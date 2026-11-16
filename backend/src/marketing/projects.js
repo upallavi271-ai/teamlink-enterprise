@@ -283,6 +283,7 @@ async function tellClient(r, kind, opts = {}) {
       const ok = !!(res && res.ok);
       const why = ok ? '' : plainWhy(res);
       out.sent.push({ way: label, ok, to, error: why });
+      if (ok && way === 'whatsapp' && kind === 'options') await require('./remind').schedule({ kind: 'project', refId: r.id, phone: r.contactPhone, name: firstWord(r.contactName), clientName: r.clientName, by: by || null }); // eslint-disable-line no-await-in-loop, global-require -- ONE reminder after 24 hours if the client does not answer
       const viaTpl = way === 'whatsapp' && ok && (!!require('./waTemplates').payload(set.waTemplates, kind, msg.values) || (res && res.mode === 'template')); // eslint-disable-line global-require
       await event(r.id, ok ? 'told' : 'told_failed', who, ok ? `Told the client by ${label}${viaTpl ? ' (approved template)' : ''} (${to})` : `The client could not be told by ${label}${to ? ` (${to})` : ''}: ${why}`); // eslint-disable-line no-await-in-loop
     }

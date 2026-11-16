@@ -224,6 +224,7 @@ async function tell(u, id, b = {}, base = '') {
       }
       if (mode !== 'picture') res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${text}\n\nReply STOP to stop messages from us.`, vars: [text], meta }); // eslint-disable-line no-await-in-loop
       const ok = !!(res && res.ok);
+      if (ok) await require('./remind').schedule({ kind: 'review', refId: r.id, phone: r.contactPhone, name: P.firstWord(r.contactName), clientName: r.clientName, by: u }); // eslint-disable-line no-await-in-loop, global-require -- ONE reminder after 24 hours if they do not answer
       sent.push({ way: 'WhatsApp', ok, to: core.maskMobile(nm.e164), mode, note: ok ? why : '', error: ok ? '' : S.clip((res && (res.notConfigured || res.outcome === 'Not configured') ? `It is not connected: ${res.error || 'ask an Admin to connect it in Administration > Integrations'}` : (res && res.error)) || 'The sender refused it.', 200).replace(/(\+?\d[\d\s-]{8,}\d)/g, 'a number') });
     } else {
       const em = String(r.contactEmail || '').trim();

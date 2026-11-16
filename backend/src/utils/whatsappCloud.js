@@ -130,7 +130,9 @@ function failure(res) {
 function templatePayload(cfg, kind, vars, own) {
   const name = (own && own.name) || cfg.templates[kind];
   if (!name) return null;
-  const components = [{ type: 'body', parameters: (vars || []).map((x) => ({ type: 'text', text: param(x) })) }];
+  const params = (vars || []).map((x) => ({ type: 'text', text: param(x) }));
+  // a template with FIXED words has no blanks: no body part is sent for it (an empty one can be refused)
+  const components = params.length || kind === 'otp' ? [{ type: 'body', parameters: params }] : [];
   if (kind === 'otp') {
     // Authentication templates: body carries the code, and the copy-code
     // button takes it again as its URL parameter.
