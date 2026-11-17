@@ -86,7 +86,7 @@ function run(bin, args, { timeoutMs = 3 * 3600000, env } = {}) {
     p.stderr.on('data', (d) => { err += d; if (err.length > 2e5) err = err.slice(-1e5); });
     const t = setTimeout(() => p.kill('SIGKILL'), timeoutMs);
     p.on('error', (e) => { clearTimeout(t); resolve({ code: -1, out, err: `${err}${e.message}` }); });
-    p.on('close', (code) => { clearTimeout(t); resolve({ code, out, err }); });
+    p.on('close', (code, signal) => { clearTimeout(t); resolve({ code, signal, out, err }); });
   });
 }
 async function probe(file) {
@@ -239,7 +239,10 @@ async function drain() {
   while (queue.length) {
     const { id, task } = queue.shift();
     try { await (task === 'cut' ? cutJob(id) : analyseJob(id)); } // eslint-disable-line no-await-in-loop
-    catch (e) { await setJob(id, { status: 'failed', error: String(e.message || e).slice(0, 500) }).catch(() => {}); } // eslint-disable-line no-await-in-loop
+    catch (e) {
+      // stopped by a restart: left as it is, so the next start carries on (ensure); anything else is a failure to show
+      if (!e.interrupted) await setJob(id, { status: 'failed', error: String(e.message || e).slice(0, 500) }).catch(() => {}); // eslint-disable-line no-await-in-loop
+    }
   }
   running = false;
 }
@@ -289,12 +292,14 @@ async function cutOne(src, parts, out, hasAudio) {
       const r = await run(FFMPEG(), ['-v', 'error', '-y', '-ss', String(s), '-i', src, '-t', d.toFixed(2), '-threads', '2', '-vf', `scale=trunc(iw/2)*2:trunc(ih/2)*2,fade=t=in:st=0:d=0.3,fade=t=out:st=${fo}:d=0.3`,
         ...(hasAudio ? ['-af', `afade=t=in:st=0:d=0.3,afade=t=out:st=${fo}:d=0.35`, '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2'] : ['-an']),
         '-c:v', 'libx264', '-crf', '24', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-r', '30', f]);
+      if (r.code === null) throw Object.assign(new Error(`stopped by ${r.signal || 'a signal'}`), { interrupted: true }); // a deploy stopped it: it starts again after the restart
       if (r.code !== 0) throw new Error(`Cutting ${s}-${e} s failed: ${r.err.slice(-300)}`);
       files.push(f);
     }
     const list = path.join(tmp, 'list.txt');
     fs.writeFileSync(list, files.map((f) => `file '${f.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'));
     const r = await run(FFMPEG(), ['-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', out]);
+    if (r.code === null) throw Object.assign(new Error(`stopped by ${r.signal || 'a signal'}`), { interrupted: true });
     if (r.code !== 0) throw new Error(`Joining failed: ${r.err.slice(-300)}`);
   } finally { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* left */ } }
 }
