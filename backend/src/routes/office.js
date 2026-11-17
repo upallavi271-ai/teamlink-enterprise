@@ -369,7 +369,8 @@ async function officeScope(query) {
     inPeriod: all.filter((r) => range.all || inRange(r.expenseDate, range)),
     invoices: live,
     invoicesInPeriod: live.filter((i) => range.all || inRange(i.invoiceDate, range)),
-    gstInvoices: live.filter((i) => range.all || inRange(joinMonthDay(i), range)),
+    // Founder 2026-11-17: no joining date recorded -> not counted in any month's GST (no fallback to the invoice date).
+    gstInvoices: live.filter((i) => range.all || (i.joiningDate && inRange(String(i.joiningDate).slice(0, 10), range))),
     payments,
   };
 }
