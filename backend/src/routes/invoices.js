@@ -1034,6 +1034,28 @@ function moneyCols(ws, fromRow, toRow, cols) {
 // carry the received figure only) — the client ledger's own rule.
 const unrecordedOf = (r) => ROUND(Number(r.received || 0) - (r.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0));
 
+// ACCOUNTING SOFTWARE EXPORT (utils/accountingExport.js): exactly the invoices on screen (same body as the Excel), as
+//   Tally   Sales vouchers in Tally's import XML       POST /register/tally.xml
+//   Zoho    the Zoho Books invoice-import CSV          POST /register/zoho.csv
+// A file download only — no API keys, nothing is sent to Tally or Zoho. Cancelled invoices are left out.
+async function accountingExport(req, res, kind) {
+  const AE = require('../utils/accountingExport'); // eslint-disable-line global-require
+  const { list } = await pickedRegister(req);
+  const day = new Date().toISOString().slice(0, 10);
+  const count = list.filter((r) => r.status !== 'Cancelled').length;
+  await logAudit({ userId: req.user.id, action: `Invoices exported for ${kind === 'tally' ? 'Tally (XML)' : 'Zoho Books (CSV)'}`, entity: 'Invoice', entityId: 'export', toValue: `${count} invoice(s)` });
+  if (kind === 'tally') {
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="tally-vouchers-${day}.xml"`);
+    return res.send(AE.tallyXml(list, { company: req.body && req.body.company, ledgers: req.body && req.body.ledgers }));
+  }
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="zoho-books-invoices-${day}.csv"`);
+  return res.send(AE.zohoCsv(list, { stateOf: (g) => gstStateName(String(g).slice(0, 2)) || '' }));
+}
+router.post('/register/tally.xml', requirePerm('accounts', 'accounts', 'Invoices', 'export'), (req, res) => accountingExport(req, res, 'tally'));
+router.post('/register/zoho.csv', requirePerm('accounts', 'accounts', 'Invoices', 'export'), (req, res) => accountingExport(req, res, 'zoho'));
+
 // Invoice accounts: one line per client (billed / received / pending) and the
 // ledger behind it — invoice raised (debit = receivable), receipts (credit),
 // running balance per client — as GET /client-account/:clientId builds it.

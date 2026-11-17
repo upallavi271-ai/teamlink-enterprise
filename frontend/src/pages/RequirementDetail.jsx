@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import JobAutoMessages from '../components/automsg/JobAutoMessages.jsx'; // automatic stage messages: this job's setting
+import { RequirementIndustryCard } from '../components/ats/OfferBgv.jsx'; // industry checklist, BGV needed, gender/age criteria
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { rowClickProps } from '../utils/rowClick.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -692,6 +693,8 @@ export default function RequirementDetail() {
           </div>
           {/* Automatic stage messages: this job's own setting (follow the rules / recruiter approves first / off). */}
           <JobAutoMessages requirementId={r.id} />
+          {/* Industry template (checklist), BGV needed, gender / age criteria with its reason (components/ats/OfferBgv.jsx) */}
+          <RequirementIndustryCard requirementId={r.id} canEdit={!!p.edit} />
           {/* docfill_: the source document (only when there is one). */}
           <SourceDocuments target="job" id={r.id} version={r.updatedAt} />
           {/* Review #3 §4 — Agreement and Job Portal lines of the 360. */}

@@ -65,6 +65,7 @@ const METRICS = [
   { key: 'followUps', label: 'Follow-ups', col: true, hint: 'Follow-ups closed' },
   { key: 'missed', label: 'Missed follow-ups', col: false, hint: 'Follow-ups due that day and not done by the end of it' },
   { key: 'reviewed', label: 'Resumes checked', col: false, hint: 'Moved on from "Check by recruiter"' },
+  { key: 'verified', label: 'Profiles verified', col: false, hint: 'Checked by the recruiter and sent on ("Approved by recruiter" or "Check by team lead")' },
   { key: 'sentTl', label: 'Sent to TL', col: true, hint: 'Moved to "Check by team lead"' },
   { key: 'sentClient', label: 'Sent to client', col: true, hint: 'Moved to "Shared with client"' },
   { key: 'interviews', label: 'Interviews', col: true, hint: 'Interviews scheduled' },
@@ -79,6 +80,7 @@ const COLUMN_KEYS = METRICS.filter((m) => m.col).map((m) => m.key);
 const STEP_METRIC = {
   TL_REVIEW: 'sentTl', SHARED_WITH_CLIENT: 'sentClient', INTERVIEW_SCHEDULED: 'interviews', INTERVIEW_COMPLETED: 'attended', OFFER: 'offers',
 };
+const VERIFIED_ON = ['RECRUITER_APPROVED', 'TL_REVIEW']; // "Profiles verified" (the dashboard funnel's Verified step)
 const CHANNEL_METRIC = { Call: 'calls', Email: 'mails', WhatsApp: 'whatsapp' };
 const WHAT = {
   added: 'Added a candidate',
@@ -88,6 +90,7 @@ const WHAT = {
   followUps: 'Follow-up done',
   missed: 'Follow-up missed',
   reviewed: 'Checked the resume',
+  verified: 'Verified the profile',
   sentTl: 'Sent to TL',
   sentClient: 'Sent to client',
   interviews: 'Interview scheduled',
@@ -100,6 +103,7 @@ const WHAT = {
 // Monthly targets (HRMS → Targets, EmployeeRecord type TARGET, the same rows
 // the recruiter dashboard reads) — matched to a metric by their unit / title.
 const TARGET_RULES = [
+  { key: 'verified', re: /verif|screen/i }, // "Profiles verified" — before "profile" (sent to client) below
   { key: 'sentClient', re: /submi|sent to client|shar|cv|profile/i },
   { key: 'joined', re: /join|placement|hire/i },
   { key: 'interviews', re: /interview/i },
@@ -298,6 +302,11 @@ async function eventsIn(user, world, from, to) {
     if (metric) {
       push({
         day, at: e.createdAt, metric, person, imported: !real, ...appRef(info),
+      });
+    }
+    if (VERIFIED_ON.includes(e.toStage) && !VERIFIED_ON.includes(e.fromStage)) {
+      push({
+        day, at: e.createdAt, metric: 'verified', person, imported: !real, ...appRef(info),
       });
     }
     if (e.fromStage === 'RECRUITER_REVIEW' && e.toStage !== 'RECRUITER_REVIEW') {

@@ -90,7 +90,8 @@ export default function Joining() {
     setJoinedMsg('');
     try {
       const res = await api.post(`/ats/joining/${r.id}/joined`, body || {});
-      setJoinedMsg(res.data.message || `🎉 ${first(r.candidate.name)} joined.`);
+      // BGV / joining checklist warnings come back with the answer (never a block).
+      setJoinedMsg([res.data.message || `🎉 ${first(r.candidate.name)} joined.`, ...((res.data.warnings || []).map((w) => `Note: ${w}`))].join(' '));
       setNotice(''); close(); load();
       return null;
     } catch (err) { return err; }
@@ -175,6 +176,12 @@ export default function Joining() {
                       : <StatusChip status={r.daysWaiting ? `Waiting ${r.daysWaiting} day${r.daysWaiting === 1 ? '' : 's'}` : 'Waiting since today'} tone={r.daysWaiting > 14 ? 'red' : 'amber'} />)}
                     {v === 'joined' && <StatusChip status={`Joined ${r.joinedAt ? fmtDate(r.joinedAt) : ''}`.trim()} tone="green" />}
                     {v === 'dropped' && <StatusChip status="Did not join" tone="red" />}
+                    {/* BGV: a WARNING when the job needs it and it is not Clear (joining is not blocked) */}
+                    {r.bgv && (
+                      <div style={{ marginTop: 3 }} title={r.bgv.warn ? 'This job needs background verification. Joining is allowed, but check it first.' : ''}>
+                        <StatusChip status={`${r.bgv.warn ? '⚠ ' : ''}BGV: ${r.bgv.overall}`} tone={r.bgv.warn ? 'red' : (r.bgv.overall === 'Clear' ? 'green' : 'grey')} />
+                      </div>
+                    )}
                     {v === 'joined' && !internal && r.invoice && (
                       <div className="small-muted" style={{ fontSize: 11, marginTop: 2 }}>
                         {canSeeInvoice ? <Link to={`/invoices/${r.invoice.id}`}>Bill ready</Link> : 'Bill ready for Accounts'}

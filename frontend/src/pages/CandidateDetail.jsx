@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { DupBanner } from '../components/duplicates/DupChip.jsx'; // dup_
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api';
+import { ApplicationExtrasCard } from '../components/ats/OfferBgv.jsx'; // industry checklist, gender/age flag, BGV, counter-offers
 import { useAuth } from '../context/AuthContext.jsx';
 import NextStepBlock from '../components/NextStepBlock.jsx';
 import {
@@ -521,6 +522,7 @@ export default function CandidateDetail() {
           />
         </div>
         {primary && internal && primary.ownership && <OwnershipCreditCard app={primary} />}
+        {primary && internal && <ApplicationExtrasCard key={primary.id} appId={primary.id} onChanged={load} />}
         {/* Progress, Actions, AI and Client feedback are direct cells of the
             page grid (same card padding and gap), so rows stay aligned. */}
         <>

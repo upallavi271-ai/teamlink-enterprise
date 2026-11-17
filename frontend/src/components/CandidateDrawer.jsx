@@ -19,6 +19,7 @@ import ProfileLeft, { ResumeTabCard } from './candidate/ProfileLeft.jsx';
 import { RecordDocuments } from './candidate/CandidateRecord.jsx'; // ATS-100 B5
 import CareerProfile from './candidate/CareerProfile.jsx'; // the Career tab (education, jobs, gaps, progression, summary, tags, custom fields)
 import FollowUpLog from './clients/FollowUpLog.jsx';
+import { ApplicationExtrasCard } from './ats/OfferBgv.jsx'; // industry checklist, gender/age flag, BGV, counter-offers
 import {
   FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot, AddApplicationSlot, AiCallingSlot,
 } from './candidate/ProfileSlots.jsx';
@@ -160,6 +161,7 @@ export default function CandidateDrawer({
                     linkTo={(a) => <Link to={`/requirements/${a.requirementId}`}>{a.requirement?.title || '—'}</Link>}
                   />
                 </section>
+                {internal && app && <ApplicationExtrasCard key={app.id} appId={app.id} onChanged={changed} />}
                 <RejectionHistorySlot {...slot} />
                 {internal && (c.rejectedBy?.length > 0) && (
                   <section className="cdw-card">

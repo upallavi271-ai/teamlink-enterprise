@@ -2495,6 +2495,31 @@ router.post('/:id/copy', JC.requireJobCreate({ needs: 'any', internalOf: (req) =
   res.status(201).json({ ...copy, copiedFrom: { id: before.id, reqCode: before.reqCode, title: before.title } });
 });
 
+// INDUSTRY TEMPLATE, BGV NEEDED and GENDER / AGE CRITERIA of one job (utils/atsOfferBgv.js). Read by anyone who may open the job
+// (recruiters see the criteria and its reason); changed by whoever may edit the job. The criteria never feed the fit score.
+router.get('/:id/industry', async (req, res) => {
+  const X = require('../utils/atsOfferBgv'); // eslint-disable-line global-require
+  const client = req.requirement.clientId ? await prisma.client.findUnique({ where: { id: req.requirement.clientId }, select: { id: true, industry: true } }) : null;
+  const ex = await X.requirementExtras({ ...req.requirement, client });
+  res.json({ ...ex, templates: (await X.templates()).map((t) => ({ id: t.id, industry: t.industry, name: t.name })), genders: X.GENDERS });
+});
+router.put('/:id/industry', JC.requireJobManage(), requirePerm('ats', 'requirements', 'Requirement Detail', 'edit'), async (req, res) => {
+  const X = require('../utils/atsOfferBgv'); // eslint-disable-line global-require
+  const out = await X.saveRequirementExtras(req.requirement.id, req.body || {}, req.user);
+  if (out.error) return res.status(400).json({ error: out.error });
+  const b = out.before; const a = out.after;
+  const tplBefore = b ? b.templateId || 'default' : 'default';
+  if (tplBefore !== (a.templateId || 'default')) await logAudit({ userId: req.user.id, action: 'Industry template changed', entity: 'Requirement', entityId: req.requirement.id, fromValue: tplBefore, toValue: a.templateId || 'default' });
+  if (Number(b ? b.bgvNeeded : 0) !== Number(a.bgvNeeded)) await logAudit({ userId: req.user.id, action: `Background verification ${Number(a.bgvNeeded) ? 'needed' : 'not needed'}`, entity: 'Requirement', entityId: req.requirement.id, fromValue: Number(b ? b.bgvNeeded : 0) ? 'Needed' : 'Not needed', toValue: Number(a.bgvNeeded) ? 'Needed' : 'Not needed' });
+  if (out.criteriaChanged) {
+    const words = (c) => (c ? [c.prefGender !== 'Any' && `Gender: ${c.prefGender}`, (c.ageMin != null || c.ageMax != null) && `Age: ${c.ageMin ?? 'any'}–${c.ageMax ?? 'any'}`].filter(Boolean).join(', ') : 'None');
+    const ca = X.criteriaOf(a);
+    await logAudit({ userId: req.user.id, action: ca ? 'Gender / age criteria set' : 'Gender / age criteria removed', entity: 'Requirement', entityId: req.requirement.id, fromValue: words(X.criteriaOf(b)), toValue: words(ca), reason: ca ? ca.reason : undefined });
+  }
+  const client = req.requirement.clientId ? await prisma.client.findUnique({ where: { id: req.requirement.clientId }, select: { id: true, industry: true } }) : null;
+  return res.json({ ok: true, ...(await X.requirementExtras({ ...req.requirement, client })) });
+});
+
 router.get('/:id', async (req, res) => {
   const requirement = await prisma.requirement.findUnique({
     where: { id: req.params.id },

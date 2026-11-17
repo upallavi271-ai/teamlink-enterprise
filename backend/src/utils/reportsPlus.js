@@ -342,6 +342,8 @@ module.exports = function reportsPlus(H) {
     { key: 'joined', re: /join|placement|hire|closure/i },
     { key: 'selected', re: /select/i },
     { key: 'interviews', re: /interview/i },
+    // PROFILES VERIFIED (founder audit 2026-11-17): a goal like "Profiles verified" / "Screened" — before "profile" below.
+    { key: 'verified', re: /verif|screen/i },
     { key: 'submitted', re: /submi|sent to client|shar|cv|profile/i },
   ];
   const periodOf = (ctx) => ctx.f.period || dateRange.resolve({ range: 'this_month' });
@@ -382,7 +384,11 @@ module.exports = function reportsPlus(H) {
     });
     ctx.targetPrep[key] = { targets: out, months };
   }
+  // "Profiles verified" = the recruiter checked the person and sent them on (Approved by recruiter / TL check) — the
+  // dashboard funnel's own "Verified" step (utils/atsHome.js FUNNEL_V3).
+  const VERIFIED_ON = ['RECRUITER_APPROVED', 'TL_REVIEW'];
   const METRICS = [
+    ['verified', 'Profiles verified'],
     ['submitted', 'Sent to client'],
     ['interviews', 'Interviews'],
     ['selected', 'Selected'],
@@ -406,6 +412,7 @@ module.exports = function reportsPlus(H) {
     ctx.apps.forEach((x) => {
       if (!x.recruiter || x.recruiter.key === '—') return;
       const hits = {
+        verified: (x.evs || []).some((e) => VERIFIED_ON.includes(e.toStage) && (!e.fromStage || !VERIFIED_ON.includes(e.fromStage)) && within(e.createdAt)),
         submitted: (x.evs || []).some((e) => CLIENT_CHAIN.includes(e.toStage) && (!e.fromStage || !CLIENT_CHAIN.includes(e.fromStage)) && within(e.createdAt)),
         interviews: !!x.a.interviewAt && within(x.a.interviewAt) && !DEAD_INTERVIEW.includes(x.a.interviewStatus),
         selected: (x.evs || []).some((e) => SELECTED_ON.includes(e.toStage) && (!e.fromStage || !SELECTED_ON.includes(e.fromStage)) && within(e.createdAt)),
@@ -447,7 +454,7 @@ module.exports = function reportsPlus(H) {
       t.tiles[t.tiles.length - 1].target = tg || null;
     });
     const notes = [];
-    if (!prep.targets.size) notes.push('No Monthly Targets are set for this period. Set them in HRMS → Performance → Monthly Targets (goal "Submissions", "Interviews", "Selections" or "Joinings").');
+    if (!prep.targets.size) notes.push('No Monthly Targets are set for this period. Set them in HRMS → Performance → Monthly Targets (goal "Profiles verified", "Submissions", "Interviews", "Selections" or "Joinings").');
     else {
       const ahead = [...sec.rows.values()].filter((r) => r.cells.t_joined && r.cells.joined.n >= r.cells.t_joined).map((r) => r.cells.recruiter);
       if (ahead.length) notes.push(`Reached the joining target: ${ahead.slice(0, 5).join(', ')}${ahead.length > 5 ? ` and ${ahead.length - 5} more` : ''}.`);

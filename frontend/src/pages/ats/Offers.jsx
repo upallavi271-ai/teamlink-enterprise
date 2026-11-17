@@ -23,6 +23,9 @@ import StatusChip from '../../components/ui/StatusChip.jsx';
 import { Modal } from '../../components/proto.jsx';
 import { ctcAsk, CtcAsk, CtcAskButtons } from '../../components/CtcConfirm.jsx';
 import { ReleaseLetterModal, ShareModal, openLetter } from '../../components/clientTrack/ClientTrack.jsx';
+import {
+  CounterOfferModal, CounterChip, BgvModal, BgvChip, BgvListModal,
+} from '../../components/ats/OfferBgv.jsx'; // counter-offers + background verification (utils/atsOfferBgv.js)
 import '../../components/interviews/Interviews.css';
 import './offersB3.css';
 import {
@@ -154,6 +157,19 @@ export default function Offers() {
                     ) : (canEdit && step.id !== 'accepted' && (
                       <div><button type="button" className="link-btn" style={{ fontSize: 11.5 }} onClick={async () => { const reason = window.prompt('Why is this offer on hold? (recorded)'); if (!reason || !reason.trim()) return; try { await api.post(`/ats/offers/${r.id}/hold`, { reason }); ws.setNotice('Offer put on hold.'); load(); } catch (e) { ws.setError(e.response?.data?.error || 'Could not put on hold.'); } }}>Put on hold</button></div>
                     ))}
+                    {/* Counter-offer (latest) and BGV overall — each opens its window */}
+                    {(r.counterOffer || r.bgv) && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 3 }}>
+                        <CounterChip counter={r.counterOffer} onOpen={() => setDialog({ kind: 'counter', row: r })} />
+                        <BgvChip bgv={r.bgv} onOpen={() => setDialog({ kind: 'bgv', row: r })} />
+                      </div>
+                    )}
+                    {canEdit && step.id !== 'accepted' && !r.counterOffer && (
+                      <div><button type="button" className="link-btn" style={{ fontSize: 11.5 }} onClick={() => setDialog({ kind: 'counter', row: r })}>Counter-offer</button></div>
+                    )}
+                    {!r.bgv && (canEdit || canApprove) && (
+                      <div><button type="button" className="link-btn" style={{ fontSize: 11.5 }} onClick={() => setDialog({ kind: 'bgv', row: r })}>Background check</button></div>
+                    )}
                     {r.clientTrack?.offer?.releasedAt && ['share', 'candidate'].includes(step.id) && (
                       <div className="small-muted" style={{ fontSize: 11.5, marginTop: 2 }}>{`Client released it ${fmtDate(r.clientTrack.offer.releasedAt)}${r.clientTrack.offer.onBehalf ? ' (recorded by the BDE)' : ''}`}</div>
                     )}
@@ -250,6 +266,30 @@ export default function Offers() {
       )}
 
       {isAdmin && <ReminderSwitch />}
+      <div className="ivx-admin">
+        <span>Background verification (BGV) of the people in your area.</span>
+        <button type="button" className="btn btn-sm" onClick={() => setDialog({ kind: 'bgvList' })}>BGV list</button>
+      </div>
+      {dialog?.kind === 'counter' && (
+        <CounterOfferModal
+          appId={dialog.row.id}
+          name={dialog.row.candidate.name}
+          offeredCtc={dialog.row.offeredCtc}
+          canEdit={canEdit}
+          canDecide={canApprove}
+          onClose={() => { close(); load(); }}
+        />
+      )}
+      {dialog?.kind === 'bgv' && (
+        <BgvModal
+          appId={dialog.row.id}
+          name={dialog.row.candidate.name}
+          canEdit={canEdit}
+          onClose={close}
+          onSaved={(b) => { close(); ws.setNotice(`Saved. BGV: ${b.overall}.`); load(); }}
+        />
+      )}
+      {dialog?.kind === 'bgvList' && <BgvListModal canEdit={canEdit} onClose={() => { close(); load(); }} />}
 
       {dialog?.kind === 'prepare' && (
         <PrepareForm

@@ -150,6 +150,9 @@ const EXPORTS = [
   { k: 'excel', label: 'Excel', path: '/invoices/register/export.xlsx', file: 'invoices.xlsx', title: 'Download exactly the invoices shown below' },
   { k: 'accounts', label: 'Invoice accounts', path: '/invoices/register/accounts.xlsx', file: 'invoice-accounts.xlsx', title: 'Each client’s account (billed, received, pending) and the ledger behind it — for the invoices shown' },
   { k: 'instalments', label: 'Instalments', path: '/invoices/register/instalments.xlsx', file: 'instalments.xlsx', title: 'Every payment received against the invoices shown' },
+  // Accounting software (file download only, no keys): Tally Sales vouchers (XML) and the Zoho Books invoice import (CSV). Cancelled left out.
+  { k: 'tally', label: 'Tally XML', path: '/invoices/register/tally.xml', file: 'tally-vouchers.xml', title: 'Sales vouchers for Tally: Gateway of Tally → Import Data → Vouchers (the invoices shown; cancelled ones left out)' },
+  { k: 'zoho', label: 'Zoho Books CSV', path: '/invoices/register/zoho.csv', file: 'zoho-books-invoices.csv', title: 'Zoho Books: Sales → Invoices → Import (the invoices shown; cancelled ones left out)' },
 ];
 
 const sumOf = (list, f) => Math.round(list.reduce((s, r) => s + (Number(f(r)) || 0), 0) * 100) / 100;

@@ -96,7 +96,11 @@ function SetTargetModal({ onClose, onSaved }) {
 
   return (
     <ComposeModal title="Set Monthly Target" onClose={onClose} onSubmit={submit} submitLabel="Set Target" busy={busy} error={error} wide>
-      <Field label="Goal" required><input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+      {/* Goal words the reports read (Results vs target): Profiles verified · Submissions · Interviews · Selections · Joinings */}
+      <Field label="Goal" required><input list="target-goal-words" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+      <datalist id="target-goal-words">
+        {['Profiles verified', 'Submissions', 'Interviews', 'Selections', 'Joinings'].map((g) => <option key={g} value={g} />)}
+      </datalist>
       <AiAssist kind="target" title={form.title} text={form.detail} onText={(detail) => setForm((f) => ({ ...f, detail }))} />
       <Field label="Description"><textarea rows="3" value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} placeholder="What counts, and how it is measured" /></Field>
       <Row>

@@ -495,6 +495,18 @@ router.get('/offers', requirePerm('ats', 'interviews', 'Offers', 'view'), async 
   await require('../utils/clientTrack').attachTo(req.user, rows); // eslint-disable-line global-require
   // an offer put ON HOLD (utils/offerHold.js) carries the reason, who and when
   try { const holds = await require('../utils/offerHold').mapOf(rows.map((r) => r.id)); rows.forEach((r) => { if (holds.has(r.id)) r.offerHold = holds.get(r.id); }); } catch { /* shown without */ } // eslint-disable-line global-require
+  // the latest counter-offer and the BGV overall per row (utils/atsOfferBgv.js)
+  try {
+    const XB = require('../utils/atsOfferBgv'); // eslint-disable-line global-require
+    const ids = rows.map((r) => r.id);
+    const [cts, bgv, need] = await Promise.all([XB.latestCounterMap(ids), XB.bgvMap(ids), XB.bgvNeededMap(rows.map((r) => r.requirement && r.requirement.id))]);
+    rows.forEach((r) => {
+      if (cts.has(r.id)) r.counterOffer = cts.get(r.id);
+      const b = bgv.get(r.id);
+      const needed = need.has(r.requirement && r.requirement.id);
+      if (b || needed) r.bgv = { overall: b ? b.overall : 'Not started', needed };
+    });
+  } catch { /* shown without */ }
   const offerSettings = await OL.loadSettings();
   // eslint-disable-next-line global-require
   const candidateEmailsOn = await require('../utils/interviewNotices').candidateEmailsOn();
@@ -507,6 +519,8 @@ router.get('/offers', requirePerm('ats', 'interviews', 'Offers', 'view'), async 
 require('./offerStaffRoutes')(router, { loadScoped });
 // 2026-10-13: a CLIENT job's offer / joining letters come from the client (utils/clientTrack.js).
 require('./clientTrackRoutes')(router, { loadScoped });
+// Counter-offers, BGV, the industry checklist and its templates (routes/atsOfferBgvRoutes.js, utils/atsOfferBgv.js).
+require('./atsOfferBgvRoutes')(router, { loadScoped });
 
 // ---------------------------------------------------------------------------
 // OFFER LETTER — template → approval → sent → the candidate accepts / declines
@@ -969,6 +983,16 @@ router.get('/joining', requirePerm('ats', 'interviews', 'Joining', 'view'), asyn
   // 2026-10-13: the client-hiring steps on each row, and the invoice AMOUNTS only for the people who may see them
   // (Admin, Accounts, Manager, a BDE with the 'Client Invoice Amount' tick); everyone else sees the status.
   await require('../utils/clientTrack').attachTo(req.user, withInvoice); // eslint-disable-line global-require
+  // BGV overall per row: a joining WARNS when the job needs BGV and it is not Clear (never a block; utils/atsOfferBgv.js)
+  try {
+    const XB = require('../utils/atsOfferBgv'); // eslint-disable-line global-require
+    const [bgv, need] = await Promise.all([XB.bgvMap(withInvoice.map((r) => r.id)), XB.bgvNeededMap(withInvoice.map((r) => r.requirement && r.requirement.id))]);
+    withInvoice.forEach((r) => {
+      const b = bgv.get(r.id);
+      const needed = need.has(r.requirement && r.requirement.id);
+      if (b || needed) r.bgv = { overall: b ? b.overall : 'Not started', needed, warn: needed && (!b || b.overall !== 'Clear') };
+    });
+  } catch { /* shown without */ }
   if (!(await mayInvoiceAmounts(req.user))) {
     withInvoice.forEach((r) => { if (r.invoice) r.invoice = { id: r.invoice.id, invoiceNumber: r.invoice.invoiceNumber, status: r.invoice.status }; });
   }
@@ -1036,7 +1060,9 @@ router.post('/joining/:id/schedule', requirePerm('ats', 'interviews', 'Joining',
     fromValue: app.joiningStatus || 'Not Scheduled', toValue: `Joining Scheduled — ${joiningDate}`,
   });
   const fresh = await prisma.application.findUnique({ where: { id: app.id }, include: FULL_INCLUDE });
-  res.json(shapeRow(fresh));
+  // BGV / joining checklist: a WARNING with the answer, never a block (utils/atsOfferBgv.js).
+  const warnings = await require('../utils/atsOfferBgv').joiningWarnings(app); // eslint-disable-line global-require
+  res.json({ ...shapeRow(fresh), warnings });
 });
 
 router.post('/joining/:id/joined', requirePerm('ats', 'interviews', 'Joining', 'edit'), async (req, res) => {
@@ -1115,8 +1141,10 @@ router.post('/joining/:id/joined', requirePerm('ats', 'interviews', 'Joining', '
   const employee = internalHire && fresh.hrmsEmployeeId
     ? await prisma.employee.findUnique({ where: { id: fresh.hrmsEmployeeId }, select: { id: true, employeeCode: true } })
     : null;
+  const warnings = await require('../utils/atsOfferBgv').joiningWarnings(app); // eslint-disable-line global-require
   res.json({
     ...shapeRow(fresh),
+    warnings,
     invoiceId: invoice ? invoice.id : null,
     employeeId: employee ? employee.id : null,
     joinedName: first,
