@@ -19,6 +19,84 @@ const SORTS = [
   { key: 'old', label: 'Oldest first' },
 ];
 
+// TAMPER CHECK (backend utils/auditSeal.js): every audit row is sealed into a hash chain; this walks it.
+function SealCheck() {
+  const [out, setOut] = useState(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+      <button type="button" className="btn btn-sm" disabled={busy} title="Proves no audit row was changed or deleted after it was recorded"
+        onClick={async () => { setBusy(true); try { setOut((await api.post('/admin/audit/verify')).data); } catch (e) { setOut({ error: e.response?.data?.error || 'The check could not run.' }); } finally { setBusy(false); } }}>
+        {busy ? 'Checking…' : '🔒 Check for tampering'}
+      </button>
+      {out && (out.error ? <span className="error-text">{out.error}</span>
+        : out.ok ? (
+          <span className="small-muted" style={{ color: 'var(--success, #157f3b)' }}>
+            ✓ Untouched: the newest {Number(out.checked).toLocaleString('en-IN')} of {Number(out.sealed).toLocaleString('en-IN')} sealed rows checked now, none changed or deleted.
+            {out.full ? ` Full check of every row ${new Date(out.full.at).toLocaleDateString('en-GB')}: ${out.full.ok ? 'OK' : 'BROKEN'}.` : ' The full check of every row runs tonight.'}
+          </span>
+        )
+          : <span className="error-text">✗ Row {out.brokenAt.seq}: {out.brokenAt.why}{out.brokenAt.action ? ` (${out.brokenAt.action}, ${new Date(out.brokenAt.at).toLocaleString('en-GB')})` : ''}</span>)}
+    </span>
+  );
+}
+
+// WHO VIEWED (backend utils/readLog.js): candidate / employee records and documents opened, newest first.
+function WhoViewed() {
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [f, setF] = useState({ entity: '', from: '', to: '' });
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    const params = { page, size: 50, ...Object.fromEntries(Object.entries(f).filter(([, v]) => v)) };
+    api.get('/admin/read-log', { params }).then((r) => { setRows(r.data.rows || []); setTotal(r.data.total || 0); }).catch(() => setErr('Could not load.'));
+  }, [page, f]);
+  const set = (k) => (e) => { setPage(1); setF((x) => ({ ...x, [k]: e.target.value })); };
+  const pages = Math.max(1, Math.ceil(total / 50));
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+        <select value={f.entity} onChange={set('entity')} style={{ width: 'auto' }}>
+          <option value="">Everything opened</option><option value="Candidate">Candidates</option><option value="Employee">Employees</option><option value="Application">Client portal resumes</option>
+        </select>
+        <label className="small-muted">From <input type="date" value={f.from} onChange={set('from')} style={{ width: 'auto' }} /></label>
+        <label className="small-muted">To <input type="date" value={f.to} onChange={set('to')} style={{ width: 'auto' }} /></label>
+        <span className="small-muted">{total.toLocaleString('en-IN')} views (the same record by the same person within 10 minutes counts once)</span>
+        <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={async () => {
+          const r = await api.get('/admin/read-log', { params: { ...Object.fromEntries(Object.entries(f).filter(([, v]) => v)), format: 'csv' }, responseType: 'blob' });
+          const a = document.createElement('a'); a.href = URL.createObjectURL(r.data); a.download = `who-viewed-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+        }}>⬇ Download CSV</button>
+      </div>
+      {err && <div className="error-text">{err}</div>}
+      <div className="tbl-wrap tbl-fit">
+        <table>
+          <thead><tr><th>When</th><th>Who</th><th>Opened</th><th>Record</th><th>IP</th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td>{new Date(r.at).toLocaleString('en-GB')}</td>
+                <td>{r.userName || '—'}{r.viewAsBy ? <span className="small-muted"> (View as by {r.viewAsBy})</span> : null}</td>
+                <td>{r.what}</td>
+                <td>{r.recordName || r.entityId}</td>
+                <td>{r.ip || '—'}</td>
+              </tr>
+            ))}
+            {!rows.length && <tr><td colSpan={5} className="small-muted">Nothing recorded yet. Views are recorded from today.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {pages > 1 && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+          <button type="button" className="btn btn-sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button>
+          <span className="small-muted">Page {page} of {pages}</span>
+          <button type="button" className="btn btn-sm" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AuditLogs() {
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
@@ -48,7 +126,7 @@ export default function AuditLogs() {
     const { dateFrom, dateTo, ...rest } = lf.params;
     const params = { ...rest, page, pageSize: size, sort: lf.sort };
     if (view === 'hr') params.entity = 'HrSensitive';
-    if (view === 'access') return undefined;
+    if (view === 'access' || view === 'viewed') return undefined;
     if (dateFrom) params.from = dateFrom;
     if (dateTo) params.to = dateTo;
     setError('');
@@ -86,7 +164,9 @@ export default function AuditLogs() {
         <button className={`btn btn-sm ${view === 'all' ? 'btn-primary' : ''}`} onClick={() => setView('all')}>All activity</button>
         <button className={`btn btn-sm ${view === 'hr' ? 'btn-primary' : ''}`} onClick={() => setView('hr')}>HR sensitive actions</button>
         <button className={`btn btn-sm ${view === 'access' ? 'btn-primary' : ''}`} onClick={() => setView('access')}>Who has Internal HR access</button>
-        {view !== 'access' && (
+        <button className={`btn btn-sm ${view === 'viewed' ? 'btn-primary' : ''}`} onClick={() => setView('viewed')} title="Who opened which candidate / employee record or document">Who viewed</button>
+        <SealCheck />
+        {view !== 'access' && view !== 'viewed' && (
           <button
             className="btn btn-sm"
             style={{ marginLeft: 'auto' }}
@@ -111,7 +191,7 @@ export default function AuditLogs() {
           </button>
         )}
       </div>
-      {view === 'access' ? <HrSuperAccess /> : (<>
+      {view === 'viewed' ? <WhoViewed /> : view === 'access' ? <HrSuperAccess /> : (<>
       <ListFilterBar lf={lf} storageKey="admin-audit" />
       {error && <div className="error-text">{error}</div>}
 

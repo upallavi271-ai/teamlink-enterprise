@@ -155,6 +155,8 @@ app.use('/api/outreach/gs/marketing/brand/logo', express.json({ limit: '600kb' }
 app.use('/api/outreach/gs/marketing/projects', express.json({ limit: '700kb' })); // a client's logo travels with the project (a picture of up to 300 KB)
 app.use('/api/public/mk-project', express.json({ limit: '700kb' })); // the client's request form can carry their logo
 app.use(express.json());
+// WHO LOOKED AT WHAT (utils/readLog.js): a candidate / employee record or document opened is written after the answer (200 only).
+app.use(require('./utils/readLog').middleware());
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 // SUPER ADMIN "VIEW AS" IS READ-ONLY (utils/viewAs.js): a View-as token may
@@ -635,6 +637,9 @@ const server = app.listen(PORT, () => {
   require('./utils/interviewNotices').startSweep();
   // A recruiter who left: their candidates go to the recruiter on the job following them up now, every hour (utils/leaverHandover.js).
   require('./utils/leaverHandover').startSweep();
+  // TAMPER-EVIDENT AUDIT: new audit rows are sealed into a hash chain every 5 minutes (utils/auditSeal.js); the read log keeps 365 days.
+  require('./utils/auditSeal').start();
+  setInterval(() => require('./utils/readLog').prune().catch(() => {}), 24 * 3600000).unref?.();
   // Employee Monitoring: activity older than the retention days is deleted every 6 hours (utils/monitoring.js).
   require('./utils/monitoring').startSweep();
   // Employee Monitoring alerts, every 5 minutes; off until HR switches them on (utils/monitoringAlerts.js).

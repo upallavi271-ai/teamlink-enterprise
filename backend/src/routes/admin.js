@@ -1332,6 +1332,34 @@ function auditWhere(query) {
   return and.length ? { AND: and } : {};
 }
 
+// WHO VIEWED (utils/readLog.js): candidate / employee records and documents opened. ?format=csv downloads (audited).
+router.get('/read-log', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res, next) => {
+  try {
+    const RL = require('../utils/readLog'); // eslint-disable-line global-require
+    if (req.query.format === 'csv') {
+      const { rows } = await RL.list({ ...req.query, page: 1, size: 50000 });
+      const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+      const csv = ['When,Who,Opened,Record,Record id,IP,View as by', ...rows.map((r) => [r.at, r.userName, r.what, r.recordName, r.entityId, r.ip, r.viewAsBy].map(q).join(','))].join('\n');
+      await logAudit({ userId: req.user.id, action: 'Who-viewed log downloaded', entity: 'ReadLog', toValue: `${rows.length} rows` });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="who-viewed-${new Date().toISOString().slice(0, 10)}.csv"`);
+      return res.send(`﻿${csv}`);
+    }
+    return res.json(await RL.list(req.query));
+  } catch (e) { return next(e); }
+});
+// TAMPER CHECK (utils/auditSeal.js): seal what is new, then walk the whole chain.
+router.post('/audit/verify', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res, next) => {
+  try {
+    const AS = require('../utils/auditSeal'); // eslint-disable-line global-require
+    // the newest 50,000 sealed rows now (from the sealed anchor before them); the full walk runs every night
+    const out = await AS.verify({ last: 50000 });
+    const full = await AS.lastFullCheck();
+    await logAudit({ userId: req.user.id, action: 'Audit trail checked for tampering', entity: 'AuditSeal', toValue: out.ok ? `OK, newest ${out.checked} of ${out.sealed} sealed rows` : `BROKEN at row ${out.brokenAt && out.brokenAt.seq}` });
+    res.json({ ...out, full });
+  } catch (e) { next(e); }
+});
+
 // THE AUDIT TRAIL AS A FILE (ATS audit 2026-11-17, Q470): the rows the filters pick, newest first, up to 50,000, as CSV. The download itself is audited.
 router.get('/audit/export', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res) => {
   const where = auditWhere(req.query);
