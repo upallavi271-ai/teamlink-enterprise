@@ -292,6 +292,7 @@ app.use('/api/public/mk-work', require('./routes/mkWorkPublic')); // AI Marketin
 app.use('/api/public/mk-project', require('./routes/mkProjectPublic')); // AI Marketing client projects: the client's private page (signed token, no login; marketing/projects.js)
 app.use('/api/public/mk-review', require('./routes/mkClientReviewPublic')); // AI Marketing client approval link (signed token in the address, no login; marketing/clientReview.js)
 app.use('/api/public/mk-meeting', require('./routes/mkMeetingPublic')); // AI Marketing plans meeting: the automated spoken presentation a client opens from a WhatsApp link (signed token, no login; marketing/meeting.js)
+setTimeout(() => { try { if (!require('./utils/sandbox').isSandbox()) require('./marketing/meetingVoice').prewarm().catch(() => {}); } catch { /* no voice on this server */ } }, 60000).unref(); // the meeting's first sentences are made a minute after start (marketing/meetingVoice.js)
 app.use('/api/public/outreach', require('./routes/outreachLibraryPublic')); // Library share links (token in the address, no login)
 app.use('/api/public/outreach', require('./routes/outreachFormsPublic')); // public capture forms: GET / POST /forms/:token (no login, honeypot + rate limit)
 app.use('/api/public/outreach', require('./routes/outreachPublic'));

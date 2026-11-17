@@ -29,7 +29,7 @@ const T = {
     submit: 'Send to our team', cancel: 'Back to the meeting', needPhone: 'Please type your WhatsApp number.', pickOne: 'Please pick one option.', fail: 'It could not be sent. Please try again.',
     thanks: (n) => `Thank you${n ? `, ${n}` : ''}. Our team has your request and will contact you soon.`, seeWork: 'See our finished work', plansTitle: 'Our plans (+ 18% GST)', again: 'Try again', loading: 'Opening your meeting…',
     gone: 'This link does not work any more. Please ask the sender for a new one.', busy: 'The page could not be opened just now. It will try again by itself.', yourQ: 'You', bot: 'Assistant', idle: 'Still there? Press Next to continue.', listenHelp: 'Say your question',
-    choosePlan: 'Choose a plan', howMonth: 'How a month works', perMonth: 'a month', plusGst: '+ GST', withGst: (x) => `${x} with GST`, voiceOn: 'Voice on', captionsOnly: 'Captions only', fullText: 'Show full text', trustMin: '5 minutes', trustNoLogin: 'No login', auto: 'Automated assistant', waitAsk: 'Do you have a question? Ask now, or press Next.', fin: 'The meeting is finished.', unsure: 'Our team will answer this one. Do you want to talk to them now?',
+    choosePlan: 'Choose a plan', howMonth: 'How a month works', perMonth: 'a month', plusGst: '+ GST', withGst: (x) => `${x} with GST`, voiceOn: 'Voice on', loadingVoice: 'Loading the voice…', captionsOnly: 'Captions only', fullText: 'Show full text', trustMin: '5 minutes', trustNoLogin: 'No login', auto: 'Automated assistant', waitAsk: 'Do you have a question? Ask now, or press Next.', fin: 'The meeting is finished.', unsure: 'Our team will answer this one. Do you want to talk to them now?',
   },
   te: {
     hello: (n) => (n ? `నమస్కారం ${n} గారు` : 'నమస్కారం'), chooseLang: 'మీ భాషను ఎంచుకోండి', start: 'మీటింగ్ మొదలుపెట్టండి', soundOn: 'దయచేసి మీ సౌండ్ ఆన్ చేయండి. ఇది ఆటోమేటెడ్ అసిస్టెంట్, మనిషి కాదు. సుమారు 5 నిమిషాలు పడుతుంది.',
@@ -40,7 +40,7 @@ const T = {
     submit: 'మా టీమ్‌కు పంపండి', cancel: 'మీటింగ్‌కు తిరిగి వెళ్ళండి', needPhone: 'దయచేసి మీ వాట్సాప్ నంబర్ రాయండి.', pickOne: 'దయచేసి ఒకటి ఎంచుకోండి.', fail: 'పంపడం కుదరలేదు. దయచేసి మళ్ళీ ప్రయత్నించండి.',
     thanks: (n) => `ధన్యవాదాలు${n ? ` ${n} గారు` : ''}. మీ అభ్యర్థన మా టీమ్‌కు అందింది, త్వరలో సంప్రదిస్తారు.`, seeWork: 'మేము చేసిన పని చూడండి', plansTitle: 'మా ప్లాన్లు (+ 18% జీఎస్టీ)', again: 'మళ్ళీ ప్రయత్నించండి', loading: 'మీ మీటింగ్ తెరుస్తున్నాను…',
     gone: 'ఈ లింక్ ఇప్పుడు పనిచేయడం లేదు. దయచేసి పంపినవారిని కొత్త లింక్ అడగండి.', busy: 'పేజీ ఇప్పుడు తెరుచుకోలేదు. అదే మళ్ళీ ప్రయత్నిస్తుంది.', yourQ: 'మీరు', bot: 'అసిస్టెంట్', idle: 'ఇంకా ఉన్నారా? కొనసాగడానికి తరువాత నొక్కండి.', listenHelp: 'మీ ప్రశ్న చెప్పండి',
-    choosePlan: 'ప్లాన్ ఎంచుకోండి', howMonth: 'ఒక నెల ఎలా సాగుతుంది', perMonth: 'నెలకు', plusGst: '+ జీఎస్టీ', withGst: (x) => `జీఎస్టీతో ${x}`, voiceOn: 'వాయిస్ ఆన్', captionsOnly: 'అక్షరాలు మాత్రమే', fullText: 'పూర్తి టెక్స్ట్ చూపండి', trustMin: '5 నిమిషాలు', trustNoLogin: 'లాగిన్ అవసరం లేదు', auto: 'ఆటోమేటెడ్ అసిస్టెంట్', waitAsk: 'ఏదైనా ప్రశ్న ఉందా? ఇప్పుడే అడగండి, లేదా తరువాత నొక్కండి.', fin: 'మీటింగ్ పూర్తయింది.', unsure: 'దీనికి మా టీమ్ సమాధానం ఇస్తుంది. ఇప్పుడే వారితో మాట్లాడతారా?',
+    choosePlan: 'ప్లాన్ ఎంచుకోండి', howMonth: 'ఒక నెల ఎలా సాగుతుంది', perMonth: 'నెలకు', plusGst: '+ జీఎస్టీ', withGst: (x) => `జీఎస్టీతో ${x}`, voiceOn: 'వాయిస్ ఆన్', loadingVoice: 'వాయిస్ లోడ్ అవుతోంది…', captionsOnly: 'అక్షరాలు మాత్రమే', fullText: 'పూర్తి టెక్స్ట్ చూపండి', trustMin: '5 నిమిషాలు', trustNoLogin: 'లాగిన్ అవసరం లేదు', auto: 'ఆటోమేటెడ్ అసిస్టెంట్', waitAsk: 'ఏదైనా ప్రశ్న ఉందా? ఇప్పుడే అడగండి, లేదా తరువాత నొక్కండి.', fin: 'మీటింగ్ పూర్తయింది.', unsure: 'దీనికి మా టీమ్ సమాధానం ఇస్తుంది. ఇప్పుడే వారితో మాట్లాడతారా?',
   },
   hi: {
     hello: (n) => (n ? `नमस्ते ${n} जी` : 'नमस्ते'), chooseLang: 'अपनी भाषा चुनें', start: 'मीटिंग शुरू करें', soundOn: 'कृपया अपनी आवाज़ चालू करें। यह एक ऑटोमैटिक असिस्टेंट है, इंसान नहीं। इसमें करीब 5 मिनट लगेंगे।',
@@ -51,7 +51,7 @@ const T = {
     submit: 'हमारी टीम को भेजें', cancel: 'मीटिंग पर वापस जाएँ', needPhone: 'कृपया अपना व्हाट्सऐप नंबर लिखें।', pickOne: 'कृपया एक विकल्प चुनें।', fail: 'भेजा नहीं जा सका। कृपया फिर से कोशिश करें।',
     thanks: (n) => `धन्यवाद${n ? ` ${n} जी` : ''}। आपकी रिक्वेस्ट हमारी टीम को मिल गई है, वे जल्द संपर्क करेंगे।`, seeWork: 'हमारा किया हुआ काम देखें', plansTitle: 'हमारे प्लान (+ 18% जीएसटी)', again: 'फिर से कोशिश करें', loading: 'आपकी मीटिंग खुल रही है…',
     gone: 'यह लिंक अब काम नहीं करता। कृपया भेजने वाले से नया लिंक माँगें।', busy: 'पेज अभी नहीं खुल सका। वह अपने आप फिर कोशिश करेगा।', yourQ: 'आप', bot: 'असिस्टेंट', idle: 'क्या आप अभी भी हैं? आगे बढ़ने के लिए अगला दबाइए।', listenHelp: 'अपना सवाल बोलिए',
-    choosePlan: 'प्लान चुनें', howMonth: 'एक महीना कैसे चलता है', perMonth: 'प्रति माह', plusGst: '+ जीएसटी', withGst: (x) => `जीएसटी के साथ ${x}`, voiceOn: 'आवाज़ चालू', captionsOnly: 'सिर्फ़ टेक्स्ट', fullText: 'पूरा टेक्स्ट दिखाएँ', trustMin: '5 मिनट', trustNoLogin: 'लॉगिन ज़रूरी नहीं', auto: 'ऑटोमैटिक असिस्टेंट', waitAsk: 'क्या आपका कोई सवाल है? अभी पूछिए, या अगला दबाइए।', fin: 'मीटिंग पूरी हुई।', unsure: 'इसका जवाब हमारी टीम देगी। क्या आप अभी उनसे बात करना चाहेंगे?',
+    choosePlan: 'प्लान चुनें', howMonth: 'एक महीना कैसे चलता है', perMonth: 'प्रति माह', plusGst: '+ जीएसटी', withGst: (x) => `जीएसटी के साथ ${x}`, voiceOn: 'आवाज़ चालू', loadingVoice: 'आवाज़ लोड हो रही है…', captionsOnly: 'सिर्फ़ टेक्स्ट', fullText: 'पूरा टेक्स्ट दिखाएँ', trustMin: '5 मिनट', trustNoLogin: 'लॉगिन ज़रूरी नहीं', auto: 'ऑटोमैटिक असिस्टेंट', waitAsk: 'क्या आपका कोई सवाल है? अभी पूछिए, या अगला दबाइए।', fin: 'मीटिंग पूरी हुई।', unsure: 'इसका जवाब हमारी टीम देगी। क्या आप अभी उनसे बात करना चाहेंगे?',
   },
 };
 
@@ -80,7 +80,7 @@ function pickVoice(voices, lang) {
   return list.slice().sort((a, b) => score(b) - score(a))[0];
 }
 // server: the server has a voice for this language (GET /voice/status). Telugu and Hindi use it first; English only when the phone has no voice.
-function say(sentences, { lang, muted = false, server = false, from = 0, onSentence, onDone } = {}) {
+function say(sentences, { lang, muted = false, server = false, from = 0, onSentence, onDone, onLoading } = {}) {
   stopSpeech();
   const my = engine.run;
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
@@ -113,12 +113,14 @@ function say(sentences, { lang, muted = false, server = false, from = 0, onSente
     for (let k = 1; k <= 2; k += 1) if (sentences[n + k]) fetch(voiceUrl(lang, sentences[n + k])).catch(() => {}); // eslint-disable-line no-undef
     const url = voiceUrl(lang, text);
     let over = false;
+    if (onLoading) onLoading(true); // the first sentence of a cold server voice takes a few seconds: say so
     const finish = () => { if (over || engine.run !== my) return; over = true; clearTimeout(engine.safety); engine.timer = setTimeout(step, 220); };
-    const fail = () => { if (over || engine.run !== my) return; over = true; clearTimeout(engine.safety); serverFails[lang] = (serverFails[lang] || 0) + 1; local(); };
+    const fail = () => { if (over || engine.run !== my) return; over = true; clearTimeout(engine.safety); if (onLoading) onLoading(false); serverFails[lang] = (serverFails[lang] || 0) + 1; local(); };
     engine.safety = setTimeout(fail, 25000); // the server did not answer: carry on without it
     fetch(url).then((r) => { if (!r.ok) throw new Error('no voice'); return r.blob(); }).then(() => { // eslint-disable-line no-undef
       if (engine.run !== my || over) return;
       clearTimeout(engine.safety);
+      if (onLoading) onLoading(false);
       if (!audioEl) audioEl = new Audio(); // eslint-disable-line no-undef
       audioEl.onended = finish; audioEl.onerror = fail; audioEl.src = url;
       engine.safety = setTimeout(finish, readMs * 4 + 10000); // never wait for ever on playback
@@ -257,6 +259,7 @@ export default function PlansMeetingPage() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState('');
   const [voices, setVoices] = useState([]);
+  const [voiceLoading, setVoiceLoading] = useState(false); // waiting for the server to make the sentence being said
   const [voiceOk, setVoiceOk] = useState(null); // { en, te, hi } true where the SERVER has a voice (GET /voice/status)
   const fromRef = useRef({ key: '', i: 0 });
   const advRef = useRef(null);
@@ -315,7 +318,7 @@ export default function PlansMeetingPage() {
     if (fromRef.current.key !== key) fromRef.current = { key, i: 0 };
     setWait(false);
     say(sentences, {
-      lang, muted, server: srv, from: fromRef.current.i,
+      lang, muted, server: srv, from: fromRef.current.i, onLoading: setVoiceLoading,
       onSentence: (n) => { fromRef.current.i = n; setSent(n); },
       onDone: () => {
         fromRef.current.i = sentences.length;
@@ -324,8 +327,10 @@ export default function PlansMeetingPage() {
         advRef.current = setTimeout(() => go(pos + 1), 900);
       },
     });
-    return () => { clearTimeout(advRef.current); stopSpeech(); };
+    return () => { clearTimeout(advRef.current); stopSpeech(); setVoiceLoading(false); };
   }, [stage, playing, panel, idx, lang, muted, srv, sentences, last, pos, go]);
+  // as soon as a language is picked, the server starts making the first sentences, so they are ready when Start is pressed
+  useEffect(() => { if (srv && d) narrationOf(0, lang, ctx).slice(0, 3).forEach((x) => fetch(voiceUrl(lang, x)).catch(() => {})); }, [srv, d, lang, ctx]); // eslint-disable-line no-undef
   useEffect(() => { if (stage === 'meet' && token) post({ type: 'slide', slide: idx }); }, [stage, idx, token]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { // still there? (once, after 45 seconds of waiting for an answer)
     if (stage !== 'meet' || !wait || panel || last) return undefined;
@@ -454,7 +459,7 @@ export default function PlansMeetingPage() {
         <section className="pm-assistant">
           <div><div className={`pm-avatar${speaking ? ' on' : ''}`}><Bot /></div><Waves on={speaking} /></div>
           <div>
-            <div className="pm-who">{t.bot}<span>{hasVoice && !muted ? `🔊 ${t.voiceOn}` : `📝 ${t.captionsOnly}`}</span></div>
+            <div className="pm-who">{t.bot}<span>{voiceLoading ? `⏳ ${t.loadingVoice}` : (hasVoice && !muted ? `🔊 ${t.voiceOn}` : `📝 ${t.captionsOnly}`)}</span></div>
             <div className="pm-say" key={`${idx}-${lang}-${Math.max(sent, 0)}`}>{shownSentence}</div>
             {wait && !last && panel === '' ? <div className="pm-ask-now">{t.waitAsk}</div> : null}
           </div>

@@ -12,6 +12,7 @@ const BACK = path.resolve(__dirname, '..');
 const SRC = path.join(BACK, 'prisma', 'sandbox.db');
 if (!fs.existsSync(SRC)) { console.error('Refusing: this test needs prisma/sandbox.db (npm run sandbox creates it).'); process.exit(2); }
 const TMP = path.join(os.tmpdir(), `mk-meeting-test-${Date.now().toString(36)}.db`);
+process.env.MK_MEETING_VOICE_DIR = path.join(os.tmpdir(), `mk-meeting-voice-test-${Date.now().toString(36)}`); // the saved sentences of this run only
 fs.copyFileSync(SRC, TMP);
 require(path.join(BACK, 'node_modules/dotenv')).config({ path: path.join(BACK, '.env'), override: false });
 process.env.DATABASE_URL = `file:${TMP.split(path.sep).join('/')}?socket_timeout=60`;
@@ -134,6 +135,9 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     check('12c text that is not one of the meeting\'s sentences is refused (404), and so is an unknown language', (await Voice.speak('te', 'Read me this other text')).status === 404 && (await Voice.speak('xx', line)).status === 404 && (await Voice.speak('te', '')).status === 404);
     const w1 = await Voice.speak('te', line); const w2 = await Voice.speak('te', line);
     check('12d a listed sentence gives a WAV, and the second time it is kept (the engine is used once)', !!w1.wav && w1.wav.slice(0, 4).toString() === 'RIFF' && w2.wav === w1.wav && said === 1, { said });
+    Voice._kept.clear();
+    const w3 = await Voice.speak('te', line);
+    check('12d2 a sentence that is no longer in memory comes back from the saved file (a server restart does not make the voice cold)', !!w3.wav && w3.wav.length === w1.wav.length && said === 1, { said });
     // the same, through the public router, including the byte range an iPhone asks for
     const app2 = express(); app2.use('/api/public/mk-meeting', require(path.join(BACK, 'src/routes/mkMeetingPublic')));
     const srv2 = await new Promise((r) => { const sv = app2.listen(0, '127.0.0.1', () => r(sv)); });
