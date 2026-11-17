@@ -13,7 +13,7 @@ const gw = require('./callGateway');
 
 // THE SIP LINE = our own Synway SIM gateway through Asterisk (the same line the AI phone calls use: AI_VOICE_AMI_*, AI_VOICE_SIP_TRUNK - no telecom subscription).
 // Click-to-call: Asterisk (AMI Originate) rings the CALLER's own phone first on the gateway; when it is answered, Asterisk dials the person on the same trunk and joins the two
-// (Application Dial - no dialplan change). It uses the AI phone line's switch: in "Test" mode only the test numbers (AI_VOICE_TEST_NUMBERS) may be dialled, "Off" is off.
+// (Application Dial - no dialplan change). A RECRUITER's manual call (founder 2026-11-17) does NOT follow the AI phone mode (AI_VOICE_PHONE_MODE Test / Live is only for the AI dialling candidates by itself).
 function sipSettings() {
   const sip = require('../calling/voice/sipCall'); // eslint-disable-line global-require
   const c = sip.config();
@@ -23,13 +23,13 @@ function sipSettings() {
     if (!c.ami.user || !c.ami.secret) problems.push('The Asterisk manager login is not set on this server (AI_VOICE_AMI_USER / AI_VOICE_AMI_SECRET).');
     if (!c.trunk) problems.push('The SIM gateway line is not set on this server (AI_VOICE_SIP_TRUNK).');
   }
-  if (c.mode === 'Off') problems.push('The phone line is switched off (AI_VOICE_PHONE_MODE=Off).');
   return { c, problems, dialNumber: sip.dialNumber };
 }
 async function sipReady() {
   const { c, problems } = sipSettings();
   if (problems.length) return { ok: false, reason: `SIP is not connected yet: ${problems[0]}` };
-  return { ok: true, note: c.mode === 'Test' ? 'The phone line is in Test mode: only the test numbers can be called until it is switched to Live.' : '' };
+  void c;
+  return { ok: true, note: 'Your own phone rings first; when you pick up, the person is dialled.' };
 }
 async function sipStart({ agent, to }) {
   const { c, problems, dialNumber } = sipSettings();
@@ -38,7 +38,6 @@ async function sipStart({ agent, to }) {
   const a = core.normalizeMobile(agent); const p = core.normalizeMobile(to);
   if (!a.ok) return { ok: false, invalid: true, error: 'Your own phone number does not look right on your profile, so the SIP line cannot ring you first.' };
   if (!p.ok) return { ok: false, invalid: true, error: 'The number to call does not look right.' };
-  if (c.mode === 'Test' && !c.testNumbers.includes(p.e164)) return { ok: false, error: 'The phone line is in Test mode: only the test numbers can be called. Ask an Admin to switch it to Live (AI_VOICE_PHONE_MODE) when you are ready.' };
   const sandbox = require('./sandbox'); // eslint-disable-line global-require
   if (sandbox.isSandbox() && !['127.0.0.1', 'localhost', '::1'].includes(String(c.ami.host))) return { ok: false, error: 'TEST MODE: this computer is a test copy and refuses to contact a real Asterisk server.' };
   const { Ami } = require('../calling/voice/ami'); // eslint-disable-line global-require

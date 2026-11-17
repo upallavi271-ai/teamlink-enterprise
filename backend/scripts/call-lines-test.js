@@ -89,7 +89,7 @@ async function stop(code) {
   check('they are worded as asked: "API (calls & msgs)", "Dinstar (calls & msgs)", "SIP (call)"', lines.map((x) => x.text).join(' | ') === 'API (calls & msgs) | Dinstar (calls & msgs) | SIP (call)', lines.map((x) => x.text));
   check('SIP is calls only; API and Dinstar carry messages too', lines[2].supports.join() === 'Calls' && lines[0].supports.includes('Messages') && lines[1].supports.includes('Messages'));
   check('Dinstar is not connected yet and says so plainly', !lines[1].ready && /Dinstar is not connected yet/.test(lines[1].reason), lines[1]);
-  check('SIP is READY (the Asterisk login and the SIM gateway line are set on this server) and says the phone line is in Test mode', lines[2].ready === true && /Test mode/.test(lines[2].note || ''), lines[2]);
+  check('SIP is READY (the Asterisk login and the SIM gateway line are set on this server), whatever the AI phone mode is (the server here is in Test mode)', lines[2].ready === true && !/Test mode/.test(lines[2].note || ''), lines[2]);
   check('with the calling API not connected, SIP is the first ready line and the default', !lines[0].ready && L.body.default === 'sip', L.body);
 
   console.log('2. A call on a line that is not connected is refused with the reason (nothing is dialled)');
@@ -97,10 +97,10 @@ async function stop(code) {
   const d = await lib.startCall('dinstar', { agent: '9000000001', to: '9000000002', ref: 'x', callbackBase: null });
   check('Dinstar: refused, notConfigured, with the Dinstar words', d.ok === false && d.notConfigured === true && /Dinstar is not connected yet/.test(d.error) && d.line === 'dinstar', d);
   const sipTest = await lib.startCall('sip', { agent: '9000000001', to: '9000000002', ref: 'x', callbackBase: null });
-  check('SIP in Test mode: a number that is not a test number is refused, nothing is dialled', sipTest.ok === false && /Test mode/.test(sipTest.error) && asked.length === 0, [sipTest, asked.length]);
+  check('a RECRUITER call on SIP is not held back by the AI phone Test mode: any valid number goes to Asterisk', sipTest.ok === true && asked.length === 1, [sipTest, asked.length]);
   const sipOk = await lib.startCall('sip', { agent: '9000000001', to: '9100654424', ref: 'x', callbackBase: null });
-  check('SIP: a test number goes to Asterisk', sipOk.ok === true && sipOk.line === 'sip' && asked.length === 1, sipOk);
-  const o = asked[0] || {};
+  check('SIP: the next call goes to Asterisk too', sipOk.ok === true && sipOk.line === 'sip' && asked.length === 2, sipOk);
+  const o = asked[asked.length - 1] || {};
   check('Asterisk is asked to ring the CALLER first on the gateway trunk (PJSIP/<caller>@teamlink-gw)', o.Channel === 'PJSIP/9000000001@teamlink-gw', o);
   check('and, when answered, to dial the person on the same trunk (Application Dial, no dialplan change)', o.Application === 'Dial' && /^PJSIP\/9100654424@teamlink-gw,\d+$/.test(o.Data || ''), o);
   amiAnswer = 'Error';
@@ -108,7 +108,7 @@ async function stop(code) {
   check('Asterisk refusing the call is reported plainly, not pretended', sipRefused.ok === false && /Asterisk refused the call/.test(sipRefused.error), sipRefused);
   amiAnswer = 'Success';
   const sipBadAgent = await lib.startCall('sip', { agent: 'abc', to: '9100654424', ref: 'x', callbackBase: null });
-  check('a caller number that is not a number is refused before Asterisk is asked', sipBadAgent.ok === false && sipBadAgent.invalid === true && asked.length === 2, sipBadAgent);
+  check('a caller number that is not a number is refused before Asterisk is asked', sipBadAgent.ok === false && sipBadAgent.invalid === true && asked.length === 3, sipBadAgent);
   const u = await lib.startCall('nonsense', { agent: '9000000001', to: '9000000002', ref: 'x', callbackBase: null });
   check('an unknown line is treated as the API line (never an error of its own)', u.line === 'api', u);
   const none = await lib.startCall(undefined, { agent: '9000000001', to: '9000000002', ref: 'x', callbackBase: null });
