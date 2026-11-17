@@ -169,6 +169,44 @@ function VerifyDialog({ app, onClose, onDone }) {
   );
 }
 
+// --- The checklist before a profile goes to the client (founder ATS audit 2026-11-17) ----------
+// GET /api/ats/share-checklist/:id lists what this person needs (an Admin switches items off in Company Setup ->
+// Pipeline & checks). The ticks ride on the move as shareChecklist; the server blocks the send with the missing list.
+export function useShareChecklist(applicationId, on) {
+  const [items, setItems] = useState(null);
+  const [ticks, setTicks] = useState({});
+  useEffect(() => {
+    if (!on || !applicationId) return;
+    api.get(`/ats/share-checklist/${applicationId}`).then((r) => {
+      const list = r.data && r.data.needed ? r.data.items || [] : [];
+      setItems(list);
+      setTicks(Object.fromEntries(list.filter((i) => i.ticked).map((i) => [i.key, true])));
+    }).catch(() => setItems([]));
+  }, [applicationId, on]);
+  const list = items || [];
+  const ready = list.every((i) => i.factOk && ticks[i.key]);
+  return { items: list, loaded: items !== null, ticks, setTicks, ready };
+}
+export function ShareChecklistBox({ chk }) {
+  if (!chk.loaded || !chk.items.length) return null;
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div className="small-muted" style={{ marginBottom: 6 }}>Before it goes to the client, tick what you checked:</div>
+      <div className="stp-checks">
+        {chk.items.map((i) => (
+          <label key={i.key} className={`stp-check${chk.ticks[i.key] ? ' is-on' : ''}`}>
+            <input type="checkbox" checked={!!chk.ticks[i.key]} disabled={!i.factOk} onChange={(e) => chk.setTicks((t) => ({ ...t, [i.key]: e.target.checked }))} />
+            <span>
+              <b>{i.label}</b>
+              {i.fact ? <span className={i.factOk ? 'small-muted' : 'error-text'}>{` · ${i.fact}`}</span> : null}
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // --- Approve / Send back (TL check and BDE Review) -------------------------------
 function ReviewDialog({
   app, onClose, onDone, who,
@@ -181,6 +219,7 @@ function ReviewDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [addSalary, setAddSalary] = useState(false); // the server says: salary needed before sharing with the client
+  const chk = useShareChecklist(app.id, bdeTl); // the BDE TL's send to the client needs the checklist
   async function go() {
     setBusy(true); setError('');
     try {
@@ -188,7 +227,7 @@ function ReviewDialog({
         await api.patch(`/applications/${app.id}/stage`, { stage: 'BDE_APPROVED', comment: 'Approved at BDE Review — sent to the BDE TL' });
         onDone({ text: `Approved. ${app.name} is now with the BDE TL, who sends it to the client.`, undo: { id: app.id, stage: app.stage, name: app.name } });
       } else if (pick === 'approve') {
-        const out = await boardMove(app.id, tl ? 'bde' : 'shared', { comment: tl ? 'Approved at TL check' : 'Approved by the BDE TL — shared with the client' });
+        const out = await boardMove(app.id, tl ? 'bde' : 'shared', { comment: tl ? 'Approved at TL check' : 'Approved by the BDE TL — shared with the client', ...(bdeTl ? { shareChecklist: chk.ticks } : {}) });
         if (!out) { setBusy(false); return; }
         onDone({
           text: tl ? `Approved. ${app.name} is now with the BDE.` : `Approved. ${app.name} is shared with the client.`,
@@ -218,7 +257,7 @@ function ReviewDialog({
           <button
             type="button"
             className={`btn ${pick === 'approve' ? 'btn-primary' : 'btn-danger'}`}
-            disabled={busy || (pick === 'back' && reason.trim().length < 3)}
+            disabled={busy || (pick === 'back' && reason.trim().length < 3) || (pick === 'approve' && bdeTl && !chk.ready)}
             onClick={go}
           >
             {busy ? 'Saving…' : pick === 'approve' ? (tl ? 'Approve — send to BDE' : who === 'bde' ? 'Approve — send to BDE TL' : 'Approve — send to client') : 'Send back'}
@@ -238,6 +277,7 @@ function ReviewDialog({
           onSaved={() => { setError(''); setAddSalary(false); go(); }}
         />
       )}
+      {bdeTl && pick === 'approve' && <ShareChecklistBox chk={chk} />}
       <div className="stp-choices">
         <Choice on={pick === 'approve'} onClick={() => setPick('approve')} tone="green" title="Approve" text={tl ? 'Good profile. It goes to the client manager (BDE).' : who === 'bde' ? 'Good profile. It goes to the BDE TL, who sends it to the client.' : 'Good profile. It is shared with the client now.'} />
         <Choice on={pick === 'back'} onClick={() => setPick('back')} tone="red" title="Send back" text={tl ? 'Back to the recruiter, with your reason.' : bdeTl ? 'Back to the BDE, with your reason.' : 'Back to the team lead, with your reason.'} />

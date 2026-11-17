@@ -14,6 +14,8 @@ import Pager, { usePaged } from '../components/Pager.jsx';
 // the permission engine (/auth/me workflow.allowedStages) — seeing the
 // pipeline never implied being allowed to move a candidate through it.
 import AskChangeJobModal from '../components/jobs/AskChangeJobModal.jsx';
+import { RejectRequestButton, RejectedBanner, mayDecideRequest } from '../components/jobs/RequestDecision.jsx'; // reject a request with a reason, re-submit it (2026-11-17)
+import SubStatusChip from '../components/applications/SubStatusChip.jsx'; // the sub-status next to the stage (Company Setup -> Pipeline & checks)
 import { can, canMoveToStage, canStartJob, workflowStages } from '../permissions';
 import RequirementForm from '../components/RequirementForm.jsx';
 import { SpecLabel } from '../components/SpecPicker.jsx'; // spec D
@@ -270,6 +272,7 @@ export default function RequirementDetail() {
   const [decision, setDecision] = useState(null);
   const [pipeFilter, setPipeFilter] = useState(() => (PIPE_FILTERS.some(([k]) => k === searchParams.get('pipe')) ? searchParams.get('pipe') : 'all'));
   const [fitFilter, setFitFilter] = useState(''); // Salary fit: within / slightly / above / missing
+  const [subFilter, setSubFilter] = useState(''); // the sub-status (Company Setup -> Pipeline & checks)
   const [fitSort, setFitSort] = useState(''); // '' | 'desc' | 'asc'
   const [srcFilter, setSrcFilter] = useState(''); // Source filter: a comma list of clean sources
   const [msgOpen, setMsgOpen] = useState(false);
@@ -444,7 +447,11 @@ export default function RequirementDetail() {
   const fitBase = applications.filter((a) => atStep(a) && srcOk(a));
   const fitOptions = [['within', 'Within budget'], ['slightly', 'Slightly above'], ['above', 'Above budget'], ['missing', 'Salary missing']]
     .map(([k, l]) => [k, l, fitBase.filter((a) => fitKeys(a).includes(k)).length]).filter(([, , n]) => n > 0);
-  let pipeRows = fitBase.filter((a) => !fitFilter || fitKeys(a).includes(fitFilter));
+  let pipeRows = fitBase.filter((a) => !fitFilter || fitKeys(a).includes(fitFilter))
+    .filter((a) => !subFilter || (a.subStatus && a.subStatus.id === subFilter));
+  // the sub-statuses the people shown have now (the filter offers only those)
+  const subOptions = [...new Map(fitBase.filter((a) => a.subStatus).map((a) => [a.subStatus.id, a.subStatus])).values()]
+    .map((x) => [x.id, x.label, fitBase.filter((a) => a.subStatus && a.subStatus.id === x.id).length]);
   if (fitSort) {
     const pct = (a) => (a.salaryFit && a.salaryFit.pct != null ? a.salaryFit.pct : null);
     pipeRows = [...pipeRows].sort((x, y) => {
@@ -478,6 +485,7 @@ export default function RequirementDetail() {
   const isNewRequest = r.status === 'DRAFT' && !r.internal && !!p.edit && !!p.approve;
   // Accept first (2026-10-23): a client's request nobody has taken shows ACCEPT; once taken, CREATE REQUIREMENT opens. A draft with no accept row counts as accepted.
   const needsAccept = isNewRequest && r.requestState === 'requested';
+  const isRejected = r.status === 'DRAFT' && r.requestState === 'rejected'; // rejected with a reason: the BDE edits it and re-submits it
   async function acceptRequest() {
     setNotice('');
     try {
@@ -805,6 +813,16 @@ export default function RequirementDetail() {
                 </Combo>
               </label>
             )}
+            {(subOptions.length > 0 || subFilter) && (
+              <label className="small-muted" style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                Sub-status
+                <Combo value={subFilter} onChange={(e) => setSubFilter(e.target.value)}>
+                  <option value="">Any</option>
+                  {subOptions.map(([k, l, n]) => <option key={k} value={k}>{`${l} (${nf(n)})`}</option>)}
+                  {subFilter && !subOptions.some(([k]) => k === subFilter) && <option value={subFilter}>(none now)</option>}
+                </Combo>
+              </label>
+            )}
             {srcOptions.length > 0 && (
               <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={srcFilter} onChange={setSrcFilter} options={srcOptions} title="Where the person came from" />
             )}
@@ -854,7 +872,10 @@ export default function RequirementDetail() {
                     )}
                     <OverrideBadge reason={a.overrideReason} by={a.overrideByName} at={a.overrideAt} />
                   </td>
-                  <td><span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span></td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span>
+                    <SubStatusChip app={a} canSet={canMoveToStage(user, a.stage)} onChanged={load} />
+                  </td>
                   <td>{a.matchScore != null ? <FitWithVersion score={a.matchScore} version={a.matchVersion} /> : a.resumeScore != null ? `${a.resumeScore}%` : '—'}</td>
                   {hasFit && <td>{a.salaryFit ? <SalaryFitChips fit={a.salaryFit} compact /> : '—'}</td>}
                   <td className="cell-muted" title={recordedAs(a)}>{a.sourceKey || a.firstSource || a.source || '—'}</td>
@@ -1175,7 +1196,8 @@ export default function RequirementDetail() {
           <JobStatusChip job={r} />
           {/* A CLIENT'S NEW JOB REQUEST (2026-10-09): the BDE / BDE TL fills in the rest and posts it - one main button. */}
           {needsAccept && <button className="btn btn-sm btn-primary" onClick={acceptRequest}>Accept request</button>}
-          {isNewRequest && !needsAccept && (
+          {needsAccept && mayDecideRequest(user) && <RejectRequestButton r={r} onDone={(t) => { setNotice(t); load(); }} />}
+          {isNewRequest && !needsAccept && !isRejected && (
             <button className="btn btn-sm btn-primary" onClick={() => { setNotice(''); ensureClients(); ensurePeople(); setDialog('edit'); }}>
               Create requirement
             </button>
@@ -1215,7 +1237,8 @@ export default function RequirementDetail() {
           {p.pipelineEdit && <button className={`btn btn-sm${isNewRequest ? '' : ' btn-primary'}`} onClick={() => setTab('candidates')}>Add candidate</button>}
         </div>
       </div>
-      {isNewRequest && (
+      {isRejected && <RejectedBanner r={r} onDone={(t) => { setNotice(t); load(); }} />}
+      {isNewRequest && !isRejected && (
         <div className="notice blue" role="status" style={{ marginBottom: 10 }}>
           <span>
             <b>{`New requirement request from ${clientName}.`}</b>

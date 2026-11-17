@@ -53,7 +53,7 @@ const INTERNAL_FIELDS = ['internalNotes', 'specialInstructions', 'recruitmentIns
 const BANK_FIELDS = ['bankAccountHolder', 'bankAccountNoEnc', 'bankAccountLast4', 'bankIfsc'];
 // Commercial (Super Admin / Admin: Commercial Terms edit), like fee %.
 const NEW_COMMERCIAL_FIELDS = ['feeType', 'feeAmount', 'gstApplicable', 'tdsApplicable', 'replacementTerms', 'specialTerms'];
-const FEE_TYPES = ['PERCENT_CTC', 'FIXED', 'PER_CANDIDATE'];
+const FEE_TYPES = ['PERCENT_CTC', 'FIXED', 'PER_CANDIDATE', 'SLAB']; // SLAB: CTC bands -> % (utils/atsFlowConfig.js, the bands in "ClientFeeSlab")
 
 const REQUIRED = [
   ['name', 'Company name'], ['industry', 'Industry'], ['contactName', 'Contact name'], ['contactEmail', 'Contact email'],
@@ -72,7 +72,7 @@ function missingRequired(c) {
   const out = [];
   REQUIRED.forEach(([k, label]) => {
     if (k === 'agreementFeePercent') {
-      const fixed = c.feeType && c.feeType !== 'PERCENT_CTC';
+      const fixed = ['FIXED', 'PER_CANDIDATE'].includes(c.feeType);
       if (fixed ? blankish(c.feeAmount) : blankish(c.agreementFeePercent)) out.push({ field: fixed ? 'feeAmount' : k, label });
       return;
     }

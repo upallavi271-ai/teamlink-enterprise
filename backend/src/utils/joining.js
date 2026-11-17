@@ -108,7 +108,14 @@ async function fillFeePlaceholders() {
       // eslint-disable-next-line no-await-in-loop
       const app = await prisma.application.findFirst({ where: { candidateId: inv.candidateId, requirementId: inv.requirementId }, select: { offeredCtc: true } });
       if (!app || !(Number(app.offeredCtc) > 0)) continue; // eslint-disable-line no-continue
-      const pct = inv.feePercent != null ? Number(inv.feePercent) : (inv.client && inv.client.agreementFeePercent != null ? Number(inv.client.agreementFeePercent) : 8.33);
+      // the invoice's own fee % when it has one; a slab agreement picks its band from the CTC now (utils/atsFlowConfig.js feeFor)
+      let pct = inv.feePercent != null ? Number(inv.feePercent) : (inv.client && inv.client.agreementFeePercent != null ? Number(inv.client.agreementFeePercent) : 8.33);
+      if (inv.feePercent == null && inv.client && inv.client.feeType === 'SLAB') {
+        const FC = require('./atsFlowConfig'); // eslint-disable-line global-require
+        // eslint-disable-next-line no-await-in-loop
+        const f = FC.feeFor(inv.client, Number(app.offeredCtc), { slabs: await FC.slabsOf(inv.client.id) });
+        if (f.feePercent != null) pct = f.feePercent;
+      }
       const amount = Math.round((Number(app.offeredCtc) * pct) / 100);
       const def = TAX.defaultsFor(inv.client, company, { gst: 18, tds: 10 });
       const tax = TAX.calcTax({ base: amount, ...def });
@@ -143,17 +150,21 @@ async function raiseJoiningInvoice({
   });
   if (already) return already;
 
-  // Fee % comes from the agreement. Falls back to the annual CTC band on the
-  // requirement when no offered CTC was recorded — never to a random number.
+  // THE FEE TYPE OF THE AGREEMENT (founder ATS audit 2026-11-17, utils/atsFlowConfig.js feeFor): % of CTC (as before), a FIXED
+  // amount per joining (feeType FIXED / PER_CANDIDATE + feeAmount) or SLABS (CTC bands -> %). The Joined popup may still record the
+  // commission % actually agreed for THIS placement, which wins. Invoices already raised are never re-priced.
   const agreed = client.agreementFeePercent != null ? client.agreementFeePercent : 8.33;
-  // The Joined popup may record the commission actually agreed for THIS
-  // placement; the agreement's fee % otherwise.
-  const feePercent = feeOverride != null && Number(feeOverride) > 0 ? Number(feeOverride) : agreed;
   // No CTC in the ATS yet (founder 2026-11-14: "salary lekapoyina invoices lo ravali"): the invoice is made anyway, with a fee of 0 and a note, so the joining is in
   // Accounts at once; the fee is filled by itself as soon as the ATS has the CTC (fillFeePlaceholders). Never a guessed salary.
+  // A fixed fee does not wait for the CTC.
   const hasCtc = Number(application.offeredCtc) > 0;
   const ctc = hasCtc ? Number(application.offeredCtc) : null;
-  const amount = hasCtc ? Math.round((ctc * feePercent) / 100) : 0;
+  // eslint-disable-next-line global-require
+  const FC = require('./atsFlowConfig');
+  const fee = FC.feeFor(client, ctc, { slabs: client.feeType === 'SLAB' ? await FC.slabsOf(client.id) : null, override: feeOverride });
+  const feePercent = fee.feePercent;
+  const amount = fee.amount != null ? fee.amount : 0;
+  const waitsForCtc = fee.amount == null;
   // GST / TDS (P4): the client's rates (18% / 10% when it has none) and its
   // GST / TDS Applicable flags; CGST + SGST or IGST from the two states;
   // amounts to 2 decimals — the one calculation in utils/invoiceTax.js.
@@ -194,14 +205,15 @@ async function raiseJoiningInvoice({
       dueDate: offsetDate(joiningDate, 12),
       feePercent,
       offeredCtc: ctc,
-      ...(hasCtc ? {} : { notes: FEE_TBD }),
+      ...(waitsForCtc ? { notes: FEE_TBD } : (fee.feeType !== 'PERCENT_CTC' ? { notes: `Fee: ${fee.basis}` } : {})),
       paymentTerms: client.paymentTerms || 'Invoice 6 days after joining; payment due within 6 days of invoice',
     },
   });
   await logAudit({
     userId, action: 'Invoice generated from ATS (Client Joining)', entity: 'Invoice',
     entityId: invoice.id, toValue: 'Pending',
-    ...(feePercent !== agreed ? { reason: `Commission ${feePercent}% set at joining (agreement ${agreed}%)` } : {}),
+    // eslint-disable-next-line no-nested-ternary
+    ...(feeOverride != null && Number(feeOverride) > 0 && Number(feeOverride) !== Number(agreed) ? { reason: `Commission ${feePercent}% set at joining (agreement ${agreed}%)` } : (fee.feeType !== 'PERCENT_CTC' ? { reason: fee.basis } : {})),
   });
   // Client hiring (2026-10-13): Accounts is told ONCE that a joined candidate's invoice draft is waiting.
   await require('./clientTrack').onInvoiceDraft({ application, existing, invoice, userId }); // eslint-disable-line global-require

@@ -181,7 +181,7 @@ async function createRequirementRequest(body, { user, via }) {
     await logAudit({ userId: user.id, actorName: user.name || null, action: 'Default team lead set', entity: 'Requirement', entityId: created.id, toValue: autoTl.name, reason: `Automatic: ${department} has one team lead` });
   }
   if (dupGuard.override) await require('./jobDupGuard').afterCreate(created, dupGuard.matches, { user, reason: dupGuard.reason, door: via }); // eslint-disable-line global-require
-  await require('./requestAccept').markRequested(created.id, via).catch(() => null); // eslint-disable-line global-require
+  await require('./requestAccept').markRequested(created.id, via, user).catch(() => null); // eslint-disable-line global-require
   await logAudit({
     userId: user.id, actorName: user.name || null, action: 'Requirement requested', entity: 'Requirement',
     entityId: created.id, toValue: `Requested via ${via}`, reason: notes || undefined,

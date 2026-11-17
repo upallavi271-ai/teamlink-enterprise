@@ -67,6 +67,17 @@ export function stageLabel(code) {
   return STAGE_LABELS[code] || code || '—';
 }
 
+// ADMIN-RENAMED STAGES (Company Setup -> Pipeline & checks, founder ATS audit 2026-11-17): the server's list
+// (GET /api/ats/stage-labels, utils/stageLabels.js) is written into STAGE_LABELS in place, so every screen that names a
+// stage through STAGE_LABELS / stageLabel / stageLabelFor shows the Admin's word. Codes never change; an unknown code is ignored.
+export const DEFAULT_STAGE_LABELS = Object.freeze({ ...STAGE_LABELS });
+export function applyStageLabels(labels) {
+  Object.keys(DEFAULT_STAGE_LABELS).forEach((k) => {
+    const v = labels && typeof labels[k] === 'string' && labels[k].trim() ? labels[k] : DEFAULT_STAGE_LABELS[k];
+    STAGE_LABELS[k] = v;
+  });
+}
+
 // §31 ONE TERMINOLOGY for pending work — mirrors backend utils/atsVocab.js
 // WORKFLOW_TERMS. Dashboard, candidate page, notifications, reports and
 // pending actions all say exactly these words.

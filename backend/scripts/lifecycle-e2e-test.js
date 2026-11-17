@@ -295,7 +295,12 @@ function printBoard() {
     check('the BDE cannot share with the client either (BDE TL step)', bdeShare.status === 403, err(bdeShare));
     const m4 = await move('bde', 'BDE_APPROVED');
     check('PATCH /stage (BDE): -> BDE_APPROVED (to the BDE TL)', ok2(m4) && await stageNow() === 'BDE_APPROVED', err(m4));
-    const m5 = await move('bdeTl', 'SHARED_WITH_CLIENT');
+    // The checklist before a profile goes to the client (founder ATS audit 2026-11-17, utils/atsFlowConfig.js): the BDE TL ticks every item.
+    const shareList = await C('GET', `/ats/share-checklist/${ids.app}`, 'bdeTl');
+    check('GET /api/ats/share-checklist/:id (BDE TL): the items to tick before the client', ok2(shareList) && shareList.body.needed && shareList.body.items.length >= 5, err(shareList));
+    const noTicks = await move('bdeTl', 'SHARED_WITH_CLIENT');
+    check('sending to the client with nothing ticked is blocked (SHARE_CHECKLIST)', noTicks.status === 409 && noTicks.body && noTicks.body.code === 'SHARE_CHECKLIST', err(noTicks));
+    const m5 = await move('bdeTl', 'SHARED_WITH_CLIENT', { shareChecklist: Object.fromEntries(((shareList.body && shareList.body.items) || []).map((i) => [i.key, true])) });
     check('PATCH /stage (BDE TL): -> SHARED_WITH_CLIENT', ok2(m5) && await stageNow() === 'SHARED_WITH_CLIENT', err(m5));
     const clientUser = await mkUser('client', { role: 'CLIENT', atsRole: 'CLIENT', clientId: ids.client, portalType: 'REVIEWER', portalPerms: 'VIEW,AGREEMENT,REQUEST,DECIDE,INTERVIEW,FEEDBACK,OFFERS' });
     T.client = await tokenOf(clientUser.id);

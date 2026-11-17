@@ -1816,7 +1816,7 @@ async function draftClientData(req) {
     clientProfile.NEW_COMMERCIAL_FIELDS.forEach((k) => { delete data[k]; });
   }
   // A % fee keeps no amount; a fixed fee keeps its amount.
-  if (data.feeType === 'PERCENT_CTC') data.feeAmount = null;
+  if (data.feeType === 'PERCENT_CTC' || data.feeType === 'SLAB') data.feeAmount = null; // a fixed fee keeps its amount; slabs live in "ClientFeeSlab"
   const draftTerms = agreementSettingsStore.draftTermsFrom(agreementDefaults);
   Object.entries(draftTerms).forEach(([k, v]) => {
     if (data[k] === undefined || data[k] === null || data[k] === '' || (typeof data[k] === 'number' && !Number.isFinite(data[k]))) data[k] = v;
@@ -2023,7 +2023,7 @@ router.put('/:id', requirePerm('ats', 'clients', 'Client Detail', 'edit'), async
   }
   Object.assign(data, profile.data);
   if (data.billingSameAsAddress) data.billingAddress = null;
-  if (data.feeType === 'PERCENT_CTC') data.feeAmount = null;
+  if (data.feeType === 'PERCENT_CTC' || data.feeType === 'SLAB') data.feeAmount = null; // a fixed fee keeps its amount; slabs live in "ClientFeeSlab"
   ['gst', 'pan', 'tan'].forEach((k) => { if (typeof data[k] === 'string') data[k] = data[k].trim().toUpperCase() || null; });
   const same = (a, b) => String(a ?? '').trim() === String(b ?? '').trim();
   const changed = Object.keys(data).filter((k) => !same(data[k], before[k]));

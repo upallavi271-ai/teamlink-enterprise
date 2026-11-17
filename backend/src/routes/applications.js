@@ -96,6 +96,12 @@ router.get('/', async (req, res) => {
     const att = await attributedApplications(req.user, req.query, { scope: applicationWhere(req.user) });
     where.id = { in: [...att.ids] };
   }
+  // ?subStatus=<id> — the people whose CURRENT sub-status is this one (Company Setup -> Pipeline & checks; utils/atsFlowConfig.js).
+  const isExt = scope.role === 'CLIENT' || scope.atsRole === 'CLIENT' || scope.role === 'CANDIDATE';
+  if (req.query.subStatus && !isExt) {
+    const ids = await require('../utils/atsFlowConfig').applicationIdsWithSub(String(req.query.subStatus)); // eslint-disable-line global-require
+    where.id = where.id && where.id.in ? { in: where.id.in.filter((x) => ids.includes(x)) } : { in: ids };
+  }
   // SERVER PAGING. The whole pipeline is 130-190 MB and over a minute, so a
   // call that does not name ONE job or ONE candidate (both naturally small) is
   // paged: { rows, total, page, pageSize, pages }, newest change first, page
@@ -121,6 +127,7 @@ router.get('/', async (req, res) => {
       skip: (page - 1) * pageSize,
       take: pageSize,
     });
+    if (!isExt) await require('../utils/atsFlowConfig').attachSubStatus(rows); // eslint-disable-line global-require
     return res.json({ rows, total, page, pageSize, pages });
   }
   const applications = await prisma.application.findMany({
@@ -131,6 +138,7 @@ router.get('/', async (req, res) => {
     include: { candidate: true, requirement: { include: { client: true, recruiter: true, bde: true } } },
     orderBy: { updatedAt: 'desc' },
   });
+  if (!isExt) await require('../utils/atsFlowConfig').attachSubStatus(applications); // eslint-disable-line global-require
   res.json(applications);
 });
 
@@ -734,6 +742,14 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     const paused = require('../utils/clientLifecycle').newWorkRefusal(existing.requirement.client, 'a new candidate submission');
     if (paused) return { status: 409, body: paused };
   }
+  // THE CHECKLIST BEFORE A PROFILE GOES TO THE CLIENT (founder ATS audit 2026-11-17, utils/atsFlowConfig.js): the first share
+  // needs every item ticked (body.shareChecklist { resume, ctc, notice, consent, contact, 'tpl:<key>' }) and the facts the app
+  // can check on file (a resume, both salaries, a notice period). Missing items block the move with the list. An Admin switches
+  // items off in Company Setup -> Pipeline & checks. Re-shares and TeamLink's own openings are not asked.
+  if (require('../utils/atsFlowConfig').needsShareChecklist(existing, stage) && ![user.atsRole, user.role].includes('CLIENT')) { // eslint-disable-line global-require
+    const chk = await require('../utils/atsFlowConfig').shareChecklistProblem(existing, body.shareChecklist, user); // eslint-disable-line global-require
+    if (chk) return chk;
+  }
   // A client acts only on profiles that have actually been shared with them.
   if ([user.atsRole, user.role].includes('CLIENT') && !CLIENT_SHARED_STAGES.includes(existing.stage)) {
     return { status: 403, body: OUT_OF_SCOPE };
@@ -1210,6 +1226,7 @@ router.post('/bulk', async (req, res, next) => {
           reasonDetail: b.reasonDetail,
           rejectKind: b.rejectKind,
           reviewOn: b.reviewOn, // cand7_: Hold → "review again on"
+          shareChecklist: b.shareChecklist, // the checklist before a profile goes to the client (utils/atsFlowConfig.js)
           interviewAt: b.interviewAt,
           interviewer: b.interviewer,
           interviewMode: b.interviewMode,

@@ -333,7 +333,7 @@ module.exports = function mountCandidatesBoard(router, deps) {
         return res.status(400).json({ error: 'Add a short note saying what happened.' });
       }
       const pass = {};
-      ['rejectedBy', 'rejectKind', 'reasonCategory', 'reasonDetail', 'joiningDate', 'offeredCtc', 'confirmCtc', 'feePercent', 'confirmSameClient', 'reviewOn']
+      ['rejectedBy', 'rejectKind', 'reasonCategory', 'reasonDetail', 'joiningDate', 'offeredCtc', 'confirmCtc', 'feePercent', 'confirmSameClient', 'reviewOn', 'shareChecklist']
         .forEach((k) => { if (b[k] !== undefined && b[k] !== null && b[k] !== '') pass[k] = b[k]; });
       // eslint-disable-next-line global-require
       const { applyStageMove } = require('./applications');

@@ -18,6 +18,7 @@
 // The server checks everything again — this is the friendly version.
 // ---------------------------------------------------------------------------
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import FeeSlabs from './FeeSlabs.jsx'; // the CTC bands of a slab fee (2026-11-17)
 import api from '../../api';
 import Combo from '../Combo.jsx';
 import { Help } from '../ui/Guide.jsx';
@@ -32,7 +33,10 @@ export const COMPANY_TYPES = ['Corporate', 'MNC', 'Startup', 'SME', 'Consultancy
 export const SOURCES = ['BDE', 'Referral', 'Website', 'Existing Client', 'Other'];
 export const COMM = ['Email', 'WhatsApp', 'Phone'];
 export const PAY_METHODS = ['Bank transfer (NEFT / RTGS / IMPS)', 'UPI', 'Cheque', 'Other'];
-const FEE_TYPES = [['PERCENT_CTC', '% of annual CTC'], ['FIXED', 'Fixed amount'], ['PER_CANDIDATE', 'Per candidate']];
+// SLAB (founder ATS audit 2026-11-17): CTC bands -> %, the bands kept by PUT /api/ats/fee-slabs/:clientId (components/clients/FeeSlabs.jsx).
+// The joining invoice takes its fee from the type (utils/atsFlowConfig.js feeFor); invoices already raised are never changed.
+const FEE_TYPES = [['PERCENT_CTC', '% of annual CTC'], ['FIXED', 'Fixed amount per joining'], ['PER_CANDIDATE', 'Per candidate'], ['SLAB', 'Slab (CTC bands)']];
+const FIXED_FEE = (t) => t === 'FIXED' || t === 'PER_CANDIDATE';
 const DOC_KINDS = [['AGREEMENT', 'Agreement'], ['GST', 'GST certificate'], ['REGISTRATION', 'Company registration'], ['PAN', 'PAN'], ['OTHER', 'Other']];
 
 const GSTIN_RE = /^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$/;
@@ -122,8 +126,8 @@ export function bodyFromForm(f, { canCommercial = true, hrEditable = true } = {}
   b.billingSameAsAddress = !!f.billingSameAsAddress;
   if (f.billingSameAsAddress) b.billingAddress = '';
   b.feeType = f.feeType;
-  b.agreementFeePercent = f.feeType === 'PERCENT_CTC' ? f.agreementFeePercent : '';
-  b.feeAmount = f.feeType === 'PERCENT_CTC' ? '' : f.feeAmount;
+  b.agreementFeePercent = f.feeType === 'PERCENT_CTC' || f.feeType === 'SLAB' ? f.agreementFeePercent : ''; // a slab keeps the % for a CTC with no band
+  b.feeAmount = FIXED_FEE(f.feeType) ? f.feeAmount : '';
   b.gstApplicable = f.gstApplicable;
   b.gstPercent = f.gstApplicable === 'Yes' ? f.gstPercent : '0';
   b.tdsApplicable = f.tdsApplicable;
@@ -166,7 +170,7 @@ SECTIONS.forEach((s) => s.fields.forEach((f) => { SECTION_OF[f] = s.id; }));
 Object.assign(SECTION_OF, { agreementFeePercent: 'commercial', feeAmount: 'commercial', invoiceDays: 'commercial', invoiceOther: 'commercial', gstPercent: 'commercial', tdsPercent: 'commercial', area: 'basic', bankAccountNo: 'payment', bankIfsc: 'payment', bankAccountHolder: 'payment' });
 
 const valueOf = (f, k) => {
-  if (k === 'fee') return f.feeType === 'PERCENT_CTC' ? f.agreementFeePercent : f.feeAmount;
+  if (k === 'fee') return f.feeType === 'SLAB' ? 'slab' : (f.feeType === 'PERCENT_CTC' ? f.agreementFeePercent : f.feeAmount);
   if (k === 'billingAddress') return f.billingSameAsAddress ? 'same' : f.billingAddress;
   if (k === 'contactWhatsApp') return f.waSame ? f.contactPhone : f.contactWhatsApp;
   if (k === 'invoiceMode') return f.invoiceMode;
@@ -192,7 +196,7 @@ export function validateClientForm(f, mode, { canCommercial = true } = {}) {
     if (blank(f.bdeOwner)) e.bdeOwner = 'Pick the client manager (BDE).';
     if (canCommercial) {
       if (f.feeType === 'PERCENT_CTC' && blank(f.agreementFeePercent)) e.agreementFeePercent = 'Write the fee %.';
-      if (f.feeType !== 'PERCENT_CTC' && blank(f.feeAmount)) e.feeAmount = 'Write the fee amount in ₹.';
+      if (FIXED_FEE(f.feeType) && blank(f.feeAmount)) e.feeAmount = 'Write the fee amount in ₹.';
       if (blank(f.paymentDays)) e.paymentDays = 'Pick the payment days.';
       if (blank(f.guaranteeDays)) e.guaranteeDays = 'Write the replacement guarantee in days.';
     }
@@ -207,7 +211,7 @@ export function validateClientForm(f, mode, { canCommercial = true } = {}) {
   if (!blank(f.bankAccountNo) && !/^\d{6,18}$/.test(String(f.bankAccountNo).replace(/\s/g, ''))) e.bankAccountNo = 'The account number is 6 to 18 digits.';
   if (canCommercial) {
     if (f.feeType === 'PERCENT_CTC' && !blank(f.agreementFeePercent) && !(Number(f.agreementFeePercent) > 0 && Number(f.agreementFeePercent) <= 100)) e.agreementFeePercent = 'The fee % is between 0 and 100, like 8.33.';
-    if (f.feeType !== 'PERCENT_CTC' && !blank(f.feeAmount) && !(Number(f.feeAmount) > 0)) e.feeAmount = 'The amount must be more than 0.';
+    if (FIXED_FEE(f.feeType) && !blank(f.feeAmount) && !(Number(f.feeAmount) > 0)) e.feeAmount = 'The amount must be more than 0.';
     if (!blank(f.guaranteeDays) && !(Number.isInteger(Number(f.guaranteeDays)) && Number(f.guaranteeDays) >= 0)) e.guaranteeDays = 'Whole days, like 30 (0 = no replacement).';
     if (!blank(f.paymentDays) && !(Number.isInteger(Number(f.paymentDays)) && Number(f.paymentDays) >= 0)) e.paymentDays = 'Whole days, like 6.';
     if (f.invoiceMode === 'after' && !(Number.isInteger(Number(f.invoiceDays)) && Number(f.invoiceDays) >= 0)) e.invoiceDays = 'Whole days, like 6.';
@@ -543,7 +547,11 @@ export default function ClientForm({
           <Field id="feeType" label="Fee type" wide>
             <Seg value={form.feeType} options={FEE_TYPES} disabled={lock} onChange={(v) => set({ feeType: v })} />
           </Field>
-          {form.feeType === 'PERCENT_CTC' ? (
+          {form.feeType === 'SLAB' ? (
+            <Field id="feeSlabs" label="Fee slabs (CTC bands)" wide tip="The fee % depends on the person's yearly CTC: the first band their CTC fits in.">
+              <FeeSlabs clientId={mode === 'edit' && client ? client.id : null} disabled={lock} />
+            </Field>
+          ) : form.feeType === 'PERCENT_CTC' ? (
             <Field id="agreementFeePercent" label="Fee %" req error={errors.agreementFeePercent} tip="Our fee as a % of the person's yearly salary (CTC). Standard: 8.33%.">
               {inp('agreementFeePercent', { type: 'number', step: '0.01', min: '0', max: '100', placeholder: '8.33', disabled: lock })}
             </Field>
@@ -599,7 +607,7 @@ export default function ClientForm({
           </Field>
           <div className="cf-linked cf-wide">
             <b>From section 4 (same values):</b>
-            {` Fee ${form.feeType === 'PERCENT_CTC' ? `${form.agreementFeePercent || '—'}%` : `₹${form.feeAmount || '—'}`}`}
+            {` Fee ${form.feeType === 'SLAB' ? 'by CTC slab' : form.feeType === 'PERCENT_CTC' ? `${form.agreementFeePercent || '—'}%` : `₹${form.feeAmount || '—'}${form.feeType === 'FIXED' ? ' per joining' : ' per candidate'}`}`}
             {` · Guarantee ${form.guaranteeDays || '—'} days${gw ? ` (${gw})` : ''}`}
             {` · Payment within ${form.paymentDays || '—'} days`}
             {canCommercial && <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setOpen({ ...open, commercial: true }); setTimeout(() => document.getElementById('cf-sec-commercial')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }}>Change them in section 4</button>}

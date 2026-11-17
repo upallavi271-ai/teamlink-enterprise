@@ -2591,6 +2591,33 @@ async function pipelineHistoryFor(applications, kind) {
       });
     });
   });
+  // Sub-status changes (utils/atsFlowConfig.js) are part of the timeline for TeamLink logins. They are not stage events, so
+  // "in this stage since" and every stage count stay exactly as they were.
+  if (kind === 'internal' && ids.length) {
+    const byId = new Map(applications.map((a) => [a.id, a]));
+    const log = await require('../utils/atsFlowConfig').subStatusLog(ids).catch(() => []); // eslint-disable-line global-require
+    log.forEach((l) => {
+      const a = byId.get(l.applicationId);
+      out.push({
+        applicationId: l.applicationId,
+        requirementTitle: a && a.requirement ? a.requirement.title : '—',
+        when: new Date(l.at),
+        who: l.byName || '—',
+        role: null,
+        // no from / to stage: the stage did not move (screens that look for the move into a stage skip this row)
+        action: l.toLabel ? `${stageLabel(l.stage)}: ${l.toLabel}${l.fromLabel ? ` (was ${l.fromLabel})` : ''}` : `${stageLabel(l.stage)}: sub-status cleared (was ${l.fromLabel || '—'})`,
+        fromStage: null,
+        fromStageLabel: null,
+        toStage: null,
+        toStageLabel: null,
+        stage: l.stage,
+        stageGroupLabel: groupLabelOfStage(l.stage),
+        comment: null,
+        subStatus: true,
+        derived: false,
+      });
+    });
+  }
   return out.sort((a, b) => new Date(b.when) - new Date(a.when));
 }
 
@@ -2808,6 +2835,8 @@ router.get('/:id', async (req, res) => {
 
   // "Interview requested by <recruiter>" on the application (internal logins; no contact data is involved).
   if (kind === 'internal') await require('../utils/interviewRequest').attachTo(applications); // eslint-disable-line global-require
+  // the sub-status chip next to the stage (Company Setup -> Pipeline & checks, utils/atsFlowConfig.js) - TeamLink logins only
+  if (kind === 'internal') await require('../utils/atsFlowConfig').attachSubStatus(applications); // eslint-disable-line global-require
 
   const latest = [...rawApplications].sort((a, b) => String(b.id).localeCompare(String(a.id)))[0] || null;
 

@@ -340,6 +340,8 @@ export const SETUP_TABS = [
   // Custom fields on the candidate profile (founder audit 2026-11-17) - Super Admin / Admin define them.
   { ...leaf('🧾', '/admin/candidate-fields', 'Candidate fields', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) },
   { ...leaf('🎯', '/admin/fit', 'Fit settings', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) },
+  // Pipeline & checks (founder ATS audit 2026-11-17): rename stages, sub-statuses under a stage, the checklist before a profile goes to the client.
+  { ...leaf('🧭', '/admin/pipeline', 'Pipeline & checks', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) },
   // Vendor portal (P3): vendor logins — Admin, or an Accounts desk login (the server allows only Accounts approvers).
   // Vendor portal (P3 / v2 §3): Super Admin / Admin, or a login that already manages users or holds the Vendor Logins grant.
   { ...leaf('🔑', '/admin/vendor-logins', 'Vendor logins', null), when: (u) => !!u && !u.viewAs && (['SUPER_ADMIN', 'ADMIN'].includes(u.role) || can(u, null, 'administration', 'Vendor Logins', 'view') || can(u, null, 'administration', 'Users', 'edit')) },

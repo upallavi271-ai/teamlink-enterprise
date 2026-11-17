@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api';
+import SubStatusChip from './applications/SubStatusChip.jsx'; // the sub-status next to the stage (2026-11-17)
 import Combo from './Combo.jsx';
 import Modal from './Modal.jsx';
 import ContactPanel from './ContactPanel.jsx';
@@ -707,6 +708,8 @@ export function CandidateActions({
             {`${a.label} →`}
           </button>
         ))}
+        {/* the sub-status next to the stage (Company Setup -> Pipeline & checks): the stage's owner picks it */}
+        {app && <SubStatusChip app={app} canSet={canMoveToStage(user, app.stage)} onChanged={() => { if (onChanged) onChanged(); }} />}
         {app && moveList && (
           <button type="button" className={`btn btn-sm${moveOpen ? ' is-on' : ''}`} disabled={busy} aria-expanded={moveOpen} onClick={() => setMoveOpen((x) => !x)}>
             Move step

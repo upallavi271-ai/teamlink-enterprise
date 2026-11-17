@@ -475,6 +475,9 @@ app.use('/api/ats/workflow', require('./routes/atsWorkflow'));
 app.use('/api/ats/joining-ctc', require('./routes/joiningCtc')); // the joined candidate's yearly CTC, entered by the requirement's BDE / BDE TL / Admin
 // Compare candidates, interview clash check, shared saved filters, leave cover (routes/atsTeamTools.js). Ahead of the calendar-gated /api/ats routers.
 app.use('/api/ats/team-tools', require('./routes/atsTeamTools'));
+// Pipeline & checks (founder ATS audit 2026-11-17): stage names, sub-statuses, the share checklist, fee slabs (routes/atsFlowConfig.js).
+// Ahead of the calendar-gated /api/ats routers: GET /api/ats/stage-labels is read by every login.
+app.use('/api/ats', require('./routes/atsFlowConfig'));
 app.use('/api/ats', atsExtrasRoutes);
 // Interviews & Joining (Interview Feedback, Offers, Joining, Internal Hiring)
 // shares the /api/ats prefix with the calendar above.
@@ -586,7 +589,10 @@ const server = app.listen(PORT, () => {
   require('./omniwa/agent').start(); // Omni-Channel WhatsApp: answers the waiting chats (does nothing until an Admin switches the AI on)
   require('./outreach/tplFromMeta').start(); // WhatsApp template approvals from Meta, TeamLink + Omni-Channel, every 15 minutes
   // TEST SANDBOX: no background workers or timers at all (utils/sandbox.js).
+  // Admin-renamed stage names (utils/atsFlowConfig.js): read once now; outside the sandbox re-read every minute (another process may save one).
+  require('./utils/atsFlowConfig').refreshLabels().catch(() => null);
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
+  require('./utils/atsFlowConfig').startLabelRefresh();
   // Morning / afternoon / evening reminders + "complete this course" (bell, email, popup) - utils/dayNudges.js (2026-11-04)
   require('./utils/dayNudges').start();
   // AI Marketing Content Calendar: the tab was removed on 2026-11-16 (founder: "not necessary now"), so its "post due in an hour" notice (marketing/calendar.js startSweep,

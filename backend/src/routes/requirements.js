@@ -2691,7 +2691,18 @@ router.get('/:id', async (req, res) => {
   // the Accept step of a client's request (utils/requestAccept.js): shown to staff only
   if (!isClient(req.user)) {
     const rs = await require('../utils/requestAccept').get(requirement.id); // eslint-disable-line global-require
-    if (rs) { payload.requestState = rs.state; payload.requestAcceptedBy = rs.byName || null; payload.requestAcceptedAt = rs.acceptedAt || null; }
+    if (rs) {
+      payload.requestState = rs.state; payload.requestAcceptedBy = rs.byName || null; payload.requestAcceptedAt = rs.acceptedAt || null;
+      // REJECTED (utils/requestAccept.js): "Rejected: <reason>" on the request until the BDE edits and re-submits it
+      if (rs.state === 'rejected') {
+        payload.requestRejection = { reason: rs.rejectReason || null, note: rs.rejectNote || null, byName: rs.rejectedByName || null, at: rs.rejectedAt || null, text: require('../utils/requestAccept').rejectedText(rs) }; // eslint-disable-line global-require
+        payload.requestCanResubmit = require('../utils/requestAccept').mayResubmit(req.user, requirement, rs); // eslint-disable-line global-require
+      }
+      if (rs.resubmittedAt) payload.requestResubmitted = { at: rs.resubmittedAt, byName: rs.resubmittedByName || null, times: rs.resubmits || 1 };
+    }
+    payload.requestRejectReasons = require('../utils/requestAccept').REJECT_REASONS; // eslint-disable-line global-require
+    // the sub-status chip next to each person's stage (utils/atsFlowConfig.js)
+    if (Array.isArray(payload.applications)) await require('../utils/atsFlowConfig').attachSubStatus(payload.applications); // eslint-disable-line global-require
   }
   // A client never receives the internal pipeline detail on their own req.
   if (isClient(req.user)) {
@@ -3900,10 +3911,73 @@ router.post('/:id/accept-request', requirePerm('ats', 'requirements', 'Requireme
   if (denied) return res.status(403).json({ error: denied });
   if (existing.status !== 'DRAFT' || existing.internal) return res.status(409).json({ error: 'Only a new request waiting for you can be accepted.' });
   const cur = await RA.get(existing.id);
+  if (cur && cur.state === 'rejected') return res.status(409).json({ error: `${RA.rejectedText(cur)}. It can be accepted once it is edited and re-submitted.`, code: 'REQUEST_REJECTED' });
   if (cur && cur.state === 'accepted') return res.json({ ok: true, already: true, requestState: 'accepted', requestAcceptedBy: cur.byName || null });
   const done = await RA.accept(existing.id, req.user);
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Requirement request accepted', entity: 'Requirement', entityId: existing.id, toValue: `${existing.reqCode || existing.title} accepted by ${req.user.name}` });
   return res.json({ ok: true, requestState: 'accepted', requestAcceptedBy: done.byName || null, requestAcceptedAt: done.acceptedAt });
+});
+
+// REJECT A REQUEST (founder ATS audit 2026-11-17): the BDE TL / a Manager / an Admin says no with a reason from the list
+// (utils/requestAccept.js REJECT_REASONS) and a note ("Other" needs one). The draft stays, reads "Rejected: <reason>", the
+// BDE (who asked, and the requirement's BDE) gets a bell, edits it and re-submits it (POST /:id/resubmit-request). Audited.
+const REJECT_KINDS = ['bdeTl', 'manager', 'am', 'admin'];
+router.post('/:id/reject-request', requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res, next) => {
+  try {
+    const RA = require('../utils/requestAccept'); // eslint-disable-line global-require
+    const existing = await prisma.requirement.findUnique({ where: { id: req.params.id }, include: { client: true } });
+    if (!existing) return res.status(404).json({ error: 'Requirement not found' });
+    if (!REJECT_KINDS.includes(JC.kindOf(req.user))) return res.status(403).json({ error: 'Only the BDE team lead, a Manager or an Admin rejects a requirement request.' });
+    const denied = await approveDenied(req.user, existing);
+    if (denied) return res.status(403).json({ error: denied });
+    if (existing.status !== 'DRAFT' || existing.internal) return res.status(409).json({ error: 'Only a requirement request that is not open yet can be rejected. Close an open requirement instead.' });
+    const cur = await RA.get(existing.id);
+    if (cur && cur.state === 'rejected') return res.status(409).json({ error: `Already ${RA.rejectedText(cur).toLowerCase()}.`, code: 'ALREADY_REJECTED' });
+    const reason = String((req.body && req.body.reason) || '').trim();
+    const note = String((req.body && req.body.note) || '').trim().slice(0, 1000);
+    if (!reason) return res.status(400).json({ error: 'Pick the reason for rejecting this request.', field: 'reason', reasons: RA.REJECT_REASONS });
+    if (!RA.REJECT_REASONS.includes(reason)) return res.status(400).json({ error: 'Pick a reason from the list.', field: 'reason', reasons: RA.REJECT_REASONS });
+    if (reason === 'Other' && note.length < 3) return res.status(400).json({ error: 'Add a short note saying why ("Other" needs one).', field: 'note' });
+    const done = await RA.reject(existing.id, req.user, reason, note);
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: 'Requirement request rejected', entity: 'Requirement', entityId: existing.id,
+      fromValue: cur ? cur.state : 'requested', toValue: RA.rejectedText(done), reason: note || reason,
+    });
+    const to = [done.requestedBy, existing.bdeId].filter(Boolean);
+    await notifyUsers([...new Set(to)], {
+      title: `Requirement request rejected — ${existing.reqCode || existing.title}`,
+      message: `${req.user.name || 'Your team lead'} rejected ${existing.title}${existing.client ? ` for ${existing.client.name}` : ''}. Reason: ${reason}${note ? ` (${note})` : ''}. Edit the request and press Re-submit.\nOpen: /requirements/${existing.id}`,
+      exceptUserId: req.user.id,
+    }).catch(() => null);
+    return res.json({ ok: true, requestState: 'rejected', requestRejection: { reason, note: note || null, byName: req.user.name || null, at: done.rejectedAt, text: RA.rejectedText(done) } });
+  } catch (err) { return next(err); }
+});
+// RE-SUBMIT after a rejection: the request was edited since (or the note says what changed) -> waiting for a decision again.
+router.post('/:id/resubmit-request', async (req, res, next) => {
+  try {
+    const RA = require('../utils/requestAccept'); // eslint-disable-line global-require
+    const existing = await prisma.requirement.findUnique({ where: { id: req.params.id }, include: { client: true } });
+    if (!existing) return res.status(404).json({ error: 'Requirement not found' });
+    const cur = await RA.get(existing.id);
+    if (!cur || cur.state !== 'rejected' || existing.status !== 'DRAFT') return res.status(409).json({ error: 'Only a rejected request can be re-submitted.' });
+    if (!RA.mayResubmit(req.user, existing, cur)) return res.status(403).json({ error: 'Only the person who asked for this requirement (or its BDE) re-submits it.' });
+    const note = String((req.body && req.body.note) || '').trim().slice(0, 1000);
+    const editedSince = existing.updatedAt && cur.rejectedAt && new Date(existing.updatedAt) > new Date(cur.rejectedAt);
+    if (!editedSince && note.length < 3) {
+      return res.status(400).json({ error: `Edit the request first (it was rejected: ${cur.rejectReason}), or say what changed in the note.`, field: 'note', code: 'EDIT_FIRST' });
+    }
+    const done = await RA.resubmit(existing.id, req.user, note);
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: 'Requirement request re-submitted', entity: 'Requirement', entityId: existing.id,
+      fromValue: RA.rejectedText(cur), toValue: 'requested', reason: note || 'Edited after the rejection',
+    });
+    await notifyUsers([cur.rejectedBy].filter(Boolean), {
+      title: `Requirement request re-submitted — ${existing.reqCode || existing.title}`,
+      message: `${req.user.name || 'The BDE'} edited and re-submitted ${existing.title}${existing.client ? ` for ${existing.client.name}` : ''} (rejected earlier: ${cur.rejectReason}).${note ? ` Note: ${note}` : ''} Accept or reject it again.\nOpen: /requirements/${existing.id}`,
+      exceptUserId: req.user.id,
+    }).catch(() => null);
+    return res.json({ ok: true, requestState: 'requested', resubmits: done.resubmits });
+  } catch (err) { return next(err); }
 });
 
 router.post('/:id/activate', JC.requireJobManage(), requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res) => {
@@ -3915,6 +3989,9 @@ router.post('/:id/activate', JC.requireJobManage(), requirePerm('ats', 'requirem
   // A client's request is taken first (Accept), then created. A draft with no accept row (older ones) is not held back.
   if (!existing.internal && existing.status === 'DRAFT' && (await require('../utils/requestAccept').stateOf(existing.id)) === 'requested') { // eslint-disable-line global-require
     return res.status(409).json({ error: 'Accept this request first (press Accept), then create the requirement.', code: 'ACCEPT_FIRST' });
+  }
+  if (!existing.internal && existing.status === 'DRAFT' && (await require('../utils/requestAccept').stateOf(existing.id)) === 'rejected') { // eslint-disable-line global-require
+    return res.status(409).json({ error: 'This request was rejected. It opens once it is edited, re-submitted and accepted.', code: 'REQUEST_REJECTED' });
   }
   // The gate is an ACTIVE agreement, not merely a signed one. Internal
   // requirements have no client agreement to wait on.

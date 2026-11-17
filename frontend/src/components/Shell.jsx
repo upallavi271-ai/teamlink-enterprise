@@ -28,6 +28,7 @@ import HealthDot from './dashboard/HealthDot.jsx';
 import TodayTasks from './dashboard/TodayTasks.jsx';
 import GlobalSearch from './GlobalSearch.jsx';
 import { loadClientAliases, forgetClientAliases } from './clientAliases.js';
+import { loadStageLabels, forgetStageLabels } from '../utils/stageLabels'; // Admin-renamed stage names + sub-statuses (Company Setup -> Pipeline & checks)
 import { hasAtsWork } from '../utils/useAtsAlerts';
 import { useJobPortalUrl } from '../pages/JobPortalRedirect.jsx';
 import { canOpenJobPortalStaff } from '../pages/JobPortalLaunch.jsx';
@@ -92,6 +93,12 @@ export default function Shell() {
     const again = () => { if (document.visibilityState === 'visible') loadClientAliases(); };
     document.addEventListener('visibilitychange', again);
     return () => document.removeEventListener('visibilitychange', again);
+  }, [user && user.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // THE STAGE NAMES an Admin set (GET /api/ats/stage-labels): written into atsVocab's STAGE_LABELS, then the page redraws once.
+  const [, setStageWords] = useState(0);
+  useEffect(() => {
+    if (!user) { forgetStageLabels(); return; }
+    loadStageLabels({ fresh: true }).then(() => setStageWords((n) => n + 1));
   }, [user && user.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [manual, setManual] = useState({});          // prototype's sidebarManualToggle
   const [manualSub, setManualSub] = useState({});    // the ATS sub-sections

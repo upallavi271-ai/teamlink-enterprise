@@ -151,10 +151,15 @@ async function selectedNotJoined() {
     orderBy: { updatedAt: 'desc' },
     take: 800,
   });
+  const FC = require('../utils/atsFlowConfig'); // eslint-disable-line global-require
+  const slabs = await FC.slabMap(apps.map((a) => a.requirement && a.requirement.client && a.requirement.client.feeType === 'SLAB' && a.requirement.clientId));
   return apps.filter((a) => a.requirement && !isInternalHire(a, a.requirement)).map((a) => {
     const cli = a.requirement.client;
-    const fee = cli && cli.agreementFeePercent != null ? Number(cli.agreementFeePercent) : null;
-    const billing = a.offeredCtc != null && fee != null ? ROUND(Number(a.offeredCtc) * fee / 100) : null;
+    // the agreement's fee type (utils/atsFlowConfig.js feeFor): % of CTC, fixed per joining, or slabs
+    const ff = cli ? FC.feeFor(cli, a.offeredCtc, { slabs: slabs.get(cli.id) }) : null;
+    const fee = ff ? ff.feePercent : null;
+    // eslint-disable-next-line no-nested-ternary
+    const billing = ff && ff.feeType !== 'PERCENT_CTC' ? (ff.amount != null ? ROUND(ff.amount) : null) : (a.offeredCtc != null && fee != null && cli.agreementFeePercent != null ? ROUND(Number(a.offeredCtc) * fee / 100) : null);
     return {
       applicationId: a.id,
       name: a.candidate ? a.candidate.name : '—',
@@ -170,6 +175,7 @@ async function selectedNotJoined() {
       joiningDate: a.joiningDate || null,
       offeredCtc: a.offeredCtc ?? null,
       feePercent: fee,
+      feeType: ff ? ff.feeType : null,
       gstPercent: cli && cli.gstPercent != null ? Number(cli.gstPercent) : 0,
       billing,
     };
@@ -201,6 +207,8 @@ async function pendingJoinGroups(hier) {
   // caller passes the hierarchy, so the card can follow the filters.
   const workedBy = hier ? await attributionData(waiting.map((a) => a.id)) : null;
 
+  const FC = require('../utils/atsFlowConfig'); // eslint-disable-line global-require
+  const slabs = await FC.slabMap(waiting.map((a) => a.requirement?.client?.feeType === 'SLAB' && a.requirement.clientId));
   const map = new Map();
   waiting.forEach((a) => {
     const cli = a.requirement?.client;
@@ -208,8 +216,11 @@ async function pendingJoinGroups(hier) {
     const key = `${cli?.id || '—'}|${mk}`;
     // The fee is the client's agreed percentage of the offered CTC — nothing is
     // hardcoded, and a joining with no CTC on it simply cannot be invoiced yet.
-    const feePct = cli?.agreementFeePercent;
-    const billing = (a.offeredCtc != null && feePct != null) ? ROUND(Number(a.offeredCtc) * Number(feePct) / 100) : null;
+    // the agreement's fee type (utils/atsFlowConfig.js feeFor): % of CTC, a fixed amount per joining (no CTC needed), or slabs
+    const ff = cli ? FC.feeFor(cli, a.offeredCtc, { slabs: slabs.get(cli.id) }) : null;
+    const feePct = ff && ff.feeType === 'PERCENT_CTC' ? cli?.agreementFeePercent : (ff ? ff.feePercent : null);
+    // eslint-disable-next-line no-nested-ternary
+    const billing = ff && ff.feeType !== 'PERCENT_CTC' ? (ff.amount != null ? ROUND(ff.amount) : null) : ((a.offeredCtc != null && feePct != null) ? ROUND(Number(a.offeredCtc) * Number(feePct) / 100) : null);
     const gstPct = cli?.gstPercent ?? 0;
     const tdsPct = cli?.tdsPercent ?? 0;
     const who = hier ? attributeApplication({ ...a, ...(workedBy.get(a.id) || {}) }, hier, cli?.ownerDepartment) : null;
