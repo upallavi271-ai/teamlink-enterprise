@@ -95,26 +95,77 @@ async function history(leadId) {
     ? { role: 'user', content: S.clip(r.note, 900) }
     : { role: 'assistant', content: S.clip(`${r.subject ? `[${r.subject}] ` : ''}${r.note}`, 900) }));
 }
-async function note(leadId, subject, body, kind) {
+async function note(leadId, subject, body, kind, delivery = null) {
   const now = DB.nowIso();
-  await S.insert('CrmActivity', { id: S.newId('act'), kind, subject, note: S.clip(body, 2000), at: now, leadId, byName: AI_NAME, createdAt: now }).catch(() => null);
+  await S.insert('CrmActivity', {
+    id: S.newId('act'), kind, subject, note: S.clip(body, 2000), at: now, leadId, byName: AI_NAME, createdAt: now,
+    ...(delivery ? { providerRef: delivery.providerRef ? String(delivery.providerRef).slice(0, 200) : null, deliveryStatus: delivery.status || null, deliveryDetail: delivery.detail ? S.clip(delivery.detail, 300) : null } : {}),
+  }).catch(() => null);
+}
+
+// ---- a lead who came for our software products (founder 2026-11-17, lead L-0013): they get the product facts, not the recruitment pitch --------
+async function productContext(lead) {
+  const PS = require('./productSales'); // eslint-disable-line global-require
+  const keys = PS.keysOf(lead.products);
+  // the lead picked a product, or itself opened the demo / the AI meeting (a demo link made for it is not enough)
+  const fromDemo = keys.length ? null : await DB.one('SELECT "id" FROM "CrmActivity" WHERE "leadId" = ? AND "byName" = \'AI sales assistant\' AND ("subject" LIKE \'Demo opened%\' OR "subject" LIKE \'Interested after the demo%\' OR "subject" LIKE \'AI meeting%\') LIMIT 1', lead.id);
+  if (!keys.length && !fromDemo) return null;
+  const all = await PS.products();
+  const prods = keys.length ? all.filter((x) => keys.includes(x.key)) : all;
+  if (!prods.length) return null;
+  const names = prods.map((x) => x.name).join(', ');
+  const qa = PS.qaOf(prods).map((x) => `Q: ${x.q}\nA: ${x.a}`).join('\n\n');
+  return {
+    names,
+    about: prods.map((x) => `${x.name}: ${x.tagline || ''} ${x.about || ''}\nFeatures: ${(x.features || []).slice(0, 10).join('; ')}`).join('\n\n'),
+    pricing: prods.map((x) => `${x.name}: ${(x.plans || []).filter((y) => y.name).map((y) => `${y.name} ${y.price ? `${y.price} ${y.unit || ''}`.trim() : 'price on request'}`).join(', ') || 'price on request'} (GST 18% extra)`).join('\n'),
+    faq: qa,
+    knowledge: PS.knowledge ? PS.knowledge(prods) : qa,
+  };
+}
+
+// ---- calls already booked, and what the lead asked for -----------------------------------------------------------------------------
+// a call booked with this lead that has not happened yet (by the AI meeting's "Talk to a person", by this assistant or by a person)
+async function upcomingCall(leadId, now = Date.now()) {
+  const rows = await DB.all('SELECT "id", "title", "dueDate", "dueTime" FROM "CrmTask" WHERE "leadId" = ? AND "status" = \'Open\' AND "dueTime" IS NOT NULL AND ("type" = \'Meeting\' OR "title" LIKE \'%booked by the lead%\') ORDER BY "dueDate", "dueTime"', leadId);
+  return rows.find((t) => Date.parse(`${t.dueDate}T${t.dueTime}:00+05:30`) > now) || null;
+}
+const whenOf = (t) => new Date(Date.parse(`${t.dueDate}T${t.dueTime}:00+05:30`)).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+// "ok", "thanks", a thumbs up: an acknowledgement, never a yes to a call
+const ACK_ONLY = /^\s*(?:(?:ok+|okay|okk+|k+|fine|done|noted|thanks?|thank\s*you(?:\s*so\s*much)?|thx|ty|tq|great|good|cool|nice|hmm+|alright|all\s*right|got\s*it|ok\s*(?:thanks?|thank\s*you|sir|madam|ma'?am))\s*[.!]*\s*|[\u{1F44D}\u{1F64F}\u{1F44C}\u{2705}\u{1F60A}\u{263A}\u{FE0F}\u{1F642}\s]+)$/iu;
+// a time the lead named: "10am", "10:00", "3 pm", "15:30" -> "10:00"
+function timeAsked(text) {
+  const t = String(text || '').toLowerCase();
+  let m = /\b(\d{1,2})(?::|\.)?(\d{2})?\s*(am|pm|a\.m\.|p\.m\.)/.exec(t);
+  if (m) { let h = Number(m[1]) % 12; if (/p/.test(m[3])) h += 12; return `${String(h).padStart(2, '0')}:${m[2] || '00'}`; }
+  m = /\b([01]?\d|2[0-3]):([0-5]\d)\b/.exec(t);
+  if (m) return `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
+  return null;
+}
+// the model must never ask "shall we book?" in the same message that says it is booked, nor claim a booking itself: the real line is added after
+function tidyBookingWords(reply) {
+  return String(reply || '').split(/(?<=[.!?])\s+/).filter((x) => !/\b(would you like|shall (?:we|i)|can (?:we|i)|do you want|may i|should (?:we|i)|let me know if you(?:'d)? like)\b[^.?!]*\b(schedule|book|set up|arrange|fix)\b/i.test(x)
+    && !/\bI(?:'ve| have)? (?:booked|scheduled|set up|arranged|fixed)\b|\bmeeting (?:is )?booked\b|\bcall (?:is )?(?:booked|scheduled)\b/i.test(x)).join(' ').trim();
 }
 
 // ---- what the model is told, and what it may send -----------------------------------------------------------------------
-function prompt(st, lead, channel, owner) {
+function prompt(st, lead, channel, owner, ctx = {}) {
   return [
-    `You are the AI sales assistant of TeamLink Consultants, answering a business lead who wrote back on ${WORD[channel]}. You are an AI; say so if asked.`,
+    ctx.product
+      ? `You are the AI sales assistant of TeamLink, which sells business software. This lead came from our product demo and is interested in ${ctx.product.names}. Talk only about these products, not about recruitment services. You are answering on ${WORD[channel]}. You are an AI; say so if asked.`
+      : `You are the AI sales assistant of TeamLink Consultants, answering a business lead who wrote back on ${WORD[channel]}. You are an AI; say so if asked.`,
     'Use ONLY the facts below. Never invent a price, a discount, a client name, a date or a promise. If the answer is not below, say our team will confirm it.',
     'Goal: answer their question briefly and politely, then move towards a short call with our team. Plain words, no markdown.',
     `Keep it short: ${channel === 'Email' ? 'a few short paragraphs' : 'two or three sentences'}. Write in the language the lead wrote in (English, Telugu or Hindi).`,
     'Reply with JSON only: {"reply": "...", "action": "none" | "meeting" | "handoff" | "not_interested"}.',
-    '- "meeting": they agree to a call or ask for one (a time is booked and sent to them; do not name a time yourself).',
+    '- "meeting": ONLY when they clearly agree to a call or ask for one. Never for a bare "ok", "thanks" or an emoji. The system books the time and adds it to your reply: never write that you booked anything yourself, and never ask whether to book in the same reply.',
+    ctx.booked ? `- A call is ALREADY booked with this lead for ${ctx.booked} (India time). Do not offer or book another one; mention this time if it helps.` : '',
     '- "handoff": they ask for a person, negotiate the price, complain, or you are not sure.',
     '- "not_interested": they say no or not now.',
     '',
-    `ABOUT TEAMLINK:\n${st.about}`,
-    `WHAT MAY BE SAID ABOUT PRICE:\n${st.pricing || 'Nothing: our team shares a proposal.'}`,
-    st.faq ? `QUESTIONS AND ANSWERS:\n${st.faq}` : '',
+    ctx.product ? `OUR PRODUCTS (${ctx.product.names}):\n${ctx.product.about}` : `ABOUT TEAMLINK:\n${st.about}`,
+    `WHAT MAY BE SAID ABOUT PRICE:\n${(ctx.product && ctx.product.pricing) || st.pricing || 'Nothing: our team shares a proposal.'}`,
+    (ctx.product ? ctx.product.faq : st.faq) ? `QUESTIONS AND ANSWERS:\n${ctx.product ? ctx.product.faq : st.faq}` : '',
     `THE LEAD: ${lead.contactName || ''} of ${lead.company || 'their company'}${lead.city ? `, ${lead.city}` : ''}${lead.notes ? `. Notes: ${S.clip(lead.notes, 300)}` : ''}. Their contact at TeamLink: ${owner || 'our sales team'}.`,
   ].filter(Boolean).join('\n');
 }
@@ -197,38 +248,67 @@ async function respond({ channel, lead, message, subject }, { deps = {}, now = D
   const auto = await AUTO.load();
   const meetingLink = (auto.meeting && auto.meeting.link) || '';
   const first = !(await DB.one('SELECT "id" FROM "CrmActivity" WHERE "leadId" = ? AND "byName" = ?', lead.id, AI_NAME));
+  const booked = await upcomingCall(lead.id, now);
+  const product = await productContext(lead).catch(() => null);
+  // a bare "ok" / "thanks" / thumbs up: nothing is booked and nothing is pushed; at most a one-line confirmation of the call already booked
+  if (ACK_ONLY.test(String(message || ''))) {
+    if (!booked) return { skipped: 'an acknowledgement: nothing to answer' };
+    const said = await DB.one('SELECT "id" FROM "CrmActivity" WHERE "leadId" = ? AND "byName" = ? AND "note" LIKE ? AND "at" > ?', lead.id, AI_NAME, `%${whenOf(booked)}%`, new Date(now - 6 * HOUR).toISOString());
+    if (said) return { skipped: 'an acknowledgement: the booking was already confirmed' };
+    const line = channel === 'Email' ? `Hello ${lead.contactName || ''},\n\nThank you. You are booked for ${whenOf(booked)} (India time).\n\nTeamLink` : `Thank you! You are booked for ${whenOf(booked)} (India time).`;
+    return deliver(channel, lead, line, subject, deps, 'none');
+  }
   let out;
   try {
     const chat = deps.chat || ((sys, msgs) => require('../utils/ai').chatJson(sys, msgs)); // eslint-disable-line global-require
     const msgs = await history(lead.id);
     if (!msgs.length || msgs[msgs.length - 1].role !== 'user') msgs.push({ role: 'user', content: S.clip(message, 1500) });
-    out = await chat(prompt(st, lead, channel, lead.ownerName), msgs);
+    out = await chat(prompt(st, lead, channel, lead.ownerName, { product, booked: booked ? whenOf(booked) : null }), msgs);
   } catch (e) {
     return handoff(lead, channel, `The AI could not answer (${S.clip(e.message, 120)}).`, subject, deps);
   }
-  const action = ['meeting', 'handoff', 'not_interested'].includes(out && out.action) ? out.action : 'none';
+  let action = ['meeting', 'handoff', 'not_interested'].includes(out && out.action) ? out.action : 'none';
   if (action === 'handoff') return handoff(lead, channel, `They need a person: "${S.clip(message, 200)}"`, subject, deps);
   if (action === 'not_interested') {
     const g0 = guard(out && out.reply, st, channel, meetingLink);
     if (g0.ok) { await send(channel, lead, g0.reply, subject, deps).catch(() => null); await note(lead.id, `AI answered on ${WORD[channel]}`, g0.reply, KIND[channel]); }
     return handoff(lead, channel, `They said they are not interested: "${S.clip(message, 200)}"`, subject, deps, { tell: false });
   }
-  const g = guard(out && out.reply, st, channel, meetingLink);
+  const known = product ? { ...st, about: product.about, pricing: product.pricing, faq: product.faq } : st;
+  const g = guard(out && out.reply, known, channel, meetingLink);
   if (!g.ok) return handoff(lead, channel, `The AI answer was not sent: ${g.why}.`, subject, deps);
-  let body = g.reply;
+  // a product lead: a job board, app or integration the product text does not name is not claimed (crm/productSales.js guardClaims)
+  let body = product ? require('./productSales').guardClaims(g.reply, product.knowledge) : g.reply; // eslint-disable-line global-require
+  const asked = timeAsked(message);
+  // one booking at a time: a call already booked is confirmed, never booked again; another time asked for goes to a person to move it
+  if (booked && (action === 'meeting' || asked)) {
+    body = tidyBookingWords(body);
+    if (asked && asked !== booked.dueTime) {
+      const stamp = DB.nowIso();
+      await S.insert('CrmTask', { id: S.newId('task'), title: `Move the call with ${lead.contactName || lead.company} from ${booked.dueTime} to ${asked} (asked on ${WORD[channel]})`, dueDate: new Date(now + 5.5 * HOUR).toISOString().slice(0, 10), dueTime: new Date(now + 5.5 * HOUR).toISOString().slice(11, 16), status: 'Open', type: 'Call', notifyApp: 1, notifyWhatsapp: 0, notifySms: 0, notifyLead: 0, remindBefore: 0, leadId: lead.id, ownerId: lead.ownerId || null, ownerName: lead.ownerName || null, createdAt: stamp, updatedAt: stamp }).catch(() => null);
+      body = `${body} You are booked for ${whenOf(booked)} (India time); I have asked our team to move it to ${asked}, and they will confirm.`.trim();
+    } else body = `${body} You are booked for ${whenOf(booked)} (India time).`.trim();
+    action = 'none';
+  } else if (action === 'meeting') {
+    body = tidyBookingWords(body);
+    const task = await AUTO.bookMeeting({ leadId: lead.id, name: lead.contactName || lead.company, email: lead.email, ownerId: lead.ownerId, ownerName: lead.ownerName, title: `TeamLink call: ${lead.company}`, at: asked }, auto, now, deps).catch(() => null);
+    if (task) body += channel === 'Email' ? `\n\nI have booked a call for ${whenOf(task)}${lead.email ? '; the invite is in your mail' : ''}. If another time suits you better, just reply.` : ` I have booked a call for ${whenOf(task)} (India time). Reply if another time suits you better.`;
+  } else body = tidyBookingWords(body) || body;
+  if (!body.trim()) body = booked ? `You are booked for ${whenOf(booked)} (India time).` : 'Thank you. Our team will get back to you shortly.';
   if (first) body = channel === 'Email' ? `${body}\n\n(This reply is from TeamLink's AI assistant. A person from our team is copied on everything.)` : `TeamLink's AI assistant: ${body}`;
-  if (action === 'meeting') {
-    const task = await AUTO.bookMeeting({ leadId: lead.id, name: lead.contactName || lead.company, email: lead.email, ownerId: lead.ownerId, ownerName: lead.ownerName, title: `TeamLink call: ${lead.company}` }, auto, now, deps).catch(() => null);
-    if (task) {
-      const at = new Date(Date.parse(`${task.dueDate}T${task.dueTime}:00+05:30`)).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
-      body += channel === 'Email' ? `\n\nI have booked a call for ${at}${lead.email ? '; the invite is in your mail' : ''}. If another time suits you better, just reply.` : ` I have booked a call for ${at}. Reply if another time suits you better.`;
-    }
-  }
-  if (channel === 'Email') body = `Hello ${lead.contactName || ''},\n\n${body}\n\nTeamLink Consultants`;
+  if (channel === 'Email') body = `Hello ${lead.contactName || ''},\n\n${body}\n\n${product ? 'TeamLink' : 'TeamLink Consultants'}`;
+  return deliver(channel, lead, body, subject, deps, action);
+}
+// send, and keep the WhatsApp reference so the timeline shows Sent / Delivered / Read / Failed; a failed send is said plainly
+async function deliver(channel, lead, body, subject, deps, action) {
   const sent = await send(channel, lead, body, subject, deps).catch((e) => ({ ok: false, error: e.message }));
-  if (!sent || !sent.ok) return handoff(lead, channel, `The AI answer could not be sent: ${(sent && sent.error) || 'unknown'}.`, subject, deps, { tell: false });
-  await note(lead.id, `AI answered on ${WORD[channel]}`, body, KIND[channel]);
-  return { answered: true, action, body };
+  if (!sent || !sent.ok) {
+    const why = (sent && sent.error) || 'unknown';
+    await note(lead.id, `AI answer not sent: ${S.clip(why, 140)}`, body, KIND[channel], { status: 'Failed', detail: why });
+    return handoff(lead, channel, `The AI answer could not be sent: ${why}.`, subject, deps, { tell: false });
+  }
+  await note(lead.id, `AI answered on ${WORD[channel]}`, body, KIND[channel], channel === 'Email' ? null : { providerRef: sent.providerRef || null, status: sent.providerRef ? 'Sent' : null });
+  return { answered: true, action, body, providerRef: sent.providerRef || null };
 }
 
-module.exports = { DEFAULTS, AI_NAME, HANDED, load, get, save, handles, respond, guard, clean };
+module.exports = { DEFAULTS, AI_NAME, HANDED, load, get, save, handles, respond, guard, clean, ACK_ONLY, timeAsked, tidyBookingWords, upcomingCall };

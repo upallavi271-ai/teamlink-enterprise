@@ -170,7 +170,7 @@ const P = process.pid;
   await wait(1500);
   const wl2 = w2.body && w2.body.id ? await S2getLead(w2.body.id) : null;
   check('32 website form with no product: guessed from the words (payroll, attendance -> HRMS)', wl2 && wl2.products === 'HRMS', wl2 && wl2.products);
-  check('33 guess: hiring + WhatsApp campaigns -> ATS and Omni-Channel', JSON.stringify(PD.guessProducts('We are hiring recruiters and want WhatsApp campaigns')) === '["ATS","OMNI"]', PD.guessProducts('We are hiring recruiters and want WhatsApp campaigns'));
+  check('33 guess: an ATS + WhatsApp campaigns -> ATS and Omni-Channel; "we are hiring" alone is a recruitment enquiry, not a software lead', JSON.stringify(PD.guessProducts('We need an ATS for our recruiters and want WhatsApp campaigns')) === '["ATS","OMNI"]' && PD.guessProducts('We are hiring 10 Java developers').length === 0, PD.guessProducts('We need an ATS for our recruiters and want WhatsApp campaigns'));
 
   // a lead with no known product gets a demo of everything and ticks what they need
   const L3 = await call('POST', '/crm/leads', { company: `ZZTEST PS Gamma ${P}`, contactName: 'Anil Varma', phone: `93${String(Date.now()).slice(-8)}`, email: `zz-ps-g-${P}@example.test`, source: 'Website' }, tA);

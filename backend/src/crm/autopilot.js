@@ -166,8 +166,13 @@ async function meetingLink(st) {
   return (crm && crm.meetingLink) || '';
 }
 /** One meeting: a Meeting follow-up with its reminders, and an invite to the person and the owner. -> the task */
-async function bookMeeting({ leadId, accountId, name, email, ownerId, ownerName, title }, st, now, deps) {
-  const slot = await nextSlot(ownerId, st, now);
+async function bookMeeting({ leadId, accountId, name, email, ownerId, ownerName, title, at }, st, now, deps) {
+  let slot = await nextSlot(ownerId, st, now);
+  // the time the lead asked for ("10am"): on that next working day, when it is between 09:00 and 19:00 and the owner has nothing then
+  if (at && /^\d{2}:\d{2}$/.test(at) && at >= '09:00' && at <= '19:00') {
+    const taken = ownerId ? await DB.one('SELECT "id" FROM "CrmTask" WHERE "ownerId" = ? AND "dueDate" = ? AND "dueTime" = ? AND "status" = \'Open\'', ownerId, slot.day, at) : null;
+    if (!taken) slot = { day: slot.day, time: at };
+  }
   const stamp = DB.nowIso();
   const start = Date.parse(`${slot.day}T${slot.time}:00+05:30`);
   const link = await meetingLink(st);

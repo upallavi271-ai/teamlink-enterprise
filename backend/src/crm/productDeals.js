@@ -69,7 +69,8 @@ async function setCompanyVideo(file, title) {
 // ---- a new lead gets the demo by itself ------------------------------------------------------------------------------------------
 const WORDS = {
   HRMS: /\b(hrms|hr software|payroll|attendance|biometric|leave|payslip|employee|hr management|salary|pf|esi)\b/i,
-  ATS: /\b(ats|recruit\w*|hiring|hire|candidate\w*|job portal|resume\w*|cv|talent|interview\w*|placement\w*|staffing)\b/i,
+  // software words only: "we are hiring 10 developers" is a recruitment-services enquiry, not a lead for our ATS software
+  ATS: /\b(ats|applicant tracking|tracking system|recruitment (software|tool|system|platform|app)|hiring (software|tool|system|platform)|recruiting (software|tool)|job portal|careers page software)\b/i,
   OMNI: /\b(omni\w*|whatsapp|sms|email campaign\w*|campaign\w*|marketing|social media|instagram|facebook|bulk message\w*|chat ?bot)\b/i,
 };
 // the three we started with by their words; a product added later by its own name ("TeamLink Accounts" -> "accounts")

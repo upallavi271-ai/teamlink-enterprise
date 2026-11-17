@@ -641,5 +641,5 @@ async function onWon(dealId) {
 module.exports = {
   PRODUCT_KEYS, ensure, products, saveProduct, setLeadProducts, demoLink, demoForToken, demoEvent, meetingLink, meetingFor, meetingSay, meetingEnd,
   meetingsOf, onWon, videoPathOf, setVideoFile, staffVideoLink, productKeys, addProduct, addExtraVideo, removeExtraVideo, extraPathOf, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
-  siteBase, note, bellOwner, followUp, leadFor, LANGS, faqMatch, guardClaims, readQuestion, qaOf, listLike, fixWrittenText,
+  siteBase, note, bellOwner, followUp, leadFor, LANGS, faqMatch, knowledge, guardClaims, readQuestion, qaOf, listLike, fixWrittenText,
 };
