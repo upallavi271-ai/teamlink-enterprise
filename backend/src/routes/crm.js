@@ -68,7 +68,13 @@ router.post('/tasks/:id/snooze', wrap((req) => CRM.snoozeTask(req.user, req.para
 // OUR PRODUCTS (HRMS / ATS / Omni-Channel): the catalogue, a lead's interest, the demo link, the AI meeting (crm/productSales.js)
 const PS = require('../crm/productSales');
 router.get('/products', wrap(async (req) => ({ status: 200, body: { products: await PS.products({ all: String(req.query.all || '') === '1' }) } })));
-router.get('/products/:key/watch', wrap((req) => PS.staffVideoLink(req.user, req.params.key)));
+const PD = require('../crm/productDeals');
+router.get('/products-settings', wrap(async (req) => (CRM.roleOf(req.user) ?{ status: 200, body: { settings: await PD.settings() } } : { status: 403, body: { error: 'No CRM access.' } })));
+router.put('/products-settings', wrap((req) => PD.saveSettings(req.user, req.body || {})));
+router.get('/products-funnel', wrap((req) => PD.funnel(req.user, req.query.days)));
+router.post('/leads/:id/quote', wrap((req) => PD.quoteByStaff(req.user, req.params.id, req.body || {})));
+router.get('/leads/:id/quotes', wrap((req) => PD.quotesOf(req.user, req.params.id)));
+router.get('/products/:key/watch',wrap((req) => PS.staffVideoLink(req.user, req.params.key)));
 router.put('/products/:key',wrap((req) => PS.saveProduct(req.user, req.params.key, req.body || {})));
 router.post('/leads/:id/products', wrap((req) => PS.setLeadProducts(req.user, req.params.id, (req.body || {}).products)));
 router.post('/leads/:id/demo', wrap((req) => PS.demoLink(req.user, req.params.id, req.body || {})));

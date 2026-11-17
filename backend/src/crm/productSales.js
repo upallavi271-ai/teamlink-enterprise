@@ -244,14 +244,15 @@ async function demoForToken(token) {
   await ensure();
   const lead = await S.getRow('lead', v.l);
   if (!lead) return null;
-  return { lead, products: await productsByKeys(v.p), keys: v.p };
+  return { lead, products: await productsByKeys(v.p), keys: v.p, pick: v.x === 'pick' };
 }
 // what the lead did on the demo page -> the timeline (and the owner, for the strong signals)
 async function demoEvent(token, kind, extra = {}) {
   const d = await demoForToken(token);
   if (!d) return { error: 'This link has expired.' };
   const names = d.products.map((p) => p.name).join(', ');
-  const words = { open: `Demo opened: ${names}`, play: `Demo video played: ${extra.product || names}`, interested: `Interested after the demo: ${names}`, person: 'Asked to talk to a person (from the demo)', later: 'Will decide later (from the demo)' }[kind];
+  const pickedNames = kind === 'interested' && [].concat(extra.products || []).length ? d.products.filter((p) => [].concat(extra.products).map((x) => String(x).toUpperCase()).includes(p.key)).map((p) => p.name).join(', ') : '';
+  const words = { open: `Demo opened: ${names}`, play: `Demo video played: ${extra.product || names}`, interested: `Interested after the demo: ${pickedNames || names}`, person: 'Asked to talk to a person (from the demo)', later: 'Will decide later (from the demo)' }[kind];
   if (!words) return { error: 'unknown' };
   // one "opened" per hour is enough
   if (kind === 'open') {
@@ -260,6 +261,9 @@ async function demoEvent(token, kind, extra = {}) {
   }
   await note(d.lead.id, d.lead.accountId, 'note', words, extra.seconds ? `Watched about ${Math.round(extra.seconds / 60)} min` : null);
   if (kind === 'interested') {
+    // on a demo of every product the lead ticks what they need: that becomes their interest and the meeting's subject
+    const picked = keysOf([].concat(extra.products || []).join(',')).filter((k) => d.keys.includes(k));
+    if (picked.length) { d.keys = picked; await S.update('CrmLead', d.lead.id, { products: picked.join(',') }); }
     await require('./sales').autoStage(d.lead.id, { kind: 'whatsapp' }).catch(() => null); // eslint-disable-line global-require
     await bellOwner(d.lead, `🎬 ${d.lead.company || 'A lead'} liked the demo`, `${d.lead.contactName || 'The lead'} pressed "I'm interested" on the ${names} demo and is starting the AI meeting.`);
     return { ok: true, meetUrl: meetUrlOf(makeToken('meet', d.lead.id, d.keys, 30)) };
@@ -324,7 +328,8 @@ function guardReply(reply, known) {
   if (/discount|free of cost|guarantee|we promise/i.test(r)) r = r.replace(/[^.]*\b(discount|free of cost|guarantee|we promise)\b[^.]*\.?/gi, '').trim() || 'Pricing terms are confirmed by our team in the proposal.';
   return r;
 }
-async function meetingSay(token, text) {
+const LANGS = { 'en-IN': 'English', 'te-IN': 'Telugu', 'hi-IN': 'Hindi', 'ta-IN': 'Tamil', 'kn-IN': 'Kannada', 'ml-IN': 'Malayalam', 'mr-IN': 'Marathi', 'bn-IN': 'Bengali', 'gu-IN': 'Gujarati' };
+async function meetingSay(token, text, lang) {
   const m = await meetingFor(token);
   if (!m) return { error: 'This meeting link has expired. Ask us for a new one.' };
   if (m.meeting.status !== 'Open') return { error: 'This meeting has ended. Thank you!' };
@@ -338,7 +343,7 @@ async function meetingSay(token, text) {
   let out = null;
   try {
     const AI = require('../utils/ai'); // eslint-disable-line global-require
-    const system = `You are TeamLink's AI sales assistant in a live product meeting with ${m.lead.contactName || 'a prospect'} from ${m.lead.company || 'a company'}. You are an AI and say so if asked.\nAnswer ONLY from the facts below. Be warm, clear and short (at most 90 words), in the language the person writes in. If the facts do not answer the question, say you will have the team confirm it, and set "unanswered": true. Never invent a price, number, client name, integration or date; never offer a discount. When it fits, end with one short question to understand their needs (team size, what they use today, timeline, who decides).\nReply ONLY as JSON: {"reply": "...", "unanswered": true|false, "wantsHuman": true|false}.\n\nFACTS:\n${kn}`;
+    const system = `You are TeamLink's AI sales assistant in a live product meeting with ${m.lead.contactName || 'a prospect'} from ${m.lead.company || 'a company'}. You are an AI and say so if asked.\nAnswer ONLY from the facts below. Be warm, clear and short (at most 90 words), in ${LANGS[lang] && lang !== 'en-IN' ? `${LANGS[lang]} (written in ${LANGS[lang]} script, product names in English)` : 'the language the person writes in'}. If the facts do not answer the question, say you will have the team confirm it, and set "unanswered": true. Never invent a price, number, client name, integration or date; never offer a discount. When it fits, end with one short question to understand their needs (team size, what they use today, timeline, who decides).\nReply ONLY as JSON: {"reply": "...", "unanswered": true|false, "wantsHuman": true|false}.\n\nFACTS:\n${kn}`;
     const history = tr.slice(-16).map((x) => ({ role: x.who === 'ai' ? 'assistant' : 'user', content: x.text }));
     out = await AI.chatJson(system, history, { maxTokens: 500 });
   } catch (e) { out = null; }
@@ -443,4 +448,5 @@ async function onWon(dealId) {
 module.exports = {
   PRODUCT_KEYS, ensure, products, saveProduct, setLeadProducts, demoLink, demoForToken, demoEvent, meetingLink, meetingFor, meetingSay, meetingEnd,
   meetingsOf, onWon, videoPathOf, setVideoFile, staffVideoLink, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
+  siteBase, note, bellOwner, followUp, leadFor, LANGS,
 };

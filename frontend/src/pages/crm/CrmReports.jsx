@@ -216,6 +216,7 @@ function WebsiteForm() {
     '  <input name="company" placeholder="Company">',
     '  <input name="phone" placeholder="Phone">',
     '  <input name="email" type="email" placeholder="Email">',
+    '  <select name="products"><option value="">Which product?</option><option value="HRMS">HRMS (people, attendance, payroll)</option><option value="ATS">ATS (recruitment)</option><option value="OMNI">Omni-Channel (WhatsApp, SMS, email, social)</option><option value="HRMS,ATS,OMNI">All three</option></select>',
     '  <textarea name="message" placeholder="How can we help?"></textarea>',
     '  <input name="website_url" style="display:none" tabindex="-1" autocomplete="off">',
     '  <button type="submit">Send</button>',
@@ -241,7 +242,7 @@ function WebsiteForm() {
   return (
     <>
       <div className="section-label">Website form</div>
-      <p className="small-muted" style={{ marginTop: 0 }}>Paste this on your website. Leads come in with Source = Website, and with the page and the campaign (UTM) they came from. The same phone or email again is added as a note on the lead already here.</p>
+      <p className="small-muted" style={{ marginTop: 0 }}>Paste this on your website. Leads come in with Source = Website, and with the page and the campaign (UTM) they came from. The same phone or email again is added as a note on the lead already here. The product they pick (or the words in their message) decides which demo they get, by itself, right away (Leads → Our products → Settings).</p>
       <label style={{ display: 'block', marginBottom: 8 }}><input type="checkbox" checked={w.autoAssign} onChange={(e) => auto(e.target.checked)} style={{ width: 'auto' }} /> Give new website leads to the sales team in turn (otherwise they wait with no owner)</label>
       <textarea readOnly rows={8} value={code} aria-label="The website form code" style={{ fontFamily: 'monospace', fontSize: 11.5 }} />
       <div style={{ display: 'flex', gap: 6, margin: '6px 0 14px' }}>

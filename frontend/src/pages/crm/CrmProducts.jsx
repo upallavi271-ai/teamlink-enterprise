@@ -95,6 +95,8 @@ export function ProductSellBox({ lead, canEdit, onChanged }) {
         <div className="small-muted" style={{ marginTop: 6, fontSize: 12 }}>The AI presents the product, answers questions by text or voice from the product details in “Our products”, and never makes up a price or a discount. At the end the lead picks Go ahead / Need time / Not for now: Go ahead marks the lead Qualified and gives you a follow-up to send the proposal.</div>
       </div>
 
+      <QuoteBox lead={lead} all={all} mine={mine} canEdit={canEdit} onChanged={onChanged} />
+
       <div className="section-label">AI meetings ({(meetings || []).length})</div>
       {meetings == null && <div className="small-muted">Loading…</div>}
       {meetings && !meetings.length && <div className="small-muted">No AI meeting yet.</div>}
@@ -128,6 +130,129 @@ export function ProductSellBox({ lead, canEdit, onChanged }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// a quote for the lead: a plan per product they want, how many people, yearly or monthly; GST 18% on top (crm/productDeals.js)
+const inr = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
+const qtyWord = (unit) => { const u = String(unit || '').toLowerCase(); if (/employee/.test(u)) return 'employees'; if (/recruiter/.test(u)) return 'recruiters'; if (/user|seat/.test(u)) return 'users'; return null; };
+function QuoteBox({ lead, all, mine, canEdit, onChanged }) {
+  const { toast } = useCrm();
+  const [quotes, setQuotes] = useState(null);
+  const [pick, setPick] = useState({}); // key -> { plan, qty }
+  const [billing, setBilling] = useState('yearly');
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get(`/crm/leads/${lead.id}/quotes`).then((r) => setQuotes(r.data.quotes || [])).catch(() => setQuotes([]));
+  useEffect(load, [lead.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const prods = (all || []).filter((p) => mine.includes(p.key) && (p.plans || []).some((x) => x.price));
+  const planOf = (p) => (p.plans || []).find((x) => x.name === (pick[p.key] || {}).plan) || (p.plans || []).find((x) => x.price);
+  async function make(channel) {
+    setBusy(true);
+    try {
+      const items = prods.map((p) => ({ key: p.key, plan: planOf(p).name, qty: Number((pick[p.key] || {}).qty) || 0 }));
+      const r = await api.post(`/crm/leads/${lead.id}/quote`, { items, billing, channel });
+      if (channel === 'email') toast(`Quote ${r.data.quote.number} sent by email.`);
+      else if (channel === 'whatsapp' && r.data.whatsappUrl) window.open(r.data.whatsappUrl, '_blank', 'noopener');
+      else await copy(r.data.url, toast, `Quote ${r.data.quote.number} made - link copied.`);
+      load(); if (onChanged) onChanged();
+    } catch (e) { toast(errOf(e, 'The quote could not be made.')); }
+    setBusy(false);
+  }
+  return (
+    <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+      <div className="section-label" style={{ marginTop: 0 }}>4 · Quote</div>
+      {!prods.length && <div className="small-muted">Tick a product with a price above to make a quote.</div>}
+      {prods.map((p) => {
+        const pl = planOf(p);
+        const w = qtyWord(pl && pl.unit);
+        return (
+          <div key={p.key} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+            <b style={{ minWidth: 170 }}>{p.name}</b>
+            <select value={pl ? pl.name : ''} onChange={(e) => setPick({ ...pick, [p.key]: { ...(pick[p.key] || {}), plan: e.target.value } })} aria-label={`${p.name} plan`} style={{ width: 'auto' }}>
+              {(p.plans || []).filter((x) => x.price).map((x) => <option key={x.name} value={x.name}>{x.name} · {x.price} {x.unit}</option>)}
+            </select>
+            {w && <input type="number" min="1" placeholder={`How many ${w}`} value={(pick[p.key] || {}).qty || ''} onChange={(e) => setPick({ ...pick, [p.key]: { ...(pick[p.key] || {}), qty: e.target.value } })} aria-label={`${p.name} ${w}`} style={{ width: 150 }} />}
+          </div>
+        );
+      })}
+      {prods.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+          <select value={billing} onChange={(e) => setBilling(e.target.value)} aria-label="Billing" style={{ width: 'auto' }}><option value="yearly">Yearly</option><option value="monthly">Monthly (10% more)</option></select>
+          <button type="button" className="btn btn-primary" disabled={!canEdit || busy} onClick={() => make('whatsapp')}>Make quote · WhatsApp</button>
+          <button type="button" className="btn" disabled={!canEdit || busy || !lead.email} onClick={() => make('email')}>Make quote · email</button>
+          <button type="button" className="btn" disabled={!canEdit || busy} onClick={() => make('link')}>Make quote · copy link</button>
+        </div>
+      )}
+      <div className="small-muted" style={{ marginTop: 6, fontSize: 12 }}>GST 18% is added. When the customer accepts on the quote page, the lead becomes a deal in Negotiation and you get a follow-up to collect the payment.</div>
+      {(quotes || []).length > 0 && (
+        <table style={{ marginTop: 8, fontSize: 13 }}>
+          <thead><tr><th>Quote</th><th>Items</th><th>Total</th><th>Status</th><th>Made</th><th /></tr></thead>
+          <tbody>
+            {quotes.map((q) => (
+              <tr key={q.id}>
+                <td><b>{q.number}</b></td>
+                <td>{(q.items || []).map((x) => `${x.product} ${x.plan}${x.qtyKind ? ` × ${x.qty}` : ''}`).join(', ')}<div className="small-muted">{q.billing}{q.madeBy ? ` · by ${q.madeBy}` : ''}</div></td>
+                <td>{inr(q.total)}</td>
+                <td><span className={`status ${q.status === 'Accepted' ? 'approved' : q.status === 'Declined' ? 'rejected' : 'pending'}`}>{q.status}</span></td>
+                <td className="small-muted">{dateTimeOf(q.createdAt)}</td>
+                <td><button type="button" className="btn btn-sm" onClick={() => copy(q.url, toast, 'Quote link copied.')}>Copy link</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// the settings of the whole flow (managers) and how leads move through it
+function SalesSettings() {
+  const { toast } = useCrm();
+  const [s, setS] = useState(null);
+  useEffect(() => { api.get('/crm/products-settings').then((r) => setS(r.data.settings)).catch(() => setS(null)); }, []);
+  if (!s) return null;
+  async function save() {
+    try { const r = await api.put('/crm/products-settings', s); setS(r.data.settings); toast('Saved.'); } catch (e) { toast(errOf(e, 'This could not be saved.')); }
+  }
+  return (
+    <div className="card" style={{ padding: 14, marginTop: 14 }}>
+      <h3 style={{ marginTop: 0 }}>Settings</h3>
+      <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!s.autoDemo} onChange={(e) => setS({ ...s, autoDemo: e.target.checked })} style={{ width: 'auto' }} /> Send the demo by itself to every new lead (website form or added by hand; not Excel imports), by email and WhatsApp</label>
+      <div className="grid-2" style={{ marginTop: 8 }}>
+        <label>WhatsApp template name (approved by Meta; needed for the first message to a new number)<input type="text" value={s.waTemplate || ''} onChange={(e) => setS({ ...s, waTemplate: e.target.value })} placeholder="e.g. product_demo" /></label>
+        <label>Template language<input type="text" value={s.waTemplateLang || ''} onChange={(e) => setS({ ...s, waTemplateLang: e.target.value })} placeholder="en" /></label>
+      </div>
+      <div className="small-muted" style={{ fontSize: 12 }}>The template gets two values: the person's name and the demo link. Without a template the plain message is tried, which WhatsApp only delivers if the person wrote to you in the last 24 hours.</div>
+      <label style={{ marginTop: 8 }}>How customers pay (shown after they accept a quote: bank account, UPI ID…)<textarea rows={4} value={s.paymentText || ''} onChange={(e) => setS({ ...s, paymentText: e.target.value })} /></label>
+      <div className="grid-2">
+        <label>Online payment page link (https://, optional)<input type="text" value={s.paymentLink || ''} onChange={(e) => setS({ ...s, paymentLink: e.target.value })} /></label>
+        <label>A quote is valid for (days)<input type="number" min="1" max="180" value={s.quoteValidityDays || 30} onChange={(e) => setS({ ...s, quoteValidityDays: e.target.value })} /></label>
+      </div>
+      <button type="button" className="btn btn-primary" style={{ marginTop: 10 }} onClick={save}>Save settings</button>
+    </div>
+  );
+}
+function SalesFunnel() {
+  const [days, setDays] = useState(90);
+  const [f, setF] = useState(null);
+  useEffect(() => { setF(null); api.get('/crm/products-funnel', { params: { days } }).then((r) => setF(r.data.rows || [])).catch(() => setF([])); }, [days]);
+  const cols = [['demosSent', 'Demos sent'], ['opened', 'Opened'], ['interested', 'Interested'], ['meetings', 'AI meetings'], ['goAhead', 'Go ahead'], ['quotes', 'Quotes'], ['accepted', 'Accepted'], ['won', 'Won']];
+  return (
+    <div className="card" style={{ padding: 14, marginTop: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <h3 style={{ margin: 0, flex: 1 }}>How leads move</h3>
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Period" style={{ width: 'auto' }}>{[30, 90, 180, 365].map((d) => <option key={d} value={d}>Last {d} days</option>)}</select>
+      </div>
+      <div className="small-muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>Leads counted once per step, per product.</div>
+      {f == null ? <div className="small-muted">Loading…</div> : (
+        <div className="tbl-wrap">
+          <table>
+            <thead><tr><th>Product</th>{cols.map(([, l]) => <th key={l}>{l}</th>)}</tr></thead>
+            <tbody>{f.map((r) => <tr key={r.key}><td><b>{r.name}</b></td>{cols.map(([k]) => <td key={k}>{r[k]}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -168,6 +293,8 @@ export function ProductCatalog() {
           </div>
         ))}
       </div>
+      <SalesFunnel />
+      {canEdit && <SalesSettings />}
       {watch && (
         <Modal title={`${watch.name} - demo video`} size="xwide" onClose={() => setWatch(null)}>
           <video src={watch.url} controls autoPlay playsInline style={{ width: '100%', maxHeight: '72vh', background: '#000', borderRadius: 8 }} />

@@ -369,6 +369,8 @@ async function create(user, kind, body = {}) {
   // a new lead gets its first call as a follow-up straight away (crm/sales.js firstFollowUp); an Excel import does not come through here
   let firstFollowUp = null;
   if (kind === 'lead') firstFollowUp = await require('./sales').firstFollowUp(saved).catch(() => null); // eslint-disable-line global-require
+  // our products: the product the lead wants (or guessed from the notes) and the demo, sent by itself (crm/productDeals.js; off in Our products settings)
+  if (kind === 'lead') setImmediate(() => require('./productDeals').onNewLead(saved, { products: body.products, text: body.notes }).catch(() => null)); // eslint-disable-line global-require
   return okBody({ ok: true, [kind]: saved, ...(firstFollowUp ? { firstFollowUp } : {}) });
 }
 

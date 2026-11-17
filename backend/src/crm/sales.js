@@ -191,6 +191,8 @@ async function capture(body = {}, headerKey = '') {
   const saved = await S.insert('CrmLead', {
     id: S.newId('lead'), ...c.data, ...utm, source: 'Website', status: 'New', stage: (await SETTINGS.load()).leadStages[0].name, ownerId: own ? own.id : null, ownerName: own ? own.name : null, createdById: null, createdAt: now, updatedAt: now,
   });
+  // the website form may say which product (products / product / interest = "HRMS,ATS"); else it is guessed from the message, and the demo goes by itself
+  setImmediate(() => require('./productDeals').onNewLead(saved, { products: body.products || body.product || body.interest, text: [message, body.service, body.subject].filter(Boolean).join(' ') }).catch(() => null)); // eslint-disable-line global-require
   if (own) {
     await websiteWrite({ ...v, lastOwnerId: own.id });
     await prisma.notification.create({ data: { userId: own.id, title: `New website lead: ${saved.company}`, message: `Open: /crm/leads?open=lead:${saved.id}`, channel: 'In-App', recipient: `crm-web|${saved.id}`, status: 'Sent' } }).catch(() => {});
