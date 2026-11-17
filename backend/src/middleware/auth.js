@@ -74,6 +74,12 @@ async function requireAuth(req, res, next) {
     if (await require('../utils/loginAccounts').tokenIsRevoked(claims)) { // eslint-disable-line global-require
       return res.status(401).json({ error: 'This login was signed out by an administrator. Please sign in again.', code: 'LOGIN_REVOKED' });
     }
+    // This one device signed out (by the person, from another device, by an admin) or idle too long (utils/sessions.js).
+    {
+      const ended = await require('../utils/sessions').checkClaims(claims).catch(() => null); // eslint-disable-line global-require
+      if (ended) return res.status(401).json(ended);
+      req.sessionId = claims.sid || null;
+    }
     // A person who has left (utils/leftLogin.js): Exited / Relieved keep a LIMITED login - only to download their own attendance,
     // leave records, offer letter and joining letter (utils/formerAccess.js, an exact allow-list; every other request is refused
     // here, before any role or scope check). Anyone else who has left (Terminated), an Admin-switched-off person, or a person whose

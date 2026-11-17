@@ -25,6 +25,32 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, []);
 
+  // IDLE SIGN-OUT (backend utils/sessions.js, Profile -> Signed-in devices): no mouse / keyboard / touch for the company's
+  // idle minutes -> signed out. The last activity is shared by every tab of this browser, so one busy tab keeps all alive.
+  const idleMin = (user && user.security && user.security.idleMinutes) || 0;
+  useEffect(() => {
+    if (!idleMin || viewAsToken()) return undefined;
+    const KEY = 'tl_last_activity';
+    const mark = () => { try { localStorage.setItem(KEY, String(Date.now())); } catch { /* storage blocked */ } };
+    let lastWrite = 0;
+    const onAct = () => { if (Date.now() - lastWrite > 15000) { lastWrite = Date.now(); mark(); } };
+    mark();
+    const evs = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'];
+    evs.forEach((e) => window.addEventListener(e, onAct, { passive: true }));
+    const t = setInterval(() => {
+      let last = Date.now();
+      try { last = Number(localStorage.getItem(KEY)) || Date.now(); } catch { /* storage blocked */ }
+      if (Date.now() - last > idleMin * 60000) {
+        const tok = localStorage.getItem('tl_token');
+        if (tok) api.post('/auth/logout', null, { headers: { Authorization: `Bearer ${tok}` } }).catch(() => {});
+        try { localStorage.removeItem('tl_token'); sessionStorage.setItem('tl_login_notice', `You were signed out after ${idleMin} minutes with no activity. Please sign in again.`); } catch { /* storage blocked */ }
+        clearKeptState();
+        setUser(null);
+      }
+    }, 30000);
+    return () => { clearInterval(t); evs.forEach((e) => window.removeEventListener(e, onAct)); };
+  }, [idleMin]);
+
   // The login response carries the whole resolved identity — employee record,
   // product access, ATS role, data scope, landing page — plus the permission
   // matrix the server enforces. Nothing here is chosen by the user.
@@ -79,6 +105,8 @@ export function AuthProvider({ children }) {
     // the Job Portal sessions opened from this sign-in end too (backend/src/utils/jobPortalSso.js); fire and forget
     const signedIn = localStorage.getItem('tl_token'); // read now: the token is gone before an interceptor would run
     if (signedIn) api.post('/sso/job-portal/signout', null, { headers: { Authorization: `Bearer ${signedIn}` } }).catch(() => {});
+    // this device's session ends on the server too (Profile -> Signed-in devices shows it as "signed out")
+    if (signedIn) api.post('/auth/logout', null, { headers: { Authorization: `Bearer ${signedIn}` } }).catch(() => {});
     localStorage.removeItem('tl_token');
     clearKeptState(); // the lists' kept search / filters / page (utils/useKeptState.js)
     setUser(null);

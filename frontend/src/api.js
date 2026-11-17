@@ -91,8 +91,12 @@ api.interceptors.response.use(undefined, async (error) => {
 // PASSWORD CHANGED ELSEWHERE (reset link / Admin reset): the server ends older
 // sign-ins. This browser's token is dead, so go back to the sign-in page.
 api.interceptors.response.use(undefined, (error) => {
-  if (error.response?.status === 401 && error.response?.data?.code === 'PASSWORD_CHANGED' && !viewAsToken()) {
-    try { localStorage.removeItem('tl_token'); } catch { /* nothing stored */ }
+  const endedCode = ['PASSWORD_CHANGED', 'SESSION_ENDED', 'SESSION_IDLE', 'LOGIN_REVOKED'].includes(error.response?.data?.code);
+  if (error.response?.status === 401 && endedCode && !viewAsToken()) {
+    try {
+      localStorage.removeItem('tl_token');
+      if (error.response.data.code !== 'PASSWORD_CHANGED') sessionStorage.setItem('tl_login_notice', error.response.data.error || 'Please sign in again.');
+    } catch { /* nothing stored */ }
     if (!['/login', '/forgot-password', '/new-password'].includes(window.location.pathname)) window.location.assign('/login');
   }
   throw error;

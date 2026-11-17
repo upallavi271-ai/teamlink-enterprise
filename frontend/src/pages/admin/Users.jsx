@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import GeneratePassword from '../../components/GeneratePassword.jsx';
+import { SessionsList } from '../../components/SessionsCard.jsx';
 import { PasswordBadge } from '../../components/PasswordStatus.jsx';
 import { EXIT_EMPLOYMENT, employeeStatusField, EMPLOYEE_OPENING } from '../../hrStatus';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -124,6 +125,7 @@ export default function Users() {
   // two-step sign-in (backend routes/mfa.js): who has it on; "Reset two-step" for a lost phone
   const [mfaOn, setMfaOn] = useState(() => new Set());
   const [mfaAsk, setMfaAsk] = useState(null);
+  const [devicesFor, setDevicesFor] = useState(null); // the login whose signed-in devices are open (components/SessionsCard.jsx)
   useEffect(() => { api.get('/auth/mfa/enabled').then((r) => setMfaOn(new Set(r.data.userIds || []))).catch(() => {}); }, []);
   const [resetPassword, setResetPassword] = useState('');
   // Branch / team / scope are read-only text in the table (as in the prototype);
@@ -429,6 +431,11 @@ export default function Users() {
       )}
       {error && <div className="error-text">{error}</div>}
       {notice && <div className="card section" style={{ marginBottom: 14 }}>{notice}</div>}
+      {devicesFor && (
+        <Modal title={`Signed-in devices · ${devicesFor.name}`} onClose={() => setDevicesFor(null)}>
+          <SessionsList userId={devicesFor.id} compact />
+        </Modal>
+      )}
       {/* The one-time sign-in link, shown once. Moved here with the button. */}
       {credentials && (
         <div className="card section" style={{ borderColor: credentials.sent ? undefined : 'var(--warn)' }}>
@@ -761,6 +768,8 @@ export default function Users() {
                       Sign out and switch off
                     </button>
                   )}
+                  {' '}
+                  <button className="btn btn-sm" onClick={() => setDevicesFor(u)} title="Where this login is signed in now, and its sign-ins of the last 30 days">Devices</button>
                   {mfaOn.has(u.id) && u.id !== me?.id && (
                     <>
                       {' '}

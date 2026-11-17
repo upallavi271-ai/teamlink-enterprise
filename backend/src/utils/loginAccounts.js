@@ -334,6 +334,8 @@ async function revokeSessions(userId) {
   const mark = Date.now();
   await prisma.appSetting.upsert({ where: { key: REVOKE_KEY + userId }, create: { key: REVOKE_KEY + userId, value: String(mark) }, update: { value: String(mark) } });
   revokeCache.delete(userId);
+  // the device list shows these as ended by an administrator (utils/sessions.js)
+  await require('./sessions').endAllOf(userId, 'admin').catch(() => {}); // eslint-disable-line global-require
   return mark;
 }
 

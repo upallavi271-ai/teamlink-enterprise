@@ -63,6 +63,8 @@ async function sessionPayload(identity) {
     // THE SALES CRM (2026-11-02): this login's CRM role (admin / tl = sales manager / view / bde = salesperson / null), so the
     // sidebar shows CRM to the sales team, including people an Admin added in CRM settings (crm/service.js).
     crmRole: await require('../crm/service').crmRoleFor(identity).catch(() => null), // eslint-disable-line global-require
+    // the browser signs out after this many minutes with no mouse / keyboard (utils/sessions.js; 0 = off)
+    security: { idleMinutes: await require('../utils/sessions').idleMinutes().catch(() => 0) }, // eslint-disable-line global-require
     // WHAT THIS LOGIN MAY FILTER BY, computed by utils/scope.js — the same
     // helper that decides what the lists actually return.
     //
@@ -181,7 +183,9 @@ async function finishSignIn(req, res, user, { mfaPassed = false, extra = {} } = 
   await logAudit({ userId: user.id, action: former ? 'Signed in (former employee, limited access)' : 'Signed in', entity: 'User', entityId: user.id, reason: `IP ${ipOf(req)}` });
   if (former) require('../utils/formerAccess').limit(identity, former); // eslint-disable-line global-require
   // tms = the exact millisecond, so "sign this login out" (utils/loginAccounts.js revokeSessions) can tell an old token from a new one.
-  const token = jwt.sign({ ...tokenPayload(identity), tms: Date.now() }, process.env.JWT_SECRET, { expiresIn: '8h' });
+  // one row per signed-in device (utils/sessions.js): Profile -> Signed-in devices, sign one out, the idle timeout
+  const sid = await require('../utils/sessions').open({ userId: user.id, ip: ipOf(req), userAgent: req.headers['user-agent'] }).catch(() => null); // eslint-disable-line global-require
+  const token = jwt.sign({ ...tokenPayload(identity), tms: Date.now(), ...(sid ? { sid } : {}) }, process.env.JWT_SECRET, { expiresIn: '8h' });
   return res.json({ ...extra, token, user: former ? await require('../utils/formerAccess').sessionPayload(identity) : await sessionPayload(identity) }); // eslint-disable-line global-require
 }
 
@@ -318,6 +322,9 @@ router.post('/login', async (req, res) => {
     accounts: entries.map((e, i) => ({ choice: String(i), label: e.label })),
   });
 });
+
+// Signed-in devices, sign-out, the idle timeout (routes/sessions.js).
+router.use('/', require('./sessions')); // eslint-disable-line global-require
 
 // Two-step sign-in: the code after the password, set-up, the company rule, admin reset (routes/mfa.js).
 router.use('/mfa', require('./mfa')({ finishSignIn })); // eslint-disable-line global-require
