@@ -115,6 +115,27 @@ async function handleWhatsApp(body, ctx) {
   return ctx ? { statuses, replies, unknown, rejected, mismatched } : { statuses, replies };
 }
 
+// META WANTS A QUICK 200 (live log 2026-11-17: 93,892 webhook calls in 3 hours, 19,605 cut off by Meta while we were still
+// writing - "499" - plus ~2,300 errors; every one of those Meta sends AGAIN, so a slow answer multiplied the load). The work
+// (seen counter, statuses, replies) runs in a small line - at most 4 at a time, so a burst cannot pile up database writes - and
+// the answer waits for it at most 2.5 s: done by then -> the usual counts; else 200 { queued: true } and it finishes behind.
+// (tests wait for the work itself, so they still prove what was stored; the live server answers Meta within 2.5 s)
+const WA_MAX = 4; const WA_WAIT_MS = process.env.TEST_MODE === '1' || process.env.TEAMLINK_SANDBOX === '1' ? 120000 : 2500;
+let waRunning = 0; const waLine = [];
+function waRun(job) {
+  return new Promise((resolve, reject) => {
+    const go = () => { waRunning += 1; Promise.resolve().then(job).then(resolve, reject).finally(() => { waRunning -= 1; const nx = waLine.shift(); if (nx) nx(); }); };
+    if (waRunning < WA_MAX) go(); else waLine.push(go);
+  });
+}
+async function ackWithin(job) {
+  const work = waRun(job);
+  work.catch((e) => console.error('[webhook] whatsapp (behind):', e && e.message)); // eslint-disable-line no-console
+  const late = new Promise((r) => { const t = setTimeout(() => r(null), WA_WAIT_MS); if (t.unref) t.unref(); });
+  const out = await Promise.race([work.catch(() => ({})), late]);
+  return out || { queued: true };
+}
+
 router.post('/whatsapp', async (req, res) => {
   try {
     const WN = require('../utils/waNumbers'); // eslint-disable-line global-require
@@ -125,9 +146,9 @@ router.post('/whatsapp', async (req, res) => {
       const sent = String(req.get('x-hub-signature-256') || '').replace(/^sha256=/i, '');
       const want = crypto.createHmac('sha256', cfg.appSecret).update(req.rawBody || Buffer.from('')).digest('hex');
       if (!safeEq(sent, want)) return res.status(403).json({ error: 'Bad signature' });
-      await delivery.markSeen('whatsapp');
       require('../utils/greenStartWaForward').forwardSoon(req.rawBody, req.get('x-hub-signature-256')); // eslint-disable-line global-require
-      const out = await handleWhatsApp(req.body);
+      const body0 = req.body;
+      const out = await ackWithin(async () => { await delivery.markSeen('whatsapp'); return handleWhatsApp(body0); });
       // Meta wants a quick 200; anything else makes it retry.
       return res.status(200).json({ ok: true, ...out });
     }
@@ -166,10 +187,10 @@ router.post('/whatsapp', async (req, res) => {
       } catch { /* a log line only */ }
       return res.status(403).json({ error: 'Bad signature' });
     }
-    await delivery.markSeen('whatsapp');
     // the same call to Omni-Channel's own webhook on this server, so replies show in its Channels > WhatsApp (utils/greenStartWaForward.js)
     require('../utils/greenStartWaForward').forwardSoon(raw, req.get('x-hub-signature-256')); // eslint-disable-line global-require
-    const out = await handleWhatsApp(req.body, { valid, anyValid });
+    const body1 = req.body;
+    const out = await ackWithin(async () => { await delivery.markSeen('whatsapp'); return handleWhatsApp(body1, { valid, anyValid }); });
     return res.status(200).json({ ok: true, ...out });
   } catch (err) {
     console.error('[webhook] whatsapp:', err && err.message); // eslint-disable-line no-console

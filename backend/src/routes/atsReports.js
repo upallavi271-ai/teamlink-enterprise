@@ -2886,9 +2886,15 @@ router.get('/:report/drill', VIEW, guarded(async (req, res) => {
   if (asCsv && !(await can(req.user, null, 'reports', 'ATS Reports', 'export'))) {
     return res.status(403).json({ error: 'Exporting ATS Reports is not included in your role’s permissions.' });
   }
-  const built = await build(req, reportId);
+  let built = await build(req, reportId);
   if (!built) return res.status(404).json({ error: 'No such report' });
-  const found = findCell(built.out, String(q.section || ''), String(q.row || ''), String(q.col || ''));
+  let found = findCell(built.out, String(q.section || ''), String(q.row || ''), String(q.col || ''));
+  // the snapshot can be stale or gone (a restart, a deploy): build the report afresh once before saying the figure is gone
+  // (founder 2026-11-17: "Joined · Applications - That figure is not on this report any more")
+  if (!found) {
+    built = await build(req, reportId, { fresh: true });
+    found = built && findCell(built.out, String(q.section || ''), String(q.row || ''), String(q.col || ''));
+  }
   if (!found) return res.status(404).json({ error: 'That figure is not on this report any more — refresh the report.' });
 
   const offset = Math.max(0, Number(q.offset) || 0);

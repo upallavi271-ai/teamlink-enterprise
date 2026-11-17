@@ -49,11 +49,15 @@ export default function UploadedBills({ onChanged, onCounts }) {
   const [open, setOpen] = useState(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  // onCounts is read through a ref: the parent passes a new function on every render, and having it in load's dependencies
+  // re-ran the load -> parent count -> parent render -> new onCounts -> load loop (36,000 requests in 3 hours, 2026-11-17)
+  const countsRef = useRef(onCounts);
+  countsRef.current = onCounts;
   const load = useCallback(() => {
     api.get(U, { params: { status: status || undefined, vendorId: vendorId || undefined, q: q || undefined } })
-      .then((r) => { setD(r.data); setErr(''); if (onCounts) onCounts(r.data.waiting); })
+      .then((r) => { setD(r.data); setErr(''); if (countsRef.current) countsRef.current(r.data.waiting); })
       .catch((e) => { if (e.response?.status !== 403) setErr(errText(e, 'Could not load the uploaded bills.')); });
-  }, [status, vendorId, q, onCounts]);
+  }, [status, vendorId, q]);
   useEffect(() => { const t = setTimeout(load, q ? 250 : 0); return () => clearTimeout(t); }, [load, q]);
   useEffect(() => { const t = setInterval(load, 20000); return () => clearInterval(t); }, [load]);
   useEffect(() => { if (!msg) return undefined; const t = setTimeout(() => setMsg(''), 5000); return () => clearTimeout(t); }, [msg]);

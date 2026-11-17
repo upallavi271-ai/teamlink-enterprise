@@ -85,7 +85,7 @@ export default function VendorBillsReview({ onChanged }) {
           <button type="button" role="tab" aria-selected={tabNow === 'uploads'} className={tabNow === 'uploads' ? 'on' : ''} onClick={() => setTab('uploads')}>Uploaded bills (AI read){up.waiting ? ` (${up.waiting} waiting)` : ''}</button>
         </div>
       )}
-      {tabNow === 'uploads' && <UploadedBills onChanged={onChanged} onCounts={() => loadUp()} />}
+      {tabNow === 'uploads' && <UploadedBills onChanged={onChanged} onCounts={loadUp} />}
       {tabNow === 'sent' && (<>
       <div className="vb-bar">
         <div className="vb-status">

@@ -144,9 +144,20 @@ router.get('/team/:userId', async (req, res, next) => {
 // and an AI score is never mixed into client interview feedback.
 // ---------------------------------------------------------------------------
 
+// ONLY WHAT THE CALENDAR READS (list speed, 2026-11-17): it used to load whole candidate rows, whole requirements (with the job
+// description), whole client records and the recruiter's / BDE's full login rows for every interview - ~0.9 s and 1.3 MB per open.
+// The fields below are every one shapeRecruitmentFull, interviewTypeOf, hiringTypeOf, ownerRecruiter, the person filters
+// (utils/candidateFields.js) and the Start button (utils/interviewMeet.js startState) use.
 const CALENDAR_INCLUDE = {
-  candidate: true,
-  requirement: { include: { client: true, recruiter: true, bde: true } },
+  candidate: { select: { id: true, name: true, specialization: true, specialisationId: true, education: true, qualificationId: true, currentDesignation: true, experienceYears: true } },
+  requirement: {
+    select: {
+      id: true, title: true, department: true, tl: true, tlId: true, bdeId: true, recruiterId: true, recruiterIds: true, clientId: true, internal: true, hiringType: true, positionCode: true,
+      client: { select: { id: true, name: true, contactName: true, contactEmail: true, recruitmentContactName: true, recruitmentContactEmail: true } },
+      recruiter: { select: { id: true, name: true } },
+      bde: { select: { id: true, name: true } },
+    },
+  },
   interviewEvents: { orderBy: { createdAt: 'asc' } },
   interviewFeedbacks: true,
 };
