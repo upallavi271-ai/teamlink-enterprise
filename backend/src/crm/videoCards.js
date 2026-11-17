@@ -53,8 +53,12 @@ async function add({ kind, productKey = null, title, file, duration = null, job 
 }
 const plainTitle = (job) => (job.title || String(job.fileName || 'Video').replace(/\.[a-z0-9]+$/i, '')).slice(0, 160);
 // the cards an upload makes when it is done (clip = the file just cut for an extra / company video)
-async function addForJob(job, { clip = null } = {}) {
+async function addForJob(job, opts = {}) {
   await ensure();
+  return cardsForJob(job, opts);
+}
+// (the set-up below calls this one directly: waiting for ensure() from inside it would wait for itself)
+async function cardsForJob(job, { clip = null } = {}) {
   const source = `sources/${job.id}${path.extname(job.fileName || '.mp4').toLowerCase() || '.mp4'}`;
   if (job.kind === 'all') return add({ kind: 'full', title: plainTitle(job), file: source, duration: job.duration, job });
   if (job.kind === 'single') return add({ kind: 'original', productKey: job.productKey, title: plainTitle(job), file: source, duration: job.duration, job });
@@ -68,7 +72,7 @@ async function backfill() {
   const st = await PD.settings();
   if (st.cardsFilled) return;
   const jobs = await prisma.$queryRawUnsafe('SELECT * FROM "CrmVideoJob" WHERE "status" = \'done\' AND "kind" IN (\'all\',\'single\') ORDER BY "createdAt"').catch(() => []);
-  for (const j of jobs) await addForJob(j).catch(() => null); // eslint-disable-line no-await-in-loop
+  for (const j of jobs) await cardsForJob(j).catch(() => null); // eslint-disable-line no-await-in-loop
   if (st.companyVideoFile) await add({ kind: 'company', title: st.companyVideoTitle || 'About TeamLink', file: path.basename(st.companyVideoFile) }).catch(() => null);
   for (const p of await PS.products({ all: true })) {
     for (const x of p.extraVideos || []) await add({ kind: 'extra', productKey: p.key, title: x.title, file: path.basename(x.file) }).catch(() => null); // eslint-disable-line no-await-in-loop

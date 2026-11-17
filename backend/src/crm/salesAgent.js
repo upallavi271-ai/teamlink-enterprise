@@ -287,7 +287,14 @@ async function respond({ channel, lead, message, subject }, { deps = {}, now = D
   const g = guard(out && out.reply, known, channel, meetingLink);
   if (!g.ok) return handoff(lead, channel, `The AI answer was not sent: ${g.why}.`, subject, deps);
   // a product lead: a job board, app or integration the product text does not name is not claimed (crm/productSales.js guardClaims)
-  let body = product ? require('./productSales').guardClaims(g.reply, product.knowledge) : g.reply; // eslint-disable-line global-require
+  const PS = require('./productSales'); // eslint-disable-line global-require
+  let body = product ? PS.guardClaims(g.reply, product.knowledge) : g.reply;
+  // a product lead asking the price, or a reply that gets GST wrong: the written price answer (exact plan prices, GST 18% on top)
+  if (product && (PS.isPriceQuestion(message) || !PS.gstOk(body))) {
+    const keys = PS.keysOf(lead.products);
+    const prods = (await PS.products()).filter((x) => !keys.length || keys.includes(x.key));
+    body = PS.priceAnswer(prods, /[\u0C00-\u0C7F]/.test(String(message || '')) ? 'te-IN' : 'en-IN').replace(/ At the end of this meeting[^.]*\.| ఈ మీటింగ్ చివర్లో[^.]*\.|, and at the end of this meeting you can see the exact price for your team size/g, '');
+  }
   const asked = timeAsked(message);
   // one booking at a time: a call already booked is confirmed, never booked again; another time asked for goes to a person to move it
   if (booked && (action === 'meeting' || asked)) {

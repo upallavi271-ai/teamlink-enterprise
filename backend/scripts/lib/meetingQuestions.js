@@ -7,6 +7,7 @@ const NEVER = [
   [/\b(naukri|shine|indeed|linkedin|monster)\b[^.]*\b(one[- ]click|automatic(ally)?|by itself)\b|\b(one[- ]click|automatic(ally)?)\b[^.]*\b(naukri|shine|indeed|linkedin|monster)\b/i, 'claims automatic / one-click posting to a job board'],
   [/vannet/i, 'speech-to-text garbage ("Vannet search")'],
   [/discount/i, 'talks about a discount'],
+  [/(includ\w*|inclusive)[^.]*gst|gst[^.]*(includ\w*|inclusive)|gst ?తో|gst సహా|జీఎస్టీతో/i, 'says the prices include GST (GST is extra)'],
   [/(,[^,]*){7,}/, 'a menu list instead of an answer'],
   [/\b(sap|successfactors|workday|darwinbox|keka|zoho)\b[^.]*\b(integrat\w*|connect\w*)\b(?![^.]*\b(confirm|check)\b)/i, 'claims an integration that is not in the product text'],
 ];
@@ -25,6 +26,10 @@ const QUESTIONS = [
   { id: 'Q10', product: 'ATS', lang: 'en-IN', q: 'does it work on mobile?', must: [/(phone|mobile|browser)/i], written: true },
   { id: 'Q11', product: 'HRMS', lang: 'en-IN', q: 'does payroll calculate PF and ESI?', must: [/\bPF\b/], written: true },
   { id: 'Q12', product: 'ATS', lang: 'en-IN', q: 'do you integrate with SAP SuccessFactors?', must: [/(confirm|team)/i] },
+  // price questions: the written answer, never a model (founder 2026-11-17: the local model said the prices include GST)
+  { id: 'P1', product: 'ATS', lang: 'te-IN', q: 'price entha?', must: [/₹1,499/, /GST 18%/, /అదనంగా/, /నిర్ధారిస్తారు/], written: true },
+  { id: 'P2', product: 'ATS', lang: 'en-IN', q: 'what is the cost', must: [/₹1,499/, /₹2,499/, /GST 18% is added on top/i, /confirms quotes for custom plans/i], written: true },
+  { id: 'P3', product: 'ATS', lang: 'en-IN', q: 'GST included aa?', must: [/GST 18% is added on top/i], written: true },
   { id: 'T1', product: 'ATS', lang: 'te-IN', q: 'clients ATS loki ela vastaru?', must: [] },
   { id: 'T2', product: 'ATS', lang: 'te-IN', q: 'క్లయింట్ ATS లో ఏమి చేస్తారు?', must: [] },
   { id: 'T3', product: 'HRMS', lang: 'te-IN', q: 'ఇది మొబైల్ లో పని చేస్తుందా?', must: [] },

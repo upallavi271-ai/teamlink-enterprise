@@ -452,6 +452,27 @@ const commas = (s) => (String(s || '').match(/,/g) || []).length;
 const listLike = (s) => commas(s) >= 7 || /\b(offers|includes) a (wide )?range of features\b/i.test(String(s || ''));
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9ఀ-౿ ]+/g, ' ').replace(/\s+/g, ' ').trim();
 // what the lead typed, read for this meeting: "ads" in an ATS meeting is ATS, and the usual speech slips
+// ---- PRICE QUESTIONS NEVER GO TO A MODEL (founder 2026-11-17: the local model said the prices include GST - they do not) ------------
+// "price entha?", "what is the cost", "GST included aa?" ... get the written answer: the plan prices exactly as in Our products, GST 18% on
+// top, a person confirms custom plans. Any model answer that mentions GST must say it is extra, else the written answer is used instead.
+const PRICE_Q = /\b(price|prices|pricing|priced|cost|costs|costing|charges?|fees?|subscription|rate card|tariff|gst|quote|quotation|budget)\b|\bhow much\b|\b(entha|enta|yentha|kitna|kitne)\b|ధర|ఖర్చు|రేటు|ఎంత|ఛార్జ|ఫీజు|జీఎస్టీ/i;
+const isPriceQuestion = (q) => PRICE_Q.test(String(q || ''));
+function priceAnswer(prods, lang) {
+  const te = lang === 'te-IN';
+  const lines = prods.map((p) => {
+    const pl = (p.plans || []).filter((x) => x.name);
+    if (!pl.length || !pl.some((x) => x.price)) return te ? `${p.name}: ధర మా టీమ్ కోట్ చేస్తుంది.` : `${p.name}: our team quotes the price.`;
+    return `${p.name}: ${pl.map((x) => `${x.name} ${x.price ? `${x.price} ${x.unit || ''}`.trim() : (te ? 'ధర అడిగితే చెబుతాము' : 'price on request')}`).join(', ')}.`;
+  });
+  return te
+    ? `${lines.join(' ')} ఈ ధరలకు పైన GST 18% అదనంగా కలుస్తుంది. కస్టమ్ ప్లాన్‌ల కోట్‌ను మా టీమ్‌లోని ఒక వ్యక్తి నిర్ధారిస్తారు. ఈ మీటింగ్ చివర్లో మీ టీమ్ సైజ్‌కి సరైన ధర చూడవచ్చు.`
+    : `${lines.join(' ')} GST 18% is added on top of these prices. A person from our team confirms quotes for custom plans, and at the end of this meeting you can see the exact price for your team size.`;
+}
+// a reply that mentions GST must say it is extra (on top / added / అదనం); "including GST", "GST తో", "GST సహా" are refused
+const GST_WORD = /\bgst\b|జీఎస్టీ/i;
+const GST_EXTRA = /\b(extra|on top|added|additional|plus|excluding|exclusive of|exclusive)\b|అదనం|పైన|కలుస్తుంది|కలపబడుతుంది/i;
+const GST_INCLUDED = /\b(includ\w*|inclusive|incl\.?)\b[^.]*\bgst\b|\bgst\b[^.]*\b(includ\w*|inclusive)\b|\bwith (18% )?gst\b|gst ?తో|gst సహా|జీఎస్టీతో|జీఎస్టీ సహా|gst కలిపి|జీఎస్టీ కలిపి/i;
+const gstOk = (reply) => !GST_WORD.test(String(reply || '')) || (GST_EXTRA.test(String(reply)) && !GST_INCLUDED.test(String(reply)));
 function readQuestion(q, prods) {
   const keys = prods.map((p) => p.key);
   let t = String(q || '');
@@ -502,8 +523,11 @@ async function meetingSay(token, text, lang) {
   // a question the managers answered in writing gets that answer at once (no AI wait) - English only, other languages go to the AI to translate
   let reply = other ? null : faqMatch(m.products, qn, { strong: true });
   if (reply && repeats(reply)) reply = null;
+  // a price question: the written price answer, in every language, never a model (a repeat is fine: the prices are the prices)
+  const priceQ = isPriceQuestion(q) || isPriceQuestion(qn);
+  if (priceQ) reply = priceAnswer(m.products, lang);
   let unanswered = false; let wantsHuman = false;
-  const meta = reply ? { provider: 'written' } : {};
+  const meta = reply ? { provider: 'written', ...(priceQ ? { price: true } : {}) } : {};
   // when Claude cannot answer, a written answer is used before the slow local model
   const writtenBackup = faqMatch(m.products, qn, { exclude: prevAi ? [prevAi.text] : [] });
   if (!reply) {
@@ -517,7 +541,8 @@ FACTS:
 ${kn}`;
       const history = tr.slice(-8).map((x) => ({ role: x.who === 'ai' ? 'assistant' : 'user', content: x.text }));
       history[history.length - 1] = { role: 'user', content: `${qn}${other ? `\n(Reply in ${other}.)` : ''}` };
-      const tidy = (o) => (o && typeof o.reply === 'string' ? guardClaims(guardReply(o.reply, kn), kn) : '');
+      // GST must be said to be extra: a reply that gets it wrong is replaced by the written price answer
+      const tidy = (o) => { if (!(o && typeof o.reply === 'string')) return ''; const r = guardClaims(guardReply(o.reply, kn), kn); return gstOk(r) ? r : priceAnswer(m.products, lang); };
       let out = await askAi(system, history, 'answer', meta, { localOk: !writtenBackup || !!other });
       let r = tidy(out);
       if (bad(r)) {
@@ -672,5 +697,5 @@ async function onWon(dealId) {
 module.exports = {
   PRODUCT_KEYS, ensure, products, saveProduct, setLeadProducts, demoLink, demoForToken, demoEvent, meetingLink, meetingFor, meetingSay, meetingEnd,
   meetingsOf, onWon, videoPathOf, setVideoFile, staffVideoLink, productKeys, addProduct, addExtraVideo, removeExtraVideo, extraPathOf, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
-  siteBase, note, bellOwner, followUp, leadFor, LANGS, faqMatch, knowledge, guardClaims, readQuestion, qaOf, listLike, fixWrittenText,
+  siteBase, note, bellOwner, followUp, leadFor, LANGS, faqMatch, knowledge, guardClaims, isPriceQuestion, priceAnswer, gstOk, readQuestion, qaOf, listLike, fixWrittenText,
 };

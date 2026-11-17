@@ -37,6 +37,7 @@ AI.setTestProviders({
     if (claudeDoes === 'badfallback' && body.fallbacks) { const e = new Error('fallbacks: this beta is not enabled for this account'); e.status = 400; throw e; }
     if (claudeDoes === 'refusal') return { model: body.model, stop_reason: 'refusal', content: [], usage: { input_tokens: 900, output_tokens: 5 } };
     const sys = String(body.system || '');
+    if (claudeDoes === 'gstwrong') return { model: body.model, stop_reason: 'end_turn', content: [{ type: 'text', text: reply('Yes, payroll is included, and all our prices include 18% GST.') }], usage: { input_tokens: 2000, output_tokens: 40 } };
     const text = /Summarise this sales meeting/.test(sys) ? JSON.stringify({ summary: 'Asked how clients use the ATS.', interest: 'high', budget: 'unknown', authority: 'unknown', need: 'client portal', timeline: 'unknown', objections: [], nextStep: 'Send the proposal' })
       : /Telugu/.test(sys) ? reply('క్లయింట్ తన పోర్టల్‌లో అవసరాలు పెడుతుంది, మీరు పంపిన ప్రొఫైళ్లను చూసి షార్ట్‌లిస్ట్ చేస్తుంది.')
         : reply('TeamLink ATS gives each client its own portal to raise requirements and review profiles.');
@@ -91,6 +92,15 @@ const fresh = () => { claudeCalls = []; localCalls = []; };
   fresh();
   await PS.meetingSay(tok, 'interview calendar untunda?', 'te-IN');
   check('10 ...and the next calls go without it at once (a retry for a repeated answer included)', claudeCalls.length >= 1 && claudeCalls.every((c) => !c.body.fallbacks), claudeCalls.map((c) => !!c.body.fallbacks));
+  claudeDoes = 'answer';
+
+  // a model reply that says the prices include GST is replaced by the written price answer
+  fresh(); claudeDoes = 'gstwrong';
+  const g1 = await PS.meetingSay(tok, 'interview feedback module kuda vastunda?', 'te-IN');
+  check('10b a Claude reply that says the prices include GST is not sent: the written price answer (GST 18% on top) goes instead', !/include 18% GST/i.test(g1.reply) && /GST 18%/.test(g1.reply) && /అదనంగా/.test(g1.reply), g1.reply);
+  fresh();
+  const p1 = await PS.meetingSay(tok, 'price entha?', 'te-IN');
+  check('10c "price entha?" is never sent to a model: the written price answer in Telugu', !claudeCalls.length && !localCalls.length && /GST 18%/.test(p1.reply) && /అదనంగా/.test(p1.reply) && (await lastMeta()).meta.price === true, { p1, c: claudeCalls.length, l: localCalls.length });
   claudeDoes = 'answer';
 
   // the summary at medium effort
