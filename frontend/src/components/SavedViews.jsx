@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
+import api from '../api';
 import './SavedViews.css';
 import { matchesText, noMatchText } from './searchMatch.js';
 
@@ -32,6 +33,11 @@ import { matchesText, noMatchText } from './searchMatch.js';
 // - Saved views can be renamed and deleted; presets cannot.
 // - Presets must only ever narrow what the server already scopes to the user
 //   (they are filters, not permissions) — the API decides what is visible.
+// - SHARING (ATS audit 2026-11-17): a saved view can be shared with "my team"
+//   or "everyone" (TeamLink logins). The shared copy lives on the server
+//   (/ats/team-tools/shared-views, routes/atsTeamTools.js); others see it under
+//   "Shared with me". Opening a shared view still shows only the records the
+//   viewer may see — it is the same filters, not the owner's data.
 // ---------------------------------------------------------------------------
 
 const keyFor = (storageKey, userId) => `tl.savedViews.${storageKey}.${userId || 'anon'}`;
@@ -74,7 +80,34 @@ export default function SavedViews({ storageKey, current, onApply, presets = [],
   const [name, setName] = useState('');
   const [msg, setMsg] = useState('');
   const [find, setFind] = useState('');
+  const [shareOf, setShareOf] = useState(null); // the name whose share choices are open
+  const [srv, setSrv] = useState({ mine: [], shared: [], loaded: false, myTeam: '' });
   const ref = useRef(null);
+  const staff = !!user && !['CLIENT', 'CANDIDATE'].includes(user.role) && !['CLIENT', 'CANDIDATE'].includes(user.atsRole);
+  const pageKey = String(storageKey || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 30);
+  const loadShared = () => {
+    if (!staff || !pageKey) return;
+    api.get('/ats/team-tools/shared-views', { params: { page: pageKey } })
+      .then((r) => setSrv({ mine: r.data.mine || [], shared: r.data.shared || [], myTeam: r.data.myTeam || '', loaded: true }))
+      .catch(() => setSrv((x) => ({ ...x, loaded: true })));
+  };
+  useEffect(() => { if (open) loadShared(); }, [open, pageKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sharedMine = (n) => srv.mine.find((v) => v.name.toLowerCase() === String(n).toLowerCase()) || null;
+  async function shareView(v, share) {
+    setMsg('');
+    try {
+      const r = await api.post('/ats/team-tools/shared-views', { page: pageKey, name: v.name, filters: v.filters, share });
+      setMsg(r.data.ok || 'Shared.');
+      loadShared();
+    } catch (e) { setMsg(e?.response?.data?.error || 'Could not share it.'); }
+    setShareOf(null);
+  }
+  async function unshare(n, quiet) {
+    const s0 = sharedMine(n);
+    if (!s0) return;
+    try { await api.delete(`/ats/team-tools/shared-views/${s0.id}`); if (!quiet) setMsg('No longer shared.'); loadShared(); } catch (e) { if (!quiet) setMsg(e?.response?.data?.error || 'Could not stop sharing.'); }
+    setShareOf(null);
+  }
 
   useEffect(() => { setViews(readViews(key)); }, [key]);
   useEffect(() => {
@@ -110,18 +143,27 @@ export default function SavedViews({ storageKey, current, onApply, presets = [],
       const entry = { name: n, filters: copy(current), savedAt: new Date().toISOString() };
       persist(clash >= 0 ? views.map((v, i) => (i === clash ? entry : v)) : [...views, entry]);
       setMsg(clash >= 0 ? `Updated "${n}".` : `Saved "${n}".`);
+      const was = clash >= 0 ? sharedMine(views[clash].name) : null;
+      if (was) api.post('/ats/team-tools/shared-views', { page: pageKey, name: views[clash].name, filters: entry.filters, share: was.share }).then(loadShared).catch(() => {});
     } else {
       if (clash >= 0 && clash !== naming.index) { setMsg('You already have a view with that name.'); return; }
+      const old = views[naming.index];
       persist(views.map((v, i) => (i === naming.index ? { ...v, name: n } : v)));
       setMsg('');
+      const was = sharedMine(old.name);
+      if (was && old.name !== n) {
+        api.post('/ats/team-tools/shared-views', { page: pageKey, name: n, filters: old.filters, share: was.share })
+          .then(() => api.delete(`/ats/team-tools/shared-views/${was.id}`)).then(loadShared).catch(() => {});
+      }
     }
     setNaming(null);
   }
   function remove(index) {
     const v = views[index];
     // eslint-disable-next-line no-alert
-    if (!window.confirm(`Delete the saved view "${v.name}"?`)) return;
+    if (!window.confirm(`Delete the saved view "${v.name}"?${sharedMine(v.name) ? ' It also stops being shared.' : ''}`)) return;
     persist(views.filter((_, i) => i !== index));
+    unshare(v.name, true);
   }
 
   return (
@@ -159,12 +201,33 @@ export default function SavedViews({ storageKey, current, onApply, presets = [],
                 <button type="button" role="menuitem" className="savedviews-item" onClick={() => apply(v)}>
                   <span className="savedviews-check">{active === v.name ? '✓' : ''}</span>
                   <span className="savedviews-name">{v.name}</span>
+                  {sharedMine(v.name) && <span className="savedviews-tag">{sharedMine(v.name).share === 'everyone' ? 'shared: everyone' : 'shared: team'}</span>}
                 </button>
+                {staff && <button type="button" className="savedviews-icon" title={`Share "${v.name}"`} aria-label={`Share ${v.name}`} aria-expanded={shareOf === v.name} onClick={() => setShareOf(shareOf === v.name ? null : v.name)}>⇪</button>}
                 <button type="button" className="savedviews-icon" title={`Rename "${v.name}"`} aria-label={`Rename ${v.name}`} onClick={() => startRename(i)}>✎</button>
                 <button type="button" className="savedviews-icon danger" title={`Delete "${v.name}"`} aria-label={`Delete ${v.name}`} onClick={() => remove(i)}>×</button>
+                {shareOf === v.name && (
+                  <div className="savedviews-share">
+                    <button type="button" className="btn btn-sm" onClick={() => shareView(v, 'team')} title={srv.myTeam ? `Your team: ${srv.myTeam}` : undefined}>Share with my team</button>
+                    <button type="button" className="btn btn-sm" onClick={() => shareView(v, 'everyone')}>Share with everyone</button>
+                    {sharedMine(v.name) && <button type="button" className="btn btn-sm btn-ghost" onClick={() => unshare(v.name)}>Stop sharing</button>}
+                  </div>
+                )}
               </div>
             )
           ))}
+          {staff && srv.shared.some((v) => matchesText(v.name, find)) && (
+            <>
+              <div className="savedviews-head">Shared with me</div>
+              {srv.shared.filter((v) => matchesText(v.name, find)).map((v) => (
+                <button key={`sh-${v.id}`} type="button" role="menuitem" className={`savedviews-item${same(v.filters, current) ? ' on' : ''}`} onClick={() => apply(v)} title={`Shared by ${v.by || 'a colleague'} with ${v.share === 'everyone' ? 'everyone' : `the team (${v.teamLabel || ''})`}. You see only your own records.`}>
+                  <span className="savedviews-check">{same(v.filters, current) ? '✓' : ''}</span>
+                  <span className="savedviews-name">{v.name}</span>
+                  <span className="savedviews-tag">{`by ${v.by || '—'}`}</span>
+                </button>
+              ))}
+            </>
+          )}
           <div className="savedviews-foot">
             {naming && naming.mode === 'new' ? (
               <form className="savedviews-form" onSubmit={commitName}>

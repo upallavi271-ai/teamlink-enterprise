@@ -855,6 +855,8 @@ router.get('/client', perm(CLIENT_VIEW, 'view'), wrap(async (req, res) => {
       publishedAt: r.portalPublishedAt,
       sharedCandidates: byRequirement.get(r.id) || 0,
       raisedAt: r.createdAt,
+      // Requirement ageing (ATS audit 2026-11-17): "Open for N days" while the requirement is live.
+      openDays: requirementIsLive(r.status) && r.createdAt ? Math.max(0, Math.floor((Date.now() - new Date(r.createdAt).getTime()) / 86400000)) : null,
     })),
     candidates: shared.map((a) => ({
       applicationId: a.id,

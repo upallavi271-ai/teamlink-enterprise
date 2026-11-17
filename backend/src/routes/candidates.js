@@ -63,9 +63,10 @@ const { isPreAtsApplication } = require('../utils/atsVocab');
 const CS = require('../utils/candidateSource');
 // WHEN DID THEY COME: one date + one trust word per person (utils/cameOn.js), used by the list, the Sources tab, the exports and the profile.
 const CAME = require('../utils/cameOn');
-const clientSearch = require('../utils/clientSearch');
+const clientSearch = require('../utils/clientSearch'); // old client names are searchable (ClientAlias)
 const PD = require('../utils/candidateProfileDepth'); // tags (the ?tag= filter) - profile depth 2026-11-17
-setTimeout(() => { PD.ready().catch(() => {}); }, 3000).unref(); // the tag index, so the first ?tag= facet count is not empty // old client names are searchable (ClientAlias)
+setTimeout(() => { PD.ready().catch(() => {}); }, 3000).unref(); // the tag index, so the first ?tag= facet count is not empty
+const BS = require('../utils/booleanSearch'); // (java OR kotlin) AND "spring boot" NOT intern - the boolean search box
 
 const router = express.Router();
 router.use(requireAuth);
@@ -760,6 +761,7 @@ async function buildPagedRows(user, st, s, shared = false) {
   const aliasOf = viewerKind(user) === 'client' ? new Map() : await clientSearch.aliasMap();
   // The joining day of the people who joined (one read for the few joined applications that carry no day of their own).
   const joinMoves = await JL.movesFor(candidates.flatMap((c) => c.applications || []));
+  const bdeView = isBdeViewer(user);
   return candidates.map((c) => {
     const row = decorate(c, { user, sharedIds, followUps: st.followUps });
     // Came on: the date + how far to trust it (utils/cameOn.js). TeamLink logins only (a client / the candidate is served none).
@@ -798,6 +800,7 @@ async function buildPagedRows(user, st, s, shared = false) {
       row.name, row.email, row.phone, row.skills, row.requirementId,
       ...apps.map((a) => (a.requirement ? `${a.requirement.title} ${a.requirement.client ? a.requirement.client.name : ''} ${(aliasOf.get(a.requirement.clientId) || []).join(' ')}` : '')),
     ].filter(Boolean).join(' ').toLowerCase();
+    row.xhay = boolHayOf(c, bdeView);
     row.phoneDigits = String(row.phone || '').replace(/\D/g, '');
     return row;
   });
@@ -860,12 +863,48 @@ function expBandOf(y) {
   return b ? b[0] : 'none';
 }
 
-function rowMatches(r, q, ctx, { skipStage = false } = {}) {
-  if (ctx.search) {
-    const digits = ctx.search.replace(/\D/g, '');
-    const phoneHit = digits.length >= 4 && r.phoneDigits.includes(digits);
-    if (!r.hay.includes(ctx.search) && !phoneHit) return false;
+// BOOLEAN SEARCH (utils/booleanSearch.js). The extra words a boolean search also reads - skills of every kind, designation,
+// current company, location, specialisation - kept apart from the plain search text so a plain search finds exactly what it did.
+// A BDE never receives where a person lives or works (utils/clientRedact.js), so a BDE's search never reads those either.
+const isBdeViewer = (user) => require('../utils/scope').clientViewRole(user) === 'bde'; // eslint-disable-line global-require
+function boolHayOf(c, bde = false) {
+  return (bde ? [c.skills, c.technicalSkills, c.goodToHaveSkills, c.currentDesignation, c.specialization]
+    : [c.skills, c.technicalSkills, c.goodToHaveSkills, c.currentDesignation, c.currentCompany, c.location, c.preferredLocation, c.specialization])
+    .filter(Boolean).join(' ').toLowerCase();
+}
+// The search part of the list's filters: { search, bool, resumeHits, searchMode, searchError }. Plain words: unchanged.
+async function searchCtxOf(user, raw, personIds) {
+  const text = String(raw || '').trim();
+  const ctx = { search: text.toLowerCase(), personIds, searchMode: text ? 'plain' : null };
+  if (text && BS.looksBoolean(text)) {
+    const p = BS.parse(text);
+    if (p.ast) {
+      ctx.bool = p;
+      ctx.searchMode = 'boolean';
+      // the stored resume text: TeamLink logins only (a client / candidate login never searches inside a resume)
+      ctx.resumeHits = viewerKind(user) === 'internal' && !isBdeViewer(user) ? await BS.resumeHits(p.terms) : new Map();
+    } else ctx.searchError = p.error;
   }
+  return ctx;
+}
+function searchHit(r, ctx) {
+  if (ctx.bool) {
+    const cid = r.candidateId || r.id;
+    return BS.evaluate(ctx.bool.ast, (t) => {
+      if (r.hay.includes(t) || (r.xhay && r.xhay.includes(t))) return true;
+      const digits = t.replace(/\D/g, '');
+      if (digits.length >= 4 && /^[\d\s+()-]+$/.test(t) && r.phoneDigits.includes(digits)) return true;
+      const hits = ctx.resumeHits && ctx.resumeHits.get(t);
+      return !!(hits && hits.has(cid));
+    });
+  }
+  const digits = ctx.search.replace(/\D/g, '');
+  const phoneHit = digits.length >= 4 && r.phoneDigits.includes(digits);
+  return r.hay.includes(ctx.search) || phoneHit;
+}
+
+function rowMatches(r, q, ctx, { skipStage = false } = {}) {
+  if (ctx.search && !searchHit(r, ctx)) return false;
   if (q.location && r.location !== q.location) return false;
   if (q.new === '1' && !isNewRow(r)) return false;
   if (q.source && !sourceSetOf(q.source).has(r.sourceKey)) return false;
@@ -999,9 +1038,11 @@ async function buildPipelineRows(user, st, s, snap) {
   const joinedMoveAt = await JL.movesFor(candidates.flatMap((c) => c.applications || []));
   let preAts = 0;
   let people = 0;
+  const bdeView = isBdeViewer(user);
   candidates.forEach((c) => {
     const apps = s.global ? (c.applications || []) : visibleApplications(user, c.applications, sharedIds);
     if (s.global || apps.length) people += 1;
+    const xhay = boolHayOf(c, bdeView); // one string per person, shared by their rows
     const inAts = apps.filter((a) => !isPreAtsApplication(a));
     const co = internalViewer ? CAME.cameOnOf(c, c.applications, bulkDays) : null;
     preAts += apps.length - inAts.length;
@@ -1124,6 +1165,7 @@ async function buildPipelineRows(user, st, s, snap) {
         && !['CANCELLED', 'NO_SHOW'].includes(a.interviewStatus);
       row.hay = [c.name, c.email, c.phone, r ? r.title : '', r ? r.reqCode : '', row.clientName, ...(r && r.clientId ? aliasOf.get(r.clientId) || [] : []), a.requirementId]
         .filter(Boolean).join(' ').toLowerCase();
+      row.xhay = xhay;
       row.phoneDigits = String(c.phone || '').replace(/\D/g, '');
       rows.push(row);
     });
@@ -1143,11 +1185,7 @@ function pipelineStageMatches(r, q) {
   return true;
 }
 function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
-  if (ctx.search) {
-    const digits = ctx.search.replace(/\D/g, '');
-    const phoneHit = digits.length >= 4 && r.phoneDigits.includes(digits);
-    if (!r.hay.includes(ctx.search) && !phoneHit) return false;
-  }
+  if (ctx.search && !searchHit(r, ctx)) return false;
   if (q.location && r.location !== q.location) return false;
   if (q.new === '1' && !isNewRow(r)) return false;
   if (q.source && !sourceSetOf(q.source).has(r.sourceKey)) return false;
@@ -1240,7 +1278,7 @@ function salaryLakhs(v) {
   if (/k/.test(s.slice(m.index + m[0].length, m.index + m[0].length + 2))) return (n * 1000 * 12) / 100000;
   return n >= 1000 ? n / 100000 : n;
 }
-const PIPELINE_HIDDEN = ['hay', 'phoneDigits', 'mine', 'interviewToday'];
+const PIPELINE_HIDDEN = ['hay', 'xhay', 'phoneDigits', 'mine', 'interviewToday'];
 function pipelineOut(r) {
   const out = { ...r };
   PIPELINE_HIDDEN.forEach((k) => { delete out[k]; });
@@ -1308,7 +1346,7 @@ async function pipelineList(req, res, sub) {
   const q = req.query;
   const quick = QUEUES[q.quick] ? q.quick : null;
   const att = hasPersonQuery(q) ? await attributedApplications(req.user, q) : null;
-  const ctx = { search: String(q.search || '').trim().toLowerCase(), personIds: att ? att.ids : null };
+  const ctx = await searchCtxOf(req.user, q.search, att ? att.ids : null);
   const built = await pipelineRowsFor(req.user);
   // cand7_: archived people are not part of any pipeline count.
   const all = q.archived === '1' ? built.rows : built.rows.filter((r) => !r.archived);
@@ -1395,6 +1433,8 @@ async function pipelineList(req, res, sub) {
     sort: sorted.sortKey,
     dir: sorted.dir === 1 ? 'asc' : 'desc',
     scopeTotal: all.length,
+    searchMode: ctx.searchMode || null, // 'boolean' when AND / OR / NOT / "phrase" / ( ) was read as a boolean search
+    searchError: ctx.searchError || null,
     counts: {
       views: { pipeline: all.length, master: built.people, jobPortal: built.preAts },
       subs,
@@ -1450,7 +1490,7 @@ function lastApplicationActivity(row, snap) {
 async function masterList(req, res, sub) {
   const q = req.query;
   const att = hasPersonQuery(q) ? await attributedApplications(req.user, q) : null;
-  const ctx = { search: String(q.search || '').trim().toLowerCase(), personIds: att ? att.ids : null };
+  const ctx = await searchCtxOf(req.user, q.search, att ? att.ids : null);
   const snap = await ensureNextActionContext();
   const days = inactiveDaysOf(q);
   const cutoff = Date.now() - days * 86400000;
@@ -1535,6 +1575,8 @@ async function masterList(req, res, sub) {
     sort: sorted.sortKey,
     dir: sorted.dir === 1 ? 'asc' : 'desc',
     scopeTotal: all.length,
+    searchMode: ctx.searchMode || null, // 'boolean' when AND / OR / NOT / "phrase" / ( ) was read as a boolean search
+    searchError: ctx.searchError || null,
     inactiveDays: days,
     counts: {
       views: { pipeline: pipe.rows.length, master: all.length, jobPortal: pipe.preAts },
@@ -1553,7 +1595,7 @@ async function masterList(req, res, sub) {
 async function masterSourceFacet(user, q) {
   const sub = MASTER_SUBS.includes(String(q.sub || '').toLowerCase()) ? String(q.sub).toLowerCase() : 'all';
   const att = hasPersonQuery(q) ? await attributedApplications(user, q) : null;
-  const ctx = { search: String(q.search || '').trim().toLowerCase(), personIds: att ? att.ids : null };
+  const ctx = await searchCtxOf(user, q.search, att ? att.ids : null);
   const all = await pagedRowsFor(user);
   const qq = { ...q, stage: '', followUp: '', source: '' };
   const days = inactiveDaysOf(q);
@@ -1587,7 +1629,7 @@ async function peopleFor(user, q, skip = [], personCache = new Map()) {
     if (!personCache.has(key)) personCache.set(key, attributedApplications(user, qq).then((a) => (a ? a.ids : null)));
     ids = await personCache.get(key);
   }
-  const ctx = { search: String(qq.search || '').trim().toLowerCase(), personIds: ids };
+  const ctx = await searchCtxOf(user, qq.search, ids);
   const all = await pagedRowsFor(user);
   return { all, rows: all.filter((r) => r.profileStatus !== 'Archived' && rowMatches(r, qq, ctx)) };
 }
@@ -2557,7 +2599,7 @@ async function pipelineHistoryFor(applications, kind) {
 require('./candidatesBoard')(router, {
   pipelineRowsFor, pipelineRowMatches, QUEUES, hasPersonQuery, attributedApplications, loadInScope, viewerKind,
   // ATS layout v3: the Candidates cards.
-  pagedRowsFor, rowMatches, availableForMatching, contactAgeDays,
+  pagedRowsFor, rowMatches, availableForMatching, contactAgeDays, searchCtxOf,
 });
 
 // The seat shown next to the recruiter's name: the seat THAT recruiter held on the application day (HRMS > Positions), so
@@ -3858,6 +3900,7 @@ module.exports = router;
 // over the pipeline's own rows with its own matcher.
 module.exports.pipelineRowsFor = pipelineRowsFor;
 module.exports.pipelineRowMatches = pipelineRowMatches;
+module.exports.searchCtxOf = searchCtxOf;
 // resume_ (routes/candidateResumes.js): the same record scope + viewer kind.
 module.exports.loadInScope = loadInScope;
 module.exports.viewerKind = viewerKind;

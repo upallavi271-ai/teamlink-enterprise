@@ -63,6 +63,22 @@ export default function ScheduleInterview({
   const [error, setError] = useState('');
   const [listErr, setListErr] = useState('');
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  // TEAM AVAILABILITY (ATS audit 2026-11-17): once a person, a date and the panel are picked, ask the server what the panel (and the
+  // candidate) already have that day; a clash within the hour is shown as a warning and the button says "Book anyway".
+  const [slot, setSlot] = useState(null);
+  const panelKey = panel.map((p) => p.userId || p.name).join('|');
+  useEffect(() => {
+    if (!chosen || !form.date || !panel.length) { setSlot(null); return undefined; }
+    let live = true;
+    const t = setTimeout(() => {
+      api.post('/ats/team-tools/slot-check', {
+        applicationId: chosen.id, date: form.date, time: form.time || '',
+        panel: panel.map((p) => (p.userId ? { userId: p.userId } : { name: p.name })),
+      }).then((r) => { if (live) setSlot(r.data); }).catch(() => { if (live) setSlot(null); });
+    }, 300);
+    return () => { live = false; clearTimeout(t); };
+  }, [chosen && chosen.id, form.date, form.time, panelKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const clashes = (slot && form.time && slot.clashes) || [];
 
   // Shortlisted people first; typing finds anyone else in your area.
   useEffect(() => {
@@ -117,7 +133,7 @@ export default function ScheduleInterview({
       onClose={onClose}
       footer={(
         <button type="button" className="btn btn-primary" disabled={busy || !ready} onClick={submit}>
-          {busy ? 'Booking…' : 'Book interview'}
+          {busy ? 'Booking…' : clashes.length ? 'Book anyway' : 'Book interview'}
         </button>
       )}
     >
@@ -196,6 +212,37 @@ export default function ScheduleInterview({
           <PanelPicker value={panel} onChange={setPanel} />
           <div className="ivx-hint">One or more people. Each gives their own feedback; the final decision is still one.</div>
         </div>
+
+        {slot && (
+          <div className="ivx-sec" aria-live="polite">
+            <b>{`The panel's day (${form.date.split('-').reverse().join('/')})`}</b>
+            {clashes.length > 0 && (
+              <div className="error-text" style={{ margin: '4px 0 6px' }}>
+                {clashes.map((c, i) => (
+                  // eslint-disable-next-line react/no-array-index-key
+                  <div key={i}>{c.kind === 'candidate' ? `Clash: ${c.who} already has an interview at ${c.time}${c.job ? ` (${c.job})` : ''}.` : `Clash: ${c.who} already has an interview at ${c.time}${c.candidate && c.candidate !== 'Another interview' ? ` with ${c.candidate}` : ''}.`}</div>
+                ))}
+              </div>
+            )}
+            {slot.booked.length ? (
+              <div className="small-muted" style={{ display: 'grid', gap: 2, fontSize: 12 }}>
+                {slot.booked.map((b, i) => (
+                  // eslint-disable-next-line react/no-array-index-key
+                  <div key={i} style={b.clash && form.time ? { color: 'var(--red, #b91c1c)' } : undefined}>{`${b.time} · ${b.interviewers.join(', ')} · ${b.candidate || 'Interview'}${b.job ? ` (${b.job})` : ''}`}</div>
+                ))}
+              </div>
+            ) : <div className="small-muted" style={{ fontSize: 12 }}>Nothing booked for the panel that day.</div>}
+            {slot.freeTimes && slot.freeTimes.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6, alignItems: 'center' }}>
+                <span className="small-muted" style={{ fontSize: 12 }}>Free:</span>
+                {slot.freeTimes.slice(0, 12).map((t) => (
+                  <button key={t} type="button" className={`btn btn-sm${form.time === t ? ' btn-primary' : ''}`} onClick={() => set({ time: t })}>{t}</button>
+                ))}
+              </div>
+            )}
+            <div className="ivx-hint">{`An interview is taken as ${slot.windowMinutes || 60} minutes. A clash is a warning only; you can still book.`}</div>
+          </div>
+        )}
 
         {/* The button is greyed until these are filled — say why. */}
         {!ready && !busy && <div className="ivx-hint">Pick a person, date, time and at least one interviewer first.</div>}

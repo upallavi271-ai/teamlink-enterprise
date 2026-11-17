@@ -377,6 +377,7 @@ export default function ClientPortal() {
                     <td>
                       <Chip label={r.status} tone={r.waitingForTeamLink ? 'amber' : undefined} />
                       {r.waitingForTeamLink && <div className="tlp-meta">{r.handledBy ? `With ${r.handledBy}` : 'With the TeamLink team'}</div>}
+                      {r.openDays != null && <div className="tlp-meta" title={r.raisedAt ? `Raised on ${new Date(r.raisedAt).toLocaleDateString('en-GB')}` : undefined}>{`Open for ${r.openDays} day${r.openDays === 1 ? '' : 's'}`}</div>}
                     </td>
                     <td>{r.shared}</td>
                     <td>{r.waitingForYou ? <button type="button" className="btn btn-sm" onClick={() => { setReqFilter(r.id); setShow('waiting'); setTab('candidates'); }}>{r.waitingForYou} →</button> : 0}</td>

@@ -1572,6 +1572,9 @@ router.post('/interviews/:id/book', mayBookHere, async (req, res) => {
     linkWarning = chk.warning || null;
   }
   if (!interviewer) return res.status(400).json({ error: 'Add who will take the interview (one or more people).' });
+  // CLASHES (ATS audit 2026-11-17): the panel or the candidate already booked within the hour. A warning in the reply, never a block
+  // (the booking window checks the same thing first, utils/interviewClash.js, and shows the panel's day).
+  const clash = await require('../utils/interviewClash').check({ user: req.user, applicationId: app.id, date, time, panel: panelEntries || [], interviewer: b.interviewer || '' }).catch(() => null); // eslint-disable-line global-require
   // ROUND (layout v3, the user brought it back): the popup sends the round;
   // left out, it is the next round after feedback, else the same round.
   let round = suggestedRoundOf(app);
@@ -1657,6 +1660,7 @@ router.post('/interviews/:id/book', mayBookHere, async (req, res) => {
     if (rule.mode === 'masked' || !rule.allowed) whatsapp = whatsapp.map((l) => (l.to === 'candidate' ? { ...l, phone: null, url: null, masked: true } : l));
   } catch { /* the cut is applied on failure below */ whatsapp = whatsapp.map((l) => (l.to === 'candidate' ? { ...l, phone: null, url: null, masked: true } : l)); }
   const parts = [`Booked: Round ${round}, ${IN.when(interviewAt)}.`];
+  if (clash && clash.warning) parts.push(clash.warning);
   if (told.people.length) parts.push(`App notice sent to ${told.people.join(', ')}.`);
   parts.push(invites.message);
   if (linkWarning) parts.push(linkWarning);
@@ -1674,6 +1678,7 @@ router.post('/interviews/:id/book', mayBookHere, async (req, res) => {
     meetingLink: meetingLink || null,
     linkWarning,
     whatsapp,
+    clashes: clash && clash.clashes ? clash.clashes : [],
     message: parts.join(' '),
   });
 });

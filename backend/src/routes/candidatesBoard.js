@@ -178,7 +178,7 @@ module.exports = function mountCandidatesBoard(router, deps) {
       if (viewerKind(req.user) !== 'internal') return res.status(403).json({ error: 'The Progress board is for TeamLink staff.' });
       const per = Math.min(PER_COLUMN_MAX, Math.max(5, parseInt(q.perColumn, 10) || PER_COLUMN_DEFAULT));
       const att = hasPersonQuery(q) ? await attributedApplications(req.user, q) : null;
-      const ctx = { search: String(q.search || '').trim().toLowerCase(), personIds: att ? att.ids : null };
+      const ctx = await deps.searchCtxOf(req.user, q.search, att ? att.ids : null);
       const quick = QUEUES[q.quick] ? q.quick : null;
       const built = await pipelineRowsFor(req.user);
       // The board shows steps, so the Status filter is not used here — Hold
@@ -379,7 +379,7 @@ module.exports = function mountCandidatesBoard(router, deps) {
       if (viewerKind(req.user) !== 'internal') return res.status(403).json({ error: 'These counts are for TeamLink staff.' });
       const q = req.query;
       const att = hasPersonQuery(q) ? await attributedApplications(req.user, q) : null;
-      const ctx = { search: String(q.search || '').trim().toLowerCase(), personIds: att ? att.ids : null };
+      const ctx = await deps.searchCtxOf(req.user, q.search, att ? att.ids : null);
       const qq = {
         ...q, stage: '', status: '', contactAge: '', available: '', followUp: '',
       };

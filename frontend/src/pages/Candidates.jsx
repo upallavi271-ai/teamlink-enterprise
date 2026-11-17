@@ -53,6 +53,7 @@ import { WaOptInModal } from '../components/wa/WaOptIn.jsx';
 import { useWaConfig, waMayUse } from '../components/wa/waKit.js';
 import { useReachRights } from '../components/reach/reachKit.js';
 import SavedViews from '../components/SavedViews.jsx';
+import BooleanHint from '../components/BooleanHint.jsx'; // the boolean search line under the search box
 import CandidateDuplicatePanel from '../components/CandidateDuplicatePanel.jsx';
 import { SalaryFitChips, SalaryFields, AddSalaryDialog, salaryCheck } from '../components/SalaryFit.jsx'; // required salary + Salary fit chips (utils/salaryFit.js)
 import FitBreakdown, { useFitBreakdown } from '../components/match/FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary (four small chips)
@@ -1740,6 +1741,7 @@ export default function Candidates() {
               <ListToolbar
                 search={filters.search}
                 onSearch={(v) => setFilter({ search: v })}
+                searchHint={<BooleanHint text={filters.search} mode={data?.searchMode} error={data?.searchError} />}
                 placeholder="Search name, phone, email, requirement…"
                 filterCount={filterCount}
                 panel={(
@@ -1985,6 +1987,7 @@ export default function Candidates() {
           <ListToolbar
             search={filters.search}
             onSearch={(v) => setFilter({ search: v })}
+            searchHint={<BooleanHint text={filters.search} mode={data?.searchMode} error={data?.searchError} />}
             placeholder="Search name, phone, email or requirement…"
             filterCount={filterCount}
             panel={(

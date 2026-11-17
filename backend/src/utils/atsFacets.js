@@ -197,7 +197,8 @@ async function candidateFacets(user, q) {
     const { sub } = cand.normaliseViewSub(q.view, q.sub);
     rows = rows.filter((r) => cand.inPipelineSub(sub, r));
   }
-  const search = String(q.search || '').trim().toLowerCase();
+  // the search box, boolean or plain, read once (routes/candidates.js searchCtxOf)
+  const base = typeof cand.searchCtxOf === 'function' ? await cand.searchCtxOf(user, q.search, null) : { search: String(q.search || '').trim().toLowerCase() };
   // Person filters resolve through attribution (utils/workers.js) — once per
   // distinct combination.
   const attCache = new Map();
@@ -212,7 +213,7 @@ async function candidateFacets(user, q) {
   for (const f of CAND_FACETS) {
     const qq = without(q, f.key === 'recruiter' ? ['recruiter', 'positionCode'] : [f.key]);
     // eslint-disable-next-line no-await-in-loop
-    const ctx = { search, personIds: await personIds(qq) };
+    const ctx = { ...base, personIds: await personIds(qq) };
     const counts = new Map();
     const labels = new Map();
     const seen = f.perPerson ? new Set() : null;
@@ -248,7 +249,7 @@ async function candidateFacets(user, q) {
     return { facets, total: m.total };
   }
   await labelBdeOptions(facets.bde); // "Name · BDE MED" (value stays name:<name>)
-  const ctxAll = { search, personIds: await personIds(q) };
+  const ctxAll = { ...base, personIds: await personIds(q) };
   const total = rows.filter((r) => match(r, q, ctxAll)).length;
   return { facets, total };
 }

@@ -323,6 +323,9 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
       handledBy: yourContact ? yourContact.label : null,
       live: requirementIsLive(r.status),
       raisedAt: r.createdAt,
+      // REQUIREMENT AGEING (founder ATS audit 2026-11-17): "Open for N days" on every live requirement the client sees - the same
+      // count the TeamLink requirement list shows (days since it was raised, routes/requirements.js daysOpen).
+      openDays: requirementIsLive(r.status) && r.createdAt ? Math.max(0, Math.floor((Date.now() - new Date(r.createdAt).getTime()) / 86400000)) : null,
       shared: count(r.id, () => true),
       waitingForYou: count(r.id, (a) => ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(a.stage)),
       interviews: count(r.id, (a) => ['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED'].includes(a.stage)),

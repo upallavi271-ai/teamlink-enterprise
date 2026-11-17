@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { assignKinds } from '../components/jobs/reqActions.js';
 import api from '../api';
 import Modal from '../components/Modal.jsx';
+import CompareCandidates from '../components/applications/CompareCandidates.jsx'; // 2-4 people of this job side by side
 import Combo from '../components/Combo.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
 // WORKFLOW ACTIONS ARE NOT VIEW/EDIT. The stages this login OWNS come from
@@ -272,6 +273,10 @@ export default function RequirementDetail() {
   const [fitSort, setFitSort] = useState(''); // '' | 'desc' | 'asc'
   const [srcFilter, setSrcFilter] = useState(''); // Source filter: a comma list of clean sources
   const [msgOpen, setMsgOpen] = useState(false);
+  // COMPARE (ATS audit 2026-11-17): tick 2-4 people on "People in process", then Compare.
+  const [comparePick, setComparePick] = useState([]);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const togglePick = (appId) => setComparePick((was) => (was.includes(appId) ? was.filter((x) => x !== appId) : was.length >= 4 ? was : [...was, appId]));
   const [shareOpen, setShareOpen] = useState(false); // the one "Share" button's choices
   // Department-wise assign (RequirementBulk → /requirements/assignable-people?forJobs=<id>).
   const [bulkAssign, setBulkAssign] = useState(null); // 'assign-recruiter' | 'assign-tl'
@@ -803,6 +808,13 @@ export default function RequirementDetail() {
             {srcOptions.length > 0 && (
               <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={srcFilter} onChange={setSrcFilter} options={srcOptions} title="Where the person came from" />
             )}
+            {applications.length > 1 && (
+              <button type="button" className={`btn btn-sm${comparePick.length >= 2 ? ' btn-primary' : ''}`} disabled={comparePick.length < 2} title="Tick 2 to 4 people in the list, then compare them side by side" onClick={() => setCompareOpen(true)}>
+                {comparePick.length ? `Compare (${comparePick.length})` : 'Compare'}
+              </button>
+            )}
+            {comparePick.length > 0 && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setComparePick([])}>Clear ticks</button>}
+            {compareOpen && <CompareCandidates ids={comparePick} onClose={() => setCompareOpen(false)} />}
             <button type="button" className="btn btn-sm" onClick={toCandidatesPage}>Open in Candidates →</button>
             {pipeRows.length > 0 && <button type="button" className="btn btn-sm btn-primary" title="Send an Email, SMS or WhatsApp to the people shown here" onClick={() => setMsgOpen(true)}>Message these {pipeRows.length}</button>}
             {msgOpen && (
@@ -819,10 +831,20 @@ export default function RequirementDetail() {
         <div className="tbl-wrap">
           <table>
             {/* Source + Applied (Save & Post spec §20): where each person came from — the site of the apply link (?src=) or how they were added. */}
-            <thead><tr><th>Candidate</th><th>Step</th><th>Fit %</th>{hasFit && <th><button type="button" className="link-btn" title="Sort by Salary fit" onClick={() => setFitSort(fitSort === 'desc' ? 'asc' : fitSort === 'asc' ? '' : 'desc')}>{`Salary fit${fitSort === 'desc' ? ' ↓' : fitSort === 'asc' ? ' ↑' : ''}`}</button></th>}<th>Source</th><th>Applied</th><th>Updated</th><th>Move to step</th></tr></thead>
+            <thead><tr><th style={{ width: 28 }} title="Tick 2 to 4 people to compare" aria-label="Compare" /><th>Candidate</th><th>Step</th><th>Fit %</th>{hasFit && <th><button type="button" className="link-btn" title="Sort by Salary fit" onClick={() => setFitSort(fitSort === 'desc' ? 'asc' : fitSort === 'asc' ? '' : 'desc')}>{`Salary fit${fitSort === 'desc' ? ' ↓' : fitSort === 'asc' ? ' ↑' : ''}`}</button></th>}<th>Source</th><th>Applied</th><th>Updated</th><th>Move to step</th></tr></thead>
             <tbody>
               {paged.slice.map((a) => (
                 <tr key={a.id} {...rowClickProps(() => navigate(`/candidates/${a.candidateId || a.candidate?.id}`), { href: `/candidates/${a.candidateId || a.candidate?.id}` })}>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Compare ${a.candidate?.name || a.candidateName || 'this person'}`}
+                      checked={comparePick.includes(a.id)}
+                      disabled={!comparePick.includes(a.id) && comparePick.length >= 4}
+                      title={!comparePick.includes(a.id) && comparePick.length >= 4 ? 'At most 4 people at a time' : 'Tick to compare'}
+                      onChange={() => togglePick(a.id)}
+                    />
+                  </td>
                   <td>
                     <Link to={`/candidates/${a.candidateId || a.candidate?.id}`}>{a.candidate?.name || a.candidateName}</Link>
                     {(a.candidate?.location || a.candidate?.experienceYears != null) && (
@@ -851,7 +873,7 @@ export default function RequirementDetail() {
                 </tr>
               ))}
               {pipeRows.length === 0 && (
-                <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>{applications.length ? (srcWanted.size ? 'No one at this step from these sources.' : 'No one at this step.') : 'No one added yet. Add a candidate below.'}</td></tr>
+                <tr><td colSpan="9" className="small-muted" style={{ padding: 16 }}>{applications.length ? (srcWanted.size ? 'No one at this step from these sources.' : 'No one at this step.') : 'No one added yet. Add a candidate below.'}</td></tr>
               )}
             </tbody>
           </table>

@@ -472,6 +472,8 @@ app.use('/api/ats/hierarchy', require('./routes/atsHierarchy'));
 // The actual workflow with live counts per box (routes/atsWorkflow.js).
 app.use('/api/ats/workflow', require('./routes/atsWorkflow'));
 app.use('/api/ats/joining-ctc', require('./routes/joiningCtc')); // the joined candidate's yearly CTC, entered by the requirement's BDE / BDE TL / Admin
+// Compare candidates, interview clash check, shared saved filters, leave cover (routes/atsTeamTools.js). Ahead of the calendar-gated /api/ats routers.
+app.use('/api/ats/team-tools', require('./routes/atsTeamTools'));
 app.use('/api/ats', atsExtrasRoutes);
 // Interviews & Joining (Interview Feedback, Offers, Joining, Internal Hiring)
 // shares the /api/ats prefix with the calendar above.
@@ -661,6 +663,8 @@ const server = app.listen(PORT, () => {
   require('./utils/interviewNotices').startSweep();
   // A recruiter who left: their candidates go to the recruiter on the job following them up now, every hour (utils/leaverHandover.js).
   require('./utils/leaverHandover').startSweep();
+  // ON LEAVE TODAY: their due follow-ups / tasks go to their backup or TL, and come back after the leave (utils/leaveCover.js), hourly
+  require('./utils/leaveCover').startSweep();
   // TAMPER-EVIDENT AUDIT: new audit rows are sealed into a hash chain every 5 minutes (utils/auditSeal.js); the read log keeps 365 days.
   require('./utils/auditSeal').start();
   setInterval(() => { require('./utils/readLog').prune().catch(() => {}); require('./utils/apiErrors').prune().catch(() => {}); }, 24 * 3600000).unref?.();

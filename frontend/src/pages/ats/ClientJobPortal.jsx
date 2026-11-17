@@ -163,7 +163,10 @@ function ClientJobPortal() {
                   <td className="cell-muted">{r.department || '—'}</td>
                   <td className="cell-muted">{r.location || '—'}</td>
                   <td className="cell-muted">{r.openings || 1}</td>
-                  <td className="cell-muted">{fmt(r.raisedAt)}</td>
+                  <td className="cell-muted">
+                    {fmt(r.raisedAt)}
+                    {r.openDays != null && <div className="small-muted" style={{ fontSize: 11.5 }}>{`Open for ${r.openDays} day${r.openDays === 1 ? '' : 's'}`}</div>}
+                  </td>
                   <td>
                     {r.published
                       ? <span className="status active">Published{r.publishedAt ? ` · ${fmt(r.publishedAt)}` : ''}</span>

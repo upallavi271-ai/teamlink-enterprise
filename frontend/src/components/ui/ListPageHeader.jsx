@@ -88,7 +88,7 @@ export function ListToolbar({
   search, onSearch, onSearchSubmit, placeholder = 'Search…', searchWidth = 280,
   filterCount = 0, panel, panelFooter, defaultOpen = false,
   sort, sortOptions, onSort, sortExtra,
-  savedViews, right, chips = [], onClearAll, className = '',
+  savedViews, right, chips = [], onClearAll, className = '', searchHint = null,
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const wrap = useRef(null);
@@ -136,6 +136,7 @@ export function ListToolbar({
         {savedViews}
         {right && <span className="lph-right">{right}</span>}
       </div>
+      {searchHint && <div className="small-muted lph-search-hint" style={{ fontSize: 11.5, margin: '4px 0 0 2px' }}>{searchHint}</div>}
       {hasPanel && open && (
         <div className="lph-panel" role="region" aria-label="Filters">
           <div className="lph-panel-grid">{panel}</div>

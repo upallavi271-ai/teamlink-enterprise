@@ -49,6 +49,8 @@ const CANDIDATE_SELECT = {
   specialization: true,
   // ... and Qualification / Designation the same way (2026-11-17)
   education: true, currentDesignation: true,
+  // Boolean search (2026-11-17): current company and the other skill lists are searched too (routes/candidates.js boolHayOf).
+  currentCompany: true, technicalSkills: true, goodToHaveSkills: true, preferredLocation: true,
   // B7: the partner who owns this person (the "Partner: X" badge).
   ownerPartnerId: true, ownerUntil: true,
 };
