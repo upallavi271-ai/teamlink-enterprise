@@ -228,7 +228,7 @@ const EMPTY_FILTERS = {
   // Deadline: overdue | week | month | none (routes/requirements.js listWhere).
   deadline: '',
   // spec D: master Qualification / Specialization ids ('none' = not mapped yet).
-  qualificationId: '', specialisationId: '',
+  qualificationId: '', specialisationId: '', title: '',
   // ATS layout v3: the status chain people see (?dstatus=, display only).
   dstatus: '',
 };
@@ -988,11 +988,8 @@ export default function Requirements() {
       {/* Specialization is always shown, with its counts (founder 2026-11-17: "specialization meedha click cheyyagane radiology 7, cardiology 8 ...; aa
           specialization click chesthe aa clients names dropdown lo raavali"): picking one narrows the Client list to the clients with such requirements. */}
       {role !== 'accounts' && <FacetSelect label="Specialization" allLabel="All specializations" value={filters.specialisationId} options={fo('specialisationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ specialisationId: v })} />}
-      {role !== 'accounts' && (!canFilter.hierarchy || h.department || filters.qualificationId) && (
-        <>
-          <FacetSelect label="Qualification" allLabel="Any qualification" value={filters.qualificationId} options={fo('qualificationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ qualificationId: v })} />
-        </>
-      )}
+      {role !== 'accounts' && <FacetSelect label="Qualification" allLabel="All qualifications" value={filters.qualificationId} options={fo('qualificationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ qualificationId: v })} />}
+      {role !== 'accounts' && <FacetSelect label="Designation" allLabel="All designations" value={filters.title} options={fo('title')} loading={facetsLoading} onChange={(v) => setDraftFilter({ title: v })} />}
       {canFilter.hiring && <FacetSelect label="Client / Internal" allLabel="Client and internal" value={filters.type} options={fo('type')} onChange={(v) => setDraftFilter({ type: v })} />}
     </>
   );

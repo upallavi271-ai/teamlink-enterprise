@@ -158,7 +158,7 @@ const EMPTY_FILTERS = {
   // Last contact · Rejected before.
   qualificationId: '', specialisationId: '', owner: '', contact: '', rejectedBefore: '',
   // Specialization (with counts: Radiology 7, Cardiology 8 ...) and Experience bands (founder 2026-11-17).
-  spec: '', expBand: '',
+  spec: '', expBand: '', qual: '', desig: '',
   // Rejections (spec 2026-10-03 §A1): the Rejected tab — whose decision · reason.
   rejSide: '', rejReason: '',
   // ATS layout v3 cards: "Not followed up 7+ / 30+ days" (pipeline) and
@@ -1998,6 +1998,8 @@ export default function Candidates() {
               </span>
             </span>
             <FacetSelect label="Specialization" allLabel="All specializations" value={filters.spec} onChange={(v) => setFilter({ spec: v })} options={withCurrent(facets.spec, filters.spec)} loading={facetsLoading} title="Radiology, Cardiology, CSE ... with how many people each. Picking one narrows the Client list to the clients they are with." />
+            <FacetSelect label="Qualification" allLabel="All qualifications" value={filters.qual} onChange={(v) => setFilter({ qual: v })} options={withCurrent(facets.qual, filters.qual)} loading={facetsLoading} title="MBBS, B.Sc Nursing, M.Tech ... with how many people each" />
+            <FacetSelect label="Designation" allLabel="All designations" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={withCurrent(facets.desig, filters.desig)} loading={facetsLoading} title="The person's current designation, with how many people each" />
             <FacetSelect label="Experience" allLabel="Any experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={withCurrent(['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean), filters.expBand)} loading={facetsLoading} />
             <FacetSelect label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
             {main === 'pipeline' && (
@@ -2032,8 +2034,6 @@ export default function Candidates() {
                   </Combo>
                 </PanelField>
                 <HierarchyFilter value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
-                <FacetSelect label="Qualification" allLabel="Any qualification" value={filters.qualificationId} onChange={(v) => setFilter({ qualificationId: v })} options={withCurrent(facets.qualificationId, filters.qualificationId)} loading={facetsLoading} />
-                <FacetSelect label="Specialization" allLabel="Any specialization" value={filters.specialisationId} onChange={(v) => setFilter({ specialisationId: v })} options={withCurrent(facets.specialisationId, filters.specialisationId)} loading={facetsLoading} />
                 {show.source && (
                   <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={(facets.source || []).map((o) => ({ ...o, label: sourceLabel(o.value) }))} loading={facetsLoading} title="Where the person came from" />
                 )}

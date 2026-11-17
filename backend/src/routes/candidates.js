@@ -848,6 +848,7 @@ function specText(s) {
   return t.split(' ').map((w) => (w.length <= 4 && w === w.toUpperCase() ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())).join(' ').slice(0, 60);
 }
 const specOf = (c, specL) => (specL && c.specialisationId && specL.spec(c.specialisationId)) || specText(c.specialization);
+const qualOf = (c, specL) => (specL && c.qualificationId && specL.qual(c.qualificationId)) || specText(c.education);
 const EXP_BANDS = [['0-1', 0, 1], ['1-3', 1, 3], ['3-5', 3, 5], ['5-10', 5, 10], ['10+', 10, Infinity]];
 function expBandOf(y) {
   if (y === null || y === undefined || y === '') return 'none';
@@ -872,6 +873,8 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (q.qualificationId && (r.qualificationId || 'none') !== q.qualificationId) return false;
   if (q.specialisationId && (r.specialisationId || 'none') !== q.specialisationId) return false;
   if (q.spec && (r.spec || 'none') !== q.spec) return false;
+  if (q.qual && (r.qual || 'none') !== q.qual) return false;
+  if (q.desig && (r.desig || 'none') !== q.desig) return false;
   if (q.expBand && (r.expBand || 'none') !== q.expBand) return false;
   if (q.status) {
     const wanted = String(q.status).split(',');
@@ -1082,6 +1085,8 @@ async function buildPipelineRows(user, st, s, snap) {
         specialisationName: specL && c.specialisationId ? specL.spec(c.specialisationId) : null,
         spec: specOf(c, specL), // the Specialization filter (with counts): master name, else the profile's own words
         expBand: expBandOf(c.experienceYears), // the Experience filter: 0-1, 1-3, 3-5, 5-10, 10+ years
+        qual: qualOf(c, specL), // the Qualification filter: master name, else the profile's own words
+        desig: specText(c.currentDesignation), // the Designation filter (current designation)
         archived: c.profileStatus === 'Archived',
         doNotUse: c.profileStatus === 'Do Not Use',
         rejectedCount: rjIx ? (rjIx.byCandidate.get(c.id) || []).length : 0,
@@ -1186,6 +1191,8 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (q.qualificationId && (r.qualificationId || 'none') !== q.qualificationId) return false;
   if (q.specialisationId && (r.specialisationId || 'none') !== q.specialisationId) return false;
   if (q.spec && (r.spec || 'none') !== q.spec) return false;
+  if (q.qual && (r.qual || 'none') !== q.qual) return false;
+  if (q.desig && (r.desig || 'none') !== q.desig) return false;
   if (q.expBand && (r.expBand || 'none') !== q.expBand) return false;
   if (q.owner && ownerKeyOf(r) !== q.owner) return false;
   if (q.rejectedBefore === 'yes' && !(r.rejectedCount > 0)) return false;

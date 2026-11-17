@@ -46,7 +46,7 @@ async function stop(code) {
   const years = [0.5, 2, 4, 7, 12, null];
   for (let i = 0; i < ids.length; i += 1) {
     // eslint-disable-next-line no-await-in-loop
-    await prisma.candidate.update({ where: { id: ids[i] }, data: { specialization: words[i], specialisationId: null, experienceYears: years[i], profileStatus: 'Active' } });
+    await prisma.candidate.update({ where: { id: ids[i] }, data: { specialization: words[i], specialisationId: null, experienceYears: years[i], profileStatus: 'Active', education: i < 3 ? ['mbbs', 'MBBS', 'Mbbs '][i] : 'M.Tech', qualificationId: null, currentDesignation: i < 2 ? 'staff nurse' : 'Senior Consultant' } });
   }
   const adminRow = (await prisma.user.findMany({ where: { status: 'Active', role: 'SUPER_ADMIN' }, take: 5 })).find((u) => !/zztest|example\.test/i.test(`${u.name}${u.email}`));
   await prisma.user.update({ where: { id: adminRow.id }, data: { passwordResetRequired: false, passwordChangedAt: new Date(Date.now() - 86400000) } });
@@ -82,6 +82,26 @@ async function stop(code) {
   check('picking Radiology narrows the Client options to the clients those people are with', clientsRad > 0 && clientsRad < clientsAll, [clientsAll, clientsRad]);
   const e = await get('/candidates?paged=1&view=pipeline&sub=all&expBand=5-10&pageSize=200');
   check('an Experience band lists only people inside it', (e.body.rows || []).length >= 1 && (e.body.rows || []).every((r) => r.experienceYears >= 5 && r.experienceYears < 10), (e.body.rows || []).map((r) => r.experienceYears).slice(0, 10));
+
+  console.log('Qualification and Designation (2026-11-17)');
+  const f3 = await get('/ats-io/facets/candidates?view=pipeline&sub=all');
+  const qual = (f3.body.facets.qual || []); const desig = (f3.body.facets.desig || []);
+  check('Qualification options with counts: "mbbs", "MBBS", "Mbbs " count together as MBBS (3+)', (qual.find((o) => o.value === 'MBBS') || {}).count >= 3, qual.slice(0, 6));
+  check('Designation options with counts: "staff nurse" shows as Staff Nurse (2+)', (desig.find((o) => o.value === 'Staff Nurse') || {}).count >= 2, desig.slice(0, 6));
+  const lq = await get('/candidates?paged=1&view=pipeline&sub=all&qual=MBBS&pageSize=200');
+  const pq = await prisma.candidate.findMany({ where: { id: { in: [...new Set((lq.body.rows || []).map((r) => r.candidateId || r.id))] } }, select: { id: true, education: true, qualificationId: true } });
+  check('picking MBBS lists only MBBS people', pq.length >= 3 && pq.every((c) => /^mbbs$/i.test(String(c.education || '').trim()) || !!c.qualificationId) , pq.map((c) => c.education).slice(0, 6));
+  const ld = await get('/candidates?paged=1&view=pipeline&sub=all&desig=Staff%20Nurse&pageSize=200');
+  check('picking Staff Nurse lists our two staff nurses', ids.slice(0, 2).every((id) => (ld.body.rows || []).some((r) => (r.candidateId || r.id) === id)));
+  const rf = await get('/ats-io/facets/requirements');
+  const titles = (rf.body && rf.body.facets && rf.body.facets.title) || [];
+  check('Requirements: a Designation option list with counts (the requirement titles)', titles.length > 0 && titles.every((o) => typeof o.count === 'number'), titles.slice(0, 3));
+  if (titles.length) {
+    const t = titles[0];
+    const rl = await get(`/requirements?title=${encodeURIComponent(t.value)}`);
+    const rrows = (rl.body && (rl.body.rows || rl.body.requirements || rl.body.items)) || (Array.isArray(rl.body) ? rl.body : []);
+    check('picking a Designation lists only requirements with that title', rl.status === 200 && rrows.length > 0 && rrows.every((x) => x.title === t.value), [rl.status, rrows.length]);
+  }
 
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);

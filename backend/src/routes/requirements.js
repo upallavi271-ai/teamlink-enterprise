@@ -661,6 +661,7 @@ async function listWhere(req) {
   // spec D: Qualification / Specialization filters (master ids).
   if (q.qualificationId) and.push({ qualificationId: q.qualificationId === 'none' ? null : q.qualificationId });
   if (q.specialisationId) and.push({ specialisationId: q.specialisationId === 'none' ? null : q.specialisationId });
+  if (q.title) and.push({ title: String(q.title) }); // the Designation filter (2026-11-17)
   // ?type=client | internal — the Client | Internal split of the actual
   // workflow (internal hiring is not a separate module; it is this filter).
   if (q.type === 'internal') and.push({ internal: true });

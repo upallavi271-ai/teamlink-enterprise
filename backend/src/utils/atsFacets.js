@@ -84,9 +84,10 @@ async function requirementFacets(user, q) {
   } catch { /* the primary counts stand */ }
   // spec D: Qualification / Specialization (master ids), cascading like the
   // rest; a requirement not mapped yet counts under 'none' ("Not mapped yet").
-  const [qualF, specF] = await Promise.all([
+  const [qualF, specF, titleF] = await Promise.all([
     group('qualificationId', ['qualificationId']),
     group('specialisationId', ['specialisationId']),
+    group('title', ['title']), // Designation = the requirement's role title (2026-11-17)
   ]);
   const specLabels = await require('./specialisations').labelsFor(); // eslint-disable-line global-require
   const noneKey = (m) => new Map([...m.entries()].map(([k, n]) => [k == null ? 'none' : k, n]));
@@ -128,6 +129,7 @@ async function requirementFacets(user, q) {
       deadline,
       qualificationId: finish(noneKey(qualF), (v) => (v === 'none' ? 'Not mapped yet' : specLabels.qual(v) || 'Unknown'), q.qualificationId),
       specialisationId: finish(noneKey(specF), (v) => (v === 'none' ? 'Not mapped yet' : specLabels.spec(v) || 'Unknown'), q.specialisationId),
+      title: finish(titleF, null, q.title),
     },
   };
 }
@@ -153,6 +155,8 @@ const CAND_FACETS = [
   { key: 'specialisationId', get: (r) => r.specialisationId || 'none', label: (r) => (r.specialisationId ? r.specialisationName || 'Unknown' : 'Not mapped yet') },
   // Specialization / Experience (founder 2026-11-17): counted per person, the master name or the profile's own words; experience in bands.
   { key: 'spec', perPerson: true, get: (r) => r.spec || 'none', label: (r) => r.spec || 'Not given' },
+  { key: 'qual', perPerson: true, get: (r) => r.qual || 'none', label: (r) => r.qual || 'Not given' },
+  { key: 'desig', perPerson: true, get: (r) => r.desig || 'none', label: (r) => r.desig || 'Not given' },
   { key: 'expBand', perPerson: true, get: (r) => r.expBand || 'none', label: null, labelOf: (v) => (v === 'none' ? 'Not given' : `${v} years`) },
   // cand7_ (Candidates §7): Owner = whose move it is now; Rejected before; Last
   // contact (a row can sit in several contact buckets, so get() returns a list).
