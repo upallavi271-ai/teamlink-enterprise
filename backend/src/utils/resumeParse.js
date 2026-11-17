@@ -254,18 +254,49 @@ function parseLocation(text) {
   return null;
 }
 
+// --- other languages (Telugu / Hindi) ---------------------------------------
+// The free parser reads English words. A resume written (partly) in Telugu or Hindi script still gives its e-mail, phone and name:
+// Telugu / Devanagari digits are read as 0-9, and a name line in either script (or after "పేరు:" / "नाम:") is taken. Skills,
+// education and experience words stay English-only here; the AI pass (RESUME_AI_EXTRACT=1) translates the whole resume.
+const SCRIPTS = [['Telugu', /[ఀ-౿]/g], ['Hindi', /[ऀ-ॿ]/g]];
+function detectLanguages(text) {
+  const t = String(text || '');
+  const latin = (t.match(/[A-Za-z]/g) || []).length;
+  const found = [];
+  SCRIPTS.forEach(([lang, re]) => { const n = (t.match(re) || []).length; if (n >= 8) found.push({ lang, chars: n }); });
+  const other = found.reduce((a, b) => a + b.chars, 0);
+  const langs = found.sort((a, b) => b.chars - a.chars).map((x) => x.lang);
+  if (latin >= 20 || !langs.length) { if (latin >= other) langs.unshift('English'); else langs.push('English'); }
+  return [...new Set(langs)];
+}
+// Telugu (U+0C66-0C6F) and Devanagari (U+0966-096F) digits -> 0-9, so phones and years are found.
+function asciiDigits(text) {
+  return String(text || '').replace(/[౦-౯]/g, (d) => String(d.charCodeAt(0) - 0x0C66)).replace(/[०-९]/g, (d) => String(d.charCodeAt(0) - 0x0966));
+}
+const NAME_LABEL = /^(name|full\s*name|candidate\s*name|resume|curriculum vitae|cv|పేరు|పూర్తి\s*పేరు|नाम|पूरा\s*नाम)\s*[:\-–]?\s*/i;
+const INDIC_NAME = /^[ఀ-౿ऀ-ॿ][ఀ-౿ऀ-ॿ.' ]{1,50}$/;
+const INDIC_HEADINGS = /రెజ్యూమ్|బయోడేటా|వివరాలు|परिचय|बायोडाटा|विवरण|रिज्यूमे/;
+
 function parseName(text) {
   const lines = String(text).split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 8);
   for (const line of lines) {
-    const clean = line.replace(/^(name|resume|curriculum vitae|cv)\s*[:\-–]?\s*/i, '').trim();
+    const clean = line.replace(NAME_LABEL, '').trim();
     if (/^[A-Za-z][A-Za-z.' ]{2,50}$/.test(clean) && clean.split(/\s+/).length >= 2 && clean.split(/\s+/).length <= 5
       && !/resume|curriculum|vitae|profile|objective|summary/i.test(clean)) return clean.replace(/\s+/g, ' ');
+  }
+  // A Telugu / Hindi resume: the name written in that script (a labelled line first, else a short line at the top).
+  for (const line of lines) {
+    const labelled = NAME_LABEL.test(line);
+    const clean = line.replace(NAME_LABEL, '').trim();
+    const words = clean.split(/\s+/).length;
+    if (INDIC_NAME.test(clean) && words >= (labelled ? 1 : 2) && words <= 5 && !INDIC_HEADINGS.test(clean)) return clean.replace(/\s+/g, ' ');
   }
   return null;
 }
 
 async function parseResumeText(text, { vocabulary } = {}) {
-  const t = String(text || '');
+  const languages = detectLanguages(text);
+  const t = asciiDigits(text);
   const lower = t.toLowerCase();
   const vocab = vocabulary || await skillVocabulary();
   const skills = vocab.filter((s) => textHasTerm(lower, s));
@@ -281,6 +312,9 @@ async function parseResumeText(text, { vocabulary } = {}) {
     education: edu.list,
     highestEducation: edu.highest,
     location: parseLocation(t),
+    // ['English'] for most; ['Telugu', 'English'] etc. when another script is in the text (the AI pass translates it)
+    languages,
+    otherLanguage: languages.some((l) => l !== 'English'),
   };
 }
 
@@ -292,7 +326,8 @@ async function parseWithAi(text) {
   const ai = require('./ai');
   const system = 'You extract fields from a resume. Return JSON with keys: name (string|null), emails (string[]), '
     + 'phones (string[]), skills (string[] of short skill names, lowercase), totalExperienceYears (number|null), '
-    + 'highestEducation (string|null), education (string[]), location (current city, string|null). Use null when unknown.';
+    + 'highestEducation (string|null), education (string[]), location (current city, string|null). Use null when unknown. '
+    + 'The resume may be in Telugu, Hindi or another language: translate every value to English (names in English letters).';
   const out = await ai.chatJson(system, [{ role: 'user', content: String(text).slice(0, 15000) }]);
   return out && typeof out === 'object' ? out : null;
 }
@@ -353,4 +388,5 @@ function resumeOwnerCheck(parsed, person) {
 
 module.exports = {
   extractText, parseResumeText, extractAndParse, skillVocabulary, textHasTerm, parsePhones, aiEnabled, resumeOwnerCheck,
+  detectLanguages, asciiDigits, parseName, parseExperienceYears, BUILTIN_SKILLS,
 };

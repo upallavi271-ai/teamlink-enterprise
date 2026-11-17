@@ -127,6 +127,11 @@ function Details({ v }) {
         </div>
       </div>
       {v.extractError && <div className="notice amber" style={{ margin: '10px 0 0' }}>{v.extractError}</div>}
+      {(p.languages || []).some((l) => l !== 'English') && (
+        <div className="notice" style={{ margin: '10px 0 0' }}>
+          {`This resume has ${p.languages.filter((l) => l !== 'English').join(' and ')} text. The free parser read the e-mail, phone and name; skills and experience are read from English words only. The AI pass (when it is switched on) translates the whole resume.`}
+        </div>
+      )}
       <div className="small-muted rsm-note">
         {`Read from ${v.label} by the ${v.parser === 'free+claude' ? 'free parser + Claude' : 'free parser'}. Used for the Resume % in every match.`}
       </div>

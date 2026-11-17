@@ -159,6 +159,8 @@ const EMPTY_FILTERS = {
   qualificationId: '', specialisationId: '', owner: '', contact: '', rejectedBefore: '',
   // Specialization (with counts: Radiology 7, Cardiology 8 ...) and Experience bands (founder 2026-11-17).
   spec: '', expBand: '', qual: '', desig: '',
+  // A free tag on the person (the profile's Career tab, 2026-11-17).
+  tag: '',
   // Rejections (spec 2026-10-03 §A1): the Rejected tab — whose decision · reason.
   rejSide: '', rejReason: '',
   // ATS layout v3 cards: "Not followed up 7+ / 30+ days" (pipeline) and
@@ -669,6 +671,14 @@ export default function Candidates() {
   }, [baseParams]);
   const { facets, loading: facetsLoading } = useFacets('candidates', facetParams, { enabled: main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'contacts' });
   const facetLabel = (key, value) => ((facets[key] || []).find((o) => String(o.value) === String(value)) || {}).label;
+  // The Tag filter's options: every tag with how many people carry it (GET /candidates/profile-tags; TeamLink logins only).
+  const [tagOptions, setTagOptions] = useState([]);
+  useEffect(() => {
+    if (!user || (user.role === 'CLIENT' || user.role === 'CANDIDATE')) return undefined;
+    let live = true;
+    api.get('/candidates/profile-tags').then((r) => { if (live) setTagOptions(r.data.tags || []); }).catch(() => {});
+    return () => { live = false; };
+  }, [user]);
   // How it works: the count at each step, over everything in your area with
   // the other filters on; a click shows the people at that step.
   // v4: the same request also feeds the KPI tiles, Needs attention and the
@@ -1034,6 +1044,7 @@ export default function Candidates() {
     { key: 'smiss', label: 'Salary', value: main === 'master' && filters.salaryMissing === '1' ? 'Missing' : '', onRemove: () => setFilter({ salaryMissing: '' }) },
     { key: 'qual', label: 'Qualification', value: filters.qualificationId ? (facetLabel('qualificationId', filters.qualificationId) || 'selected') : '', onRemove: () => setFilter({ qualificationId: '' }) },
     { key: 'spec', label: 'Specialization', value: filters.specialisationId ? (facetLabel('specialisationId', filters.specialisationId) || 'selected') : '', onRemove: () => setFilter({ specialisationId: '' }) },
+    { key: 'tag', label: 'Tag', value: filters.tag || '', onRemove: () => setFilter({ tag: '' }) },
     { key: 'owner', label: 'Owner', value: main === 'pipeline' && filters.owner ? (facetLabel('owner', filters.owner) || 'selected') : '', onRemove: () => setFilter({ owner: '' }) },
     { key: 'contact', label: 'Last contact', value: main === 'pipeline' && filters.contact ? (facetLabel('contact', filters.contact) || filters.contact) : '', onRemove: () => setFilter({ contact: '' }) },
     { key: 'rej', label: 'Rejected before', value: main === 'pipeline' && filters.rejectedBefore ? ((REJECTED_BEFORE.find((x) => x[0] === filters.rejectedBefore) || [])[1] || '') : '', onRemove: () => setFilter({ rejectedBefore: '' }) },
@@ -2002,6 +2013,7 @@ export default function Candidates() {
             <FacetSelect label="Designation" allLabel="All designations" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={withCurrent(facets.desig, filters.desig)} loading={facetsLoading} title="The person's current designation, with how many people each" />
             <FacetSelect label="Experience" allLabel="Any experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={withCurrent(['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean), filters.expBand)} loading={facetsLoading} />
             <FacetSelect label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
+            <FacetSelect label="Tag" allLabel="Any tag" value={filters.tag} onChange={(v) => setFilter({ tag: v })} options={withCurrent(tagOptions, filters.tag)} title="A tag added on the person's Career tab (count = people with it)" />
             {main === 'pipeline' && (
               <FacetSelect
                 label="Salary fit"

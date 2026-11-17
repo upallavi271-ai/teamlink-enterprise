@@ -337,6 +337,8 @@ export const SETUP_TABS = [
   leaf('📋', '/admin/master-lists', 'Master lists', [['administration', 'Company Setup', 'view']]),
   { ...leaf('⏰', '/admin/step-timing', 'Step timing', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) },
   { ...leaf('🧹', '/admin/data-cleanup', 'Data cleanup', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) },
+  // Custom fields on the candidate profile (founder audit 2026-11-17) - Super Admin / Admin define them.
+  { ...leaf('🧾', '/admin/candidate-fields', 'Candidate fields', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) },
   { ...leaf('🎯', '/admin/fit', 'Fit settings', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) },
   // Vendor portal (P3): vendor logins — Admin, or an Accounts desk login (the server allows only Accounts approvers).
   // Vendor portal (P3 / v2 §3): Super Admin / Admin, or a login that already manages users or holds the Vendor Logins grant.

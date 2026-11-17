@@ -125,6 +125,7 @@ function metaFor(r, internal) {
       emails: parsed.emails || [],
       phones: parsed.phones || [],
       name: parsed.name || null,
+      languages: parsed.languages || null, // Telugu / Hindi script found: the free parser read only e-mail, phone and name lines
     } : null,
   };
 }

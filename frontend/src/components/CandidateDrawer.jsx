@@ -17,6 +17,7 @@ import ConversationView from './messaging/ConversationView.jsx'; // omnichannel 
 import CommunicationTimeline from './messaging/CommunicationTimeline.jsx'; // one communication timeline (Omni-Channel)
 import ProfileLeft, { ResumeTabCard } from './candidate/ProfileLeft.jsx';
 import { RecordDocuments } from './candidate/CandidateRecord.jsx'; // ATS-100 B5
+import CareerProfile from './candidate/CareerProfile.jsx'; // the Career tab (education, jobs, gaps, progression, summary, tags, custom fields)
 import FollowUpLog from './clients/FollowUpLog.jsx';
 import {
   FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot, AddApplicationSlot, AiCallingSlot,
@@ -232,6 +233,7 @@ export default function CandidateDrawer({
             {tab === 'followups' && internal && <FollowUpLog key={c.id} candidateId={c.id} applicationId={app ? app.id : undefined} />}
             {/* The Resume card — its own tab, no longer on the left. */}
             {tab === 'resume' && <ResumeTabCard c={c} />}
+            {tab === 'career' && internal && <CareerProfile c={c} />}
             </div>
             </div>
           </div>

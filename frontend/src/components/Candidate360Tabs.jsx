@@ -48,6 +48,8 @@ export const candidateCode = (id) => `CAN-${String(id || '').slice(-8).toUpperCa
 export const C360_TABS = [
   ['applications', 'Overview'], // the whole profile: personal info, work facts, skills, consent and the applications
   ['resume', 'Resume'], // the Resume card (file, Edit resume, versions, facts) — was on the left of the page
+  // 2026-11-17 (founder audit): education list, employment history, gaps, career progression, summary, tags, custom fields (internal logins only)
+  ['career', 'Career'],
   ['notes', 'Notes'],
   // 2026-11-03: the dated follow-up log ("recruiters ki ithey, candidate follow up vundali") - TeamLink's own, internal logins only
   ['followups', 'Follow-ups'],
@@ -106,7 +108,7 @@ export function C360Tabs({ tab, setTab, c, className = '' }) {
   const n = tabCounts(c);
   const internal = !!(c && c.viewer && c.viewer.internal);
   // Fit and Notes are TeamLink's own; a client / candidate login has none.
-  const tabs = C360_TABS.filter(([key]) => internal || !['fit', 'notes', 'conversation', 'followups', 'aicalling'].includes(key));
+  const tabs = C360_TABS.filter(([key]) => internal || !['fit', 'notes', 'conversation', 'followups', 'aicalling', 'career'].includes(key));
   return (
     <div className={`tabs c360t-tabs ${className}`} role="tablist">
       {tabs.map(([key, label]) => (

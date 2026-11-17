@@ -71,6 +71,7 @@ import SystemSafety from './pages/admin/SystemSafety.jsx';
 import FitSettings from './components/resume/FitSettings.jsx'; // fit_: Admin → Fit settings
 import AtsAlertSettings from './pages/admin/AtsAlertSettings.jsx'; // Admin → Step timing (dashboards)
 import DataCleanup from './pages/admin/DataCleanup.jsx'; // Admin → Company Setup → Data cleanup (dashboards)
+import CandidateFields from './pages/admin/CandidateFields.jsx'; // Admin → Company Setup → Candidate fields (custom fields on the profile)
 import Profile from './pages/admin/Profile.jsx';
 
 // THE JOB PORTAL (2026-10-05): the customer's own portal, embedded at /jobs
@@ -381,6 +382,7 @@ export default function App() {
         <Route path="admin/master-lists" element={<MasterLists />} />
         <Route path="admin/step-timing" element={<AtsAlertSettings />} />
         <Route path="admin/data-cleanup" element={<DataCleanup />} />
+        <Route path="admin/candidate-fields" element={<CandidateFields />} />
         <Route path="admin/vendor-logins" element={<VendorLogins />} />
         <Route path="admin/partners" element={<Partners />} />
         <Route path="admin/message-templates" element={<MessageTemplates />} />

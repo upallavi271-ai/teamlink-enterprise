@@ -33,6 +33,7 @@ import {
 } from '../components/Candidate360Tabs.jsx';
 // cand7_ (Candidates §7): the profile top and the other agents' mount points.
 import ProfileTop from '../components/candidate/ProfileTop.jsx';
+import CareerProfile from '../components/candidate/CareerProfile.jsx'; // the Career tab: education, jobs, gaps, progression, summary, tags, custom fields
 import CandidateConversation from '../components/messaging/CandidateConversation.jsx'; // Conversation tab: this candidate's WhatsApp chat + the all-channels view (ConversationView, CommunicationTimeline)
 import ProfileLeft, { ResumeTabCard } from '../components/candidate/ProfileLeft.jsx';
 import { RecordDocuments } from '../components/candidate/CandidateRecord.jsx'; // ATS-100 B5
@@ -1098,6 +1099,7 @@ export default function CandidateDetail() {
       {tab === 'followups' && internal && <FollowUpLog key={c.id} candidateId={c.id} applicationId={primary ? primary.id : undefined} />}
       {/* The Resume card (file, Edit resume, versions, facts) — its own tab, no longer on the left. */}
       {tab === 'resume' && <ResumeTabCard c={c} />}
+      {tab === 'career' && internal && <CareerProfile c={c} />}
 
       {/* --- Notes: internal recruiter / TL notes. Never served to a client. --- */}
       {tab === 'notes' && internal && <div className="section-label">{notes.length ? `Notes (${notes.length})` : 'Notes'}</div>}

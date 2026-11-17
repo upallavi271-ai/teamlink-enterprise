@@ -63,7 +63,9 @@ const { isPreAtsApplication } = require('../utils/atsVocab');
 const CS = require('../utils/candidateSource');
 // WHEN DID THEY COME: one date + one trust word per person (utils/cameOn.js), used by the list, the Sources tab, the exports and the profile.
 const CAME = require('../utils/cameOn');
-const clientSearch = require('../utils/clientSearch'); // old client names are searchable (ClientAlias)
+const clientSearch = require('../utils/clientSearch');
+const PD = require('../utils/candidateProfileDepth'); // tags (the ?tag= filter) - profile depth 2026-11-17
+setTimeout(() => { PD.ready().catch(() => {}); }, 3000).unref(); // the tag index, so the first ?tag= facet count is not empty // old client names are searchable (ClientAlias)
 
 const router = express.Router();
 router.use(requireAuth);
@@ -876,6 +878,8 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (q.qual && (r.qual || 'none') !== q.qual) return false;
   if (q.desig && (r.desig || 'none') !== q.desig) return false;
   if (q.expBand && (r.expBand || 'none') !== q.expBand) return false;
+  // Tag (profile depth, 2026-11-17): a free label on the person (utils/candidateProfileDepth.js).
+  if (q.tag && !PD.hasTagSync(r.id, q.tag)) return false;
   if (q.status) {
     const wanted = String(q.status).split(',');
     const legacy = { 'On Hold': 'Hold', Closed: 'Joined' };
@@ -1194,6 +1198,7 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (q.qual && (r.qual || 'none') !== q.qual) return false;
   if (q.desig && (r.desig || 'none') !== q.desig) return false;
   if (q.expBand && (r.expBand || 'none') !== q.expBand) return false;
+  if (q.tag && !PD.hasTagSync(r.candidateId, q.tag)) return false;
   if (q.owner && ownerKeyOf(r) !== q.owner) return false;
   if (q.rejectedBefore === 'yes' && !(r.rejectedCount > 0)) return false;
   if (q.rejectedBefore === 'no' && r.rejectedCount > 0) return false;
@@ -1588,6 +1593,7 @@ async function peopleFor(user, q, skip = [], personCache = new Map()) {
 }
 
 async function pagedList(req, res) {
+  if (req.query.tag) await PD.ready(); // the tag index is loaded before the rows are matched
   const { view, sub } = normaliseViewSub(req.query.view, req.query.sub);
   if (view === 'master') return masterList(req, res, sub);
   return pipelineList(req, res, sub);
@@ -2597,6 +2603,10 @@ const slimMatch = (r, restricted = false) => ({
   openings: r.openings ?? null,
   fit: restricted ? FB.round10(r.match.overall) : r.match.overall,
 });
+
+// PROFILE DEPTH (founder audit 2026-11-17): education list, employment history, gaps, progression, standard titles, summary, tags,
+// custom fields - routes/candidateProfileDepth.js. Above GET /:id so /profile-tags and /profile-fields are not read as an id.
+router.use(require('./candidateProfileDepth'));
 
 // A LIMITED CANDIDATE VIEW for the BDE team (founder, 2026-10-16): a person who is only in the "Good fit for this job" list is not in any
 // pipeline yet, so the full page (which needs an application in the login's scope) refuses. The BDE team can still open them here:

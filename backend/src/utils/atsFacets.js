@@ -188,6 +188,7 @@ async function candidateFacets(user, q) {
   // eslint-disable-next-line global-require
   const cand = require('../routes/candidates');
   if (typeof cand.pipelineRowsFor !== 'function') return { facets: {}, total: null };
+  if (q && q.tag) await require('./candidateProfileDepth').ready().catch(() => {}); // eslint-disable-line global-require
   const built = await cand.pipelineRowsFor(user);
   let rows = built.rows || [];
   // The sub-tab the screen is on (Active / Hold / Selected …) narrows the
