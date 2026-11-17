@@ -92,6 +92,8 @@ async function onNewLead(lead, { products, text } = {}, deps = {}) {
   try {
     await ensure();
     if (!lead || !lead.id) return { skip: 'no lead' };
+    // a website lead who wrote about the marketing work gets the plans demo (marketing/meetingOffer.js) instead of the HR product demo, when an Admin switched that on
+    if (lead.source === 'Website' && await require('../marketing/meetingOffer').takesLead(lead, { products, text }).catch(() => null)) return { skip: 'marketing lead: the plans demo goes instead' }; // eslint-disable-line global-require
     const catalogue = await PS.products();
     let keys = PS.keysOf(Array.isArray(products) ? products.join(',') : products).filter((k) => catalogue.some((p) => p.key === k));
     if (!keys.length) keys = guessProducts([text, lead.notes, lead.company, lead.industry].filter(Boolean).join(' '), catalogue);

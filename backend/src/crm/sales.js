@@ -201,6 +201,8 @@ async function capture(body = {}, headerKey = '') {
   });
   // the website form may say which product (products / product / interest = "HRMS,ATS"); else it is guessed from the message, and the demo goes by itself
   setImmediate(() => require('./productDeals').onNewLead(saved, { products: body.products || body.product || body.interest, text: [message, body.service, body.subject].filter(Boolean).join(' ') }).catch(() => null)); // eslint-disable-line global-require
+  // a lead who wrote about our marketing work (not the HR products) is offered the plans demo on WhatsApp (marketing/meetingOffer.js; off until an Admin switches it on)
+  setImmediate(() => require('../marketing/meetingOffer').onWebsiteLead(saved, { text: [message, body.service, body.subject].filter(Boolean).join(' '), products: body.products || body.product || body.interest }).catch(() => null)); // eslint-disable-line global-require
   if (own) {
     await prisma.notification.create({ data: { userId: own.id, title: `New website lead: ${saved.company}`, message: `Open: /crm/leads?open=lead:${saved.id}`, channel: 'In-App', recipient: `crm-web|${saved.id}`, status: 'Sent' } }).catch(() => {});
     await firstFollowUp(saved).catch(() => null); // the first call, two hours on

@@ -35,7 +35,7 @@ function Row({ m, busy, note, onSend, onCopy, onDelete, onCall, onDial }) {
       <div style={{ minWidth: 0 }}>
         <div className="mkm-name">
           <button type="button" onClick={() => setOpen(!open)}>{who}</button>
-          <Pill tone={TONE[m.interest]} dot>{m.interest}</Pill>{wants ? <Pill tone="red">📞 Wants a call</Pill> : null}<Tag>{LANG[m.language] || m.language}</Tag>{m.sentAt ? <Tag green title="Sent from TeamLink">Sent</Tag> : null}{m.inCrm ? <Tag green title="This client is a lead in the CRM (Sales CRM > Leads)">In CRM</Tag> : null}
+          <Pill tone={TONE[m.interest]} dot>{m.interest}</Pill>{wants ? <Pill tone="red">📞 Wants a call</Pill> : null}<Tag>{LANG[m.language] || m.language}</Tag>{m.source === 'inbound' || m.source === 'website' ? <Tag title="TeamLink offered this demo by itself, to a new person who wrote to us">{m.source === 'website' ? 'From the website' : 'From WhatsApp'}</Tag> : null}{m.sentAt ? <Tag green title="Sent from TeamLink">Sent</Tag> : null}{m.inCrm ? <Tag green title="This client is a lead in the CRM (Sales CRM > Leads)">In CRM</Tag> : null}
         </div>
         <div className="mkm-meta">
           {m.phone || 'no number yet'} · {progress}{m.views ? ` · opened ${m.views}×, last ${fmtDateTime(m.lastOpenedAt)}` : ''} · made by {m.createdByName || 'a visitor'}
@@ -90,8 +90,9 @@ export default function MkMeetingPage() {
   const [notes, setNotes] = useState({}); // what the last Call now / Dial it myself did, kept next to that client's buttons (a toast, or a message at the top of a long page, is easy to miss)
   const [al, setAl] = useState(null); // { on, phone } being edited for the alert
   const [ed, setEd] = useState(null); // the answer being written: { id, q, answer: { en, te, hi }, keywords }
+  const [au, setAu] = useState(null); // the automatic demo being edited: { on, website, numberIds } (an Admin's switch: marketing/meetingOffer.js)
   const timer = useRef(null);
-  const load = useCallback(() => omni.get('/gs/marketing/meetings').then((x) => { setD(x); setSpots((cur) => (cur == null ? x.settings.spotsLeft : cur)); setAl((cur) => cur || { on: x.alert.on, phone: x.alert.phone }); setErr(''); }).catch((e) => setErr(errOf(e, 'The meetings could not be read.'))), []);
+  const load = useCallback(() => omni.get('/gs/marketing/meetings').then((x) => { setD(x); setSpots((cur) => (cur == null ? x.settings.spotsLeft : cur)); setAl((cur) => cur || { on: x.alert.on, phone: x.alert.phone }); setAu((cur) => cur || { on: x.offer.on, website: x.offer.website, numberIds: x.offer.numberIds }); setErr(''); }).catch((e) => setErr(errOf(e, 'The meetings could not be read.'))), []);
   useEffect(() => { load(); timer.current = setInterval(load, 20000); return () => clearInterval(timer.current); }, [load]);
   useEffect(() => { api.get('/messaging/call-lines').then((r) => { setLines(r.data); setCallLine((cur) => cur || r.data.default || 'api'); }).catch(() => setLines(null)); }, []);
   if (err && !d) return <div className="card panel" style={{ color: '#9b1c1c' }}>{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={load}>Try again</button></div>;
@@ -129,6 +130,14 @@ export default function MkMeetingPage() {
     setBusy('alert'); setErr('');
     try { const r = await omni.put('/gs/marketing/meetings/alert', { on, phone: (al && al.phone) || '' }); toast(r.ok); setAl({ on: r.alert.on, phone: r.alert.phone }); await load(); } catch (e) { const m = errOf(e, 'It could not be saved.'); setErr(m); toast(m); } finally { setBusy(''); }
   };
+  const saveOffer = async () => {
+    setBusy('offer'); setErr('');
+    try { const r = await omni.put('/gs/marketing/meetings/offer', { on: !!au.on, website: !!au.website, numberIds: au.numberIds }); toast(r.ok); setAu({ on: r.offer.on, website: r.offer.website, numberIds: r.offer.numberIds }); await load(); } catch (e) { const m = errOf(e, 'It could not be saved.'); setErr(m); toast(m); } finally { setBusy(''); }
+  };
+  const openLink = `${window.location.origin}/plans-meeting`; // anybody who opens it starts a meeting of their own (a row "Opened without a link"); they type their number only when they ask for a call
+  const shareText = `Want to see our social media plans, prices and offers? Watch a 5-minute automated demo in English, Telugu or Hindi, and ask for a call from our team: ${openLink}`;
+  const shareCode = `<a href="${openLink}" target="_blank" rel="noopener" style="display:inline-block;padding:12px 22px;border-radius:10px;background:#0a73c4;color:#fff;font:600 15px Arial,sans-serif;text-decoration:none">Watch our plans demo (5 min)</a>`;
+  const copyText = async (text, what) => { try { await navigator.clipboard.writeText(text); toast(`${what} copied`); } catch { window.prompt(`Copy ${what.toLowerCase()}:`, text); } };
   const startAnswer = (q, id, answer, keywords) => setEd({ id: id || '', q, answer: { en: '', te: '', hi: '', ...(answer || {}) }, keywords: keywords || '' });
   const saveAnswer = async () => {
     setBusy('answer'); setErr('');
@@ -240,6 +249,44 @@ export default function MkMeetingPage() {
               <div className="row">
                 <Btn small primary disabled={busy === 'alert' || !((al && al.phone) || '').trim()} onClick={() => saveAlert(d.alert.on)}>Save my number</Btn>
                 <Btn small disabled={busy === 'alert' || !((al && al.phone) || '').trim()} onClick={() => saveAlert(!d.alert.on)}>{d.alert.on ? 'Alert off' : 'Alert me on WhatsApp'}</Btn>
+              </div>
+            </div>
+          </section>
+
+          {au ? (
+            <section className="mkm-card">
+              <h3>Automatic demo for new enquiries</h3>
+              <p>No need to add a number and send a link each time. When a <b>new person</b> writes to a number ticked here, TeamLink sends them their own demo link by itself, in their language. Once per person in 30 days; never after STOP; never to a candidate, employee or client contact.</p>
+              <div className="mkm-form">
+                <label className="mkm-check"><input type="checkbox" disabled={!d.offer.canEdit || busy === 'offer'} checked={!!au.on} onChange={(e) => setAu({ ...au, on: e.target.checked })} /> Offer the demo to new WhatsApp enquiries</label>
+                <div className={au.on ? '' : 'mkm-dim'}>
+                  <div className="lab">WHICH NUMBERS OFFER IT</div>
+                  {d.offer.numbers && d.offer.numbers.length ? d.offer.numbers.map((n) => (
+                    <label key={n.id} className="mkm-check"><input type="checkbox" disabled={!d.offer.canEdit || busy === 'offer'} checked={au.numberIds.includes(n.id)} onChange={(e) => setAu({ ...au, numberIds: e.target.checked ? [...au.numberIds, n.id] : au.numberIds.filter((x) => x !== n.id) })} /> {n.label}{n.number ? ` · ${n.number}` : ''}{n.isDefault ? ' (default)' : ''}</label>
+                  )) : <small>No WhatsApp numbers are listed for your login. An Admin adds them in Administration &gt; Integrations &gt; WhatsApp numbers.</small>}
+                  <small>{au.on && !au.numberIds.length ? 'Tick the number that should offer the demo, then press Save. ' : ''}On a ticked number the job-seeker assistant stays quiet for people who are not candidates.</small>
+                </div>
+                <label className="mkm-check"><input type="checkbox" disabled={!d.offer.canEdit || busy === 'offer'} checked={!!au.website} onChange={(e) => setAu({ ...au, website: e.target.checked })} /> Also send it to website-form leads who ask about marketing (approved template; leads who ask about HRMS or ATS keep their own demo)</label>
+                {!d.offer.siteReady && d.offer.canEdit ? <div className="mkm-note" role="alert">This copy of TeamLink does not know its own https address (APP_BASE_URL), so links cannot be made. Ask the person who runs the server.</div> : null}
+                {!d.offer.canEdit ? <small>Only an Admin can change this.</small> : (
+                  <div className="row">
+                    <Btn small primary disabled={busy === 'offer' || (au.on && !au.numberIds.length) || (au.on === d.offer.on && au.website === d.offer.website && [...au.numberIds].sort().join() === [...d.offer.numberIds].sort().join())} onClick={saveOffer}>{busy === 'offer' ? 'Saving…' : 'Save'}</Btn>
+                  </div>
+                )}
+                <small>{d.offer.on ? 'ON for WhatsApp enquiries.' : 'OFF for WhatsApp enquiries.'} {d.offer.website ? 'ON for website leads.' : 'OFF for website leads.'} Last 30 days: <b>{d.offer.last30.offered}</b> offered · <b>{d.offer.last30.opened}</b> opened · <b>{d.offer.last30.wantCall}</b> asked for a call. At most {d.offer.cap} a day.</small>
+              </div>
+            </section>
+          ) : null}
+
+          <section className="mkm-card">
+            <h3>Share the demo anywhere</h3>
+            <p>One open link for your Instagram bio, website, posts and visiting cards. Each person who opens it gets a meeting of their own (a row “Opened without a link”); their number is asked only if they ask for a call.</p>
+            <div className="mkm-form">
+              <input readOnly value={openLink} onFocus={(e) => e.target.select()} aria-label="The open demo link" />
+              <div className="row" style={{ flexWrap: 'wrap' }}>
+                <Btn small primary onClick={() => copyText(openLink, 'Link')}>⧉ Copy link</Btn>
+                <Btn small onClick={() => copyText(shareText, 'Message')}>Copy a ready message</Btn>
+                <Btn small onClick={() => copyText(shareCode, 'Button code')}>Copy website button code</Btn>
               </div>
             </div>
           </section>

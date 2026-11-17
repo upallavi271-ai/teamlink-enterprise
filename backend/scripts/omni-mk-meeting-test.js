@@ -375,6 +375,100 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     MG.send = realSend;
     for (const z of [mA, mB]) await M.remove(sa, z.id);
 
+    // ---- the demo offered by itself: a NEW person writes to a ticked company number (or fills the website form about marketing) and is sent their own link; everything off until an Admin switches it on ----
+    const OF = require(path.join(BACK, 'src/marketing/meetingOffer')); const WNm = require(path.join(BACK, 'src/utils/waNumbers')); const realGetRow = WNm.getRow;
+    WNm.getRow = async (id) => ({ numDM: { id: 'numDM', label: 'Digital Marketing', active: true }, numOff: { id: 'numOff', label: 'Switched off', active: false } }[id] || null);
+    const keepBase = process.env.APP_BASE_URL; process.env.APP_BASE_URL = 'https://teamlink.test';
+    const sentO = [];
+    MG.send = async (channel, o) => { sentO.push({ channel, ...o }); return { ok: true }; };
+    const madeIds = [];
+    const stranger = (n, text, extra) => ({ info: { channel: 'WhatsApp', from: `91900001${n}`, text, name: 'Anil Kumar', numberId: 'numDM', ...(extra || {}) }, out: { stored: false, stop: false, candidateId: null } });
+    const enq = async (n, text, extra, out) => { const s = stranger(n, text, extra); return OF.onInbound(s.info, out || s.out); };
+    const sources = async () => (await S0.q(`SELECT * FROM "OmniMkMeeting" WHERE source IN ('inbound', 'website') AND deletedAt IS NULL ORDER BY createdAt ASC`));
+
+    const offer0 = (await M.list(sa)).offer;
+    check('30 the automatic demo is OFF by default (no number ticked, website off)', offer0.on === false && offer0.website === false && offer0.numberIds.length === 0 && offer0.canEdit === true, offer0);
+    check('30b a stranger writing while it is off gets nothing and makes no row', (await enq('1111', 'Hi, I need social media marketing')) === null && sentO.length === 0 && (await sources()).length === 0);
+    check('30c only an Admin can switch it on', (await M.saveOffer({ id: 'x', name: 'Not Admin', role: 'EMPLOYEE' }, { on: true, numberIds: ['numDM'] })).status === 403);
+    check('31 switching on with no number ticked, an unknown number or a switched-off number is refused in words', (await M.saveOffer(sa, { on: true, numberIds: [] })).status === 400 && (await M.saveOffer(sa, { on: true, numberIds: ['nope'] })).status === 400 && (await M.saveOffer(sa, { on: true, numberIds: ['numOff'] })).status === 409);
+    delete process.env.APP_BASE_URL;
+    check('31b without the site\'s own https address nothing can be switched on (a link could not be made)', (await M.saveOffer(sa, { on: true, numberIds: ['numDM'] })).status === 409);
+    process.env.APP_BASE_URL = 'https://teamlink.test';
+    const on1 = await M.saveOffer(sa, { on: true, numberIds: ['numDM'], website: false });
+    check('31c an Admin ticks the Digital Marketing number and switches it on', !!on1.ok && on1.offer.on === true && on1.offer.numberIds.join() === 'numDM' && (await OF.handles('numDM')) === true && (await OF.handles('numOther')) === false && (await OF.handles(null)) === false, on1);
+
+    const r1 = await enq('1111', 'Hi, I need social media marketing');
+    const rows1 = await sources();
+    check('32 a new person writing to the ticked number is sent ONE message from that number, in the 24-hour window (free text), with their own short link', r1 && r1.sent === true && sentO.length === 1 && sentO[0].kind === 'text' && sentO[0].numberId === 'numDM' && sentO[0].automatic === true && sentO[0].to === '+919000011111' && /^Hello Anil!/.test(sentO[0].text) && new RegExp(`https://teamlink.test/m/${r1.id}`).test(sentO[0].text) && /Reply STOP/.test(sentO[0].text), { r1, sent: sentO.map((z) => z.text && z.text.slice(0, 90)) });
+    const rowO = rows1[0] || {};
+    check('32b the row is made by TeamLink itself (source "inbound", no person as its maker), keeps their number, name and first words, and is marked sent', rows1.length === 1 && rowO.source === 'inbound' && !rowO.createdById && rowO.createdByName === 'WhatsApp (automatic)' && /9000011111$/.test(rowO.phone) && rowO.name === 'Anil Kumar' && /social media/.test(rowO.note || '') && S0.num(rowO.sentAt) > 0 && rowO.sentVia === 'whatsapp (automatic)', rowO);
+    const bellO = await prisma.notification.findFirst({ where: { title: { contains: 'New WhatsApp enquiry' } }, orderBy: { createdAt: 'desc' } });
+    check('32c the team\'s bell rings with who wrote', !!bellO && /Anil Kumar/.test(bellO.title + bellO.message), bellO && bellO.title);
+    const listO = await M.list(sa);
+    check('32d the Plans meeting page lists it (the page tells TeamLink-made ones by their "WhatsApp (automatic)" maker) and counts it in the last 30 days', !!listO.items.find((x) => x.id === r1.id && x.createdByName === 'WhatsApp (automatic)') && listO.offer.last30.offered === 1, listO.offer);
+    madeIds.push(r1.id);
+
+    check('33 the same person writing again gets nothing more (once in 30 days)', (await enq('1111', 'Hello? Are you there')) === null && sentO.length === 1 && (await sources()).length === 1);
+    const before = sentO.length;
+    check('33b a number that is not ticked, STOP, a person TeamLink already knows, a message waiting for review and a STOP flag all get nothing', (await enq('2222', 'Need marketing', { numberId: 'numElse' })) === null && (await enq('2222', 'STOP')) === null && (await enq('2222', 'marketing', {}, { stored: true, stop: false })) === null && (await enq('2222', 'marketing', {}, { stored: false, review: true })) === null && (await enq('2222', 'marketing', {}, { stored: false, stop: true })) === null && sentO.length === before && (await sources()).length === 1);
+    const rTe = await enq('3333', 'నాకు సోషల్ మీడియా మార్కెటింగ్ కావాలి', { name: 'Ravi' });
+    check('33c a message in Telugu is answered in Telugu (and Hindi in Hindi), and the row remembers the language', rTe && rTe.sent === true && /నమస్కారం Ravi గారు/.test(sentO[sentO.length - 1].text) && (await S0q(rTe.id)).language === 'te', sentO[sentO.length - 1].text.slice(0, 40));
+    const rHi = await enq('4444', 'मुझे मार्केटिंग चाहिए', { name: 'Sunita' });
+    check('33d Hindi too', rHi && rHi.sent === true && /नमस्ते Sunita जी/.test(sentO[sentO.length - 1].text) && (await S0q(rHi.id)).language === 'hi');
+    madeIds.push(rTe.id, rHi.id);
+    const both = await Promise.all([enq('5555', 'Hi'), enq('5555', 'I want marketing plans')]);
+    check('33e two messages from the same new person arriving together make ONE offer', both.filter(Boolean).length === 1 && (await sources()).filter((x) => /9000015555$/.test(x.phone)).length === 1, both);
+    madeIds.push(...both.filter(Boolean).map((x) => x.id));
+
+    // when WhatsApp cannot send: the row stays (the team can send the link by hand) and says why
+    MG.send = async () => ({ ok: false, error: 'WhatsApp is down' });
+    const rBad = await enq('6666', 'marketing please');
+    const badRow = await S0q(rBad.id);
+    check('34 if WhatsApp cannot send, nothing is marked as sent and the row says why', rBad.sent === false && !badRow.sentAt && /not sent: WhatsApp is down/.test(badRow.note || ''), badRow);
+    madeIds.push(rBad.id);
+    MG.send = async (channel, o) => { sentO.push({ channel, ...o }); return { ok: true }; };
+
+    // the client opens it, asks for a call: the same alerts and CRM lead as any link, owner = nobody (every Admin is told, everyone with alerts on is WhatsApped)
+    const tokO = M.tokenOf(r1.id);
+    sentO.length = 0;
+    const askO = await M.publicEvent(tokO, { type: 'handover', name: 'Anil Kumar', phone: '9000011111', window: 'asap' });
+    const crmO = (await CRMDB.all('SELECT * FROM "CrmLead" WHERE "source" = ?', 'Plans meeting')).find((l) => /Anil Kumar/.test(l.company));
+    check('35 the person who got the offer can ask for a call: a Hot CRM lead is made and the alert goes to the people who switched alerts on', askO.ok === true && !!crmO && crmO.rating === 'Hot' && sentO.some((z) => z.to === '918919239827' || /8919239827/.test(String(z.to))), { askO, crm: !!crmO, sent: sentO.map((z) => z.to) });
+
+    // the cap: at most 150 in 24 hours
+    const capIds = []; for (let i = 0; i < 150; i += 1) capIds.push((await M.createOffered({ name: `cap ${i}`, phone: `9110${String(i).padStart(6, '0')}`, source: 'inbound' })).id);
+    sentO.length = 0;
+    check('36 after 150 demos in 24 hours nothing more is sent by itself', (await enq('7777', 'marketing')) === null && sentO.length === 0);
+    for (const id of capIds) await S0.run('DELETE FROM "OmniMkMeeting" WHERE id = ?', id); // really gone (a removed row would still count toward the day\'s cap, on purpose)
+
+    // the recruitment assistant stays quiet on a ticked number (omniwa/agent.js asks handles()); off = it answers again
+    check('37 the ticked number is the one the job-seeker assistant stays quiet on, and only while the switch is on', (await OF.handles('numDM')) === true && (await M.saveOffer(sa, { on: false, numberIds: ['numDM'] })).offer.on === false && (await OF.handles('numDM')) === false && (await enq('8888', 'marketing')) === null);
+
+    // website-form leads: only when the second switch is on, only a real mobile, only about marketing (not HRMS/ATS), only once
+    await M.saveOffer(sa, { on: false, website: false, numberIds: ['numDM'] });
+    const wlead = (extra) => ({ id: 'lead_x', company: 'Sita Boutique', contactName: 'Sita Rao', phone: '9000022222', notes: '', ownerId: null, ...(extra || {}) });
+    sentO.length = 0;
+    check('38 a website lead gets nothing while the website switch is off', (await OF.onWebsiteLead(wlead(), { text: 'I need instagram marketing and reels' })) === null && sentO.length === 0);
+    const onW = await M.saveOffer(sa, { on: false, website: true, numberIds: ['numDM'] });
+    check('38b switching only the website on works without ticking the WhatsApp enquiries', !!onW.ok && onW.offer.website === true && onW.offer.on === false && (await OF.handles('numDM')) === false, onW);
+    check('38c a lead who wrote about the HR products, about nothing in our line, or with no real mobile number gets nothing', (await OF.onWebsiteLead(wlead(), { text: 'I need instagram marketing', products: 'HRMS' })) === null && (await OF.onWebsiteLead(wlead(), { text: 'Need an HRMS and payroll for 40 staff, also marketing' })) === null && (await OF.onWebsiteLead(wlead(), { text: 'Please call me about pricing' })) === null && (await OF.onWebsiteLead(wlead({ phone: '12345' }), { text: 'instagram marketing' })) === null && sentO.length === 0);
+    const wl = await OF.onWebsiteLead(wlead(), { text: 'I need instagram marketing and reels' });
+    const wRow = wl && (await S0q(wl.id));
+    check('38d a lead who wrote about marketing is sent the invite by the approved template from the company number, and the row says "website"', wl && wl.sent === true && sentO.length === 1 && sentO[0].kind === 'bulk' && sentO[0].to === '919000022222' && new RegExp(`https://teamlink.test/m/${wl.id}`).test(sentO[0].text) && /Reply STOP/.test(sentO[0].text) && wRow.source === 'website' && wRow.createdByName === 'Website form' && S0.num(wRow.sentAt) > 0, { wl, sent: sentO.map((z) => ({ kind: z.kind, to: z.to })) });
+    check('38e the same lead again gets nothing', (await OF.onWebsiteLead(wlead(), { text: 'instagram marketing again' })) === null && sentO.length === 1);
+    madeIds.push(wl.id);
+    const PD = require(path.join(BACK, 'src/crm/productDeals'));
+    const noSend = { sendMail: async () => ({ ok: true }), sendWa: async () => ({ ok: true }) }; // the HR product demo must not really send from this test
+    const skipPD = await PD.onNewLead({ id: 'lead_y', source: 'Website', company: 'Rao Studio', phone: '9000033333', notes: '' }, { text: 'I need instagram marketing and a logo' }, noSend);
+    const keepPD = await PD.onNewLead({ id: 'lead_z', source: 'Website', company: 'Rao Staffing', phone: '9000044444', notes: '' }, { text: 'I need an HRMS and payroll' }, noSend);
+    check('38f the HR product demo steps aside for that marketing lead (the plans demo goes instead) but not for a lead who asked about HR', !!skipPD && /plans demo goes instead/.test(skipPD.skip || '') && !(keepPD && /plans demo goes instead/.test(keepPD.skip || '')), { skipPD, keepPD });
+
+    // clean up: switched off again, the test rows removed, the stand-ins put back
+    await M.saveOffer(sa, { on: false, website: false, numberIds: [] });
+    for (const id of madeIds) await M.remove(sa, id);
+    check('39 everything is switched off again and the list is clean', ((await M.list(sa)).offer.on === false) && (await sources()).length === 0);
+    WNm.getRow = realGetRow; MG.send = realSend; if (keepBase === undefined) delete process.env.APP_BASE_URL; else process.env.APP_BASE_URL = keepBase;
+
     // removing
     const rm = await M.remove(sa, m.id);
     check('11 removing makes the link stop working and leave the list', !!rm.ok && (await M.publicView(m.token)).status === 404 && !(await M.list(sa)).items.find((x) => x.id === m.id), rm);

@@ -51,6 +51,11 @@
 .gsx .mkm-form input, .gsx .mkm-form select { width: 100%; box-sizing: border-box; margin-top: 3px; border: 1px solid #d5e0da; border-radius: 9px; padding: 7px 9px; font: inherit; font-size: 12.5px; background: #fff; text-transform: none; letter-spacing: 0; font-weight: 500; color: inherit; }
 .gsx .mkm-form small { display: block; font-size: 10.5px; color: var(--mkm-mute); margin-top: 3px; line-height: 1.45; text-transform: none; letter-spacing: 0; font-weight: 500; }
 .gsx .mkm-form .row { display: flex; gap: 6px; flex-wrap: wrap; }
+/* the automatic-demo card: tick boxes in plain sentences (not the small capital labels of the form fields) */
+.gsx .mkm-form label.mkm-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; font-weight: 600; letter-spacing: 0; text-transform: none; color: inherit; line-height: 1.4; cursor: pointer; padding: 3px 0; }
+.gsx .mkm-form label.mkm-check input { width: 16px; height: 16px; margin: 1px 0 0; flex: none; accent-color: var(--mkm-p); }
+.gsx .mkm-form .lab { font-size: 10px; font-weight: 800; color: #166534; letter-spacing: .06em; margin: 4px 0 2px; }
+.gsx .mkm-dim { opacity: .55; }
 .gsx .mkm-chips { display: flex; gap: 5px; flex-wrap: wrap; margin: 2px 0 6px; }
 .gsx .mkm-chip { border: 1px solid var(--mkm-line); background: #fff; border-radius: 999px; padding: 4px 11px; font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; }
 .gsx .mkm-chip.on { background: var(--mkm-p); color: #fff; border-color: var(--mkm-p); }

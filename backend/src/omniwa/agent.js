@@ -521,6 +521,8 @@ async function runTurn(row, defaults, now = Date.now()) {
   if (await require('../crm/salesAgent').handles(conv.e164).catch(() => false)) return skip('crm_sales', 'An open CRM lead: the CRM sales assistant answers, not this agent.'); // eslint-disable-line global-require
   // a contact of an AI Marketing client project (not a job seeker) is answered by marketing/clientChat.js in simple words about THEIR work, never by this recruitment agent ("Are you looking for a job?")
   if (!conv.candidateId && await require('../marketing/clientChat').handles(conv.e164).catch(() => false)) return skip('mk_client', 'A client of an AI Marketing project: the client chat answers, not this recruitment agent.'); // eslint-disable-line global-require
+  // a company number an Admin ticked for the automatic plans demo (Plans meeting page): somebody who is not a candidate gets that demo, never the recruitment questions
+  if (!conv.candidateId && await require('../marketing/meetingOffer').handles(conv.numberId).catch(() => false)) return skip('mk_demo', 'This number offers the AI Marketing plans demo: the recruitment agent stays quiet for people who are not candidates.'); // eslint-disable-line global-require
   if (cfg.testNumbers.length && !cfg.testNumbers.includes(conv.e164)) return skip('not_a_test_number');
   // somebody who said no and writes again ("Yes", a question) is talking again; "bye" / "thanks" ends it; STOP is the isBlocked check below
   if (conv.mode === 'ai' && ((conv.state === 'needs_human' && !STAYS_WITH_PEOPLE.test(conv.handoffReason || '')) || (conv.state === 'not_interested' && !T.isClosing(input)))) {

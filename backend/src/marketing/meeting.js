@@ -55,18 +55,21 @@ const core = () => require('../utils/messagingCore'); // eslint-disable-line glo
 
 // ---- the "first ten customers" spots (the team keeps the number: nothing counts them yet) ---------------------------------------------------------
 const SETTINGS_KEY = 'omni.mk.meeting';
+// the demo offered by itself (marketing/meetingOffer.js): ALWAYS off until an Admin switches it on; `numberIds` = the company WhatsApp numbers that offer it, `website` = also to website-form leads
+const cleanOffer = (o) => ({ on: !!(o && o.on), website: !!(o && o.website), numberIds: Array.isArray(o && o.numberIds) ? [...new Set(o.numberIds.map((x) => String(x)).filter(Boolean))].slice(0, 20) : [] });
+const OFFER_CAP = 150; // at most this many demos offered by itself in 24 hours (marketing/meetingOffer.js)
 async function readAll() {
   try {
     const prisma = require('../db'); // eslint-disable-line global-require
     const row = await prisma.appSetting.findUnique({ where: { key: SETTINGS_KEY } });
     const v = row ? JSON.parse(row.value) : {};
     const n = Math.floor(Number(v.spotsLeft));
-    return { spotsLeft: Number.isFinite(n) && n >= 0 ? Math.min(n, 99) : 10, alerts: v.alerts && typeof v.alerts === 'object' ? v.alerts : {}, answers: Array.isArray(v.answers) ? v.answers : [] };
-  } catch { return { spotsLeft: 10, alerts: {}, answers: [] }; }
+    return { spotsLeft: Number.isFinite(n) && n >= 0 ? Math.min(n, 99) : 10, alerts: v.alerts && typeof v.alerts === 'object' ? v.alerts : {}, answers: Array.isArray(v.answers) ? v.answers : [], offer: cleanOffer(v.offer) };
+  } catch { return { spotsLeft: 10, alerts: {}, answers: [], offer: cleanOffer(null) }; }
 }
 const writeAll = async (all) => {
   const prisma = require('../db'); // eslint-disable-line global-require
-  const value = JSON.stringify({ spotsLeft: all.spotsLeft, alerts: all.alerts || {}, answers: all.answers || [] });
+  const value = JSON.stringify({ spotsLeft: all.spotsLeft, alerts: all.alerts || {}, answers: all.answers || [], offer: cleanOffer(all.offer) });
   await prisma.appSetting.upsert({ where: { key: SETTINGS_KEY }, update: { value }, create: { key: SETTINGS_KEY, value } });
 };
 const readSettings = async () => ({ spotsLeft: (await readAll()).spotsLeft }); // what the client page and the team page may see (never the alert numbers)
@@ -78,6 +81,38 @@ async function saveSettings(u, b = {}) {
   await writeAll({ ...all, spotsLeft: n });
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: plans meeting, first-ten spots left set', entity: TABLE, entityId: 'settings', toValue: String(n) });
   return { ok: n > 0 ? `${n} spot${n === 1 ? '' : 's'} left: the assistant says the first-ten offer.` : 'No spots left: the assistant no longer says the first-ten offer.', settings: { spotsLeft: n } };
+}
+
+// ---- THE DEMO OFFERED BY ITSELF (founder 2026-11-17: "everytime we cant manually add the client no. and share them a demo link ... when a client is looking for our kind of work they should be suggested a demo") ----
+// An Admin chooses which company WhatsApp numbers offer it (and whether website-form leads get it too). What happens is in marketing/meetingOffer.js; this is the switch, the counts and the rows it makes.
+const SELF_MADE = ['inbound', 'website']; // rows made by TeamLink itself (no person made the link): every login that may use this page sees them
+async function offerView(u) {
+  await ensure();
+  const o = (await readAll()).offer;
+  const now = Date.now();
+  const one = async (extra) => S.num((await S.q(`SELECT COUNT(*) AS n FROM "${TABLE}" WHERE source IN ('inbound', 'website') AND deletedAt IS NULL AND createdAt > ?${extra || ''}`, now - 30 * DAY))[0].n);
+  let numbers = [];
+  try { numbers = (await require('./sender').numbersFor(u)).numbers; } catch { numbers = []; } // eslint-disable-line global-require
+  return { ...o, canEdit: A.isAdmin(u), numbers, siteReady: !!String(process.env.APP_BASE_URL || '').trim(), cap: OFFER_CAP, last30: { offered: await one(), opened: await one(' AND views > 0'), wantCall: await one(' AND handoverAt IS NOT NULL') } };
+}
+async function saveOffer(u, b = {}) {
+  if (!A.isAdmin(u)) return { error: 'Only an Admin can switch the automatic demo on or off, because it writes to people who message the company.', status: 403 };
+  const prev = (await readAll());
+  const on = b.on === true; const website = b.website === true;
+  const wanted = Array.isArray(b.numberIds) ? [...new Set(b.numberIds.map((x) => String(x)).filter(Boolean))] : prev.offer.numberIds;
+  const WN = require('../utils/waNumbers'); // eslint-disable-line global-require
+  const ok = [];
+  for (const id of wanted) { // only numbers connected in TeamLink and switched on can be ticked
+    const row = await WN.getRow(id).catch(() => null); // eslint-disable-line no-await-in-loop
+    if (!row) return { error: 'One of the WhatsApp numbers was not found. Reload the page and tick again.', status: 400 };
+    if (!row.active && on) return { error: `The WhatsApp number "${row.label}" is switched off in Integrations. Untick it, or switch it on first.`, status: 409 };
+    ok.push(String(row.id));
+  }
+  if (on && !ok.length) return { error: 'Tick the WhatsApp number that should offer the demo (the Digital Marketing number).', status: 400 };
+  if ((on || website) && !String(process.env.APP_BASE_URL || '').trim()) return { error: 'This copy of TeamLink does not know its own https address (APP_BASE_URL), so a link cannot be made. Ask the person who runs the server to set it.', status: 409 };
+  await writeAll({ ...prev, offer: { on, website, numberIds: ok } });
+  await logAudit({ userId: u.id, actorName: u.name, action: `Omni-Channel AI Marketing: plans meeting, automatic demo ${on ? 'switched on' : 'switched off'}${website ? ' (website leads too)' : ''}`, entity: TABLE, entityId: 'offer', toValue: `${ok.length} WhatsApp number${ok.length === 1 ? '' : 's'}` });
+  return { ok: on ? `On. A new person who writes to ${ok.length === 1 ? 'that number' : `those ${ok.length} numbers`} is sent the demo by TeamLink.` : (website ? 'Website leads get the demo; WhatsApp enquiries do not.' : 'Off. Nothing is sent by itself.'), offer: await offerView(u) };
 }
 
 
@@ -253,7 +288,7 @@ const full = (r) => ({
   calledAt: r.calledAt ? S.num(r.calledAt) : null, calledByName: r.calledByName || '', callLine: r.callLine || '', inCrm: !!r.crmLeadId, slotAt: r.slotAt ? S.num(r.slotAt) : null, slotText: r.slotAt ? istText(r.slotAt) : '',
 });
 const row = async (id) => (await S.q(`SELECT * FROM "${TABLE}" WHERE id = ? AND deletedAt IS NULL`, String(id || '')))[0] || null;
-const visible = (u, r) => A.isAdmin(u) || r.createdById === u.id;
+const visible = (u, r) => A.isAdmin(u) || r.createdById === u.id || (!r.createdById && SELF_MADE.includes(r.source)); // a demo TeamLink offered by itself has no maker: whoever may use the page sees it
 async function mine(u, id) {
   await ensure();
   const r = await row(id);
@@ -270,7 +305,15 @@ async function list(u) {
   const count = (k) => items.filter((x) => x.interest === k).length;
   const waiting = items.filter((x) => x.handoverAt && (!x.calledAt || x.calledAt < x.handoverAt)).length; // asked for a call and nobody has called since
   const all = await readAll();
-  return { items, counts: { total: items.length, hot: count('Hot'), warm: count('Warm'), cold: count('Cold'), notOpened: count('Not opened'), waiting }, settings: { spotsLeft: all.spotsLeft }, alert: await myAlert(u), unanswered: unansweredOf(rows, all.answers), answers: all.answers };
+  return { items, counts: { total: items.length, hot: count('Hot'), warm: count('Warm'), cold: count('Cold'), notOpened: count('Not opened'), waiting }, settings: { spotsLeft: all.spotsLeft }, alert: await myAlert(u), unanswered: unansweredOf(rows, all.answers), answers: all.answers, offer: await offerView(u) };
+}
+// a row TeamLink makes by itself (marketing/meetingOffer.js): the same link, no person as its maker
+async function createOffered({ name, phone, language, source, createdById, createdByName, note }) {
+  await ensure();
+  const id = newId(); const now = Date.now();
+  await S.run(`INSERT INTO "${TABLE}" (id, name, phone, language, note, source, createdById, createdByName, expiresAt, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    id, S.clip(name, 80) || null, S.clip(phone, 30) || null, LANGS.includes(language) ? language : 'en', S.clip(note, 200) || null, SELF_MADE.includes(source) ? source : 'inbound', createdById || null, S.clip(createdByName, 80) || null, now + 30 * DAY, now, now);
+  return { id };
 }
 async function create(u, b = {}) {
   if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not use this page.', status: 403 };
@@ -489,4 +532,4 @@ async function publicEvent(token, b = {}, base = '') {
   return { ok: true };
 }
 
-module.exports = { ensure, create, list, remove, tell, call, saveAlert, myAlert, saveSettings, readSettings, saveAnswer, removeAnswer, customSentences, keywordsOf, publicSlots, allowedSlots, runSlotReminders, istText, publicStart, publicShort, publicView, publicEvent, tokenOf, idOfToken, interestOf, inviteText, summaryText, SLIDES };
+module.exports = { ensure, readAll, createOffered, saveOffer, offerView, OFFER_CAP, create, list, remove, tell, call, saveAlert, myAlert, saveSettings, readSettings, saveAnswer, removeAnswer, customSentences, keywordsOf, publicSlots, allowedSlots, runSlotReminders, istText, publicStart, publicShort, publicView, publicEvent, tokenOf, idOfToken, interestOf, inviteText, summaryText, SLIDES };
