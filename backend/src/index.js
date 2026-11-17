@@ -4,6 +4,9 @@ require('dotenv').config();
 const sandbox = require('./utils/sandbox');
 sandbox.assertSafe();
 sandbox.installGuards();
+// A SEPARATE COMPANY's copy of this app (COMPANY_KEY in its .env, docs/second-company.md) refuses to run on any database that is not its own.
+// Does nothing at all on TeamLink and on every PC (no COMPANY_KEY).
+require('./utils/companyGuard').start();
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -78,6 +81,8 @@ const mailWorker = require('./utils/mailWorker');
 // engine at request time (req.user.caps.hrmsManage), not by a role list here.
 
 const app = express();
+// Separate company copies only: answer nothing until the database has been confirmed as that company's own (utils/companyGuard.js).
+app.use(require('./utils/companyGuard').middleware);
 // WEB HARDENING (utils/webSecurity.js): no X-Powered-By; 'trust proxy' only when TRUST_PROXY is set (default off).
 require('./utils/webSecurity').configureApp(app);
 // CREDENTIAL MATERIAL NEVER LEAVES THE SERVER (hrms-24 §12). Many routes
@@ -158,7 +163,7 @@ app.use(express.json());
 // WHO LOOKED AT WHAT (utils/readLog.js): a candidate / employee record or document opened is written after the answer (200 only).
 app.use(require('./utils/readLog').middleware());
 
-app.get('/api/health', (req, res) => res.json({ ok: true }));
+app.get('/api/health', (req, res) => res.json(process.env.COMPANY_KEY ? { ok: true, company: String(process.env.COMPANY_KEY).trim().toLowerCase() } : { ok: true }));
 // SUPER ADMIN "VIEW AS" IS READ-ONLY (utils/viewAs.js): a View-as token may
 // only GET, plus a short allow-list of POSTs that just read. Ahead of every
 // router, so no route can forget it.

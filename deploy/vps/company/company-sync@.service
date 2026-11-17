@@ -1,0 +1,9 @@
+[Unit]
+Description=Bring separate company "%i" to the release TeamLink runs (docs/second-company.md)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/company-sync/company-sync.sh %i
+Nice=10
+TimeoutStartSec=1800

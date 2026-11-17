@@ -1393,3 +1393,8 @@ tbody tr:nth-child(even) td{background:#FAFBFD}
 .emp-status-tag.emp-status-exited{border-color:var(--red,#B02318);background:var(--red-tint,#fbebea);color:var(--red,#B02318)}
 .emp-status-tag.emp-status-relieved{border-color:var(--amber,#8A5206);background:var(--amber-tint,#fbf0de);color:var(--amber,#8A5206)}
 .emp-status-tag.block{display:table;margin:2px 0 0}
+
+/* A separate company's own name as the mark (frontend/src/brand.js, docs/second-company.md). TeamLink's build never renders this. */
+.brand-text-mark{display:inline-block;font-weight:700;letter-spacing:.02em;line-height:1.25;color:#1b2a4a;font-size:15px;text-align:left}
+.login-card .brand-text-mark{display:block;font-size:20px;text-align:center;margin:0 auto}
+.login-card .logo-lockup{text-align:center}

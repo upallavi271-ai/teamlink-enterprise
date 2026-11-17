@@ -98,3 +98,7 @@ greenstart-app/var/
 # the Job Portal's own live database folder and runtime files: never code (deploy/vps/teamlink-sync.sh also never touches them)
 job-portal-app/**/var/
 job-portal-app/**/run/
+
+# A separate company's sandbox copy on a PC (backend/scripts/company-sandbox.js): database + the one-time sign-in link.
+backend/prisma/company-sandbox.*
+backend/prisma/zz-sc-*

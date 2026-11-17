@@ -10,6 +10,8 @@
     "prisma:migrate": "prisma migrate dev",
     "seed": "node prisma/seed.js",
     "sandbox": "node scripts/sandbox.js",
+    "company-sandbox": "node scripts/company-sandbox.js",
+    "company-test": "node scripts/second-company-test.js",
     "backup": "node scripts/backup.js",
     "backup:verify": "node scripts/backup.js --verify",
     "backup:drill": "node scripts/backup.js --drill",

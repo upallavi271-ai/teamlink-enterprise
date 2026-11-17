@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // The TeamLink Job Portal is a self-contained single-file app that lives at
@@ -41,8 +41,22 @@ function jobPortalRoute() {
   };
 }
 
-export default defineConfig({
-  plugins: [react(), jobPortalRoute()],
+// A SEPARATE COMPANY's build (docs/second-company.md): VITE_BRAND_NAME="..." puts its name in the browser tab and drops TeamLink's tab icon.
+// Without VITE_BRAND_NAME (TeamLink, every PC) the page is passed through untouched.
+function brandHtml(mode) {
+  return {
+    name: 'company-brand-html',
+    transformIndexHtml(html) {
+      const name = String(process.env.VITE_BRAND_NAME || loadEnv(mode, process.cwd(), 'VITE_').VITE_BRAND_NAME || '').trim();
+      if (!name) return html;
+      const esc = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      return html.replace(/<title>[^<]*<\/title>/, `<title>${esc}</title>`).replace(/\s*<link rel="(?:icon|apple-touch-icon)"[^>]*>/g, '');
+    },
+  };
+}
+
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), jobPortalRoute(), brandHtml(mode)],
   // THE PDF VIEWER'S WORKER is a .mjs file. The live nginx serves .mjs as application/octet-stream, and a browser refuses to load a
   // module with that type ("Setting up fake worker failed: Failed to fetch dynamically imported module ... pdf.worker.min-*.mjs",
   // founder 2026-11-02 - every LMS PDF stayed blank). Emitted as .js it is served as JavaScript everywhere.
@@ -73,4 +87,4 @@ export default defineConfig({
       '/icons/': process.env.API_PROXY || 'http://localhost:4010',
     },
   },
-});
+}));

@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "sandbox": "node scripts/sandbox.mjs",
+    "company-sandbox": "node scripts/company-sandbox.mjs",
     "check:selects": "node scripts/check-selects.mjs"
   },
   "dependencies": {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { TeamLinkMark } from '../components/Logo.jsx';
+import { BRAND } from '../brand.js';
 import vendorApi, { setVendorToken, setVendorHome, vendorHome } from '../vendorApi';
 import api from '../api';
 import { RecoveryCodes, SetupBox } from '../components/TwoStepCard.jsx';
@@ -189,7 +190,7 @@ export default function Login() {
         <form className="login-card" onSubmit={onChoose} data-testid="choose-account">
           <div className="logo-lockup">
             <TeamLinkMark width={168} />
-            <div className="small-muted" style={{ marginTop: 6 }}>TeamLink.Enterprise</div>
+            <div className="small-muted" style={{ marginTop: 6 }}>{BRAND.product}</div>
           </div>
           <h1 style={{ fontSize: 20, margin: '4px 0 6px' }}>Choose your account</h1>
           <div className="small-muted" style={{ marginBottom: 12 }}>
@@ -234,7 +235,7 @@ export default function Login() {
           <TeamLinkMark width={168} />
           {/* NO PRODUCT NAME HERE. A client and a candidate sign in on this same
               card, and "HRMS" is internal vocabulary they must never see. */}
-          <div className="small-muted" style={{ marginTop: 6 }}>TeamLink.Enterprise</div>
+          <div className="small-muted" style={{ marginTop: 6 }}>{BRAND.product}</div>
         </div>
 
         {notice && <div className="notice green" role="status" style={{ display: 'block', marginBottom: 12 }}>{notice}</div>}

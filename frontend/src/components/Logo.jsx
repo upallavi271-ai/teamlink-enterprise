@@ -1,3 +1,4 @@
+import { BRAND } from '../brand.js';
 import logoMark from '../assets/teamlink-full-logo.png';
 import logo180 from '../assets/teamlink-logo-180.png';
 import logo240 from '../assets/teamlink-logo-240.png';
@@ -32,6 +33,14 @@ const DEFAULT_W = 170;
 
 export function TeamLinkMark({ width = DEFAULT_W }) {
   const w = Math.min(width, NATURAL_W);
+  // A separate company's copy (frontend/src/brand.js): its own name as a text mark, never TeamLink's picture.
+  if (BRAND.separate) {
+    return (
+      <span className="brand-mark brand-text-mark" role="img" aria-label={BRAND.name} style={{ maxWidth: w }}>
+        {BRAND.name}
+      </span>
+    );
+  }
   return (
     <img
       className="brand-mark"
@@ -54,7 +63,7 @@ export default function Logo({ width = DEFAULT_W, plate = true }) {
       <span className={plate ? 'brand-plate' : undefined}>
         <TeamLinkMark width={width} />
       </span>
-      <span className="b2">TeamLink.Enterprise</span>
+      <span className="b2">{BRAND.product}</span>
     </span>
   );
 }

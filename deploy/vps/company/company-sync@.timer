@@ -1,0 +1,11 @@
+[Unit]
+Description=Every 2 minutes: does separate company "%i" need the newer TeamLink release?
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=company-sync@%i.service
+
+[Install]
+WantedBy=timers.target

@@ -8,6 +8,7 @@ import {
 } from '../nav';
 import ModuleTabs from './ModuleTabs.jsx';
 import Logo from './Logo.jsx';
+import { BRAND } from '../brand.js'; // a separate company's copy shows its own name (frontend/src/brand.js); TeamLink's build is unchanged
 import AiAssistant, { AiStatusDot } from './AiAssistant.jsx';
 import ProfileStatusBanner from './ProfileStatusBanner.jsx';
 import SetupTabs from './SetupTabs.jsx';
@@ -154,7 +155,7 @@ export default function Shell() {
     const detail = current && pathname !== currentPath && pathname.startsWith(`${currentPath}/`) && !tab ? 'Details' : null;
     const parts = [detail, tab && (!current || tab !== current.label) ? tab : null, current ? current.label : null, section === 'dashboard' ? 'Dashboard' : sectionLabel(section, user)]
       .filter((x, i, all) => x && all.indexOf(x) === i);
-    document.title = `${parts.join(' · ')}${parts.length ? ' · ' : ''}TeamLink.Enterprise`;
+    document.title = `${parts.join(' · ')}${parts.length ? ' · ' : ''}${BRAND.separate ? `${BRAND.name} · ${BRAND.product}` : BRAND.product}`;
   }, [pathname, current, currentPath, section, user]);
 
   return (
@@ -173,7 +174,7 @@ export default function Shell() {
         {...drawer.touch}
       >
         <div className="sidebar-brand">
-          <Link to="/" onClick={closeSidebar} aria-label="TeamLink Consultants — home">
+          <Link to="/" onClick={closeSidebar} aria-label={`${BRAND.name} — home`}>
             <Logo />
           </Link>
           <button type="button" className="sidebar-close" ref={drawer.closeRef} onClick={closeSidebar} aria-label="Close menu">✕</button>
@@ -253,7 +254,8 @@ export default function Shell() {
           )}
           {/* Only for logins with ATS (user, 2026-09-29: R&D / non-ATS staff have
               nothing to do with the job portal). */}
-          {user?.products?.ats && !isExternalUser(user) && (
+          {/* (a separate company's copy has no Job Portal: it is its own program with its own database - docs/second-company.md) */}
+          {!BRAND.separate && user?.products?.ats && !isExternalUser(user) && (
             <div className="sb-group">
               {/* 2026-10-29: Admins, Recruiters and TLs open the Job Portal already signed in with this login (no second login);
                   everyone else gets the public portal. */}
@@ -405,7 +407,7 @@ export default function Shell() {
         {/* Review #2 §27 — small and unobtrusive: one faint line, no rule. */}
         <footer style={{ padding: '6px 22px 8px', fontSize: 10.5, borderTop: 0, opacity: 0.6 }}>
           {/* No product names: this footer renders for clients and candidates too. */}
-          TeamLink.Enterprise · connected to the TeamLink Job Portal
+          {BRAND.separate ? `${BRAND.name} · ${BRAND.product}` : 'TeamLink.Enterprise · connected to the TeamLink Job Portal'}
         </footer>
       </div>
 
