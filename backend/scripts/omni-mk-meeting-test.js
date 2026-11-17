@@ -262,6 +262,7 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     // what the phone's recogniser mishears (the founder said "list of the plans" and it wrote "list of the plants")
     const idOf = (q) => { const m = matchFaq(q, FE.meetingContent.FAQ); return m ? m.id : null; };
     check('14g "list of the plans", the misheard "list of the plants" and "what plants do you have" all give the prices (F1), in Telugu and Hindi too', ['list of the plans', 'list of the plants', 'what plants do you have', 'show me all plans', 'ప్లాన్లు ఏమిటి', 'सभी प्लान बताइए'].every((q) => idOf(q) === 'F1'), ['list of the plans', 'list of the plants', 'what plants do you have', 'ప్లాన్లు ఏమిటి', 'सभी प्लान बताइए'].map((q) => `${q}=${idOf(q)}`));
+    check('14g2 "can i know the best plan" and "which is the best" ask for plan advice (F3); "best price" is still the price', idOf('can i know the best plan') === 'F3' && idOf('which is the best') === 'F3' && idOf('what is the best price') === 'F1', ['can i know the best plan', 'which is the best', 'what is the best price'].map((q) => `${q}=${idOf(q)}`));
     check('14h one wrong letter is forgiven only in longer words: nothing answers noise, "again and again" or "paid maid", and "which plan is right for me" is still the plan advice', idOf('asdf qwerty zzz') === null && idOf('again and again') === null && idOf('paid maid') === null && idOf('a') === null && idOf('which plan is right for me') === 'F3' && idOf('can i change my plans') === 'F8');
     // removing
     const rm = await M.remove(sa, m.id);
