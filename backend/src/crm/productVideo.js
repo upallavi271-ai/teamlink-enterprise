@@ -46,8 +46,20 @@ function ensure() {
         "received" INTEGER NOT NULL DEFAULT 0, "status" TEXT NOT NULL, "step" TEXT, "duration" REAL, "transcript" TEXT, "draft" TEXT, "error" TEXT,
         "createdById" TEXT, "createdByName" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT)`);
       await prisma.$executeRawUnsafe('ALTER TABLE "CrmVideoJob" ADD COLUMN "title" TEXT').catch((e) => { if (!/duplicate column/i.test(e.message)) throw e; });
-      // a restart stops the background work: say so, Retry starts it again
-      await prisma.$executeRawUnsafe('UPDATE "CrmVideoJob" SET "status" = \'failed\', "error" = \'The server restarted while this was running - press Retry.\' WHERE "status" IN (\'queued\',\'analysing\',\'cutting\')');
+      await prisma.$executeRawUnsafe('ALTER TABLE "CrmVideoJob" ADD COLUMN "resumes" INTEGER NOT NULL DEFAULT 0').catch((e) => { if (!/duplicate column/i.test(e.message)) throw e; });
+      // a restart (a deploy) stops the background work: it starts again by itself, up to 3 times; after that, Retry
+      const cut = await prisma.$queryRawUnsafe('SELECT "id", "draft", "resumes" FROM "CrmVideoJob" WHERE "status" IN (\'queued\',\'analysing\',\'cutting\')');
+      for (const j of cut) {
+        const source = srcPath({ id: j.id, fileName: (await prisma.$queryRawUnsafe('SELECT "fileName" FROM "CrmVideoJob" WHERE "id" = ?', j.id))[0].fileName }); // eslint-disable-line no-await-in-loop
+        if (Number(j.resumes) >= 3 || !fs.existsSync(source)) {
+          await prisma.$executeRawUnsafe('UPDATE "CrmVideoJob" SET "status" = \'failed\', "error" = \'The server restarted while this was running - press Retry.\' WHERE "id" = ?', j.id); // eslint-disable-line no-await-in-loop
+          continue; // eslint-disable-line no-continue
+        }
+        await prisma.$executeRawUnsafe('UPDATE "CrmVideoJob" SET "status" = \'queued\', "step" = \'Starting again after a server restart\', "resumes" = "resumes" + 1 WHERE "id" = ?', j.id); // eslint-disable-line no-await-in-loop
+        const d = parse(j.draft, null);
+        queue.push({ id: j.id, task: d && d.apply ? 'cut' : 'analyse' });
+      }
+      if (queue.length && !running) setImmediate(drain);
     })().catch((e) => { READY = null; throw e; });
   }
   return READY;
@@ -459,3 +471,6 @@ async function sourceFile(token) {
 }
 
 module.exports = { ensure, CHUNK, startUpload, putChunk, finishUpload, jobs, jobDetail, applyDraft, retry, remove, sourceFile, splitByProduct, fix, drain: () => (running ? new Promise((r) => { const t = setInterval(() => { if (!running) { clearInterval(t); r(); } }, 200); }) : Promise.resolve()) };
+
+// after a restart, an interrupted video job carries on without waiting for someone to open the page (not in the sandbox tests)
+if (!process.env.TEST_MODE) setTimeout(() => ensure().catch(() => {}), 15000).unref();
