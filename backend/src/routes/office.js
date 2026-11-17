@@ -342,15 +342,34 @@ async function vendorMapOf() {
   return m;
 }
 
-const joinMonthDay = (i) => String(i.joiningDate || i.invoiceDate || '').slice(0, 10);
+const joinMonthDay = (i) => String(i.joinDay || i.joiningDate || i.invoiceDate || '').slice(0, 10);
+// The joining date the Invoices page shows: the invoice's own, else the candidate's ATS application (same pick as
+// routes/invoices.js placementFacts: exact requirement, else the application at this client, joined first).
+async function stampJoinDays(invoices) {
+  const candIds = [...new Set(invoices.map((i) => i.candidateId).filter(Boolean))];
+  const apps = candIds.length ? await prisma.application.findMany({
+    where: { candidateId: { in: candIds } },
+    select: { candidateId: true, requirementId: true, stage: true, joiningDate: true, requirement: { select: { clientId: true } } },
+  }) : [];
+  const byCand = new Map();
+  apps.forEach((a) => byCand.set(a.candidateId, [...(byCand.get(a.candidateId) || []), a]));
+  invoices.forEach((inv) => {
+    const list = byCand.get(inv.candidateId) || [];
+    const exact = inv.requirementId ? list.find((a) => a.requirementId === inv.requirementId) : null;
+    const same = list.filter((a) => a.requirement?.clientId === inv.clientId);
+    const app = exact || same.find((a) => a.stage === 'JOINED' || a.stage === 'HIRED') || same[0] || null;
+    inv.joinDay = String(inv.joiningDate || app?.joiningDate || '').slice(0, 10) || null;
+  });
+}
 async function officeScope(query) {
   const range = officeRange(query.period);
   const [expenses, invoices, payments, vendorMap] = await Promise.all([
     prisma.officeExpense.findMany({ orderBy: [{ expenseDate: 'desc' }, { category: 'asc' }] }),
-    prisma.invoice.findMany({ include: { client: true } }),
+    prisma.invoice.findMany({ include: { client: true, candidate: { select: { name: true } } } }),
     prisma.invoicePayment.findMany({ include: { invoice: { include: { client: true } } } }),
     vendorMapOf(),
   ]);
+  await stampJoinDays(invoices);
   await CNU.decorateNet(invoices); // B9.9: billed figures after issued notes
   // A hand loan or the owner's own money is not a cost — it stays out of
   // profit and out of GST, exactly as the accounting application has it.
@@ -370,7 +389,7 @@ async function officeScope(query) {
     invoices: live,
     invoicesInPeriod: live.filter((i) => range.all || inRange(i.invoiceDate, range)),
     // Founder 2026-11-17: no joining date recorded -> not counted in any month's GST (no fallback to the invoice date).
-    gstInvoices: live.filter((i) => range.all || (i.joiningDate && inRange(String(i.joiningDate).slice(0, 10), range))),
+    gstInvoices: live.filter((i) => range.all || (i.joinDay && inRange(i.joinDay, range))),
     payments,
   };
 }
@@ -1528,8 +1547,12 @@ function officeFacts({
   gstInv.forEach((i) => {
     const k = i.client?.name || '—';
     const c = cli.get(k) || {
-      name: k, n: 0, taxable: 0, gst: 0, value: 0,
+      name: k, n: 0, taxable: 0, gst: 0, value: 0, items: [],
     };
+    c.items.push({
+      id: i.id, number: i.invoiceNumber || null, candidate: i.candidate?.name || null, joined: i.joinDay || null, invoiceDate: i.invoiceDate || null,
+      taxable: ROUND(CNU.billedOf(i)), gst: ROUND(CNU.gstBilledOf(i)), status: deriveInvoiceStatus(i), received: Number(i.receivedAmount || 0),
+    });
     c.n += 1; c.taxable = ROUND(c.taxable + CNU.billedOf(i));
     c.gst = ROUND(c.gst + CNU.gstBilledOf(i));
     c.value = ROUND(c.taxable + c.gst);

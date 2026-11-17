@@ -6,7 +6,8 @@
 // invoice side follows the period only). This replaces the old "GST
 // Reconciliation" with its invoice-level and purchase-level reconciliation
 // lists (removed by S1.5).
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
+import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import ScrollSync from '../../components/accounts/ScrollSync.jsx';
 import AddGstin from './AddGstin.jsx';
@@ -27,12 +28,58 @@ function Card({
   );
 }
 
-function ClientsModal({ clients, onClose }) {
+// One invoice under a client: the candidate, when they joined, the amounts - with Edit (joining date) / Open / Cancel.
+function InvoiceRow({ it, canManage, onChanged }) {
+  const [edit, setEdit] = useState(false);
+  const [val, setVal] = useState(it.joined || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const run = async (fn) => {
+    setBusy(true); setErr('');
+    try { await fn(); setEdit(false); onChanged(); } catch (e) { setErr(e.response?.data?.error || 'That did not save.'); }
+    setBusy(false);
+  };
+  const cancelled = it.status === 'Cancelled';
+  return (
+    <tr className="gp-inv">
+      <td>{it.candidate || <span className="small-muted">no candidate</span>}<div className="small-muted">{it.number || '—'}</div></td>
+      <td colSpan={2}>
+        {edit ? (
+          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input type="date" value={val} onChange={(e) => setVal(e.target.value)} aria-label="Joining date" />
+            <button type="button" className="btn btn-sm btn-primary" disabled={busy || !val} onClick={() => run(() => api.patch(`/invoices/${it.id}/joining-date`, { joiningDate: val }))}>Save</button>
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setEdit(false)}>Back</button>
+          </span>
+        ) : (
+          <>Joined {it.joined ? fmtD(it.joined) : <b>date not recorded</b>}<div className="small-muted">Invoice {it.invoiceDate ? fmtD(it.invoiceDate) : '—'} · {it.status}</div></>
+        )}
+        {err && <div className="field-error" role="alert">{err}</div>}
+      </td>
+      <td className="num">{money(it.gst)}</td>
+      <td className="num" style={{ whiteSpace: 'normal' }}>
+        {money(it.taxable + it.gst)}
+        {canManage && !edit && (
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 4, flexWrap: 'wrap' }}>
+            <button type="button" className="btn btn-sm" onClick={() => { setVal(it.joined || ''); setEdit(true); }}>Edit date</button>
+            <a className="btn btn-sm" href={`/invoices/${it.id}`} target="_blank" rel="noreferrer">Open</a>
+            {!cancelled && (
+              <button type="button" className="btn btn-sm" disabled={busy}
+                onClick={() => { if (window.confirm(`Delete (cancel) invoice ${it.number || ''} for ${it.candidate || 'this candidate'}? It will no longer count in GST. This only works while no money is received against it.`)) run(() => api.patch(`/invoices/${it.id}/cancel`)); }}>Delete</button>
+            )}
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function ClientsModal({ clients, canManage, onChanged, onClose }) {
+  const [open, setOpen] = useState(null);
   const t = clients.reduce((a, c) => ({ n: a.n + c.n, taxable: a.taxable + c.taxable, gst: a.gst + c.gst, value: a.value + c.value }), {
     n: 0, taxable: 0, gst: 0, value: 0,
   });
   return (
-    <Modal title="Who the invoices went to" note={plural(clients.length, 'client')} onClose={onClose} size="wide"
+    <Modal title="Who the invoices went to" note={`${plural(clients.length, 'client')} · click a client to see its candidates`} onClose={onClose} size="wide"
       footer={<button type="button" className="btn btn-primary" onClick={onClose} autoFocus>Close</button>}>
       <ScrollSync className="gp-tbl" stickyHead={false} stickyFoot={false}>
         <table>
@@ -41,7 +88,12 @@ function ClientsModal({ clients, onClose }) {
           </thead>
           <tbody>
             {clients.map((c) => (
-              <tr key={c.name}><td><b>{c.name}</b></td><td className="num">{c.n}</td><td className="num">{money(c.taxable)}</td><td className="num">{money(c.gst)}</td><td className="num">{money(c.value)}</td></tr>
+              <Fragment key={c.name}>
+                <tr onClick={() => setOpen(open === c.name ? null : c.name)} style={{ cursor: 'pointer' }} aria-expanded={open === c.name}>
+                  <td><b>{open === c.name ? '▾' : '▸'} {c.name}</b></td><td className="num">{c.n}</td><td className="num">{money(c.taxable)}</td><td className="num">{money(c.gst)}</td><td className="num">{money(c.value)}</td>
+                </tr>
+                {open === c.name && (c.items || []).map((it) => <InvoiceRow key={it.id} it={it} canManage={canManage} onChanged={onChanged} />)}
+              </Fragment>
             ))}
             {clients.length === 0 && <tr><td colSpan={5} className="empty-mini">No invoices in this period.</td></tr>}
           </tbody>
@@ -160,7 +212,7 @@ export default function GstPosition({
       {i.atRisk <= 0.5 && i.bills > 0 && (
         <div className="gp-ok">Every bill with GST in this period has a valid vendor GSTIN — all {money(i.gstPaid)} can be claimed.</div>
       )}
-      {clientsOpen && <ClientsModal clients={o.clients} onClose={() => setClientsOpen(false)} />}
+      {clientsOpen && <ClientsModal clients={o.clients} canManage={canManage} onChanged={onChanged} onClose={() => setClientsOpen(false)} />}
     </div>
   );
 }
