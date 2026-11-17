@@ -340,20 +340,30 @@ async function meetingSay(token, text, lang) {
   const now = new Date().toISOString();
   tr.push({ who: 'lead', text: q, at: now });
   const kn = knowledge(m.products);
+  const other = LANGS[lang] && lang !== 'en-IN' ? LANGS[lang] : '';
+  const NOTED = 'Thank you - I have noted your question and our team will confirm it. Meanwhile, the slides on the side show the main features and plans.';
+  // a question the managers answered in writing gets that answer at once (no AI wait) - English only, other languages go to the AI to translate
+  const direct = other ? null : faqMatch(m.products, q, { strong: true });
   let out = null;
-  try {
-    const AI = require('../utils/ai'); // eslint-disable-line global-require
-    const system = `You are TeamLink's AI sales assistant in a live product meeting with ${m.lead.contactName || 'a prospect'} from ${m.lead.company || 'a company'}. You are an AI and say so if asked.\nAnswer ONLY from the facts below. Be warm, clear and short (at most 90 words), in ${LANGS[lang] && lang !== 'en-IN' ? `${LANGS[lang]} (written in ${LANGS[lang]} script, product names in English)` : 'the language the person writes in'}. If the facts do not answer the question, say you will have the team confirm it, and set "unanswered": true. Never invent a price, number, client name, integration or date; never offer a discount. When it fits, end with one short question to understand their needs (team size, what they use today, timeline, who decides).\nReply ONLY as JSON: {"reply": "...", "unanswered": true|false, "wantsHuman": true|false}.\n\nFACTS:\n${kn}`;
-    const history = tr.slice(-16).map((x) => ({ role: x.who === 'ai' ? 'assistant' : 'user', content: x.text }));
-    out = await AI.chatJson(system, history, { maxTokens: 500 });
-  } catch (e) { out = null; }
+  if (!direct) {
+    try {
+      const AI = require('../utils/ai'); // eslint-disable-line global-require
+      const system = `You are TeamLink's AI sales assistant in a live product meeting with ${m.lead.contactName || 'a prospect'} from ${m.lead.company || 'a company'}. You are an AI and say so if asked.\nAnswer ONLY from the facts below. Be warm, clear and short (at most 70 words)${other ? `. You MUST write the reply in ${other}, in ${other} script (product names stay in English)` : ', in the language the person writes in'}. If the facts do not answer the question, write a polite sentence saying our team will confirm it, and set "unanswered": true. Never invent a price, number, client name, integration or date; never offer a discount. When it fits, end with one short question to understand their needs (team size, what they use today, timeline, who decides). The person can see their exact price at the end of the meeting.\nReply ONLY as JSON: {"reply": "<your full sentence(s) to the person>", "unanswered": true|false, "wantsHuman": true|false}.\n\nFACTS:\n${kn}`;
+      const history = tr.slice(-8).map((x) => ({ role: x.who === 'ai' ? 'assistant' : 'user', content: x.text }));
+      if (other) history[history.length - 1] = { role: 'user', content: `${q}\n(Reply in ${other}.)` };
+      out = await AI.chatJson(system, history, { maxTokens: 400 });
+    } catch (e) { out = null; }
+  }
   let reply; let unanswered = false; let wantsHuman = false;
-  if (out && typeof out.reply === 'string' && out.reply.trim()) {
+  // a small model sometimes puts a flag word where the sentence should be: never show that to the lead
+  const usable = out && typeof out.reply === 'string' && out.reply.trim().length >= 12 && !/^(unanswered|answered|true|false|null|yes|no|n\/a)\.?$/i.test(out.reply.trim());
+  if (direct) reply = direct;
+  else if (usable) {
     reply = guardReply(out.reply, kn); unanswered = !!out.unanswered; wantsHuman = !!out.wantsHuman;
   } else {
-    // no model: the closest written answer, else a promise that a person answers
+    // no usable answer: the closest written answer, else a promise that a person answers
     const hit = faqMatch(m.products, q);
-    reply = hit || 'Thank you - I have noted your question and our team will answer it. Meanwhile, the slides on the side show the main features and plans.';
+    reply = hit || NOTED;
     unanswered = !hit;
   }
   tr.push({ who: 'ai', text: reply, at: new Date().toISOString(), unanswered, wantsHuman });
@@ -361,17 +371,23 @@ async function meetingSay(token, text, lang) {
   if (wantsHuman) await bellOwner(m.lead, `🙋 ${m.lead.company || 'A lead'} wants a person in the AI meeting`, `${m.lead.contactName || 'The lead'} asked for a person: "${q.slice(0, 120)}"`);
   return { ok: true, reply, unanswered };
 }
-function faqMatch(prods, q) {
-  const words = String(q).toLowerCase().match(/[a-z]{4,}/g) || [];
+// the written answer closest to the question: Q&A blocks first (the answer part only), then the features. strong = a clear match for answering at once
+const STOP = new Set(['the', 'and', 'for', 'are', 'our', 'you', 'can', 'how', 'its', 'any', 'has', 'all', 'yes', 'not', 'does', 'with', 'what', 'have', 'your', 'this', 'that', 'there', 'they', 'from', 'will', 'which', 'about', 'when', 'where', 'into', 'work', 'many', 'much', 'please', 'tell']);
+function faqMatch(prods, q, { strong = false } = {}) {
+  const words = [...new Set((String(q).toLowerCase().match(/[a-z]{3,}/g) || []).filter((w) => !STOP.has(w)))];
+  if (!words.length) return null;
   let best = null; let bestN = 0;
   prods.forEach((p) => {
-    String(p.faq || '').split(/\n(?=q[:.)]|\d+[.)])/i).forEach((block) => {
-      const n = words.filter((w) => block.toLowerCase().includes(w)).length;
-      if (n > bestN) { bestN = n; best = block; }
+    String(p.faq || '').split(/\n\s*\n|\n(?=q[:.)])/i).forEach((block) => {
+      const qPart = (/^\s*q[:.)]?\s*([\s\S]*?)(\n\s*a[:.)]|$)/i.exec(block) || [])[1] || block;
+      const n = words.filter((w) => block.toLowerCase().includes(w) || qPart.toLowerCase().includes(w)).length;
+      const ans = (/\n\s*a[:.)]\s*([\s\S]+)$/i.exec(block) || [])[1];
+      if (n > bestN && ans) { bestN = n; best = ans.trim(); }
     });
-    (p.features || []).forEach((f) => { const n = words.filter((w) => f.toLowerCase().includes(w)).length; if (n > bestN) { bestN = n; best = `Yes - ${p.name}: ${f}.`; } });
+    if (!strong) (p.features || []).forEach((f) => { const n = words.filter((w) => f.toLowerCase().includes(w)).length; if (n > bestN) { bestN = n; best = `Yes - ${p.name}: ${f}.`; } });
   });
-  return bestN >= 2 ? String(best).replace(/^q[:.)]?\s*/i, '').slice(0, 600) : null;
+  const need = strong ? Math.max(2, Math.ceil(words.length * 0.6)) : 2;
+  return bestN >= need ? String(best).slice(0, 600) : null;
 }
 const DECISIONS = { yes: 'Yes, I want to go ahead', later: 'I need some time', no: 'Not for us right now' };
 async function meetingEnd(token, decision) {
@@ -385,8 +401,20 @@ async function meetingEnd(token, decision) {
   let sum = null;
   try {
     const AI = require('../utils/ai'); // eslint-disable-line global-require
-    sum = await AI.chatJson('Summarise this sales meeting for the sales owner. Reply ONLY as JSON: {"summary": "3-5 short lines", "interest": "high|medium|low", "budget": "what was said or unknown", "authority": "who decides or unknown", "need": "the need in a line or unknown", "timeline": "when or unknown", "objections": ["..."], "nextStep": "one line"}', [{ role: 'user', content: tr.map((x) => `${x.who === 'ai' ? 'AI' : 'LEAD'}: ${x.text}`).join('\n').slice(-12000) }], { maxTokens: 600 });
+    sum = await AI.chatJson('Summarise this sales meeting for the sales owner. budget, authority, need and timeline come ONLY from what the LEAD said (never from what the AI said, never our prices); write "unknown" when the lead did not say it. TeamLink gives no discounts in the meeting: never write that a discount is possible. Reply ONLY as JSON: {"summary": "3-5 short lines", "interest": "high|medium|low", "budget": "the lead\'s own words or unknown", "authority": "who decides, as the lead said, or unknown", "need": "the need in a line or unknown", "timeline": "when, as the lead said, or unknown", "objections": ["..."], "nextStep": "one line"}', [{ role: 'user', content: tr.map((x) => `${x.who === 'ai' ? 'AI' : 'LEAD'}: ${x.text}`).join('\n').slice(-12000) }], { maxTokens: 600 });
   } catch { sum = null; }
+  // what only the AI said is not the lead's budget / decision maker / timeline; and no "discount possible"
+  const leadSaid = asked.join(' ').toLowerCase().replace(/,/g, '');
+  const noDiscount = (v) => (v == null ? v : String(v).replace(/[^.;,]*discount[^.;,]*[.;,]?/gi, '').trim() || 'unknown');
+  if (sum) {
+    ['budget', 'authority', 'timeline'].forEach((k) => {
+      const v = noDiscount(sum[k]);
+      const nums = (String(v || '').replace(/,/g, '').match(/\d+/g) || []).filter((n) => n.length >= 2);
+      sum[k] = nums.some((n) => !leadSaid.includes(n)) ? 'unknown' : v;
+    });
+    sum.summary = noDiscount(sum.summary);
+    sum.nextStep = noDiscount(sum.nextStep);
+  }
   const known = (v) => v && !/^unknown$/i.test(String(v).trim());
   const interest = d === 'yes' ? 'high' : d === 'no' ? 'low' : ((sum && sum.interest) || (asked.length >= 3 ? 'medium' : 'low'));
   const score = Math.min(100, (interest === 'high' ? 40 : interest === 'medium' ? 20 : 0) + (sum && known(sum.budget) ? 15 : 0) + (sum && known(sum.authority) ? 15 : 0) + (sum && known(sum.need) ? 15 : 0) + (sum && known(sum.timeline) ? 15 : 0) + (d === 'yes' ? 20 : 0));
@@ -448,5 +476,5 @@ async function onWon(dealId) {
 module.exports = {
   PRODUCT_KEYS, ensure, products, saveProduct, setLeadProducts, demoLink, demoForToken, demoEvent, meetingLink, meetingFor, meetingSay, meetingEnd,
   meetingsOf, onWon, videoPathOf, setVideoFile, staffVideoLink, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
-  siteBase, note, bellOwner, followUp, leadFor, LANGS,
+  siteBase, note, bellOwner, followUp, leadFor, LANGS, faqMatch,
 };
