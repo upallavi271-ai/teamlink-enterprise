@@ -1851,11 +1851,29 @@ async function expenseAccounts() {
     .map((x) => String(x || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
+// The Match / Categorise panel read EVERY invoice, receipt, office expense and rule from the database each time it opened
+// (founder 2026-11-17: "chala slow ga categorize open avuthundi"). The same snapshot is reused for a few seconds, and dropped
+// the moment anything is written through this router; every write re-reads what it needs inside its own transaction, so a
+// snapshot is only ever used to SHOW candidates, never to decide a write.
+let ctxCache = { at: 0, p: null };
+const CTX_TTL_MS = 20000;
+function matchContextShared() {
+  if (ctxCache.p && Date.now() - ctxCache.at < CTX_TTL_MS) return ctxCache.p;
+  const p = matchContext();
+  ctxCache = { at: Date.now(), p };
+  p.catch(() => { if (ctxCache.p === p) ctxCache = { at: 0, p: null }; });
+  return p;
+}
+router.use((req, res, next) => {
+  if (WRITE_METHODS.includes(req.method)) res.on('finish', () => { ctxCache = { at: 0, p: null }; });
+  next();
+});
+
 router.get('/:id/candidates', async (req, res) => {
   const txn = await loadTxn(req.params.id);
   if (!txn) return res.status(404).json({ error: 'Transaction not found' });
   const [ctx, accounts, loans] = await Promise.all([
-    matchContext(),
+    matchContextShared(),
     ensureAccounts(),
     prisma.handLoan.findMany({ include: { links: true } }),
   ]);
