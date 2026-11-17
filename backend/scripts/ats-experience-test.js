@@ -84,10 +84,25 @@ const tokenPath = (link) => new URL(link).pathname;
   check('setup: the person is on the job', [200, 201].includes(a1.status) && !!appId, a1.body);
   await prisma.application.update({ where: { id: appId }, data: { stage: 'INTERVIEW_SCHEDULED', ownerRecruiterId: REC.id } });
 
+  // ---- the two "send by itself" switches: OFF by default -> a stage move makes no survey and sends nothing
+  const sv = async () => E.q('SELECT * FROM "AtsSurvey" WHERE "applicationId" = ? ORDER BY "createdAt"', appId);
+  const as0 = await call('GET', '/ats-experience/auto-settings', null, tA);
+  check('both automatic survey switches are off by default', as0.status === 200 && as0.body.candidateSurveys === false && as0.body.clientSurveys === false && as0.body.mayEdit === true, as0.body);
+  const mv0 = await call('PATCH', `/applications/${appId}/stage`, { stage: 'INTERVIEW_COMPLETED', comment: 'done (switches off)' }, tA);
+  const offJoin = await E.onStage({ applicationId: appId, fromStage: 'OFFER', toStage: 'JOINED' });
+  check('with the switches off, the interview move and a joining make no survey row and send nothing', mv0.status === 200 && (await sv()).length === 0 && offJoin.length === 0
+    && (await prisma.candidateMessage.count({ where: { candidateId: C.id, template: { startsWith: 'SURVEY_' } } })) === 0, { mv0: mv0.status, offJoin });
+  check('a non-admin (BDE TL) cannot switch them on', (await call('PUT', '/ats-experience/auto-settings', { candidateSurveys: true }, tBT)).status === 403
+    && (await call('PUT', '/ats-experience/auto-settings', { clientSurveys: true }, tT)).status === 403);
+  check('a bad value is refused', (await call('PUT', '/ats-experience/auto-settings', { candidateSurveys: 'yes' }, tA)).status === 400);
+  const as1 = await call('PUT', '/ats-experience/auto-settings', { candidateSurveys: true, clientSurveys: true }, tA);
+  const auditSw = await prisma.auditLog.findFirst({ where: { entity: 'AppSetting', entityId: E.AUTO_KEY }, orderBy: { createdAt: 'desc' } });
+  check('the Admin switches both on, and the change is audited', as1.status === 200 && as1.body.candidateSurveys === true && as1.body.clientSurveys === true && auditSw && /candidate on, client on/.test(auditSw.toValue || ''), { b: as1.body, a: auditSw && auditSw.toValue });
+  await prisma.application.update({ where: { id: appId }, data: { stage: 'INTERVIEW_SCHEDULED' } });
+
   // ---- interview done -> one survey, queued through the candidate message queue
   const mv1 = await call('PATCH', `/applications/${appId}/stage`, { stage: 'INTERVIEW_COMPLETED', comment: 'done' }, tA);
   check('the interview is marked done', mv1.status === 200, mv1.body);
-  const sv = async () => E.q('SELECT * FROM "AtsSurvey" WHERE "applicationId" = ? ORDER BY "createdAt"', appId);
   let rows = await sv();
   const sInt = rows.find((r) => r.event === 'interview' && r.side === 'candidate');
   check('an interview experience survey is created for the move', !!sInt && sInt.recruiterId === REC.id && sInt.tlId === TL.id, rows);
@@ -285,6 +300,18 @@ const tokenPath = (link) => new URL(link).pathname;
   check('...and by source: linkedin submitted, naukri not', fnLater.bySource.some((g) => g.key === 'linkedin' && g.submitted === 1) && fnLater.bySource.some((g) => g.key === 'naukri' && g.abandoned === 1), fnLater.bySource);
   const fa = await call('GET', '/ats-experience/apply-funnel', null, tA);
   check('the apply funnel report answers over the API', fa.status === 200 && fa.body.byJob.some((g) => g.key === job.id && g.started === 2), fa.body && fa.body.overall);
+
+  // ---- switches off again: the manual paths still work
+  await call('PUT', '/ats-experience/auto-settings', { candidateSurveys: false, clientSurveys: false }, tA);
+  const C2 = await prisma.candidate.create({ data: { name: `Xp Second ${P}`, phone: `7${String(P).padStart(9, '6').slice(-9)}`, email: `xp.second.${P}@xp-test.in`, consentStatus: 'GIVEN' } });
+  const a2 = await call('POST', '/applications', { candidateId: C2.id, requirementId: j1.id, overrideReason: 'experience test second' }, tA);
+  const app2 = a2.body && (a2.body.id || (a2.body.application && a2.body.application.id));
+  await prisma.application.update({ where: { id: app2 }, data: { stage: 'INTERVIEW_SCHEDULED', ownerRecruiterId: REC.id } });
+  await call('PATCH', `/applications/${app2}/stage`, { stage: 'INTERVIEW_COMPLETED', comment: 'done' }, tA);
+  check('switched off again: a new interview move makes no survey', (await E.q('SELECT * FROM "AtsSurvey" WHERE "applicationId" = ?', app2)).length === 0);
+  check('...the recruiter can still log a complaint', (await call('POST', '/ats-experience/complaints', { side: 'candidate', applicationId: app2, subject: 'Manual path works' }, tR)).status === 201);
+  const qc = await call('POST', '/ats-experience/client-surveys/quarterly', { clientIds: [j1.clientId] }, tA);
+  check('...and the "Send quarterly survey" button still works', qc.status === 200 && qc.body.already === 1, qc.body && { c: qc.body.created, a: qc.body.already });
 
   // ---- catalog flags on the Reports page
   const cat = await call('GET', '/ats-reports/catalog', null, tA);

@@ -256,19 +256,43 @@ async function ensureClientSurvey(clientId, event, { applicationId = null, perio
   }
 }
 
+// THE TWO "SEND BY ITSELF" SWITCHES (coordinator 2026-11-17: nothing reaches a real candidate or client on deploy until the founder
+// turns them on). Both OFF by default. While a switch is off the stage hook creates NO survey row and sends nothing, so switching it on
+// later never floods old events. The manual paths (send one by hand, the quarterly button, complaints) are not affected.
+const AUTO_KEY = 'ats-experience-auto';
+async function autoSettings() {
+  const row = await prisma.appSetting.findUnique({ where: { key: AUTO_KEY } }).catch(() => null);
+  let v = {}; try { v = row ? JSON.parse(row.value) : {}; } catch { v = {}; }
+  return { candidateSurveys: v.candidateSurveys === true, clientSurveys: v.clientSurveys === true, updatedByName: row ? row.updatedByName : null, updatedAt: row ? row.updatedAt : null };
+}
+async function saveAutoSettings(body, user) {
+  const cur = await autoSettings();
+  const next = {
+    candidateSurveys: body.candidateSurveys === undefined ? cur.candidateSurveys : body.candidateSurveys === true,
+    clientSurveys: body.clientSurveys === undefined ? cur.clientSurveys : body.clientSurveys === true,
+  };
+  const value = JSON.stringify(next);
+  await prisma.appSetting.upsert({ where: { key: AUTO_KEY }, create: { key: AUTO_KEY, value, updatedById: user.id, updatedByName: user.name }, update: { value, updatedById: user.id, updatedByName: user.name } });
+  const word = (b) => (b ? 'on' : 'off');
+  await require('./audit').logAudit({ userId: user.id, action: 'Automatic experience surveys switched', entity: 'AppSetting', entityId: AUTO_KEY, fromValue: `candidate ${word(cur.candidateSurveys)}, client ${word(cur.clientSurveys)}`, toValue: `candidate ${word(next.candidateSurveys)}, client ${word(next.clientSurveys)}` }); // eslint-disable-line global-require
+  return autoSettings();
+}
+
 // The pipeline hook: applyStageMove (routes/applications.js) and recordWorkflowMove (utils/stageEvents.js) call this after every move.
 const INTERVIEW_STAGES = ['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED'];
 async function onStage({ applicationId, fromStage, toStage, user = null }) {
   const out = [];
   try {
     if (!applicationId || !toStage || fromStage === toStage) return out;
-    if (toStage === 'INTERVIEW_COMPLETED' || (['SELECTED', 'REJECTED', 'HOLD'].includes(toStage) && INTERVIEW_STAGES.includes(fromStage))) {
+    const auto = await autoSettings();
+    if (!auto.candidateSurveys && !auto.clientSurveys) return out;
+    if (auto.candidateSurveys && (toStage === 'INTERVIEW_COMPLETED' || (['SELECTED', 'REJECTED', 'HOLD'].includes(toStage) && INTERVIEW_STAGES.includes(fromStage)))) {
       out.push(await ensureCandidateSurvey(applicationId, 'interview', { user }));
     }
-    if (toStage === 'OFFER') out.push(await ensureCandidateSurvey(applicationId, 'offer', { user }));
+    if (auto.candidateSurveys && toStage === 'OFFER') out.push(await ensureCandidateSurvey(applicationId, 'offer', { user }));
     if (['JOINED', 'HIRED'].includes(toStage)) {
-      out.push(await ensureCandidateSurvey(applicationId, 'joining', { user }));
-      const a = await prisma.application.findUnique({ where: { id: applicationId }, select: { requirement: { select: { clientId: true, internal: true } } } });
+      if (auto.candidateSurveys) out.push(await ensureCandidateSurvey(applicationId, 'joining', { user }));
+      const a = auto.clientSurveys ? await prisma.application.findUnique({ where: { id: applicationId }, select: { requirement: { select: { clientId: true, internal: true } } } }) : null;
       if (a && a.requirement && !a.requirement.internal) out.push(await ensureClientSurvey(a.requirement.clientId, 'joining', { applicationId, user }));
     }
   } catch (e) { console.error('[ats-experience] onStage:', e.message); } // eslint-disable-line no-console
@@ -479,6 +503,6 @@ async function applySubmitted({ session, jobId, applicationId, source }) {
 
 module.exports = {
   ensure, q, x, STATUSES, EVENTS, CAND_DUE_HOURS, DEFAULT_LEVEL_HOURS, surveyToken, surveyOfToken, surveyUrl, npsOf, quarterOf,
-  ensureCandidateSurvey, ensureClientSurvey, onStage, surveyForPage, answerSurvey, matrixFor, saveMatrix, createComplaint, getComplaint,
+  ensureCandidateSurvey, ensureClientSurvey, onStage, autoSettings, saveAutoSettings, AUTO_KEY, surveyForPage, answerSurvey, matrixFor, saveMatrix, createComplaint, getComplaint,
   updateComplaint, runEscalations, applyProgress, applySubmitted, clientContacts, DAY, HOUR,
 };

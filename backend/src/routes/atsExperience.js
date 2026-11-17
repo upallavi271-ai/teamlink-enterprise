@@ -37,6 +37,18 @@ const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((err) => 
 });
 const send = (res, out) => (out && out.error ? res.status(out.status || 400).json({ error: out.error }) : res.json(out));
 const SETTINGS_KEY = 'client-nps-quarterly';
+const isAdmin = (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role);
+
+// The two "send by itself" switches (both OFF by default; utils/atsExperience.js autoSettings). Super Admin / Admin change them; audited.
+router.get('/auto-settings', wrap(async (req, res) => res.json({ ...(await E.autoSettings()), mayEdit: isAdmin(req.user) })));
+router.put('/auto-settings', wrap(async (req, res) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ error: 'Only Super Admin or Admin switches the automatic surveys on or off.' });
+  const b = req.body || {};
+  for (const k of ['candidateSurveys', 'clientSurveys']) {
+    if (b[k] !== undefined && typeof b[k] !== 'boolean') return res.status(400).json({ error: `${k} must be true or false.` });
+  }
+  return res.json({ ...(await E.saveAutoSettings(b, req.user)), mayEdit: true });
+}));
 
 router.get('/catalog', wrap(async (req, res) => res.json({
   seesAllCandidates: R.seesAllCandidates(req.user), seesAllClients: R.seesAllClients(req.user), mayEditMatrix: R.mayEditMatrix(req.user),

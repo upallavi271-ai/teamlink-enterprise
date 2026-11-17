@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import StatCard, { StatRow } from '../../components/ui/StatCard.jsx';
 import {
-  ComplaintsPanel, DateRange, Downloads, NpsTable, NpsTiles, SurveysList, day, errText,
+  AutoSwitch, ComplaintsPanel, DateRange, Downloads, NpsTable, NpsTiles, SurveysList, day, errText,
 } from './ExperienceBits.jsx';
 
 // ---------------------------------------------------------------------------
@@ -105,6 +105,7 @@ export default function CandidateExperienceReport() {
   const [part, setPart] = useState('results');
   return (
     <div>
+      <AutoSwitch which="candidateSurveys" />
       <div className="tabs" role="tablist" aria-label="Candidate experience">
         {PARTS.map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={part === id} className={`tab-btn${part === id ? ' active' : ''}`} onClick={() => setPart(id)}>{label}</button>

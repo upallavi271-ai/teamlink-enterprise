@@ -11,6 +11,29 @@ export const day = (iso) => (iso ? new Date(iso).toLocaleDateString('en-GB', { d
 export const when = (iso) => (iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
 const dash = (v, suffix = '') => (v === null || v === undefined || v === '' ? '—' : `${v}${suffix}`);
 
+// The "send by itself" switch at the top of each tab (both OFF by default; Super Admin / Admin change them, audited).
+// which: 'candidateSurveys' | 'clientSurveys'. While off, a stage move creates no survey and sends nothing.
+export function AutoSwitch({ which }) {
+  const [s, setS] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => { api.get('/ats-experience/auto-settings').then((x) => setS(x.data)).catch(() => setS(null)); }, []);
+  if (!s) return null;
+  const label = which === 'clientSurveys' ? 'Send client surveys by themselves (after each joining)' : 'Send candidate surveys by themselves (after interview, offer and joining - email and WhatsApp)';
+  async function flip(on) {
+    try { const x = await api.put('/ats-experience/auto-settings', { [which]: on }); setS(x.data); setErr(''); } catch (e) { setErr(errText(e, 'Could not save.')); }
+  }
+  return (
+    <div className={`notice${s[which] ? ' green' : ' amber'}`} style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+      <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+        <input type="checkbox" checked={!!s[which]} disabled={!s.mayEdit} onChange={(e) => flip(e.target.checked)} />
+        <b>{label}</b>
+      </label>
+      <span className="small-muted">{s[which] ? 'On.' : 'Off: nothing is sent and no survey is made when a candidate moves.'}{!s.mayEdit ? ' Only Super Admin or Admin changes this.' : ''}{s.updatedByName ? ` Last changed by ${s.updatedByName}.` : ''}</span>
+      {err && <span style={{ color: '#b91c1c' }}>{err}</span>}
+    </div>
+  );
+}
+
 export async function downloadFile(url, params, fallback) {
   try {
     const res = await api.get(url, { params, responseType: 'blob' });

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import api from '../../api';
 import StatCard, { StatRow } from '../../components/ui/StatCard.jsx';
 import {
-  ComplaintsPanel, DateRange, Downloads, NpsTable, NpsTiles, Picker, SurveysList, errText,
+  AutoSwitch, ComplaintsPanel, DateRange, Downloads, NpsTable, NpsTiles, Picker, SurveysList, errText,
 } from './ExperienceBits.jsx';
 
 // ---------------------------------------------------------------------------
@@ -195,6 +195,7 @@ export default function ClientHealthReport() {
   const [part, setPart] = useState('nps');
   return (
     <div>
+      <AutoSwitch which="clientSurveys" />
       <div className="tabs" role="tablist" aria-label="Client health">
         {PARTS.map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={part === id} className={`tab-btn${part === id ? ' active' : ''}`} onClick={() => setPart(id)}>{label}</button>
