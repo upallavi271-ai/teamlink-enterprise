@@ -70,7 +70,9 @@ async function myResults(user, query) {
   // A recruiter's results are THEIR people: the candidates attributed to them (utils/workers.js attribute(), the rule every
   // report uses), not everyone on a job they share with a colleague (user, 2026-10-12).
   if (require('./ownOnly').isOwnOnly(user)) { // eslint-disable-line global-require
-    const ctx = await require('../routes/atsReports').packContext(user, { recruiter: `id:${user.id}` }, 'createdAt'); // eslint-disable-line global-require
+    // fresh: opening My results counts what is true NOW, not a snapshot from up to 10 minutes ago (a joining just recorded
+    // showed 0 - lifecycle test 2026-11-17)
+    const ctx = await require('../routes/atsReports').packContext(user, { recruiter: `id:${user.id}` }, 'createdAt', true); // eslint-disable-line global-require
     const mine = new Set(ctx.apps.map((x) => x.id));
     apps = apps.filter((a) => mine.has(a.id));
   }

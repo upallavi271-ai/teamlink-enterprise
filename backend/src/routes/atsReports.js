@@ -2516,7 +2516,8 @@ async function reportFacets(user, q0) {
 router.reportFacets = reportFacets;
 // utils/reportPack.js (team-wise / individual reports + their exports): the SAME scoped rows every report here is
 // counted from (this login's scope, the period/department as filters), so a pack number equals the report's.
-router.packContext = async (user, query, appDate = 'createdAt') => contextFor(user, parseFilters(query || {}), appDate, false);
+// fresh = load now instead of the 10-minute snapshot (My results is a report OPENED, not a drill-down: it must show what just happened)
+router.packContext = async (user, query, appDate = 'createdAt', fresh = false) => contextFor(user, parseFilters(query || {}), appDate, fresh);
 router.PIPE = PIPE;
 
 const REVENUE_DENIED = 'Client revenue is only for Super Admin, Admin and Accounts.';

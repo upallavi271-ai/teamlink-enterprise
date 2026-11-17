@@ -397,6 +397,15 @@ function printBoard() {
     check('GET /api/ats-reports/my-results (recruiter): Joined goes up by 1', myBefore.status === 200 && myAfter.status === 200 && Number(ja) === Number(jb) + 1, { before: jb, after: ja, st: [myBefore.status, myAfter.status], err: err(myAfter) });
     const sb = cardOf(myBefore.body, 'selected'); const sa2 = cardOf(myAfter.body, 'selected'); const ib = cardOf(myBefore.body, 'interviews'); const ia = cardOf(myAfter.body, 'interviews');
     note(`recruiter My results: joined ${jb}->${ja}, selected ${sb}->${sa2}, interviews ${ib}->${ia}`);
+    if (process.env.LCE_DEBUG) {
+      const S0 = require('../src/utils/scope'); // eslint-disable-line global-require
+      const recId = await resolveIdentity(rec.id);
+      const inScope = await prisma.application.count({ where: { AND: [{ id: ids.app }, S0.applicationWhere(recId)] } });
+      const base = await prisma.application.count({ where: { AND: [{ id: ids.app }, S0.applicationWhereBase ? S0.applicationWhereBase(recId) : {}] } });
+      const appRow = await prisma.application.findUnique({ where: { id: ids.app }, select: { ownerRecruiterId: true, stage: true, requirement: { select: { recruiterId: true, recruiterIds: true, department: true, positionCode: true } } } });
+      const ctxR = await require('../src/routes/atsReports').packContext(recId, { recruiter: `id:${rec.id}` }, 'createdAt'); // eslint-disable-line global-require
+      note(`DEBUG applicationWhere(rec) has the app: ${inScope}; base: ${base}; ownerRecruiterId=${appRow.ownerRecruiterId === rec.id ? 'rec' : appRow.ownerRecruiterId}; req.recruiterId=${appRow.requirement.recruiterId === rec.id ? 'rec' : appRow.requirement.recruiterId} recruiterIds=${appRow.requirement.recruiterIds} dept=${appRow.requirement.department}; ctx(recruiter=rec) apps=${(ctxR.apps || []).length} has=${(ctxR.apps || []).some((a) => a.id === ids.app)}; isOwnOnly=${require('../src/utils/ownOnly').isOwnOnly(recId)}; positions=${!!(S0.atsScopeOf(recId).positions)}`); // eslint-disable-line global-require
+    }
     // the recruiter's own Funnel report (built with fresh: true)
     const recFunnel = await C('GET', '/ats-reports/funnel', 'rec');
     const rfJ = tileOf(recFunnel.body, 'joined');
