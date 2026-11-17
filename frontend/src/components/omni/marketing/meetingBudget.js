@@ -1,8 +1,8 @@
 // THE PLANS MEETING: "my budget is 6000" -> which plan fits. Fixed words and fixed price lines, no AI. Pure functions, so they can be tested alone.
 // The plan prices (marketing sheet, 17 Nov 2026): Starter Rs 3,999, Growth Rs 9,999, Premium Rs 19,999 a month + 18% GST, so with GST they cost Rs 4,719 / 11,799 / 23,599. The limits below are those
-// numbers rounded UP to the next hundred, so "Starter fits from Rs 4,800" is always true. The trial is Rs 999 + GST (Rs 1,179).
+// numbers EXACTLY (slide 6 shows the same totals: the founder asked on 2026-11-17 for the slide to say Starter is Rs 3,999 + GST, not "from Rs 4,800"). The trial is Rs 999 + GST (Rs 1,179).
 const DIGITS = { '०': '0', '१': '1', '२': '2', '३': '3', '४': '4', '५': '5', '६': '6', '७': '7', '८': '8', '९': '9', '౦': '0', '౧': '1', '౨': '2', '౩': '3', '౪': '4', '౫': '5', '౬': '6', '౭': '7', '౮': '8', '౯': '9' };
-export const LIMITS = { trial: 1200, starter: 4800, growth: 11800, premium: 23600 }; // a monthly budget with GST, from this up
+export const LIMITS = { trial: 1179, starter: 4719, growth: 11799, premium: 23599 }; // a monthly budget with GST, from this up (the plan prices + 18% GST)
 
 const UNIT = '(crores?|cr|lakhs?|lacs?|lac|l|thousand|k|కోట్లు?|లక్షలు?|లక్ష|వేలు|వెయ్యి|करोड़|लाख|हज़ार|हजार)';
 const CONTEXT = /(budget|rs\.?|rupee|rupees|inr|₹|per month|a month|monthly|month|బడ్జెట్|రూపాయ|రూ\.?|నెలకు|నెలవారీ|बजट|रुपये|रुपए|रु\.?|महीने|मासिक)/i;

@@ -203,31 +203,31 @@ export const SLIDES = [
     "title": "Which plan is right for you",
     "screen": {
       "en": [
-        "Monthly budget (with GST)",
-        "Up to Rs 4,800  →  start with the Rs 999 trial",
-        "From Rs 4,800  →  Starter",
-        "From Rs 11,800  →  Growth",
-        "From Rs 23,600  →  Premium"
+        "Pick by your monthly budget (with GST)",
+        "Trial (one time): Rs 999 + GST  →  Rs 1,179",
+        "Starter: Rs 3,999 + GST  →  Rs 4,719",
+        "Growth: Rs 9,999 + GST  →  Rs 11,799",
+        "Premium: Rs 19,999 + GST  →  Rs 23,599"
       ],
       "te": [
-        "నెలవారీ బడ్జెట్ (జీఎస్టీతో)",
-        "₹4,800 వరకు  →  ₹999 ట్రయల్‌తో మొదలుపెట్టండి",
-        "₹4,800 నుండి  →  స్టార్టర్",
-        "₹11,800 నుండి  →  గ్రోత్",
-        "₹23,600 నుండి  →  ప్రీమియం"
+        "మీ నెలవారీ బడ్జెట్‌ను బట్టి ఎంచుకోండి (జీఎస్టీతో)",
+        "ట్రయల్ (ఒకసారి): ₹999 + జీఎస్టీ  →  ₹1,179",
+        "స్టార్టర్: ₹3,999 + జీఎస్టీ  →  ₹4,719",
+        "గ్రోత్: ₹9,999 + జీఎస్టీ  →  ₹11,799",
+        "ప్రీమియం: ₹19,999 + జీఎస్టీ  →  ₹23,599"
       ],
       "hi": [
-        "मासिक बजट (जीएसटी के साथ)",
-        "₹4,800 तक  →  ₹999 के ट्रायल से शुरू करें",
-        "₹4,800 से  →  स्टार्टर",
-        "₹11,800 से  →  ग्रोथ",
-        "₹23,600 से  →  प्रीमियम"
+        "अपने मासिक बजट के हिसाब से चुनें (जीएसटी के साथ)",
+        "ट्रायल (एक बार): ₹999 + जीएसटी  →  ₹1,179",
+        "स्टार्टर: ₹3,999 + जीएसटी  →  ₹4,719",
+        "ग्रोथ: ₹9,999 + जीएसटी  →  ₹11,799",
+        "प्रीमियम: ₹19,999 + जीएसटी  →  ₹23,599"
       ]
     },
     "voice": {
-      "en": "Which plan is right for you? Think of your monthly budget for social media, including GST. Up to about forty-eight hundred rupees, start with the nine hundred ninety-nine rupee trial. From forty-eight hundred, Starter fits. From eleven thousand eight hundred, Growth fits. From twenty-three thousand six hundred, Premium fits.",
-      "te": "మీకు ఏ ప్లాన్ సరిపోతుంది? జీఎస్టీతో కలిపి సోషల్ మీడియా కోసం మీ నెలవారీ బడ్జెట్ ఆలోచించండి. నాలుగు వేల ఎనిమిది వందల రూపాయల వరకు అయితే తొమ్మిది వందల తొంభై తొమ్మిది రూపాయల ట్రయల్‌తో మొదలుపెట్టండి. నాలుగు వేల ఎనిమిది వందల నుండి స్టార్టర్ సరిపోతుంది. పదకొండు వేల ఎనిమిది వందల నుండి గ్రోత్. ఇరవై మూడు వేల ఆరు వందల నుండి ప్రీమియం.",
-      "hi": "आपके लिए कौन सा प्लान सही है? जीएसटी मिलाकर सोशल मीडिया के लिए अपना मासिक बजट सोचिए। करीब अड़तालीस सौ रुपये तक हो तो नौ सौ निन्यानवे रुपये के ट्रायल से शुरू कीजिए। अड़तालीस सौ से स्टार्टर ठीक है। ग्यारह हज़ार आठ सौ से ग्रोथ। तेईस हज़ार छह सौ से प्रीमियम।"
+      "en": "Which plan is right for you? Think of your monthly budget for social media, including GST. The trial is nine hundred ninety-nine rupees plus GST, one time. Starter is three thousand nine hundred ninety-nine rupees plus GST, which is four thousand seven hundred nineteen with GST. Growth is nine thousand nine hundred ninety-nine plus GST, which is eleven thousand seven hundred ninety-nine with GST. Premium is nineteen thousand nine hundred ninety-nine plus GST, which is twenty-three thousand five hundred ninety-nine with GST. Pick the plan that fits your budget.",
+      "te": "మీకు ఏ ప్లాన్ సరిపోతుంది? జీఎస్టీతో కలిపి సోషల్ మీడియా కోసం మీ నెలవారీ బడ్జెట్ ఆలోచించండి. ట్రయల్ తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం, ఒకసారి మాత్రమే. స్టార్టర్ మూడు వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం, అంటే జీఎస్టీతో నాలుగు వేల ఏడు వందల పంతొమ్మిది. గ్రోత్ తొమ్మిది వేల తొమ్మిది వందల తొంభై తొమ్మిది, జీఎస్టీ అదనం, అంటే జీఎస్టీతో పదకొండు వేల ఏడు వందల తొంభై తొమ్మిది. ప్రీమియం పంతొమ్మిది వేల తొమ్మిది వందల తొంభై తొమ్మిది, జీఎస్టీ అదనం, అంటే జీఎస్టీతో ఇరవై మూడు వేల ఐదు వందల తొంభై తొమ్మిది. మీ బడ్జెట్‌కు సరిపోయే ప్లాన్ ఎంచుకోండి.",
+      "hi": "आपके लिए कौन सा प्लान सही है? जीएसटी मिलाकर सोशल मीडिया के लिए अपना मासिक बजट सोचिए। ट्रायल नौ सौ निन्यानवे रुपये है, जीएसटी अलग, सिर्फ़ एक बार। स्टार्टर तीन हज़ार नौ सौ निन्यानवे रुपये, जीएसटी अलग, यानी जीएसटी के साथ चार हज़ार सात सौ उन्नीस। ग्रोथ नौ हज़ार नौ सौ निन्यानवे, जीएसटी अलग, यानी जीएसटी के साथ ग्यारह हज़ार सात सौ निन्यानवे। प्रीमियम उन्नीस हज़ार नौ सौ निन्यानवे, जीएसटी अलग, यानी जीएसटी के साथ तेईस हज़ार पाँच सौ निन्यानवे। अपने बजट के हिसाब से प्लान चुनिए।"
     }
   },
   {
