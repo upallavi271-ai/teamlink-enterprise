@@ -165,8 +165,33 @@ async function until(token, id, statuses, ms = 120000) {
   check('22 Save: Omni-Channel plays its own new clip', j2d && j2d.status === 'done' && /^OMNI-/.test(o2.videoFile || '') && Math.abs(durationOf(path.join(VID, o2.videoFile)) - 12) < 1.5, { j: j2d && [j2d.status, j2d.error], f: o2.videoFile });
   const list = await call('GET', '/crm/product-videos', null, tA);
   check('23 the uploads list shows both, newest first', list.status === 200 && list.body.jobs.length >= 2 && list.body.jobs[0].id === s2.body.id);
+  // ---- the 4th card: the full all-products video (founder 2026-11-17 "add 4th card")
+  const fv1 = (await call('GET', '/crm/products-settings', null, tA)).body.settings.fullVideo;
+  check('24a saving the all-products upload makes the full-video card: its original, a line from its narration, its length, off the demo pages', fv1 && fv1.jobId === id && fv1.title === 'TeamLink — all products (full demo)' && /TeamLink Enterprise, module by module/.test(fv1.description) && Math.abs(fv1.duration - 64) < 1 && fv1.showOnDemo === false, fv1);
+  const wf = await call('GET', '/crm/products/FULL/watch', null, tA);
+  const wfs = wf.body.url ? (await fetch(`http://localhost:${PORT}${wf.body.url}`, { headers: { Range: 'bytes=0-99' } })).status : 0;
+  check('24b ▶ Watch video on the card streams the whole original (in parts)', wf.status === 200 && wfs === 206, [wf.body, wfs]);
+  const FL = await call('POST', '/crm/leads', { company: `ZZTEST PV Full ${process.pid}`, contactName: 'Full Lead', source: 'Website' }, tA);
+  await call('POST', `/crm/leads/${FL.body.lead.id}/products`, { products: ['HRMS'] }, tA);
+  const fdm = await call('POST', `/crm/leads/${FL.body.lead.id}/demo`, { channel: 'link' }, tA);
+  const fdt = fdm.body.url.split('/').pop();
+  const offPage = await fetch(fdm.body.url).then((r) => r.text());
+  const offVid = await fetch(`${API}/crm-public/demo/${fdt}/full-video`);
+  check('24c off (the default): the demo page has no full demo, and its video link gives nothing', !/Watch the full demo/.test(offPage) && offVid.status === 404, offVid.status);
+  await call('PUT', '/crm/products-settings', { fullVideoShowOnDemo: true }, tA);
+  const onPage = await fetch(fdm.body.url).then((r) => r.text());
+  const onVid = await fetch(`${API}/crm-public/demo/${fdt}/full-video`, { headers: { Range: 'bytes=0-9' } });
+  check('24d "Show on demo pages" on: "Watch the full demo (1 min)" under the product clips, and it streams', /Watch the full demo \(1 min\)/.test(onPage) && onPage.indexOf('Watch the full demo') > onPage.indexOf('TeamLink HRMS') && onVid.status === 206, onVid.status);
+  await call('PUT', '/crm/products-settings', { autoDemo: true, paymentText: 'UPI: x@bank' }, tA);
+  const fv2 = (await call('GET', '/crm/products-settings', null, tA)).body.settings.fullVideo;
+  check('24e saving other settings keeps the card and its "show" choice', fv2 && fv2.jobId === id && fv2.showOnDemo === true, fv2);
+  const prodKeys = (await call('GET', '/crm/products?all=1', null, tA)).body.products.map((p) => p.key);
+  check('24f the card is not a product: no FULL in the products (leads, quotes, the funnel, the AI meeting)', !prodKeys.includes('FULL'), prodKeys);
+  const jl = (await call('GET', '/crm/product-videos', null, tA)).body.jobs.find((j) => j.id === id);
+  check('24g the uploads list says this upload is what the card plays (so ✕ can ask)', jl && jl.usedByCard === true, jl);
   const del = await call('DELETE', `/crm/product-videos/${id}`, null, tA);
-  check('24 removing an upload keeps the live clips', del.status === 200 && fs.existsSync(hFile) && !fs.existsSync(path.join(VID, 'sources', `${id}.mp4`)), del.body);
+  const fv3 = (await call('GET', '/crm/products-settings', null, tA)).body.settings.fullVideo;
+  check('24 removing the upload but keeping the card: the live clips stay, and so does the original the card plays', del.status === 200 && fs.existsSync(hFile) && fs.existsSync(path.join(VID, 'sources', `${id}.mp4`)) && fv3 && fv3.jobId === id, del.body);
 
   // ==== any video, any time (founder 2026-11-17: "whatever video we want to upload in future") ====
   const upload = async (buf, body) => {
@@ -205,6 +230,8 @@ async function until(token, id, statuses, ms = 120000) {
   await until(tA, again.id, ['done', 'failed'], 120000);
   const acc = (await call('GET', '/crm/products?all=1', null, tA)).body.products.find((p) => p.key === 'ACCOUNTS');
   check('28 Save: the new product has its clip and its text', /^ACCOUNTS-/.test(acc.videoFile || '') && acc.about === 'Accounts from the video.' && fs.existsSync(path.join(VID, acc.videoFile)), acc);
+  const fv4 = (await call('GET', '/crm/products-settings', null, tA)).body.settings.fullVideo;
+  check('28b a newer all-products upload saved: the card plays it now (still shown on demo pages as chosen)', fv4 && fv4.jobId === again.id && fv4.showOnDemo === true, fv4);
 
   // another video for a product, next to its demo
   const hMain = (await call('GET', '/crm/products?all=1', null, tA)).body.products.find((p) => p.key === 'HRMS').videoFile;
@@ -241,6 +268,10 @@ async function until(token, id, statuses, ms = 120000) {
   const st2 = (await call('GET', '/crm/products-settings', null, tA)).body.settings;
   const page2 = await fetch(dm.body.url).then((r) => r.text());
   check('34 remove: the other video and the company video come off the demo page', rmx.status === 200 && h3.extraVideos.length === 0 && !st2.companyVideoFile && !/More videos/.test(page2) && !/About TeamLink Consultants/.test(page2), [rmx.status, h3.extraVideos, st2.companyVideoFile]);
+  const rmc = await call('DELETE', `/crm/product-videos/${again.id}?removeCard=1`, null, tA);
+  const fv5 = (await call('GET', '/crm/products-settings', null, tA)).body.settings.fullVideo;
+  const page3 = await fetch(dm.body.url).then((r) => r.text());
+  check('35 removing the upload WITH the card: the card is gone, its original is deleted, the demo page has no full demo', rmc.status === 200 && !fv5 && !fs.existsSync(path.join(VID, 'sources', `${again.id}.mp4`)) && !/Watch the full demo/.test(page3), [rmc.status, fv5]);
 
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);

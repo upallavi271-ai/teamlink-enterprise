@@ -110,7 +110,7 @@ router.get('/product-videos', wrap((req) => PV.jobs(req.user)));
 router.get('/product-videos/:id', wrap((req) => PV.jobDetail(req.user, req.params.id)));
 router.post('/product-videos/:id/apply', wrap((req) => PV.applyDraft(req.user, req.params.id, req.body || {})));
 router.post('/product-videos/:id/retry', wrap((req) => PV.retry(req.user, req.params.id)));
-router.delete('/product-videos/:id', wrap((req) => PV.remove(req.user, req.params.id)));
+router.delete('/product-videos/:id', wrap((req) => PV.remove(req.user, req.params.id, { removeCard: String(req.query.removeCard || '') === '1' })));
 router.get('/products/:key/watch', wrap((req) => PS.staffVideoLink(req.user, req.params.key, req.query.extra)));
 router.post('/products', wrap((req) => PS.addProduct(req.user, req.body || {})));
 router.delete('/products/:key/videos/:n', wrap((req) => PS.removeExtraVideo(req.user, req.params.key, req.params.n)));

@@ -32,7 +32,8 @@ const plansHtml = (p) => { const pl = (p.plans || []).filter((x) => x.name); ret
 router.get('/product-video/:token', async (req, res) => {
   const v = PS.readToken(req.params.token, 'pv');
   if (!v) return res.status(404).end();
-  const file = v.p[0] === 'COMPANY' ? await companyFile() : await productFile(v.p[0], v.x && /^x\d+$/.test(v.x) ? v.x.slice(1) : null);
+  const file = v.p[0] === 'FULL' ? ((await require('../crm/productVideo').fullVideoFile().catch(() => null)) || {}).file // eslint-disable-line global-require
+    : v.p[0] === 'COMPANY' ? await companyFile() : await productFile(v.p[0], v.x && /^x\d+$/.test(v.x) ? v.x.slice(1) : null);
   if (!file) return res.status(404).end();
   noStore(res);
   return res.sendFile(file, { acceptRanges: true, headers: { 'Content-Type': 'video/mp4' } });
@@ -56,6 +57,14 @@ router.get('/:kind(demo|meet)/:token/company-video', async (req, res) => {
   if (!f) return res.status(404).end();
   noStore(res);
   return res.sendFile(f, { acceptRanges: true, headers: { 'Content-Type': 'video/mp4' } });
+});
+// the full all-products video under the product clips, only when the managers turned "Show on demo pages" on
+router.get('/demo/:token/full-video', async (req, res) => {
+  const v = PS.readToken(req.params.token, 'demo');
+  const f = v ? await require('../crm/productVideo').fullVideoFile().catch(() => null) : null; // eslint-disable-line global-require
+  if (!f || !f.fv.showOnDemo) return res.status(404).end();
+  noStore(res);
+  return res.sendFile(f.file, { acceptRanges: true });
 });
 router.get('/:kind(demo|meet)/:token/xvideo/:key/:n', async (req, res) => {
   const v = PS.readToken(req.params.token, req.params.kind);
@@ -86,7 +95,9 @@ router.get('/demo/:token', async (req, res) => {
     ${p.hasVideo ? `<video controls preload="metadata" playsinline data-key="${esc(p.key)}" src="${p.videoFile ? `/api/crm-public/demo/${t}/video/${esc(p.key)}` : esc(p.videoUrl)}"></video>` : (p.demoUrl ? `<p><a href="${esc(p.demoUrl)}" target="_blank" rel="noopener">Open the live demo</a></p>` : '')}
     <p>${esc(p.about || '')}</p><ul>${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>${moreVideos(p, 'demo', t)}${plansHtml(p) ? `<h2 style="margin-top:14px">Plans</h2>${plansHtml(p)}` : ''}</div>`).join('');
   const company = await companyCard('demo', t);
-  const body = `<div class="card"><h1>${hi} here is your demo</h1><p>${esc(d.lead.company ? `Made for ${d.lead.company}.` : '')} Watch at your own pace.${d.pick ? ' <b>Tick the products you need</b>, then' : ' If it looks right,'} press <b>I'm interested</b>: our AI assistant will walk you through it and answer your questions right away.</p></div>${company}${cards}
+  const full = await require('../crm/productVideo').fullVideoFile().catch(() => null); // eslint-disable-line global-require
+  const fullCard = full && full.fv.showOnDemo ? `<div class="card"><h2>Watch the full demo (${Math.max(1, Math.round((full.fv.duration || 900) / 60))} min)</h2><p class="muted">${esc(full.fv.description || 'Every TeamLink product, module by module.')}</p><video controls preload="none" playsinline src="/api/crm-public/demo/${t}/full-video"></video></div>` : '';
+  const body = `<div class="card"><h1>${hi} here is your demo</h1><p>${esc(d.lead.company ? `Made for ${d.lead.company}.` : '')} Watch at your own pace.${d.pick ? ' <b>Tick the products you need</b>, then' : ' If it looks right,'} press <b>I'm interested</b>: our AI assistant will walk you through it and answer your questions right away.</p></div>${company}${cards}${fullCard}
   <div class="card"><h2>What next?</h2><div class="btns"><button class="b b1" onclick="ev('interested')">I'm interested - start the AI meeting</button><button class="b b2" onclick="person()">Talk to a person</button><button class="b b2" onclick="trial()">Request a trial account</button><button class="b b3" onclick="ev('later')">Later</button></div><p class="muted" id="msg"></p><p class="muted" id="tmsg"></p><div id="book" class="card" style="display:none;margin-top:12px"></div></div>`;
   const script = `const T=${JSON.stringify(req.params.token)};const PICK=${d.pick ? 'true' : 'false'};function post(k,x){return fetch('/api/crm-public/demo/'+T+'/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({kind:k},x||{}))}).then(r=>r.json()).catch(()=>({}))}
 post('open');document.querySelectorAll('video').forEach(v=>{let sent=false;v.addEventListener('play',()=>{if(!sent){sent=true;post('play',{product:v.dataset.key})}})});

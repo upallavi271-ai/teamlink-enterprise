@@ -101,7 +101,13 @@ export function VideoStudio({ onSaved, refreshKey, products }) {
   async function act(j, what) {
     try {
       if (what === 'retry') await api.post(`/crm/product-videos/${j.id}/retry`);
-      if (what === 'delete') { if (!window.confirm(`Remove the upload "${j.fileName}"? Clips already live stay as they are.`)) return; await api.delete(`/crm/product-videos/${j.id}`); } // eslint-disable-line no-alert
+      if (what === 'delete') {
+        if (!window.confirm(`Remove the upload "${j.fileName}"? Clips already live stay as they are.`)) return; // eslint-disable-line no-alert
+        // this upload is what the full-video card plays: ask whether the card goes too (Cancel keeps the card and its file)
+        const card = j.usedByCard && window.confirm('This upload is also the full all-products video card on Our products. Remove that card too?\n\nOK = remove the card as well\nCancel = keep the card playing it'); // eslint-disable-line no-alert
+        await api.delete(`/crm/product-videos/${j.id}`, { params: card ? { removeCard: 1 } : {} });
+        if (onSaved) onSaved();
+      }
       load();
     } catch (e) { toast(errOf(e, 'This did not work.')); }
   }

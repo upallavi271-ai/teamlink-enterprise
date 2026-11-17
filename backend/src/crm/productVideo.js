@@ -60,6 +60,7 @@ function ensure() {
         queue.push({ id: j.id, task: d && d.apply ? 'cut' : 'analyse' });
       }
       if (queue.length && !running) setImmediate(drain);
+      await backfillFullVideo().catch(() => {});
     })().catch((e) => { READY = null; throw e; });
   }
   return READY;
@@ -71,7 +72,7 @@ async function setJob(id, patch) {
 }
 const shapeJob = (j, { full = false } = {}) => (j ? {
   id: j.id, kind: j.kind, productKey: j.productKey, title: j.title, fileName: j.fileName, size: j.size, received: j.received, status: j.status, step: j.step, duration: j.duration,
-  error: j.error, createdByName: j.createdByName, createdAt: j.createdAt, updatedAt: j.updatedAt, hasDraft: !!j.draft,
+  error: j.error, createdByName: j.createdByName, createdAt: j.createdAt, updatedAt: j.updatedAt, hasDraft: !!j.draft, usedByCard: !!(FULL_FILE && FULL_FILE === `${j.id}${path.extname(j.fileName || '.mp4').toLowerCase() || '.mp4'}`),
   ...(full ? { draft: parse(j.draft, null), transcript: parse(j.transcript, null), srcUrl: `/api/crm-public/product-video-src/${PS.makeToken('vsrc', j.createdById || 'staff', [], 0.5, j.id)}` } : {}),
 } : null);
 
@@ -328,10 +329,40 @@ async function cutJob(id) {
   await setJob(id, { status: 'done', step: done.length ? `Live: ${done.join(', ')}` : 'Text saved' });
   cleanup().catch(() => {});
 }
-// keep the last 3 uploaded originals; older ones (and their unfinished pieces) are removed
+// keep the last 3 uploaded originals; older ones (and their unfinished pieces) are removed - never the one the full-video card plays
 async function cleanup() {
   const rows = await prisma.$queryRawUnsafe('SELECT * FROM "CrmVideoJob" ORDER BY "createdAt" DESC');
-  rows.slice(3).forEach((j) => { if (!ACTIVE.includes(j.status)) for (const f of [srcPath(j), partPath(j)]) { try { fs.unlinkSync(f); } catch { /* gone */ } } });
+  const fv = (await PD().settings()).fullVideo;
+  rows.slice(3).forEach((j) => {
+    if (ACTIVE.includes(j.status)) return;
+    if (!(fv && fv.file === path.basename(srcPath(j)))) { try { fs.unlinkSync(srcPath(j)); } catch { /* gone */ } }
+    try { fs.unlinkSync(partPath(j)); } catch { /* gone */ }
+  });
+}
+// ---- THE FULL ALL-PRODUCTS VIDEO CARD (founder 2026-11-17 "add 4th card"): the original of the last all-products upload saved, played whole -----
+const PD = () => require('./productDeals'); // eslint-disable-line global-require
+const fullPathOf = (fv) => (fv && fv.file ? path.join(dirOf(), 'sources', path.basename(fv.file)) : null);
+function oneLineOf(job) {
+  const segs = parse(job.transcript, []);
+  const first = segs.length ? fix(segs[0].t) : '';
+  const mins = Math.round((Number(job.duration) || 0) / 60);
+  return `${first || 'Every TeamLink product, module by module, on the real application.'}${mins ? ` (${mins} min)` : ''}`.slice(0, 300);
+}
+async function pointFullVideoAt(job) {
+  const file = path.basename(srcPath(job));
+  if (!fs.existsSync(path.join(dirOf(), 'sources', file))) return null;
+  return PD().setFullVideo({ jobId: job.id, file, title: 'TeamLink — all products (full demo)', description: oneLineOf(job), duration: Number(job.duration) || null });
+}
+// a catalogue that had an all-products upload saved before this card existed gets it once
+async function backfillFullVideo() {
+  if ((await PD().settings()).fullVideo) return;
+  const [j] = await prisma.$queryRawUnsafe('SELECT * FROM "CrmVideoJob" WHERE "kind" = \'all\' AND "status" = \'done\' ORDER BY "updatedAt" DESC LIMIT 1');
+  if (j) await pointFullVideoAt(j);
+}
+async function fullVideoFile() {
+  const fv = (await PD().settings()).fullVideo;
+  const f = fullPathOf(fv);
+  return f && fs.existsSync(f) ? { file: f, fv } : null;
 }
 
 // ---- what the screen calls ----------------------------------------------------------------------------------------------------------------
@@ -387,9 +418,11 @@ async function finishUpload(user, id) {
   enqueue(id, 'analyse');
   return S.okBody({ ok: true, job: shapeJob(await getJob(id)) });
 }
+let FULL_FILE = null; // the file the full-video card plays, for the uploads list ("used by the full-video card")
 async function jobs(user) {
   if (!isManager(user)) return S.fail(403, 'Only a Sales manager or an Admin can see this.');
   await ensure();
+  FULL_FILE = ((await PD().settings()).fullVideo || {}).file || null;
   const rows = await prisma.$queryRawUnsafe('SELECT * FROM "CrmVideoJob" ORDER BY "createdAt" DESC LIMIT 8');
   return S.okBody({ jobs: rows.map((j) => shapeJob(j)) });
 }
@@ -446,6 +479,8 @@ async function applyDraft(user, id, body = {}) {
   await setJob(id, { draft: JSON.stringify(draft), status: anyVideo ? 'queued' : 'done', step: anyVideo ? 'Waiting to cut the clips' : 'Text saved', error: null });
   await S.audit(user, 'CRM product video draft saved', 'CrmVideoJob', id, Object.entries(apply).map(([k, a]) => `${k}:${a.video ? 'video' : ''}${a.text ? '+text' : ''}`).join(' '));
   if (anyVideo) enqueue(id, 'cut');
+  // a newer all-products video saved: the full-video card plays it from now on
+  if (job.kind === 'all') await pointFullVideoAt(job).catch(() => null);
   return S.okBody({ ok: true, job: shapeJob(await getJob(id)) });
 }
 async function retry(user, id) {
@@ -458,12 +493,17 @@ async function retry(user, id) {
   enqueue(id, d && d.apply ? 'cut' : 'analyse');
   return S.okBody({ ok: true });
 }
-async function remove(user, id) {
+async function remove(user, id, { removeCard = false } = {}) {
   if (!isManager(user)) return S.fail(403, 'Only a Sales manager or an Admin can do this.');
   const job = await getJob(id);
   if (!job) return S.fail(404, 'No such upload.');
   if (ACTIVE.includes(job.status)) return S.fail(400, 'This is being worked on - wait for it to finish.');
-  for (const f of [srcPath(job), partPath(job)]) { try { fs.unlinkSync(f); } catch { /* gone */ } }
+  // the full-video card plays this upload's original: removed with it only when the manager says so; else the file stays for the card
+  const fv = (await PD().settings()).fullVideo;
+  const forCard = !!(fv && fv.file === path.basename(srcPath(job)));
+  if (forCard && removeCard) await PD().setFullVideo(null);
+  if (!forCard || removeCard) { try { fs.unlinkSync(srcPath(job)); } catch { /* gone */ } }
+  try { fs.unlinkSync(partPath(job)); } catch { /* gone */ }
   await prisma.$executeRawUnsafe('DELETE FROM "CrmVideoJob" WHERE "id" = ?', id);
   return S.okBody({ ok: true });
 }
@@ -475,7 +515,7 @@ async function sourceFile(token) {
   return f && fs.existsSync(f) ? f : null;
 }
 
-module.exports = { ensure, CHUNK, startUpload, putChunk, finishUpload, jobs, jobDetail, applyDraft, retry, remove, sourceFile, splitByProduct, fix, drain: () => (running ? new Promise((r) => { const t = setInterval(() => { if (!running) { clearInterval(t); r(); } }, 200); }) : Promise.resolve()) };
+module.exports = { ensure, CHUNK, fullVideoFile, backfillFullVideo, startUpload, putChunk, finishUpload, jobs, jobDetail, applyDraft, retry, remove, sourceFile, splitByProduct, fix, drain: () => (running ? new Promise((r) => { const t = setInterval(() => { if (!running) { clearInterval(t); r(); } }, 200); }) : Promise.resolve()) };
 
 // after a restart, an interrupted video job carries on without waiting for someone to open the page (not in the sandbox tests)
 if (!process.env.TEST_MODE) setTimeout(() => ensure().catch(() => {}), 15000).unref();

@@ -199,6 +199,11 @@ function videoPathOf(p) {
 // the team watches a product's clip from Leads > Our products (a <video> cannot send the login, so a link signed for 6 hours)
 async function staffVideoLink(user, key, extra) {
   await ensure();
+  if (String(key).toUpperCase() === 'FULL') {
+    const fv = await require('./productVideo').fullVideoFile(); // eslint-disable-line global-require
+    if (!fv) return S.fail(404, 'There is no full all-products video yet.');
+    return S.okBody({ ok: true, url: `/api/crm-public/product-video/${makeToken('pv', user.id, ['FULL'], 0.25)}`, name: fv.fv.title });
+  }
   if (String(key).toUpperCase() === 'COMPANY') {
     const st = await require('./productDeals').settings(); // eslint-disable-line global-require
     if (!st.companyVideoFile) return S.fail(404, 'There is no company video yet.');
@@ -490,7 +495,10 @@ async function meetingSay(token, text, lang) {
   const now = new Date().toISOString();
   tr.push({ who: 'lead', text: q, at: now });
   const qn = readQuestion(q, m.products);
-  const kn = knowledge(m.products);
+  let kn = knowledge(m.products);
+  // the full all-products video is mentioned only when the managers show it on the demo pages
+  const fullOn = await require('./productDeals').settings().then((x) => x.fullVideo && x.fullVideo.showOnDemo).catch(() => false); // eslint-disable-line global-require
+  if (fullOn) kn += '\n\nALSO: a full 15-minute demo video of every TeamLink product is on the demo page ("Watch the full demo").';
   const other = LANGS[lang] && lang !== 'en-IN' ? LANGS[lang] : '';
   const NOTED = 'Thank you - that is a good question. A person from our team will confirm it for you; I have noted it. Meanwhile, the slides on the side show the main features and plans.';
   // the same answer to a different question is a miss (founder 2026-11-17: two questions got the same menu list)
