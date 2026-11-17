@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "TeamLink Website Reporter",
+  "version": "1.0.0",
+  "description": "Sends only the website name (host, e.g. naukri.com) of the active tab to the TeamLink monitor on this same PC during work hours. Never the full address, the page, the search, page content or anything from an incognito window.",
+  "permissions": ["tabs", "alarms"],
+  "host_permissions": ["http://127.0.0.1:47811/*"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

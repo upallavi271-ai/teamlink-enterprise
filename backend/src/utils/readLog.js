@@ -17,6 +17,8 @@ const RULES = [
   [/^\/api\/employees\/([A-Za-z0-9_-]{8,})$/, 'Employee', 'Employee record'],
   [/^\/api\/employees\/([A-Za-z0-9_-]{8,})\/documents\/[^/]+\/file$/, 'Employee', 'Employee document file'],
   [/^\/api\/portal\/client\/resume\/([A-Za-z0-9_-]{8,})$/, 'Application', 'Resume opened in the client portal'],
+  // Employee Monitoring screenshots (founder 2026-11-17): every open of a screenshot image is logged (Admin / HR only can open one)
+  [/^\/api\/monitoring\/screenshots\/(shot[A-Za-z0-9_-]{8,})$/, 'Monitoring', 'Screenshot opened'],
 ];
 const recent = new Map(); // `${userId}|${entity}|${id}|${what}` -> ms
 const WINDOW = 10 * 60000;

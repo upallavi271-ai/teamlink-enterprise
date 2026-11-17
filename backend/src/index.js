@@ -142,6 +142,8 @@ app.use('/api/crm/leads/public', require('./routes/crmWebsite'));
 app.use(require('./utils/webSecurity').corsMiddleware());
 // Employee Monitoring: an agent batch of activity can be larger than the site-wide 100 kB JSON limit.
 app.use('/api/monitoring/activity', express.json({ limit: '1mb' }));
+// Employee Monitoring screenshots (founder 2026-11-17): the agent uploads a JPEG as the raw request body (any content type, up to 2 MB).
+app.use('/api/monitoring/agent/screenshot', express.raw({ type: () => true, limit: '2mb' }));
 // AI Marketing > AI Images: the public link of an APPROVED picture (for posts and the Content Calendar). No login: the link carries an HMAC of
 // the picture's id, so it cannot be guessed, and it stops answering as soon as the picture is sent back or deleted (marketing/images.js).
 app.get('/api/mk-image/:id/:file', async (req, res, next) => {

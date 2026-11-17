@@ -14,8 +14,12 @@
     * (2.8-2.9) a summary of that same activity: how many minutes the keyboard / the mouse were actually in use, whether the
       typing in each minute was light, moderate or heavy (by app and hour), and the longest run of minutes typed without a
       break. Counts and minutes only, never a character.
+    * (3.4) a clear screenshot of the whole screen about every 10 minutes - ONLY while recording and at the PC (not idle, not
+      locked, not on lunch / break / pause, not before the notice is accepted). It is uploaded at once and never kept on this PC.
+    * (3.4) the website NAME only (the host, e.g. naukri.com) of the tab in front, from the TeamLink browser add-on on this PC
+      (a local 127.0.0.1 listener). Never a path, a query, page content or anything from an incognito window.
   and only during work hours (HR sets them; the server throws away anything outside).
-  It NEVER records what is typed, passwords, the clipboard, files or screenshots. Chat apps are recorded by name only.
+  It NEVER records what is typed, passwords, the clipboard or files. Chat apps are recorded by name only.
 
   No hidden mode: the first run shows the company notice, and nothing is recorded until the employee accepts it and signs
   in with their own TeamLink email and password. While it runs, a TeamLink icon sits next to the clock ("Recording PC use
@@ -32,7 +36,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '3.3'
+$AgentVersion = '3.4'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -257,6 +261,81 @@ public static class TLPower {
 }
 '@
 
+# ---------------------------------------------------------------- THE WEBSITE ADD-ON'S LOCAL LISTENER (agent 3.4, founder 2026-11-17)
+# A tiny HTTP listener on 127.0.0.1 (a fixed port, no admin rights - System.Net.Sockets.TcpListener). The Chrome / Edge add-on on this
+# same PC POSTs the HOST of the active tab (naukri.com) to /host whenever it changes and every 60 s. Only the host is taken: it is
+# validated (a dotted name, letters / digits / '-' / '.', at most 253 characters) and the latest one is kept with its time. The agent
+# reads the freshest host (seen in the last 2 minutes) and shows it as the exact website when the front app is a browser. Never a path,
+# a query, page content or anything from an incognito window (the add-on never sends those).
+Add-Type -ReferencedAssemblies System -TypeDefinition @'
+using System;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
+using System.Text.RegularExpressions;
+public static class TLHost {
+  static volatile string host = "";
+  static long atTicks;
+  static readonly Regex rx = new Regex(@"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", RegexOptions.Compiled);
+  public static bool Started;
+  public static void Start(int port) {
+    if (Started) return;
+    var th = new Thread(() => {
+      TcpListener l = null;
+      try { l = new TcpListener(IPAddress.Loopback, port); l.Start(); } catch { return; }
+      Started = true;
+      while (true) {
+        try {
+          using (var c = l.AcceptTcpClient()) {
+            c.ReceiveTimeout = 2000; c.SendTimeout = 2000;
+            var ns = c.GetStream();
+            var buf = new byte[8192];
+            int got = 0, n;
+            // read until the end of the headers, then the body by Content-Length
+            while (got < buf.Length && (n = ns.Read(buf, got, buf.Length - got)) > 0) {
+              got += n;
+              string so = Encoding.ASCII.GetString(buf, 0, got);
+              int he = so.IndexOf("\r\n\r\n");
+              if (he >= 0) {
+                int clen = 0;
+                var m = Regex.Match(so, @"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase);
+                if (m.Success) int.TryParse(m.Groups[1].Value, out clen);
+                int have = got - (he + 4);
+                if (have >= clen) {
+                  string body = Encoding.UTF8.GetString(buf, he + 4, Math.Min(clen, got - (he + 4)));
+                  Take(body);
+                  break;
+                }
+              }
+            }
+            var resp = Encoding.ASCII.GetBytes("HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            try { ns.Write(resp, 0, resp.Length); } catch { }
+          }
+        } catch { }
+      }
+    });
+    th.IsBackground = true; th.Start();
+  }
+  static void Take(string body) {
+    try {
+      var m = Regex.Match(body, "\"host\"\\s*:\\s*\"([^\"]{1,300})\"");
+      if (!m.Success) return;
+      string h = m.Groups[1].Value.Trim().ToLowerInvariant();
+      if (h.Length == 0 || h.Length > 253 || !rx.IsMatch(h)) return;
+      host = h; Interlocked.Exchange(ref atTicks, DateTime.UtcNow.Ticks);
+    } catch { }
+  }
+  // the host seen in the last maxAgeMs milliseconds, or "" (then the agent falls back to the window-title guess)
+  public static string Current(long maxAgeMs) {
+    string h = host;
+    if (String.IsNullOrEmpty(h)) return "";
+    long age = (DateTime.UtcNow.Ticks - Interlocked.Read(ref atTicks)) / 10000;
+    return age <= maxAgeMs ? h : "";
+  }
+}
+'@
+
 # one agent per PC login: running the setup file again must not start a second copy (two icons, every minute counted twice)
 $script:OneCopy = New-Object Threading.Mutex($false, 'Local\TeamLinkMonitor')
 # After an update the older copy closes still holding this - Windows then hands it over with an "abandoned" error, which used to
@@ -457,6 +536,8 @@ try {
   [TLPower]::RelaunchArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$me`" -Keeper"
   [TLPower]::Guard(180, 20)
 } catch { Write-Log "guard not started: $($_.Exception.Message)" }
+# the website add-on's local listener (agent 3.4): 127.0.0.1 only, a fixed port, no admin rights needed
+try { [TLHost]::Start(47811); if ([TLHost]::Started) { Write-Log 'website add-on listener on 127.0.0.1:47811' } else { Write-Log 'website add-on listener could not open 127.0.0.1:47811 (the website name falls back to the window title)' } } catch { Write-Log "website add-on listener not started: $($_.Exception.Message)" }
 
 $settings = @{ workStart = '09:30'; workEnd = '18:30'; idleThresholdMinutes = 5; excluded = $false }
 $queue = New-Object System.Collections.ArrayList
@@ -466,7 +547,7 @@ function Restore-Saved {
   if (Test-Path $OpenFile) {
     try {
       $o = Get-Content $OpenFile -Raw | ConvertFrom-Json
-      [void]$script:queue.Add(@{ appName = $o.app; windowTitle = $o.title; start = $o.start; end = $o.last; isIdle = [bool]$o.idle; isBreak = [bool]$o.brk })
+      [void]$script:queue.Add(@{ appName = $o.app; windowTitle = $o.title; start = $o.start; end = $o.last; isIdle = [bool]$o.idle; isBreak = [bool]$o.brk; host = $o.host })
     } catch {}
     Remove-Item -Path $OpenFile -ErrorAction SilentlyContinue
   }
@@ -482,6 +563,11 @@ $nextLive = [datetime]::MinValue
 $paused = $false      # stopped by TeamLink (no consent, PC switched off)
 $onBreak = $false     # the employee pressed Pause: only the break itself is timed
 $clockedOutDay = ''   # the employee clocked out: nothing until the next day
+# SCREENSHOTS (agent 3.4, founder 2026-11-17): a clear JPEG of the whole screen about every N minutes while recording and at the PC.
+$script:shotEnabled = $false       # set from the heartbeat (HR's setting); off until TeamLink says on
+$script:shotInterval = 10          # minutes between screenshots (HR's setting)
+$script:nextShot = (Get-Date).AddMinutes(1)  # not in the very first seconds after start
+$script:shotRetry = $false         # one upload failed: try once more next cycle, then drop it
 
 function In-WorkHours {
   if ($settings.excluded) { return $false }
@@ -499,14 +585,14 @@ function Save-Queue {
 function Write-Open {
   $c = $script:current
   if (-not $c) { return }
-  try { @{ app = $c.app; title = $c.title; idle = $c.idle; brk = $c.brk; start = $c.start.ToString('o'); last = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json | Set-Content -Path $OpenFile -Encoding UTF8 } catch {}
+  try { @{ app = $c.app; title = $c.title; idle = $c.idle; brk = $c.brk; host = $c.host; start = $c.start.ToString('o'); last = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json | Set-Content -Path $OpenFile -Encoding UTF8 } catch {}
 }
 # ends the open piece, now or at the moment given
 function Close-Segment($at = $null) {
   if ($script:current) {
     $end = if ($at) { $at } else { (Get-Date).ToUniversalTime() }
     if (($end - $script:current.start).TotalSeconds -ge 1) {
-      [void]$script:queue.Add(@{ appName = $script:current.app; windowTitle = $script:current.title; start = $script:current.start.ToString('o'); end = $end.ToString('o'); isIdle = $script:current.idle; isBreak = $script:current.brk })
+      [void]$script:queue.Add(@{ appName = $script:current.app; windowTitle = $script:current.title; start = $script:current.start.ToString('o'); end = $end.ToString('o'); isIdle = $script:current.idle; isBreak = $script:current.brk; host = $script:current.host })
       Save-Queue
     }
     $script:current = $null
@@ -528,6 +614,13 @@ function Get-Front {
 }
 # idle = no GENUINE activity (key, click, scroll) for the threshold - a bare mouse move (a nudge) does not count any more (founder 2026-11-13)
 function Idle-Seconds { if ([TLInput]::Started) { return [double][TLInput]::GenuineIdleSeconds() } else { return [double][TLWin]::IdleSeconds() } }
+# the active tab's HOST from the website add-on (agent 3.4): only for a browser window, and only a host heard in the last 2 minutes;
+# otherwise '' and the server reads the website from the window title as before
+$script:BrowserAppsSet = @('chrome', 'msedge', 'firefox', 'opera', 'brave', 'vivaldi', 'iexplore', 'safari')
+function Host-For($app) {
+  if (($script:BrowserAppsSet -notcontains ([string]$app).ToLower()) -or -not [TLHost]::Started) { return '' }
+  try { return [TLHost]::Current(120000) } catch { return '' }
+}
 function Sample {
   $now = (Get-Date).ToUniversalTime()
   # the timer stopped for a while: the PC was asleep. That time is nobody's work, so the open piece ends where the PC last looked.
@@ -540,7 +633,7 @@ function Sample {
     $c = $script:current
     if ($c -and $c.brk -and ($now - $c.start).TotalMinutes -lt 30) { Write-Open; return }
     Close-Segment
-    $script:current = @{ app = 'Break'; title = ''; idle = $false; brk = $true; start = $now }
+    $script:current = @{ app = 'Break'; title = ''; idle = $false; brk = $true; start = $now; host = '' }
     Write-Open
     return
   }
@@ -560,7 +653,7 @@ function Sample {
     if ($from -lt $c.start) { $from = $c.start }
     Close-Segment $from
   } else { Close-Segment }
-  $script:current = @{ app = $app; title = $title; idle = $idle; brk = $false; start = $from }
+  $script:current = @{ app = $app; title = $title; idle = $idle; brk = $false; start = $from; host = $(if ($idle) { '' } else { Host-For $app }) }
   Write-Open
 }
 # THE LIVE DASHBOARD, WITHIN SECONDS: looks at what is in front every 2 seconds and tells TeamLink only when it changed. This is the live
@@ -575,10 +668,80 @@ function Watch-Front {
   if ($app -in @('LockApp', 'LogonUI')) { $idle = $true; $app = 'Locked' }
   if ($idle) { $title = '' }
   $doing = if (-not $idle -and [TLInput]::Started) { [TLInput]::Doing() } else { '' }
-  $key = "$app|$title|$idle|$doing"
+  $siteHost = if ($idle) { '' } else { Host-For $app }
+  $key = "$app|$title|$idle|$doing|$siteHost"
   if ($key -eq $script:lastLive) { return }
-  $r = Call-Api 'POST' '/live' @{ currentApp = $app; title = $title; idle = [bool]$idle; doing = $doing } $script:cfg.token 5
+  $r = Call-Api 'POST' '/live' @{ currentApp = $app; title = $title; idle = [bool]$idle; doing = $doing; host = $siteHost } $script:cfg.token 5
   if ($r.status -eq 200) { $script:lastLive = $key; $script:nextLive = $now.AddSeconds(2) } else { $script:nextLive = $now.AddSeconds(30) }  # no line: try again later, quietly
+}
+# SCREENSHOTS (agent 3.4). Grabs ALL monitors into one bitmap, scales it down to at most 1600 px wide, saves it as JPEG (quality ~60,
+# well under 300 KB) in memory only, and uploads it. Nothing is ever written to disk on this PC. Returns the JPEG bytes, or $null.
+function Capture-Screen {
+  $bounds = [Windows.Forms.SystemInformation]::VirtualScreen
+  if ($bounds.Width -le 0 -or $bounds.Height -le 0) { return $null }
+  $bmp = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
+  try {
+    $g = [Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen($bounds.Location, [Drawing.Point]::Empty, $bounds.Size)
+    $g.Dispose()
+    $max = 1600
+    if ($bmp.Width -gt $max) {
+      $w = $max; $h = [int][Math]::Round($bmp.Height * ($max / $bmp.Width))
+      $small = New-Object Drawing.Bitmap $w, $h
+      $g2 = [Drawing.Graphics]::FromImage($small)
+      $g2.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+      $g2.DrawImage($bmp, 0, 0, $w, $h)
+      $g2.Dispose(); $bmp.Dispose(); $bmp = $small
+    }
+    $enc = [Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+    $ep = New-Object Drawing.Imaging.EncoderParameters 1
+    $ep.Param[0] = New-Object Drawing.Imaging.EncoderParameter ([Drawing.Imaging.Encoder]::Quality), ([int64]60)
+    $ms = New-Object IO.MemoryStream
+    $bmp.Save($ms, $enc, $ep)
+    $ep.Dispose()
+    $bytes = $ms.ToArray(); $ms.Dispose()
+    return , $bytes
+  } finally { $bmp.Dispose() }
+}
+function Upload-Screenshot($bytes, $app, $title) {
+  try {
+    $uri = $script:Server.TrimEnd('/') + '/api/monitoring/agent/screenshot'
+    $req = [Net.HttpWebRequest]::Create($uri)
+    $req.Method = 'POST'; $req.Timeout = 30000; $req.ReadWriteTimeout = 30000; $req.ContentType = 'image/jpeg'
+    $req.Headers['Authorization'] = "Device $($script:cfg.token)"
+    $req.Headers['X-Shot-At'] = (Get-Date).ToUniversalTime().ToString('o')
+    $req.Headers['X-Shot-App'] = [Uri]::EscapeDataString(([string]$app))
+    $req.Headers['X-Shot-Title'] = [Uri]::EscapeDataString(([string]$title).Substring(0, [Math]::Min(200, ([string]$title).Length)))
+    $req.ContentLength = $bytes.Length
+    $st = $req.GetRequestStream(); $st.Write($bytes, 0, $bytes.Length); $st.Close()
+    $resp = $req.GetResponse(); $code = [int]$resp.StatusCode; $resp.Close()
+    return ($code -ge 200 -and $code -lt 300)
+  } catch { return $false }
+}
+# Called by the shot timer: take one only when it is time, screenshots are on, and the person is recording and at the PC (not idle,
+# not locked, not on lunch / break / pause / clock-out, in work hours). On an upload failure: try once more next cycle, then drop it.
+function Take-Screenshot {
+  if (-not $script:shotEnabled) { return }
+  $now = Get-Date
+  if (($now -lt $script:nextShot) -and -not $script:shotRetry) { return }
+  if ($script:paused -or $script:onBreak -or $script:clockedOutDay -or -not (In-WorkHours)) { $script:shotRetry = $false; $script:nextShot = $now.AddMinutes($script:shotInterval); return }
+  if ((Idle-Seconds) -ge ([int]$settings.idleThresholdMinutes * 60) -or [TLPower]::Locked) { $script:shotRetry = $false; $script:nextShot = $now.AddMinutes($script:shotInterval); return }
+  $f = Get-Front
+  if ($f.app -in @('LockApp', 'LogonUI', 'Locked')) { $script:shotRetry = $false; $script:nextShot = $now.AddMinutes($script:shotInterval); return }
+  try {
+    $bytes = Capture-Screen
+    if (-not $bytes -or $bytes.Length -eq 0) { $script:shotRetry = $false; $script:nextShot = $now.AddMinutes($script:shotInterval); return }
+    if (Upload-Screenshot $bytes $f.app $f.title) {
+      Write-Log ("screenshot: captured and uploaded ({0} KB)" -f [int]($bytes.Length / 1024))
+      $script:shotRetry = $false; $script:nextShot = $now.AddMinutes($script:shotInterval)
+    } elseif ($script:shotRetry) {
+      Write-Log 'screenshot: upload failed again, dropped'
+      $script:shotRetry = $false; $script:nextShot = $now.AddMinutes($script:shotInterval)
+    } else {
+      Write-Log 'screenshot: upload failed, will retry next cycle'
+      $script:shotRetry = $true
+    }
+  } catch { Write-Log "screenshot not taken: $($_.Exception.Message)"; $script:shotRetry = $false; $script:nextShot = $now.AddMinutes($script:shotInterval) }
 }
 # ONE MINUTE OF INPUT, LOOKED AT (agent 2.5). A minute is kept only when nearly all of it is ONE thing over and over:
 #   key       30+ key presses and one key is 85%+ of them (a key held down or tapped again and again)
@@ -851,6 +1014,9 @@ function Heartbeat {
     $s = $r.data.settings
     $script:lastLive = ''   # this heartbeat may be up to 15 seconds old: the watcher sets the picture right
     $script:settings = @{ workStart = $s.workStart; workEnd = $s.workEnd; idleThresholdMinutes = $s.idleThresholdMinutes; excluded = [bool]$s.excluded }
+    # screenshots: on / off and how often (agent 3.4)
+    $script:shotEnabled = [bool]$s.screenshotsEnabled
+    if ($s.screenshotIntervalMinutes) { $script:shotInterval = [Math]::Max(1, [int]$s.screenshotIntervalMinutes) }
     # a new notice: shown at once, and nothing more is recorded until it is accepted
     if ($r.data.consentRequired) { Ask-Consent @{ policyText = $r.data.policyText; policyVersion = $s.policyVersion } }
     elseif ($r.data.update -and -not $script:stopping) { Apply-Update $r.data.update }
@@ -893,6 +1059,9 @@ $liveTimer = New-Object Windows.Forms.Timer; $liveTimer.Interval = 2000; $liveTi
 try { if (-not [TLInput]::Start()) { Write-Log 'key and click counting could not start on this PC' } } catch { Write-Log "key and click counting could not start: $($_.Exception.Message)" }
 $inputTimer = New-Object Windows.Forms.Timer; $inputTimer.Interval = 60000; $inputTimer.Add_Tick({ try { Check-Input; Take-Counts } catch {} }); $inputTimer.Start()
 $beatTimer = New-Object Windows.Forms.Timer; $beatTimer.Interval = 60000; $beatTimer.Add_Tick({ try { Heartbeat } catch {} }); $beatTimer.Start()
+# screenshots (agent 3.4): the timer looks every 20 seconds; Take-Screenshot itself takes one only when the interval has passed and
+# the person is recording and at the PC. So a 10-minute interval and a one-cycle retry both land within 20 seconds.
+$shotTimer = New-Object Windows.Forms.Timer; $shotTimer.Interval = 20000; $shotTimer.Add_Tick({ try { Take-Screenshot } catch {} }); $shotTimer.Start()
 # ---------------------------------------------------------------- WAKE FROM SLEEP
 # Closing the laptop and opening it the next day does NOT sign out of Windows, so this same agent keeps running. But while the
 # PC sleeps a Windows.Forms.Timer does not tick, and the Wi-Fi takes a few seconds to come back on wake - so the first

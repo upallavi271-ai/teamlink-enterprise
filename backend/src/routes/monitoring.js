@@ -44,12 +44,14 @@ const fail = (res, status, error, extra = {}) => res.status(status).json({ error
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const publicSettings = (s) => ({
   workStart: s.workStart, workEnd: s.workEnd, breakStart: s.breakStart, breakEnd: s.breakEnd, weeklyBreaks: s.weeklyBreaks || [], idleThresholdMinutes: s.idleThresholdMinutes, retentionDays: s.retentionDays,
-  screenshotsEnabled: false, policyVersion: s.policyVersion,
+  // the agent reads these: whether to take screenshots and how often (founder 2026-11-17)
+  screenshotsEnabled: !!s.screenshotsEnabled, screenshotIntervalMinutes: (s.screenshots && s.screenshots.intervalMinutes) || 10, historyDays: s.historyDays || 365, policyVersion: s.policyVersion,
   alertsEnabled: !!s.alertsEnabled, longIdleMinutes: s.longIdleMinutes, offlineMinutes: s.offlineMinutes, lowActivityHours: s.lowActivityHours,
 });
 // what only the Settings tab shows
 const fullSettings = (s) => ({
   ...publicSettings(s), policyText: s.policyText, unauthorizedApps: s.unauthorizedApps || '', alertEmail: !!s.alertEmail, trackTitles: s.trackTitles !== false,
+  screenshotRetentionDays: (s.screenshots && s.screenshots.retentionDays) || 30,
   reportEnabled: !!s.reportEnabled, reportFrequency: s.reportFrequency || 'daily', reportEmails: s.reportEmails || '', autoUpdate: s.autoUpdate !== false, deviceApproval: !!s.deviceApproval, itAdminIds: s.itAdminIds || '',
 });
 
@@ -146,6 +148,21 @@ router.post('/input-breakdown', agent, wrap(async (req, res) => { const b = req.
 // agent 2.8: active keyboard / mouse minutes and typing intensity by app and hour (counts only)
 router.post('/input-activity', agent, wrap(async (req, res) => { const b = req.body || {}; const out = await require('../utils/monitoringInput').addActivity(req.device, b.day, b.rows, b.longestTypingMin); return out.status ? res.status(out.status).json(out) : res.json(out); })); // eslint-disable-line global-require
 router.post('/live', agent, wrap(async (req, res) => { await M.liveUpdate(req.device, req.body || {}); res.json({ ok: true }); }));
+// SCREENSHOTS (founder 2026-11-17): the agent uploads one JPEG of the whole screen about every 10 minutes while the person is
+// recording and at the PC. The bytes arrive as the raw request body (express.raw in index.js); the app and title at that moment and
+// the time are in headers. Nothing is kept on the PC. Refused unless screenshots are on and the employee has accepted the notice.
+router.post('/agent/screenshot', agent, wrap(async (req, res) => {
+  const s = await M.settings();
+  if (!s.screenshotsEnabled) return fail(res, 403, 'Screenshots are switched off.');
+  if (!(await M.hasConsent(req.device.employeeId, s.policyVersion))) return fail(res, 412, 'The employee has not accepted the current monitoring notice yet.', { consentRequired: true, policyVersion: s.policyVersion, policyText: s.policyText });
+  const cfg = M.effective(s, await M.overrideIndex(), req.device.employee || { id: req.device.employeeId });
+  if (cfg.excluded || req.device.approved === false) return res.json({ ok: true, skipped: true });
+  const buf = Buffer.isBuffer(req.body) ? req.body : null;
+  const dec = (h) => { try { return decodeURIComponent(String(req.headers[h] || '')); } catch { return ''; } };
+  const out = await require('../utils/monitoringScreenshots').saveScreenshot(req.device, buf, { appName: dec('x-shot-app'), title: dec('x-shot-title'), takenAt: String(req.headers['x-shot-at'] || '') }); // eslint-disable-line global-require
+  if (out.error) return fail(res, out.status, out.error);
+  return res.status(201).json({ ok: true, id: out.id });
+}));
 // auto-update: the agent script itself; the PC checks its hash against the heartbeat before using it
 router.get('/agent-script', agent, wrap(async (req, res) => {
   res.set('Content-Type', 'application/octet-stream');
@@ -211,6 +228,37 @@ router.get('/employee/:id/app-keys', wrap(async (req, res) => {
   const to = valid(req.query.to) ? req.query.to : from;
   const out = await require('../utils/monitoringInput').appKeys(id, from, to, req.query.app, req.query.site || ''); // eslint-disable-line global-require
   return out.status ? res.status(out.status).json(out) : res.json(out);
+}));
+
+// SCREENSHOTS, VIEWING (founder 2026-11-17): ONLY Super Admin, Admin and HR (isMonitorAdmin) - not team leads, not IT Admin. Each
+// open of an image is written in the read log (utils/readLog.js auto-logs the GET of /screenshots/<id>). Images are served with
+// Cache-Control: private, no-store so a shared screen never leaves one behind.
+const SH = require('../utils/monitoringScreenshots');
+const shotsAdmin = (req, res, next) => (M.isMonitorAdmin(req.user) ? next() : fail(res, 403, 'Screenshots are for Admin and HR only.'));
+router.get('/screenshots', shotsAdmin, wrap(async (req, res) => {
+  const id = String(req.query.employeeId || '');
+  const valid = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
+  const day = valid(req.query.day) ? req.query.day : M.todayIst();
+  if (!id) return fail(res, 400, 'Which employee?');
+  const s = await M.settings();
+  const shots = await SH.listForDay(id, day);
+  return res.json({ employeeId: id, day, enabled: s.screenshotsEnabled, intervalMinutes: s.screenshots.intervalMinutes, retentionDays: s.screenshots.retentionDays, shots });
+}));
+router.get('/screenshots/days', shotsAdmin, wrap(async (req, res) => {
+  const id = String(req.query.employeeId || '');
+  const valid = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
+  if (!id) return fail(res, 400, 'Which employee?');
+  const to = valid(req.query.to) ? req.query.to : M.todayIst();
+  const from = valid(req.query.from) ? req.query.from : M.addDays(to, -30);
+  return res.json({ employeeId: id, from, to, days: await SH.daysFor(id, from, to) });
+}));
+router.get('/screenshots/:id', shotsAdmin, wrap(async (req, res) => {
+  const shot = await SH.openOne(req.params.id);
+  if (!shot) return fail(res, 404, 'This screenshot is gone (it may have passed its retention).');
+  res.set('Cache-Control', 'private, no-store');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Content-Type', 'image/jpeg');
+  return res.sendFile(shot.path);
 }));
 
 router.get('/reports', teamOnly, wrap(async (req, res) => {

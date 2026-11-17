@@ -25,6 +25,10 @@ const HM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 // the lunch break but not every day. It is a Break (never idle, never "not on the PC"), it comes off the work hours that day, and the PC reads
 // "On break" while it lasts. Company-wide, kept in the AppSetting 'monitoring.weeklyBreaks' (no database change); weekday: 0 Sunday ... 6 Saturday.
 const WEEKLY_KEY = 'monitoring.weeklyBreaks';
+// HISTORY KEPT 1 YEAR (founder 2026-11-17): per-day / per-minute monitoring data is kept this many days, then the daily cleanup
+// deletes it in batches. Company-wide, in AppSetting (no schema change). Default 365.
+const HISTORY_KEY = 'monitoring.historyDays';
+const DEFAULT_HISTORY_DAYS = 365;
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DEFAULT_WEEKLY_BREAKS = [{ weekday: 6, start: '16:00', end: '16:20', label: 'Saturday break' }];
 function cleanWeeklyBreaks(v) {
@@ -96,26 +100,34 @@ const INPUT_LINE_25 = 'How much the keyboard and mouse are used: only counts per
 const INPUT_LINE_26 = 'How much the keyboard and mouse are used: how many times each kind of key and mouse button is pressed in a day (for example Space, Enter, Backspace, left click). All letter keys are counted together as one number, and all number keys as one number, so what you type can never be rebuilt. When one single key or button is pressed again and again for a long time (a key held down, an auto-clicker), its name and the time are kept.';
 // agent 2.7 (founder 2026-11-12): the same counts, by app / website and hour
 const INPUT_LINE = 'How much the keyboard and mouse are used: how many times each kind of key and mouse button is pressed (for example Space, Enter, Backspace, left click), in which app or website, and in which hour. All letter keys are counted together as one number, and all number keys as one number - single letters are never counted apart - so what you type can never be rebuilt. When one single key or button is pressed again and again for a long time (a key held down, an auto-clicker), its name and the time are kept.';
-const POLICY_LINES = [
-  'TeamLink records how this office PC is used during work hours, so that HR can see working time and idle time.',
-  '',
-  'What is recorded: the name of the app in front (for example Chrome or Excel), its window title, when the PC is in use or idle, and the first and last activity of the day.',
-  INPUT_LINE,
-  'What is never recorded: what you type, passwords, the clipboard, screenshots, files, or the content of chats and mails. Chat apps are recorded by their name only.',
-  'Only work hours are recorded. Records are deleted after the number of days HR has set (90 days unless changed).',
-  WHO_NEW,
-  PAUSE_LINE,
-  'Nothing is recorded until you accept this notice. You can ask HR about it at any time.',
-];
+// SCREENSHOTS, HISTORY KEPT 1 YEAR, WEBSITE ADD-ON (founder 2026-11-17): the notice says plainly that a clear screenshot is taken
+// about every 10 minutes while working (Admin and HR only, deleted after 30 days), that the activity history is kept a year, and
+// that a browser add-on reads the website name (host) only. One policy-version bump: everyone accepts the new notice once.
+const SHOT_LINE = 'A clear picture of the whole screen (a screenshot) is taken about every 10 minutes while you are working - never while the PC is idle or locked, nor during lunch, a break or a pause, nor before you accept this notice. It is seen only by Admin and HR, and it is deleted after 30 days.';
+const WEBSITE_LINE = 'The website name only - for example naukri.com, never the full web address, the page, the search or anything you type, and nothing from a private / incognito window - of the tab in front is read by a TeamLink browser add-on, so HR sees the exact website rather than a guess from the window title.';
+const NEVER_LINE = 'What is never recorded: what you type, passwords, the clipboard, your files, or the content of chats and mails. Chat apps are recorded by their name only.';
+const RETENTION_LINE = 'Only work hours are recorded. Your activity history is kept for 1 year, and screenshots are kept for 30 days (HR can change these).';
+const INTRO_LINE = 'TeamLink records how this office PC is used during work hours, so that HR can see working time and idle time.';
+const RECORDED_LINE = 'What is recorded: the name of the app in front (for example Chrome or Excel), its window title, when the PC is in use or idle, and the first and last activity of the day.';
+const FINAL_LINE = 'Nothing is recorded until you accept this notice. You can ask HR about it at any time.';
+const POLICY_LINES = [INTRO_LINE, '', RECORDED_LINE, INPUT_LINE, SHOT_LINE, WEBSITE_LINE, NEVER_LINE, RETENTION_LINE, WHO_NEW, PAUSE_LINE, FINAL_LINE];
 const DEFAULT_POLICY = POLICY_LINES.join('\n');
-// the notice as first shipped: still the words in use -> replaced by the new one, as a new version everybody accepts again
-const FIRST_POLICY = POLICY_LINES.filter((l) => l !== PAUSE_LINE && l !== INPUT_LINE).map((l) => (l === WHO_NEW ? WHO_OLD : l)).join('\n');
-// the notice before agent 2.5 (no key / click counts): still in use -> the new words, a new version everybody accepts again
-const BEFORE_INPUT_POLICY = POLICY_LINES.filter((l) => l !== INPUT_LINE).join('\n');
-// the 2.5 notice (minutes only): still in use -> the 2.6 words, a new version
-const INPUT_25_POLICY = POLICY_LINES.map((l) => (l === INPUT_LINE ? INPUT_LINE_25 : l)).join('\n');
-// the 2.6 notice (daily counts only): still in use -> the 2.7 words, a new version
-const INPUT_26_POLICY = POLICY_LINES.map((l) => (l === INPUT_LINE ? INPUT_LINE_26 : l)).join('\n');
+// THE PREVIOUS NOTICES (each still accepted on some PCs) -> replaced by the new one above, as a new version everyone accepts again.
+// These are the EXACT historical texts, so they are built from the OLD lines (before screenshots / the 1-year history / the add-on),
+// never from the new POLICY_LINES above - changing the current notice must not silently change what counts as an old notice.
+const OLD_NEVER_LINE = 'What is never recorded: what you type, passwords, the clipboard, screenshots, files, or the content of chats and mails. Chat apps are recorded by their name only.';
+const OLD_RETENTION_LINE = 'Only work hours are recorded. Records are deleted after the number of days HR has set (90 days unless changed).';
+const OLD_LINES = [INTRO_LINE, '', RECORDED_LINE, INPUT_LINE, OLD_NEVER_LINE, OLD_RETENTION_LINE, WHO_NEW, PAUSE_LINE, FINAL_LINE];
+// the 2.7 live default (with the input line), the notice as it stood just before 2026-11-17
+const PRE_SHOTS_POLICY = OLD_LINES.join('\n');
+// the notice as first shipped
+const FIRST_POLICY = OLD_LINES.filter((l) => l !== PAUSE_LINE && l !== INPUT_LINE).map((l) => (l === WHO_NEW ? WHO_OLD : l)).join('\n');
+// the notice before agent 2.5 (no key / click counts)
+const BEFORE_INPUT_POLICY = OLD_LINES.filter((l) => l !== INPUT_LINE).join('\n');
+// the 2.5 notice (minutes only)
+const INPUT_25_POLICY = OLD_LINES.map((l) => (l === INPUT_LINE ? INPUT_LINE_25 : l)).join('\n');
+// the 2.6 notice (daily counts only)
+const INPUT_26_POLICY = OLD_LINES.map((l) => (l === INPUT_LINE ? INPUT_LINE_26 : l)).join('\n');
 
 // --- time ------------------------------------------------------------------------------------------------------
 const istDay = (d) => new Date(new Date(d).getTime() + IST).toISOString().slice(0, 10);
@@ -159,12 +171,16 @@ async function accessOf(user) {
 async function settings() {
   let row = await prisma.monitoringSetting.findUnique({ where: { id: 'default' } });
   if (!row) row = await prisma.monitoringSetting.create({ data: { id: 'default', policyText: DEFAULT_POLICY } }).catch(() => null);
-  if (row && (row.policyText === FIRST_POLICY || row.policyText === BEFORE_INPUT_POLICY || row.policyText === INPUT_25_POLICY || row.policyText === INPUT_26_POLICY)) row = await prisma.monitoringSetting.update({ where: { id: 'default' }, data: { policyText: DEFAULT_POLICY, policyVersion: (row.policyVersion || 1) + 1 } }).catch(() => row);
-  const s = row || { workStart: '09:30', workEnd: '18:30', breakStart: '12:30', breakEnd: '13:15', idleThresholdMinutes: 5, retentionDays: 90, screenshotsEnabled: false, policyVersion: 1, policyText: DEFAULT_POLICY, trackTitles: true, autoUpdate: true };
+  if (row && [FIRST_POLICY, BEFORE_INPUT_POLICY, INPUT_25_POLICY, INPUT_26_POLICY, PRE_SHOTS_POLICY].includes(row.policyText)) row = await prisma.monitoringSetting.update({ where: { id: 'default' }, data: { policyText: DEFAULT_POLICY, policyVersion: (row.policyVersion || 1) + 1 } }).catch(() => row);
+  const s = row || { workStart: '09:30', workEnd: '18:30', breakStart: '12:30', breakEnd: '13:15', idleThresholdMinutes: 5, retentionDays: 90, screenshotsEnabled: true, policyVersion: 1, policyText: DEFAULT_POLICY, trackTitles: true, autoUpdate: true };
   // the weekly breaks: the Saturday break until somebody changes the list (an empty list is "none", on purpose)
   let weeklyBreaks = DEFAULT_WEEKLY_BREAKS;
   try { const w = await prisma.appSetting.findUnique({ where: { key: WEEKLY_KEY } }); if (w && w.value) weeklyBreaks = cleanWeeklyBreaks(JSON.parse(w.value)); } catch { /* the default list */ }
-  return { ...s, policyText: s.policyText || DEFAULT_POLICY, screenshotsEnabled: false, weeklyBreaks };
+  // SCREENSHOTS and HISTORY (founder 2026-11-17): kept in AppSetting so no schema change is needed, like the weekly breaks.
+  const screenshots = await require('./monitoringScreenshots').shotSettings().catch(() => ({ enabled: true, intervalMinutes: 10, retentionDays: 30 })); // eslint-disable-line global-require
+  let historyDays = DEFAULT_HISTORY_DAYS;
+  try { const h = await prisma.appSetting.findUnique({ where: { key: HISTORY_KEY } }); if (h && h.value) { const n = Math.round(Number(JSON.parse(h.value))); if (n >= 30 && n <= 1825) historyDays = n; } } catch { /* the default year */ }
+  return { ...s, policyText: s.policyText || DEFAULT_POLICY, screenshots, screenshotsEnabled: screenshots.enabled, historyDays, weeklyBreaks };
 }
 async function saveSettings(user, body = {}) {
   const cur = await settings();
@@ -186,6 +202,28 @@ async function saveSettings(user, body = {}) {
     const n = Math.round(Number(body.retentionDays));
     if (!(n >= 7 && n <= 730)) return { status: 400, error: 'Keep records for 7 to 730 days.' };
     data.retentionDays = n;
+  }
+  // HISTORY KEPT 1 YEAR (founder 2026-11-17): how many days of per-day / per-minute activity are kept (default 365). AppSetting, not a column.
+  if (body.historyDays !== undefined) {
+    const n = Math.round(Number(body.historyDays));
+    if (!(n >= 30 && n <= 1825)) return { status: 400, error: 'Keep history for 30 to 1825 days (1 year is 365).' };
+    await prisma.appSetting.upsert({ where: { key: HISTORY_KEY }, create: { key: HISTORY_KEY, value: JSON.stringify(n), updatedById: user ? user.id : null, updatedByName: user ? user.name || null : null }, update: { value: JSON.stringify(n), updatedById: user ? user.id : null, updatedByName: user ? user.name || null : null } });
+  }
+  // SCREENSHOTS (founder 2026-11-17): on / off (default ON), how often, how long kept. AppSetting via monitoringScreenshots.
+  if (body.screenshotsEnabled !== undefined || body.screenshotIntervalMinutes !== undefined || body.screenshotRetentionDays !== undefined) {
+    const patch = {};
+    if (body.screenshotsEnabled !== undefined) patch.enabled = body.screenshotsEnabled === true;
+    if (body.screenshotIntervalMinutes !== undefined) {
+      const n = Math.round(Number(body.screenshotIntervalMinutes));
+      if (!(n >= 1 && n <= 120)) return { status: 400, error: 'Take a screenshot every 1 to 120 minutes.' };
+      patch.intervalMinutes = n;
+    }
+    if (body.screenshotRetentionDays !== undefined) {
+      const n = Math.round(Number(body.screenshotRetentionDays));
+      if (!(n >= 1 && n <= 365)) return { status: 400, error: 'Keep screenshots for 1 to 365 days.' };
+      patch.retentionDays = n;
+    }
+    await require('./monitoringScreenshots').saveShotSettings(user, patch); // eslint-disable-line global-require
   }
   if (body.alertsEnabled !== undefined) data.alertsEnabled = body.alertsEnabled === true;
   if (body.alertEmail !== undefined) data.alertEmail = body.alertEmail === true;
@@ -359,6 +397,14 @@ const endSetupCode = (code) => prisma.appSetting.deleteMany({ where: { key: code
 
 // --- one batch from the agent -------------------------------------------------------------------------------------------
 const cleanApp = (s) => String(s || '').trim().replace(/\.exe$/i, '').replace(/[^\w .+-]/g, '').slice(0, 80);
+// THE WEBSITE ADD-ON (founder 2026-11-17): the browser add-on sends the HOST of the active tab only (naukri.com). We keep the host,
+// never a path or query. A valid host is a dotted name, lower-cased, at most 253 characters, letters / digits / '-' / '.' only, no
+// leading or trailing dot or hyphen. Anything else is dropped (and then the window title's own guess is used, as before).
+function cleanHost(v) {
+  const h = String(v == null ? '' : v).trim().toLowerCase();
+  if (!h || h.length > 253 || !/^[a-z0-9.-]+$/.test(h) || !h.includes('.') || /^[.-]|[.-]$|\.\.|^-|-$/.test(h)) return null;
+  return h;
+}
 function cleanTitle(app, title) {
   const t = String(title || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 300);
   if (!t) return null;
@@ -412,8 +458,17 @@ async function ingest(device, records) {
       cur = y;
     });
     if (cur < b) parts.push([cur, b, null]);
+    // THE WEBSITE ADD-ON (founder 2026-11-17): for a browser record the add-on's host (naukri.com) is the exact website, so it is
+    // what is shown - the server no longer has to guess the site from the window title. The agent only attaches a host it heard in
+    // the last 2 minutes; with no host it sends the title and the old title-based guess stays.
+    const host = cleanHost(r && r.host);
+    const titleOf = (kind) => {
+      if (kind || !cfg.trackTitles) return null;
+      if (host && BROWSERS.includes(app.toLowerCase())) return host;
+      return cleanTitle(app, r.windowTitle);
+    };
     parts.filter(([x, y]) => y - x >= 1000).forEach(([x, y, kind]) => rows.push({
-      deviceId: device.id, employeeId: device.employeeId, appName: kind === 'lunch' ? 'Break' : kind === 'weekly' ? 'Scheduled break' : app, windowTitle: kind || !cfg.trackTitles ? null : cleanTitle(app, r.windowTitle),
+      deviceId: device.id, employeeId: device.employeeId, appName: kind === 'lunch' ? 'Break' : kind === 'weekly' ? 'Scheduled break' : app, windowTitle: titleOf(kind),
       startTime: new Date(x), endTime: new Date(y), durationSeconds: Math.round((y - x) / 1000),
       isIdle: !kind && r.isBreak !== true && (r.isIdle === true || r.idle === true), isBreak: !!kind || r.isBreak === true, day,
     }));
@@ -447,7 +502,12 @@ async function liveTitle(device, body) {
   const working = isMeeting(cleanApp(body.currentApp), body.title) || isVici(cleanApp(body.currentApp), body.title);
   if (body.idle === true && !working) return null;
   const cfg = effective(await settings(), await overrideIndex(), device.employee || { id: device.employeeId });
-  return cfg.trackTitles && !cfg.excluded ? cleanTitle(cleanApp(body.currentApp), body.title) : null;
+  if (!cfg.trackTitles || cfg.excluded) return null;
+  // the website add-on's host is the exact site for a browser window, as in a record (founder 2026-11-17)
+  const app = cleanApp(body.currentApp);
+  const host = cleanHost(body.host);
+  if (host && BROWSERS.includes(app.toLowerCase())) return host;
+  return cleanTitle(app, body.title);
 }
 // The moment the app or tab changes (founder 2026-11-05: "within sec lo updation jaragali"). The live picture only: records are unchanged.
 async function liveUpdate(device, body = {}) {
@@ -1279,14 +1339,36 @@ function agentInstaller() {
 }
 
 // --- retention ------------------------------------------------------------------------------------------------------------------
+// HISTORY KEPT 1 YEAR (founder 2026-11-17): the per-day / per-minute data older than historyDays (default 365) is deleted, in
+// batches of 5,000 so the DB is never locked for long, and idempotently (another run simply finds nothing left). Devices and
+// settings are left alone. Screenshots keep their own, shorter retention. The old 90-day setting is gone; history is now a year.
 async function purge() {
   const s = await settings();
-  const cutoff = addDays(todayIst(), -s.retentionDays);
-  const r = await prisma.activityLog.deleteMany({ where: { day: { lt: cutoff } } });
+  const cutoff = addDays(todayIst(), -s.historyDays);
+  // activity records, in batches by id (SQLite has no DELETE ... LIMIT by default)
+  let count = 0;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const ids = await prisma.activityLog.findMany({ where: { day: { lt: cutoff } }, select: { id: true }, take: 5000 });
+    if (!ids.length) break;
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.activityLog.deleteMany({ where: { id: { in: ids.map((x) => x.id) } } });
+    count += ids.length;
+    if (ids.length < 5000) break;
+  }
   await prisma.appSetting.deleteMany({ where: { key: { startsWith: 'monitoring.attdismiss.' }, updatedAt: { lt: new Date(`${cutoff}T00:00:00Z`) } } }).catch(() => {});
-  await prisma.monitoringAlert.deleteMany({ where: { day: { lt: cutoff } } });
-  await require('./monitoringInput').cleanup(s.retentionDays).catch(() => {}); // eslint-disable-line global-require
-  return r.count;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const ids = await prisma.monitoringAlert.findMany({ where: { day: { lt: cutoff } }, select: { id: true }, take: 5000 });
+    if (!ids.length) break;
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.monitoringAlert.deleteMany({ where: { id: { in: ids.map((x) => x.id) } } });
+    if (ids.length < 5000) break;
+  }
+  await require('./monitoringInput').cleanup(s.historyDays).catch(() => {}); // eslint-disable-line global-require
+  // the screenshots have their own (shorter) retention - founder: deleted after 30 days
+  await require('./monitoringScreenshots').cleanupShots(s.screenshots.retentionDays).catch(() => {}); // eslint-disable-line global-require
+  return count;
 }
 let TIMER = null;
 function startSweep() {

@@ -998,6 +998,56 @@ function AppKeysDetail({ id, from, to, app, site, onClose }) {
     </tr>
   );
 }
+// A protected screenshot: the image route needs the login token in a header, so it is fetched as a blob and shown from an object URL.
+function ShotImg({ shotId, alt, style, onClick }) {
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    let active = true; let obj = '';
+    api.get(`/monitoring/screenshots/${shotId}`, { responseType: 'blob' })
+      .then((r) => { if (!active) return; obj = URL.createObjectURL(r.data); setUrl(obj); })
+      .catch(() => {});
+    return () => { active = false; if (obj) URL.revokeObjectURL(obj); };
+  }, [shotId]);
+  if (!url) return <span style={{ ...style, background: '#eef1f5', display: 'inline-block' }} aria-label="Loading screenshot" />;
+  return <img src={url} alt={alt} style={style} onClick={onClick} />;
+}
+// SCREENSHOTS, the day's strip (founder 2026-11-17): thumbnails by time, click one to see it large with Previous / Next. Only Admin
+// and HR get the list (others get a 403 and see nothing here). Every open of a large image is written in the audit log by the server.
+function Screenshots({ id, day }) {
+  const { data, error } = useGet('/monitoring/screenshots', { employeeId: id, day });
+  const [open, setOpen] = useState(-1);
+  if (error || !data) return null;
+  const shots = data.shots || [];
+  const sub = `About every ${data.intervalMinutes} min while working · kept ${data.retentionDays} days · Admin and HR only; every time one is opened is in the audit log`;
+  return (
+    <Panel title={`Screenshots (${shots.length})`} sub={sub}>
+      {!data.enabled && !shots.length && <div className="small-muted">Screenshots are switched off.</div>}
+      {data.enabled && !shots.length && <div className="ak-empty">No screenshots for this day.</div>}
+      {shots.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {shots.map((s, i) => (
+            <button type="button" key={s.id} onClick={() => setOpen(i)} title={`${tm(s.takenAt)}${s.appName ? ` · ${s.appName}` : ''}`} style={{ padding: 0, border: '1px solid #d7dde6', borderRadius: 6, overflow: 'hidden', cursor: 'pointer', background: '#fff' }}>
+              <ShotImg shotId={s.id} alt={`Screenshot ${tm(s.takenAt)}`} style={{ display: 'block', width: 160, height: 100, objectFit: 'cover' }} />
+              <div style={{ fontSize: 11, padding: '2px 4px', color: '#55606e' }}>{tm(s.takenAt)}</div>
+            </button>
+          ))}
+        </div>
+      )}
+      {open >= 0 && shots[open] && (
+        <div role="dialog" aria-modal="true" onClick={() => setOpen(-1)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.82)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ color: '#fff', marginBottom: 8, maxWidth: '92vw', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>{tm(shots[open].takenAt)}{shots[open].appName ? ` · ${shots[open].appName}` : ''}{shots[open].title ? ` · ${shots[open].title}` : ''}</div>
+          <ShotImg shotId={shots[open].id} alt="Screenshot" style={{ maxWidth: '92vw', maxHeight: '76vh', objectFit: 'contain', background: '#000' }} onClick={(e) => e.stopPropagation()} />
+          <div style={{ marginTop: 10, display: 'flex', gap: 10 }} onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="btn btn-sm" disabled={open <= 0} onClick={() => setOpen(open - 1)}>← Previous</button>
+            <button type="button" className="btn btn-sm" onClick={() => setOpen(-1)}>Close</button>
+            <button type="button" className="btn btn-sm" disabled={open >= shots.length - 1} onClick={() => setOpen(open + 1)}>Next →</button>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export function EmployeeDetail({ id, onBack, own = false }) {
   const [from, setFrom] = useState(todayIst());
   const [to, setTo] = useState(todayIst());
@@ -1097,6 +1147,7 @@ export function EmployeeDetail({ id, onBack, own = false }) {
               {data.timeline.length ? <Timeline rows={data.timeline} workStart={data.workStart} workEnd={data.workEnd} day={data.from} /> : <div className="ak-empty">No activity on this day.</div>}
             </Panel>
           )}
+          {data.timeline && !own && data.from === data.to && <Screenshots id={id} day={data.from} />}
           {data.activity && data.activity.kbMin > 0 && (
             <Panel title="Typing and activity" sub={`${data.from === data.to ? 'This day' : `${data.from} to ${data.to}`} · active keyboard ${hmins(data.activity.kbMin)} · active mouse ${hmins(data.activity.mouseMin)} · typing speed about ${data.activity.speed} keys a minute${data.activity.longestTypingMin ? ` · longest unbroken typing ${hmins(data.activity.longestTypingMin)}` : ''}. Counts only, never what was typed.`}>
               <div className="mon-tl-sum">
@@ -1974,7 +2025,7 @@ function Settings() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (data) setForm(data.canEdit ? { workStart: data.workStart, workEnd: data.workEnd, breakStart: data.breakStart || '', breakEnd: data.breakEnd || '', weeklyBreaks: data.weeklyBreaks || [], idleThresholdMinutes: data.idleThresholdMinutes, retentionDays: data.retentionDays, policyText: data.policyText, alertsEnabled: !!data.alertsEnabled, longIdleMinutes: data.longIdleMinutes, offlineMinutes: data.offlineMinutes, lowActivityHours: data.lowActivityHours, unauthorizedApps: data.unauthorizedApps || '', alertEmail: !!data.alertEmail, trackTitles: data.trackTitles !== false, reportEnabled: !!data.reportEnabled, reportFrequency: data.reportFrequency || 'daily', reportEmails: data.reportEmails || '', autoUpdate: data.autoUpdate !== false, deviceApproval: !!data.deviceApproval, itAdminIds: data.itAdminIds || '' } : { autoUpdate: data.autoUpdate !== false, deviceApproval: !!data.deviceApproval }); }, [data]);
+  useEffect(() => { if (data) setForm(data.canEdit ? { workStart: data.workStart, workEnd: data.workEnd, breakStart: data.breakStart || '', breakEnd: data.breakEnd || '', weeklyBreaks: data.weeklyBreaks || [], idleThresholdMinutes: data.idleThresholdMinutes, retentionDays: data.retentionDays, historyDays: data.historyDays || 365, screenshotsEnabled: !!data.screenshotsEnabled, screenshotIntervalMinutes: data.screenshotIntervalMinutes || 10, screenshotRetentionDays: data.screenshotRetentionDays || 30, policyText: data.policyText, alertsEnabled: !!data.alertsEnabled, longIdleMinutes: data.longIdleMinutes, offlineMinutes: data.offlineMinutes, lowActivityHours: data.lowActivityHours, unauthorizedApps: data.unauthorizedApps || '', alertEmail: !!data.alertEmail, trackTitles: data.trackTitles !== false, reportEnabled: !!data.reportEnabled, reportFrequency: data.reportFrequency || 'daily', reportEmails: data.reportEmails || '', autoUpdate: data.autoUpdate !== false, deviceApproval: !!data.deviceApproval, itAdminIds: data.itAdminIds || '' } : { autoUpdate: data.autoUpdate !== false, deviceApproval: !!data.deviceApproval }); }, [data]);
   const [itPeople, setItPeople] = useState([]);
   useEffect(() => { if (data && data.itAdmins) setItPeople(data.itAdmins); }, [data]);
   if (error) return <div className="notice red">{error}</div>;
@@ -2022,10 +2073,18 @@ function Settings() {
           <label>Lunch break starts <input type="time" value={form.breakStart} onChange={(e) => setForm({ ...form, breakStart: e.target.value })} /></label>
           <label>Lunch break ends <input type="time" value={form.breakEnd} onChange={(e) => setForm({ ...form, breakEnd: e.target.value })} /></label>
           <label>Idle after (minutes with no mouse or keyboard) <input type="number" min={1} max={60} value={form.idleThresholdMinutes} onChange={(e) => setForm({ ...form, idleThresholdMinutes: e.target.value })} /></label>
-          <label>Keep records for (days) <input type="number" min={7} max={730} value={form.retentionDays} onChange={(e) => setForm({ ...form, retentionDays: e.target.value })} /></label>
+          <label>Keep history for (days) <input type="number" min={30} max={1825} value={form.historyDays} onChange={(e) => setForm({ ...form, historyDays: e.target.value })} /></label>
         </div>
         {check('trackTitles', 'Record window titles (off: app names only, and websites cannot be told apart)')}
-        <div className="small-muted">Only work hours (India time) are recorded; anything outside them is thrown away. The lunch break counts as Break, not idle, and keeps no app details. Older records are deleted by themselves. Screenshots: <b>off</b> - TeamLink never takes screenshots or reads what is typed.</div>
+        <div className="small-muted">Only work hours (India time) are recorded; anything outside them is thrown away. The lunch break counts as Break, not idle, and keeps no app details. Activity history is kept for the days above (1 year by default) and then deleted by itself, in the background.</div>
+      </Panel>
+      <Panel title="Screenshots" sub="A clear picture of the whole screen is taken by the agent about every few minutes, only while the person is recording and at the PC (not idle, not locked, not on lunch / break / pause). Seen only by Admin and HR; every time one is opened is written in the audit log.">
+        <div className="mon-grid">
+          <label>Take screenshots every (minutes) <input type="number" min={1} max={120} value={form.screenshotIntervalMinutes} disabled={!form.screenshotsEnabled} onChange={(e) => setForm({ ...form, screenshotIntervalMinutes: e.target.value })} /></label>
+          <label>Keep screenshots for (days) <input type="number" min={1} max={365} value={form.screenshotRetentionDays} disabled={!form.screenshotsEnabled} onChange={(e) => setForm({ ...form, screenshotRetentionDays: e.target.value })} /></label>
+        </div>
+        {check('screenshotsEnabled', 'Take screenshots (clear, every few minutes, Admin and HR only)')}
+        <div className="small-muted">Switching this on or off, or changing the notice, is a new version of the notice: every employee accepts it once more before anything is recorded again. Nothing you type is ever recorded.</div>
       </Panel>
       <Panel title="Weekly breaks" sub="A break at a fixed time on one weekday, like the Saturday 4:00 - 4:20 pm break. It counts as a Break (never idle, never 'not on the PC'), the PC shows 'On break' while it lasts, and it comes off that day's work hours.">
         {(form.weeklyBreaks || []).map((b, i) => {
