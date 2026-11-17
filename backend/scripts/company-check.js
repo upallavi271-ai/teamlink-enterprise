@@ -81,6 +81,7 @@ async function check({ env, home, tl, checkPort }) {
   // folders: the default for every one of them is under the Linux user's home folder, which TeamLink shares
   const homeOk = !!homeDir && !/^\/root\/?$/.test(homeDir) && !/\.teamlink/i.test(homeDir);
   add(homeOk, 'HOME points at this company\'s own folder (every default data folder hangs under it)', homeDir || 'not set');
+  add(!!e.COMPANY_HOME && !!homeDir && path.resolve(String(e.COMPANY_HOME)) === path.resolve(homeDir), 'COMPANY_HOME is set to the home folder of this company (the server then keeps it however it is restarted)', e.COMPANY_HOME || 'not set');
   const dirs = ['UPLOAD_DIR', 'ATS_IO_DIR', 'MESSAGE_JOB_DIR', 'BACKUP_DIR', 'TL_QR_SESSION_DIR', 'AI_VOICE_LIVE_FILE'];
   for (const k of dirs) {
     const v = String(e[k] || '');

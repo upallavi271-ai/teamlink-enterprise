@@ -353,7 +353,7 @@ async function main() {
   const goodEnv = path.join(TMP, 'good.env'); const badEnv = path.join(TMP, 'bad.env'); const tlEnv = path.join(TMP, 'tl.env');
   const home = path.join(TMP, 'nish-home');
   fs.writeFileSync(tlEnv, ['PORT=4010', 'DATABASE_URL="file:./dev.db"', 'JWT_SECRET=' + 'a'.repeat(64), 'INTEGRATION_SECRET_KEY=' + 'b'.repeat(64), 'APP_BASE_URL=https://teamlink.teamlinks.in', 'UPLOAD_DIR=/root/.teamlink-uploads'].join('\n'));
-  fs.writeFileSync(goodEnv, ['COMPANY_KEY=nish', 'PORT=4012', 'DATABASE_URL="file:./nish.db"', 'JWT_SECRET=' + 'c'.repeat(64), 'INTEGRATION_SECRET_KEY=' + 'd'.repeat(64), 'APP_BASE_URL=https://nish.example.org',
+  fs.writeFileSync(goodEnv, ['COMPANY_KEY=nish', `COMPANY_HOME=${home}`, 'PORT=4012', 'DATABASE_URL="file:./nish.db"', 'JWT_SECRET=' + 'c'.repeat(64), 'INTEGRATION_SECRET_KEY=' + 'd'.repeat(64), 'APP_BASE_URL=https://nish.example.org',
     `UPLOAD_DIR=${home}/data/uploads`, `ATS_IO_DIR=${home}/data/ats-io`, `MESSAGE_JOB_DIR=${home}/data/message-jobs`, `BACKUP_DIR=${home}/data/backups`, `TL_QR_SESSION_DIR=${home}/data/qr`, `AI_VOICE_LIVE_FILE=${home}/data/live-calls`,
     'GREENSTART_ENABLED=false', 'GREENSTART_SUPERVISE=false', 'GREENSTART_AUTOSTART=false', 'JOB_PORTAL_EMBED=0', 'JOB_PORTAL_SYNC_INTERVAL_MS=0'].join('\n'));
   fs.writeFileSync(badEnv, ['PORT=4010', 'DATABASE_URL="file:./dev.db"', 'JWT_SECRET=' + 'a'.repeat(64), 'INTEGRATION_SECRET_KEY=change-this-to-a-long-random-string', 'APP_BASE_URL=https://teamlink.teamlinks.in'].join('\n'));

@@ -90,6 +90,7 @@ rand() { openssl rand -hex 32; }
 cat > "$ROOT/config/.env" <<EOF
 # ${NAME} - its OWN settings. Secrets are random and belong to this company only. Written by company-install.sh $(date +%F).
 COMPANY_KEY=$KEY
+COMPANY_HOME=$ROOT/home
 NODE_ENV=production
 PORT=$PORT
 DATABASE_URL="file:$ROOT/data/$KEY.db"

@@ -180,3 +180,19 @@ Taking it away: `JOB_PORTAL_EMBED=0` and `pm2 restart company-<key>`; the folder
 
 Proof: `npm run company-portal-test` in `backend/` (27 checks: the refusals, TeamLink unchanged, the settings check, the scripts), plus the throw-away end-to-end run on the server described above.
 Not changed (wording, not data): the portal's message templates and the label "TeamLink AI Engine v2.3" in its AI settings keep the program's own wording; the company adds its own mail / SMS / WhatsApp / job-board accounts inside the portal.
+### 11.1 Three faults found while installing it on the live server (2026-11-17), and what now prevents them
+
+1. **The first-start process was left running and open to the internet.** `company-portal-install.sh` started the portal's own `dev-server.mjs` directly (it listens on every address; this server has no
+   firewall) and stopped a wrapper process instead of the portal, so the portal stayed up on port 4324 while the clean-up opened the same database folder. Found because a process listened on `*:4324`; it was stopped,
+   the empty database was made again and the clean-up repeated. The script now starts the portal through its own host (`embed/host.mjs`, bound to 127.0.0.1), uses `exec` so the stop reaches the portal itself,
+   and refuses to go on if the portal listened anywhere else or a port is still held afterwards.
+2. **The company's server was running with HOME=/root (TeamLink's home folder).** `pm2 restart --update-env` copies the caller's environment over the process's. From a root shell that overwrote the
+   company's own HOME, so every default folder under the home folder was TeamLink's, and the company's server could read TeamLink's Companies key folder and make passes (a company Super Admin opened the menu
+   inside the company). Now: `company-deploy.sh` and `company-portal-install.sh` restart with the company's own HOME and `PM2_HOME` naming the real pm2 folder (with another HOME pm2 looks in the wrong folder
+   and starts a second manager there); `COMPANY_HOME` in the company's settings is applied by `utils/companyGuard.js` before anything reads the home folder (whatever starts the process);
+   `utils/companyBridge.js` never issues a pass in a company copy; `company-check.js` requires COMPANY_HOME to be the company's own folder. `npm run company-portal-test` covers all four.
+3. **`/jobs` showed the company's own screens, not its portal.** TeamLink's nginx site has two rules (`location = /jobs` and `location ^~ /jobs/`) that hand `/jobs` to the backend; a company's site
+   (`company-install.sh`) only handed `/api/` over and served the rest as plain screens. `company-portal-install.sh` now adds the same two rules to the company's own nginx site (`nginx-jobs.snippet`; nginx is
+   tested before it is reloaded and the old file is put back if the test fails).
+
+Known and not changed: the portal's own pages are the customer's program and carry the name "TeamLink" (title, logo); only its data (company, demo logins, labels) is the company's.

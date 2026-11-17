@@ -30,6 +30,9 @@ function bridgeDir() { return path.resolve(process.env.COMPANY_BRIDGE_DIR || pat
 // ---- TeamLink's side (the one that signs) --------------------------------------------------------------------------------------------
 let cache = { at: 0, v: null };
 function readIssuer() {
+  // ONLY TeamLink signs. A company copy (COMPANY_KEY) never issues a pass, even if a key folder is visible to it (found 2026-11-17: a company server started
+  // with TeamLink's home folder could read TeamLink's key and open itself from its own Companies menu).
+  if (process.env.COMPANY_KEY) return { companies: [], privateKey: null };
   if (cache.v && Date.now() - cache.at < 5000) return cache.v;
   let v = { companies: [], privateKey: null };
   try {

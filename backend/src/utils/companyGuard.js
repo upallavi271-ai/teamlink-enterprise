@@ -18,6 +18,19 @@
 // ---------------------------------------------------------------------------
 const KEY_ROW = 'company.key';
 
+// A COMPANY COPY KEEPS ITS OWN HOME FOLDER, whatever starts it (found 2026-11-17). Every default data folder of this program hangs under the Linux
+// user's home folder (~/.teamlink-uploads, ~/.teamlink-company-bridge ...), and TeamLink uses /root. "pm2 restart --update-env" copies the CALLER's
+// environment over the process's, so a restart from a root shell silently gave the company's server HOME=/root: it could read TeamLink's key folder.
+// COMPANY_HOME (this copy's .env, written by company-install.sh) is therefore applied here, before anything looks at the home folder.
+const homeWas = (() => {
+  const want = String(process.env.COMPANY_KEY || '').trim() ? String(process.env.COMPANY_HOME || '').trim() : '';
+  if (!want || process.env.HOME === want) return null;
+  const was = process.env.HOME || '';
+  process.env.HOME = want;
+  if (process.platform === 'win32') process.env.USERPROFILE = want;
+  return was;
+})();
+
 const wanted = () => String(process.env.COMPANY_KEY || '').trim().toLowerCase();
 let state = wanted() ? 'checking' : 'off'; // off | checking | ok | bad
 let started = false;
@@ -39,6 +52,7 @@ async function verify(prisma) {
 function start() {
   if (started || state === 'off') return;
   started = true;
+  if (homeWas !== null) console.log(`[company] the process was started with HOME=${homeWas || '(none)'}; using this company's own home folder (COMPANY_HOME) instead.`); // eslint-disable-line no-console
   const prisma = require('../db'); // eslint-disable-line global-require
   verify(prisma).then((r) => {
     if (r.ok) { state = 'ok'; console.log(`[company] this server belongs to company "${r.wanted}" and its database says the same.`); return; } // eslint-disable-line no-console

@@ -65,7 +65,7 @@ const os = require('os');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'company-portal-test-'));
 const home = '/opt/company-nish/home';
 const base = [
-  'COMPANY_KEY=nish', 'PORT=4012', 'DATABASE_URL="file:/opt/company-nish/data/nish.db"', `JWT_SECRET=${rand()}`, `INTEGRATION_SECRET_KEY=${rand()}`, 'APP_BASE_URL=https://nish.example.org',
+  'COMPANY_KEY=nish', `COMPANY_HOME=${home}`, 'PORT=4012', 'DATABASE_URL="file:/opt/company-nish/data/nish.db"', `JWT_SECRET=${rand()}`, `INTEGRATION_SECRET_KEY=${rand()}`, 'APP_BASE_URL=https://nish.example.org',
   'UPLOAD_DIR=/opt/company-nish/data/uploads', 'ATS_IO_DIR=/opt/company-nish/data/ats-io', 'MESSAGE_JOB_DIR=/opt/company-nish/data/message-jobs', 'BACKUP_DIR=/opt/company-nish/data/backups',
   'TL_QR_SESSION_DIR=/opt/company-nish/data/qr', 'AI_VOICE_LIVE_FILE=/opt/company-nish/data/live-calls.json',
   'GREENSTART_ENABLED=false', 'GREENSTART_SUPERVISE=false', 'GREENSTART_AUTOSTART=false', 'JOB_PORTAL_SYNC_SECRETS_PLACEHOLDER',
@@ -99,9 +99,34 @@ const c5 = check('tlfolder.env', own(goodPortal.map((l) => l.replace('JOBPORTAL_
 ok(c5.status === 1 && c5.fails.some((l) => /DEV_DB_DIR/.test(l)), 'TeamLink\'s portal database folder: rejected', c5.fails.join(' | '));
 const c6 = check('weak.env', own(goodPortal.map((l) => l.replace(/^JOBPORTAL__DEV_PASSWORD=.*/, 'JOBPORTAL__DEV_PASSWORD=TeamLink@2026'))));
 ok(c6.status === 1 && c6.fails.some((l) => /own|DEV_PASSWORD|refuses/.test(l)), 'the portal\'s well-known demo password: rejected', c6.fails.join(' | '));
+const c7 = check('nohome.env', own(goodPortal).split('\n').filter((l) => !l.startsWith('COMPANY_HOME=')).join('\n'));
+ok(c7.status === 1 && c7.fails.some((l) => /COMPANY_HOME/.test(l)), 'a company without COMPANY_HOME: rejected', c7.fails.join(' | '));
+const c8 = check('roothome.env', own(goodPortal).replace(`COMPANY_HOME=${home}`, 'COMPANY_HOME=/root'));
+ok(c8.status === 1 && c8.fails.some((l) => /COMPANY_HOME/.test(l)), 'COMPANY_HOME pointing at /root (TeamLink\'s home folder): rejected', c8.fails.join(' | '));
+
+heading('5. a company copy never issues passes and keeps its own home folder (found on the live server, 2026-11-17)');
+// a real key folder, made the way TeamLink's server makes it
+const keyDir = path.join(TMP, 'tl-bridge');
+const setup = spawnSync(process.execPath, ['scripts/company-bridge-setup.js', '--dir', keyDir, '--key', 'nish', '--name', 'NISH', '--url', 'https://nish.example.org'], { cwd: BACKEND, encoding: 'utf8' });
+ok(setup.status === 0, 'a key folder was made for the test', setup.stderr);
+const menuWith = (env) => {
+  const r = spawnSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(require("./src/utils/companyBridge").companiesForMenu()))'], { cwd: BACKEND, env: { PATH: process.env.PATH, ...env }, encoding: 'utf8' });
+  try { return JSON.parse(r.stdout); } catch { return `error: ${(r.stderr || '').slice(0, 200)}`; }
+};
+const tlMenu = menuWith({ COMPANY_BRIDGE_DIR: keyDir });
+ok(Array.isArray(tlMenu) && tlMenu.length === 1 && tlMenu[0].key === 'nish', 'control: TeamLink (no COMPANY_KEY) reads the key folder and lists the company', JSON.stringify(tlMenu));
+const coMenu = menuWith({ COMPANY_KEY: 'nish', COMPANY_BRIDGE_DIR: keyDir });
+ok(Array.isArray(coMenu) && coMenu.length === 0, 'a company copy that can SEE the key folder still lists nothing: it cannot make a pass', JSON.stringify(coMenu));
+const homeOf = (env) => {
+  const r = spawnSync(process.execPath, ['-e', 'require("./src/utils/companyGuard"); process.stdout.write(process.env.HOME || "")'], { cwd: BACKEND, env: { PATH: process.env.PATH, ...env }, encoding: 'utf8' });
+  return r.stdout;
+};
+ok(homeOf({ COMPANY_KEY: 'nish', COMPANY_HOME: '/opt/company-nish/home', HOME: '/root' }) === '/opt/company-nish/home', 'a company copy started with HOME=/root takes its own home folder (COMPANY_HOME)');
+ok(homeOf({ COMPANY_KEY: 'nish', HOME: '/root' }) === '/root', 'without COMPANY_HOME nothing changes (older company copies)');
+ok(homeOf({ COMPANY_HOME: '/opt/company-nish/home', HOME: '/root' }) === '/root', 'TeamLink (no COMPANY_KEY) never changes its home folder');
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* none */ }
 
-heading('4. the scripts are valid');
+heading('6. the scripts are valid');
 for (const f of ['company-deploy.sh', 'company-install.sh', 'company-sync.sh', 'company-portal-install.sh']) {
   const r = spawnSync('bash', ['-n', path.join(ROOT, 'deploy', 'vps', 'company', f)], { encoding: 'utf8' });
   ok(r.status === 0, `bash -n ${f}`, (r.stderr || '').slice(0, 160));

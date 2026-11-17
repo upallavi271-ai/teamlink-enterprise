@@ -34,6 +34,11 @@ STAMP=$(date +%Y-%m-%d-%H%M%S)
 LOG=$STATE/deploy.log
 
 mkdir -p "$STATE" "$ROOT/data/backups" "$ROOT/home" "$ROOT/config"
+# "pm2 restart --update-env" copies the CALLER's environment over the process's. From a root shell that made the company's server run with HOME=/root, which is
+# TeamLink's home folder (found 2026-11-17: the company could read TeamLink's key folder). So the restart is given the company's own HOME, and PM2_HOME names the
+# real pm2 folder (with another HOME, pm2 would look in the company's home folder and start a second manager there).
+export PM2_HOME=${PM2_HOME:-${HOME:-/root}/.pm2}
+pm2_restart() { HOME="$ROOT/home" pm2 restart "$PM2_NAME" --update-env; }
 log() { printf '%s  %s\n' "$(date '+%F %T')" "$*" | tee -a "$LOG" >&2; }
 alert() { log "ALERT: $*"; printf '%s  %s\n' "$(date '+%F %T')" "$*" > "$STATE/ALERT"; }
 status() { printf '%s  %s\n' "$(date '+%F %T')" "$*" > "$STATE/STATUS"; }
@@ -160,7 +165,7 @@ fi
 ok=1
 ( cd "$ROOT/backend" && npx prisma migrate deploy ) >>"$LOG" 2>&1 || ok=0
 if [ $ok = 1 ]; then
-  if pm2 describe "$PM2_NAME" >/dev/null 2>&1; then pm2 restart "$PM2_NAME" --update-env >>"$LOG" 2>&1 || ok=0
+  if pm2 describe "$PM2_NAME" >/dev/null 2>&1; then pm2_restart >>"$LOG" 2>&1 || ok=0
   else pm2 start "$ROOT/ecosystem.config.js" >>"$LOG" 2>&1 || ok=0; fi
 fi
 healthy=0
@@ -187,7 +192,7 @@ if [ $had_live = 1 ] && [ -d "$OLDB" ]; then
   mv "$ROOT/backend" "$ROOT/backend-failed-$STAMP"; mv "$OLDB" "$ROOT/backend"
   if [ -d "$OLDF" ]; then mv "$ROOT/frontend" "$ROOT/frontend-failed-$STAMP"; mv "$OLDF" "$ROOT/frontend"; fi
   if [ $had_portal = 1 ] && [ -d "$OLDP" ]; then mv "$ROOT/job-portal-app" "$ROOT/job-portal-app-failed-$STAMP"; mv "$OLDP" "$ROOT/job-portal-app"; fi
-  pm2 restart "$PM2_NAME" --update-env >>"$LOG" 2>&1 && log "the previous release is back" || alert "AUTOMATIC ROLLBACK DID NOT COMPLETE for '$KEY': put backend-old / frontend-old back by hand"
+  pm2_restart >>"$LOG" 2>&1 && log "the previous release is back" || alert "AUTOMATIC ROLLBACK DID NOT COMPLETE for '$KEY': put backend-old / frontend-old back by hand"
 fi
 status "FAILED on ${COMMIT:0:8}"
 exit 1

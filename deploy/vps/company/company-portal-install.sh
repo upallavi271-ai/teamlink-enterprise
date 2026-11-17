@@ -14,6 +14,7 @@
 #      company-portal-init.mjs removes what the portal writes on a new database that is not this company's (a "TeamLink Consultants" company, two
 #      demo logins) and gives the company's own Admin(s) a portal admin login. Only then:
 #   5  JOB_PORTAL_EMBED=1 and the company's server restarts; its supervisor starts the portal (on the company's own port).
+#   5b the company's own nginx site gets the two /jobs rules (TeamLink's site has them; without them /jobs would show the company's own screens)
 #   6  checks: the portal answers on ITS port, /jobs works through the company's address, TeamLink's portal is untouched, company-check passes.
 # Taking it away: set JOB_PORTAL_EMBED=0 and pm2 restart company-<key>; the data folder data/job-portal can then be kept or deleted.
 # ============================================================================
@@ -97,15 +98,23 @@ step "4  first start off to the side, clean-up, the company's own admin login"
 DEVDB=$(getenv JOBPORTAL__DEV_DB_DIR); [ -n "$DEVDB" ] || fail "JOBPORTAL__DEV_DB_DIR is not set"
 if [ ! -f "$DEVDB/PG_VERSION" ]; then
   echo "starting the portal once (new database: its migrations run, about a minute) ..."
-  ( cd "$PD" && env -i PATH="$PATH" HOME="$ROOT/home" PG_PORT="$PG_PORT" DEV_DB_DIR="$DEVDB" STORAGE_LOCAL_DIR="$(getenv JOBPORTAL__STORAGE_LOCAL_DIR)" \
+  # Started through the portal's own host (embed/host.mjs) and NOT through tools/dev-server.mjs directly: the host binds the web port to 127.0.0.1 only
+  # (dev-server alone listens on every address, and this server has no firewall). "exec" makes $! the portal's own process id, so the stop below
+  # stops the portal and not just a wrapper around it (a wrapper was stopped once and the portal ran on, open to the internet, while the database
+  # was being cleaned: 2026-11-17).
+  ( cd "$PD" && exec env -i PATH="$PATH" HOME="$ROOT/home" JP_ROOT="$PD" JP_PORT="$WEB_PORT" JP_BIND=127.0.0.1 PG_PORT="$PG_PORT" DEV_DB_DIR="$DEVDB" STORAGE_LOCAL_DIR="$(getenv JOBPORTAL__STORAGE_LOCAL_DIR)" \
       AUTH_SECRET="$(getenv JOBPORTAL__AUTH_SECRET)" INTEGRATION_SECRET_KEY="$(getenv JOBPORTAL__INTEGRATION_SECRET_KEY)" DEV_PASSWORD="$(getenv JOBPORTAL__DEV_PASSWORD)" \
-      nohup node tools/dev-server.mjs "$WEB_PORT" > "$DATA/first-start.log" 2>&1 & echo $! > "$DATA/first-start.pid" )
+      node "$ROOT/job-portal-app/embed/host.mjs" ) > "$DATA/first-start.log" 2>&1 &
+  FP=$!; echo "$FP" > "$DATA/first-start.pid"
   up=0; for i in $(seq 1 120); do if curl -s -m 2 "http://127.0.0.1:$WEB_PORT/api/health" | grep -q ok; then up=1; break; fi; sleep 2; done
-  kill -TERM "$(cat "$DATA/first-start.pid")" 2>/dev/null || true
-  for i in $(seq 1 30); do kill -0 "$(cat "$DATA/first-start.pid")" 2>/dev/null || break; sleep 1; done
-  if kill -0 "$(cat "$DATA/first-start.pid")" 2>/dev/null; then kill -KILL "$(cat "$DATA/first-start.pid")" 2>/dev/null || true; fail "the portal did not stop cleanly after its first start (see $DATA/first-start.log)"; fi
+  open=$(ss -ltnp 2>/dev/null | grep "pid=$FP," | awk '{print $4}' | grep -vE '^127\.0\.0\.1:' | tr '\n' ' ')
+  kill -TERM "$FP" 2>/dev/null || true
+  for i in $(seq 1 40); do kill -0 "$FP" 2>/dev/null || break; sleep 1; done
+  if kill -0 "$FP" 2>/dev/null; then kill -KILL "$FP" 2>/dev/null || true; sleep 1; fail "the portal did not stop cleanly after its first start (see $DATA/first-start.log)"; fi
+  [ -z "$open" ] || fail "the first-start portal listened on an address other than 127.0.0.1 ($open): stopped"
+  portfree "$WEB_PORT" && portfree "$PG_PORT" || fail "a first-start process still holds port $WEB_PORT or $PG_PORT: find it with  ss -ltnp  and stop it before going on"
   [ $up = 1 ] || fail "the portal did not answer on its first start (see $DATA/first-start.log)"
-  echo "first start done and stopped cleanly"
+  echo "first start done and stopped cleanly; its ports are free again"
 fi
 ADMINS=$(cd "$ROOT/backend" && node -e '
 const { DatabaseSync } = require("node:sqlite");
@@ -118,10 +127,22 @@ console.log(JSON.stringify(rows.map((r) => ({ name: r.name, email: r.email }))))
 
 step "5  switch on (only the company's own server restarts)"
 setenv JOB_PORTAL_EMBED 1
-pm2 restart "$PM2_NAME" --update-env >/dev/null 2>&1 || fail "pm2 could not restart $PM2_NAME"
+PM2_HOME="${PM2_HOME:-${HOME:-/root}/.pm2}" HOME="$ROOT/home" pm2 restart "$PM2_NAME" --update-env >/dev/null 2>&1 || fail "pm2 could not restart $PM2_NAME"
 ok=0; for i in $(seq 1 40); do if curl -s -m 3 "http://127.0.0.1:$WEB_PORT/api/health" | grep -q ok; then ok=1; break; fi; sleep 3; done
 [ $ok = 1 ] || fail "the portal did not come up on port $WEB_PORT (see $DATA/run/portal.log). Set JOB_PORTAL_EMBED=0 and pm2 restart $PM2_NAME to switch it off again."
 
+step "5b  the company's web address passes /jobs on to its server (one rule pair in ITS OWN nginx site; nginx is tested before it is reloaded)"
+SITE=$(readlink -f "/etc/nginx/sites-enabled/company-$KEY.conf" 2>/dev/null)
+[ -n "$SITE" ] && [ -f "$SITE" ] || fail "the company's nginx site /etc/nginx/sites-enabled/company-$KEY.conf was not found"
+if grep -q 'location ^~ /jobs/' "$SITE"; then echo "the /jobs rules are already in $SITE"; else
+  cp -p "$SITE" "/root/nginx-company-$KEY-before-jobs-$STAMP.conf"
+  sed "s/__APP_PORT__/$APP_PORT/" "$HERE/nginx-jobs.snippet" > "$DATA/nginx-jobs.snippet.tmp"
+  TMPN=$(mktemp)
+  awk -v snip="$DATA/nginx-jobs.snippet.tmp" 'index($0, "    location /api/ {") == 1 && !d { while ((getline l < snip) > 0) print l; d = 1 } { print }' "$SITE" > "$TMPN"
+  grep -q 'location ^~ /jobs/' "$TMPN" || fail "could not place the /jobs rules (no /api/ rule found in $SITE); nothing was changed"
+  cp "$TMPN" "$SITE"; rm -f "$TMPN" "$DATA/nginx-jobs.snippet.tmp"
+  if nginx -t >/dev/null 2>&1; then systemctl reload nginx && echo "nginx reloaded with the /jobs rules"; else cp -p "/root/nginx-company-$KEY-before-jobs-$STAMP.conf" "$SITE"; fail "nginx -t failed: the old site file was put back"; fi
+fi
 step "6  checks"
 echo "company health:   $(curl -s -m 5 "http://127.0.0.1:$APP_PORT/api/health")"
 echo "portal health:    $(curl -s -m 5 "http://127.0.0.1:$WEB_PORT/api/health" | head -c 120)"
