@@ -45,12 +45,12 @@ function Legend({ items }) {
 }
 
 // a donut: identity by slot colour AND by the legend beside it
-function Donut({ rows, valueOf = (r) => r.count, fmt = (v) => v.toLocaleString('en-IN'), empty }) {
+function Donut({ rows, measure = (r) => r.count, fmt = (v) => v.toLocaleString('en-IN'), empty }) {
   const { on, view } = useTip();
   const top = rows.slice(0, 7);
   const rest = rows.slice(7);
   const data = [...top, ...(rest.length ? [{ name: 'Other', count: rest.reduce((a, r) => a + r.count, 0), value: rest.reduce((a, r) => a + (r.value || 0), 0) }] : [])]
-    .map((r, i) => ({ ...r, color: SERIES[i], v: valueOf(r) })).filter((r) => r.v > 0);
+    .map((r, i) => ({ ...r, color: SERIES[i], v: measure(r) })).filter((r) => r.v > 0);
   const total = data.reduce((a, r) => a + r.v, 0);
   if (!total) return <div className="small-muted">{empty || 'Nothing in this period.'}</div>;
   const R = 52; const r0 = 32; const C = 60;
@@ -141,6 +141,7 @@ function MoneyLines({ rows }) {
   const y = (v) => H - P.b - (v / max) * (H - P.t - P.b);
   const ticks = [0, 0.5, 1].map((f) => f * max);
   const [hover, setHover] = useState(null);
+  if (!rows.some((r) => keys.some((k) => r[k] > 0))) return <div className="small-muted">Nothing booked, invoiced or collected in the last 12 months.</div>;
   return (
     <div data-tipbox style={{ position: 'relative' }}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Booked, invoiced and collected by month" style={{ display: 'block' }} onMouseLeave={() => setHover(null)}>
