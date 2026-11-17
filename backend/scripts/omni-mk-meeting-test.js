@@ -129,7 +129,8 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     const Gw = require(path.join(BACK, 'src/calling/voice/gateway'));
     const realEngines = Gw.engines; const keepTts = process.env.AI_VOICE_TTS; let said = 0;
     process.env.AI_VOICE_TTS = 'vexyl';
-    Gw.engines = () => ({ tts: async () => Buffer.alloc(16000), ttsWide: async () => { said += 1; return { pcm: Buffer.alloc(44100), rate: 22050 }; } });
+    let heardLang = null;
+    Gw.engines = () => ({ tts: async () => Buffer.alloc(16000), ttsWide: async () => { said += 1; return { pcm: Buffer.alloc(44100), rate: 22050 }; }, stt: async (pcm, lang) => { heardLang = lang; return { text: 'how much does it cost' }; } });
     const line = fresh.te[0];
     check('12b the server says where it has a voice', JSON.stringify(Voice.status()) === '{"en":true,"te":true,"hi":true}', Voice.status());
     check('12c text that is not one of the meeting\'s sentences is refused (404), and so is an unknown language', (await Voice.speak('te', 'Read me this other text')).status === 404 && (await Voice.speak('xx', line)).status === 404 && (await Voice.speak('te', '')).status === 404);
@@ -151,8 +152,19 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     check('12g GET /voice with other text answers 404 and a plain error', vx.status === 404 && !!(await vx.json()).error);
     const vs = await fetch(`${b2}/voice/status`);
     check('12h GET /voice/status answers the languages', vs.status === 200 && (await vs.json()).te === true);
+    // hearing the client's recorded question (marketing/meetingHear.js), with a FAKE listener
+    const Hear = require(path.join(BACK, 'src/marketing/meetingHear')); const RE = require(path.join(BACK, 'src/calling/voice/engines'));
+    const wav1s = RE.pcmToWav(Buffer.alloc(8000 * 2), 8000);
+    const h1 = await Hear.hear('te', wav1s);
+    check('12j a recorded sound is turned into words by the right listener (Telugu here)', h1.text === 'how much does it cost' && heardLang === 'Telugu', { h1, heardLang });
+    check('12k too short, an unknown language and too long are refused', (await Hear.hear('te', Buffer.alloc(10))).status === 400 && (await Hear.hear('xx', wav1s)).status === 400 && (await Hear.hear('te', Buffer.alloc(3 * 1024 * 1024))).status === 413);
+    const hp = await fetch(`${b2}/hear?lang=hi`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: wav1s });
+    check('12l POST /hear answers { text } and keeps nothing', hp.status === 200 && (await hp.json()).text === 'how much does it cost' && heardLang === 'Hindi', { s: hp.status, heardLang });
+    const hb = await fetch(`${b2}/hear?lang=hi`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: Buffer.alloc(20) });
+    check('12m a sound that is too short answers 400 with a plain error', hb.status === 400 && !!(await hb.json()).error);
     await new Promise((r) => srv2.close(r));
     Gw.engines = () => null;
+    check('12i2 with no listener hearing is refused with 503 and a plain error', (await Hear.hear('te', wav1s)).status === 503);
     check('12i with no engine the server says it has no voice and refuses with 503', JSON.stringify(Voice.status()) === '{"en":false,"te":false,"hi":false}' && (await Voice.speak('hi', fresh.hi[1])).status === 503);
     Gw.engines = realEngines; if (keepTts === undefined) delete process.env.AI_VOICE_TTS; else process.env.AI_VOICE_TTS = keepTts;
 

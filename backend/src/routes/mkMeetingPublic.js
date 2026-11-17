@@ -4,11 +4,13 @@
 //   POST /:token/event   { type: start | slide | ask | choice | handover, ... }: what the client does, saved for the team
 //   GET  /voice/status   { en, te, hi }: where the server can speak (marketing/meetingVoice.js: the free Piper voices)
 //   GET  /voice?lang=te&t=<one of the meeting's own sentences>   audio/wav (nothing else can be spoken)
+//   POST /hear?lang=te   the client's recorded question (audio bytes) -> { text } (marketing/meetingHear.js: the free speech engines; not kept)
 // The token is "<id>.<signature>" (an HMAC), so a link cannot be guessed; every other address answers the same plain 404. Rate limited per caller, never cached, never indexed.
 const express = require('express');
 const { rateLimit } = require('../utils/publicRateLimit');
 const M = require('../marketing/meeting');
 const Voice = require('../marketing/meetingVoice');
+const Hear = require('../marketing/meetingHear');
 
 const router = express.Router();
 const lim = rateLimit({ bucket: 'mk-meeting', max: 600, windowMs: 10 * 60000, message: 'Many people are using this page at once. Please wait a minute and try again.' });
@@ -37,6 +39,11 @@ router.get('/voice/status', lim, (req, res) => res.json(Voice.status()));
 router.get('/voice', limVoice, wrap(async (req, res) => {
   const out = await Voice.speak(String(req.query.lang || ''), String(req.query.t || ''));
   return out.error ? res.status(out.status || 400).json({ error: out.error }) : sendWav(req, res, out.wav);
+}));
+const limHear = rateLimit({ bucket: 'mk-meeting-hear', max: 40, windowMs: 10 * 60000, message: 'Please wait a few minutes and try again, or type your question.' });
+router.post('/hear', limHear, express.raw({ type: () => true, limit: '2mb' }), wrap(async (req, res) => {
+  const out = await Hear.hear(String(req.query.lang || ''), Buffer.isBuffer(req.body) ? req.body : null);
+  return out.error ? res.status(out.status || 400).json({ error: out.error }) : res.json({ text: out.text });
 }));
 router.post('/', limStart, wrap(async (req, res) => res.json(await M.publicStart((req.body || {}).language))));
 router.get('/:token', lim, wrap(async (req, res) => send(res, await M.publicView(req.params.token))));
