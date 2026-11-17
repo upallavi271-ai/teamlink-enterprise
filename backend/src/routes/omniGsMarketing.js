@@ -166,6 +166,14 @@ router.post('/client-reviews/:id/tell', mustWrite, wrap(async (req, res) => send
 router.post('/client-reviews/:id/revoke', mustWrite, wrap(async (req, res) => send(res, await CR.revoke(req.user, req.params.id))));
 router.post('/client-reviews/:id/extend', mustWrite, wrap(async (req, res) => send(res, await CR.extend(req.user, req.params.id, (req.body || {}).days))));
 
+// ---- plans meeting (marketing/meeting.js): a link the team sends a client on WhatsApp; the client watches an automated, spoken meeting about the plans (public page /plans-meeting/<token>) ------------
+// Nothing is sent until a person clicks "Send on WhatsApp" (tell). The public side is routes/mkMeetingPublic.js.
+router.get('/meetings', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').list(req.user)))); // eslint-disable-line global-require
+router.put('/meetings/settings', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').saveSettings(req.user, req.body || {})))); // eslint-disable-line global-require
+router.post('/meetings', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').create(req.user, req.body || {})))); // eslint-disable-line global-require
+router.post('/meetings/:id/tell', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').tell(req.user, req.params.id, req.body || {}, siteOf(req))))); // eslint-disable-line global-require
+router.delete('/meetings/:id', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').remove(req.user, req.params.id)))); // eslint-disable-line global-require
+
 // ---- AI clips (marketing/aiclips.js): a real-motion clip from Google Veo; paid, so the cost must be confirmed and a daily limit applies ------------------
 // ---- create from a prompt (marketing/autostudio.js): one sentence -> the plan of a video / picture post (pictures and the video are then made by the screen) ------------------
 router.post('/studio/plan', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/autostudio').plan(req.user, req.body || {}))));

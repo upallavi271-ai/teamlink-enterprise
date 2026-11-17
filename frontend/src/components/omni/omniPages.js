@@ -50,6 +50,8 @@ export const PAGES = {
   mkhome: { label: 'Overview', icon: '✧', title: 'AI Marketing' },
   // Lead generation is a SUB-TAB of Client projects (2026-11-16; MK_SUBTABS below). Workflow automation, Email marketing and Campaign messages were removed: nothing had ever been made in them.
   mkleads: { label: 'Lead generation', icon: '◎', title: 'Lead generation: scored leads for the CRM' },
+  // Plans meeting is also a SUB-TAB of Client projects (2026-11-17): a link sent on WhatsApp opens an automated, spoken meeting about the plans in English, Telugu or Hindi
+  mkmeeting: { label: 'Plans meeting', icon: '☎', title: 'Plans meeting: an automated, spoken presentation of the plans for a client' },
   mkimages: { label: 'AI Images', icon: '◩', title: 'AI Images' },
   mkvideos: { label: 'AI Video', icon: '▶', title: 'AI Video' },
   mkapprove: { label: 'Approvals', icon: '✔', title: 'AI Marketing approvals' },
@@ -71,12 +73,12 @@ export const SECTIONS = [
   { id: 'connections', label: 'Channel Connections', icon: '⚯', views: ['connections', 'fbchannel', 'igchannel', 'fbcatalogs', 'shopify'] },
   { id: 'reports', label: 'Reports', icon: '⌁', views: ['analytics'] },
   { id: 'settings', label: 'Settings & Audit Log', icon: '⚙', views: ['settings', 'waai', 'team', 'billing', 'superadmin', 'audit'] },
-  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkprojects', 'mkourwork', 'mkleads', 'mkimages', 'mkvideos', 'mkapprove', 'mkreports', 'mkbrand', 'mkusage'] },
+  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkprojects', 'mkourwork', 'mkleads', 'mkmeeting', 'mkimages', 'mkvideos', 'mkapprove', 'mkreports', 'mkbrand', 'mkusage'] },
 ];
 // AI MARKETING SUB-TABS: a tab that has more screens under it. The tab bar shows the parent only; opening the parent (or one of its screens) shows the row of sub-tabs under the bar,
 // the first one being the parent itself. A screen the login may not open is left out of the row.
-export const MK_SUBTABS = { mkprojects: ['mkprojects', 'mkleads'] };
-export const MK_SUB_PARENT = { mkleads: 'mkprojects' };
+export const MK_SUBTABS = { mkprojects: ['mkprojects', 'mkleads', 'mkmeeting'] };
+export const MK_SUB_PARENT = { mkleads: 'mkprojects', mkmeeting: 'mkprojects' };
 export const SECTION_IDS = SECTIONS.map((s) => s.id);
 export const ALL_IDS = Object.keys(PAGES);
 export const HOME = 'overview';

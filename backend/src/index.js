@@ -291,6 +291,7 @@ app.use('/api/omni-gs', require('./routes/greenStartEmbed')); // status + sessio
 app.use('/api/public/mk-work', require('./routes/mkWorkPublic')); // AI Marketing "Our work": track record and portfolio (no login; marketing/projects.js)
 app.use('/api/public/mk-project', require('./routes/mkProjectPublic')); // AI Marketing client projects: the client's private page (signed token, no login; marketing/projects.js)
 app.use('/api/public/mk-review', require('./routes/mkClientReviewPublic')); // AI Marketing client approval link (signed token in the address, no login; marketing/clientReview.js)
+app.use('/api/public/mk-meeting', require('./routes/mkMeetingPublic')); // AI Marketing plans meeting: the automated spoken presentation a client opens from a WhatsApp link (signed token, no login; marketing/meeting.js)
 app.use('/api/public/outreach', require('./routes/outreachLibraryPublic')); // Library share links (token in the address, no login)
 app.use('/api/public/outreach', require('./routes/outreachFormsPublic')); // public capture forms: GET / POST /forms/:token (no login, honeypot + rate limit)
 app.use('/api/public/outreach', require('./routes/outreachPublic'));
