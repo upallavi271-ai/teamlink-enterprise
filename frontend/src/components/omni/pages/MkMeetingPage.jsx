@@ -137,12 +137,12 @@ export default function MkMeetingPage() {
               {lines && lines.lines ? lines.lines.map((l) => <option key={l.id} value={l.id} disabled={!l.ready}>{l.text}{l.from ? ` · client sees ${l.from}` : ''}{l.ready ? '' : ' · not connected'}</option>) : <option value="">Default line</option>}
             </select>
           </Field>
-          <Field label="WHATSAPP ALERT TO MY NUMBER" hint={d.alert.on ? `On: alerts go to ${d.alert.phoneMasked}. Sent from the company WhatsApp number.` : 'Off. Type your own WhatsApp number and switch it on.'}>
-            <input value={(al && al.phone) || ''} maxLength={30} inputMode="tel" placeholder="+91…" onChange={(e) => setAl({ ...(al || { on: false }), phone: e.target.value })} aria-label="Your WhatsApp number for alerts" />
+          <Field label="MY PHONE NUMBER" hint={`This phone rings first when you press Call now, and gets the WhatsApp alert when it is switched on. ${d.alert.phone ? `Saved: ${d.alert.phoneMasked}. ` : 'Nothing saved yet. '}${d.alert.on ? 'The WhatsApp alert is ON (sent from the company WhatsApp number).' : 'The WhatsApp alert is off.'}`}>
+            <input value={(al && al.phone) || ''} maxLength={30} inputMode="tel" placeholder="+91…" onChange={(e) => setAl({ ...(al || { on: false }), phone: e.target.value })} aria-label="Your own phone number" />
           </Field>
           <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <Btn small primary disabled={busy === 'alert' || !((al && al.phone) || '').trim()} onClick={() => saveAlert(true)}>{d.alert.on ? 'Save my number' : 'Switch the WhatsApp alert on'}</Btn>
-            {d.alert.on ? <Btn small disabled={busy === 'alert'} onClick={() => saveAlert(false)}>Switch it off</Btn> : null}
+            <Btn small primary disabled={busy === 'alert' || !((al && al.phone) || '').trim()} onClick={() => saveAlert(d.alert.on)}>Save my number</Btn>
+            <Btn small disabled={busy === 'alert' || !((al && al.phone) || '').trim()} onClick={() => saveAlert(!d.alert.on)}>{d.alert.on ? 'Switch the WhatsApp alert off' : 'Also send me a WhatsApp alert'}</Btn>
           </div>
         </div>
       </Panel>

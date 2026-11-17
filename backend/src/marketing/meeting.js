@@ -183,15 +183,18 @@ async function call(u, id, b = {}) {
   const nm = r.phone ? core().normalizeMobile(r.phone) : null;
   if (!nm || !nm.ok) return { error: 'This meeting has no usable phone number yet. Type the client\'s number first (open the row).', status: 400 };
   const own = await require('../utils/messageChannels').ownContact(u); // eslint-disable-line global-require
-  if (!own.phone) return { error: 'Your own phone number is not on your employee profile, so TeamLink does not know which phone to ring first. Add it on your profile, or use "Call from this phone".', status: 409 };
+  // the phone that rings first: the one on the employee profile, else the number this person saved themselves in "Calls and alerts" (their own, typed on their own page, audited)
+  const saved = (await readAll()).alerts[u.id];
+  const ringFirst = own.phone || (saved && saved.phone) || '';
+  if (!ringFirst) return { error: 'TeamLink does not know which phone to ring first: your own number is not on your employee profile. Type your phone number in "Calls and alerts" on this page and press "Save my number", or use "Call from this phone".', status: 409 };
   const lines = require('../utils/callLines'); // eslint-disable-line global-require
   const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '') || null;
-  const out = await lines.startCall(b.line, { agent: own.phone, to: r.phone, ref: `mkmeeting:${r.id}`.slice(0, 120), callbackBase: base });
-  const detail = out.ok ? `Call through TeamLink started on the ${String(out.line || b.line || 'api').toUpperCase()} line: ${own.name}'s phone rings first${out.sandbox ? ' (test server, no real call)' : ''}.` : `Call did not start: ${out.error}`;
+  const out = await lines.startCall(b.line, { agent: ringFirst, to: r.phone, ref: `mkmeeting:${r.id}`.slice(0, 120), callbackBase: base });
+  const detail = out.ok ? `Call through TeamLink started on the ${String(out.line || b.line || 'api').toUpperCase()} line: ${own.name}'s phone (${core().maskMobile(ringFirst)}) rings first${out.sandbox ? ' (test server, no real call)' : ''}.` : `Call did not start: ${out.error}`;
   await logAudit({ userId: u.id, actorName: u.name, action: out.ok ? 'Omni-Channel AI Marketing: plans meeting, call to the client started' : 'Omni-Channel AI Marketing: plans meeting, call to the client failed', entity: TABLE, entityId: r.id, toValue: `${r.name || 'client'} (${core().maskMobile(nm.e164)}): ${detail}`.slice(0, 300) });
   if (!out.ok) return { error: out.error, status: out.notConfigured ? 409 : (out.invalid ? 400 : (out.transient ? 503 : 502)) };
   await S.run(`UPDATE "${TABLE}" SET calledAt = ?, calledByName = ?, callLine = ?, updatedAt = ? WHERE id = ?`, Date.now(), S.clip(u.name, 80), String(out.line || ''), Date.now(), r.id);
-  return { ok: `Your phone (${own.name}) will ring first. Pick up, and TeamLink then connects ${r.name || 'the client'}.${out.sandbox ? ' (Test server: no real call.)' : ''}`, meeting: full(await row(r.id)) };
+  return { ok: `Your phone (${core().maskMobile(ringFirst)}) will ring first. Pick up, and TeamLink then connects ${r.name || 'the client'}.${out.sandbox ? ' (Test server: no real call.)' : ''}`, meeting: full(await row(r.id)) };
 }
 
 // the message a client gets with the link, in their language (the approved WhatsApp template carries it: marketing/clientReview.js does the same)

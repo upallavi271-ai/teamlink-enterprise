@@ -202,6 +202,18 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     const goodAlert = await M.saveAlert(sa, { on: true, phone: '8919239827' });
     check('16b the alert is saved for this person and shown masked in the message', !!goodAlert.ok && /9827/.test(goodAlert.ok) && !/8919239827/.test(goodAlert.ok) && goodAlert.alert.on === true, goodAlert);
     check('16c the spots setting keeps the alert when it is saved (and the alert number is never in the public view)', !!(await M.saveSettings(sa, { spotsLeft: 7 })).ok && (await M.myAlert(sa)).on === true && !/8919239827/.test(JSON.stringify(await M.publicView(m2.token))) && !/8919239827/.test(JSON.stringify((await M.list(sa)).settings)));
+    // no phone on the employee profile, but the person saved their own number: it rings first
+    const mR = (await M.create(sa, { name: 'ZZ Ring Test', phone: '9123456780', language: 'en' })).meeting;
+    let ringArgs = null;
+    MC.ownContact = async () => ({ phone: null, name: 'Test Caller' });
+    CL.startCall = async (line, args) => { ringArgs = args; return { ok: true, callSid: 'fake-2', line: line || 'api' }; };
+    const viaSaved = await M.call(sa, mR.id, { line: 'sip' });
+    check('16i with no phone on the employee profile the number saved in "Calls and alerts" rings first (shown masked in the message)', !!viaSaved.ok && ringArgs && ringArgs.agent === '8919239827' && /9827/.test(viaSaved.ok) && !/8919239827/.test(viaSaved.ok), { viaSaved, ringArgs });
+    await M.saveAlert(sa, { on: false, phone: '8919239827' });
+    check('16j the number can be saved with the alert off, and it still rings first', (await M.myAlert(sa)).on === false && (await M.myAlert(sa)).phone === '8919239827' && !!(await M.call(sa, mR.id, { line: 'sip' })).ok);
+    await M.saveAlert(sa, { on: true, phone: '8919239827' });
+    CL.startCall = realStart; MC.ownContact = realOwn;
+    await M.remove(sa, mR.id);
     const sentTo = [];
     MG.send = async (channel, o) => { sentTo.push({ channel, to: o.to, text: o.text, vars: o.vars }); return { ok: true }; };
     const m3 = (await M.create(sa, { name: 'ZZ Alert Test', phone: '9123456780', language: 'en' })).meeting;
