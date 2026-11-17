@@ -52,6 +52,49 @@ const MEDIA_FILE = new RegExp(`^/media/[a-z0-9_-]{1,40}/${UUID}/${UUID}\\.[a-z0-
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain; charset=utf-8', '.map': 'application/json', '.webmanifest': 'application/manifest+json', '.xml': 'application/xml' };
 
+// STAY ON THE SAME SCREEN WHEN THE ORGANIZATION IS SWITCHED (founder 2026-11-17: "I am on the WhatsApp tab of one organization; when I switch to
+// another organization it starts again from the Dashboard - it should open the same tab"). Green Start's own header does
+// `switchWorkspace(id); window.location.assign('/app/dashboard')` (green-start-web/src/components/layout/Header.tsx), a different repo that TeamLink
+// does not edit. So the gate adds one small script to the page shell (served at /__gate/keep-tab.js, same address, no secrets in it):
+//   - when a page is left after the remembered workspace (localStorage gs.workspaceId) changed on it, it remembers that page's address in
+//     sessionStorage (this tab only, kept 20 seconds): a record of the old workspace (an id in the address) goes back to its list;
+//     the Dashboard, Organizations and anything outside /app/ are never remembered;
+//   - the Dashboard that the switch then opens sends the person straight on to that screen (before Green Start draws anything).
+// Nothing else changes; any error in the script is swallowed, so Green Start opens as it always did. Remove this block (and the two uses of
+// KEEP_TAB below) once the one-line change is made in Green Start's own repo.
+const KEEP_TAB = `(function () {
+  try {
+    var WS = 'gs.workspaceId';
+    var KEY = 'tl.switchBack';
+    var ls = window.localStorage;
+    var ss = window.sessionStorage;
+    var at = ls.getItem(WS);
+    var OK = /^\\/app\\/[A-Za-z0-9\\/_-]*(\\?[A-Za-z0-9_.~%=&+,:@!*'()-]*)?$/;
+    var raw = ss.getItem(KEY);
+    if (raw) {
+      ss.removeItem(KEY);
+      var saved = JSON.parse(raw);
+      if (saved && typeof saved.p === 'string' && Date.now() - saved.t < 20000 && /^\\/app\\/dashboard\\/?$/.test(location.pathname) && OK.test(saved.p)) { location.replace(saved.p); return; }
+    }
+    window.addEventListener('pagehide', function () {
+      try {
+        if (!at || ls.getItem(WS) === at) return;
+        var parts = location.pathname.replace(/\\/+$/, '').split('/');
+        var keep = [];
+        var cut = false;
+        for (var i = 0; i < parts.length; i++) {
+          if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parts[i]) || /^[0-9]{5,}$/.test(parts[i])) { cut = true; break; }
+          keep.push(parts[i]);
+        }
+        var p = keep.join('/') + (cut ? '' : location.search);
+        if (!OK.test(p) || /^\\/app\\/(dashboard|organizations)(\\/|\\?|$)/.test(p)) return;
+        ss.setItem(KEY, JSON.stringify({ p: p, t: Date.now() }));
+      } catch (e) { /* nothing is remembered */ }
+    });
+  } catch (e) { /* Green Start opens as usual */ }
+})();`;
+const KEEP_TAB_TAG = '<script src="/__gate/keep-tab.js"></script>';
+
 const cookieOf = (req, name) => {
   for (const part of String(req.headers.cookie || '').split(';')) {
     const i = part.indexOf('=');
@@ -148,6 +191,17 @@ function serveStatic(req, res) {
   const headers = { 'content-type': MIME[ext] || 'application/octet-stream', 'content-length': st.size, 'x-content-type-options': 'nosniff', 'referrer-policy': 'same-origin' };
   headers['cache-control'] = /\/assets\/.+-[A-Za-z0-9_-]{6,}\.[a-z0-9]+$/.test(file.replace(/\\/g, '/')) ? 'private, max-age=31536000, immutable' : 'no-cache';
   if (ext === '.html') headers['content-security-policy'] = FRAME;
+  // the page shell gets the keep-the-screen script (see KEEP_TAB); a page without a <head> or one that cannot be read goes out as it is
+  if (ext === '.html') {
+    let shell = null;
+    try { shell = fs.readFileSync(file, 'utf8'); } catch { shell = null; }
+    if (shell !== null && /<head[^>]*>/i.test(shell)) {
+      const buf = Buffer.from(shell.replace(/<head[^>]*>/i, (m) => `${m}${KEEP_TAB_TAG}`), 'utf8');
+      headers['content-length'] = buf.length;
+      res.writeHead(200, headers);
+      return req.method === 'HEAD' ? res.end() : res.end(buf);
+    }
+  }
   res.writeHead(200, headers);
   if (req.method === 'HEAD') return res.end();
   return fs.createReadStream(file).pipe(res);
@@ -156,6 +210,10 @@ function serveStatic(req, res) {
 const server = http.createServer(async (req, res) => {
   const pathname = (req.url || '/').split('?')[0];
   if (pathname === '/__gate/health') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end('{"ok":true}'); }
+  if (pathname === '/__gate/keep-tab.js' && (req.method === 'GET' || req.method === 'HEAD')) { // the script of KEEP_TAB: nothing secret, so no pass is needed
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff', 'content-length': Buffer.byteLength(KEEP_TAB) });
+    return req.method === 'HEAD' ? res.end() : res.end(KEEP_TAB);
+  }
   const isApi = pathname.startsWith('/api/') || pathname.startsWith('/media/');
   // PUBLIC MEDIA (founder 2026-10-31, asked and approved: "media public cheyyi"): a Facebook post with an image failed "Missing or invalid
   // image file" - Facebook, Instagram and LinkedIn download a post's image / video from its address themselves and carry no TeamLink pass.
