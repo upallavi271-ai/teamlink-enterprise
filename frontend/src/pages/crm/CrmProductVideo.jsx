@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
 // OUR PRODUCTS > VIDEOS (founder 2026-11-17: "upload a video, and the content is made from it"). Managers only, inside Leads > Our products.
-//   VideoStudio      upload one video with all the products (or a product's own video from its card), see each upload's progress
+//   VideoStudio      upload one video with all the products (again whenever it changes) or a company / general video; a product's own
+//                    demo or another video for it from its card; see each upload's progress. Any product, also one added later.
 //   DraftEditor      what the server found: the parts of the video per product (start - end, play each part), the intro and the closing,
 //                    and the text written from that product's narration. Tick what to use and Save; until then nothing changes.
 // Backend: crm/productVideo.js (/api/crm/product-videos...).
@@ -10,15 +11,25 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateTimeOf } from './crmShared.jsx'; // eslint-disable-line import/no-cycle
 
-const NAME = { HRMS: 'HRMS', ATS: 'ATS', OMNI: 'Omni-Channel' };
+const short = (name) => String(name || '').replace(/^TeamLink\s+/i, '');
+const FORMATS = /\.(mp4|mov|m4v|webm|mkv|avi)$/i;
+const ACCEPT = 'video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi';
+const MAX = 3 * 1024 * 1024 * 1024;
+// say what is wrong before a long upload starts
+export function fileProblem(f) {
+  if (!FORMATS.test(f.name)) return `${f.name} is not a video we can use. Upload an MP4, MOV, M4V, WebM, MKV or AVI file.`;
+  if (f.size > MAX) return `${f.name} is ${(f.size / 1073741824).toFixed(1)} GB. The limit is 3 GB: export it smaller (1080p, H.264 MP4) and upload again.`;
+  if (!f.size) return `${f.name} is empty.`;
+  return '';
+}
 const ACTIVE = ['uploading', 'queued', 'analysing', 'cutting'];
 const mmss = (n) => { if (n == null || n === '' || Number.isNaN(Number(n))) return ''; const v = Number(n); const m = Math.floor(v / 60); const s = (v - m * 60).toFixed(1).padStart(4, '0'); return `${m}:${s}`; };
 const secs = (t) => { const m = /^(?:(\d+):)?(\d+(?:\.\d+)?)$/.exec(String(t || '').trim()); return m ? Number(m[1] || 0) * 60 + Number(m[2]) : NaN; };
 const mb = (n) => `${(Number(n || 0) / 1048576).toFixed(n > 104857600 ? 0 : 1)} MB`;
 
 // send the file in pieces; a piece that fails is tried again 3 times, a piece out of order restarts from where the server is
-export async function uploadVideo(file, { kind, key }, onProgress) {
-  const st = await api.post('/crm/product-videos', { kind, key, name: file.name, size: file.size });
+export async function uploadVideo(file, { kind, key, title }, onProgress) {
+  const st = await api.post('/crm/product-videos', { kind, key, title, name: file.name, size: file.size });
   const { id, chunkSize } = st.data;
   let offset = 0;
   while (offset < file.size) {
@@ -43,8 +54,13 @@ export async function uploadVideo(file, { kind, key }, onProgress) {
   return (await api.post(`/crm/product-videos/${id}/finish`)).data.job;
 }
 
-export function VideoStudio({ onSaved, refreshKey }) {
+export function VideoStudio({ onSaved, refreshKey, products }) {
   const { toast } = useCrm();
+  const nameOf = (k) => short(((products || []).find((p) => p.key === k) || {}).name || k);
+  const [company, setCompany] = useState(null); // the company video now on the demo pages
+  const companyInput = useRef(null);
+  const loadCompany = () => api.get('/crm/products-settings').then((r) => setCompany(r.data.settings)).catch(() => setCompany(null));
+  useEffect(() => { loadCompany(); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const [jobs, setJobs] = useState(null);
   const [up, setUp] = useState(null); // { name, pct }
   const [open, setOpen] = useState(null); // job id whose draft is open
@@ -61,17 +77,27 @@ export function VideoStudio({ onSaved, refreshKey }) {
   useEffect(() => {
     (jobs || []).forEach((j) => {
       if (ACTIVE.includes(j.status)) wasActive.current.add(j.id);
-      else if (wasActive.current.has(j.id)) { wasActive.current.delete(j.id); if (j.status === 'done' && onSaved) onSaved(); if (j.status === 'draft') toast('The video is read: press Review the draft.'); }
+      else if (wasActive.current.has(j.id)) { wasActive.current.delete(j.id); if (j.status === 'done') { loadCompany(); if (onSaved) onSaved(); } if (j.status === 'draft') toast('The video is read: press Review the draft.'); }
     });
   }, [jobs]); // eslint-disable-line react-hooks/exhaustive-deps
-  async function pick(e) {
+  async function pick(e, kind) {
     const f = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!f) return;
+    const bad = fileProblem(f);
+    if (bad) { toast(bad); return; }
+    let title = '';
+    if (kind === 'company') { title = window.prompt('A title for this video (shown above it on the demo page):', (company && company.companyVideoTitle) || 'About TeamLink'); if (title == null) return; } // eslint-disable-line no-alert
     setUp({ name: f.name, pct: 0 });
-    try { await uploadVideo(f, { kind: 'all' }, (p) => setUp({ name: f.name, pct: p })); toast('Uploaded. The server is reading the video now - this takes a few minutes.'); } catch (err) { toast(errOf(err, 'The upload did not finish. Please try again.')); }
+    try { await uploadVideo(f, { kind, title }, (p) => setUp({ name: f.name, pct: p })); toast('Uploaded. The server is reading the video now - this takes a few minutes.'); } catch (err) { toast(errOf(err, 'The upload did not finish. Please try again.')); }
     setUp(null); load();
   }
+  async function watchCompany() { try { const r = await api.get('/crm/products/COMPANY/watch'); window.open(r.data.url, '_blank', 'noopener'); } catch (e) { toast(errOf(e, 'The video could not be opened.')); } }
+  async function removeCompany() {
+    if (!window.confirm('Take the company video off the demo pages?')) return; // eslint-disable-line no-alert
+    try { await api.put('/crm/products-settings', { companyVideoFile: '' }); loadCompany(); toast('Removed from the demo pages.'); } catch (e) { toast(errOf(e, 'This did not work.')); }
+  }
+  const forOf = (j) => (j.kind === 'single' ? `${nameOf(j.productKey)}: demo` : j.kind === 'extra' ? `${nameOf(j.productKey)}: ${j.title || 'another video'}` : j.kind === 'company' ? `Company video${j.title ? `: ${j.title}` : ''}` : 'All products');
   async function act(j, what) {
     try {
       if (what === 'retry') await api.post(`/crm/product-videos/${j.id}/retry`);
@@ -83,10 +109,19 @@ export function VideoStudio({ onSaved, refreshKey }) {
     <div className="card" style={{ padding: 14, marginBottom: 14 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <h3 style={{ margin: 0, flex: 1 }}>Product videos</h3>
-        <input ref={input} type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.m4v,.webm,.mkv" style={{ display: 'none' }} onChange={pick} />
+        <input ref={input} type="file" accept={ACCEPT} style={{ display: 'none' }} onChange={(e) => pick(e, 'all')} />
+        <input ref={companyInput} type="file" accept={ACCEPT} style={{ display: 'none' }} onChange={(e) => pick(e, 'company')} />
         <button type="button" className="btn btn-primary" disabled={!!up} onClick={() => input.current && input.current.click()}>⬆ Upload one video with all products</button>
+        <button type="button" className="btn" disabled={!!up} onClick={() => companyInput.current && companyInput.current.click()}>⬆ Company / general video</button>
       </div>
-      <div className="small-muted" style={{ fontSize: 12, margin: '6px 0' }}>The server listens to the narration, finds where HRMS, ATS (with the Job Portal) and Omni-Channel are, and writes each product's text from what is said about it. You review it all before anything changes. To replace one product's video, use “Upload video” on its card below.</div>
+      {company && company.companyVideoFile && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0', fontSize: 13 }}>
+          <span>On every demo page now: <b>{company.companyVideoTitle || 'Company video'}</b></span>
+          <button type="button" className="btn btn-sm" onClick={watchCompany}>▶ Watch</button>
+          <button type="button" className="btn btn-sm" onClick={removeCompany}>Remove</button>
+        </div>
+      )}
+      <div className="small-muted" style={{ fontSize: 12, margin: '6px 0' }}>Upload as often as you like: MP4, MOV, M4V, WebM, MKV or AVI, up to 3 GB. For a video with all products, the server listens to the narration, finds where each product is (also products you add later, by their name) and writes each product's text from what is said about it. You review it all before anything changes. On each product's card: replace its demo video, or add another video for it (a feature walk-through, a customer story). “+ Add product” below adds something new to sell.</div>
       {up && (
         <div style={{ margin: '8px 0' }}>
           <div className="small-muted">Uploading {up.name}: {Math.round(up.pct * 100)}% - keep this page open</div>
@@ -100,7 +135,7 @@ export function VideoStudio({ onSaved, refreshKey }) {
             {jobs.map((j) => (
               <tr key={j.id}>
                 <td>{j.fileName}<div className="small-muted">{mb(j.size)}{j.duration ? ` · ${mmss(j.duration)}` : ''}</div></td>
-                <td>{j.kind === 'single' ? NAME[j.productKey] : 'All products'}</td>
+                <td>{forOf(j)}</td>
                 <td>
                   <span className={`status ${j.status === 'done' ? 'approved' : j.status === 'failed' ? 'rejected' : 'pending'}`}>{{ uploading: 'Uploading', queued: 'Waiting', analysing: 'Reading', draft: 'Draft ready', cutting: 'Making clips', done: 'Done', failed: 'Failed' }[j.status] || j.status}</span>
                   <div className="small-muted" style={{ fontSize: 11.5 }}>{j.error || j.step}</div>
@@ -116,7 +151,7 @@ export function VideoStudio({ onSaved, refreshKey }) {
           </tbody>
         </table>
       )}
-      {open && <DraftEditor id={open} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); load(); if (onSaved) onSaved(); }} />}
+      {open && <DraftEditor id={open} nameOf={nameOf} onClose={() => setOpen(null)} onSaved={() => { setOpen(null); load(); if (onSaved) onSaved(); }} />}
     </div>
   );
 }
@@ -124,20 +159,31 @@ export function VideoStudio({ onSaved, refreshKey }) {
 // a product's own video from its card
 export function SingleUpload({ product, onDone }) {
   const { toast } = useCrm();
-  const input = useRef(null);
+  const main = useRef(null);
+  const extra = useRef(null);
   const [pct, setPct] = useState(null);
-  async function pick(e) {
+  async function pick(e, kind) {
     const f = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!f) return;
+    const bad = fileProblem(f);
+    if (bad) { toast(bad); return; }
+    let title = '';
+    if (kind === 'extra') { title = window.prompt(`A title for this ${short(product.name)} video (shown above it):`, f.name.replace(/\.[a-z0-9]+$/i, '')); if (title == null) return; } // eslint-disable-line no-alert
     setPct(0);
-    try { await uploadVideo(f, { kind: 'single', key: product.key }, setPct); toast(`Uploaded. When it is read, review it under Product videos and press Save to use it for ${product.name}.`); if (onDone) onDone(); } catch (err) { toast(errOf(err, 'The upload did not finish. Please try again.')); }
+    try { await uploadVideo(f, { kind, key: product.key, title }, setPct); toast(`Uploaded. When it is read, review it under Product videos and press Save to use it for ${product.name}.`); if (onDone) onDone(); } catch (err) { toast(errOf(err, 'The upload did not finish. Please try again.')); }
     setPct(null);
   }
   return (
     <>
-      <input ref={input} type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.m4v,.webm,.mkv" style={{ display: 'none' }} onChange={pick} />
-      <button type="button" className="btn btn-sm" style={{ marginTop: 10, marginRight: 6 }} disabled={pct != null} onClick={() => input.current && input.current.click()}>{pct == null ? '⬆ Upload video' : `Uploading ${Math.round(pct * 100)}%`}</button>
+      <input ref={main} type="file" accept={ACCEPT} style={{ display: 'none' }} onChange={(e) => pick(e, 'single')} />
+      <input ref={extra} type="file" accept={ACCEPT} style={{ display: 'none' }} onChange={(e) => pick(e, 'extra')} />
+      {pct != null ? <span className="small-muted" style={{ marginTop: 10, marginRight: 6, display: 'inline-block' }}>Uploading {Math.round(pct * 100)}%</span> : (
+        <>
+          <button type="button" className="btn btn-sm" style={{ marginTop: 10, marginRight: 6 }} onClick={() => main.current && main.current.click()} title="This becomes the product's demo video">⬆ {product.hasVideo ? 'Replace demo video' : 'Upload demo video'}</button>
+          <button type="button" className="btn btn-sm" style={{ marginTop: 10, marginRight: 6 }} onClick={() => extra.current && extra.current.click()} title="Shown under the demo, the demo stays">+ Add another video</button>
+        </>
+      )}
     </>
   );
 }
@@ -160,7 +206,7 @@ function RangeRow({ label, range, onChange, onPlay, onRemove }) {
   );
 }
 
-function DraftEditor({ id, onClose, onSaved }) {
+function DraftEditor({ id, onClose, onSaved, nameOf }) {
   const { toast } = useCrm();
   const [job, setJob] = useState(null);
   const [d, setD] = useState(null);
@@ -175,7 +221,7 @@ function DraftEditor({ id, onClose, onSaved }) {
       setJob(j);
       const dr = j.draft || { products: {} };
       setD({ ...dr, products: Object.fromEntries(Object.entries(dr.products || {}).map(([k, p]) => [k, { ...p, featuresText: (p.features || []).join('\n') }])) });
-      setUse(Object.fromEntries(Object.keys(dr.products || {}).map((k) => [k, { video: true, text: (dr.products[k].features || []).length > 0 }])));
+      setUse(Object.fromEntries(Object.keys(dr.products || {}).map((k) => [k, { video: true, text: !dr.products[k].noText && (dr.products[k].features || []).length > 0 }])));
     }).catch((e) => toast(errOf(e, 'The draft could not be opened.')));
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   function play([s, e]) {
@@ -188,7 +234,7 @@ function DraftEditor({ id, onClose, onSaved }) {
     setBusy(true);
     try {
       const products = Object.fromEntries(Object.entries(d.products).map(([k, p]) => [k, { segments: p.segments, tagline: p.tagline, about: p.about, features: String(p.featuresText || '').split('\n').map((x) => x.trim()).filter(Boolean), faq: p.faq }]));
-      await api.post(`/crm/product-videos/${id}/apply`, { draft: { intro: d.intro, outro: d.outro, products }, use });
+      await api.post(`/crm/product-videos/${id}/apply`, { draft: { intro: d.intro, outro: d.outro, products, title: d.target ? d.target.title : undefined }, use });
       toast(Object.values(use).some((u) => u.video) ? 'Saved. The text is live now; the clips are being made and go live one by one (a few minutes).' : 'Saved. The text is live now.');
       onSaved();
     } catch (e) { toast(errOf(e, 'This could not be saved.')); }
@@ -202,7 +248,8 @@ function DraftEditor({ id, onClose, onSaved }) {
             onTimeUpdate={(e) => { if (stopAt.current != null && e.currentTarget.currentTime >= stopAt.current) { e.currentTarget.pause(); stopAt.current = null; } }} />
           {(d.notes || []).length > 0 && <div className="notice" style={{ marginTop: 8 }}>{d.notes.join(' ')}</div>}
           <div className="small-muted" style={{ fontSize: 12, margin: '8px 0' }}>Times are minutes:seconds. Every product's clip = the intro + its parts + the closing. Nothing changes on the live demo until you press Save.</div>
-          {job.kind !== 'single' && (
+          {d.target && d.target.kind !== 'single' && <label>Title (shown above the video)<input type="text" value={d.target.title || ''} onChange={(e) => setD({ ...d, target: { ...d.target, title: e.target.value } })} /></label>}
+          {job.kind === 'all' && (
             <div className="card" style={{ padding: 10, marginBottom: 10 }}>
               <RangeRow label="Intro" range={d.intro} onChange={(r) => setD({ ...d, intro: r })} onPlay={play} onRemove={d.intro ? () => setD({ ...d, intro: null }) : null} />
               {!d.intro && <button type="button" className="btn btn-sm" onClick={() => setD({ ...d, intro: [0, 8] })}>+ Intro</button>}
@@ -214,15 +261,16 @@ function DraftEditor({ id, onClose, onSaved }) {
           {Object.entries(d.products).map(([k, p]) => (
             <div key={k} className="card" style={{ padding: 12, marginBottom: 10 }}>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                <h3 style={{ margin: 0, flex: 1 }}>{NAME[k]}</h3>
+                <h3 style={{ margin: 0, flex: 1 }}>{k === 'COMPANY' ? 'Company video' : nameOf(k)}{job.kind === 'extra' ? ' - another video' : ''}</h3>
                 <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={!!(use[k] || {}).video} onChange={(e) => setUse({ ...use, [k]: { ...use[k], video: e.target.checked } })} style={{ width: 'auto' }} /> Use the video</label>
-                <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={!!(use[k] || {}).text} onChange={(e) => setUse({ ...use, [k]: { ...use[k], text: e.target.checked } })} style={{ width: 'auto' }} /> Use the text</label>
+                {!p.noText && <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={!!(use[k] || {}).text} onChange={(e) => setUse({ ...use, [k]: { ...use[k], text: e.target.checked } })} style={{ width: 'auto' }} /> Use the text</label>}
               </div>
               <div className="section-label">Parts of the video</div>
               {(p.segments || []).map((r, i) => (
                 <RangeRow key={i} label={`Part ${i + 1}`} range={r} onPlay={play} onChange={(nr) => setP(k, { segments: p.segments.map((x, j) => (j === i ? nr : x)) })} onRemove={() => setP(k, { segments: p.segments.filter((_, j) => j !== i) })} />
               ))}
               <button type="button" className="btn btn-sm" onClick={() => { const last = (p.segments || []).slice(-1)[0]; const s = last ? last[1] : 0; setP(k, { segments: [...(p.segments || []), [s, Math.min(d.duration || s + 30, s + 30)]] }); }}>+ Part</button>
+              {!p.noText && (<>
               <div className="section-label" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 Text {p.source === 'ai' ? '(written by AI from the narration)' : p.source === 'narration' ? '(sentences from the narration)' : ''}
                 {p.narration && <button type="button" className="crm-linkbtn" onClick={() => setShowText(showText === k ? null : k)}>{showText === k ? 'Hide' : 'Show'} what is said</button>}
@@ -232,6 +280,7 @@ function DraftEditor({ id, onClose, onSaved }) {
               <label>About<textarea rows={3} value={p.about || ''} onChange={(e) => setP(k, { about: e.target.value })} /></label>
               <label>Features (one per line)<textarea rows={6} value={p.featuresText || ''} onChange={(e) => setP(k, { featuresText: e.target.value })} /></label>
               <label>Questions and answers (added to what the AI meeting answers from; prices stay as you set them)<textarea rows={4} value={p.faq || ''} onChange={(e) => setP(k, { faq: e.target.value })} /></label>
+              </>)}
             </div>
           ))}
           <div style={{ display: 'flex', gap: 6 }}>

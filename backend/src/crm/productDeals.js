@@ -33,7 +33,7 @@ const nowIso = () => new Date().toISOString();
 const ist = (ms = Date.now()) => new Date(ms + 5.5 * 3600000);
 
 // ---- settings ----------------------------------------------------------------------------------------------------------------
-const DEFAULTS = { autoDemo: true, waTemplate: '', waTemplateLang: 'en', paymentText: '', paymentLink: '', quoteValidityDays: 30 };
+const DEFAULTS = { autoDemo: true, waTemplate: '', waTemplateLang: 'en', paymentText: '', paymentLink: '', quoteValidityDays: 30, companyVideoFile: '', companyVideoTitle: '' };
 async function settings() {
   await ensure();
   const [r] = await prisma.$queryRawUnsafe('SELECT "json" FROM "CrmProductSettings" WHERE "id" = \'main\'');
@@ -50,11 +50,20 @@ async function saveSettings(user, body = {}) {
     paymentText: t(body.paymentText, 2000) ?? cur.paymentText,
     paymentLink: t(body.paymentLink, 500) ?? cur.paymentLink,
     quoteValidityDays: Math.min(180, Math.max(1, Math.round(Number(body.quoteValidityDays) || cur.quoteValidityDays))),
+    companyVideoFile: body.companyVideoFile === '' ? '' : cur.companyVideoFile, // only cleared from the screen; set by an upload (crm/productVideo.js)
+    companyVideoTitle: t(body.companyVideoTitle, 120) ?? cur.companyVideoTitle,
   };
   if (next.paymentLink && !/^https:\/\//i.test(next.paymentLink)) return S.fail(400, 'The payment link must start with https://');
   await prisma.$executeRawUnsafe('INSERT INTO "CrmProductSettings" ("id","json","updatedAt") VALUES (\'main\',?,?) ON CONFLICT("id") DO UPDATE SET "json" = excluded."json", "updatedAt" = excluded."updatedAt"', JSON.stringify(next), nowIso());
   await S.audit(user, 'CRM product settings changed', 'CrmProductSettings', 'main', next.autoDemo ? 'auto demo on' : 'auto demo off');
   return S.okBody({ ok: true, settings: next });
+}
+
+// the company / general video shown at the top of every demo page (from an upload, crm/productVideo.js)
+async function setCompanyVideo(file, title) {
+  const cur = await settings();
+  const next = { ...cur, companyVideoFile: file, companyVideoTitle: String(title || cur.companyVideoTitle || 'About TeamLink').slice(0, 120) };
+  await prisma.$executeRawUnsafe('INSERT INTO "CrmProductSettings" ("id","json","updatedAt") VALUES (\'main\',?,?) ON CONFLICT("id") DO UPDATE SET "json" = excluded."json", "updatedAt" = excluded."updatedAt"', JSON.stringify(next), nowIso());
 }
 
 // ---- a new lead gets the demo by itself ------------------------------------------------------------------------------------------
@@ -63,9 +72,14 @@ const WORDS = {
   ATS: /\b(ats|recruit\w*|hiring|hire|candidate\w*|job portal|resume\w*|cv|talent|interview\w*|placement\w*|staffing)\b/i,
   OMNI: /\b(omni\w*|whatsapp|sms|email campaign\w*|campaign\w*|marketing|social media|instagram|facebook|bulk message\w*|chat ?bot)\b/i,
 };
-function guessProducts(text) {
+// the three we started with by their words; a product added later by its own name ("TeamLink Accounts" -> "accounts")
+const nameWords = (name) => String(name || '').replace(/teamlink/ig, '').split(/[^a-z0-9]+/i).filter((w) => w.length >= 3).map((w) => w.toLowerCase());
+function guessProducts(text, custom = []) {
   const t = String(text || '');
-  return PS.PRODUCT_KEYS.filter((k) => WORDS[k].test(t));
+  const lower = t.toLowerCase();
+  const base = Object.keys(WORDS).filter((k) => WORDS[k].test(t));
+  const extra = custom.filter((p) => !WORDS[p.key] && nameWords(p.name).some((w) => new RegExp(`\\b${w}\\b`).test(lower))).map((p) => p.key);
+  return [...base, ...extra];
 }
 async function sendWa(lead, text, url, st) {
   // eslint-disable-next-line global-require
@@ -78,8 +92,9 @@ async function onNewLead(lead, { products, text } = {}, deps = {}) {
   try {
     await ensure();
     if (!lead || !lead.id) return { skip: 'no lead' };
-    let keys = PS.keysOf(Array.isArray(products) ? products.join(',') : products).filter((k) => PS.PRODUCT_KEYS.includes(k));
-    if (!keys.length) keys = guessProducts([text, lead.notes, lead.company, lead.industry].filter(Boolean).join(' '));
+    const catalogue = await PS.products();
+    let keys = PS.keysOf(Array.isArray(products) ? products.join(',') : products).filter((k) => catalogue.some((p) => p.key === k));
+    if (!keys.length) keys = guessProducts([text, lead.notes, lead.company, lead.industry].filter(Boolean).join(' '), catalogue);
     if (keys.length) await S.update('CrmLead', lead.id, { products: keys.join(',') });
     const st = await settings();
     if (!st.autoDemo) return { skip: 'auto demo is off', keys };
@@ -336,4 +351,4 @@ async function funnel(user, days = 90) {
   return S.okBody({ days: Number(days) || 90, rows });
 }
 
-module.exports = { ensure, settings, saveSettings, guessProducts, onNewLead, priceQuote, makeQuote, quoteByStaff, quoteByMeeting, quoteFor, decideQuote, quotesOf, requestTrial, slots, book, funnel };
+module.exports = { ensure, settings, saveSettings, setCompanyVideo, guessProducts, onNewLead, priceQuote, makeQuote, quoteByStaff, quoteByMeeting, quoteFor, decideQuote, quotesOf, requestTrial, slots, book, funnel };

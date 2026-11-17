@@ -32,12 +32,42 @@ const plansHtml = (p) => { const pl = (p.plans || []).filter((x) => x.name); ret
 router.get('/product-video/:token', async (req, res) => {
   const v = PS.readToken(req.params.token, 'pv');
   if (!v) return res.status(404).end();
-  const p = (await PS.products({ all: true }).catch(() => [])).find((x) => x.key === v.p[0]);
-  const file = p && PS.videoPathOf(p);
+  const file = v.p[0] === 'COMPANY' ? await companyFile() : await productFile(v.p[0], v.x && /^x\d+$/.test(v.x) ? v.x.slice(1) : null);
   if (!file) return res.status(404).end();
   noStore(res);
   return res.sendFile(file, { acceptRanges: true, headers: { 'Content-Type': 'video/mp4' } });
 });
+// the files behind the links: a product's main demo or one of its other videos, and the company video
+async function productFile(key, extra) {
+  const p = (await PS.products({ all: true }).catch(() => [])).find((x) => x.key === String(key).toUpperCase());
+  if (!p) return null;
+  return extra != null ? PS.extraPathOf(p, extra) : PS.videoPathOf(p);
+}
+async function companyFile() {
+  const st = await require('../crm/productDeals').settings().catch(() => ({})); // eslint-disable-line global-require
+  if (!st.companyVideoFile) return null;
+  const f = require('path').join(PS.VIDEO_DIR(), require('path').basename(st.companyVideoFile)); // eslint-disable-line global-require
+  return fs.existsSync(f) ? f : null;
+}
+// the company video and a product's other videos on the demo page and in the meeting room (same signed link as the page)
+router.get('/:kind(demo|meet)/:token/company-video', async (req, res) => {
+  const ok = PS.readToken(req.params.token, req.params.kind);
+  const f = ok ? await companyFile() : null;
+  if (!f) return res.status(404).end();
+  noStore(res);
+  return res.sendFile(f, { acceptRanges: true, headers: { 'Content-Type': 'video/mp4' } });
+});
+router.get('/:kind(demo|meet)/:token/xvideo/:key/:n', async (req, res) => {
+  const v = PS.readToken(req.params.token, req.params.kind);
+  const key = String(req.params.key).toUpperCase();
+  if (!v || !(v.p || []).includes(key)) return res.status(404).end();
+  const f = await productFile(key, req.params.n);
+  if (!f) return res.status(404).end();
+  noStore(res);
+  return res.sendFile(f, { acceptRanges: true, headers: { 'Content-Type': 'video/mp4' } });
+});
+const moreVideos = (p, kind, t) => ((p.extraVideos || []).length ? `<h2 style="margin-top:14px">More videos</h2>${p.extraVideos.map((x, n) => `<p class="muted" style="margin:10px 0 4px">${esc(x.title)}</p><video controls preload="none" playsinline src="/api/crm-public/${kind}/${t}/xvideo/${esc(p.key)}/${n}"></video>`).join('')}` : '');
+const companyCard = async (kind, t) => { const st = await require('../crm/productDeals').settings().catch(() => ({})); return st.companyVideoFile && await companyFile() ? `<div class="card"><h2>${esc(st.companyVideoTitle || 'About TeamLink')}</h2><video controls preload="metadata" playsinline src="/api/crm-public/${kind}/${t}/company-video"></video></div>` : ''; }; // eslint-disable-line global-require
 
 // ---- the demo ----
 // "Talk to a person" and "trial" are shared by the demo, the meeting and the quote page (crm/productDeals.js)
@@ -54,8 +84,9 @@ router.get('/demo/:token', async (req, res) => {
   const hi = d.lead.contactName ? `Hello ${esc(String(d.lead.contactName).split(' ')[0])},` : 'Hello,';
   const cards = d.products.map((p) => `<div class="card"><h2>${d.pick ? `<label style="cursor:pointer"><input type="checkbox" class="pk" value="${esc(p.key)}" style="width:20px;height:20px;vertical-align:middle"> ` : ''}${esc(p.name)}${d.pick ? '</label>' : ''}</h2><p>${esc(p.tagline || '')}</p>
     ${p.hasVideo ? `<video controls preload="metadata" playsinline data-key="${esc(p.key)}" src="${p.videoFile ? `/api/crm-public/demo/${t}/video/${esc(p.key)}` : esc(p.videoUrl)}"></video>` : (p.demoUrl ? `<p><a href="${esc(p.demoUrl)}" target="_blank" rel="noopener">Open the live demo</a></p>` : '')}
-    <p>${esc(p.about || '')}</p><ul>${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>${plansHtml(p) ? `<h2 style="margin-top:14px">Plans</h2>${plansHtml(p)}` : ''}</div>`).join('');
-  const body = `<div class="card"><h1>${hi} here is your demo</h1><p>${esc(d.lead.company ? `Made for ${d.lead.company}.` : '')} Watch at your own pace.${d.pick ? ' <b>Tick the products you need</b>, then' : ' If it looks right,'} press <b>I'm interested</b>: our AI assistant will walk you through it and answer your questions right away.</p></div>${cards}
+    <p>${esc(p.about || '')}</p><ul>${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>${moreVideos(p, 'demo', t)}${plansHtml(p) ? `<h2 style="margin-top:14px">Plans</h2>${plansHtml(p)}` : ''}</div>`).join('');
+  const company = await companyCard('demo', t);
+  const body = `<div class="card"><h1>${hi} here is your demo</h1><p>${esc(d.lead.company ? `Made for ${d.lead.company}.` : '')} Watch at your own pace.${d.pick ? ' <b>Tick the products you need</b>, then' : ' If it looks right,'} press <b>I'm interested</b>: our AI assistant will walk you through it and answer your questions right away.</p></div>${company}${cards}
   <div class="card"><h2>What next?</h2><div class="btns"><button class="b b1" onclick="ev('interested')">I'm interested - start the AI meeting</button><button class="b b2" onclick="person()">Talk to a person</button><button class="b b2" onclick="trial()">Request a trial account</button><button class="b b3" onclick="ev('later')">Later</button></div><p class="muted" id="msg"></p><p class="muted" id="tmsg"></p><div id="book" class="card" style="display:none;margin-top:12px"></div></div>`;
   const script = `const T=${JSON.stringify(req.params.token)};const PICK=${d.pick ? 'true' : 'false'};function post(k,x){return fetch('/api/crm-public/demo/'+T+'/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({kind:k},x||{}))}).then(r=>r.json()).catch(()=>({}))}
 post('open');document.querySelectorAll('video').forEach(v=>{let sent=false;v.addEventListener('play',()=>{if(!sent){sent=true;post('play',{product:v.dataset.key})}})});
@@ -92,7 +123,7 @@ router.get('/meet/:token', async (req, res) => {
   noStore(res);
   if (!m) return expired(res);
   const t = esc(req.params.token);
-  const slides = m.products.map((p) => `<div class="card"><h2>${esc(p.name)}</h2>${p.videoFile && PS.videoPathOf(p) ? `<video controls preload="metadata" playsinline src="/api/crm-public/meet/${t}/video/${esc(p.key)}"></video>` : ''}<p>${esc(p.tagline || '')}</p><p>${esc(p.about || '')}</p><ul>${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>${plansHtml(p) ? `<h2 style="margin-top:12px">Plans</h2>${plansHtml(p)}` : ''}</div>`).join('');
+  const slides = m.products.map((p) => `<div class="card"><h2>${esc(p.name)}</h2>${p.videoFile && PS.videoPathOf(p) ? `<video controls preload="metadata" playsinline src="/api/crm-public/meet/${t}/video/${esc(p.key)}"></video>` : ''}<p>${esc(p.tagline || '')}</p><p>${esc(p.about || '')}</p><ul>${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>${moreVideos(p, 'meet', t)}${plansHtml(p) ? `<h2 style="margin-top:12px">Plans</h2>${plansHtml(p)}` : ''}</div>`).join('');
   // the quote builder shown after "Yes, I want to go ahead": a plan per product, how many people, yearly or monthly
   const qrows = m.products.map((p) => { const pl = (p.plans || []).filter((x) => x.name && x.price); if (!pl.length) return ''; return `<div style="margin:8px 0"><b>${esc(p.name)}</b><br><select data-k="${esc(p.key)}" class="qp" style="padding:8px;border-radius:8px;border:1px solid #c9d2e3;margin-top:4px">${pl.map((x) => `<option value="${esc(x.name)}" data-u="${esc(x.unit || '')}">${esc(x.name)} - ${esc(x.price)} ${esc(x.unit || '')}</option>`).join('')}</select> <input type="number" min="1" class="qn" data-k="${esc(p.key)}" placeholder="How many people" style="padding:8px;border-radius:8px;border:1px solid #c9d2e3;width:150px"></div>`; }).join('');
   const body = `<style>.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:860px){.grid{grid-template-columns:1fr}}#log{height:420px;overflow:auto;display:flex;flex-direction:column;gap:8px}.ai,.me{padding:9px 12px;border-radius:12px;max-width:88%;line-height:1.5}.ai{background:#eef3ff;align-self:flex-start}.me{background:#16a34a;color:#fff;align-self:flex-end}.row{display:flex;gap:8px;margin-top:10px}.row input{flex:1;padding:11px;border:1px solid #c9d2e3;border-radius:9px;font-size:15px}</style>

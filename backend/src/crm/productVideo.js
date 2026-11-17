@@ -1,6 +1,8 @@
 // ---------------------------------------------------------------------------
 // OUR PRODUCTS: UPLOAD A VIDEO, AND THE CONTENT IS MADE FROM IT (founder 2026-11-17). Leads > Our products (managers):
-//   upload            one video with all the products, or one product's own video, sent in 8 MB pieces (the file is 100 MB+)
+//   upload            one video with all the products (again whenever it changes), a product's own demo (replaces it), another video for a
+//                     product (added next to its demo), or a company / general video (top of every demo page); any product, also one
+//                     added later; MP4, MOV, M4V, WebM, MKV, AVI up to 3 GB; sent in 8 MB pieces
 //   analyse           the narration is turned into text with times (faster-whisper on the server, the same one the AI calls use);
 //                     the narration names each part ("In HRMS ...", "In the ATS ...", "Omni-Channel opens on ...", "The Job Portal's
 //                     recruiter desk opens on ..."), so the video is split by those openings, each checked by the words that follow;
@@ -19,6 +21,13 @@ const S = require('./service');
 const PS = require('./productSales');
 
 const CHUNK = 8 * 1024 * 1024;
+const KINDS = ['all', 'single', 'extra', 'company'];
+const FORMATS = /\.(mp4|mov|m4v|webm|mkv|avi)$/i;
+async function nameOf(key) {
+  if (key === 'COMPANY') return 'the company video';
+  const p = (await PS.products({ all: true })).find((x) => x.key === key);
+  return p ? p.name.replace(/^TeamLink\s+/i, '') : key;
+}
 const MAX_SIZE = 3 * 1024 * 1024 * 1024;
 const ACTIVE = ['queued', 'analysing', 'cutting'];
 const dirOf = () => { const d = PS.VIDEO_DIR(); fs.mkdirSync(path.join(d, 'sources'), { recursive: true }); return d; };
@@ -36,6 +45,7 @@ function ensure() {
       await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "CrmVideoJob" ("id" TEXT PRIMARY KEY, "kind" TEXT NOT NULL, "productKey" TEXT, "fileName" TEXT, "size" INTEGER,
         "received" INTEGER NOT NULL DEFAULT 0, "status" TEXT NOT NULL, "step" TEXT, "duration" REAL, "transcript" TEXT, "draft" TEXT, "error" TEXT,
         "createdById" TEXT, "createdByName" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT)`);
+      await prisma.$executeRawUnsafe('ALTER TABLE "CrmVideoJob" ADD COLUMN "title" TEXT').catch((e) => { if (!/duplicate column/i.test(e.message)) throw e; });
       // a restart stops the background work: say so, Retry starts it again
       await prisma.$executeRawUnsafe('UPDATE "CrmVideoJob" SET "status" = \'failed\', "error" = \'The server restarted while this was running - press Retry.\' WHERE "status" IN (\'queued\',\'analysing\',\'cutting\')');
     })().catch((e) => { READY = null; throw e; });
@@ -48,7 +58,7 @@ async function setJob(id, patch) {
   await prisma.$executeRawUnsafe(`UPDATE "CrmVideoJob" SET ${keys.map((k) => `"${k}" = ?`).join(', ')}, "updatedAt" = ? WHERE "id" = ?`, ...keys.map((k) => patch[k]), nowIso(), id);
 }
 const shapeJob = (j, { full = false } = {}) => (j ? {
-  id: j.id, kind: j.kind, productKey: j.productKey, fileName: j.fileName, size: j.size, received: j.received, status: j.status, step: j.step, duration: j.duration,
+  id: j.id, kind: j.kind, productKey: j.productKey, title: j.title, fileName: j.fileName, size: j.size, received: j.received, status: j.status, step: j.step, duration: j.duration,
   error: j.error, createdByName: j.createdByName, createdAt: j.createdAt, updatedAt: j.updatedAt, hasDraft: !!j.draft,
   ...(full ? { draft: parse(j.draft, null), transcript: parse(j.transcript, null), srcUrl: `/api/crm-public/product-video-src/${PS.makeToken('vsrc', j.createdById || 'staff', [], 0.5, j.id)}` } : {}),
 } : null);
@@ -104,23 +114,37 @@ async function transcribe(job, file, info) {
 const FIXES = [[/\b(the )?80s\b|\beighties\b|\ba\.t\.s\.?/gi, 'ATS'], [/\b(a ?me|o ?me|omi|omni) ?-?channel\b|\bomichannel\b|\bomnichannel\b/gi, 'Omni-Channel'], [/\bteam ?link\b/gi, 'TeamLink'],
   [/\bjob (orders|porters?|portals)\b/gi, 'Job Portal'], [/\bEI\b/g, 'AI'], [/\bH\.?R\.?M\.?S\.?\b/gi, 'HRMS']];
 const fix = (t) => FIXES.reduce((s, [re, to]) => s.replace(re, to), String(t || ''));
-const MODULE_NAMES = [['HRMS', /\bhrms\b/i], ['ATS', /\bats\b/i], ['ATS', /\bjob portal\b/i], ['OMNI', /\bomni-channel\b/i], ['OTHER', /\b(accounts|crm|admin|administration|control tower)\b/i]];
+const BASE_NAMES = [['HRMS', /\bhrms\b/i], ['ATS', /\bats\b/i], ['ATS', /\bjob portal\b/i], ['OMNI', /\bomni-channel\b/i]];
+const OTHER_NAMES = ['OTHER', /\b(accounts|crm|admin|administration|control tower)\b/i];
+const escRe = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// a product added later is found by its own name ("TeamLink Accounts" -> "accounts"); its words are its name plus the "other modules" words
+const customOf = (catalogue) => (catalogue || []).filter((x) => !['HRMS', 'ATS', 'OMNI'].includes(x.key)).map((x) => {
+  const words = String(x.name).replace(/teamlink/ig, '').split(/[^a-z0-9-]+/i).filter((w) => w.length >= 3);
+  return words.length ? { key: x.key, re: new RegExp(`\\b(${words.map(escRe).join('|')})\\b`, 'i') } : null;
+}).filter(Boolean);
 const VOTES = {
   HRMS: /\b(hrms|attendance|biometric|punch\w*|leave|holiday\w*|payroll|pay ?slips?|salar\w+|ctc|incentives?|performance|reward\w*|disciplinary|lms|courses?|help ?desk|assets?|notice board|survey|resignation|relieving|shifts?|timesheets?|time sheets?|expense claims?|regulari[sz]ation|employees?)\b/gi,
   ATS: /\b(ats|candidates?|pipeline|applications?|recruiters?|interviews?|offers?|joining|hiring|talent pool|job portal|job post\w*|requirements?|openings?|shortlist\w*|resumes?|co-?pilot)\b/gi,
   OMNI: /\b(omni-channel|whatsapp|facebook|instagram|sms|rcs|campaigns?|social|marketing|templates?|segments?|bots?|ads|seo|keywords?|search console|ai visibility|content library|ai content|wallet|shopify|reviews?|inbox|reels)\b/gi,
   OTHER: /\b(control tower|accounts|invoices?|gst|tds|reconciliation|ledger|journal|receivables?|revenue|crm|sales|deals?|leads|administration|master lists?|backups?|departments?|positions?|seats?|role catalog|integrations?|organi[sz]ation structure|audit logs?|vendors?|partners?)\b/gi,
 };
-const votesOf = (text) => Object.fromEntries(Object.entries(VOTES).map(([k, re]) => [k, (String(text).match(re) || []).length]));
+let CUSTOM = [];
+const votesOf = (text) => {
+  const v = Object.fromEntries(Object.entries(VOTES).map(([k, re]) => [k, (String(text).match(re) || []).length]));
+  CUSTOM.forEach((c) => { v[c.key] = (String(text).match(new RegExp(c.re.source, 'gi')) || []).length * 3 + v.OTHER * 0.5; });
+  return v;
+};
 function openerOf(seg) {
   const t = seg.t.trim();
   if (!/^in\b/i.test(t) && !/\b(opens on|opens with|starts with)\b/i.test(t)) return null;
   const head = t.split(/\s+/).slice(0, 9).join(' ');
-  const hit = MODULE_NAMES.find(([, re]) => re.test(head));
+  const hit = [...BASE_NAMES, ...CUSTOM.map((c) => [c.key, c.re]), OTHER_NAMES].find(([, re]) => re.test(head));
   return hit ? hit[0] : null;
 }
 const round1 = (n) => Math.round(n * 10) / 10;
-function splitByProduct(segsIn, duration) {
+function splitByProduct(segsIn, duration, catalogue) {
+  CUSTOM = customOf(catalogue);
+  const sold = ['HRMS', 'ATS', 'OMNI', ...CUSTOM.map((c) => c.key)];
   const segs = (segsIn || []).map((x) => ({ s: Number(x.s) || 0, e: Number(x.e) || 0, t: fix(x.t) })).filter((x) => x.e > x.s);
   const notes = [];
   if (!segs.length) return { intro: null, outro: null, products: {}, notes: ['No narration was found: set the parts by hand.'] };
@@ -133,7 +157,8 @@ function splitByProduct(segsIn, duration) {
     const end = k + 1 < opens.length ? opens[k + 1].i : segs.length;
     const v = votesOf(segs.slice(o.i, end).map((x) => x.t).join(' '));
     const best = Object.entries(v).sort((a, b) => b[1] - a[1])[0];
-    const keep = !cur || o.m === cur || (v[o.m] || 0) > (v[cur] || 0) || best[0] === o.m;
+    const custom = CUSTOM.some((c) => c.key === o.m);
+    const keep = !cur || o.m === cur || (v[o.m] || 0) > (v[cur] || 0) || (custom && (v[o.m] || 0) >= (v[cur] || 0)) || best[0] === o.m;
     if (keep) cur = o.m;
     for (let i = o.i; i < end; i += 1) labels[i] = cur;
   });
@@ -157,7 +182,7 @@ function splitByProduct(segsIn, duration) {
     const l = labels[i];
     let j = i;
     while (j + 1 < segs.length && labels[j + 1] === l) j += 1;
-    if (['HRMS', 'ATS', 'OMNI'].includes(l)) {
+    if (sold.includes(l)) {
       const s = i > 0 ? (segs[i - 1].e + segs[i].s) / 2 : 0;
       const e = j + 1 < segs.length ? (segs[j].e + segs[j + 1].s) / 2 : duration;
       if (e - s >= 5) (products[l] = products[l] || { segments: [], text: [] }).segments.push([round1(s), round1(e)]);
@@ -165,7 +190,7 @@ function splitByProduct(segsIn, duration) {
     }
     i = j + 1;
   }
-  PS.PRODUCT_KEYS.filter((key) => !products[key]).forEach((key) => notes.push(`${key === 'OMNI' ? 'Omni-Channel' : key} was not found in this video.`));
+  (catalogue || []).filter((x) => x.active !== false && !products[x.key]).forEach((x) => notes.push(`${x.name} was not found in this video.`));
   return { intro, outro, products, notes };
 }
 
@@ -175,8 +200,8 @@ function plainDraft(name, text) {
   const ss = sentencesOf(text);
   return { tagline: '', about: ss.slice(0, 2).join(' '), features: [...new Set(ss.slice(2, 14))], faq: '', source: 'narration' };
 }
-async function writeContent(key, text) {
-  const name = { HRMS: 'TeamLink HRMS', ATS: 'TeamLink ATS', OMNI: 'TeamLink Omni-Channel' }[key];
+async function writeContent(key, text, productName) {
+  const name = productName || { HRMS: 'TeamLink HRMS', ATS: 'TeamLink ATS', OMNI: 'TeamLink Omni-Channel' }[key] || key;
   const fb = plainDraft(name, text);
   if (process.env.TEAMLINK_SANDBOX === '1' && !process.env.TEST_ALLOW_AI) return fb;
   try {
@@ -216,18 +241,23 @@ async function analyseJob(id) {
   const segs = Array.isArray(tr) ? tr : [];
   await setJob(id, { transcript: JSON.stringify(segs), step: 'Finding each product' });
   let draft;
-  if (job.kind === 'single') {
+  const catalogue = await PS.products({ all: true });
+  if (job.kind !== 'all') {
+    // one video for one thing: the whole of it is the clip (trim it in the draft if needed)
     const text = segs.map((x) => fix(x.t)).join(' ');
-    draft = { duration: info.duration, intro: null, outro: null, products: { [job.productKey]: { segments: [[0, round1(info.duration)]], narration: text } }, notes: tr && tr.none ? [tr.none] : [] };
+    const key = job.kind === 'company' ? 'COMPANY' : job.productKey;
+    draft = { duration: info.duration, intro: null, outro: null, target: { kind: job.kind, key, title: job.title || '' }, products: { [key]: { segments: [[0, round1(info.duration)]], narration: text, noText: job.kind !== 'single' } }, notes: tr && tr.none ? [tr.none] : [] };
   } else {
-    const sp = splitByProduct(segs, info.duration);
+    const sp = splitByProduct(segs, info.duration, catalogue);
     draft = { duration: info.duration, intro: sp.intro, outro: sp.outro, products: {}, notes: [...(tr && tr.none ? [tr.none] : []), ...sp.notes] };
     Object.entries(sp.products).forEach(([k, v]) => { draft.products[k] = { segments: v.segments, narration: v.text.join(' ') }; });
   }
   for (const k of Object.keys(draft.products)) {
-    await setJob(id, { step: `Writing the ${k === 'OMNI' ? 'Omni-Channel' : k} text` }); // eslint-disable-line no-await-in-loop
     const p = draft.products[k];
-    Object.assign(p, p.narration ? await writeContent(k, p.narration) : { tagline: '', about: '', features: [], faq: '', source: 'none' }); // eslint-disable-line no-await-in-loop
+    if (p.noText) { Object.assign(p, { tagline: '', about: '', features: [], faq: '', source: 'none' }); continue; } // eslint-disable-line no-continue
+    const pr = catalogue.find((x) => x.key === k);
+    await setJob(id, { step: `Writing the ${await nameOf(k)} text` }); // eslint-disable-line no-await-in-loop
+    Object.assign(p, p.narration ? await writeContent(k, p.narration, pr && pr.name) : { tagline: '', about: '', features: [], faq: '', source: 'none' }); // eslint-disable-line no-await-in-loop
   }
   await setJob(id, { status: 'draft', step: 'Ready to review', draft: JSON.stringify(draft) });
 }
@@ -266,13 +296,17 @@ async function cutJob(id) {
   for (const key of Object.keys(plan).filter((k) => plan[k].video)) {
     const p = draft.products[key];
     const parts = [...(draft.intro ? [draft.intro] : []), ...p.segments, ...(draft.outro ? [draft.outro] : [])];
-    await setJob(id, { step: `Making the ${key === 'OMNI' ? 'Omni-Channel' : key} clip (${parts.length} parts)` }); // eslint-disable-line no-await-in-loop
-    const name = `${key}-${id.slice(-8)}.mp4`;
+    await setJob(id, { step: `Making the ${await nameOf(key)} clip (${parts.length} part${parts.length > 1 ? 's' : ''})` }); // eslint-disable-line no-await-in-loop
+    const kind = (draft.target && draft.target.kind) || job.kind;
+    const name = `${key}-${kind === 'extra' ? 'X' : ''}${id.slice(-8)}.mp4`;
     await cutOne(src, parts, path.join(dirOf(), name), info.audio); // eslint-disable-line no-await-in-loop
-    await PS.setVideoFile(key, name); // eslint-disable-line no-await-in-loop
-    done.push(key);
+    const title = (draft.target && draft.target.title) || job.title || '';
+    if (kind === 'company') await require('./productDeals').setCompanyVideo(name, title || 'About TeamLink'); // eslint-disable-line global-require, no-await-in-loop
+    else if (kind === 'extra') await PS.addExtraVideo(key, name, title || job.fileName); // eslint-disable-line no-await-in-loop
+    else await PS.setVideoFile(key, name); // eslint-disable-line no-await-in-loop
+    done.push(await nameOf(key)); // eslint-disable-line no-await-in-loop
   }
-  await setJob(id, { status: 'done', step: done.length ? `Live: ${done.map((k) => (k === 'OMNI' ? 'Omni-Channel' : k)).join(', ')} clip${done.length > 1 ? 's' : ''}` : 'Text saved' });
+  await setJob(id, { status: 'done', step: done.length ? `Live: ${done.join(', ')}` : 'Text saved' });
   cleanup().catch(() => {});
 }
 // keep the last 3 uploaded originals; older ones (and their unfinished pieces) are removed
@@ -285,19 +319,25 @@ async function cleanup() {
 async function startUpload(user, body = {}) {
   if (!isManager(user)) return S.fail(403, 'Only a Sales manager or an Admin can upload product videos.');
   await ensure();
-  const kind = body.kind === 'single' ? 'single' : 'all';
+  const kind = KINDS.includes(body.kind) ? body.kind : 'all';
   const key = String(body.key || '').toUpperCase();
-  if (kind === 'single' && !PS.PRODUCT_KEYS.includes(key)) return S.fail(400, 'Which product is this video for?');
+  if (['single', 'extra'].includes(kind) && !(await PS.productKeys()).includes(key)) return S.fail(400, 'Which product is this video for?');
   const name = String(body.name || 'video.mp4').slice(0, 200);
-  if (!/\.(mp4|mov|m4v|webm|mkv)$/i.test(name)) return S.fail(400, 'Upload an MP4, MOV, WebM or MKV video.');
+  if (!FORMATS.test(name)) return S.fail(400, 'Upload an MP4, MOV, M4V, WebM, MKV or AVI video.');
   const size = Math.round(Number(body.size) || 0);
-  if (size <= 0 || size > MAX_SIZE) return S.fail(400, 'The video must be smaller than 3 GB.');
+  if (size <= 0) return S.fail(400, 'This file is empty.');
+  if (size > MAX_SIZE) return S.fail(400, `This video is ${(size / 1073741824).toFixed(1)} GB. The limit is 3 GB: export it smaller (1080p, H.264) and upload again.`);
+  try {
+    const st = fs.statfsSync(dirOf());
+    if (st.bavail * st.bsize < size * 2.5 + 500 * 1048576) return S.fail(507, 'The server does not have enough free space for this video right now. Remove old uploads below, or ask the developer to free space.');
+  } catch { /* cannot tell: carry on */ }
+  const title = String(body.title || '').trim().slice(0, 120) || (kind === 'company' ? 'About TeamLink' : kind === 'extra' ? name.replace(/\.[a-z0-9]+$/i, '') : '');
   const busy = await prisma.$queryRawUnsafe('SELECT COUNT(*) AS n FROM "CrmVideoJob" WHERE "status" IN (\'uploading\',\'queued\',\'analysing\',\'cutting\') AND "updatedAt" > ?', new Date(Date.now() - 30 * 60000).toISOString());
   if (Number(busy[0].n) >= 2) return S.fail(409, 'Two videos are being worked on already. Please wait for one to finish.');
   const id = S.newId('vid');
   const now = nowIso();
-  await prisma.$executeRawUnsafe('INSERT INTO "CrmVideoJob" ("id","kind","productKey","fileName","size","received","status","step","createdById","createdByName","createdAt","updatedAt") VALUES (?,?,?,?,?,0,\'uploading\',\'Uploading\',?,?,?,?)',
-    id, kind, kind === 'single' ? key : null, name, size, user.id, user.name || null, now, now);
+  await prisma.$executeRawUnsafe('INSERT INTO "CrmVideoJob" ("id","kind","productKey","title","fileName","size","received","status","step","createdById","createdByName","createdAt","updatedAt") VALUES (?,?,?,?,?,?,0,\'uploading\',\'Uploading\',?,?,?,?)',
+    id, kind, ['single', 'extra'].includes(kind) ? key : null, title || null, name, size, user.id, user.name || null, now, now);
   fs.writeFileSync(partPath({ id, fileName: name }), '');
   return S.okBody({ ok: true, id, chunkSize: CHUNK });
 }
@@ -358,13 +398,15 @@ async function applyDraft(user, id, body = {}) {
   if (intro === 'bad' || outro === 'bad') return S.fail(400, 'The intro or the closing part has a wrong time (start must be before the end, inside the video).');
   const use = body.use || {};
   const products = {};
-  for (const key of PS.PRODUCT_KEYS) {
+  const allowed = job.kind === 'company' ? ['COMPANY'] : await PS.productKeys();
+  for (const key of Object.keys(inD.products || {}).filter((k) => allowed.includes(k))) {
     const p = (inD.products || {})[key];
     const u = use[key] || {};
     if (!p || (!u.video && !u.text)) continue; // eslint-disable-line no-continue
     const segs = (Array.isArray(p.segments) ? p.segments : []).map((r) => cleanRange(r, dur));
-    if (u.video && (!segs.length || segs.includes('bad') || segs.includes(null))) return S.fail(400, `Check the ${key === 'OMNI' ? 'Omni-Channel' : key} parts: each needs a start before its end, inside the video.`);
-    if (u.video && segs.reduce((s, r) => s + (r[1] - r[0]), 0) < 3) return S.fail(400, `The ${key} clip would be shorter than 3 seconds.`);
+    if (u.video && (!segs.length || segs.includes('bad') || segs.includes(null))) return S.fail(400, `Check the ${await nameOf(key)} parts: each needs a start before its end, inside the video.`);
+    if (u.video && segs.reduce((s, r) => s + (r[1] - r[0]), 0) < 3) return S.fail(400, `The ${await nameOf(key)} clip would be shorter than 3 seconds.`);
+    if (['extra', 'company'].includes(job.kind)) u.text = false; // a second video or the company video never rewrites a product's text
     products[key] = { ...(old.products || {})[key], segments: segs.filter((r) => Array.isArray(r)), tagline: String(p.tagline || '').slice(0, 300), about: String(p.about || '').slice(0, 4000),
       features: (Array.isArray(p.features) ? p.features : String(p.features || '').split('\n')).map((x) => String(x).trim()).filter(Boolean).slice(0, 30), faq: String(p.faq || '').slice(0, 8000), use: { video: !!u.video, text: !!u.text } };
   }
@@ -379,6 +421,7 @@ async function applyDraft(user, id, body = {}) {
     if (Object.keys(patch).length) { const r = await PS.saveProduct(user, key, patch); if (r.status !== 200) return r; } // eslint-disable-line no-await-in-loop
   }
   const apply = Object.fromEntries(Object.entries(products).map(([k, p]) => [k, p.use]));
+  if (inD.title != null && old.target) old.target.title = String(inD.title).slice(0, 120);
   const draft = { ...old, intro, outro, products: { ...(old.products || {}), ...products }, apply };
   const anyVideo = Object.values(apply).some((x) => x.video);
   await setJob(id, { draft: JSON.stringify(draft), status: anyVideo ? 'queued' : 'done', step: anyVideo ? 'Waiting to cut the clips' : 'Text saved', error: null });

@@ -86,6 +86,7 @@ function ensure() {
       await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "CrmAiMeeting" ("id" TEXT PRIMARY KEY, "leadId" TEXT NOT NULL, "products" TEXT, "startedAt" TEXT,
         "endedAt" TEXT, "transcript" TEXT, "decision" TEXT, "summary" TEXT, "score" INTEGER, "status" TEXT NOT NULL DEFAULT 'Open', "createdAt" TEXT NOT NULL)`);
       await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "CrmAiMeeting_lead" ON "CrmAiMeeting" ("leadId","createdAt")');
+      await prisma.$executeRawUnsafe('ALTER TABLE "CrmProduct" ADD COLUMN "extraVideos" TEXT').catch((e) => { if (!/duplicate column/i.test(e.message)) throw e; });
       await prisma.$executeRawUnsafe('ALTER TABLE "CrmLead" ADD COLUMN "products" TEXT').catch((e) => { if (!/duplicate column/i.test(e.message)) throw e; });
       for (const p of SEED) {
         // eslint-disable-next-line no-await-in-loop
@@ -107,7 +108,9 @@ function ensure() {
   return READY;
 }
 const parse = (s, d) => { try { const v = JSON.parse(s); return v == null ? d : v; } catch { return d; } };
-const shape = (r) => (r ? { ...r, active: !!r.active, features: parse(r.features, []), plans: parse(r.plans, []), hasVideo: !!(r.videoFile || r.videoUrl) } : null);
+const shape = (r) => (r ? { ...r, active: !!r.active, features: parse(r.features, []), plans: parse(r.plans, []), extraVideos: parse(r.extraVideos, []), hasVideo: !!(r.videoFile || r.videoUrl) } : null);
+// every product the CRM knows (the three we started with and any added later)
+async function productKeys() { return (await products({ all: true })).map((p) => p.key); }
 async function products({ all = false } = {}) {
   await ensure();
   const rows = await prisma.$queryRawUnsafe(`SELECT * FROM "CrmProduct" ${all ? '' : 'WHERE "active" = 1'} ORDER BY "sort", "name"`);
@@ -154,12 +157,65 @@ function videoPathOf(p) {
   return fs.existsSync(f) ? f : null;
 }
 // the team watches a product's clip from Leads > Our products (a <video> cannot send the login, so a link signed for 6 hours)
-async function staffVideoLink(user, key) {
+async function staffVideoLink(user, key, extra) {
   await ensure();
+  if (String(key).toUpperCase() === 'COMPANY') {
+    const st = await require('./productDeals').settings(); // eslint-disable-line global-require
+    if (!st.companyVideoFile) return S.fail(404, 'There is no company video yet.');
+    return S.okBody({ ok: true, url: `/api/crm-public/product-video/${makeToken('pv', user.id, ['COMPANY'], 0.25)}`, name: st.companyVideoTitle || 'Company video' });
+  }
+  if (extra != null && extra !== '') {
+    const [px] = (await products({ all: true })).filter((x) => x.key === String(key).toUpperCase());
+    if (!px || !extraPathOf(px, extra)) return S.fail(404, 'No such video.');
+    return S.okBody({ ok: true, url: `/api/crm-public/product-video/${makeToken('pv', user.id, [px.key], 0.25, `x${Number(extra)}`)}`, name: `${px.name} - ${px.extraVideos[Number(extra)].title}` });
+  }
   const [p] = (await products({ all: true })).filter((x) => x.key === String(key).toUpperCase());
   if (!p) return S.fail(404, 'No such product.');
   if (!videoPathOf(p) && !p.videoUrl) return S.fail(404, 'This product has no video yet.');
   return S.okBody({ ok: true, url: p.videoUrl && !videoPathOf(p) ? p.videoUrl : `/api/crm-public/product-video/${makeToken('pv', user.id, [p.key], 0.25)}`, name: p.name });
+}
+// a product added later (founder 2026-11-17: "whatever we sell next"): its own key from its name, no price until a manager sets one
+async function addProduct(user, body = {}) {
+  if (!isManager(user)) return S.fail(403, 'Only a Sales manager or an Admin can add a product.');
+  await ensure();
+  const name = String(body.name || '').trim().slice(0, 120);
+  if (name.length < 2) return S.fail(400, 'Write the product\'s name.');
+  const all = await products({ all: true });
+  if (all.some((p) => p.name.toLowerCase() === name.toLowerCase())) return S.fail(409, 'A product with this name is there already.');
+  const base = name.toUpperCase().replace(/^TEAMLINK\s+/, '').replace(/[^A-Z0-9]/g, '').slice(0, 12) || 'PRODUCT';
+  let key = base; let n = 2;
+  while (all.some((p) => p.key === key)) { key = `${base.slice(0, 10)}${n}`; n += 1; }
+  const sort = Math.max(0, ...all.map((p) => Number(p.sort) || 0)) + 1;
+  await prisma.$executeRawUnsafe('INSERT INTO "CrmProduct" ("id","key","name","tagline","about","features","plans","faq","active","sort","updatedAt") VALUES (?,?,?,?,?,?,?,?,1,?,?)',
+    `prod_${key.toLowerCase()}_${Date.now().toString(36)}`, key, name, String(body.tagline || '').slice(0, 300), String(body.about || '').slice(0, 4000), '[]', '[]', '', sort, new Date().toISOString());
+  await S.audit(user, 'CRM product added', 'CrmProduct', key, name);
+  return S.okBody({ ok: true, product: (await products({ all: true })).find((p) => p.key === key) });
+}
+// more videos for a product, next to its main demo (a feature walk-through, a customer story ...)
+async function addExtraVideo(key, file, title) {
+  await ensure();
+  const [r] = await prisma.$queryRawUnsafe('SELECT "extraVideos" FROM "CrmProduct" WHERE "key" = ?', String(key).toUpperCase());
+  if (!r) return;
+  const list = parse(r.extraVideos, []);
+  list.push({ file, title: String(title || 'Video').slice(0, 120), at: new Date().toISOString() });
+  await prisma.$executeRawUnsafe('UPDATE "CrmProduct" SET "extraVideos" = ?, "updatedAt" = ? WHERE "key" = ?', JSON.stringify(list.slice(-12)), new Date().toISOString(), String(key).toUpperCase());
+}
+async function removeExtraVideo(user, key, n) {
+  if (!isManager(user)) return S.fail(403, 'Only a Sales manager or an Admin can change the products.');
+  await ensure();
+  const [r] = await prisma.$queryRawUnsafe('SELECT "extraVideos" FROM "CrmProduct" WHERE "key" = ?', String(key).toUpperCase());
+  const list = parse(r && r.extraVideos, []);
+  if (!list[Number(n)]) return S.fail(404, 'No such video.');
+  const [gone] = list.splice(Number(n), 1);
+  await prisma.$executeRawUnsafe('UPDATE "CrmProduct" SET "extraVideos" = ?, "updatedAt" = ? WHERE "key" = ?', JSON.stringify(list), new Date().toISOString(), String(key).toUpperCase());
+  await S.audit(user, 'CRM product video removed', 'CrmProduct', String(key).toUpperCase(), gone.title);
+  return S.okBody({ ok: true });
+}
+function extraPathOf(p, n) {
+  const x = p && (p.extraVideos || [])[Number(n)];
+  if (!x || !x.file) return null;
+  const f = path.join(VIDEO_DIR(), path.basename(x.file));
+  return fs.existsSync(f) ? f : null;
 }
 async function setVideoFile(key, fileName) {
   await ensure();
@@ -177,7 +233,8 @@ async function leadFor(user, id, { edit = false } = {}) {
 async function setLeadProducts(user, id, keys) {
   const { row, error } = await leadFor(user, id, { edit: true });
   if (error) return error;
-  const clean = keysOf(Array.isArray(keys) ? keys.join(',') : keys).filter((k) => PRODUCT_KEYS.includes(k));
+  const known = await productKeys();
+  const clean = keysOf(Array.isArray(keys) ? keys.join(',') : keys).filter((k) => known.includes(k));
   await S.update('CrmLead', row.id, { products: clean.join(',') || null, updatedAt: new Date().toISOString() });
   return S.okBody({ ok: true, products: clean });
 }
@@ -219,7 +276,8 @@ async function followUp(lead, title, days) {
 async function demoLink(user, id, body = {}) {
   const { row, error } = await leadFor(user, id, { edit: true });
   if (error) return error;
-  const want = keysOf((body.products && [].concat(body.products).join(',')) || row.products).filter((k) => PRODUCT_KEYS.includes(k));
+  const known = await productKeys();
+  const want = keysOf((body.products && [].concat(body.products).join(',')) || row.products).filter((k) => known.includes(k));
   if (!want.length) return S.fail(400, 'Pick which product the lead wants (HRMS, ATS, Omni-Channel) first.');
   if (!row.products) await S.update('CrmLead', row.id, { products: want.join(',') });
   const url = demoUrlOf(makeToken('demo', row.id, want));
@@ -279,7 +337,8 @@ async function demoEvent(token, kind, extra = {}) {
 async function meetingLink(user, id, body = {}) {
   const { row, error } = await leadFor(user, id, { edit: true });
   if (error) return error;
-  const want = keysOf((body.products && [].concat(body.products).join(',')) || row.products).filter((k) => PRODUCT_KEYS.includes(k));
+  const known = await productKeys();
+  const want = keysOf((body.products && [].concat(body.products).join(',')) || row.products).filter((k) => known.includes(k));
   if (!want.length) return S.fail(400, 'Pick which product the lead wants first.');
   const url = meetUrlOf(makeToken('meet', row.id, want, 30));
   await note(row.id, row.accountId, 'note', 'AI meeting link made', url);
@@ -475,6 +534,6 @@ async function onWon(dealId) {
 
 module.exports = {
   PRODUCT_KEYS, ensure, products, saveProduct, setLeadProducts, demoLink, demoForToken, demoEvent, meetingLink, meetingFor, meetingSay, meetingEnd,
-  meetingsOf, onWon, videoPathOf, setVideoFile, staffVideoLink, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
+  meetingsOf, onWon, videoPathOf, setVideoFile, staffVideoLink, productKeys, addProduct, addExtraVideo, removeExtraVideo, extraPathOf, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
   siteBase, note, bellOwner, followUp, leadFor, LANGS, faqMatch,
 };

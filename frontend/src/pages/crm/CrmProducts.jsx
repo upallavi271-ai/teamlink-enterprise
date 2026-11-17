@@ -275,11 +275,25 @@ export function ProductCatalog() {
       toast('Saved. The demo page and the AI meeting use it from now.'); setEdit(null); load();
     } catch (e) { toast(errOf(e, 'This could not be saved.')); }
   }
+  async function addProduct() {
+    const name = window.prompt('Name of the new product (e.g. TeamLink Accounts):'); // eslint-disable-line no-alert
+    if (!name || !name.trim()) return;
+    try {
+      const r = await api.post('/crm/products', { name: name.trim() });
+      toast(`${r.data.product.name} added. Upload its demo video on its card: the text is written from the video, then set its plans and prices with Edit.`);
+      load();
+    } catch (e) { toast(errOf(e, 'The product could not be added.')); }
+  }
   const setPlan = (i, k, v) => setEdit((e) => ({ ...e, plans: e.plans.map((p, j) => (j === i ? { ...p, [k]: v } : p)) }));
   if (!rows) return <div className="small-muted">Loading…</div>;
   return (
     <div>
-      {canEdit && <VideoStudio refreshKey={vidKey} onSaved={load} />}
+      {canEdit && <VideoStudio refreshKey={vidKey} onSaved={load} products={rows} />}
+      {canEdit && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <button type="button" className="btn" onClick={addProduct}>+ Add product</button>
+        </div>
+      )}
       <div className="small-muted" style={{ margin: '6px 0 12px' }}>What we sell. The demo page and the AI meeting read from here, so the AI only says what is written here. A plan with no price is quoted by a person.</div>
       <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: 12 }}>
         {rows.map((p) => (
@@ -292,6 +306,18 @@ export function ProductCatalog() {
             <ul style={{ margin: '0 0 8px 18px', padding: 0, fontSize: 13 }}>{(p.features || []).slice(0, 5).map((f, i) => <li key={i}>{f}</li>)}{(p.features || []).length > 5 && <li className="small-muted">+{p.features.length - 5} more</li>}</ul>
             <div style={{ fontSize: 13 }}>{(p.plans || []).map((x) => <div key={x.name}><b>{x.name}</b>: {x.price ? `${x.price} ${x.unit || ''}` : <span className="small-muted">price on request</span>}</div>)}</div>
             {p.hasVideo && <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 10, marginRight: 6 }} onClick={() => play(p)}>▶ Watch video</button>}
+            {(p.extraVideos || []).length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 13 }}>
+                <div className="small-muted">More videos</div>
+                {p.extraVideos.map((x, n) => (
+                  <div key={`${x.file}${n}`} style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '3px 0' }}>
+                    <span style={{ flex: 1 }}>{x.title}</span>
+                    <button type="button" className="btn btn-sm" onClick={() => api.get(`/crm/products/${p.key}/watch`, { params: { extra: n } }).then((r) => setWatch(r.data)).catch((e) => toast(errOf(e, 'The video could not be opened.')))}>▶</button>
+                    {canEdit && <button type="button" className="btn btn-sm" aria-label={`Remove ${x.title}`} onClick={() => { if (window.confirm(`Remove "${x.title}" from ${p.name}?`)) api.delete(`/crm/products/${p.key}/videos/${n}`).then(load).catch((e) => toast(errOf(e, 'This did not work.'))); }}>✕</button>} {/* eslint-disable-line no-alert */}
+                  </div>
+                ))}
+              </div>
+            )}
             {canEdit && <SingleUpload product={p} onDone={() => setVidKey((n) => n + 1)} />}
             {canEdit && <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={() => setEdit({ ...p, featuresText: lines(p.features), plans: (p.plans || []).length ? p.plans : [{ name: 'Starter', price: '', unit: 'per user / month', includes: '' }] })}>Edit</button>}
           </div>

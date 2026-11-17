@@ -49,7 +49,7 @@ fs.writeFileSync(FAKE, JSON.stringify([
 
 const PORT = 4078;
 const API = `http://localhost:${PORT}/api`;
-const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'prodvid-test', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}`, CRM_DEMO_DIR: VID, FFMPEG_BIN: FF, CRM_STT_FAKE_JSON: FAKE };
+const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'prodvid-test', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}`, CRM_DEMO_DIR: VID, FFMPEG_BIN: FF, CRM_STT_FAKE_JSON: FAKE, PUBLIC_BASE_URL: `http://localhost:${PORT}` };
 delete env.TEST_ALLOW_AI;
 Object.assign(process.env, env);
 const jwt = require('jsonwebtoken');
@@ -167,6 +167,80 @@ async function until(token, id, statuses, ms = 120000) {
   check('23 the uploads list shows both, newest first', list.status === 200 && list.body.jobs.length >= 2 && list.body.jobs[0].id === s2.body.id);
   const del = await call('DELETE', `/crm/product-videos/${id}`, null, tA);
   check('24 removing an upload keeps the live clips', del.status === 200 && fs.existsSync(hFile) && !fs.existsSync(path.join(VID, 'sources', `${id}.mp4`)), del.body);
+
+  // ==== any video, any time (founder 2026-11-17: "whatever video we want to upload in future") ====
+  const upload = async (buf, body) => {
+    const s = await call('POST', '/crm/product-videos', { ...body, size: buf.length }, tA);
+    if (s.status !== 200) return { start: s };
+    await call('PUT', `/crm/product-videos/${s.body.id}/chunk?offset=0`, buf, tA);
+    await call('POST', `/crm/product-videos/${s.body.id}/finish`, null, tA);
+    return { id: s.body.id, job: await until(tA, s.body.id, ['draft', 'failed']) };
+  };
+  // formats and sizes
+  const avi = await call('POST', '/crm/product-videos', { kind: 'all', name: 'Demo.AVI', size: 1000 }, tA);
+  const big = await call('POST', '/crm/product-videos', { kind: 'all', name: 'huge.mp4', size: 4 * 1024 * 1024 * 1024 }, tA);
+  const exe = await call('POST', '/crm/product-videos', { kind: 'all', name: 'setup.exe', size: 1000 }, tA);
+  check('25 AVI is accepted; a 4 GB file is refused with the limit and what to do; a non-video is refused', avi.status === 200 && big.status === 400 && /3 GB/.test(big.body.error) && /export it smaller/.test(big.body.error) && exe.status === 400, [avi.status, big.body, exe.status]);
+  if (avi.body.id) await call('DELETE', `/crm/product-videos/${avi.body.id}`, null, tA).catch(() => null);
+  await prisma.$executeRawUnsafe('UPDATE "CrmVideoJob" SET "status" = \'failed\' WHERE "status" = \'uploading\'');
+
+  // a new product
+  const np = await call('POST', '/crm/products', { name: 'TeamLink Accounts' }, tA);
+  const dupP = await call('POST', '/crm/products', { name: 'teamlink accounts' }, tA);
+  const noP = await call('POST', '/crm/products', { name: 'Something' }, tP);
+  check('26 + Add product: TeamLink Accounts gets its own key; the same name twice is refused; only managers', np.status === 200 && np.body.product.key === 'ACCOUNTS' && np.body.product.plans.length === 0 && dupP.status === 409 && noP.status === 403, [np.body, dupP.status, noP.status]);
+  // the all-products video again, now with Accounts in it: the split finds it by its name and writes its text
+  fs.writeFileSync(FAKE, JSON.stringify([
+    { s: 0.3, e: 4.6, t: 'This is Team Link Enterprise, module by module.' },
+    { s: 5.2, e: 24.6, t: 'In HRMS, the HRMS dashboard shows headcount, attendance, leave and payroll.' },
+    { s: 25.2, e: 32.0, t: 'In accounts, the dashboard tracks invoices, collections, GST and TDS.' },
+    { s: 32.0, e: 39.5, t: 'Journal and ledger gives the trial balance and the profit and loss.' },
+    { s: 40.2, e: 57.6, t: 'A me channel opens on its dashboard; the WhatsApp inbox holds every chat.' },
+    { s: 58.3, e: 63.5, t: 'Every module, every tab, one login.' },
+  ]));
+  const again = await upload(file, { kind: 'all', name: 'all-products-v2.mp4' });
+  const d2 = again.job && again.job.draft;
+  check('27 the all-products video uploaded again is split again, and finds the new product by its name (Accounts 25-40)', d2 && d2.products.ACCOUNTS && near(d2.products.ACCOUNTS.segments[0][0], 24.9) && near(d2.products.ACCOUNTS.segments[0][1], 39.85) && /invoices|ledger/i.test(d2.products.ACCOUNTS.narration) && (d2.notes || []).some((n) => /ATS was not found/.test(n)), d2 && { p: Object.fromEntries(Object.entries(d2.products).map(([k, v]) => [k, v.segments])), n: d2.notes });
+  await call('POST', `/crm/product-videos/${again.id}/apply`, { draft: { intro: d2.intro, outro: d2.outro, products: { ACCOUNTS: { ...d2.products.ACCOUNTS, about: 'Accounts from the video.' } } }, use: { ACCOUNTS: { video: true, text: true } } }, tA);
+  await until(tA, again.id, ['done', 'failed'], 120000);
+  const acc = (await call('GET', '/crm/products?all=1', null, tA)).body.products.find((p) => p.key === 'ACCOUNTS');
+  check('28 Save: the new product has its clip and its text', /^ACCOUNTS-/.test(acc.videoFile || '') && acc.about === 'Accounts from the video.' && fs.existsSync(path.join(VID, acc.videoFile)), acc);
+
+  // another video for a product, next to its demo
+  const hMain = (await call('GET', '/crm/products?all=1', null, tA)).body.products.find((p) => p.key === 'HRMS').videoFile;
+  const ex = await upload(one, { kind: 'extra', key: 'HRMS', name: 'payroll.mov', title: 'Payroll walk-through' });
+  check('29 another video for HRMS: one part, no text to write', ex.job && ex.job.status === 'draft' && ex.job.draft.products.HRMS.noText === true && ex.job.draft.target.title === 'Payroll walk-through', ex.job && ex.job.draft);
+  await call('POST', `/crm/product-videos/${ex.id}/apply`, { draft: { products: { HRMS: ex.job.draft.products.HRMS }, title: 'Payroll walk-through' }, use: { HRMS: { video: true, text: true } } }, tA);
+  await until(tA, ex.id, ['done', 'failed'], 120000);
+  const h2 = (await call('GET', '/crm/products?all=1', null, tA)).body.products.find((p) => p.key === 'HRMS');
+  check('30 Save: HRMS keeps its demo and gets "Payroll walk-through" under it (its text is not rewritten)', h2.videoFile === hMain && h2.extraVideos.length === 1 && h2.extraVideos[0].title === 'Payroll walk-through' && h2.about === 'HRMS from the video.', { v: h2.videoFile, x: h2.extraVideos, a: h2.about });
+  // the company video
+  const co = await upload(one, { kind: 'company', name: 'about-us.webm', title: 'About TeamLink Consultants' });
+  await call('POST', `/crm/product-videos/${co.id}/apply`, { draft: { products: { COMPANY: co.job.draft.products.COMPANY }, title: 'About TeamLink Consultants' }, use: { COMPANY: { video: true } } }, tA);
+  await until(tA, co.id, ['done', 'failed'], 120000);
+  const cst = (await call('GET', '/crm/products-settings', null, tA)).body.settings;
+  check('31 a company video: saved for the top of every demo page', /^COMPANY-/.test(cst.companyVideoFile || '') && cst.companyVideoTitle === 'About TeamLink Consultants', st);
+  // what a lead sees
+  const L = await call('POST', '/crm/leads', { company: `ZZTEST PV ${process.pid}`, contactName: 'Pv Lead', phone: `91${String(Date.now()).slice(-8)}`, source: 'Website' }, tA);
+  await call('POST', `/crm/leads/${L.body.lead.id}/products`, { products: ['HRMS', 'ACCOUNTS'] }, tA);
+  const dm = await call('POST', `/crm/leads/${L.body.lead.id}/demo`, { channel: 'link' }, tA);
+  const dt = dm.body.url.split('/').pop();
+  const page = await fetch(dm.body.url).then((r) => r.text());
+  const xv = await fetch(`${API}/crm-public/demo/${dt}/xvideo/HRMS/0`, { headers: { Range: 'bytes=0-9' } });
+  const cv = await fetch(`${API}/crm-public/demo/${dt}/company-video`, { headers: { Range: 'bytes=0-9' } });
+  const xo = await fetch(`${API}/crm-public/demo/${dt}/xvideo/OMNI/0`);
+  check('32 the demo page: the company video first, HRMS with "More videos", the new product Accounts; videos stream; another product\'s video is not given', /About TeamLink Consultants/.test(page) && /More videos/.test(page) && /Payroll walk-through/.test(page) && /TeamLink Accounts/.test(page) && xv.status === 206 && cv.status === 206 && xo.status === 404, [xv.status, cv.status, xo.status, /About TeamLink Consultants/.test(page), /More videos/.test(page), /Payroll walk-through/.test(page), /TeamLink Accounts/.test(page), (page.match(/<h2>[^<]*<\/h2>/g) || []).slice(0, 8)]);
+  const wc = await call('GET', '/crm/products/COMPANY/watch', null, tA);
+  const wx = await call('GET', '/crm/products/HRMS/watch?extra=0', null, tA);
+  const wcs = wc.body.url ? (await fetch(`http://localhost:${PORT}${wc.body.url}`, { headers: { Range: 'bytes=0-9' } })).status : 0;
+  const wxs = wx.body.url ? (await fetch(`http://localhost:${PORT}${wx.body.url}`, { headers: { Range: 'bytes=0-9' } })).status : 0;
+  check('33 the team can watch the company video and the other videos from Our products', wcs === 206 && wxs === 206, [wc.body, wx.body, wcs, wxs]);
+  const rmx = await call('DELETE', '/crm/products/HRMS/videos/0', null, tA);
+  await call('PUT', '/crm/products-settings', { companyVideoFile: '' }, tA);
+  const h3 = (await call('GET', '/crm/products?all=1', null, tA)).body.products.find((p) => p.key === 'HRMS');
+  const st2 = (await call('GET', '/crm/products-settings', null, tA)).body.settings;
+  const page2 = await fetch(dm.body.url).then((r) => r.text());
+  check('34 remove: the other video and the company video come off the demo page', rmx.status === 200 && h3.extraVideos.length === 0 && !st2.companyVideoFile && !/More videos/.test(page2) && !/About TeamLink Consultants/.test(page2), [rmx.status, h3.extraVideos, st2.companyVideoFile]);
 
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);
