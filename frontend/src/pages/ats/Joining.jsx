@@ -35,7 +35,7 @@ const first = (n) => String(n || '').replace(/^ZZTEST\S*\s*/i, '').split(/\s+/)[
 const todayIso = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 
 function viewOf(r) {
-  if (r.joiningStatus === 'Dropped') return 'dropped';
+  if (r.joiningStatus === 'Dropped' && !['JOINED', 'HIRED'].includes(r.stage)) return 'dropped';
   if (r.waitingToJoin) return 'waiting';
   if (['JOINED', 'HIRED'].includes(r.stage)) return 'joined';
   return 'all';

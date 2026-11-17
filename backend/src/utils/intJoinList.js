@@ -91,7 +91,8 @@ function waitingToJoin(app) {
   return app.stage === 'OFFER_ACCEPTED' && !['Joined', 'Dropped'].includes(app.joiningStatus);
 }
 function joiningViewId(app) {
-  if (app.joiningStatus === 'Dropped') return 'dropped';
+  // A stale "did not join" flag does not undo a Joined/Hired stage (the person did join).
+  if (app.joiningStatus === 'Dropped' && !['JOINED', 'HIRED'].includes(app.stage)) return 'dropped';
   if (waitingToJoin(app)) return 'waiting';
   if (['JOINED', 'HIRED'].includes(app.stage)) return 'joined';
   return 'all';
