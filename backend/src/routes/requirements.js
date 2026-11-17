@@ -3535,6 +3535,26 @@ const sameValue = (a, b) => {
   return norm(a) === norm(b);
 };
 
+// THE BDE TL'S LOOK AT A LIVE JOB'S CHANGED DETAILS (utils/requirementReview.js)
+router.get('/:id/review', async (req, res, next) => {
+  try {
+    const r = await prisma.requirement.findFirst({ where: { AND: [{ id: req.params.id }, requirementWhere(req.user)] }, select: { id: true } });
+    if (!r) return res.status(404).json({ error: 'Requirement not found' });
+    const review = await require('../utils/requirementReview').of(r.id); // eslint-disable-line global-require
+    const roles = [req.user.role, req.user.atsRole].filter(Boolean);
+    return res.json({ review, canDecide: isBdeTlUser(req.user) || roles.some((x) => ['SUPER_ADMIN', 'ADMIN'].includes(x)) });
+  } catch (e) { return next(e); }
+});
+router.post('/:id/review/:action(approve|undo)', async (req, res, next) => {
+  try {
+    const roles = [req.user.role, req.user.atsRole].filter(Boolean);
+    if (!(isBdeTlUser(req.user) || roles.some((x) => ['SUPER_ADMIN', 'ADMIN'].includes(x))) || req.viewAs) return res.status(403).json({ error: 'The BDE TL (or an Admin) approves or undoes changes to a live requirement.' });
+    const RR = require('../utils/requirementReview'); // eslint-disable-line global-require
+    const out = req.params.action === 'approve' ? await RR.approve(req.params.id, req.user) : await RR.undo(req.params.id, req.user);
+    return out.error ? res.status(409).json(out) : res.json(out);
+  } catch (e) { return next(e); }
+});
+
 router.put('/:id', JC.requireJobManage(), requirePerm('ats', 'requirements', 'Requirement Detail', 'edit'), async (req, res, next) => {
   try {
     // VIEW != EDIT: holding the edit action is not enough — the record has to
@@ -3674,6 +3694,13 @@ router.put('/:id', JC.requireJobManage(), requirePerm('ats', 'requirements', 'Re
       reason: req.body.editReason || null,
     });
 
+    // KEY DETAILS OF A LIVE JOB CHANGED -> the BDE TL approves or undoes it (utils/requirementReview.js); the BDE TL / Admin are exempt
+    try {
+      const RR = require('../utils/requirementReview'); // eslint-disable-line global-require
+      const roles = [req.user.role, req.user.atsRole].filter(Boolean);
+      const exempt = isBdeTlUser(req.user) || roles.some((x) => ['SUPER_ADMIN', 'ADMIN'].includes(x)) || !requirementIsLive(before.status) || before.internal;
+      await RR.afterEdit({ requirement, changes, user: req.user, exempt });
+    } catch { /* the edit itself is saved */ }
     if (autoTlMove) {
       await logAudit({
         userId: req.user.id, action: 'Default team lead set', entity: 'Requirement', entityId: requirement.id,

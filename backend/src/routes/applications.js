@@ -1339,6 +1339,45 @@ router.post('/bulk', async (req, res, next) => {
   }
 });
 
+// MOVE TO ANOTHER REQUIREMENT (audit P3.7, founder 2026-11-17 "build what is not built"): the person fits another job better. The
+// person is added to the new job as a NEW application (its own history, Fit, override reason, same-client check - the same rules as
+// any add), and the old application is closed as "Moved to <new job>" with the reason, so both histories stay and the reports
+// count it as a move, not a silent disappearance. A placed person (offer accepted / joined) is never moved.
+router.post('/:id/move', async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const reason = String(b.reason || '').trim();
+    if (reason.length < 5) return res.status(400).json({ error: 'Say why the person moves to the other requirement.' });
+    const old = await prisma.application.findUnique({ where: { id: req.params.id }, include: { candidate: true, requirement: { include: { client: true, recruiter: true, bde: true } } } });
+    if (!old) return res.status(404).json({ error: 'Application not found' });
+    if (!applicationInScope(req.user, old)) return res.status(403).json(OUT_OF_SCOPE);
+    if (['OFFER_ACCEPTED', 'JOINED', 'HIRED'].includes(old.stage)) return res.status(409).json({ error: `${old.candidate.name} is already placed on this job (${stageLabel(old.stage)}); they cannot be moved.` });
+    if (String(b.requirementId || '') === old.requirementId) return res.status(400).json({ error: 'Pick a different requirement.' });
+    const target = await prisma.requirement.findUnique({ where: { id: String(b.requirementId || '') } });
+    if (!target) return res.status(404).json({ error: 'Pick the requirement to move to.' });
+    const reqInScope = await prisma.requirement.count({ where: { AND: [{ id: target.id }, require('../utils/scope').requirementWhere(req.user)] } }); // eslint-disable-line global-require
+    if (!reqInScope) return res.status(403).json(OUT_OF_SCOPE);
+    const dupBody = await require('../utils/applicationDup').alreadyAppliedBody(req.user, old.candidate, target, null); // eslint-disable-line global-require
+    if (dupBody) return res.status(409).json(dupBody);
+    const jobNo = await jobRefusalFor(target);
+    if (jobNo) return res.status(jobNo.status).json(jobNo.body);
+    const fit = await fitAtAdd(req.user, old.candidate, target);
+    const override = fit.overrideWhy && fit.overrideWhy.length ? { reason: `Moved from ${old.requirement.reqCode || old.requirement.title}: ${reason}`.slice(0, 300), why: fit.overrideWhy } : null;
+    const targetName = target.reqCode || target.title;
+    // 1. close the old one (the same stage rules as any reject: whose step it is now)
+    if (old.stage !== 'REJECTED') {
+      const closed = await applyStageMove(req.user, old.id, {
+        stage: 'REJECTED', rejectedBy: 'Internal', reasonCategory: 'Moved to another requirement', reasonDetail: `Moved to ${targetName}: ${reason}`, rejectKind: 'not_suitable',
+      });
+      if (closed.status >= 300) return res.status(closed.status).json(closed.body);
+    }
+    // 2. the new application
+    const created = await addApplication(req.user, { candidate: old.candidate, requirement: target, comment: `Moved from ${old.requirement.reqCode || old.requirement.title}: ${reason}`, fit, override });
+    await logAudit({ userId: req.user.id, action: 'Candidate moved to another requirement', entity: 'Application', entityId: created.id, fromValue: old.requirement.reqCode || old.requirement.title, toValue: targetName, reason });
+    return res.status(201).json({ ok: true, from: old.id, to: created.id, message: `${old.candidate.name} is moved to ${targetName}. The old application is closed as "Moved".` });
+  } catch (err) { return next(err); }
+});
+
 router.patch('/:id/stage', async (req, res, next) => {
   try {
     // OUTSIDE YOUR AREA FIRST (lifecycle test 2026-11-17): somebody who cannot see this candidate is told so before any form check

@@ -55,7 +55,11 @@ export default function PostingStatusPanel({ requirementId, code, title, onClose
   useEffect(() => { polls.current = 0; load(); }, [requirementId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = data ? data.sites.filter((s) => s.ticked && s.code !== 'NOT_SELECTED' && s.id !== 'google') : null;
-  const waiting = (shown || []).filter((s) => s.code === 'WAITING_BY_HAND');
+  // NO API ACCOUNT = POST IT YOURSELF (founder 2026-11-17: "automatic avasaram ledhu, post in naukri ani click chesinappudu naukri job
+  // postings page ki redirect avvali, anni platforms ki same"): a board that is not connected is treated exactly like "by hand" -
+  // [Copy job text] + [Post on Naukri ↗] opening the board's own job-posting page - never "Integration Required / Configure".
+  const byHand = (s) => s.code === 'WAITING_BY_HAND' || ((s.code === 'INTEGRATION_REQUIRED' || s.code === 'SETUP_REQUIRED') && !!(s.hand && s.hand.openUrl));
+  const waiting = (shown || []).filter(byHand);
   const going = (shown || []).some((s) => GOING.includes(s.code) && !s.waiting);
 
   useEffect(() => {
@@ -121,7 +125,7 @@ export default function PostingStatusPanel({ requirementId, code, title, onClose
       {sum && <div className={`pc-sum${sumTone}`}>{sum.line}</div>}
       {shown && !shown.length && <div className="small-muted">No site was ticked, so the requirement is not posted anywhere.</div>}
       {shown && shown.map((s) => {
-        const isWait = s.code === 'WAITING_BY_HAND';
+        const isWait = byHand(s);
         const h = helpers[s.id];
         const link = s.link ? fullLink(s.link) : (s.hand && s.hand.url) || null;
         return (
@@ -149,7 +153,7 @@ export default function PostingStatusPanel({ requirementId, code, title, onClose
                 )}
                 <div className="pc-steps">
                   <button type="button" className="btn btn-sm btn-primary" disabled={!h} onClick={() => copyJob(s)}>Copy job text</button>
-                  <a className="btn btn-sm" href={(h && h.openUrl) || (s.hand && s.hand.openUrl) || '#'} target="_blank" rel="noreferrer">Open {s.name} ↗</a>
+                  <a className="btn btn-sm" href={(h && h.openUrl) || (s.hand && s.hand.openUrl) || '#'} target="_blank" rel="noreferrer" onClick={() => { if (h) copyJob(s); }}>Post on {s.name} ↗</a>
                   <span className="small-muted">{`Shows Live by itself when the first person comes from ${s.name}.`}</span>
                 </div>
                 {/* the old "Yes, it is live" link box is gone: jobDist/signals.js marks it Live (2026-11-03) */}

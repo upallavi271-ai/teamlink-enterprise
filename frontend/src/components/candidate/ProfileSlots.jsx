@@ -26,7 +26,10 @@
 //   logContactClick       follow-ups agent    (kept as a no-op: QuickContact logs
 //                                             its own clicks)
 // ---------------------------------------------------------------------------
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import api from '../../api';
+import { JobPickerCombo, jobLabel } from '../JobPicker.jsx';
 import ResumePanel from '../resume/ResumePanel.jsx';
 import { EligibleRequirementsPanel, AlsoGoodFitCard } from '../resume/MatchSplit.jsx';
 import RejectionHistory from '../rejections/RejectionHistory.jsx';
@@ -53,7 +56,49 @@ export function ResumeSlot({ c }) {
 // --- Add application (any TeamLink login that may add people to a job) ---------
 export function AddApplicationSlot({ c, user, internal, onAddToJob }) {
   if (!internal || !onAddToJob || !user || !can(user, 'ats', 'candidates', 'Applications', 'create')) return null;
-  return <AddApplicationCard c={c} onAddToJob={onAddToJob} />;
+  return (
+    <>
+      <AddApplicationCard c={c} onAddToJob={onAddToJob} />
+      <MoveApplicationCard c={c} />
+    </>
+  );
+}
+
+// --- Move to another requirement (backend POST /applications/:id/move) ------------------------------------------------
+// The old application is closed as "Moved to <job>" with the reason; the person is added to the new job (same rules as Add).
+const PLACED = ['OFFER_ACCEPTED', 'JOINED', 'HIRED', 'REJECTED'];
+function MoveApplicationCard({ c }) {
+  const apps = (c.applications || []).filter((a) => !PLACED.includes(a.stage));
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  if (!apps.length) return null;
+  const fromId = from || apps[0].id;
+  return (
+    <div className="c360t-card">
+      <div className="c360t-label">Move to another requirement</div>
+      <div className="small-muted" style={{ marginBottom: 6 }}>The current application is closed as &quot;Moved&quot; with your reason; the person is added to the new requirement. Both histories stay.</div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        {apps.length > 1 && (
+          <select value={fromId} onChange={(e) => setFrom(e.target.value)}>
+            {apps.map((a) => <option key={a.id} value={a.id}>{`From: ${(a.requirement && (a.requirement.reqCode || a.requirement.title)) || 'requirement'} (${a.stageLabel || a.stage})`}</option>)}
+          </select>
+        )}
+        <JobPickerCombo value={to} onChange={(e) => { setTo(e.target.value); setMsg(null); }} blank="Move to: pick a requirement, or type a title, code or client" labelOf={(r) => `${r.reqCode ? `${r.reqCode} · ` : ''}${jobLabel(r)}`} />
+        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why? e.g. Fits the ICU opening better (salary, location)" />
+        <div>
+          <button type="button" className="btn" disabled={busy || !to || reason.trim().length < 5}
+            onClick={async () => {
+              setBusy(true); setMsg(null);
+              try { const r = await api.post(`/applications/${fromId}/move`, { requirementId: to, reason }); setMsg({ ok: true, text: r.data.message }); setTimeout(() => window.location.reload(), 1200); } catch (e) { if (!e.alreadyApplied) setMsg({ ok: false, text: e.response?.data?.error || 'Could not move.' }); } finally { setBusy(false); }
+            }}>{busy ? 'Moving…' : 'Move'}</button>
+        </div>
+        {msg && <div className={msg.ok ? 'notice green' : 'error-text'}>{msg.text}</div>}
+      </div>
+    </div>
+  );
 }
 
 // --- Fit (resume/fit agent) ----------------------------------------------------

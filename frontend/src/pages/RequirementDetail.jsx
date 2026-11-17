@@ -197,6 +197,31 @@ const PIPE_FILTERS = [
 ];
 const INTERVIEW_STAGES = ['CLIENT_SHORTLISTED', 'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED'];
 
+// CHANGES WAITING FOR THE BDE TL (backend utils/requirementReview.js): what changed on this live job (old -> new) and, for the BDE TL /
+// an Admin, Approve or Undo. Everybody else sees that the change is waiting.
+function ChangeReviewBanner({ jobId, onChanged }) {
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const get = () => api.get(`/requirements/${jobId}/review`).then((x) => setD(x.data)).catch(() => setD(null));
+  useEffect(() => { get(); }, [jobId]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!d || !d.review) return msg ? <div className="notice green" style={{ display: 'block', margin: '8px 0' }}>{msg}</div> : null;
+  const fmt = (v) => (v === null || v === undefined || v === '' ? '—' : String(v).slice(0, 80));
+  const act = async (a) => { try { const x = await api.post(`/requirements/${jobId}/review/${a}`); setMsg(a === 'approve' ? 'Change approved.' : `Change undone${x.data.skipped && x.data.skipped.length ? ` (change by hand: ${x.data.skipped.join(', ')})` : ''}.`); await get(); if (onChanged) onChanged(); } catch (e) { setMsg(e.response?.data?.error || 'That did not work.'); } };
+  return (
+    <div className="notice" style={{ display: 'block', margin: '8px 0', borderColor: 'var(--warn, #b7791f)' }}>
+      <b>✏️ Changes waiting for the BDE TL</b> <span className="small-muted">({d.review.byName || '—'}, {new Date(d.review.at).toLocaleString('en-GB')})</span>
+      <ul style={{ margin: '6px 0', paddingLeft: 18 }}>{d.review.changes.map((c) => <li key={c.field}>{c.label}: <s>{fmt(c.from)}</s> → <b>{fmt(c.to)}</b></li>)}</ul>
+      {d.canDecide ? (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => act('approve')}>Approve the change</button>
+          <button type="button" className="btn btn-sm" onClick={() => act('undo')}>Undo the change</button>
+        </div>
+      ) : <div className="small-muted">The job keeps running; the BDE TL approves or undoes this change.</div>}
+      {msg && <div className="small-muted" style={{ marginTop: 4 }}>{msg}</div>}
+    </div>
+  );
+}
+
 export default function RequirementDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -1103,6 +1128,7 @@ export default function RequirementDetail() {
       <Link className="small-muted" to="/requirements">← Requirements</Link>
 
       {!r.internal && <JobDupNote jobId={r.id} onOpenList={() => navigate('/requirements?tab=duplicates')} />}
+      {!r.internal && <ChangeReviewBanner jobId={r.id} onChanged={load} />}
 
       <div className="page-head" style={{ marginTop: 10, marginBottom: 6 }}>
         <div>

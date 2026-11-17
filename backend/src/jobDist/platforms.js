@@ -28,11 +28,12 @@ const DEFAULTS = [
   ['career', 'Own job portal', 'auto', 'careers', 'jd', null, null, null, 1, null, 'Goes live by itself on our careers page. Nothing to copy.', 'career', 10],
   ['google', 'Google for Jobs', 'auto', 'search', 'jd', null, null, null, 1, null, 'Google reads the job page itself (job markup and the site map). Nothing to post.', null, 20],
   ['feed', 'RSS / XML feed', 'auto', 'feed', 'jd', null, null, null, 1, null, 'The requirement is in our feed for job aggregators. Nothing to post.', null, 30],
-  ['telegram', 'Telegram channel', 'auto', 'social', 'short', null, 4096, null, 1, null, 'A short message with the apply link. Posted by the Telegram bot (an Admin sets it up once).', 'telegram', 40],
-  ['facebook', 'Facebook page', 'auto', 'social', 'short', null, 5000, null, 1, null, 'A short post with the apply link. Posted by the Facebook page connection (an Admin sets it up once).', 'facebook', 50],
-  ['instagram', 'Instagram', 'auto', 'social', 'short', null, 2200, null, 1, null, 'A picture of the job with this text under it. Posted by the Instagram account linked to the Facebook Page (an Admin connects it once in Social Media).', 'instagram', 52],
-  ['threads', 'Threads', 'auto', 'social', 'short', null, 500, null, 1, null, 'A short text with the apply link. Posted by the Threads connection (an Admin connects it once in Social Media).', 'threads', 54],
-  ['linkedinpost', 'LinkedIn post', 'auto', 'social', 'short', null, 3000, null, 1, null, 'A short post on the LinkedIn feed with the apply link (not LinkedIn Jobs). Posted by the LinkedIn connection (an Admin connects it once in Social Media).', 'linkedinpost', 56],
+  ['telegram', 'Telegram channel', 'auto', 'social', 'short', 'https://web.telegram.org/', 4096, null, 1, null, 'A short message with the apply link. Posted by the Telegram bot (an Admin sets it up once).', 'telegram', 40],
+  ['facebook', 'Facebook page', 'auto', 'social', 'short', 'https://business.facebook.com/latest/composer', 5000, null, 1, null, 'A short post with the apply link. Posted by the Facebook page connection (an Admin sets it up once).', 'facebook', 50],
+  ['instagram', 'Instagram', 'auto', 'social', 'short', 'https://business.facebook.com/latest/composer', 2200, null, 1, null, 'A picture of the job with this text under it. Posted by the Instagram account linked to the Facebook Page (an Admin connects it once in Social Media).', 'instagram', 52],
+  ['threads', 'Threads', 'auto', 'social', 'short', 'https://www.threads.net/', 500, null, 1, null, 'A short text with the apply link. Posted by the Threads connection (an Admin connects it once in Social Media).', 'threads', 54],
+  ['linkedinpost', 'LinkedIn post', 'auto', 'social', 'short', 'https://www.linkedin.com/feed/?shareActive=true', 3000, null, 1, null, 'A short post on the LinkedIn feed with the apply link (not LinkedIn Jobs). Posted by the LinkedIn connection (an Admin connects it once in Social Media).', 'linkedinpost', 56],
+  ['youtube', 'YouTube (community post)', 'semi', 'social', 'short', 'https://studio.youtube.com/', 1500, null, 1, 30, 'A short community post with the apply link. Copy it, open YouTube Studio, Create -> Post.', null, 58],
   ['linkedin', 'LinkedIn', 'semi', 'job_board', 'jd', POST_URLS.linkedin, 3000, 100, 1, 30, 'Short and clear. Keep it under about 250 words. LinkedIn does not allow programs to post jobs, so a person posts it.', 'linkedin', 60],
   ['indeed', 'Indeed', 'semi', 'job_board', 'jd', POST_URLS.indeed, 5000, 100, 1, 30, 'Plain text. Paste the title and the description.', null, 70],
   ['naukri', 'Naukri', 'semi', 'job_board', 'jd', POST_URLS.naukri, 4000, 100, 1, 30, 'Plain text with short bullet lines. Naukri checks each job before it shows (up to 24 hours).', 'naukri', 80],
@@ -93,6 +94,12 @@ async function ensureSeeded() {
       'INSERT OR IGNORE INTO "DistPlatform" ("key","name","kind","medium","format","postUrl","maxChars","maxTitle","formatHint","includeSalary","expiryDays","active","builtin","sortOrder","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,?,?,?,?,1,1,?,?,?)',
       d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[10], d[8], d[9], d[12], now, now,
     );
+    // a built-in row that has NO posting page yet gets the default one (founder 2026-11-17: every platform's "Post on" button
+    // opens its own posting page); an Admin's own link is never overwritten
+    if (d[5]) {
+      // eslint-disable-next-line no-await-in-loop
+      await ex('UPDATE "DistPlatform" SET "postUrl" = ? WHERE "key" = ? AND ("postUrl" IS NULL OR "postUrl" = \'\')', d[5], d[0]);
+    }
   }
   seeded = true;
 }

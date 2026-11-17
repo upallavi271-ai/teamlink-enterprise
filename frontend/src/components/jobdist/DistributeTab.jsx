@@ -112,7 +112,8 @@ function KitBox({ card, can, onChanged, flash }) {
       </div>
       <div className="dx-acts">
         <button type="button" className="btn btn-primary" onClick={async () => flash((await copyText(draft)) ? 'Text copied. Now paste it on the site.' : 'Could not copy. Select the text and copy by hand.')}>Copy text</button>
-        {card.postUrl && can.edit && <a className="btn" href={card.postUrl} target="_blank" rel="noopener noreferrer">{`Open ${card.name}`}</a>}
+        {/* POST ON <SITE> (founder 2026-11-17): copies the text and opens the site's own job-posting page */}
+        {card.postUrl && can.edit && <a className="btn" href={card.postUrl} target="_blank" rel="noopener noreferrer" onClick={() => { copyText(draft).then((ok) => flash(ok ? `Text copied - paste it on ${card.name}.` : `Opened ${card.name}. Copy the text and paste it there.`)); }}>{`Post on ${card.name} ↗`}</a>}
         {can.edit && dirty && <button type="button" className="btn btn-sm" disabled={busy === 'save'} onClick={() => run('save', () => dx.put(`/jobs/${card.jobId}/platforms/${card.key}/text`, { text: draft, title: k.title }), 'Saved. Your edit is kept for this requirement.')}>Save my edit</button>}
         {can.edit && (k.overridden || dirty) && <button type="button" className="btn btn-sm" disabled={busy === 'reset'} onClick={() => run('reset', () => dx.del(`/jobs/${card.jobId}/platforms/${card.key}/text`), 'Back to the text TeamLink wrote.')}>Reset to auto</button>}
       </div>
