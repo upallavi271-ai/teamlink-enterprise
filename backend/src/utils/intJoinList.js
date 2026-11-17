@@ -61,7 +61,7 @@ const LEAN_SELECT = {
   offerAcceptedAt: true,
   interviewAt: true,
   interviewStatus: true,
-  candidate: { select: { id: true, name: true } },
+  candidate: { select: { id: true, name: true, specialization: true, specialisationId: true, education: true, qualificationId: true, currentDesignation: true, experienceYears: true } },
   requirement: {
     select: {
       id: true,
@@ -162,6 +162,11 @@ function fieldsFor(spec) {
     { key: 'job', get: (it) => it.title },
     { key: 'recruiter', get: (it) => it.recruiterId, label: (v, it) => it.recruiterName },
     { key: 'hiringType', get: (it) => it.hiring, label: hiringLabel },
+    // the four person filters (founder 2026-11-17): the same values and rules as the Candidates list
+    { key: 'spec', get: (it) => it.spec, label: (v) => (v === 'none' ? 'Not given' : v) },
+    { key: 'qual', get: (it) => it.qual, label: (v) => (v === 'none' ? 'Not given' : v) },
+    { key: 'desig', get: (it) => it.desig, label: (v) => (v === 'none' ? 'Not given' : v) },
+    { key: 'expBand', get: (it) => it.expBand, label: (v) => (v === 'none' ? 'Not given' : `${v} years`) },
   ];
 }
 
@@ -181,6 +186,7 @@ function ask(query) {
     q: str('q').trim().toLowerCase(),
     filters: {
       status: str('status'), department: str('department'), client: str('client'), job: str('job'), recruiter: str('recruiter'), hiringType: str('hiringType'),
+      spec: str('spec'), qual: str('qual'), desig: str('desig'), expBand: str('expBand'),
     },
     sort: str('sort'),
     view: str('view') || 'all',
@@ -208,7 +214,8 @@ async function leanApps(req, where, kind) {
     const rows = await prisma.$queryRawUnsafe(
       `SELECT a.id, a.stage, a.updatedAt, a.hiringType, a.offerStatus, a.offerDate, a.joiningDate, a.joiningStatus, a.joinedAt,
               a.offerAcceptedAt, a.interviewAt, a.interviewStatus,
-              c.id AS cId, c.name AS cName,
+              c.id AS cId, c.name AS cName, c.specialization AS cSpec, c.specialisationId AS cSpecId, c.education AS cEdu, c.qualificationId AS cQualId,
+              c.currentDesignation AS cDesig, c.experienceYears AS cExp,
               r.id AS rId, r.title AS rTitle, r.department AS rDepartment, r.internal AS rInternal, r.hiringType AS rHiringType,
               cl.id AS clId, cl.name AS clName, u.id AS uId, u.name AS uName
               ${kind === 'feedback' ? ", EXISTS(SELECT 1 FROM InterviewFeedback f WHERE f.applicationId = a.id AND f.kind = 'Internal') AS hasInternal" : ''}
@@ -232,7 +239,9 @@ async function leanApps(req, where, kind) {
       offerAcceptedAt: x.offerAcceptedAt,
       interviewAt: x.interviewAt,
       interviewStatus: x.interviewStatus,
-      candidate: x.cId ? { id: x.cId, name: x.cName } : null,
+      candidate: x.cId ? {
+        id: x.cId, name: x.cName, specialization: x.cSpec, specialisationId: x.cSpecId, education: x.cEdu, qualificationId: x.cQualId, currentDesignation: x.cDesig, experienceYears: x.cExp == null ? null : Number(x.cExp),
+      } : null,
       requirement: x.rId ? {
         id: x.rId,
         title: x.rTitle,
@@ -268,6 +277,8 @@ async function leanItems(req, where, kind) {
   const now = Date.now();
   const aliasByName = await require('./clientSearch').aliasNameMap().catch(() => new Map()); // eslint-disable-line global-require
   const tracks = kind === 'offers' ? await require('./clientTrack').loadAll().catch(() => new Map()) : null; // eslint-disable-line global-require
+  const CF = require('./candidateFields'); // eslint-disable-line global-require
+  const lab = await CF.labels();
   return apps.map((app) => {
     const r = app.requirement || {};
     const hiring = hiringTypeOf(app, r);
@@ -289,6 +300,7 @@ async function leanItems(req, where, kind) {
       recruiterId: r.recruiter ? r.recruiter.id : null,
       recruiterName: r.recruiter ? r.recruiter.name : '',
       hiring,
+      ...CF.fieldsOf(app.candidate || {}, lab), // Specialization · Qualification · Designation · Experience (2026-11-17)
     };
     if (kind === 'feedback') it.statusText = feedbackStepText(app, (app.interviewFeedbacks || []).length > 0, now);
     return it;

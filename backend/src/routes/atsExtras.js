@@ -215,6 +215,8 @@ function shapeRecruitmentFull(app) {
     id: app.id,
     interviewCode: interviewCode(app),
     candidate: { id: app.candidate.id, name: app.candidate.name },
+    // the four person filters on the Interview Calendar (2026-11-17): Specialization · Qualification · Designation · Experience band
+    person: require('../utils/candidateFields').fieldsOf(app.candidate, require('../utils/candidateFields').labelsSync()), // eslint-disable-line global-require
     requirement: {
       id: app.requirement.id,
       title: app.requirement.title,

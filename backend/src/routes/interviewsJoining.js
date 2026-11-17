@@ -133,6 +133,8 @@ function shapeRowFull(app) {
     id: app.id,
     interviewCode: app.interviewCode || `INT-${app.id.slice(-6).toUpperCase()}`,
     candidate: { id: app.candidate.id, name: app.candidate.name, email: app.candidate.email },
+    // the four person filters on the Interview Calendar (2026-11-17): Specialization · Qualification · Designation · Experience band
+    person: require('../utils/candidateFields').fieldsOf(app.candidate, require('../utils/candidateFields').labelsSync()), // eslint-disable-line global-require
     requirement: {
       id: req.id,
       title: req.title,

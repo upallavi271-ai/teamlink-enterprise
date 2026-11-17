@@ -464,7 +464,7 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
       // AND, not a spread: requirementWhere() may itself carry clientId.
       where: { AND: [bdeTl ? {} : teamRequirementWhere(user), clientIn ? { clientId: clientIn } : {}] },
       select: {
-        id: true, clientId: true, status: true, recruiterId: true,
+        id: true, clientId: true, status: true, recruiterId: true, title: true, specialisation: true, specialisationId: true, qualificationId: true,
         bde: { select: { name: true } }, recruiter: { select: { name: true } },
       },
     }),
@@ -531,6 +531,8 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
   const reqClient = new Map(reqRows.map((r) => [r.id, r.clientId]));
   const bucket = () => new Map(ids.map((id) => [id, []]));
   const reqsByClient = bucket();
+  const CF = require('../utils/candidateFields'); // eslint-disable-line global-require
+  const specLab = await CF.labels();
   reqRows.forEach((r) => { if (reqsByClient.has(r.clientId)) reqsByClient.get(r.clientId).push(r); });
   const appsByClient = bucket();
   liveApps.forEach((a) => {
@@ -710,6 +712,10 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
       nextActionDue: dates[0] || null,
       nextActionOverdue: overdue.length > 0,
       openRequirements: reqs.length,
+      // the Specialization / Qualification / Designation filters (2026-11-17): what this client's requirements ask for
+      reqSpecs: [...new Set(allReqs.map((x) => (specLab && x.specialisationId && specLab.spec(x.specialisationId)) || CF.tidy(x.specialisation)).filter(Boolean))],
+      reqQuals: [...new Set(allReqs.map((x) => specLab && x.qualificationId && specLab.qual(x.qualificationId)).filter(Boolean))],
+      reqTitles: [...new Set(allReqs.map((x) => CF.tidy(x.title)).filter(Boolean))],
       awaitingDecision: awaitingDecision.length,
       // --- §9 relationship numbers -------------------------------------
       activeRequirements: reqs.length,

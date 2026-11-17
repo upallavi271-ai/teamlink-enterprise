@@ -356,7 +356,7 @@ export function matchesShared(row, filters, dateValue, personIds = null) {
 // already your area, cut by the server), zero options are hidden.
 //   const { rows, toolbar } = useIntJoinList(allRows, { status, dateOf, … })
 // ---------------------------------------------------------------------------
-const EMPTY_LIST = { q: '', department: '', client: '', job: '', recruiter: '', hiringType: '', status: '' };
+const EMPTY_LIST = { q: '', department: '', client: '', job: '', recruiter: '', hiringType: '', status: '', spec: '', qual: '', desig: '', expBand: '' };
 export function useIntJoinList(allRows, {
   status = null, // { label, get(row) -> value, text(value) -> label }
   dateOf = () => null,
@@ -437,7 +437,7 @@ export function useIntJoinList(allRows, {
 //   ws.older / ws.setOlder / ws.olderCount           for <ShowOlder />
 // ---------------------------------------------------------------------------
 export const PAGE_SIZES_IJ = [25, 50, 100, 200];
-const FILTER_KEYS_IJ = ['department', 'client', 'job', 'recruiter', 'hiringType', 'status'];
+const FILTER_KEYS_IJ = ['department', 'client', 'job', 'recruiter', 'hiringType', 'status', 'spec', 'qual', 'desig', 'expBand'];
 export function useIntJoinPaged(url, {
   view = 'all', status = null, placeholder = 'Search name or requirement…', sortOptions = null, defaultSort = '',
 } = {}) {
@@ -507,8 +507,9 @@ export function useIntJoinPaged(url, {
   const fields = [
     ...(status ? [{ key: 'status' }] : []),
     { key: 'department' }, ...(clientDesk ? [{ key: 'client' }] : []), { key: 'job' }, { key: 'recruiter' }, { key: 'hiringType' },
+    { key: 'spec' }, { key: 'qual' }, { key: 'desig' }, { key: 'expBand' },
   ];
-  const NAMES = { department: 'Department', client: 'Client', job: 'Requirement', recruiter: 'Recruiter', hiringType: 'Hiring', status: status ? status.label : 'Status' };
+  const NAMES = { department: 'Department', client: 'Client', job: 'Requirement', recruiter: 'Recruiter', hiringType: 'Hiring', status: status ? status.label : 'Status', spec: 'Specialization', qual: 'Qualification', desig: 'Designation', expBand: 'Experience' };
   const chips = [
     ...fields.filter((x) => f[x.key]).map((x) => ({ key: x.key, label: NAMES[x.key], value: label(x.key, f[x.key]), onRemove: () => set({ [x.key]: '' }) })),
     f.q && { key: 'q', label: 'Search', value: f.q, onRemove: () => set({ q: '' }) },
@@ -533,6 +534,11 @@ export function useIntJoinPaged(url, {
           <FacetSelect label="Requirement" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All requirements" />
           <FacetSelect label="Recruiter" value={f.recruiter} onChange={(v) => set({ recruiter: v })} options={facets.recruiter} allLabel="All recruiters" />
           <FacetSelect label="Hiring" value={f.hiringType} onChange={(v) => set({ hiringType: v })} options={facets.hiringType} allLabel="Both kinds" />
+          {/* the four person filters (founder 2026-11-17), with counts; picking one narrows the Client list too */}
+          <FacetSelect label="Specialization" value={f.spec} onChange={(v) => set({ spec: v })} options={facets.spec} allLabel="All specializations" />
+          <FacetSelect label="Qualification" value={f.qual} onChange={(v) => set({ qual: v })} options={facets.qual} allLabel="All qualifications" />
+          <FacetSelect label="Designation" value={f.desig} onChange={(v) => set({ desig: v })} options={facets.desig} allLabel="All designations" />
+          <FacetSelect label="Experience" value={f.expBand} onChange={(v) => set({ expBand: v })} options={['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean)} allLabel="Any experience" />
         </>
       )}
     />

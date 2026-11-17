@@ -119,6 +119,7 @@ const DONE_STATUSES = ['COMPLETED', 'PENDING_FEEDBACK', 'FEEDBACK_SUBMITTED'];
 const EMPTY_FILTERS = {
   q: '', status: '', type: '', date: '', client: '', recruiter: '', tl: '', bde: '', positionCode: '',
   department: '', requirement: '', candidate: '', hiringType: '', from: '', to: '', phase: '',
+  spec: '', qual: '', desig: '', expBand: '',
 };
 
 // Roles that may move an interview. Clients watch; the API enforces this too.
@@ -170,6 +171,11 @@ const CAL_FIELDS = [
   { key: 'requirement', get: (r) => r.requirement.title },
   { key: 'candidate', get: (r) => r.candidate.name },
   { key: 'hiringType', get: (r) => r.hiringType },
+  // the four person filters (founder 2026-11-17), with counts
+  { key: 'spec', get: (r) => (r.person ? r.person.spec : null), label: (v) => (v === 'none' ? 'Not given' : v) },
+  { key: 'qual', get: (r) => (r.person ? r.person.qual : null), label: (v) => (v === 'none' ? 'Not given' : v) },
+  { key: 'desig', get: (r) => (r.person ? r.person.desig : null), label: (v) => (v === 'none' ? 'Not given' : v) },
+  { key: 'expBand', get: (r) => (r.person ? r.person.expBand : null), label: (v) => (v === 'none' ? 'Not given' : `${v} years`) },
 ];
 function calPred(r, k, v) {
   switch (k) {
@@ -182,6 +188,7 @@ function calPred(r, k, v) {
     case 'requirement': return r.requirement.title === v;
     case 'candidate': return r.candidate.name === v;
     case 'hiringType': return r.hiringType === v;
+    case 'spec': case 'qual': case 'desig': case 'expBand': return !!r.person && r.person[k] === v;
     default: return true;
   }
 }
@@ -466,6 +473,7 @@ export default function InterviewCalendar() {
     requirement: filters.requirement,
     candidate: filters.candidate,
     hiringType: filters.hiringType,
+    spec: filters.spec, qual: filters.qual, desig: filters.desig, expBand: filters.expBand,
   }), [filters, deptFilter]);
   const pr = calRange(pf);
   const passesBase = (r, skipPhase) => {
@@ -1185,6 +1193,10 @@ export default function InterviewCalendar() {
                     <HierarchyFilter value={{ ...hier, department: pf.department }} onChange={(v) => { setHier({ ...v, department: '' }); if (v.tl) setMine(false); }} show={{ department: false, recruiter: false }} />
                     <FacetSelect label="Candidate" value={filters.candidate} onChange={(v) => setFilter({ candidate: v })} options={facets.candidate} allLabel="All candidates" />
                     <FacetSelect label="Hiring type" value={filters.hiringType} onChange={(v) => setFilter({ hiringType: v })} options={facets.hiringType} allLabel="All hiring types" />
+                    <FacetSelect label="Specialization" value={filters.spec} onChange={(v) => setFilter({ spec: v })} options={facets.spec} allLabel="All specializations" />
+                    <FacetSelect label="Qualification" value={filters.qual} onChange={(v) => setFilter({ qual: v })} options={facets.qual} allLabel="All qualifications" />
+                    <FacetSelect label="Designation" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={facets.desig} allLabel="All designations" />
+                    <FacetSelect label="Experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean)} allLabel="Any experience" />
                   </>
                 )}
               />

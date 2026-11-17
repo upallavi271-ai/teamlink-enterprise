@@ -158,6 +158,7 @@ const NO_DEPT = '__none__';
 const EMPTY_FILTERS = {
   search: '', industry: '', status: '', owner: '', expiring: '', unassigned: '', department: '', location: '',
   agreement: '', hasOpen: '', outstanding: '', overdue: '', signed: '', waiting: '', desk: '',
+  reqSpec: '', reqQual: '', reqTitle: '', // what the client's requirements ask for (2026-11-17)
 };
 // the work status of a client, from its Follow-ups or the BDE sheets
 const DESK_WORDS = ['Running', 'On hold', 'Stopped', 'No requirement'];
@@ -303,6 +304,10 @@ export default function Clients() {
       { key: 'desk', get: (c) => c.deskStatus || DESK_NONE, label: (v) => (v === DESK_NONE ? 'Not set' : v) },
       { key: 'outstanding', get: (c) => (c.invoiceSummary?.outstanding > 0.5 ? '1' : null), label: () => 'Has unpaid invoices' },
       { key: 'overdue', get: (c) => OVERDUE_STEPS.filter((d) => (c.invoiceSummary?.overdueDays || 0) >= Number(d)), label: (v) => `Late ${v}+ days` },
+      // what the client's requirements ask for (2026-11-17): a client is counted under each of its specializations / qualifications / designations
+      { key: 'reqSpec', get: (c) => c.reqSpecs || [] },
+      { key: 'reqQual', get: (c) => c.reqQuals || [] },
+      { key: 'reqTitle', get: (c) => c.reqTitles || [] },
     ];
   }, [expiringIds, today]);
   const matchAll = (c) => fields.every((f) => !ef[f.key] || hitField(f, c, ef[f.key]));
@@ -600,6 +605,9 @@ export default function Clients() {
         {allowedCols.includes('desk') && <FacetSelect label="Work status" value={filters.desk} onChange={(v) => setFilter({ desk: v })} options={facets.desk} allLabel="Any work status" />}
         {has('status') && <FacetSelect label="Status" value={filters.status} onChange={(v) => setFilter({ status: v })} options={statusFacets.status} allLabel="Any status" />}
         {(has('agreement') || seeAgreement) && <FacetSelect label="Signed?" value={filters.signed} onChange={(v) => setFilter({ signed: v })} options={facets.signed} allLabel="Signed or not" />}
+        <FacetSelect label="Specialization" value={filters.reqSpec || ''} onChange={(v) => setFilter({ reqSpec: v })} options={facets.reqSpec} allLabel="All specializations" title="Clients whose requirements ask for this specialization" />
+        <FacetSelect label="Qualification" value={filters.reqQual || ''} onChange={(v) => setFilter({ reqQual: v })} options={facets.reqQual} allLabel="All qualifications" title="Clients whose requirements ask for this qualification" />
+        <FacetSelect label="Designation" value={filters.reqTitle || ''} onChange={(v) => setFilter({ reqTitle: v })} options={facets.reqTitle} allLabel="All designations" title="Clients with a requirement for this role" />
         {has('location') && <FacetSelect label="Location" value={filters.location} onChange={(v) => setFilter({ location: v })} options={facets.location} allLabel="All locations" />}
       </FilterCard>
 
