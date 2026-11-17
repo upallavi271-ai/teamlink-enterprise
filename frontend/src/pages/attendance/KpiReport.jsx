@@ -21,12 +21,14 @@ import ScrollTable from '../../components/ScrollTable.jsx';
 import { downloadFrom } from './MyAttendance.jsx';
 import { SourceChips, SourceFilter, PunchToggle, PunchDetails } from '../../components/PunchSourceChip.jsx';
 import { fmtDay, clock12, localToday, addDays, HalfLeaveChip, HalfLeaveSub } from './DayReport.jsx';
+import '../../components/ExportMenu.css';
 import './kpi-report.css';
 
 const MO = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const monthEnd = (ym) => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`; };
 const weekStart = (d) => addDays(d, -((new Date(`${d}T00:00:00Z`).getUTCDay() + 6) % 7));
-function rangeOf(mode, anchor) {
+function rangeOf(mode, anchor, custom) {
+  if (mode === 'range') return { from: custom.from, to: custom.to < custom.from ? custom.from : custom.to };
   if (mode === 'week') { const f = weekStart(anchor); return { from: f, to: addDays(f, 6) }; }
   if (mode === 'month') { const ym = anchor.slice(0, 7); return { from: `${ym}-01`, to: monthEnd(ym) }; }
   return { from: anchor, to: anchor };
@@ -42,8 +44,36 @@ function step(mode, anchor, n) {
 }
 function rangeLabel(mode, from, to) {
   if (mode === 'month') return `${MO[Number(from.slice(5, 7)) - 1]} ${from.slice(0, 4)}`;
-  if (mode === 'week') return `${fmtDay(from)} → ${fmtDay(to)}`;
+  if (mode === 'week' || mode === 'range') return from === to ? fmtDay(from) : `${fmtDay(from)} → ${fmtDay(to)}`;
   return fmtDay(from);
+}
+
+// ONE Export button for everything this screen can hand out. Each file follows the dates and filters picked above.
+function ExportDrop({ busy, disabled, items }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  return (
+    <span className="xm xm-right" ref={ref}>
+      <button type="button" className="btn btn-primary btn-sm" aria-haspopup="menu" aria-expanded={open} disabled={disabled || busy} onClick={() => setOpen((o) => !o)}>
+        {busy ? 'Making file…' : 'Export'} <span aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <span className="xm-menu" role="menu">
+          {items.map((it) => (it.heading
+            ? <span key={it.heading} className="xm-note" style={{ fontWeight: 600 }}>{it.heading}</span>
+            : <button key={it.label + it.key} type="button" role="menuitem" className="xm-item" onClick={() => { setOpen(false); it.run(); }}>{it.label}</button>))}
+        </span>
+      )}
+    </span>
+  );
 }
 
 // The tiles, in the user's order. tone = the four colours of the simple-UX
@@ -72,9 +102,12 @@ const SUMMED = CARDS.map((c) => c.key);
 const hintOf = (k, r) => (r && k.hintOf ? k.hintOf(r) : k.hint);
 const t12 = (t) => (t ? clock12(String(t).slice(0, 5)) : '—');
 
-export default function KpiReport({ onRangeChange } = {}) {
+// `preset` = { from, to, q, tile, n }: the Monthly summary opened this period / person / count here (n changes each time).
+// `onOpenSummary` draws the calendar button that opens the Monthly summary.
+export default function KpiReport({ onRangeChange, preset = null, onOpenSummary = null } = {}) {
   const [mode, setMode] = useState('day');
   const [anchor, setAnchor] = useState(localToday());
+  const [custom, setCustom] = useState({ from: localToday(), to: localToday() });
   const [dept, setDept] = useState('');
   const [emp, setEmp] = useState('');
   const [pick, setPick] = useState({ kpi: '', part: '', note: '', leave: '' });
@@ -86,8 +119,19 @@ export default function KpiReport({ onRangeChange } = {}) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState('');
-  const { from, to } = rangeOf(mode, anchor);
+  const { from, to } = rangeOf(mode, anchor, custom);
   const seq = useRef(0);
+
+  // Opened from the Monthly summary: take its dates, the person and the count, and drop the other filters.
+  const presetN = preset ? preset.n : 0;
+  useEffect(() => {
+    if (!preset) return;
+    setMode('range');
+    setCustom({ from: preset.from, to: preset.to });
+    setDept(''); setEmp(''); setHow(''); setSrc('');
+    setQ(preset.q || '');
+    setPick({ kpi: preset.tile || '', part: '', note: '', leave: '' });
+  }, [presetN]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const mine = ++seq.current;
@@ -135,6 +179,28 @@ export default function KpiReport({ onRangeChange } = {}) {
     } catch { setError('Could not make the Excel file. Please try again.'); } finally { setBusy(false); }
   }
 
+  // The other files this screen hands out. All follow the same dates, department, employee and source as the report.
+  async function exportFile(url, params, name) {
+    setBusy(true); setSaved('');
+    try { await downloadFrom(url, params, name); setSaved(`Saved ${name}`); } catch { setError('Could not make the file. Please try again.'); } finally { setBusy(false); }
+  }
+  const span = from === to ? from : `${from}_to_${to}`;
+  const base = { ...(dept ? { department: dept } : {}), ...(emp ? { employeeId: emp } : {}), ...(src ? { punchSource: src } : {}) };
+  // The date-wise report finds a person by name / code, so hand it the code of the employee picked above.
+  const empCode = () => { const o = (data?.facets?.employeeId || []).find((x) => x.value === emp); const m = o && /\(([^()]+)\)\s*$/.exec(o.label); return m ? m[1] : ''; };
+  const dateWise = (format) => exportFile('/attendance/biometric', { ...(from === to ? { date: from } : { from, to }), ...(dept ? { department: dept } : {}), ...(emp ? { q: empCode() } : {}), ...(src ? { punchSource: src } : {}), format }, `first-check-in-last-check-out-${span}.${format}`);
+  const punchLog = (format) => exportFile('/attendance/punch-log', { from, to, ...base, format }, `punch-log-${span}.${format}`);
+  const exportItems = [
+    { heading: 'Attendance report' },
+    { key: 'r', label: 'Excel (.xlsx)', run: exportExcel },
+    { heading: 'Date-wise report (first in, last out)' },
+    { key: 'd1', label: 'Excel (.xlsx)', run: () => dateWise('xlsx') },
+    { key: 'd2', label: 'CSV (.csv)', run: () => dateWise('csv') },
+    { heading: 'Punch log' },
+    { key: 'p1', label: 'Excel (.xlsx)', run: () => punchLog('xlsx') },
+    { key: 'p2', label: 'CSV (.csv)', run: () => punchLog('csv') },
+  ];
+
   const c = data ? data.cards : {};
   const parts = data ? data.parts : {};
   const tiles = data ? (data.tiles || {}) : {};
@@ -152,24 +218,42 @@ export default function KpiReport({ onRangeChange } = {}) {
     <div className="att-kr">
       <div className="att-kr-head">
         <h3>Attendance report</h3>
-        <button type="button" className="btn btn-primary btn-sm" disabled={!data || busy} onClick={exportExcel}>{busy ? 'Making file…' : 'Export to Excel'}</button>
+        <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {onOpenSummary && (
+            <button type="button" className="btn btn-sm" onClick={onOpenSummary} title="Monthly summary: the month at a glance, person by person" aria-label="Open the monthly summary">
+              <span aria-hidden="true">📅</span> Monthly summary
+            </button>
+          )}
+          <ExportDrop busy={busy} disabled={!data} items={exportItems} />
+        </span>
       </div>
       {saved && <div className="att-kr-saved">{saved}</div>}
 
       <div className="att-kr-bar">
         <div className="att-kr-seg" role="group" aria-label="Period">
-          {[['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([k, l]) => (
-            <button key={k} type="button" className={`btn btn-sm${mode === k ? ' btn-primary' : ''}`} onClick={() => { setMode(k); setPick(noPick); }}>{l}</button>
+          {[['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['range', 'From – To']].map(([k, l]) => (
+            <button key={k} type="button" className={`btn btn-sm${mode === k ? ' btn-primary' : ''}`} onClick={() => { if (k === 'range') setCustom({ from, to }); setMode(k); setPick(noPick); }}>{l}</button>
           ))}
         </div>
-        <div className="att-kr-nav">
-          <button type="button" className="btn btn-sm" aria-label="Previous" onClick={() => setAnchor(step(mode, anchor, -1))}>◀</button>
-          {mode === 'month'
-            ? <input type="month" value={anchor.slice(0, 7)} onChange={(e) => e.target.value && setAnchor(`${e.target.value}-01`)} aria-label="Month" />
-            : <input type="date" value={anchor} onChange={(e) => e.target.value && setAnchor(e.target.value)} aria-label="Date" />}
-          <button type="button" className="btn btn-sm" aria-label="Next" onClick={() => setAnchor(step(mode, anchor, 1))}>▶</button>
-          {anchor !== localToday() && <button type="button" className="btn btn-sm" onClick={() => setAnchor(localToday())}>Today</button>}
-        </div>
+        {mode === 'range' ? (
+          <div className="att-kr-nav">
+            <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0 }}>From
+              <input type="date" value={custom.from} max={custom.to} onChange={(e) => e.target.value && setCustom((c0) => ({ from: e.target.value, to: c0.to < e.target.value ? e.target.value : c0.to }))} aria-label="From date" />
+            </label>
+            <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0 }}>To
+              <input type="date" value={custom.to} min={custom.from} onChange={(e) => e.target.value && setCustom((c0) => ({ ...c0, to: e.target.value }))} aria-label="To date" />
+            </label>
+          </div>
+        ) : (
+          <div className="att-kr-nav">
+            <button type="button" className="btn btn-sm" aria-label="Previous" onClick={() => setAnchor(step(mode, anchor, -1))}>◀</button>
+            {mode === 'month'
+              ? <input type="month" value={anchor.slice(0, 7)} onChange={(e) => e.target.value && setAnchor(`${e.target.value}-01`)} aria-label="Month" />
+              : <input type="date" value={anchor} onChange={(e) => e.target.value && setAnchor(e.target.value)} aria-label="Date" />}
+            <button type="button" className="btn btn-sm" aria-label="Next" onClick={() => setAnchor(step(mode, anchor, 1))}>▶</button>
+            {anchor !== localToday() && <button type="button" className="btn btn-sm" onClick={() => setAnchor(localToday())}>Today</button>}
+          </div>
+        )}
         <span className="att-kr-range">{rangeLabel(mode, from, to)}</span>
       </div>
 

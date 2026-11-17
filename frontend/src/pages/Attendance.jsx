@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
+import Modal from '../components/Modal.jsx';
 import { downloadCsv, to12h } from '../utils/csv.js';
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRow, Status } from '../components/proto.jsx';
 import { can, isAdmin, isSuperAdmin, isHR as hasHrmsAdmin, canEditAttendance, canDecideAttendance } from '../permissions';
@@ -16,8 +17,8 @@ import MyAttendance, { downloadFrom } from './attendance/MyAttendance.jsx';
 // The Monthly Summary also carries the old "Reports (Monthly)" figures; the
 // Team Attendance tab is gone — the Biometric list is the day-by-day view.
 import { MonthlySummaryTab, PunchImageButton } from './attendance/TeamAttendance.jsx';
-import { SourceChips, SourceFilter, PunchToggle, PunchDetails } from '../components/PunchSourceChip.jsx';
-import { HalfLeaveChip, DayKpis, PersonDayTiles, RangeBar, RangeKpis, DateTotalsTable, ScrollTable, matchesKpi, fmtDay, clock12, localToday, BUCKET_LABEL } from './attendance/DayReport.jsx';
+import { SourceFilter, PunchToggle, PunchDetails } from '../components/PunchSourceChip.jsx';
+import { RangeBar, ScrollTable, matchesKpi, fmtDay, clock12, localToday, BUCKET_LABEL } from './attendance/DayReport.jsx';
 import { DayStatus } from './attendance/MyAttendance.jsx';
 import NotifySettings from './attendance/NotifySettings.jsx';
 import CheckinSettings from './attendance/CheckinSettings.jsx';
@@ -79,8 +80,6 @@ const KPI_NAME = {
   presentAny: 'Present on ≥ 1 day', presentAll: 'Present every working day', halfDayAny: 'Half day on ≥ 1 day', absentAny: 'Absent on ≥ 1 day',
   onLeaveAny: 'On leave on ≥ 1 day', noRecordAny: 'No device data on ≥ 1 day', lateAny: 'Late on ≥ 1 day',
 };
-// 'pd:present' (a person-day count of the period) reads like the count it came from.
-const kpiName = (k) => { const s = String(k || ''); const base = s.replace(/^pd:/, ''); return `${KPI_NAME[base] || base}${s.startsWith('pd:') ? ' (person-days)' : ''}`; };
 
 ['halfDay', 'onLeave', 'absent'].forEach((t) => Object.entries({ late: 'Late', earlyLogout: 'Early logout', missingCheckIn: 'Missing check-in', missingCheckOut: 'Missing check-out', noPunches: 'No punches', punchOnLeave: 'Punch on a leave day', leaveRejected: 'Half-day leave rejected' })
   .forEach(([n, w]) => { KPI_NAME[`${t}:${n}`] = `${BUCKET_LABEL[t]} - ${w}`; }));
@@ -103,6 +102,15 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
   const [mf, setMf] = useState(EMPTY_MARK);
   // A KPI card clicked = the list below narrowed to those people.
   const [kpi, setKpi] = useState('');
+  // THE MONTHLY SUMMARY (founder 2026-11-14): one calendar button on this screen opens it; a number clicked inside it brings
+  // those dates / that person back into the report below (reportPreset).
+  const [showSummary, setShowSummary] = useState(false);
+  const [reportPreset, setReportPreset] = useState(null);
+  function fromSummary(f, t, key, q) {
+    const tile = String(key || '').replace(/^pd:/, '');
+    setReportPreset({ from: f, to: t, q: q || '', tile: ['present', 'absent', 'halfDay', 'onLeave', 'offDay'].includes(tile) ? tile : '', n: Date.now() });
+    setShowSummary(false);
+  }
   // The trend charts start on This Month (a one-day trend says nothing);
   // a period the user picked before is kept.
   useState(() => {
@@ -218,15 +226,18 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
           <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <DataIoBar ioKey="attendance" exportUrl="/insights/attendance/export" params={{ from: range.from, to: range.to }} showImport={false} />
             {canImportHistory && <button type="button" className="btn btn-sm" onClick={() => goTab('history')} title="Import past attendance from the old HRMS's CSV exports — sample files are on that tab">Import History →</button>}
-            <button type="button" className="btn btn-sm" onClick={() => goTab('biometric')}>Open date-wise list →</button>
           </span>
         </PanelHead>
         {/* THE ATTENDANCE REPORT (user, 2026-10-05): Day / Week / Month,
             Department -> Employee, the cards and their lists, Export to Excel
             (./attendance/KpiReport.jsx). Its period also drives the daily
             marking and the regularization list below. */}
-        <KpiReport onRangeChange={(f, t) => { if (f !== range.from || t !== range.to) pickRange(f, t); }} />
+        <KpiReport onRangeChange={(f, t) => { if (f !== range.from || t !== range.to) pickRange(f, t); }} preset={reportPreset} onOpenSummary={() => setShowSummary(true)} />
       </Panel>
+
+      {/* What used to sit on the Punch log screen for HR: tries refused for being outside the office, and the face check review. */}
+      <RefusedAttempts from={range.from} to={range.to} />
+      <FaceReview />
 
       <TwoCol>
         {!isRange ? (
@@ -344,6 +355,12 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
           <InsightsPanel module="attendance" storageKey={TREND_RANGE_KEY} tiles={false} />
         </div>
       </Panel>
+
+      {showSummary && (
+        <Modal title="Monthly summary" size="xwide" onClose={() => setShowSummary(false)}>
+          <MonthlySummaryTab goList={fromSummary} />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -351,17 +368,7 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
 // Anyone's own attendance — check in / out with a live face + location, and
 // their own days — is ./attendance/MyAttendance.jsx (HRMS-24 §5, §10).
 
-// ---- Tab 2: Biometric Attendance List — the old "First Check-In & Last
-// Check-Out Report" -----------------------------------------------------------
-// One line per person per day, exactly the old report's columns: Employee No ·
-// Employee Ref No · Employee Name · Department · Designation · Date · First
-// Check In · Last Check Out · Work Location · Total Time Worked · Total Time In
-// Break · Total Hours. Imported days show the CSV's values as exported; device
-// days are worked out from the stored punches (server: reportDay()). Name,
-// department and designation come from Employee Management. Like the old
-// report, only days with a check-in are listed unless "Show people without a
-// check-in" is ticked or a KPI card / status is picked. The KPI cards and the
-// date-wise totals stay (people, never person-days).
+// ---- (The old Tab 2, the date-wise "Biometric Attendance List", is the Dashboard report now: one filter bar, one list; its Excel / CSV are in the Dashboard Export menu.)
 
 // The dropdown options a filter bar has seen so far on this tab: the union of
 // every response's facets, so picking "Biometric" never shrinks the Method
@@ -380,166 +387,6 @@ function useSeen(data, pick) {
     });
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
   return seen;
-}
-
-// Search · Department · Status | More: Role · Employee status · Method · Source.
-// All of them are sent to the server (GET /attendance/biometric), so the
-// KPI-free totals, the rows and the CSV / Excel export follow the same filters.
-// Department only when the login's scope holds more than one.
-const bioFields = (seen, roles) => [
-  { key: 'q', type: 'search', placeholder: 'Search employee name or ID…' },
-  { key: 'department', label: 'Department', primary: true, options: seen.departments || [], show: (seen.departments || []).length > 1 },
-  { key: 'status', label: 'Status', allLabel: 'All day statuses', primary: true, options: seen.statuses || [] },
-  { key: 'role', label: 'Role', options: roles },
-  { key: 'hrStatus', label: 'Employee status', options: HR_STATUSES },
-  // ONE control: the check-in method (the old Method and Source filters said the same thing).
-  { key: 'method', label: 'Check-in method', allLabel: 'Any method', primary: true, options: seen.methods || [] },
-];
-
-const REPORT_COLS = [
-  ['employeeNo', 'Employee No'], ['employeeRef', 'Employee Ref No'], ['name', 'Employee Name'], ['department', 'Department'],
-  ['designation', 'Designation'], ['dateLabel', 'Date'], ['dayStatusCol', 'Day status'], ['methodText', 'Check-in method'], ['firstCheckIn', 'First Check In'], ['lastCheckOut', 'Last Check Out'],
-  ['workLocation', 'Work Location'], ['totalTimeWorked', 'Total Time Worked'], ['totalBreak', 'Total Time In Break'], ['totalHours', 'Total Hours'],
-];
-
-// `preset` = { from, to, kpi, q, n }: another tab (the Monthly Summary) opened this list for those dates / that count / that person.
-function BiometricTab({ preset = null, goSummary = null }) {
-  const [range, setRange] = useState(() => (preset ? { from: preset.from, to: preset.to } : { from: today(), to: today() }));
-  const [kpi, setKpi] = useState(() => (preset && preset.kpi) || '');
-  const [everyone, setEveryone] = useState(false);
-  const [src, setSrc] = useState(''); // Source filter: '' | web | biometric | pulse | hr
-  const [openRow, setOpenRow] = useState(null);
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const roles = useRoles(true);
-  const seen = useSeen(data, (d) => ({ departments: (d.rows || []).map((r) => r.department), ...(d.facets || {}) }));
-  const lf = useListFilters([], bioFields(seen, roles), { server: true });
-  // opened from the Monthly Summary: take its dates, its count and (for a person's number) that person
-  const presetN = preset ? preset.n : 0;
-  useEffect(() => {
-    if (!preset) return;
-    setRange({ from: preset.from, to: preset.to });
-    setKpi(preset.kpi || '');
-    lf.setValue('q', preset.q || '');
-  }, [presetN]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const single = range.from === range.to;
-  // A KPI card lists people who may have no check-in (Absent, On Leave…), so
-  // it asks for everyone too.
-  const params = { ...(single ? { date: range.from } : range), ...lf.params, ...(everyone || kpi ? { all: '1' } : {}), ...(src ? { punchSource: src } : {}) };
-  const key = JSON.stringify(params);
-  useEffect(() => {
-    let alive = true;
-    setError('');
-    api.get('/attendance/biometric', { params })
-      .then((res) => { if (alive) setData(res.data); })
-      .catch((e) => { if (alive) { setData(null); setError(e.response?.data?.error || 'Could not load the biometric list.'); } });
-    return () => { alive = false; };
-  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const isRange = !!data?.range;
-  // In range mode the "≥ 1 day" cards pick PEOPLE; their day rows are listed.
-  // (a person-day tile 'pd:…' lists day rows, so it is not a people filter)
-  const rangePeople = isRange && kpi && !String(kpi).startsWith('pd:') ? new Set((data.summary?.rows || []).filter((p) => matchesKpi(p, kpi)).map((p) => p.employeeId)) : null;
-  const rows = (data?.rows || []).filter((r) => (rangePeople ? rangePeople.has(r.employeeId) : matchesKpi(r, kpi)));
-  const page = usePaged(rows, 100);
-  const clearAll = () => { lf.clear(); setKpi(''); };
-
-  async function exportAs(format) {
-    setBusy(true);
-    try {
-      const name = single ? range.from : `${range.from}_to_${range.to}`;
-      await downloadFrom('/attendance/biometric', { ...params, ...(kpi && !isRange ? { dayStatus: kpi } : {}), format }, `first-check-in-last-check-out-${name}.${format}`);
-    } catch { setError('Could not export the list.'); } finally { setBusy(false); }
-  }
-
-  return (
-    <Panel className="att-day">
-      <PanelHead title={`First Check-In & Last Check-Out Report — ${single ? fmtDay(range.from) : `${fmtDay(range.from)} → ${fmtDay(range.to)}`}`}>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button type="button" className="btn btn-sm" onClick={() => exportAs('csv')} disabled={!data || busy} title="The rows matching these filters, with the same 12 columns">Export CSV</button>
-          <button type="button" className="btn btn-sm btn-primary" onClick={() => exportAs('xlsx')} disabled={!data || busy} title="The rows matching these filters, with the same 12 columns">Export Excel</button>
-        </div>
-      </PanelHead>
-      <div style={{ padding: '12px 18px 0' }}>
-        <RangeBar from={range.from} to={range.to} onChange={(f, t) => { setRange({ from: f, to: t }); setKpi(''); }} latest={data?.latestDataDate} today={data?.today} />
-        <ListFilterBar lf={lf} storageKey="att-bio">
-          <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, margin: 0 }} title="Also list the people on the rolls with no check-in that day (absent, on leave, no record, week-off)">
-            <input type="checkbox" style={{ width: 15, height: 15, minHeight: 0, minWidth: 0 }} checked={everyone} onChange={(e) => setEveryone(e.target.checked)} />
-            Show people without a check-in
-          </label>
-          {kpi && <button type="button" className="btn btn-sm" onClick={() => setKpi('')} title="Show everyone again">✕ {kpiName(kpi)}</button>}
-        </ListFilterBar>
-        <SourceFilter value={src} onChange={setSrc} totals={data?.sourceTotals} />
-        {error && <div className="notice red">{error}</div>}
-        <NoDataNotice data={data} to={range.to} />
-        {data && !isRange && <DayKpis kpis={data.totals} date={data.date} headcount={data.headcount} active={kpi} onPick={setKpi} lateAfter={data.lateAfter} />}
-        {data && isRange && (
-          <>
-            <PersonDayTiles tiles={data.summary?.tiles} equation={data.summary?.equation} from={data.from} to={data.to} active={kpi} onPick={setKpi} onOpenSummary={goSummary ? () => goSummary(data.from, data.to) : null} />
-            <RangeKpis summary={data.summary} from={data.from} to={data.to} active={kpi} onPick={setKpi} />
-            <div className="att-kpi-sep">Date-wise totals — click a date to open that day</div>
-            <DateTotalsTable days={data.days} onPickDay={(d) => { setRange({ from: d, to: d }); setKpi(''); }} />
-          </>
-        )}
-        <div className="small-muted" style={{ fontSize: 12, margin: '4px 0 10px' }}>
-          Imported days show the old HRMS report&apos;s values as exported. Device days: First Check In = the first check-in, Last Check Out = the last
-          check-out the employee pressed, Total Hours = last out − first in, Total Time In Break = the gaps from a check-out to the next check-in,
-          Total Time Worked = Total Hours − breaks. Hover a row for the day&apos;s status.
-          {data && !data.everyone && data.withoutCheckIn > 0 && (
-            <> {' '}<b>{data.withoutCheckIn}</b> person-day(s) on the rolls without a check-in are not listed —{' '}
-              <button type="button" className="link-btn" onClick={() => setEveryone(true)}>show them</button>.
-            </>
-          )}
-        </div>
-      </div>
-      <ScrollTable>
-        <table>
-          <thead>
-            <tr>{[...REPORT_COLS, ['punchSources', 'Punches by source']].map(([k, label]) => <th key={k} style={{ whiteSpace: 'nowrap' }}>{label}</th>)}</tr>
-          </thead>
-          <tbody>
-            {page.slice.map((r) => [(
-              <tr key={`${r.employeeId}-${r.date}`} title={`${r.dateLabel}: ${r.bucket === 'noRecord' ? 'No device data' : r.status}${r.note ? ` — ${r.note}` : ''}${r.source && r.source !== '—' ? ` · ${r.source}` : ''}`}>
-                <td><b>{r.employeeNo}</b></td>
-                <td>{r.employeeRef}</td>
-                <td>{r.name}</td>
-                <td className="cell-muted">{r.department || ''}</td>
-                <td className="cell-muted">{r.designation || ''}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>{r.dateLabel}</td>
-                <td>{r.status ? <DayStatus status={r.bucket === 'noRecord' ? 'No device data' : r.status} earlyLogout={r.earlyLogout} /> : ''}{r.halfLeave ? <div><HalfLeaveChip state={r.halfLeave} half={r.halfLeaveHalf} by={r.halfLeaveBy} /></div> : null}</td>
-                <td className="cell-muted">{r.methodText || '—'}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>{r.firstCheckIn || ''}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>{r.lastCheckOut || ''}</td>
-                <td className="cell-muted">{r.workLocation || ''}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>{r.totalTimeWorked || ''}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>{r.totalBreak || ''}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>{r.totalHours || ''}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  <SourceChips counts={r.sourceCounts} />
-                  {(r.rawPunches || []).length > 0 && <div><PunchToggle open={openRow === `${r.employeeId}-${r.date}`} count={r.rawPunches.length} onClick={() => setOpenRow(openRow === `${r.employeeId}-${r.date}` ? null : `${r.employeeId}-${r.date}`)} /></div>}
-                </td>
-              </tr>
-            ), openRow === `${r.employeeId}-${r.date}` && <tr key={`${r.employeeId}-${r.date}-d`}><td colSpan="15"><PunchDetails list={r.rawPunches} /></td></tr>])}
-            {data && rows.length === 0 && (
-              <tr><td colSpan="15">
-                <ListEmpty lf={{ activeCount: lf.activeCount || kpi ? 1 : 0, clear: clearAll }} noun="rows" title="No check-ins in this period." />
-              </td></tr>
-            )}
-            {!data && !error && <tr><td colSpan="15" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
-          </tbody>
-        </table>
-      </ScrollTable>
-      <div style={{ padding: '4px 18px 10px' }}>
-        {rows.length > 0 && <Pager page={page} noun="rows" />}
-        <div className="small-muted" style={{ fontSize: 12 }}>
-          {data && rows.length !== data.rows.length ? `${data.rows.length} row(s) before the card filter` : ''}{kpi ? ` · ${kpiName(kpi)}` : ''}
-          {data && rows.length > page.size ? ' · the export has every matching row' : ''}
-        </div>
-      </div>
-    </Panel>
-  );
 }
 
 // ---- Tab 3: Punch log — every punch, and how many times each day ------------
@@ -1178,40 +1025,35 @@ export default function Attendance() {
   const canEditPolicy = isAdmin(user);
   const canImportHistory = can(user, 'hrms', 'hrms', 'Attendance & Time', 'configure');
   const canAssignMethods = isSuperAdmin(user);
-  // Count -> list: the Monthly Summary opens the Biometric list for the same dates / count / person, and back.
-  const [bioPreset, setBioPreset] = useState(null);
-  const [summaryPreset, setSummaryPreset] = useState(null);
   // ?tab=late opens the Late coming tab (the bell and the Late alert link here).
   const [tab, setTab] = useState(() => { try { return new URLSearchParams(window.location.search).get('tab') || 'dashboard'; } catch { return 'dashboard'; } });
+
+  // ONE LEVEL OF TABS (founder 2026-11-14: not tabs inside tabs). The date-wise list, the punch log and the monthly summary are
+  // not screens of their own for HR any more: they are the Dashboard's one filter bar and list, an Export menu (punch log
+  // included) and a calendar button that opens the monthly summary.
+  const tabs = [
+    { key: 'dashboard', label: 'Dashboard', element: <DashboardTab isHR={isHR} canMark={canMark} goTab={setTab} canImportHistory={canImportHistory} /> },
+    // HR, Managers, STLs and TLs have their own attendance too.
+    // …but Super Admin is a system account, not an employee: no self-service tab.
+    ...(isHR && !user?.systemAccount ? [{ key: 'mine', label: 'My Attendance', element: <MyAttendance /> }] : []),
+    // PUNCH LOG FOR EVERYONE BUT HR (founder 2026-10-29): an employee sees their own punches, a TL their team (server scope).
+    ...(!isHR ? [{ key: 'punchlog', label: 'Punch log', element: <PunchLogTab isHR={false} /> }] : []),
+    { key: 'regularization', label: 'Regularization', element: <RegularizationTab isHR={isHR} canDecide={canDecide} /> },
+    // LATE COMING: everyone with an employee record can tell why they were late; approvers see the requests waiting on them.
+    { key: 'late', label: 'Late coming', element: <LateComing isHR={isHR} canDecide={canDecide} /> },
+    { key: 'methods', label: 'Check-in Methods', element: <MethodsTab canEdit={canEditPolicy} canAssign={canAssignMethods} canAlerts={canImportHistory} /> },
+    ...(canImportHistory ? [{ key: 'history', label: 'Import History', element: <HistoryImport /> }] : []),
+  ];
+  // An old or not-allowed ?tab= (biometric, summary, a tab this login does not have) opens the Dashboard, not an empty page.
+  const active = tabs.some((t) => t.key === tab) ? tab : 'dashboard';
 
   return (
     <TabsPage
       title="Attendance & Time"
       subtitle="Day-by-day attendance of the people on the rolls, device punches, the monthly summary and the check-in methods your people may use."
-      value={tab}
+      value={active}
       onChange={setTab}
-      tabs={[
-        { key: 'dashboard', label: 'Dashboard', element: <DashboardTab isHR={isHR} canMark={canMark} goTab={setTab} canImportHistory={canImportHistory} /> },
-        // HR, Managers, STLs and TLs have their own attendance too.
-        // …but Super Admin is a system account, not an employee: no self-service tab.
-        ...(isHR && !user?.systemAccount ? [{ key: 'mine', label: 'My Attendance', element: <MyAttendance /> }] : []),
-        ...(isHR ? [
-          { key: 'biometric', label: 'Biometric Attendance List', element: <BiometricTab preset={bioPreset} goSummary={(from, to) => { setSummaryPreset({ from, to, n: Date.now() }); setTab('summary'); }} /> },
-        ] : []),
-        // PUNCH LOG FOR EVERYONE (founder 2026-10-29): an employee sees their own punches, a TL their team, HR everyone (server scope).
-        { key: 'punchlog', label: 'Punch log', element: <PunchLogTab isHR={isHR} /> },
-        ...(isHR ? [
-          // HRMS-24 §11 — the monthly summary, in scope. It now carries the old
-          // "Reports (Monthly)" figures too; "Team Attendance" is gone — the
-          // Biometric list above is the date-wise, in-scope view of every person.
-          { key: 'summary', label: 'Monthly Summary', element: <MonthlySummaryTab preset={summaryPreset} goList={(from, to, kpi, q) => { setBioPreset({ from, to, kpi: kpi || '', q: q || '', n: Date.now() }); setTab('biometric'); }} /> },
-        ] : []),
-        ...(canImportHistory ? [{ key: 'history', label: 'Import History', element: <HistoryImport /> }] : []),
-        { key: 'methods', label: 'Check-in Methods', element: <MethodsTab canEdit={canEditPolicy} canAssign={canAssignMethods} canAlerts={canImportHistory} /> },
-        { key: 'regularization', label: 'Regularization', element: <RegularizationTab isHR={isHR} canDecide={canDecide} /> },
-        // LATE COMING: everyone with an employee record can tell why they were late; approvers see the requests waiting on them.
-        { key: 'late', label: 'Late coming', element: <LateComing isHR={isHR} canDecide={canDecide} /> },
-      ]}
+      tabs={tabs}
     />
   );
 }
