@@ -967,6 +967,15 @@ async function remove(user, kind, id) {
     await DB.run('UPDATE "CrmContact" SET "accountId" = NULL WHERE "accountId" = ?', row.id);
   }
   if (kind === 'deal') await DB.run('UPDATE "CrmLead" SET "dealId" = NULL WHERE "dealId" = ?', row.id);
+  // a lead deleted from its record (founder 2026-11-17) takes its own timeline and follow-ups with it; what was carried over to an
+  // account or a deal at conversion stays there
+  if (kind === 'lead') {
+    await DB.run('DELETE FROM "CrmActivity" WHERE "leadId" = ? AND "accountId" IS NULL AND "dealId" IS NULL', row.id);
+    await DB.run('DELETE FROM "CrmTask" WHERE "leadId" = ? AND "accountId" IS NULL AND "dealId" IS NULL', row.id);
+    await DB.run('UPDATE "CrmActivity" SET "leadId" = NULL WHERE "leadId" = ?', row.id);
+    await DB.run('UPDATE "CrmTask" SET "leadId" = NULL WHERE "leadId" = ?', row.id);
+    for (const t of ['CrmAiMeeting', 'CrmQuote']) await DB.run(`DELETE FROM "${t}" WHERE "leadId" = ?`, row.id).catch(() => null); // eslint-disable-line no-await-in-loop
+  }
   await DB.run(`DELETE FROM "${table}" WHERE "id" = ?`, row.id);
   await audit(user, `CRM ${kind} deleted`, table, row.id, row.company || row.name || row.title || row.subject);
   return okBody({ ok: true });

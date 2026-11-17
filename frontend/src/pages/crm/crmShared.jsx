@@ -1096,6 +1096,14 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
             {d.canEdit && kind === 'lead' && row.status !== 'Converted' && <button type="button" className="btn btn-sm" title="Stop or start the automatic mails, SMS, WhatsApp and calls to this lead" onClick={() => api.post(`/crm/leads/${row.id}/auto`, { paused: !row.autoPaused }).then(() => { toast(row.autoPaused ? 'Automatic follow-through is on for this lead.' : 'Automatic follow-through stopped for this lead.'); changed(); }).catch((e) => toast(errOf(e, 'This could not be changed.')))}>{row.autoPaused ? 'Start automatic' : 'Stop automatic'}</button>}
             {d.canEdit && kind === 'lead' && row.status !== 'Converted' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setConverting(true)}>Convert to deal</button>}
             {kind === 'lead' && row.status === 'Converted' && row.dealId && <button type="button" className="btn btn-sm" onClick={() => openRecord('deal', row.dealId)}>Open the deal</button>}
+            {kind === 'lead' && d.canEdit && (me.canAssign || (me.rights && me.rights.delete)) && (
+              <button type="button" className="btn btn-sm" style={{ color: 'var(--red)', borderColor: 'var(--red)' }} title="Delete this lead with its own activities and follow-ups"
+                onClick={() => {
+                  // eslint-disable-next-line no-alert
+                  if (!window.confirm(`Delete the lead "${name}"?\n\nIts own activities and follow-ups go with it. ${row.status === 'Converted' ? 'The account and the deal made from it stay.' : ''}\nThis cannot be undone.`)) return;
+                  api.delete(`/crm/lead/${row.id}`).then(() => { toast('Lead deleted.'); if (onChanged) onChanged(); onClose(); }).catch((e) => toast(errOf(e, 'The lead could not be deleted.')));
+                }}>Delete</button>
+            )}
             {d.canEdit && kind === 'account' && <button type="button" className="btn btn-sm" onClick={() => setEditing({ kind: 'contact', preset: { accountId: row.id } })}>+ Contact</button>}
             {d.canEdit && kind === 'account' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setEditing({ kind: 'deal', preset: { accountId: row.id, title: `${row.name} - deal` } })}>+ Deal</button>}
           </div>
