@@ -199,3 +199,67 @@
 .pm-table tr[data-plan="premium"] td:first-child { box-shadow: inset 3px 0 0 var(--pm-gold); }
 .pm-cta.compact { gap: 8px; margin-top: 12px; }
 .pm-cta.compact .pm-btn { padding: 11px 14px; font-size: 15px; border-radius: 12px; }
+
+
+/* ============================================================================================================================================================================
+   THE LOOK (founder 2026-11-17: "this is not good looking, create some aesthetic way"): an immersive navy page with soft moving light, frosted glass panels, and white cards only for what has to be
+   read in full (the plans, the table, the questions). The first screen fills the phone instead of a small card with an empty page under it.
+   ============================================================================================================================================================================ */
+.pm { color: #fff; background: radial-gradient(900px 560px at 88% -8%, rgba(12, 156, 252, .42), transparent 62%), radial-gradient(760px 520px at -12% 30%, rgba(46, 98, 230, .32), transparent 62%), linear-gradient(180deg, #08205b 0%, #0a2463 38%, #061540 100%) fixed; }
+.pm::before { content: ""; position: fixed; inset: -20%; z-index: 0; pointer-events: none; animation: pmDrift 26s ease-in-out infinite alternate;
+  background: radial-gradient(closest-side, rgba(12, 156, 252, .20), transparent) 18% 28% / 42% 42% no-repeat, radial-gradient(closest-side, rgba(130, 175, 255, .13), transparent) 82% 72% / 46% 46% no-repeat; }
+@keyframes pmDrift { from { transform: translate3d(-2%, -1%, 0); } to { transform: translate3d(3%, 2%, 0); } }
+.pm .pm-wrap { position: relative; z-index: 1; }
+.pm-top { background: transparent; border-bottom: 0; backdrop-filter: none; }
+.pm-logochip { display: inline-flex; align-items: center; background: #fff; border-radius: 14px; padding: 7px 13px 6px; box-shadow: 0 10px 24px -12px rgba(0, 0, 0, .65); }
+.pm-live { color: rgba(255, 255, 255, .82); }
+.pm-lang { background: rgba(255, 255, 255, .13); backdrop-filter: blur(8px); }
+.pm-lang button { color: rgba(255, 255, 255, .86); }
+.pm-lang button[aria-pressed="true"] { background: #fff; color: var(--pm-s); }
+
+/* the stage: frosted glass over the page */
+.pm-stage { background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .17); backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); box-shadow: 0 34px 70px -34px rgba(0, 0, 0, .7), inset 0 1px 0 rgba(255, 255, 255, .12); }
+.pm-seg i { background: rgba(255, 255, 255, .22); }
+.pm-seg i.on { background: linear-gradient(90deg, #7cc4ff, #fff); }
+.pm-tile, .pm-rung { box-shadow: 0 14px 28px -18px rgba(0, 0, 0, .7); }
+.pm-plan, .pm-tablewrap { box-shadow: 0 22px 44px -22px rgba(0, 0, 0, .75); }
+.pm-panel, .pm-card { color: var(--pm-ink); }
+
+/* the assistant: glass, with a glowing orb */
+.pm-assistant { background: rgba(255, 255, 255, .09); border: 1px solid rgba(255, 255, 255, .18); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); color: #fff; box-shadow: 0 24px 50px -30px rgba(0, 0, 0, .7); }
+.pm-avatar { background: radial-gradient(circle at 30% 25%, #4cc0ff, #0a73c4 55%, #0a2463); box-shadow: 0 0 28px -4px rgba(12, 156, 252, .75), inset 0 1px 0 rgba(255, 255, 255, .35); }
+.pm-avatar::after { border-color: #7cc4ff; }
+.pm-waves i { background: #7cc4ff; }
+.pm-who { color: rgba(255, 255, 255, .72); }
+.pm-who span { background: rgba(255, 255, 255, .15); color: #fff; }
+.pm-say { color: #fff; }
+.pm-ask-now { color: #8ff0b8; }
+.pm-assistant details { color: rgba(255, 255, 255, .78); }
+.pm-assistant summary { color: #8fd0ff; }
+.pm-assistant details mark { background: rgba(253, 230, 138, .95); color: #1c2733; }
+
+/* the first screen fills the phone */
+.pm-hero { background: none; box-shadow: none; padding: 6px 4px 26px; margin-top: 0; min-height: calc(100vh - 92px); min-height: calc(100svh - 92px); display: flex; flex-direction: column; justify-content: center; }
+.pm-hero .pm-avatar { width: 116px; height: 116px; margin-bottom: 20px; background: radial-gradient(circle at 30% 25%, #5cc8ff, #0a73c4 55%, #0a2463); border: 2px solid rgba(255, 255, 255, .55); box-shadow: 0 0 60px -6px rgba(12, 156, 252, .85), inset 0 1px 0 rgba(255, 255, 255, .4); }
+.pm-hero .pm-avatar svg { width: 58%; height: 58%; }
+.pm-hero h1 { font-size: 36px; letter-spacing: -.02em; }
+.pm-hero p { font-size: 16.5px; color: rgba(255, 255, 255, .86); margin-top: 12px; }
+.pm-langs { margin: 26px 0 16px; }
+.pm-langs button { background: rgba(255, 255, 255, .1); border: 1.5px solid rgba(255, 255, 255, .26); backdrop-filter: blur(10px); padding: 16px 6px; transition: transform .15s, background .15s; }
+.pm-langs button:active { transform: scale(.97); }
+.pm-langs button[aria-pressed="true"] { background: #fff; color: var(--pm-s); border-color: #fff; box-shadow: 0 18px 34px -16px rgba(0, 0, 0, .7); }
+.pm-start { width: 100%; padding: 18px 20px; font-size: 19px; color: #fff; background: linear-gradient(135deg, #34b8ff, #0a73c4); box-shadow: 0 20px 38px -16px rgba(12, 156, 252, .95), inset 0 1px 0 rgba(255, 255, 255, .35); }
+.pm-start .pm-play-ico { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: rgba(255, 255, 255, .22); font-size: 12px; }
+.pm-trust { margin-top: 20px; color: rgba(255, 255, 255, .85); }
+
+/* the controls: a dark glass bar */
+.pm-bar { background: rgba(6, 21, 64, .8); border-top: 1px solid rgba(255, 255, 255, .14); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+.pm-round { background: rgba(255, 255, 255, .13); color: #fff; }
+.pm-play { background: linear-gradient(135deg, #34b8ff, #0a73c4); box-shadow: 0 12px 26px -10px #0c9cfc; }
+.pm-next { background: linear-gradient(135deg, #34b8ff, #0a73c4); box-shadow: 0 12px 26px -14px #0c9cfc; }
+.pm-next.hint { background: linear-gradient(135deg, #34d399, #15803d); }
+.pm-pill { background: rgba(255, 255, 255, .06); border: 1.5px solid rgba(255, 255, 255, .38); color: #fff; }
+.pm-pill.call { border-color: #6ee7a8; color: #c4f7da; }
+@media (min-width: 980px) { .pm-hero { min-height: calc(100vh - 120px); } .pm-hero h1 { font-size: 40px; } }
+.pm-panel .pm-round { background: #e6eef9; color: var(--pm-ink); }
+.pm-panel .pm-round.pm-mic.on { background: #dc2626; color: #fff; }

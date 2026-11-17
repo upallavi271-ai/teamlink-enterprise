@@ -464,7 +464,7 @@ export default function PlansMeetingPage() {
   const top = (withLang = true) => (
     <header className="pm-top">
       <div className="pm-top-in">
-        <div className="pm-brand"><TeamLinkMark width={150} /><span className="pm-live"><i /><em>{t.auto}</em></span></div>
+        <div className="pm-brand"><span className="pm-logochip"><TeamLinkMark width={138} /></span><span className="pm-live"><i /><em>{t.auto}</em></span></div>
         {withLang ? <div className="pm-lang" role="group" aria-label={t.chooseLang}>{LANGS.map(([k, name]) => <button key={k} type="button" aria-pressed={lang === k} onClick={() => pickLang(k)}>{name}</button>)}</div> : null}
       </div>
     </header>
@@ -495,7 +495,7 @@ export default function PlansMeetingPage() {
               {LANGS.map(([k, name]) => <button key={k} type="button" aria-pressed={lang === k} onClick={() => pickLang(k)}>{name}<small>{LANG_NAME[k]}</small></button>)}
             </div>
             {!hasVoice && (voices.length > 0 || typeof window === 'undefined' || !window.speechSynthesis) ? <div className="pm-note">{t.noVoice(LANG_NAME[lang])}</div> : null}
-            <button type="button" className="pm-btn go" style={{ width: '100%', fontSize: 18, padding: '17px 18px' }} onClick={begin}>▶ {t.start}</button>
+            <button type="button" className="pm-btn pm-start" onClick={begin}><span className="pm-play-ico">▶</span> {t.start}</button>
             <div className="pm-trust"><span>⏱ {t.trustMin}</span><span>🤖 {t.auto}</span><span>🔒 {t.trustNoLogin}</span></div>
           </section>
         </main>
