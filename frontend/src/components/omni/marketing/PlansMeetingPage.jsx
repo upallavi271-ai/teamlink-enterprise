@@ -6,6 +6,7 @@ import { matchFaq, sentencesOf, dropFirstTen, dropFirstTenLines, fillProof, answ
 import { budgetOf, budgetReply } from './meetingBudget.js';
 import { planAnswer } from './meetingPlans.js';
 import './plansMeeting.css';
+import { TeamLinkMark } from '../../Logo.jsx'; // the TeamLink logo, untouched (its own colours)
 
 // THE PLANS MEETING (/plans-meeting/:token, or /plans-meeting with no token): no login, outside the TeamLink shell. A client who got the link on WhatsApp opens it on their phone: an automated
 // assistant shows 12 short slides and SPEAKS them (the browser's own voice, free) in English, Telugu or Hindi, with captions always on screen. The client can ask a question at any time (typed,
@@ -29,7 +30,7 @@ const T = {
     submit: 'Send to our team', cancel: 'Back to the meeting', needPhone: 'Please type your WhatsApp number.', pickOne: 'Please pick one option.', fail: 'It could not be sent. Please try again.',
     thanks: (n) => `Thank you${n ? `, ${n}` : ''}. Our team has your request and will contact you soon.`, seeWork: 'See our finished work', plansTitle: 'Our plans (+ 18% GST)', again: 'Try again', loading: 'Opening your meeting…',
     gone: 'This link does not work any more. Please ask the sender for a new one.', busy: 'The page could not be opened just now. It will try again by itself.', yourQ: 'You', bot: 'Assistant', idle: 'Still there? Press Next to continue.', listenHelp: 'Say your question',
-    choosePlan: 'Choose a plan', howMonth: 'How a month works', perMonth: 'a month', plusGst: '+ GST', withGst: (x) => `${x} with GST`, voiceOn: 'Voice on', loadingVoice: 'Loading the voice…', micListening: 'Listening… speak your question now', micRecording: 'Recording… tap the microphone again when you finish', micThinking: 'Understanding what you said…', micDenied: 'The microphone is blocked. Tap the lock icon next to the address, allow the microphone for this page, then try again.', micNo: 'No microphone was found on this device.', micNone: 'I did not hear anything. Tap the microphone and speak a little louder, or type your question.', micFail: 'Your voice could not be understood. Please type your question.', micHeard: (x) => `I heard: “${x}”`, captionsOnly: 'Captions only', fullText: 'Show full text', trustMin: '5 minutes', trustNoLogin: 'No login', auto: 'Automated assistant', waitAsk: 'Do you have a question? Ask now, or press Next.', fin: 'The meeting is finished.', unsure: 'Our team will answer this one. Do you want to talk to them now?',
+    choosePlan: 'Choose a plan', howMonth: 'How a month works', thPlan: 'Plan', thMonth: 'Per month', thGst: 'With GST', perMonth: 'a month', plusGst: '+ GST', withGst: (x) => `${x} with GST`, voiceOn: 'Voice on', loadingVoice: 'Loading the voice…', micListening: 'Listening… speak your question now', micRecording: 'Recording… tap the microphone again when you finish', micThinking: 'Understanding what you said…', micDenied: 'The microphone is blocked. Tap the lock icon next to the address, allow the microphone for this page, then try again.', micNo: 'No microphone was found on this device.', micNone: 'I did not hear anything. Tap the microphone and speak a little louder, or type your question.', micFail: 'Your voice could not be understood. Please type your question.', micHeard: (x) => `I heard: “${x}”`, captionsOnly: 'Captions only', fullText: 'Show full text', trustMin: '5 minutes', trustNoLogin: 'No login', auto: 'Automated assistant', waitAsk: 'Do you have a question? Ask now, or press Next.', fin: 'The meeting is finished.', unsure: 'Our team will answer this one. Do you want to talk to them now?',
   },
   te: {
     hello: (n) => (n ? `నమస్కారం ${n} గారు` : 'నమస్కారం'), chooseLang: 'మీ భాషను ఎంచుకోండి', start: 'మీటింగ్ మొదలుపెట్టండి', soundOn: 'దయచేసి మీ సౌండ్ ఆన్ చేయండి. ఇది ఆటోమేటెడ్ అసిస్టెంట్, మనిషి కాదు. సుమారు 5 నిమిషాలు పడుతుంది.',
@@ -40,7 +41,7 @@ const T = {
     submit: 'మా టీమ్‌కు పంపండి', cancel: 'మీటింగ్‌కు తిరిగి వెళ్ళండి', needPhone: 'దయచేసి మీ వాట్సాప్ నంబర్ రాయండి.', pickOne: 'దయచేసి ఒకటి ఎంచుకోండి.', fail: 'పంపడం కుదరలేదు. దయచేసి మళ్ళీ ప్రయత్నించండి.',
     thanks: (n) => `ధన్యవాదాలు${n ? ` ${n} గారు` : ''}. మీ అభ్యర్థన మా టీమ్‌కు అందింది, త్వరలో సంప్రదిస్తారు.`, seeWork: 'మేము చేసిన పని చూడండి', plansTitle: 'మా ప్లాన్లు (+ 18% జీఎస్టీ)', again: 'మళ్ళీ ప్రయత్నించండి', loading: 'మీ మీటింగ్ తెరుస్తున్నాను…',
     gone: 'ఈ లింక్ ఇప్పుడు పనిచేయడం లేదు. దయచేసి పంపినవారిని కొత్త లింక్ అడగండి.', busy: 'పేజీ ఇప్పుడు తెరుచుకోలేదు. అదే మళ్ళీ ప్రయత్నిస్తుంది.', yourQ: 'మీరు', bot: 'అసిస్టెంట్', idle: 'ఇంకా ఉన్నారా? కొనసాగడానికి తరువాత నొక్కండి.', listenHelp: 'మీ ప్రశ్న చెప్పండి',
-    choosePlan: 'ప్లాన్ ఎంచుకోండి', howMonth: 'ఒక నెల ఎలా సాగుతుంది', perMonth: 'నెలకు', plusGst: '+ జీఎస్టీ', withGst: (x) => `జీఎస్టీతో ${x}`, voiceOn: 'వాయిస్ ఆన్', loadingVoice: 'వాయిస్ లోడ్ అవుతోంది…', micListening: 'వింటున్నాను… మీ ప్రశ్న ఇప్పుడే చెప్పండి', micRecording: 'రికార్డ్ అవుతోంది… పూర్తయ్యాక మైక్ మళ్ళీ నొక్కండి', micThinking: 'మీరు చెప్పింది అర్థం చేసుకుంటున్నాను…', micDenied: 'మైక్రోఫోన్ బ్లాక్ అయింది. అడ్రస్ పక్కన ఉన్న తాళం గుర్తు నొక్కి, ఈ పేజీకి మైక్రోఫోన్ అనుమతించి, మళ్ళీ ప్రయత్నించండి.', micNo: 'ఈ పరికరంలో మైక్రోఫోన్ కనిపించలేదు.', micNone: 'నాకు ఏమీ వినిపించలేదు. మైక్ నొక్కి కొంచెం గట్టిగా మాట్లాడండి, లేదా మీ ప్రశ్న రాయండి.', micFail: 'మీ గొంతు అర్థం కాలేదు. దయచేసి మీ ప్రశ్న రాయండి.', micHeard: (x) => `నాకు వినిపించింది: “${x}”`, captionsOnly: 'అక్షరాలు మాత్రమే', fullText: 'పూర్తి టెక్స్ట్ చూపండి', trustMin: '5 నిమిషాలు', trustNoLogin: 'లాగిన్ అవసరం లేదు', auto: 'ఆటోమేటెడ్ అసిస్టెంట్', waitAsk: 'ఏదైనా ప్రశ్న ఉందా? ఇప్పుడే అడగండి, లేదా తరువాత నొక్కండి.', fin: 'మీటింగ్ పూర్తయింది.', unsure: 'దీనికి మా టీమ్ సమాధానం ఇస్తుంది. ఇప్పుడే వారితో మాట్లాడతారా?',
+    choosePlan: 'ప్లాన్ ఎంచుకోండి', howMonth: 'ఒక నెల ఎలా సాగుతుంది', thPlan: 'ప్లాన్', thMonth: 'నెలకు', thGst: 'జీఎస్టీతో', perMonth: 'నెలకు', plusGst: '+ జీఎస్టీ', withGst: (x) => `జీఎస్టీతో ${x}`, voiceOn: 'వాయిస్ ఆన్', loadingVoice: 'వాయిస్ లోడ్ అవుతోంది…', micListening: 'వింటున్నాను… మీ ప్రశ్న ఇప్పుడే చెప్పండి', micRecording: 'రికార్డ్ అవుతోంది… పూర్తయ్యాక మైక్ మళ్ళీ నొక్కండి', micThinking: 'మీరు చెప్పింది అర్థం చేసుకుంటున్నాను…', micDenied: 'మైక్రోఫోన్ బ్లాక్ అయింది. అడ్రస్ పక్కన ఉన్న తాళం గుర్తు నొక్కి, ఈ పేజీకి మైక్రోఫోన్ అనుమతించి, మళ్ళీ ప్రయత్నించండి.', micNo: 'ఈ పరికరంలో మైక్రోఫోన్ కనిపించలేదు.', micNone: 'నాకు ఏమీ వినిపించలేదు. మైక్ నొక్కి కొంచెం గట్టిగా మాట్లాడండి, లేదా మీ ప్రశ్న రాయండి.', micFail: 'మీ గొంతు అర్థం కాలేదు. దయచేసి మీ ప్రశ్న రాయండి.', micHeard: (x) => `నాకు వినిపించింది: “${x}”`, captionsOnly: 'అక్షరాలు మాత్రమే', fullText: 'పూర్తి టెక్స్ట్ చూపండి', trustMin: '5 నిమిషాలు', trustNoLogin: 'లాగిన్ అవసరం లేదు', auto: 'ఆటోమేటెడ్ అసిస్టెంట్', waitAsk: 'ఏదైనా ప్రశ్న ఉందా? ఇప్పుడే అడగండి, లేదా తరువాత నొక్కండి.', fin: 'మీటింగ్ పూర్తయింది.', unsure: 'దీనికి మా టీమ్ సమాధానం ఇస్తుంది. ఇప్పుడే వారితో మాట్లాడతారా?',
   },
   hi: {
     hello: (n) => (n ? `नमस्ते ${n} जी` : 'नमस्ते'), chooseLang: 'अपनी भाषा चुनें', start: 'मीटिंग शुरू करें', soundOn: 'कृपया अपनी आवाज़ चालू करें। यह एक ऑटोमैटिक असिस्टेंट है, इंसान नहीं। इसमें करीब 5 मिनट लगेंगे।',
@@ -51,7 +52,7 @@ const T = {
     submit: 'हमारी टीम को भेजें', cancel: 'मीटिंग पर वापस जाएँ', needPhone: 'कृपया अपना व्हाट्सऐप नंबर लिखें।', pickOne: 'कृपया एक विकल्प चुनें।', fail: 'भेजा नहीं जा सका। कृपया फिर से कोशिश करें।',
     thanks: (n) => `धन्यवाद${n ? ` ${n} जी` : ''}। आपकी रिक्वेस्ट हमारी टीम को मिल गई है, वे जल्द संपर्क करेंगे।`, seeWork: 'हमारा किया हुआ काम देखें', plansTitle: 'हमारे प्लान (+ 18% जीएसटी)', again: 'फिर से कोशिश करें', loading: 'आपकी मीटिंग खुल रही है…',
     gone: 'यह लिंक अब काम नहीं करता। कृपया भेजने वाले से नया लिंक माँगें।', busy: 'पेज अभी नहीं खुल सका। वह अपने आप फिर कोशिश करेगा।', yourQ: 'आप', bot: 'असिस्टेंट', idle: 'क्या आप अभी भी हैं? आगे बढ़ने के लिए अगला दबाइए।', listenHelp: 'अपना सवाल बोलिए',
-    choosePlan: 'प्लान चुनें', howMonth: 'एक महीना कैसे चलता है', perMonth: 'प्रति माह', plusGst: '+ जीएसटी', withGst: (x) => `जीएसटी के साथ ${x}`, voiceOn: 'आवाज़ चालू', loadingVoice: 'आवाज़ लोड हो रही है…', micListening: 'सुन रहा हूँ… अपना सवाल अभी बोलिए', micRecording: 'रिकॉर्ड हो रहा है… बोलना पूरा होने पर माइक फिर दबाइए', micThinking: 'आपकी बात समझ रहा हूँ…', micDenied: 'माइक्रोफ़ोन बंद है। एड्रेस के पास ताले का निशान दबाकर इस पेज के लिए माइक्रोफ़ोन की अनुमति दीजिए, फिर कोशिश कीजिए।', micNo: 'इस डिवाइस में माइक्रोफ़ोन नहीं मिला।', micNone: 'मुझे कुछ सुनाई नहीं दिया। माइक दबाकर थोड़ा ज़ोर से बोलिए, या अपना सवाल लिखिए।', micFail: 'आपकी आवाज़ समझ नहीं आई। कृपया अपना सवाल लिखिए।', micHeard: (x) => `मैंने सुना: “${x}”`, captionsOnly: 'सिर्फ़ टेक्स्ट', fullText: 'पूरा टेक्स्ट दिखाएँ', trustMin: '5 मिनट', trustNoLogin: 'लॉगिन ज़रूरी नहीं', auto: 'ऑटोमैटिक असिस्टेंट', waitAsk: 'क्या आपका कोई सवाल है? अभी पूछिए, या अगला दबाइए।', fin: 'मीटिंग पूरी हुई।', unsure: 'इसका जवाब हमारी टीम देगी। क्या आप अभी उनसे बात करना चाहेंगे?',
+    choosePlan: 'प्लान चुनें', howMonth: 'एक महीना कैसे चलता है', thPlan: 'प्लान', thMonth: 'प्रति माह', thGst: 'जीएसटी के साथ', perMonth: 'प्रति माह', plusGst: '+ जीएसटी', withGst: (x) => `जीएसटी के साथ ${x}`, voiceOn: 'आवाज़ चालू', loadingVoice: 'आवाज़ लोड हो रही है…', micListening: 'सुन रहा हूँ… अपना सवाल अभी बोलिए', micRecording: 'रिकॉर्ड हो रहा है… बोलना पूरा होने पर माइक फिर दबाइए', micThinking: 'आपकी बात समझ रहा हूँ…', micDenied: 'माइक्रोफ़ोन बंद है। एड्रेस के पास ताले का निशान दबाकर इस पेज के लिए माइक्रोफ़ोन की अनुमति दीजिए, फिर कोशिश कीजिए।', micNo: 'इस डिवाइस में माइक्रोफ़ोन नहीं मिला।', micNone: 'मुझे कुछ सुनाई नहीं दिया। माइक दबाकर थोड़ा ज़ोर से बोलिए, या अपना सवाल लिखिए।', micFail: 'आपकी आवाज़ समझ नहीं आई। कृपया अपना सवाल लिखिए।', micHeard: (x) => `मैंने सुना: “${x}”`, captionsOnly: 'सिर्फ़ टेक्स्ट', fullText: 'पूरा टेक्स्ट दिखाएँ', trustMin: '5 मिनट', trustNoLogin: 'लॉगिन ज़रूरी नहीं', auto: 'ऑटोमैटिक असिस्टेंट', waitAsk: 'क्या आपका कोई सवाल है? अभी पूछिए, या अगला दबाइए।', fin: 'मीटिंग पूरी हुई।', unsure: 'इसका जवाब हमारी टीम देगी। क्या आप अभी उनसे बात करना चाहेंगे?',
   },
 };
 
@@ -163,9 +164,9 @@ const Bot = () => (
   </svg>
 );
 const Waves = ({ on }) => <div className={`pm-waves${on ? ' on' : ''}`} aria-hidden="true"><i /><i /><i /><i /><i /></div>;
-function Cta({ t, openForm }) {
+function Cta({ t, openForm, compact }) {
   return (
-    <div className="pm-cta">
+    <div className={`pm-cta${compact ? ' compact' : ''}`}>
       <button type="button" className="pm-btn go" onClick={() => openForm('trial')}>🚀 {t.optTrial}</button>
       <div className="pm-two">
         <button type="button" className="pm-btn ghost" onClick={() => openForm('')}>{t.choosePlan}</button>
@@ -174,7 +175,7 @@ function Cta({ t, openForm }) {
     </div>
   );
 }
-function SlideBody({ idx, lines, t, done, openForm }) {
+function SlideBody({ idx, lines, t, done, openForm, plansInfo }) {
   const [title, ...rest] = lines;
   const tile = (icon, text, n) => <div className="pm-tile" key={n}><span className="pm-ico">{icon}</span><div>{text}</div></div>;
   if (idx === 0) {
@@ -228,8 +229,21 @@ function SlideBody({ idx, lines, t, done, openForm }) {
     return (
       <>
         <h2 className="pm-title">{done ? t.fin : t.plansTitle}</h2>
-        <div className="pm-tiles">{Object.keys(PLAN_MONEY).map((p, n) => <div className="pm-tile" key={p}><span className="pm-badge" style={{ minWidth: 92 }}>{PLAN_MONEY[p][0]}</span><div><b style={{ textTransform: 'capitalize' }}>{p}</b><small>{t.withGst(PLAN_MONEY[p][1])}</small></div></div>)}</div>
-        {done ? null : <Cta t={t} openForm={openForm} />}
+        <div className="pm-tablewrap">
+          <table className="pm-table">
+            <thead><tr><th>{t.thPlan}</th><th>{t.thMonth}</th><th>{t.thGst}</th></tr></thead>
+            <tbody>
+              {(plansInfo || []).map((r) => (
+                <tr key={r.p} data-plan={r.p}>
+                  <td><b>{r.name}</b><small>{r.feat}</small></td>
+                  <td className="num">{PLAN_MONEY[r.p][0]}</td>
+                  <td className="num strong">{PLAN_MONEY[r.p][1]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {done ? null : <Cta t={t} openForm={openForm} compact />}
       </>
     );
   }
@@ -306,6 +320,8 @@ export default function PlansMeetingPage() {
   const last = pos >= order.length - 1;
   const sentences = useMemo(() => narrationOf(idx, lang, ctx), [idx, lang, ctx]);
   const lines = useMemo(() => linesOf(idx, lang, ctx), [idx, lang, ctx]);
+  // the closing table: each plan's name and what it holds, in the language chosen (from slides 4 to 6)
+  const plansInfo = useMemo(() => [3, 4, 5].map((i) => { const l = linesOf(i, lang, ctx); return { p: PLAN_OF[i], name: colon(l[0])[0], feat: l[1] || '' }; }), [lang, ctx]);
   const hasDeviceVoice = useMemo(() => !!pickVoice(voices, lang), [voices, lang]);
   const srv = !!(voiceOk && voiceOk[lang]) && !(serverFails[lang] >= 2); // the server has a voice for this language
   const hasVoice = hasDeviceVoice || srv;
@@ -441,15 +457,14 @@ export default function PlansMeetingPage() {
     } catch (e) { setFormErr(errOf(e, t.fail)); } finally { setBusy(false); }
   };
 
-  const P = (d && d.brand && d.brand.colors && d.brand.colors.primary) || '#0f766e';
-  const S2 = (d && d.brand && d.brand.colors && d.brand.colors.secondary) || '#134e4a';
+  // the colours of the TeamLink logo (navy and azure), as the founder asked (2026-11-17): not the Brand voice colours
   const brandName = String((d && d.brand && d.brand.name) || 'TeamLink');
-  const vars = { '--pm-p': P, '--pm-s': S2 };
+  const vars = { '--pm-s': '#0a2463', '--pm-p': '#0a73c4', '--pm-azure': '#0c9cfc' };
   const speaking = stage === 'meet' && playing && !panel;
   const top = (withLang = true) => (
     <header className="pm-top">
       <div className="pm-top-in">
-        <div className="pm-brand"><span className="pm-logo">{brandName.slice(0, 1).toUpperCase()}</span><div style={{ minWidth: 0 }}><b>{brandName}</b><span className="pm-live"><i /><em>{t.auto}</em></span></div></div>
+        <div className="pm-brand"><TeamLinkMark width={150} /><span className="pm-live"><i /><em>{t.auto}</em></span></div>
         {withLang ? <div className="pm-lang" role="group" aria-label={t.chooseLang}>{LANGS.map(([k, name]) => <button key={k} type="button" aria-pressed={lang === k} onClick={() => pickLang(k)}>{name}</button>)}</div> : null}
       </div>
     </header>
@@ -492,16 +507,18 @@ export default function PlansMeetingPage() {
   const shownSentence = sentences[Math.max(0, Math.min(sent, sentences.length - 1))] || '';
   return (
     <div className="pm" style={vars}>{top(true)}
-      <main className="pm-wrap">
+      <main className="pm-wrap pm-meet">
+        <div className="pm-grid">
         <section className="pm-stage" aria-live="polite">
           <div className="pm-stage-top"><span className="pm-count"><b>{String(pos + 1).padStart(2, '0')}</b> / {String(order.length).padStart(2, '0')}</span><span>{brandName.toUpperCase()}</span></div>
           <div className="pm-seg" aria-hidden="true">{order.map((x, n) => <i key={x} className={n <= pos ? 'on' : ''} />)}</div>
           <div className="pm-body" key={`${idx}-${lang}`}>
-            <SlideBody idx={idx} lines={lines} t={t} done={!!done} openForm={openForm} />
+            <SlideBody idx={idx} lines={lines} t={t} done={!!done} openForm={openForm} plansInfo={plansInfo} />
             {done ? <div className="pm-thanks">{done}</div> : null}
           </div>
         </section>
 
+        <div className="pm-side">
         <section className="pm-assistant">
           <div><div className={`pm-avatar${speaking ? ' on' : ''}`}><Bot /></div><Waves on={speaking} /></div>
           <div>
@@ -551,6 +568,8 @@ export default function PlansMeetingPage() {
             <button type="button" className="pm-btn soft" style={{ width: '100%', marginTop: 8 }} onClick={closePanel}>{t.cancel}</button>
           </section>
         ) : null}
+        </div>
+        </div>
       </main>
 
       <div className="pm-bar">

@@ -1,0 +1,56 @@
+/* AI MARKETING > PLANS MEETING (the team's page, MkMeetingPage.jsx): a compact dashboard. The clients come first (the ones waiting for a call on top); making a link, the calling line and the alert are in a narrow
+   column on the right, so nothing is stretched across a wide screen. Scoped under .mkm. */
+.gsx .mkm { --mkm-line: #e3eae6; --mkm-mute: #66786f; --mkm-p: #0f766e; --mkm-amber: #b45309; }
+.gsx .mkm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.gsx .mkm-head h1 { margin: 2px 0 2px; font-size: 22px; line-height: 1.2; }
+.gsx .mkm-head p { margin: 0; font-size: 12px; color: var(--mkm-mute); max-width: 640px; line-height: 1.5; }
+.gsx .mkm-eyebrow { font-size: 10px; font-weight: 800; letter-spacing: .12em; color: var(--mkm-p); text-transform: uppercase; }
+
+.gsx .mkm-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.gsx .mkm-kpi { text-align: left; background: #fff; border: 1px solid var(--mkm-line); border-radius: 12px; padding: 9px 12px; cursor: pointer; font: inherit; color: inherit; transition: border-color .12s, box-shadow .12s; }
+.gsx .mkm-kpi:hover { border-color: #b9ccc3; }
+.gsx .mkm-kpi.on { border-color: var(--mkm-p); box-shadow: 0 0 0 2px color-mix(in srgb, var(--mkm-p) 18%, transparent); }
+.gsx .mkm-kpi span { display: block; font-size: 10.5px; font-weight: 700; color: var(--mkm-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gsx .mkm-kpi b { display: block; font-size: 22px; line-height: 1.15; margin-top: 2px; }
+.gsx .mkm-kpi.warn { background: #fff8eb; border-color: #f1d49c; }
+.gsx .mkm-kpi.warn b { color: var(--mkm-amber); }
+
+.gsx .mkm-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (min-width: 1080px) { .gsx .mkm-grid { grid-template-columns: minmax(0, 1fr) 330px; } }
+.gsx .mkm-card { background: #fff; border: 1px solid var(--mkm-line); border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; }
+.gsx .mkm-card h3 { margin: 0 0 2px; font-size: 13.5px; }
+.gsx .mkm-card > p { margin: 0 0 8px; font-size: 11px; color: var(--mkm-mute); line-height: 1.45; }
+.gsx .mkm-side .mkm-card:last-child { margin-bottom: 0; }
+
+/* the clients */
+.gsx .mkm-listhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.gsx .mkm-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 11px 6px; border-top: 1px solid var(--mkm-line); }
+.gsx .mkm-row:first-of-type { border-top: 0; }
+.gsx .mkm-row.wants { background: #fffaf0; border-left: 3px solid #e9a43a; border-radius: 10px; margin: 4px 0; border-top: 0; padding-left: 10px; }
+.gsx .mkm-av { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 14px; color: #fff; background: linear-gradient(135deg, #0f766e, #134e4a); text-transform: uppercase; }
+.gsx .mkm-row.wants .mkm-av { background: linear-gradient(135deg, #e9a43a, #c2410c); }
+.gsx .mkm-name { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.gsx .mkm-name button { all: unset; cursor: pointer; font-weight: 800; font-size: 13.5px; margin-right: 2px; }
+.gsx .mkm-meta { font-size: 11px; color: var(--mkm-mute); line-height: 1.55; margin-top: 2px; overflow-wrap: anywhere; }
+.gsx .mkm-meta b { color: #166534; }
+.gsx .mkm-acts { display: flex; flex-direction: row; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; max-width: 330px; }
+.gsx .mkm-acts .tiny-btn { text-align: center; white-space: nowrap; }
+.gsx .mkm-acts .mkm-call { background: #15803d; color: #fff; border: 0; border-radius: 9px; padding: 7px 10px; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
+.gsx .mkm-acts .mkm-call[disabled] { opacity: .6; cursor: default; }
+.gsx .mkm-acts .mkm-call.soft { background: #fff; color: #15803d; border: 1px solid #b7dcc6; }
+.gsx .mkm-more { grid-column: 2 / -1; margin-top: 8px; background: #f6f8f7; border-radius: 10px; padding: 10px 12px; font-size: 12px; line-height: 1.6; }
+.gsx .mkm-more .lab { font-size: 10px; font-weight: 800; color: #166534; letter-spacing: .06em; margin-top: 6px; }
+.gsx .mkm-more input, .gsx .mkm-more select { width: 100%; box-sizing: border-box; margin: 3px 0 4px; border: 1px solid var(--mkm-line); border-radius: 8px; padding: 6px 9px; font: inherit; font-size: 12px; background: #fff; }
+.gsx .mkm-note { grid-column: 2 / -1; font-size: 11.5px; border-radius: 9px; padding: 7px 10px; margin-top: 6px; background: #fdecec; border: 1px solid #f4c9cc; color: #9b1c1c; }
+.gsx .mkm-note.ok { background: #e8f7ef; border-color: #bfe3d0; color: #087844; }
+@media (max-width: 640px) { .gsx .mkm-row { grid-template-columns: auto minmax(0, 1fr); } .gsx .mkm-acts { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; } .gsx .mkm-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* the side column: narrow, stacked forms */
+.gsx .mkm-form { display: grid; gap: 7px; }
+.gsx .mkm-form label { font-size: 9.5px; font-weight: 800; letter-spacing: .07em; color: var(--mkm-mute); text-transform: uppercase; display: block; }
+.gsx .mkm-form input, .gsx .mkm-form select { width: 100%; box-sizing: border-box; margin-top: 3px; border: 1px solid #d5e0da; border-radius: 9px; padding: 7px 9px; font: inherit; font-size: 12.5px; background: #fff; text-transform: none; letter-spacing: 0; font-weight: 500; color: inherit; }
+.gsx .mkm-form small { display: block; font-size: 10.5px; color: var(--mkm-mute); margin-top: 3px; line-height: 1.45; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.gsx .mkm-form .row { display: flex; gap: 6px; flex-wrap: wrap; }
+.gsx .mkm-chips { display: flex; gap: 5px; flex-wrap: wrap; margin: 2px 0 6px; }
+.gsx .mkm-chip { border: 1px solid var(--mkm-line); background: #fff; border-radius: 999px; padding: 4px 11px; font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.gsx .mkm-chip.on { background: var(--mkm-p); color: #fff; border-color: var(--mkm-p); }
