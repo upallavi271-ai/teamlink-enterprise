@@ -162,7 +162,9 @@ let TIMER = null;
 function startSweep() {
   if (require('./sandbox').isSandbox() || TIMER) return; // eslint-disable-line global-require
   const tick = () => fixOwners().then((f) => { if (f.fixed) console.log(`[followup-owner] ${f.fixed} follow-up(s) now name the candidate's own recruiter`); }).catch((e) => console.error('[followup-owner]', e.message)) // eslint-disable-line no-console
-    .then(() => run()).then((r) => { if (r.moved) console.log(`[leaver-handover] ${r.moved} candidate(s) handed over`); }).catch((e) => console.error('[leaver-handover]', e.message)); // eslint-disable-line no-console
+    .then(() => run()).then((r) => { if (r.moved) console.log(`[leaver-handover] ${r.moved} candidate(s) handed over`); }).catch((e) => console.error('[leaver-handover]', e.message)) // eslint-disable-line no-console
+    // a BDE seat holder is an ATS BDE, and a BDE who left hands their clients to whoever sits in their seat now (utils/bdeSeatHandover.js)
+    .then(() => require('./bdeSeatHandover').run()).catch((e) => console.error('[bde-seats]', e.message)); // eslint-disable-line no-console, global-require
   setTimeout(tick, 60000).unref?.();
   TIMER = setInterval(tick, 60 * 60000);
   if (TIMER.unref) TIMER.unref();

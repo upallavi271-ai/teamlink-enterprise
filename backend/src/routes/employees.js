@@ -2096,6 +2096,7 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
       action: `${name} assigned to position ${seat.code}`,
       entity: 'Employee', entityId: employee.id, toValue: seat.code,
     });
+    require('../utils/bdeSeatHandover').soon(); // eslint-disable-line global-require -- a BDE seat makes them an ATS BDE (utils/bdeSeatHandover.js)
   }
 
   if (verification) {
@@ -3082,6 +3083,7 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
       action: 'Position changed', entity: 'Employee', entityId: employee.id,
       fromValue: currentCode || '(none)', toValue: wanted || '(none)',
     });
+    require('../utils/bdeSeatHandover').soon(); // eslint-disable-line global-require -- a BDE seat makes them an ATS BDE (utils/bdeSeatHandover.js)
   }
   // A DESIGNATION CHANGE IS A ROLE CHANGE. Promoting a Recruiter to TL used to
   // leave an ATS login that was still a RECRUITER, because the designation ->

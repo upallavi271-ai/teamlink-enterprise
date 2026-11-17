@@ -571,6 +571,7 @@ router.post('/:id/assign', MANAGE, async (req, res, next) => {
       fromValue: current ? (current.employee && current.employee.name) : 'vacant',
       toValue: employee.name,
     });
+    require('../utils/bdeSeatHandover').soon(); // eslint-disable-line global-require -- a BDE seat makes them an ATS BDE; a leaver's clients follow the seat
     return res.status(201).json({ ...row, closed });
   } catch (err) { return next(err); }
 });
