@@ -49,6 +49,30 @@ const SEED = [
   },
 ];
 const PLAN_NAMES = ['Starter', 'Growth', 'Enterprise'];
+// founder 2026-11-17 "put some plans yourself": starting price list (prices exclude GST; managers change them in Leads > Our products)
+const PLANS = {
+  HRMS: [
+    { name: 'Starter', price: '₹49', unit: 'per employee / month', includes: 'Employee records and documents, web-punch attendance, leave and holidays, self-service login for every employee. Minimum 25 employees.' },
+    { name: 'Growth', price: '₹99', unit: 'per employee / month', includes: 'Everything in Starter + payroll with payslips and statutory deductions, biometric device sync, shifts and weekly offs, onboarding and exit checklists, assets, all reports.' },
+    { name: 'Enterprise', price: '₹149', unit: 'per employee / month', includes: 'Everything in Growth + work-monitoring agent, performance reviews, several branches, custom roles and approvals, priority support.' },
+  ],
+  ATS: [
+    { name: 'Starter', price: '₹1,499', unit: 'per recruiter / month', includes: 'Requirements, candidate database with duplicate check, pipeline, interview calendar, careers page and job portal posting, email to candidates.' },
+    { name: 'Growth', price: '₹2,499', unit: 'per recruiter / month', includes: 'Everything in Starter + AI resume screening and fit score, client portal, WhatsApp and SMS to candidates, offers and joining, recruiter and team reports with targets.' },
+    { name: 'Enterprise', price: '₹3,999', unit: 'per recruiter / month', includes: 'Everything in Growth + AI video interviews with photo verification, placement invoices, team lead and manager hierarchy, posting to many job boards, priority support.' },
+  ],
+  OMNI: [
+    { name: 'Starter', price: '₹2,999', unit: 'per month', includes: '1 WhatsApp Business number, email campaigns, templates, delivery reports, up to 3 team users.' },
+    { name: 'Growth', price: '₹6,999', unit: 'per month', includes: 'Up to 3 WhatsApp numbers, SMS with DLT templates, social posting to Facebook, Instagram, LinkedIn and Threads, shared inbox, AI Marketing, up to 10 users.' },
+    { name: 'Enterprise', price: '₹14,999', unit: 'per month', includes: 'Up to 10 WhatsApp numbers, unlimited users, Ads Manager, keyword research, Search Console and AI visibility, chat bots, dedicated support.' },
+  ],
+};
+const COMMON_FAQ = 'Q: Are the prices with GST?\nA: No. GST at 18% is added to the prices shown.\n\nQ: How is it billed?\nA: Yearly in advance. Monthly billing is possible at 10% more.\n\nQ: How long does it take to start?\nA: Usually 3 to 7 working days: we set up the account, import your data and train your team.\n\nQ: Where is our data kept?\nA: On servers in India, with daily backups. Each company sees only its own data.\n\nQ: Can we try it first?\nA: Yes. After this meeting our team can set up a trial account for your company.';
+const FAQ = {
+  HRMS: `Q: Does it work with biometric devices?\nA: Yes. eSSL and ZKTeco devices send punches straight into TeamLink attendance.\n\nQ: Does payroll handle PF, ESI and PT?\nA: Yes. Payroll calculates PF, ESI, professional tax and TDS, and gives payslips to every employee.\n\n${COMMON_FAQ}`,
+  ATS: `Q: Can we post jobs to Naukri and LinkedIn?\nA: Yes. Jobs go to your careers page and Google Jobs automatically, and to Naukri, Shine, Indeed and LinkedIn with one click.\n\nQ: Can our clients see the shortlisted candidates?\nA: Yes. Each client gets a client portal login to shortlist and give feedback.\n\n${COMMON_FAQ}`,
+  OMNI: `Q: Are WhatsApp and SMS message charges included?\nA: No. WhatsApp conversation charges are paid at Meta's rates and SMS at the operator's rates, from your wallet in the app.\n\nQ: Do we need our own WhatsApp Business number?\nA: Yes, a number for the official WhatsApp Business API. Our team helps you get it approved.\n\n${COMMON_FAQ}`,
+};
 
 // ---- storage ----------------------------------------------------------------------------------------------------------------
 let READY = null;
@@ -66,7 +90,14 @@ function ensure() {
       for (const p of SEED) {
         // eslint-disable-next-line no-await-in-loop
         await prisma.$executeRawUnsafe('INSERT OR IGNORE INTO "CrmProduct" ("id","key","name","tagline","about","features","plans","faq","active","sort","updatedAt") VALUES (?,?,?,?,?,?,?,?,1,?,?)',
-          `prod_${p.key.toLowerCase()}`, p.key, p.name, p.tagline, p.about, JSON.stringify(p.features), JSON.stringify(PLAN_NAMES.map((n) => ({ name: n, price: '', unit: 'per user / month', includes: '' }))), p.faq, p.sort, new Date().toISOString());
+          `prod_${p.key.toLowerCase()}`, p.key, p.name, p.tagline, p.about, JSON.stringify(p.features), JSON.stringify(PLANS[p.key] || PLAN_NAMES.map((n) => ({ name: n, price: '', unit: 'per user / month', includes: '' }))), FAQ[p.key] || p.faq, p.sort, new Date().toISOString());
+        // a catalogue made before the price list (every price blank, no Q&A) gets it once; anything a manager wrote is kept
+        // eslint-disable-next-line no-await-in-loop
+        const [row] = await prisma.$queryRawUnsafe('SELECT "plans","faq" FROM "CrmProduct" WHERE "key" = ?', p.key);
+        if (row && PLANS[p.key] && !parse(row.plans, []).some((x) => x && x.price)) {
+          // eslint-disable-next-line no-await-in-loop
+          await prisma.$executeRawUnsafe('UPDATE "CrmProduct" SET "plans" = ?, "faq" = CASE WHEN "faq" IS NULL OR "faq" = \'\' THEN ? ELSE "faq" END, "updatedAt" = ? WHERE "key" = ?', JSON.stringify(PLANS[p.key]), FAQ[p.key], new Date().toISOString(), p.key);
+        }
         // the product's own clip (HRMS.mp4 / ATS.mp4 / OMNI.mp4 in the demo folder) is used by itself once it is there
         // eslint-disable-next-line no-await-in-loop
         try { if (fs.existsSync(path.join(VIDEO_DIR(), `${p.key}.mp4`))) await prisma.$executeRawUnsafe('UPDATE "CrmProduct" SET "videoFile" = ? WHERE "key" = ? AND "videoFile" IS NULL', `${p.key}.mp4`, p.key); } catch { /* no clip yet */ }
