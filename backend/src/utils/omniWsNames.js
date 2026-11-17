@@ -9,8 +9,8 @@
 //     a second workspace with the same name:      "... - 2", "... - 3"
 // Several places read a workspace's department back from its NAME (ad leads -> CRM department, AI calls -> Voice Calling workspace, a number
 // connected inside Omni-Channel -> its department): deptOfName() understands every form above, so none of them breaks when a workspace is renamed.
-// renameWorkspaces() renames only workspaces whose name already follows this convention (never a hand-made name, never a number the Super Admin
-// pinned by hand), and never to a name another workspace has.
+// renameWorkspaces() renames only workspaces whose name already follows this convention FOR THE SAME DEPARTMENT (a hand-made name such as
+// "Sales Desk" is never touched), also when the Super Admin pinned the number to that workspace by hand, and never to a name another workspace has.
 // ---------------------------------------------------------------------------
 const SEP = ' · ';
 const INDEX = /\s+-\s+\d+$/;
@@ -56,7 +56,7 @@ function belongs(wsName, dept, canon = lower) {
 
 /**
  * Give the workspaces of the plan the name of their number's Meta name + department. plan = [{ number: { verifiedName }, dept, ws: { id, name },
- * manual? }]; wss = every workspace (id, name); call(method, path, { ws, body }) = the Green Start API with the company login.
+ * }]; wss = every workspace (id, name); call(method, path, { ws, body }) = the Green Start API with the company login.
  * -> { done: [{ from, to }], failed: ["<name>: why"] }. Updates ws.name (and the same workspace in wss) after each rename.
  */
 async function renameWorkspaces({ plan, wss, call, canon = lower }) {
@@ -64,7 +64,7 @@ async function renameWorkspaces({ plan, wss, call, canon = lower }) {
   const failed = [];
   const taken = (nm, id) => wss.some((w) => w.id !== id && lower(w.name) === lower(nm));
   for (const p of plan) {
-    if (!p || p.manual || !p.ws || !p.ws.id) continue; // eslint-disable-line no-continue
+    if (!p || !p.ws || !p.ws.id) continue; // eslint-disable-line no-continue
     const meta = cleanMeta(p.number && p.number.verifiedName);
     if (!meta) continue; // eslint-disable-line no-continue -- Meta has not given a name yet: the workspace keeps the name it has
     const cur = String(p.ws.name || '');

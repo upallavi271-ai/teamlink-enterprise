@@ -95,6 +95,7 @@ async function run({ why = 'manual', pushChannels = true } = {}) {
       const taken = new Map(Object.entries(map).filter(([, v]) => v && v.workspaceId && !v.auto).map(([nid, v]) => [v.workspaceId, nid]));
       // a workspace an earlier automatic run gave to a number that still has that same department stays that number's (a new number never takes it)
       const reserved = new Map();
+      const renameOnly = []; // { number, dept, ws }: pinned by hand, no department of its own, workspace named for one
       for (const n of nums) {
         const c = map[n.id];
         const ds = [...new Set((n.departments || []).map((d) => String(d).trim()).filter(Boolean))];
@@ -106,6 +107,9 @@ async function run({ why = 'manual', pushChannels = true } = {}) {
           const ws = wss.find((w) => w.id === cur.workspaceId);
           const dept = (n.departments || []).length === 1 ? n.departments[0] : null;
           if (ws && dept) plan.push({ number: n, dept, ws, manual: true });
+          // a pinned number with no (or several) departments still shows its Meta name on a workspace named for a department ("Teamlink Medical"):
+          // renamed only, never given a login or changed in any other way
+          else if (ws && W.deptOfName(ws.name)) renameOnly.push({ number: n, dept: W.deptOfName(ws.name), ws, manual: true });
           continue; // eslint-disable-line no-continue
         }
         const depts = [...new Set((n.departments || []).map((d) => String(d).trim()).filter(Boolean))];
@@ -153,9 +157,10 @@ async function run({ why = 'manual', pushChannels = true } = {}) {
       }
       await putSetting(WA_MAP_KEY, map);
 
-      // 1b. each workspace shows its number's Meta name and department (founder 2026-11-17). Only a name made by this convention is changed, never a
-      // hand-made name, never a number the Super Admin pinned by hand; a name another workspace has is never taken. Meta not asked yet = no change.
-      const renamed = await W.renameWorkspaces({ plan, wss, canon, call: (m, p, o) => O.call(m, p, { token, ...o }) })
+      // 1b. each workspace shows its number's Meta name and department (founder 2026-11-17). Only a name made by this convention for that same
+      // department is changed (also when the Super Admin pinned the number there by hand), never a hand-made name like "Sales Desk"; a name another
+      // workspace has is never taken. Meta not asked yet = no change.
+      const renamed = await W.renameWorkspaces({ plan: [...plan, ...renameOnly], wss, canon, call: (m, p, o) => O.call(m, p, { token, ...o }) })
         .catch((err) => ({ done: [], failed: [String((err && err.message) || err).slice(0, 160)] }));
 
       // 2. the numbers go to their workspaces (the integrations sync reads the map)

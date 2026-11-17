@@ -9,7 +9,9 @@
 //   A  names: "<Meta name> · <Dept> dept" with a Meta name, "Teamlink <Dept>" without; "- 2" for a repeat; deptOfName reads every form back
 //      (the ad-lead, AI-call and imported-number code relies on it)
 //   B  the run: the Medical workspace is renamed to its number's Meta name + department; Education (no Meta name yet) keeps its name;
-//      a second Medical number and a Manufacturing number get NEW workspaces named that way; a hand-pinned workspace is never renamed
+//      a second Medical number and a Manufacturing number get NEW workspaces named that way; a number pinned by hand to a workspace named
+//      for a department ("Teamlink Medical - 2") shows its Meta name there too (with or without a department of its own) and gets no login
+//      from it; a hand-made name ("Sales Desk") is never renamed
 //   C  a second run changes nothing; a new Meta name renames again; two numbers with one Meta name get "- 2"
 //   D  a refused rename (no permission) is told in words, the name stays, and the department logins still come out ready
 // ---------------------------------------------------------------------------
@@ -61,6 +63,7 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
     let gs = [
       { id: 'ws-main', name: 'Main', orgId: 'org1' }, { id: 'ws-med', name: 'Teamlink Medical', orgId: 'org1' },
       { id: 'ws-edu', name: 'Teamlink Education', orgId: 'org1' }, { id: 'ws-hand', name: 'Sales Desk', orgId: 'org1' },
+      { id: 'ws-med2', name: 'Teamlink Medical - 2', orgId: 'org1' }, { id: 'ws-edu2', name: 'Teamlink Education - 2', orgId: 'org1' },
     ];
     let calls = []; let members = {}; let patchFails = false;
     O.signIn = async () => 'tok';
@@ -84,11 +87,12 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
     const setting = async (k, v) => prisma.appSetting.upsert({ where: { key: k }, create: { key: k, value: JSON.stringify(v) }, update: { value: JSON.stringify(v) } });
     const readMap = async () => JSON.parse((await prisma.appSetting.findUnique({ where: { key: 'omni.gs.waMap' } })).value);
     await prisma.appSetting.deleteMany({ where: { key: { in: ['omni.gs.waMap', D.KEY] } } });
-    // the Super Admin pinned the Sales number to "Sales Desk" by hand
-    await setting('omni.gs.waMap', { n5: { workspaceId: 'ws-hand', auto: false } });
+    // the Super Admin pinned by hand: the Sales number to "Sales Desk"; a number with NO department to "Teamlink Medical - 2"; an Education number to "Teamlink Education - 2"
+    await setting('omni.gs.waMap', { n5: { workspaceId: 'ws-hand', auto: false }, n6: { workspaceId: 'ws-med2', auto: false }, n7: { workspaceId: 'ws-edu2', auto: false } });
     nums = [
       num('n1', 'WA Med', 'Medical', 'Nonit Consultants'), num('n2', 'WA Edu', 'Education', ''), num('n3', 'WA Med2', 'Medical', 'Nonit Hospitals'),
       num('n4', 'WA Man', 'Manufacturing', 'Nonit Mfg'), num('n5', 'WA Sales', 'Sales', 'Zed Sales'),
+      num('n6', 'WA Pin Med', null, 'Pinned Med Meta'), num('n7', 'WA Pin Edu', 'Education', 'Pinned Edu Meta'),
     ];
     const names = () => Object.fromEntries(gs.map((w) => [w.id, w.name]));
 
@@ -103,9 +107,13 @@ const eq = (n, got, want) => check(n, JSON.stringify(got) === JSON.stringify(wan
     check('B6 the map holds each number\'s workspace (n1 = the old Medical workspace, renamed in place)', map1.n1.workspaceId === 'ws-med' && map1.n2.workspaceId === 'ws-edu' && map1.n1.auto === true && map1.n1.dept === 'Medical', map1);
     const rows1 = r1.departments.filter((x) => x.state === 'ready');
     check('B7 the department logins are ready and name the NEW workspace names', rows1.some((x) => x.dept === 'Medical' && /Nonit Consultants · Medical dept/.test(x.workspace) && /Nonit Hospitals · Medical dept/.test(x.workspace)), r1.departments);
-    check('B8 the result tells what was renamed', Array.isArray(r1.renamed) && r1.renamed.length === 1 && r1.renamed[0].from === 'Teamlink Medical' && /name now show the Meta name/.test(r1.words), [r1.renamed, r1.words]);
+    check('B8 the result tells what was renamed', Array.isArray(r1.renamed) && r1.renamed.length === 3 && r1.renamed.some((x) => x.from === 'Teamlink Medical') && /3 workspace names now show the Meta name/.test(r1.words), [r1.renamed, r1.words]);
     const saved = JSON.parse((await prisma.appSetting.findUnique({ where: { key: D.KEY } })).value);
-    check('B9 the last run is kept with the rename', saved.last && saved.last.renamed && saved.last.renamed.length === 1, saved.last && saved.last.renamed);
+    check('B9 the last run is kept with the renames', saved.last && saved.last.renamed && saved.last.renamed.length === 3, saved.last && saved.last.renamed);
+    check('B10 a number pinned by hand with NO department of its own shows its Meta name on the workspace named for a department', names()['ws-med2'] === 'Pinned Med Meta · Medical dept', names());
+    check('B11 a pinned number WITH a department does the same', names()['ws-edu2'] === 'Pinned Edu Meta · Education dept', names());
+    const medRow = r1.departments.find((x) => x.dept === 'Medical');
+    check('B12 the pinned workspaces stay pinned, and the no-department number gets no department login from its workspace', map1.n6.workspaceId === 'ws-med2' && map1.n6.auto === false && map1.n7.workspaceId === 'ws-edu2' && medRow && !(medRow.workspaceIds || []).includes('ws-med2'), [map1.n6, map1.n7, medRow && medRow.workspaceIds]);
 
     // C. a second run changes nothing
     const before = JSON.stringify(names()); calls = [];
