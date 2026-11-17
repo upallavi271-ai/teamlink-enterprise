@@ -2460,7 +2460,7 @@ router.post('/:id/categorise', async (req, res) => {
   const updated = await prisma.bankTransaction.update({
     where: { id: txn.id },
     data: {
-      category: kind === 'expense' || kind === 'other' ? category : null,
+      category: kind === 'expense' || kind === 'other' || (kind === 'transfer' && category === 'Salary funding') ? category : null,
       categoryKind: kind,
       vendor: body.vendor || null,
       counterparty: body.party || null,

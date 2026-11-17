@@ -76,7 +76,7 @@ function describeFiling(facts) {
     return { kind: 'loan', label: `Hand loan · ${(loan && loan.name) || txn.counterparty || '—'}`, amountFiled: amount, unallocated: null };
   }
   if (txn.categoryKind === 'transfer') {
-    return { kind: 'transfer', label: 'Transfer between our own accounts', amountFiled: amount, unallocated: null };
+    return { kind: 'transfer', label: txn.category === 'Salary funding' ? 'Salary funding — transfer between our own accounts' : 'Transfer between our own accounts', amountFiled: amount, unallocated: null };
   }
   if (partner) {
     return { kind: 'vendor_payment', label: `Partner payout · ${partner.name || 'partner'}`, amountFiled: partner.net != null ? ROUND(partner.net) : amount, unallocated: null };

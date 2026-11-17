@@ -71,6 +71,7 @@ const DEBIT_KINDS = [
   ['expense', 'Expense — money the office spent'],
   ['hand', 'Hand loan repayment — not an expense'],
   ['transfer', 'Our own transfer — not an expense'],
+  ['salary', 'Salary funding — money moved between our accounts for salaries'],
 ];
 const CREDIT_KINDS = [
   ['client', 'Customer (client) payment — money from a client'],
@@ -79,6 +80,7 @@ const CREDIT_KINDS = [
   ['refund', 'Refund received (vendor / other)'],
   ['hand', 'Hand loan taken — not income'],
   ['transfer', 'Our own transfer — not income'],
+  ['salary', 'Salary funding — money moved between our accounts for salaries'],
 ];
 
 // "Interest received" and "Refund received" are Other income with the account already named.
@@ -142,7 +144,7 @@ export default function MatchPanel({
     loanId: '',
   });
   const set = (key) => (e) => setF((x) => ({ ...x, [key]: e.target.value }));
-  const k = PRESET[f.kind] ? 'other' : f.kind;
+  const k = PRESET[f.kind] ? 'other' : (f.kind === 'salary' ? 'transfer' : f.kind);
   const pickKind = (e) => {
     const v = e.target.value;
     setF((x) => ({ ...x, kind: v, expenseAccount: PRESET[v] || (PRESET[x.kind] ? '' : x.expenseAccount) }));
@@ -328,7 +330,7 @@ export default function MatchPanel({
     }
     await post(`/bank/${txn.id}/categorise`, {
       kind: k,
-      category: k === 'other' ? f.expenseAccount : '',
+      category: k === 'other' ? f.expenseAccount : (f.kind === 'salary' ? 'Salary funding' : ''),
       party: f.party || null,
       vendor: null,
       remember: !!remember,
