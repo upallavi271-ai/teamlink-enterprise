@@ -220,6 +220,7 @@ export default function App() {
       <Route path="/our-work" element={<OurWorkPage />} />
       <Route path="/plans-meeting" element={<PlansMeetingPage />} />
       <Route path="/plans-meeting/:token" element={<PlansMeetingPage />} />
+      <Route path="/m/:shortId" element={<PlansMeetingPage />} />
 
       {/* New employee sign-in link — single-use, expiring, no login required */}
       <Route path="/set-password/:token" element={<SetPassword />} />

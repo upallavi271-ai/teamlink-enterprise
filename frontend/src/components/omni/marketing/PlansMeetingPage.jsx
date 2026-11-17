@@ -37,7 +37,7 @@ const T = {
     submit: 'Send to our team', cancel: 'Back to the meeting', needPhone: 'Please type your WhatsApp number.', pickOne: 'Please pick one option.', fail: 'It could not be sent. Please try again.',
     thanks: (n) => `Thank you${n ? `, ${n}` : ''}. Our team has your request and will contact you soon.`, seeWork: 'See our finished work', plansTitle: 'Our plans (+ 18% GST)', again: 'Try again', loading: 'Opening your meeting…',
     gone: 'This link does not work any more. Please ask the sender for a new one.', busy: 'The page could not be opened just now. It will try again by itself.', yourQ: 'You', bot: 'Assistant', idle: 'Still there? Press Next to continue.', listenHelp: 'Say your question',
-    choosePlan: 'Choose a plan', howMonth: 'How a month works', thPlan: 'Plan', thMonth: 'Per month', thGst: 'With GST', perMonth: 'a month', plusGst: '+ GST', withGst: (x) => `${x} with GST`, voiceOn: 'Voice on', loadingVoice: 'Loading the voice…', micListening: 'Listening… speak your question now', micRecording: 'Recording… tap the microphone again when you finish', micThinking: 'Understanding what you said…', micDenied: 'The microphone is blocked. Tap the lock icon next to the address, allow the microphone for this page, then try again.', micWebview: 'This window cannot ask for the microphone. Please open this link in Chrome (or Safari on an iPhone) and try again. You can also type your question.', micNo: 'No microphone was found on this device.', micNone: 'I did not hear anything. Tap the microphone and speak a little louder, or type your question.', micFail: 'Your voice could not be understood. Please type your question.', micHeard: (x) => `I heard: “${x}”`, micRetry: (x) => `I heard “${x}”, but I am not sure. Tap the microphone and say it again: this time our own careful listener will hear you.`, micCheck: (x) => `I heard “${x}”. Is that right? Fix it in the box if needed, then press Ask.`, micLang: (n) => `To ask by voice, speak in ${n}. To speak another language, change it at the top first.`, captionsOnly: 'Captions only', fullText: 'Show full text', trustMin: '5 minutes', trustNoLogin: 'No login', auto: 'Automated assistant', waitAsk: 'Do you have a question? Ask now, or press Next.', fin: 'The meeting is finished.', unsure: 'Our team will answer this one. Do you want to talk to them now?',
+    choosePlan: 'Choose a plan', howMonth: 'How a month works', sumBtn: 'Send me these plans on WhatsApp', sumSent: (x) => `Sent${x ? ` to ${x}` : ''}. Please check your WhatsApp.`, thPlan: 'Plan', thMonth: 'Per month', thGst: 'With GST', perMonth: 'a month', plusGst: '+ GST', withGst: (x) => `${x} with GST`, voiceOn: 'Voice on', loadingVoice: 'Loading the voice…', micListening: 'Listening… speak your question now', micRecording: 'Recording… tap the microphone again when you finish', micThinking: 'Understanding what you said…', micDenied: 'The microphone is blocked. Tap the lock icon next to the address, allow the microphone for this page, then try again.', micWebview: 'This window cannot ask for the microphone. Please open this link in Chrome (or Safari on an iPhone) and try again. You can also type your question.', micNo: 'No microphone was found on this device.', micNone: 'I did not hear anything. Tap the microphone and speak a little louder, or type your question.', micFail: 'Your voice could not be understood. Please type your question.', micHeard: (x) => `I heard: “${x}”`, micRetry: (x) => `I heard “${x}”, but I am not sure. Tap the microphone and say it again: this time our own careful listener will hear you.`, micCheck: (x) => `I heard “${x}”. Is that right? Fix it in the box if needed, then press Ask.`, micLang: (n) => `To ask by voice, speak in ${n}. To speak another language, change it at the top first.`, captionsOnly: 'Captions only', fullText: 'Show full text', trustMin: '5 minutes', trustNoLogin: 'No login', auto: 'Automated assistant', waitAsk: 'Do you have a question? Ask now, or press Next.', fin: 'The meeting is finished.', unsure: 'Our team will answer this one. Do you want to talk to them now?',
   },
   te: {
     hello: (n) => (n ? `నమస్కారం ${n} గారు` : 'నమస్కారం'), chooseLang: 'మీ భాషను ఎంచుకోండి', start: 'మీటింగ్ మొదలుపెట్టండి', soundOn: 'దయచేసి మీ సౌండ్ ఆన్ చేయండి. ఇది ఆటోమేటెడ్ అసిస్టెంట్, మనిషి కాదు. సుమారు 5 నిమిషాలు పడుతుంది.',
@@ -48,7 +48,7 @@ const T = {
     submit: 'మా టీమ్‌కు పంపండి', cancel: 'మీటింగ్‌కు తిరిగి వెళ్ళండి', needPhone: 'దయచేసి మీ వాట్సాప్ నంబర్ రాయండి.', pickOne: 'దయచేసి ఒకటి ఎంచుకోండి.', fail: 'పంపడం కుదరలేదు. దయచేసి మళ్ళీ ప్రయత్నించండి.',
     thanks: (n) => `ధన్యవాదాలు${n ? ` ${n} గారు` : ''}. మీ అభ్యర్థన మా టీమ్‌కు అందింది, త్వరలో సంప్రదిస్తారు.`, seeWork: 'మేము చేసిన పని చూడండి', plansTitle: 'మా ప్లాన్లు (+ 18% జీఎస్టీ)', again: 'మళ్ళీ ప్రయత్నించండి', loading: 'మీ మీటింగ్ తెరుస్తున్నాను…',
     gone: 'ఈ లింక్ ఇప్పుడు పనిచేయడం లేదు. దయచేసి పంపినవారిని కొత్త లింక్ అడగండి.', busy: 'పేజీ ఇప్పుడు తెరుచుకోలేదు. అదే మళ్ళీ ప్రయత్నిస్తుంది.', yourQ: 'మీరు', bot: 'అసిస్టెంట్', idle: 'ఇంకా ఉన్నారా? కొనసాగడానికి తరువాత నొక్కండి.', listenHelp: 'మీ ప్రశ్న చెప్పండి',
-    choosePlan: 'ప్లాన్ ఎంచుకోండి', howMonth: 'ఒక నెల ఎలా సాగుతుంది', thPlan: 'ప్లాన్', thMonth: 'నెలకు', thGst: 'జీఎస్టీతో', perMonth: 'నెలకు', plusGst: '+ జీఎస్టీ', withGst: (x) => `జీఎస్టీతో ${x}`, voiceOn: 'వాయిస్ ఆన్', loadingVoice: 'వాయిస్ లోడ్ అవుతోంది…', micListening: 'వింటున్నాను… మీ ప్రశ్న ఇప్పుడే చెప్పండి', micRecording: 'రికార్డ్ అవుతోంది… పూర్తయ్యాక మైక్ మళ్ళీ నొక్కండి', micThinking: 'మీరు చెప్పింది అర్థం చేసుకుంటున్నాను…', micDenied: 'మైక్రోఫోన్ బ్లాక్ అయింది. అడ్రస్ పక్కన ఉన్న తాళం గుర్తు నొక్కి, ఈ పేజీకి మైక్రోఫోన్ అనుమతించి, మళ్ళీ ప్రయత్నించండి.', micWebview: 'ఈ విండో మైక్రోఫోన్ అడగలేకపోతోంది. దయచేసి ఈ లింక్‌ను Chrome (ఐఫోన్‌లో Safari)లో తెరిచి మళ్ళీ ప్రయత్నించండి. లేదా మీ ప్రశ్న రాయవచ్చు.', micNo: 'ఈ పరికరంలో మైక్రోఫోన్ కనిపించలేదు.', micNone: 'నాకు ఏమీ వినిపించలేదు. మైక్ నొక్కి కొంచెం గట్టిగా మాట్లాడండి, లేదా మీ ప్రశ్న రాయండి.', micFail: 'మీ గొంతు అర్థం కాలేదు. దయచేసి మీ ప్రశ్న రాయండి.', micHeard: (x) => `నాకు వినిపించింది: “${x}”`, micRetry: (x) => `నాకు “${x}” అని వినిపించింది, కానీ ఖచ్చితంగా తెలియదు. మైక్ మళ్ళీ నొక్కి మళ్ళీ చెప్పండి: ఈసారి మా స్వంత జాగ్రత్తగా వినే వ్యవస్థ వింటుంది.`, micCheck: (x) => `నాకు వినిపించింది “${x}”. సరైనదేనా? అవసరమైతే బాక్స్‌లో సరిచేసి అడగండి నొక్కండి.`, micLang: () => 'వాయిస్‌తో అడగడానికి తెలుగులో మాట్లాడండి. వేరే భాషలో మాట్లాడాలంటే ముందు పైన భాషను మార్చండి.', captionsOnly: 'అక్షరాలు మాత్రమే', fullText: 'పూర్తి టెక్స్ట్ చూపండి', trustMin: '5 నిమిషాలు', trustNoLogin: 'లాగిన్ అవసరం లేదు', auto: 'ఆటోమేటెడ్ అసిస్టెంట్', waitAsk: 'ఏదైనా ప్రశ్న ఉందా? ఇప్పుడే అడగండి, లేదా తరువాత నొక్కండి.', fin: 'మీటింగ్ పూర్తయింది.', unsure: 'దీనికి మా టీమ్ సమాధానం ఇస్తుంది. ఇప్పుడే వారితో మాట్లాడతారా?',
+    choosePlan: 'ప్లాన్ ఎంచుకోండి', howMonth: 'ఒక నెల ఎలా సాగుతుంది', sumBtn: 'ఈ ప్లాన్లను నా వాట్సాప్‌కు పంపండి', sumSent: (x) => `${x ? `${x} కు ` : ''}పంపాం. దయచేసి మీ వాట్సాప్ చూడండి.`, thPlan: 'ప్లాన్', thMonth: 'నెలకు', thGst: 'జీఎస్టీతో', perMonth: 'నెలకు', plusGst: '+ జీఎస్టీ', withGst: (x) => `జీఎస్టీతో ${x}`, voiceOn: 'వాయిస్ ఆన్', loadingVoice: 'వాయిస్ లోడ్ అవుతోంది…', micListening: 'వింటున్నాను… మీ ప్రశ్న ఇప్పుడే చెప్పండి', micRecording: 'రికార్డ్ అవుతోంది… పూర్తయ్యాక మైక్ మళ్ళీ నొక్కండి', micThinking: 'మీరు చెప్పింది అర్థం చేసుకుంటున్నాను…', micDenied: 'మైక్రోఫోన్ బ్లాక్ అయింది. అడ్రస్ పక్కన ఉన్న తాళం గుర్తు నొక్కి, ఈ పేజీకి మైక్రోఫోన్ అనుమతించి, మళ్ళీ ప్రయత్నించండి.', micWebview: 'ఈ విండో మైక్రోఫోన్ అడగలేకపోతోంది. దయచేసి ఈ లింక్‌ను Chrome (ఐఫోన్‌లో Safari)లో తెరిచి మళ్ళీ ప్రయత్నించండి. లేదా మీ ప్రశ్న రాయవచ్చు.', micNo: 'ఈ పరికరంలో మైక్రోఫోన్ కనిపించలేదు.', micNone: 'నాకు ఏమీ వినిపించలేదు. మైక్ నొక్కి కొంచెం గట్టిగా మాట్లాడండి, లేదా మీ ప్రశ్న రాయండి.', micFail: 'మీ గొంతు అర్థం కాలేదు. దయచేసి మీ ప్రశ్న రాయండి.', micHeard: (x) => `నాకు వినిపించింది: “${x}”`, micRetry: (x) => `నాకు “${x}” అని వినిపించింది, కానీ ఖచ్చితంగా తెలియదు. మైక్ మళ్ళీ నొక్కి మళ్ళీ చెప్పండి: ఈసారి మా స్వంత జాగ్రత్తగా వినే వ్యవస్థ వింటుంది.`, micCheck: (x) => `నాకు వినిపించింది “${x}”. సరైనదేనా? అవసరమైతే బాక్స్‌లో సరిచేసి అడగండి నొక్కండి.`, micLang: () => 'వాయిస్‌తో అడగడానికి తెలుగులో మాట్లాడండి. వేరే భాషలో మాట్లాడాలంటే ముందు పైన భాషను మార్చండి.', captionsOnly: 'అక్షరాలు మాత్రమే', fullText: 'పూర్తి టెక్స్ట్ చూపండి', trustMin: '5 నిమిషాలు', trustNoLogin: 'లాగిన్ అవసరం లేదు', auto: 'ఆటోమేటెడ్ అసిస్టెంట్', waitAsk: 'ఏదైనా ప్రశ్న ఉందా? ఇప్పుడే అడగండి, లేదా తరువాత నొక్కండి.', fin: 'మీటింగ్ పూర్తయింది.', unsure: 'దీనికి మా టీమ్ సమాధానం ఇస్తుంది. ఇప్పుడే వారితో మాట్లాడతారా?',
   },
   hi: {
     hello: (n) => (n ? `नमस्ते ${n} जी` : 'नमस्ते'), chooseLang: 'अपनी भाषा चुनें', start: 'मीटिंग शुरू करें', soundOn: 'कृपया अपनी आवाज़ चालू करें। यह एक ऑटोमैटिक असिस्टेंट है, इंसान नहीं। इसमें करीब 5 मिनट लगेंगे।',
@@ -59,7 +59,7 @@ const T = {
     submit: 'हमारी टीम को भेजें', cancel: 'मीटिंग पर वापस जाएँ', needPhone: 'कृपया अपना व्हाट्सऐप नंबर लिखें।', pickOne: 'कृपया एक विकल्प चुनें।', fail: 'भेजा नहीं जा सका। कृपया फिर से कोशिश करें।',
     thanks: (n) => `धन्यवाद${n ? ` ${n} जी` : ''}। आपकी रिक्वेस्ट हमारी टीम को मिल गई है, वे जल्द संपर्क करेंगे।`, seeWork: 'हमारा किया हुआ काम देखें', plansTitle: 'हमारे प्लान (+ 18% जीएसटी)', again: 'फिर से कोशिश करें', loading: 'आपकी मीटिंग खुल रही है…',
     gone: 'यह लिंक अब काम नहीं करता। कृपया भेजने वाले से नया लिंक माँगें।', busy: 'पेज अभी नहीं खुल सका। वह अपने आप फिर कोशिश करेगा।', yourQ: 'आप', bot: 'असिस्टेंट', idle: 'क्या आप अभी भी हैं? आगे बढ़ने के लिए अगला दबाइए।', listenHelp: 'अपना सवाल बोलिए',
-    choosePlan: 'प्लान चुनें', howMonth: 'एक महीना कैसे चलता है', thPlan: 'प्लान', thMonth: 'प्रति माह', thGst: 'जीएसटी के साथ', perMonth: 'प्रति माह', plusGst: '+ जीएसटी', withGst: (x) => `जीएसटी के साथ ${x}`, voiceOn: 'आवाज़ चालू', loadingVoice: 'आवाज़ लोड हो रही है…', micListening: 'सुन रहा हूँ… अपना सवाल अभी बोलिए', micRecording: 'रिकॉर्ड हो रहा है… बोलना पूरा होने पर माइक फिर दबाइए', micThinking: 'आपकी बात समझ रहा हूँ…', micDenied: 'माइक्रोफ़ोन बंद है। एड्रेस के पास ताले का निशान दबाकर इस पेज के लिए माइक्रोफ़ोन की अनुमति दीजिए, फिर कोशिश कीजिए।', micWebview: 'यह विंडो माइक्रोफ़ोन की अनुमति नहीं माँग सकती। कृपया इस लिंक को Chrome (iPhone में Safari) में खोलकर फिर कोशिश कीजिए। आप अपना सवाल लिखकर भी पूछ सकते हैं।', micNo: 'इस डिवाइस में माइक्रोफ़ोन नहीं मिला।', micNone: 'मुझे कुछ सुनाई नहीं दिया। माइक दबाकर थोड़ा ज़ोर से बोलिए, या अपना सवाल लिखिए।', micFail: 'आपकी आवाज़ समझ नहीं आई। कृपया अपना सवाल लिखिए।', micHeard: (x) => `मैंने सुना: “${x}”`, micRetry: (x) => `मुझे “${x}” सुनाई दिया, पर पक्का नहीं है। माइक फिर दबाकर दोबारा बोलिए: इस बार हमारा अपना ध्यान से सुनने वाला सिस्टम सुनेगा।`, micCheck: (x) => `मैंने सुना “${x}”। क्या यह सही है? ज़रूरत हो तो बॉक्स में ठीक करके पूछें दबाइए।`, micLang: () => 'आवाज़ से पूछने के लिए हिन्दी में बोलिए। दूसरी भाषा में बोलना हो तो पहले ऊपर भाषा बदलिए।', captionsOnly: 'सिर्फ़ टेक्स्ट', fullText: 'पूरा टेक्स्ट दिखाएँ', trustMin: '5 मिनट', trustNoLogin: 'लॉगिन ज़रूरी नहीं', auto: 'ऑटोमैटिक असिस्टेंट', waitAsk: 'क्या आपका कोई सवाल है? अभी पूछिए, या अगला दबाइए।', fin: 'मीटिंग पूरी हुई।', unsure: 'इसका जवाब हमारी टीम देगी। क्या आप अभी उनसे बात करना चाहेंगे?',
+    choosePlan: 'प्लान चुनें', howMonth: 'एक महीना कैसे चलता है', sumBtn: 'ये प्लान मेरे व्हाट्सऐप पर भेजें', sumSent: (x) => `${x ? `${x} पर ` : ''}भेज दिया। कृपया अपना व्हाट्सऐप देखिए।`, thPlan: 'प्लान', thMonth: 'प्रति माह', thGst: 'जीएसटी के साथ', perMonth: 'प्रति माह', plusGst: '+ जीएसटी', withGst: (x) => `जीएसटी के साथ ${x}`, voiceOn: 'आवाज़ चालू', loadingVoice: 'आवाज़ लोड हो रही है…', micListening: 'सुन रहा हूँ… अपना सवाल अभी बोलिए', micRecording: 'रिकॉर्ड हो रहा है… बोलना पूरा होने पर माइक फिर दबाइए', micThinking: 'आपकी बात समझ रहा हूँ…', micDenied: 'माइक्रोफ़ोन बंद है। एड्रेस के पास ताले का निशान दबाकर इस पेज के लिए माइक्रोफ़ोन की अनुमति दीजिए, फिर कोशिश कीजिए।', micWebview: 'यह विंडो माइक्रोफ़ोन की अनुमति नहीं माँग सकती। कृपया इस लिंक को Chrome (iPhone में Safari) में खोलकर फिर कोशिश कीजिए। आप अपना सवाल लिखकर भी पूछ सकते हैं।', micNo: 'इस डिवाइस में माइक्रोफ़ोन नहीं मिला।', micNone: 'मुझे कुछ सुनाई नहीं दिया। माइक दबाकर थोड़ा ज़ोर से बोलिए, या अपना सवाल लिखिए।', micFail: 'आपकी आवाज़ समझ नहीं आई। कृपया अपना सवाल लिखिए।', micHeard: (x) => `मैंने सुना: “${x}”`, micRetry: (x) => `मुझे “${x}” सुनाई दिया, पर पक्का नहीं है। माइक फिर दबाकर दोबारा बोलिए: इस बार हमारा अपना ध्यान से सुनने वाला सिस्टम सुनेगा।`, micCheck: (x) => `मैंने सुना “${x}”। क्या यह सही है? ज़रूरत हो तो बॉक्स में ठीक करके पूछें दबाइए।`, micLang: () => 'आवाज़ से पूछने के लिए हिन्दी में बोलिए। दूसरी भाषा में बोलना हो तो पहले ऊपर भाषा बदलिए।', captionsOnly: 'सिर्फ़ टेक्स्ट', fullText: 'पूरा टेक्स्ट दिखाएँ', trustMin: '5 मिनट', trustNoLogin: 'लॉगिन ज़रूरी नहीं', auto: 'ऑटोमैटिक असिस्टेंट', waitAsk: 'क्या आपका कोई सवाल है? अभी पूछिए, या अगला दबाइए।', fin: 'मीटिंग पूरी हुई।', unsure: 'इसका जवाब हमारी टीम देगी। क्या आप अभी उनसे बात करना चाहेंगे?',
   },
 };
 
@@ -182,7 +182,7 @@ function Cta({ t, openForm, compact }) {
     </div>
   );
 }
-function SlideBody({ idx, lines, t, done, openForm, plansInfo }) {
+function SlideBody({ idx, lines, t, done, openForm, plansInfo, summary }) {
   const [title, ...rest] = lines;
   const tile = (icon, text, n) => <div className="pm-tile" key={n}><span className="pm-ico">{icon}</span><div>{text}</div></div>;
   if (idx === 0) {
@@ -250,6 +250,19 @@ function SlideBody({ idx, lines, t, done, openForm, plansInfo }) {
             </tbody>
           </table>
         </div>
+        {summary ? (
+          <div className="pm-sum">
+            {summary.state === 'sent'
+              ? <div className="pm-sum-ok">✓ {t.sumSent(summary.to)}</div>
+              : (
+                <>
+                  {!summary.hasPhone ? <input className="pm-input" value={summary.phone} maxLength={30} inputMode="tel" onChange={(e) => summary.setPhone(e.target.value)} placeholder={`${t.yourPhone} (+91…)`} aria-label={t.yourPhone} /> : null}
+                  <button type="button" className="pm-btn ghost" disabled={summary.state === 'busy'} onClick={summary.send}>💬 {t.sumBtn}</button>
+                  {summary.msg ? <div className="pm-sum-err" role="alert">{summary.msg}</div> : null}
+                </>
+              )}
+          </div>
+        ) : null}
         {done ? null : <Cta t={t} openForm={openForm} compact />}
       </>
     );
@@ -258,7 +271,7 @@ function SlideBody({ idx, lines, t, done, openForm, plansInfo }) {
 }
 
 export default function PlansMeetingPage() {
-  const { token: routeToken } = useParams();
+  const { token: routeToken, shortId } = useParams();
   const [token, setToken] = useState(routeToken || '');
   const [d, setD] = useState(null);
   const [gone, setGone] = useState('');
@@ -282,6 +295,8 @@ export default function PlansMeetingPage() {
   const [voices, setVoices] = useState([]);
   const [micState, setMicState] = useState(''); // '' | listening | recording | thinking
   const [micMsg, setMicMsg] = useState('');
+  const [sum, setSum] = useState({ state: '', msg: '', to: '' }); // the plans on WhatsApp: '' | busy | sent
+  const [sumPhone, setSumPhone] = useState('');
   const [serverFirst, setServerFirst] = useState(false); // the phone's recogniser heard nonsense once: from now on our own listener hears the questions
   const [heardOpts, setHeardOpts] = useState([]); // what was heard (by each listener), shown as buttons to pick the right one
   const mediaRef = useRef(null);
@@ -294,19 +309,21 @@ export default function PlansMeetingPage() {
   const tries = useRef(0);
   const t = T[lang];
 
-  const boot = useCallback(() => {
-    const req = routeToken ? api.get(`/public/mk-meeting/${encodeURIComponent(routeToken)}`) : api.post('/public/mk-meeting', {});
-    return req.then((r) => {
+  const boot = useCallback(async () => {
+    try {
+      let tk = routeToken || '';
+      if (!tk && shortId) { tk = (await api.get(`/public/mk-meeting/short/${encodeURIComponent(shortId)}`)).data.token; setToken(tk); } // the short address /m/<id> -> the full link behind it
+      const r = await (tk ? api.get(`/public/mk-meeting/${encodeURIComponent(tk)}`) : api.post('/public/mk-meeting', {}));
       const v = r.data; setD(v); if (v.token) setToken(v.token);
       if (v.session && LANGS.some(([k]) => k === v.session.language)) setLang(v.session.language);
-      setForm((f) => ({ ...f, name: (v.session && v.session.firstName) || f.name }));
+      setForm((f0) => ({ ...f0, name: (v.session && v.session.firstName) || f0.name }));
       setGone(''); setTemp(false);
-    }).catch((e) => {
+    } catch (e) {
       const s = e && e.response && e.response.status;
       if (!s || s >= 500 || s === 429) { setTemp(true); setGone('busy'); return; }
       setTemp(false); setGone(errOf(e, ''));
-    });
-  }, [routeToken]);
+    }
+  }, [routeToken, shortId]);
   useEffect(() => { document.title = 'TeamLink Digital Marketing plans'; const m = document.createElement('meta'); m.name = 'robots'; m.content = 'noindex'; document.head.appendChild(m); boot(); return () => { stopSpeech(); try { document.head.removeChild(m); } catch { /* gone */ } }; }, [boot]);
   useEffect(() => { // a busy site is not a dead link: try again by itself (up to 6 times)
     if (!temp || tries.current >= 6) return undefined;
@@ -331,6 +348,8 @@ export default function PlansMeetingPage() {
   const lines = useMemo(() => linesOf(idx, lang, ctx), [idx, lang, ctx]);
   // the closing table: each plan's name and what it holds, in the language chosen (from slides 4 to 6)
   const plansInfo = useMemo(() => [3, 4, 5].map((i) => { const l = linesOf(i, lang, ctx); return { p: PLAN_OF[i], name: colon(l[0])[0], feat: l[1] || '' }; }), [lang, ctx]);
+  // the 19 fixed answers and the ones the team added from the questions nobody could answer (the team page)
+  const faqAll = useMemo(() => [...FAQ, ...((d && d.custom) || []).map((c) => ({ id: c.id, custom: true, ask: {}, answer: c.answer, keywords: c.keywords }))], [d]);
   const hasDeviceVoice = useMemo(() => !!pickVoice(voices, lang), [voices, lang]);
   const srv = !!(voiceOk && voiceOk[lang]) && !(serverFails[lang] >= 2); // the server has a voice for this language
   const hasVoice = hasDeviceVoice || srv;
@@ -389,15 +408,17 @@ export default function PlansMeetingPage() {
     // everything else goes to the fixed answers. (Never the same "which plan" answer again.)
     const amount = faqId ? null : budgetOf(s);
     const bud = amount != null ? budgetReply(amount, lang) : null;
-    const usual = faqId ? { id: faqId } : matchFaq(s, FAQ);
+    const usual = faqId ? { id: faqId } : matchFaq(s, faqAll);
     const pa = !faqId && !bud ? planAnswer(s, lang, usual ? usual.id : null) : null;
     const m = bud ? { id: 'F3' } : (pa ? { id: pa.faq } : usual);
-    const f = m ? FAQ.find((x) => x.id === m.id) : null;
+    const f = m ? faqAll.find((x) => x.id === m.id) : null;
     const reply = bud ? bud.text : (pa ? pa.text : (f ? answerFor(f, lang, ctx.spots) : STANDARD.L3[lang]));
+    // an added answer may exist in one language only: it is shown and spoken in that language
+    const spokenLang = f && f.custom && !f.answer[lang] ? ['en', 'te', 'hi'].find((l) => f.answer[l]) || lang : lang;
     setMsgs((x) => [...x.slice(-5), { who: 'me', text: s }, { who: 'bot', text: reply, note: bud ? bud.shown : (pa ? pa.shown : '') }]);
     setQ(''); setUnsure(!f);
     post({ type: 'ask', q: s, faq: f ? f.id : '' });
-    say(sentencesOf(reply), sayOpts);
+    say(sentencesOf(reply), spokenLang === lang ? sayOpts : { lang: spokenLang, muted, server: !!(voiceOk && voiceOk[spokenLang]) });
     if (f && f.id === 'F19') openForm('team');
   };
   // ASKING BY VOICE. First the phone's own speech recognition (fast), with the words showing as they are heard and a plain message for every way it can fail. Where it is missing (iPhone, Firefox, an
@@ -412,7 +433,7 @@ export default function PlansMeetingPage() {
     } catch { setMicMsg(t.micDenied); }
   };
   // how much a sentence means to this page (an answer it knows, a budget, a plan named): 0 = nothing
-  const meaning = (x) => { const m = matchFaq(x, FAQ); return (m ? m.score : 0) + (budgetOf(x) != null ? 2 : 0) + (plansIn(x).length ? 1 : 0); };
+  const meaning = (x) => { const m = matchFaq(x, faqAll); return (m ? m.score : 0) + (budgetOf(x) != null ? 2 : 0) + (plansIn(x).length ? 1 : 0); };
   // What was heard, and who heard it (viaServer = our own listener). A sentence the page understands is answered. One it does not understand AND the phone's recogniser itself doubts ("can i know that this" for
   // "can i know the best plan") is not answered: the first time, the person is asked to say it again and OUR listener (Whisper, a second opinion) hears it; if that does not make sense either, both versions
   // are shown as buttons and in the box, to pick or correct.
@@ -477,6 +498,14 @@ export default function PlansMeetingPage() {
       r.onend = () => { recRef.current = null; if (failed) return; if (said.trim()) heardIt(said, conf); else micFail(t.micNone); };
       recRef.current = r; setListening(true); setMicState('listening'); r.start();
     } catch { setListening(false); setMicState(''); record(); }
+  };
+  const sendSummary = async () => {
+    if (!(d && d.session && d.session.hasPhone) && sumPhone.trim().length < 8) { setSum({ state: '', msg: t.needPhone, to: '' }); return; }
+    setSum({ state: 'busy', msg: '', to: '' });
+    try {
+      const r = await api.post(`/public/mk-meeting/${encodeURIComponent(token)}/event`, { type: 'summary', ...(sumPhone.trim() ? { phone: sumPhone.trim() } : {}) });
+      setSum({ state: 'sent', msg: '', to: (r.data && r.data.sentTo) || (d && d.session && d.session.phoneMasked) || '' });
+    } catch (e) { setSum({ state: '', msg: errOf(e, t.fail), to: '' }); }
   };
   const submitForm = async () => {
     const name = form.name.trim(); const phone = form.phone.trim();
@@ -545,7 +574,7 @@ export default function PlansMeetingPage() {
           <div className="pm-stage-top"><span className="pm-count"><b>{String(pos + 1).padStart(2, '0')}</b> / {String(order.length).padStart(2, '0')}</span><span>{brandName.toUpperCase()}</span></div>
           <div className="pm-seg" aria-hidden="true">{order.map((x, n) => <i key={x} className={n <= pos ? 'on' : ''} />)}</div>
           <div className="pm-body" key={`${idx}-${lang}`}>
-            <SlideBody idx={idx} lines={lines} t={t} done={!!done} openForm={openForm} plansInfo={plansInfo} />
+            <SlideBody idx={idx} lines={lines} t={t} done={!!done} openForm={openForm} plansInfo={plansInfo} summary={{ state: sum.state, msg: sum.msg, to: sum.to, hasPhone: !!(d && d.session && d.session.hasPhone), phone: sumPhone, setPhone: setSumPhone, send: sendSummary }} />
             {done ? <div className="pm-thanks">{done}</div> : null}
           </div>
         </section>

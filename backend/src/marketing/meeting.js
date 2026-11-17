@@ -21,7 +21,7 @@ const DDL = [
   `CREATE INDEX IF NOT EXISTS "${TABLE}_by" ON "${TABLE}"("createdById", "createdAt")`,
 ];
 // columns added after the first release (an older table gets them here): who called the client and when, and when the team was last alerted
-const LATER = [['calledAt', 'DATETIME'], ['calledByName', 'TEXT'], ['callLine', 'TEXT'], ['alertedAt', 'DATETIME']];
+const LATER = [['calledAt', 'DATETIME'], ['calledByName', 'TEXT'], ['callLine', 'TEXT'], ['alertedAt', 'DATETIME'], ['crmLeadId', 'TEXT'], ['summaryAt', 'DATETIME']];
 let okAt = 0;
 async function ensure() {
   if (okAt && Date.now() - okAt < 600000) return true;
@@ -61,12 +61,12 @@ async function readAll() {
     const row = await prisma.appSetting.findUnique({ where: { key: SETTINGS_KEY } });
     const v = row ? JSON.parse(row.value) : {};
     const n = Math.floor(Number(v.spotsLeft));
-    return { spotsLeft: Number.isFinite(n) && n >= 0 ? Math.min(n, 99) : 10, alerts: v.alerts && typeof v.alerts === 'object' ? v.alerts : {} };
-  } catch { return { spotsLeft: 10, alerts: {} }; }
+    return { spotsLeft: Number.isFinite(n) && n >= 0 ? Math.min(n, 99) : 10, alerts: v.alerts && typeof v.alerts === 'object' ? v.alerts : {}, answers: Array.isArray(v.answers) ? v.answers : [] };
+  } catch { return { spotsLeft: 10, alerts: {}, answers: [] }; }
 }
 const writeAll = async (all) => {
   const prisma = require('../db'); // eslint-disable-line global-require
-  const value = JSON.stringify({ spotsLeft: all.spotsLeft, alerts: all.alerts || {} });
+  const value = JSON.stringify({ spotsLeft: all.spotsLeft, alerts: all.alerts || {}, answers: all.answers || [] });
   await prisma.appSetting.upsert({ where: { key: SETTINGS_KEY }, update: { value }, create: { key: SETTINGS_KEY, value } });
 };
 const readSettings = async () => ({ spotsLeft: (await readAll()).spotsLeft }); // what the client page and the team page may see (never the alert numbers)
@@ -78,6 +78,72 @@ async function saveSettings(u, b = {}) {
   await writeAll({ ...all, spotsLeft: n });
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: plans meeting, first-ten spots left set', entity: TABLE, entityId: 'settings', toValue: String(n) });
   return { ok: n > 0 ? `${n} spot${n === 1 ? '' : 's'} left: the assistant says the first-ten offer.` : 'No spots left: the assistant no longer says the first-ten offer.', settings: { spotsLeft: n } };
+}
+
+
+// ---- QUESTIONS THE ASSISTANT COULD NOT ANSWER, and the answers the team adds (founder 2026-11-17: "any ideas that are best, go with that") ----------------------------------------------------
+// A question that matched none of the 19 fixed answers is kept on the client's row. The team page lists them (the same question asked again is counted once), and a person types the answer once, in any of
+// the three languages: from then on the assistant answers it (and anything that uses the same words) for every client. Nothing here is written by an AI, and the policy is the team's own.
+const normQ = (q) => String(q || '').toLowerCase().normalize('NFC').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+const STOP = new Set(['what', 'which', 'your', 'have', 'does', 'with', 'that', 'this', 'there', 'about', 'from', 'would', 'could', 'should', 'will', 'you', 'are', 'the', 'and', 'for', 'can', 'how', 'why', 'when', 'please', 'tell', 'know', 'want', 'need', 'give', 'show', 'any', 'our', 'also', 'than', 'into', 'they', 'them', 'been', 'do', 'is', 'it', 'me', 'my', 'we', 'to', 'of', 'in', 'on', 'or', 'if', 'so', 'be']);
+function keywordsOf(q, extra) {
+  const n = normQ(q);
+  const words = n.split(' ').filter((w) => (/^[a-z0-9]+$/.test(w) ? w.length >= 4 && !STOP.has(w) : w.length >= 3));
+  const more = String(extra || '').split(/[,\n]/).map((x) => normQ(x)).filter((x) => x.length >= 2);
+  return [...new Set([...(n.length >= 6 ? [n] : []), ...words, ...more])].slice(0, 14);
+}
+async function saveAnswer(u, b = {}) {
+  if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not change this.', status: 403 };
+  const q = S.clip(b.q, 300);
+  const a = b.answer || {};
+  const answer = { en: S.clip(a.en, 900), te: S.clip(a.te, 900), hi: S.clip(a.hi, 900) };
+  if (!q) return { error: 'Write the question first.', status: 400 };
+  if (![answer.en, answer.te, answer.hi].some((x) => String(x || '').length >= 3)) return { error: 'Write the answer in at least one language.', status: 400 };
+  const all = await readAll();
+  const existing = b.id ? all.answers.find((x) => x.id === String(b.id)) : null;
+  if (!existing && all.answers.length >= 60) return { error: 'There are 60 answers already. Remove one first.', status: 400 };
+  const keywords = keywordsOf(q, b.keywords);
+  if (!keywords.length) return { error: 'Add one or two words that mean this question (in "Words that find this answer").', status: 400 };
+  const entry = { id: existing ? existing.id : `C${1 + all.answers.reduce((m, x) => Math.max(m, Number(String(x.id).slice(1)) || 0), 0)}`, q, fromQ: normQ(q), keywords, answer, by: S.clip(u.name, 80), at: Date.now() };
+  all.answers = existing ? all.answers.map((x) => (x.id === existing.id ? entry : x)) : [...all.answers, entry];
+  await writeAll(all); customCache.at = 0;
+  await logAudit({ userId: u.id, actorName: u.name, action: `Omni-Channel AI Marketing: plans meeting, an answer ${existing ? 'changed' : 'added'}`, entity: TABLE, entityId: entry.id, toValue: q.slice(0, 120) });
+  return { ok: 'Saved. The assistant answers this from now on.', answers: all.answers };
+}
+async function removeAnswer(u, id) {
+  if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not change this.', status: 403 };
+  const all = await readAll();
+  const e = all.answers.find((x) => x.id === String(id));
+  if (!e) return { error: 'That answer was not found.', status: 404 };
+  all.answers = all.answers.filter((x) => x.id !== e.id);
+  await writeAll(all); customCache.at = 0;
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: plans meeting, an answer removed', entity: TABLE, entityId: e.id, toValue: String(e.q).slice(0, 120) });
+  return { ok: 'Removed.', answers: all.answers };
+}
+// what the client page may know of the answers (never who wrote them or the question that led to them)
+const customForClient = (all) => all.answers.map((e) => ({ id: e.id, keywords: e.keywords, answer: e.answer }));
+// every sentence of every added answer, per language: the server voice may speak these too (marketing/meetingVoice.js)
+const customCache = { at: 0, sets: { en: new Set(), te: new Set(), hi: new Set() } };
+const SENT = (text) => (String(text || '').match(/[^.!?।]+[.!?।]*\s*/g) || []).map((x) => x.trim()).filter(Boolean);
+async function customSentences() {
+  if (Date.now() - customCache.at < 30000) return customCache.sets;
+  const all = await readAll();
+  const sets = { en: new Set(), te: new Set(), hi: new Set() };
+  all.answers.forEach((e) => ['en', 'te', 'hi'].forEach((l) => SENT(e.answer && e.answer[l]).forEach((x) => sets[l].add(x))));
+  customCache.at = Date.now(); customCache.sets = sets;
+  return sets;
+}
+// the questions with no answer, the same words counted once, the most asked first
+function unansweredOf(rows, answers) {
+  const known = new Set(answers.map((e) => e.fromQ));
+  const m = new Map();
+  rows.forEach((r) => parse(r.questions, []).forEach((x) => {
+    if (x.id) return;
+    const k = normQ(x.q); if (!k || k.length < 4 || known.has(k)) return;
+    const e = m.get(k) || { q: x.q, count: 0, lastAt: 0, language: r.language };
+    e.count += 1; e.lastAt = Math.max(e.lastAt, S.num(x.t)); m.set(k, e);
+  }));
+  return [...m.values()].sort((a, b) => (b.count - a.count) || (b.lastAt - a.lastAt)).slice(0, 30);
 }
 
 // ---- WhatsApp ALERT to the team when a client asks for a call (founder 2026-11-17: "i have to get notifications ... every time i cant check and call") --------------------------------------
@@ -132,7 +198,7 @@ const full = (r) => ({
   views: S.num(r.views), firstOpenedAt: r.firstOpenedAt ? S.num(r.firstOpenedAt) : null, lastOpenedAt: r.lastOpenedAt ? S.num(r.lastOpenedAt) : null,
   lastSlide: S.num(r.lastSlide), maxSlide: S.num(r.maxSlide), slides: SLIDES, finishedAt: r.finishedAt ? S.num(r.finishedAt) : null,
   questions: parse(r.questions, []), choice: r.choice || '', callbackWindow: r.callbackWindow || '', handoverAt: r.handoverAt ? S.num(r.handoverAt) : null, interest: interestOf(r),
-  calledAt: r.calledAt ? S.num(r.calledAt) : null, calledByName: r.calledByName || '', callLine: r.callLine || '',
+  calledAt: r.calledAt ? S.num(r.calledAt) : null, calledByName: r.calledByName || '', callLine: r.callLine || '', inCrm: !!r.crmLeadId,
 });
 const row = async (id) => (await S.q(`SELECT * FROM "${TABLE}" WHERE id = ? AND deletedAt IS NULL`, String(id || '')))[0] || null;
 const visible = (u, r) => A.isAdmin(u) || r.createdById === u.id;
@@ -151,7 +217,8 @@ async function list(u) {
   const items = rows.map(full);
   const count = (k) => items.filter((x) => x.interest === k).length;
   const waiting = items.filter((x) => x.handoverAt && (!x.calledAt || x.calledAt < x.handoverAt)).length; // asked for a call and nobody has called since
-  return { items, counts: { total: items.length, hot: count('Hot'), warm: count('Warm'), cold: count('Cold'), notOpened: count('Not opened'), waiting }, settings: await readSettings(), alert: await myAlert(u) };
+  const all = await readAll();
+  return { items, counts: { total: items.length, hot: count('Hot'), warm: count('Warm'), cold: count('Cold'), notOpened: count('Not opened'), waiting }, settings: { spotsLeft: all.spotsLeft }, alert: await myAlert(u), unanswered: unansweredOf(rows, all.answers), answers: all.answers };
 }
 async function create(u, b = {}) {
   if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not use this page.', status: 403 };
@@ -206,6 +273,13 @@ const INVITE = {
   hi: (n, link) => `${n ? `नमस्ते ${n} जी,` : 'नमस्ते,'} हमारे सोशल मीडिया प्लान के बारे में एक छोटी ऑटोमैटिक मीटिंग (करीब 5 मिनट, अंग्रेज़ी, तेलुगु या हिंदी में)। इसे अपने फ़ोन पर खोलें और आवाज़ चालू करें: ${link}`,
 };
 const inviteText = (lang, first, link) => (INVITE[lang] || INVITE.en)(first, link);
+// what the client gets when THEY tap "Send me the plans on WhatsApp" (never sent by itself)
+const SUMMARY = {
+  en: (n, link) => `${n ? `Thank you ${n}, ` : 'Thank you '}for joining the TeamLink Digital Marketing plans meeting. Our plans, per month plus 18% GST: Starter Rs 3,999 (Rs 4,719 with GST), Growth Rs 9,999 (Rs 11,799), Premium Rs 19,999 (Rs 23,599). Trial: Rs 999. Open the meeting again: ${link}`,
+  te: (n, link) => `${n ? `ధన్యవాదాలు ${n} గారు, ` : 'ధన్యవాదాలు, '}టీమ్‌లింక్ డిజిటల్ మార్కెటింగ్ ప్లాన్ల మీటింగ్‌లో చేరినందుకు. మా ప్లాన్లు, నెలకు + 18% జీఎస్టీ: స్టార్టర్ ₹3,999 (జీఎస్టీతో ₹4,719), గ్రోత్ ₹9,999 (₹11,799), ప్రీమియం ₹19,999 (₹23,599). ట్రయల్: ₹999. మీటింగ్ మళ్ళీ చూడటానికి: ${link}`,
+  hi: (n, link) => `${n ? `धन्यवाद ${n} जी, ` : 'धन्यवाद, '}टीमलिंक डिजिटल मार्केटिंग प्लान मीटिंग में शामिल होने के लिए। हमारे प्लान, प्रति माह + 18% जीएसटी: स्टार्टर ₹3,999 (जीएसटी के साथ ₹4,719), ग्रोथ ₹9,999 (₹11,799), प्रीमियम ₹19,999 (₹23,599)। ट्रायल: ₹999। मीटिंग फिर से देखने के लिए: ${link}`,
+};
+const summaryText = (lang, first, link) => (SUMMARY[lang] || SUMMARY.en)(first, link);
 
 async function tell(u, id, b = {}, base = '') {
   const g = await mine(u, id); if (g.error) return g;
@@ -222,7 +296,7 @@ async function tell(u, id, b = {}, base = '') {
   const Sender = require('./sender'); // eslint-disable-line global-require
   const pk = await Sender.pick(u, b.numberId);
   if (pk.error) return { error: pk.error, status: pk.status || 400 };
-  const link = `${site}/plans-meeting/${tokenOf(r.id)}`;
+  const link = `${site}/m/${r.id}`; // the short address (the page opens the full link behind it)
   const text = inviteText(r.language, P.firstWord(r.name), link);
   const meta = { audience: 'client', personName: S.clip(r.name, 80), purpose: 'AI Marketing: plans meeting link', module: 'AI Marketing', senderUserId: u.id, senderName: S.clip(u.name, 80) };
   const messaging = require('../utils/messaging'); // eslint-disable-line global-require
@@ -254,8 +328,15 @@ async function proofNow() {
 }
 async function viewOf(r) {
   const brand = await Cfg.getBrand();
-  const st = await readSettings();
-  return { session: { language: r.language, firstName: require('./projects').firstWord(r.name), hasPhone: !!r.phone, phoneMasked: r.phone ? core().maskMobile(r.phone) : '' }, brand: { name: brand.brandName || 'TeamLink', colors: brand.colors }, spotsLeft: st.spotsLeft, proof: await proofNow() }; // eslint-disable-line global-require
+  const st = await readAll();
+  return { custom: customForClient(st), session: { language: r.language, firstName: require('./projects').firstWord(r.name), hasPhone: !!r.phone, phoneMasked: r.phone ? core().maskMobile(r.phone) : '' }, brand: { name: brand.brandName || 'TeamLink', colors: brand.colors }, spotsLeft: st.spotsLeft, proof: await proofNow() }; // eslint-disable-line global-require
+}
+// the short address /m/<id>: the page asks for the full link behind it (the id is 64 random bits: it cannot be guessed, and the address is rate limited)
+async function publicShort(id) {
+  if (!/^[a-f0-9]{16}$/.test(String(id || ''))) return GONE;
+  const token = tokenOf(id);
+  const r = await load(token);
+  return r ? { token } : GONE;
 }
 async function publicStart(language) {
   await ensure();
@@ -273,9 +354,27 @@ async function publicView(token) {
   return viewOf(r);
 }
 
+// A client who asks for a call or picks a plan becomes a lead in the CRM (source "Plans meeting", rating Hot, owned by the person who made the link), once; the same phone again only adds a note.
+async function crmLead(r, { name, phone, what, window, asked }) {
+  try {
+    const DB = require('../crm/schema'); const CS = require('../crm/service'); const CSET = require('../crm/settings'); const CSALES = require('../crm/sales'); // eslint-disable-line global-require
+    const now = DB.nowIso();
+    const note = `Plans meeting: ${what}. Call ${WINDOW_WORDS[window]}.${asked ? ` They asked: ${asked}.` : ''}`.slice(0, 1500);
+    const ph = CS.phone10(phone);
+    const same = r.crmLeadId ? { id: r.crmLeadId } : (ph.length === 10 ? (await DB.all('SELECT "id", "phone" FROM "CrmLead"')).find((l) => CS.phone10(l.phone) === ph) : null);
+    if (same) {
+      await CS.insert('CrmActivity', { id: CS.newId('act'), kind: 'note', subject: 'Plans meeting: asked for a call', note, at: now, leadId: same.id, byName: 'Plans meeting', createdAt: now });
+      return same.id;
+    }
+    const stage = (await CSET.load()).leadStages[0].name;
+    const lead = await CS.insert('CrmLead', { id: CS.newId('lead'), company: name || 'Plans meeting visitor', contactName: name || null, phone, source: 'Plans meeting', rating: 'Hot', notes: note, status: 'New', stage, ownerId: r.createdById || null, ownerName: r.createdByName || null, createdById: r.createdById || null, createdAt: now, updatedAt: now });
+    if (r.createdById) await CSALES.firstFollowUp(lead).catch(() => null); // the first call, two hours on (CRM settings can switch it off)
+    return lead.id;
+  } catch (e) { console.error('[omni-mk] meeting crm lead:', e.message); return null; } // eslint-disable-line no-console
+}
 async function tellOwner(r, title, message) { try { await require('./projects').tellTeam(r, title, message); } catch (e) { console.error('[omni-mk] meeting bell:', e.message); } } // eslint-disable-line global-require, no-console
 const who = (r) => r.name || 'A visitor';
-async function publicEvent(token, b = {}) {
+async function publicEvent(token, b = {}, base = '') {
   const r = await load(token);
   if (!r) return GONE;
   const now = Date.now(); const t = String(b.type || '');
@@ -289,7 +388,7 @@ async function publicEvent(token, b = {}) {
     const q = S.clip(b.q, 300);
     if (!q) return { error: 'Type a question first.', status: 400 };
     const list = parse(r.questions, []);
-    list.push({ t: now, q, id: /^F\d{1,2}$/.test(String(b.faq || '')) ? String(b.faq) : '' });
+    list.push({ t: now, q, id: /^[FC]\d{1,3}$/.test(String(b.faq || '')) ? String(b.faq) : '' });
     await S.run(`UPDATE "${TABLE}" SET questions = ?, updatedAt = ? WHERE id = ?`, JSON.stringify(list.slice(-30)), now, r.id);
   } else if (t === 'choice' || t === 'handover') {
     const choice = t === 'choice' ? String(b.choice || '') : 'team';
@@ -304,9 +403,27 @@ async function publicEvent(token, b = {}) {
     const asked = parse(r.questions, []).map((x) => x.q).slice(-3).join('; ');
     const what = { trial: 'wants to start the Rs 999 trial', starter: 'chose the Starter plan', growth: 'chose the Growth plan', premium: 'chose the Premium plan', team: 'asked for a call from the team' }[choice];
     await tellOwner(r, `Plans meeting: ${who({ name })} ${what} (Hot)`, `${who({ name })} (${phone}) ${what}. Call ${WINDOW_WORDS[window]}.${asked ? ` They asked: ${asked}.` : ''} Open AI Marketing > Client projects > Plans meeting.`);
+    const leadId = await crmLead(r, { name, phone, what, window, asked });
+    if (leadId && leadId !== r.crmLeadId) await S.run(`UPDATE "${TABLE}" SET crmLeadId = ? WHERE id = ?`, leadId, r.id);
     await alertWhatsApp(r, `Plans meeting: ${who({ name })} ${what}. Call ${WINDOW_WORDS[window]} on ${phone}.${asked ? ` They asked: ${asked}.` : ''} Open TeamLink > AI Marketing > Client projects > Plans meeting to call them.`);
+  } else if (t === 'summary') {
+    const typed = S.clip(b.phone, 30);
+    if (typed && !core().normalizeMobile(typed).ok) return { error: 'That number does not look right. Please check it.', status: 400 };
+    const phone = typed || r.phone || '';
+    const nm = phone ? core().normalizeMobile(phone) : null;
+    if (!nm || !nm.ok) return { error: 'Please type your WhatsApp number.', status: 400 };
+    if (r.summaryAt && now - S.num(r.summaryAt) < 300000) return { ok: true, already: true }; // one every five minutes
+    const P = require('./projects'); // eslint-disable-line global-require
+    const site = P.siteFor(base);
+    if (!site) return { error: 'This page cannot send it from here. Please ask our team.', status: 503 };
+    const text = summaryText(r.language, P.firstWord(r.name || b.name), `${site}/m/${r.id}`);
+    const messaging = require('../utils/messaging'); // eslint-disable-line global-require
+    const res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${text}\n\nReply STOP to stop messages from us.`, vars: [text], meta: { audience: 'client', personName: S.clip(r.name, 80), purpose: 'AI Marketing: plans meeting, the plans on WhatsApp (the client asked)', module: 'AI Marketing' } });
+    if (!(res && res.ok)) return { error: 'We could not send it just now. Please try again in a minute, or ask our team.', status: 502 };
+    await S.run(`UPDATE "${TABLE}" SET summaryAt = ?, phone = COALESCE(NULLIF(phone, ''), ?), updatedAt = ? WHERE id = ?`, now, phone, now, r.id);
+    return { ok: true, sentTo: core().maskMobile(nm.e164) };
   } else return { error: 'Unknown event.', status: 400 };
   return { ok: true };
 }
 
-module.exports = { ensure, create, list, remove, tell, call, saveAlert, myAlert, saveSettings, readSettings, publicStart, publicView, publicEvent, tokenOf, idOfToken, interestOf, inviteText, SLIDES };
+module.exports = { ensure, create, list, remove, tell, call, saveAlert, myAlert, saveSettings, readSettings, saveAnswer, removeAnswer, customSentences, keywordsOf, publicStart, publicShort, publicView, publicEvent, tokenOf, idOfToken, interestOf, inviteText, summaryText, SLIDES };

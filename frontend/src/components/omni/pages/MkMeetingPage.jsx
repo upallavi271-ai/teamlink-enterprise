@@ -16,7 +16,7 @@ const LANG = { en: 'English', te: 'తెలుగు', hi: 'हिन्दी'
 const TONE = { Hot: 'red', Warm: 'warn', Cold: 'draft', 'Not opened': 'draft' };
 const CHOICE = { trial: 'wants the ₹999 trial', starter: 'chose Starter', growth: 'chose Growth', premium: 'chose Premium', team: 'asked for a call' };
 const WINDOW = { asap: 'as soon as possible', morning: 'morning (9 to 12)', afternoon: 'afternoon (12 to 4)', evening: 'evening (4 to 7)' };
-const linkOf = (m) => `${window.location.origin}/plans-meeting/${m.token}`;
+const linkOf = (m) => `${window.location.origin}/m/${m.id}`; // the short address: it opens the full link behind it
 const telOf = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 10 ? `+91${d}` : `+${d}`; }; // opens the phone's own dialler
 const waiting = (m) => !!m.handoverAt && (!m.calledAt || m.calledAt < m.handoverAt); // asked for a call and nobody has called since
 const FILTERS = [['waiting', 'Waiting for your call'], ['Hot', 'Hot'], ['Warm', 'Warm'], ['Cold', 'Cold'], ['Not opened', 'Not opened']];
@@ -35,7 +35,7 @@ function Row({ m, busy, note, onSend, onCopy, onDelete, onCall, onDial }) {
       <div style={{ minWidth: 0 }}>
         <div className="mkm-name">
           <button type="button" onClick={() => setOpen(!open)}>{who}</button>
-          <Pill tone={TONE[m.interest]} dot>{m.interest}</Pill>{wants ? <Pill tone="red">📞 Wants a call</Pill> : null}<Tag>{LANG[m.language] || m.language}</Tag>{m.sentAt ? <Tag green title="Sent from TeamLink">Sent</Tag> : null}
+          <Pill tone={TONE[m.interest]} dot>{m.interest}</Pill>{wants ? <Pill tone="red">📞 Wants a call</Pill> : null}<Tag>{LANG[m.language] || m.language}</Tag>{m.sentAt ? <Tag green title="Sent from TeamLink">Sent</Tag> : null}{m.inCrm ? <Tag green title="This client is a lead in the CRM (Sales CRM > Leads)">In CRM</Tag> : null}
         </div>
         <div className="mkm-meta">
           {m.phone || 'no number yet'} · {progress}{m.views ? ` · opened ${m.views}×, last ${fmtDateTime(m.lastOpenedAt)}` : ''} · made by {m.createdByName || 'a visitor'}
@@ -88,6 +88,7 @@ export default function MkMeetingPage() {
   const [callLine, setCallLine] = useState('');
   const [notes, setNotes] = useState({}); // what the last Call now / Dial it myself did, kept next to that client's buttons (a toast, or a message at the top of a long page, is easy to miss)
   const [al, setAl] = useState(null); // { on, phone } being edited for the alert
+  const [ed, setEd] = useState(null); // the answer being written: { id, q, answer: { en, te, hi }, keywords }
   const timer = useRef(null);
   const load = useCallback(() => omni.get('/gs/marketing/meetings').then((x) => { setD(x); setSpots((cur) => (cur == null ? x.settings.spotsLeft : cur)); setAl((cur) => cur || { on: x.alert.on, phone: x.alert.phone }); setErr(''); }).catch((e) => setErr(errOf(e, 'The meetings could not be read.'))), []);
   useEffect(() => { load(); timer.current = setInterval(load, 20000); return () => clearInterval(timer.current); }, [load]);
@@ -127,6 +128,15 @@ export default function MkMeetingPage() {
     setBusy('alert'); setErr('');
     try { const r = await omni.put('/gs/marketing/meetings/alert', { on, phone: (al && al.phone) || '' }); toast(r.ok); setAl({ on: r.alert.on, phone: r.alert.phone }); await load(); } catch (e) { const m = errOf(e, 'It could not be saved.'); setErr(m); toast(m); } finally { setBusy(''); }
   };
+  const startAnswer = (q, id, answer, keywords) => setEd({ id: id || '', q, answer: { en: '', te: '', hi: '', ...(answer || {}) }, keywords: keywords || '' });
+  const saveAnswer = async () => {
+    setBusy('answer'); setErr('');
+    try { const r = await omni.put('/gs/marketing/meetings/answers', { id: ed.id || undefined, q: ed.q, answer: ed.answer, keywords: ed.keywords }); toast(r.ok); setEd(null); await load(); } catch (e) { const m = errOf(e, 'It could not be saved.'); setErr(m); toast(m); } finally { setBusy(''); }
+  };
+  const dropAnswer = async (a) => {
+    setBusy('answer');
+    try { const r = await omni.del(`/gs/marketing/meetings/answers/${a.id}`); toast(r.ok); await load(); } catch (e) { toast(errOf(e, 'It could not be removed.')); } finally { setBusy(''); }
+  };
   const countOf = { waiting: c.waiting || 0, Hot: c.hot, Warm: c.warm, Cold: c.cold, 'Not opened': c.notOpened };
   // who asked for a call and has not been called is on top
   const shown = d.items.filter((m) => (filter === 'waiting' ? waiting(m) : (filter ? m.interest === filter : true))).slice().sort((a, b) => (Number(waiting(b)) - Number(waiting(a))) || (b.createdAt - a.createdAt));
@@ -159,6 +169,40 @@ export default function MkMeetingPage() {
               <span style={{ fontSize: 11, color: 'var(--muted)' }}>{filter ? `${shown.length} shown · ` : ''}{c.total} link{c.total === 1 ? '' : 's'} made{filter ? <> · <button type="button" className="link-btn" style={{ fontSize: 11 }} onClick={() => setFilter('')}>show all</button></> : ''}</span>
             </div>
             {shown.length === 0 ? <Empty title="No clients here yet">Make a link on the right, then send it to a client on WhatsApp.</Empty> : shown.map((m) => <Row key={m.id} m={m} busy={busy} note={notes[m.id]} onSend={send} onCall={call} onDial={dial} onCopy={copy} onDelete={(x) => setAsk(x)} />)}
+          </section>
+
+          <section className="mkm-card">
+            <div className="mkm-listhead"><h3>Questions the assistant could not answer</h3><span style={{ fontSize: 11, color: 'var(--muted)' }}>{d.unanswered.length} waiting · {d.answers.length} added by you</span></div>
+            <p>Write the answer once, in any language, and the assistant answers it (and the same words) for every client from then on. It never makes up policy: these are your words.</p>
+            {ed ? (
+              <div className="mkm-more" style={{ marginBottom: 10 }}>
+                <div className="lab">THE QUESTION</div>
+                <input value={ed.q} maxLength={300} onChange={(e) => setEd({ ...ed, q: e.target.value })} aria-label="The question" />
+                {[['en', 'ANSWER IN ENGLISH'], ['te', 'ANSWER IN TELUGU (OPTIONAL)'], ['hi', 'ANSWER IN HINDI (OPTIONAL)']].map(([k, lab]) => (
+                  <div key={k}><div className="lab">{lab}</div><textarea rows={2} maxLength={900} value={ed.answer[k] || ''} onChange={(e) => setEd({ ...ed, answer: { ...ed.answer, [k]: e.target.value } })} aria-label={lab} /></div>
+                ))}
+                <div className="lab">EXTRA WORDS THAT FIND THIS ANSWER (OPTIONAL, WITH COMMAS)</div>
+                <input value={ed.keywords} maxLength={200} onChange={(e) => setEd({ ...ed, keywords: e.target.value })} placeholder="For example: logo, branding" aria-label="Extra words" />
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}><Btn small primary disabled={busy === 'answer'} onClick={saveAnswer}>Save the answer</Btn><Btn small onClick={() => setEd(null)}>Cancel</Btn></div>
+              </div>
+            ) : null}
+            {d.unanswered.length === 0 ? <div className="mkm-meta" style={{ padding: '6px 2px' }}>Nothing is waiting. When a client asks something the assistant has no answer for, it appears here.</div> : d.unanswered.map((u) => (
+              <div className="mkm-q" key={u.q}>
+                <div><b>“{u.q}”</b><span className="mkm-meta"> asked {u.count} time{u.count === 1 ? '' : 's'}, last {fmtDateTime(u.lastAt)}</span></div>
+                <Btn small primary onClick={() => startAnswer(u.q)}>Add an answer</Btn>
+              </div>
+            ))}
+            {d.answers.length ? (
+              <div style={{ marginTop: 10 }}>
+                <div className="mkm-eyebrow" style={{ margin: '4px 0' }}>Answers you added</div>
+                {d.answers.map((a) => (
+                  <div className="mkm-q" key={a.id}>
+                    <div><b>“{a.q}”</b><span className="mkm-meta"> {a.answer.en || a.answer.te || a.answer.hi}</span></div>
+                    <div style={{ display: 'flex', gap: 6 }}><TinyBtn onClick={() => startAnswer(a.q, a.id, a.answer, (a.keywords || []).filter((k) => !String(a.q).toLowerCase().includes(k)).join(', '))}>Edit</TinyBtn><TinyBtn disabled={busy === 'answer'} onClick={() => dropAnswer(a)}>Remove</TinyBtn></div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </section>
         </div>
 

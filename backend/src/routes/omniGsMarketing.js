@@ -170,6 +170,8 @@ router.post('/client-reviews/:id/extend', mustWrite, wrap(async (req, res) => se
 // Nothing is sent until a person clicks "Send on WhatsApp" (tell). The public side is routes/mkMeetingPublic.js.
 router.get('/meetings', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').list(req.user)))); // eslint-disable-line global-require
 router.put('/meetings/settings', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').saveSettings(req.user, req.body || {})))); // eslint-disable-line global-require
+router.put('/meetings/answers', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').saveAnswer(req.user, req.body || {})))); // eslint-disable-line global-require
+router.delete('/meetings/answers/:id', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').removeAnswer(req.user, req.params.id)))); // eslint-disable-line global-require
 router.put('/meetings/alert', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').saveAlert(req.user, req.body || {})))); // eslint-disable-line global-require
 router.post('/meetings', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').create(req.user, req.body || {})))); // eslint-disable-line global-require
 router.post('/meetings/:id/tell', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').tell(req.user, req.params.id, req.body || {}, siteOf(req))))); // eslint-disable-line global-require

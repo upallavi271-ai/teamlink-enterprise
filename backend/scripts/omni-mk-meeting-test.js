@@ -22,6 +22,9 @@ const prisma = require(path.join(BACK, 'src/db'));
 const { resolveIdentity } = require(path.join(BACK, 'src/utils/identity'));
 const M = require(path.join(BACK, 'src/marketing/meeting'));
 
+const S0 = require(path.join(BACK, 'src/outreach/store'));
+const S0q = async (id) => (await S0.q('SELECT * FROM "OmniMkMeeting" WHERE id = ?', id))[0];
+const S0run = async (id) => S0.run('UPDATE "OmniMkMeeting" SET summaryAt = NULL WHERE id = ?', id);
 let pass = 0; let fail = 0;
 const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${ok ? 'PASS' : 'FAIL'}  ${n}${!ok && d != null ? `  -> ${String(typeof d === 'string' ? d : JSON.stringify(d)).slice(0, 400)}` : ''}`); };
 
@@ -264,6 +267,65 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     check('14g "list of the plans", the misheard "list of the plants" and "what plants do you have" all give the prices (F1), in Telugu and Hindi too', ['list of the plans', 'list of the plants', 'what plants do you have', 'show me all plans', 'ప్లాన్లు ఏమిటి', 'सभी प्लान बताइए'].every((q) => idOf(q) === 'F1'), ['list of the plans', 'list of the plants', 'what plants do you have', 'ప్లాన్లు ఏమిటి', 'सभी प्लान बताइए'].map((q) => `${q}=${idOf(q)}`));
     check('14g2 "can i know the best plan" and "which is the best" ask for plan advice (F3); "best price" is still the price', idOf('can i know the best plan') === 'F3' && idOf('which is the best') === 'F3' && idOf('what is the best price') === 'F1', ['can i know the best plan', 'which is the best', 'what is the best price'].map((q) => `${q}=${idOf(q)}`));
     check('14h one wrong letter is forgiven only in longer words: nothing answers noise, "again and again" or "paid maid", and "which plan is right for me" is still the plan advice', idOf('asdf qwerty zzz') === null && idOf('again and again') === null && idOf('paid maid') === null && idOf('a') === null && idOf('which plan is right for me') === 'F3' && idOf('can i change my plans') === 'F8');
+    // ---- the ideas: the CRM lead, the questions with no answer and the answers the team adds, the plans on WhatsApp by the client's tap, the short link ----
+    const CRMDB = require(path.join(BACK, 'src/crm/schema'));
+    const mI = (await M.create(sa, { name: 'ZZ Ideas Test', phone: '9123456799', language: 'en' })).meeting; // a phone no earlier test used (the same phone is the same CRM lead)
+    check('17 the short address /m/<id> gives the full link behind it; a made-up one does not', (await M.publicShort(mI.id)).token === M.tokenOf(mI.id) && (await M.publicShort('0123456789abcdef')).status === 404 && (await M.publicShort('nonsense')).status === 404);
+
+    // questions with no answer
+    await M.publicEvent(mI.token, { type: 'ask', q: 'Do you provide logo design?', faq: '' });
+    await M.publicEvent(mI.token, { type: 'ask', q: 'do you provide logo design', faq: '' });
+    await M.publicEvent(mI.token, { type: 'ask', q: 'how much does it cost', faq: 'F1' });
+    let L = await M.list(sa);
+    const un = L.unanswered.find((e) => /logo design/i.test(e.q));
+    check('17b a question with no answer is listed once, with how often it was asked; an answered one is not listed', !!un && un.count === 2 && !L.unanswered.some((e) => /how much does it cost/i.test(e.q)), L.unanswered);
+    check('17c an answer needs a question, and words in at least one language', (await M.saveAnswer(sa, { q: '', answer: { en: 'Yes' } })).status === 400 && (await M.saveAnswer(sa, { q: 'Do you provide logo design?', answer: {} })).status === 400);
+    const saved = await M.saveAnswer(sa, { q: 'Do you provide logo design?', answer: { en: 'Yes. Our team can make your logo. Please ask for a call.', te: '' , hi: '' }, keywords: 'logo, branding' });
+    const ans = (saved.answers || [])[0];
+    check('17d the answer is saved with words that find it (the question, its main words and the extra ones)', !!saved.ok && ans && ans.id === 'C1' && ans.keywords.includes('logo') && ans.keywords.includes('design') && ans.keywords.includes('branding') && ans.keywords.includes('do you provide logo design'), saved);
+    L = await M.list(sa);
+    check('17e once answered, the question leaves the list and the answer is on the team page', !L.unanswered.some((e) => /logo design/i.test(e.q)) && L.answers.length === 1);
+    const vw = await M.publicView(mI.token);
+    check('17f the client page gets the answer and its words, not who wrote it or the question behind it', vw.custom.length === 1 && vw.custom[0].id === 'C1' && vw.custom[0].answer.en.startsWith('Yes.') && !/by|fromQ|"q"/.test(JSON.stringify(vw.custom)), vw.custom);
+    check('17g a question answered by an added answer is saved with its id (C1), not as unanswered', (await M.publicEvent(mI.token, { type: 'ask', q: 'logo design', faq: 'C1' })).ok === true && (await M.list(sa)).items.find((i) => i.id === mI.id).questions.slice(-1)[0].id === 'C1');
+    // the server voice speaks a sentence of an added answer, and still nothing else
+    process.env.AI_VOICE_TTS = 'vexyl'; Gw.engines = () => ({ tts: async () => Buffer.alloc(16000), ttsWide: async () => ({ pcm: Buffer.alloc(44100), rate: 22050 }) });
+    const vOk = await Voice.speak('en', 'Yes.'); const vNo = await Voice.speak('en', 'Please read this other text.');
+    check('17h the voice speaks a sentence of an added answer (and still refuses any other text)', !!vOk.wav && vNo.status === 404, { vOk: !!vOk.wav, vNo: vNo.status });
+    Gw.engines = realEngines; if (keepTts === undefined) delete process.env.AI_VOICE_TTS; else process.env.AI_VOICE_TTS = keepTts;
+    check('17i an answer can be removed', !!(await M.removeAnswer(sa, 'C1')).ok && (await M.list(sa)).answers.length === 0 && (await M.removeAnswer(sa, 'C1')).status === 404);
+
+    // the CRM lead
+    MG.send = async () => ({ ok: true });
+    await M.publicEvent(mI.token, { type: 'handover', name: 'Ideas Client', phone: '9123456799', window: 'morning' });
+    const leads = await CRMDB.all('SELECT * FROM "CrmLead" WHERE "source" = ?', 'Plans meeting');
+    const lead = leads.find((l) => /Ideas Client/.test(l.company));
+    const rowI = (await S0q(mI.id));
+    check('18 a call request becomes a CRM lead (source "Plans meeting", Hot, owned by the person who made the link) and the meeting keeps its id', !!lead && lead.rating === 'Hot' && lead.ownerId === sa.id && /asked for a call/.test(lead.notes || '') && rowI && rowI.crmLeadId === lead.id, { lead: !!lead, leads: leads.length, crm: rowI && rowI.crmLeadId, owner: rowI && rowI.createdById });
+    await M.publicEvent(mI.token, { type: 'choice', choice: 'growth', phone: '9123456799', window: 'asap' });
+    const leads2 = (await CRMDB.all('SELECT "id" FROM "CrmLead" WHERE "source" = ?', 'Plans meeting')).filter((l) => l.id === lead.id);
+    const acts = await CRMDB.all('SELECT "id" FROM "CrmActivity" WHERE "leadId" = ?', lead.id);
+    check('18b asking again does not make a second lead: it adds a note to the first', leads2.length === 1 && (await CRMDB.all('SELECT "id" FROM "CrmLead" WHERE "phone" = ?', '9123456799')).length === 1 && acts.length >= 1, { n: leads2.length, acts: acts.length });
+
+    // the plans on WhatsApp, only by the client's tap
+    const sent2 = [];
+    MG.send = async (channel, o) => { sent2.push({ channel, to: o.to, text: o.text }); return { ok: true }; };
+    const mS = (await M.create(sa, { name: 'ZZ Summary Test', language: 'te' })).meeting;
+    const noNo = await M.publicEvent(mS.token, { type: 'summary' }, 'https://teamlink.test');
+    const badNo = await M.publicEvent(mS.token, { type: 'summary', phone: '12' }, 'https://teamlink.test');
+    check('19 the plans are not sent without a number, or to a wrong one', noNo.status === 400 && badNo.status === 400 && sent2.length === 0, { noNo, badNo });
+    const okS = await M.publicEvent(mS.token, { type: 'summary', phone: '9123456782' }, 'https://teamlink.test');
+    check('19b a tap sends ONE WhatsApp to that number, in the client\'s language, with the totals and the short link', okS.ok === true && sent2.length === 1 && sent2[0].to === '919123456782' && /₹4,719/.test(sent2[0].text) && /₹23,599/.test(sent2[0].text) && new RegExp(`https://teamlink.test/m/${mS.id}`).test(sent2[0].text) && /జీఎస్టీ/.test(sent2[0].text) && !/\n[^\n]*\n[^\n]*Reply STOP/.test('') , { okS, text: sent2[0] && sent2[0].text.slice(0, 80) });
+    const again = await M.publicEvent(mS.token, { type: 'summary', phone: '9123456782' }, 'https://teamlink.test');
+    check('19c tapping again within five minutes sends nothing more', again.ok === true && again.already === true && sent2.length === 1);
+    MG.send = async () => ({ ok: false, error: 'down' });
+    await S0run(mS.id);
+    const failS = await M.publicEvent(mS.token, { type: 'summary', phone: '9123456782' }, 'https://teamlink.test');
+    check('19d if WhatsApp cannot send, the client is told plainly and nothing is marked as sent', failS.status === 502 && /try again/i.test(failS.error || ''), failS);
+    check('19e the plans text exists in all three languages with the same totals', ['en', 'te', 'hi'].every((l) => /4,719/.test(M.summaryText(l, 'Ravi', 'https://x/m/1')) && /11,799/.test(M.summaryText(l, '', 'https://x/m/1')) && /https:\/\/x\/m\/1/.test(M.summaryText(l, '', 'https://x/m/1'))));
+    MG.send = realSend;
+    for (const z of [mI, mS]) await M.remove(sa, z.id);
+
     // removing
     const rm = await M.remove(sa, m.id);
     check('11 removing makes the link stop working and leave the list', !!rm.ok && (await M.publicView(m.token)).status === 404 && !(await M.list(sa)).items.find((x) => x.id === m.id), rm);

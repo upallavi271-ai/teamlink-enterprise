@@ -60,6 +60,6 @@ export function fillProof(text, proof) {
 
 // the answer text for a language, with the spots rule applied
 export function answerFor(f, lang, spotsLeft) {
-  const a = f.answer[lang] || f.answer.en;
+  const a = f.answer[lang] || f.answer.en || f.answer.te || f.answer.hi || ''; // an answer the team added may have words in one language only
   return f.id === 'F16' && !(spotsLeft > 0) ? dropFirstTen(a) : a;
 }

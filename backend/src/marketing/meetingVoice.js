@@ -43,7 +43,12 @@ const status = () => ({ en: ready('en'), te: ready('te'), hi: ready('hi') });
 
 async function speak(lang, text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!NAME[lang] || !t || !ALLOW[lang].has(t)) return { error: 'Not found', status: 404 };
+  if (!NAME[lang] || !t) return { error: 'Not found', status: 404 };
+  if (!ALLOW[lang].has(t)) { // not one of the meeting's own sentences: maybe a sentence of an answer the team added
+    let extra = null;
+    try { extra = await require('./meeting').customSentences(); } catch { extra = null; } // eslint-disable-line global-require
+    if (!(extra && extra[lang] && extra[lang].has(t))) return { error: 'Not found', status: 404 };
+  }
   if (!ready(lang)) return { error: 'The voice is not available', status: 503 };
   const key = `${lang}|${t}`;
   let wav = kept.get(key) || fromDisk(key);

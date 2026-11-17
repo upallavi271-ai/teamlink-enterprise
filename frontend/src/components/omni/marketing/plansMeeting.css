@@ -271,3 +271,10 @@
 @media (min-width: 980px) { .pm-logo-img { width: 176px; } }
 
 .pm-miclang { margin: -2px 0 10px; font-size: 13px; line-height: 1.45; color: var(--pm-mute); }
+
+/* the plans on WhatsApp (the client's own tap) */
+.pm-sum { margin-top: 10px; display: grid; gap: 8px; }
+.pm-sum .pm-input { background: rgba(255, 255, 255, .95); }
+.pm-sum .pm-btn { width: 100%; padding: 12px 14px; font-size: 15px; }
+.pm-sum-ok { background: rgba(255, 255, 255, .95); color: #087844; border-radius: 12px; padding: 11px 13px; font-weight: 700; font-size: 15px; }
+.pm-sum-err { color: #ffd0d0; font-size: 14px; font-weight: 600; }
