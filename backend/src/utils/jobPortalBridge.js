@@ -657,7 +657,12 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
     out.failed = badIds.length;
     out.closed = ((res && res.closed) || []).length;
     const scope = (ids) => (requirementIds ? ids.filter((id) => requirementIds.includes(id)) : ids);
-    if (okIds.length) await prisma.requirement.updateMany({ where: { id: { in: scope(okIds) } }, data: { portalSyncStatus: 'Synced' } });
+    if (okIds.length) {
+      await prisma.requirement.updateMany({ where: { id: { in: scope(okIds) } }, data: { portalSyncStatus: 'Synced' } });
+      // the Job Portal posting a portal outage left "Failed" is Posted again once the sync puts the job back on the portal
+      // (live 2026-11-17: 18 live jobs synced for weeks but still showed "Failed" from the 27-29 Oct outage)
+      await prisma.requirementPosting.updateMany({ where: { requirementId: { in: scope(okIds) }, source: 'jobportal', status: 'Failed' }, data: { status: 'Posted', errorMessage: null, postedAt: new Date(), lastTriedAt: new Date() } }).catch(() => {});
+    }
     if (badIds.length) await prisma.requirement.updateMany({ where: { id: { in: scope(badIds) } }, data: { portalSyncStatus: 'Failed' } });
     // Published but no longer live: it cannot be on offer, so it is not "Synced".
     await prisma.requirement.updateMany({
