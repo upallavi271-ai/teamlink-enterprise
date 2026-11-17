@@ -353,7 +353,34 @@ router.get('/', async (req, res) => {
   let rows = synced.map(decorate);
   // Filter on the derived status so "Overdue" means what it says.
   if (req.query.status) rows = rows.filter((i) => i.status === req.query.status);
+  // a disputed invoice is ON HOLD (utils/invoiceHold.js): shown beside its status
+  try { const holds = await require('../utils/invoiceHold').mapOf(rows.map((r) => r.id)); rows = rows.map((r) => (holds.has(r.id) ? { ...r, hold: holds.get(r.id) } : r)); } catch { /* shown without */ } // eslint-disable-line global-require
   res.json(rows);
+});
+
+// BILLING DISPUTE: hold / release an invoice (utils/invoiceHold.js). Status untouched; the hold and its reason are shown and audited.
+router.patch('/:id/hold', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
+  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
+  const reason = String((req.body || {}).reason || '').trim();
+  if (reason.length < 5) return res.status(400).json({ error: 'Write what the client disputes (for example, "Client says the candidate left in 10 days").' });
+  if (['Paid', 'Cancelled'].includes(invoice.status)) return res.status(400).json({ error: `This invoice is ${invoice.status.toLowerCase()}; there is nothing to hold.` });
+  const H = require('../utils/invoiceHold'); // eslint-disable-line global-require
+  await H.put(invoice.id, reason, req.user.name);
+  await logAudit({ userId: req.user.id, action: 'Invoice put on hold (billing dispute)', entity: 'Invoice', entityId: invoice.id, toValue: invoice.invoiceNumber || null, reason });
+  return res.json({ ok: true, hold: await H.of(invoice.id) });
+});
+router.patch('/:id/release', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
+  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
+  const H = require('../utils/invoiceHold'); // eslint-disable-line global-require
+  const h = await H.of(invoice.id);
+  if (!h) return res.status(400).json({ error: 'This invoice is not on hold.' });
+  await H.release(invoice.id);
+  await logAudit({ userId: req.user.id, action: 'Invoice hold released', entity: 'Invoice', entityId: invoice.id, fromValue: h.reason, reason: String((req.body || {}).note || '').slice(0, 300) || null });
+  return res.json({ ok: true });
 });
 
 // Receivables summary for the accountant dashboard and reports.
@@ -1576,6 +1603,7 @@ router.get('/:id', async (req, res) => {
   res.json({
     ...rest, tdsCertHasFile: !!tdsCertFile, proofHasFile: !!proofFile, proofLines, ...taxPayload(synced, company),
     paymentRecon, reconSummary,
+    hold: await require('../utils/invoiceHold').of(invoice.id).catch(() => null), // eslint-disable-line global-require
     ...paymentHistoryOf(synced, synced.receivedAmount, new Map(txns.map((t) => [t.id, t]))),
     paidTotal: ROUND(Number(synced.receivedAmount || 0)),
     payState: IPS.brief(IPS.judge(synced, { pending: wn.hasNotes ? wn.pending : invoiceOutstanding(synced), matchedLines: (await matchedCreditsOf([synced.id])).get(synced.id) || [] })),

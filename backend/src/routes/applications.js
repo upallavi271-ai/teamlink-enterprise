@@ -207,6 +207,11 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
   // Fit, the notice period or the location goes in only WITH a reason — and
   // that is recorded as an override (column + audit row + badge).
   const fit = await fitAtAdd(req.user, candidate, requirement);
+  // SAME CLIENT, ANOTHER JOB (utils/sameClientConflict.js): the person is already live with this client -> say why, like a rule miss
+  try {
+    const clash = await require('../utils/sameClientConflict').reasons(candidate.id, requirement); // eslint-disable-line global-require
+    if (clash.length) fit.overrideWhy = [...(fit.overrideWhy || []), ...clash];
+  } catch { /* the add goes on as before */ }
   let override = null;
   if (fit.overrideWhy.length) {
     const reason = String(req.body.overrideReason || '').trim().slice(0, 300);
@@ -483,6 +488,16 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     }
     if (body.rejectKind === 'do_not_use' && clientLogin) {
       return { status: 403, body: { error: 'Only TeamLink can mark a candidate "Do not use".' } };
+    }
+  }
+
+  // CONSENT BEFORE A CLIENT SEES THE PROFILE (ATS audit 741, DPDP, founder 2026-11-17): a person who said no, withdrew consent
+  // or asked not to be contacted is never sent to a client. ("Not recorded" still goes: most of the database predates consent.)
+  if (['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(stage)) {
+    const a0 = await prisma.application.findUnique({ where: { id: applicationId }, select: { candidate: { select: { name: true, consentStatus: true, doNotContact: true } } } }).catch(() => null);
+    const c0 = a0 && a0.candidate;
+    if (c0 && (c0.doNotContact || ['WITHDRAWN', 'NOT_GIVEN'].includes(c0.consentStatus))) {
+      return { status: 409, body: { error: `${c0.name} has ${c0.consentStatus === 'NOT_GIVEN' ? 'not given consent' : 'withdrawn consent / asked not to be contacted'}, so the profile cannot be sent to a client. Record their consent on the profile first.`, code: 'NO_CONSENT' } };
     }
   }
 

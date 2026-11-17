@@ -254,8 +254,16 @@ export default function InvoiceDetail() {
           {invoice.clientId && <button type="button" className="btn btn-sm" onClick={() => setShowAccount(true)}>Client account</button>}
           <button className="btn btn-sm" onClick={() => setPreview('client')} disabled={!doc}>👁 View invoice</button>
           {canManage && <button className="btn btn-sm" onClick={() => setSend('email')} disabled={!doc}>✉ Send invoice</button>}
+          {canManage && !['Paid', 'Cancelled'].includes(invoice.status) && (invoice.hold
+            ? <button type="button" className="btn btn-sm" onClick={() => run(() => api.patch(`/invoices/${id}/release`, {}))}>Release hold</button>
+            : <button type="button" className="btn btn-sm" title="The client disputes this bill: mark it on hold with the reason" onClick={() => { const reason = window.prompt('What does the client dispute? (this is recorded)'); if (reason && reason.trim()) run(() => api.patch(`/invoices/${id}/hold`, { reason })); }}>⏸ Hold (dispute)</button>)}
         </div>
       </div>
+      {invoice.hold && (
+        <div className="notice" style={{ display: 'block', marginBottom: 12, borderColor: 'var(--warn, #b7791f)' }}>
+          ⏸ <b>On hold: billing dispute.</b> {invoice.hold.reason} <span className="small-muted">(by {invoice.hold.byName || '—'}, {fmtD(invoice.hold.at)})</span>
+        </div>
+      )}
 
       {error && <div className="card section error-text" style={{ marginBottom: 12 }}>{error}</div>}
 
