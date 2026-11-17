@@ -99,8 +99,14 @@ async function check({ env, home, tl, checkPort }) {
   add(!e.KAVYA_API_KEY_FILE && !e.KAVYA_API_KEY, 'no Kavya AI-calling key is wired in');
   add(!e.JOB_PORTAL_URL && !e.JOB_PORTAL_API_URL, 'no Job Portal address is set');
 
-  // anything that names TeamLink's own folders or address
-  const mentions = Object.entries(e).filter(([k, v]) => !['APP_BASE_URL'].includes(k) && /\/opt\/teamlink-enterprise|teamlink\.teamlinks\.in|\.teamlink-(uploads|backups|data|sandbox)/i.test(String(v)));
+  // THE COMPANIES MENU (utils/companyBridge.js, docs/second-company.md section 9): TeamLink signs, the company only checks. A company holds TeamLink's
+  // PUBLIC key (a file of its own) and a plain link back to TeamLink; it must never be set up to make passes itself.
+  if (e.COMPANY_BRIDGE_PUBLIC_KEY_FILE || e.COMPANY_BRIDGE_HOME_URL || e.COMPANY_BRIDGE_DIR) {
+    add(!e.COMPANY_BRIDGE_DIR, 'the Companies menu: this company cannot make passes (COMPANY_BRIDGE_DIR is not set; only TeamLink signs)');
+    add(!!e.COMPANY_BRIDGE_PUBLIC_KEY_FILE && !/\.teamlink|\/opt\/teamlink-enterprise/i.test(e.COMPANY_BRIDGE_PUBLIC_KEY_FILE), 'the Companies menu: the public key file is this company\'s own copy', e.COMPANY_BRIDGE_PUBLIC_KEY_FILE || 'missing');
+  }
+  // anything that names TeamLink's own folders or address (COMPANY_BRIDGE_HOME_URL is the one allowed exception: it is only the "Back to TeamLink" link)
+  const mentions = Object.entries(e).filter(([k, v]) => !['APP_BASE_URL', 'COMPANY_BRIDGE_HOME_URL'].includes(k) && /\/opt\/teamlink-enterprise|teamlink\.teamlinks\.in|\.teamlink-(uploads|backups|data|sandbox)/i.test(String(v)));
   add(mentions.length === 0, 'no setting names a TeamLink folder or address', mentions.map(([k]) => k).join(', '));
   return out;
 }

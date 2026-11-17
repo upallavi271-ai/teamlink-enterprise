@@ -361,6 +361,20 @@ async function main() {
   ok(cb.status === 1 && (cb.stdout.match(/^FAIL/gm) || []).length >= 8, 'TeamLink\'s own settings are rejected line by line', `${(cb.stdout.match(/^FAIL/gm) || []).length} failures`);
   const cx = spawnSync(process.execPath, ['scripts/company-check.js', '--env', goodEnv, '--home', '/root', '--teamlink-env', tlEnv], { cwd: BACKEND, encoding: 'utf8' });
   ok(cx.status === 1 && /FAIL  HOME points/.test(cx.stdout), 'a copy that still uses the shared /root home folder is rejected');
+  // the Companies menu settings (docs/second-company.md section 9): TeamLink's PUBLIC key and a link back pass; a company that could make passes itself fails
+  const brOk = path.join(TMP, 'bridge-ok.env'); const brBad = path.join(TMP, 'bridge-bad.env');
+  fs.writeFileSync(brOk, `${fs.readFileSync(goodEnv, 'utf8')}
+COMPANY_BRIDGE_PUBLIC_KEY_FILE=${home}/config/bridge-public.pem
+COMPANY_BRIDGE_HOME_URL=https://teamlink.teamlinks.in
+`);
+  fs.writeFileSync(brBad, `${fs.readFileSync(goodEnv, 'utf8')}
+COMPANY_BRIDGE_DIR=${home}/bridge
+COMPANY_BRIDGE_PUBLIC_KEY_FILE=/root/.teamlink-company-bridge/private.pem
+`);
+  const cbo = spawnSync(process.execPath, ['scripts/company-check.js', '--env', brOk, '--home', home, '--teamlink-env', tlEnv], { cwd: BACKEND, encoding: 'utf8' });
+  ok(cbo.status === 0, 'the Companies menu settings (the public key of TeamLink and a link back to it) pass the check', (cbo.stdout.match(/^FAIL.*$/gm) || []).join(' | '));
+  const cbb = spawnSync(process.execPath, ['scripts/company-check.js', '--env', brBad, '--home', home, '--teamlink-env', tlEnv], { cwd: BACKEND, encoding: 'utf8' });
+  ok(cbb.status === 1 && /cannot make passes/.test(cbb.stdout) && /public key file is this company/.test(cbb.stdout), 'a company that is set up to make passes, or uses the private key of TeamLink, is rejected');
 }
 
 (async () => {
