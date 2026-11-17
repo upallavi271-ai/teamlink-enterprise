@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom';
 import api from '../../../api';
 import { LANGS, SLIDES, STANDARD, FAQ, CHIPS } from './meetingContent.js';
 import { matchFaq, sentencesOf, dropFirstTen, dropFirstTenLines, fillProof, answerFor } from './meetingLogic.js';
+import { budgetOf, budgetReply } from './meetingBudget.js';
+import { planAnswer } from './meetingPlans.js';
 
 // THE PLANS MEETING (/plans-meeting/:token, or /plans-meeting with no token): no login, outside the TeamLink shell. A client who got the link on WhatsApp opens it on their phone: an automated
 // assistant shows 12 short slides and SPEAKS them (the browser's own voice, free) in English, Telugu or Hindi, with captions always on screen. The client can ask a question at any time (typed,
@@ -52,11 +54,23 @@ const T = {
   },
 };
 
-// ---- the voice: the browser's own text-to-speech, one sentence at a time (Chrome cuts long texts). With no voice (or sound off) the sentences are shown on a reading timer, so the meeting still moves. ----
+// ---- the voice, one sentence at a time (Chrome cuts long texts). Two sources, both free:
+//   the SERVER voice (Piper: the same Telugu / Hindi / English voices as our AI interview and AI calls; routes/mkMeetingPublic.js GET /voice): used for Telugu and Hindi when the server has it, because most
+//   phones have no Telugu or Hindi voice, and for English when the phone has none. A sentence that cannot be fetched falls back to the phone's own voice.
+//   the PHONE's own text-to-speech (speechSynthesis).
+// With no voice at all (or sound off) the sentences are shown on a reading timer, so the meeting still moves. ----
+const SILENT = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='; // an empty sound: playing it in the Start press lets the phone play the voice later
+let audioEl = null; // ONE audio element for the whole meeting: unlocked by the Start press, then reused (phones refuse a new one without a press)
+const serverFails = {}; // lang -> how many sentences the server could not give; after 2 the page stops asking for that language
+const voiceUrl = (lang, text) => `/api/public/mk-meeting/voice?lang=${lang}&t=${encodeURIComponent(text)}`;
 const engine = { run: 0, timer: null, safety: null, cur: null };
 function stopSpeech() {
   engine.run += 1; clearTimeout(engine.timer); clearTimeout(engine.safety);
   try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch { /* no voice */ }
+  try { if (audioEl) { audioEl.onended = null; audioEl.onerror = null; audioEl.pause(); } } catch { /* no audio */ }
+}
+function unlockAudio() {
+  try { if (!audioEl) audioEl = new Audio(); audioEl.src = SILENT; const p = audioEl.play(); if (p && p.catch) p.catch(() => {}); } catch { /* the phone will not play the server voice */ } // eslint-disable-line no-undef
 }
 function pickVoice(voices, lang) {
   const list = (voices || []).filter((v) => String(v.lang || '').toLowerCase().replace('_', '-').split('-')[0] === lang);
@@ -64,13 +78,15 @@ function pickVoice(voices, lang) {
   const score = (v) => (/natural|neural|online/i.test(v.name) ? 3 : 0) + (/google/i.test(v.name) ? 2 : 0) + (/-in$/i.test(String(v.lang).replace('_', '-')) ? 1 : 0);
   return list.slice().sort((a, b) => score(b) - score(a))[0];
 }
-function say(sentences, { lang, muted = false, from = 0, onSentence, onDone } = {}) {
+// server: the server has a voice for this language (GET /voice/status). Telugu and Hindi use it first; English only when the phone has no voice.
+function say(sentences, { lang, muted = false, server = false, from = 0, onSentence, onDone } = {}) {
   stopSpeech();
   const my = engine.run;
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
   let voice = null;
   try { voice = muted || !synth ? null : pickVoice(synth.getVoices(), lang); } catch { voice = null; }
   let i = from;
+  const remote = !muted && server && (lang !== 'en' || !voice);
   const step = () => {
     if (engine.run !== my) return;
     if (i >= sentences.length) { if (onDone) onDone(); return; }
@@ -78,16 +94,35 @@ function say(sentences, { lang, muted = false, from = 0, onSentence, onDone } = 
     if (onSentence) onSentence(n);
     const text = sentences[n];
     const readMs = Math.max(1800, text.length * 62);
-    if (!voice) { engine.timer = setTimeout(step, readMs); return; }
+    // the phone's own voice, or (with none / sound off) a reading timer
+    const local = () => {
+      if (!voice) { engine.timer = setTimeout(step, readMs); return; }
+      let over = false;
+      const done = () => { if (over || engine.run !== my) return; over = true; clearTimeout(engine.safety); engine.timer = setTimeout(step, 220); };
+      try {
+        const u = new SpeechSynthesisUtterance(text); // eslint-disable-line no-undef
+        u.voice = voice; u.lang = voice.lang; u.rate = 0.95; u.onend = done; u.onerror = done;
+        engine.cur = u; // kept so the browser does not drop it before it ends
+        engine.safety = setTimeout(done, readMs * 3 + 4000); // some voices never say "ended"
+        synth.speak(u);
+      } catch { engine.timer = setTimeout(step, readMs); }
+    };
+    if (!remote || serverFails[lang] >= 2) { local(); return; }
+    // the server voice: fetch this sentence (and warm the next two), then play it on the one audio element
+    for (let k = 1; k <= 2; k += 1) if (sentences[n + k]) fetch(voiceUrl(lang, sentences[n + k])).catch(() => {}); // eslint-disable-line no-undef
+    const url = voiceUrl(lang, text);
     let over = false;
-    const done = () => { if (over || engine.run !== my) return; over = true; clearTimeout(engine.safety); engine.timer = setTimeout(step, 220); };
-    try {
-      const u = new SpeechSynthesisUtterance(text); // eslint-disable-line no-undef
-      u.voice = voice; u.lang = voice.lang; u.rate = 0.95; u.onend = done; u.onerror = done;
-      engine.cur = u; // kept so the browser does not drop it before it ends
-      engine.safety = setTimeout(done, readMs * 3 + 4000); // some voices never say "ended"
-      synth.speak(u);
-    } catch { engine.timer = setTimeout(step, readMs); }
+    const finish = () => { if (over || engine.run !== my) return; over = true; clearTimeout(engine.safety); engine.timer = setTimeout(step, 220); };
+    const fail = () => { if (over || engine.run !== my) return; over = true; clearTimeout(engine.safety); serverFails[lang] = (serverFails[lang] || 0) + 1; local(); };
+    engine.safety = setTimeout(fail, 25000); // the server did not answer: carry on without it
+    fetch(url).then((r) => { if (!r.ok) throw new Error('no voice'); return r.blob(); }).then(() => { // eslint-disable-line no-undef
+      if (engine.run !== my || over) return;
+      clearTimeout(engine.safety);
+      if (!audioEl) audioEl = new Audio(); // eslint-disable-line no-undef
+      audioEl.onended = finish; audioEl.onerror = fail; audioEl.src = url;
+      engine.safety = setTimeout(finish, readMs * 4 + 10000); // never wait for ever on playback
+      const p = audioEl.play(); if (p && p.catch) p.catch(fail);
+    }).catch(fail);
   };
   engine.timer = setTimeout(step, 90);
 }
@@ -135,6 +170,7 @@ export default function PlansMeetingPage() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState('');
   const [voices, setVoices] = useState([]);
+  const [voiceOk, setVoiceOk] = useState(null); // { en, te, hi } true where the SERVER has a voice (GET /voice/status)
   const fromRef = useRef({ key: '', i: 0 });
   const advRef = useRef(null);
   const recRef = useRef(null);
@@ -161,6 +197,7 @@ export default function PlansMeetingPage() {
     const x = setTimeout(() => { tries.current += 1; boot(); }, 8000);
     return () => clearTimeout(x);
   }, [temp, gone, boot]);
+  useEffect(() => { api.get('/public/mk-meeting/voice/status').then((r) => setVoiceOk(r.data)).catch(() => setVoiceOk(null)); }, []);
   useEffect(() => {
     const s = typeof window !== 'undefined' ? window.speechSynthesis : null;
     if (!s) return undefined;
@@ -176,8 +213,11 @@ export default function PlansMeetingPage() {
   const last = pos >= order.length - 1;
   const sentences = useMemo(() => narrationOf(idx, lang, ctx), [idx, lang, ctx]);
   const lines = useMemo(() => linesOf(idx, lang, ctx), [idx, lang, ctx]);
-  const hasVoice = useMemo(() => !!pickVoice(voices, lang), [voices, lang]);
-  const post = useCallback((body) => (token ? api.post(`/public/mk-meeting/${encodeURIComponent(token)}/event`, body).catch(() => null) : Promise.resolve(null)), [token]);
+  const hasDeviceVoice = useMemo(() => !!pickVoice(voices, lang), [voices, lang]);
+  const srv = !!(voiceOk && voiceOk[lang]) && !(serverFails[lang] >= 2); // the server has a voice for this language
+  const hasVoice = hasDeviceVoice || srv;
+  const sayOpts = { lang, muted, server: srv };
+  const post =useCallback((body) => (token ? api.post(`/public/mk-meeting/${encodeURIComponent(token)}/event`, body).catch(() => null) : Promise.resolve(null)), [token]);
 
   const go = useCallback((p) => { clearTimeout(advRef.current); setPos(Math.max(0, Math.min(order.length - 1, p))); setWait(false); setSent(-1); setPlaying(true); setPanel(''); }, [order]);
 
@@ -188,29 +228,30 @@ export default function PlansMeetingPage() {
     if (fromRef.current.key !== key) fromRef.current = { key, i: 0 };
     setWait(false);
     say(sentences, {
-      lang, muted, from: fromRef.current.i,
+      lang, muted, server: srv, from: fromRef.current.i,
       onSentence: (n) => { fromRef.current.i = n; setSent(n); },
       onDone: () => {
         fromRef.current.i = sentences.length;
         if (last) { setPlaying(false); setWait(true); return; }
-        if (ASK_STOPS.includes(idx)) { setWait(true); say(sentencesOf(STANDARD.L1[lang]), { lang, muted }); return; }
+        if (ASK_STOPS.includes(idx)) { setWait(true); say(sentencesOf(STANDARD.L1[lang]), { lang, muted, server: srv }); return; }
         advRef.current = setTimeout(() => go(pos + 1), 900);
       },
     });
     return () => { clearTimeout(advRef.current); stopSpeech(); };
-  }, [stage, playing, panel, idx, lang, muted, sentences, last, pos, go]);
+  }, [stage, playing, panel, idx, lang, muted, srv, sentences, last, pos, go]);
   useEffect(() => { if (stage === 'meet' && token) post({ type: 'slide', slide: idx }); }, [stage, idx, token]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { // still there? (once, after 45 seconds of waiting for an answer)
     if (stage !== 'meet' || !wait || panel || last) return undefined;
-    const x = setTimeout(() => say(sentencesOf(STANDARD.L4[lang]), { lang, muted }), 45000);
+    const x = setTimeout(() => say(sentencesOf(STANDARD.L4[lang]), { lang, muted, server: srv }), 45000);
     return () => clearTimeout(x);
-  }, [stage, wait, panel, last, lang, muted]);
+  }, [stage, wait, panel, last, lang, muted, srv]);
 
   useEffect(() => { // a panel opens below the slide: bring it into view (on a phone it would be off screen)
     if (panel && panelRef.current && panelRef.current.scrollIntoView) { try { panelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* old browser */ } }
   }, [panel]);
 
   const begin = () => {
+    unlockAudio(); // the Start press lets the phone play the server voice afterwards
     try { if (window.speechSynthesis) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.speak(u); } } catch { /* the phone will not speak */ } // eslint-disable-line no-undef
     post({ type: 'start', language: lang });
     fromRef.current = { key: '', i: 0 };
@@ -224,13 +265,19 @@ export default function PlansMeetingPage() {
   const submitQ = (text, faqId) => {
     const s = String(text || '').trim();
     if (!s) return;
-    const m = faqId ? { id: faqId } : matchFaq(s, FAQ);
+    // a budget ("my budget is 6000", "upto 30L") gets the plan that fits it; a question that names a plan ("Starter with GST final cost", "Starter vs Growth") gets that plan's own numbers;
+    // everything else goes to the fixed answers. (Never the same "which plan" answer again.)
+    const amount = faqId ? null : budgetOf(s);
+    const bud = amount != null ? budgetReply(amount, lang) : null;
+    const usual = faqId ? { id: faqId } : matchFaq(s, FAQ);
+    const pa = !faqId && !bud ? planAnswer(s, lang, usual ? usual.id : null) : null;
+    const m = bud ? { id: 'F3' } : (pa ? { id: pa.faq } : usual);
     const f = m ? FAQ.find((x) => x.id === m.id) : null;
-    const reply = f ? answerFor(f, lang, ctx.spots) : STANDARD.L3[lang];
-    setMsgs((x) => [...x.slice(-5), { who: 'me', text: s }, { who: 'bot', text: reply }]);
+    const reply = bud ? bud.text : (pa ? pa.text : (f ? answerFor(f, lang, ctx.spots) : STANDARD.L3[lang]));
+    setMsgs((x) => [...x.slice(-5), { who: 'me', text: s }, { who: 'bot', text: reply, note: bud ? bud.shown : (pa ? pa.shown : '') }]);
     setQ(''); setUnsure(!f);
     post({ type: 'ask', q: s, faq: f ? f.id : '' });
-    say(sentencesOf(reply), { lang, muted });
+    say(sentencesOf(reply), sayOpts);
     if (f && f.id === 'F19') openForm('team');
   };
   const listen = () => {
@@ -296,7 +343,7 @@ export default function PlansMeetingPage() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
             {LANGS.map(([k, name]) => <button key={k} type="button" onClick={() => pickLang(k)} aria-pressed={lang === k} style={{ ...btn(lang === k ? P : '#e3ebe7', lang === k ? '#fff' : '#17261f'), flex: '1 1 90px', fontSize: 17 }}>{name}</button>)}
           </div>
-          {voices.length && !hasVoice ? <div style={{ background: '#fff7e6', border: '1px solid #f1d9a0', borderRadius: 10, padding: '9px 11px', fontSize: 13.5, lineHeight: 1.5, marginBottom: 12 }}>{t.noVoice(LANG_NAME[lang])}</div> : null}
+          {!hasVoice && (voices.length > 0 || typeof window === 'undefined' || !window.speechSynthesis) ? <div style={{ background: '#fff7e6', border: '1px solid #f1d9a0', borderRadius: 10, padding: '9px 11px', fontSize: 13.5, lineHeight: 1.5, marginBottom: 12 }}>{t.noVoice(LANG_NAME[lang])}</div> : null}
           <button type="button" onClick={begin} style={{ ...btn('#15803d'), width: '100%', fontSize: 18, padding: '15px 16px' }}>▶ {t.start}</button>
         </div>
       </div>
@@ -353,7 +400,7 @@ export default function PlansMeetingPage() {
           </form>
           {msgs.length ? (
             <div style={{ marginTop: 12 }}>
-              {msgs.map((m, n) => <div key={n} style={{ margin: '6px 0', padding: '9px 11px', borderRadius: 10, background: m.who === 'me' ? '#e3ebe7' : '#fffdf5', border: m.who === 'me' ? 'none' : '1px solid #f1e6bd', fontSize: 15.5, lineHeight: 1.55 }}><b style={{ fontSize: 11, color: '#5a7266' }}>{(m.who === 'me' ? t.yourQ : t.bot).toUpperCase()}</b><div>{m.text}</div></div>)}
+              {msgs.map((m, n) => <div key={n} style={{ margin: '6px 0', padding: '9px 11px', borderRadius: 10, background: m.who === 'me' ? '#e3ebe7' : '#fffdf5', border: m.who === 'me' ? 'none' : '1px solid #f1e6bd', fontSize: 15.5, lineHeight: 1.55 }}><b style={{ fontSize: 11, color: '#5a7266' }}>{(m.who === 'me' ? t.yourQ : t.bot).toUpperCase()}</b><div>{m.text}</div>{m.note ? <div style={{ fontSize: 12.5, color: '#5a7266', marginTop: 4 }}>{m.note}</div> : null}</div>)}
             </div>
           ) : null}
           {unsure ? <div style={{ marginTop: 8 }}><div style={{ fontSize: 14, marginBottom: 6 }}>{t.unsure}</div><button type="button" onClick={() => openForm('team')} style={{ ...btn('#15803d'), width: '100%' }}>{t.team}</button></div> : null}

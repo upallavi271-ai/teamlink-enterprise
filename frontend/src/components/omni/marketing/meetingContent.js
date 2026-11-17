@@ -204,30 +204,30 @@ export const SLIDES = [
     "screen": {
       "en": [
         "Monthly budget (with GST)",
-        "Under Rs 5,000  →  Starter",
-        "Rs 5,000 to Rs 24,000  →  Growth",
-        "Above Rs 24,000  →  Premium",
-        "Or start with the Rs 999 trial"
+        "Up to Rs 4,800  →  start with the Rs 999 trial",
+        "From Rs 4,800  →  Starter",
+        "From Rs 11,800  →  Growth",
+        "From Rs 23,600  →  Premium"
       ],
       "te": [
         "నెలవారీ బడ్జెట్ (జీఎస్టీతో)",
-        "₹5,000 లోపు  →  స్టార్టర్",
-        "₹5,000 నుండి ₹24,000  →  గ్రోత్",
-        "₹24,000 పైన  →  ప్రీమియం",
-        "లేదా ₹999 ట్రయల్‌తో మొదలుపెట్టండి"
+        "₹4,800 వరకు  →  ₹999 ట్రయల్‌తో మొదలుపెట్టండి",
+        "₹4,800 నుండి  →  స్టార్టర్",
+        "₹11,800 నుండి  →  గ్రోత్",
+        "₹23,600 నుండి  →  ప్రీమియం"
       ],
       "hi": [
         "मासिक बजट (जीएसटी के साथ)",
-        "₹5,000 से कम  →  स्टार्टर",
-        "₹5,000 से ₹24,000  →  ग्रोथ",
-        "₹24,000 से ऊपर  →  प्रीमियम",
-        "या ₹999 के ट्रायल से शुरू करें"
+        "₹4,800 तक  →  ₹999 के ट्रायल से शुरू करें",
+        "₹4,800 से  →  स्टार्टर",
+        "₹11,800 से  →  ग्रोथ",
+        "₹23,600 से  →  प्रीमियम"
       ]
     },
     "voice": {
-      "en": "Which plan is right for you? If your monthly budget for social media, including GST, is under five thousand rupees, Starter fits. Between five thousand and twenty-four thousand, Growth fits. Above twenty-four thousand, Premium fits. You can also start with the nine hundred ninety-nine rupee trial.",
-      "te": "మీకు ఏ ప్లాన్ సరిపోతుంది? జీఎస్టీతో కలిపి సోషల్ మీడియా కోసం మీ నెలవారీ బడ్జెట్ ఐదు వేల రూపాయల లోపు అయితే స్టార్టర్ సరిపోతుంది. ఐదు వేల నుండి ఇరవై నాలుగు వేల మధ్య అయితే గ్రోత్. ఇరవై నాలుగు వేల పైన అయితే ప్రీమియం. తొమ్మిది వందల తొంభై తొమ్మిది రూపాయల ట్రయల్‌తో కూడా మొదలుపెట్టవచ్చు.",
-      "hi": "आपके लिए कौन सा प्लान सही है? जीएसटी मिलाकर सोशल मीडिया के लिए आपका मासिक बजट पाँच हज़ार रुपये से कम हो तो स्टार्टर ठीक है। पाँच हज़ार से चौबीस हज़ार के बीच हो तो ग्रोथ। चौबीस हज़ार से ऊपर हो तो प्रीमियम। आप नौ सौ निन्यानवे रुपये के ट्रायल से भी शुरू कर सकते हैं।"
+      "en": "Which plan is right for you? Think of your monthly budget for social media, including GST. Up to about forty-eight hundred rupees, start with the nine hundred ninety-nine rupee trial. From forty-eight hundred, Starter fits. From eleven thousand eight hundred, Growth fits. From twenty-three thousand six hundred, Premium fits.",
+      "te": "మీకు ఏ ప్లాన్ సరిపోతుంది? జీఎస్టీతో కలిపి సోషల్ మీడియా కోసం మీ నెలవారీ బడ్జెట్ ఆలోచించండి. నాలుగు వేల ఎనిమిది వందల రూపాయల వరకు అయితే తొమ్మిది వందల తొంభై తొమ్మిది రూపాయల ట్రయల్‌తో మొదలుపెట్టండి. నాలుగు వేల ఎనిమిది వందల నుండి స్టార్టర్ సరిపోతుంది. పదకొండు వేల ఎనిమిది వందల నుండి గ్రోత్. ఇరవై మూడు వేల ఆరు వందల నుండి ప్రీమియం.",
+      "hi": "आपके लिए कौन सा प्लान सही है? जीएसटी मिलाकर सोशल मीडिया के लिए अपना मासिक बजट सोचिए। करीब अड़तालीस सौ रुपये तक हो तो नौ सौ निन्यानवे रुपये के ट्रायल से शुरू कीजिए। अड़तालीस सौ से स्टार्टर ठीक है। ग्यारह हज़ार आठ सौ से ग्रोथ। तेईस हज़ार छह सौ से प्रीमियम।"
     }
   },
   {

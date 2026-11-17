@@ -119,6 +119,57 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     check('10d POST with no link starts a session', ps.status === 200 && !!pj.token && pj.session.language === 'te');
     await new Promise((r) => srv.close(r));
 
+    // the server voice (marketing/meetingVoice.js): only the meeting's own sentences, once each, from the engines the AI calls use. A FAKE engine here: nothing is spoken for real.
+    const Gen = require(path.join(BACK, 'scripts/make-meeting-sentences'));
+    const fresh = await Gen.build();
+    const onDisk = require(path.join(BACK, 'src/marketing/meetingSentences.json'));
+    check('12 meetingSentences.json is current with the page words (run scripts/make-meeting-sentences.js after changing them)', JSON.stringify(fresh) === JSON.stringify(onDisk) && fresh.en.length > 90 && fresh.te.length > 90 && fresh.hi.length > 90, { en: fresh.en.length, te: fresh.te.length, hi: fresh.hi.length });
+    const Voice = require(path.join(BACK, 'src/marketing/meetingVoice'));
+    const Gw = require(path.join(BACK, 'src/calling/voice/gateway'));
+    const realEngines = Gw.engines; const keepTts = process.env.AI_VOICE_TTS; let said = 0;
+    process.env.AI_VOICE_TTS = 'vexyl';
+    Gw.engines = () => ({ tts: async () => Buffer.alloc(16000), ttsWide: async () => { said += 1; return { pcm: Buffer.alloc(44100), rate: 22050 }; } });
+    const line = fresh.te[0];
+    check('12b the server says where it has a voice', JSON.stringify(Voice.status()) === '{"en":true,"te":true,"hi":true}', Voice.status());
+    check('12c text that is not one of the meeting\'s sentences is refused (404), and so is an unknown language', (await Voice.speak('te', 'Read me this other text')).status === 404 && (await Voice.speak('xx', line)).status === 404 && (await Voice.speak('te', '')).status === 404);
+    const w1 = await Voice.speak('te', line); const w2 = await Voice.speak('te', line);
+    check('12d a listed sentence gives a WAV, and the second time it is kept (the engine is used once)', !!w1.wav && w1.wav.slice(0, 4).toString() === 'RIFF' && w2.wav === w1.wav && said === 1, { said });
+    // the same, through the public router, including the byte range an iPhone asks for
+    const app2 = express(); app2.use('/api/public/mk-meeting', require(path.join(BACK, 'src/routes/mkMeetingPublic')));
+    const srv2 = await new Promise((r) => { const sv = app2.listen(0, '127.0.0.1', () => r(sv)); });
+    const b2 = `http://127.0.0.1:${srv2.address().port}/api/public/mk-meeting`;
+    const vg = await fetch(`${b2}/voice?lang=te&t=${encodeURIComponent(line)}`);
+    const body = Buffer.from(await vg.arrayBuffer());
+    check('12e GET /voice answers audio/wav that can be cached', vg.status === 200 && /audio\/wav/.test(vg.headers.get('content-type')) && /max-age/.test(vg.headers.get('cache-control')) && body.slice(0, 4).toString() === 'RIFF', { s: vg.status, t: vg.headers.get('content-type') });
+    const vr = await fetch(`${b2}/voice?lang=te&t=${encodeURIComponent(line)}`, { headers: { Range: 'bytes=0-1' } });
+    check('12f a byte range gets 206 with the right Content-Range', vr.status === 206 && /^bytes 0-1\/\d+$/.test(vr.headers.get('content-range') || '') && Buffer.from(await vr.arrayBuffer()).length === 2, { s: vr.status, r: vr.headers.get('content-range') });
+    const vx = await fetch(`${b2}/voice?lang=te&t=${encodeURIComponent('Read me this other text')}`);
+    check('12g GET /voice with other text answers 404 and a plain error', vx.status === 404 && !!(await vx.json()).error);
+    const vs = await fetch(`${b2}/voice/status`);
+    check('12h GET /voice/status answers the languages', vs.status === 200 && (await vs.json()).te === true);
+    await new Promise((r) => srv2.close(r));
+    Gw.engines = () => null;
+    check('12i with no engine the server says it has no voice and refuses with 503', JSON.stringify(Voice.status()) === '{"en":false,"te":false,"hi":false}' && (await Voice.speak('hi', fresh.hi[1])).status === 503);
+    Gw.engines = realEngines; if (keepTts === undefined) delete process.env.AI_VOICE_TTS; else process.env.AI_VOICE_TTS = keepTts;
+
+    // what the meeting answers (the page's own logic, imported as the browser has it): a budget, a named plan, the usual answers
+    const FE = await Gen.loadFrontend(['meetingContent', 'meetingLogic', 'meetingBudget', 'meetingPlans']);
+    const { budgetOf, planFor, budgetReply } = FE.meetingBudget; const { planAnswer } = FE.meetingPlans; const { matchFaq } = FE.meetingLogic;
+    check('13 a budget is read from what people type: 30L, 15k, 6000, Rs 4,800, Hindi digits; not from "999 trial" or "10 posts"',
+      budgetOf('my budget is upto 30L') === 3000000 && budgetOf('budget 15k per month') === 15000 && budgetOf('my budget is 6000') === 6000 && budgetOf('Rs 4,800 a month') === 4800 && budgetOf('बजट ₹ ६०००') === 6000 && budgetOf('what is the 999 trial') === null && budgetOf('I need 10 posts') === null,
+      [budgetOf('my budget is upto 30L'), budgetOf('budget 15k per month'), budgetOf('Rs 4,800 a month'), budgetOf('what is the 999 trial')]);
+    check('13b the plan that fits a budget follows the prices with GST (4,719 / 11,799 / 23,599, rounded up to 4,800 / 11,800 / 23,600)', planFor(1000) === 'low' && planFor(1200) === 'trial' && planFor(4799) === 'trial' && planFor(4800) === 'starter' && planFor(11799) === 'starter' && planFor(11800) === 'growth' && planFor(23599) === 'growth' && planFor(23600) === 'premium');
+    const big = budgetReply(3000000, 'en');
+    check('13c a 30 lakh budget gets Premium, shows the number it understood, and is not the "which plan" answer again', big.plan === 'premium' && /30,00,000/.test(big.shown) && /Premium fits/.test(big.text) && big.text !== FE.meetingContent.FAQ.find((f) => f.id === 'F3').answer.en);
+    const asked = (q, lang = 'en') => { const u = matchFaq(q, FE.meetingContent.FAQ); return planAnswer(q, lang, u ? u.id : null); };
+    const sp = asked('starter plan with gst final cost');
+    check('14 "starter plan with GST final cost" gets Starter\'s own total: 3,999 + 720 = 4,719', !!sp && /four thousand seven hundred nineteen/.test(sp.text) && /₹3,999 \+ ₹720 GST \(18%\) = ₹4,719/.test(sp.shown) && sp.faq === 'F1', sp);
+    check('14b the same question in Telugu and Hindi gets the answer in that language', /నాలుగు వేల ఏడు వందల పంతొమ్మిది/.test((asked('స్టార్టర్ ప్లాన్ జీఎస్టీతో ఎంత', 'te') || {}).text || '') && /चार हज़ार सात सौ उन्नीस/.test((asked('स्टार्टर प्लान जीएसटी के साथ कितना', 'hi') || {}).text || ''));
+    check('14c the totals are right for all three plans (price + 18% GST, rounded to the rupee)', [[3999, 720, 4719, 'starter'], [9999, 1800, 11799, 'growth'], [19999, 3600, 23599, 'premium']].every(([a, g, t, p]) => Math.round(a * 0.18) === g && a + g === t && new RegExp(String.raw`₹${a.toLocaleString('en-IN')} \+ ₹${g.toLocaleString('en-IN')} GST \(18%\) = ₹${t.toLocaleString('en-IN')}`).test(asked(`${p} price with gst`).shown)));
+    check('14d "what does Premium include" and "Starter vs Growth" get the plan sheet and the comparison', /weekly report/.test((asked('what does premium include') || {}).text || '') && /double the content of Starter/.test((asked('starter vs growth') || {}).text || '') && /thirty pictures and eight videos instead of sixteen and four/.test((asked('growth vs premium difference') || {}).text || ''));
+    check('14e questions that are not about a plan\'s numbers keep their own answer ("can I cancel Growth", "which plan is right for me")', asked('can i cancel growth plan') === null && asked('which plan is right for me') === null && asked('is gst included') === null);
+    check('14f the budget bands on slide 6 are the same as the budget answer (4,800 / 11,800 / 23,600)', FE.meetingContent.SLIDES[6].screen.en.join(' ').includes('4,800') && FE.meetingContent.SLIDES[6].screen.en.join(' ').includes('11,800') && FE.meetingContent.SLIDES[6].screen.en.join(' ').includes('23,600') && !/24,000/.test(JSON.stringify(FE.meetingContent.SLIDES[6])));
+
     // removing
     const rm = await M.remove(sa, m.id);
     check('11 removing makes the link stop working and leave the list', !!rm.ok && (await M.publicView(m.token)).status === 404 && !(await M.list(sa)).items.find((x) => x.id === m.id), rm);
