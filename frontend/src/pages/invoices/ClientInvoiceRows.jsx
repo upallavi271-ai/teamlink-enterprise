@@ -84,6 +84,20 @@ function JoiningCell({ m, canJoin, onChanged }) {
   );
 }
 
+// Delete = cancel the invoice line (the API refuses it once money is received, a credit note exists or a bank line is matched).
+function DeleteLine({ m, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    const who = m.candidateName || '(no candidate linked)';
+    if (!window.confirm(`Delete invoice ${m.invoiceNumber} — ${who} (${money2(m.invoiceValue)})?
+It is cancelled and no longer counts in billing or GST.`)) return;
+    setBusy(true);
+    try { await api.patch(`/invoices/${m.id}/cancel`); onChanged(); } catch (e) { window.alert(e.response?.data?.error || 'That could not be deleted.'); }
+    setBusy(false);
+  };
+  return <button type="button" className="btn btn-sm" disabled={busy} onClick={go}>Delete</button>;
+}
+
 function Panel({
   g, canPay, canJoin, onPay, onAccount, onView, onChanged, onClose,
 }) {
@@ -106,7 +120,7 @@ function Panel({
             <thead>
               <tr>
                 <th>#</th><th>Candidate name</th><th>Date of joining</th><th>Role / Designation</th>
-                <th className="num">Salary (CTC)</th><th className="num">Billing %</th><th className="num">Fee before GST</th><th className="num">GST</th><th className="num">Amount</th>
+                <th className="num">Salary (CTC)</th><th className="num">Billing %</th><th className="num">Fee before GST</th><th className="num">GST</th><th className="num">Amount</th><th>Delete</th>
               </tr>
             </thead>
             <tbody>
@@ -127,6 +141,7 @@ function Panel({
                   <td className="num">{money2(m.billing)}</td>
                   <td className="num">{money2(m.gst)}</td>
                   <td className="num"><b>{money2(m.invoiceValue)}</b></td>
+                  <td><DeleteLine m={m} onChanged={onChanged} /></td>
                 </tr>
               ))}
             </tbody>
@@ -135,7 +150,7 @@ function Panel({
                 <td colSpan={6}><b>Total</b> <span className="small-muted">{g.candidates} candidate{g.candidates === 1 ? '' : 's'}</span></td>
                 <td className="num">{money2(g.billing)}</td>
                 <td className="num">{money2(g.gst)}</td>
-                <td className="num"><b>{money2(g.invoiceValue)}</b></td>
+                <td className="num"><b>{money2(g.invoiceValue)}</b></td><td />
               </tr>
             </tfoot>
           </table>
