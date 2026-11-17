@@ -157,6 +157,8 @@ const EMPTY_FILTERS = {
   // cand7_ (§7 Filters): Qualification · Specialization (masters) · Owner ·
   // Last contact · Rejected before.
   qualificationId: '', specialisationId: '', owner: '', contact: '', rejectedBefore: '',
+  // Specialization (with counts: Radiology 7, Cardiology 8 ...) and Experience bands (founder 2026-11-17).
+  spec: '', expBand: '',
   // Rejections (spec 2026-10-03 §A1): the Rejected tab — whose decision · reason.
   rejSide: '', rejReason: '',
   // ATS layout v3 cards: "Not followed up 7+ / 30+ days" (pipeline) and
@@ -1995,6 +1997,8 @@ export default function Candidates() {
                 <input type="number" min="0" step="0.5" placeholder="Max" aria-label="Maximum experience (years)" value={filters.maxExp} onChange={(e) => setFilter({ maxExp: e.target.value })} />
               </span>
             </span>
+            <FacetSelect label="Specialization" allLabel="All specializations" value={filters.spec} onChange={(v) => setFilter({ spec: v })} options={withCurrent(facets.spec, filters.spec)} loading={facetsLoading} title="Radiology, Cardiology, CSE ... with how many people each. Picking one narrows the Client list to the clients they are with." />
+            <FacetSelect label="Experience" allLabel="Any experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={withCurrent(['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean), filters.expBand)} loading={facetsLoading} />
             <FacetSelect label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
             {main === 'pipeline' && (
               <FacetSelect

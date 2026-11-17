@@ -839,6 +839,24 @@ function joinedMatches(days, q) {
   return (days || []).some((d) => d && (!from || d >= from) && (!to || d <= to));
 }
 
+// SPECIALIZATION AND EXPERIENCE FILTERS WITH COUNTS (founder 2026-11-17: "specialization meedha click cheyyagane radiology 7, cardiology 8, gynecology ...,
+// M.Tech 10, CSE 11; experience kuda filter undali - complete ATS lo"). The specialization is the master name when the profile is mapped, else the free text
+// the profile carries, tidied (so "radiology" and "Radiology " count together). Experience in bands.
+function specText(s) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  return t.split(' ').map((w) => (w.length <= 4 && w === w.toUpperCase() ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())).join(' ').slice(0, 60);
+}
+const specOf = (c, specL) => (specL && c.specialisationId && specL.spec(c.specialisationId)) || specText(c.specialization);
+const EXP_BANDS = [['0-1', 0, 1], ['1-3', 1, 3], ['3-5', 3, 5], ['5-10', 5, 10], ['10+', 10, Infinity]];
+function expBandOf(y) {
+  if (y === null || y === undefined || y === '') return 'none';
+  const n = Number(y);
+  if (!Number.isFinite(n) || n < 0) return 'none';
+  const b = EXP_BANDS.find(([, lo, hi]) => n >= lo && n < hi);
+  return b ? b[0] : 'none';
+}
+
 function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (ctx.search) {
     const digits = ctx.search.replace(/\D/g, '');
@@ -853,6 +871,8 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   // cand7_: the person's master Qualification / Specialisation ('none' = not mapped).
   if (q.qualificationId && (r.qualificationId || 'none') !== q.qualificationId) return false;
   if (q.specialisationId && (r.specialisationId || 'none') !== q.specialisationId) return false;
+  if (q.spec && (r.spec || 'none') !== q.spec) return false;
+  if (q.expBand && (r.expBand || 'none') !== q.expBand) return false;
   if (q.status) {
     const wanted = String(q.status).split(',');
     const legacy = { 'On Hold': 'Hold', Closed: 'Joined' };
@@ -1060,6 +1080,8 @@ async function buildPipelineRows(user, st, s, snap) {
         qualificationName: specL && c.qualificationId ? specL.qual(c.qualificationId) : null,
         specialisationId: c.specialisationId || null,
         specialisationName: specL && c.specialisationId ? specL.spec(c.specialisationId) : null,
+        spec: specOf(c, specL), // the Specialization filter (with counts): master name, else the profile's own words
+        expBand: expBandOf(c.experienceYears), // the Experience filter: 0-1, 1-3, 3-5, 5-10, 10+ years
         archived: c.profileStatus === 'Archived',
         doNotUse: c.profileStatus === 'Do Not Use',
         rejectedCount: rjIx ? (rjIx.byCandidate.get(c.id) || []).length : 0,
@@ -1163,6 +1185,8 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (r.archived && q.archived !== '1') return false;
   if (q.qualificationId && (r.qualificationId || 'none') !== q.qualificationId) return false;
   if (q.specialisationId && (r.specialisationId || 'none') !== q.specialisationId) return false;
+  if (q.spec && (r.spec || 'none') !== q.spec) return false;
+  if (q.expBand && (r.expBand || 'none') !== q.expBand) return false;
   if (q.owner && ownerKeyOf(r) !== q.owner) return false;
   if (q.rejectedBefore === 'yes' && !(r.rejectedCount > 0)) return false;
   if (q.rejectedBefore === 'no' && r.rejectedCount > 0) return false;

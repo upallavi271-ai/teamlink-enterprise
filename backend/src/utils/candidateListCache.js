@@ -45,6 +45,8 @@ const CANDIDATE_SELECT = {
   // Candidates (2026-10-03 §7): Archived / Do Not Use, and the Qualification /
   // Specialisation masters the Filters panel offers.
   profileStatus: true, qualificationId: true, specialisationId: true,
+  // The Specialization filter with counts (2026-11-17): the profile's own words when it is not mapped to the master.
+  specialization: true,
   // B7: the partner who owns this person (the "Partner: X" badge).
   ownerPartnerId: true, ownerUntil: true,
 };

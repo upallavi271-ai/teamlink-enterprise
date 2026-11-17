@@ -151,6 +151,9 @@ const CAND_FACETS = [
   // spec D: the CANDIDATE's own master qualification / specialisation.
   { key: 'qualificationId', get: (r) => r.qualificationId || 'none', label: (r) => (r.qualificationId ? r.qualificationName || 'Unknown' : 'Not mapped yet') },
   { key: 'specialisationId', get: (r) => r.specialisationId || 'none', label: (r) => (r.specialisationId ? r.specialisationName || 'Unknown' : 'Not mapped yet') },
+  // Specialization / Experience (founder 2026-11-17): counted per person, the master name or the profile's own words; experience in bands.
+  { key: 'spec', perPerson: true, get: (r) => r.spec || 'none', label: (r) => r.spec || 'Not given' },
+  { key: 'expBand', perPerson: true, get: (r) => r.expBand || 'none', label: null, labelOf: (v) => (v === 'none' ? 'Not given' : `${v} years`) },
   // cand7_ (Candidates §7): Owner = whose move it is now; Rejected before; Last
   // contact (a row can sit in several contact buckets, so get() returns a list).
   { key: 'owner', get: (r) => (['Active', 'Hold'].includes(r.pipelineStatus) ? (r.ownerUserId || 'none') : null), label: (r) => (r.ownerUserId ? (r.owner && r.owner !== '—' ? r.owner : 'Name not on file') : 'Nobody named yet') },
@@ -206,11 +209,13 @@ async function candidateFacets(user, q) {
     const ctx = { search, personIds: await personIds(qq) };
     const counts = new Map();
     const labels = new Map();
+    const seen = f.perPerson ? new Set() : null;
     rows.forEach((r) => {
       if (!match(r, qq, ctx)) return;
       const got = f.get(r);
       (Array.isArray(got) ? got : [got]).forEach((v) => {
         if (v === null || v === undefined || v === '') return;
+        if (seen) { const k = `${v}|${r.candidateId}`; if (seen.has(k)) return; seen.add(k); }
         counts.set(v, (counts.get(v) || 0) + 1);
         if (f.label && !labels.has(v)) labels.set(v, f.label(r) || String(v));
       });

@@ -985,10 +985,12 @@ export default function Requirements() {
       )}
       {/* spec D: cascade from Department (shown once a department is picked,
           or for a role without the Department filter, or while one is set). */}
-      {role !== 'accounts' && (!canFilter.hierarchy || h.department || filters.qualificationId || filters.specialisationId) && (
+      {/* Specialization is always shown, with its counts (founder 2026-11-17: "specialization meedha click cheyyagane radiology 7, cardiology 8 ...; aa
+          specialization click chesthe aa clients names dropdown lo raavali"): picking one narrows the Client list to the clients with such requirements. */}
+      {role !== 'accounts' && <FacetSelect label="Specialization" allLabel="All specializations" value={filters.specialisationId} options={fo('specialisationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ specialisationId: v })} />}
+      {role !== 'accounts' && (!canFilter.hierarchy || h.department || filters.qualificationId) && (
         <>
           <FacetSelect label="Qualification" allLabel="Any qualification" value={filters.qualificationId} options={fo('qualificationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ qualificationId: v })} />
-          <FacetSelect label="Specialization" allLabel="Any specialization" value={filters.specialisationId} options={fo('specialisationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ specialisationId: v })} />
         </>
       )}
       {canFilter.hiring && <FacetSelect label="Client / Internal" allLabel="Client and internal" value={filters.type} options={fo('type')} onChange={(v) => setDraftFilter({ type: v })} />}
