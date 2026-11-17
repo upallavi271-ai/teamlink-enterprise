@@ -191,6 +191,12 @@ heading('5d. the first-organization approval stage (company Green Start)');
   ok(/welcome:/.test(stage) && /admin\.signup_approved/.test(stage), 'it gives the welcome balance once and writes the history line, as the program\'s approve() does');
   ok(/--name/.test(inst) && /:'name'/.test(stage) && /:'email'/.test(stage), 'the company name and e-mail go in as psql variables, not pasted into the SQL');
   ok(!/echo[^\n]*\$(TICKET|SECRET)|echo[^\n]*accessToken/.test(stage), 'no sign-in ticket, secret or access token is printed');
+  // the Omni-Channel button of a company's screens must open the COMPANY's Green Start, never TeamLink's (which refuses the company's ticket)
+  ok(/setv "\$BRANDF" VITE_GREENSTART_URL "https:\/\/\$DOMAIN"/.test(inst), 'the public stage writes VITE_GREENSTART_URL (the company\'s own address) into config/brand.env');
+  const deploy = fs.readFileSync(path.join(ROOT, 'deploy', 'vps', 'company', 'company-deploy.sh'), 'utf8');
+  ok(/\. "\$ROOT\/config\/brand\.env"/.test(deploy) && deploy.indexOf('brand.env') < deploy.indexOf('npm run build'), 'every company build reads config/brand.env before the screens are built');
+  const link = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'components', 'outreach', 'greenStartLink.js'), 'utf8');
+  ok(/envUrl/.test(link) && /if \(v\) return/.test(link), 'the screens\' Omni-Channel address is overridden by VITE_GREENSTART_URL');
 }
 
 heading('6. the scripts are valid');

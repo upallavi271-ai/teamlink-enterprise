@@ -248,4 +248,10 @@ the welcome balance (1,000 rupees = 10,000,000 wallet units, once per business, 
 one-click ticket sign-in for that account returns a session (tested on the live server). The organization and workspace are given the company's name by the same transaction, because Green Start names its first ones after the person who signed in ("TeamLink").
 Later organizations, if any, are approved the same way or by a platform Super Admin the company creates for itself.
 
+**The Omni-Channel button must open the company's own address (found 2026-11-17: "Could not sign in - Your session has expired").** The screens decide the address (`frontend/src/components/outreach/greenStartLink.js`): with no
+`VITE_GREENSTART_URL` at build time, any `*.teamlinks.in` screen opens TeamLink's own `https://greenstart.teamlinks.in`. A company's sign-in ticket is signed with the company's own secret, so TeamLink's Green Start rightly refuses it (HTTP 401:
+nothing of TeamLink's was reachable), but the person only sees the error page. Fix, no code change: `config/brand.env` (read by every `company-deploy.sh` build) holds `VITE_GREENSTART_URL=https://<the company's Green Start address>`;
+`--stage public` writes it, and the next build (`bash /opt/company-sync/company-deploy.sh <key>`) bakes it into the screens, so it survives every later automatic update. The sign-in is one-click only: the Green Start accounts it makes
+have no password of their own, so there is no second login to remember (the Green Start page opened directly shows a login form that these accounts cannot use).
+
 **Not yet done in code:** the names "TeamLink" that the app itself sends in the sign-in ticket (user name, organization name) still come from TeamLink's wording; a company name setting (`COMPANY_NAME`) would replace them. Until then the `approve` stage gives the first organization and workspace the company's name, and any further organization would need the same rename.

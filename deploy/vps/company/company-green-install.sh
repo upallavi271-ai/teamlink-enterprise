@@ -352,6 +352,11 @@ if [ "$STAGE" = public ]; then
   setv "$CENV" GREENSTART_SUPERVISE false
   setv "$CENV" GREENSTART_AUTOSTART false
   chmod 600 "$CENV"
+  # The company's SCREENS decide where the Omni-Channel button goes. Without this, any *.teamlinks.in screen opens TeamLink's own greenstart.teamlinks.in, which refuses the company's
+  # sign-in ticket ("Could not sign in": found 2026-11-17). config/brand.env is read at every build (company-deploy.sh), so the address survives every later update.
+  BRANDF=$ROOT/config/brand.env; touch "$BRANDF"; [ -z "$(tail -c1 "$BRANDF")" ] || echo >> "$BRANDF"
+  setv "$BRANDF" VITE_GREENSTART_URL "https://$DOMAIN"
+  echo "the company's screens will open Omni-Channel at https://$DOMAIN (after the next build: bash /opt/company-sync/company-deploy.sh $KEY)"
   EMAIL=$(cd "$ROOT/backend" && node -e '
 const { DatabaseSync } = require("node:sqlite");
 const d = new DatabaseSync((process.argv[1] || "").replace(/^file:/, ""), { readOnly: true });
