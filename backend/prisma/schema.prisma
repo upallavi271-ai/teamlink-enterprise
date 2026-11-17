@@ -2951,6 +2951,23 @@ model Notification {
   @@index([userId, createdAt]) // perf_indexes 20261009210000
 }
 
+// PHONE ALERTS (Web Push, 2026-11-17): one row per phone / browser a person switched alerts on for. A notification the person would
+// see in the bell is also sent to every row here (utils/webPush.js). No relation on purpose: a row is just an address to knock on,
+// it is removed when the phone says it is gone (404 / 410), when the person turns alerts off or signs out on that phone.
+model PushSubscription {
+  id         String    @id @default(cuid())
+  userId     String
+  endpoint   String    @unique
+  p256dh     String
+  auth       String
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  failCount  Int       @default(0)
+
+  @@index([userId])
+}
+
 // Role Catalog "Edit Access" — one row per (role, module). `moduleEnabled` is
 // the module toggle; `features` is a JSON object mapping each named feature to
 // its seven action flags, e.g.

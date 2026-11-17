@@ -122,7 +122,8 @@ export function RangePicker({ onApply, allowYear = true }) {
   );
 }
 
-function CheckInPanel() {
+// exported for Mobile Home (pages/MobileHome.jsx), which shows this same panel
+export function CheckInPanel() {
   const [st, setSt] = useState(null);
   const [open, setOpen] = useState(null); // { method, direction }
   const [message, setMessage] = useState('');

@@ -1,8 +1,16 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import api, { viewAsToken } from '../api';
 import { clearKeptState } from '../utils/useKeptState.js';
+import { forgetThisDevice } from '../pwa/pwa.js';
 
 const AuthContext = createContext(null);
+
+// Signing out: first this phone stops getting this person's alerts (it needs the session that is about to end, so it goes first and is
+// given at most 1.5 s), then the session ends on the server. Never throws, never blocks the sign-out screen.
+function endSession(token) {
+  const capped = Promise.race([forgetThisDevice(token), new Promise((r) => { setTimeout(r, 1500); })]);
+  return capped.catch(() => {}).then(() => api.post('/auth/logout', null, { headers: { Authorization: `Bearer ${token}` } })).catch(() => {});
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -42,7 +50,7 @@ export function AuthProvider({ children }) {
       try { last = Number(localStorage.getItem(KEY)) || Date.now(); } catch { /* storage blocked */ }
       if (Date.now() - last > idleMin * 60000) {
         const tok = localStorage.getItem('tl_token');
-        if (tok) api.post('/auth/logout', null, { headers: { Authorization: `Bearer ${tok}` } }).catch(() => {});
+        if (tok) endSession(tok);
         try { localStorage.removeItem('tl_token'); sessionStorage.setItem('tl_login_notice', `You were signed out after ${idleMin} minutes with no activity. Please sign in again.`); } catch { /* storage blocked */ }
         clearKeptState();
         setUser(null);
@@ -106,7 +114,7 @@ export function AuthProvider({ children }) {
     const signedIn = localStorage.getItem('tl_token'); // read now: the token is gone before an interceptor would run
     if (signedIn) api.post('/sso/job-portal/signout', null, { headers: { Authorization: `Bearer ${signedIn}` } }).catch(() => {});
     // this device's session ends on the server too (Profile -> Signed-in devices shows it as "signed out")
-    if (signedIn) api.post('/auth/logout', null, { headers: { Authorization: `Bearer ${signedIn}` } }).catch(() => {});
+    if (signedIn) endSession(signedIn);
     localStorage.removeItem('tl_token');
     clearKeptState(); // the lists' kept search / filters / page (utils/useKeptState.js)
     setUser(null);

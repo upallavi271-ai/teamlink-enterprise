@@ -521,6 +521,8 @@ app.use('/api/targets', employeeRecordRouter('TARGET', { createRoles: true }));
 app.use('/api/resignations', resignationRoutes);
 // One read endpoint for any request on the approval chain (components/ApprovalChain.jsx).
 app.use('/api/approvals', require('./routes/approvals'));
+// Phone alerts (Web Push): a person switches alerts on for this phone (routes/push.js, utils/webPush.js).
+app.use('/api/push', require('./routes/push'));
 // Administration → System (Super Admin): backups, restore test, uptime alert (routes/system.js).
 app.use('/api/system', require('./routes/system'));
 app.use('/api/data-import', dataImportRoutes);

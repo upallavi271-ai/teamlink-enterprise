@@ -14,8 +14,9 @@ const announcementLink = (n) => (String(n.title || '').startsWith(ANN_PREFIX)
 // A notice whose last line is "Open: /some/path" opens that screen (e.g. the
 // client's Agreement card, 2026-10-05); the line itself is not shown.
 const OPEN_RE = /\nOpen: (\/[^\s]+)\s*$/;
-const noteLink = (n) => announcementLink(n) || ((String(n.message || '').match(OPEN_RE) || [])[1] || null);
-const noteText = (m) => String(m || '').replace(OPEN_RE, '');
+// exported for Mobile Home, which opens a message the same way the bell does
+export const noteLink = (n) => announcementLink(n) || ((String(n.message || '').match(OPEN_RE) || [])[1] || null);
+export const noteText = (m) => String(m || '').replace(OPEN_RE, '');
 
 // ---------------------------------------------------------------------------
 // 🔔 THE BELL — dashboard review 2026-10-03 §A8: "🔔 7,030 → nobody reads

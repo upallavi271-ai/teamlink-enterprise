@@ -102,4 +102,18 @@ prisma.$use(async (params, next) => {
   return result;
 });
 
+// push_: a notification written for a person is also sent to the phones they switched alerts on for (utils/webPush.js).
+// Runs after the write, in the background; a person with no phone registered costs one indexed count. Never throws, never waits.
+prisma.$use(async (params, next) => {
+  const startedAt = new Date(Date.now() - 1000);
+  const result = await next(params);
+  if (params.model === 'Notification' && (params.action === 'create' || params.action === 'createMany')) {
+    try {
+      const push = require('./utils/webPush'); // eslint-disable-line global-require
+      if (params.action === 'create') push.onNotification(result);
+      else push.onNotificationRows([].concat((params.args && params.args.data) || []), startedAt);
+    } catch (err) { console.error('[push] hook:', err.message); }
+  }
+  return result;
+});
 module.exports = prisma;

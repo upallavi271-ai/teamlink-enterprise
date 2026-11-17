@@ -46,6 +46,7 @@
     "playwright-core": "^1.49.1",
     "qrcode": "^1.5.4",
     "sharp": "^0.34.5",
+    "web-push": "^3.6.7",
     "word-extractor": "^1.0.4",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },

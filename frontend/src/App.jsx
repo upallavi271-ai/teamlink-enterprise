@@ -5,6 +5,7 @@ import OmniEntry, { OmniLegacyRedirect } from './components/outreach/OmniEntry.j
 import OmniApp from './components/omni/OmniApp.jsx'; // Omni-Channel (the Green Start page tree, 2026-10-17; the five-hub OutreachHome.jsx is kept on disk for its parts)
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import MobileHome from './pages/MobileHome.jsx'; // the screen the phone app opens on (2026-11-17)
 
 import Requirements from './pages/Requirements.jsx';
 import RequirementDetail from './pages/RequirementDetail.jsx';
@@ -246,6 +247,7 @@ export default function App() {
         }
       >
         <Route index element={<Dashboard />} />
+        <Route path="mobile" element={<MobileHome />} />
 
         {/* HRMS — matches the prototype's 6-item sidebar; the long tail of
             sub-features lives as tabs inside Performance & Development and

@@ -48,7 +48,22 @@ function brandHtml(mode) {
     name: 'company-brand-html',
     transformIndexHtml(html) {
       const name = String(process.env.VITE_BRAND_NAME || loadEnv(mode, process.cwd(), 'VITE_').VITE_BRAND_NAME || '').trim();
-      if (!name) return html;
+      if (!name) {
+        // TeamLink's OWN build is also an installable phone app (2026-11-17): manifest, theme colour and home-screen icon
+        // (public/tl-app.webmanifest, public/tl-app-sw.js, src/pwa/pwa.js). A separate company's copy gets none of it: it carries TeamLink's name and picture.
+        return {
+          html,
+          tags: [
+            { tag: 'link', attrs: { rel: 'manifest', href: '/tl-app.webmanifest' }, injectTo: 'head' },
+            { tag: 'link', attrs: { rel: 'apple-touch-icon', sizes: '180x180', href: '/tl-app-icons/apple-touch-icon.png' }, injectTo: 'head-prepend' }, // first, so a phone picks this sharp 180 px one over the 128 px tab icon below
+            { tag: 'meta', attrs: { name: 'theme-color', content: '#22333B' }, injectTo: 'head' },
+            { tag: 'meta', attrs: { name: 'mobile-web-app-capable', content: 'yes' }, injectTo: 'head' },
+            { tag: 'meta', attrs: { name: 'apple-mobile-web-app-capable', content: 'yes' }, injectTo: 'head' },
+            { tag: 'meta', attrs: { name: 'apple-mobile-web-app-title', content: 'TeamLink' }, injectTo: 'head' },
+            { tag: 'meta', attrs: { name: 'apple-mobile-web-app-status-bar-style', content: 'default' }, injectTo: 'head' },
+          ],
+        };
+      }
       const esc = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
       return html.replace(/<title>[^<]*<\/title>/, `<title>${esc}</title>`).replace(/\s*<link rel="(?:icon|apple-touch-icon)"[^>]*>/g, '');
     },

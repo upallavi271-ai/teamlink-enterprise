@@ -5,6 +5,7 @@ import App from './App.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { AuthProvider } from './context/AuthContext.jsx';
 import './styles.css';
+import './pwa/pwa.js'; // the phone app: app worker, install prompt, phone alerts (off in a separate company's build)
 import { installStickyColumns } from './utils/stickyColumns.js';
 
 // Every wide table in the app: the ID + Name columns stay on screen while the rest scrolls sideways.

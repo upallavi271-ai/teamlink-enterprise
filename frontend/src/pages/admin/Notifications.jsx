@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import PhoneAlerts from '../../components/PhoneAlerts.jsx'; // install the app / switch phone alerts on (2026-11-17)
 import api from '../../api';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { PAGE_SIZES } from '../../components/Pager.jsx';
@@ -88,6 +89,8 @@ export default function Notifications() {
           Notification emails are OFF, so the Email lines below say &quot;Not sent&quot;. Turn them on in <Link to="/attendance">Attendance</Link> → Who gets told, and how → Turn notification emails ON.
         </div>
       )}
+
+      <div style={{ marginBottom: 12, maxWidth: 640 }}><PhoneAlerts /></div>
 
       <ListFilterBar lf={lf} storageKey="admin-notifications" />
 

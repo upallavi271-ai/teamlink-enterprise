@@ -1,0 +1,19 @@
+/* "TeamLink on this phone" card (PhoneAlerts.jsx) */
+.phalert-card{background:var(--paper-raised);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.phalert-card h3{font-size:15px;margin:0 0 8px}
+.phalert-note{margin:0;color:var(--ink-soft);font-size:13px;line-height:1.5}
+.phalert-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.phalert-row:first-of-type{border-top:0}
+.phalert-text{display:flex;flex-direction:column;gap:2px;font-size:13px;line-height:1.5;min-width:0;color:var(--ink-soft)}
+.phalert-text b{color:var(--ink);font-size:13.5px}
+.phalert-btns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.phalert-btn{min-height:40px;flex:0 0 auto}
+.phalert-msg{margin-top:8px;font-size:13px;border-radius:8px;padding:8px 10px;line-height:1.45}
+.phalert-msg.ok{background:var(--teal-tint);color:var(--teal)}
+.phalert-msg.bad{background:var(--red-tint);color:var(--red)}
+@media (max-width:640px){
+  .phalert-row{flex-direction:column;align-items:stretch}
+  .phalert-btns{justify-content:stretch}
+  .phalert-btns .phalert-btn{flex:1 1 0}
+  .phalert-btn{width:100%}
+}
