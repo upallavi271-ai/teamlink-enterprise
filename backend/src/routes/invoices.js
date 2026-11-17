@@ -447,7 +447,12 @@ async function placementFacts(invoices, hier) {
     const list = byCand.get(inv.candidateId) || [];
     const exact = inv.requirementId ? list.find((a) => a.requirementId === inv.requirementId) : null;
     const sameClient = list.filter((a) => a.requirement?.clientId === inv.clientId);
-    const app = exact || sameClient.find((a) => a.stage === 'JOINED' || a.stage === 'HIRED') || sameClient[0] || null;
+    // A person can have a dropped seat AND a joined seat at the same client (dropped from one
+    // job, joined another). The invoice must not show "Dropped" while another seat is Joined.
+    const joinedSeat = sameClient.find((a) => (a.stage === 'JOINED' || a.stage === 'HIRED' || a.joiningStatus === 'Joined') && a.joiningStatus !== 'Dropped');
+    const app = (exact && exact.joiningStatus === 'Dropped' && joinedSeat ? joinedSeat : exact)
+      || sameClient.find((a) => (a.stage === 'JOINED' || a.stage === 'HIRED') && a.joiningStatus !== 'Dropped')
+      || sameClient.find((a) => a.stage === 'JOINED' || a.stage === 'HIRED') || sameClient[0] || null;
     const req = inv.requirement || app?.requirement || null;
     // Why an invoice has no recruiter, in words the report can count.
     let unattributed = null;
