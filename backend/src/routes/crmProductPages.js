@@ -72,6 +72,13 @@ router.get('/demo/:token/video/:key', async (req, res) => {
   noStore(res);
   return res.sendFile(file, { acceptRanges: true, headers: { 'Content-Type': 'video/mp4' } });
 });
+// the uploaded original, for the manager's preview of the draft (signed for 12 hours)
+router.get('/product-video-src/:token', async (req, res) => {
+  const f = await require('../crm/productVideo').sourceFile(req.params.token).catch(() => null); // eslint-disable-line global-require
+  if (!f) return res.status(404).end();
+  noStore(res);
+  return res.sendFile(f, { acceptRanges: true });
+});
 router.post('/demo/:token/event', async (req, res) => {
   const b = req.body || {};
   const out = await PS.demoEvent(req.params.token, String(b.kind || ''), { product: b.product, products: Array.isArray(b.products) ? b.products.slice(0, 6) : undefined, seconds: Number(b.seconds) || 0 }).catch(() => ({ error: 'failed' }));

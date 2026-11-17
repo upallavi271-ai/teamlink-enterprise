@@ -74,6 +74,16 @@ router.put('/products-settings', wrap((req) => PD.saveSettings(req.user, req.bod
 router.get('/products-funnel', wrap((req) => PD.funnel(req.user, req.query.days)));
 router.post('/leads/:id/quote', wrap((req) => PD.quoteByStaff(req.user, req.params.id, req.body || {})));
 router.get('/leads/:id/quotes', wrap((req) => PD.quotesOf(req.user, req.params.id)));
+// a product video uploaded in pieces, read by speech-to-text, split per product, the text drafted; managers review and save (crm/productVideo.js)
+const PV = require('../crm/productVideo');
+router.post('/product-videos', wrap((req) => PV.startUpload(req.user, req.body || {})));
+router.put('/product-videos/:id/chunk', express.raw({ type: () => true, limit: '9mb' }), wrap((req) => PV.putChunk(req.user, req.params.id, Number(req.query.offset), req.body)));
+router.post('/product-videos/:id/finish', wrap((req) => PV.finishUpload(req.user, req.params.id)));
+router.get('/product-videos', wrap((req) => PV.jobs(req.user)));
+router.get('/product-videos/:id', wrap((req) => PV.jobDetail(req.user, req.params.id)));
+router.post('/product-videos/:id/apply', wrap((req) => PV.applyDraft(req.user, req.params.id, req.body || {})));
+router.post('/product-videos/:id/retry', wrap((req) => PV.retry(req.user, req.params.id)));
+router.delete('/product-videos/:id', wrap((req) => PV.remove(req.user, req.params.id)));
 router.get('/products/:key/watch',wrap((req) => PS.staffVideoLink(req.user, req.params.key)));
 router.put('/products/:key',wrap((req) => PS.saveProduct(req.user, req.params.key, req.body || {})));
 router.post('/leads/:id/products', wrap((req) => PS.setLeadProducts(req.user, req.params.id, (req.body || {}).products)));

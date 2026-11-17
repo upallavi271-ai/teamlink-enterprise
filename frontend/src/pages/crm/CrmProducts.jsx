@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateTimeOf } from './crmShared.jsx'; // eslint-disable-line import/no-cycle
+import { VideoStudio, SingleUpload } from './CrmProductVideo.jsx'; // eslint-disable-line import/no-cycle
 
 const copy = async (text, toast, words) => {
   try { await navigator.clipboard.writeText(text); toast(words || 'Copied.'); } catch { window.prompt('Copy this:', text); } // eslint-disable-line no-alert
@@ -263,6 +264,7 @@ export function ProductCatalog() {
   const [rows, setRows] = useState(null);
   const [edit, setEdit] = useState(null); // the product being edited
   const [watch, setWatch] = useState(null); // { name, url } of the clip playing
+  const [vidKey, setVidKey] = useState(0); // a product's own upload refreshes the uploads list
   const canEdit = me && ['admin', 'tl'].includes(me.role);
   const play = (p) => api.get(`/crm/products/${p.key}/watch`).then((r) => setWatch(r.data)).catch((e) => toast(errOf(e, 'The video could not be opened.')));
   const load = () => api.get('/crm/products', { params: { all: 1 } }).then((r) => setRows(r.data.products || [])).catch((e) => { setRows([]); toast(errOf(e, 'The products could not be read.')); });
@@ -277,6 +279,7 @@ export function ProductCatalog() {
   if (!rows) return <div className="small-muted">Loading…</div>;
   return (
     <div>
+      {canEdit && <VideoStudio refreshKey={vidKey} onSaved={load} />}
       <div className="small-muted" style={{ margin: '6px 0 12px' }}>What we sell. The demo page and the AI meeting read from here, so the AI only says what is written here. A plan with no price is quoted by a person.</div>
       <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: 12 }}>
         {rows.map((p) => (
@@ -289,6 +292,7 @@ export function ProductCatalog() {
             <ul style={{ margin: '0 0 8px 18px', padding: 0, fontSize: 13 }}>{(p.features || []).slice(0, 5).map((f, i) => <li key={i}>{f}</li>)}{(p.features || []).length > 5 && <li className="small-muted">+{p.features.length - 5} more</li>}</ul>
             <div style={{ fontSize: 13 }}>{(p.plans || []).map((x) => <div key={x.name}><b>{x.name}</b>: {x.price ? `${x.price} ${x.unit || ''}` : <span className="small-muted">price on request</span>}</div>)}</div>
             {p.hasVideo && <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 10, marginRight: 6 }} onClick={() => play(p)}>▶ Watch video</button>}
+            {canEdit && <SingleUpload product={p} onDone={() => setVidKey((n) => n + 1)} />}
             {canEdit && <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={() => setEdit({ ...p, featuresText: lines(p.features), plans: (p.plans || []).length ? p.plans : [{ name: 'Starter', price: '', unit: 'per user / month', includes: '' }] })}>Edit</button>}
           </div>
         ))}
