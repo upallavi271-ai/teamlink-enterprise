@@ -60,7 +60,8 @@ PORT=$(sed -n 's/^PORT=//p' "$ROOT/config/.env" | tail -1 | tr -d '"\047\r')
 PKG=$ROOT/.pkg-$STAMP
 NEWB=$ROOT/backend-new-$STAMP;  OLDB=$ROOT/backend-old-$STAMP
 NEWF=$ROOT/frontend-new-$STAMP; OLDF=$ROOT/frontend-old-$STAMP
-cleanup() { rm -rf "$PKG" "$NEWB" "$NEWF"; }
+NEWP=$ROOT/job-portal-app-new-$STAMP; OLDP=$ROOT/job-portal-app-old-$STAMP
+cleanup() { rm -rf "$PKG" "$NEWB" "$NEWF" "$NEWP"; }
 trap cleanup EXIT
 
 log "deploy of ${COMMIT:0:8} to company '$KEY' starting (the live copy keeps running while the new one is built)"
@@ -75,6 +76,22 @@ if [ -f "$TL_STATE/check-requires.js" ]; then
   r=$(cd "$PKG/backend" && node "$TL_STATE/check-requires.js" src 2>&1) || { alert "the new backend would crash on start (nothing was stopped): $(echo "$r" | head -3 | tr '\n' ' ')"; exit 1; }
 fi
 
+# 1b. THIS COMPANY'S OWN JOB PORTAL (docs/second-company.md section 11). Only when its settings name a portal port (company-portal-install.sh writes it).
+# The portal's code is a git SUBMODULE of TeamLink's repository, so it is taken from the submodule's own repository at the commit THIS release pins,
+# plus the embed layer from the release itself. The portal's DATABASE, files and run folder live under data/job-portal (settings), never in this code folder.
+PORTAL=0; PHASH=""; PORTAL_CHANGED=0
+if grep -q '^JOB_PORTAL_PORT=' "$ROOT/config/.env" 2>/dev/null && [ -z "$FROM_DIR" ]; then
+  sub=$(git -C "$SRC" ls-tree "$COMMIT" job-portal-app/job_portal-main 2>/dev/null | awk '{print $3}')
+  if [ -n "$sub" ] && git -C "$SRC/job-portal-app/job_portal-main" cat-file -e "$sub^{commit}" 2>/dev/null; then
+    mkdir -p "$PKG/job-portal-app/job_portal-main"
+    if git -C "$SRC" archive "$COMMIT" job-portal-app/embed | tar -x -C "$PKG" && git -C "$SRC/job-portal-app/job_portal-main" archive "$sub" | tar -x -C "$PKG/job-portal-app/job_portal-main" && [ -f "$PKG/job-portal-app/job_portal-main/package.json" ]; then
+      PORTAL=1
+      PHASH=$(cd "$PKG/job-portal-app" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
+      if [ "$PHASH" != "$(cat "$STATE/portal-hash" 2>/dev/null)" ] || [ ! -d "$ROOT/job-portal-app/job_portal-main/node_modules" ]; then PORTAL_CHANGED=1; fi
+    else log "WARNING: the Job Portal code of ${COMMIT:0:8} could not be unpacked: the company's portal keeps its present code"; fi
+  else log "WARNING: the Job Portal code that ${COMMIT:0:8} pins is not in the clone yet: the company's portal keeps its present code"; fi
+fi
+
 # 2. build both parts next to the live ones (hard links of the live packages when package-lock.json is the same: instant)
 (
   set -e
@@ -87,12 +104,34 @@ fi
   npm run build
   [ -f dist/index.html ] || { echo "the screen build made no dist/index.html"; exit 1; }
 ) >>"$LOG" 2>&1 || { alert "building ${COMMIT:0:8} FAILED (see $LOG). Nothing was switched: the company's live copy was not touched."; status "FAILED building ${COMMIT:0:8}"; exit 1; }
+
+# 2b. the portal's packages, next to the live ones (hard links of the live packages when package-lock.json is the same: instant). A portal that cannot be built
+# never stops the company's own release: it keeps the code it has.
+if [ $PORTAL_CHANGED = 1 ]; then
+  LP=$ROOT/job-portal-app/job_portal-main
+  (
+    set -e
+    cp -a "$PKG/job-portal-app" "$NEWP"
+    cd "$NEWP/job_portal-main"
+    if [ -d "$LP/node_modules" ] && cmp -s "$LP/package-lock.json" package-lock.json; then cp -al "$LP/node_modules" node_modules; else npm install --include=dev --no-audit --no-fund; fi
+    cd api
+    if [ -d "$LP/api/node_modules" ] && cmp -s "$LP/api/package-lock.json" package-lock.json; then cp -al "$LP/api/node_modules" node_modules; else npm install --omit=dev --no-audit --no-fund; fi
+  ) >>"$LOG" 2>&1 || { log "WARNING: building the Job Portal of ${COMMIT:0:8} FAILED (see $LOG): the company's portal keeps its present code"; rm -rf "$NEWP"; PORTAL_CHANGED=0; }
+fi
 log "built; switching"
 status "switching to ${COMMIT:0:8}"
 
 # 3. switch. The database is outside backend/ (config/.env: DATABASE_URL=file:/opt/company-<key>/data/<key>.db) so nothing is copied.
 had_live=0; [ -d "$ROOT/backend" ] && had_live=1
 if [ $had_live = 1 ] && [ $NOSTART = 0 ]; then pm2 stop "$PM2_NAME" >>"$LOG" 2>&1 || true; fi
+# the portal stops cleanly some seconds after its backend does (it closes its own database); its code is replaced only once it is down
+if [ $PORTAL_CHANGED = 1 ] && [ -d "$NEWP" ]; then
+  RUNDIR=$(sed -n 's/^JOB_PORTAL_RUN_DIR=//p' "$ROOT/config/.env" | tail -1 | tr -d '"\047\r')
+  PIDF=$RUNDIR/portal.pid.json; w=0
+  portal_up() { local p; [ -f "$PIDF" ] || return 1; p=$(sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p' "$PIDF" 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
+  while portal_up && [ $w -lt 90 ]; do sleep 1; w=$((w+1)); done
+  if portal_up; then log "WARNING: the company's Job Portal was still running after 90 s: its code was NOT replaced this time"; rm -rf "$NEWP"; PORTAL_CHANGED=0; fi
+fi
 DBFILE=$(sed -n 's/^DATABASE_URL=//p' "$ROOT/config/.env" | tail -1 | tr -d '"\047\r' | sed 's#^file:##')
 if [ -f "$DBFILE" ]; then
   mkdir -p "$ROOT/data/backups/pre-deploy-$STAMP"
@@ -102,6 +141,11 @@ fi
 [ $had_live = 1 ] && mv "$ROOT/backend" "$OLDB"
 [ -d "$ROOT/frontend" ] && mv "$ROOT/frontend" "$OLDF"
 mv "$NEWB" "$ROOT/backend"; mv "$NEWF" "$ROOT/frontend"
+had_portal=0
+if [ $PORTAL_CHANGED = 1 ] && [ -d "$NEWP" ]; then
+  [ -d "$ROOT/job-portal-app" ] && { had_portal=1; mv "$ROOT/job-portal-app" "$OLDP"; }
+  mv "$NEWP" "$ROOT/job-portal-app"
+fi
 ln -sfn "$ROOT/config/.env" "$ROOT/backend/.env"
 # the company's own logo for payslips / agreements / mails (the file keeps TeamLink's historical name); none given = those documents carry no logo
 rm -rf "$ROOT/frontend/src"; mkdir -p "$ROOT/frontend/src/assets"
@@ -130,6 +174,8 @@ fi
 if [ $healthy = 1 ]; then
   pm2 save >>"$LOG" 2>&1 || true
   echo "$COMMIT" > "$STATE/deployed-commit"; rm -f "$STATE/ALERT"
+  [ $PORTAL = 1 ] && [ -n "$PHASH" ] && [ -d "$ROOT/job-portal-app/job_portal-main/node_modules" ] && echo "$PHASH" > "$STATE/portal-hash"
+  ls -dt "$ROOT"/job-portal-app-old-* 2>/dev/null | tail -n +3 | xargs -r rm -rf
   ls -dt "$ROOT"/backend-old-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
   ls -dt "$ROOT"/frontend-old-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
   log "company '$KEY' is healthy on ${COMMIT:0:8}"; status "deployed ${COMMIT:0:8}"; exit 0
@@ -140,6 +186,7 @@ if [ $had_live = 1 ] && [ -d "$OLDB" ]; then
   pm2 stop "$PM2_NAME" >>"$LOG" 2>&1 || true
   mv "$ROOT/backend" "$ROOT/backend-failed-$STAMP"; mv "$OLDB" "$ROOT/backend"
   if [ -d "$OLDF" ]; then mv "$ROOT/frontend" "$ROOT/frontend-failed-$STAMP"; mv "$OLDF" "$ROOT/frontend"; fi
+  if [ $had_portal = 1 ] && [ -d "$OLDP" ]; then mv "$ROOT/job-portal-app" "$ROOT/job-portal-app-failed-$STAMP"; mv "$OLDP" "$ROOT/job-portal-app"; fi
   pm2 restart "$PM2_NAME" --update-env >>"$LOG" 2>&1 && log "the previous release is back" || alert "AUTOMATIC ROLLBACK DID NOT COMPLETE for '$KEY': put backend-old / frontend-old back by hand"
 fi
 status "FAILED on ${COMMIT:0:8}"

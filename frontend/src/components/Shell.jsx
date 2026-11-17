@@ -255,8 +255,8 @@ export default function Shell() {
           )}
           {/* Only for logins with ATS (user, 2026-09-29: R&D / non-ATS staff have
               nothing to do with the job portal). */}
-          {/* (a separate company's copy has no Job Portal: it is its own program with its own database - docs/second-company.md) */}
-          {!BRAND.separate && user?.products?.ats && !isExternalUser(user) && (
+          {/* (a separate company's copy shows the Job Portal only when it was built with its OWN one: VITE_BRAND_JOB_PORTAL, docs/second-company.md section 11) */}
+          {BRAND.jobPortal && user?.products?.ats && !isExternalUser(user) && (
             <div className="sb-group">
               {/* 2026-10-29: Admins, Recruiters and TLs open the Job Portal already signed in with this login (no second login);
                   everyone else gets the public portal. */}

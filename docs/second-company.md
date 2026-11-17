@@ -147,3 +147,36 @@ A separate company starts with an empty database, but a few screens draw TeamLin
 Education Teams A / B, Medical, Manufacturing, BDE, R&D) — a company copy now starts with no plan and shows no card (`utils/vacancies.js`, `Vacancies.jsx`, `HrmsDashboard.jsx`; TeamLink unchanged).
 `npm run company-test` now prints an information line with TeamLink's business words that still appear in the new company's answers, so the rest can be found and listed. Known and not yet changed: the
 Vacancies plan editor cannot add departments (a company has no plan until that is built), the wording "TeamLink Consultants" in agreements / mails / greetings (section 8), and department lists that offer TeamLink's department names.
+## 11. The company's own Job Portal (added 2026-11-17)
+
+Founder's wish: Omni-Channel and the Job Portal also visible in the other company, but with none of TeamLink's accounts or details. The Job Portal is a separate program with its own
+database (the customer's `job_portal`, a git submodule of this repository). TeamLink runs it **inside its own server process** at `/jobs`, with a small database of its own. A company copy
+does the same, as its own portal on its own ports, in its own folders:
+
+| | TeamLink | the company (NISH) |
+|---|---|---|
+| address | `/jobs` on TeamLink's address | `/jobs` on the company's address |
+| web port / database port | 4323 / 5434 | 4324 / 5435 (own, set in its settings) |
+| code | `/opt/teamlink-enterprise/job-portal-app` | `/opt/company-<key>/job-portal-app` (replaced by a deploy) |
+| database, uploads, run files | `.../job_portal-main/var` | `/opt/company-<key>/data/job-portal/{db,storage,run}` (a deploy never touches them) |
+| secrets | its own | NEW random ones (sync token, push secret, portal auth secret, integration key) |
+
+**Why a new portal is not simply switched on (found by running a fresh one):** the portal's own first start puts a company called **"TeamLink Consultants"** into the database, and, while its users
+table is empty, two demo logins (`recruiter@teamlink.com` "Dev Recruiter", `bde@teamlink.com` "Priya Nair") that share one password (a published default unless one is given). Its AI-calling settings and two
+publishing labels also say "TeamLink". `deploy/vps/company/company-portal-init.mjs` therefore runs once on the new database: renames those to the company's name, removes exactly the two demo logins and their two
+profile rows (it refuses if the portal holds anything else), and gives the company's own Admin a portal admin login, which also stops the portal from writing the demo logins again on a later start (proved on a
+throw-away copy: second start creates nothing). `JOBPORTAL__DEV_PASSWORD` is a random value nobody knows, so even a demo login that slipped in could not be used.
+
+**The program refuses a portal that is not the company's own.** The supervisor adopts any portal that answers on its port, and the default ports ARE TeamLink's: a company copy that kept them would show TeamLink's
+jobs and candidates under its own address. So `utils/jobPortalEmbed.js` starts a portal in a company copy (COMPANY_KEY) only when its own web port, database port (neither 4323 / 5434), run folder, database folder and
+a long demo-account password are all set; `scripts/company-check.js` checks the same list, plus that the four portal secrets differ from TeamLink's and the folders are the company's own. TeamLink (no COMPANY_KEY) is unchanged.
+
+**How it is installed** (`deploy/vps/company/company-portal-install.sh --key nish --name "..."`, plan first, `--apply` to do it; needs the founder's yes):
+1. checks (company healthy, ports free and not TeamLink's, disk); 2. settings + folders (dated copy of the settings file; `JOB_PORTAL_EMBED=0` at first; the screens get the Job Portal menu through `VITE_BRAND_JOB_PORTAL=1`);
+3. `company-deploy.sh` puts the portal's code (taken from the submodule at the commit the release pins) and packages next to the company's release (same method as TeamLink's own deploy; later releases refresh it only when
+it changed, wait for the portal to stop before replacing code, and put the old code back on a failed start); 4. first start off to the side, clean-up (above); 5. `JOB_PORTAL_EMBED=1`, only the company's server restarts;
+6. checks: the portal answers on ITS port, `/jobs` works through the company's address, the process runs from the company's folder, TeamLink's portal (4323) untouched, `company-check` passes.
+Taking it away: `JOB_PORTAL_EMBED=0` and `pm2 restart company-<key>`; the folder `data/job-portal` can then be kept or deleted.
+
+Proof: `npm run company-portal-test` in `backend/` (27 checks: the refusals, TeamLink unchanged, the settings check, the scripts), plus the throw-away end-to-end run on the server described above.
+Not changed (wording, not data): the portal's message templates and the label "TeamLink AI Engine v2.3" in its AI settings keep the program's own wording; the company adds its own mail / SMS / WhatsApp / job-board accounts inside the portal.

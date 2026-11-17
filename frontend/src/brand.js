@@ -8,6 +8,7 @@
 //
 //   VITE_BRAND_NAME      the company's name, shown as the mark.            (unset = TeamLink Consultants, the picture logo)
 //   VITE_BRAND_PRODUCT   the product line under it / in the tab title.     (unset = TeamLink.Enterprise; with a name: "<name> · Enterprise")
+//   VITE_BRAND_JOB_PORTAL=1   this company has its OWN Job Portal (its own database; docs/second-company.md section 11): the menu offers it.
 // ---------------------------------------------------------------------------
 const env = (import.meta && import.meta.env) || {};
 const NAME = String(env.VITE_BRAND_NAME || '').trim();
@@ -17,6 +18,8 @@ export const BRAND = Object.freeze({
   separate: !!NAME,
   name: NAME || 'TeamLink Consultants',
   product: String(env.VITE_BRAND_PRODUCT || '').trim() || (NAME ? 'Enterprise' : 'TeamLink.Enterprise'),
+  // a separate company's copy offers the Job Portal only when it was built to have its own
+  jobPortal: !NAME || /^(1|true|yes|on)$/i.test(String(env.VITE_BRAND_JOB_PORTAL || '').trim()),
 });
 
 export default BRAND;

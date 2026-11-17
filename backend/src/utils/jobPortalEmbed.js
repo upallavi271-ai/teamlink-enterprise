@@ -68,8 +68,31 @@ const appBase = () => trimSlash(process.env.APP_BASE_URL || 'http://localhost:51
 function isSandbox() {
   try { return require('./sandbox').isSandbox(); } catch { return false; } // eslint-disable-line global-require
 }
+// A SEPARATE COMPANY's copy (COMPANY_KEY, docs/second-company.md) may run a Job Portal only if it is entirely its own. The supervisor ADOPTS any portal that
+// answers on the internal port, and the default ports (4323 / 5434) are TeamLink's own portal: a company copy that kept them would serve TeamLink's jobs and
+// candidates under its own address. So a company copy refuses to start one unless every one of these is set (company-check.js checks the same list):
+// its own web port and database port (not TeamLink's), its own run folder, its own database folder, and a password for the portal's first-start demo
+// accounts that nobody knows. Returns the sentence that says what is missing, or null. TeamLink has no COMPANY_KEY: nothing here applies to it.
+function companyPortalRefusal(env = process.env) {
+  if (!env.COMPANY_KEY) return null;
+  const p = parseInt(env.JOB_PORTAL_PORT, 10);
+  const pg = parseInt(env.JOB_PORTAL_PG_PORT, 10);
+  if (!p || p === 4323) return 'JOB_PORTAL_PORT must be this company\'s own port (4323 is TeamLink\'s Job Portal)';
+  if (!pg || pg === 5434) return 'JOB_PORTAL_PG_PORT must be this company\'s own port (5434 is TeamLink\'s Job Portal database)';
+  if (p === pg) return 'JOB_PORTAL_PORT and JOB_PORTAL_PG_PORT must differ';
+  if (!env.JOB_PORTAL_RUN_DIR) return 'JOB_PORTAL_RUN_DIR must be set to a folder of this company';
+  if (!env.JOBPORTAL__DEV_DB_DIR) return 'JOBPORTAL__DEV_DB_DIR must be set to this company\'s own portal database folder';
+  if (!env.JOBPORTAL__DEV_PASSWORD || String(env.JOBPORTAL__DEV_PASSWORD).length < 16) return 'JOBPORTAL__DEV_PASSWORD must be a long random password (the portal\'s first-start demo accounts use it)';
+  return null;
+}
+let refusalLogged = false;
 function enabled() {
   if (isSandbox()) return false;
+  const why = companyPortalRefusal();
+  if (why) {
+    if (!refusalLogged && process.env.JOB_PORTAL_EMBED !== undefined && truthy(process.env.JOB_PORTAL_EMBED)) { refusalLogged = true; console.error(`[job-portal] NOT started: this is a separate company's copy and ${why}.`); }
+    return false;
+  }
   if (process.env.JOB_PORTAL_EMBED !== undefined && process.env.JOB_PORTAL_EMBED !== '') return truthy(process.env.JOB_PORTAL_EMBED);
   return process.env.NODE_ENV !== 'production';
 }
@@ -479,7 +502,7 @@ function proxy() {
 }
 
 module.exports = {
-  start, status, proxy, enabled, requestStop, internalUrl, health,
+  start, status, proxy, enabled, requestStop, internalUrl, health, companyPortalRefusal,
   // for tests
   _inject: inject, _portalEnv: portalEnv, _portalIsStale: portalIsStale, _newestCodeChange: newestCodeChange, BASE, RUN_DIR, PIDFILE, HEARTBEAT, LOGFILE, MAINT,
 };

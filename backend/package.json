@@ -23,7 +23,8 @@
     "portal-calibrate": "node scripts/portal-calibrate.js",
     "posting-test": "node scripts/job-publish-test.js",
     "company-bridge-test": "node scripts/company-bridge-test.js",
-    "bridge-sandbox": "node scripts/teamlink-bridge-sandbox.js"
+    "bridge-sandbox": "node scripts/teamlink-bridge-sandbox.js",
+    "company-portal-test": "node scripts/company-portal-test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0",

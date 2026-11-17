@@ -92,8 +92,26 @@ async function check({ env, home, tl, checkPort }) {
   add(falsy(e.GREENSTART_ENABLED) && e.GREENSTART_ENABLED !== undefined, 'TeamLink\'s Omni-Channel (Green Start) is switched off here (GREENSTART_ENABLED=false)', String(e.GREENSTART_ENABLED || 'not set'));
   add(falsy(e.GREENSTART_SUPERVISE) && e.GREENSTART_SUPERVISE !== undefined, 'this server does not start or watch Green Start (GREENSTART_SUPERVISE=false)', String(e.GREENSTART_SUPERVISE || 'not set'));
   add(falsy(e.GREENSTART_AUTOSTART) && e.GREENSTART_AUTOSTART !== undefined, 'Green Start auto-start is off (GREENSTART_AUTOSTART=false)', String(e.GREENSTART_AUTOSTART || 'not set'));
-  add(falsy(e.JOB_PORTAL_EMBED) && e.JOB_PORTAL_EMBED !== undefined, 'the embedded Job Portal is off (JOB_PORTAL_EMBED=0)', String(e.JOB_PORTAL_EMBED || 'not set'));
-  add(!e.JOB_PORTAL_SYNC_TOKEN && !e.JOB_PORTAL_PUSH_SECRET, 'no Job Portal sync secrets are set (the portal sync stays off)');
+  // THE JOB PORTAL (docs/second-company.md section 11): off, or entirely this company's own. The default ports and folders are TeamLink's own portal, and
+  // the program adopts any portal that answers on its port, so "on" is only allowed with ports, folders and secrets of the company's own.
+  const portalOn = e.JOB_PORTAL_EMBED !== undefined && !falsy(e.JOB_PORTAL_EMBED) && String(e.JOB_PORTAL_EMBED).trim() !== '';
+  if (!portalOn) {
+    add(falsy(e.JOB_PORTAL_EMBED) && e.JOB_PORTAL_EMBED !== undefined, 'the embedded Job Portal is off (JOB_PORTAL_EMBED=0)', String(e.JOB_PORTAL_EMBED || 'not set'));
+    add(!e.JOB_PORTAL_SYNC_TOKEN && !e.JOB_PORTAL_PUSH_SECRET, 'no Job Portal sync secrets are set (the portal sync stays off)');
+  } else {
+    const why = require('../src/utils/jobPortalEmbed').companyPortalRefusal({ ...e, COMPANY_KEY: e.COMPANY_KEY || 'x' }); // eslint-disable-line global-require
+    add(!why, 'the Job Portal is this company\'s own: web and database ports, run folder, database folder and demo-account password (the program refuses to start it otherwise)', why || '');
+    for (const k of ['JOB_PORTAL_SYNC_TOKEN', 'JOB_PORTAL_PUSH_SECRET', 'JOBPORTAL__AUTH_SECRET', 'JOBPORTAL__INTEGRATION_SECRET_KEY']) {
+      const v = String(e[k] || '');
+      add(v.length >= 32 && !PLACEHOLDER.test(v), `${k} is its own long random value`, v ? `${v.length} characters` : 'missing');
+      if (tl && tl[k]) add(fingerprint(v) !== fingerprint(tl[k]), `${k} differs from TeamLink's (fingerprints compared, nothing printed)`);
+    }
+    for (const k of ['JOB_PORTAL_RUN_DIR', 'JOBPORTAL__DEV_DB_DIR', 'JOBPORTAL__STORAGE_LOCAL_DIR']) {
+      const v = String(e[k] || '');
+      add(v && !/\.teamlink|\/opt\/teamlink-enterprise|\/tmp\/teamlink/i.test(v) && /^\/opt\/company-[a-z0-9-]+\//.test(v.replace(/\\/g, '/')) || /^[A-Za-z]:/.test(v) || /\/(tmp|var\/tmp)\//.test(v), `${k} is a folder of this company's own`, v || 'not set');
+    }
+    if (e.JOB_PORTAL_PUBLIC_URL) add(!/teamlink\.teamlinks\.in/i.test(e.JOB_PORTAL_PUBLIC_URL), 'JOB_PORTAL_PUBLIC_URL is not TeamLink\'s address');
+  }
   add(!String(e.AI_VOICE_GATEWAY || '').match(/^(1|true|yes|on)$/i), 'the AI phone gateway is off (AI_VOICE_GATEWAY)');
   add(!e.AI_CALL_AUDIOSOCKET_PORT && !e.AI_CALL_OLLAMA_URL && !e.AI_CALL_STT_URL && !e.AI_CALL_TTS_URL, 'no self-hosted AI-calling services are wired in (AI_CALL_*)');
   add(!e.KAVYA_API_KEY_FILE && !e.KAVYA_API_KEY, 'no Kavya AI-calling key is wired in');
