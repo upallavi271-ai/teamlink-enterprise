@@ -41,6 +41,18 @@ const GENERIC_DEFAULTS = ['DesignationRole', 'ExpenseCategory', 'LedgerAccount',
 const WRITTEN_HERE = ['Company', 'User', 'Employee', 'AppSetting'];
 // Rows put there by migrations that belong to TeamLink's own business, not to every company.
 const TEAMLINK_OWN_SEEDS = ['JoiningCategoryTarget'];
+// The program's standard roles (what "Add employee" offers and what each one may open). The migrations install only "HR"; as soon as that one row
+// exists the program stops using its built-in list (utils/identity.js FALLBACK_DESIGNATION_MAP), so a new company could create nothing but HR.
+// These are the same seven rows TeamLink's own list holds: roles of the program, not TeamLink's business.
+const STANDARD_ROLES = [
+  { designation: 'Super Admin', atsRole: 'SUPER_ADMIN', hrms: true, ats: true, accounts: true, landing: 'ats', position: 1, hrmsRole: null, accountsRole: null },
+  { designation: 'Manager', atsRole: 'MANAGER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 3, hrmsRole: null, accountsRole: null },
+  { designation: 'Assistant Manager', atsRole: 'ASSISTANT_MANAGER', hrms: true, ats: true, accounts: false, landing: 'ats', position: 4, hrmsRole: null, accountsRole: null },
+  { designation: 'STL', atsRole: 'STL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 5, hrmsRole: null, accountsRole: null },
+  { designation: 'TL', atsRole: 'TL', hrms: true, ats: true, accounts: false, landing: 'ats', position: 6, hrmsRole: null, accountsRole: null },
+  { designation: 'Employee', atsRole: null, hrms: true, ats: true, accounts: false, landing: 'hrms', position: 7, hrmsRole: 'EMPLOYEE', accountsRole: null },
+  { designation: 'Accountant', atsRole: null, hrms: true, ats: false, accounts: true, landing: 'accounts', position: 8, hrmsRole: 'ACCOUNTANT', accountsRole: null },
+];
 
 function fail(msg, code = 2) { console.error(`[company-init] ${msg}`); process.exit(code); }
 
@@ -149,6 +161,19 @@ async function main() {
     // eslint-disable-next-line no-await-in-loop
     const r = await prisma[m].deleteMany({});
     if (r.count) console.log(`[company-init] removed ${r.count} TeamLink-only ${model} row(s).`);
+  }
+  // 2b. the program's standard roles (see STANDARD_ROLES): without them "Add employee" offers only HR
+  {
+    const have = await prisma.designationRole.findMany({ select: { designation: true } });
+    let added = 0;
+    for (const r of STANDARD_ROLES) {
+      if (have.some((h) => String(h.designation).toLowerCase() === r.designation.toLowerCase())) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.designationRole.create({ data: r });
+      added += 1;
+    }
+    await prisma.designationRole.updateMany({ where: { designation: 'HR' }, data: { position: 2 } });
+    if (added) console.log(`[company-init] added the ${added} standard roles (Super Admin, Manager, Assistant Manager, STL, TL, Employee, Accountant).`);
   }
 
   // 3. the company, its Super Admin, and the row that ties this database to this company

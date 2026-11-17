@@ -188,6 +188,8 @@ async function main() {
   }
   const su = nishDb.prepare('select role, hrmsAccess, atsAccess, accountsAccess from "User"').get();
   ok(su.role === 'SUPER_ADMIN' && su.hrmsAccess === 1 && su.atsAccess === 1 && su.accountsAccess === 1, 'the one login is a Super Admin with HRMS, ATS and Accounts');
+  { const roles = nishDb.prepare('select designation from "DesignationRole" order by position').all().map((r) => r.designation);
+    ok(['Super Admin', 'HR', 'Manager', 'Assistant Manager', 'STL', 'TL', 'Employee', 'Accountant'].every((x) => roles.includes(x)) && roles.length === 8, 'the 8 standard roles of the program are there, so Add employee offers more than HR', roles.join(', ')); }
   nishDb.close();
   // every specific text (names, emails, titles) that TeamLink's data has, looked for in the new company's database
   const dataTables = ['User', 'Client', 'Candidate', 'Employee', 'Requirement', 'Department', 'Team', 'Project', 'Course', 'Announcement', 'Survey', 'PolicyDocument', 'Asset', 'OfficeExpense', 'Invoice', 'BankTransaction', 'Holiday', 'LeaveType', 'ShiftPattern', 'SalaryStructure', 'HrConfig', 'EmployeeRecord', 'InterviewEvent'];
