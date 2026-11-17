@@ -18,7 +18,7 @@ const linkOf = (m) => `${window.location.origin}/plans-meeting/${m.token}`;
 const telOf = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 10 ? `+91${d}` : `+${d}`; }; // opens the phone's own dialler
 const waiting = (m) => !!m.handoverAt && (!m.calledAt || m.calledAt < m.handoverAt); // asked for a call and nobody has called since
 
-function Row({ m, busy, onSend, onCopy, onDelete, onCall }) {
+function Row({ m, busy, onSend, onCopy, onDelete, onCall, onDial }) {
   const [open, setOpen] = useState(false);
   const [phone, setPhone] = useState(null);
   const [numberId, setNumberId] = useState('');
@@ -28,7 +28,7 @@ function Row({ m, busy, onSend, onCopy, onDelete, onCall }) {
   const callBtn = m.phone ? (
     <>
       <Btn small primary={wants} disabled={!!busy} onClick={() => onCall(m)} title="TeamLink rings YOUR phone first, then connects the client, on the line picked above">{busy === `call${m.id}` ? 'Calling…' : '📞 Call now'}</Btn>
-      <a href={`tel:${telOf(m.phone)}`} className="tiny-btn" style={{ textDecoration: 'none', display: 'inline-block' }} title="Opens this phone's own dialler">Call from this phone</a>
+      <a href={`tel:${telOf(m.phone)}`} onClick={() => onDial(m)} className="tiny-btn" style={{ textDecoration: 'none', display: 'inline-block' }} title="Copies the number and tries to open your dialler (a phone does; a computer needs a calling app such as Phone Link)">Dial it myself</a>
     </>
   ) : null;
   return (
@@ -101,6 +101,12 @@ export default function MkMeetingPage() {
     setBusy(`call${m.id}`); setErr('');
     try { const r = await omni.post(`/gs/marketing/meetings/${m.id}/call`, { line: callLine || undefined }); toast(r.ok); await load(); } catch (e) { const x = errOf(e, 'The call could not be started.'); setErr(x); toast(x); } finally { setBusy(''); }
   };
+  // "Dial it myself": a computer often has no program for tel: links, so nothing would happen. The number is always copied and shown, and the link still tries the dialler.
+  const dial = async (m) => {
+    const n = telOf(m.phone);
+    try { await navigator.clipboard.writeText(n); } catch { /* the toast still shows the number */ }
+    toast(`Number ${n}${m.name ? ` (${m.name})` : ''} copied. If your dialler did not open, dial it on your phone.`);
+  };
   const copy = async (m) => { try { await navigator.clipboard.writeText(linkOf(m)); toast('Link copied'); } catch { window.prompt('Copy the link:', linkOf(m)); } };
   const del = async (m) => {
     setBusy(`del${m.id}`);
@@ -166,7 +172,7 @@ export default function MkMeetingPage() {
         </div>
       </Panel>
       <Panel title="Your meetings" sub="Clients waiting for a call come first. Press a name to see the link, send it, and read everything the client asked." style={{ marginTop: 14 }} right={<select value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Show"><option value="">All</option><option value="Hot">Hot</option><option value="Warm">Warm</option><option value="Cold">Cold</option><option value="Not opened">Not opened</option></select>}>
-        {shown.length === 0 ? <Empty title="No meetings here yet">Make a link above, then send it to a client on WhatsApp.</Empty> : shown.map((m) => <Row key={m.id} m={m} busy={busy} onSend={send} onCall={call} onCopy={copy} onDelete={(x) => setAsk(x)} />)}
+        {shown.length === 0 ? <Empty title="No meetings here yet">Make a link above, then send it to a client on WhatsApp.</Empty> : shown.map((m) => <Row key={m.id} m={m} busy={busy} onSend={send} onCall={call} onDial={dial} onCopy={copy} onDelete={(x) => setAsk(x)} />)}
       </Panel>
       {ask ? <ConfirmModal title="Remove this meeting link?" text={`The link for ${ask.name || 'this client'} stops working at once and leaves this list.`} yes="Remove it" danger onNo={() => setAsk(null)} onYes={() => { const x = ask; setAsk(null); del(x); }} /> : null}
     </div>

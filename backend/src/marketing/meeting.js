@@ -186,7 +186,7 @@ async function call(u, id, b = {}) {
   // the phone that rings first: the one on the employee profile, else the number this person saved themselves in "Calls and alerts" (their own, typed on their own page, audited)
   const saved = (await readAll()).alerts[u.id];
   const ringFirst = own.phone || (saved && saved.phone) || '';
-  if (!ringFirst) return { error: 'TeamLink does not know which phone to ring first: your own number is not on your employee profile. Type your phone number in "Calls and alerts" on this page and press "Save my number", or use "Call from this phone".', status: 409 };
+  if (!ringFirst) return { error: 'TeamLink does not know which phone to ring first: your own number is not on your employee profile. Type your phone number in "Calls and alerts" on this page and press "Save my number", or use "Dial it myself".', status: 409 };
   const lines = require('../utils/callLines'); // eslint-disable-line global-require
   const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '') || null;
   const out = await lines.startCall(b.line, { agent: ringFirst, to: r.phone, ref: `mkmeeting:${r.id}`.slice(0, 120), callbackBase: base });

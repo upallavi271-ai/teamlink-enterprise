@@ -181,7 +181,7 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     await M.publicEvent(m2.token, { type: 'handover', name: 'ZZ Call Test', phone: '9123456780', window: 'morning' });
     MC.ownContact = async () => ({ phone: null, name: 'Test' });
     const noOwn = await M.call(sa, m2.id, { line: 'api' });
-    check('15b with no phone on the caller\'s employee profile the call is refused with the reason (and a hint to use "Call from this phone")', noOwn.status === 409 && /employee profile/.test(noOwn.error || '') && /Call from this phone/.test(noOwn.error || ''), noOwn);
+    check('15b with no phone on the caller\'s employee profile the call is refused with the reason (and a hint to use "Dial it myself")', noOwn.status === 409 && /employee profile/.test(noOwn.error || '') && /Dial it myself/.test(noOwn.error || ''), noOwn);
     let asked1 = null;
     MC.ownContact = async () => ({ phone: '9000000001', name: 'Test Caller' });
     CL.startCall = async (line, args) => { asked1 = { line, args }; return { ok: true, callSid: 'fake-1', line: line || 'api' }; };
