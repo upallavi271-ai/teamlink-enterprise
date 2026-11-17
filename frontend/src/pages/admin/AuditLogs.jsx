@@ -86,6 +86,30 @@ export default function AuditLogs() {
         <button className={`btn btn-sm ${view === 'all' ? 'btn-primary' : ''}`} onClick={() => setView('all')}>All activity</button>
         <button className={`btn btn-sm ${view === 'hr' ? 'btn-primary' : ''}`} onClick={() => setView('hr')}>HR sensitive actions</button>
         <button className={`btn btn-sm ${view === 'access' ? 'btn-primary' : ''}`} onClick={() => setView('access')}>Who has Internal HR access</button>
+        {view !== 'access' && (
+          <button
+            className="btn btn-sm"
+            style={{ marginLeft: 'auto' }}
+            title="Downloads the rows these filters pick (up to 50,000) as a CSV file"
+            onClick={async () => {
+              const { dateFrom, dateTo, ...rest } = lf.params;
+              const params = { ...rest };
+              if (view === 'hr') params.entity = 'HrSensitive';
+              if (dateFrom) params.from = dateFrom;
+              if (dateTo) params.to = dateTo;
+              try {
+                const r = await api.get('/admin/audit/export', { params, responseType: 'blob' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(r.data);
+                a.download = `audit-trail-${new Date().toISOString().slice(0, 10)}.csv`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+              } catch { setError('The audit trail could not be downloaded.'); }
+            }}
+          >
+            ⬇ Download CSV
+          </button>
+        )}
       </div>
       {view === 'access' ? <HrSuperAccess /> : (<>
       <ListFilterBar lf={lf} storageKey="admin-audit" />

@@ -3800,7 +3800,15 @@ router.put('/:id', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'),
   const candidate = await prisma.candidate.update({ where: { id: req.params.id }, data: picked });
   markCandidateDirty(candidate.id); // the paged list re-reads this row on its next request
   await writeSourceNote(candidate.id, req.user, req.body, loaded.candidate.source);
-  await logAudit({ userId: req.user.id, action: 'Candidate updated', entity: 'Candidate', entityId: candidate.id });
+  // WHAT CHANGED, field by field (ATS audit 2026-11-17, Q458/459/462: "previous values and new values compare cheyyagalama"): one audit row per changed field
+  // with the old and the new value (salary changes included), then the summary row naming the fields.
+  const shown = (v) => (v == null ? '' : (v instanceof Date ? v.toISOString().slice(0, 10) : String(v))).slice(0, 300);
+  const changed = Object.keys(picked).filter((k) => shown(loaded.candidate[k]) !== shown(candidate[k]));
+  for (const k of changed) {
+    // eslint-disable-next-line no-await-in-loop
+    await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Candidate field changed', entity: 'Candidate', entityId: candidate.id, field: k, fieldLabel: k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase()), fromValue: shown(loaded.candidate[k]) || '(blank)', toValue: shown(candidate[k]) || '(blank)' });
+  }
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Candidate updated', entity: 'Candidate', entityId: candidate.id, toValue: changed.length ? `Changed: ${changed.join(', ')}`.slice(0, 300) : 'No field changed' });
   return res.json({ ...candidate, salaryWarnings: salEdit.warnings });
 });
 

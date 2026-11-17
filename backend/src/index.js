@@ -597,6 +597,7 @@ const server = app.listen(PORT, () => {
   // Job Portal: a full sync 30s after boot, then hourly (JOB_PORTAL_SYNC_INTERVAL_MS).
   require('./utils/jobPortalBridge').startSchedule();
   require('./utils/candidateLogins').startSchedule();
+  require('./utils/requirementExpiry').startSchedule(); // once a day after 9 am: open requirements closing in 3 days, or past their closing date, to their recruiters / TL / BDEs
   require('./calling/voiceCampaigns').startSchedule(); // AI Voice campaigns: dispatch the waiting calls, at most `concurrency` lines at once
   require('./utils/omniVoiceSync').startSchedule(); // finished AI calls -> Omni-Channel > Voice Calling (the history there too)
   require('./utils/omniLeadSync').startSchedule(); // ad leads from Omni-Channel > Lead Management -> the team CRM (All Customers)

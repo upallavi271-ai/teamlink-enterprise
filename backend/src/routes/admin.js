@@ -1307,28 +1307,47 @@ router.put('/hr-super-access', requirePerm(null, 'administration', 'Users', 'edi
   res.json({ ok: true, enabled: saved.enabled, emailSuperAdmins: saved.emailSuperAdmins, notifyAdmins: saved.notifyAdmins, users: saved.users });
 });
 
+// The audit filters (search, person, action, record type, approval, dates), shared by the list and the download.
+function auditWhere(query) {
+  const and = [];
+  const q = String(query.q || '').trim();
+  if (q) {
+    and.push({
+      OR: [
+        { action: { contains: q } }, { entity: { contains: q } }, { entityId: { contains: q } },
+        { fromValue: { contains: q } }, { toValue: { contains: q } }, { fieldLabel: { contains: q } },
+        { field: { contains: q } }, { reason: { contains: q } }, { actorName: { contains: q } },
+        { user: { is: { name: { contains: q } } } },
+      ],
+    });
+  }
+  const uid = String(query.userId || '');
+  if (uid) and.push({ userId: uid === '__system' ? null : uid });
+  if (query.action) and.push({ action: String(query.action) });
+  if (query.entity) and.push({ entity: String(query.entity) });
+  if (query.entityId) and.push({ entityId: String(query.entityId) });
+  if (query.approvalStatus) and.push({ approvalStatus: String(query.approvalStatus) });
+  const range = createdAtRange(query);
+  if (range) and.push({ createdAt: range });
+  return and.length ? { AND: and } : {};
+}
+
+// THE AUDIT TRAIL AS A FILE (ATS audit 2026-11-17, Q470): the rows the filters pick, newest first, up to 50,000, as CSV. The download itself is audited.
+router.get('/audit/export', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res) => {
+  const where = auditWhere(req.query);
+  const rows = await prisma.auditLog.findMany({ where, include: { user: AUDIT_USER }, orderBy: { createdAt: 'desc' }, take: 50000 });
+  const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""').replace(/[\r\n]+/g, ' ')}"`;
+  const head = ['When (UTC)', 'Who', 'Action', 'Record type', 'Record id', 'Field', 'Old value', 'New value', 'Reason', 'Approval'];
+  const lines = [head.map(q).join(',')].concat(rows.map((r) => [r.createdAt.toISOString(), r.actorName || (r.user && r.user.name) || 'System', r.action, r.entity, r.entityId, r.fieldLabel || r.field, r.fromValue, r.toValue, r.reason, r.approvalStatus].map(q).join(',')));
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Audit trail downloaded', entity: 'AuditLog', toValue: `${rows.length} rows` });
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="audit-trail-${new Date().toISOString().slice(0, 10)}.csv"`);
+  return res.send(`﻿${lines.join('\r\n')}`);
+});
+
 router.get('/audit', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res) => {
   if (req.query.page !== undefined) {
-    const and = [];
-    const q = String(req.query.q || '').trim();
-    if (q) {
-      and.push({
-        OR: [
-          { action: { contains: q } }, { entity: { contains: q } }, { entityId: { contains: q } },
-          { fromValue: { contains: q } }, { toValue: { contains: q } }, { fieldLabel: { contains: q } },
-          { field: { contains: q } }, { reason: { contains: q } }, { actorName: { contains: q } },
-          { user: { is: { name: { contains: q } } } },
-        ],
-      });
-    }
-    const uid = String(req.query.userId || '');
-    if (uid) and.push({ userId: uid === '__system' ? null : uid });
-    if (req.query.action) and.push({ action: String(req.query.action) });
-    if (req.query.entity) and.push({ entity: String(req.query.entity) });
-    if (req.query.approvalStatus) and.push({ approvalStatus: String(req.query.approvalStatus) });
-    const range = createdAtRange(req.query);
-    if (range) and.push({ createdAt: range });
-    const where = and.length ? { AND: and } : {};
+    const where = auditWhere(req.query);
     const { page, pageSize, skip, take } = pageArgs(req.query);
     const orderBy = { createdAt: req.query.sort === 'old' ? 'asc' : 'desc' };
     const [rows, total, byUser, byAction, byEntity, byApproval] = await Promise.all([
