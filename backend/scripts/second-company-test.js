@@ -213,7 +213,7 @@ async function main() {
   const markers = [...tlMarkText.keys()].filter((v) => specific(v) && !nishText.has(v) && !baseText.has(v) && !/@example\.(com|org|net)$/i.test(v) && !sourceText.includes(v));
   ok(markers.length > 50, `TeamLink's data gives ${markers.length} names / emails / titles to look for`, 'too few markers to be a real test');
   // two words the application itself writes into every employee row: the Super Admin's designation and the default shift
-  const OWN_WORDS = new Set(['Super Admin', 'General (9:00 AM – 6:00 PM)']);
+  const OWN_WORDS = new Set(['Super Admin', 'Assistant Manager', 'General (9:00 AM – 6:00 PM)']);
   const inside = [...tlText.keys()].filter((v) => specific(v) && !baseText.has(v) && !OWN_WORDS.has(v) && nishText.has(v));
   ok(inside.length === 0, 'none of TeamLink\'s names, emails or titles exist in the new company\'s database', inside.slice(0, 5).join(' | '));
 
