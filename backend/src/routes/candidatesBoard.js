@@ -527,6 +527,8 @@ module.exports = function mountCandidatesBoard(router, deps) {
         const inScope = await loadInScope(req, res);
         if (!inScope) return undefined;
       }
+      // LEGAL HOLD (utils/candidatePrivacy.js): a record held for a dispute or legal case is never deleted
+      { const h = await require('../utils/candidatePrivacy').holdOf(req.params.id).catch(() => null); if (h) return res.status(409).json({ error: `This record is on legal hold (${h.reason}). It cannot be deleted until the hold is released.` }); } // eslint-disable-line global-require
       const b = req.body || {};
       const reason = String(b.reason || '');
       if (!['Duplicate', 'Wrong entry'].includes(reason)) {

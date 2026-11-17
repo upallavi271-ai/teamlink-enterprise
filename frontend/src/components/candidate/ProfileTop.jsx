@@ -10,6 +10,7 @@ import { SalaryFitChips, AddSalaryDialog } from '../SalaryFit.jsx'; // Salary fi
 import FitBreakdown, { useFitBreakdown } from '../match/FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary
 import { ContactButtons } from './ProfileSlots.jsx';
 import { recordedAs, IMPORTED_SOURCE, longDay, CAME_KIND_TEXT } from '../../utils/candidateSource.js';
+import PrivacyTools, { mayPrivacy } from './PrivacyTools.jsx';
 import './ProfileTop.css';
 
 // ---------------------------------------------------------------------------
@@ -144,7 +145,7 @@ export function ProfileTools({
   const archived = c.profileStatus === 'Archived';
   const canArchive = mayArchive(user) && c.profileStatus !== 'Do Not Use';
   const canDelete = isSuperAdmin(user) || hasRole(user, DELETE_LEADS);
-  if (!canArchive && !canDelete) return null;
+  if (!canArchive && !canDelete && !mayPrivacy(user)) return null;
 
   async function doArchive(on) {
     setBusy(true); setMsg(null);
@@ -174,6 +175,7 @@ export function ProfileTools({
       {canArchive && !archived && <button type="button" className="btn btn-sm" onClick={() => { setReason(''); setDlg('archive'); }}>Archive</button>}
       {canArchive && archived && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => doArchive(false)}>Bring back</button>}
       {canDelete && <button type="button" className="btn btn-sm btn-ghost cpt-del" onClick={() => { setReason(''); setConfirmName(''); setDlg('delete'); }}>Delete (wrong entry)</button>}
+      <PrivacyTools c={c} user={user} onChanged={onChanged} />
       {msg && <span className={msg.ok ? 'cpt-ok' : 'error-text'}>{msg.text}</span>}
 
       {dlg === 'archive' && (
