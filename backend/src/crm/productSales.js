@@ -37,7 +37,7 @@ const SEED = [
     key: 'ATS', name: 'TeamLink ATS', sort: 2,
     tagline: 'Recruitment from requirement to joining, with AI screening and AI interviews.',
     about: 'TeamLink ATS runs recruitment end to end: client and internal requirements, job posting to the company job portal, website and job boards, candidates with duplicate checks, AI resume screening and AI video interviews, the full pipeline (recruiter, team lead, client manager, client), interview calendar, offers and joining, invoices for placements, and reports for every recruiter, team lead and client. Each role sees only its own work.',
-    features: ['Client and internal requirements with approvals and recruiter assignment', 'Job portal, careers page and Google Jobs posting; one-click posting to Naukri, Shine, Indeed, LinkedIn and others', 'Candidate database with duplicate detection, resume parsing and source tracking', 'Fit score against each requirement, AI interview with photo verification and recording', 'Pipeline with stage owners: recruiter, team lead, client manager, client', 'Interview calendar, feedback per round, offers, joining and replacement tracking', 'Client portal for shortlisting and feedback', 'WhatsApp, SMS and email to candidates, automatic stage messages', 'Recruiter, team and client reports, targets and Excel exports'],
+    features: ['Client and internal requirements with approvals and recruiter assignment', 'Jobs go by themselves to your Job Portal, careers website and Google Jobs; for Naukri, Shine and other job boards one button opens the board with the job text ready', 'Candidate database with duplicate detection, resume parsing and source tracking', 'Fit score against each requirement, AI interview with photo verification and recording', 'Pipeline with stage owners: recruiter, team lead, client manager, client', 'Interview calendar, feedback per round, offers, joining and replacement tracking', 'Client portal for shortlisting and feedback', 'WhatsApp, SMS and email to candidates, automatic stage messages', 'Recruiter, team and client reports, targets and Excel exports'],
     faq: '',
   },
   {
@@ -67,10 +67,23 @@ const PLANS = {
     { name: 'Enterprise', price: '₹14,999', unit: 'per month', includes: 'Up to 10 WhatsApp numbers, unlimited users, Ads Manager, keyword research, Search Console and AI visibility, chat bots, dedicated support.' },
   ],
 };
-const COMMON_FAQ = 'Q: Are the prices with GST?\nA: No. GST at 18% is added to the prices shown.\n\nQ: How is it billed?\nA: Yearly in advance. Monthly billing is possible at 10% more.\n\nQ: How long does it take to start?\nA: Usually 3 to 7 working days: we set up the account, import your data and train your team.\n\nQ: Where is our data kept?\nA: On servers in India, with daily backups. Each company sees only its own data.\n\nQ: Can we try it first?\nA: Yes. After this meeting our team can set up a trial account for your company.';
+// how the ATS really works for a client (founder 2026-11-17): client -> BDE -> BDE TL -> department TL, who picks the recruiters and posts
+const ATS_FLOW = [
+  'Q: How do clients come into the ATS?\nA: Your BDE adds the client and its agreement in the ATS. Once the client signs the agreement, the client gets its own client-portal login, and from then on it raises its requirements there.',
+  'Q: What does a client do in the ATS?\nA: In its client portal the client raises requirements, reviews the candidate profiles sent to it, shortlists or rejects them, gives interview feedback and raises any concern. It also sees for how many days each requirement has been open.',
+  'Q: How does a client send a requirement?\nA: The client raises it in its client portal. It goes to the client\'s BDE, then the BDE team lead, then the department team lead, who picks the recruiters and posts the job.',
+  'Q: Can the client see the candidates?\nA: Yes, but only the candidates sent to that client, in its client portal, where it can shortlist or reject them and give feedback.',
+  'Q: How does job posting work?\nA: A posted job goes by itself to your Job Portal, your careers website and Google Jobs. For Naukri, Shine and other job boards, your team posts with one button that opens the board\'s posting page with the job text ready.',
+].join('\n\n');
+const EXTRA_COMMON = [
+  'Q: What does it cost?\nA: Each product has Starter, Growth and Enterprise plans, shown on the slides; GST at 18% is added. At the end of this meeting you can see your exact price for your team size.',
+  'Q: Can we import our Excel data?\nA: Yes. Your existing records can be brought in from Excel sheets, and our team does the first import with you during set-up.',
+  'Q: Does it work on mobile?\nA: Yes. It works in the web browser on any phone, tablet or computer; there is no separate app to install.',
+].join('\n\n');
+const COMMON_FAQ = `Q: Are the prices with GST?\nA: No. GST at 18% is added to the prices shown.\n\nQ: How is it billed?\nA: Yearly in advance. Monthly billing is possible at 10% more.\n\nQ: How long does it take to start?\nA: Usually 3 to 7 working days: we set up the account, import your data and train your team.\n\nQ: Where is our data kept?\nA: On servers in India, with daily backups. Each company sees only its own data.\n\nQ: Can we try it first?\nA: Yes. After this meeting our team can set up a trial account for your company.\n\n${EXTRA_COMMON}`;
 const FAQ = {
   HRMS: `Q: Does it work with biometric devices?\nA: Yes. eSSL and ZKTeco devices send punches straight into TeamLink attendance.\n\nQ: Does payroll handle PF, ESI and PT?\nA: Yes. Payroll calculates PF, ESI, professional tax and TDS, and gives payslips to every employee.\n\n${COMMON_FAQ}`,
-  ATS: `Q: Can we post jobs to Naukri and LinkedIn?\nA: Yes. Jobs go to your careers page and Google Jobs automatically, and to Naukri, Shine, Indeed and LinkedIn with one click.\n\nQ: Can our clients see the shortlisted candidates?\nA: Yes. Each client gets a client portal login to shortlist and give feedback.\n\n${COMMON_FAQ}`,
+  ATS: `${ATS_FLOW}\n\nQ: Can our clients see the shortlisted candidates?\nA: Yes. Each client gets a client portal login to shortlist and give feedback.\n\n${COMMON_FAQ}`,
   OMNI: `Q: Are WhatsApp and SMS message charges included?\nA: No. WhatsApp conversation charges are paid at Meta's rates and SMS at the operator's rates, from your wallet in the app.\n\nQ: Do we need our own WhatsApp Business number?\nA: Yes, a number for the official WhatsApp Business API. Our team helps you get it approved.\n\n${COMMON_FAQ}`,
 };
 
@@ -88,6 +101,7 @@ function ensure() {
       await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "CrmAiMeeting_lead" ON "CrmAiMeeting" ("leadId","createdAt")');
       await prisma.$executeRawUnsafe('ALTER TABLE "CrmProduct" ADD COLUMN "extraVideos" TEXT').catch((e) => { if (!/duplicate column/i.test(e.message)) throw e; });
       await prisma.$executeRawUnsafe('ALTER TABLE "CrmLead" ADD COLUMN "products" TEXT').catch((e) => { if (!/duplicate column/i.test(e.message)) throw e; });
+      await fixWrittenText().catch(() => {});
       for (const p of SEED) {
         // eslint-disable-next-line no-await-in-loop
         await prisma.$executeRawUnsafe('INSERT OR IGNORE INTO "CrmProduct" ("id","key","name","tagline","about","features","plans","faq","active","sort","updatedAt") VALUES (?,?,?,?,?,?,?,?,1,?,?)',
@@ -107,6 +121,32 @@ function ensure() {
   }
   return READY;
 }
+const FALSE_POSTING = /[^.\n]*\b(naukri|shine|indeed|linkedin)\b[^.\n]*\b(one[- ]click|automatic(ally)?)\b[^.\n]*\.?|[^.\n]*\b(one[- ]click|automatic(ally)?)\b[^.\n]*\b(naukri|shine|indeed|linkedin)\b[^.\n]*\.?/gi;
+async function fixWrittenText() {
+  const rows = await prisma.$queryRawUnsafe('SELECT "key","features","faq" FROM "CrmProduct"');
+  for (const r of rows) {
+    let feats = parse(r.features, []);
+    feats = feats.map((f) => (FALSE_POSTING.test(f) ? (FALSE_POSTING.lastIndex = 0, NEW_POSTING_FEATURE) : f)).map((f) => f.replace(/\bvannet search\b/gi, 'Saved searches'));
+    FALSE_POSTING.lastIndex = 0;
+    let faq = String(r.faq || '');
+    const blocks = faq.split(/\n\s*\n/).filter((b) => b.trim());
+    let kept = blocks.filter((b) => { const ans = (/\n\s*a[:.)]\s*([\s\S]+)$/i.exec(b) || [])[1] || ''; return !listLike(ans); }) // a menu list is not an answer
+      .map((b) => (/^\s*q[:.)]\s*can we post jobs to naukri/i.test(b) ? null : b)).filter(Boolean) // the old false answer: replaced by "How does job posting work?"
+      .map((b) => b.replace(/\bvannet search\b/gi, 'saved searches'));
+    const has = (q) => kept.some((b) => b.toLowerCase().includes(q.toLowerCase()));
+    const add = (text) => text.split('\n\n').forEach((b) => { const q = (/^q[:.)]\s*([^\n]+)/i.exec(b) || [])[1]; if (q && !has(q)) kept.push(b); });
+    if (r.key === 'ATS') add(ATS_FLOW);
+    if (['HRMS', 'ATS', 'OMNI'].includes(r.key)) add(EXTRA_COMMON);
+    const next = kept.join('\n\n');
+    const nextFeats = JSON.stringify(feats);
+    if (next !== faq || nextFeats !== r.features) {
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.$executeRawUnsafe('UPDATE "CrmProduct" SET "faq" = ?, "features" = ?, "updatedAt" = ? WHERE "key" = ?', next, nextFeats, new Date().toISOString(), r.key);
+    }
+    faq = next;
+  }
+}
+const NEW_POSTING_FEATURE = 'Jobs go by themselves to your Job Portal, careers website and Google Jobs; for Naukri, Shine and other job boards one button opens the board with the job text ready';
 const parse = (s, d) => { try { const v = JSON.parse(s); return v == null ? d : v; } catch { return d; } };
 const shape = (r) => (r ? { ...r, active: !!r.active, features: parse(r.features, []), plans: parse(r.plans, []), extraVideos: parse(r.extraVideos, []), hasVideo: !!(r.videoFile || r.videoUrl) } : null);
 // every product the CRM knows (the three we started with and any added later)
@@ -370,9 +410,11 @@ function greeting(lead, prods) {
   return `Hello${lead.contactName ? ` ${String(lead.contactName).split(' ')[0]}` : ''}, I am TeamLink's AI assistant. Thank you for your interest in ${names}. I will walk you through what it does and answer any question you have - type it, or press the microphone and speak. The slides on the side show the main points. What would you like to know first?`;
 }
 function knowledge(prods) {
+  // the written answers first: they are what the managers want said
   return prods.map((p) => {
     const plans = (p.plans || []).filter((x) => x.name).map((x) => `- ${x.name}: ${x.price ? `${x.price} ${x.unit || ''}`.trim() : 'price on request (a person will quote)'}${x.includes ? ` - ${x.includes}` : ''}`).join('\n');
-    return `PRODUCT: ${p.name}\n${p.tagline || ''}\nWHAT IT IS: ${p.about || ''}\nFEATURES:\n${(p.features || []).map((f) => `- ${f}`).join('\n')}\nPLANS:\n${plans || '- price on request'}\n${p.faq ? `QUESTIONS AND ANSWERS:\n${p.faq}` : ''}`;
+    const qa = qaOf([p]).map((x) => `Q: ${x.q}\nA: ${x.a}`).join('\n\n');
+    return `PRODUCT: ${p.name}\n${p.tagline || ''}\n${qa ? `QUESTIONS AND ANSWERS (use these first):\n${qa}\n` : ''}WHAT IT IS: ${p.about || ''}\nFEATURES:\n${(p.features || []).map((f) => `- ${f}`).join('\n')}\nPLANS:\n${plans || '- price on request'}`;
   }).join('\n\n');
 }
 const MONEY = /(₹|rs\.?|inr|rupees?|\$|usd|\b\d[\d,]*\s*(\/|per)\s*(user|month|year|employee))/i;
@@ -387,6 +429,35 @@ function guardReply(reply, known) {
   if (/discount|free of cost|guarantee|we promise/i.test(r)) r = r.replace(/[^.]*\b(discount|free of cost|guarantee|we promise)\b[^.]*\.?/gi, '').trim() || 'Pricing terms are confirmed by our team in the proposal.';
   return r;
 }
+// founder 2026-11-17: the AI said "one click to Naukri, Shine, Indeed and LinkedIn" - not true. A job board, app or integration is named only
+// when the product text names it, and posting to a job board is never "automatic" or "one click": that is the team's button, by hand.
+const POSTING_TRUTH = 'A posted job goes by itself to your Job Portal, your careers website and Google Jobs. For Naukri, Shine and other job boards, your team posts with one button that opens the board\'s posting page with the job text ready.';
+const NAMED = ['naukri', 'shine', 'indeed', 'linkedin', 'monster', 'foundit', 'glassdoor', 'google jobs', 'facebook', 'instagram', 'whatsapp', 'telegram', 'threads', 'youtube', 'sap', 'successfactors', 'workday', 'oracle', 'zoho', 'tally', 'quickbooks', 'darwinbox', 'keka', 'greythr', 'bamboohr', 'slack', 'microsoft teams', 'zoom', 'google meet', 'razorpay', 'paytm', 'shopify', 'salesforce', 'hubspot', 'esslsmart', 'essl', 'zkteco', 'aadhaar', 'digilocker', 'outlook', 'gmail'];
+const BOARDS = /\b(naukri|shine|indeed|linkedin|monster|foundit|glassdoor)\b/i;
+const AUTO = /\b(automatic(ally)?|auto-?post\w*|one[- ]click|directly|instantly|by itself|on its own)\b/i;
+function guardClaims(reply, known) {
+  const kn = String(known || '').toLowerCase();
+  let posting = false;
+  const out = [];
+  String(reply || '').split(/(?<=[.!?])\s+/).forEach((sentence) => {
+    const s = sentence.toLowerCase();
+    if (BOARDS.test(s) && AUTO.test(s)) { if (!posting && kn.includes('job portal')) { out.push(POSTING_TRUTH); posting = true; } return; }
+    if (NAMED.some((n) => new RegExp(`\\b${n}\\b`).test(s) && !kn.includes(n))) return;
+    out.push(sentence);
+  });
+  return out.join(' ').trim();
+}
+const commas = (s) => (String(s || '').match(/,/g) || []).length;
+// a menu of screen names is not an answer
+const listLike = (s) => commas(s) >= 7 || /\b(offers|includes) a (wide )?range of features\b/i.test(String(s || ''));
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9ఀ-౿ ]+/g, ' ').replace(/\s+/g, ' ').trim();
+// what the lead typed, read for this meeting: "ads" in an ATS meeting is ATS, and the usual speech slips
+function readQuestion(q, prods) {
+  const keys = prods.map((p) => p.key);
+  let t = String(q || '');
+  if (keys.includes('ATS') && !keys.includes('OMNI')) t = t.replace(/\b(ads|ats's|a\.t\.s\.?|80s|eighties)\b/gi, 'ATS');
+  return t.replace(/\bteam ?link\b/gi, 'TeamLink');
+}
 const LANGS = { 'en-IN': 'English', 'te-IN': 'Telugu', 'hi-IN': 'Hindi', 'ta-IN': 'Tamil', 'kn-IN': 'Kannada', 'ml-IN': 'Malayalam', 'mr-IN': 'Marathi', 'bn-IN': 'Bengali', 'gu-IN': 'Gujarati' };
 async function meetingSay(token, text, lang) {
   const m = await meetingFor(token);
@@ -396,56 +467,91 @@ async function meetingSay(token, text, lang) {
   if (!q) return { error: 'Type or say your question.' };
   const tr = m.meeting.transcript;
   if (tr.length > 120) return { error: 'This meeting is long already - please press "End the meeting" and our team will follow up.' };
+  const prevAi = [...tr].reverse().find((x) => x.who === 'ai');
+  const prevQ = [...tr].reverse().find((x) => x.who === 'lead');
   const now = new Date().toISOString();
   tr.push({ who: 'lead', text: q, at: now });
+  const qn = readQuestion(q, m.products);
   const kn = knowledge(m.products);
   const other = LANGS[lang] && lang !== 'en-IN' ? LANGS[lang] : '';
-  const NOTED = 'Thank you - I have noted your question and our team will confirm it. Meanwhile, the slides on the side show the main features and plans.';
+  const NOTED = 'Thank you - that is a good question. A person from our team will confirm it for you; I have noted it. Meanwhile, the slides on the side show the main features and plans.';
+  // the same answer to a different question is a miss (founder 2026-11-17: two questions got the same menu list)
+  const repeats = (r) => prevAi && norm(r) === norm(prevAi.text) && norm(readQuestion(prevQ && prevQ.text, m.products)) !== norm(qn);
+  const bad = (r) => !r || r.trim().length < 12 || /^(unanswered|answered|true|false|null|yes|no|n\/a)\.?$/i.test(r.trim()) || listLike(r) || repeats(r);
   // a question the managers answered in writing gets that answer at once (no AI wait) - English only, other languages go to the AI to translate
-  const direct = other ? null : faqMatch(m.products, q, { strong: true });
-  let out = null;
-  if (!direct) {
+  let reply = other ? null : faqMatch(m.products, qn, { strong: true });
+  if (reply && repeats(reply)) reply = null;
+  let unanswered = false; let wantsHuman = false;
+  if (!reply) {
     try {
       const AI = require('../utils/ai'); // eslint-disable-line global-require
-      const system = `You are TeamLink's AI sales assistant in a live product meeting with ${m.lead.contactName || 'a prospect'} from ${m.lead.company || 'a company'}. You are an AI and say so if asked.\nAnswer ONLY from the facts below. Be warm, clear and short (at most 70 words)${other ? `. You MUST write the reply in ${other}, in ${other} script (product names stay in English)` : ', in the language the person writes in'}. If the facts do not answer the question, write a polite sentence saying our team will confirm it, and set "unanswered": true. Never invent a price, number, client name, integration or date; never offer a discount. When it fits, end with one short question to understand their needs (team size, what they use today, timeline, who decides). The person can see their exact price at the end of the meeting.\nReply ONLY as JSON: {"reply": "<your full sentence(s) to the person>", "unanswered": true|false, "wantsHuman": true|false}.\n\nFACTS:\n${kn}`;
+      const system = `You are TeamLink's AI sales assistant in a live product meeting with ${m.lead.contactName || 'a prospect'} from ${m.lead.company || 'a company'}. You are an AI and say so if asked.
+Answer EXACTLY the question asked, in 2 to 4 plain sentences (at most 70 words)${other ? `. You MUST write the reply in ${other}, in ${other} script (product names stay in English)` : ', in the language the person writes in'}. Never answer with a list of screens, menus or feature names. If the QUESTIONS AND ANSWERS below cover the question, give that answer in your own words.
+Use ONLY the facts below. Name a job board, app or integration only if the facts name it, and say it works only the way the facts say (if the facts say the team posts by hand, never say automatic or one click). If the facts do not answer the question, say a person from our team will confirm it, and set "unanswered": true. Never invent a price, number, client name or date; never offer a discount. When it fits, end with one short question about their needs (team size, what they use today, timeline, who decides). The person can see their exact price at the end of the meeting.
+Reply ONLY as JSON: {"reply": "<your full sentence(s) to the person>", "unanswered": true|false, "wantsHuman": true|false}.
+
+FACTS:
+${kn}`;
       const history = tr.slice(-8).map((x) => ({ role: x.who === 'ai' ? 'assistant' : 'user', content: x.text }));
-      if (other) history[history.length - 1] = { role: 'user', content: `${q}\n(Reply in ${other}.)` };
-      out = await AI.chatJson(system, history, { maxTokens: 400 });
-    } catch (e) { out = null; }
+      history[history.length - 1] = { role: 'user', content: `${qn}${other ? `\n(Reply in ${other}.)` : ''}` };
+      const tidy = (o) => (o && typeof o.reply === 'string' ? guardClaims(guardReply(o.reply, kn), kn) : '');
+      let out = await AI.chatJson(system, history, { maxTokens: 400 });
+      let r = tidy(out);
+      if (bad(r)) {
+        // one more try, told what was wrong
+        const again = [...history, { role: 'assistant', content: String((out && out.reply) || '').slice(0, 600) }, { role: 'user', content: `That did not answer my question. Answer only this, in 2-4 plain sentences, no list: ${qn}${other ? ` (in ${other})` : ''}` }];
+        out = await AI.chatJson(system, again, { maxTokens: 400 });
+        r = tidy(out);
+      }
+      if (!bad(r)) { reply = r; unanswered = !!out.unanswered; wantsHuman = !!out.wantsHuman; }
+    } catch (e) { /* no model: the written answers below */ }
   }
-  let reply; let unanswered = false; let wantsHuman = false;
-  // a small model sometimes puts a flag word where the sentence should be: never show that to the lead
-  const usable = out && typeof out.reply === 'string' && out.reply.trim().length >= 12 && !/^(unanswered|answered|true|false|null|yes|no|n\/a)\.?$/i.test(out.reply.trim());
-  if (direct) reply = direct;
-  else if (usable) {
-    reply = guardReply(out.reply, kn); unanswered = !!out.unanswered; wantsHuman = !!out.wantsHuman;
-  } else {
-    // no usable answer: the closest written answer, else a promise that a person answers
-    const hit = faqMatch(m.products, q);
-    reply = hit || NOTED;
-    unanswered = !hit;
+  if (!reply) {
+    // no usable answer: the closest written answer (not the one just given), else a person will confirm
+    const hit = faqMatch(m.products, qn, { exclude: prevAi ? [prevAi.text] : [] });
+    reply = hit && !bad(hit) ? hit : NOTED;
+    unanswered = reply === NOTED;
   }
   tr.push({ who: 'ai', text: reply, at: new Date().toISOString(), unanswered, wantsHuman });
   await prisma.$executeRawUnsafe('UPDATE "CrmAiMeeting" SET "transcript" = ? WHERE "id" = ?', JSON.stringify(tr), m.meeting.id);
   if (wantsHuman) await bellOwner(m.lead, `🙋 ${m.lead.company || 'A lead'} wants a person in the AI meeting`, `${m.lead.contactName || 'The lead'} asked for a person: "${q.slice(0, 120)}"`);
   return { ok: true, reply, unanswered };
 }
-// the written answer closest to the question: Q&A blocks first (the answer part only), then the features. strong = a clear match for answering at once
-const STOP = new Set(['the', 'and', 'for', 'are', 'our', 'you', 'can', 'how', 'its', 'any', 'has', 'all', 'yes', 'not', 'does', 'with', 'what', 'have', 'your', 'this', 'that', 'there', 'they', 'from', 'will', 'which', 'about', 'when', 'where', 'into', 'work', 'many', 'much', 'please', 'tell']);
-function faqMatch(prods, q, { strong = false } = {}) {
-  const words = [...new Set((String(q).toLowerCase().match(/[a-z]{3,}/g) || []).filter((w) => !STOP.has(w)))];
+// the written Q&A of the products, without menu-list answers
+function qaOf(prods) {
+  const out = [];
+  prods.forEach((p) => String(p.faq || '').split(/\n\s*\n|\n(?=q[:.)])/i).forEach((block) => {
+    const q = ((/^\s*q[:.)]?\s*([\s\S]*?)(\n\s*a[:.)]|$)/i.exec(block) || [])[1] || '').trim();
+    const a = ((/\n\s*a[:.)]\s*([\s\S]+)$/i.exec(block) || [])[1] || '').trim();
+    if (q && a && !listLike(a)) out.push({ q, a, product: p.name });
+  }));
+  return out;
+}
+// the written answer closest to the question. strong = its QUESTION says what was asked (answer at once); otherwise the answers and the
+// features count too (the fallback when the AI cannot answer)
+const STOP = new Set(['the', 'and', 'for', 'are', 'our', 'you', 'can', 'how', 'its', 'any', 'has', 'all', 'yes', 'not', 'does', 'with', 'what', 'have', 'your', 'this', 'that', 'there', 'they', 'from', 'will', 'which', 'about', 'when', 'where', 'into', 'work', 'many', 'much', 'please', 'tell', 'teamlink', 'who', 'why', 'get', 'use', 'did', 'was', 'were', 'them', 'then', 'than', 'also', 'just', 'like', 'want', 'need', 'one', 'our', 'out']);
+const SYN = { price: 'cost', prices: 'cost', pricing: 'cost', priced: 'cost', charge: 'cost', charges: 'cost', fee: 'cost', fees: 'cost', costs: 'cost', mobiles: 'mobile', phone: 'mobile', phones: 'mobile', android: 'mobile', iphone: 'mobile', excel: 'excel', sheet: 'excel', sheets: 'excel', xlsx: 'excel' };
+const stem = (w) => SYN[w] || (w.length > 4 ? w.replace(/(ings|ing|ies|es|s|ed)$/, '') : w);
+const SHORT = ['pf', 'hr', 'ai', 'do'];
+const wordsOf = (t) => [...new Set((String(t).toLowerCase().match(/[a-z]{2,}/g) || []).filter((w) => !STOP.has(w) && (w.length >= 3 || SHORT.includes(w))).map(stem).filter((w) => !STOP.has(w)))];
+const stemsOf = (t) => new Set(wordsOf(t));
+function faqMatch(prods, q, { strong = false, exclude = [] } = {}) {
+  const words = wordsOf(q);
   if (!words.length) return null;
-  let best = null; let bestN = 0;
-  prods.forEach((p) => {
-    String(p.faq || '').split(/\n\s*\n|\n(?=q[:.)])/i).forEach((block) => {
-      const qPart = (/^\s*q[:.)]?\s*([\s\S]*?)(\n\s*a[:.)]|$)/i.exec(block) || [])[1] || block;
-      const n = words.filter((w) => block.toLowerCase().includes(w) || qPart.toLowerCase().includes(w)).length;
-      const ans = (/\n\s*a[:.)]\s*([\s\S]+)$/i.exec(block) || [])[1];
-      if (n > bestN && ans) { bestN = n; best = ans.trim(); }
-    });
-    if (!strong) (p.features || []).forEach((f) => { const n = words.filter((w) => f.toLowerCase().includes(w)).length; if (n > bestN) { bestN = n; best = `Yes - ${p.name}: ${f}.`; } });
+  const skip = new Set(exclude.map(norm));
+  let best = null; let bestN = 0; let bestScore = -1;
+  qaOf(prods).forEach((x) => {
+    if (skip.has(norm(x.a))) return;
+    const qs = stemsOf(x.q); const as = stemsOf(x.a);
+    const n = words.filter((w) => qs.has(w) || (!strong && as.has(w))).length;
+    // the written question that says the most of what was asked, and the least of anything else
+    const score = n - 0.25 * [...qs].filter((w) => !words.includes(w)).length;
+    if (n > 0 && score > bestScore) { bestScore = score; bestN = n; best = x.a; }
   });
-  const need = strong ? Math.max(2, Math.ceil(words.length * 0.6)) : 2;
+  if (!strong) prods.forEach((p) => (p.features || []).forEach((f) => { const fs2 = stemsOf(f); const n = words.filter((w) => fs2.has(w)).length; if (n > bestN && !skip.has(norm(`Yes - ${p.name}: ${f}.`))) { bestN = n; best = `Yes - ${p.name}: ${f}.`; } }));
+  // one meaningful word ("does it work on mobile?"): only a written question about just that word
+  if (words.length === 1) return bestN === 1 && bestScore >= 0.75 ? String(best).slice(0, 600) : null;
+  const need = strong ? Math.max(2, Math.ceil(words.length * 0.7)) : 2;
   return bestN >= need ? String(best).slice(0, 600) : null;
 }
 const DECISIONS = { yes: 'Yes, I want to go ahead', later: 'I need some time', no: 'Not for us right now' };
@@ -535,5 +641,5 @@ async function onWon(dealId) {
 module.exports = {
   PRODUCT_KEYS, ensure, products, saveProduct, setLeadProducts, demoLink, demoForToken, demoEvent, meetingLink, meetingFor, meetingSay, meetingEnd,
   meetingsOf, onWon, videoPathOf, setVideoFile, staffVideoLink, productKeys, addProduct, addExtraVideo, removeExtraVideo, extraPathOf, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
-  siteBase, note, bellOwner, followUp, leadFor, LANGS, faqMatch,
+  siteBase, note, bellOwner, followUp, leadFor, LANGS, faqMatch, guardClaims, readQuestion, qaOf, listLike, fixWrittenText,
 };

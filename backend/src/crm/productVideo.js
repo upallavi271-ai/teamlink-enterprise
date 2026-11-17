@@ -112,7 +112,8 @@ async function transcribe(job, file, info) {
 // ---- which part of the video is which product ----------------------------------------------------------------------------------------
 // speech-to-text mishears product names: fix the common ones before reading or writing anything
 const FIXES = [[/\b(the )?80s\b|\beighties\b|\ba\.t\.s\.?/gi, 'ATS'], [/\b(a ?me|o ?me|omi|omni) ?-?channel\b|\bomichannel\b|\bomnichannel\b/gi, 'Omni-Channel'], [/\bteam ?link\b/gi, 'TeamLink'],
-  [/\bjob (orders|porters?|portals)\b/gi, 'Job Portal'], [/\bEI\b/g, 'AI'], [/\bH\.?R\.?M\.?S\.?\b/gi, 'HRMS']];
+  [/\bjob (orders|porters?|portals)\b/gi, 'Job Portal'], [/\bEI\b/g, 'AI'], [/\bH\.?R\.?M\.?S\.?\b/gi, 'HRMS'],
+  [/\b(vannet|manet) search\b/gi, 'Saved search'], [/\bpunch-lob\b/gi, 'punch log']];
 const fix = (t) => FIXES.reduce((s, [re, to]) => s.replace(re, to), String(t || ''));
 const BASE_NAMES = [['HRMS', /\bhrms\b/i], ['ATS', /\bats\b/i], ['ATS', /\bjob portal\b/i], ['OMNI', /\bomni-channel\b/i]];
 const OTHER_NAMES = ['OTHER', /\b(accounts|crm|admin|administration|control tower)\b/i];
@@ -206,12 +207,13 @@ async function writeContent(key, text, productName) {
   if (process.env.TEAMLINK_SANDBOX === '1' && !process.env.TEST_ALLOW_AI) return fb;
   try {
     const AI = require('../utils/ai'); // eslint-disable-line global-require
-    const out = await AI.chatJson(`You write the product page of ${name} for a sales demo. Use ONLY what the narration of its demo video below says; it comes from speech-to-text, so fix obvious mishearings (product names, words) but add nothing that is not said. Never write a price, a discount, a number of customers or an integration that is not named. Reply ONLY as JSON: {"tagline": "one line, at most 14 words", "about": "2-3 sentences: what it is and who it is for", "features": ["8 to 12 short lines, each one a real screen or ability shown"], "faq": [{"q": "a question a buyer would ask", "a": "the answer from the narration"}]}`,
+    const out = await AI.chatJson(`You write the product page of ${name} for a sales demo. Use ONLY what the narration of its demo video below says; it comes from speech-to-text, so fix obvious mishearings (product names, words) but add nothing that is not said. Never write a price, a discount, a number of customers or an integration that is not named. Reply ONLY as JSON: {"tagline": "one line, at most 14 words", "about": "2-3 sentences: what it is and who it is for", "features": ["8 to 12 short lines, each one a real screen or ability shown"], "faq": [{"q": "a question a buyer would ask (how something works, who does what)", "a": "1-2 plain sentences from the narration, never a list of screens"}]}`,
       [{ role: 'user', content: `NARRATION OF THE ${name.toUpperCase()} DEMO:\n${String(text).slice(0, 7000)}` }], { maxTokens: 1400, timeoutMs: 6 * 60000 }); // the server's small model on the CPU needs a few minutes for this
     const features = Array.isArray(out && out.features) ? out.features.map((x) => String(x).trim()).filter((x) => x.length > 3).slice(0, 14) : [];
     if (!out || !features.length) return fb;
     const noMoney = (s) => String(s || '').replace(/[^.]*(₹|rs\.?\s?\d|\bper (user|month|employee)\b|discount)[^.]*\.?/gi, '').trim();
-    const faq = (Array.isArray(out.faq) ? out.faq : []).filter((x) => x && x.q && x.a).slice(0, 6).map((x) => `Q: ${noMoney(x.q)}\nA: ${noMoney(x.a)}`).filter((x) => !/\nA: $/.test(x)).join('\n\n');
+    // a question a buyer asks, answered in a sentence or two: never "what features does it offer" with a menu list as the answer
+    const faq = (Array.isArray(out.faq) ? out.faq : []).filter((x) => x && x.q && x.a && !PS.listLike(x.a) && !/what features/i.test(x.q)).slice(0, 6).map((x) => `Q: ${noMoney(x.q)}\nA: ${noMoney(x.a)}`).filter((x) => !/\nA: $/.test(x)).join('\n\n');
     return { tagline: noMoney(out.tagline).slice(0, 200), about: noMoney(out.about).slice(0, 1500), features: features.map(noMoney).filter(Boolean), faq, source: 'ai' };
   } catch { return fb; }
 }
