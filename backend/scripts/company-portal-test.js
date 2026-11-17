@@ -149,6 +149,50 @@ ok(g4.status === 1 && g4.fails.some((l) => /GREENSTART_SSO_SECRET differs/.test(
 const g5 = check('green-weak.env', greenBase + NL + greenLines({ secret: 'short' }));
 ok(g5.status === 1, 'a short sign-in secret: rejected', g5.fails.join(' | '));
 
+heading('5c. the e-mail sink (a stand-in for a mailbox until a company has one)');
+{
+  const sinkFile = path.join(ROOT, 'deploy', 'vps', 'company', 'company-green-mailsink.js');
+  const sinkSrc = fs.readFileSync(sinkFile, 'utf8');
+  ok(sinkSrc.includes("const HOST = '127.0.0.1'") && sinkSrc.includes('server.listen(PORT, HOST'), 'the sink listens on 127.0.0.1 only');
+  const port = 25000 + Math.floor(Math.random() * 3000);
+  const script = [
+    "const { spawn } = require('child_process'); const path = require('path');",
+    "const nodemailer = require(path.join(process.cwd(), 'node_modules', 'nodemailer'));",
+    "const sink = spawn(process.execPath, [process.argv[1], process.argv[2]], { stdio: ['ignore', 'pipe', 'pipe'] });",
+    "let out = ''; sink.stdout.on('data', (d) => { out += d; });",
+    "(async () => {",
+    "  await new Promise((r) => setTimeout(r, 700));",
+    "  const t = nodemailer.createTransport({ host: '127.0.0.1', port: Number(process.argv[2]), secure: false, auth: { user: 'sink', pass: 'x' }, connectionTimeout: 5000 });",
+    "  const res = { verify: await t.verify() };",
+    "  const info = await t.sendMail({ from: 'a@example.test', to: 'secret.person@example.test', subject: 'SECRET SUBJECT', text: 'SECRET BODY' });",
+    "  res.accepted = info.accepted.length; res.response = info.response;",
+    "  await new Promise((r) => setTimeout(r, 300));",
+    "  res.leak = /secret|SECRET|example[.]test/.test(out); res.dropped = /sink.:.dropped/.test(out);",
+    "  console.log(JSON.stringify(res)); t.close(); sink.kill();",
+    "})().catch((e) => { console.log(JSON.stringify({ error: e.message })); sink.kill(); process.exit(1); });",
+  ].join(NL);
+  const r = spawnSync(process.execPath, ['-e', script, sinkFile, String(port)], { cwd: BACKEND, encoding: 'utf8', timeout: 30000 });
+  let res = {};
+  try { res = JSON.parse(String(r.stdout).trim().split(NL).pop()); } catch { res = { error: (r.stderr || r.stdout || '').slice(0, 200) }; }
+  ok(res.verify === true, 'the real mail library (nodemailer) logs in to the sink', JSON.stringify(res));
+  ok(res.accepted === 1 && /dropped/.test(String(res.response)), 'a message is accepted and dropped', JSON.stringify(res));
+  ok(res.dropped === true && res.leak === false, 'the sink logs that a message was dropped, and never the address, the subject or the text', JSON.stringify(res));
+}
+
+heading('5d. the first-organization approval stage (company Green Start)');
+{
+  const inst = fs.readFileSync(path.join(ROOT, 'deploy', 'vps', 'company', 'company-green-install.sh'), 'utf8');
+  const at = inst.indexOf('if [ "$STAGE" = approve ]');
+  const stage = at >= 0 ? inst.slice(at) : '';
+  ok(at >= 0, 'the install script has an approve stage');
+  ok(/"isSuperAdmin" = false/.test(stage) && !/"isSuperAdmin" = true/.test(stage), 'the approve stage never makes the account a platform administrator (the one-click route refuses those)');
+  ok(/ON_ERROR_STOP=1/.test(stage) && /^begin;$/m.test(stage) && /^commit;$/m.test(stage), 'the approval is one transaction that stops at the first error');
+  ok(/-d "\$DBNAME"/.test(stage) && !/-d greenstart[ "]/.test(stage), 'it only opens the company\'s own database, never TeamLink\'s "greenstart"');
+  ok(/welcome:/.test(stage) && /admin\.signup_approved/.test(stage), 'it gives the welcome balance once and writes the history line, as the program\'s approve() does');
+  ok(/--name/.test(inst) && /:'name'/.test(stage) && /:'email'/.test(stage), 'the company name and e-mail go in as psql variables, not pasted into the SQL');
+  ok(!/echo[^\n]*\$(TICKET|SECRET)|echo[^\n]*accessToken/.test(stage), 'no sign-in ticket, secret or access token is printed');
+}
+
 heading('6. the scripts are valid');
 for (const f of ['company-deploy.sh', 'company-install.sh', 'company-sync.sh', 'company-portal-install.sh', 'company-green-install.sh', 'company-green-smtp.sh', 'company-green-sync.sh']) {
   const r = spawnSync('bash', ['-n', path.join(ROOT, 'deploy', 'vps', 'company', f)], { encoding: 'utf8' });

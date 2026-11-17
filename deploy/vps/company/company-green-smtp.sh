@@ -21,6 +21,7 @@ genv() { sed -n "s/^$1=//p" "$ENVF" | tail -1 | sed -E 's/^"(.*)"$/\1/'; }
 
 if [ $CHECK = 1 ]; then
   for k in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_FROM; do if [ -n "$(genv $k)" ]; then echo "$k: filled in"; else echo "$k: EMPTY"; fi; done
+  [ -f "$G/state/mail-is-sink" ] && echo "(a local e-mail sink is in use: e-mails are dropped, nothing leaves the server)"
   exit 0
 fi
 
@@ -65,5 +66,14 @@ chown root:greenstart "$ENVF"; chmod 640 "$ENVF"
 unset MPASS
 echo "Saved. (Values are not shown.)"
 for k in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_FROM; do if [ -n "$(genv $k)" ]; then echo "  $k: filled in"; else echo "  $k: EMPTY"; fi; done
+# a real mailbox replaces the local e-mail sink (company-green-install.sh --stage sink), if it was in use
+if [ -f "$G/state/mail-is-sink" ]; then
+  systemctl disable --now "green-start-$KEY-mailsink" >/dev/null 2>&1
+  rm -f "/etc/systemd/system/green-start-$KEY-api.service.d/mailsink.conf" "/etc/systemd/system/green-start-$KEY-worker.service.d/mailsink.conf"
+  rmdir "/etc/systemd/system/green-start-$KEY-api.service.d" "/etc/systemd/system/green-start-$KEY-worker.service.d" 2>/dev/null
+  rm -f "$G/state/mail-is-sink" "$G/mailsink.js"; systemctl daemon-reload
+  echo "The local e-mail sink was switched off: Green Start now uses the real mailbox."
+fi
+if systemctl is-active --quiet "green-start-$KEY-api"; then systemctl restart "green-start-$KEY-api" "green-start-$KEY-worker" && echo "Green Start was restarted with the new mailbox."; fi
 echo
-echo "Next: bash $(dirname "$0")/company-green-install.sh --key $KEY --domain <the company's Omni-Channel address> --stage start --apply"
+echo "Next (if Green Start is not running yet): bash $(dirname "$0")/company-green-install.sh --key $KEY --domain <the company's Omni-Channel address> --stage start --apply"

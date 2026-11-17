@@ -18,26 +18,34 @@
 # TeamLink's Green Start (its services, database, settings, address) is only READ, never changed. Nothing here edits another nginx site.
 #
 # STAGES: prepare = checks, database, Redis, folders, settings, migrations, services installed but NOT started (needs nothing from outside);
-#         start   = starts them (refuses until the company's own mailbox is in the settings: Green Start will not run as a real server without one);
+#         sink    = OPTIONAL stand-in for the mailbox until the company has one: a tiny e-mail sink on this computer only that accepts and DROPS every message
+#                   (company-green-mailsink.js). One-click sign-in from the company's app works; Green Start's own sign-up / reset / invitation e-mails go nowhere.
+#                   company-green-smtp.sh replaces it later with the real mailbox.
+#         start   = starts them (refuses until a mailbox, real or the sink, is in the settings: Green Start will not run as a real server without one);
 #         public  = the company's own web address in nginx + certificate (certbot) + the company's server is switched to its own Green Start.
+#         approve = the FIRST organization of the company's Green Start (made by the first one-click sign-in) waits for a platform Super Admin, which the company does not have,
+#                   and an account marked platform administrator cannot use the one-click button. This stage signs the company account in once (that makes its account and
+#                   organization), then approves that one organization with the same changes the program's own approve() makes, in one transaction, and gives it the
+#                   company's name (--name "..."). Needs --stage start (API running). Safe to run again: nothing waiting = nothing changed.
 # ============================================================================
 set -uo pipefail
 
-KEY=""; DOMAIN=""; STAGE=prepare; APPLY=0; API_PORT=4021; REDIS_PORT=6380
+KEY=""; DOMAIN=""; STAGE=prepare; APPLY=0; API_PORT=4021; REDIS_PORT=6380; NAME=""
 while [ $# -gt 0 ]; do case "$1" in
-  --key) KEY=${2:-}; shift ;; --domain) DOMAIN=${2:-}; shift ;; --stage) STAGE=${2:-}; shift ;; --apply) APPLY=1 ;;
+  --key) KEY=${2:-}; shift ;; --domain) DOMAIN=${2:-}; shift ;; --stage) STAGE=${2:-}; shift ;; --apply) APPLY=1 ;; --name) NAME=${2:-}; shift ;;
   --api-port) API_PORT=${2:-}; shift ;; --redis-port) REDIS_PORT=${2:-}; shift ;;
   *) echo "unknown option $1"; exit 2 ;; esac; shift; done
 [[ "$KEY" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || { echo "usage: company-green-install.sh --key <key> --domain <address> --stage prepare|start|public [--apply]"; exit 2; }
 [[ "$DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$ ]] || { echo "--domain is required: the company's own address for Omni-Channel, for example omni.nish.teamlinks.in"; exit 2; }
-[[ "$STAGE" =~ ^(prepare|start|public)$ ]] || { echo "--stage must be prepare, start or public"; exit 2; }
+[[ "$STAGE" =~ ^(prepare|sink|start|public|approve)$ ]] || { echo "--stage must be prepare, sink, start, public or approve"; exit 2; }
+[ "$STAGE" != approve ] || [ -n "$NAME" ] || { echo "--name \"<the company's full name>\" is required for --stage approve (it becomes the name of the first organization)"; exit 2; }
 [[ "$API_PORT" =~ ^[0-9]+$ && "$REDIS_PORT" =~ ^[0-9]+$ ]] || { echo "ports must be numbers"; exit 2; }
 
 ROOT=/opt/company-$KEY; G=$ROOT/green; CFG=$G/config; ENVF=$CFG/gs-api.env; REDISCONF=$CFG/redis.conf
 CENV=$ROOT/config/.env
 GS=/opt/green-start
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-U_API=green-start-$KEY-api; U_WORKER=green-start-$KEY-worker; U_REDIS=green-start-$KEY-redis
+U_API=green-start-$KEY-api; U_WORKER=green-start-$KEY-worker; U_REDIS=green-start-$KEY-redis; U_MAILSINK=green-start-$KEY-mailsink; SINK_PORT=${SINK_PORT:-2525}
 DBNAME=greenstart_${KEY//-/_}; DBROLE=gs_${KEY//-/_}
 PM2_NAME=company-$KEY
 STAMP=$(date +%Y%m%d-%H%M%S)
@@ -73,7 +81,7 @@ avail=$(free -m | awk 'NR==2{print $7}'); [ "${avail:-0}" -ge 1500 ] || fail "on
 echo "free disk ${free} MB, free memory ${avail} MB"
 
 if [ $APPLY = 0 ]; then
-  echo; echo "PLAN ($STAGE): $(case $STAGE in prepare) echo "database $DBNAME + login $DBROLE, Redis on $REDIS_PORT, folders and settings in $G, migrations, services $U_API / $U_WORKER / $U_REDIS installed (not started)";; start) echo "start $U_REDIS, $U_API, $U_WORKER and check them (needs the company's own mailbox in the settings)";; public) echo "nginx site for $DOMAIN, certificate, GREENSTART_* settings of company-$KEY, restart of company-$KEY only";; esac)"
+  echo; echo "PLAN ($STAGE): $(case $STAGE in prepare) echo "database $DBNAME + login $DBROLE, Redis on $REDIS_PORT, folders and settings in $G, migrations, services $U_API / $U_WORKER / $U_REDIS installed (not started)";; sink) echo "a local e-mail sink (127.0.0.1 only, drops every message) as service $U_MAILSINK and the settings that point Green Start at it";; start) echo "start $U_REDIS, $U_API, $U_WORKER and check them (needs a mailbox in the settings: the company's own, or the sink)";; public) echo "nginx site for $DOMAIN, certificate, GREENSTART_* settings of company-$KEY, restart of company-$KEY only";; approve) echo "sign the company account in once, approve its first organization (Starter, welcome balance) and name it '$NAME'";; esac)"
   echo "That was only the plan. Nothing was changed. Run again with --apply to do it."; exit 0
 fi
 
@@ -247,6 +255,48 @@ fi
 
 [ -f "$ENVF" ] || fail "run --stage prepare first"
 
+if [ "$STAGE" = sink ]; then
+  step "2  the e-mail sink (a stand-in for the company's own mailbox)"
+  [ -f "$G/state/mail-is-sink" ] || { for k in SMTP_HOST SMTP_USER SMTP_PASS SMTP_FROM; do [ -z "$(genv $k)" ] || fail "$k already holds a real mailbox: the sink would replace it. Nothing was changed."; done; }
+  portfree "$SINK_PORT" || [ -f "$G/state/mail-is-sink" ] || fail "port $SINK_PORT is in use"
+  install -m 644 "$HERE/company-green-mailsink.js" "$G/mailsink.js"; chown root:greenstart "$G/mailsink.js"
+  cat > /etc/systemd/system/$U_MAILSINK.service <<EOF
+[Unit]
+Description=Green Start of company $KEY: e-mail sink (127.0.0.1:$SINK_PORT, drops every message, stores nothing)
+After=network-online.target
+[Service]
+Type=simple
+User=greenstart
+Group=greenstart
+ExecStart=/usr/bin/node $G/mailsink.js $SINK_PORT
+Restart=always
+RestartSec=3
+MemoryMax=64M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+SyslogIdentifier=$U_MAILSINK
+[Install]
+WantedBy=multi-user.target
+EOF
+  for u in $U_API $U_WORKER; do mkdir -p /etc/systemd/system/$u.service.d; printf "[Unit]
+Wants=$U_MAILSINK.service
+After=$U_MAILSINK.service
+" > /etc/systemd/system/$u.service.d/mailsink.conf; done
+  systemctl daemon-reload && systemctl enable --now "$U_MAILSINK" >/dev/null 2>&1
+  sleep 2; systemctl is-active --quiet "$U_MAILSINK" || { journalctl -u "$U_MAILSINK" -n 10 --no-pager | cut -c1-200; fail "the sink did not start"; }
+  [ -n "$(genv SMTP_PASS)" ] || setv "$ENVF" SMTP_PASS "\"$(hex 16)\""
+  setv "$ENVF" SMTP_HOST "\"127.0.0.1\""; setv "$ENVF" SMTP_PORT "$SINK_PORT"; setv "$ENVF" SMTP_SECURE false; setv "$ENVF" SMTP_USER "\"sink\""
+  setv "$ENVF" SMTP_FROM "\"noreply@$DOMAIN\""; setv "$ENVF" SMTP_FROM_NAME "\"Green Start\""
+  chown root:greenstart "$ENVF"; chmod 640 "$ENVF"; mkdir -p "$G/state"; : > "$G/state/mail-is-sink"; chown greenstart:greenstart "$G/state/mail-is-sink"
+  echo "listening: $(ss -ltn | awk '{print $4}' | grep -E ":$SINK_PORT$" | tr '
+' ' ') (127.0.0.1 only is right)"
+  RES=$(cd "$G/gs-api" && runuser -u greenstart -- env -i PATH="$PATH" HOME="$G" SMTP_P="$SINK_PORT" node -e 'require("nodemailer").createTransport({ host: "127.0.0.1", port: Number(process.env.SMTP_P), secure: false, auth: { user: "sink", pass: "x" }, connectionTimeout: 8000 }).verify().then(() => console.log("OK")).catch((e) => console.log("FAIL " + e.message))' 2>&1 | tail -1)
+  echo "login test against the sink: $RES"; [ "$RES" = OK ] || fail "the sink does not answer the way Green Start expects"
+  echo; echo "DONE (sink). Green Start now has a mailbox setting; e-mails it sends are dropped. NEXT:  --stage start --apply"
+  exit 0
+fi
 if [ "$STAGE" = start ]; then
   step "2  the company's own mailbox must be set"
   for k in SMTP_HOST SMTP_USER SMTP_PASS SMTP_FROM; do [ -n "$(genv $k)" ] || fail "$k is empty in $ENVF. Run:  bash $HERE/company-green-smtp.sh --key $KEY"; done
@@ -325,5 +375,84 @@ const prisma = require("./src/db");
   ( cd "$ROOT/backend" && node scripts/company-check.js --env "$CENV" --home "$ROOT/home" --teamlink-env "$TL_ENV" 2>&1 | grep -E "^(FAIL|All checks|[0-9]+ check)" )
   echo "TeamLink: $(curl -s -m 8 http://127.0.0.1:4010/api/health)   TeamLink's Green Start site: HTTP $(curl -s -o /dev/null -m 15 -w '%{http_code}' https://greenstart.teamlinks.in/)"
   echo; echo "DONE (public). The company's Omni-Channel is at https://$DOMAIN (opened from the menu: Omni-Channel)."
+  echo "THEN: the first organization has to be approved once:  --stage approve --name \"<the company's full name>\" --apply"
+  exit 0
+fi
+
+if [ "$STAGE" = approve ]; then
+  step "2  the API must be running and the company account known"
+  curl -s -m 5 "http://127.0.0.1:$API_PORT/api/v1/health" | grep -qi "ok\|up" || fail "the company's Green Start API is not running: run --stage start first"
+  API="http://127.0.0.1:$API_PORT/api/v1"
+  SSO_EMAIL=$(cd "$ROOT/backend" && node -e '
+const { DatabaseSync } = require("node:sqlite");
+const d = new DatabaseSync((process.argv[1] || "").replace(/^file:/, ""), { readOnly: true });
+const r = d.prepare("select value from AppSetting where key = ?").get("omni.gs.ssoEmail");
+let v = ""; try { v = r ? String(JSON.parse(r.value) || "") : ""; } catch { v = ""; }
+console.log(v);' "$(cenv DATABASE_URL)" 2>/dev/null | tail -1)
+  [[ "$SSO_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || fail "the company's Green Start account is not stored yet: run --stage public first"
+  echo "the company's Green Start account: $(echo "$SSO_EMAIL" | sed -E 's/^[^@]{0,40}/***/')"
+  ticket() { SECRET="$(genv TEAMLINK_SSO_SECRET)" EMAIL="$SSO_EMAIL" WHO="$NAME" node -e '
+const crypto = require("crypto");
+const now = Math.floor(Date.now() / 1000);
+const b = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const h = b({ alg: "HS256", typ: "JWT" });
+const p = b({ iss: "teamlink", aud: "greenstart", email: process.env.EMAIL, name: process.env.WHO, iat: now, exp: now + 60, jti: crypto.randomUUID() });
+console.log(h + "." + p + "." + crypto.createHmac("sha256", process.env.SECRET).update(h + "." + p).digest("base64url"));'; }
+  signin() { local t; t=$(ticket); curl -s -m 30 -X POST -H 'content-type: application/json' -d "{\"ticket\":\"$t\"}" "$API/auth/teamlink"; }
+  verdict() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);console.log(j.success===true?"SIGNED_IN":"REFUSED "+((j.error&&j.error.code)||"?"))}catch{console.log("NO_ANSWER")}})'; }
+  step "3  sign the company account in once (this makes its account and first organization; waiting is expected)"
+  FIRST=$(signin | verdict); echo "first sign-in: $FIRST"
+  DBQ() { sudo -u postgres psql -d "$DBNAME" -At "$@"; }
+  WAITING=$(DBQ -v email="$SSO_EMAIL" 2>/dev/null <<'SQ'
+select count(*) from organizations where status = 'PENDING_APPROVAL' and "ownerId" = (select id from users where "emailLower" = lower(:'email'));
+SQ
+)
+  echo "organizations of this account waiting for approval: ${WAITING:-?}"
+  if [ "${WAITING:-0}" = 1 ]; then
+    step "4  approve it the way the program's own approve() does (one transaction), and give it the company's name"
+    sudo -u postgres psql -d "$DBNAME" -v ON_ERROR_STOP=1 -v email="$SSO_EMAIL" -v name="$NAME" -q <<'SQL' || fail "the approval was rolled back, nothing changed"
+begin;
+-- the account must not be a platform administrator (the one-click route refuses those)
+update users set "isSuperAdmin" = false, "updatedAt" = now() where "emailLower" = lower(:'email');
+-- the organization and its first workspace carry the company's name instead of the sign-in name
+update organizations set name = :'name', "updatedAt" = now()
+ where status = 'PENDING_APPROVAL' and "approvalPlan" = 'starter' and "ownerId" = (select id from users where "emailLower" = lower(:'email'));
+update workspaces set name = :'name', "updatedAt" = now()
+ where "organizationId" in (select id from organizations where name = :'name' and status = 'PENDING_APPROVAL');
+-- approve(): organization waiting -> trial (Starter), decision time noted
+update organizations set status = 'TRIAL', "approvalDecidedAt" = now(), "approvalRejectionReason" = null, "updatedAt" = now()
+ where status = 'PENDING_APPROVAL' and "approvalPlan" = 'starter' and "ownerId" = (select id from users where "emailLower" = lower(:'email'));
+-- approve(): the approval record on the owner's account (approved at, source = sign-up)
+update users set "approvedAt" = now(), "approvalSource" = 'SIGNUP', "approvalRequestedAt" = null, "updatedAt" = now()
+ where "emailLower" = lower(:'email') and "approvedAt" is null;
+-- approve(): the welcome balance, once per business (1000 rupees = 10,000,000 wallet units), with its ledger row
+update subscriptions s set "walletBalance" = "walletBalance" + 10000000, "updatedAt" = now()
+ where s."organizationId" in (select id from organizations where status = 'TRIAL' and "ownerId" = (select id from users where "emailLower" = lower(:'email')))
+   and not exists (select 1 from credit_transactions c where c."idempotencyKey" = 'welcome:' || s."organizationId");
+insert into credit_transactions (id, "subscriptionId", "organizationId", delta, "balanceAfter", reason, description, "idempotencyKey", metadata, "createdAt")
+select gen_random_uuid(), s.id, s."organizationId", 10000000, s."walletBalance", 'WELCOME_CREDIT', 'Welcome balance', 'welcome:' || s."organizationId",
+       jsonb_build_object('ownerId', o."ownerId"), now()
+  from subscriptions s join organizations o on o.id = s."organizationId"
+ where o.status = 'TRIAL' and o."ownerId" = (select id from users where "emailLower" = lower(:'email'))
+   and not exists (select 1 from credit_transactions c where c."idempotencyKey" = 'welcome:' || s."organizationId");
+-- approve(): the history line
+insert into audit_logs (id, action, "entityType", "entityId", summary, metadata, "organizationId", "organizationName", success, "createdAt")
+select gen_random_uuid(), 'admin.signup_approved', 'Organization', o.id,
+       'Approved sign-up "' || o.name || '" - first organization of this company''s own Green Start (set up by the installer): Starter, access granted',
+       jsonb_build_object('plan', 'starter', 'status', 'TRIAL', 'by', 'installer'), o.id, o.name, true, now()
+  from organizations o
+ where o.status = 'TRIAL' and o."ownerId" = (select id from users where "emailLower" = lower(:'email'))
+   and not exists (select 1 from audit_logs a where a.action = 'admin.signup_approved' and a."entityId" = o.id::text);
+commit;
+SQL
+    echo "approved."
+  else
+    echo "nothing is waiting for approval for this account: nothing was changed"
+  fi
+  step "5  check: the one-click sign-in the company's app uses"
+  LAST=$(signin | verdict); echo "sign-in as the company account: $LAST"
+  [ "$LAST" = SIGNED_IN ] || fail "the one-click sign-in is still refused ($LAST): look at the account in the company's Green Start database"
+  echo "organizations: $(DBQ -F ' | ' -c "select name || ' = ' || status from organizations" | tr '\n' ';')  platform admins: $(DBQ -c 'select count(*) from users where "isSuperAdmin"')  welcome balance rows: $(DBQ -c "select count(*) from credit_transactions where reason = 'WELCOME_CREDIT'")"
+  echo; echo "DONE (approve). Open Omni-Channel from the company's menu: it signs in with one click."
   exit 0
 fi

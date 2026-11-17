@@ -221,14 +221,31 @@ links to those files and **no `.env`** (the company's own settings come from its
    sends nothing, saved only in the company's settings file, never printed, never in a chat).
 3. **public** (needs the DNS record): the company's own nginx site (`nginx-omni.conf.tmpl`, from TeamLink's live Green Start site with its own port, name and origin; one new file, `nginx -t` before reload) + certificate (certbot)
    + the company's server is switched to its own Green Start (`GREENSTART_ENABLED=true`, its own API / Redis ports, its own sign-in secret `GREENSTART_SSO_SECRET` = the company's `TEAMLINK_SSO_SECRET`) and restarted with its own HOME.
-   The company's Green Start account is made by Green Start itself on the first one-click sign-in (Super Admin of the company); no manual account setup.
+   The company's Green Start account is made by Green Start itself on the first one-click sign-in; see 12.1 for the one step that is still needed (approval of that first organization).
 
 **The program refuses a Green Start that is not the company's own** (`utils/companyGuard.js`): the program's defaults (API port 4020, Redis 6379, "on" when unset) are TeamLink's own Green Start, so a company copy
 keeps Green Start on only when `GREENSTART_API_PORT` is a port of its own (not 4020); otherwise it is switched off at start. `scripts/company-check.js` checks the same, plus its own Redis port (not 6379), a long sign-in secret that
-differs from TeamLink's, and no TeamLink gate port. TeamLink (no COMPANY_KEY) is unchanged. `npm run company-portal-test` covers it (48 checks).
+differs from TeamLink's, and no TeamLink gate port. TeamLink (no COMPANY_KEY) is unchanged. `npm run company-portal-test` covers it (59 checks, including the sink and the approval stage).
 
 **Proved on the live server before anything was handed over:** `--stage prepare` created the database (153 tables, 207 rows that the program installs itself: migration bookkeeping, permissions, plans, rate cards; nothing naming TeamLink
 except one migration file name), then a boot test with clearly fake mailbox values started the company's Redis, API and worker (API health ok, listening on 127.0.0.1 only, about 230 MB, no errors, TeamLink's Green Start undisturbed),
 and the services were stopped and the fake values blanked again.
 
 Known: the company's own WhatsApp number, Meta app, SMS and ad accounts are added inside its Green Start later (none are shared). The program's public pages keep the product name "Green Start".
+
+### 12.1 Opening it without a mailbox, and the first account (found while installing it for NISH, 2026-11-17)
+
+**The e-mail sink (`company-green-mailsink.js`, service `green-start-<key>-mailsink`).** Green Start will not start as a real server without SMTP settings, and a company that has no mailbox yet must not borrow TeamLink's.
+`company-green-install.sh --stage sink` installs a tiny local "mail server" that listens on 127.0.0.1 only, accepts any login and **throws every message away**. Green Start is pointed at it (`SMTP_*` in the company's own
+`gs-api.env`), so it starts and works through the one-click button, and nothing is ever sent to anybody. The sink's log keeps only a count and a time, never an address, subject or text (`company-portal-test` checks this).
+Consequence: with the sink in place, nobody receives sign-up codes, password resets or invitations. When the company has its own mailbox, run `company-green-smtp.sh --key <key>` in the server terminal (the real mailbox replaces the sink
+settings; the sink service can then be stopped). The mailbox of another company (for example TeamLink's) must never be entered there.
+
+**The first account has to be approved, and must NOT be a platform administrator.** Green Start holds every new organization in "waiting for approval" until a platform Super Admin approves it (`admin/signups/:id/approve`).
+The company has no platform Super Admin, and an account marked platform administrator is refused by the one-click route (`TEAMLINK_NOT_ALLOWED`: platform administrators must sign in with their own email and password). So the first
+organization is approved **once, by the installer (`company-green-install.sh --key <key> --domain <address> --stage approve --name "<the company's full name>" --apply`; safe to run again), with the same changes the program's own `approve()` makes, in one transaction**: organization -> trial (Starter), decision time; the owner's account gets "approved, source sign-up";
+the welcome balance (1,000 rupees = 10,000,000 wallet units, once per business, with its ledger row); and a history line saying it was approved by the installer. The owner stays a normal account (no platform flag). Afterwards the
+one-click ticket sign-in for that account returns a session (tested on the live server). The organization and workspace are given the company's name by the same transaction, because Green Start names its first ones after the person who signed in ("TeamLink").
+Later organizations, if any, are approved the same way or by a platform Super Admin the company creates for itself.
+
+**Not yet done in code:** the names "TeamLink" that the app itself sends in the sign-in ticket (user name, organization name) still come from TeamLink's wording; a company name setting (`COMPANY_NAME`) would replace them. Until then the `approve` stage gives the first organization and workspace the company's name, and any further organization would need the same rename.
