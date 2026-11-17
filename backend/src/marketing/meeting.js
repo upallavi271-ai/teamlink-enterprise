@@ -187,6 +187,8 @@ async function call(u, id, b = {}) {
   const saved = (await readAll()).alerts[u.id];
   const ringFirst = own.phone || (saved && saved.phone) || '';
   if (!ringFirst) return { error: 'TeamLink does not know which phone to ring first: your own number is not on your employee profile. Type your phone number in "Calls and alerts" on this page and press "Save my number", or use "Dial it myself".', status: 409 };
+  const ownNm = core().normalizeMobile(ringFirst);
+  if (ownNm.ok && ownNm.e164 === nm.e164) return { error: `The client's number (${core().maskMobile(nm.e164)}) is the same as the phone that rings first (${core().maskMobile(ownNm.e164)}): TeamLink would be calling you twice and the second call cannot connect. To test, put a different number in the client's WhatsApp number (open the row), for example a colleague's.`, status: 400 };
   const lines = require('../utils/callLines'); // eslint-disable-line global-require
   const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '') || null;
   const out = await lines.startCall(b.line, { agent: ringFirst, to: r.phone, ref: `mkmeeting:${r.id}`.slice(0, 120), callbackBase: base });

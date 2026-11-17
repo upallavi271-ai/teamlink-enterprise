@@ -212,6 +212,12 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     await M.saveAlert(sa, { on: false, phone: '8919239827' });
     check('16j the number can be saved with the alert off, and it still rings first', (await M.myAlert(sa)).on === false && (await M.myAlert(sa)).phone === '8919239827' && !!(await M.call(sa, mR.id, { line: 'sip' })).ok);
     await M.saveAlert(sa, { on: true, phone: '8919239827' });
+    // the client's number is the caller's own number (how the founder tested): refused with the reason, no call made
+    const mSame = (await M.create(sa, { name: 'ZZ Same Test', phone: '8919239827', language: 'en' })).meeting;
+    let dialled = false; CL.startCall = async () => { dialled = true; return { ok: true, callSid: 'fake-3', line: 'sip' }; };
+    const same = await M.call(sa, mSame.id, { line: 'sip' });
+    check('16k a client number that is the same as the phone that rings first is refused with the reason and nothing is dialled', same.status === 400 && /same as the phone that rings first/.test(same.error || '') && /colleague/.test(same.error || '') && dialled === false && !/8919239827/.test(same.error), same);
+    await M.remove(sa, mSame.id);
     CL.startCall = realStart; MC.ownContact = realOwn;
     await M.remove(sa, mR.id);
     const sentTo = [];

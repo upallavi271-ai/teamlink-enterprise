@@ -18,7 +18,7 @@ const linkOf = (m) => `${window.location.origin}/plans-meeting/${m.token}`;
 const telOf = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 10 ? `+91${d}` : `+${d}`; }; // opens the phone's own dialler
 const waiting = (m) => !!m.handoverAt && (!m.calledAt || m.calledAt < m.handoverAt); // asked for a call and nobody has called since
 
-function Row({ m, busy, onSend, onCopy, onDelete, onCall, onDial }) {
+function Row({ m, busy, note, onSend, onCopy, onDelete, onCall, onDial }) {
   const [open, setOpen] = useState(false);
   const [phone, setPhone] = useState(null);
   const [numberId, setNumberId] = useState('');
@@ -41,6 +41,7 @@ function Row({ m, busy, onSend, onCopy, onDelete, onCall, onDial }) {
         {m.calledAt ? <small style={{ color: m.calledAt >= (m.handoverAt || 0) ? '#166534' : 'var(--muted)' }}>Called {fmtDateTime(m.calledAt)} by {m.calledByName || 'the team'}{m.callLine ? ` on the ${String(m.callLine).toUpperCase()} line` : ''}</small> : null}
         {asked.length ? <small>Asked: {asked.slice(-3).map((x) => `“${x.q}”`).join(', ')}{asked.length > 3 ? ` and ${asked.length - 3} more` : ''}</small> : null}
         {callBtn ? <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>{callBtn}</div> : null}
+        {note ? <div className={`mk-note${note.tone === 'ok' ? ' ok' : ''}`} role="status" style={{ marginTop: 8 }}>{note.text}</div> : null}
         {open ? (
           <div style={{ marginTop: 8, background: '#f6f8f7', borderRadius: 10, padding: '10px 12px', fontSize: 12, lineHeight: 1.6 }}>
             {m.note ? <div style={{ marginBottom: 6 }}>Your note: {m.note}</div> : null}
@@ -81,6 +82,7 @@ export default function MkMeetingPage() {
   const [filter, setFilter] = useState('');
   const [lines, setLines] = useState(null); // the call lines (utils/callLines.js): API, Dinstar, SIP
   const [callLine, setCallLine] = useState('');
+  const [notes, setNotes] = useState({}); // what the last Call now / Dial it myself did, kept next to the buttons (a message at the top of a long page, or a toast, is easy to miss)
   const [al, setAl] = useState(null); // { on, phone } being edited for the WhatsApp alert
   const timer = useRef(null);
   const load = useCallback(() => omni.get('/gs/marketing/meetings').then((x) => { setD(x); setSpots((cur) => (cur == null ? x.settings.spotsLeft : cur)); setAl((cur) => cur || { on: x.alert.on, phone: x.alert.phone }); setErr(''); }).catch((e) => setErr(errOf(e, 'The meetings could not be read.'))), []);
@@ -97,15 +99,16 @@ export default function MkMeetingPage() {
     setBusy(`send${m.id}`); setErr('');
     try { const r = await omni.post(`/gs/marketing/meetings/${m.id}/tell`, { ...(o.numberId ? { numberId: o.numberId } : {}), ...(o.phone != null && String(o.phone).trim() ? { phone: String(o.phone).trim() } : {}) }); toast(r.ok); await load(); } catch (e) { const x = errOf(e, 'It could not be sent.'); setErr(x); toast(x); } finally { setBusy(''); }
   };
+  const note = (id, tone, text) => setNotes((n) => ({ ...n, [id]: { tone, text } }));
   const call = async (m) => {
-    setBusy(`call${m.id}`); setErr('');
-    try { const r = await omni.post(`/gs/marketing/meetings/${m.id}/call`, { line: callLine || undefined }); toast(r.ok); await load(); } catch (e) { const x = errOf(e, 'The call could not be started.'); setErr(x); toast(x); } finally { setBusy(''); }
+    setBusy(`call${m.id}`); setErr(''); note(m.id, 'ok', 'Starting the call…');
+    try { const r = await omni.post(`/gs/marketing/meetings/${m.id}/call`, { line: callLine || undefined }); note(m.id, 'ok', `${r.ok} If your phone does not ring within a minute, tell the team the line may be down.`); toast(r.ok); await load(); } catch (e) { const x = errOf(e, 'The call could not be started.'); note(m.id, 'err', x); setErr(x); toast(x); } finally { setBusy(''); }
   };
   // "Dial it myself": a computer often has no program for tel: links, so nothing would happen. The number is always copied and shown, and the link still tries the dialler.
   const dial = async (m) => {
     const n = telOf(m.phone);
-    try { await navigator.clipboard.writeText(n); } catch { /* the toast still shows the number */ }
-    toast(`Number ${n}${m.name ? ` (${m.name})` : ''} copied. If your dialler did not open, dial it on your phone.`);
+    try { await navigator.clipboard.writeText(n); } catch { /* the message still shows the number */ }
+    note(m.id, 'ok', `Dial ${n}${m.name ? ` (${m.name})` : ''}. The number is copied. If your computer did not open a dialler, dial it on your phone.`);
   };
   const copy = async (m) => { try { await navigator.clipboard.writeText(linkOf(m)); toast('Link copied'); } catch { window.prompt('Copy the link:', linkOf(m)); } };
   const del = async (m) => {
@@ -172,7 +175,7 @@ export default function MkMeetingPage() {
         </div>
       </Panel>
       <Panel title="Your meetings" sub="Clients waiting for a call come first. Press a name to see the link, send it, and read everything the client asked." style={{ marginTop: 14 }} right={<select value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Show"><option value="">All</option><option value="Hot">Hot</option><option value="Warm">Warm</option><option value="Cold">Cold</option><option value="Not opened">Not opened</option></select>}>
-        {shown.length === 0 ? <Empty title="No meetings here yet">Make a link above, then send it to a client on WhatsApp.</Empty> : shown.map((m) => <Row key={m.id} m={m} busy={busy} onSend={send} onCall={call} onDial={dial} onCopy={copy} onDelete={(x) => setAsk(x)} />)}
+        {shown.length === 0 ? <Empty title="No meetings here yet">Make a link above, then send it to a client on WhatsApp.</Empty> : shown.map((m) => <Row key={m.id} m={m} busy={busy} note={notes[m.id]} onSend={send} onCall={call} onDial={dial} onCopy={copy} onDelete={(x) => setAsk(x)} />)}
       </Panel>
       {ask ? <ConfirmModal title="Remove this meeting link?" text={`The link for ${ask.name || 'this client'} stops working at once and leaves this list.`} yes="Remove it" danger onNo={() => setAsk(null)} onYes={() => { const x = ask; setAsk(null); del(x); }} /> : null}
     </div>
