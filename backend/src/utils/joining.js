@@ -229,6 +229,19 @@ async function createHrmsEmployee({ application, candidate, requirement, userId 
     return prisma.employee.findUnique({ where: { id: application.hrmsEmployeeId } });
   }
 
+  // ALREADY AN EMPLOYEE (audit Q134): somebody re-hired, or already added by HR by hand - the same email or phone on an employee
+  // record links to it instead of making a second one.
+  {
+    const or = [];
+    if (candidate.email) or.push({ email: String(candidate.email).trim() });
+    if (candidate.phone) or.push({ phone: String(candidate.phone).trim() });
+    const existing = or.length ? await prisma.employee.findFirst({ where: { OR: or }, orderBy: { createdAt: 'desc' } }).catch(() => null) : null;
+    if (existing) {
+      await prisma.application.update({ where: { id: application.id }, data: { hrmsEmployeeId: existing.id } });
+      await logAudit({ userId, action: 'Internal hire linked to an existing employee (same email / phone)', entity: 'Employee', entityId: existing.id, toValue: existing.employeeCode || existing.name }).catch(() => {});
+      return existing;
+    }
+  }
   // The next TL<nnn> — the same series Add Employee issues (utils/employeeCode.js).
   // eslint-disable-next-line global-require
   const employeeCode = await require('./employeeCode').nextEmployeeCode();

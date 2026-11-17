@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import api from '../../api';
 import { Modal } from '../proto.jsx';
 import { RejectFields, EMPTY_REJECT, rejectReady } from '../rejections/rejectionUi.jsx';
 import MissingHint from '../ui/MissingHint.jsx';
@@ -44,6 +45,25 @@ export function ratingOf(fb) {
   if (!fb) return null;
   const xs = ['technical', 'communication', 'experience', 'roleFit'].map((k) => fb[k]).filter((v) => v != null);
   return xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null;
+}
+
+// EVERY EARLIER ROUND / EDIT (backend utils/feedbackHistory.js): the feedback saved before, never overwritten.
+function FeedbackHistory({ appId }) {
+  const [rows, setRows] = useState(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { api.get(`/ats/interviews/${appId}/feedback-history`).then((r) => setRows(r.data.rows || [])).catch(() => setRows([])); }, [appId]);
+  if (!rows || !rows.length) return null;
+  return (
+    <div className="ivx-sec" style={{ marginBottom: 10 }}>
+      <button type="button" className="link-btn" onClick={() => setOpen((v) => !v)}>{open ? 'Hide' : 'Show'} earlier feedback ({rows.length})</button>
+      {open && rows.map((f) => (
+        <div key={f.id} className="small-muted" style={{ borderLeft: '3px solid var(--line, #ddd)', padding: '4px 8px', margin: '6px 0' }}>
+          <b>{f.kind} · Round {f.round || 1}</b> · {f.recommendation || '—'} · {new Date(f.at).toLocaleString('en-GB')} · {f.byName || '—'}
+          <div>{f.overall}</div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function ShortFeedbackForm({
@@ -94,6 +114,7 @@ export default function ShortFeedbackForm({
         <div className="ivx-hint" style={{ marginTop: 0, marginBottom: 12 }}>
           {[row.requirement && row.requirement.title, row.requirement && row.requirement.client && row.requirement.client.name].filter(Boolean).join(' · ')}
         </div>
+        <FeedbackHistory appId={row.id} />
 
         <div className="ivx-sec">
           <b>Result</b>

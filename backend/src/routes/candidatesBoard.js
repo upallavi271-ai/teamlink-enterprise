@@ -560,6 +560,11 @@ module.exports = function mountCandidatesBoard(router, deps) {
         });
       }
       const appIds = c.applications.map((a) => a.id);
+      // RECYCLE BIN (utils/recycleBin.js): the row and its applications are kept 90 days so an Admin can restore them
+      try {
+        const [fullCand, fullApps] = await Promise.all([prisma.candidate.findUnique({ where: { id: c.id } }), prisma.application.findMany({ where: { id: { in: appIds } } })]);
+        await require('../utils/recycleBin').put({ entity: 'Candidate', entityId: c.id, name: c.name, data: { candidate: fullCand, applications: fullApps }, user: req.user, reason }); // eslint-disable-line global-require
+      } catch (e) { return res.status(500).json({ error: 'Could not keep a copy in the recycle bin, so nothing was deleted. Try again.' }); }
       try {
         await prisma.$transaction([
           prisma.application.deleteMany({ where: { id: { in: appIds } } }),

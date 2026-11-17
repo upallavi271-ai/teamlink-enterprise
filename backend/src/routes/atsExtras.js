@@ -421,6 +421,19 @@ router.get('/calendar', async (req, res) => {
   });
 });
 
+// Every round's / every edit's feedback of one interview (utils/feedbackHistory.js), inside the caller's scope.
+// The BDE team never reads the internal panel's feedback (P2); a client only its own side.
+router.get('/interviews/:id/feedback-history', async (req, res, next) => {
+  try {
+    const app = await prisma.application.findFirst({ where: { AND: [{ id: req.params.id }, calendarScope(req.user)] }, select: { id: true } });
+    if (!app) return res.status(404).json({ error: 'Interview not found' });
+    const clientLogin = [req.user.role, req.user.atsRole].includes('CLIENT');
+    let rows = await require('../utils/feedbackHistory').forApplication(app.id, { client: clientLogin }); // eslint-disable-line global-require
+    if (isBdeView(req.user)) rows = rows.filter((r) => r.kind === 'Client');
+    return res.json({ rows });
+  } catch (e) { return next(e); }
+});
+
 // The AI tab, one page at a time (utils/calendarAi.js has the contract).
 router.get('/calendar/ai', async (req, res) => {
   let scope = calendarScope(req.user);
@@ -854,6 +867,8 @@ router.post('/interviews/:id/feedback', async (req, res) => {
     create: { applicationId: app.id, kind: 'Internal', ...data },
     update: data,
   });
+  // every round and every edit kept (utils/feedbackHistory.js)
+  await require('../utils/feedbackHistory').record(app.id, 'Internal', app.interviewRound || 1, data, req.user).catch(() => {}); // eslint-disable-line global-require
   // Round N in the history (layout v3); "Next round" = passed this round, the
   // next one is booked through the same Schedule popup (stored as Selected).
   await recordEvent(app.id, 'FEEDBACK_SUBMITTED', { reason: `Round ${app.interviewRound || 1} feedback — ${req.body.nextRound === true ? 'Next round' : result}`, by: req.user.name });

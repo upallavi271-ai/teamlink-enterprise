@@ -145,6 +145,15 @@ export default function Offers() {
                   <td className="small-muted">{r.joiningDate ? fmtDate(r.joiningDate) : '—'}</td>
                   <td>
                     <StatusChip status={step.text} tone={step.tone} />
+                    {/* OFFER ON HOLD (backend utils/offerHold.js): the reason shows; the offer keeps its step */}
+                    {r.offerHold ? (
+                      <div style={{ fontSize: 11.5, marginTop: 3 }}>
+                        <StatusChip status="On hold" tone="grey" /> <span className="small-muted">{r.offerHold.reason}</span>{' '}
+                        {canEdit && <button type="button" className="link-btn" style={{ fontSize: 11.5 }} onClick={async () => { try { await api.post(`/ats/offers/${r.id}/release-hold`); ws.setNotice('Hold released.'); load(); } catch (e) { ws.setError(e.response?.data?.error || 'Could not release.'); } }}>Release</button>}
+                      </div>
+                    ) : (canEdit && step.id !== 'accepted' && (
+                      <div><button type="button" className="link-btn" style={{ fontSize: 11.5 }} onClick={async () => { const reason = window.prompt('Why is this offer on hold? (recorded)'); if (!reason || !reason.trim()) return; try { await api.post(`/ats/offers/${r.id}/hold`, { reason }); ws.setNotice('Offer put on hold.'); load(); } catch (e) { ws.setError(e.response?.data?.error || 'Could not put on hold.'); } }}>Put on hold</button></div>
+                    ))}
                     {r.clientTrack?.offer?.releasedAt && ['share', 'candidate'].includes(step.id) && (
                       <div className="small-muted" style={{ fontSize: 11.5, marginTop: 2 }}>{`Client released it ${fmtDate(r.clientTrack.offer.releasedAt)}${r.clientTrack.offer.onBehalf ? ' (recorded by the BDE)' : ''}`}</div>
                     )}

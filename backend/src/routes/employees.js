@@ -2163,7 +2163,10 @@ async function createLoginFor(req, employee) {
     await logAudit({ userId: req.user.id, action: 'Login linked to employee', entity: 'User', entityId: taken.id, toValue: employee.employeeCode });
   } else {
     // Role and reach are derived from the designation, exactly as Add Employee derives them.
-    const mapping = await mappingFor(employee.designation);
+    // A job title that is not a designation in the Role mapping (an internal hire's designation is the requirement's title,
+    // "Recruitment Executive") reads as a plain Employee - before, it stored HRMS role "NONE" and the new hire was refused
+    // attendance, leave and payslips (internal-hire end-to-end test 2026-11-17).
+    const mapping = (await mappingFor(employee.designation)) || (await mappingFor('Employee'));
     const role = loginRoleFor(mapping);
     {
       const refusal = await require('../utils/roleGuard').checkRoleChange({ // eslint-disable-line global-require

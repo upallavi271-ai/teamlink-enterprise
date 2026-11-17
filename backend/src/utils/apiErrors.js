@@ -36,11 +36,14 @@ async function record(req, res) {
   const [n] = await prisma.$queryRawUnsafe('SELECT COUNT(*) AS n FROM "ApiError" WHERE "groupKey" = ? AND "at" >= ?', g, new Date(Date.now() - 10 * 60000).toISOString());
   if (Number(n.n) >= 5 && (!alerted.get(g) || Date.now() - alerted.get(g) > 3600000)) {
     alerted.set(g, Date.now());
-    const admins = await prisma.user.findMany({ where: { status: 'Active', role: 'SUPER_ADMIN' }, select: { id: true } }).catch(() => []);
-    await require('./notify').notifyUsers(admins.map((a) => a.id), { // eslint-disable-line global-require
-      title: '⚠ A screen keeps failing',
-      message: `${method} ${route} failed ${n.n} times in 10 minutes: "${msg}". Administration → Audit Logs → Errors has the details.`,
-    }).catch(() => {});
+    const admins = await prisma.user.findMany({ where: { status: 'Active', role: 'SUPER_ADMIN' }, select: { id: true, email: true, name: true } }).catch(() => []);
+    const text = `${method} ${route} failed ${n.n} times in 10 minutes: "${msg}". Administration → Audit Logs → Errors has the details.`;
+    await require('./notify').notifyUsers(admins.map((a) => a.id), { title: '⚠ A screen keeps failing', message: text }).catch(() => {}); // eslint-disable-line global-require
+    // ...and by email, so it reaches someone who is not looking at TeamLink (audit A25 / 794); test / sandbox logins never get mail
+    for (const a of admins.filter((x) => x.email && !/zztest|example\.test|\.test$/i.test(`${x.name} ${x.email}`))) {
+      // eslint-disable-next-line no-await-in-loop, global-require
+      await require('./mailer').sendMail({ to: a.email, subject: `TeamLink alert: ${route} keeps failing`, text: `${text}\n\n- TeamLink`, useEmployeeFrom: false, fromName: 'TeamLink' }).catch(() => {});
+    }
   }
 }
 

@@ -1348,6 +1348,18 @@ router.get('/read-log', requirePerm(null, 'administration', 'Audit Logs', 'view'
     return res.json(await RL.list(req.query));
   } catch (e) { return next(e); }
 });
+// RECYCLE BIN (utils/recycleBin.js): deleted candidates of the last 90 days; restore = Super Admin / Admin.
+router.get('/recycle-bin', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res, next) => {
+  try { res.json({ items: await require('../utils/recycleBin').list() }); } catch (e) { next(e); } // eslint-disable-line global-require
+});
+router.post('/recycle-bin/:id/restore', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res, next) => {
+  try {
+    const roles = [req.user.role, req.user.hrmsRole, req.user.atsRole].filter(Boolean);
+    if (!roles.some((r) => ['SUPER_ADMIN', 'ADMIN'].includes(r)) || req.viewAs) return res.status(403).json({ error: 'Only a Super Admin or an Admin can restore.' });
+    const out = await require('../utils/recycleBin').restore(req.params.id, req.user); // eslint-disable-line global-require
+    return out.error ? res.status(409).json(out) : res.json(out);
+  } catch (e) { return next(e); }
+});
 // ERRORS (utils/apiErrors.js): failed requests of the last N days, grouped (same route + same error), most frequent first.
 router.get('/errors', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res, next) => {
   try { res.json({ groups: await require('../utils/apiErrors').groups({ days: Math.min(60, Number(req.query.days) || 7) }) }); } catch (e) { next(e); } // eslint-disable-line global-require

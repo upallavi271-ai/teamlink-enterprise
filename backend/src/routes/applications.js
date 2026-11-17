@@ -1341,6 +1341,15 @@ router.post('/bulk', async (req, res, next) => {
 
 router.patch('/:id/stage', async (req, res, next) => {
   try {
+    // OUTSIDE YOUR AREA FIRST (lifecycle test 2026-11-17): somebody who cannot see this candidate is told so before any form check
+    // ("say whose decision the rejection was") - the answer must not depend on how complete their request was.
+    // (the SAME rule and record shape applyStageMove checks below - applicationInScope - only earlier)
+    const pre = await prisma.application.findUnique({
+      where: { id: req.params.id },
+      include: { candidate: true, requirement: { include: { client: true, recruiter: true, bde: true } } },
+    });
+    if (!pre) return res.status(404).json({ error: 'Application not found' });
+    if (!applicationInScope(req.user, pre)) return res.status(403).json(OUT_OF_SCOPE);
     const out = await applyStageMove(req.user, req.params.id, req.body);
     return res.status(out.status).json(out.body);
   } catch (err) {

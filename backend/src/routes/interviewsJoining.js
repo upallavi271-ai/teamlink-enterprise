@@ -301,6 +301,8 @@ router.post('/interviews/:id/client-feedback', requirePerm('ats', 'interviews', 
     create: { applicationId: app.id, kind: 'Client', ...data },
     update: data,
   });
+  // every round and every edit kept (utils/feedbackHistory.js)
+  await require('../utils/feedbackHistory').record(app.id, 'Client', app.interviewRound || 1, data, req.user).catch(() => {}); // eslint-disable-line global-require
   await logAudit({
     userId: req.user.id, action: `Client interview feedback submitted — ${recommendation}`,
     entity: 'Application', entityId: app.id, toValue: recommendation,
@@ -328,7 +330,19 @@ router.post('/interviews/:id/client-feedback', requirePerm('ats', 'interviews', 
 // The decision that closes the feedback loop. It moves the PIPELINE; it does
 // not touch the interview's status, which stays Feedback Submitted.
 const DECISION_STAGE = { Selected: 'SELECTED', Rejected: 'REJECTED', Hold: 'HOLD' };
-router.post('/interviews/:id/decision', requirePerm('ats', 'interviews', 'Interview Feedback', 'approve'), async (req, res) => {
+// WHO MAY TAKE THE DECISION: Interview Feedback / approve as before, OR the person who OWNS that step of the pipeline (the BDE TL
+// owns Selected on a client job - lifecycle test 2026-11-17: the BDE TL could mark Selected on the pipeline but got 403 here).
+// The stage-owner rule itself (canMoveToStage) is checked again inside, with the real from-step.
+async function decisionGate(req, res, next) {
+  try {
+    const P = require('../utils/permissions'); // eslint-disable-line global-require
+    if (await P.can(req.user, 'ats', 'interviews', 'Interview Feedback', 'approve')) return next();
+    const stage = DECISION_STAGE[normalizeRecommendation(req.body && req.body.decision)];
+    if (stage && !(await P.canMoveToStage(req.user, stage, {}))) return next();
+    return res.status(403).json({ error: "This action isn't included in your role's permissions" });
+  } catch (e) { return next(e); }
+}
+router.post('/interviews/:id/decision', decisionGate, async (req, res) => {
   const app = await loadScoped(req, res);
   if (!app) return;
   const decision = normalizeRecommendation(req.body.decision);
@@ -479,6 +493,8 @@ router.get('/offers', requirePerm('ats', 'interviews', 'Offers', 'view'), async 
     });
   }
   await require('../utils/clientTrack').attachTo(req.user, rows); // eslint-disable-line global-require
+  // an offer put ON HOLD (utils/offerHold.js) carries the reason, who and when
+  try { const holds = await require('../utils/offerHold').mapOf(rows.map((r) => r.id)); rows.forEach((r) => { if (holds.has(r.id)) r.offerHold = holds.get(r.id); }); } catch { /* shown without */ } // eslint-disable-line global-require
   const offerSettings = await OL.loadSettings();
   // eslint-disable-next-line global-require
   const candidateEmailsOn = await require('../utils/interviewNotices').candidateEmailsOn();
@@ -767,6 +783,29 @@ async function approveAndSend(req, res) {
 }
 router.post('/offers/:id/approve', requirePerm('ats', 'interviews', 'Offers', 'approve'), approveAndSend);
 router.post('/offers/:id/release', requirePerm('ats', 'interviews', 'Offers', 'approve'), approveAndSend);
+// OFFER ON HOLD (utils/offerHold.js, audit 126): the candidate / client asks to wait. The offer keeps its status; the reason shows.
+router.post('/offers/:id/hold', requirePerm('ats', 'interviews', 'Offers', 'edit'), async (req, res) => {
+  const app = await loadScoped(req, res);
+  if (!app) return undefined;
+  const reason = String((req.body || {}).reason || '').trim();
+  if (reason.length < 5) return res.status(400).json({ error: 'Say why the offer is on hold (for example, "Candidate asked for 2 weeks to decide").' });
+  if (['OFFER_ACCEPTED', 'JOINED', 'HIRED'].includes(app.stage)) return res.status(409).json({ error: 'This offer is already accepted.' });
+  const H = require('../utils/offerHold'); // eslint-disable-line global-require
+  await H.put(app.id, reason, req.user.name);
+  await logAudit({ userId: req.user.id, action: 'Offer put on hold', entity: 'Application', entityId: app.id, toValue: app.offerStatus || null, reason });
+  return res.json({ ok: true, offerHold: await H.of(app.id) });
+});
+router.post('/offers/:id/release-hold', requirePerm('ats', 'interviews', 'Offers', 'edit'), async (req, res) => {
+  const app = await loadScoped(req, res);
+  if (!app) return undefined;
+  const H = require('../utils/offerHold'); // eslint-disable-line global-require
+  const h = await H.of(app.id);
+  if (!h) return res.status(400).json({ error: 'This offer is not on hold.' });
+  await H.release(app.id);
+  await logAudit({ userId: req.user.id, action: 'Offer hold released', entity: 'Application', entityId: app.id, fromValue: h.reason });
+  return res.json({ ok: true });
+});
+
 router.post('/offers/:id/accept', requirePerm('ats', 'interviews', 'Offers', 'edit'), async (req, res) => {
   const app = await loadScoped(req, res);
   if (!app) return;

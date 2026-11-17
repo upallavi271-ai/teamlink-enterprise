@@ -41,6 +41,35 @@ function SealCheck() {
   );
 }
 
+// RECYCLE BIN (backend utils/recycleBin.js): deleted candidates (duplicates / wrong entries) of the last 90 days, restorable.
+function RecycleBin() {
+  const [rows, setRows] = useState(null);
+  const [msg, setMsg] = useState('');
+  const load = () => api.get('/admin/recycle-bin').then((r) => setRows(r.data.items || [])).catch(() => setRows([]));
+  useEffect(() => { load(); }, []);
+  return (
+    <div>
+      <div className="small-muted" style={{ marginBottom: 8 }}>A deleted candidate (duplicate or wrong entry) stays here 90 days with its applications. Restore brings it back with the same id.</div>
+      {msg && <div className="notice" style={{ display: 'block', marginBottom: 8 }}>{msg}</div>}
+      <div className="tbl-wrap tbl-fit">
+        <table>
+          <thead><tr><th>Deleted</th><th>What</th><th>Name</th><th>By</th><th>Why</th><th /></tr></thead>
+          <tbody>
+            {(rows || []).map((r) => (
+              <tr key={r.id}>
+                <td>{new Date(r.deletedAt).toLocaleString('en-GB')}</td><td>{r.entity}</td><td>{r.name || r.entityId}</td><td>{r.deletedByName || '—'}</td><td>{r.reason || '—'}</td>
+                <td>{r.restoredAt ? <span className="small-muted">Restored {new Date(r.restoredAt).toLocaleDateString('en-GB')} by {r.restoredByName || '—'}</span>
+                  : <button type="button" className="btn btn-sm" onClick={async () => { try { const x = await api.post(`/admin/recycle-bin/${r.id}/restore`); setMsg(`${x.data.name} is back.`); load(); } catch (e) { setMsg(e.response?.data?.error || 'Could not restore.'); } }}>Restore</button>}</td>
+              </tr>
+            ))}
+            {rows && !rows.length && <tr><td colSpan={6} className="small-muted">Nothing deleted in the last 90 days.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ERRORS (backend utils/apiErrors.js): requests that failed on the server, same route + same error grouped, most frequent first.
 function ErrorGroups() {
   const [rows, setRows] = useState(null);
@@ -156,7 +185,7 @@ export default function AuditLogs() {
     const { dateFrom, dateTo, ...rest } = lf.params;
     const params = { ...rest, page, pageSize: size, sort: lf.sort };
     if (view === 'hr') params.entity = 'HrSensitive';
-    if (view === 'access' || view === 'viewed' || view === 'errors') return undefined;
+    if (view === 'access' || view === 'viewed' || view === 'errors' || view === 'bin') return undefined;
     if (dateFrom) params.from = dateFrom;
     if (dateTo) params.to = dateTo;
     setError('');
@@ -196,8 +225,9 @@ export default function AuditLogs() {
         <button className={`btn btn-sm ${view === 'access' ? 'btn-primary' : ''}`} onClick={() => setView('access')}>Who has Internal HR access</button>
         <button className={`btn btn-sm ${view === 'viewed' ? 'btn-primary' : ''}`} onClick={() => setView('viewed')} title="Who opened which candidate / employee record or document">Who viewed</button>
         <button className={`btn btn-sm ${view === 'errors' ? 'btn-primary' : ''}`} onClick={() => setView('errors')} title="Requests that failed on the server, grouped">Errors</button>
+        <button className={`btn btn-sm ${view === 'bin' ? 'btn-primary' : ''}`} onClick={() => setView('bin')} title="Deleted candidates of the last 90 days - restore them">Recycle bin</button>
         <SealCheck />
-        {view !== 'access' && view !== 'viewed' && view !== 'errors' && (
+        {view !== 'access' && view !== 'viewed' && view !== 'errors' && view !== 'bin' && (
           <button
             className="btn btn-sm"
             style={{ marginLeft: 'auto' }}
@@ -222,7 +252,7 @@ export default function AuditLogs() {
           </button>
         )}
       </div>
-      {view === 'errors' ? <ErrorGroups /> : view === 'viewed' ? <WhoViewed /> : view === 'access' ? <HrSuperAccess /> : (<>
+      {view === 'bin' ? <RecycleBin /> : view === 'errors' ? <ErrorGroups /> : view === 'viewed' ? <WhoViewed /> : view === 'access' ? <HrSuperAccess /> : (<>
       <ListFilterBar lf={lf} storageKey="admin-audit" />
       {error && <div className="error-text">{error}</div>}
 
