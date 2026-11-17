@@ -158,22 +158,10 @@ async function detail(base) {
 }
 
 // The Admin's own address / number, from their employee record.
-const OWN_PHONE_KEY = (userId) => `call.ownPhone:${userId}`;
-async function savedOwnPhone(userId) {
-  try { const r = await prisma.appSetting.findUnique({ where: { key: OWN_PHONE_KEY(userId) } }); return (r && r.value) || null; } catch { return null; }
-}
-/** Keep the number a login's calls ring first (when it has none on an employee record). -> { ok, phone } | { error } */
-async function saveOwnPhone(user, raw) {
-  const m = require('./messagingCore').normalizeMobile(String(raw || '').trim()); // eslint-disable-line global-require
-  if (!m.ok) return { error: 'That does not look like a mobile number. Write the 10 digits, with or without +91.' };
-  await prisma.appSetting.upsert({ where: { key: OWN_PHONE_KEY(user.id) }, update: { value: m.e164, updatedById: user.id, updatedByName: user.name || null }, create: { key: OWN_PHONE_KEY(user.id), value: m.e164, updatedById: user.id, updatedByName: user.name || null } });
-  return { ok: true, phone: m.e164 };
-}
 async function ownContact(user) {
   let emp = null;
   try { emp = await prisma.employee.findUnique({ where: { userId: user.id } }); } catch { emp = null; }
-  const phone = (emp && emp.phone) || await savedOwnPhone(user.id);
-  return { email: (emp && emp.email) || user.email || null, phone: phone || null, name: (emp && emp.name) || user.name };
+  return { email: (emp && emp.email) || user.email || null, phone: (emp && emp.phone) || null, name: (emp && emp.name) || user.name };
 }
 
 async function test(user, channel) {
@@ -225,4 +213,4 @@ async function emailDomainCheck() {
   return { domain, from, items, allGood: items.every((i) => i.ok), checkedAt: new Date().toISOString() };
 }
 
-module.exports = { detail, test, emailDomainCheck, ownContact, saveOwnPhone };
+module.exports = { detail, test, emailDomainCheck, ownContact };

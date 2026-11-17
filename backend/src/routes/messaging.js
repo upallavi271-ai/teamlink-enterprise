@@ -112,22 +112,6 @@ router.put('/limits', async (req, res, next) => {
 });
 
 // WHICH LINE a call goes out on (utils/callLines.js): API (calls & msgs), Dinstar (calls & msgs), SIP (call). The dropdown in the Call window reads this.
-// The number a call rings FIRST (the caller's own phone): from the employee record, else the one this login saved here.
-router.get('/my-phone', async (req, res, next) => {
-  try {
-    const own = await require('../utils/messageChannels').ownContact(req.user); // eslint-disable-line global-require
-    const d = String(own.phone || '').replace(/\D/g, '');
-    return res.json({ has: !!d, hint: d ? `•••${d.slice(-4)}` : null });
-  } catch (err) { return next(err); }
-});
-router.put('/my-phone', async (req, res, next) => {
-  try {
-    const out = await require('../utils/messageChannels').saveOwnPhone(req.user, (req.body || {}).phone); // eslint-disable-line global-require
-    if (out.error) return res.status(400).json({ error: out.error });
-    return res.json({ ok: true, hint: `•••${out.phone.slice(-4)}` });
-  } catch (err) { return next(err); }
-});
-
 router.get('/call-lines', async (req, res, next) => {
   try { return res.json(await require('../utils/callLines').list()); } catch (err) { return next(err); } // eslint-disable-line global-require
 });
@@ -147,7 +131,7 @@ router.post('/call', async (req, res, next) => {
     const person = people[0];
     if (person.doNotContact) return res.status(409).json({ error: 'This person asked not to be contacted.' });
     const own = await require('../utils/messageChannels').ownContact(req.user); // eslint-disable-line global-require
-    if (!own.phone) return res.status(409).json({ error: 'TeamLink does not know which phone to ring first: your own phone number is not on an employee profile. Write it below and save it once.', code: 'own-phone-missing' });
+    if (!own.phone) return res.status(409).json({ error: 'Your own phone number is not on your employee profile, so TeamLink does not know which phone to ring first. Add it on your profile.' });
     const lines = require('../utils/callLines'); // eslint-disable-line global-require
     const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '') || null;
     const out = await lines.startCall(b.line, { agent: own.phone, to: person.mobile, ref: `${audience}:${person.id}`.slice(0, 120), callbackBase: base });
