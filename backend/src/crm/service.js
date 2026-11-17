@@ -442,6 +442,8 @@ async function moveDeal(user, id, { stage, lostReason } = {}) {
   // Won -> the CRM raises its own invoice (never fail the Won if that errors). founder 2026-11-13.
   let invoice = null;
   if (stage === 'Won') { try { invoice = await createInvoiceForDeal(user, saved); } catch (e) { console.error('[crm] invoice on Won:', e.message); } } // eslint-disable-line no-console
+  // one of OUR products sold (HRMS / ATS / Omni-Channel): onboarding follow-ups and the renewal reminder (crm/productSales.js)
+  if (stage === 'Won') await require('./productSales').onWon(row.id).catch(() => {}); // eslint-disable-line global-require
   return okBody({ ok: true, deal: saved, invoice: invoice ? invoiceOut(invoice) : null });
 }
 

@@ -95,4 +95,7 @@ router.post('/proposal/:token', express.urlencoded({ extended: false, limit: '2k
   }
 });
 
+// OUR PRODUCTS: the lead's demo page and the AI meeting room (routes/crmProductPages.js, crm/productSales.js)
+router.use(require('./crmProductPages')); // eslint-disable-line global-require
+
 module.exports = router;

@@ -9,6 +9,7 @@ import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, Pill, DateField, QuickLog, RecordForm, download } from './crmShared.jsx';
 import CrmCampaigns from './CrmCampaigns.jsx';
 import CrmLeadBoard from './CrmLeadBoard.jsx';
+import { ProductCatalog } from './CrmProducts.jsx';
 
 function ImportLeads({ onClose, onDone }) {
   const { me, toast } = useCrm();
@@ -98,7 +99,7 @@ export default function CrmLeads() {
   const { me, toast, openRecord, version } = useCrm();
   const [sp, setSp] = useSearchParams();
   const setOpen = (o) => openRecord(o.kind, o.id);
-  const [view, setView] = useState(sp.get('tab') === 'campaigns' ? 'campaigns' : 'leads');
+  const [view, setView] = useState(['campaigns', 'products'].includes(sp.get('tab')) ? sp.get('tab') : 'leads');
   const [adding, setAdding] = useState(sp.get('add') === '1');
   const [importing, setImporting] = useState(false);
   const [rows, setRows] = useState(null);
@@ -143,9 +144,10 @@ export default function CrmLeads() {
         </div>
       </div>
       <div className="tabs" role="tablist">
-        {[['leads', 'Leads'], ['campaigns', 'Campaigns']].map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={view === k} className={`tab${view === k ? ' active' : ''}`} onClick={() => setView(k)} onKeyDown={(e) => { if (e.key === 'Enter') setView(k); }}>{l}</div>)}
+        {[['leads', 'Leads'], ['campaigns', 'Campaigns'], ['products', 'Our products']].map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={view === k} className={`tab${view === k ? ' active' : ''}`} onClick={() => setView(k)} onKeyDown={(e) => { if (e.key === 'Enter') setView(k); }}>{l}</div>)}
       </div>
       {view === 'campaigns' && <CrmCampaigns />}
+      {view === 'products' && <ProductCatalog />}
       {view === 'leads' && (<>
       <div className="filter-row">
         <input type="text" placeholder="Search company, person, phone, email, city" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 260 }} aria-label="Search leads" />

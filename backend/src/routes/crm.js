@@ -65,6 +65,14 @@ router.post('/tasks', wrap((req) => CRM.addTask(req.user, req.body || {})));
 router.post('/tasks/:id/done', wrap((req) => CRM.finishTask(req.user, req.params.id, req.body || {})));
 router.post('/tasks/:id/cancel', wrap((req) => SALES.cancelTask(req.user, req.params.id)));
 router.post('/tasks/:id/snooze', wrap((req) => CRM.snoozeTask(req.user, req.params.id, req.body || {})));
+// OUR PRODUCTS (HRMS / ATS / Omni-Channel): the catalogue, a lead's interest, the demo link, the AI meeting (crm/productSales.js)
+const PS = require('../crm/productSales');
+router.get('/products', wrap(async (req) => ({ status: 200, body: { products: await PS.products({ all: String(req.query.all || '') === '1' }) } })));
+router.put('/products/:key', wrap((req) => PS.saveProduct(req.user, req.params.key, req.body || {})));
+router.post('/leads/:id/products', wrap((req) => PS.setLeadProducts(req.user, req.params.id, (req.body || {}).products)));
+router.post('/leads/:id/demo', wrap((req) => PS.demoLink(req.user, req.params.id, req.body || {})));
+router.post('/leads/:id/ai-meeting', wrap((req) => PS.meetingLink(req.user, req.params.id, req.body || {})));
+router.get('/leads/:id/ai-meetings', wrap((req) => PS.meetingsOf(req.user, req.params.id)));
 // the lead pipeline, the website form and the on-screen reminders (crm/sales.js)
 router.post('/leads/:id/stage', wrap((req) => SALES.moveLead(req.user, req.params.id, req.body || {}))); // refused: stages move on their own
 router.post('/leads/:id/reopen', wrap((req) => SALES.reopenLead(req.user, req.params.id))); // the one undo of an automatic Lost

@@ -1,0 +1,407 @@
+// ---------------------------------------------------------------------------
+// SELLING OUR OWN PRODUCTS - HRMS, ATS, OMNI-CHANNEL (founder 2026-11-17: "naa products ni sale cheyyali ... lead vasthey, first sample demo
+// chupinchali, vallu ok ithey meeting conduct cheyyali, ahh meeting antha ai cheyyali, lead ki vunna doubts ni ai clarify cheyyali, lead ok
+// anukuntey, qualify chestham, akkadi nunchi remaining process antha jaragaali" + the demo video: "lead yokka req ni batti vundali").
+//
+//   PRODUCTS     CrmProduct: name, one line, what it is, features, plans (price only when the founder writes one), the demo video (a file of
+//                that product's own part, or a link), questions & answers for the AI. Seeded with HRMS, ATS and Omni-Channel.
+//   INTEREST     CrmLead.products: which of them the lead wants ("HRMS", "ATS,OMNI" ...).
+//   DEMO         a signed link per lead + the products they want: a page with each product's own video and features. Opened / played /
+//                "I'm interested" / "Talk to a person" are written on the lead's timeline; "I'm interested" opens the AI meeting.
+//   AI MEETING   a signed meeting link: the AI greets, walks through the product (agenda from its features and plans) and answers the
+//                lead's questions by text or voice - only from what is written here; never a price that is not written, never a
+//                discount. Every line is kept. At the end the lead says Yes / Need time / Not for us, and the AI writes the summary,
+//                the open questions and a readiness score (interest, budget, decision maker, need, timeline).
+//   QUALIFY      Yes (or a strong score) -> the lead moves to Qualified (crm/sales.js autoStage, "Meeting held"), the owner gets a bell
+//                and a follow-up with the open questions; Need time -> a follow-up in 7 days; Not for us -> Lost with the reason.
+//   AFTER WON    onWon(): onboarding follow-ups (set up the account, training, go-live check) and the renewal reminder 30 days before
+//                a year is up. The proposal -> negotiation -> won -> invoice steps are the CRM's own (crm/extra.js, crm/service.js).
+// Raw tables, created on first use (no Prisma migration).
+// ---------------------------------------------------------------------------
+const crypto = require('crypto');
+const path = require('path');
+const fs = require('fs');
+const prisma = require('../db');
+const S = require('./service');
+
+const PRODUCT_KEYS = ['HRMS', 'ATS', 'OMNI'];
+const SEED = [
+  {
+    key: 'HRMS', name: 'TeamLink HRMS', sort: 1,
+    tagline: 'Every employee, attendance, leave and payroll in one place.',
+    about: 'TeamLink HRMS runs the people side of a company: the employee record from joining to exit, attendance (biometric devices, web punch, shifts and weekly offs), leave with approvals, payroll with payslips, assets, onboarding and exit checklists, and a desktop work-monitoring agent. Every employee has a self-service login; HR, team leads and managers see their own teams.',
+    features: ['Employee records, documents and history from joining to exit', 'Attendance from biometric devices and web punch, shifts, weekly breaks and late marks', 'Leave types, balances and approvals by team lead and HR', 'Payroll with payslips and statutory deductions', 'Onboarding and exit checklists, offer and joining letters', 'Assets and stationery given to each employee', 'Work monitoring agent: apps and sites used, active and idle time (never mail content)', 'Self-service login for every employee, role-based access for HR, TL and managers', 'Reports and Excel exports for every module'],
+    faq: '',
+  },
+  {
+    key: 'ATS', name: 'TeamLink ATS', sort: 2,
+    tagline: 'Recruitment from requirement to joining, with AI screening and AI interviews.',
+    about: 'TeamLink ATS runs recruitment end to end: client and internal requirements, job posting to the company job portal, website and job boards, candidates with duplicate checks, AI resume screening and AI video interviews, the full pipeline (recruiter, team lead, client manager, client), interview calendar, offers and joining, invoices for placements, and reports for every recruiter, team lead and client. Each role sees only its own work.',
+    features: ['Client and internal requirements with approvals and recruiter assignment', 'Job portal, careers page and Google Jobs posting; one-click posting to Naukri, Shine, Indeed, LinkedIn and others', 'Candidate database with duplicate detection, resume parsing and source tracking', 'Fit score against each requirement, AI interview with photo verification and recording', 'Pipeline with stage owners: recruiter, team lead, client manager, client', 'Interview calendar, feedback per round, offers, joining and replacement tracking', 'Client portal for shortlisting and feedback', 'WhatsApp, SMS and email to candidates, automatic stage messages', 'Recruiter, team and client reports, targets and Excel exports'],
+    faq: '',
+  },
+  {
+    key: 'OMNI', name: 'TeamLink Omni-Channel', sort: 3,
+    tagline: 'WhatsApp, SMS, email and social media from one screen, with AI marketing.',
+    about: 'TeamLink Omni-Channel brings a company\'s customer messaging into one place: WhatsApp Business (several numbers), SMS, email campaigns, and social media posting (Facebook, Instagram, LinkedIn, Threads), with templates, a shared inbox of replies, opt-out handling, delivery reports and AI Marketing that plans and writes campaigns.',
+    features: ['WhatsApp Business inbox and campaigns on several numbers', 'SMS with DLT templates and delivery reports', 'Email campaigns with unsubscribe handling', 'Social media posting to Facebook, Instagram, LinkedIn and Threads', 'AI Marketing: plans, writes and schedules campaigns', 'Templates, contact lists and opt-out across every channel', 'Reports: sent, delivered, read, replied'],
+    faq: '',
+  },
+];
+const PLAN_NAMES = ['Starter', 'Growth', 'Enterprise'];
+
+// ---- storage ----------------------------------------------------------------------------------------------------------------
+let READY = null;
+function ensure() {
+  if (!READY) {
+    READY = (async () => {
+      await require('./schema').ensure(); // eslint-disable-line global-require
+      await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "CrmProduct" ("id" TEXT PRIMARY KEY, "key" TEXT NOT NULL UNIQUE, "name" TEXT NOT NULL, "tagline" TEXT,
+        "about" TEXT, "features" TEXT, "plans" TEXT, "faq" TEXT, "videoFile" TEXT, "videoUrl" TEXT, "demoUrl" TEXT, "active" INTEGER NOT NULL DEFAULT 1,
+        "sort" INTEGER, "updatedAt" TEXT)`);
+      await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "CrmAiMeeting" ("id" TEXT PRIMARY KEY, "leadId" TEXT NOT NULL, "products" TEXT, "startedAt" TEXT,
+        "endedAt" TEXT, "transcript" TEXT, "decision" TEXT, "summary" TEXT, "score" INTEGER, "status" TEXT NOT NULL DEFAULT 'Open', "createdAt" TEXT NOT NULL)`);
+      await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "CrmAiMeeting_lead" ON "CrmAiMeeting" ("leadId","createdAt")');
+      await prisma.$executeRawUnsafe('ALTER TABLE "CrmLead" ADD COLUMN "products" TEXT').catch((e) => { if (!/duplicate column/i.test(e.message)) throw e; });
+      for (const p of SEED) {
+        // eslint-disable-next-line no-await-in-loop
+        await prisma.$executeRawUnsafe('INSERT OR IGNORE INTO "CrmProduct" ("id","key","name","tagline","about","features","plans","faq","active","sort","updatedAt") VALUES (?,?,?,?,?,?,?,?,1,?,?)',
+          `prod_${p.key.toLowerCase()}`, p.key, p.name, p.tagline, p.about, JSON.stringify(p.features), JSON.stringify(PLAN_NAMES.map((n) => ({ name: n, price: '', unit: 'per user / month', includes: '' }))), p.faq, p.sort, new Date().toISOString());
+        // the product's own clip (HRMS.mp4 / ATS.mp4 / OMNI.mp4 in the demo folder) is used by itself once it is there
+        // eslint-disable-next-line no-await-in-loop
+        try { if (fs.existsSync(path.join(VIDEO_DIR(), `${p.key}.mp4`))) await prisma.$executeRawUnsafe('UPDATE "CrmProduct" SET "videoFile" = ? WHERE "key" = ? AND "videoFile" IS NULL', `${p.key}.mp4`, p.key); } catch { /* no clip yet */ }
+      }
+    })().catch((e) => { READY = null; throw e; });
+  }
+  return READY;
+}
+const parse = (s, d) => { try { const v = JSON.parse(s); return v == null ? d : v; } catch { return d; } };
+const shape = (r) => (r ? { ...r, active: !!r.active, features: parse(r.features, []), plans: parse(r.plans, []), hasVideo: !!(r.videoFile || r.videoUrl) } : null);
+async function products({ all = false } = {}) {
+  await ensure();
+  const rows = await prisma.$queryRawUnsafe(`SELECT * FROM "CrmProduct" ${all ? '' : 'WHERE "active" = 1'} ORDER BY "sort", "name"`);
+  return rows.map(shape);
+}
+async function productsByKeys(keys) {
+  const all = await products();
+  const want = (keys || []).map((k) => String(k).toUpperCase());
+  return all.filter((p) => want.includes(p.key));
+}
+const keysOf = (v) => [...new Set(String(v || '').split(/[\s,]+/).map((k) => k.trim().toUpperCase()).filter(Boolean))];
+
+// ---- managers edit the catalogue ------------------------------------------------------------------------------------------
+const isManager = (user) => ['admin', 'tl'].includes(S.roleOf(user));
+async function saveProduct(user, key, body = {}) {
+  if (!isManager(user)) return S.fail(403, 'Only a Sales manager or an Admin can change the products.');
+  await ensure();
+  const [cur] = await prisma.$queryRawUnsafe('SELECT * FROM "CrmProduct" WHERE "key" = ?', String(key).toUpperCase());
+  if (!cur) return S.fail(404, 'No such product.');
+  const t = (v, n) => (v == null ? undefined : String(v).trim().slice(0, n));
+  const next = {
+    name: t(body.name, 120) || cur.name,
+    tagline: t(body.tagline, 300) ?? cur.tagline,
+    about: t(body.about, 4000) ?? cur.about,
+    features: Array.isArray(body.features) ? JSON.stringify(body.features.map((x) => String(x).trim().slice(0, 300)).filter(Boolean).slice(0, 30)) : cur.features,
+    plans: Array.isArray(body.plans) ? JSON.stringify(body.plans.slice(0, 6).map((p) => ({ name: String(p.name || '').slice(0, 60), price: String(p.price || '').slice(0, 60), unit: String(p.unit || '').slice(0, 60), includes: String(p.includes || '').slice(0, 600) })).filter((p) => p.name)) : cur.plans,
+    faq: t(body.faq, 8000) ?? cur.faq,
+    videoUrl: t(body.videoUrl, 500) ?? cur.videoUrl,
+    demoUrl: t(body.demoUrl, 500) ?? cur.demoUrl,
+    active: body.active === undefined ? cur.active : (body.active ? 1 : 0),
+  };
+  if (next.videoUrl && !/^https:\/\//i.test(next.videoUrl)) return S.fail(400, 'The video link must start with https://');
+  if (next.demoUrl && !/^https:\/\//i.test(next.demoUrl)) return S.fail(400, 'The demo link must start with https://');
+  await prisma.$executeRawUnsafe('UPDATE "CrmProduct" SET "name"=?,"tagline"=?,"about"=?,"features"=?,"plans"=?,"faq"=?,"videoUrl"=?,"demoUrl"=?,"active"=?,"updatedAt"=? WHERE "key"=?',
+    next.name, next.tagline, next.about, next.features, next.plans, next.faq, next.videoUrl || null, next.demoUrl || null, next.active, new Date().toISOString(), cur.key);
+  await S.audit(user, 'CRM product updated', 'CrmProduct', cur.id, next.name);
+  return S.okBody({ ok: true, product: shape((await prisma.$queryRawUnsafe('SELECT * FROM "CrmProduct" WHERE "key" = ?', cur.key))[0]) });
+}
+// the product's own part of the demo video, kept on the server (founder 2026-11-17: one video per product)
+const VIDEO_DIR = () => process.env.CRM_DEMO_DIR || path.join(require('../utils/attachments').uploadDir(), 'crm-demo'); // eslint-disable-line global-require
+function videoPathOf(p) {
+  if (!p || !p.videoFile) return null;
+  const f = path.join(VIDEO_DIR(), path.basename(p.videoFile));
+  return fs.existsSync(f) ? f : null;
+}
+async function setVideoFile(key, fileName) {
+  await ensure();
+  await prisma.$executeRawUnsafe('UPDATE "CrmProduct" SET "videoFile" = ?, "updatedAt" = ? WHERE "key" = ?', fileName, new Date().toISOString(), String(key).toUpperCase());
+}
+
+// ---- the lead's interest ----------------------------------------------------------------------------------------------------
+async function leadFor(user, id, { edit = false } = {}) {
+  await ensure();
+  const r = S.roleOf(user);
+  const row = await S.getRow('lead', id);
+  if (!row || !(edit ? S.canEditRow(user, r, row) : S.canSeeRow(user, r, row))) return { error: S.fail(404, 'This lead is not there, or it is not yours.') };
+  return { row, r };
+}
+async function setLeadProducts(user, id, keys) {
+  const { row, error } = await leadFor(user, id, { edit: true });
+  if (error) return error;
+  const clean = keysOf(Array.isArray(keys) ? keys.join(',') : keys).filter((k) => PRODUCT_KEYS.includes(k));
+  await S.update('CrmLead', row.id, { products: clean.join(',') || null, updatedAt: new Date().toISOString() });
+  return S.okBody({ ok: true, products: clean });
+}
+
+// ---- signed links (demo / meeting) ------------------------------------------------------------------------------------------
+const key = () => crypto.createHash('sha256').update(`${process.env.JWT_SECRET || 'teamlink'}:crm-product-links-v1`).digest();
+const sig = (s) => crypto.createHmac('sha256', key()).update(s).digest('base64url').slice(0, 24);
+function makeToken(kind, leadId, products, days = 30, extra = '') {
+  const body = Buffer.from(JSON.stringify({ k: kind, l: leadId, p: products, e: Math.floor(Date.now() / 1000) + days * 86400, x: extra })).toString('base64url');
+  return `${body}.${sig(body)}`;
+}
+function readToken(token, kind) {
+  const [b, s] = String(token || '').split('.');
+  if (!b || !s || sig(b) !== s) return null;
+  let v = null; try { v = JSON.parse(Buffer.from(b, 'base64url').toString('utf8')); } catch { return null; }
+  if (!v || v.k !== kind || !v.l || v.e < Date.now() / 1000) return null;
+  return v;
+}
+const siteBase = () => String(process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || 'https://teamlink.teamlinks.in').replace(/\/+$/, '');
+const demoUrlOf = (t) => `${siteBase()}/api/crm-public/demo/${t}`;
+const meetUrlOf = (t) => `${siteBase()}/api/crm-public/meet/${t}`;
+
+async function note(leadId, accountId, kind, subject, text) {
+  const now = new Date().toISOString();
+  await S.insert('CrmActivity', { id: S.newId('act'), kind, subject: String(subject).slice(0, 200), note: text ? String(text).slice(0, 4000) : null, at: now, leadId, accountId: accountId || null, byId: null, byName: 'AI sales assistant', createdAt: now });
+  await S.update('CrmLead', leadId, { updatedAt: now });
+}
+async function bellOwner(lead, title, message) {
+  if (!lead.ownerId) return;
+  try { await require('../utils/notify').notifyUsers([lead.ownerId], { title, message: `${message} Open: /crm/leads?open=lead:${lead.id}` }); } catch { /* the timeline still has it */ } // eslint-disable-line global-require
+}
+async function followUp(lead, title, days) {
+  const due = new Date(Date.now() + 5.5 * 3600000 + days * 86400000).toISOString().slice(0, 10);
+  const now = new Date().toISOString();
+  await S.insert('CrmTask', { id: S.newId('task'), title: String(title).slice(0, 200), dueDate: due, status: 'Open', leadId: lead.id || null, accountId: lead.accountId || null, dealId: lead.dealId || null, ownerId: lead.ownerId || null, ownerName: lead.ownerName || null, createdById: lead.ownerId || null, createdAt: now, updatedAt: now });
+}
+
+// ---- the demo ------------------------------------------------------------------------------------------------------------------
+async function demoLink(user, id, body = {}) {
+  const { row, error } = await leadFor(user, id, { edit: true });
+  if (error) return error;
+  const want = keysOf((body.products && [].concat(body.products).join(',')) || row.products).filter((k) => PRODUCT_KEYS.includes(k));
+  if (!want.length) return S.fail(400, 'Pick which product the lead wants (HRMS, ATS, Omni-Channel) first.');
+  if (!row.products) await S.update('CrmLead', row.id, { products: want.join(',') });
+  const url = demoUrlOf(makeToken('demo', row.id, want));
+  const names = (await productsByKeys(want)).map((p) => p.name).join(', ');
+  const channel = String(body.channel || 'link');
+  const text = `Hello ${row.contactName || ''},\n\nHere is a short demo of ${names}: ${url}\n\nWatch it when it suits you. If it looks right for ${row.company || 'you'}, press "I'm interested" on that page and our AI assistant will walk you through it and answer your questions straight away.\n\nTeamLink`.replace('Hello ,', 'Hello,');
+  let sent = null;
+  if (channel === 'email') {
+    if (!row.email) return S.fail(400, 'This lead has no email address.');
+    const r = await require('../utils/mailer').sendMail({ to: row.email, subject: `Your ${names} demo`, text, useEmployeeFrom: false, fromName: 'TeamLink' }).catch((e) => ({ ok: false, error: e.message })); // eslint-disable-line global-require
+    sent = r && r.ok !== false ? 'email' : null;
+    if (!sent) return S.fail(502, `The email could not be sent: ${(r && r.error) || 'mail is not set up'}.`);
+  }
+  const wa = row.phone ? `https://wa.me/91${String(row.phone).replace(/\D/g, '').slice(-10)}?text=${encodeURIComponent(text)}` : null;
+  await note(row.id, row.accountId, channel === 'email' ? 'email' : 'note', `Demo ${sent ? 'sent by email' : 'link made'}: ${names}`, url);
+  if (sent) await require('./sales').autoStage(row.id, { kind: 'email' }).catch(() => null); // eslint-disable-line global-require
+  return S.okBody({ ok: true, url, whatsappUrl: wa, text, sent });
+}
+async function demoForToken(token) {
+  const v = readToken(token, 'demo');
+  if (!v) return null;
+  await ensure();
+  const lead = await S.getRow('lead', v.l);
+  if (!lead) return null;
+  return { lead, products: await productsByKeys(v.p), keys: v.p };
+}
+// what the lead did on the demo page -> the timeline (and the owner, for the strong signals)
+async function demoEvent(token, kind, extra = {}) {
+  const d = await demoForToken(token);
+  if (!d) return { error: 'This link has expired.' };
+  const names = d.products.map((p) => p.name).join(', ');
+  const words = { open: `Demo opened: ${names}`, play: `Demo video played: ${extra.product || names}`, interested: `Interested after the demo: ${names}`, person: 'Asked to talk to a person (from the demo)', later: 'Will decide later (from the demo)' }[kind];
+  if (!words) return { error: 'unknown' };
+  // one "opened" per hour is enough
+  if (kind === 'open') {
+    const recent = await prisma.$queryRawUnsafe('SELECT COUNT(*) AS n FROM "CrmActivity" WHERE "leadId" = ? AND "subject" = ? AND "at" > ?', d.lead.id, words, new Date(Date.now() - 3600000).toISOString());
+    if (Number(recent[0].n)) return { ok: true };
+  }
+  await note(d.lead.id, d.lead.accountId, 'note', words, extra.seconds ? `Watched about ${Math.round(extra.seconds / 60)} min` : null);
+  if (kind === 'interested') {
+    await require('./sales').autoStage(d.lead.id, { kind: 'whatsapp' }).catch(() => null); // eslint-disable-line global-require
+    await bellOwner(d.lead, `🎬 ${d.lead.company || 'A lead'} liked the demo`, `${d.lead.contactName || 'The lead'} pressed "I'm interested" on the ${names} demo and is starting the AI meeting.`);
+    return { ok: true, meetUrl: meetUrlOf(makeToken('meet', d.lead.id, d.keys, 30)) };
+  }
+  if (kind === 'person') {
+    await bellOwner(d.lead, `📞 ${d.lead.company || 'A lead'} wants to talk to a person`, `${d.lead.contactName || 'The lead'} asked for a call after the ${names} demo.`);
+    await followUp(d.lead, `Call ${d.lead.contactName || d.lead.company}: asked for a person after the demo`, 0);
+  }
+  return { ok: true };
+}
+
+// ---- the AI meeting ----------------------------------------------------------------------------------------------------------
+async function meetingLink(user, id, body = {}) {
+  const { row, error } = await leadFor(user, id, { edit: true });
+  if (error) return error;
+  const want = keysOf((body.products && [].concat(body.products).join(',')) || row.products).filter((k) => PRODUCT_KEYS.includes(k));
+  if (!want.length) return S.fail(400, 'Pick which product the lead wants first.');
+  const url = meetUrlOf(makeToken('meet', row.id, want, 30));
+  await note(row.id, row.accountId, 'note', 'AI meeting link made', url);
+  return S.okBody({ ok: true, url });
+}
+async function meetingFor(token) {
+  const v = readToken(token, 'meet');
+  if (!v) return null;
+  await ensure();
+  const lead = await S.getRow('lead', v.l);
+  if (!lead) return null;
+  const prods = await productsByKeys(v.p);
+  // one open meeting per link (the same link opened again continues it)
+  const mid = `aim_${crypto.createHash('sha1').update(token).digest('hex').slice(0, 20)}`;
+  let [m] = await prisma.$queryRawUnsafe('SELECT * FROM "CrmAiMeeting" WHERE "id" = ?', mid);
+  if (!m) {
+    const now = new Date().toISOString();
+    const greet = greeting(lead, prods);
+    await prisma.$executeRawUnsafe('INSERT INTO "CrmAiMeeting" ("id","leadId","products","startedAt","transcript","status","createdAt") VALUES (?,?,?,?,?,?,?)',
+      mid, lead.id, v.p.join(','), now, JSON.stringify([{ who: 'ai', text: greet, at: now }]), 'Open', now);
+    await note(lead.id, lead.accountId, 'meeting', `AI meeting started: ${prods.map((p) => p.name).join(', ')}`, null);
+    await bellOwner(lead, `🤖 ${lead.company || 'A lead'} is in the AI meeting now`, `${lead.contactName || 'The lead'} joined the AI meeting about ${prods.map((p) => p.name).join(', ')}.`);
+    [m] = await prisma.$queryRawUnsafe('SELECT * FROM "CrmAiMeeting" WHERE "id" = ?', mid);
+  }
+  return { lead, products: prods, meeting: { ...m, transcript: parse(m.transcript, []) } };
+}
+function greeting(lead, prods) {
+  const names = prods.map((p) => p.name).join(' and ');
+  return `Hello${lead.contactName ? ` ${String(lead.contactName).split(' ')[0]}` : ''}, I am TeamLink's AI assistant. Thank you for your interest in ${names}. I will walk you through what it does and answer any question you have - type it, or press the microphone and speak. The slides on the side show the main points. What would you like to know first?`;
+}
+function knowledge(prods) {
+  return prods.map((p) => {
+    const plans = (p.plans || []).filter((x) => x.name).map((x) => `- ${x.name}: ${x.price ? `${x.price} ${x.unit || ''}`.trim() : 'price on request (a person will quote)'}${x.includes ? ` - ${x.includes}` : ''}`).join('\n');
+    return `PRODUCT: ${p.name}\n${p.tagline || ''}\nWHAT IT IS: ${p.about || ''}\nFEATURES:\n${(p.features || []).map((f) => `- ${f}`).join('\n')}\nPLANS:\n${plans || '- price on request'}\n${p.faq ? `QUESTIONS AND ANSWERS:\n${p.faq}` : ''}`;
+  }).join('\n\n');
+}
+const MONEY = /(₹|rs\.?|inr|rupees?|\$|usd|\b\d[\d,]*\s*(\/|per)\s*(user|month|year|employee))/i;
+// never a price or a number that is not in what the managers wrote; never a discount or a promise
+function guardReply(reply, known) {
+  let r = String(reply || '').trim().slice(0, 1200);
+  if (MONEY.test(r)) {
+    const plain = String(known || '').replace(/,/g, '');
+    const nums = (r.match(/\d[\d,]*(\.\d+)?/g) || []).map((n) => n.replace(/,/g, '')).filter((n) => n.length >= 2);
+    if (nums.some((n) => !plain.includes(n))) r = 'The exact price depends on the number of users and the plan. Our team will send you a quote - I have noted that you asked.';
+  }
+  if (/discount|free of cost|guarantee|we promise/i.test(r)) r = r.replace(/[^.]*\b(discount|free of cost|guarantee|we promise)\b[^.]*\.?/gi, '').trim() || 'Pricing terms are confirmed by our team in the proposal.';
+  return r;
+}
+async function meetingSay(token, text) {
+  const m = await meetingFor(token);
+  if (!m) return { error: 'This meeting link has expired. Ask us for a new one.' };
+  if (m.meeting.status !== 'Open') return { error: 'This meeting has ended. Thank you!' };
+  const q = String(text || '').trim().slice(0, 1000);
+  if (!q) return { error: 'Type or say your question.' };
+  const tr = m.meeting.transcript;
+  if (tr.length > 120) return { error: 'This meeting is long already - please press "End the meeting" and our team will follow up.' };
+  const now = new Date().toISOString();
+  tr.push({ who: 'lead', text: q, at: now });
+  const kn = knowledge(m.products);
+  let out = null;
+  try {
+    const AI = require('../utils/ai'); // eslint-disable-line global-require
+    const system = `You are TeamLink's AI sales assistant in a live product meeting with ${m.lead.contactName || 'a prospect'} from ${m.lead.company || 'a company'}. You are an AI and say so if asked.\nAnswer ONLY from the facts below. Be warm, clear and short (at most 90 words), in the language the person writes in. If the facts do not answer the question, say you will have the team confirm it, and set "unanswered": true. Never invent a price, number, client name, integration or date; never offer a discount. When it fits, end with one short question to understand their needs (team size, what they use today, timeline, who decides).\nReply ONLY as JSON: {"reply": "...", "unanswered": true|false, "wantsHuman": true|false}.\n\nFACTS:\n${kn}`;
+    const history = tr.slice(-16).map((x) => ({ role: x.who === 'ai' ? 'assistant' : 'user', content: x.text }));
+    out = await AI.chatJson(system, history, { maxTokens: 500 });
+  } catch (e) { out = null; }
+  let reply; let unanswered = false; let wantsHuman = false;
+  if (out && typeof out.reply === 'string' && out.reply.trim()) {
+    reply = guardReply(out.reply, kn); unanswered = !!out.unanswered; wantsHuman = !!out.wantsHuman;
+  } else {
+    // no model: the closest written answer, else a promise that a person answers
+    const hit = faqMatch(m.products, q);
+    reply = hit || 'Thank you - I have noted your question and our team will answer it. Meanwhile, the slides on the side show the main features and plans.';
+    unanswered = !hit;
+  }
+  tr.push({ who: 'ai', text: reply, at: new Date().toISOString(), unanswered, wantsHuman });
+  await prisma.$executeRawUnsafe('UPDATE "CrmAiMeeting" SET "transcript" = ? WHERE "id" = ?', JSON.stringify(tr), m.meeting.id);
+  if (wantsHuman) await bellOwner(m.lead, `🙋 ${m.lead.company || 'A lead'} wants a person in the AI meeting`, `${m.lead.contactName || 'The lead'} asked for a person: "${q.slice(0, 120)}"`);
+  return { ok: true, reply, unanswered };
+}
+function faqMatch(prods, q) {
+  const words = String(q).toLowerCase().match(/[a-z]{4,}/g) || [];
+  let best = null; let bestN = 0;
+  prods.forEach((p) => {
+    String(p.faq || '').split(/\n(?=q[:.)]|\d+[.)])/i).forEach((block) => {
+      const n = words.filter((w) => block.toLowerCase().includes(w)).length;
+      if (n > bestN) { bestN = n; best = block; }
+    });
+    (p.features || []).forEach((f) => { const n = words.filter((w) => f.toLowerCase().includes(w)).length; if (n > bestN) { bestN = n; best = `Yes - ${p.name}: ${f}.`; } });
+  });
+  return bestN >= 2 ? String(best).replace(/^q[:.)]?\s*/i, '').slice(0, 600) : null;
+}
+const DECISIONS = { yes: 'Yes, I want to go ahead', later: 'I need some time', no: 'Not for us right now' };
+async function meetingEnd(token, decision) {
+  const m = await meetingFor(token);
+  if (!m) return { error: 'This meeting link has expired.' };
+  if (m.meeting.status !== 'Open') return { ok: true, already: true };
+  const d = DECISIONS[decision] ? decision : 'later';
+  const tr = m.meeting.transcript;
+  const asked = tr.filter((x) => x.who === 'lead').map((x) => x.text);
+  const open = tr.filter((x, i) => x.who === 'ai' && x.unanswered && tr[i - 1] && tr[i - 1].who === 'lead').map((x, i, arr) => x && tr[tr.indexOf(x) - 1].text);
+  let sum = null;
+  try {
+    const AI = require('../utils/ai'); // eslint-disable-line global-require
+    sum = await AI.chatJson('Summarise this sales meeting for the sales owner. Reply ONLY as JSON: {"summary": "3-5 short lines", "interest": "high|medium|low", "budget": "what was said or unknown", "authority": "who decides or unknown", "need": "the need in a line or unknown", "timeline": "when or unknown", "objections": ["..."], "nextStep": "one line"}', [{ role: 'user', content: tr.map((x) => `${x.who === 'ai' ? 'AI' : 'LEAD'}: ${x.text}`).join('\n').slice(-12000) }], { maxTokens: 600 });
+  } catch { sum = null; }
+  const known = (v) => v && !/^unknown$/i.test(String(v).trim());
+  const interest = d === 'yes' ? 'high' : d === 'no' ? 'low' : ((sum && sum.interest) || (asked.length >= 3 ? 'medium' : 'low'));
+  const score = Math.min(100, (interest === 'high' ? 40 : interest === 'medium' ? 20 : 0) + (sum && known(sum.budget) ? 15 : 0) + (sum && known(sum.authority) ? 15 : 0) + (sum && known(sum.need) ? 15 : 0) + (sum && known(sum.timeline) ? 15 : 0) + (d === 'yes' ? 20 : 0));
+  const summary = {
+    decision: DECISIONS[d], interest, score, questions: asked.length, openQuestions: open,
+    text: (sum && sum.summary) || `${asked.length} question(s) asked. The lead said: ${DECISIONS[d]}.`,
+    budget: sum && sum.budget, authority: sum && sum.authority, need: sum && sum.need, timeline: sum && sum.timeline, objections: (sum && sum.objections) || [], nextStep: sum && sum.nextStep,
+  };
+  const now = new Date().toISOString();
+  await prisma.$executeRawUnsafe('UPDATE "CrmAiMeeting" SET "endedAt" = ?, "decision" = ?, "summary" = ?, "score" = ?, "status" = ? WHERE "id" = ?', now, d, JSON.stringify(summary), score, 'Ended', m.meeting.id);
+  const names = m.products.map((p) => p.name).join(', ');
+  const lines = [`Decision: ${DECISIONS[d]} · readiness ${score}/100 · interest ${interest}`, summary.text, summary.need ? `Need: ${summary.need}` : '', summary.budget ? `Budget: ${summary.budget}` : '', summary.authority ? `Decides: ${summary.authority}` : '', summary.timeline ? `Timeline: ${summary.timeline}` : '', open.length ? `Open questions for the team:\n- ${open.join('\n- ')}` : ''].filter(Boolean).join('\n');
+  // the meeting itself on the timeline; the stage follows (crm/sales.js autoStage)
+  const S2 = require('./sales'); // eslint-disable-line global-require
+  await S.insert('CrmActivity', { id: S.newId('act'), kind: 'meeting', subject: `AI meeting held: ${names}`, note: lines.slice(0, 4000), at: now, leadId: m.lead.id, accountId: m.lead.accountId || null, byId: null, byName: 'AI sales assistant', createdAt: now });
+  if (d === 'yes' || (d === 'later' && score >= 60)) {
+    await S2.autoStage(m.lead.id, { kind: 'meeting', outcome: 'Meeting held' }).catch(() => null);
+    await followUp(m.lead, `${m.lead.company || 'Lead'} is ready: send the proposal for ${names}${open.length ? ' (answer the open questions)' : ''}`, 1);
+    await bellOwner(m.lead, `✅ ${m.lead.company || 'A lead'} qualified in the AI meeting`, `${DECISIONS[d]}. Readiness ${score}/100. ${open.length} open question(s).`);
+  } else if (d === 'later') {
+    await S2.autoStage(m.lead.id, { kind: 'meeting' }).catch(() => null);
+    await followUp(m.lead, `Follow up ${m.lead.company || 'the lead'} after the AI meeting (${names})`, 7);
+    await bellOwner(m.lead, `🕐 ${m.lead.company || 'A lead'} needs time`, `After the AI meeting: ${DECISIONS[d]}. Readiness ${score}/100.`);
+  } else {
+    await S2.autoStage(m.lead.id, { kind: 'meeting', outcome: 'Not interested' }).catch(() => null);
+    await bellOwner(m.lead, `❌ ${m.lead.company || 'A lead'} said not for now`, `After the AI meeting about ${names}.`);
+  }
+  return { ok: true, decision: d, score };
+}
+async function meetingsOf(user, id) {
+  const { row, error } = await leadFor(user, id);
+  if (error) return error;
+  await ensure();
+  const rows = await prisma.$queryRawUnsafe('SELECT * FROM "CrmAiMeeting" WHERE "leadId" = ? ORDER BY "createdAt" DESC', row.id);
+  return S.okBody({ meetings: rows.map((x) => ({ ...x, transcript: parse(x.transcript, []), summary: parse(x.summary, null) })), products: keysOf(row.products) });
+}
+
+// ---- after Won: onboarding and the renewal --------------------------------------------------------------------------------
+async function onWon(dealId) {
+  try {
+    await ensure();
+    const deal = await S.getRow('deal', dealId);
+    if (!deal) return;
+    const [lead] = await prisma.$queryRawUnsafe('SELECT * FROM "CrmLead" WHERE "dealId" = ? LIMIT 1', dealId);
+    const keys = keysOf(lead && lead.products);
+    if (!keys.length) return; // not one of our software products
+    const names = (await productsByKeys(keys)).map((p) => p.name).join(', ');
+    const already = await prisma.$queryRawUnsafe('SELECT COUNT(*) AS n FROM "CrmTask" WHERE "dealId" = ? AND "title" LIKE ?', dealId, 'Onboarding:%');
+    if (Number(already[0].n)) return;
+    const base = { ...lead, dealId, ownerId: deal.ownerId || (lead && lead.ownerId), ownerName: deal.ownerName || (lead && lead.ownerName) };
+    await followUp(base, `Onboarding: set up the ${names} account and the admin login`, 1);
+    await followUp(base, `Onboarding: training session for the team (${names})`, 5);
+    await followUp(base, `Onboarding: go-live check and first-week review (${names})`, 14);
+    await followUp(base, `Renewal: ${names} subscription renews in 30 days - confirm users and plan`, 335);
+    await note(lead.id, lead.accountId, 'note', `Won: onboarding and the renewal reminder are planned (${names})`, null);
+  } catch { /* the deal is won anyway */ }
+}
+
+module.exports = {
+  PRODUCT_KEYS, ensure, products, saveProduct, setLeadProducts, demoLink, demoForToken, demoEvent, meetingLink, meetingFor, meetingSay, meetingEnd,
+  meetingsOf, onWon, videoPathOf, setVideoFile, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
+};

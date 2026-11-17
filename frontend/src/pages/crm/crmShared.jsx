@@ -13,6 +13,7 @@ import { DoneDialog, REMIND_WORDS } from './CrmFollowups.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { TicketList } from './CrmSupport.jsx'; // eslint-disable-line import/no-cycle
 import CrmContactDialog, { ContactPanel } from './CrmContact.jsx'; // eslint-disable-line import/no-cycle
+import { ProductSellBox } from './CrmProducts.jsx'; // eslint-disable-line import/no-cycle
 
 export const CrmCtx = createContext(null);
 export const useCrm = () => useContext(CrmCtx);
@@ -1052,7 +1053,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
       ['Next follow-up', nextTask ? <span style={{ color: nextTask.dueDate < today ? 'var(--red)' : undefined, fontWeight: nextTask.dueDate <= today ? 600 : undefined }}>{nextTask.dueDate === today ? 'Today' : dateOf(nextTask.dueDate)} · {nextTask.title}</span> : 'None set'],
       ['Last touched', lastAct ? `${dateTimeOf(lastAct.at)}${lastAct.byName ? ` · ${lastAct.byName}` : ''}` : 'Never'],
     ].filter(([, v]) => v);
-    const tabs = [['overview', 'Overview'], ['activities', `Activities (${(d.activities || []).length})`], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice']] : []), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ['notes', 'Notes']];
+    const tabs = [['overview', 'Overview'], ...(kind === 'lead' ? [['products', 'Products & demo']] : []), ['activities', `Activities (${(d.activities || []).length})`], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice']] : []), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ['notes', 'Notes']];
     const kindPill = kind === 'lead' ? row.status : kind === 'deal' ? row.stage : row.kind;
     body = (
       <>
@@ -1164,6 +1165,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
             <Timeline activities={d.activities || []} />
           </>
         )}
+        {tab === 'products' && kind === 'lead' && <ProductSellBox lead={row} canEdit={d.canEdit} onChanged={changed} />}
         {tab === 'followups' && <TaskList tasks={d.tasks || []} link={link} onChanged={changed} canEdit={d.canEdit} />}
         {tab === 'proposals' && kind === 'deal' && <ProposalBox dealId={row.id} onChanged={changed} />}
         {tab === 'invoice' && kind === 'deal' && <InvoiceBox deal={row} onChanged={changed} />}
