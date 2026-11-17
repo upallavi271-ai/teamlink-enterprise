@@ -268,7 +268,7 @@ async function loadWorld(appWhere, reqWhere, today) {
   const idIn = (part) => ({ applicationId: { in: part } });
   // eslint-disable-next-line global-require
   const W = require('./workers');
-  const FU_SELECT = { applicationId: true, ownerUserId: true, ownerName: true, ownerPositionCode: true, tlUserId: true, tlName: true, bdeUserId: true, bdeName: true, createdAt: true };
+  const FU_SELECT = { applicationId: true, ownerUserId: true, ownerName: true, ownerRole: true, ownerPositionCode: true, tlUserId: true, tlName: true, bdeUserId: true, bdeName: true, createdAt: true };
   const EV_SELECT = { applicationId: true, fromStage: true, toStage: true, actorUserId: true, actorName: true, actorRole: true, actorPositionCode: true, actorSide: true, createdAt: true };
   const [clients, cands, dir, fus, evs] = await Promise.all([
     chunked(clientIds, (part) => prisma.client.findMany({ where: { id: { in: part } }, select: { id: true, name: true, bdeOwner: true, ownerDepartment: true } })),

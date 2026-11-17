@@ -167,7 +167,7 @@ const APP_SELECT = {
   },
   followUps: {
     select: {
-      ownerUserId: true, ownerName: true, ownerPositionCode: true, tlUserId: true, tlName: true,
+      ownerUserId: true, ownerName: true, ownerRole: true, ownerPositionCode: true, tlUserId: true, tlName: true,
       bdeUserId: true, bdeName: true, createdAt: true,
     },
     orderBy: { createdAt: 'asc' },

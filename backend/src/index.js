@@ -164,6 +164,8 @@ app.use(express.json());
 app.use(require('./utils/readLog').middleware());
 // FAILED REQUESTS (utils/apiErrors.js): every 500+ answer recorded and grouped; 5 of the same in 10 minutes -> a bell to Super Admins.
 app.use(require('./utils/apiErrors').middleware());
+// OVERLOAD PROTECTION (utils/heavyGate.js): the big list / report requests take turns (12 at a time) instead of all at once.
+app.use(require('./utils/heavyGate').middleware());
 
 app.get('/api/health', (req, res) => res.json(process.env.COMPANY_KEY ? { ok: true, company: String(process.env.COMPANY_KEY).trim().toLowerCase() } : { ok: true }));
 // SUPER ADMIN "VIEW AS" IS READ-ONLY (utils/viewAs.js): a View-as token may

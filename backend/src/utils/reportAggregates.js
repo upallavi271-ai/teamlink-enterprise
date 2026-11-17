@@ -84,7 +84,7 @@ const EVENT_SELECT = {
   reasonCategory: true, reasonDetail: true,
 };
 const FU_SELECT = {
-  id: true, applicationId: true, ownerUserId: true, ownerName: true, ownerPositionCode: true,
+  id: true, applicationId: true, ownerUserId: true, ownerName: true, ownerRole: true, ownerPositionCode: true,
   tlName: true, bdeUserId: true, bdeName: true, dueDate: true, completedAt: true, createdAt: true,
   escalationLevel: true, outcome: true, nextAction: true, tlUserId: true,
 };

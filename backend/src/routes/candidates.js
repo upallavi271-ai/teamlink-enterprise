@@ -2269,7 +2269,7 @@ async function loadInScope(req, res) {
       const ids = apps.map((a) => a.id);
       const [evRows, fuRows, dir, HO] = await Promise.all([
         prisma.applicationStageEvent.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, fromStage: true, toStage: true, actorUserId: true, actorName: true, actorRole: true, createdAt: true }, orderBy: { createdAt: 'asc' } }),
-        prisma.applicationFollowUp.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, ownerUserId: true, ownerName: true, createdAt: true, completedAt: true }, orderBy: { createdAt: 'asc' } }),
+        prisma.applicationFollowUp.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, ownerUserId: true, ownerName: true, ownerRole: true, createdAt: true, completedAt: true }, orderBy: { createdAt: 'asc' } }),
         W.loadDirectory(),
         require('../utils/handover').handoversFor(ids), // eslint-disable-line global-require
       ]);

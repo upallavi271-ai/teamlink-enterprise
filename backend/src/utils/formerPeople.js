@@ -110,7 +110,7 @@ async function readAllApplications() {
     }),
     prisma.applicationFollowUp.findMany({
       select: {
-        applicationId: true, ownerUserId: true, ownerName: true, ownerPositionCode: true, tlUserId: true, tlName: true,
+        applicationId: true, ownerUserId: true, ownerName: true, ownerRole: true, ownerPositionCode: true, tlUserId: true, tlName: true,
         bdeUserId: true, bdeName: true, createdAt: true, lastContactedAt: true,
       },
       orderBy: { createdAt: 'asc' },

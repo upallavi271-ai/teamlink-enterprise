@@ -62,6 +62,9 @@ const isPlaceholderName = (n) => {
 // A same-day tenure is a stub (a seat typed in and corrected the same day).
 const realTenure = (a) => !(a.toDate && a.toDate <= a.fromDate);
 
+// a follow-up owned by the BDE / TL side (the automatic client-step tasks) is not the recruiter's work
+const NOT_RECRUITER_FU = (f) => ['BDE', 'TL'].includes(roleOfLabel(f && f.ownerRole));
+
 function roleOfLabel(r) {
   const k = String(r || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
   if (k === 'RECRUITER') return 'RECRUITER';
@@ -297,7 +300,9 @@ function attribute(req, fus, evs, person) {
   const evOf = (role) => lastOf(evs, (e) => roleOfLabel(e.actorRole) === role && realActor(e));
   let recruiter = null;
   let seat = null;
-  const ownerFu = lastOf(fus, (x) => x.ownerName || x.ownerUserId);
+  // the RECRUITER's follow-up: the automatic client-step tasks ("Chase the client for feedback", owner role BDE / TL) name the BDE,
+  // who must not become the candidate's recruiter or take the recruiter's joining (lifecycle test 2026-11-17)
+  const ownerFu = lastOf(fus, (x) => (x.ownerName || x.ownerUserId) && !NOT_RECRUITER_FU(x));
   if (ownerFu) {
     recruiter = person(ownerFu.ownerUserId, ownerFu.ownerName);
     seat = clean(ownerFu.ownerPositionCode) || r.positionCode || null;
@@ -351,7 +356,7 @@ function creditAt(req, fus, evs, person, at, handovers = null) {
   const before = (x) => x && x.createdAt && new Date(x.createdAt).getTime() <= t;
   for (let i = (fus || []).length - 1; i >= 0; i -= 1) {
     const f = fus[i];
-    if (before(f) && (f.ownerUserId || f.ownerName)) { const p = person(f.ownerUserId, f.ownerName); if (started(p)) return p; }
+    if (before(f) && (f.ownerUserId || f.ownerName) && !NOT_RECRUITER_FU(f)) { const p = person(f.ownerUserId, f.ownerName); if (started(p)) return p; }
   }
   for (let i = (evs || []).length - 1; i >= 0; i -= 1) {
     const e = evs[i];
@@ -359,7 +364,7 @@ function creditAt(req, fus, evs, person, at, handovers = null) {
   }
   // imported history: the trackers' follow-ups were written on the import day, after the step - the FIRST one still names
   // who worked the person (the same name the old rule used, so one person is not split in two)
-  const first = (fus || []).find((f) => f.ownerUserId || f.ownerName);
+  const first = (fus || []).find((f) => (f.ownerUserId || f.ownerName) && !NOT_RECRUITER_FU(f));
   if (first) { const p = person(first.ownerUserId, first.ownerName); if (started(p)) return p; }
   const r = req || {};
   if (r.recruiterId) { const p = person(r.recruiterId); if (started(p)) return p; }
@@ -458,7 +463,7 @@ const ATTR_SELECT = {
   },
   followUps: {
     select: {
-      ownerUserId: true, ownerName: true, ownerPositionCode: true, tlUserId: true, tlName: true,
+      ownerUserId: true, ownerName: true, ownerRole: true, ownerPositionCode: true, tlUserId: true, tlName: true,
       bdeUserId: true, bdeName: true, createdAt: true,
     },
     orderBy: { createdAt: 'asc' },
