@@ -29,7 +29,7 @@ async function sipReady() {
   const { c, problems } = sipSettings();
   if (problems.length) return { ok: false, reason: `SIP is not connected yet: ${problems[0]}` };
   void c;
-  return { ok: true, note: 'Your own phone rings first; when you pick up, the person is dialled.' };
+  return { ok: true, from: c.callerId || null, note: 'Your own phone rings first; when you pick up, the person is dialled.' };
 }
 async function sipStart({ agent, to }) {
   const { c, problems, dialNumber } = sipSettings();
@@ -67,7 +67,7 @@ const NOT_SET = (name) => `${name} is not connected yet. An Admin sets it up in 
 const LINES = [
   {
     id: 'api', label: 'API', supports: ['Calls', 'Messages'],
-    async ready() { const c = await gw.callConfig().catch(() => ({ configured: false, reason: 'not connected' })); return { ok: !!c.configured, reason: c.configured ? '' : (c.reason || 'The calling API is not connected.'), recording: !!c.record }; },
+    async ready() { const c = await gw.callConfig().catch(() => ({ configured: false, reason: 'not connected' })); return { ok: !!c.configured, reason: c.configured ? '' : (c.reason || 'The calling API is not connected.'), recording: !!c.record, from: c.callerId || null }; },
     start: (args) => gw.startCall(args),
   },
   {
@@ -89,7 +89,7 @@ async function list() {
   for (const l of LINES) {
     // eslint-disable-next-line no-await-in-loop
     const r = await l.ready();
-    out.push({ id: l.id, label: l.label, text: wordsOf(l), supports: l.supports, ready: !!r.ok, reason: r.ok ? null : r.reason, note: r.note || null, recording: !!r.recording });
+    out.push({ id: l.id, label: l.label, text: wordsOf(l), supports: l.supports, ready: !!r.ok, reason: r.ok ? null : r.reason, note: r.note || null, recording: !!r.recording, from: r.from || null });
   }
   const first = out.find((x) => x.ready);
   return { lines: out, default: first ? first.id : 'api' };

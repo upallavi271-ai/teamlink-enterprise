@@ -170,8 +170,10 @@ router.post('/client-reviews/:id/extend', mustWrite, wrap(async (req, res) => se
 // Nothing is sent until a person clicks "Send on WhatsApp" (tell). The public side is routes/mkMeetingPublic.js.
 router.get('/meetings', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').list(req.user)))); // eslint-disable-line global-require
 router.put('/meetings/settings', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').saveSettings(req.user, req.body || {})))); // eslint-disable-line global-require
+router.put('/meetings/alert', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').saveAlert(req.user, req.body || {})))); // eslint-disable-line global-require
 router.post('/meetings', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').create(req.user, req.body || {})))); // eslint-disable-line global-require
 router.post('/meetings/:id/tell', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').tell(req.user, req.params.id, req.body || {}, siteOf(req))))); // eslint-disable-line global-require
+router.post('/meetings/:id/call', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').call(req.user, req.params.id, req.body || {})))); // eslint-disable-line global-require
 router.delete('/meetings/:id', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/meeting').remove(req.user, req.params.id)))); // eslint-disable-line global-require
 
 // ---- AI clips (marketing/aiclips.js): a real-motion clip from Google Veo; paid, so the cost must be confirmed and a daily limit applies ------------------

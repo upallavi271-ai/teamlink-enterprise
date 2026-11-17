@@ -20,10 +20,17 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS "${TABLE}" ("id" TEXT NOT NULL PRIMARY KEY, "name" TEXT, "phone" TEXT, "language" TEXT NOT NULL DEFAULT 'en', "note" TEXT, "source" TEXT NOT NULL DEFAULT 'invite', "createdById" TEXT, "createdByName" TEXT, "department" TEXT, "sentAt" DATETIME, "sentVia" TEXT, "views" INTEGER NOT NULL DEFAULT 0, "firstOpenedAt" DATETIME, "lastOpenedAt" DATETIME, "startedAt" DATETIME, "lastSlide" INTEGER NOT NULL DEFAULT 0, "maxSlide" INTEGER NOT NULL DEFAULT 0, "finishedAt" DATETIME, "questions" TEXT NOT NULL DEFAULT '[]', "choice" TEXT, "callbackWindow" TEXT, "handoverAt" DATETIME, "expiresAt" DATETIME NOT NULL DEFAULT 0, "createdAt" DATETIME NOT NULL DEFAULT 0, "updatedAt" DATETIME NOT NULL DEFAULT 0, "deletedAt" DATETIME)`,
   `CREATE INDEX IF NOT EXISTS "${TABLE}_by" ON "${TABLE}"("createdById", "createdAt")`,
 ];
+// columns added after the first release (an older table gets them here): who called the client and when, and when the team was last alerted
+const LATER = [['calledAt', 'DATETIME'], ['calledByName', 'TEXT'], ['callLine', 'TEXT'], ['alertedAt', 'DATETIME']];
 let okAt = 0;
 async function ensure() {
   if (okAt && Date.now() - okAt < 600000) return true;
-  try { for (const sql of DDL) await S.run(sql); okAt = Date.now(); return true; } catch (e) { console.error('[omni-mk] meeting schema:', e.message); return false; } // eslint-disable-line no-await-in-loop, no-console
+  try {
+    for (const sql of DDL) await S.run(sql); // eslint-disable-line no-await-in-loop
+    const have = new Set((await S.q(`PRAGMA table_info("${TABLE}")`)).map((c) => c.name));
+    for (const [name, type] of LATER) if (!have.has(name)) await S.run(`ALTER TABLE "${TABLE}" ADD COLUMN "${name}" ${type}`); // eslint-disable-line no-await-in-loop
+    okAt = Date.now(); return true;
+  } catch (e) { console.error('[omni-mk] meeting schema:', e.message); return false; } // eslint-disable-line no-console
 }
 
 const DAY = 86400000;
@@ -48,24 +55,68 @@ const core = () => require('../utils/messagingCore'); // eslint-disable-line glo
 
 // ---- the "first ten customers" spots (the team keeps the number: nothing counts them yet) ---------------------------------------------------------
 const SETTINGS_KEY = 'omni.mk.meeting';
-async function readSettings() {
+async function readAll() {
   try {
     const prisma = require('../db'); // eslint-disable-line global-require
     const row = await prisma.appSetting.findUnique({ where: { key: SETTINGS_KEY } });
     const v = row ? JSON.parse(row.value) : {};
     const n = Math.floor(Number(v.spotsLeft));
-    return { spotsLeft: Number.isFinite(n) && n >= 0 ? Math.min(n, 99) : 10 };
-  } catch { return { spotsLeft: 10 }; }
+    return { spotsLeft: Number.isFinite(n) && n >= 0 ? Math.min(n, 99) : 10, alerts: v.alerts && typeof v.alerts === 'object' ? v.alerts : {} };
+  } catch { return { spotsLeft: 10, alerts: {} }; }
 }
+const writeAll = async (all) => {
+  const prisma = require('../db'); // eslint-disable-line global-require
+  const value = JSON.stringify({ spotsLeft: all.spotsLeft, alerts: all.alerts || {} });
+  await prisma.appSetting.upsert({ where: { key: SETTINGS_KEY }, update: { value }, create: { key: SETTINGS_KEY, value } });
+};
+const readSettings = async () => ({ spotsLeft: (await readAll()).spotsLeft }); // what the client page and the team page may see (never the alert numbers)
 async function saveSettings(u, b = {}) {
   if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not change this.', status: 403 };
   const n = Math.floor(Number(b.spotsLeft));
   if (!Number.isFinite(n) || n < 0 || n > 99) return { error: 'Type how many "first ten customers" spots are left, from 0 to 99.', status: 400 };
-  const prisma = require('../db'); // eslint-disable-line global-require
-  const value = JSON.stringify({ spotsLeft: n });
-  await prisma.appSetting.upsert({ where: { key: SETTINGS_KEY }, update: { value }, create: { key: SETTINGS_KEY, value } });
+  const all = await readAll();
+  await writeAll({ ...all, spotsLeft: n });
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: plans meeting, first-ten spots left set', entity: TABLE, entityId: 'settings', toValue: String(n) });
   return { ok: n > 0 ? `${n} spot${n === 1 ? '' : 's'} left: the assistant says the first-ten offer.` : 'No spots left: the assistant no longer says the first-ten offer.', settings: { spotsLeft: n } };
+}
+
+// ---- WhatsApp ALERT to the team when a client asks for a call (founder 2026-11-17: "i have to get notifications ... every time i cant check and call") --------------------------------------
+// Each person sets their own number once (Plans meeting page). The bell in TeamLink always rings; this puts the same words on their WhatsApp (the company number, as a template message), so they
+// can call at once. A link a person made alerts that person; a page opened with no link (nobody made it) alerts everyone who switched alerts on. One alert per client every 3 minutes.
+const myAlert = async (u) => { const a = (await readAll()).alerts[u.id]; return { on: !!(a && a.on), phone: (a && a.phone) || '', phoneMasked: a && a.phone ? core().maskMobile(a.phone) : '' }; };
+async function saveAlert(u, b = {}) {
+  if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not change this.', status: 403 };
+  const on = b.on === true;
+  const typed = S.clip(b.phone, 30);
+  const all = await readAll();
+  const prev = all.alerts[u.id] || {};
+  if (on || typed) {
+    const phone = typed || prev.phone || '';
+    if (!phone || !core().normalizeMobile(phone).ok) return { error: 'Type your own WhatsApp number (the one that should get the alert).', status: 400 };
+    all.alerts[u.id] = { on, phone, name: S.clip(u.name, 80) };
+  } else all.alerts[u.id] = { ...prev, on: false };
+  await writeAll(all);
+  await logAudit({ userId: u.id, actorName: u.name, action: `Omni-Channel AI Marketing: plans meeting, WhatsApp alert for call requests ${on ? 'switched on' : 'switched off'}`, entity: TABLE, entityId: 'alert', toValue: all.alerts[u.id].phone ? core().maskMobile(all.alerts[u.id].phone) : '' });
+  return { ok: on ? `Done. When a client asks for a call, TeamLink sends a WhatsApp to ${core().maskMobile(all.alerts[u.id].phone)}.` : 'Alerts are off. The bell in TeamLink still rings.', alert: await myAlert(u) };
+}
+async function alertWhatsApp(r, text) {
+  const all = await readAll();
+  const ids = r.createdById ? [r.createdById] : Object.keys(all.alerts);
+  const numbers = new Map();
+  ids.forEach((id) => { const a = all.alerts[id]; const nm = a && a.on && a.phone ? core().normalizeMobile(a.phone) : null; if (nm && nm.ok) numbers.set(nm.e164, a.phone); });
+  if (!numbers.size) return { sent: 0 };
+  if (r.alertedAt && Date.now() - S.num(r.alertedAt) < 180000) return { sent: 0, skipped: 'recently alerted' };
+  const messaging = require('../utils/messaging'); // eslint-disable-line global-require
+  const line = String(text).replace(/\s+/g, ' ').trim().slice(0, 700); // one line: a template value cannot hold new lines
+  let sent = 0;
+  for (const e164 of numbers.keys()) {
+    try { // eslint-disable-line no-await-in-loop
+      const res = await messaging.send('WhatsApp', { to: e164, kind: 'bulk', text: line, vars: [line], meta: { audience: 'employees', purpose: 'AI Marketing: plans meeting, call request alert', module: 'AI Marketing' } }); // eslint-disable-line no-await-in-loop
+      if (res && res.ok) sent += 1; else console.error('[omni-mk] meeting alert not sent:', String((res && (res.error || res.outcome)) || 'refused').slice(0, 120)); // eslint-disable-line no-console
+    } catch (e) { console.error('[omni-mk] meeting alert:', e.message); } // eslint-disable-line no-console
+  }
+  if (sent) await S.run(`UPDATE "${TABLE}" SET alertedAt = ?, updatedAt = ? WHERE id = ?`, Date.now(), Date.now(), r.id);
+  return { sent };
 }
 
 // ---- shapes ---------------------------------------------------------------------------------------------------------------------------------------
@@ -81,6 +132,7 @@ const full = (r) => ({
   views: S.num(r.views), firstOpenedAt: r.firstOpenedAt ? S.num(r.firstOpenedAt) : null, lastOpenedAt: r.lastOpenedAt ? S.num(r.lastOpenedAt) : null,
   lastSlide: S.num(r.lastSlide), maxSlide: S.num(r.maxSlide), slides: SLIDES, finishedAt: r.finishedAt ? S.num(r.finishedAt) : null,
   questions: parse(r.questions, []), choice: r.choice || '', callbackWindow: r.callbackWindow || '', handoverAt: r.handoverAt ? S.num(r.handoverAt) : null, interest: interestOf(r),
+  calledAt: r.calledAt ? S.num(r.calledAt) : null, calledByName: r.calledByName || '', callLine: r.callLine || '',
 });
 const row = async (id) => (await S.q(`SELECT * FROM "${TABLE}" WHERE id = ? AND deletedAt IS NULL`, String(id || '')))[0] || null;
 const visible = (u, r) => A.isAdmin(u) || r.createdById === u.id;
@@ -98,7 +150,8 @@ async function list(u) {
   const rows = (await S.q(`SELECT * FROM "${TABLE}" WHERE deletedAt IS NULL ORDER BY createdAt DESC LIMIT 300`)).filter((r) => visible(u, r));
   const items = rows.map(full);
   const count = (k) => items.filter((x) => x.interest === k).length;
-  return { items, counts: { total: items.length, hot: count('Hot'), warm: count('Warm'), cold: count('Cold'), notOpened: count('Not opened') }, settings: await readSettings() };
+  const waiting = items.filter((x) => x.handoverAt && (!x.calledAt || x.calledAt < x.handoverAt)).length; // asked for a call and nobody has called since
+  return { items, counts: { total: items.length, hot: count('Hot'), warm: count('Warm'), cold: count('Cold'), notOpened: count('Not opened'), waiting }, settings: await readSettings(), alert: await myAlert(u) };
 }
 async function create(u, b = {}) {
   if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not use this page.', status: 403 };
@@ -118,6 +171,27 @@ async function remove(u, id) {
   await S.run(`UPDATE "${TABLE}" SET deletedAt = ?, updatedAt = ? WHERE id = ?`, Date.now(), Date.now(), g.r.id);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: plans meeting link removed', entity: TABLE, entityId: g.r.id, toValue: g.r.name || '' });
   return { ok: 'Removed. The link does not open any more.' };
+}
+
+// CALL the client through TeamLink (founder 2026-11-17: "the client should get the call from my selected no. only" and "call button there itself"): the same click-to-call the CRM uses
+// (utils/callLines.js). The line picked decides the number the CLIENT sees (the company's ExoPhone on the API line, the company SIM on the SIP line). The caller's own phone (employee profile)
+// rings first; when picked up, TeamLink dials the client. One person per click, never automatic.
+async function call(u, id, b = {}) {
+  const g = await mine(u, id); if (g.error) return g;
+  const r = g.r;
+  if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not call from it.', status: 403 };
+  const nm = r.phone ? core().normalizeMobile(r.phone) : null;
+  if (!nm || !nm.ok) return { error: 'This meeting has no usable phone number yet. Type the client\'s number first (open the row).', status: 400 };
+  const own = await require('../utils/messageChannels').ownContact(u); // eslint-disable-line global-require
+  if (!own.phone) return { error: 'Your own phone number is not on your employee profile, so TeamLink does not know which phone to ring first. Add it on your profile, or use "Call from this phone".', status: 409 };
+  const lines = require('../utils/callLines'); // eslint-disable-line global-require
+  const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '') || null;
+  const out = await lines.startCall(b.line, { agent: own.phone, to: r.phone, ref: `mkmeeting:${r.id}`.slice(0, 120), callbackBase: base });
+  const detail = out.ok ? `Call through TeamLink started on the ${String(out.line || b.line || 'api').toUpperCase()} line: ${own.name}'s phone rings first${out.sandbox ? ' (test server, no real call)' : ''}.` : `Call did not start: ${out.error}`;
+  await logAudit({ userId: u.id, actorName: u.name, action: out.ok ? 'Omni-Channel AI Marketing: plans meeting, call to the client started' : 'Omni-Channel AI Marketing: plans meeting, call to the client failed', entity: TABLE, entityId: r.id, toValue: `${r.name || 'client'} (${core().maskMobile(nm.e164)}): ${detail}`.slice(0, 300) });
+  if (!out.ok) return { error: out.error, status: out.notConfigured ? 409 : (out.invalid ? 400 : (out.transient ? 503 : 502)) };
+  await S.run(`UPDATE "${TABLE}" SET calledAt = ?, calledByName = ?, callLine = ?, updatedAt = ? WHERE id = ?`, Date.now(), S.clip(u.name, 80), String(out.line || ''), Date.now(), r.id);
+  return { ok: `Your phone (${own.name}) will ring first. Pick up, and TeamLink then connects ${r.name || 'the client'}.${out.sandbox ? ' (Test server: no real call.)' : ''}`, meeting: full(await row(r.id)) };
 }
 
 // the message a client gets with the link, in their language (the approved WhatsApp template carries it: marketing/clientReview.js does the same)
@@ -225,8 +299,9 @@ async function publicEvent(token, b = {}) {
     const asked = parse(r.questions, []).map((x) => x.q).slice(-3).join('; ');
     const what = { trial: 'wants to start the Rs 999 trial', starter: 'chose the Starter plan', growth: 'chose the Growth plan', premium: 'chose the Premium plan', team: 'asked for a call from the team' }[choice];
     await tellOwner(r, `Plans meeting: ${who({ name })} ${what} (Hot)`, `${who({ name })} (${phone}) ${what}. Call ${WINDOW_WORDS[window]}.${asked ? ` They asked: ${asked}.` : ''} Open AI Marketing > Client projects > Plans meeting.`);
+    await alertWhatsApp(r, `Plans meeting: ${who({ name })} ${what}. Call ${WINDOW_WORDS[window]} on ${phone}.${asked ? ` They asked: ${asked}.` : ''} Open TeamLink > AI Marketing > Client projects > Plans meeting to call them.`);
   } else return { error: 'Unknown event.', status: 400 };
   return { ok: true };
 }
 
-module.exports = { ensure, create, list, remove, tell, saveSettings, readSettings, publicStart, publicView, publicEvent, tokenOf, idOfToken, interestOf, inviteText, SLIDES };
+module.exports = { ensure, create, list, remove, tell, call, saveAlert, myAlert, saveSettings, readSettings, publicStart, publicView, publicEvent, tokenOf, idOfToken, interestOf, inviteText, SLIDES };

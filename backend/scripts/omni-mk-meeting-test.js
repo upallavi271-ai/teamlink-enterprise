@@ -170,6 +170,61 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     check('14e questions that are not about a plan\'s numbers keep their own answer ("can I cancel Growth", "which plan is right for me")', asked('can i cancel growth plan') === null && asked('which plan is right for me') === null && asked('is gst included') === null);
     check('14f the budget bands on slide 6 are the same as the budget answer (4,800 / 11,800 / 23,600)', FE.meetingContent.SLIDES[6].screen.en.join(' ').includes('4,800') && FE.meetingContent.SLIDES[6].screen.en.join(' ').includes('11,800') && FE.meetingContent.SLIDES[6].screen.en.join(' ').includes('23,600') && !/24,000/.test(JSON.stringify(FE.meetingContent.SLIDES[6])));
 
+    // the call button and the WhatsApp alert (founder 2026-11-17). FAKE telephony and WhatsApp here: nothing is dialled or sent.
+    const CL = require(path.join(BACK, 'src/utils/callLines')); const MC = require(path.join(BACK, 'src/utils/messageChannels')); const MG = require(path.join(BACK, 'src/utils/messaging'));
+    const realStart = CL.startCall; const realOwn = MC.ownContact; const realSend = MG.send;
+    const m2 = (await M.create(sa, { name: 'ZZ Call Test', language: 'en' })).meeting;
+    const noPhone = await M.call(sa, m2.id, { line: 'api' });
+    check('15 calling a meeting with no number is refused', noPhone.status === 400 && /phone number/.test(noPhone.error || ''), noPhone);
+    await M.tell(sa, m2.id, { phone: '9123456780' }, '').catch(() => null); // saves nothing without a site; the number is typed below through a handover instead
+    await M.publicEvent(m2.token, { type: 'ask', q: 'hello' });
+    await M.publicEvent(m2.token, { type: 'handover', name: 'ZZ Call Test', phone: '9123456780', window: 'morning' });
+    MC.ownContact = async () => ({ phone: null, name: 'Test' });
+    const noOwn = await M.call(sa, m2.id, { line: 'api' });
+    check('15b with no phone on the caller\'s employee profile the call is refused with the reason (and a hint to use "Call from this phone")', noOwn.status === 409 && /employee profile/.test(noOwn.error || '') && /Call from this phone/.test(noOwn.error || ''), noOwn);
+    let asked1 = null;
+    MC.ownContact = async () => ({ phone: '9000000001', name: 'Test Caller' });
+    CL.startCall = async (line, args) => { asked1 = { line, args }; return { ok: true, callSid: 'fake-1', line: line || 'api' }; };
+    const called = await M.call(sa, m2.id, { line: 'sip' });
+    const rowC = (await M.list(sa)).items.find((x) => x.id === m2.id);
+    check('15c a call rings the caller first, dials the client on the picked line, and is saved on the row', !!called.ok && asked1 && asked1.line === 'sip' && asked1.args.agent === '9000000001' && asked1.args.to === '9123456780' && /mkmeeting:/.test(asked1.args.ref) && !!rowC.calledAt && rowC.calledByName === sa.name && rowC.callLine === 'sip', { called, asked1, rowC });
+    check('15d once called after the request, the client no longer counts as waiting for a call', rowC.calledAt >= rowC.handoverAt && (await M.list(sa)).counts.waiting === (await M.list(sa)).items.filter((x) => x.handoverAt && (!x.calledAt || x.calledAt < x.handoverAt)).length);
+    CL.startCall = async () => ({ ok: false, notConfigured: true, error: 'Calling is not connected yet.' });
+    const nc = await M.call(sa, m2.id, { line: 'api' });
+    check('15e a line that is not connected gives its reason, not a crash', nc.status === 409 && /not connected/.test(nc.error || ''), nc);
+    const rowAfter = (await M.list(sa)).items.find((x) => x.id === m2.id);
+    check('15f a failed call does not change who called last', rowAfter.callLine === 'sip');
+    CL.startCall = realStart; MC.ownContact = realOwn;
+
+    // WhatsApp alert
+    const badAlert = await M.saveAlert(sa, { on: true, phone: 'abc' });
+    check('16 an alert needs a real WhatsApp number', badAlert.status === 400, badAlert);
+    const goodAlert = await M.saveAlert(sa, { on: true, phone: '8919239827' });
+    check('16b the alert is saved for this person and shown masked in the message', !!goodAlert.ok && /9827/.test(goodAlert.ok) && !/8919239827/.test(goodAlert.ok) && goodAlert.alert.on === true, goodAlert);
+    check('16c the spots setting keeps the alert when it is saved (and the alert number is never in the public view)', !!(await M.saveSettings(sa, { spotsLeft: 7 })).ok && (await M.myAlert(sa)).on === true && !/8919239827/.test(JSON.stringify(await M.publicView(m2.token))) && !/8919239827/.test(JSON.stringify((await M.list(sa)).settings)));
+    const sentTo = [];
+    MG.send = async (channel, o) => { sentTo.push({ channel, to: o.to, text: o.text, vars: o.vars }); return { ok: true }; };
+    const m3 = (await M.create(sa, { name: 'ZZ Alert Test', phone: '9123456780', language: 'en' })).meeting;
+    await M.publicEvent(m3.token, { type: 'handover', name: 'Ravi', phone: '9123456780', window: 'afternoon' });
+    check('16d a call request sends one WhatsApp to the person who made the link, with the name, the number and when to call, on one line', sentTo.length === 1 && sentTo[0].channel === 'WhatsApp' && sentTo[0].to === '918919239827' && /Ravi/.test(sentTo[0].text) && /9123456780/.test(sentTo[0].text) && /afternoon/.test(sentTo[0].text) && !/\n/.test(sentTo[0].text) && sentTo[0].vars[0] === sentTo[0].text, sentTo);
+    await M.publicEvent(m3.token, { type: 'handover', name: 'Ravi', phone: '9123456780', window: 'afternoon' });
+    check('16e the same client asking again within 3 minutes does not alert again', sentTo.length === 1, sentTo.length);
+    const open2 = await M.publicStart('en');
+    await M.publicEvent(open2.token, { type: 'handover', name: 'Walk-in', phone: '9123456781', window: 'asap' });
+    check('16f a page opened with no link (nobody made it) alerts everyone who switched alerts on', sentTo.length === 2 && sentTo[1].to === '918919239827' && /Walk-in/.test(sentTo[1].text), sentTo);
+    await M.saveAlert(sa, { on: false });
+    const open3 = await M.publicStart('en');
+    await M.publicEvent(open3.token, { type: 'handover', name: 'Nobody', phone: '9123456782', window: 'asap' });
+    check('16g with the alert switched off no WhatsApp goes (the bell still does)', sentTo.length === 2 && (await M.myAlert(sa)).on === false, sentTo.length);
+    MG.send = async () => { throw new Error('WhatsApp down'); };
+    await M.saveAlert(sa, { on: true, phone: '8919239827' });
+    const open4 = await M.publicStart('en');
+    const ev4 = await M.publicEvent(open4.token, { type: 'handover', name: 'Still saved', phone: '9123456783', window: 'asap' });
+    check('16h if the alert cannot be sent the client\'s request is still saved and answered', ev4.ok === true && (await M.list(sa)).items.find((x) => x.id === (M.idOfToken(open4.token))).handoverAt > 0);
+    MG.send = realSend;
+    await M.saveAlert(sa, { on: false });
+    for (const x of [m2, m3]) await M.remove(sa, x.id);
+
     // removing
     const rm = await M.remove(sa, m.id);
     check('11 removing makes the link stop working and leave the list', !!rm.ok && (await M.publicView(m.token)).status === 404 && !(await M.list(sa)).items.find((x) => x.id === m.id), rm);
