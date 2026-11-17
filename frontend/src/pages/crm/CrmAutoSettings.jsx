@@ -88,6 +88,10 @@ function SalesAi() {
       <div className="field"><label>What TeamLink does (the AI says nothing beyond this)</label><textarea rows={4} value={a.about} onChange={(e) => setA({ ...a, about: e.target.value })} /></div>
       <div className="field"><label>What may be said about price (no figure here = the AI never names one)</label><textarea rows={2} value={a.pricing} onChange={(e) => setA({ ...a, pricing: e.target.value })} /></div>
       <div className="field"><label>Questions and answers (optional, one per line: question - answer)</label><textarea rows={4} value={a.faq} onChange={(e) => setA({ ...a, faq: e.target.value })} placeholder="Do you hire for night shifts? - Yes, for IT support and medical roles." /></div>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '4px 0 12px' }}>
+        <input type="checkbox" checked={a.useClaude !== false} onChange={(e) => setA({ ...a, useClaude: e.target.checked })} style={{ width: 'auto', marginTop: 3 }} />
+        <span><b>Use Claude for these replies and the AI meeting</b><span className="small-muted" style={{ display: 'block', fontSize: 12 }}>Fast and natural in English and Telugu; billed by Anthropic per meeting. Off: the server&apos;s own model answers (free, slower, weaker in Telugu). If Claude is not available, the server&apos;s model answers that turn by itself.</span></span>
+      </label>
       <div className="field" style={{ maxWidth: 260 }}><label>AI answers per lead per day (then a person takes over)</label><input type="number" min={1} max={30} value={a.maxPerDay} onChange={(e) => setA({ ...a, maxPerDay: Number(e.target.value) })} /></div>
       <p className="small-muted" style={{ marginTop: 0 }}>Calls are booked at the meeting time and with the meeting link set above. Mail replies need the company mailbox connected in Administration → Integrations.</p>
       <button type="button" className="btn btn-sm" disabled={busy} onClick={() => save()} style={{ marginBottom: 14 }}>Save AI assistant</button>

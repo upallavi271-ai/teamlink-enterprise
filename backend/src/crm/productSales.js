@@ -458,6 +458,24 @@ function readQuestion(q, prods) {
   if (keys.includes('ATS') && !keys.includes('OMNI')) t = t.replace(/\b(ads|ats's|a\.t\.s\.?|80s|eighties)\b/gi, 'ATS');
   return t.replace(/\bteam ?link\b/gi, 'TeamLink');
 }
+// The AI meeting asks Claude itself (founder 2026-11-17: "Yes, use Claude" - fast, natural Telugu) while the rest of TeamLink stays on the
+// local model; CRM > Automatic > AI assistant > "Use Claude" turns it off. Answers at low effort (short, quick), the summary at medium.
+// Any Claude failure (no key / credit, an error, more than 20 s, a refusal) answers that turn another way, so a meeting never stops.
+const CLAUDE = { model: 'claude-opus-5-5', answer: { effort: 'low', timeoutMs: 20000, maxTokens: 400 }, summary: { effort: 'medium', timeoutMs: 60000, maxTokens: 600 } };
+async function askAi(system, history, kind, meta = {}, { localOk = true } = {}) {
+  const AI = require('../utils/ai'); // eslint-disable-line global-require
+  const st = await require('./salesAgent').load().catch(() => ({ useClaude: true })); // eslint-disable-line global-require
+  const c = CLAUDE[kind] || CLAUDE.answer;
+  if (st.useClaude !== false) {
+    try {
+      return await AI.chatJson(system, history, { provider: 'claude', model: CLAUDE.model, effort: c.effort, fallbacks: true, timeoutMs: c.timeoutMs, maxTokens: c.maxTokens, meta });
+    } catch (e) {
+      meta.claudeError = S.clip(`${e.code || ''} ${e.message || e}`.trim(), 160);
+      if (!localOk) throw e;
+    }
+  }
+  return AI.chatJson(system, history, { maxTokens: c.maxTokens, meta });
+}
 const LANGS = { 'en-IN': 'English', 'te-IN': 'Telugu', 'hi-IN': 'Hindi', 'ta-IN': 'Tamil', 'kn-IN': 'Kannada', 'ml-IN': 'Malayalam', 'mr-IN': 'Marathi', 'bn-IN': 'Bengali', 'gu-IN': 'Gujarati' };
 async function meetingSay(token, text, lang) {
   const m = await meetingFor(token);
@@ -482,9 +500,11 @@ async function meetingSay(token, text, lang) {
   let reply = other ? null : faqMatch(m.products, qn, { strong: true });
   if (reply && repeats(reply)) reply = null;
   let unanswered = false; let wantsHuman = false;
+  const meta = reply ? { provider: 'written' } : {};
+  // when Claude cannot answer, a written answer is used before the slow local model
+  const writtenBackup = faqMatch(m.products, qn, { exclude: prevAi ? [prevAi.text] : [] });
   if (!reply) {
     try {
-      const AI = require('../utils/ai'); // eslint-disable-line global-require
       const system = `You are TeamLink's AI sales assistant in a live product meeting with ${m.lead.contactName || 'a prospect'} from ${m.lead.company || 'a company'}. You are an AI and say so if asked.
 Answer EXACTLY the question asked, in 2 to 4 plain sentences (at most 70 words)${other ? `. You MUST write the reply in ${other}, in ${other} script (product names stay in English)` : ', in the language the person writes in'}. Never answer with a list of screens, menus or feature names. If the QUESTIONS AND ANSWERS below cover the question, give that answer in your own words.
 Use ONLY the facts below. Name a job board, app or integration only if the facts name it, and say it works only the way the facts say (if the facts say the team posts by hand, never say automatic or one click). If the facts do not answer the question, say a person from our team will confirm it, and set "unanswered": true. Never invent a price, number, client name or date; never offer a discount. When it fits, end with one short question about their needs (team size, what they use today, timeline, who decides). The person can see their exact price at the end of the meeting.
@@ -495,24 +515,30 @@ ${kn}`;
       const history = tr.slice(-8).map((x) => ({ role: x.who === 'ai' ? 'assistant' : 'user', content: x.text }));
       history[history.length - 1] = { role: 'user', content: `${qn}${other ? `\n(Reply in ${other}.)` : ''}` };
       const tidy = (o) => (o && typeof o.reply === 'string' ? guardClaims(guardReply(o.reply, kn), kn) : '');
-      let out = await AI.chatJson(system, history, { maxTokens: 400 });
+      let out = await askAi(system, history, 'answer', meta, { localOk: !writtenBackup || !!other });
       let r = tidy(out);
       if (bad(r)) {
         // one more try, told what was wrong
         const again = [...history, { role: 'assistant', content: String((out && out.reply) || '').slice(0, 600) }, { role: 'user', content: `That did not answer my question. Answer only this, in 2-4 plain sentences, no list: ${qn}${other ? ` (in ${other})` : ''}` }];
-        out = await AI.chatJson(system, again, { maxTokens: 400 });
+        const meta2 = {};
+        out = await askAi(system, again, 'answer', meta2, { localOk: !writtenBackup || !!other });
         r = tidy(out);
+        meta.retried = true; meta.ms = (meta.ms || 0) + (meta2.ms || 0);
+        meta.inputTokens = (meta.inputTokens || 0) + (meta2.inputTokens || 0); meta.outputTokens = (meta.outputTokens || 0) + (meta2.outputTokens || 0);
+        if (meta2.provider) meta.provider = meta2.provider;
       }
       if (!bad(r)) { reply = r; unanswered = !!out.unanswered; wantsHuman = !!out.wantsHuman; }
-    } catch (e) { /* no model: the written answers below */ }
+    } catch (e) { meta.error = S.clip(e.message, 160); /* no model: the written answers below */ }
   }
   if (!reply) {
     // no usable answer: the closest written answer (not the one just given), else a person will confirm
     const hit = faqMatch(m.products, qn, { exclude: prevAi ? [prevAi.text] : [] });
     reply = hit && !bad(hit) ? hit : NOTED;
     unanswered = reply === NOTED;
+    meta.answeredBy = reply === NOTED ? 'none (a person will confirm)' : 'written';
   }
-  tr.push({ who: 'ai', text: reply, at: new Date().toISOString(), unanswered, wantsHuman });
+  // which provider answered, for the team (never shown to the lead: the meeting page reads only who and text)
+  tr.push({ who: 'ai', text: reply, at: new Date().toISOString(), unanswered, wantsHuman, meta });
   await prisma.$executeRawUnsafe('UPDATE "CrmAiMeeting" SET "transcript" = ? WHERE "id" = ?', JSON.stringify(tr), m.meeting.id);
   if (wantsHuman) await bellOwner(m.lead, `🙋 ${m.lead.company || 'A lead'} wants a person in the AI meeting`, `${m.lead.contactName || 'The lead'} asked for a person: "${q.slice(0, 120)}"`);
   return { ok: true, reply, unanswered };
@@ -564,9 +590,10 @@ async function meetingEnd(token, decision) {
   const asked = tr.filter((x) => x.who === 'lead').map((x) => x.text);
   const open = tr.filter((x, i) => x.who === 'ai' && x.unanswered && tr[i - 1] && tr[i - 1].who === 'lead').map((x, i, arr) => x && tr[tr.indexOf(x) - 1].text);
   let sum = null;
+  let sumMeta = null;
   try {
-    const AI = require('../utils/ai'); // eslint-disable-line global-require
-    sum = await AI.chatJson('Summarise this sales meeting for the sales owner. budget, authority, need and timeline come ONLY from what the LEAD said (never from what the AI said, never our prices); write "unknown" when the lead did not say it. TeamLink gives no discounts in the meeting: never write that a discount is possible. Reply ONLY as JSON: {"summary": "3-5 short lines", "interest": "high|medium|low", "budget": "the lead\'s own words or unknown", "authority": "who decides, as the lead said, or unknown", "need": "the need in a line or unknown", "timeline": "when, as the lead said, or unknown", "objections": ["..."], "nextStep": "one line"}', [{ role: 'user', content: tr.map((x) => `${x.who === 'ai' ? 'AI' : 'LEAD'}: ${x.text}`).join('\n').slice(-12000) }], { maxTokens: 600 });
+    sumMeta = {};
+    sum = await askAi('Summarise this sales meeting for the sales owner. budget, authority, need and timeline come ONLY from what the LEAD said (never from what the AI said, never our prices); write "unknown" when the lead did not say it. TeamLink gives no discounts in the meeting: never write that a discount is possible. Reply ONLY as JSON: {"summary": "3-5 short lines", "interest": "high|medium|low", "budget": "the lead\'s own words or unknown", "authority": "who decides, as the lead said, or unknown", "need": "the need in a line or unknown", "timeline": "when, as the lead said, or unknown", "objections": ["..."], "nextStep": "one line"}', [{ role: 'user', content: tr.map((x) => `${x.who === 'ai' ? 'AI' : 'LEAD'}: ${x.text}`).join('\n').slice(-12000) }], 'summary', sumMeta, { localOk: true });
   } catch { sum = null; }
   // what only the AI said is not the lead's budget / decision maker / timeline; and no "discount possible"
   const leadSaid = asked.join(' ').toLowerCase().replace(/,/g, '');
@@ -585,6 +612,7 @@ async function meetingEnd(token, decision) {
   const score = Math.min(100, (interest === 'high' ? 40 : interest === 'medium' ? 20 : 0) + (sum && known(sum.budget) ? 15 : 0) + (sum && known(sum.authority) ? 15 : 0) + (sum && known(sum.need) ? 15 : 0) + (sum && known(sum.timeline) ? 15 : 0) + (d === 'yes' ? 20 : 0));
   const summary = {
     decision: DECISIONS[d], interest, score, questions: asked.length, openQuestions: open,
+    ai: sumMeta, // which provider wrote the summary (for the team)
     text: (sum && sum.summary) || `${asked.length} question(s) asked. The lead said: ${DECISIONS[d]}.`,
     budget: sum && sum.budget, authority: sum && sum.authority, need: sum && sum.need, timeline: sum && sum.timeline, objections: (sum && sum.objections) || [], nextStep: sum && sum.nextStep,
   };

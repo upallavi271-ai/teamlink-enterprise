@@ -143,6 +143,7 @@ const modelThreads = () => Math.max(1, Number(process.env.OLLAMA_NUM_THREAD) || 
 
 // waitMs: how long THIS call may wait for live AI calls to end (default as above); a screen that must answer inside the web server's 60 seconds passes a few seconds
 async function ollamaChat(systemPrompt, history, { json = false, model: wanted = null, timeoutMs = null, waitMs = null } = {}) {
+  if (TEST && TEST.ollama) return TEST.ollama({ system: systemPrompt, history, json }); // sandbox tests only
   const model = wanted || ollamaModel();
   let res;
   try { await require('../calling/voice/liveLoad').whenQuiet(waitMs != null ? waitMs : (Number(process.env.OLLAMA_WAIT_FOR_CALLS_MS) || 120000)); } catch { /* never blocks */ } // eslint-disable-line global-require
@@ -234,22 +235,52 @@ async function claudeConfig() {
   return cfg;
 }
 
+// The sandbox tests put stand-ins for both providers here (never in a running server: TEST_MODE only)
+let TEST = null;
+function setTestProviders(t) {
+  if (!process.env.TEST_MODE) throw new Error('Test providers are for the sandbox tests only.');
+  TEST = t || null;
+}
+// The server-side refusal fallback (Anthropic re-runs a declined request on another model inside the same call). If the account cannot use
+// it (a 400 that names it), the call is sent again without it, and it is not asked for again until a restart.
+const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+let fallbackUnavailable = false;
+
 // maxTokens: optional, for ONE call that needs a longer answer (AI Marketing writes several versions at once); empty = the Assistant's setting (still never above 4000)
-async function claudeChat(systemPrompt, history, { json = false, model: wanted = null, maxTokens = null } = {}) {
-  const cfg = await claudeConfig();
+// effort: 'low' | 'medium' | 'high' ... (output_config.effort; thinking stays on - Claude Opus 5.5 refuses it off), fallbacks: the refusal fallback,
+// timeoutMs: one try within this time (no retries: the caller has its own fallback), meta: an object filled with provider, model, time and tokens
+async function claudeChat(systemPrompt, history, { json = false, model: wanted = null, maxTokens = null, effort = null, fallbacks = false, timeoutMs = null, meta = null } = {}) {
+  const cfg = TEST && TEST.claude ? { apiKey: 'test', model: 'test' } : await claudeConfig();
+  if (!(TEST && TEST.claude) && require('./aiAgent').creditHeld(cfg.apiKey)) throw new AiError(require('./aiAgent').NO_CREDITS, 503, 'no_credit'); // eslint-disable-line global-require
   const messages = claudeMessages(history);
   if (!messages.length) throw new AiError('Ask a question first.', 400, 'empty');
   const system = json
     ? `${systemPrompt}\n\nRespond with a single JSON object and nothing else — no prose, no code fence.`
     : systemPrompt;
+  const params = {
+    model: wanted || cfg.model,
+    max_tokens: Math.min(Number(maxTokens) || cfg.maxTokens || CLAUDE_MAX_TOKENS, 4000),
+    system,
+    messages,
+    ...(effort ? { output_config: { effort } } : {}),
+  };
+  const useFallbacks = fallbacks && !fallbackUnavailable;
+  const send = (withFallbacks) => {
+    const body = withFallbacks ? { ...params, fallbacks: 'default' } : params;
+    const opts = { ...(timeoutMs ? { timeout: timeoutMs, maxRetries: 0 } : {}), ...(withFallbacks ? { headers: { 'anthropic-beta': FALLBACK_BETA } } : {}) };
+    if (TEST && TEST.claude) return TEST.claude(body, opts);
+    return clientFor(cfg.apiKey).messages.create(body, Object.keys(opts).length ? opts : undefined);
+  };
+  const t0 = Date.now();
   let response;
   try {
-    response = await clientFor(cfg.apiKey).messages.create({
-      model: wanted || cfg.model,
-      max_tokens: Math.min(Number(maxTokens) || cfg.maxTokens || CLAUDE_MAX_TOKENS, 4000),
-      system,
-      messages,
-    });
+    try {
+      response = await send(useFallbacks);
+    } catch (err) {
+      if (!(useFallbacks && err && err.status === 400 && /fallback|beta/i.test(String(err.message || '')))) throw err;
+      fallbackUnavailable = true;
+      response = await send(false);
+    }
   } catch (err) {
     if (err && err.status === 401) {
       rejectedKeyHash = keyHash(cfg.apiKey);
@@ -258,6 +289,13 @@ async function claudeChat(systemPrompt, history, { json = false, model: wanted =
     }
     // apiError() words the provider's failure without the key or the prompt.
     throw new AiError(apiError(err), 502, 'provider');
+  }
+  if (meta) {
+    const u = (response && response.usage) || {};
+    Object.assign(meta, {
+      provider: 'claude', model: (response && response.model) || params.model, effort: effort || null, ms: Date.now() - t0, stopReason: response && response.stop_reason,
+      inputTokens: (Number(u.input_tokens) || 0) + (Number(u.cache_read_input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0), outputTokens: Number(u.output_tokens) || 0,
+    });
   }
   if (response && response.stop_reason === 'refusal') {
     throw new AiError('The model declined to answer that.', 502, 'refusal');
@@ -308,12 +346,23 @@ function refuseWhileViewingAs() {
   }
 }
 
+// One call may ask for Claude itself (opts.provider = 'claude') while the server's own provider stays local (AI_PROVIDER=ollama): the AI
+// meeting and the CRM WhatsApp assistant do (founder 2026-11-17). opts.provider = 'ollama' asks for the local model. Effort and the refusal
+// fallback go to Claude only; the local model ignores them.
+const useClaude = (opts = {}) => (opts.provider === 'claude' ? true : (opts.provider === 'ollama' ? false : provider() === 'claude'));
+
 // Plain text reply.
-async function chat(systemPrompt, history) {
+async function chat(systemPrompt, history, opts = {}) {
   refuseWhileViewingAs();
-  return provider() === 'claude'
-    ? claudeChat(systemPrompt, history)
-    : ollamaChat(systemPrompt, history);
+  return useClaude(opts)
+    ? claudeChat(systemPrompt, history, { model: opts.model, maxTokens: opts.maxTokens, effort: opts.effort, fallbacks: opts.fallbacks, timeoutMs: opts.timeoutMs, meta: opts.meta })
+    : localChat(systemPrompt, history, { timeoutMs: opts.timeoutMs, waitMs: opts.waitMs, meta: opts.meta });
+}
+async function localChat(systemPrompt, history, { json = false, model = null, timeoutMs = null, waitMs = null, meta = null } = {}) {
+  const t0 = Date.now();
+  const text = await ollamaChat(systemPrompt, history, { json, model, timeoutMs, waitMs });
+  if (meta) Object.assign(meta, { provider: 'local', model: model || ollamaModel(), ms: Date.now() - t0 });
+  return text;
 }
 
 // Parsed JSON. An unreadable reply is a clarify result, never a throw — the
@@ -321,9 +370,9 @@ async function chat(systemPrompt, history) {
 // opts: { model, timeoutMs, waitMs } for one call (the WhatsApp agent's own settings; AI Marketing's quick plan); empty = the app's model and time limit.
 async function chatJson(systemPrompt, history, opts = {}) {
   refuseWhileViewingAs();
-  const text = provider() === 'claude'
-    ? await claudeChat(systemPrompt, history, { json: true, model: opts.model, maxTokens: opts.maxTokens })
-    : await ollamaChat(systemPrompt, history, { json: true, model: opts.model, timeoutMs: opts.timeoutMs, waitMs: opts.waitMs });
+  const text = useClaude(opts)
+    ? await claudeChat(systemPrompt, history, { json: true, model: opts.provider === 'claude' ? opts.model : (opts.claudeModel || opts.model), maxTokens: opts.maxTokens, effort: opts.effort, fallbacks: opts.fallbacks, timeoutMs: opts.timeoutMs, meta: opts.meta })
+    : await localChat(systemPrompt, history, { json: true, model: opts.provider === 'claude' ? null : opts.model, timeoutMs: opts.timeoutMs, waitMs: opts.waitMs, meta: opts.meta });
   const parsed = parseJsonLoose(text);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...CLARIFY_UNREADABLE };
   return parsed;
@@ -347,5 +396,5 @@ async function checkStatus() {
 function resetStatusCache() { statusCache = null; }
 
 module.exports = {
-  chat, chatJson, checkStatus, resetStatusCache, provider, parseJsonLoose, AiError, OLLAMA_OFFLINE,
+  chat, chatJson, checkStatus, resetStatusCache, provider, parseJsonLoose, AiError, OLLAMA_OFFLINE, setTestProviders,
 };

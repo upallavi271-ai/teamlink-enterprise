@@ -32,6 +32,7 @@ const DEFAULTS = {
   pricing: 'Our fee depends on the role and the number of positions; our team shares a proposal after a short call.',
   faq: '',
   maxPerDay: 6,
+  useClaude: true, // founder 2026-11-17: these replies and the AI meeting ask Claude (the rest of TeamLink stays on the local model)
 };
 const HOUR = 3600000;
 
@@ -45,6 +46,7 @@ function clean(v = {}) {
     pricing: text(v.pricing == null ? DEFAULTS.pricing : v.pricing, 1500),
     faq: text(v.faq, 4000),
     maxPerDay: Number.isFinite(per) && per >= 1 && per <= 30 ? Math.round(per) : DEFAULTS.maxPerDay,
+    useClaude: v.useClaude !== false,
   };
 }
 async function load() {
@@ -260,7 +262,14 @@ async function respond({ channel, lead, message, subject }, { deps = {}, now = D
   }
   let out;
   try {
-    const chat = deps.chat || ((sys, msgs) => require('../utils/ai').chatJson(sys, msgs)); // eslint-disable-line global-require
+    // Claude at low effort (short replies, quick), with the refusal fallback; any failure answers with the local model instead
+    const chat = deps.chat || (async (sys, msgs) => {
+      const AI = require('../utils/ai'); // eslint-disable-line global-require
+      if (st.useClaude !== false) {
+        try { return await AI.chatJson(sys, msgs, { provider: 'claude', model: 'claude-opus-5-5', effort: 'low', fallbacks: true, timeoutMs: 20000, maxTokens: 500 }); } catch (e) { /* the local model below */ }
+      }
+      return AI.chatJson(sys, msgs);
+    });
     const msgs = await history(lead.id);
     if (!msgs.length || msgs[msgs.length - 1].role !== 'user') msgs.push({ role: 'user', content: S.clip(message, 1500) });
     out = await chat(prompt(st, lead, channel, lead.ownerName, { product, booked: booked ? whenOf(booked) : null }), msgs);
