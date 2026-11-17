@@ -138,6 +138,7 @@ export default function PlansMeetingPage() {
   const fromRef = useRef({ key: '', i: 0 });
   const advRef = useRef(null);
   const recRef = useRef(null);
+  const panelRef = useRef(null);
   const tries = useRef(0);
   const t = T[lang];
 
@@ -205,6 +206,10 @@ export default function PlansMeetingPage() {
     return () => clearTimeout(x);
   }, [stage, wait, panel, last, lang, muted]);
 
+  useEffect(() => { // a panel opens below the slide: bring it into view (on a phone it would be off screen)
+    if (panel && panelRef.current && panelRef.current.scrollIntoView) { try { panelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* old browser */ } }
+  }, [panel]);
+
   const begin = () => {
     try { if (window.speechSynthesis) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.speak(u); } } catch { /* the phone will not speak */ } // eslint-disable-line no-undef
     post({ type: 'start', language: lang });
@@ -254,7 +259,7 @@ export default function PlansMeetingPage() {
   const P = (d && d.brand && d.brand.colors && d.brand.colors.primary) || '#0f766e';
   const S2 = (d && d.brand && d.brand.colors && d.brand.colors.secondary) || '#134e4a';
   const card = { background: '#fff', borderRadius: 16, padding: '18px 16px', boxShadow: '0 1px 8px rgba(0,0,0,.09)', margin: '0 auto 12px', maxWidth: 640, boxSizing: 'border-box' };
-  const page = { minHeight: '100vh', background: '#eef3f1', fontFamily: FONT, color: '#17261f', paddingBottom: 130 };
+  const page = { minHeight: '100vh', background: '#eef3f1', fontFamily: FONT, color: '#17261f', paddingBottom: 215 };
   const btn = (bg, fg = '#fff', extra = {}) => ({ border: 'none', borderRadius: 12, padding: '12px 16px', fontSize: 15, fontWeight: 800, background: bg, color: fg, cursor: 'pointer', fontFamily: 'inherit', ...extra });
   const input = { width: '100%', boxSizing: 'border-box', border: '1px solid #c9d6d0', borderRadius: 10, padding: '11px 12px', font: 'inherit', fontSize: 16 };
   const head = (
@@ -336,7 +341,7 @@ export default function PlansMeetingPage() {
       </div>
 
       {panel === 'ask' ? (
-        <div style={card}>
+        <div style={{ ...card, scrollMarginTop: 8 }} ref={panelRef}>
           <div style={{ fontWeight: 800, marginBottom: 8 }}>{t.ask}</div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }} aria-label={t.chips}>
             {CHIPS.map((id) => { const f = FAQ.find((x) => x.id === id); return f ? <button key={id} type="button" onClick={() => submitQ(f.ask[lang], id)} style={{ ...btn('#e3ebe7', '#17261f'), padding: '8px 12px', fontSize: 14, fontWeight: 700 }}>{f.ask[lang]}</button> : null; })}
@@ -357,7 +362,7 @@ export default function PlansMeetingPage() {
       ) : null}
 
       {panel === 'form' ? (
-        <div style={card}>
+        <div style={{ ...card, scrollMarginTop: 8 }} ref={panelRef}>
           <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 10 }}>{t.formTitle}</div>
           {[['trial', t.optTrial], ['starter', t.optStarter], ['growth', t.optGrowth], ['premium', t.optPremium], ['team', t.optTeam]].map(([k, label]) => (
             <label key={k} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '9px 10px', marginBottom: 6, border: `2px solid ${form.choice === k ? P : '#dbe5e0'}`, borderRadius: 10, fontSize: 16, cursor: 'pointer', background: form.choice === k ? '#f1f9f6' : '#fff' }}>
