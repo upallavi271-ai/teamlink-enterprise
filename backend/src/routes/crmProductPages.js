@@ -28,6 +28,17 @@ const shell = (title, body, script = '') => `<!doctype html><html><head><meta ch
 const expired = (res) => { res.set('Content-Type', 'text/html; charset=utf-8'); return res.status(404).send(shell('Link expired', '<div class="card"><h1>This link has expired</h1><p>Please reply to our message and we will send you a fresh one.</p></div>')); };
 const plansHtml = (p) => { const pl = (p.plans || []).filter((x) => x.name); return pl.length ? `<div class="plans">${pl.map((x) => `<div class="plan"><b>${esc(x.name)}</b><div class="muted">${x.price ? `${esc(x.price)} ${esc(x.unit || '')}` : 'Price on request'}</div>${x.includes ? `<div class="muted">${esc(x.includes)}</div>` : ''}</div>`).join('')}</div>` : ''; };
 
+// the team's own preview from Leads > Our products (crm/productSales.js staffVideoLink, signed for 6 hours)
+router.get('/product-video/:token', async (req, res) => {
+  const v = PS.readToken(req.params.token, 'pv');
+  if (!v) return res.status(404).end();
+  const p = (await PS.products({ all: true }).catch(() => [])).find((x) => x.key === v.p[0]);
+  const file = p && PS.videoPathOf(p);
+  if (!file) return res.status(404).end();
+  noStore(res);
+  return res.sendFile(file, { acceptRanges: true, headers: { 'Content-Type': 'video/mp4' } });
+});
+
 // ---- the demo ----
 router.get('/demo/:token', async (req, res) => {
   const d = await PS.demoForToken(req.params.token).catch(() => null);

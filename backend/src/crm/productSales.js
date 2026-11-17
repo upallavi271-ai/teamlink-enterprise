@@ -153,6 +153,14 @@ function videoPathOf(p) {
   const f = path.join(VIDEO_DIR(), path.basename(p.videoFile));
   return fs.existsSync(f) ? f : null;
 }
+// the team watches a product's clip from Leads > Our products (a <video> cannot send the login, so a link signed for 6 hours)
+async function staffVideoLink(user, key) {
+  await ensure();
+  const [p] = (await products({ all: true })).filter((x) => x.key === String(key).toUpperCase());
+  if (!p) return S.fail(404, 'No such product.');
+  if (!videoPathOf(p) && !p.videoUrl) return S.fail(404, 'This product has no video yet.');
+  return S.okBody({ ok: true, url: p.videoUrl && !videoPathOf(p) ? p.videoUrl : `/api/crm-public/product-video/${makeToken('pv', user.id, [p.key], 0.25)}`, name: p.name });
+}
 async function setVideoFile(key, fileName) {
   await ensure();
   await prisma.$executeRawUnsafe('UPDATE "CrmProduct" SET "videoFile" = ?, "updatedAt" = ? WHERE "key" = ?', fileName, new Date().toISOString(), String(key).toUpperCase());
@@ -434,5 +442,5 @@ async function onWon(dealId) {
 
 module.exports = {
   PRODUCT_KEYS, ensure, products, saveProduct, setLeadProducts, demoLink, demoForToken, demoEvent, meetingLink, meetingFor, meetingSay, meetingEnd,
-  meetingsOf, onWon, videoPathOf, setVideoFile, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
+  meetingsOf, onWon, videoPathOf, setVideoFile, staffVideoLink, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
 };

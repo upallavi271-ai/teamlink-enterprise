@@ -71,6 +71,10 @@ const P = process.pid;
   await PS.setVideoFile('HRMS', 'HRMS.mp4'); await PS.setVideoFile('ATS', 'ATS.mp4');
   const sv = await call('PUT', '/crm/products/HRMS', { plans: [{ name: 'Starter', price: '₹149', unit: 'per employee / month', includes: 'Attendance, leave, payroll' }], faq: 'Q: Does it work with biometric devices?\nA: Yes, eSSL and ZKTeco devices push punches straight into TeamLink attendance.' }, tA);
   check('2 the manager sets the HRMS price and a written answer', sv.status === 200 && sv.body.product.plans[0].price === '₹149' && /eSSL/.test(sv.body.product.faq), sv.body);
+  const w = await call('GET', '/crm/products/HRMS/watch', null, tA);
+  const wv = w.body && w.body.url ? await fetch(BASE + w.body.url, { headers: { Range: 'bytes=0-9' } }) : { status: 0 };
+  const wo = await call('GET', '/crm/products/OMNI/watch', null, tA);
+  check('2b the team watches the HRMS clip from Our products (signed link, streams); Omni has no clip here: 404', w.status === 200 && wv.status === 206 && wo.status === 404 && (await fetch(`${API}/crm-public/product-video/bad.token`)).status === 404, [w.status, w.body, wv.status, wo.status]);
   check('3 a video link that is not https is refused', (await call('PUT', '/crm/products/ATS', { videoUrl: 'http://x.example/v.mp4' }, tA)).status === 400);
   check('4 an unknown product is 404', (await call('PUT', '/crm/products/ERP', { name: 'x' }, tA)).status === 404);
 

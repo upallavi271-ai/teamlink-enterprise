@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useState } from 'react';
 import api from '../../api';
+import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateTimeOf } from './crmShared.jsx'; // eslint-disable-line import/no-cycle
 
 const copy = async (text, toast, words) => {
@@ -136,7 +137,9 @@ export function ProductCatalog() {
   const { me, toast } = useCrm();
   const [rows, setRows] = useState(null);
   const [edit, setEdit] = useState(null); // the product being edited
+  const [watch, setWatch] = useState(null); // { name, url } of the clip playing
   const canEdit = me && ['admin', 'tl'].includes(me.role);
+  const play = (p) => api.get(`/crm/products/${p.key}/watch`).then((r) => setWatch(r.data)).catch((e) => toast(errOf(e, 'The video could not be opened.')));
   const load = () => api.get('/crm/products', { params: { all: 1 } }).then((r) => setRows(r.data.products || [])).catch((e) => { setRows([]); toast(errOf(e, 'The products could not be read.')); });
   useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
   async function save() {
@@ -160,10 +163,17 @@ export function ProductCatalog() {
             <div className="small-muted" style={{ margin: '4px 0 8px' }}>{p.tagline}</div>
             <ul style={{ margin: '0 0 8px 18px', padding: 0, fontSize: 13 }}>{(p.features || []).slice(0, 5).map((f, i) => <li key={i}>{f}</li>)}{(p.features || []).length > 5 && <li className="small-muted">+{p.features.length - 5} more</li>}</ul>
             <div style={{ fontSize: 13 }}>{(p.plans || []).map((x) => <div key={x.name}><b>{x.name}</b>: {x.price ? `${x.price} ${x.unit || ''}` : <span className="small-muted">price on request</span>}</div>)}</div>
+            {p.hasVideo && <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 10, marginRight: 6 }} onClick={() => play(p)}>▶ Watch video</button>}
             {canEdit && <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={() => setEdit({ ...p, featuresText: lines(p.features), plans: (p.plans || []).length ? p.plans : [{ name: 'Starter', price: '', unit: 'per user / month', includes: '' }] })}>Edit</button>}
           </div>
         ))}
       </div>
+      {watch && (
+        <Modal title={`${watch.name} - demo video`} size="xwide" onClose={() => setWatch(null)}>
+          <video src={watch.url} controls autoPlay playsInline style={{ width: '100%', maxHeight: '72vh', background: '#000', borderRadius: 8 }} />
+          <div className="small-muted" style={{ marginTop: 6, fontSize: 12 }}>This is exactly what a lead sees on the demo page for this product.</div>
+        </Modal>
+      )}
       {edit && (
         <div className="card" style={{ padding: 14, marginTop: 14 }}>
           <h3 style={{ marginTop: 0 }}>Edit {edit.name}</h3>

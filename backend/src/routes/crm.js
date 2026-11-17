@@ -68,7 +68,8 @@ router.post('/tasks/:id/snooze', wrap((req) => CRM.snoozeTask(req.user, req.para
 // OUR PRODUCTS (HRMS / ATS / Omni-Channel): the catalogue, a lead's interest, the demo link, the AI meeting (crm/productSales.js)
 const PS = require('../crm/productSales');
 router.get('/products', wrap(async (req) => ({ status: 200, body: { products: await PS.products({ all: String(req.query.all || '') === '1' }) } })));
-router.put('/products/:key', wrap((req) => PS.saveProduct(req.user, req.params.key, req.body || {})));
+router.get('/products/:key/watch', wrap((req) => PS.staffVideoLink(req.user, req.params.key)));
+router.put('/products/:key',wrap((req) => PS.saveProduct(req.user, req.params.key, req.body || {})));
 router.post('/leads/:id/products', wrap((req) => PS.setLeadProducts(req.user, req.params.id, (req.body || {}).products)));
 router.post('/leads/:id/demo', wrap((req) => PS.demoLink(req.user, req.params.id, req.body || {})));
 router.post('/leads/:id/ai-meeting', wrap((req) => PS.meetingLink(req.user, req.params.id, req.body || {})));
