@@ -296,6 +296,7 @@ app.use('/api/public/feedback', require('./routes/feedbackPublic')); // the cand
 app.use('/api/public/mk-review', require('./routes/mkClientReviewPublic')); // AI Marketing client approval link (signed token in the address, no login; marketing/clientReview.js)
 app.use('/api/public/mk-meeting', require('./routes/mkMeetingPublic')); // AI Marketing plans meeting: the automated spoken presentation a client opens from a WhatsApp link (signed token, no login; marketing/meeting.js)
 setTimeout(() => { try { if (!require('./utils/sandbox').isSandbox()) require('./marketing/meetingVoice').prewarm().catch(() => {}); } catch { /* no voice on this server */ } }, 60000).unref(); // the meeting's first sentences are made a minute after start (marketing/meetingVoice.js)
+setInterval(() => { try { if (!require('./utils/sandbox').isSandbox()) require('./marketing/meeting').runSlotReminders().catch(() => {}); } catch { /* the meeting tables are not there yet */ } }, 60000).unref(); // a bell and a WhatsApp 10 minutes before a call time a client booked (marketing/meeting.js)
 app.use('/api/public/outreach', require('./routes/outreachLibraryPublic')); // Library share links (token in the address, no login)
 app.use('/api/public/outreach', require('./routes/outreachFormsPublic')); // public capture forms: GET / POST /forms/:token (no login, honeypot + rate limit)
 app.use('/api/public/outreach', require('./routes/outreachPublic'));

@@ -33,7 +33,7 @@ const T = {
     next: 'Next', back: 'Back', pause: 'Pause', play: 'Play', mute: 'Sound off', unmute: 'Sound on', ask: 'Ask a question', team: 'Talk to our team', send: 'Ask', typeHere: 'Type your question', mic: 'Speak', listening: 'Listening…',
     chips: 'Common questions', cont: 'Continue the meeting', slide: (a, b) => `Slide ${a} of ${b}`, noVoice: (l) => `This phone has no ${l} voice, so please read the words on the screen. Every button still works.`,
     formTitle: 'How can our team reach you?', optTrial: 'Start the ₹999 trial', optStarter: 'Starter · ₹3,999 a month', optGrowth: 'Growth · ₹9,999 a month', optPremium: 'Premium · ₹19,999 a month', optTeam: 'I want to talk to your team first',
-    yourName: 'Your name', yourPhone: 'Your WhatsApp number', otherPhone: 'Use another number (optional)', usePhone: (m) => `We will use ${m}.`, callWhen: 'When should we call?', asap: 'As soon as possible', morning: 'Morning (9 to 12)', afternoon: 'Afternoon (12 to 4)', evening: 'Evening (4 to 7)',
+    yourName: 'Your name', yourPhone: 'Your WhatsApp number', otherPhone: 'Use another number (optional)', usePhone: (m) => `We will use ${m}.`, slotToday: 'Today', slotTomorrow: 'Tomorrow', slotLoading: 'Loading the times…', slotNone: 'No times are free in the next days. Please choose “As soon as possible”.', slotNote: 'Times are India time. We call from 9 am to 7 pm, Monday to Saturday.', thanksAt: (n, when) => `Thank you${n ? `, ${n}` : ''}. Your call is booked for ${when}. Our team will call you then.`, callWhen: 'When should we call?', asap: 'As soon as possible', morning: 'Morning (9 to 12)', afternoon: 'Afternoon (12 to 4)', evening: 'Evening (4 to 7)',
     submit: 'Send to our team', cancel: 'Back to the meeting', needPhone: 'Please type your WhatsApp number.', pickOne: 'Please pick one option.', fail: 'It could not be sent. Please try again.',
     thanks: (n) => `Thank you${n ? `, ${n}` : ''}. Our team has your request and will contact you soon.`, seeWork: 'See our finished work', plansTitle: 'Our plans (+ 18% GST)', again: 'Try again', loading: 'Opening your meeting…',
     gone: 'This link does not work any more. Please ask the sender for a new one.', busy: 'The page could not be opened just now. It will try again by itself.', yourQ: 'You', bot: 'Assistant', idle: 'Still there? Press Next to continue.', listenHelp: 'Say your question',
@@ -44,7 +44,7 @@ const T = {
     next: 'తరువాత', back: 'వెనక్కి', pause: 'ఆపండి', play: 'ప్లే', mute: 'సౌండ్ ఆఫ్', unmute: 'సౌండ్ ఆన్', ask: 'ప్రశ్న అడగండి', team: 'మా టీమ్‌తో మాట్లాడండి', send: 'అడగండి', typeHere: 'మీ ప్రశ్న రాయండి', mic: 'మాట్లాడండి', listening: 'వింటున్నాను…',
     chips: 'సాధారణ ప్రశ్నలు', cont: 'మీటింగ్ కొనసాగించండి', slide: (a, b) => `స్లైడ్ ${a} / ${b}`, noVoice: () => 'ఈ ఫోన్‌లో తెలుగు వాయిస్ లేదు, కాబట్టి దయచేసి స్క్రీన్ మీద ఉన్న అక్షరాలను చదవండి. అన్ని బటన్లు పనిచేస్తాయి.',
     formTitle: 'మా టీమ్ మిమ్మల్ని ఎలా సంప్రదించాలి?', optTrial: '₹999 ట్రయల్ మొదలుపెట్టండి', optStarter: 'Starter · నెలకు ₹3,999', optGrowth: 'Growth · నెలకు ₹9,999', optPremium: 'Premium · నెలకు ₹19,999', optTeam: 'ముందు మీ టీమ్‌తో మాట్లాడాలి',
-    yourName: 'మీ పేరు', yourPhone: 'మీ వాట్సాప్ నంబర్', otherPhone: 'వేరే నంబర్ వాడాలంటే (ఐచ్ఛికం)', usePhone: (m) => `మేము ${m} నంబర్‌ను వాడతాము.`, callWhen: 'ఎప్పుడు కాల్ చేయాలి?', asap: 'వీలైనంత త్వరగా', morning: 'ఉదయం (9 నుండి 12)', afternoon: 'మధ్యాహ్నం (12 నుండి 4)', evening: 'సాయంత్రం (4 నుండి 7)',
+    yourName: 'మీ పేరు', yourPhone: 'మీ వాట్సాప్ నంబర్', otherPhone: 'వేరే నంబర్ వాడాలంటే (ఐచ్ఛికం)', usePhone: (m) => `మేము ${m} నంబర్‌ను వాడతాము.`, slotToday: 'ఈ రోజు', slotTomorrow: 'రేపు', slotLoading: 'సమయాలు లోడ్ అవుతున్నాయి…', slotNone: 'రాబోయే రోజుల్లో ఖాళీ సమయాలు లేవు. దయచేసి “వీలైనంత త్వరగా” ఎంచుకోండి.', slotNote: 'సమయాలు భారత సమయం. మేము సోమవారం నుండి శనివారం, ఉదయం 9 నుండి సాయంత్రం 7 వరకు కాల్ చేస్తాం.', thanksAt: (n, when) => `ధన్యవాదాలు${n ? ` ${n} గారు` : ''}. మీ కాల్ ${when} కు బుక్ అయింది. అప్పుడు మా టీమ్ మీకు కాల్ చేస్తుంది.`, callWhen: 'ఎప్పుడు కాల్ చేయాలి?', asap: 'వీలైనంత త్వరగా', morning: 'ఉదయం (9 నుండి 12)', afternoon: 'మధ్యాహ్నం (12 నుండి 4)', evening: 'సాయంత్రం (4 నుండి 7)',
     submit: 'మా టీమ్‌కు పంపండి', cancel: 'మీటింగ్‌కు తిరిగి వెళ్ళండి', needPhone: 'దయచేసి మీ వాట్సాప్ నంబర్ రాయండి.', pickOne: 'దయచేసి ఒకటి ఎంచుకోండి.', fail: 'పంపడం కుదరలేదు. దయచేసి మళ్ళీ ప్రయత్నించండి.',
     thanks: (n) => `ధన్యవాదాలు${n ? ` ${n} గారు` : ''}. మీ అభ్యర్థన మా టీమ్‌కు అందింది, త్వరలో సంప్రదిస్తారు.`, seeWork: 'మేము చేసిన పని చూడండి', plansTitle: 'మా ప్లాన్లు (+ 18% జీఎస్టీ)', again: 'మళ్ళీ ప్రయత్నించండి', loading: 'మీ మీటింగ్ తెరుస్తున్నాను…',
     gone: 'ఈ లింక్ ఇప్పుడు పనిచేయడం లేదు. దయచేసి పంపినవారిని కొత్త లింక్ అడగండి.', busy: 'పేజీ ఇప్పుడు తెరుచుకోలేదు. అదే మళ్ళీ ప్రయత్నిస్తుంది.', yourQ: 'మీరు', bot: 'అసిస్టెంట్', idle: 'ఇంకా ఉన్నారా? కొనసాగడానికి తరువాత నొక్కండి.', listenHelp: 'మీ ప్రశ్న చెప్పండి',
@@ -55,7 +55,7 @@ const T = {
     next: 'अगला', back: 'पीछे', pause: 'रोकें', play: 'चलाएँ', mute: 'आवाज़ बंद', unmute: 'आवाज़ चालू', ask: 'सवाल पूछें', team: 'हमारी टीम से बात करें', send: 'पूछें', typeHere: 'अपना सवाल लिखें', mic: 'बोलें', listening: 'सुन रहा हूँ…',
     chips: 'आम सवाल', cont: 'मीटिंग जारी रखें', slide: (a, b) => `स्लाइड ${a} / ${b}`, noVoice: () => 'इस फ़ोन में हिंदी आवाज़ नहीं है, इसलिए कृपया स्क्रीन पर लिखा हुआ पढ़ें। सभी बटन काम करेंगे।',
     formTitle: 'हमारी टीम आपसे कैसे संपर्क करे?', optTrial: '₹999 का ट्रायल शुरू करें', optStarter: 'Starter · ₹3,999 प्रति माह', optGrowth: 'Growth · ₹9,999 प्रति माह', optPremium: 'Premium · ₹19,999 प्रति माह', optTeam: 'पहले हमारी टीम से बात करनी है',
-    yourName: 'आपका नाम', yourPhone: 'आपका व्हाट्सऐप नंबर', otherPhone: 'दूसरा नंबर देना हो तो (वैकल्पिक)', usePhone: (m) => `हम ${m} नंबर का इस्तेमाल करेंगे।`, callWhen: 'कब कॉल करें?', asap: 'जितनी जल्दी हो सके', morning: 'सुबह (9 से 12)', afternoon: 'दोपहर (12 से 4)', evening: 'शाम (4 से 7)',
+    yourName: 'आपका नाम', yourPhone: 'आपका व्हाट्सऐप नंबर', otherPhone: 'दूसरा नंबर देना हो तो (वैकल्पिक)', usePhone: (m) => `हम ${m} नंबर का इस्तेमाल करेंगे।`, slotToday: 'आज', slotTomorrow: 'कल', slotLoading: 'समय लोड हो रहे हैं…', slotNone: 'अगले दिनों में कोई समय खाली नहीं है। कृपया “जितनी जल्दी हो सके” चुनिए।', slotNote: 'समय भारतीय समय में हैं। हम सोमवार से शनिवार, सुबह 9 से शाम 7 बजे तक कॉल करते हैं।', thanksAt: (n, when) => `धन्यवाद${n ? ` ${n} जी` : ''}। आपकी कॉल ${when} के लिए बुक हो गई है। तब हमारी टीम आपको कॉल करेगी।`, callWhen: 'कब कॉल करें?', asap: 'जितनी जल्दी हो सके', morning: 'सुबह (9 से 12)', afternoon: 'दोपहर (12 से 4)', evening: 'शाम (4 से 7)',
     submit: 'हमारी टीम को भेजें', cancel: 'मीटिंग पर वापस जाएँ', needPhone: 'कृपया अपना व्हाट्सऐप नंबर लिखें।', pickOne: 'कृपया एक विकल्प चुनें।', fail: 'भेजा नहीं जा सका। कृपया फिर से कोशिश करें।',
     thanks: (n) => `धन्यवाद${n ? ` ${n} जी` : ''}। आपकी रिक्वेस्ट हमारी टीम को मिल गई है, वे जल्द संपर्क करेंगे।`, seeWork: 'हमारा किया हुआ काम देखें', plansTitle: 'हमारे प्लान (+ 18% जीएसटी)', again: 'फिर से कोशिश करें', loading: 'आपकी मीटिंग खुल रही है…',
     gone: 'यह लिंक अब काम नहीं करता। कृपया भेजने वाले से नया लिंक माँगें।', busy: 'पेज अभी नहीं खुल सका। वह अपने आप फिर कोशिश करेगा।', yourQ: 'आप', bot: 'असिस्टेंट', idle: 'क्या आप अभी भी हैं? आगे बढ़ने के लिए अगला दबाइए।', listenHelp: 'अपना सवाल बोलिए',
@@ -288,7 +288,8 @@ export default function PlansMeetingPage() {
   const [q, setQ] = useState('');
   const [listening, setListening] = useState(false);
   const [unsure, setUnsure] = useState(false);
-  const [form, setForm] = useState({ choice: '', name: '', phone: '', window: 'asap' });
+  const [form, setForm] = useState({ choice: '', name: '', phone: '', window: 'asap', slot: null });
+  const [slots, setSlots] = useState({ state: 'idle', days: [], day: '' }); // the call times still free (GET /:token/slots)
   const [formErr, setFormErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState('');
@@ -507,15 +508,31 @@ export default function PlansMeetingPage() {
       setSum({ state: 'sent', msg: '', to: (r.data && r.data.sentTo) || (d && d.session && d.session.phoneMasked) || '' });
     } catch (e) { setSum({ state: '', msg: errOf(e, t.fail), to: '' }); }
   };
+  // the call times: fetched each time the form opens (a time another client just took must not be offered)
+  const loadSlots = useCallback(() => {
+    if (!token) return;
+    setSlots((s) => ({ ...s, state: 'loading' }));
+    api.get(`/public/mk-meeting/${encodeURIComponent(token)}/slots`).then((r) => setSlots((s) => ({ state: 'ready', days: r.data.days || [], day: (r.data.days || []).some((x) => x.date === s.day) ? s.day : ((r.data.days || [])[0] || {}).date || '' }))).catch(() => setSlots({ state: 'error', days: [], day: '' }));
+  }, [token]);
+  useEffect(() => { if (panel === 'form') loadSlots(); }, [panel, loadSlots]);
+  const loc = LANG_CODE[lang] || 'en-IN';
+  const timeLabel = (at) => new Intl.DateTimeFormat(loc, { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }).format(new Date(at));
+  const dayLabel = (date, firstAt) => {
+    const ist = (n) => new Date(Date.now() + 19800000 + n * 86400000).toISOString().slice(0, 10);
+    if (date === ist(0)) return t.slotToday;
+    if (date === ist(1)) return t.slotTomorrow;
+    return new Intl.DateTimeFormat(loc, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }).format(new Date(firstAt));
+  };
+  const whenLabel = (at) => `${dayLabel(new Date(at + 19800000).toISOString().slice(0, 10), at)}, ${timeLabel(at)}`;
   const submitForm = async () => {
     const name = form.name.trim(); const phone = form.phone.trim();
     if (!form.choice) { setFormErr(t.pickOne); return; }
     if (!(d && d.session && d.session.hasPhone) && phone.length < 8) { setFormErr(t.needPhone); return; }
     setBusy(true); setFormErr('');
     try {
-      await api.post(`/public/mk-meeting/${encodeURIComponent(token)}/event`, { type: form.choice === 'team' ? 'handover' : 'choice', choice: form.choice, name, ...(phone ? { phone } : {}), window: form.window });
-      setDone(t.thanks(name.split(/\s+/)[0] || '')); setPanel(''); setUnsure(false); go(order.length - 1);
-    } catch (e) { setFormErr(errOf(e, t.fail)); } finally { setBusy(false); }
+      await api.post(`/public/mk-meeting/${encodeURIComponent(token)}/event`, { type: form.choice === 'team' ? 'handover' : 'choice', choice: form.choice, name, ...(phone ? { phone } : {}), window: form.slot ? 'slot' : 'asap', ...(form.slot ? { slot: form.slot } : {}) });
+      setDone(form.slot ? t.thanksAt(name.split(/\s+/)[0] || '', whenLabel(form.slot)) : t.thanks(name.split(/\s+/)[0] || '')); setPanel(''); setUnsure(false); go(order.length - 1);
+    } catch (e) { setFormErr(errOf(e, t.fail)); if (e && e.response && e.response.status === 409) { setForm((x) => ({ ...x, slot: null })); loadSlots(); } } finally { setBusy(false); } // a time another client just took: offer the others
   };
 
   // the colours of the TeamLink logo (navy and azure), as the founder asked (2026-11-17): not the Brand voice colours
@@ -622,9 +639,19 @@ export default function PlansMeetingPage() {
               <input className="pm-input" value={form.name} maxLength={80} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t.yourName} aria-label={t.yourName} />
               {d.session.hasPhone ? <div style={{ fontSize: 14, color: '#4b6358' }}>{t.usePhone(d.session.phoneMasked)}</div> : null}
               <input className="pm-input" value={form.phone} maxLength={30} inputMode="tel" onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder={d.session.hasPhone ? t.otherPhone : `${t.yourPhone} (+91…)`} aria-label={t.yourPhone} />
-              <label style={{ fontSize: 14, fontWeight: 700 }}>{t.callWhen}
-                <select className="pm-input" style={{ marginTop: 4 }} value={form.window} onChange={(e) => setForm({ ...form, window: e.target.value })}>{[['asap', t.asap], ['morning', t.morning], ['afternoon', t.afternoon], ['evening', t.evening]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-              </label>
+              <div className="pm-when">
+                <div className="pm-when-label">{t.callWhen}</div>
+                <button type="button" className={`pm-slotbtn asap${form.slot ? '' : ' on'}`} onClick={() => setForm({ ...form, slot: null, window: 'asap' })}>⚡ {t.asap}</button>
+                {slots.state === 'loading' ? <div className="pm-when-note">{t.slotLoading}</div> : null}
+                {slots.state === 'ready' && slots.days.length === 0 ? <div className="pm-when-note">{t.slotNone}</div> : null}
+                {slots.days.length ? (
+                  <>
+                    <div className="pm-days">{slots.days.map((x) => <button key={x.date} type="button" className={slots.day === x.date ? 'on' : ''} onClick={() => setSlots((s) => ({ ...s, day: x.date }))}>{dayLabel(x.date, x.slots[0].at)}</button>)}</div>
+                    <div className="pm-slots">{((slots.days.find((x) => x.date === slots.day) || slots.days[0]).slots).map((z) => <button key={z.at} type="button" className={`pm-slotbtn${form.slot === z.at ? ' on' : ''}`} onClick={() => setForm({ ...form, slot: z.at, window: 'slot' })}>{timeLabel(z.at)}</button>)}</div>
+                  </>
+                ) : null}
+                <div className="pm-when-note">{t.slotNote}</div>
+              </div>
             </div>
             {formErr ? <div className="pm-err" role="alert">{formErr}</div> : null}
             <button type="button" className="pm-btn green" disabled={busy} style={{ width: '100%', marginTop: 12 }} onClick={submitForm}>{t.submit}</button>

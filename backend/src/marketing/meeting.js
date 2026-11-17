@@ -20,8 +20,8 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS "${TABLE}" ("id" TEXT NOT NULL PRIMARY KEY, "name" TEXT, "phone" TEXT, "language" TEXT NOT NULL DEFAULT 'en', "note" TEXT, "source" TEXT NOT NULL DEFAULT 'invite', "createdById" TEXT, "createdByName" TEXT, "department" TEXT, "sentAt" DATETIME, "sentVia" TEXT, "views" INTEGER NOT NULL DEFAULT 0, "firstOpenedAt" DATETIME, "lastOpenedAt" DATETIME, "startedAt" DATETIME, "lastSlide" INTEGER NOT NULL DEFAULT 0, "maxSlide" INTEGER NOT NULL DEFAULT 0, "finishedAt" DATETIME, "questions" TEXT NOT NULL DEFAULT '[]', "choice" TEXT, "callbackWindow" TEXT, "handoverAt" DATETIME, "expiresAt" DATETIME NOT NULL DEFAULT 0, "createdAt" DATETIME NOT NULL DEFAULT 0, "updatedAt" DATETIME NOT NULL DEFAULT 0, "deletedAt" DATETIME)`,
   `CREATE INDEX IF NOT EXISTS "${TABLE}_by" ON "${TABLE}"("createdById", "createdAt")`,
 ];
-// columns added after the first release (an older table gets them here): who called the client and when, and when the team was last alerted
-const LATER = [['calledAt', 'DATETIME'], ['calledByName', 'TEXT'], ['callLine', 'TEXT'], ['alertedAt', 'DATETIME'], ['crmLeadId', 'TEXT'], ['summaryAt', 'DATETIME']];
+// columns added after the first release (an older table gets them here): who called the client and when, and when the team was last alerted. slotAt is DATETIME like the other epoch columns on purpose: a big INTEGER column fails in Prisma raw reads here.
+const LATER = [['calledAt', 'DATETIME'], ['calledByName', 'TEXT'], ['callLine', 'TEXT'], ['alertedAt', 'DATETIME'], ['crmLeadId', 'TEXT'], ['summaryAt', 'DATETIME'], ['slotAt', 'DATETIME'], ['slotRemindedAt', 'DATETIME']];
 let okAt = 0;
 async function ensure() {
   if (okAt && Date.now() - okAt < 600000) return true;
@@ -37,7 +37,7 @@ const DAY = 86400000;
 const SLIDES = 12; // slide 0 .. 11 (marketing/meetingContent.js)
 const LANGS = ['en', 'te', 'hi'];
 const CHOICES = ['trial', 'starter', 'growth', 'premium', 'team'];
-const WINDOWS = ['asap', 'morning', 'afternoon', 'evening'];
+const WINDOWS = ['asap', 'morning', 'afternoon', 'evening', 'slot'];
 const WINDOW_WORDS = { asap: 'as soon as possible', morning: 'morning (9 to 12)', afternoon: 'afternoon (12 to 4)', evening: 'evening (4 to 7)' };
 const parse = (v, d) => { try { return typeof v === 'string' ? JSON.parse(v) : (v == null ? d : v); } catch { return d; } };
 const mayWrite = (u) => A.has('mayAiMarketing')(u);
@@ -165,13 +165,13 @@ async function saveAlert(u, b = {}) {
   await logAudit({ userId: u.id, actorName: u.name, action: `Omni-Channel AI Marketing: plans meeting, WhatsApp alert for call requests ${on ? 'switched on' : 'switched off'}`, entity: TABLE, entityId: 'alert', toValue: all.alerts[u.id].phone ? core().maskMobile(all.alerts[u.id].phone) : '' });
   return { ok: on ? `Done. When a client asks for a call, TeamLink sends a WhatsApp to ${core().maskMobile(all.alerts[u.id].phone)}.` : 'Alerts are off. The bell in TeamLink still rings.', alert: await myAlert(u) };
 }
-async function alertWhatsApp(r, text) {
+async function alertWhatsApp(r, text, force = false) {
   const all = await readAll();
   const ids = r.createdById ? [r.createdById] : Object.keys(all.alerts);
   const numbers = new Map();
   ids.forEach((id) => { const a = all.alerts[id]; const nm = a && a.on && a.phone ? core().normalizeMobile(a.phone) : null; if (nm && nm.ok) numbers.set(nm.e164, a.phone); });
   if (!numbers.size) return { sent: 0 };
-  if (r.alertedAt && Date.now() - S.num(r.alertedAt) < 180000) return { sent: 0, skipped: 'recently alerted' };
+  if (!force && r.alertedAt && Date.now() - S.num(r.alertedAt) < 180000) return { sent: 0, skipped: 'recently alerted' };
   const messaging = require('../utils/messaging'); // eslint-disable-line global-require
   const line = String(text).replace(/\s+/g, ' ').trim().slice(0, 700); // one line: a template value cannot hold new lines
   let sent = 0;
@@ -183,6 +183,58 @@ async function alertWhatsApp(r, text) {
   }
   if (sent) await S.run(`UPDATE "${TABLE}" SET alertedAt = ?, updatedAt = ? WHERE id = ?`, Date.now(), Date.now(), r.id);
   return { sent };
+}
+
+
+// ---- EXACT CALL TIMES (founder 2026-11-17, "build it with the simple version") ----------------------------------------------------------------------------------------------------------
+// The client picks a real time instead of "afternoon": 30-minute slots, 9 am to 7 pm India time, Monday to Saturday, today and the next three days, never sooner than 30 minutes from now, one list for
+// the whole team (a slot is taken by the first client who books it). The team page shows "Call at ...", the owner gets a bell and a WhatsApp 10 minutes before, and the CRM follow-up is set for that time.
+const IST = 19800000; const DAY_MS = 86400000;
+const SLOT = { startMin: 9 * 60, endMin: 19 * 60, stepMin: 30, leadMin: 30, days: 4, sunday: false };
+const istMidnight = (t) => Math.floor((t + IST) / DAY_MS) * DAY_MS - IST; // the epoch of 00:00 India time of the day `t` is in
+// every slot the rules allow from `now` on: [{ at, date: 'YYYY-MM-DD', min: minutes after midnight }]
+function allowedSlots(now = Date.now()) {
+  const out = [];
+  for (let d = 0; d < SLOT.days; d += 1) {
+    const mid = istMidnight(now) + d * DAY_MS;
+    if (!SLOT.sunday && new Date(mid + IST).getUTCDay() === 0) continue; // eslint-disable-line no-continue
+    for (let m = SLOT.startMin; m < SLOT.endMin; m += SLOT.stepMin) {
+      const at = mid + m * 60000;
+      if (at >= now + SLOT.leadMin * 60000) out.push({ at, date: new Date(mid + IST).toISOString().slice(0, 10), min: m });
+    }
+  }
+  return out;
+}
+const istText = (at) => new Date(Number(at)).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }).replace(/\bam\b/, 'am').replace(/\bpm\b/, 'pm');
+// the slots a client can still book (taken ones left out); `except` = the client's own row (it may keep its own slot)
+async function freeSlots(except = '', now = Date.now()) {
+  await ensure();
+  const all = allowedSlots(now);
+  if (!all.length) return [];
+  const taken = new Set((await S.q(`SELECT slotAt FROM "${TABLE}" WHERE slotAt >= ? AND deletedAt IS NULL AND id != ?`, all[0].at, String(except))).map((x) => S.num(x.slotAt)));
+  return all.filter((x) => !taken.has(x.at));
+}
+async function publicSlots(token) {
+  const r = await load(token);
+  if (!r) return GONE;
+  const free = await freeSlots(r.id);
+  const days = [];
+  free.forEach((x) => { let d = days[days.length - 1]; if (!d || d.date !== x.date) { d = { date: x.date, slots: [] }; days.push(d); } d.slots.push({ at: x.at }); });
+  return { tz: 'Asia/Kolkata', days, mine: r.slotAt ? S.num(r.slotAt) : null };
+}
+// a bell and a WhatsApp 10 minutes before a booked call (nobody has called since the request); once per booking
+async function runSlotReminders(now = Date.now()) {
+  await ensure();
+  const rows = await S.q(`SELECT * FROM "${TABLE}" WHERE deletedAt IS NULL AND slotAt IS NOT NULL AND slotAt BETWEEN ? AND ? AND slotRemindedAt IS NULL AND handoverAt IS NOT NULL AND (calledAt IS NULL OR calledAt < handoverAt)`, now, now + 10 * 60000);
+  for (const r of rows) {
+    const claimed = await S.run(`UPDATE "${TABLE}" SET slotRemindedAt = ? WHERE id = ? AND slotRemindedAt IS NULL`, now, r.id); // eslint-disable-line no-await-in-loop
+    if (Number(claimed) !== 1) continue; // eslint-disable-line no-continue
+    const mins = Math.max(1, Math.round((S.num(r.slotAt) - now) / 60000));
+    const nm = r.name || 'A client';
+    await tellOwner(r, `Call due in ${mins} min: ${nm}`, `${nm} (${r.phone || 'no number'}) is booked for ${istText(r.slotAt)}. Open AI Marketing > Client projects > Plans meeting and press Call now.`); // eslint-disable-line no-await-in-loop
+    await alertWhatsApp(r, `Call due in ${mins} min: ${nm} on ${r.phone || 'no number'} at ${istText(r.slotAt)}. Open TeamLink > AI Marketing > Client projects > Plans meeting and press Call now.`, true); // eslint-disable-line no-await-in-loop
+  }
+  return rows.length;
 }
 
 // ---- shapes ---------------------------------------------------------------------------------------------------------------------------------------
@@ -198,7 +250,7 @@ const full = (r) => ({
   views: S.num(r.views), firstOpenedAt: r.firstOpenedAt ? S.num(r.firstOpenedAt) : null, lastOpenedAt: r.lastOpenedAt ? S.num(r.lastOpenedAt) : null,
   lastSlide: S.num(r.lastSlide), maxSlide: S.num(r.maxSlide), slides: SLIDES, finishedAt: r.finishedAt ? S.num(r.finishedAt) : null,
   questions: parse(r.questions, []), choice: r.choice || '', callbackWindow: r.callbackWindow || '', handoverAt: r.handoverAt ? S.num(r.handoverAt) : null, interest: interestOf(r),
-  calledAt: r.calledAt ? S.num(r.calledAt) : null, calledByName: r.calledByName || '', callLine: r.callLine || '', inCrm: !!r.crmLeadId,
+  calledAt: r.calledAt ? S.num(r.calledAt) : null, calledByName: r.calledByName || '', callLine: r.callLine || '', inCrm: !!r.crmLeadId, slotAt: r.slotAt ? S.num(r.slotAt) : null, slotText: r.slotAt ? istText(r.slotAt) : '',
 });
 const row = async (id) => (await S.q(`SELECT * FROM "${TABLE}" WHERE id = ? AND deletedAt IS NULL`, String(id || '')))[0] || null;
 const visible = (u, r) => A.isAdmin(u) || r.createdById === u.id;
@@ -355,20 +407,24 @@ async function publicView(token) {
 }
 
 // A client who asks for a call or picks a plan becomes a lead in the CRM (source "Plans meeting", rating Hot, owned by the person who made the link), once; the same phone again only adds a note.
-async function crmLead(r, { name, phone, what, window, asked }) {
+async function crmLead(r, { name, phone, what, when, slot, asked }) {
   try {
     const DB = require('../crm/schema'); const CS = require('../crm/service'); const CSET = require('../crm/settings'); const CSALES = require('../crm/sales'); // eslint-disable-line global-require
     const now = DB.nowIso();
-    const note = `Plans meeting: ${what}. Call ${WINDOW_WORDS[window]}.${asked ? ` They asked: ${asked}.` : ''}`.slice(0, 1500);
+    const note = `Plans meeting: ${what}. Call ${when}.${asked ? ` They asked: ${asked}.` : ''}`.slice(0, 1500);
     const ph = CS.phone10(phone);
     const same = r.crmLeadId ? { id: r.crmLeadId } : (ph.length === 10 ? (await DB.all('SELECT "id", "phone" FROM "CrmLead"')).find((l) => CS.phone10(l.phone) === ph) : null);
+    const dueDate = slot != null ? new Date(slot + IST).toISOString().slice(0, 10) : null; const dueTime = slot != null ? new Date(slot + IST).toISOString().slice(11, 16) : null;
+    const addTask = async (leadId, ownerId, ownerName) => { if (slot == null) return; await CS.insert('CrmTask', { id: CS.newId('task'), title: `Call ${name || 'the client'} (booked in the plans meeting)`, dueDate, dueTime, status: 'Open', type: 'Call', priority: 'High', notifyApp: 1, notifyWhatsapp: 0, notifySms: 0, notifyLead: 0, remindBefore: 15, leadId, ownerId: ownerId || null, ownerName: ownerName || null, createdById: null, createdAt: now, updatedAt: now }); };
     if (same) {
+      await addTask(same.id, r.createdById, r.createdByName).catch(() => null);
       await CS.insert('CrmActivity', { id: CS.newId('act'), kind: 'note', subject: 'Plans meeting: asked for a call', note, at: now, leadId: same.id, byName: 'Plans meeting', createdAt: now });
       return same.id;
     }
     const stage = (await CSET.load()).leadStages[0].name;
     const lead = await CS.insert('CrmLead', { id: CS.newId('lead'), company: name || 'Plans meeting visitor', contactName: name || null, phone, source: 'Plans meeting', rating: 'Hot', notes: note, status: 'New', stage, ownerId: r.createdById || null, ownerName: r.createdByName || null, createdById: r.createdById || null, createdAt: now, updatedAt: now });
-    if (r.createdById) await CSALES.firstFollowUp(lead).catch(() => null); // the first call, two hours on (CRM settings can switch it off)
+    if (slot != null) await addTask(lead.id, r.createdById, r.createdByName).catch(() => null); // the booked time is the follow-up
+    else if (r.createdById) await CSALES.firstFollowUp(lead).catch(() => null); // no time booked: the first call, two hours on (CRM settings can switch it off)
     return lead.id;
   } catch (e) { console.error('[omni-mk] meeting crm lead:', e.message); return null; } // eslint-disable-line no-console
 }
@@ -398,14 +454,21 @@ async function publicEvent(token, b = {}, base = '') {
     if (typed && !core().normalizeMobile(typed).ok) return { error: 'That number does not look right. Please check it.', status: 400 };
     const phone = typed || r.phone || '';
     if (!phone) return { error: 'Please type your WhatsApp number so our team can reach you.', status: 400 };
-    const window = WINDOWS.includes(b.window) ? b.window : 'asap';
+    const slot = b.slot != null && b.slot !== '' ? Math.floor(Number(b.slot)) : null;
+    if (slot != null && !allowedSlots(now).some((x) => x.at === slot)) return { error: 'Please pick one of the times shown.', status: 400 };
+    if (slot != null) { // the guard is in the statement itself, so two clients cannot both get the same slot
+      const got = await S.run(`UPDATE "${TABLE}" SET slotAt = ?, slotRemindedAt = NULL WHERE id = ? AND NOT EXISTS (SELECT 1 FROM "${TABLE}" x WHERE x.slotAt = ? AND x.id != ? AND x.deletedAt IS NULL)`, slot, r.id, slot, r.id);
+      if (Number(got) !== 1) return { error: 'That time was just taken. Please pick another time.', status: 409 };
+    } else await S.run(`UPDATE "${TABLE}" SET slotAt = NULL, slotRemindedAt = NULL WHERE id = ?`, r.id); // as soon as possible (or a broad time): a slot held before is given back
+    const window = slot != null ? 'slot' : (WINDOWS.includes(b.window) && b.window !== 'slot' ? b.window : 'asap');
+    const when = slot != null ? `at ${istText(slot)} (India time)` : WINDOW_WORDS[window];
     await S.run(`UPDATE "${TABLE}" SET name = ?, phone = ?, choice = ?, callbackWindow = ?, handoverAt = ?, updatedAt = ? WHERE id = ?`, name || null, phone, choice, window, now, now, r.id);
     const asked = parse(r.questions, []).map((x) => x.q).slice(-3).join('; ');
     const what = { trial: 'wants to start the Rs 999 trial', starter: 'chose the Starter plan', growth: 'chose the Growth plan', premium: 'chose the Premium plan', team: 'asked for a call from the team' }[choice];
-    await tellOwner(r, `Plans meeting: ${who({ name })} ${what} (Hot)`, `${who({ name })} (${phone}) ${what}. Call ${WINDOW_WORDS[window]}.${asked ? ` They asked: ${asked}.` : ''} Open AI Marketing > Client projects > Plans meeting.`);
-    const leadId = await crmLead(r, { name, phone, what, window, asked });
+    await tellOwner(r, `Plans meeting: ${who({ name })} ${what} (Hot)`, `${who({ name })} (${phone}) ${what}. Call ${when}.${asked ? ` They asked: ${asked}.` : ''} Open AI Marketing > Client projects > Plans meeting.`);
+    const leadId = await crmLead(r, { name, phone, what, when, slot, asked });
     if (leadId && leadId !== r.crmLeadId) await S.run(`UPDATE "${TABLE}" SET crmLeadId = ? WHERE id = ?`, leadId, r.id);
-    await alertWhatsApp(r, `Plans meeting: ${who({ name })} ${what}. Call ${WINDOW_WORDS[window]} on ${phone}.${asked ? ` They asked: ${asked}.` : ''} Open TeamLink > AI Marketing > Client projects > Plans meeting to call them.`);
+    await alertWhatsApp(r, `Plans meeting: ${who({ name })} ${what}. Call ${when} on ${phone}.${asked ? ` They asked: ${asked}.` : ''} Open TeamLink > AI Marketing > Client projects > Plans meeting to call them.`);
   } else if (t === 'summary') {
     const typed = S.clip(b.phone, 30);
     if (typed && !core().normalizeMobile(typed).ok) return { error: 'That number does not look right. Please check it.', status: 400 };
@@ -426,4 +489,4 @@ async function publicEvent(token, b = {}, base = '') {
   return { ok: true };
 }
 
-module.exports = { ensure, create, list, remove, tell, call, saveAlert, myAlert, saveSettings, readSettings, saveAnswer, removeAnswer, customSentences, keywordsOf, publicStart, publicShort, publicView, publicEvent, tokenOf, idOfToken, interestOf, inviteText, summaryText, SLIDES };
+module.exports = { ensure, create, list, remove, tell, call, saveAlert, myAlert, saveSettings, readSettings, saveAnswer, removeAnswer, customSentences, keywordsOf, publicSlots, allowedSlots, runSlotReminders, istText, publicStart, publicShort, publicView, publicEvent, tokenOf, idOfToken, interestOf, inviteText, summaryText, SLIDES };

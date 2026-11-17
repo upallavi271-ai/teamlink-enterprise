@@ -39,7 +39,8 @@ function Row({ m, busy, note, onSend, onCopy, onDelete, onCall, onDial }) {
         </div>
         <div className="mkm-meta">
           {m.phone || 'no number yet'} · {progress}{m.views ? ` · opened ${m.views}×, last ${fmtDateTime(m.lastOpenedAt)}` : ''} · made by {m.createdByName || 'a visitor'}
-          {m.choice ? <div><b>{CHOICE[m.choice]}{m.callbackWindow ? `: call ${WINDOW[m.callbackWindow] || m.callbackWindow}` : ''}{m.handoverAt ? ` (asked ${fmtDateTime(m.handoverAt)})` : ''}</b></div> : null}
+          {m.choice ? <div><b>{CHOICE[m.choice]}{m.callbackWindow ? `: call ${m.callbackWindow === 'slot' ? `at ${m.slotText} (India time)` : (WINDOW[m.callbackWindow] || m.callbackWindow)}` : ''}{m.handoverAt ? ` (asked ${fmtDateTime(m.handoverAt)})` : ''}</b></div> : null}
+          {m.slotAt && wants ? <div style={m.slotAt < Date.now() ? { color: '#b91c1c', fontWeight: 700 } : { color: '#9a5b00', fontWeight: 700 }}>📅 Call at {m.slotText}{m.slotAt < Date.now() ? ' (this time has passed: call now)' : ''}</div> : null}
           {m.calledAt ? <div style={{ color: m.calledAt >= (m.handoverAt || 0) ? '#166534' : undefined }}>Called {fmtDateTime(m.calledAt)} by {m.calledByName || 'the team'}{m.callLine ? ` on the ${String(m.callLine).toUpperCase()} line` : ''}</div> : null}
           {asked.length ? <div>Asked: {asked.slice(-2).map((x) => `“${x.q}”`).join(', ')}{asked.length > 2 ? ` and ${asked.length - 2} more` : ''}</div> : null}
         </div>
@@ -139,7 +140,7 @@ export default function MkMeetingPage() {
   };
   const countOf = { waiting: c.waiting || 0, Hot: c.hot, Warm: c.warm, Cold: c.cold, 'Not opened': c.notOpened };
   // who asked for a call and has not been called is on top
-  const shown = d.items.filter((m) => (filter === 'waiting' ? waiting(m) : (filter ? m.interest === filter : true))).slice().sort((a, b) => (Number(waiting(b)) - Number(waiting(a))) || (b.createdAt - a.createdAt));
+  const shown = d.items.filter((m) => (filter === 'waiting' ? waiting(m) : (filter ? m.interest === filter : true))).slice().sort((a, b) => (Number(waiting(b)) - Number(waiting(a))) || (waiting(a) && waiting(b) ? ((a.slotAt || 0) - (b.slotAt || 0)) || (b.handoverAt - a.handoverAt) : (b.createdAt - a.createdAt))); // waiting first: "as soon as possible" on top, then by the booked time, soonest first
   const picked = lines && lines.lines ? lines.lines.find((l) => l.id === callLine) : null;
   return (
     <div className="mkm">

@@ -278,3 +278,15 @@
 .pm-sum .pm-btn { width: 100%; padding: 12px 14px; font-size: 15px; }
 .pm-sum-ok { background: rgba(255, 255, 255, .95); color: #087844; border-radius: 12px; padding: 11px 13px; font-weight: 700; font-size: 15px; }
 .pm-sum-err { color: #ffd0d0; font-size: 14px; font-weight: 600; }
+
+/* the call times in the form */
+.pm-when { display: grid; gap: 8px; }
+.pm-when-label { font-size: 14px; font-weight: 800; }
+.pm-when-note { font-size: 12.5px; color: var(--pm-mute); line-height: 1.45; }
+.pm-days { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.pm-days button { flex: none; border: 1.5px solid var(--pm-line); background: #fff; color: var(--pm-ink); border-radius: 999px; padding: 7px 14px; font-size: 13.5px; font-weight: 700; }
+.pm-days button.on { background: var(--pm-s); border-color: var(--pm-s); color: #fff; }
+.pm-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 6px; max-height: 190px; overflow-y: auto; }
+.pm-slotbtn { border: 1.5px solid var(--pm-line); background: #f6f9fd; color: var(--pm-ink); border-radius: 12px; padding: 10px 6px; font-size: 14.5px; font-weight: 700; }
+.pm-slotbtn.asap { text-align: left; padding: 11px 13px; font-size: 15px; }
+.pm-slotbtn.on { background: var(--pm-p); border-color: var(--pm-p); color: #fff; box-shadow: 0 8px 18px -10px var(--pm-p); }

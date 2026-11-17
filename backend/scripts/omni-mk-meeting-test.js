@@ -326,11 +326,60 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     MG.send = realSend;
     for (const z of [mI, mS]) await M.remove(sa, z.id);
 
+    // ---- exact call times: 30-minute slots, 9 am to 7 pm India time, Monday to Saturday, today and three more days, never sooner than 30 minutes, one list for the team ----
+    const wed = Date.parse('2026-11-18T10:10:00+05:30'); const fri = Date.parse('2026-11-20T10:10:00+05:30');
+    const sl = M.allowedSlots(wed);
+    const dates = [...new Set(sl.map((z) => z.date))];
+    check('20 the slots: from 11:00 today (30 minutes ahead of 10:10), to 18:30, then 9:00 to 18:30 on the next three days: 76 in all', sl[0].at === Date.parse('2026-11-18T11:00:00+05:30') && sl.length === 76 && dates.join() === '2026-11-18,2026-11-19,2026-11-20,2026-11-21' && sl.every((z) => z.min % 30 === 0 && z.min >= 540 && z.min <= 1110), { n: sl.length, first: new Date(sl[0].at).toISOString(), dates });
+    check('20b Sunday has no slots (from Friday: Fri, Sat, Mon)', M.allowedSlots(fri).map((z) => z.date).filter((d, i, a) => a.indexOf(d) === i).join() === '2026-11-20,2026-11-21,2026-11-23');
+    check('20c after hours nothing is offered for today (Wednesday 8 pm: tomorrow on)', M.allowedSlots(Date.parse('2026-11-18T20:00:00+05:30'))[0].date === '2026-11-19');
+    check('20d a slot is written in India time', /Wed.*18.*Nov.*11:00\s?am/i.test(M.istText(Date.parse('2026-11-18T11:00:00+05:30'))), M.istText(Date.parse('2026-11-18T11:00:00+05:30')));
+
+    const sentS = [];
+    MG.send = async (channel, o) => { sentS.push({ channel, to: o.to, text: o.text }); return { ok: true }; };
+    await M.saveAlert(sa, { on: true, phone: '8919239827' });
+    const mA = (await M.create(sa, { name: 'ZZ Slot A', phone: '9123456811', language: 'en' })).meeting;
+    const mB = (await M.create(sa, { name: 'ZZ Slot B', phone: '9123456812', language: 'en' })).meeting;
+    const offA = await M.publicSlots(mA.token);
+    const s1 = offA.days[0].slots[0].at; const s2 = offA.days[0].slots[1].at;
+    check('21 a client is offered the free slots by day', offA.days.length >= 1 && offA.days.every((d) => d.slots.length > 0 && /^\d{4}-\d\d-\d\d$/.test(d.date)) && offA.tz === 'Asia/Kolkata' && (await M.publicSlots('nonsense')).status === 404);
+    check('21b a time that is not on the list is refused', (await M.publicEvent(mA.token, { type: 'handover', name: 'A', phone: '9123456811', slot: s1 + 1000 })).status === 400 && (await M.publicEvent(mA.token, { type: 'handover', name: 'A', phone: '9123456811', slot: Date.now() })).status === 400);
+    const bookA = await M.publicEvent(mA.token, { type: 'handover', name: 'Slot A', phone: '9123456811', slot: s1 });
+    const rowA = (await M.list(sa)).items.find((i) => i.id === mA.id);
+    check('22 booking a time saves it on the row (shown in India time) as the call time', bookA.ok === true && rowA.slotAt === s1 && rowA.callbackWindow === 'slot' && /\d/.test(rowA.slotText) && rowA.handoverAt > 0, rowA);
+    check('22b the bell and the WhatsApp alert say the exact time, not a broad one', sentS.length >= 1 && sentS[sentS.length - 1].text.includes(M.istText(s1)) && !/as soon as possible|afternoon/.test(sentS[sentS.length - 1].text), sentS.map((z) => z.text.slice(0, 120)));
+    const bell2 = await prisma.notification.findFirst({ where: { userId: saRow.id, title: { contains: 'Plans meeting: Slot A' } }, orderBy: { createdAt: 'desc' } });
+    check('22c the owner\'s bell carries the time too', !!bell2 && bell2.message.includes(M.istText(s1)), bell2 && bell2.message);
+    const offB = await M.publicSlots(mB.token);
+    check('23 that slot is gone for the next client, but the client who holds it still sees it', !offB.days.some((d) => d.slots.some((z) => z.at === s1)) && (await M.publicSlots(mA.token)).days.some((d) => d.slots.some((z) => z.at === s1)));
+    const clash = await M.publicEvent(mB.token, { type: 'handover', name: 'B', phone: '9123456812', slot: s1 });
+    check('23b a second client asking for the same time is told it was just taken, and nothing of theirs is saved', clash.status === 409 && /just taken/.test(clash.error || '') && !(await M.list(sa)).items.find((i) => i.id === mB.id).handoverAt, clash);
+    const bookB = await M.publicEvent(mB.token, { type: 'handover', name: 'Slot B', phone: '9123456812', slot: s2 });
+    check('23c another time is fine', bookB.ok === true && (await M.list(sa)).items.find((i) => i.id === mB.id).slotAt === s2);
+    const ctask = await CRMDB.all('SELECT * FROM "CrmTask" WHERE "title" LIKE ?', '%Slot A%');
+    const istIso = new Date(s1 + 19800000).toISOString();
+    check('24 the CRM gets a call follow-up at exactly that time (India time), with a reminder 15 minutes before', ctask.length === 1 && ctask[0].dueDate === istIso.slice(0, 10) && ctask[0].dueTime === istIso.slice(11, 16) && ctask[0].type === 'Call' && Number(ctask[0].remindBefore) === 15, ctask);
+    // asking for a call "as soon as possible" afterwards gives the slot back
+    await M.publicEvent(mA.token, { type: 'handover', name: 'Slot A', phone: '9123456811', window: 'asap' });
+    const rowA2 = (await M.list(sa)).items.find((i) => i.id === mA.id);
+    check('25 asking again for "as soon as possible" gives the slot back to the others', rowA2.slotAt === null && rowA2.callbackWindow === 'asap' && (await M.publicSlots(mB.token)).days.some((d) => d.slots.some((z) => z.at === s1)));
+    // the reminder ten minutes before
+    sentS.length = 0;
+    await S0.run('UPDATE "OmniMkMeeting" SET slotAt = ?, slotRemindedAt = NULL WHERE id = ?', Date.now() + 5 * 60000, mB.id);
+    const due1 = await M.runSlotReminders();
+    const bell3 = await prisma.notification.findFirst({ where: { userId: saRow.id, title: { contains: 'Call due in' } }, orderBy: { createdAt: 'desc' } });
+    check('26 ten minutes before a booked call the owner gets a bell and a WhatsApp, once', due1 === 1 && !!bell3 && /Slot B/.test(bell3.title) && sentS.length === 1 && /Call due in/.test(sentS[0].text) && (await M.runSlotReminders()) === 0, { due1, bell: bell3 && bell3.title, sent: sentS.length });
+    await S0.run('UPDATE "OmniMkMeeting" SET slotAt = ?, slotRemindedAt = NULL, calledAt = ? WHERE id = ?', Date.now() + 4 * 60000, Date.now() + 1000, mB.id);
+    check('26b a client who was already called is not reminded about', (await M.runSlotReminders()) === 0);
+    check('26c a call more than ten minutes away is not reminded yet', await (async () => { await S0.run('UPDATE "OmniMkMeeting" SET slotAt = ?, slotRemindedAt = NULL, calledAt = NULL WHERE id = ?', Date.now() + 40 * 60000, mB.id); return (await M.runSlotReminders()) === 0; })());
+    MG.send = realSend;
+    for (const z of [mA, mB]) await M.remove(sa, z.id);
+
     // removing
     const rm = await M.remove(sa, m.id);
     check('11 removing makes the link stop working and leave the list', !!rm.ok && (await M.publicView(m.token)).status === 404 && !(await M.list(sa)).items.find((x) => x.id === m.id), rm);
     check('11b an unknown id cannot be removed', (await M.remove(sa, 'ffffffffffffffff')).status === 404);
-  } catch (e) { check('the test ran without an exception', false, e && e.stack); }
+  } catch (e) { check('the test ran without an exception', false, e && e.message); console.error(String((e && e.stack) || e).split(String.fromCharCode(10)).filter((l) => /backend[\\/](src|scripts)/.test(l)).slice(0, 10).join(String.fromCharCode(10))); }
   console.log(`\n${pass} passed, ${fail} failed`);
   try { await prisma.$disconnect(); fs.unlinkSync(TMP); } catch { /* the temp copy stays in the temp folder */ }
   process.exit(fail ? 1 : 0);

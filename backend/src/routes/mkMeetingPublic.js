@@ -1,6 +1,7 @@
 // PUBLIC plans meeting (no login): /api/public/mk-meeting (marketing/meeting.js).
 //   GET  /:token         the language, the first name, the brand colours, the first-ten spots left and the real proof numbers (when there is enough real work)
 //   POST /               a page opened without a link starts an anonymous session -> { token, ... }
+//   GET  /:token/slots  the call times this client can still book (30-minute slots, 9 am to 7 pm India time, Monday to Saturday)
 //   GET  /short/:id      the short address /m/<id> -> { token } (the page then opens the full link)
 //   POST /:token/event   { type: start | slide | ask | choice | handover | summary, ... }: what the client does, saved for the team
 //   GET  /voice/status   { en, te, hi }: where the server can speak (marketing/meetingVoice.js: the free Piper voices)
@@ -48,6 +49,7 @@ router.post('/hear', limHear, express.raw({ type: () => true, limit: '2mb' }), w
 }));
 router.post('/', limStart, wrap(async (req, res) => res.json(await M.publicStart((req.body || {}).language))));
 router.get('/short/:id', lim, wrap(async (req, res) => send(res, await M.publicShort(req.params.id))));
+router.get('/:token/slots', lim, wrap(async (req, res) => send(res, await M.publicSlots(req.params.token))));
 router.get('/:token', lim, wrap(async (req, res) => send(res, await M.publicView(req.params.token))));
 const baseOf = (req) => String(process.env.APP_BASE_URL || '').replace(/\/+$/, '') || `${String(req.headers['x-forwarded-proto'] || req.protocol).split(',')[0]}://${req.headers['x-forwarded-host'] || req.headers.host}`;
 router.post('/:token/event', limPost, wrap(async (req, res) => send(res, await M.publicEvent(req.params.token, req.body || {}, baseOf(req)))));
