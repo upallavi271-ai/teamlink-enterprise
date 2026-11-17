@@ -14,6 +14,8 @@ import api from '../../api';
 import './ResumePanel.css';
 // B8: Match by meaning + scoring versions.
 import { SemanticCard, VersionsCard } from '../match/FitSettingsExtras.jsx';
+// AI fairness (2026-11-17): the bias test of the Fit score, Admin only (hides itself for anyone else).
+import FairnessCard from '../match/FairnessCard.jsx';
 
 const ORDER = ['mand', 'good', 'exp', 'relev', 'edu', 'loc', 'sal', 'notice', 'mode', 'emp', 'jp', 'avail', 'ai'];
 // Used only if the server did not send the groups (it does: data.groups / data.groupKeys).
@@ -152,6 +154,7 @@ export default function FitSettings() {
       </div>
       <SemanticCard data={data} form={form} setForm={setForm} edit={edit} busy={busy} onSave={() => save(form)} onReload={load} />
       <VersionsCard data={data} />
+      <FairnessCard />
     </div>
   );
 }

@@ -186,6 +186,39 @@ function resumeHasSkill(lowerText, skill) {
 }
 const squashEdu = (v) => lc(v).replace(/[^a-z0-9]/g, '');
 
+// FAIRNESS (2026-11-17, scripts/ai-bias-test.js; docs/AI-BIAS-TEST-REPORT.md):
+// a skill is looked for in the resume's WORK text only. The person's own name,
+// e-mail addresses, links, and the "Name: / Father's name: / Declaration"
+// lines are taken out first, so a name that is also a skill word ("Ruby
+// Fernandes" for a Ruby job, "java.dev@…") never adds a skill. The bias test
+// found exactly that: same resume, "Ruby" scored 13 points more than "Robin".
+// A skill the person really has is still found in the skills / work lines.
+const PERSONAL_LINE = /^[ \t]*(?:(?:full |candidate |father'?s? |mother'?s? |husband'?s? |spouse'?s? )?name[ \t]*[:\-–]|declaration\b).*$/gim;
+const scrubCache = new WeakMap();
+function skillTextOf(resume, lowerText, name) {
+  const key = lc(name).trim();
+  const hit = resume && typeof resume === 'object' ? scrubCache.get(resume) : null;
+  if (hit && hit.key === key) return hit.text;
+  let t = String(lowerText || '')
+    .replace(/[^\s@<>()[\]]+@[^\s@<>()[\]]+/g, ' ') // e-mail addresses
+    .replace(/\b(?:https?:\/\/|www\.)\S+/g, ' ') // links
+    .replace(/\b(?:linkedin|github)\.com\/\S*/g, ' ')
+    .replace(PERSONAL_LINE, ' ');
+  const parts = key.replace(/[^a-z0-9' .-]/g, ' ').split(/[\s.]+/).filter((p) => p.length >= 2);
+  if (parts.length) {
+    const seq = (list) => list.map(escapeRe).join('[\\s.,]+');
+    const orders = parts.length > 1 ? [parts, [...parts].reverse()] : [parts];
+    orders.forEach((o) => { t = t.replace(new RegExp(`(^|[^a-z0-9])${seq(o)}(?![a-z0-9])`, 'g'), '$1 '); });
+    // A first line that is only the person's own name (or part of it): "RUBY".
+    const lines = t.split('\n');
+    const first = lines.findIndex((l) => l.trim());
+    if (first >= 0 && lines[first].trim().split(/[\s.,]+/).filter(Boolean).every((w) => parts.includes(w))) lines[first] = ' ';
+    t = lines.join('\n');
+  }
+  if (resume && typeof resume === 'object') scrubCache.set(resume, { key, text: t });
+  return t;
+}
+
 // computeMatch(candidate, requirement, { resume })
 //   resume (optional) = { text, parsed } of the candidate's CURRENT resume
 //   (utils/resumeMatch.js). When present, skills / experience / education are
@@ -198,7 +231,8 @@ function computeMatch(candidate, requirement, opts = {}) {
   const gaps = []; // what reduced the score
   const resume = opts && opts.resume && (opts.resume.text || opts.resume.parsed) ? opts.resume : null;
   const rParsed = (resume && resume.parsed) || {};
-  const rLower = resume ? lc(resume.lowerText != null ? resume.lowerText : resume.text) : '';
+  // FAIRNESS: the resume text without the person's name, e-mail, links and personal lines (skillTextOf above).
+  const rLower = resume ? skillTextOf(resume, lc(resume.lowerText != null ? resume.lowerText : resume.text), candidate && candidate.name) : '';
 
   // fit_ (2026-10-03): most real jobs have no must-have skills typed in, but
   // they do name a specialisation ("Dermatology"). Then that specialisation is

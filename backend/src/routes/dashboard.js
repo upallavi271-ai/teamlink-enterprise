@@ -1593,6 +1593,42 @@ async function mayExportAtsHome(user) {
   if (!access.export) return false;
   return !!(await can(user, 'ats', 'dashboard', 'KPI Overview', 'export')) || (SPEC_EXPORT_ROLES || []).includes(access.role);
 }
+// MY DASHBOARD LAYOUT (2026-11-17, utils/dashboardLayout.js): each login's own
+// order of the cards and the cards it hid. Saved per login; never another's.
+//   GET    /ats/home/layout   (?asUser= for the Super Admin's "Dashboard of": that login's, read-only)
+//   PUT    /ats/home/layout   { order: [cardId…], hidden: [cardId…] }
+//   DELETE /ats/home/layout   Reset layout (the usual order, every card shown)
+const DL = require('../utils/dashboardLayout');
+const layoutWriteRefused = (req) => (req.viewAs ? 'You are viewing as another login. Your layout can be changed only on your own dashboard.'
+  : req.query && req.query.asUser && String(req.query.asUser) !== String(req.user.id) ? 'This is another login’s dashboard. Only they can change its layout.' : null);
+router.get('/ats/home/layout', ...ATS_BOARD_GUARDS, async (req, res, next) => {
+  try {
+    const { boardSubject } = require('../utils/dashboardOf'); // eslint-disable-line global-require
+    const subject = await boardSubject(req);
+    return res.json({ layout: await DL.getLayout(subject.id, 'ats-home') });
+  } catch (err) {
+    if (err.boardRefusal) return res.status(err.status).json({ error: err.message });
+    return next(err);
+  }
+});
+router.put('/ats/home/layout', ...ATS_BOARD_GUARDS, async (req, res, next) => {
+  const no = layoutWriteRefused(req);
+  if (no) return res.status(403).json({ error: no });
+  try {
+    return res.json({ ok: true, layout: await DL.saveLayout(req.user.id, 'ats-home', req.body || {}), message: 'Layout saved.' });
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    return next(err);
+  }
+});
+router.delete('/ats/home/layout', ...ATS_BOARD_GUARDS, async (req, res, next) => {
+  const no = layoutWriteRefused(req);
+  if (no) return res.status(403).json({ error: no });
+  try {
+    await DL.resetLayout(req.user.id, 'ats-home');
+    return res.json({ ok: true, layout: null, message: 'Layout reset. Every card is back in its usual place.' });
+  } catch (err) { return next(err); }
+});
 router.get('/ats/home', ...ATS_BOARD_GUARDS, async (req, res, next) => {
   try {
     const { b, subject } = await asBoardSubject(req, async (u) => ({ b: await atsHome.buildHomeCached(u, req), subject: u }));
@@ -1602,8 +1638,10 @@ router.get('/ats/home', ...ATS_BOARD_GUARDS, async (req, res, next) => {
     const dashboardOf = subject === req.user ? null : {
       id: subject.id, name: subject.name, layout: b.layout, title: b.title, scope: b.scopeChip || null,
     };
+    // cardLayout (2026-11-17): how this login arranged its cards (utils/dashboardLayout.js), null = the usual order.
+    const cardLayout = await DL.getLayout(subject.id, 'ats-home').catch(() => null);
     // mayExport: the page shows its Export button only when this is true (the export route checks again).
-    return res.json({ ...atsHome.publicHome(b), mayExport: await mayExportAtsHome(req.user), dashboardOf });
+    return res.json({ ...atsHome.publicHome(b), mayExport: await mayExportAtsHome(req.user), dashboardOf, cardLayout });
   } catch (err) {
     if (err.boardRefusal) return res.status(err.status).json({ error: err.message });
     if (err.status === 400 || err.name === 'RangeError400') return res.status(400).json({ error: err.message });

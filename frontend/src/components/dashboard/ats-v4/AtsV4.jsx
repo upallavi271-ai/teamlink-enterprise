@@ -7,6 +7,9 @@ import {
 import { LineChart, DonutChart } from '../../charts';
 import { can, canRaiseRequirement, canStartJob } from '../../../permissions';
 import './atsV4.css';
+import {
+  arrange, moveOnto, moveBy, cardKey, LayoutBox, LayoutBar,
+} from './CardLayout.jsx'; // my dashboard layout (2026-11-17)
 
 // ---------------------------------------------------------------------------
 // ATS DASHBOARD v4 (redesign 2026-10-08, reference ref-ats-dashboard.png).
@@ -20,6 +23,9 @@ import './atsV4.css';
 //   Joinings — last 6 months | Money | Hiring progress | Recent activity ·
 //   everything else the role's dashboard has (Open jobs, Team leads, …),
 //   each in its own collapsed section.
+// MY LAYOUT (2026-11-17): "Customise" lets each login drag the sections and
+// the cards inside a row into its own order and hide / show cards; saved per
+// login (CardLayout.jsx, PUT/DELETE /api/dashboard/ats/home/layout).
 // Every widget is optional: a role that has no data for a slot gets the
 // slot filled by its own next widget, or the slot is left out. Nothing here
 // invents a number — a missing value is "—" or the widget's own empty text.
@@ -630,70 +636,218 @@ export default function AtsV4({
   const mainAction = data.main
     ? (data.main.to ? { label: data.main.label, to: data.main.to } : { label: data.main.label, onClick: () => onDrill(data.main.drill) })
     : null;
-  const row4 = [line, money, funnel, ...fill].filter(Boolean);
+  // ---- MY DASHBOARD LAYOUT (2026-11-17): every block below is a card the person can move or hide (CardLayout.jsx).
+  const readOnly = !!(params && params.asUser); // "Dashboard of": their layout, shown read-only
+  const [layout, setLayout] = useState(data.cardLayout || null);
+  const layoutStamp = data.cardLayout ? data.cardLayout.updatedAt : '';
+  useEffect(() => { setLayout(data.cardLayout || null); }, [layoutStamp, readOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [editing, setEditing] = useState(false);
+  const [drag, setDrag] = useState(null);
+  const [layMsg, setLayMsg] = useState('');
+  const [layBusy, setLayBusy] = useState(false);
+  const order = (layout && layout.order) || [];
+  const hidden = new Set((layout && layout.hidden) || []);
 
-  return (
-    <div className="av4">
-      {workspace && draw(workspace)}
-      {missed && draw(missed)}
-      {(kpi || tiles.length > 0) && (
-        <KpiRow className={`av4-kpis av4-kpis-${Math.min(6, tiles.length)}`}>
-          {tiles.slice(0, 6).map((t) => <Tile key={t.id} t={t} onDrill={onDrill} prevWord={prevWord} />)}
-        </KpiRow>
-      )}
-      {tiles.length > 6 && (
-        <KpiRow className="av4-kpis av4-kpis-6">
-          {tiles.slice(6).map((t) => <Tile key={t.id} t={t} onDrill={onDrill} prevWord={prevWord} />)}
-        </KpiRow>
-      )}
-
-      <div className="av4-row av4-row2">
-        <Panel title="Needs attention" icon="alert" iconTone="red" className="av4-att" action={mainAction}>
-          <AttentionList items={att.items} empty={att.empty} />
-          {att.more > 0 && <div className="av4-note">+ {fmt(att.more)} smaller {att.more === 1 ? 'item' : 'items'}</div>}
-          {att.notes.map((n) => <div key={n} className="av4-note is-ok">{n}</div>)}
-        </Panel>
-        {openjobs
+  const card = (id, label, node, flex) => (node ? { id: cardKey(id), label, node, flex } : null);
+  const wLabel = (w, fallback) => (w && (w.title || FOLD_NAMES[w.type])) || fallback;
+  const sections = [
+    { id: 'workspace', label: 'My business workspace', cards: [card('workspace', 'My business workspace', workspace && draw(workspace))] },
+    { id: 'missed', label: 'My missed items', cards: [card('missed', wLabel(missed, 'My missed items'), missed && draw(missed))] },
+    {
+      id: 'kpis',
+      label: 'Numbers',
+      cards: [card('kpis', 'Numbers', (kpi || tiles.length > 0) ? (
+        <>
+          <KpiRow className={`av4-kpis av4-kpis-${Math.min(6, tiles.length)}`}>
+            {tiles.slice(0, 6).map((t) => <Tile key={t.id} t={t} onDrill={onDrill} prevWord={prevWord} />)}
+          </KpiRow>
+          {tiles.length > 6 && (
+            <KpiRow className="av4-kpis av4-kpis-6">
+              {tiles.slice(6).map((t) => <Tile key={t.id} t={t} onDrill={onDrill} prevWord={prevWord} />)}
+            </KpiRow>
+          )}
+        </>
+      ) : null)],
+    },
+    {
+      id: 'row2',
+      label: 'Needs attention row',
+      row: 'av4-row av4-row2',
+      cards: [
+        card('attention', 'Needs attention', (
+          <Panel title="Needs attention" icon="alert" iconTone="red" className="av4-att" action={mainAction}>
+            <AttentionList items={att.items} empty={att.empty} />
+            {att.more > 0 && <div className="av4-note">+ {fmt(att.more)} smaller {att.more === 1 ? 'item' : 'items'}</div>}
+            {att.notes.map((n) => <div key={n} className="av4-note is-ok">{n}</div>)}
+          </Panel>
+        ), 'att'),
+        card('requirements', openjobs ? 'Requirements needing attention' : wLabel(middle, 'Requirements'), openjobs
           ? <LateJobs params={params} reload={reload} total={openjobs.total} drill={openjobs.drill} onDrill={onDrill} mayOpen={mayOpenJob} />
-          : middle ? <JobsTable w={middle} onDrill={onDrill} /> : null}
-        {qa.length > 0 && (
+          : middle ? <JobsTable w={middle} onDrill={onDrill} /> : null, 'reqs'),
+        card('quick', 'Quick actions', qa.length > 0 ? (
           <Panel title="Quick actions" icon="bolt" iconTone="blue" className="av4-quick">
             <QuickActions items={qa} />
           </Panel>
-        )}
-      </div>
-      {drops && <div className="av4-drops">{draw(drops)}</div>}
-      {dropMonths && <div className="av4-drops">{draw(dropMonths)}</div>}
+        ) : null, 'quick'),
+      ],
+    },
+    { id: 'drops', label: wLabel(drops, 'Drops and replacements'), cards: [card('drops', wLabel(drops, 'Drops and replacements'), drops && <div className="av4-drops">{draw(drops)}</div>)] },
+    { id: 'drop-months', label: wLabel(dropMonths, 'Drops by month'), cards: [card('drop-months', wLabel(dropMonths, 'Drops by month'), dropMonths && <div className="av4-drops">{draw(dropMonths)}</div>)] },
+    {
+      id: 'row3',
+      label: 'Team row',
+      row: 'av4-row av4-row3',
+      cards: [
+        card('departments', 'Department performance', depts && <DeptPerf w={depts} onDrill={onDrill} onPickDept={onPickDept} tls={tls} />, 'dept'),
+        left3 && card(`w:${left3.id}`, wLabel(left3, 'List'), <div className="av4-slot">{draw(left3)}</div>),
+        card('team', 'Team snapshot', (tlsW || peopleW) && <TeamSnapshot tlsW={tlsW} tls={tls} peopleW={peopleW} onDrill={onDrill} onShowAll={showTls} />, 'team'),
+        right3 && card(`w:${right3.id}`, wLabel(right3, 'List'), <div className="av4-slot">{draw(right3)}</div>),
+      ],
+    },
+    {
+      id: 'row4',
+      label: 'Charts row',
+      row: 'av4-row av4-row4',
+      cards: [
+        card('joinings', wLabel(line, 'Joinings'), line && <Joinings w={line} onDrill={onDrill} />, 'chart'),
+        card('money', wLabel(money, 'Money'), money && <Money w={money} onDrill={onDrill} />),
+        card('hiring', wLabel(funnel, 'Hiring progress'), funnel && <Hiring w={funnel} onDrill={onDrill} />),
+        ...fill.map((w) => card(`w:${w.id}`, wLabel(w, 'More'), <div className="av4-slot av4-fill">{draw(w)}</div>)),
+        card('activity', 'Recent activity', (today || banner) && <Activity today={today} banner={banner} onDrill={onDrill} />, 'activity'),
+      ],
+    },
+    {
+      id: 'below',
+      label: 'More on your dashboard',
+      below: true,
+      cards: below.map((w) => {
+        const fid = w.type === 'tls' ? 'tls' : w.id;
+        const title = w.title || FOLD_NAMES[w.type] || 'More';
+        return card(`fold:${fid}`, title, (
+          <Fold id={fid} title={title} count={foldCount(w)} open={open.includes(fid)} onToggle={() => toggle(fid)}>
+            {draw(w)}
+          </Fold>
+        ));
+      }),
+    },
+  ].map((s) => ({ ...s, cards: s.cards.filter(Boolean) })).filter((s) => s.cards.length > 0);
 
-      {(depts || left3 || tlsW || peopleW || right3) && (
-        <div className="av4-row av4-row3">
-          {depts && <DeptPerf w={depts} onDrill={onDrill} onPickDept={onPickDept} tls={tls} />}
-          {left3 && <div className="av4-slot">{draw(left3)}</div>}
-          {(tlsW || peopleW) && <TeamSnapshot tlsW={tlsW} tls={tls} peopleW={peopleW} onDrill={onDrill} onShowAll={showTls} />}
-          {right3 && <div className="av4-slot">{draw(right3)}</div>}
-        </div>
-      )}
+  const allCards = sections.flatMap((s) => s.cards);
+  const hiddenCards = allCards.filter((c) => hidden.has(c.id));
+  // The sections and their cards in this person's order (hidden cards left out).
+  const current = () => arrange(sections, order).map((s) => ({ ...s, cards: arrange(s.cards, order) }));
+  const visibleSections = current()
+    .map((s) => ({ ...s, shown: s.cards.filter((c) => !hidden.has(c.id)) }))
+    .filter((s) => s.shown.length > 0);
 
-      {(row4.length > 0 || today || banner) && (
-        <div className="av4-row av4-row4">
-          {line && <Joinings w={line} onDrill={onDrill} />}
-          {money && <Money w={money} onDrill={onDrill} />}
-          {funnel && <Hiring w={funnel} onDrill={onDrill} />}
-          {fill.map((w) => <div key={w.id} className="av4-slot av4-fill">{draw(w)}</div>)}
-          {(today || banner) && <Activity today={today} banner={banner} onDrill={onDrill} />}
-        </div>
-      )}
+  // Save: the relative order of everything on the page now (+ ids the page does not have today).
+  async function persist(nextSections, nextHidden, note) {
+    const ids = [...nextSections.map((s) => s.id), ...nextSections.flatMap((s) => s.cards.map((c) => c.id))];
+    const keep = order.filter((id) => !ids.includes(id));
+    const next = { order: [...new Set([...ids, ...keep])], hidden: [...nextHidden] };
+    setLayout({ ...next, updatedAt: layout && layout.updatedAt });
+    setLayBusy(true); setLayMsg('Saving…');
+    try {
+      const r = await api.put('/dashboard/ats/home/layout', next);
+      setLayout(r.data.layout);
+      setLayMsg(note || 'Saved.');
+    } catch (e) { setLayMsg(errText(e)); } finally { setLayBusy(false); }
+  }
+  const moveSection = (fn) => {
+    const cur = current();
+    const ids = fn(visibleSections.map((s) => s.id));
+    const rest = cur.filter((s) => !ids.includes(s.id));
+    persist([...ids.map((x) => cur.find((s) => s.id === x)), ...rest], hidden);
+  };
+  const moveCard = (secId, fn) => {
+    persist(current().map((s) => {
+      if (s.id !== secId) return s;
+      const shownIds = fn(s.cards.filter((c) => !hidden.has(c.id)).map((c) => c.id));
+      return { ...s, cards: [...shownIds.map((x) => s.cards.find((c) => c.id === x)), ...s.cards.filter((c) => hidden.has(c.id))] };
+    }), hidden);
+  };
+  const hideCard = (id) => { const h = new Set(hidden); h.add(id); persist(current(), h, 'Hidden. Press its name under Hidden to show it again.'); };
+  const showCard = (id) => { const h = new Set(hidden); h.delete(id); persist(current(), h, 'Shown again.'); };
+  async function resetLayout() {
+    setLayBusy(true); setLayMsg('');
+    try {
+      await api.delete('/dashboard/ats/home/layout');
+      setLayout(null);
+      setLayMsg('Layout reset. Every card is back in its usual place.');
+    } catch (e) { setLayMsg(errText(e)); } finally { setLayBusy(false); }
+  }
 
-      {below.length > 0 && (
-        <div className="av4-below">
-          <div className="av4-below-h">More on your dashboard</div>
-          {below.map((w) => (
-            <Fold key={w.id} id={w.type === 'tls' ? 'tls' : w.id} title={w.title || FOLD_NAMES[w.type] || 'More'} count={foldCount(w)} open={open.includes(w.type === 'tls' ? 'tls' : w.id)} onToggle={() => toggle(w.type === 'tls' ? 'tls' : w.id)}>
-              {draw(w)}
-            </Fold>
+  const arranging = editing && !readOnly;
+  const drawSection = (s, si) => {
+    const single = !s.row && !s.below;
+    const boxProps = (c, i, list) => ({
+      kind: 'card',
+      id: c.id,
+      group: s.id,
+      label: c.label,
+      editing: arranging,
+      drag,
+      setDrag,
+      onDropOnto: (from, onto) => moveCard(s.id, (ids) => moveOnto(ids, from, onto)),
+      onMove: (dir) => moveCard(s.id, (ids) => moveBy(ids, c.id, dir)),
+      onHide: () => hideCard(c.id),
+      prevLabel: i > 0 ? list[i - 1].label : '',
+      nextLabel: i < list.length - 1 ? list[i + 1].label : '',
+    });
+    let inner;
+    if (single) inner = s.shown[0].node;
+    else if (s.row) {
+      inner = (
+        <div className={s.row}>
+          {s.shown.map((c, i, list) => (
+            <LayoutBox key={c.id} {...boxProps(c, i, list)} className={`av4-card${c.flex ? ` is-${c.flex}` : ''}`}>{c.node}</LayoutBox>
           ))}
         </div>
-      )}
+      );
+    } else {
+      inner = (
+        <div className="av4-below">
+          <div className="av4-below-h">More on your dashboard</div>
+          {s.shown.map((c, i, list) => <LayoutBox key={c.id} {...boxProps(c, i, list)} className="av4-card-fold">{c.node}</LayoutBox>)}
+        </div>
+      );
+    }
+    return (
+      <LayoutBox
+        key={s.id}
+        kind="section"
+        id={s.id}
+        group="sections"
+        label={single ? s.shown[0].label : s.label}
+        editing={arranging}
+        drag={drag}
+        setDrag={setDrag}
+        onDropOnto={(from, onto) => moveSection((ids) => moveOnto(ids, from, onto))}
+        onMove={(dir) => moveSection((ids) => moveBy(ids, s.id, dir))}
+        onHide={single ? () => hideCard(s.shown[0].id) : null}
+        prevLabel={si > 0 ? visibleSections[si - 1].label : ''}
+        nextLabel={si < visibleSections.length - 1 ? visibleSections[si + 1].label : ''}
+        className="av4-sec"
+      >
+        {inner}
+      </LayoutBox>
+    );
+  };
+
+  return (
+    <div className={`av4${arranging ? ' is-arranging' : ''}`}>
+      <LayoutBar
+        editing={arranging}
+        setEditing={(on) => { setEditing(on); setDrag(null); if (!on) setLayMsg(''); }}
+        hiddenCards={hiddenCards}
+        onShow={showCard}
+        onReset={resetLayout}
+        readOnly={readOnly}
+        msg={layMsg}
+        busy={layBusy}
+        customised={!!layout}
+      />
+      {visibleSections.map(drawSection)}
 
       <footer className="av4-foot">
         <span>TeamLink · ATS Dashboard{data.scopeChip ? ` · Your area: ${data.scopeChip}` : ''}</span>

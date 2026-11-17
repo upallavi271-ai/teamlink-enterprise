@@ -350,6 +350,31 @@ router.put('/fit-settings', async (req, res) => {
   }
 });
 
+// --- AI FAIRNESS (founder audit 2026-11-17) -----------------------------------
+// The paired bias test + the four-fifths check of the Fit score
+// (utils/fairnessTest.js, the same code as scripts/ai-bias-test.js), run on
+// synthetic people only, with the LIVE Fit weights. Admin only.
+//   GET  /fairness-test   the last run (or null)
+//   POST /fairness-test   run it now, keep the result, return it
+const fairness = require('../utils/fairnessTest');
+router.get('/fairness-test', async (req, res, next) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ error: 'Only an Admin can see the AI fairness test.' });
+  try { return res.json({ last: await fairness.latestRun() }); } catch (err) { return next(err); }
+});
+router.post('/fairness-test', async (req, res, next) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ error: 'Only an Admin can run the AI fairness test.' });
+  try {
+    await rm.loadFitSettings({ fresh: true }).catch(() => null); // test the weights in use now
+    const result = fairness.runBiasTest({ tolerance: 0 });
+    await fairness.saveRun(result, req.user);
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: `AI fairness test run: ${result.pass ? 'passed' : 'FAILED'}`, entity: 'AiFairnessRun', entityId: result.fitVersion,
+      toValue: JSON.stringify({ pass: result.pass, comparisons: result.comparisons, failed: result.attributes.filter((a) => !a.pass).map((a) => a.key), minRatio: result.fourFifths.minRatio }),
+    }).catch(() => null);
+    return res.json({ last: { ...(await fairness.latestRun()), ranByName: req.user.name } });
+  } catch (err) { return next(err); }
+});
+
 // --- B8: meaning-based matching -------------------------------------------------
 router.get('/semantic/status', async (req, res) => {
   if (cand().viewerKind(req.user) !== 'internal') return res.status(403).json({ error: 'Only TeamLink staff can see this.' });
