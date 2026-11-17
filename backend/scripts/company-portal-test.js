@@ -71,7 +71,7 @@ const base = [
   'GREENSTART_ENABLED=false', 'GREENSTART_SUPERVISE=false', 'GREENSTART_AUTOSTART=false', 'JOB_PORTAL_SYNC_SECRETS_PLACEHOLDER',
 ];
 const tlEnv = path.join(TMP, 'tl.env');
-const tlSecrets = { JOB_PORTAL_SYNC_TOKEN: rand(), JOB_PORTAL_PUSH_SECRET: rand(), JOBPORTAL__AUTH_SECRET: rand(), JOBPORTAL__INTEGRATION_SECRET_KEY: rand() };
+const tlSecrets = { GREENSTART_SSO_SECRET: rand(), JOB_PORTAL_SYNC_TOKEN: rand(), JOB_PORTAL_PUSH_SECRET: rand(), JOBPORTAL__AUTH_SECRET: rand(), JOBPORTAL__INTEGRATION_SECRET_KEY: rand() };
 fs.writeFileSync(tlEnv, ['PORT=4010', 'DATABASE_URL="file:./dev.db"', `JWT_SECRET=${rand()}`, `INTEGRATION_SECRET_KEY=${rand()}`, 'APP_BASE_URL=https://teamlink.teamlinks.in', 'UPLOAD_DIR=/root/.teamlink-uploads',
   ...Object.entries(tlSecrets).map(([k, v]) => `${k}=${v}`)].join('\n'));
 const own = (extra) => [...base.filter((l) => l !== 'JOB_PORTAL_SYNC_SECRETS_PLACEHOLDER'), ...extra].join('\n');
@@ -124,10 +124,33 @@ const homeOf = (env) => {
 ok(homeOf({ COMPANY_KEY: 'nish', COMPANY_HOME: '/opt/company-nish/home', HOME: '/root' }) === '/opt/company-nish/home', 'a company copy started with HOME=/root takes its own home folder (COMPANY_HOME)');
 ok(homeOf({ COMPANY_KEY: 'nish', HOME: '/root' }) === '/root', 'without COMPANY_HOME nothing changes (older company copies)');
 ok(homeOf({ COMPANY_HOME: '/opt/company-nish/home', HOME: '/root' }) === '/root', 'TeamLink (no COMPANY_KEY) never changes its home folder');
-try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* none */ }
+
+heading('5b. Green Start (Omni-Channel): a company copy uses only its OWN Green Start');
+const greenOf = (env) => {
+  const r = spawnSync(process.execPath, ['-e', 'require("./src/utils/companyGuard"); process.stdout.write(String(process.env.GREENSTART_ENABLED))'], { cwd: BACKEND, env: { PATH: process.env.PATH, ...env }, encoding: 'utf8' });
+  return r.stdout;
+};
+ok(greenOf({ COMPANY_KEY: 'nish' }) === 'false', 'a company copy with Green Start left on by default is switched off (the defaults are TeamLink ports)');
+ok(greenOf({ COMPANY_KEY: 'nish', GREENSTART_API_PORT: '4020' }) === 'false', 'a company copy pointing at port 4020 (the Green Start of TeamLink) is switched off');
+ok(greenOf({ COMPANY_KEY: 'nish', GREENSTART_API_PORT: '4021' }) === 'undefined', 'a company copy with an API port of its own keeps Green Start on');
+ok(greenOf({ COMPANY_KEY: 'nish', GREENSTART_ENABLED: 'false' }) === 'false', 'explicitly off stays off');
+ok(greenOf({}) === 'undefined' && greenOf({ GREENSTART_API_PORT: '4020' }) === 'undefined', 'TeamLink (no COMPANY_KEY): nothing changes');
+const NL = String.fromCharCode(10);
+const greenBase = own(goodPortal).split(NL).filter((l) => !l.startsWith('GREENSTART_ENABLED=')).join(NL);
+const greenLines = (over = {}) => [`GREENSTART_ENABLED=true`, `GREENSTART_API_PORT=${over.api || 4021}`, `GREENSTART_REDIS_PORT=${over.redis || 6380}`, `GREENSTART_SSO_SECRET=${over.secret || rand()}`].join(NL);
+const g1 = check('green-own.env', greenBase + NL + greenLines());
+ok(g1.status === 0, 'its own Green Start (own ports and secret): passes the settings check', g1.fails.join(' | '));
+const g2 = check('green-4020.env', greenBase + NL + greenLines({ api: 4020 }));
+ok(g2.status === 1 && g2.fails.some((l) => /4020/.test(l)), 'TeamLink API port 4020: rejected', g2.fails.join(' | '));
+const g3 = check('green-redis.env', greenBase + NL + greenLines({ redis: 6379 }));
+ok(g3.status === 1 && g3.fails.some((l) => /6379/.test(l)), 'TeamLink Redis port 6379: rejected', g3.fails.join(' | '));
+const g4 = check('green-secret.env', greenBase + NL + greenLines({ secret: tlSecrets.GREENSTART_SSO_SECRET }));
+ok(g4.status === 1 && g4.fails.some((l) => /GREENSTART_SSO_SECRET differs/.test(l)), 'TeamLink\'s own Green Start sign-in secret reused: rejected', g4.fails.join(' | '));
+const g5 = check('green-weak.env', greenBase + NL + greenLines({ secret: 'short' }));
+ok(g5.status === 1, 'a short sign-in secret: rejected', g5.fails.join(' | '));
 
 heading('6. the scripts are valid');
-for (const f of ['company-deploy.sh', 'company-install.sh', 'company-sync.sh', 'company-portal-install.sh']) {
+for (const f of ['company-deploy.sh', 'company-install.sh', 'company-sync.sh', 'company-portal-install.sh', 'company-green-install.sh', 'company-green-smtp.sh', 'company-green-sync.sh']) {
   const r = spawnSync('bash', ['-n', path.join(ROOT, 'deploy', 'vps', 'company', f)], { encoding: 'utf8' });
   ok(r.status === 0, `bash -n ${f}`, (r.stderr || '').slice(0, 160));
 }
@@ -136,5 +159,6 @@ const chk = spawnSync(process.execPath, ['--input-type=module', '--check'], { in
 ok(chk.status === 0, 'company-portal-init.mjs is valid JavaScript', (chk.stderr || '').slice(0, 160));
 ok(/delete from users where lower\(email\) = any\(\$1\)/.test(init) && /refuse|throw new Error\('the portal has/.test(init), 'the clean-up removes only the two demo logins and refuses a portal that holds more');
 
+try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* none */ }
 console.log(`\n${failures === 0 ? 'ALL PASSED' : 'FAILED'}: ${passes} passed, ${failures} failed`);
 process.exit(failures === 0 ? 0 : 1);

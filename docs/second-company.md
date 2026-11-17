@@ -196,3 +196,39 @@ Not changed (wording, not data): the portal's message templates and the label "T
    tested before it is reloaded and the old file is put back if the test fails).
 
 Known and not changed: the portal's own pages are the customer's program and carry the name "TeamLink" (title, logo); only its data (company, demo logins, labels) is the company's.
+## 12. The company's own Omni-Channel (Green Start) (added 2026-11-17)
+
+Founder's wish: Omni-Channel visible in the other company too, with none of TeamLink's accounts or details. Green Start is a separate program (NestJS API + background worker + its own PostgreSQL database
++ Redis); TeamLink runs one at `greenstart.teamlinks.in`. A company gets a **second, completely separate set**, built by `deploy/vps/company/company-green-install.sh`:
+
+| | TeamLink | the company (NISH) |
+|---|---|---|
+| database | `greenstart` (own login `greenstart`) | `greenstart_nish` (own login `gs_nish`), same PostgreSQL server, 153 tables, no company data |
+| Redis | port 6379 | its own instance, port 6380, own password and folder |
+| API / worker | `green-start-api` (4020) / `green-start-worker` | `green-start-nish-api` (4021) / `green-start-nish-worker` / `green-start-nish-redis` |
+| settings + secrets | `/opt/green-start/gs-api/.env` | `/opt/company-nish/green/config/gs-api.env` (mode 640): every secret new, nothing copied |
+| uploads | `/opt/green-start/uploads` | `/opt/company-nish/green/uploads` |
+| address | `greenstart.teamlinks.in` | the company's own, for example `omni.nish.teamlinks.in` (own nginx site + certificate) |
+
+The **program files** (`gs-api/dist`, the built website) are TeamLink's own read-only copy: the same program runs for both, so there is no second heavy build. The company's folder `green/gs-api` holds only
+links to those files and **no `.env`** (the company's own settings come from its own file; nothing of TeamLink's `.env` can be read). After TeamLink's own deploy of a new Green Start version has finished,
+`company-green-sync.sh` (called by the company's 2-minute check) migrates the company's own database and restarts its own API and worker. TeamLink's Green Start is only read, never changed.
+
+**Three stages** (`--stage prepare|start|public`, plan first, `--apply` to do it):
+1. **prepare** (needs nothing from outside): checks, database + login, Redis, folders, settings, migrations, services installed but NOT started.
+2. **start**: refuses until the company's OWN sending mailbox is in the settings. Green Start e-mails sign-up codes, password resets and invitations, so as a real server it will not start without
+   SMTP_HOST / SMTP_USER / SMTP_PASS / SMTP_FROM, and TeamLink's mailbox is never used. `company-green-smtp.sh --key nish` asks for the details in the server terminal (password typed hidden, tested with a login check that
+   sends nothing, saved only in the company's settings file, never printed, never in a chat).
+3. **public** (needs the DNS record): the company's own nginx site (`nginx-omni.conf.tmpl`, from TeamLink's live Green Start site with its own port, name and origin; one new file, `nginx -t` before reload) + certificate (certbot)
+   + the company's server is switched to its own Green Start (`GREENSTART_ENABLED=true`, its own API / Redis ports, its own sign-in secret `GREENSTART_SSO_SECRET` = the company's `TEAMLINK_SSO_SECRET`) and restarted with its own HOME.
+   The company's Green Start account is made by Green Start itself on the first one-click sign-in (Super Admin of the company); no manual account setup.
+
+**The program refuses a Green Start that is not the company's own** (`utils/companyGuard.js`): the program's defaults (API port 4020, Redis 6379, "on" when unset) are TeamLink's own Green Start, so a company copy
+keeps Green Start on only when `GREENSTART_API_PORT` is a port of its own (not 4020); otherwise it is switched off at start. `scripts/company-check.js` checks the same, plus its own Redis port (not 6379), a long sign-in secret that
+differs from TeamLink's, and no TeamLink gate port. TeamLink (no COMPANY_KEY) is unchanged. `npm run company-portal-test` covers it (48 checks).
+
+**Proved on the live server before anything was handed over:** `--stage prepare` created the database (153 tables, 207 rows that the program installs itself: migration bookkeeping, permissions, plans, rate cards; nothing naming TeamLink
+except one migration file name), then a boot test with clearly fake mailbox values started the company's Redis, API and worker (API health ok, listening on 127.0.0.1 only, about 230 MB, no errors, TeamLink's Green Start undisturbed),
+and the services were stopped and the fake values blanked again.
+
+Known: the company's own WhatsApp number, Meta app, SMS and ad accounts are added inside its Green Start later (none are shared). The program's public pages keep the product name "Green Start".

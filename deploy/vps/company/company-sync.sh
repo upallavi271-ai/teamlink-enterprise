@@ -22,6 +22,8 @@ mkdir -p "$STATE"
 
 [ -f "$STATE/PAUSE" ] && { echo "$(date '+%F %T')  PAUSED here (rm $STATE/PAUSE to resume)" > "$STATE/STATUS"; exit 0; }
 [ -f "$TL_STATE/PAUSE" ] && exit 0                    # TeamLink's deploys are paused: so is this
+# a company that has its OWN Green Start (Omni-Channel): keep it on the program version TeamLink's Green Start runs (migrates ITS database, restarts ITS services; see company-green-sync.sh)
+[ -f "$HERE/company-green-sync.sh" ] && bash "$HERE/company-green-sync.sh" "$KEY" || true
 want=$(cat "$TL_STATE/deployed-commit" 2>/dev/null || true)
 have=$(cat "$STATE/deployed-commit" 2>/dev/null || true)
 [ -n "$want" ] || exit 0

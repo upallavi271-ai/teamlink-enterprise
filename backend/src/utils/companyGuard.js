@@ -32,6 +32,18 @@ const homeWas = (() => {
 })();
 
 const wanted = () => String(process.env.COMPANY_KEY || '').trim().toLowerCase();
+// GREEN START (Omni-Channel) FOR A COMPANY COPY: only with its OWN Green Start. Several parts of the program (utils/greenStartEmbed.js,
+// greenStartIntegrations.js, aiMarketingPlatform.js) default to port 4020, which is TeamLink's own Green Start, and treat an unset
+// GREENSTART_ENABLED as "on": a company copy that kept those defaults would send its integrations and sign-ins to TeamLink's Green Start.
+// So a company copy keeps Green Start switched on only when GREENSTART_API_PORT is set to a port of its own (not 4020); otherwise it is switched off here.
+const greenOffWhy = (() => {
+  if (!String(process.env.COMPANY_KEY || '').trim()) return null;
+  if (/^(0|false|no|off)$/i.test(String(process.env.GREENSTART_ENABLED || '').trim())) return null; // already off
+  const p = parseInt(process.env.GREENSTART_API_PORT, 10);
+  if (p && p !== 4020) return null; // its own Green Start
+  process.env.GREENSTART_ENABLED = 'false';
+  return p === 4020 ? 'GREENSTART_API_PORT is 4020, the port of the Green Start that belongs to TeamLink' : 'GREENSTART_API_PORT is not set';
+})();
 let state = wanted() ? 'checking' : 'off'; // off | checking | ok | bad
 let started = false;
 
@@ -52,6 +64,7 @@ async function verify(prisma) {
 function start() {
   if (started || state === 'off') return;
   started = true;
+  if (greenOffWhy) console.log(`[company] Green Start (Omni-Channel) is switched off in this company copy: ${greenOffWhy}. It needs its own Green Start API port.`); // eslint-disable-line no-console
   if (homeWas !== null) console.log(`[company] the process was started with HOME=${homeWas || '(none)'}; using this company's own home folder (COMPANY_HOME) instead.`); // eslint-disable-line no-console
   const prisma = require('../db'); // eslint-disable-line global-require
   verify(prisma).then((r) => {

@@ -90,7 +90,21 @@ async function check({ env, home, tl, checkPort }) {
   }
 
   // neighbours on the same server
-  add(falsy(e.GREENSTART_ENABLED) && e.GREENSTART_ENABLED !== undefined, 'TeamLink\'s Omni-Channel (Green Start) is switched off here (GREENSTART_ENABLED=false)', String(e.GREENSTART_ENABLED || 'not set'));
+  // GREEN START (Omni-Channel, docs/second-company.md section 12): off, or this company's OWN copy. The program's defaults (API port 4020, Redis 6379, "on" when unset)
+  // are TeamLink's own Green Start, so "on" is only allowed with a port and a sign-in secret of the company's own.
+  const greenOn = e.GREENSTART_ENABLED !== undefined && !falsy(e.GREENSTART_ENABLED) && String(e.GREENSTART_ENABLED).trim() !== '';
+  if (!greenOn) {
+    add(falsy(e.GREENSTART_ENABLED) && e.GREENSTART_ENABLED !== undefined, 'TeamLink\'s Omni-Channel (Green Start) is switched off here (GREENSTART_ENABLED=false)', String(e.GREENSTART_ENABLED || 'not set'));
+  } else {
+    const gp = parseInt(e.GREENSTART_API_PORT, 10);
+    add(!!gp && gp !== 4020, 'Omni-Channel is this company\'s own Green Start: its API port is its own (not 4020, the Green Start of TeamLink)', String(e.GREENSTART_API_PORT || 'not set'));
+    const rp = parseInt(e.GREENSTART_REDIS_PORT, 10);
+    add(!!rp && rp !== 6379, 'its Redis port is its own (not 6379, which TeamLink\'s Green Start uses)', String(e.GREENSTART_REDIS_PORT || 'not set'));
+    const gs = String(e.GREENSTART_SSO_SECRET || '');
+    add(gs.length >= 32 && !PLACEHOLDER.test(gs), 'GREENSTART_SSO_SECRET is its own long random value', gs ? `${gs.length} characters` : 'missing');
+    if (tl && tl.GREENSTART_SSO_SECRET) add(fingerprint(gs) !== fingerprint(tl.GREENSTART_SSO_SECRET), 'GREENSTART_SSO_SECRET differs from TeamLink\'s (fingerprints compared, nothing printed)');
+    if (e.GREENSTART_GATE_PORT) add(parseInt(e.GREENSTART_GATE_PORT, 10) !== 5190, 'GREENSTART_GATE_PORT is not 5190 (TeamLink\'s gate)');
+  }
   add(falsy(e.GREENSTART_SUPERVISE) && e.GREENSTART_SUPERVISE !== undefined, 'this server does not start or watch Green Start (GREENSTART_SUPERVISE=false)', String(e.GREENSTART_SUPERVISE || 'not set'));
   add(falsy(e.GREENSTART_AUTOSTART) && e.GREENSTART_AUTOSTART !== undefined, 'Green Start auto-start is off (GREENSTART_AUTOSTART=false)', String(e.GREENSTART_AUTOSTART || 'not set'));
   // THE JOB PORTAL (docs/second-company.md section 11): off, or entirely this company's own. The default ports and folders are TeamLink's own portal, and
