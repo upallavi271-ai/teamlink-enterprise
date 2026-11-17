@@ -144,8 +144,13 @@ async function requireAuth(req, res, next) {
     // /api/auth/* (to see its status and change the password) until it has chosen its own. See utils/seedPasswords.js.
     if (!claims.viewAs && !claims.actAs && !/^\/api\/auth(\/|\?|$)/.test(String(req.originalUrl || req.url || ''))) {
       if (await require('../utils/seedPasswords').mustChange(identity.id)) { // eslint-disable-line global-require
-        return res.status(403).json({ error: 'Change your password now. This account still uses a starting password.', code: 'PASSWORD_CHANGE_REQUIRED' });
+        return res.status(403).json({ error: 'Change your password now: it is a starting password, or it is older than the company allows.', code: 'PASSWORD_CHANGE_REQUIRED' });
       }
+    }
+    // IP ALLOW-LIST (utils/securityPolicy.js; off unless an Admin switches it on): staff work only from the company's addresses.
+    if (!claims.viewAs && !claims.actAs) {
+      const refusedIp = await require('../utils/securityPolicy').ipRefusal(identity, require('../utils/clientIp').ipOf(req)).catch(() => null); // eslint-disable-line global-require
+      if (refusedIp) return res.status(403).json(refusedIp);
     }
     // INTERNAL HR (utils/internalHr.js): sees every employee on the attendance / leave / directory
     // requests only; every other request keeps the person's own scope.

@@ -503,6 +503,7 @@ async function redeem(req, token, password, confirm) {
   if (await bcrypt.compare(String(password), user.passwordHash)) {
     return { status: 400, code: 'same', error: 'Choose a password different from your old one.' };
   }
+  { const reused = await require('./securityPolicy').reuseError(user, password); if (reused) return { status: 400, code: 'reused', error: reused }; } // eslint-disable-line global-require
   // SINGLE USE: claim the link first. Two people (or two taps) racing for the
   // same link cannot both win - the update only matches the unchanged row.
   const used = { ...got.rec, usedAt: new Date().toISOString() };
@@ -522,6 +523,7 @@ async function redeem(req, token, password, confirm) {
     await prisma.appSetting.updateMany({ where: { key: got.row.key }, data: { value: got.row.value } }).catch(() => {});
     throw err;
   }
+  await require('./securityPolicy').remember(user.id, user.passwordHash).catch(() => {}); // eslint-disable-line global-require -- the old one joins the no-reuse history
   const method = got.rec.via === 'admin' ? 'admin_link' : 'reset_link';
   await logAudit({
     userId: user.id, action: 'Password changed using a reset link', entity: 'User', entityId: user.id,

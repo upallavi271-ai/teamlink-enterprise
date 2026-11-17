@@ -86,4 +86,28 @@ router.put('/security/idle', adminOnly, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ---- password policy + IP allow-list (utils/securityPolicy.js) -----------------------------------------------
+const SP = require('../utils/securityPolicy');
+const { ipOf } = require('../utils/clientIp');
+router.get('/security/policy', adminOnly, async (req, res, next) => {
+  try { await SP.refresh(); res.json({ password: SP.passwordPolicy(), ipAllow: SP.ipAllow(), yourIp: SP.normIp(ipOf(req)) }); } catch (e) { next(e); }
+});
+router.put('/security/password-policy', adminOnly, async (req, res, next) => {
+  try {
+    const before = SP.passwordPolicy();
+    const v = await SP.setPasswordPolicy(req.body || {});
+    await logAudit({ userId: req.user.id, action: 'Password policy changed', entity: 'AppSetting', entityId: 'security.passwordPolicy', fromValue: JSON.stringify(before), toValue: JSON.stringify(v) });
+    res.json({ password: v });
+  } catch (e) { next(e); }
+});
+router.put('/security/ip-allow', adminOnly, async (req, res, next) => {
+  try {
+    const before = SP.ipAllow();
+    const out = await SP.setIpAllow(req.body || {}, { adminIp: ipOf(req), adminRoles: rolesOf(req.user) });
+    if (out.error) return res.status(400).json({ error: out.error });
+    await logAudit({ userId: req.user.id, action: 'IP allow-list changed', entity: 'AppSetting', entityId: 'security.ipAllow', fromValue: `${before.enabled ? 'on' : 'off'}: ${before.entries.join(', ')}`, toValue: `${out.value.enabled ? 'on' : 'off'}: ${out.value.entries.join(', ')}` });
+    return res.json({ ipAllow: out.value });
+  } catch (e) { return next(e); }
+});
+
 module.exports = router;

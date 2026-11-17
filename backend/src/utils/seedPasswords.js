@@ -47,7 +47,9 @@ async function mustChange(userId) {
   const c = perUser.get(userId);
   if (c && Date.now() - c.at < TTL) return c.v;
   const u = await prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true, passwordChangedAt: true, role: true } }).catch(() => null);
-  const v = !!(u && !u.passwordChangedAt && !['CLIENT', 'CANDIDATE'].includes(u.role) && await hashIsStarting(u.passwordHash));
+  const v = !!(u && !u.passwordChangedAt && !['CLIENT', 'CANDIDATE'].includes(u.role) && await hashIsStarting(u.passwordHash))
+    // ... or older than the company's password expiry (utils/securityPolicy.js; off unless an Admin sets it)
+    || !!(u && require('./securityPolicy').expired(u.passwordChangedAt, u.role)); // eslint-disable-line global-require
   if (perUser.size > 5000) perUser.clear();
   perUser.set(userId, { at: Date.now(), v });
   return v;

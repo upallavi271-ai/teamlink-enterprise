@@ -6,6 +6,7 @@ import { workRoleLabel } from '../../permissions';
 import ChangePasswordCard from '../../components/ChangePasswordCard.jsx';
 import TwoStepCard from '../../components/TwoStepCard.jsx';
 import SessionsCard from '../../components/SessionsCard.jsx';
+import SecurityPolicyCard from '../../components/SecurityPolicyCard.jsx';
 
 // Profile — the prototype's adminProfileView() (line 10593) is a single card
 // with Name and Role. Main's editable form is kept below it: changing your own
@@ -67,6 +68,7 @@ export default function Profile() {
       <ChangePasswordCard style={{ marginTop: 14 }} />
       <TwoStepCard style={{ marginTop: 14 }} />
       <SessionsCard style={{ marginTop: 14 }} />
+      <SecurityPolicyCard style={{ marginTop: 14 }} />
     </div>
   );
 }

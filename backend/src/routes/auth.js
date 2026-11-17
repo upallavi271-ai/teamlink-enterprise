@@ -163,6 +163,15 @@ async function finishSignIn(req, res, user, { mfaPassed = false, extra = {} } = 
     return res.status(403).json({ error: 'This login has no access yet — ask an administrator to grant it' });
   }
 
+  // IP ALLOW-LIST (utils/securityPolicy.js; off unless an Admin switches it on)
+  {
+    const refusedIp = await require('../utils/securityPolicy').ipRefusal(user, ipOf(req)).catch(() => null); // eslint-disable-line global-require
+    if (refusedIp) {
+      await logAudit({ userId: user.id, action: 'Sign-in refused (address not on the company list)', entity: 'User', entityId: user.id, reason: `IP ${ipOf(req)}` });
+      return res.status(403).json(refusedIp);
+    }
+  }
+
   // TWO-STEP SIGN-IN (utils/mfa.js, routes/mfa.js): the password was right, but no session yet. With two-step on, the page asks for
   // the 6-digit code; under the company rule a login that has not set it up sets it up now. The 5-minute ticket proves the password only.
   if (!mfaPassed) {
@@ -396,6 +405,8 @@ async function changeOwnPassword(req, currentPassword, newPassword) {
   if (await bcrypt.compare(String(newPassword), user.passwordHash)) {
     return { status: 400, field: 'newPassword', error: 'Choose a password different from your current one.' };
   }
+  { const reused = await require('../utils/securityPolicy').reuseError(user, newPassword); if (reused) return { status: 400, field: 'newPassword', error: reused }; } // eslint-disable-line global-require
+  await require('../utils/securityPolicy').remember(user.id, user.passwordHash).catch(() => {}); // eslint-disable-line global-require -- the old one joins the no-reuse history
   await prisma.user.update({
     where: { id: user.id },
     data: {

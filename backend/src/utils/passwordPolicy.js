@@ -20,6 +20,8 @@ const LOCK_MINUTES = Number(process.env.LOGIN_LOCK_MINUTES || 15);
 function strengthError(password, { email, name } = {}) {
   const pw = String(password || '');
   if (pw.length < MIN_LENGTH) return `Choose a password of at least ${MIN_LENGTH} characters.`;
+  // the company's own rules on top (Profile -> Security settings: length, capitals, symbols; utils/securityPolicy.js)
+  { const extra = require('./securityPolicy').extraStrengthError(pw); if (extra) return extra; } // eslint-disable-line global-require
   if (pw.length > 128) return 'That password is too long (128 characters at most).';
   if (!/[A-Za-z]/.test(pw) || !/\d/.test(pw)) return 'Use at least one letter and one number.';
   if (/^(.)\1+$/.test(pw)) return 'That password is a single repeated character.';
