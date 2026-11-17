@@ -177,3 +177,13 @@ main:has(> .crm-page){max-width:1680px;margin:0}
 /* Deals board (2026-11-14): the six open stages share the page width (no sideways scroll at 1366 px); Won and Lost are a closed strip under them */
 .crm-board.crm-board-open .crm-col{flex:1 1 150px;min-width:150px}
 .crm-board.crm-board-closed .crm-col{flex:1 1 300px;min-height:96px}
+
+/* the lines of a Draft invoice being edited (2026-11-17): description, SAC, qty, rate, amount */
+.crm-inv-lines{display:flex;flex-direction:column;gap:6px}
+.crm-inv-line{display:grid;grid-template-columns:minmax(0,3fr) 90px 70px 110px 110px 34px;gap:6px;align-items:center}
+.crm-inv-head{font-size:11.5px}
+@media (max-width:640px){
+  .crm-inv-line{grid-template-columns:1fr 1fr 1fr;}
+  .crm-inv-line>:first-child{grid-column:1 / -1}
+  .crm-inv-head{display:none}
+}

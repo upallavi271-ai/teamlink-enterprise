@@ -627,67 +627,164 @@ export async function shareInvoiceWhatsApp(inv, toast, after) {
   }
 }
 // THE INVOICE BY EMAIL (founder 2026-11-16): a small window with the customer's address, subject and words ready; Send email sends it with the PDF attached.
+// (2026-11-17) CC, a plain "email is not set up" when it is not, and a Draft becomes Sent by the send itself.
 export function InvoiceEmailDialog({ inv, onClose, onSent }) {
   const { toast } = useCrm();
   const [f, setF] = useState(null);
+  const [ready, setReady] = useState({ ok: true, reason: '' });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { api.get(`/crm/invoices/${inv.id}/email-draft`).then((r) => setF({ to: r.data.to || '', subject: r.data.subject, text: r.data.text })).catch((e) => setErr(errOf(e, 'The email could not be made.'))); }, [inv.id]);
+  useEffect(() => {
+    api.get(`/crm/invoices/${inv.id}/email-draft`).then((r) => { setF({ to: r.data.to || '', cc: r.data.cc || '', subject: r.data.subject, text: r.data.text }); setReady({ ok: r.data.mailReady !== false, reason: r.data.mailReason || '' }); }).catch((e) => setErr(errOf(e, 'The email could not be made.')));
+  }, [inv.id]);
   async function send() {
     setBusy(true); setErr('');
     try {
-      await api.post(`/crm/invoices/${inv.id}/email`, f);
-      toast(`${inv.code || 'The invoice'} emailed to ${f.to} with the PDF attached.`);
-      if (inv.status === 'Draft' && window.confirm(`Mark ${inv.code} as Sent?\n\n(It is a Draft until you do; only sent invoices count as Invoiced.)`)) await api.post(`/crm/invoices/${inv.id}/status`, { status: 'Sent' });
+      const r = await api.post(`/crm/invoices/${inv.id}/email`, f);
+      toast(`${inv.code || 'The invoice'} emailed to ${f.to}${r.data.cc && r.data.cc.length ? ` (cc ${r.data.cc.join(', ')})` : ''} with the PDF attached.${inv.status === 'Draft' && r.data.status === 'Sent' ? ' It is marked Sent.' : ''}`);
       if (onSent) onSent();
       onClose();
     } catch (e) { setErr(errOf(e, 'It could not be sent.')); setBusy(false); }
   }
   return (
-    <Modal title={`Email ${inv.code || 'invoice'}`} onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Close</button><button type="button" className="btn btn-primary" disabled={busy || !f} onClick={send}>{busy ? 'Sending…' : 'Send email'}</button></>}>
+    <Modal title={`Send ${inv.code || 'invoice'} by email`} onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Close</button><button type="button" className="btn btn-primary" disabled={busy || !f || !ready.ok} onClick={send}>{busy ? 'Sending…' : 'Send email'}</button></>}>
       {!f && !err && <p className="small-muted">Getting the email ready…</p>}
+      {f && !ready.ok && <div className="notice" role="alert" style={{ marginBottom: 10 }}><b>Email is not set up yet</b>, so it cannot be sent from here. An Admin connects it in Administration → Integrations → Email.{ready.reason ? ` (${ready.reason})` : ''} You can download the PDF and send it yourself.</div>}
       {f && (
         <>
-          <div className="field"><label>To</label><input type="email" value={f.to} placeholder="customer@company.com" onChange={(e) => setF({ ...f, to: e.target.value })} /></div>
-          <div className="field"><label>Subject</label><input type="text" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} /></div>
-          <div className="field"><label>Message</label><textarea rows={8} value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })} /></div>
-          <div className="small-muted" style={{ fontSize: 12.5 }}>📎 The invoice PDF ({inv.code}) goes with the email. It is sent from your own name through the company mailbox; replies come to you.</div>
+          <div className="field"><label>To</label><input type="email" value={f.to} placeholder="customer@company.com" onChange={(e) => setF({ ...f, to: e.target.value })} aria-label="To" /></div>
+          <div className="field"><label>CC <span className="small-muted">optional, commas between addresses</span></label><input type="text" value={f.cc} placeholder="accounts@company.com" onChange={(e) => setF({ ...f, cc: e.target.value })} aria-label="CC" /></div>
+          <div className="field"><label>Subject</label><input type="text" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} aria-label="Subject" /></div>
+          <div className="field"><label>Message</label><textarea rows={8} value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })} aria-label="Message" /></div>
+          <div className="small-muted" style={{ fontSize: 12.5 }}>📎 The invoice PDF ({inv.code}) goes with the email. It is sent from your own name through the company mailbox; replies come to you.{inv.status === 'Draft' ? ' The Draft becomes Sent once the email goes, and cannot be edited after that.' : ''}</div>
         </>
       )}
       {err && <div className="notice" style={{ marginTop: 10 }} role="alert">{err}</div>}
     </Modal>
   );
 }
+// A DRAFT invoice is edited here (2026-11-17): its lines (description, SAC, qty, rate), notes and due date; the totals follow. Once Sent it is read-only.
+export function InvoiceEditDialog({ inv, onClose, onSaved }) {
+  const { toast } = useCrm();
+  const [lines, setLines] = useState(() => (inv.lines || []).map((l) => ({ description: l.description || '', sac: l.sac || '', qty: String(l.qty ?? 1), rate: String(l.rate ?? '') })));
+  const [notes, setNotes] = useState(inv.notes || '');
+  const [dueDate, setDueDate] = useState(inv.dueDate || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const n = (v) => Number(String(v).replace(/[, ]/g, '')) || 0;
+  const amount = Math.round(lines.reduce((a, l) => a + Math.round(n(l.qty) * n(l.rate) * 100) / 100, 0) * 100) / 100;
+  const tax = Math.round(amount * ((Number(inv.taxPercent) || 0) / 100) * 100) / 100;
+  const setLine = (i, k, v) => setLines((x) => x.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+  async function save() {
+    setBusy(true); setErr('');
+    try {
+      const r = await api.put(`/crm/invoices/${inv.id}`, { lines, notes, dueDate });
+      toast(`${inv.code} saved: ${money(r.data.invoice.total)} with tax.`);
+      onSaved(r.data.invoice);
+    } catch (e) { setErr(errOf(e, 'The invoice could not be saved.')); } finally { setBusy(false); }
+  }
+  return (
+    <Modal title={`Edit ${inv.code} (Draft)`} size="wide" onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></>}>
+      <div className="small-muted" style={{ marginBottom: 8 }}>While it is a Draft you can change the lines, notes and due date. The customer&#39;s GSTIN, address and state are copied again from the account when you save.</div>
+      <div className="crm-inv-lines">
+        <div className="crm-inv-line crm-inv-head small-muted"><span>Description</span><span>SAC</span><span>Qty</span><span>Rate ₹</span><span style={{ textAlign: 'right' }}>Amount</span><span /></div>
+        {lines.map((l, i) => (
+          <div key={i} className="crm-inv-line">{/* eslint-disable-line react/no-array-index-key */}
+            <input type="text" value={l.description} maxLength={300} onChange={(e) => setLine(i, 'description', e.target.value)} aria-label={`Line ${i + 1} description`} />
+            <input type="text" inputMode="numeric" value={l.sac} maxLength={8} onChange={(e) => setLine(i, 'sac', e.target.value.replace(/\D/g, ''))} aria-label={`Line ${i + 1} SAC`} />
+            <input type="text" inputMode="decimal" value={l.qty} onChange={(e) => setLine(i, 'qty', e.target.value)} aria-label={`Line ${i + 1} quantity`} />
+            <input type="text" inputMode="decimal" value={l.rate} onChange={(e) => setLine(i, 'rate', e.target.value)} aria-label={`Line ${i + 1} rate`} />
+            <span style={{ textAlign: 'right', fontWeight: 600 }}>{money(Math.round(n(l.qty) * n(l.rate) * 100) / 100)}</span>
+            <button type="button" className="btn btn-sm" disabled={lines.length === 1} onClick={() => setLines((x) => x.filter((_, j) => j !== i))} aria-label={`Remove line ${i + 1}`}>×</button>
+          </div>
+        ))}
+      </div>
+      <button type="button" className="btn btn-sm" style={{ margin: '6px 0 10px' }} disabled={lines.length >= 30} onClick={() => setLines((x) => [...x, { description: '', sac: (x[0] && x[0].sac) || '', qty: '1', rate: '' }])}>+ Line</button>
+      <div className="small-muted" style={{ marginBottom: 10 }}>Taxable {money(amount)} · GST {inv.taxPercent}% {money(tax)} · <b>Total {money(amount + tax)}</b></div>
+      <div className="grid-2">
+        <div className="field"><label>Due date</label><DateField value={dueDate} onChange={setDueDate} min={inv.issueDate} style={{ width: 170 }} aria-label="Due date" /></div>
+        <div className="field"><label>Notes on the invoice <span className="small-muted">optional</span></label><textarea rows={2} value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} aria-label="Notes" /></div>
+      </div>
+      {err && <div className="small-muted" role="alert" style={{ color: 'var(--red)' }}>{err}</div>}
+    </Modal>
+  );
+}
+// The GST lines of an invoice: CGST + SGST (same state) or IGST, the SAC, both GSTINs and the place of supply, and a warning when the state is not known.
+export function GstBlock({ inv }) {
+  const g = inv.gst || {};
+  const pct = (v) => `${Math.round((Number(v) || 0) * 1000) / 1000}%`;
+  return (
+    <div style={{ marginTop: 8, fontSize: 12.5 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
+        <div><div className="small-muted" style={{ fontSize: 11 }}>Taxable{inv.discountPercent ? ` (after ${inv.discountPercent}% off)` : ''}</div><b>{money(inv.amount)}</b></div>
+        {g.mode === 'intra' && <><div><div className="small-muted" style={{ fontSize: 11 }}>CGST {pct(g.halfRate)}</div><b>{money(g.cgst)}</b></div><div><div className="small-muted" style={{ fontSize: 11 }}>SGST {pct(g.halfRate)}</div><b>{money(g.sgst)}</b></div></>}
+        {g.mode === 'inter' && <div><div className="small-muted" style={{ fontSize: 11 }}>IGST {pct(g.rate)}</div><b>{money(g.igst)}</b></div>}
+        {(!g.mode || g.mode === 'none') && <div><div className="small-muted" style={{ fontSize: 11 }}>Tax {inv.taxPercent}%</div><b>{money(inv.taxAmount)}</b></div>}
+        <div><div className="small-muted" style={{ fontSize: 11 }}>Total</div><b>{money(inv.total)}</b></div>
+      </div>
+      <div className="small-muted" style={{ fontSize: 11.5, marginTop: 6, overflowWrap: 'anywhere' }}>
+        SAC {g.sac || '—'} · place of supply {g.placeOfSupply ? `${g.placeOfSupply.name} (${g.placeOfSupply.code})` : 'not known'} · our GSTIN {g.ourGstin || 'not set'} · customer GSTIN {g.customerGstin || 'none'}
+      </div>
+      {g.flag && <div className="small-muted" role="status" style={{ fontSize: 12, marginTop: 4, color: 'var(--amber, #b45309)' }}>⚠ {g.flag}</div>}
+    </div>
+  );
+}
 export const openInvoicePdf = (inv, toast) => download(`/crm/invoices/${inv.id}/pdf`, `${inv.code || 'invoice'}.pdf`, { open: true }).catch(() => toast('The PDF could not be opened.'));
 // ---- the PAYMENT LOG of an invoice (founder 2026-11-14: every amount received is a line - date, amount, mode; Partly paid / Paid follow from it) ----
 export const PAYMENT_MODES = ['Bank transfer', 'UPI', 'Cheque', 'Cash', 'Card', 'Other'];
+// what is still to come on an invoice: total - cash received - TDS the customer deducted
+export const balanceOf = (inv) => (inv.balance != null ? inv.balance : Math.max(0, Math.round((inv.total - inv.paidAmount - (inv.tdsAmount || 0)) * 100) / 100));
 function PaymentDialog({ inv, onClose, onSaved }) {
   const { toast } = useCrm();
-  const left = Math.max(0, Math.round((inv.total - inv.paidAmount) * 100) / 100);
+  const left = balanceOf(inv);
   const [amount, setAmount] = useState(String(left));
   const [paidOn, setPaidOn] = useState(istToday());
   const [mode, setMode] = useState('Bank transfer');
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
+  // TDS the customer deducted on this line (2026-11-17): none, rupees, or a % of the value before GST of what the line settles
+  const [tdsWay, setTdsWay] = useState('none');
+  const [tdsValue, setTdsValue] = useState('');
+  const [tdsRef, setTdsRef] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const num = (v) => Number(String(v).replace(/[, ]/g, ''));
+  const cash = num(amount) || 0;
+  const tds = (() => {
+    if (tdsWay === 'amount') return Math.round((num(tdsValue) || 0) * 100) / 100;
+    if (tdsWay === 'percent') { const k = ((num(tdsValue) || 0) / 100) * (inv.total ? inv.amount / inv.total : 1); return k > 0 && k < 1 ? Math.round(((k * cash) / (1 - k)) * 100) / 100 : 0; }
+    return 0;
+  })();
   async function save() {
-    const n = Number(String(amount).replace(/[, ]/g, ''));
-    if (!(n > 0)) { setErr('Write the amount received.'); return; }
-    if (n > left + 0.005) { setErr(`Only ${money(left)} is left on this invoice.`); return; }
+    const n = String(amount).trim() === '' ? 0 : num(amount);
+    if (!Number.isFinite(n) || n < 0) { setErr('Write the amount received.'); return; }
+    if (!(n > 0) && !(tds > 0)) { setErr('Write the amount received.'); return; }
+    if (tdsWay !== 'none' && !(tds > 0)) { setErr(tdsWay === 'percent' ? 'Write the TDS % (more than 0).' : 'Write the TDS in rupees.'); return; }
+    if (n + tds > left + 0.005) { setErr(`Only ${money(left)} is left on this invoice${tds > 0 ? `; this line settles ${money(n + tds)} (received + TDS)` : ''}.`); return; }
     if (!paidOn) { setErr('Write the date the money came.'); return; }
     if (paidOn > istToday()) { setErr('The payment date cannot be in the future.'); return; }
     setBusy(true); setErr('');
     try {
-      const r = await api.post(`/crm/invoices/${inv.id}/payments`, { amount: n, paidOn, mode, reference, note });
-      toast(r.data.invoice.status === 'Paid' ? `${inv.code} is paid in full.` : `${money(n)} recorded. ${money(r.data.invoice.balance)} is left.`);
+      const body = { amount: n, paidOn, mode, reference, note, tdsRef };
+      if (tdsWay === 'amount') body.tdsAmount = tds; else if (tdsWay === 'percent') body.tdsPercent = num(tdsValue);
+      const r = await api.post(`/crm/invoices/${inv.id}/payments`, body);
+      toast(r.data.invoice.status === 'Paid' ? `${inv.code} is settled in full.` : `${money(n)} recorded${tds > 0 ? ` with ${money(tds)} TDS` : ''}. ${money(r.data.invoice.balance)} is left.`);
       onSaved(r.data.invoice);
     } catch (e) { setErr(errOf(e, 'The payment could not be saved.')); } finally { setBusy(false); }
   }
   return (
     <Modal title={`Record a payment · ${inv.code}`} onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save payment'}</button></>}>
-      <div className="small-muted" style={{ marginBottom: 8 }}>Total {money(inv.total)} · received so far {money(inv.paidAmount)} · left {money(left)}</div>
-      <div className="field"><label>Amount received</label><input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount received" /></div>
+      <div className="small-muted" style={{ marginBottom: 8 }}>Total {money(inv.total)} · received so far {money(inv.paidAmount)}{inv.tdsAmount > 0 ? ` · TDS ${money(inv.tdsAmount)}` : ''} · left {money(left)}</div>
+      <div className="field"><label>Amount received (cash in the bank)</label><input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount received" /></div>
+      <div className="field"><label>TDS deducted by the customer</label>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+          {[['none', 'No TDS'], ['amount', '₹ amount'], ['percent', '% rate']].map(([k, l]) => <button key={k} type="button" className={`btn btn-sm${tdsWay === k ? ' btn-primary' : ''}`} onClick={() => setTdsWay(k)}>{l}</button>)}
+          {tdsWay !== 'none' && <input inputMode="decimal" value={tdsValue} onChange={(e) => setTdsValue(e.target.value)} placeholder={tdsWay === 'percent' ? 'e.g. 10' : 'e.g. 10000'} style={{ width: 120 }} aria-label={tdsWay === 'percent' ? 'TDS percent' : 'TDS amount'} />}
+          {tdsWay !== 'none' && <span className="small-muted" style={{ fontSize: 12.5 }}>TDS {money(tds)} · this line settles {money(cash + tds)}</span>}
+        </div>
+        {tdsWay === 'percent' && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 4 }}>The % is taken on the value before GST of what this line settles (10% on ₹1,00,000 + GST paid as ₹1,08,000 → TDS ₹10,000).</div>}
+      </div>
+      {tdsWay !== 'none' && <div className="field"><label>TDS certificate / reference <span className="small-muted">optional (Form 16A no., challan)</span></label><input value={tdsRef} maxLength={80} onChange={(e) => setTdsRef(e.target.value)} aria-label="TDS certificate or reference" /></div>}
       <div className="field"><label>Date the money came</label><DateField value={paidOn} onChange={setPaidOn} style={{ width: 160 }} aria-label="Payment date" /></div>
       <div className="field"><label>How it came</label>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{PAYMENT_MODES.map((m) => <button key={m} type="button" className={`btn btn-sm${mode === m ? ' btn-primary' : ''}`} onClick={() => setMode(m)}>{m}</button>)}</div>
@@ -702,16 +799,16 @@ function PaymentLog({ inv, canEdit, onChanged }) {
   const { toast } = useCrm();
   const [adding, setAdding] = useState(false);
   const pays = inv.payments || [];
-  const left = Math.max(0, Math.round((inv.total - inv.paidAmount) * 100) / 100);
+  const left = balanceOf(inv);
   async function remove(p) {
-    if (!window.confirm(`Remove the payment of ${money(p.amount)} on ${dateOf(p.paidOn)}? The invoice goes back to what is left to pay.`)) return;
+    if (!window.confirm(`Remove the payment of ${money(p.amount)}${p.tdsAmount > 0 ? ` (+ ${money(p.tdsAmount)} TDS)` : ''} on ${dateOf(p.paidOn)}? The invoice goes back to what is left to pay.`)) return;
     try { await api.delete(`/crm/invoices/${inv.id}/payments/${p.id}`); toast('Payment removed.'); onChanged(); } catch (e) { toast(errOf(e, 'The payment could not be removed.')); }
   }
   return (
     <div style={{ marginTop: 10, borderTop: '1px solid var(--line, #e5e7eb)', paddingTop: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <div className="section-label" style={{ margin: 0 }}>Payments</div>
-        <span className="small-muted" style={{ fontSize: 12 }}>{money(inv.paidAmount)} of {money(inv.total)} received{left > 0 && inv.status !== 'Cancelled' ? ` · ${money(left)} left` : ''}</span>
+        <span className="small-muted" style={{ fontSize: 12 }}>{money(inv.paidAmount)} of {money(inv.total)} received{inv.tdsAmount > 0 ? ` · ${money(inv.tdsAmount)} TDS deducted` : ''}{left > 0 && inv.status !== 'Cancelled' ? ` · ${money(left)} left` : ''}</span>
         {canEdit && left > 0 && inv.status !== 'Cancelled' && <button type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setAdding(true)}>+ Record payment</button>}
       </div>
       {!pays.length && <div className="small-muted" style={{ fontSize: 12.5, marginTop: 6 }}>No payment recorded yet.</div>}
@@ -720,7 +817,7 @@ function PaymentLog({ inv, canEdit, onChanged }) {
           {pays.map((p) => (
             <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderTop: '1px solid var(--line, #eef0f4)' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}><b style={{ fontSize: 14 }}>{money(p.amount)}</b><span>{p.mode || '—'}</span><span className="small-muted">{dateOf(p.paidOn)}</span></div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}><b style={{ fontSize: 14 }}>{money(p.amount)}</b><span>{p.mode || '—'}</span><span className="small-muted">{dateOf(p.paidOn)}</span>{p.tdsAmount > 0 && <span className="small-muted" style={{ fontSize: 12 }}>+ TDS {money(p.tdsAmount)}{p.tdsPercent ? ` (${p.tdsPercent}%)` : ''}{p.tdsRef ? ` · ${p.tdsRef}` : ''}</span>}</div>
                 {([p.reference, p.note].some(Boolean) || p.byName) && <div className="small-muted" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{[p.reference, p.note].filter(Boolean).join(' · ')}{p.byName ? `${[p.reference, p.note].some(Boolean) ? ' · ' : ''}by ${p.byName}` : ''}</div>}
               </div>
               {canEdit && <button type="button" className="btn btn-sm" aria-label={`Remove the payment of ${money(p.amount)}`} onClick={() => remove(p)}>Remove</button>}
@@ -735,6 +832,7 @@ function PaymentLog({ inv, canEdit, onChanged }) {
 function InvoiceBox({ deal, onChanged }) {
   const { toast, me } = useCrm();
   const [mailing, setMailing] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [list, setList] = useState(null);
   const [busy, setBusy] = useState(false);
   const load = () => api.get('/crm/invoices', { params: { dealId: deal.id } }).then((r) => setList(r.data.invoices)).catch(() => setList([]));
@@ -756,24 +854,39 @@ function InvoiceBox({ deal, onChanged }) {
         <div style={{ fontSize: 13 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <b>{inv.code}</b> <Pill v={invoicePill(inv)} />
-            <span className="small-muted" style={{ fontSize: 11.5 }}>issued {dateOf(inv.issueDate)}{inv.dueDate ? ` · due ${dateOf(inv.dueDate)}` : ''}</span>
-            <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+            <span className="small-muted" style={{ fontSize: 11.5, color: inv.overdue ? 'var(--red)' : undefined }}>issued {dateOf(inv.issueDate)}{inv.dueDate ? ` · due ${dateOf(inv.dueDate)}` : ''}{inv.overdue ? ' · overdue' : ''}</span>
+            <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
               <button type="button" className="btn btn-sm" onClick={() => openInvoicePdf(inv, toast)}>PDF</button>
-              {me.canEdit && inv.status !== 'Cancelled' && <button type="button" className="btn btn-sm" title="Emails the invoice with the PDF attached" onClick={() => setMailing(true)}>✉️ Email</button>}
+              {me.canEdit && inv.status === 'Draft' && <button type="button" className="btn btn-sm" title="Change the lines, notes and due date while it is a Draft" onClick={() => setEditing(true)}>✏️ Edit</button>}
+              {me.canEdit && inv.status !== 'Cancelled' && <button type="button" className="btn btn-sm" title="Emails the invoice with the PDF attached" onClick={() => setMailing(true)}>✉️ Send by email</button>}
               {me.canEdit && inv.status !== 'Cancelled' && <button type="button" className="btn btn-sm" title="Opens WhatsApp with the message and a link to the invoice; you press Send" onClick={() => shareInvoiceWhatsApp(inv, toast, () => { load(); if (onChanged) onChanged(); })}>💬 WhatsApp</button>}
               {me.canEdit && <InvoiceStatusSelect inv={inv} onSaved={() => { load(); if (onChanged) onChanged(); }} />}
             </span>
           </div>
+          {(inv.lines || []).length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              {inv.lines.map((l, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, fontSize: 12.5, padding: '3px 0', borderBottom: '1px solid var(--line-soft, #eef0f4)' }}>{/* eslint-disable-line react/no-array-index-key */}
+                  <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{l.description}</span>
+                  <span className="small-muted">SAC {l.sac || '—'}</span>
+                  <span className="small-muted">{l.qty} × {money(l.rate)}</span>
+                  <b>{money(l.amount)}</b>
+                </div>
+              ))}
+            </div>
+          )}
+          <GstBlock inv={inv} />
           <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
-            <div><div className="small-muted" style={{ fontSize: 11 }}>Amount{inv.discountPercent ? ` (after ${inv.discountPercent}% off)` : ''}</div><b>{money(inv.amount)}</b></div>
-            <div><div className="small-muted" style={{ fontSize: 11 }}>Tax {inv.taxPercent}%</div><b>{money(inv.taxAmount)}</b></div>
-            <div><div className="small-muted" style={{ fontSize: 11 }}>Total</div><b>{money(inv.total)}</b></div>
             <div><div className="small-muted" style={{ fontSize: 11 }}>Received</div><b>{money(inv.paidAmount)}</b></div>
+            {inv.tdsAmount > 0 && <div><div className="small-muted" style={{ fontSize: 11 }}>TDS deducted</div><b>{money(inv.tdsAmount)}</b></div>}
+            <div><div className="small-muted" style={{ fontSize: 11 }}>Balance</div><b style={{ color: inv.overdue ? 'var(--red)' : undefined }}>{money(balanceOf(inv))}</b></div>
           </div>
+          {inv.status !== 'Draft' && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 4 }}>🔒 Sent to the customer: the invoice itself can no longer be edited.</div>}
           <PaymentLog inv={inv} canEdit={me.canEdit} onChanged={() => { load(); if (onChanged) onChanged(); }} />
         </div>
       )}
       {mailing && inv && <InvoiceEmailDialog inv={inv} onClose={() => setMailing(false)} onSent={() => { load(); if (onChanged) onChanged(); }} />}
+      {editing && inv && <InvoiceEditDialog inv={inv} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load(); if (onChanged) onChanged(); }} />}
     </div>
   );
 }
@@ -787,7 +900,7 @@ export function useMoveDeal(onMoved) {
     if (stage === 'Lost' && !lostReason) { setAsking({ deal }); setReason(''); return; }
     try {
       const r = await api.post(`/crm/deals/${deal.id}/stage`, { stage, lostReason });
-      toast(stage === 'Won' ? (r.data.invoice ? `🎉 Won! Invoice ${r.data.invoice.code} is ready.` : '🎉 Won!') : `Moved to ${stage}.`);
+      toast(stage === 'Won' ? (r.data.invoice ? `🎉 Won! Invoice ${r.data.invoice.code} is ready.` : '🎉 Won!') : stage === 'Lost' && r.data.recheck ? `Marked lost. A follow-up to look at it again is set for ${dateOf(r.data.recheck.dueDate)}.` : `Moved to ${stage}.`);
       // the customer's GSTIN / address are copied onto the invoice when it is made: say so now, while it can still be put right on the account
       if (stage === 'Won' && r.data.invoice && r.data.invoice.missing && r.data.invoice.missing.length) setTimeout(() => toast(`Heads up: this customer has no ${r.data.invoice.missing.join(' and ')} on its account, so the invoice shows it blank. Add it on the account before sending the invoice.`), 700);
       onMoved(r.data.deal);
@@ -893,6 +1006,54 @@ function ProposalBox({ dealId, onChanged }) {
           <div className="small-muted">The PDF is attached. The deal moves to "Proposal sent" and the email is written on its timeline.</div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+// ---- files kept on a deal: the quotation the customer was sent, their PO (2026-11-17; PDF / Word / Excel / picture, at most 10 MB) ------------------
+const FILE_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp';
+const sizeOf = (b) => (b >= 1024 * 1024 ? `${(b / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+function DealFiles({ dealId, onChanged }) {
+  const { toast } = useCrm();
+  const [d, setD] = useState(null);
+  const [kind, setKind] = useState('Quotation');
+  const [busy, setBusy] = useState(false);
+  const input = useRef(null);
+  const load = () => api.get(`/crm/deals/${dealId}/files`).then((r) => setD(r.data)).catch(() => setD({ files: [], canEdit: false }));
+  useEffect(() => { load(); }, [dealId]); // eslint-disable-line react-hooks/exhaustive-deps
+  async function upload(file) {
+    if (!file) return;
+    const max = (d && d.maxBytes) || 10 * 1024 * 1024;
+    if (file.size > max) { toast(`That file is ${sizeOf(file.size)}; at most 10 MB can be kept on a deal.`); return; }
+    const fd = new FormData(); fd.append('kind', kind); fd.append('file', file, file.name);
+    setBusy(true);
+    try { await api.post(`/crm/deals/${dealId}/files`, fd); toast(`${file.name} is kept on the deal.`); load(); if (onChanged) onChanged(); } catch (e) { toast(errOf(e, 'The file could not be uploaded.')); } finally { setBusy(false); if (input.current) input.current.value = ''; }
+  }
+  async function remove(f) {
+    if (!window.confirm(`Delete ${f.name} from this deal?`)) return;
+    try { await api.delete(`/crm/deal-files/${f.id}`); toast('File deleted.'); load(); if (onChanged) onChanged(); } catch (e) { toast(errOf(e, 'The file could not be deleted.')); }
+  }
+  if (!d) return null;
+  return (
+    <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+        <div className="section-label" style={{ margin: 0 }}>Quotations and files ({d.files.length})</div>
+        {d.canEdit && (
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="What the file is" style={{ width: 'auto', padding: '2px 6px', fontSize: 13 }}>{(d.kinds || ['Quotation', 'Purchase order', 'Other']).map((k) => <option key={k} value={k}>{k}</option>)}</select>
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => input.current && input.current.click()}>{busy ? 'Uploading…' : '+ Upload'}</button>
+            <input ref={input} type="file" accept={FILE_ACCEPT} style={{ display: 'none' }} onChange={(e) => upload(e.target.files && e.target.files[0])} aria-label="Choose a file" />
+          </span>
+        )}
+      </div>
+      {!d.files.length && <div className="small-muted">No file yet. Upload the quotation you sent (PDF, Word, Excel or a picture, up to 10 MB).</div>}
+      {d.files.map((f) => (
+        <div key={f.id} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '6px 0', borderBottom: '1px solid var(--line-soft)', fontSize: 13 }}>
+          <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}><b>{f.name}</b> <span className="small-muted" style={{ fontSize: 11.5 }}>{f.kind} · {sizeOf(f.size)} · {dateOf(f.createdAt)}{f.byName ? ` · ${f.byName}` : ''}</span></span>
+          <button type="button" className="btn btn-sm" onClick={() => download(`/crm/deal-files/${f.id}`, f.name).catch(() => toast('The file could not be downloaded.'))}>Download</button>
+          {d.canEdit && <button type="button" className="btn btn-sm" onClick={() => remove(f)} aria-label={`Delete ${f.name}`}>Delete</button>}
+        </div>
+      ))}
     </div>
   );
 }
@@ -1175,7 +1336,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
         )}
         {tab === 'products' && kind === 'lead' && <ProductSellBox lead={row} canEdit={d.canEdit} onChanged={changed} />}
         {tab === 'followups' && <TaskList tasks={d.tasks || []} link={link} onChanged={changed} canEdit={d.canEdit} />}
-        {tab === 'proposals' && kind === 'deal' && <ProposalBox dealId={row.id} onChanged={changed} />}
+        {tab === 'proposals' && kind === 'deal' && <><ProposalBox dealId={row.id} onChanged={changed} /><DealFiles dealId={row.id} onChanged={changed} /></>}
         {tab === 'invoice' && kind === 'deal' && <InvoiceBox deal={row} onChanged={changed} />}
         {tab === 'support' && kind === 'account' && <TicketList accountId={row.id} compact />}
         {tab === 'notes' && (

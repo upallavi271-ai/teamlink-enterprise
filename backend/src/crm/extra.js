@@ -134,7 +134,19 @@ async function setTarget(user, { month, ownerId, amount, deals } = {}) {
 // ---- settings -------------------------------------------------------------------------------------------------
 async function saveSettings(user, body) {
   if (!S.mayAssign(S.roleOf(user))) return S.fail(403, 'CRM settings are changed by a Sales manager or an Admin.');
-  const st = await SETTINGS.save(body || {});
+  // the invoice pieces that would otherwise be quietly put back to their defaults are refused with the reason instead
+  const b = body || {};
+  const was = await SETTINGS.load();
+  const changed = (k) => b.invoiceFrom && String(b.invoiceFrom[k] || '').trim().toUpperCase() !== String((was.invoiceFrom || {})[k] || '').trim().toUpperCase();
+  const checkGst = !!b.invoiceFrom && (changed('gstin') || changed('state')); // unchanged GSTIN / state: kept as they are, never refused
+  if (b.invoiceNumberFormat && !SETTINGS.validInvoiceFormat(String(b.invoiceNumberFormat).trim())) return S.fail(400, 'The invoice number format needs exactly one running number like {0000}, and may have {FY} (2026-27) or {FY2} (26-27). Example: INV/{FY}/{0000}.');
+  if (b.invoiceSac != null && b.invoiceSac !== '' && !/^\d{4,8}$/.test(String(b.invoiceSac).trim())) return S.fail(400, 'The SAC code is 4 to 8 digits, like 998314.');
+  const g = checkGst && b.invoiceFrom.gstin ? String(b.invoiceFrom.gstin).trim().toUpperCase() : '';
+  if (g && !require('./money').validGstin(g)) return S.fail(400, 'Our GSTIN does not look right: 15 characters, starting with the 2-digit state code (like 36ABCDE1234F1Z5).'); // eslint-disable-line global-require
+  const stName = checkGst && b.invoiceFrom.state ? String(b.invoiceFrom.state).trim() : '';
+  if (stName && !require('./money').stateCodeOf(stName)) return S.fail(400, `"${stName.slice(0, 40)}" is not a state we know. Write the state name (like Telangana) or its GST code (36).`); // eslint-disable-line global-require
+  if (g && stName && require('./money').stateCodeOf(stName) !== g.slice(0, 2)) return S.fail(400, `Our GSTIN starts with ${g.slice(0, 2)} (${require('./money').stateName(g.slice(0, 2))}) but the state says ${stName}. Make them agree.`); // eslint-disable-line global-require
+  const st = await SETTINGS.save(b);
   if (body && Array.isArray(body.salesTeam)) await S.audit(user, 'CRM sales team changed', 'AppSetting', 'crm.settings', st.salesTeam.map((m) => `${m.name}: ${m.role}`).join(', ').slice(0, 300));
   await S.audit(user, 'CRM settings changed', 'AppSetting', 'crm.settings', `${st.sources.length} sources, ${st.lostReasons.length} lost reasons, cold after ${st.staleDays} days`);
   return S.okBody({ ok: true, settings: st });
@@ -447,50 +459,65 @@ async function proposalPdf(user, id, { signed } = {}) {
 // `signed` is only ever passed by the public link route AFTER it has checked the signed, unexpired token (shareInvoice below).
 async function invoicePdf(user, id, { signed } = {}) {
   const r = S.roleOf(user);
-  const inv = await DB.one('SELECT * FROM "CrmInvoice" WHERE "id" = ?', S.clip(id, 60));
-  if (!inv || (!signed && !S.canSeeRow(user, r, inv))) return S.fail(404, 'This invoice is not there.');
-  let from = {}; let to = {};
-  try { from = JSON.parse(inv.fromJson || '{}'); } catch { from = {}; }
-  try { to = JSON.parse(inv.billToJson || '{}'); } catch { to = {}; }
+  const raw = await DB.one('SELECT * FROM "CrmInvoice" WHERE "id" = ?', S.clip(id, 60));
+  if (!raw || (!signed && !S.canSeeRow(user, r, raw))) return S.fail(404, 'This invoice is not there.');
+  await SETTINGS.load().catch(() => null); // the public link may be the first reader: our state / SAC on an old invoice come from the settings
+  const inv = S.invoiceOut(raw);
+  const { from, billTo: to, gst } = inv;
   const PDFDocument = require('pdfkit'); // eslint-disable-line global-require
   const { LOGO } = require('../utils/agreementPdf'); // eslint-disable-line global-require
   const fs = require('fs'); // eslint-disable-line global-require
   const money = (v) => `Rs. ${(Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const date = (ymd) => (ymd ? new Date(`${ymd}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '-');
+  const qtyText = (q) => (Number.isInteger(Number(q)) ? String(q) : String(Number(q)));
   const buf = await new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 50, info: { Title: `Invoice ${inv.code || inv.id}`, Author: from.name || 'TeamLink Consultants' } });
     const chunks = [];
     doc.on('data', (c) => chunks.push(c)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject);
     const W = doc.page.width - 100; const NAVY = '#1b2a4a'; const MUTED = '#5b6474';
     if (fs.existsSync(LOGO)) { try { doc.image(LOGO, 50, 40, { height: 28 }); } catch { /* optional */ } }
-    doc.font('Helvetica-Bold').fontSize(20).fillColor(NAVY).text('INVOICE', 50, 40, { width: W, align: 'right' });
+    doc.font('Helvetica-Bold').fontSize(20).fillColor(NAVY).text(from.gstin ? 'TAX INVOICE' : 'INVOICE', 50, 40, { width: W, align: 'right' });
     doc.font('Helvetica').fontSize(9.5).fillColor(MUTED).text(inv.code || '', { width: W, align: 'right' }).text(`Date: ${date(inv.issueDate)}`, { width: W, align: 'right' }).text(`Due: ${date(inv.dueDate)}`, { width: W, align: 'right' });
     doc.moveDown(2);
     const top = doc.y;
     doc.font('Helvetica-Bold').fontSize(9.5).fillColor(MUTED).text('FROM', 50, top).text('BILL TO', 310, top);
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#222').text(from.name || 'TeamLink Consultants', 50, top + 14, { width: 240 }).text(to.name || inv.accountName || '-', 310, top + 14, { width: 235 });
     doc.font('Helvetica').fontSize(9.5).fillColor('#333');
-    const lines = (o) => [o.address, [o.state, o.pincode].filter(Boolean).join(' '), o.gstin ? `GSTIN: ${o.gstin}` : '', o.email, o.phone].filter(Boolean).join('\n');
-    const fromY = doc.y; doc.text(lines(from), 50, fromY, { width: 240 }); const leftEnd = doc.y;
-    doc.text(lines(to), 310, fromY, { width: 235 });
-    doc.y = Math.max(leftEnd, doc.y) + 20; doc.x = 50;
-    // item table
+    const stateLine = (o, st) => [st ? `State: ${st.name} (code ${st.code})` : o.state, o.pincode].filter(Boolean).join(' ');
+    const party = (o, st) => [o.address, stateLine(o, st), o.gstin ? `GSTIN: ${o.gstin}` : 'GSTIN: not given', o.email, o.phone].filter(Boolean).join('\n');
+    const fromY = doc.y; doc.text(party(from, gst.ourState), 50, fromY, { width: 240 }); const leftEnd = doc.y;
+    doc.text(party(to, gst.customerState), 310, fromY, { width: 235 });
+    doc.y = Math.max(leftEnd, doc.y) + 10; doc.x = 50;
+    doc.font('Helvetica').fontSize(9.5).fillColor('#333').text(`Place of supply: ${gst.placeOfSupply ? `${gst.placeOfSupply.name} (${gst.placeOfSupply.code})` : 'not known'}${gst.sac ? `   ·   SAC: ${gst.sac}` : ''}`, 50, doc.y, { width: W });
+    if (gst.flag) doc.font('Helvetica-Oblique').fontSize(8.5).fillColor('#b45309').text(gst.flag, 50, doc.y + 2, { width: W });
+    doc.y += 12;
+    // item table: description, SAC, qty, rate, amount
+    const C = { desc: 50, sac: 50 + W - 300, qty: 50 + W - 230, rate: 50 + W - 190, amt: 50 + W - 100 };
     let y = doc.y;
-    doc.font('Helvetica-Bold').fontSize(9.5).fillColor(MUTED).text('Description', 50, y).text('Amount', 50 + W - 100, y, { width: 100, align: 'right' });
+    doc.font('Helvetica-Bold').fontSize(9.5).fillColor(MUTED).text('Description', C.desc, y).text('SAC', C.sac, y).text('Qty', C.qty, y, { width: 35, align: 'right' }).text('Rate', C.rate, y, { width: 85, align: 'right' }).text('Amount', C.amt, y, { width: 100, align: 'right' });
     y += 16; doc.moveTo(50, y - 3).lineTo(50 + W, y - 3).strokeColor('#d9dee8').stroke();
-    doc.font('Helvetica').fontSize(10.5).fillColor('#222').text(inv.title || 'Services', 50, y, { width: W - 120 });
-    doc.text(money(inv.amount), 50 + W - 100, y, { width: 100, align: 'right' });
-    y = Math.max(doc.y, y + 16) + 6;
+    const room = (h) => { if (y + h > doc.page.height - 60) { doc.addPage(); y = 50; } };
+    inv.lines.forEach((l) => {
+      room(30);
+      doc.font('Helvetica').fontSize(10).fillColor('#222').text(l.description || 'Services', C.desc, y, { width: C.sac - C.desc - 8 });
+      const end = doc.y;
+      doc.text(l.sac || '-', C.sac, y).text(qtyText(l.qty), C.qty, y, { width: 35, align: 'right' }).text(money(l.rate), C.rate, y, { width: 85, align: 'right' }).text(money(l.amount), C.amt, y, { width: 100, align: 'right' });
+      y = Math.max(end, y + 14) + 5;
+    });
     if (inv.discountPercent) { doc.font('Helvetica-Oblique').fontSize(9).fillColor(MUTED).text(`After a ${inv.discountPercent}% discount`, 50, y - 2); y = doc.y + 6; }
     doc.moveTo(50, y).lineTo(50 + W, y).strokeColor('#d9dee8').stroke(); y += 8;
-    doc.font('Helvetica').fontSize(10.5).fillColor('#222').text('Subtotal', 50 + W - 220, y, { width: 110 }).text(money(inv.amount), 50 + W - 100, y, { width: 100, align: 'right' });
-    y += 16; doc.text(`Tax (${inv.taxPercent || 0}%)`, 50 + W - 220, y, { width: 110 }).text(money(inv.taxAmount), 50 + W - 100, y, { width: 100, align: 'right' });
-    y += 20; doc.font('Helvetica-Bold').fontSize(12).fillColor(NAVY).text('Total', 50 + W - 220, y, { width: 110 }).text(money(inv.total), 50 + W - 100, y, { width: 100, align: 'right' });
-    if (inv.paidAmount > 0) {
-      y += 20; doc.font('Helvetica').fontSize(10).fillColor('#222').text('Received', 50 + W - 220, y, { width: 110 }).text(money(inv.paidAmount), 50 + W - 100, y, { width: 100, align: 'right' });
-      y += 15; doc.font('Helvetica-Bold').text('Balance', 50 + W - 220, y, { width: 110 }).text(money(Math.max(0, inv.total - inv.paidAmount)), 50 + W - 100, y, { width: 100, align: 'right' });
+    const sum = (label, v, { bold, size } = {}) => { room(22); doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size || 10.5).fillColor(bold ? NAVY : '#222').text(label, 50 + W - 260, y, { width: 150 }).text(money(v), 50 + W - 100, y, { width: 100, align: 'right' }); y += bold ? 20 : 16; };
+    sum('Taxable value', inv.amount);
+    const r2 = (n) => Math.round(n * 1000) / 1000;
+    if (gst.mode === 'intra') { sum(`CGST @ ${r2(gst.halfRate)}%`, gst.cgst); sum(`SGST @ ${r2(gst.halfRate)}%`, gst.sgst); } else if (gst.mode === 'inter') sum(`IGST @ ${r2(gst.rate)}%`, gst.igst); else sum(`Tax (${inv.taxPercent || 0}%)`, inv.taxAmount);
+    y += 4; sum('Total', inv.total, { bold: true, size: 12 });
+    if (inv.paidAmount > 0 || inv.tdsAmount > 0) {
+      if (inv.paidAmount > 0) sum('Received', inv.paidAmount);
+      if (inv.tdsAmount > 0) sum('TDS deducted by you', inv.tdsAmount);
+      sum('Balance', inv.balance, { bold: true, size: 10.5 });
     }
-    doc.y = y + 34; doc.x = 50;
+    if (inv.notes) { doc.font('Helvetica').fontSize(9.5).fillColor('#333').text(inv.notes, 50, y + 10, { width: W }); y = doc.y; }
+    doc.y = y + 24; doc.x = 50;
     if (from.bank) { doc.font('Helvetica-Bold').fontSize(10).fillColor(NAVY).text('Bank details', 50); doc.moveDown(0.2); doc.font('Helvetica').fontSize(9.5).fillColor('#333').text(from.bank, 50, doc.y, { width: W }); doc.moveDown(0.8); }
     if (from.terms) { doc.font('Helvetica-Bold').fontSize(10).fillColor(NAVY).text('Terms', 50); doc.moveDown(0.2); doc.font('Helvetica').fontSize(9.5).fillColor('#333').text(from.terms, 50, doc.y, { width: W }); }
     doc.end();
@@ -541,11 +568,12 @@ async function shareInvoice(user, id, req) {
   const url = `${base}/api/crm-public/invoice/${shareToken(inv.id)}`;
   let from = {}; try { from = JSON.parse(inv.fromJson || '{}'); } catch { from = {}; }
   const inr = (v) => `Rs. ${(Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-  const left = Math.max(0, inv.total - inv.paidAmount);
+  const settled = inv.paidAmount + (Number(inv.tdsAmount) || 0); // TDS the customer deducted counts as settled
+  const left = Math.max(0, inv.total - settled);
   const due = inv.dueDate ? new Date(`${inv.dueDate}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
   const text = [
     `Hello${contactName ? ` ${String(contactName).split(/\s+/)[0]}` : ''},`,
-    `Invoice ${inv.code || ''} from ${from.name || 'TeamLink Consultants'}: ${inr(left > 0 && inv.paidAmount > 0 ? left : inv.total)}${inv.paidAmount > 0 && left > 0 ? ' balance' : ''}${due ? `, due ${due}` : ''}.`,
+    `Invoice ${inv.code || ''} from ${from.name || 'TeamLink Consultants'}: ${inr(left > 0 && settled > 0 ? left : inv.total)}${settled > 0 && left > 0 ? ' balance' : ''}${due ? `, due ${due}` : ''}.`,
     `You can open the invoice (PDF) here: ${url}`,
     'Thank you.',
   ].join('\n');
@@ -608,8 +636,8 @@ async function decideByCustomer(id, decision, { ip } = {}) {
 
 // ---- the invoice by EMAIL (founder 2026-11-16: "ikkada mail option kuda vundali, only wtsp ey kaadhu") -----------------------------------------------------------
 // Like WhatsApp, but the PDF itself goes as an attachment, from the person's own name through the company mailbox, through the app's one send door (credits, opt-out, ledger).
-// emailInvoiceDraft = the box's starting words and the customer's address (the account's, else the deciding contact's); emailInvoice = the send. The status is left as it is:
-// the screen asks "Mark as Sent?" afterwards, as it does after WhatsApp.
+// emailInvoiceDraft = the box's starting words and the customer's address (the account's, else the deciding contact's), and whether mail is set up at all;
+// emailInvoice = the send (To, CC, subject, words editable). A Draft becomes Sent once the mail went (2026-11-17); WhatsApp still asks "Mark as Sent?".
 async function invoiceMailOf(user, id) {
   const r = S.roleOf(user);
   const inv = await DB.one('SELECT * FROM "CrmInvoice" WHERE "id" = ?', S.clip(id, 60));
@@ -631,23 +659,31 @@ async function emailInvoiceDraft(user, id) {
     if (ct) { contactName = ct.name || ''; if (!to) to = String(ct.email || '').trim(); }
   }
   const inr = (v) => `Rs. ${(Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-  const left = Math.max(0, inv.total - inv.paidAmount);
+  const settled = inv.paidAmount + (Number(inv.tdsAmount) || 0);
+  const left = Math.max(0, inv.total - settled);
   const due = inv.dueDate ? new Date(`${inv.dueDate}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
   const text = [
     `Dear ${contactName ? String(contactName).split(/\s+/)[0] : (billTo.name || 'Sir / Madam')},`,
     '',
-    `Please find attached invoice ${inv.code || ''} from ${from.name || 'TeamLink Consultants'} for ${inr(left > 0 && inv.paidAmount > 0 ? left : inv.total)}${inv.paidAmount > 0 && left > 0 ? ' (balance)' : ''}${due ? `, due on ${due}` : ''}.`,
+    `Please find attached invoice ${inv.code || ''} from ${from.name || 'TeamLink Consultants'} for ${inr(left > 0 && settled > 0 ? left : inv.total)}${settled > 0 && left > 0 ? ' (balance)' : ''}${due ? `, due on ${due}` : ''}.`,
     '',
     'Please let us know if you need anything else.',
   ].join('\n');
-  return S.okBody({ ok: true, to, subject: `Invoice ${inv.code || ''} from ${from.name || 'TeamLink Consultants'}`, text, status: inv.status });
+  const mail = await require('../utils/messaging').channelStatus().then((c) => c.Email).catch(() => null); // eslint-disable-line global-require
+  return S.okBody({ ok: true, to, cc: '', subject: `Invoice ${inv.code || ''} from ${from.name || 'TeamLink Consultants'}`, text, status: inv.status, mailReady: !!(mail && mail.configured), mailReason: mail && !mail.configured ? mail.reason : null });
 }
-async function emailInvoice(user, id, { to, subject, text } = {}) {
+const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+// { to, cc ("a@x.com, b@y.com", at most 5), subject, text } -> the mail with the invoice PDF attached; a Draft becomes Sent (it went to the customer).
+async function emailInvoice(user, id, { to, cc, subject, text } = {}) {
   const x = await invoiceMailOf(user, id);
   if (x.error) return x.error;
   const { inv } = x;
   const addr = S.clip(to, 200);
-  if (!addr || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return S.fail(400, addr ? 'That email address does not look right.' : 'Write the customer\'s email address in the To box.');
+  if (!addr || !EMAIL_RE.test(addr)) return S.fail(400, addr ? 'That email address does not look right.' : 'Write the customer\'s email address in the To box.');
+  const ccList = [...new Set((Array.isArray(cc) ? cc : String(cc || '').split(/[,;\s]+/)).map((v) => String(v || '').trim()).filter(Boolean))].filter((v) => v.toLowerCase() !== addr.toLowerCase());
+  if (ccList.length > 5) return S.fail(400, 'At most 5 addresses in CC.');
+  const badCc = ccList.find((v) => !EMAIL_RE.test(v) || v.length > 200);
+  if (badCc) return S.fail(400, `The CC address "${badCc.slice(0, 80)}" does not look right.`);
   const subj = S.clip(subject, 200);
   const body = S.clip(text, 4000);
   if (!subj) return S.fail(400, 'Write the subject.');
@@ -658,15 +694,21 @@ async function emailInvoice(user, id, { to, subject, text } = {}) {
   if (!out.pdf) return out;
   const own = await require('../utils/messageChannels').ownContact(user); // eslint-disable-line global-require
   const result = await require('../utils/messaging').send('Email', { // eslint-disable-line global-require
-    to: addr, subject: subj, text: body, senderEmail: own.email || undefined, senderName: own.name || user.name, actorUserId: user.id,
+    to: addr, cc: ccList, subject: subj, text: body, senderEmail: own.email || undefined, senderName: own.name || user.name, actorUserId: user.id,
     attachments: [{ filename: out.name, content: out.pdf, contentType: 'application/pdf' }],
     meta: { audience: 'crm', personName: inv.accountName || '', senderUserId: user.id, senderName: user.name, purpose: 'CRM invoice email' },
   });
-  if (!result.ok) return S.fail(result.notConfigured ? 409 : (result.invalid || result.creditsBlocked ? 400 : 502), result.notConfigured ? `Email is not connected: ${result.error}` : `The email was not sent: ${result.error || 'unknown problem'}`);
+  if (!result.ok) {
+    if (result.notConfigured) return S.fail(409, `Email is not set up yet, so nothing was sent. Connect it in Administration > Integrations > Email (${result.error}). You can download the PDF and send it yourself.`, { notConfigured: true });
+    return S.fail(result.invalid || result.creditsBlocked || result.reserved ? 400 : 502, `The email was not sent: ${result.error || 'unknown problem'}`);
+  }
   const now = DB.nowIso();
-  await S.insert('CrmActivity', { id: S.newId('act'), kind: 'email', subject: `Invoice ${inv.code || ''} emailed`, note: `To ${addr}\n\n${body}\n\n(the invoice PDF was attached)`, at: now, dealId: inv.dealId || null, accountId: inv.accountId || null, byId: user.id, byName: user.name || null, createdAt: now });
-  await S.audit(user, 'CRM invoice emailed', 'CrmInvoice', inv.id, `${inv.code || inv.id} to ${addr}`);
-  return S.okBody({ ok: true, to: addr, status: inv.status });
+  await S.insert('CrmActivity', { id: S.newId('act'), kind: 'email', subject: `Invoice ${inv.code || ''} emailed`, note: `To ${addr}${ccList.length ? `\nCC ${ccList.join(', ')}` : ''}\n\n${body}\n\n(the invoice PDF was attached)`, at: now, dealId: inv.dealId || null, accountId: inv.accountId || null, byId: user.id, byName: user.name || null, createdAt: now });
+  // it went to the customer: a Draft is Sent now (and can no longer be edited)
+  let status = inv.status;
+  if (inv.status === 'Draft') { await S.update('CrmInvoice', inv.id, { status: 'Sent', sentAt: inv.sentAt || now, updatedAt: now }); status = 'Sent'; }
+  await S.audit(user, 'CRM invoice emailed', 'CrmInvoice', inv.id, `${inv.code || inv.id} to ${addr}${ccList.length ? ` cc ${ccList.join(', ')}` : ''}${status !== inv.status ? ' (Draft -> Sent)' : ''}`);
+  return S.okBody({ ok: true, to: addr, cc: ccList, status });
 }
 
 async function sendProposal(user, id, { to, message } = {}, req) {
@@ -755,16 +797,20 @@ async function overview(user, { period, mine } = {}) {
   const dFrom = ymd(R.from); const dTo = ymd(R.to); const dPrevFrom = ymd(R.prevFrom); const dPrevTo = ymd(R.prevTo);
   const sumRow = async (sql, ...args) => { const x = (await DB.one(sql, ...args)) || {}; return { n: Number(x.n) || 0, v: Math.round((Number(x.v) || 0) * 100) / 100 }; };
   const invoicedNow = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("total"), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" NOT IN ('Draft', 'Cancelled') AND "issueDate" >= ? AND "issueDate" < ?`, ...p, dFrom, dTo);
-  const collectedNow = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("amount"), 0) AS "v" FROM "CrmPayment" WHERE ${own} AND "paidOn" >= ? AND "paidOn" < ?`, ...p, dFrom, dTo);
+  const collectedNow = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("amount"), 0) AS "v" FROM "CrmPayment" WHERE ${own} AND "amount" > 0 AND "paidOn" >= ? AND "paidOn" < ?`, ...p, dFrom, dTo);
   const collectedBefore = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("amount"), 0) AS "v" FROM "CrmPayment" WHERE ${own} AND "paidOn" >= ? AND "paidOn" < ?`, ...p, dPrevFrom, dPrevTo);
-  const owed = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("total" - "paidAmount"), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" IN ('Sent', 'Partly paid') AND "total" - "paidAmount" > 0.004`, ...p);
-  const overdueOwed = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("total" - "paidAmount"), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" IN ('Sent', 'Partly paid') AND "total" - "paidAmount" > 0.004 AND "dueDate" IS NOT NULL AND "dueDate" < ?`, ...p, today);
+  // TDS the customer deducted counts as settled (it is not owed), but it is NOT cash: collected stays the money that came, TDS is its own line
+  const BAL = '"total" - "paidAmount" - COALESCE("tdsAmount", 0)';
+  const owed = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM(${BAL}), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" IN ('Sent', 'Partly paid') AND ${BAL} > 0.004`, ...p);
+  const overdueOwed = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM(${BAL}), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" IN ('Sent', 'Partly paid') AND ${BAL} > 0.004 AND "dueDate" IS NOT NULL AND "dueDate" < ?`, ...p, today);
+  const tdsNow = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("tdsAmount"), 0) AS "v" FROM "CrmPayment" WHERE ${own} AND COALESCE("tdsAmount", 0) > 0 AND "paidOn" >= ? AND "paidOn" < ?`, ...p, dFrom, dTo);
   const drafts = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("total"), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" = 'Draft'`, ...p);
   const wonNoInvoice = await count(`SELECT COUNT(*) AS "n" FROM "CrmDeal" d WHERE ${all ? '1=1' : 'd."ownerId" = ?'} AND d."stage" = 'Won' AND NOT EXISTS (SELECT 1 FROM "CrmInvoice" i WHERE i."dealId" = d."id")`, ...p);
   const cash = {
     booked: { value: wonNow.v, deals: wonNow.n, delta: delta(wonNow.v, wonBefore.v) },
     invoiced: { value: invoicedNow.v, invoices: invoicedNow.n },
     collected: { value: collectedNow.v, payments: collectedNow.n, delta: delta(collectedNow.v, collectedBefore.v) },
+    tds: { value: tdsNow.v, lines: tdsNow.n },
     toCollect: { value: owed.v, invoices: owed.n, overdueValue: overdueOwed.v, overdueInvoices: overdueOwed.n },
     drafts: { value: drafts.v, invoices: drafts.n },
     wonNoInvoice,

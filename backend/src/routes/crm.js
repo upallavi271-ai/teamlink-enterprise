@@ -27,6 +27,8 @@
 //   POST   /crm/leads/bulk {ids, ownerId|status|rating}     POST /crm/leads/import?name=&ownerId=&dryRun=1 (the file as the body)
 //   GET    /crm/export/leads|deals|accounts|contacts|activities|tasks   (CSV)
 //   GET/POST /crm/deals/:id/proposals    GET /crm/proposals/:id/pdf    POST /crm/proposals/:id/send {to, message}   /status {status}
+//   PUT    /crm/invoices/:id {lines, notes, dueDate} (Draft only)   POST /crm/invoices/:id/email {to, cc, subject, text} (Draft -> Sent)
+//   GET/POST /crm/deals/:id/files (multipart, 10 MB)   GET / DELETE /crm/deal-files/:fid   (the quotation kept on a deal)
 //   DELETE /crm/:kind/:id                  Admin / BDE TL (a BDE: their own activity / follow-up)
 // ---------------------------------------------------------------------------
 const express = require('express');
@@ -39,6 +41,7 @@ const CONTACT = require('../crm/contact'); // Call / WhatsApp / Email from a rec
 const AI = require('../crm/ai');
 const SALES = require('../crm/sales');
 const AUTO = require('../crm/autopilot');
+const MONEY = require('../crm/money'); // GST split, invoice numbering, draft editing, TDS, overdue alert, deal files, lost re-check
 
 const router = express.Router();
 router.use(requireAuth);
@@ -197,6 +200,21 @@ router.get('/invoices/:id/pdf', async (req, res, next) => {
   } catch (e) { return next(e); }
 });
 router.post('/deals/:id/invoice', wrap((req) => CRM.invoiceForDeal(req.user, req.params.id)));
+// the money path, slice 2 (crm/money.js): a Draft invoice's lines / notes / due date (read-only once Sent), and files kept on a deal (the quotation)
+router.put('/invoices/:id', wrap((req) => MONEY.editDraft(req.user, req.params.id, req.body || {})));
+router.get('/deals/:id/files', wrap((req) => MONEY.dealFiles(req.user, req.params.id)));
+router.post('/deals/:id/files', wrap((req) => MONEY.uploadDealFile(req.user, req.params.id, req))); // multipart: file (+ kind), at most 10 MB
+router.delete('/deal-files/:fid', wrap((req) => MONEY.deleteDealFile(req.user, req.params.fid)));
+router.get('/deal-files/:fid', async (req, res, next) => {
+  try {
+    const out = await MONEY.dealFileDownload(req.user, req.params.fid);
+    if (!out.path) return send(res, out);
+    res.set('Content-Type', out.mime);
+    res.set('Content-Disposition', `attachment; filename="${String(out.name).replace(/"/g, '')}"`);
+    res.set('X-Content-Type-Options', 'nosniff');
+    return res.sendFile(out.path);
+  } catch (e) { return next(e); }
+});
 
 router.get('/:kind(leads|accounts|contacts|deals)', wrap(async (req) => ({ status: 200, body: { rows: await CRM.list(req.user, kindOf(req), req.query || {}) } })));
 router.post('/:kind(leads|accounts|contacts|deals)', wrap((req) => CRM.create(req.user, kindOf(req), req.body || {})));
@@ -216,6 +234,8 @@ if (!process.env.TEST_MODE && process.env.NODE_ENV !== 'test') {
       // a follow-up that went a day overdue is told to the Sales managers, once (crm/sales.js escalateOverdue)
       SALES.escalateOverdue().catch((e) => console.error('[crm] overdue alert:', e.message)); // eslint-disable-line no-console
     }
+    // 10:00 India time: invoices past their due date with money owed -> one bell to the owner and the Sales managers (every 3 days at most, crm/money.js)
+    if (h === 10) MONEY.escalateOverdueInvoices().catch((e) => console.error('[crm] overdue invoices:', e.message)); // eslint-disable-line no-console
   }, 60 * 60 * 1000).unref();
   // the timed reminders: every minute, each sent once (crm/sales.js)
   setInterval(() => { SALES.runDue().catch((e) => console.error('[crm] timed reminders:', e.message)); }, 60 * 1000).unref(); // eslint-disable-line no-console

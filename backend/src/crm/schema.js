@@ -126,7 +126,7 @@ const DDL = [
   'CREATE INDEX IF NOT EXISTS "CrmInvoice_account" ON "CrmInvoice"("accountId")',
   'CREATE INDEX IF NOT EXISTS "CrmInvoice_status" ON "CrmInvoice"("ownerId", "status")',
   // The PAYMENT LOG of an invoice (founder 2026-11-14, build order 1): every amount received is a line - date, amount, mode (and a reference like the UTR or cheque no.).
-  // The invoice's paid amount and its Partly paid / Paid status come FROM these lines. No TDS / GST columns until the CA confirms the rules.
+  // The invoice's paid amount and its Partly paid / Paid status come FROM these lines. TDS deducted on a line is added later (COLUMNS below, 2026-11-17).
   `CREATE TABLE IF NOT EXISTS "CrmPayment" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "invoiceId" TEXT NOT NULL, "dealId" TEXT, "accountId" TEXT,
@@ -195,6 +195,15 @@ const DDL = [
   )`,
   'CREATE UNIQUE INDEX IF NOT EXISTS "CrmAutoStep_one" ON "CrmAutoStep"("recordId", "stepId")',
   'CREATE INDEX IF NOT EXISTS "CrmAutoStep_due" ON "CrmAutoStep"("status", "dueAt")',
+  // a file kept on a deal - the quotation the customer was sent, their PO ... (crm/money.js; the bytes live in UPLOAD_DIR, utils/attachments.js)
+  `CREATE TABLE IF NOT EXISTS "CrmDealFile" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "dealId" TEXT NOT NULL, "accountId" TEXT,
+    "kind" TEXT NOT NULL DEFAULT 'Quotation',
+    "name" TEXT NOT NULL, "mime" TEXT NOT NULL, "size" INTEGER NOT NULL DEFAULT 0, "stored" TEXT NOT NULL,
+    "createdById" TEXT, "createdByName" TEXT, "createdAt" TEXT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS "CrmDealFile_deal" ON "CrmDealFile"("dealId", "createdAt")',
 ];
 // Columns added after the first release: added once, "duplicate column" is the normal answer afterwards.
 const COLUMNS = [
@@ -216,6 +225,12 @@ const COLUMNS = [
   ['CrmLead', 'code', 'TEXT'], ['CrmDeal', 'code', 'TEXT'], ['CrmAccount', 'code', 'TEXT'],
   // Follow-ups upgrade (founder 2026-11-14): priority, what came of it, and the one-time overdue alert to the managers
   ['CrmTask', 'priority', 'TEXT'], ['CrmTask', 'outcome', 'TEXT'], ['CrmTask', 'escalatedAt', 'TEXT'],
+  // the money path, slice 2 (2026-11-17, crm/money.js): invoice lines (description, SAC, qty, rate) a Draft may edit, TDS on a payment line
+  // (amount, the % it was worked from, the certificate / reference), the invoice's TDS total, when it went out, the last overdue alert;
+  // a follow-up made by the CRM itself says why ('lost-recheck': a lost deal is looked at again three months on)
+  ['CrmInvoice', 'linesJson', 'TEXT'], ['CrmInvoice', 'tdsAmount', 'REAL'], ['CrmInvoice', 'sentAt', 'TEXT'], ['CrmInvoice', 'overdueAlertAt', 'TEXT'],
+  ['CrmPayment', 'tdsAmount', 'REAL'], ['CrmPayment', 'tdsPercent', 'REAL'], ['CrmPayment', 'tdsRef', 'TEXT'],
+  ['CrmTask', 'origin', 'TEXT'],
 ];
 const INDEXES = [
   'CREATE INDEX IF NOT EXISTS "CrmLead_phone" ON "CrmLead"("phone")', 'CREATE INDEX IF NOT EXISTS "CrmLead_email" ON "CrmLead"("email")', 'CREATE INDEX IF NOT EXISTS "CrmLead_stage" ON "CrmLead"("stage")',

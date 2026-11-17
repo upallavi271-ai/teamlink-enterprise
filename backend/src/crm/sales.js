@@ -364,5 +364,5 @@ async function escalateOverdue({ now = Date.now(), notify } = {}) {
 }
 
 module.exports = {
-  PRIORITIES, OUTCOMES, firstFollowUp, escalateOverdue, TASK_TYPES, REMIND_BEFORE, stageOf, stageNames, moveLead, autoStage, reopenLead, capture, websiteGet, websiteSave, websiteNewKey, taskExtras, cancelTask, liveReminders, runDue,
+  PRIORITIES, OUTCOMES, firstFollowUp, escalateOverdue, managersToTell, TASK_TYPES, REMIND_BEFORE, stageOf, stageNames, moveLead, autoStage, reopenLead, capture, websiteGet, websiteSave, websiteNewKey, taskExtras, cancelTask, liveReminders, runDue,
 };

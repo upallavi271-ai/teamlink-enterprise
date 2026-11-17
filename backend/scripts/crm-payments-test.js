@@ -2,7 +2,7 @@
 /**
  * The PAYMENT LOG of a CRM invoice (crm/service.js: addPayment, deletePayment, settleInvoice, setInvoiceStatus) - founder 2026-11-14, build order 1.
  * Every amount received is a line (date, amount, mode, reference); the invoice's paid amount and its Partly paid / Paid status come FROM the lines.
- * No TDS / GST (waits for the CA). Never touches the ATS Accounts tables.
+ * TDS on a line is tested in crm-money2-test.js. Never touches the ATS Accounts tables.
  * SANDBOX ONLY: a private server on a COPY of the sandbox database, port 4053. Nothing real is called.
  *   TEST_SOURCE_DB=<path to a current-schema sandbox.db> node scripts/crm-payments-test.js
  */
@@ -148,7 +148,7 @@ const istDay = (plus = 0) => new Date(Date.now() + 5.5 * 3600000 + plus * 864000
   console.log('Kept apart from ATS Accounts');
   check('no ATS Accounts invoice was made', (await prisma.invoice.count()) === atsInvoicesBefore);
   const cols = await DB.all('PRAGMA table_info("CrmPayment")');
-  check('the payment table has no TDS / GST columns (they wait for the CA)', !cols.some((c) => /tds|gst/i.test(c.name)), cols.map((c) => c.name));
+  check('the payment table has no GST columns (GST is on the invoice); TDS has its own columns since 2026-11-17 (crm-money2-test.js)', !cols.some((c) => /gst/i.test(c.name)) && cols.some((c) => c.name === 'tdsAmount'), cols.map((c) => c.name));
 
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);

@@ -21,9 +21,15 @@ const DEFAULTS = {
   discountApprovalLimit: 10,
   salesTeam: [],
   // the company's own details for CRM invoices (crm/invoices.js)
-  invoiceFrom: { name: 'TeamLink Consultants', address: '', gstin: '', email: '', phone: '', bank: '', terms: 'Payment within 15 days of the invoice date.' },
+  invoiceFrom: { name: 'TeamLink Consultants', address: '', gstin: '', state: '', email: '', phone: '', bank: '', terms: 'Payment within 15 days of the invoice date.' },
   invoiceTaxPercent: 18,
   invoiceDueDays: 15,
+  // GST on CRM invoices (2026-11-17, crm/money.js): the SAC printed on each line (998314 = IT design and development services - to be
+  // confirmed with the CA), and the invoice number format: '' keeps INV-0001; e.g. 'INV/{FY}/{0000}' numbers per Indian financial year
+  invoiceSac: '998314',
+  invoiceNumberFormat: '',
+  overdueInvoiceAlert: true, // an invoice past its due date with money still owed: a bell to the owner and the Sales managers at 10:00, every 3 days
+  lostRecheck: true, // a deal marked Lost gets a follow-up for its owner 90 days later, "Re-check <account>: lost because <reason>"
   // the meeting link a lead books a call on (crm/booking.js), and the hours a slot may be booked in
   meetingLink: '',
   bookingHours: { from: '10:00', to: '18:00', minutes: 30 },
@@ -100,6 +106,16 @@ async function seedTeam(raw) {
   });
   return team;
 }
+// An invoice number format (crm/money.js formatInvoiceCode): letters, digits and / - _ . # spaces, with exactly one running number {0000}
+// (1 to 8 zeros = its width) and, if wanted, {FY} (2026-27) or {FY2} (26-27); the number starts again at 1 each financial year when {FY} / {FY2} is in it.
+function validInvoiceFormat(fmt) {
+  const s = String(fmt || '');
+  if (s.length < 3 || s.length > 40 || !/^[A-Za-z0-9/\-_.# {}]+$/.test(s)) return false;
+  const tokens = s.match(/\{[^}]*\}/g) || [];
+  if (tokens.some((t) => !/^\{(0{1,8}|FY|FY2)\}$/.test(t))) return false;
+  if (tokens.filter((t) => /^\{0+\}$/.test(t)).length !== 1) return false;
+  return !/[{}]/.test(s.replace(/\{(0{1,8}|FY|FY2)\}/g, ''));
+}
 const cleanList = (v, fallback) => {
   const out = [...new Set((Array.isArray(v) ? v : String(v || '').split(/\n|,/)).map((x) => String(x || '').trim().slice(0, 60)).filter(Boolean))].slice(0, 40);
   return out.length ? out : fallback;
@@ -132,13 +148,20 @@ function normalize(raw = {}) {
     .filter((m) => m.userId && !seen.has(m.userId) && seen.add(m.userId)).slice(0, 300);
   const f = raw.invoiceFrom || {};
   const s60 = (v, n = 200) => String(v == null ? '' : v).trim().slice(0, n);
-  const invoiceFrom = { name: s60(f.name, 120) || DEFAULTS.invoiceFrom.name, address: s60(f.address, 400), gstin: s60(f.gstin, 20), email: s60(f.email, 120), phone: s60(f.phone, 30), bank: s60(f.bank, 400), terms: s60(f.terms, 600) || DEFAULTS.invoiceFrom.terms };
+  const invoiceFrom = { name: s60(f.name, 120) || DEFAULTS.invoiceFrom.name, address: s60(f.address, 400), gstin: s60(f.gstin, 20).toUpperCase(), state: s60(f.state, 60), email: s60(f.email, 120), phone: s60(f.phone, 30), bank: s60(f.bank, 400), terms: s60(f.terms, 600) || DEFAULTS.invoiceFrom.terms };
+  const sac = String(raw.invoiceSac == null ? DEFAULTS.invoiceSac : raw.invoiceSac).trim();
+  const fmt = String(raw.invoiceNumberFormat == null ? '' : raw.invoiceNumberFormat).trim();
+  const flag = (v, d) => (v === undefined ? d : v !== false && v !== 0 && v !== 'false');
   const tax = Number(raw.invoiceTaxPercent); const due = Math.round(Number(raw.invoiceDueDays));
   const bh = raw.bookingHours || {}; const HM = /^\d{2}:\d{2}$/;
   const bookingHours = { from: HM.test(bh.from) ? bh.from : DEFAULTS.bookingHours.from, to: HM.test(bh.to) ? bh.to : DEFAULTS.bookingHours.to, minutes: [15, 30, 45, 60].includes(Number(bh.minutes)) ? Number(bh.minutes) : 30 };
   return {
     sources, lostReasons, stageProbability: prob, salesTeam, leadStages: cleanStages(raw.leadStages), teamSeeded: raw.teamSeeded === true, accessSet: raw.accessSet === true,
     invoiceFrom, invoiceTaxPercent: Number.isFinite(tax) && tax >= 0 && tax <= 50 ? tax : DEFAULTS.invoiceTaxPercent, invoiceDueDays: Number.isFinite(due) && due >= 0 && due <= 180 ? due : DEFAULTS.invoiceDueDays,
+    invoiceSac: /^\d{4,8}$/.test(sac) ? sac : DEFAULTS.invoiceSac,
+    invoiceNumberFormat: !fmt || validInvoiceFormat(fmt) ? fmt : '',
+    overdueInvoiceAlert: flag(raw.overdueInvoiceAlert, true),
+    lostRecheck: flag(raw.lostRecheck, true),
     meetingLink: /^https?:\/\//i.test(String(raw.meetingLink || '').trim()) ? String(raw.meetingLink).trim().slice(0, 300) : '', bookingHours,
     defaultRemindBefore: [0, 15, 60, 1440].includes(Number(raw.defaultRemindBefore)) ? Number(raw.defaultRemindBefore) : DEFAULTS.defaultRemindBefore,
     staleDays: Number.isFinite(stale) && stale >= 1 && stale <= 365 ? stale : DEFAULTS.staleDays,
@@ -185,5 +208,7 @@ function teamRole(userId) {
   return m ? m.role : null;
 }
 const member = (userId) => (cached && cached.salesTeam.find((x) => x.userId === userId)) || null;
+// the last read settings, for a sync reader (crm/service.js invoiceOut works the GST split out while it shapes a row); the defaults before the first read
+const current = () => cached || normalize({});
 
-module.exports = { load, save, teamRole, member, cleanMember, STAGES, DEFAULTS, ROLES, RIGHTS, ROLE_RIGHTS };
+module.exports = { load, save, teamRole, member, current, cleanMember, validInvoiceFormat, STAGES, DEFAULTS, ROLES, RIGHTS, ROLE_RIGHTS };

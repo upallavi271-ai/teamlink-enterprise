@@ -61,6 +61,8 @@ async function sendInner(channel, opts = {}) {
         senderName: opts.senderName,
         useEmployeeFrom: !!opts.senderEmail,
         fromName: opts.fromName,
+        // copies (the CRM invoice email, 2026-11-17): valid addresses only, reserved test domains dropped like the To
+        ...(Array.isArray(opts.cc) && opts.cc.length ? { cc: opts.cc.map((a) => String(a || '').trim()).filter((a) => core.validEmail(a) && !mailer.isReservedTestAddress(a)) } : {}),
         // files to attach (e.g. the agreement PDF to eSign in DigiLocker, 2026-10-31): [{ filename, content: Buffer, contentType }]
         ...(Array.isArray(opts.attachments) && opts.attachments.length ? { attachments: opts.attachments } : {}),
       });

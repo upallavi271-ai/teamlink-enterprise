@@ -4,7 +4,7 @@
 // (`embedded`), not a module of its own: the CRM stays at five (founder 2026-11-14).
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
-import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, shareInvoiceWhatsApp, InvoiceEmailDialog, INVOICE_STATUSES } from './crmShared.jsx';
+import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, shareInvoiceWhatsApp, InvoiceEmailDialog, InvoiceEditDialog, INVOICE_STATUSES, balanceOf } from './crmShared.jsx';
 
 export default function CrmInvoices({ embedded = false }) {
   const { me, toast, openRecord, version } = useCrm();
@@ -15,6 +15,7 @@ export default function CrmInvoices({ embedded = false }) {
   const [missing, setMissing] = useState(0); // Won deals with no invoice yet (won before invoices existed)
   const [busy, setBusy] = useState(false);
   const [mailInv, setMailInv] = useState(null); // the invoice whose email window is open
+  const [editInv, setEditInv] = useState(null); // the Draft being edited
   const load = () => api.get('/crm/invoices').then((r) => { setRows(r.data.invoices); setMissing(r.data.missing || 0); setErr(''); }).catch((e) => setErr(errOf(e, 'The invoices could not be read.')));
   async function backfill() {
     setBusy(true);
@@ -23,9 +24,10 @@ export default function CrmInvoices({ embedded = false }) {
   useEffect(() => { load(); }, [version]); // eslint-disable-line react-hooks/exhaustive-deps
   const live = (rows || []).filter((x) => x.status !== 'Cancelled');
   const sum = (list, f) => list.reduce((a, x) => a + (f(x) || 0), 0);
-  const owed = sum(live.filter((x) => x.status !== 'Paid'), (x) => x.total - x.paidAmount);
+  const owed = sum(live.filter((x) => x.status !== 'Paid'), balanceOf);
   const overdue = live.filter((x) => x.overdue);
   const received = sum(live, (x) => x.paidAmount);
+  const tds = sum(live, (x) => x.tdsAmount);
   const shown = useMemo(() => (rows || []).filter((x) => (!status || (status === 'Overdue' ? x.overdue : x.status === status))
     && (!q || `${x.code} ${x.accountName} ${x.title}`.toLowerCase().includes(q.toLowerCase()))), [rows, q, status]);
   const replace = (inv) => setRows((list) => (list || []).map((x) => (x.id === inv.id ? inv : x)));
@@ -51,8 +53,8 @@ export default function CrmInvoices({ embedded = false }) {
       {rows && (
         <div className="crm-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginBottom: 12 }}>
           <div className="card" style={{ padding: 12 }}><div className="small-muted">Yet to be received</div><div style={{ fontSize: 20, fontWeight: 700 }}>{money(owed)}</div></div>
-          <div className="card" style={{ padding: 12 }}><div className="small-muted">Overdue</div><div style={{ fontSize: 20, fontWeight: 700, color: overdue.length ? 'var(--red)' : undefined }}>{overdue.length} · {money(sum(overdue, (x) => x.total - x.paidAmount))}</div></div>
-          <div className="card" style={{ padding: 12 }}><div className="small-muted">Received</div><div style={{ fontSize: 20, fontWeight: 700 }}>{money(received)}</div></div>
+          <div className="card" style={{ padding: 12 }}><div className="small-muted">Overdue</div><div style={{ fontSize: 20, fontWeight: 700, color: overdue.length ? 'var(--red)' : undefined }}>{overdue.length} · {money(sum(overdue, balanceOf))}</div></div>
+          <div className="card" style={{ padding: 12 }}><div className="small-muted">Received (cash)</div><div style={{ fontSize: 20, fontWeight: 700 }}>{money(received)}</div>{tds > 0 && <div className="small-muted" style={{ fontSize: 12 }}>+ {money(tds)} TDS deducted by customers</div>}</div>
         </div>
       )}
       <div className="filter-row">
@@ -72,17 +74,17 @@ export default function CrmInvoices({ embedded = false }) {
             <tbody>
               {!shown.length && <tr><td colSpan={me.seesAll ? 10 : 9}><div className="empty"><h3>{rows.length ? 'No invoice matches' : 'No invoices yet'}</h3>{rows.length ? 'Try another search or status.' : 'When a deal is moved to Won, its invoice appears here.'}</div></td></tr>}
               {shown.map((x) => (
-                <tr key={x.id} className="row-link" onClick={() => x.dealId && openRecord('deal', x.dealId)}>
-                  <td><b>{x.code}</b></td>
+                <tr key={x.id} className="row-link" onClick={() => x.dealId && openRecord('deal', x.dealId)} style={x.overdue ? { boxShadow: 'inset 3px 0 0 var(--red)', background: 'rgba(220, 38, 38, 0.05)' } : undefined}>
+                  <td><b style={{ color: x.overdue ? 'var(--red)' : undefined }}>{x.code}</b>{x.gst && x.gst.flag && <div className="small-muted" style={{ fontSize: 11, color: 'var(--amber, #b45309)' }} title={x.gst.flag}>⚠ IGST: state not known</div>}</td>
                   <td>{x.accountName || '—'}{x.missing && x.missing.length > 0 && <div className="small-muted" style={{ fontSize: 11.5, color: 'var(--amber, #b45309)' }} title="Add it on the customer's account; invoices made later will carry it">⚠ no {x.missing.join(' / ')}</div>}</td>
                   <td>{x.title || '—'}</td>
                   <td>{dateOf(x.issueDate)}</td>
                   <td style={{ color: x.overdue ? 'var(--red)' : undefined }}>{x.dueDate ? dateOf(x.dueDate) : '—'}</td>
                   <td style={{ textAlign: 'right' }}>{money(x.total)}</td>
-                  <td style={{ textAlign: 'right' }}>{money(x.paidAmount)}</td>
+                  <td style={{ textAlign: 'right' }}>{money(x.paidAmount)}{x.tdsAmount > 0 && <div className="small-muted" style={{ fontSize: 11 }}>+ TDS {money(x.tdsAmount)}</div>}</td>
                   <td>{me.canEdit ? <><InvoiceStatusSelect inv={x} onSaved={replace} />{x.overdue && <> <Pill v="Overdue" /></>}</> : <Pill v={invoicePill(x)} />}</td>
                   {me.seesAll && <td>{x.ownerName || '—'}</td>}
-                  <td style={{ whiteSpace: 'nowrap' }}><button type="button" className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openInvoicePdf(x, toast); }}>PDF</button>{me.canEdit && x.status !== 'Cancelled' && <> <button type="button" className="btn btn-sm" title="Emails the invoice with the PDF attached" aria-label={`Email ${x.code}`} onClick={(e) => { e.stopPropagation(); setMailInv(x); }}>✉️</button> <button type="button" className="btn btn-sm" title="Opens WhatsApp with the message and a link to the invoice; you press Send" aria-label={`Send ${x.code} on WhatsApp`} onClick={(e) => { e.stopPropagation(); shareInvoiceWhatsApp(x, toast, () => load()); }}>💬</button></>}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}><button type="button" className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openInvoicePdf(x, toast); }}>PDF</button>{me.canEdit && x.status === 'Draft' && <> <button type="button" className="btn btn-sm" title="Edit the Draft: lines, notes, due date" aria-label={`Edit ${x.code}`} onClick={(e) => { e.stopPropagation(); setEditInv(x); }}>✏️</button></>}{me.canEdit && x.status !== 'Cancelled' && <> <button type="button" className="btn btn-sm" title="Send by email, with the PDF attached" aria-label={`Send ${x.code} by email`} onClick={(e) => { e.stopPropagation(); setMailInv(x); }}>✉️ Send</button> <button type="button" className="btn btn-sm" title="Opens WhatsApp with the message and a link to the invoice; you press Send" aria-label={`Send ${x.code} on WhatsApp`} onClick={(e) => { e.stopPropagation(); shareInvoiceWhatsApp(x, toast, () => load()); }}>💬</button></>}</td>
                 </tr>
               ))}
             </tbody>
@@ -90,6 +92,7 @@ export default function CrmInvoices({ embedded = false }) {
         </div>
       )}
       {mailInv && <InvoiceEmailDialog inv={mailInv} onClose={() => setMailInv(null)} onSent={() => load()} />}
+      {editInv && <InvoiceEditDialog inv={editInv} onClose={() => setEditInv(null)} onSaved={(inv) => { setEditInv(null); replace(inv); }} />}
     </div>
   );
 }

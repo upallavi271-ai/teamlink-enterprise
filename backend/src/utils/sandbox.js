@@ -57,6 +57,7 @@ function testHooks(msg, to) {
     const addr = (v) => (v && typeof v === 'object' ? `${v.name ? `${v.name} ` : ''}<${v.address}>` : String(v || ''));
     fs.appendFileSync(cap, `${JSON.stringify({
       at: new Date().toISOString(), to, from: addr(msg.from), replyTo: addr(msg.replyTo), subject: msg.subject || '', text: msg.text || '', html: msg.html || '', headers: msg.headers || {},
+      cc: [].concat(msg.cc || []).map(addr), attachments: [].concat(msg.attachments || []).map((a) => ({ filename: a.filename || '', contentType: a.contentType || '', size: a.content && a.content.length ? a.content.length : 0, pdf: !!(a.content && Buffer.isBuffer(a.content) && a.content.slice(0, 4).toString('latin1') === '%PDF') })),
     })}\n`);
   }
 }

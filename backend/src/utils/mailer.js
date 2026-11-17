@@ -190,8 +190,10 @@ function isReservedTestAddress(to) {
 // html / attachments (optional): a report mail with tables and an Excel file (utils/eodReport.js);
 // `text` stays the plain-text fallback every mail carries.
 async function sendMail({
-  to, subject, text, html, attachments, senderEmail, senderName, useEmployeeFrom = true, fromName, headers,
+  to, cc, subject, text, html, attachments, senderEmail, senderName, useEmployeeFrom = true, fromName, headers,
 }) {
+  // copies: a list (or one address); the envelope carries them too, or the relay would never deliver them
+  const ccList = (Array.isArray(cc) ? cc : (cc ? [cc] : [])).map((a) => String(a || '').trim()).filter(Boolean);
   const cfg = await emailConfig();
   if (!cfg.configured) return { ok: false, notConfigured: true, error: cfg.reason, transient: false };
   if (!to || !String(to).trim()) {
@@ -221,12 +223,13 @@ async function sendMail({
       sender: addr.sender,
       replyTo: addr.replyTo,
       to: String(to).trim(),
+      ...(ccList.length ? { cc: ccList } : {}),
       subject: subject || '(no subject)',
       text: text || '',
       ...(html ? { html } : {}),
       ...(attachments && attachments.length ? { attachments } : {}),
       ...(headers && Object.keys(headers).length ? { headers } : {}), // Omni-Channel: List-Unsubscribe etc.
-      envelope: { from: addr.envelopeFrom, to: String(to).trim() },
+      envelope: { from: addr.envelopeFrom, to: ccList.length ? [String(to).trim(), ...ccList] : String(to).trim() },
     });
     // A message the provider did not accept for THIS recipient is not sent,
     // whatever else the response says.
