@@ -154,7 +154,12 @@ input,select,textarea{font-family:inherit;font-size:13.5px}
 .breadcrumb .bc-link:hover{text-decoration:underline}
 .breadcrumb .bc-current{color:var(--ink);font-weight:500}
 
-main{flex:1;max-width:1220px;margin:0 auto;padding:24px 24px 70px;width:100%}
+/* founder 2026-11-17 "align these pages properly": the page starts at the breadcrumb's left edge and uses the screen's width (was
+   capped at 1220px and centred, which left a wide gap after the breadcrumb on big screens). Very wide screens stop at 1680px. */
+main{flex:1;max-width:1680px;margin:0;padding:24px 24px 70px;width:100%;min-width:0}
+/* the count on a status tab ("Waiting to join 97") is a small badge, never glued to the word */
+.lph-tabs .tab .n{display:inline-block;margin-left:7px;padding:0 7px;border-radius:999px;font-size:12px;line-height:18px;font-weight:600;background:rgba(15,23,42,.07)}
+.lph-tabs .tab.active .n{background:rgba(255,255,255,.22)}
 .page-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px;gap:14px;flex-wrap:wrap}
 .page-head h1{font-size:23px}
 .page-sub{color:var(--ink-soft);font-size:13px;margin-top:2px}
@@ -357,7 +362,7 @@ footer{border-top:1px solid var(--line);padding:18px 22px;color:var(--ink-soft);
    prototype's .app-shell / .content-col / main boxes. */
 .shell{display:flex;min-height:100vh}
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
-.content{flex:1;max-width:1220px;margin:0 auto;padding:24px 24px 70px;width:100%}
+.content{flex:1;max-width:1680px;margin:0;padding:24px 24px 70px;width:100%}
 .content>*{min-width:0}
 
 /* <label class="field"><span>Label</span><input/></label> — the prototype puts

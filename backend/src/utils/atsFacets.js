@@ -129,7 +129,8 @@ async function requirementFacets(user, q) {
       deadline,
       qualificationId: finish(noneKey(qualF), (v) => (v === 'none' ? 'Not mapped yet' : specLabels.qual(v) || 'Unknown'), q.qualificationId),
       specialisationId: finish(noneKey(specF), (v) => (v === 'none' ? 'Not mapped yet' : specLabels.spec(v) || 'Unknown'), q.specialisationId),
-      title: finish(titleF, null, q.title),
+      // a follow-up note imported into the title column ("2-9-25 Client said no requirements ...") is not a designation
+      title: finish(new Map([...titleF.entries()].filter(([k]) => k === q.title || !require('./candidateFields').isNoteTitle(k))), null, q.title), // eslint-disable-line global-require
     },
   };
 }

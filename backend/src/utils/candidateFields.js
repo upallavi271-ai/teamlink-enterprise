@@ -38,4 +38,13 @@ function fieldsOf(c, lab) {
   return { spec: specOf(c, lab) || 'none', qual: qualOf(c, lab) || 'none', desig: desigOf(c) || 'none', expBand: expBandOf(c && c.experienceYears) };
 }
 
-module.exports = { tidy, specOf, qualOf, desigOf, expBandOf, fieldsOf, labels, labelsSync, BAND_ORDER, bandLabel };
+// A follow-up note that an old sheet import put into a title column ("2-9-25 Client said no requirements ...", "22-1-25 On hold
+// from Vasu sir ...") - kept out of the Designation filters (founder 2026-11-17: "what is this?").
+const NOTE_WORDS = /\b(client said|no requirements?|on hold|will update|if any|in future|asking to negot)/i;
+function isNoteTitle(t) {
+  const s = String(t || '').trim();
+  if (!s) return false;
+  if (/^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b/.test(s)) return true; // starts with a date
+  return NOTE_WORDS.test(s) || s.length > 70;
+}
+module.exports = { tidy, specOf, qualOf, desigOf, expBandOf, fieldsOf, labels, labelsSync, BAND_ORDER, bandLabel, isNoteTitle };

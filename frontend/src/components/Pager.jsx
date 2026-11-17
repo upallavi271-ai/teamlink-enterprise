@@ -92,8 +92,9 @@ export default function Pager({ page, noun = 'rows', className = '', sizes = PAG
   return (
     <div className={`pager ${className}`}>
       <div className="pager-count">
+        {/* nothing to count: the table's own empty / loading line says it (not a second "No offers" under "Loading offers…") */}
         {total === 0
-          ? `No ${noun}`
+          ? null
           : <>Showing <strong>{from.toLocaleString()}–{to.toLocaleString()}</strong> of <strong>{total.toLocaleString()}</strong> {noun}</>}
       </div>
 

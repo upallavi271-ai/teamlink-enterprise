@@ -715,7 +715,7 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
       // the Specialization / Qualification / Designation filters (2026-11-17): what this client's requirements ask for
       reqSpecs: [...new Set(allReqs.map((x) => (specLab && x.specialisationId && specLab.spec(x.specialisationId)) || CF.tidy(x.specialisation)).filter(Boolean))],
       reqQuals: [...new Set(allReqs.map((x) => specLab && x.qualificationId && specLab.qual(x.qualificationId)).filter(Boolean))],
-      reqTitles: [...new Set(allReqs.map((x) => CF.tidy(x.title)).filter(Boolean))],
+      reqTitles: [...new Set(allReqs.map((x) => CF.tidy(x.title)).filter((t) => t && !CF.isNoteTitle(t)))],
       awaitingDecision: awaitingDecision.length,
       // --- §9 relationship numbers -------------------------------------
       activeRequirements: reqs.length,
