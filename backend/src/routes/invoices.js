@@ -480,7 +480,10 @@ async function placementFacts(invoices, hier) {
       offeredCtc: inv.offeredCtc ?? app?.offeredCtc ?? null,
       // The ATS's own joining status ("Joined", "Dropped" …) — the Invoice
       // page counts drop-outs from it; nothing is billed from it.
-      joiningStatus: app?.joiningStatus || null,
+      // "Dropped" on the application only ever means "did not join" (left-after-joining lives in
+      // the joining record). If the ATS has since moved the person to Joined/Hired, they joined.
+      joiningStatus: app && app.joiningStatus === 'Dropped' && (app.stage === 'JOINED' || app.stage === 'HIRED')
+        ? 'Joined' : (app?.joiningStatus || null),
     };
   };
 }
