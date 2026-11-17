@@ -108,6 +108,7 @@ router.get(BASE, async (req, res, next) => {
         departments: n.departments || [], department: (n.departments || []).length === 1 ? n.departments[0] : null,
         everyone: !!n.everyone,
         status: n.status ? { code: n.status.code, label: n.status.label, tone: n.status.tone } : null,
+        metaName: (n.status && n.status.verifiedName) || '', // the name Meta shows for the number (founder 2026-11-17)
         workspace: m && m.workspaceId ? wsName(m.workspaceId) : null,
         problem: problemOf({ ...n, departments: n.departments || [] }, run),
       };

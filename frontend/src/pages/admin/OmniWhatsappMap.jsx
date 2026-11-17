@@ -54,25 +54,30 @@ export default function OmniWhatsappMap({ onSaved }) {
       </div>
       {data.workspacesError && <div className="small-muted" style={{ color: '#b42318', marginBottom: 8 }}>Omni-Channel: {data.workspacesError}</div>}
       <div className="tbl-wrap"><table>
-        <thead><tr><th>WhatsApp number</th><th>Departments</th><th>Omni-Channel workspace</th></tr></thead>
+        <thead><tr><th>WhatsApp number</th><th>Assigned to department</th><th>Omni-Channel workspace</th></tr></thead>
         <tbody>{data.numbers.map((n) => {
           const v = pick[n.id] || { choice: '', newName: '' };
+          const savedWs = data.map[n.id] && data.map[n.id].workspaceId ? wsName(data.map[n.id].workspaceId) : '';
           return (
             <tr key={n.id}>
-              <td><b>{n.label}</b>{n.isDefault ? <span className="small-muted"> · default</span> : null}<div className="small-muted" style={{ fontSize: 11.5 }}>{n.display || 'number not shown'}{n.ready ? '' : ` · not ready: ${n.problem || 'not set up'}`}</div></td>
-              <td className="small-muted">{n.departments.length ? n.departments.join(', ') : 'none'}</td>
+              <td><b>{n.label}</b>{n.isDefault ? <span className="small-muted"> · default</span> : null}<div className="small-muted" style={{ fontSize: 11.5 }}>{n.display || 'number not shown'}{n.ready ? '' : ` · not ready: ${n.problem || 'not set up'}`}</div>
+                {/* the name Meta shows for this number: the workspace is named after it */}
+                <div className="small-muted" style={{ fontSize: 11.5 }}>Meta name: {n.verifiedName ? <b>{n.verifiedName}</b> : 'not read from Meta yet'}</div></td>
+              <td className="small-muted">{n.departments.length ? n.departments.map((d) => `${d} department`).join(', ') : 'No department yet'}</td>
               <td>
                 {isSA ? (
                   <>
-                    <select value={v.choice} onChange={(e) => setPick({ ...pick, [n.id]: { choice: e.target.value, newName: v.newName || `${n.departments[0] || n.label}` } })} style={{ minWidth: 220 }}>
+                    <select value={v.choice} onChange={(e) => setPick({ ...pick, [n.id]: { choice: e.target.value, newName: v.newName || n.suggestedName || `${n.departments[0] || n.label}` } })} style={{ minWidth: 220 }}>
                       <option value="">Not in Omni-Channel</option>
                       {data.workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                       <option value={NEW}>＋ A new workspace…</option>
                     </select>
                     {v.choice === NEW && <input value={v.newName} maxLength={120} placeholder="New workspace name, e.g. Medical - 2" onChange={(e) => setPick({ ...pick, [n.id]: { ...v, newName: e.target.value } })} style={{ display: 'block', marginTop: 6, minWidth: 220 }} />}
+                    {v.choice === NEW && n.suggestedName && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 4 }}>A new workspace is made for this number. Suggested name: {n.suggestedName}</div>}
                     {v.choice && v.choice !== NEW && twice.includes(v.choice) && <div style={{ color: '#b42318', fontSize: 12 }}>Another number is in this workspace too: one per workspace.</div>}
+                    {savedWs && v.choice === (data.map[n.id] || {}).workspaceId && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 4 }}>In Omni-Channel it is called &quot;{savedWs}&quot;{n.departments.length ? `, assigned to the ${n.departments.join(', ')} department` : ''}.</div>}
                   </>
-                ) : (data.map[n.id] && data.map[n.id].workspaceId ? wsName(data.map[n.id].workspaceId) : <span className="small-muted">Not in Omni-Channel</span>)}
+                ) : (data.map[n.id] && data.map[n.id].workspaceId ? <>{wsName(data.map[n.id].workspaceId)}{n.departments.length ? <div className="small-muted" style={{ fontSize: 11.5 }}>Assigned to the {n.departments.join(', ')} department</div> : null}</> : <span className="small-muted">Not in Omni-Channel</span>)}
               </td>
             </tr>
           );

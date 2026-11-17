@@ -323,7 +323,7 @@ async function waNumbers() {
         if (row.removedAt) continue; // eslint-disable-line no-continue
         const cfg = await WN.configOf(row); // eslint-disable-line no-await-in-loop
         const deps = (await WN.accessOf(row.id)).filter((a) => /dep/i.test(a.kind)).map((a) => a.refLabel || a.refId); // eslint-disable-line no-await-in-loop
-        out.push({ id: row.id, label: row.label, display: row.displayNumber || '', isDefault: !!row.isDefault, departments: [...new Set(deps)], cfg });
+        out.push({ id: row.id, label: row.label, display: row.displayNumber || '', verifiedName: row.verifiedName || '', isDefault: !!row.isDefault, departments: [...new Set(deps)], cfg });
       }
       return out;
     }
@@ -342,7 +342,12 @@ async function waMapView() {
   let workspacesError = null;
   try { const { token } = await signIn(); workspaces = (await workspacesOf(token)).map((w) => ({ id: w.id, name: w.name })); } catch (err) { workspacesError = err.message; }
   return {
-    numbers: nums.map((n) => ({ id: n.id, label: n.label, display: n.display, isDefault: n.isDefault, departments: n.departments, ready: !!(n.cfg && n.cfg.configured && !n.cfg.testMode), problem: n.cfg && !n.cfg.configured ? n.cfg.reason : null })),
+    // verifiedName = the name Meta shows for the number; suggestedName = what a workspace made for it is called (utils/omniWsNames.js)
+    numbers: nums.map((n) => ({
+      id: n.id, label: n.label, display: n.display, verifiedName: n.verifiedName || '', isDefault: n.isDefault, departments: n.departments,
+      suggestedName: n.departments.length === 1 ? require('./omniWsNames').nameFor({ dept: n.departments[0], meta: n.verifiedName }) : '', // eslint-disable-line global-require
+      ready: !!(n.cfg && n.cfg.configured && !n.cfg.testMode), problem: n.cfg && !n.cfg.configured ? n.cfg.reason : null,
+    })),
     workspaces, workspacesError, map: await readWaMap(),
   };
 }

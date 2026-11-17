@@ -45,13 +45,15 @@ const canon = (name) => {
   try { return String(require('./bdeDesk').canonicalDepartment(name) || name || '').trim().toLowerCase(); } catch { return String(name || '').trim().toLowerCase(); } // eslint-disable-line global-require
 };
 // "medical" -> "Medical"; short names stay capitals ("hr" -> "HR", "r&d" -> "R&D", "bde" -> "BDE")
-const title = (d) => String(d || '').trim().replace(/\s+/g, ' ').split(' ')
-  .map((w) => (w.replace(/[^a-z]/gi, '').length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
-  .join(' ');
+const title = (d) => require('./omniWsNames').title(d); // eslint-disable-line global-require
 const slug = (d) => canon(d).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'dept';
 // Green Start keeps ONE WhatsApp number per workspace, so a department's 2nd, 3rd ... number gets "Teamlink <Dept> - 2", "- 3" (founder
 // 2026-11-02: both job-update numbers to Education); the department login is a member of all of them.
-const wsNameFor = (dept, i = 1) => `Teamlink ${title(dept)}${i > 1 ? ` - ${i}` : ''}`;
+// Founder 2026-11-17: the workspace name carries the number's Meta name and its department ("Nonit Consultants · Medical dept"; "Teamlink Medical"
+// until Meta has given a name): utils/omniWsNames.js, which also reads a department back from a name.
+const W = require('./omniWsNames');
+
+const wsNameFor = (dept, i = 1, meta = '') => W.nameFor({ dept, meta, index: i });
 
 /** <company>+omni-<dept>@<domain> (the company mailbox receives anything Green Start ever mails it). */
 function emailFor(dept, companyEmail) {
@@ -60,14 +62,10 @@ function emailFor(dept, companyEmail) {
   return `${local.split('+')[0]}+omni-${slug(dept)}@${domain}`;
 }
 
-// a workspace that already stands for this department: "Teamlink Medical", "Medical", "... Medical"
-// the 2nd, 3rd ... workspace of a department: "Teamlink Medical - 2", "Medical - 2"
-function findWorkspace(wss, dept, i = 1) {
-  const d = canon(dept);
-  const n = (w) => String(w.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  if (i > 1) return wss.find((w) => n(w) === `teamlink ${d} - ${i}`) || wss.find((w) => n(w) === `${d} - ${i}`) || null;
-  return wss.find((w) => n(w) === `teamlink ${d}`) || wss.find((w) => n(w) === d) || wss.find((w) => n(w).endsWith(` ${d}`)) || null;
-}
+// a workspace that already stands for this department: "Teamlink Medical", "Nonit Consultants · Medical dept", "Medical", "... Medical", and their "- 2" forms
+const belongs = (wsName, dept) => W.belongs(wsName, dept, canon);
+// the i-th (1, 2, 3 ...) workspace that stands for this department, in the order Green Start lists them; null when there is none (loginFor uses it)
+const findWorkspace = (wss, dept, i = 1) => wss.filter((w) => belongs(w.name, dept))[i - 1] || null;
 
 let running = null;
 /**
@@ -95,6 +93,13 @@ async function run({ why = 'manual', pushChannels = true } = {}) {
       // 1. each number with ONE department -> that department's workspace (hand-made choices stay)
       const plan = []; // { number, dept, ws }
       const taken = new Map(Object.entries(map).filter(([, v]) => v && v.workspaceId && !v.auto).map(([nid, v]) => [v.workspaceId, nid]));
+      // a workspace an earlier automatic run gave to a number that still has that same department stays that number's (a new number never takes it)
+      const reserved = new Map();
+      for (const n of nums) {
+        const c = map[n.id];
+        const ds = [...new Set((n.departments || []).map((d) => String(d).trim()).filter(Boolean))];
+        if (c && c.auto && c.workspaceId && ds.length === 1 && canon(c.dept) === canon(ds[0])) reserved.set(c.workspaceId, n.id);
+      }
       for (const n of nums) {
         const cur = map[n.id];
         if (cur && !cur.auto) { // the Super Admin chose by hand
@@ -115,29 +120,29 @@ async function run({ why = 'manual', pushChannels = true } = {}) {
           continue; // eslint-disable-line no-continue
         }
         const dept = depts[0];
-        const free = (w) => w && (!taken.has(w.id) || taken.get(w.id) === n.id);
+        const free = (w) => w && (!taken.has(w.id) || taken.get(w.id) === n.id) && (!reserved.has(w.id) || reserved.get(w.id) === n.id);
         // the workspace this number had last time stays its own (numbers keep their place when another one is added)
         let ws = cur && cur.auto && canon(cur.dept) === canon(dept) ? wss.find((w) => w.id === cur.workspaceId) : null;
-        let i = 1;
-        if (!free(ws)) {
-          ws = null;
-          for (; i <= 20; i += 1) { // the first "Teamlink <Dept>", "- 2", "- 3" ... without another number
-            const w = findWorkspace(wss, dept, i);
-            if (!w || free(w)) { ws = w; break; }
-          }
-        }
-        if (!ws && i > 20) {
-          result.departments.push({ dept: title(dept), number: n.label, state: 'failed', words: `${title(dept)} has too many WhatsApp numbers for Omni-Channel workspaces.` });
-          delete map[n.id];
-          continue; // eslint-disable-line no-continue
-        }
+        // else the first workspace of this department that no other number uses
+        if (!free(ws)) ws = wss.find((w) => belongs(w.name, dept) && free(w)) || null;
+        const sameName = (nm) => wss.some((w) => String(w.name || '').trim().toLowerCase() === nm.toLowerCase());
+        let madeName = '';
         if (!ws) {
+          // else a NEW workspace, named after the number's Meta name and its department ("- 2", "- 3" when that name is already taken)
+          madeName = wsNameFor(dept, 1, n.verifiedName);
+          for (let i = 2; sameName(madeName) && i <= 20; i += 1) madeName = wsNameFor(dept, i, n.verifiedName);
+          if (sameName(madeName)) {
+            result.departments.push({ dept: title(dept), number: n.label, state: 'failed', words: `${title(dept)} has too many WhatsApp numbers for Omni-Channel workspaces.` });
+            delete map[n.id];
+            continue; // eslint-disable-line no-continue
+          }
           try {
             // eslint-disable-next-line no-await-in-loop
-            ws = await O.call('POST', '/workspaces', { token, body: { ...(orgId ? { organizationId: orgId } : {}), name: wsNameFor(dept, i) } });
-            wss = [...wss, { id: ws.id, name: ws.name, orgId }];
+            ws = await O.call('POST', '/workspaces', { token, body: { ...(orgId ? { organizationId: orgId } : {}), name: madeName } });
+            wss = [...wss, { id: ws.id, name: ws.name || madeName, orgId }];
+            ws = wss[wss.length - 1]; // the one object, so a later rename shows everywhere
           } catch (err) {
-            result.departments.push({ dept: title(dept), number: n.label, state: 'failed', words: `The workspace "${wsNameFor(dept, i)}" could not be made: ${err.message}` });
+            result.departments.push({ dept: title(dept), number: n.label, state: 'failed', words: `The workspace "${madeName}" could not be made: ${err.message}` });
             delete map[n.id];
             continue; // eslint-disable-line no-continue
           }
@@ -147,6 +152,11 @@ async function run({ why = 'manual', pushChannels = true } = {}) {
         plan.push({ number: n, dept, ws });
       }
       await putSetting(WA_MAP_KEY, map);
+
+      // 1b. each workspace shows its number's Meta name and department (founder 2026-11-17). Only a name made by this convention is changed, never a
+      // hand-made name, never a number the Super Admin pinned by hand; a name another workspace has is never taken. Meta not asked yet = no change.
+      const renamed = await W.renameWorkspaces({ plan, wss, canon, call: (m, p, o) => O.call(m, p, { token, ...o }) })
+        .catch((err) => ({ done: [], failed: [String((err && err.message) || err).slice(0, 160)] }));
 
       // 2. the numbers go to their workspaces (the integrations sync reads the map)
       const s = pushChannels ? await GSI.sync({ why: `department workspaces (${why})` }).catch((err) => ({ ok: false, words: err.message, workspaces: [] })) : { workspaces: [] };
@@ -188,7 +198,10 @@ async function run({ why = 'manual', pushChannels = true } = {}) {
       result.words = plan.length
         ? `${result.departments.filter((d) => d.state === 'ready').length} of ${result.departments.length} department${result.departments.length === 1 ? '' : 's'} ready in Omni-Channel.`
         : 'No WhatsApp number is given to a department yet (Administration > Integrations > WhatsApp: give each number one department).';
-      await putSetting(KEY, { last: { at: result.at, ok: result.ok, words: result.words, why, rows: result.departments }, departments: logins });
+      result.renamed = renamed.done;
+      if (renamed.done.length) result.words += ` ${renamed.done.length} workspace name${renamed.done.length === 1 ? '' : 's'} now show the Meta name and department.`;
+      if (renamed.failed.length) result.words += ` A workspace name could not be changed (${renamed.failed[0]}).`;
+      await putSetting(KEY, { last: { at: result.at, ok: result.ok, words: result.words, why, rows: result.departments, renamed: renamed.done, renameFailed: renamed.failed }, departments: logins });
     } catch (err) {
       result.words = String((err && err.message) || err).slice(0, 300);
       const st = await getSetting(KEY, {});
@@ -376,4 +389,4 @@ function schedule(why = 'number saved') {
 }
 const last = async () => getSetting(KEY, {});
 
-module.exports = { staffRoleFor, run, ensureLogin, ensureAdminLogin, removeElsewhere, loginFor, start, schedule, last, emailFor, findWorkspace, title, KEY };
+module.exports = { staffRoleFor, run, ensureLogin, ensureAdminLogin, removeElsewhere, loginFor, start, schedule, last, emailFor, findWorkspace, belongs, title, KEY };

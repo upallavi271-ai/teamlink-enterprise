@@ -90,7 +90,9 @@ async function sync() {
     const list = await call('GET', '/workspaces', { token });
     const wss = (Array.isArray(list) ? list : (list && list.items) || []).map((w) => ({ id: w.id, name: String(w.name || ''), createdAt: w.createdAt || '' })).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
     if (!wss.length) throw new Error('The company Omni-Channel account has no workspace yet.');
-    const wsFor = (dept) => (dept && wss.find((w) => w.name.toLowerCase() === `teamlink ${String(dept).toLowerCase()}`)) || wss[0];
+    // the department's workspace (oldest first): "Teamlink Medical" or, once Meta names the number, "Nonit Consultants · Medical dept" (utils/omniWsNames.js)
+    const WS_NAMES = require('./omniWsNames'); // eslint-disable-line global-require
+    const wsFor = (dept) => (dept && wss.find((w) => String(WS_NAMES.deptOfName(w.name) || '').toLowerCase() === String(dept).trim().toLowerCase())) || wss[0];
     const groups = new Map();
     todo.forEach((t) => { const w = wsFor(t.department); if (!groups.has(w.id)) groups.set(w.id, []); groups.get(w.id).push(t); });
     let sent = 0;

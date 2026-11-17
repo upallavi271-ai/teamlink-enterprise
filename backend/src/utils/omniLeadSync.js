@@ -47,7 +47,8 @@ async function signIn() {
   return out.accessToken;
 }
 
-const departmentOf = (workspaceName) => { const m = /^teamlink\s+(.+)$/i.exec(String(workspaceName || '').trim()); return m ? m[1] : null; };
+// the department a workspace stands for: "Teamlink Medical", "Nonit Consultants · Medical dept", "... - 2" -> Medical (utils/omniWsNames.js); other names -> none
+const departmentOf = (workspaceName) => require('./omniWsNames').deptOfName(workspaceName); // eslint-disable-line global-require
 
 // one lead -> what the CRM stores; null when it has neither a usable phone nor email
 function contactOf(lead, workspaceName, K) {

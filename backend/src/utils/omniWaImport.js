@@ -50,7 +50,7 @@ async function departmentOf(workspaceId, workspaceName) {
   const rows = ((await getSetting(DEPT_KEY, {})).last || {}).rows || [];
   const fromRun = rows.find((r) => (r.workspaceIds || [r.workspaceId]).includes(workspaceId) && r.dept && r.dept !== '—');
   if (fromRun) return fromRun.dept;
-  const bare = String(workspaceName || '').trim().replace(/\s+-\s+\d+$/, '').replace(/^teamlink\s+/i, '').trim().toLowerCase();
+  const bare = String(require('./omniWsNames').deptOfName(workspaceName) || String(workspaceName || '').trim().replace(/\s+-\s+\d+$/, '')).trim().toLowerCase(); // eslint-disable-line global-require
   if (!bare) return null;
   const master = (await WN.departmentCounts().catch(() => [])).map((d) => d.name);
   return master.find((m) => m.toLowerCase() === bare) || null;
