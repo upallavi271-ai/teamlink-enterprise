@@ -186,8 +186,11 @@ const LITE = new Map(); // month -> { at, promise } (creditedJoinings: one lite 
 function invalidate() { CACHE.clear(); LITE.clear(); }
 
 // Every joining of the month, credited. -> { month, apps:[…], dir }
-async function monthApplications(month, { fresh = false } = {}) {
-  const hit = CACHE.get(month);
+// withTest: test people (zztest / example.test) are kept - only for a viewer who is a test login (the automated tests), the
+// reports' own rule (utils/dailyReport.js isTestPerson, utils/atsHome.js testViewer). Everyone else never sees them.
+async function monthApplications(month, { fresh = false, withTest = false } = {}) {
+  const ck = withTest ? `${month}|test` : month;
+  const hit = CACHE.get(ck);
   if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.value;
   const from = `${month}-01`;
   const to = lastDay(month);
@@ -229,7 +232,7 @@ async function monthApplications(month, { fresh = false } = {}) {
   const apps = [];
   const undated = [];
   [...rows, ...extraRows].forEach((a) => {
-    if (isTest(a.candidate && a.candidate.name)) return;
+    if (!withTest && isTest(a.candidate && a.candidate.name)) return;
     const evs = a.stageEvents || [];
     const joined = JOINED.includes(a.stage);
     const firstMove = evs.find((e) => e.fromStage && JOINED.includes(e.toStage) && !JOINED.includes(e.fromStage));
@@ -331,7 +334,7 @@ async function monthApplications(month, { fresh = false } = {}) {
     }
   } catch { /* the note is a bonus: the count never depends on it */ }
   const value = { month, apps, undated, dir };
-  CACHE.set(month, { at: Date.now(), value });
+  CACHE.set(ck, { at: Date.now(), value });
   return value;
 }
 
@@ -474,10 +477,12 @@ async function loadDecisions(month) {
 
 // The whole company for one month (no role scope — routes apply it).
 // lite: only what the joinings COUNT needs (creditedJoinings below): no "candidates generated", no decisions, no BDE rows.
-async function monthBoard(month, { fresh = false, bde = false, lite = false } = {}) {
+async function monthBoard(month, {
+  fresh = false, bde = false, lite = false, withTest = false,
+} = {}) {
   if (!isMonth(month)) throw Object.assign(new Error('Pick a month.'), { status: 400 });
   const [{ apps, undated, dir }, seats, rules, decisions, emps, gen] = await Promise.all([
-    monthApplications(month, { fresh }), loadSeats(), loadTargetRules(), lite ? [] : loadDecisions(month),
+    monthApplications(month, { fresh, withTest }), loadSeats(), loadTargetRules(), lite ? [] : loadDecisions(month),
     prisma.employee.findMany({ select: { id: true, employeeCode: true } }),
     lite ? null : generatedByMonth(month),
   ]);
@@ -503,7 +508,7 @@ async function monthBoard(month, { fresh = false, bde = false, lite = false } = 
   };
   // 1. Every Recruiter login whose employee worked that month.
   dir.users.forEach((u) => {
-    if (u.atsRole !== 'RECRUITER' || isTest(u.name)) return;
+    if (u.atsRole !== 'RECRUITER' || (!withTest && isTest(u.name))) return;
     const e = dir.empByUser.get(u.id);
     if (!e) return;
     const tenure = seats.assignments.some((a) => a.employeeId === e.id && overlaps(a, from, to));
@@ -524,7 +529,7 @@ async function monthBoard(month, { fresh = false, bde = false, lite = false } = 
       if (r.counted) skipped.push({ ...r, reason: 'No recruiter on record for this joining' });
       return;
     }
-    if (isTest(r.recruiterName)) return;
+    if (!withTest && isTest(r.recruiterName)) return;
     const emp = r.recruiterUserId ? dir.empByUser.get(r.recruiterUserId) : dir.empByName.get(String(r.recruiterName || '').trim().toLowerCase());
     // Resolve the credit to a login — by its own userId, or by the employee the credited name matches —
     // and key the joining under that login (u:<id>) so it merges with the recruiter's own row.
@@ -776,15 +781,18 @@ function rowsForViewer(user, rows, level = viewerLevel(user)) {
 }
 
 // The lite board of a month, shared for a short while (the dashboard, the reports and My results all ask for it).
-function liteBoard(month, { fresh = false } = {}) {
-  const hit = LITE.get(month);
+function liteBoard(month, { fresh = false, withTest = false } = {}) {
+  const key = withTest ? `${month}|test` : month;
+  const hit = LITE.get(key);
   if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.promise;
-  const promise = monthBoard(month, { fresh, lite: true });
-  LITE.set(month, { at: Date.now(), promise });
+  const promise = monthBoard(month, { fresh, lite: true, withTest });
+  LITE.set(key, { at: Date.now(), promise });
   while (LITE.size > 48) LITE.delete(LITE.keys().next().value);
-  promise.catch(() => LITE.delete(month));
+  promise.catch(() => LITE.delete(key));
   return promise;
 }
+// A test login (the automated tests) reads its own test people, as every report does; nobody else ever does.
+const testViewer = (user) => !!user && (isTest(user.name) || isTest(user.email) || isTest(user.username));
 
 // =================================================================================================================================
 // JOININGS CREDITED TO THIS LOGIN IN THIS PERIOD — THE ONE FUNCTION (audit Checklist-120 #106, Practical P10.8, Extra 820).
@@ -815,7 +823,8 @@ async function creditedJoinings(user, {
   for (let m = t.slice(0, 7); m >= f.slice(0, 7) && months.length < MAX_RANGE_MONTHS; m = prevMonth(m)) months.push(m);
   const clamped = months[months.length - 1] > f.slice(0, 7);
   const lv = level || viewerLevel(user);
-  const boards = await Promise.all(months.map((m) => liteBoard(m, { fresh })));
+  const withTest = testViewer(user);
+  const boards = await Promise.all(months.map((m) => liteBoard(m, { fresh, withTest })));
   const seen = new Set();
   const list = [];
   let target = null;
@@ -837,7 +846,7 @@ async function creditedJoinings(user, {
 // The recruiter's own figure for a month (ATS dashboard, HRMS dashboard): creditedJoinings at the "self" level.
 async function ownFigure(user, month = thisMonth()) {
   if (!user || !user.id) return null;
-  const b = await liteBoard(month);
+  const b = await liteBoard(month, { withTest: testViewer(user) });
   const rows = rowsForViewer(user, b.rows, 'self');
   const r = rows[0];
   if (!r) return null;

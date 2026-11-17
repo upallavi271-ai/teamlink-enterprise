@@ -94,7 +94,15 @@ const same = (a, b) => JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
   // never counted this month: joined last month; selected (not joined) with a joining date today
   await mkApp(J2, 'JOINED', prevMonthDay, null);
   await mkApp(J1, 'SELECTED', today, null);
-  const want = { R1: [A1.id, A2.id], R2: [A3.id, A4.id, A5.id] };
+  // R1 brought and owns this one; the TEAM LEAD marked it Selected and Joined for the client (and owns the joining task
+  // afterwards): it is still R1's joining, never the lead's
+  const A6 = await mkApp(J1, 'JOINED', today, { ownerUserId: R1.id, ownerName: R1.name, createdAt: new Date(Date.now() - 3 * 3600e3) });
+  const c6 = (await prisma.application.findUnique({ where: { id: A6.id } })).candidateId;
+  await prisma.applicationStageEvent.create({ data: { applicationId: A6.id, candidateId: c6, fromStage: 'NEW', toStage: 'RECRUITER_REVIEW', action: 'Moved', actorUserId: R1.id, actorName: R1.name, actorRole: 'RECRUITER', createdAt: new Date(Date.now() - 3 * 3600e3) } });
+  await prisma.applicationStageEvent.create({ data: { applicationId: A6.id, candidateId: c6, fromStage: 'INTERVIEW_COMPLETED', toStage: 'SELECTED', action: 'Moved to Selected', actorUserId: TL.id, actorName: TL.name, actorRole: 'TL', createdAt: new Date(Date.now() - 2 * 3600e3) } });
+  await prisma.applicationFollowUp.create({ data: { applicationId: A6.id, candidateId: c6, ownerUserId: TL.id, ownerName: TL.name, ownerRole: 'TL', nextAction: 'Joining formalities', dueDate: today, createdAt: new Date(Date.now() - 2 * 3600e3) } });
+  await prisma.applicationStageEvent.create({ data: { applicationId: A6.id, candidateId: c6, fromStage: 'SELECTED', toStage: 'JOINED', action: 'Joined', actorUserId: TL.id, actorName: TL.name, actorRole: 'TL', createdAt: new Date(Date.now() - 3600e3) } });
+  const want = { R1: [A1.id, A2.id, A6.id], R2: [A3.id, A4.id, A5.id] };
   want.TL = [...want.R1, ...want.R2];
 
   // the case that broke: the name-credited joining is outside the recruiter's own scope
@@ -109,9 +117,19 @@ const same = (a, b) => JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
     // eslint-disable-next-line no-await-in-loop
     cj[k] = await RJ.creditedJoinings(await resolveIdentity(u.id), { month, fresh: true });
   }
-  check('creditedJoinings: R1 = own job + name-credited', same(cj.R1.appIds, want.R1) && cj.R1.level === 'self', { got: cj.R1.appIds, want: want.R1 });
+  check('creditedJoinings: R1 = own job + name-credited + the one the TL marked Selected / Joined', same(cj.R1.appIds, want.R1) && cj.R1.level === 'self', { got: cj.R1.appIds, want: want.R1 });
   check('creditedJoinings: R2 = own job + name-credited + R1\'s job that R2 worked', same(cj.R2.appIds, want.R2), { got: cj.R2.appIds, want: want.R2 });
   check('creditedJoinings: the TL = both recruiters', same(cj.TL.appIds, want.TL) && cj.TL.level === 'team', { got: cj.TL.appIds, level: cj.TL.level });
+  check('a TL who marks Selected / Joined for the client does not take the joining of the recruiter', !cj.TL.list.some((x) => x.id === A6.id && x.creditedTo.userId === TL.id) && cj.R1.list.some((x) => x.id === A6.id && x.creditedTo.userId === R1.id));
+  // a TEST login (the automated tests) reads its own test joinings; a real login never sees them (the reports' rule)
+  const RZ = await prisma.user.create({ data: { name: `ZZTEST Jcm rec ${P}`, email: `zz-jcm-rec-${P}@example.test`, passwordHash: 'x', status: 'Active', role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: 'IT', atsAccess: true, passwordChangedAt: past } });
+  await prisma.employee.create({ data: { employeeCode: `JCM-RZ-${P}`, name: RZ.name, userId: RZ.id, department: 'IT', employmentStatus: 'Active', dateOfJoining: new Date('2020-01-01T00:00:00Z') } });
+  const JZ = await mkReq('zz', { recruiterId: RZ.id });
+  const AZ = await mkApp(JZ, 'JOINED', today, null);
+  const cz = await RJ.creditedJoinings(await resolveIdentity(RZ.id), { month, fresh: true });
+  check('a test recruiter login sees its own test joining', same(cz.appIds, [AZ.id]), cz.appIds);
+  const realBoard = await RJ.monthBoard(month, { fresh: true });
+  check('...and the real HRMS board never lists the test recruiter', !realBoard.rows.some((r) => r.userId === RZ.id));
   const r1Range = await RJ.creditedJoinings(await resolveIdentity(R1.id), { from: today, to: today });
   check('creditedJoinings: a one-day range gives the same R1 rows', same(r1Range.appIds, want.R1), r1Range.appIds);
 
