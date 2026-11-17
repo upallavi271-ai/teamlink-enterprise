@@ -24,6 +24,7 @@ import Team from './pages/ats/Team.jsx';
 import RecruiterHandover from './pages/ats/RecruiterHandover.jsx'; // Reports & Team -> Handover (2026-11-10)
 import AiCallingPage from './components/aicalling/AiCallingPage.jsx'; // Exotel AI Calling (a tab of Reports & Team)
 import { FollowUpsRoute } from './pages/ats/FollowUps.jsx';
+import DataQuality from './pages/ats/DataQuality.jsx'; // profile completeness, duplicates, stale profiles (2026-11-17)
 import CallLists from './pages/ats/CallLists.jsx'; // a sheet of contacts split among recruiters, who call it from VICIdial (2026-11-17)
 import InterviewCalendar from './pages/ats/InterviewCalendar.jsx';
 import InterviewFeedback from './pages/ats/InterviewFeedback.jsx';
@@ -311,6 +312,7 @@ export default function App() {
             it. Routed so those links have somewhere to go. */}
         <Route path="ats/followups" element={<FollowUpsRoute />} />
         <Route path="ats/call-lists" element={<CallLists />} />
+        <Route path="ats/data-quality" element={<DataQuality />} />
         <Route path="ats/calendar" element={<InterviewCalendar />} />
         {/* Interviews & Joining: Interview Calendar (above) - Interview Feedback
             - Offers - Joining - Internal Hiring */}

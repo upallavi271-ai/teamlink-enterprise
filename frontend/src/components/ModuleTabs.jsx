@@ -14,7 +14,7 @@ const BARS = [
   {
     label: 'Reports & Team',
     tabs: REPORTS_TEAM_TABS,
-    on: ['/reports/ats', '/reports/my-results', '/reports/job-portal', '/ats/team', '/ats/followups', '/ats/settings', '/ats/handover', '/ats/call-lists'],
+    on: ['/reports/ats', '/reports/my-results', '/reports/job-portal', '/ats/team', '/ats/followups', '/ats/settings', '/ats/handover', '/ats/call-lists', '/ats/data-quality'],
     // Follow-ups is a view of the Team tab; Job Portal Reports a tab of ATS Reports.
     alias: { '/ats/followups': '/ats/team', '/reports/job-portal': '/reports/ats' },
   },

@@ -74,6 +74,20 @@ function JoinedOn({ c, app }) {
   );
 }
 
+// PROFILE COMPLETENESS (same weights as backend utils/dataQuality.js): the details a recruiter needs, 0-100, and what is missing.
+const COMPLETE_ITEMS = [
+  ['Phone', 15, (c) => !!c.phone], ['Email', 10, (c) => !!c.email], ['Location', 8, (c) => !!c.location],
+  ['Experience', 10, (c) => c.experienceYears != null], ['Qualification', 10, (c) => !!(c.education || c.qualificationId)],
+  ['Specialization', 8, (c) => !!(c.specialization || c.specialisationId)], ['Skills', 10, (c) => !!(c.skills || c.technicalSkills)],
+  ['Current salary', 7, (c) => !!c.currentSalary], ['Expected salary', 7, (c) => !!c.expectedSalary], ['Notice period', 5, (c) => !!c.noticePeriod],
+  ['Resume', 10, (c) => !!c.resumeName],
+];
+export function completenessOf(c) {
+  let got = 0; const missing = [];
+  COMPLETE_ITEMS.forEach(([label, w, has]) => { if (has(c || {})) got += w; else missing.push(label); });
+  return { score: Math.round((got / 100) * 100), missing };
+}
+
 export default function ProfileTop({
   c, app, internal, onChanged, extra = null,
 }) {
@@ -94,6 +108,7 @@ export default function ProfileTop({
           <span className="cpt-code" title={c.id}>{code(c)}</span>
           {c.profileStatus === 'Archived' && <span className="cpt-flag is-orange">Archived</span>}
           {c.profileStatus === 'Do Not Use' && <span className="cpt-flag is-red">Do not use</span>}
+          {internal !== false && (() => { const q = completenessOf(c); return <span className={`cpt-flag ${q.score >= 80 ? '' : q.score >= 60 ? 'is-orange' : 'is-red'}`} style={{ fontWeight: 600 }} title={q.missing.length ? `Missing: ${q.missing.join(', ')}` : 'Every key detail is filled'}>{q.score}% complete</span>; })()}
         </div>
         <div className="cpt-facts">
           {c.phone && <span>{c.phone}</span>}

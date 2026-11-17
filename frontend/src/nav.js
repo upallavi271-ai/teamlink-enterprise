@@ -192,6 +192,8 @@ export const REPORTS_TEAM_TABS = [
   leaf('🔁', '/ats/handover', 'Handover', [['recruiterbde', 'Team View', 'assign']]),
   // CALL LISTS (founder 2026-11-17): a sheet of contacts split among recruiters, who call their own block from VICIdial (pages/ats/CallLists.jsx). The server decides what each login sees.
   { ...leaf('📞', '/ats/call-lists', 'Call lists', null, 'ats'), when: (u) => !!u && !u.clientId && !u.candidateId },
+  // DATA QUALITY (2026-11-17, audit AR1): profile completeness, duplicates, stale profiles (pages/ats/DataQuality.jsx). TL and above.
+  { ...leaf('🧹', '/ats/data-quality', 'Data quality', null, 'ats'), when: (u) => !!u && [u.role, u.atsRole, u.hrmsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'].includes(r)) },
   // AI Calling is a tab on the candidate profile now (founder 2026-11-04), not a tab here or a sidebar entry.
   // NO Settings tab (user, 2026-10-03: 'settings already Administration lo
   // vunnai, extra em cheyyaku'). Settings stay in Administration only.
