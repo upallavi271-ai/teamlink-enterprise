@@ -4,7 +4,7 @@ import api from '../../../api';
 import { LANGS, SLIDES, STANDARD, FAQ, CHIPS } from './meetingContent.js';
 import { matchFaq, sentencesOf, dropFirstTen, dropFirstTenLines, fillProof, answerFor } from './meetingLogic.js';
 import { budgetOf, budgetReply } from './meetingBudget.js';
-import { planAnswer } from './meetingPlans.js';
+import { planAnswer, plansIn } from './meetingPlans.js';
 import './plansMeeting.css';
 import { BRAND } from '../../../brand.js';
 import logoDark340 from '../../../assets/teamlink-logo-ondark-340.png';
@@ -37,7 +37,7 @@ const T = {
     submit: 'Send to our team', cancel: 'Back to the meeting', needPhone: 'Please type your WhatsApp number.', pickOne: 'Please pick one option.', fail: 'It could not be sent. Please try again.',
     thanks: (n) => `Thank you${n ? `, ${n}` : ''}. Our team has your request and will contact you soon.`, seeWork: 'See our finished work', plansTitle: 'Our plans (+ 18% GST)', again: 'Try again', loading: 'Opening your meeting…',
     gone: 'This link does not work any more. Please ask the sender for a new one.', busy: 'The page could not be opened just now. It will try again by itself.', yourQ: 'You', bot: 'Assistant', idle: 'Still there? Press Next to continue.', listenHelp: 'Say your question',
-    choosePlan: 'Choose a plan', howMonth: 'How a month works', thPlan: 'Plan', thMonth: 'Per month', thGst: 'With GST', perMonth: 'a month', plusGst: '+ GST', withGst: (x) => `${x} with GST`, voiceOn: 'Voice on', loadingVoice: 'Loading the voice…', micListening: 'Listening… speak your question now', micRecording: 'Recording… tap the microphone again when you finish', micThinking: 'Understanding what you said…', micDenied: 'The microphone is blocked. Tap the lock icon next to the address, allow the microphone for this page, then try again.', micNo: 'No microphone was found on this device.', micNone: 'I did not hear anything. Tap the microphone and speak a little louder, or type your question.', micFail: 'Your voice could not be understood. Please type your question.', micHeard: (x) => `I heard: “${x}”`, captionsOnly: 'Captions only', fullText: 'Show full text', trustMin: '5 minutes', trustNoLogin: 'No login', auto: 'Automated assistant', waitAsk: 'Do you have a question? Ask now, or press Next.', fin: 'The meeting is finished.', unsure: 'Our team will answer this one. Do you want to talk to them now?',
+    choosePlan: 'Choose a plan', howMonth: 'How a month works', thPlan: 'Plan', thMonth: 'Per month', thGst: 'With GST', perMonth: 'a month', plusGst: '+ GST', withGst: (x) => `${x} with GST`, voiceOn: 'Voice on', loadingVoice: 'Loading the voice…', micListening: 'Listening… speak your question now', micRecording: 'Recording… tap the microphone again when you finish', micThinking: 'Understanding what you said…', micDenied: 'The microphone is blocked. Tap the lock icon next to the address, allow the microphone for this page, then try again.', micWebview: 'This window cannot ask for the microphone. Please open this link in Chrome (or Safari on an iPhone) and try again. You can also type your question.', micNo: 'No microphone was found on this device.', micNone: 'I did not hear anything. Tap the microphone and speak a little louder, or type your question.', micFail: 'Your voice could not be understood. Please type your question.', micHeard: (x) => `I heard: “${x}”`, micCheck: (x) => `I heard “${x}”. Is that right? Fix it in the box if needed, then press Ask.`, micLang: (n) => `To ask by voice, speak in ${n}. To speak another language, change it at the top first.`, captionsOnly: 'Captions only', fullText: 'Show full text', trustMin: '5 minutes', trustNoLogin: 'No login', auto: 'Automated assistant', waitAsk: 'Do you have a question? Ask now, or press Next.', fin: 'The meeting is finished.', unsure: 'Our team will answer this one. Do you want to talk to them now?',
   },
   te: {
     hello: (n) => (n ? `నమస్కారం ${n} గారు` : 'నమస్కారం'), chooseLang: 'మీ భాషను ఎంచుకోండి', start: 'మీటింగ్ మొదలుపెట్టండి', soundOn: 'దయచేసి మీ సౌండ్ ఆన్ చేయండి. ఇది ఆటోమేటెడ్ అసిస్టెంట్, మనిషి కాదు. సుమారు 5 నిమిషాలు పడుతుంది.',
@@ -48,7 +48,7 @@ const T = {
     submit: 'మా టీమ్‌కు పంపండి', cancel: 'మీటింగ్‌కు తిరిగి వెళ్ళండి', needPhone: 'దయచేసి మీ వాట్సాప్ నంబర్ రాయండి.', pickOne: 'దయచేసి ఒకటి ఎంచుకోండి.', fail: 'పంపడం కుదరలేదు. దయచేసి మళ్ళీ ప్రయత్నించండి.',
     thanks: (n) => `ధన్యవాదాలు${n ? ` ${n} గారు` : ''}. మీ అభ్యర్థన మా టీమ్‌కు అందింది, త్వరలో సంప్రదిస్తారు.`, seeWork: 'మేము చేసిన పని చూడండి', plansTitle: 'మా ప్లాన్లు (+ 18% జీఎస్టీ)', again: 'మళ్ళీ ప్రయత్నించండి', loading: 'మీ మీటింగ్ తెరుస్తున్నాను…',
     gone: 'ఈ లింక్ ఇప్పుడు పనిచేయడం లేదు. దయచేసి పంపినవారిని కొత్త లింక్ అడగండి.', busy: 'పేజీ ఇప్పుడు తెరుచుకోలేదు. అదే మళ్ళీ ప్రయత్నిస్తుంది.', yourQ: 'మీరు', bot: 'అసిస్టెంట్', idle: 'ఇంకా ఉన్నారా? కొనసాగడానికి తరువాత నొక్కండి.', listenHelp: 'మీ ప్రశ్న చెప్పండి',
-    choosePlan: 'ప్లాన్ ఎంచుకోండి', howMonth: 'ఒక నెల ఎలా సాగుతుంది', thPlan: 'ప్లాన్', thMonth: 'నెలకు', thGst: 'జీఎస్టీతో', perMonth: 'నెలకు', plusGst: '+ జీఎస్టీ', withGst: (x) => `జీఎస్టీతో ${x}`, voiceOn: 'వాయిస్ ఆన్', loadingVoice: 'వాయిస్ లోడ్ అవుతోంది…', micListening: 'వింటున్నాను… మీ ప్రశ్న ఇప్పుడే చెప్పండి', micRecording: 'రికార్డ్ అవుతోంది… పూర్తయ్యాక మైక్ మళ్ళీ నొక్కండి', micThinking: 'మీరు చెప్పింది అర్థం చేసుకుంటున్నాను…', micDenied: 'మైక్రోఫోన్ బ్లాక్ అయింది. అడ్రస్ పక్కన ఉన్న తాళం గుర్తు నొక్కి, ఈ పేజీకి మైక్రోఫోన్ అనుమతించి, మళ్ళీ ప్రయత్నించండి.', micNo: 'ఈ పరికరంలో మైక్రోఫోన్ కనిపించలేదు.', micNone: 'నాకు ఏమీ వినిపించలేదు. మైక్ నొక్కి కొంచెం గట్టిగా మాట్లాడండి, లేదా మీ ప్రశ్న రాయండి.', micFail: 'మీ గొంతు అర్థం కాలేదు. దయచేసి మీ ప్రశ్న రాయండి.', micHeard: (x) => `నాకు వినిపించింది: “${x}”`, captionsOnly: 'అక్షరాలు మాత్రమే', fullText: 'పూర్తి టెక్స్ట్ చూపండి', trustMin: '5 నిమిషాలు', trustNoLogin: 'లాగిన్ అవసరం లేదు', auto: 'ఆటోమేటెడ్ అసిస్టెంట్', waitAsk: 'ఏదైనా ప్రశ్న ఉందా? ఇప్పుడే అడగండి, లేదా తరువాత నొక్కండి.', fin: 'మీటింగ్ పూర్తయింది.', unsure: 'దీనికి మా టీమ్ సమాధానం ఇస్తుంది. ఇప్పుడే వారితో మాట్లాడతారా?',
+    choosePlan: 'ప్లాన్ ఎంచుకోండి', howMonth: 'ఒక నెల ఎలా సాగుతుంది', thPlan: 'ప్లాన్', thMonth: 'నెలకు', thGst: 'జీఎస్టీతో', perMonth: 'నెలకు', plusGst: '+ జీఎస్టీ', withGst: (x) => `జీఎస్టీతో ${x}`, voiceOn: 'వాయిస్ ఆన్', loadingVoice: 'వాయిస్ లోడ్ అవుతోంది…', micListening: 'వింటున్నాను… మీ ప్రశ్న ఇప్పుడే చెప్పండి', micRecording: 'రికార్డ్ అవుతోంది… పూర్తయ్యాక మైక్ మళ్ళీ నొక్కండి', micThinking: 'మీరు చెప్పింది అర్థం చేసుకుంటున్నాను…', micDenied: 'మైక్రోఫోన్ బ్లాక్ అయింది. అడ్రస్ పక్కన ఉన్న తాళం గుర్తు నొక్కి, ఈ పేజీకి మైక్రోఫోన్ అనుమతించి, మళ్ళీ ప్రయత్నించండి.', micWebview: 'ఈ విండో మైక్రోఫోన్ అడగలేకపోతోంది. దయచేసి ఈ లింక్‌ను Chrome (ఐఫోన్‌లో Safari)లో తెరిచి మళ్ళీ ప్రయత్నించండి. లేదా మీ ప్రశ్న రాయవచ్చు.', micNo: 'ఈ పరికరంలో మైక్రోఫోన్ కనిపించలేదు.', micNone: 'నాకు ఏమీ వినిపించలేదు. మైక్ నొక్కి కొంచెం గట్టిగా మాట్లాడండి, లేదా మీ ప్రశ్న రాయండి.', micFail: 'మీ గొంతు అర్థం కాలేదు. దయచేసి మీ ప్రశ్న రాయండి.', micHeard: (x) => `నాకు వినిపించింది: “${x}”`, micCheck: (x) => `నాకు వినిపించింది “${x}”. సరైనదేనా? అవసరమైతే బాక్స్‌లో సరిచేసి అడగండి నొక్కండి.`, micLang: () => 'వాయిస్‌తో అడగడానికి తెలుగులో మాట్లాడండి. వేరే భాషలో మాట్లాడాలంటే ముందు పైన భాషను మార్చండి.', captionsOnly: 'అక్షరాలు మాత్రమే', fullText: 'పూర్తి టెక్స్ట్ చూపండి', trustMin: '5 నిమిషాలు', trustNoLogin: 'లాగిన్ అవసరం లేదు', auto: 'ఆటోమేటెడ్ అసిస్టెంట్', waitAsk: 'ఏదైనా ప్రశ్న ఉందా? ఇప్పుడే అడగండి, లేదా తరువాత నొక్కండి.', fin: 'మీటింగ్ పూర్తయింది.', unsure: 'దీనికి మా టీమ్ సమాధానం ఇస్తుంది. ఇప్పుడే వారితో మాట్లాడతారా?',
   },
   hi: {
     hello: (n) => (n ? `नमस्ते ${n} जी` : 'नमस्ते'), chooseLang: 'अपनी भाषा चुनें', start: 'मीटिंग शुरू करें', soundOn: 'कृपया अपनी आवाज़ चालू करें। यह एक ऑटोमैटिक असिस्टेंट है, इंसान नहीं। इसमें करीब 5 मिनट लगेंगे।',
@@ -59,7 +59,7 @@ const T = {
     submit: 'हमारी टीम को भेजें', cancel: 'मीटिंग पर वापस जाएँ', needPhone: 'कृपया अपना व्हाट्सऐप नंबर लिखें।', pickOne: 'कृपया एक विकल्प चुनें।', fail: 'भेजा नहीं जा सका। कृपया फिर से कोशिश करें।',
     thanks: (n) => `धन्यवाद${n ? ` ${n} जी` : ''}। आपकी रिक्वेस्ट हमारी टीम को मिल गई है, वे जल्द संपर्क करेंगे।`, seeWork: 'हमारा किया हुआ काम देखें', plansTitle: 'हमारे प्लान (+ 18% जीएसटी)', again: 'फिर से कोशिश करें', loading: 'आपकी मीटिंग खुल रही है…',
     gone: 'यह लिंक अब काम नहीं करता। कृपया भेजने वाले से नया लिंक माँगें।', busy: 'पेज अभी नहीं खुल सका। वह अपने आप फिर कोशिश करेगा।', yourQ: 'आप', bot: 'असिस्टेंट', idle: 'क्या आप अभी भी हैं? आगे बढ़ने के लिए अगला दबाइए।', listenHelp: 'अपना सवाल बोलिए',
-    choosePlan: 'प्लान चुनें', howMonth: 'एक महीना कैसे चलता है', thPlan: 'प्लान', thMonth: 'प्रति माह', thGst: 'जीएसटी के साथ', perMonth: 'प्रति माह', plusGst: '+ जीएसटी', withGst: (x) => `जीएसटी के साथ ${x}`, voiceOn: 'आवाज़ चालू', loadingVoice: 'आवाज़ लोड हो रही है…', micListening: 'सुन रहा हूँ… अपना सवाल अभी बोलिए', micRecording: 'रिकॉर्ड हो रहा है… बोलना पूरा होने पर माइक फिर दबाइए', micThinking: 'आपकी बात समझ रहा हूँ…', micDenied: 'माइक्रोफ़ोन बंद है। एड्रेस के पास ताले का निशान दबाकर इस पेज के लिए माइक्रोफ़ोन की अनुमति दीजिए, फिर कोशिश कीजिए।', micNo: 'इस डिवाइस में माइक्रोफ़ोन नहीं मिला।', micNone: 'मुझे कुछ सुनाई नहीं दिया। माइक दबाकर थोड़ा ज़ोर से बोलिए, या अपना सवाल लिखिए।', micFail: 'आपकी आवाज़ समझ नहीं आई। कृपया अपना सवाल लिखिए।', micHeard: (x) => `मैंने सुना: “${x}”`, captionsOnly: 'सिर्फ़ टेक्स्ट', fullText: 'पूरा टेक्स्ट दिखाएँ', trustMin: '5 मिनट', trustNoLogin: 'लॉगिन ज़रूरी नहीं', auto: 'ऑटोमैटिक असिस्टेंट', waitAsk: 'क्या आपका कोई सवाल है? अभी पूछिए, या अगला दबाइए।', fin: 'मीटिंग पूरी हुई।', unsure: 'इसका जवाब हमारी टीम देगी। क्या आप अभी उनसे बात करना चाहेंगे?',
+    choosePlan: 'प्लान चुनें', howMonth: 'एक महीना कैसे चलता है', thPlan: 'प्लान', thMonth: 'प्रति माह', thGst: 'जीएसटी के साथ', perMonth: 'प्रति माह', plusGst: '+ जीएसटी', withGst: (x) => `जीएसटी के साथ ${x}`, voiceOn: 'आवाज़ चालू', loadingVoice: 'आवाज़ लोड हो रही है…', micListening: 'सुन रहा हूँ… अपना सवाल अभी बोलिए', micRecording: 'रिकॉर्ड हो रहा है… बोलना पूरा होने पर माइक फिर दबाइए', micThinking: 'आपकी बात समझ रहा हूँ…', micDenied: 'माइक्रोफ़ोन बंद है। एड्रेस के पास ताले का निशान दबाकर इस पेज के लिए माइक्रोफ़ोन की अनुमति दीजिए, फिर कोशिश कीजिए।', micWebview: 'यह विंडो माइक्रोफ़ोन की अनुमति नहीं माँग सकती। कृपया इस लिंक को Chrome (iPhone में Safari) में खोलकर फिर कोशिश कीजिए। आप अपना सवाल लिखकर भी पूछ सकते हैं।', micNo: 'इस डिवाइस में माइक्रोफ़ोन नहीं मिला।', micNone: 'मुझे कुछ सुनाई नहीं दिया। माइक दबाकर थोड़ा ज़ोर से बोलिए, या अपना सवाल लिखिए।', micFail: 'आपकी आवाज़ समझ नहीं आई। कृपया अपना सवाल लिखिए।', micHeard: (x) => `मैंने सुना: “${x}”`, micCheck: (x) => `मैंने सुना “${x}”। क्या यह सही है? ज़रूरत हो तो बॉक्स में ठीक करके पूछें दबाइए।`, micLang: () => 'आवाज़ से पूछने के लिए हिन्दी में बोलिए। दूसरी भाषा में बोलना हो तो पहले ऊपर भाषा बदलिए।', captionsOnly: 'सिर्फ़ टेक्स्ट', fullText: 'पूरा टेक्स्ट दिखाएँ', trustMin: '5 मिनट', trustNoLogin: 'लॉगिन ज़रूरी नहीं', auto: 'ऑटोमैटिक असिस्टेंट', waitAsk: 'क्या आपका कोई सवाल है? अभी पूछिए, या अगला दबाइए।', fin: 'मीटिंग पूरी हुई।', unsure: 'इसका जवाब हमारी टीम देगी। क्या आप अभी उनसे बात करना चाहेंगे?',
   },
 };
 
@@ -402,11 +402,26 @@ export default function PlansMeetingPage() {
   // in-app browser) or cannot work (no internet to the recogniser, no Telugu / Hindi model), the question is recorded and sent to our own listener (POST /hear: the free speech engines of the AI calls).
   const stopMic = () => { try { if (recRef.current) recRef.current.abort(); } catch { /* already stopped */ } recRef.current = null; try { if (mediaRef.current && mediaRef.current.state === 'recording') mediaRef.current.stop(); } catch { /* already stopped */ } };
   const micFail = (text) => { setMicMsg(text); setMicState(''); setListening(false); };
-  const heardIt = (text) => { const x = String(text || '').trim(); setMicState(''); setListening(false); if (!x) { setMicMsg(t.micNone); return; } setMicMsg(t.micHeard(x)); setQ(''); submitQ(x); };
+  // the browser said "not allowed": either the person (or the browser settings) blocked the microphone for this page, or this window (the browser inside an app) cannot ask at all. The permission state tells which.
+  const micBlocked = () => {
+    setMicState(''); setListening(false);
+    try {
+      navigator.permissions.query({ name: 'microphone' }).then((s) => setMicMsg(s && s.state === 'denied' ? t.micDenied : t.micWebview), () => setMicMsg(t.micDenied));
+    } catch { setMicMsg(t.micDenied); }
+  };
+  // how much a sentence means to this page (an answer it knows, a budget, a plan named): 0 = nothing
+  const meaning = (x) => { const m = matchFaq(x, FAQ); return (m ? m.score : 0) + (budgetOf(x) != null ? 2 : 0) + (plansIn(x).length ? 1 : 0); };
+  // a sentence the page cannot make sense of AND the recogniser itself doubts (a word of the wrong language, a noise) is put in the box to correct, not answered
+  const heardIt = (text, conf) => {
+    const x = String(text || '').trim(); setMicState(''); setListening(false);
+    if (!x) { setMicMsg(t.micNone); return; }
+    if (meaning(x) === 0 && conf != null && conf < 0.75) { setQ(x); setMicMsg(t.micCheck(x)); return; }
+    setMicMsg(t.micHeard(x)); setQ(''); submitQ(x);
+  };
   const record = async () => {
     if (!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { micFail(t.micFail); return; }
     let stream = null;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { micFail(e && /NotFound|Devices/i.test(e.name) ? t.micNo : t.micDenied); return; }
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { if (e && /NotFound|Devices/i.test(e.name)) micFail(t.micNo); else micBlocked(); return; }
     try {
       const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((m) => window.MediaRecorder.isTypeSupported && window.MediaRecorder.isTypeSupported(m)) || '';
       const rec = new window.MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
@@ -432,24 +447,29 @@ export default function PlansMeetingPage() {
     if (!SR) { record(); return; }
     try {
       const r = new SR();
-      r.lang = LANG_CODE[lang]; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
-      let said = ''; let failed = false;
+      r.lang = LANG_CODE[lang]; r.interimResults = true; r.continuous = false; r.maxAlternatives = 3; // three guesses: the one that means something wins ("plants" or "plans")
+      let said = ''; let conf = null; let failed = false;
       r.onresult = (e) => {
         let fin = ''; let part = '';
-        for (let i = e.resultIndex; i < e.results.length; i += 1) { if (e.results[i].isFinal) fin += e.results[i][0].transcript; else part += e.results[i][0].transcript; }
+        for (let i = e.resultIndex; i < e.results.length; i += 1) {
+          if (!e.results[i].isFinal) { part += e.results[i][0].transcript; continue; } // eslint-disable-line no-continue
+          let best = e.results[i][0];
+          for (let j = 1; j < e.results[i].length; j += 1) if (meaning(e.results[i][j].transcript) > meaning(best.transcript)) best = e.results[i][j];
+          fin += best.transcript; conf = best.confidence;
+        }
         if (fin) said += fin;
         setQ(said || part); // the words show as they are heard
       };
       r.onerror = (e) => {
         failed = true;
         const code = e && e.error;
-        if (code === 'not-allowed') micFail(t.micDenied);
+        if (code === 'not-allowed') micBlocked();
         else if (code === 'audio-capture') micFail(t.micNo);
         else if (code === 'no-speech') micFail(t.micNone);
         else if (code === 'aborted') micFail('');
         else { setListening(false); setMicState(''); record(); } // network / service-not-allowed / language-not-supported: record it and use our own listener
       };
-      r.onend = () => { recRef.current = null; if (failed) return; if (said.trim()) heardIt(said); else micFail(t.micNone); };
+      r.onend = () => { recRef.current = null; if (failed) return; if (said.trim()) heardIt(said, conf); else micFail(t.micNone); };
       recRef.current = r; setListening(true); setMicState('listening'); r.start();
     } catch { setListening(false); setMicState(''); record(); }
   };
@@ -539,6 +559,7 @@ export default function PlansMeetingPage() {
         {panel === 'ask' ? (
           <section className="pm-panel" ref={panelRef}>
             <h3>{t.ask}</h3>
+            <div className="pm-miclang">🎤 {t.micLang(LANG_NAME[lang])}</div>
             <div className="pm-chips" aria-label={t.chips}>
               {CHIPS.map((id) => { const f = FAQ.find((x) => x.id === id); return f ? <button key={id} type="button" className="pm-chip" onClick={() => submitQ(f.ask[lang], id)}>{f.ask[lang]}</button> : null; })}
             </div>

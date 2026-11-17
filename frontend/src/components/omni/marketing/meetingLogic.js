@@ -7,12 +7,28 @@ const ZW = /[‌‍]/g;
 export const norm = (s) => String(s == null ? '' : s).toLowerCase().normalize('NFC').replace(ZW, '').replace(/['’‘`]/g, '').replace(/[.,!?;:()[\]{}"“”।|/\\_-]+/g, ' ').replace(/\s+/g, ' ').trim();
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// a Latin keyword must match whole words ("ai" must not be found inside "again"); a Telugu or Hindi keyword matches inside a word (those scripts glue endings on)
+// a Latin keyword must match whole words ("ai" must not be found inside "again"); a Telugu or Hindi keyword matches inside a word (those scripts glue endings on).
+// Returns 2 for an exact hit, 1 for a near hit (one wrong letter in a word of 5 letters or more: the phone's recogniser heard "plants" for "plans"), 0 for none.
+function lev1(a, b) { // are the two words one letter apart (a different letter, one more or one less)?
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0; let j = 0; let miss = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i += 1; j += 1; } else {
+      miss += 1; if (miss > 1) return false;
+      if (a.length === b.length) { i += 1; j += 1; } else if (a.length > b.length) i += 1; else j += 1;
+    }
+  }
+  return miss + (a.length - i) + (b.length - j) <= 1;
+}
 function hits(text, kw) {
   const k = norm(kw);
-  if (!k) return false;
-  if (/^[a-z0-9 ]+$/.test(k)) return new RegExp(`(?:^| )${esc(k)}(?: |$)`).test(text);
-  return text.includes(k);
+  if (!k) return 0;
+  if (/^[a-z0-9 ]+$/.test(k)) {
+    if (new RegExp(`(?:^| )${esc(k)}(?: |$)`).test(text)) return 2;
+    if (k.length >= 5 && !k.includes(' ')) return text.split(' ').some((w) => w.length >= 4 && lev1(w, k)) ? 1 : 0;
+    return 0;
+  }
+  return text.includes(k) ? 2 : 0;
 }
 
 export function matchFaq(input, faq) {
@@ -21,7 +37,7 @@ export function matchFaq(input, faq) {
   let best = null;
   for (const f of faq) { // eslint-disable-line no-restricted-syntax
     let score = 0;
-    for (const kw of f.keywords) if (hits(text, kw)) score += 1 + Math.min(norm(kw).length, 12) / 12; // eslint-disable-line no-restricted-syntax
+    for (const kw of f.keywords) { const h = hits(text, kw); if (h) score += (h === 2 ? 1 : 0.6) + Math.min(norm(kw).length, 12) / 12; } // eslint-disable-line no-restricted-syntax
     if (score <= 0) continue; // eslint-disable-line no-continue
     // "talk to a person" wins a tie: if someone asks for a person they must reach one
     if (!best || score > best.score || (score === best.score && f.id === 'F19')) best = { id: f.id, score };

@@ -269,3 +269,5 @@
 .pm-textlogo { font-weight: 800; font-size: 17px; letter-spacing: -.01em; color: #fff; }
 .pm-brand { gap: 14px; padding: 4px 0; }
 @media (min-width: 980px) { .pm-logo-img { width: 176px; } }
+
+.pm-miclang { margin: -2px 0 10px; font-size: 13px; line-height: 1.45; color: var(--pm-mute); }

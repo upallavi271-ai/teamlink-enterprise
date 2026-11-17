@@ -259,6 +259,10 @@ const check = (n, ok, d) => { if (ok) pass += 1; else fail += 1; console.log(`${
     await M.saveAlert(sa, { on: false });
     for (const x of [m2, m3]) await M.remove(sa, x.id);
 
+    // what the phone's recogniser mishears (the founder said "list of the plans" and it wrote "list of the plants")
+    const idOf = (q) => { const m = matchFaq(q, FE.meetingContent.FAQ); return m ? m.id : null; };
+    check('14g "list of the plans", the misheard "list of the plants" and "what plants do you have" all give the prices (F1), in Telugu and Hindi too', ['list of the plans', 'list of the plants', 'what plants do you have', 'show me all plans', 'ప్లాన్లు ఏమిటి', 'सभी प्लान बताइए'].every((q) => idOf(q) === 'F1'), ['list of the plans', 'list of the plants', 'what plants do you have', 'ప్లాన్లు ఏమిటి', 'सभी प्लान बताइए'].map((q) => `${q}=${idOf(q)}`));
+    check('14h one wrong letter is forgiven only in longer words: nothing answers noise, "again and again" or "paid maid", and "which plan is right for me" is still the plan advice', idOf('asdf qwerty zzz') === null && idOf('again and again') === null && idOf('paid maid') === null && idOf('a') === null && idOf('which plan is right for me') === 'F3' && idOf('can i change my plans') === 'F8');
     // removing
     const rm = await M.remove(sa, m.id);
     check('11 removing makes the link stop working and leave the list', !!rm.ok && (await M.publicView(m.token)).status === 404 && !(await M.list(sa)).items.find((x) => x.id === m.id), rm);
