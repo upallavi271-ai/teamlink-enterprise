@@ -36,16 +36,27 @@ export function AuthProvider({ children }) {
     if (res.data.chooseAccount) {
       return { chooseAccount: true, selectionToken: res.data.selectionToken, accounts: res.data.accounts || [], expiresAt: res.data.expiresAt };
     }
+    // two-step sign-in (backend routes/mfa.js): the code next, or set it up now under the company rule
+    if (res.data.mfaRequired || res.data.mfaEnrolRequired) return { mfa: res.data.mfaRequired ? 'verify' : 'enrol', mfaTicket: res.data.mfaTicket };
     localStorage.setItem('tl_token', res.data.token);
     clearKeptState(); // a new sign-in starts every list fresh (also after a forced sign-out, api.js)
     setUser(res.data.user);
     return res.data.user;
   }
 
+  // The last step of a two-step sign-in: POST /auth/mfa/verify or /auth/mfa/enrol/confirm returns the normal session.
+  async function finishMfa(path, body) {
+    const res = await api.post(`/auth/mfa/${path}`, body);
+    localStorage.setItem('tl_token', res.data.token);
+    clearKeptState();
+    return { user: res.data.user, recoveryCodes: res.data.recoveryCodes || null, recoveryLeft: res.data.recoveryLeft, commit: () => setUser(res.data.user) };
+  }
+
   async function chooseLogin(selectionToken, choice) {
     const res = await api.post('/auth/login/choose', { selectionToken, choice });
     // A vendor login on the same email was picked: the page signs it in through the vendor sign-in.
     if (res.data.useVendor) return { useVendor: true };
+    if (res.data.mfaRequired || res.data.mfaEnrolRequired) return { mfa: res.data.mfaRequired ? 'verify' : 'enrol', mfaTicket: res.data.mfaTicket };
     localStorage.setItem('tl_token', res.data.token);
     clearKeptState(); // a new sign-in starts every list fresh (also after a forced sign-out, api.js)
     setUser(res.data.user);
@@ -85,7 +96,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, chooseLogin, logout, endSessionWithNotice, switchWorkspace }}>
+    <AuthContext.Provider value={{ user, loading, login, chooseLogin, finishMfa, logout, endSessionWithNotice, switchWorkspace }}>
       {children}
     </AuthContext.Provider>
   );

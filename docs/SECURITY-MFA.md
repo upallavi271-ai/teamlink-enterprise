@@ -1,6 +1,6 @@
 # Two-step sign-in (MFA) for Super Admin and Admin: design
 
-Status: NOT BUILT (2026-10-13). It needs three new columns on `User`, and the rule for this task was "migrations only if truly needed". MFA is optional and off by default, so it was written down instead of half-built. Everything below is ready to build once the migration is approved.
+Status: BUILT 2026-11-17 (utils/mfa.js, routes/mfa.js, Profile → Two-step sign-in, Users → Reset two-step; scripts/mfa-test.js). Stored in its own raw table "UserMfa" instead of new User columns, so no migration was needed. Open to every login, compulsory per role by the company rule (default: nobody).
 
 ## What the user gets (plain words)
 

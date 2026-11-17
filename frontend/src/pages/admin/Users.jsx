@@ -121,6 +121,10 @@ export default function Users() {
   const [created, setCreated] = useState(null);
   const [switching, setSwitching] = useState(false);
   const [revokeAsk, setRevokeAsk] = useState(null);
+  // two-step sign-in (backend routes/mfa.js): who has it on; "Reset two-step" for a lost phone
+  const [mfaOn, setMfaOn] = useState(() => new Set());
+  const [mfaAsk, setMfaAsk] = useState(null);
+  useEffect(() => { api.get('/auth/mfa/enabled').then((r) => setMfaOn(new Set(r.data.userIds || []))).catch(() => {}); }, []);
   const [resetPassword, setResetPassword] = useState('');
   // Branch / team / scope are read-only text in the table (as in the prototype);
   // this modal is where main's inline editing of them moved to.
@@ -756,6 +760,19 @@ export default function Users() {
                       title="Switch off this ONE login and end its open sessions. Other logins on the same email keep working.">
                       Sign out and switch off
                     </button>
+                  )}
+                  {mfaOn.has(u.id) && u.id !== me?.id && (
+                    <>
+                      {' '}
+                      {mfaAsk === u.id ? (
+                        <>
+                          <button className="btn btn-sm btn-primary" onClick={async () => { setMfaAsk(null); await run(() => api.post(`/auth/mfa/reset/${u.id}`, { reason: 'Lost phone' }), `${u.name}'s two-step sign-in is reset and they are signed out. They sign in with the password and set it up again.`); setMfaOn((s) => { const n = new Set(s); n.delete(u.id); return n; }); }}>Yes, reset two-step</button>{' '}
+                          <button className="btn btn-sm" onClick={() => setMfaAsk(null)}>No</button>
+                        </>
+                      ) : (
+                        <button className="btn btn-sm" onClick={() => setMfaAsk(u.id)} title="Two-step sign-in is on for this login. Lost phone: clear it so they sign in with the password and set it up again.">🔐 Reset two-step</button>
+                      )}
+                    </>
                   )}
                   {' '}
                   <ViewAsButton userId={u.id} name={u.name} active={u.status === 'Active'}

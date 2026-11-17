@@ -135,7 +135,7 @@ async function spend(password, done) {
 }
 
 // Everything after "the password is right" - one place for the plain sign-in and the "Choose your account" step.
-async function finishSignIn(req, res, user) {
+async function finishSignIn(req, res, user, { mfaPassed = false, extra = {} } = {}) {
   // A login an admin has disabled on the Users screen is really disabled.
   if (user.status && user.status !== 'Active') {
     if (user.status === 'Locked') return res.status(403).json({ error: 'This login is locked by HR. Ask HR to unlock it.' });
@@ -161,6 +161,19 @@ async function finishSignIn(req, res, user) {
     return res.status(403).json({ error: 'This login has no access yet — ask an administrator to grant it' });
   }
 
+  // TWO-STEP SIGN-IN (utils/mfa.js, routes/mfa.js): the password was right, but no session yet. With two-step on, the page asks for
+  // the 6-digit code; under the company rule a login that has not set it up sets it up now. The 5-minute ticket proves the password only.
+  if (!mfaPassed) {
+    const MFA = require('../utils/mfa'); // eslint-disable-line global-require
+    if (await MFA.isOn(user.id)) {
+      await logAudit({ userId: user.id, action: 'Sign-in: password right, two-step code asked', entity: 'User', entityId: user.id, reason: `IP ${ipOf(req)}` });
+      return res.json({ mfaRequired: true, mfaTicket: MFA.makeTicket(user, 'verify') });
+    }
+    if (!former && await MFA.requiredFor(user)) {
+      return res.json({ mfaEnrolRequired: true, mfaTicket: MFA.makeTicket(user, 'enrol') });
+    }
+  }
+
   // Stamps the Users screen's "Last Login" column, and clears the failed
   // sign-in counter.
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), failedLoginCount: 0, lockedUntil: null } });
@@ -169,7 +182,7 @@ async function finishSignIn(req, res, user) {
   if (former) require('../utils/formerAccess').limit(identity, former); // eslint-disable-line global-require
   // tms = the exact millisecond, so "sign this login out" (utils/loginAccounts.js revokeSessions) can tell an old token from a new one.
   const token = jwt.sign({ ...tokenPayload(identity), tms: Date.now() }, process.env.JWT_SECRET, { expiresIn: '8h' });
-  return res.json({ token, user: former ? await require('../utils/formerAccess').sessionPayload(identity) : await sessionPayload(identity) }); // eslint-disable-line global-require
+  return res.json({ ...extra, token, user: former ? await require('../utils/formerAccess').sessionPayload(identity) : await sessionPayload(identity) }); // eslint-disable-line global-require
 }
 
 const lockedBody = (until) => ({
@@ -305,6 +318,9 @@ router.post('/login', async (req, res) => {
     accounts: entries.map((e, i) => ({ choice: String(i), label: e.label })),
   });
 });
+
+// Two-step sign-in: the code after the password, set-up, the company rule, admin reset (routes/mfa.js).
+router.use('/mfa', require('./mfa')({ finishSignIn })); // eslint-disable-line global-require
 
 // Step 2 of "Choose your account": the signed token proves the password, the person names which one in the list (choice = its position).
 router.post('/login/choose', async (req, res) => {

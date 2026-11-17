@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { TeamLinkMark } from '../components/Logo.jsx';
 import vendorApi, { setVendorToken, setVendorHome, vendorHome } from '../vendorApi';
+import api from '../api';
+import { RecoveryCodes, SetupBox } from '../components/TwoStepCard.jsx';
 
 // Email and password. Nothing else.
 //
@@ -11,7 +13,11 @@ import vendorApi, { setVendorToken, setVendorHome, vendorHome } from '../vendorA
 // else: a person's role is derived from their employee record (department +
 // designation), never chosen at sign-in. No demo password is displayed.
 export default function Login() {
-  const { login, chooseLogin } = useAuth();
+  const { login, chooseLogin, finishMfa } = useAuth();
+  // Two-step sign-in (backend routes/mfa.js): { mode: 'verify' | 'enrol', ticket, setup?, codes?, done? }
+  const [mfa, setMfa] = useState(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [useRecovery, setUseRecovery] = useState(false);
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -44,6 +50,7 @@ export default function Login() {
     setError('');
     try {
       const user = await login(email.trim(), password);
+      if (user && user.mfa) { await startMfa(user); return; }
       if (user && user.chooseAccount) {
         setChoice(user);
         setPicked(user.accounts.length ? user.accounts[0].choice : '');
@@ -80,6 +87,7 @@ export default function Login() {
     setError('');
     try {
       const user = await chooseLogin(choice.selectionToken, picked);
+      if (user && user.mfa) { setChoice(null); await startMfa(user); return; }
       if (user && user.useVendor) {
         try {
           await vendorSignIn(email, password);
@@ -97,6 +105,82 @@ export default function Login() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function startMfa(r) {
+    setMfaCode(''); setUseRecovery(false);
+    if (r.mfa === 'enrol') {
+      const s = await api.post('/auth/mfa/enrol/start', { mfaTicket: r.mfaTicket });
+      setMfa({ mode: 'enrol', ticket: r.mfaTicket, setup: s.data });
+    } else setMfa({ mode: 'verify', ticket: r.mfaTicket });
+  }
+
+  async function onMfa(e) {
+    e.preventDefault();
+    setBusy(true); setError('');
+    try {
+      const body = mfa.mode === 'enrol' ? { mfaTicket: mfa.ticket, code: mfaCode }
+        : (useRecovery ? { mfaTicket: mfa.ticket, recoveryCode: mfaCode } : { mfaTicket: mfa.ticket, code: mfaCode });
+      const out = await finishMfa(mfa.mode === 'enrol' ? 'enrol/confirm' : 'verify', body);
+      // new recovery codes (set-up) or few left: show them / say so before going in
+      if (out.recoveryCodes || (out.recoveryLeft != null && out.recoveryLeft <= 3)) { setMfa({ ...mfa, done: out }); return; }
+      out.commit();
+      navigate(out.user?.landingPath || '/', { replace: true });
+    } catch (err) {
+      const msg = err.response?.data?.error || 'That did not work. Try again.';
+      setError(msg);
+      if (err.response?.data?.code === 'MFA_TICKET_EXPIRED' || err.response?.status === 423) { setMfa(null); setPassword(''); }
+    } finally { setBusy(false); }
+  }
+
+  if (mfa) {
+    const done = mfa.done;
+    return (
+      <div className="login-shell">
+        <form className="login-card" onSubmit={done ? (e) => { e.preventDefault(); done.commit(); navigate(done.user?.landingPath || '/', { replace: true }); } : onMfa} style={mfa.mode === 'enrol' && !done ? { maxWidth: 560 } : undefined}>
+          <div className="logo-lockup"><TeamLinkMark width={168} /><div className="small-muted" style={{ marginTop: 6 }}>TeamLink.Enterprise</div></div>
+          {done ? (
+            <>
+              <h1 style={{ fontSize: 20, margin: '4px 0 6px' }}>{done.recoveryCodes ? 'Two-step sign-in is on' : 'Signed in with a recovery code'}</h1>
+              {done.recoveryCodes ? <RecoveryCodes codes={done.recoveryCodes} />
+                : <div className="notice" style={{ display: 'block' }}>Only {done.recoveryLeft} recovery code{done.recoveryLeft === 1 ? '' : 's'} left. Make new ones on your Profile → Two-step sign-in.</div>}
+              <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 16 }} type="submit">{done.recoveryCodes ? 'I saved them, continue' : 'Continue'}</button>
+            </>
+          ) : (
+            <>
+              <h1 style={{ fontSize: 20, margin: '4px 0 6px' }}>{mfa.mode === 'enrol' ? 'Set up two-step sign-in' : 'Two-step sign-in'}</h1>
+              {mfa.mode === 'enrol' ? (
+                <>
+                  <div className="small-muted">Your company asks your role to use a code from a phone app after the password. It takes a minute.</div>
+                  <SetupBox setup={mfa.setup} code={mfaCode} setCode={setMfaCode} />
+                </>
+              ) : (
+                <>
+                  <div className="small-muted" style={{ marginBottom: 10 }}>{useRecovery ? 'Type one of your recovery codes.' : 'Type the 6-digit code from your authenticator app.'}</div>
+                  <input
+                    autoFocus inputMode={useRecovery ? 'text' : 'numeric'} autoComplete="one-time-code" maxLength={useRecovery ? 14 : 6}
+                    value={mfaCode} onChange={(e) => setMfaCode(useRecovery ? e.target.value.toUpperCase() : e.target.value.replace(/\D/g, ''))}
+                    placeholder={useRecovery ? 'XXXXX-XXXXX' : '123456'} aria-label={useRecovery ? 'Recovery code' : '6-digit code'} style={{ fontSize: 20, letterSpacing: 3, textAlign: 'center' }}
+                  />
+                  <div style={{ marginTop: 8, textAlign: 'right' }}>
+                    <button type="button" className="link-btn" style={{ background: 'none', border: 0, cursor: 'pointer', fontSize: 12 }} onClick={() => { setUseRecovery((v) => !v); setMfaCode(''); setError(''); }}>
+                      {useRecovery ? 'Use the app code instead' : 'Lost your phone? Use a recovery code'}
+                    </button>
+                  </div>
+                </>
+              )}
+              {error && <div className="error-text" style={{ marginTop: 10 }}>{error}</div>}
+              <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 16 }} type="submit" disabled={busy || (useRecovery ? mfaCode.replace(/[^A-Z0-9]/g, '').length < 10 : mfaCode.length !== 6)}>
+                {busy ? 'Checking…' : (mfa.mode === 'enrol' ? 'Turn on and sign in' : 'Sign in')}
+              </button>
+              <div style={{ marginTop: 10, textAlign: 'center' }}>
+                <button type="button" className="link-btn" style={{ background: 'none', border: 0, cursor: 'pointer', fontSize: 12 }} onClick={() => { setMfa(null); setError(''); }}>Back</button>
+              </div>
+            </>
+          )}
+        </form>
+      </div>
+    );
   }
 
   if (choice) {
