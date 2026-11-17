@@ -263,3 +263,9 @@
 @media (min-width: 980px) { .pm-hero { min-height: calc(100vh - 120px); } .pm-hero h1 { font-size: 40px; } }
 .pm-panel .pm-round { background: #e6eef9; color: var(--pm-ink); }
 .pm-panel .pm-round.pm-mic.on { background: #dc2626; color: #fff; }
+
+/* the logo straight on the page (no box) */
+.pm-logo-img { display: block; height: auto; max-width: 100%; filter: drop-shadow(0 6px 18px rgba(12, 156, 252, .28)); }
+.pm-textlogo { font-weight: 800; font-size: 17px; letter-spacing: -.01em; color: #fff; }
+.pm-brand { gap: 14px; padding: 4px 0; }
+@media (min-width: 980px) { .pm-logo-img { width: 176px; } }

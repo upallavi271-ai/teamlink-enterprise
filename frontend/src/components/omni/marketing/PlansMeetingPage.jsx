@@ -6,7 +6,14 @@ import { matchFaq, sentencesOf, dropFirstTen, dropFirstTenLines, fillProof, answ
 import { budgetOf, budgetReply } from './meetingBudget.js';
 import { planAnswer } from './meetingPlans.js';
 import './plansMeeting.css';
-import { TeamLinkMark } from '../../Logo.jsx'; // the TeamLink logo, untouched (its own colours)
+import { BRAND } from '../../../brand.js';
+import logoDark340 from '../../../assets/teamlink-logo-ondark-340.png';
+import logoDark680 from '../../../assets/teamlink-logo-ondark-680.png';
+// THE LOGO ON THE NAVY PAGE: the same TeamLink artwork with its navy parts turned white (Team, Consultants, the ring) and the azure parts (Link) kept, the way every brand reverses its logo for a dark background.
+// It sits straight on the page, no box around it (a white box looked like a patch: founder 2026-11-17). A separate company's copy shows its own name as text (brand.js).
+const Logo = ({ w = 156 }) => (BRAND.separate
+  ? <span className="pm-textlogo">{BRAND.name}</span>
+  : <img className="pm-logo-img" src={logoDark340} srcSet={`${logoDark340} 340w, ${logoDark680} 680w`} sizes={`${w}px`} alt="TeamLink Consultants" width={w} height={Math.round((w * 142) / 680)} draggable="false" />);
 
 // THE PLANS MEETING (/plans-meeting/:token, or /plans-meeting with no token): no login, outside the TeamLink shell. A client who got the link on WhatsApp opens it on their phone: an automated
 // assistant shows 12 short slides and SPEAKS them (the browser's own voice, free) in English, Telugu or Hindi, with captions always on screen. The client can ask a question at any time (typed,
@@ -464,7 +471,7 @@ export default function PlansMeetingPage() {
   const top = (withLang = true) => (
     <header className="pm-top">
       <div className="pm-top-in">
-        <div className="pm-brand"><span className="pm-logochip"><TeamLinkMark width={138} /></span><span className="pm-live"><i /><em>{t.auto}</em></span></div>
+        <div className="pm-brand"><Logo w={158} /><span className="pm-live"><i /><em>{t.auto}</em></span></div>
         {withLang ? <div className="pm-lang" role="group" aria-label={t.chooseLang}>{LANGS.map(([k, name]) => <button key={k} type="button" aria-pressed={lang === k} onClick={() => pickLang(k)}>{name}</button>)}</div> : null}
       </div>
     </header>
