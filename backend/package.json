@@ -21,7 +21,9 @@
     "comm-test": "node scripts/comm-automation-test.js",
     "portal-session": "node scripts/portal-session.js",
     "portal-calibrate": "node scripts/portal-calibrate.js",
-    "posting-test": "node scripts/job-publish-test.js"
+    "posting-test": "node scripts/job-publish-test.js",
+    "company-bridge-test": "node scripts/company-bridge-test.js",
+    "bridge-sandbox": "node scripts/teamlink-bridge-sandbox.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0",

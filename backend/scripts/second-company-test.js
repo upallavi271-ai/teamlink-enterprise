@@ -299,6 +299,14 @@ async function main() {
   ok(seenT.size >= 15, `control: TeamLink-style answers do contain its demo names (${seenT.size} different ones found), so the check can see them`, `${seenT.size}`);
   ok(seenN.size === 0, 'NOT ONE TeamLink name, email or title appears in any answer given to the new company\'s Super Admin',
     [...seenN].slice(0, 5).map(([mk, urls]) => `"${mk}" in ${urls[0]}`).join(' | '));
+  // INFORMATION ONLY: words that are TeamLink's own business lines. They are not database rows, so the check above cannot see them; a screen that
+  // draws them from a default written in the program (for example the vacancy plan) would show them to a brand-new company.
+  { const FLAVOUR = ['Edu-A-', 'Education', 'Medical', 'Manufacturing', 'TeamLink'];
+    const flav = new Map();
+    for (const [url, v] of swN) { if (v.status !== 200) continue; for (const w of FLAVOUR) if (v.text.includes(w)) { if (!flav.has(w)) flav.set(w, []); flav.get(w).push(url); } }
+    console.log(`  (information) TeamLink's own business words in the new company's answers: ${flav.size ? [...flav].map(([w, u]) => `"${w}" in ${u.length} (${u.slice(0, 4).join(', ')})`).join(' | ') : 'none'})`);
+    ok(!(flav.get('Edu-A-') || []).length, 'the vacancy plan (Education Team A / Team B seat names) is not given to the new company', (flav.get('Edu-A-') || []).join(','));
+  }
   // counts on the main lists
   const listLen = (r) => (r && r.json ? (Array.isArray(r.json) ? r.json.length : (Array.isArray(r.json.items) ? r.json.items.length : (Array.isArray(r.json.rows) ? r.json.rows.length : (Array.isArray(r.json.data) ? r.json.data.length : null)))) : null);
   const lists = ['/api/clients', '/api/candidates', '/api/requirements', '/api/applications', '/api/invoices', '/api/employees', '/api/attendance', '/api/leave-requests', '/api/payroll/runs', '/api/announcements', '/api/assets', '/api/departments', '/api/interviews'];

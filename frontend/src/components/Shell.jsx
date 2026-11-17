@@ -10,6 +10,7 @@ import ModuleTabs from './ModuleTabs.jsx';
 import Logo from './Logo.jsx';
 import { BRAND } from '../brand.js'; // a separate company's copy shows its own name (frontend/src/brand.js); TeamLink's build is unchanged
 import AiAssistant, { AiStatusDot } from './AiAssistant.jsx';
+import CompanySwitcher from './CompanySwitcher.jsx'; // Super Admin: "Companies" menu on TeamLink / "Back to TeamLink" inside a company (2026-11-17)
 import ProfileStatusBanner from './ProfileStatusBanner.jsx';
 import SetupTabs from './SetupTabs.jsx';
 import InterviewTabs from './InterviewTabs.jsx';
@@ -307,6 +308,7 @@ export default function Shell() {
                 product, so the chip simply shows this login's role in the
                 product whose page is open. */}
             <span className="rolechip tb-role">{workRoleLabel(user, ['hrms', 'ats', 'accounts'].includes(section) ? section : undefined)}</span>
+            <CompanySwitcher />
             {/* Always-on AI status: green = model ready, amber = model not
                 pulled, grey = offline. Opens the AI panel. */}
             <AiStatusDot />

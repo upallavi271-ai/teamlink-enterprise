@@ -110,3 +110,40 @@ TeamLink's own deploy script is not changed. Pause the company only: `touch /opt
 * **First-use quirk on any brand-new database.** The program sets up a few of its own tables the first time a screen needs them; two screens opening in the same
   instant can make one of them say "Something went wrong" once. Reloading fixes it. (TeamLink's database was set up long ago.)
 * The server's free memory has not been looked at yet (a company copy needs about 600 MB while running).
+## 9. The "Companies" menu: one Super Admin on top, the company's own admin below (added 2026-11-17)
+
+Founder's wish: one Super Admin in TeamLink who can open the other company; the company's own admin is a "sub Super Admin" who sees only their company; TeamLink's data and
+settings are not touched. Built as a **one-way door** between two separate copies (the data stays in separate databases, as in section 2):
+
+* On TeamLink a **real** Super Admin (not an HR login lifted to Super Admin powers, not a View-as / Act-as session) sees **Companies ▾** in the top bar. Picking a company asks TeamLink
+  for a **pass**: a signed note (Ed25519) that names the company, lives 60 seconds and works once. It goes in the address after the # sign, so it never reaches a server log.
+* The company's server checks the signature with TeamLink's **public** key only, that the pass is for **its own** key, not older than 2 minutes, not used before, and signs the person in as
+  that company's **"<name> (TeamLink owner)"**: a Super Admin of THIS company only, with no Employee record (the company's headcount and attendance stay its own), no password anyone knows.
+  Inside the company the top bar shows **← Back to TeamLink**.
+* **There is no way from a company into TeamLink.** The company holds no key that can make a pass; TeamLink has no door that takes one (it answers "not found" to a pass); a company token is worthless on TeamLink.
+* The company's own admin is the "sub Super Admin": the top of that company, nothing of TeamLink. They **cannot lock the owner out**: at every visit the owner's login is made an Active Super Admin again.
+* TeamLink's database gets **nothing** (no table, no login, no setting): one audit line each time a company is opened. The company records each visit ("Signed in from TeamLink") and each refused pass. No pass and no TeamLink e-mail address is written anywhere.
+* Off by default: with no key files the menu does not exist and every route answers "nothing set up".
+
+Files: `backend/src/utils/companyBridge.js`, `backend/src/routes/companyBridge.js` (mounted at `/api/company-bridge`), `backend/scripts/company-bridge-setup.js`,
+`frontend/src/components/CompanySwitcher.jsx`, `frontend/src/pages/CompanyBridge.jsx` (route `/bridge`).
+Proof: `npm run company-bridge-test` in `backend/` (59 checks: who sees the menu, empty company, replay / expired / long-lived / wrong company / wrong issuer / changed / forged / garbage pass, no way into TeamLink,
+owner cannot be locked out, nothing stored). Try it by eye on a PC: `npm run company-sandbox` + `npm run bridge-sandbox` in backend/ and frontend/, then http://localhost:5186 (sign in as admin@teamlink.test) -> Companies.
+
+### Going live (needs the founder's yes; the code reaches TeamLink and NISH through the normal main -> deploy -> follower path)
+
+1. Push the code to main (TeamLink deploys it; the follower then builds NISH). Nothing changes on screen yet: no key files, no menu.
+2. On the VPS, as root, ONE new folder and ONE new file for NISH (nothing existing is edited, TeamLink is not restarted):
+   `cd /opt/teamlink-enterprise/backend && HOME=/root node scripts/company-bridge-setup.js --key nish --name "NISHTECHNOLOGIES INDIA PVT LTD" --url https://nish.teamlinks.in --public-out /opt/company-nish/config/bridge-public.pem`
+   (makes /root/.teamlink-company-bridge/private.pem, mode 600, and companies.json; the private key never leaves that folder.)
+3. NISH's own settings file gets two lines, then NISH (only) restarts:
+   `COMPANY_BRIDGE_PUBLIC_KEY_FILE=/opt/company-nish/config/bridge-public.pem` and `COMPANY_BRIDGE_HOME_URL=https://teamlink.teamlinks.in`, then `pm2 restart company-nish`. `company-check.js` still passes.
+4. The Super Admin reloads TeamLink: **Companies ▾** appears (TeamLink reads its two files at request time; no restart).
+Taking it away: `node scripts/company-bridge-setup.js --remove nish` (the menu is gone at once); delete the two lines from NISH's settings and restart NISH.
+
+## 10. TeamLink's own business words that are written in the program, not in the database (found 2026-11-17)
+
+A separate company starts with an empty database, but a few screens draw TeamLink's own numbers from a default written in the program. Found and fixed: the dashboard's **Vacancies** card (the staffing plan:
+Education Teams A / B, Medical, Manufacturing, BDE, R&D) — a company copy now starts with no plan and shows no card (`utils/vacancies.js`, `Vacancies.jsx`, `HrmsDashboard.jsx`; TeamLink unchanged).
+`npm run company-test` now prints an information line with TeamLink's business words that still appear in the new company's answers, so the rest can be found and listed. Known and not yet changed: the
+Vacancies plan editor cannot add departments (a company has no plan until that is built), the wording "TeamLink Consultants" in agreements / mails / greetings (section 8), and department lists that offer TeamLink's department names.

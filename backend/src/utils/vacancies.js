@@ -73,6 +73,8 @@ async function readPlan() {
     const v = row ? JSON.parse(row.value) : null;
     if (Array.isArray(v) && v.length) return withDefaultTeams(v).map(syncTeamTotals);
   } catch { /* the default */ }
+  // A SEPARATE COMPANY's copy (COMPANY_KEY, docs/second-company.md) starts with NO plan: the numbers above are TeamLink's own staffing.
+  if (process.env.COMPANY_KEY) return [];
   return DEFAULT_PLAN.map(syncTeamTotals);
 }
 

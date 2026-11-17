@@ -40,6 +40,8 @@ const env = {
   JWT_SECRET: crypto.createHash('sha256').update('company-sandbox-jwt').digest('hex'), INTEGRATION_SECRET_KEY: crypto.createHash('sha256').update('company-sandbox-key').digest('hex'),
   APP_BASE_URL: `http://localhost:${FE_PORT}`, UPLOAD_DIR: path.join(FILES, 'uploads'), ATS_IO_DIR: path.join(FILES, 'ats-io'), MESSAGE_JOB_DIR: path.join(FILES, 'message-jobs'), BACKUP_DIR: path.join(FILES, 'backups'),
   GREENSTART_ENABLED: 'false', GREENSTART_SUPERVISE: 'false', GREENSTART_AUTOSTART: 'false', JOB_PORTAL_EMBED: '0', JOB_PORTAL_SYNC_INTERVAL_MS: '0', MAIL_WORKER_INTERVAL_MS: '0',
+  // the Companies menu (npm run bridge-sandbox opens this company): TeamLink's PUBLIC key and the way back (docs/second-company.md section 9)
+  COMPANY_BRIDGE_PUBLIC_KEY_FILE: path.join(os.homedir() || os.tmpdir(), '.company-sandbox-bridge', 'bridge-public.pem'), COMPANY_BRIDGE_HOME_URL: 'http://localhost:5186',
 };
 console.log(`[company-sandbox] company "NISHTECHNOLOGIES INDIA PVT LTD" (sandbox copy) on http://localhost:${PORT}   sign-in link file: ${LINK}`);
 const child = spawn(process.execPath, ['src/index.js'], { cwd: BACKEND, env, stdio: 'inherit' });

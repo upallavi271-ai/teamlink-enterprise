@@ -251,6 +251,9 @@ app.use([
   '/api/clients', '/api/rejections', '/api/candidate-resumes', '/api/ats-io', '/api/candidate-duplicates',
 ], require('./utils/clientRedact').atsPrivacyGuard);
 app.use('/api/auth', authRoutes);
+// COMPANY SWITCHER (utils/companyBridge.js): TeamLink's "Companies" menu and the one-way door into a separate company's copy. It answers
+// "nothing set up" until its key files exist and changes nothing about any other route.
+app.use('/api/company-bridge', require('./routes/companyBridge'));
 // FORMER EMPLOYEES (Exited / Relieved): the limited page - own attendance, leave records, offer letter, joining letter (utils/formerAccess.js).
 app.use('/api/former', require('./routes/former'));
 app.use('/api/clients', clientRoutes);

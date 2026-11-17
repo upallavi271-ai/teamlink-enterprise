@@ -92,6 +92,7 @@ import AgreementView from './pages/AgreementView.jsx';
 import SetPassword from './pages/SetPassword.jsx';
 import ForgotPassword from './pages/ForgotPassword.jsx';
 import NewPassword from './pages/NewPassword.jsx';
+import CompanyBridge from './pages/CompanyBridge.jsx'; // a separate company's address /bridge: TeamLink's Super Admin arrives from the Companies menu (2026-11-17)
 import PortalInvite from './pages/PortalInvite.jsx';
 import HomeRoute from './pages/home/HomeRoute.jsx';
 // Super Admin "View as" (read-only): the picker and the banner on every page.
@@ -146,6 +147,7 @@ export default function App() {
       {/* Forgot password (2026-10-12). /new-password, NOT /reset-password: that path is the Job Portal's. */}
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/new-password" element={<NewPassword />} />
+      <Route path="/bridge" element={<CompanyBridge />} />
       {/* Vendor Portal — separate login, own top bar, no sidebar. */}
       {/* Partner Portal (B7) — separate login, own top bar, no sidebar. */}
       <Route path="/partner-login" element={<PartnerLogin />} />

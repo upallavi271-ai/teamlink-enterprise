@@ -34,7 +34,7 @@ export { vacantByDepartment };
 export default function Vacancies() {
   const [d, setD] = useVacancies();
   const [show, setShow] = useState(false);
-  if (!d) return null;
+  if (!d || !(d.groups && d.groups.length)) return null; // a separate company starts with no staffing plan: no card (TeamLink's plan is in the program only for TeamLink)
   const t = d.totals;
   const lines = vacantByDepartment(d);
   return (

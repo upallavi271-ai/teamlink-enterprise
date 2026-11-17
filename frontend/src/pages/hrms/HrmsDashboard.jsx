@@ -240,7 +240,7 @@ function HrDashboard() {
         ...(ao.noRecord ? [{ id: 'norec', tile: 'noRecord', value: ao.noRecord, label: 'No device data' }] : []),
         ...(ao.notYet ? [{ id: 'notyet', tile: 'notYet', value: ao.notYet, label: 'Not checked in yet' }] : []),
         ...(ao.upcoming ? [{ id: 'upc', tile: 'upcoming', value: ao.upcoming, label: 'Upcoming day' }] : []),
-        ...(vac ? [{ id: 'vac', tile: 'vacancies', value: vac.totals.vacant, label: 'Vacancies', sub: `Should have ${vac.totals.planned} · Working ${vac.totals.filled}`, help: 'How many people each department should have (STL / TL / Employee) minus who is working now. Click to see it by department.' }] : []),
+        ...(vac && vac.groups && vac.groups.length ? [{ id: 'vac', tile: 'vacancies', value: vac.totals.vacant, label: 'Vacancies', sub: `Should have ${vac.totals.planned} · Working ${vac.totals.filled}`, help: 'How many people each department should have (STL / TL / Employee) minus who is working now. Click to see it by department.' }] : []),
         // Regularization Pending (now) was the same figure as "Attendance
         // Regularization" under Pending Tasks & Approvals — shown there once.
       ]} />
