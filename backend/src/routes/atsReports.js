@@ -2476,9 +2476,13 @@ router.get('/catalog', guarded(async (req, res) => {
     reports,
     view, export: exp, revenue: PLUSX.mayRevenue(req.user), myResults: mine, jobPortal: portal, accounts, myBusiness: myBiz,
     recruiterRevenue: PLUSX.mayRevenue(req.user), // B9.7: the same gate as Client revenue
+    // Candidate experience (surveys, NPS, complaints, apply funnel) and Client health (client NPS, escalations, retention):
+    // routes/atsExperience.js, every list cut to this login's scope there. HR has no client book, so no Client health.
+    experience: !!view,
+    clientHealth: !!view && !(scopeOf(req.user).atsRole === 'HR' && !scopeOf(req.user).global),
     scope: view ? scopeLabel(req.user, 'ats') : null,
     ownOnly,
-    ...(ownOnly ? { view: false, export: false, revenue: false, recruiterRevenue: false, jobPortal: false, accounts: false, myBusiness: false, ownReports: OWN.OWN_REPORTS, scope: 'Your own numbers' } : {}),
+    ...(ownOnly ? { view: false, export: false, revenue: false, recruiterRevenue: false, jobPortal: false, accounts: false, myBusiness: false, experience: false, clientHealth: false, ownReports: OWN.OWN_REPORTS, scope: 'Your own numbers' } : {}),
   });
 }));
 

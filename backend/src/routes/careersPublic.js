@@ -369,6 +369,18 @@ async function findByContact(email, phone) {
   return require('../utils/jobPortalBridge').findCandidateByContact({ email, phone });
 }
 
+// APPLICATION COMPLETION / ABANDONMENT (ATS audit 2026-11-17, utils/atsExperience.js): the Apply form says "started" when it
+// opens and how many of its fields are filled as the person types ({ session, filled, total, src }); the application below marks
+// the same session submitted. Nothing about the person is sent here - only counts.
+router.post('/jobs/:id/apply-progress', async (req, res) => {
+  if (!allow(`progress|${ipOf(req)}`, 600, 15 * MIN)) return res.status(429).json({ error: 'Too many requests.' });
+  const job = await findByIdOrSlug(pick(req.params.id, 160)).catch(() => null);
+  if (!isListed(job)) return res.status(404).json({ error: 'This job is not open any more.' });
+  const b = req.body || {};
+  const out = await require('../utils/atsExperience').applyProgress({ session: b.session, jobId: job.id, filled: b.filled, total: b.total, source: b.src || b.utm_source || null }).catch(() => ({ error: 'bad' })); // eslint-disable-line global-require
+  return out.error ? res.status(400).json({ error: 'Not recorded.' }) : res.json({ ok: true });
+});
+
 router.post('/jobs/:id/apply', async (req, res) => {
   const ip = ipOf(req);
   if (!allow(`apply|${ip}`, LIMITS.apply.n, LIMITS.apply.ms)) {
@@ -479,6 +491,8 @@ router.post('/jobs/:id/apply', async (req, res) => {
     return res.status(409).json({ error: 'You have already applied to this job. You can see it under "My applications".', duplicate: true });
   }
   const { candidate, application } = out;
+  // The Apply form's session is now submitted (completion / abandonment report).
+  await require('../utils/atsExperience').applySubmitted({ session: fields.applySession, jobId: job.id, applicationId: application.id, source: src || fields.utm_source || null }).catch(() => {}); // eslint-disable-line global-require
   // The resume, as an ORIGINAL version (Resume tab, Fit %, extraction).
   let resumeSaved = false;
   try {

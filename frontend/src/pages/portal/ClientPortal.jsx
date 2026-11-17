@@ -16,6 +16,7 @@ import ClientOffers from './ClientOffers.jsx';
 import ClientJoinDrop from './ClientJoinDrop.jsx'; // Joinings and drops: who joined, who dropped, the replacement answer
 import Combo from '../../components/Combo.jsx';
 import { ViewAgreementButton } from '../../components/agreements/SignedAgreementFiles.jsx'; // the one shared "View agreement" button
+import ClientConcerns from './ClientConcerns.jsx'; // raise a concern / escalation and follow it (routes/atsExperience.js, 2026-11-17)
 import ClientCreative from './ClientCreative.jsx'; // AI Marketing in the client's own login: see our creative work, choose one (the approval), send a new request (2026-11-14)
 
 // ---------------------------------------------------------------------------
@@ -285,6 +286,7 @@ export default function ClientPortal() {
           agreement || capOn('AGREEMENT') ? { id: 'agreement', label: 'Agreement' } : null,
           invoices ? { id: 'invoices', label: 'Invoices', count: invoices.length } : null,
           mayReports ? { id: 'reports', label: 'Reports' } : null,
+          { id: 'concerns', label: 'Concerns' },
         ]}
       />
 
@@ -495,6 +497,7 @@ export default function ClientPortal() {
       )}
 
       {tab === 'joindrop' && <ClientJoinDrop onChanged={loadJd} />}
+      {tab === 'concerns' && <ClientConcerns />}
       {tab === 'creative' && capOn('CREATIVE') && <ClientCreative userName={user && user.name} onCount={setCreativeWaiting} />}
       {tab === 'hires' && (data.offers || []).length > 0 && (
         <ClientOffers offers={data.offers} onChanged={(msg) => { setNotice(msg || 'Saved.'); setError(''); load(); }} />

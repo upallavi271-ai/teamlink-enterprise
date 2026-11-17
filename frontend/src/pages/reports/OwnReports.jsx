@@ -4,6 +4,7 @@ import MissedItemsBox from '../../components/MissedItemsBox.jsx';
 import TeamReports from './TeamReports.jsx';
 import DailyReport from './DailyReport.jsx';
 import AtsReports from './AtsReports.jsx';
+import { ComplaintsPanel } from './ExperienceBits.jsx'; // candidate complaints I own or log (routes/atsExperience.js)
 import './OwnReports.css';
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,7 @@ const TABS = [
   ['progress', 'My progress', 'Where my candidates are now, and how far they got.'],
   ['followups', 'My follow-ups', 'Which of my follow-ups are done, due today or late.'],
   ['day', 'My daily report', 'What I did on one day.'],
+  ['complaints', 'Candidate complaints', 'Complaints about my candidates: log one, move it to In progress or Resolved. Due in 48 hours, then it goes to my team lead.'],
 ];
 // Old addresses (?tab=daily, ?tab=teamwise ...) land on the nearest own tab.
 const OLD = {
@@ -68,6 +70,7 @@ export default function OwnReports() {
         </>
       )}
       {tab === 'day' && <DailyReport />}
+      {tab === 'complaints' && <ComplaintsPanel side="candidate" compact />}
     </div>
   );
 }

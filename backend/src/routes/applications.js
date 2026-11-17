@@ -1065,6 +1065,9 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     });
   }
 
+  // Experience surveys (interview done / offer / joining; utils/atsExperience.js): one per event, never fatal.
+  await require('../utils/atsExperience').onStage({ applicationId: application.id, fromStage: existing.stage, toStage: stage, user }).catch(() => {}); // eslint-disable-line global-require
+
   // An internal hire whose HRMS employee was just made goes on to Hired
   // (e2e gap 9) — after the Joined history row above, so it reads in order.
   if (stage === 'JOINED' && hiringTypeOf(existing, existing.requirement) === 'TeamLink Internal Hire') {

@@ -46,6 +46,7 @@ export const REPORT_GROUPS = [
       { id: 'clientsjobs', icon: '🏢', title: 'Client-wise requirements', answers: 'Which clients get their requirements filled, and which are stuck?', views: [['clients', 'Clients'], ['requirements', 'Requirements']] },
       { id: 'mybusiness', icon: '💼', title: 'My business', answers: 'My clients, my requirements and my follow-ups in one place.', views: [['mybusiness', 'My business']] },
       { id: 'supply', icon: '⚖️', title: 'Supply vs demand', answers: 'Which specializations need more candidates?', views: [['specialisations', 'Supply vs demand']] },
+      { id: 'clienthealth', icon: '🩺', title: 'Client health', answers: 'Are clients happy (NPS), what are they escalating, who stays and who did we lose?', views: [['clienthealth', 'Client health']] },
     ],
   },
   {
@@ -64,6 +65,7 @@ export const REPORT_GROUPS = [
       { id: 'ops', icon: '⏱️', title: 'Late & waiting', answers: 'What is late: steps past their time, follow-ups not done?', views: [['sla', 'Late steps'], ['followups', 'Follow-ups']] },
       { id: 'rejections', icon: '✋', title: 'Rejections', answers: 'Who rejects people, and why?', views: [['rejections', 'Rejection reasons']] },
       { id: 'overrides', icon: '⚠️', title: 'Added by override', answers: 'Who was added although they did not fit the requirement, and why?', views: [['overrides', 'Added by override']] },
+      { id: 'experience', icon: '💬', title: 'Candidate experience', answers: 'How do candidates rate us after interview, offer and joining - complaints, and who leaves the Apply form half-way?', views: [['experience', 'Candidate experience']] },
     ],
   },
   {
@@ -80,7 +82,7 @@ export const REPORT_GROUPS = [
 
 // MAY THIS LOGIN OPEN THIS REPORT? The catalog's answer: a few reports have their own switch, the rest are the role's list
 // (catalog.reports; null = every report for a login with ATS Reports).
-const OWN_SWITCH = { mybusiness: 'myBusiness', jobportal: 'jobPortal', revenue: 'revenue', 'recruiter-revenue': 'recruiterRevenue' };
+const OWN_SWITCH = { mybusiness: 'myBusiness', jobportal: 'jobPortal', revenue: 'revenue', 'recruiter-revenue': 'recruiterRevenue', experience: 'experience', clienthealth: 'clientHealth' };
 export function mayOpen(cat, id) {
   if (!cat) return false;
   if (OWN_SWITCH[id]) return !!cat[OWN_SWITCH[id]];

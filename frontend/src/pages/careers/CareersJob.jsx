@@ -56,6 +56,22 @@ function ApplyForm({ job, src }) {
   const fileRef = useRef(null);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
+  // Completion / abandonment (backend utils/atsExperience.js): "started" when the form opens, then how many fields are filled
+  // (counts only - nothing the person types is sent before Apply). The application carries the same session id.
+  const sessionRef = useRef('');
+  if (!sessionRef.current) {
+    try { sessionRef.current = window.crypto.randomUUID(); } catch { sessionRef.current = `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`; }
+  }
+  const FIELDS = ['name', 'phone', 'email', 'location', 'experienceYears', 'currentCompany', 'noticePeriod', 'currentSalary', 'expectedSalary', 'skills'];
+  const filled = FIELDS.filter((k) => String(form[k] || '').trim()).length + (file ? 1 : 0) + (consent ? 1 : 0);
+  const total = FIELDS.length + 2;
+  useEffect(() => {
+    const t = setTimeout(() => {
+      api.post(`/public/careers/jobs/${job.id}/apply-progress`, { session: sessionRef.current, filled, total, src: src || undefined }).catch(() => {});
+    }, filled ? 1500 : 0);
+    return () => clearTimeout(t);
+  }, [job.id, filled, total, src]);
+
   function pickFile(e) {
     const f = e.target.files && e.target.files[0];
     if (!f) { setFile(null); return; }
@@ -83,6 +99,7 @@ function ApplyForm({ job, src }) {
       fd.append(job.botProtection.field || 'cf-turnstile-response', tok.value);
     }
     if (src) fd.append('src', src);
+    fd.append('applySession', sessionRef.current);
     fd.append('resume', file, file.name);
     try {
       await api.post(`/public/careers/jobs/${job.id}/apply`, fd);

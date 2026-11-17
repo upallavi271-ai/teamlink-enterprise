@@ -290,6 +290,7 @@ app.use('/api/omni', require('./routes/omniShared')); // Omni-Channel shared API
 app.use('/api/omni-gs', require('./routes/greenStartEmbed')); // status + session cookie for the embedded Green Start app
 app.use('/api/public/mk-work', require('./routes/mkWorkPublic')); // AI Marketing "Our work": track record and portfolio (no login; marketing/projects.js)
 app.use('/api/public/mk-project', require('./routes/mkProjectPublic')); // AI Marketing client projects: the client's private page (signed token, no login; marketing/projects.js)
+app.use('/api/public/feedback', require('./routes/feedbackPublic')); // the candidate / client experience survey (signed token, no login; utils/atsExperience.js)
 app.use('/api/public/mk-review', require('./routes/mkClientReviewPublic')); // AI Marketing client approval link (signed token in the address, no login; marketing/clientReview.js)
 app.use('/api/public/mk-meeting', require('./routes/mkMeetingPublic')); // AI Marketing plans meeting: the automated spoken presentation a client opens from a WhatsApp link (signed token, no login; marketing/meeting.js)
 setTimeout(() => { try { if (!require('./utils/sandbox').isSandbox()) require('./marketing/meetingVoice').prewarm().catch(() => {}); } catch { /* no voice on this server */ } }, 60000).unref(); // the meeting's first sentences are made a minute after start (marketing/meetingVoice.js)
@@ -304,6 +305,7 @@ app.use('/api/job-portal', jobPortalRoutes);
 // The AI calling voice for the Job Portal's AI video interview: this machine only, with the shared portal secret (routes/voiceService.js).
 app.use('/api/voice-service', require('./routes/voiceService'));
 // Client portal + candidate portal (outside logins) and 'Invite to portal'.
+app.use('/api/portal/client/concerns', require('./routes/atsExperience').portalRouter); // a client login raises / follows its concerns (escalation matrix); ahead of routes/portal.js
 app.use('/api/portal', require('./routes/portal'));
 // JOINING & DROP (2026-10-17): the joining record, the drop, the client's replacement decision, the journey, the client history (routes/joinDrop.js).
 app.use('/api/join-drop', require('./routes/joinDrop'));
@@ -422,6 +424,8 @@ app.use('/api/ats-reports', atsReportRoutes);
 app.use('/api/ats-daily', require('./routes/atsDaily'));
 // Team-wise / person-wise reports, day / week / month, with Excel + PDF exports and individual packs (routes/atsReportPack.js).
 app.use('/api/ats-report-pack', require('./routes/atsReportPack'));
+// Candidate experience (surveys, NPS, complaints, apply funnel) and Client health (client NPS, escalations, retention) - routes/atsExperience.js.
+app.use('/api/ats-experience', require('./routes/atsExperience'));
 // Pending work -> the TL (digest, escalation, Remind), the BDE's client work, the end-of-day report.
 app.use('/api/pending-work', require('./routes/pendingWork'));
 // Proof reminder: daily WhatsApp + e-mail to the Accountant (utils/proofReminders.js).
@@ -643,6 +647,7 @@ const server = app.listen(PORT, () => {
   // ATS late-work escalation (owner → TL → Manager), every 15 min, IN-APP
   // only — does nothing until an Admin switches it on (utils/atsEscalation.js).
   require('./utils/atsEscalation').startSweep();
+  require('./routes/atsExperience').startSweep(); // late complaints / client escalations move up a level; the quarterly client survey when switched on
   // Pending-work digest to the TL (10:30), escalation, BDE client-work digest, end-of-day report (18:45):
   // one tick every 5 minutes, each part sent once a day (utils/pendingWork.js).
   require('./utils/pendingWork').startSweep();

@@ -144,6 +144,9 @@ async function recordWorkflowMove({
     console.error('[stageEvents] follow-up bookkeeping failed:', err.message);
   }
 
+  // Experience surveys (interview done / offer released / joining; utils/atsExperience.js): one per event, never fatal.
+  await require('./atsExperience').onStage({ applicationId: existing.id, fromStage: existing.stage, toStage, user }).catch(() => {}); // eslint-disable-line global-require
+
   try {
     // The client's own BDE (named on the CLIENT, not on the job) hears about the moves that concern the client side.
     const audience = await withClientBdesForMove(stageMoveAudience(requirement), requirement, existing.stage, toStage);
