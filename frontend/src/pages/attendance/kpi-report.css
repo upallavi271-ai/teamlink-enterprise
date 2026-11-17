@@ -51,3 +51,18 @@
   .att-kr-head .btn{flex:0 0 auto}
 }
 .att-kr-card.tone-navy{border-left-color:var(--navy);background:var(--paper)}
+/* The biometric list and the punch log, as sections of the same Dashboard (DashboardLists.jsx) */
+.att-kr-jump{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.att-kr-sec,#att-kr-days{scroll-margin-top:64px}
+.att-kr-sec{margin-top:22px;border-top:2px solid var(--line);padding-top:12px}
+.att-kr-sec-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.att-kr-fold{font:inherit;font-size:15px;background:none;border:0;padding:2px 0;cursor:pointer;color:var(--ink);text-align:left}
+.att-kr-fold:hover{color:var(--navy)}
+.att-kr-sec-tools{display:flex;gap:6px;align-items:center;margin-left:auto;flex-wrap:nowrap;flex:0 1 380px}
+.att-kr-sec-tools input[type=search]{flex:1 1 140px;min-width:0;width:auto}
+.att-kr-sec-tools .btn{flex:0 0 auto}
+.att-kr-sec-hint{font-size:12px;line-height:1.55;margin:0 0 8px}
+@media (max-width:640px){
+  .att-kr-sec-tools{margin-left:0;flex:1 1 100%}
+  .att-kr-sec-tools input[type=search]{flex:1 1 100%;max-width:none}
+}

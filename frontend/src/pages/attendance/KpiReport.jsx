@@ -21,6 +21,7 @@ import ScrollTable from '../../components/ScrollTable.jsx';
 import { downloadFrom } from './MyAttendance.jsx';
 import { SourceChips, SourceFilter, PunchToggle, PunchDetails } from '../../components/PunchSourceChip.jsx';
 import { fmtDay, clock12, localToday, addDays, HalfLeaveChip, HalfLeaveSub } from './DayReport.jsx';
+import { BiometricList, PunchLogList } from './DashboardLists.jsx'; // the biometric list and the punch log, on this same Dashboard
 import '../../components/ExportMenu.css';
 import './kpi-report.css';
 
@@ -165,6 +166,8 @@ export default function KpiReport({ onRangeChange, preset = null, onOpenSummary 
   const list = rowsAll.filter((x) => match(x) && (!s || `${x.name} ${x.employeeCode} ${x.department}`.toLowerCase().includes(s)));
   const page = usePaged(list, 50);
 
+  // Typing a From or To date opens exactly that period (the From – To choice), whatever Day / Week / Month was on.
+  const pickDates = (f, t) => { setCustom({ from: f, to: t < f ? f : t }); setMode('range'); setPick(noPick); };
   const choose = (kpi, part = '', note = '', leave = '') => setPick((cur) => (cur.kpi === kpi && cur.part === part && cur.note === note && cur.leave === leave ? noPick : { kpi, part, note, leave }));
   const noPick = { kpi: '', part: '', note: '', leave: '' };
 
@@ -235,16 +238,7 @@ export default function KpiReport({ onRangeChange, preset = null, onOpenSummary 
             <button key={k} type="button" className={`btn btn-sm${mode === k ? ' btn-primary' : ''}`} onClick={() => { if (k === 'range') setCustom({ from, to }); setMode(k); setPick(noPick); }}>{l}</button>
           ))}
         </div>
-        {mode === 'range' ? (
-          <div className="att-kr-nav">
-            <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0 }}>From
-              <input type="date" value={custom.from} max={custom.to} onChange={(e) => e.target.value && setCustom((c0) => ({ from: e.target.value, to: c0.to < e.target.value ? e.target.value : c0.to }))} aria-label="From date" />
-            </label>
-            <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0 }}>To
-              <input type="date" value={custom.to} min={custom.from} onChange={(e) => e.target.value && setCustom((c0) => ({ ...c0, to: e.target.value }))} aria-label="To date" />
-            </label>
-          </div>
-        ) : (
+        {mode !== 'range' && (
           <div className="att-kr-nav">
             <button type="button" className="btn btn-sm" aria-label="Previous" onClick={() => setAnchor(step(mode, anchor, -1))}>◀</button>
             {mode === 'month'
@@ -254,6 +248,15 @@ export default function KpiReport({ onRangeChange, preset = null, onOpenSummary 
             {anchor !== localToday() && <button type="button" className="btn btn-sm" onClick={() => setAnchor(localToday())}>Today</button>}
           </div>
         )}
+        {/* FROM – TO IS ALWAYS ON SCREEN (founder 2026-11-17): the two dates show the period being looked at; changing either one opens that exact period. */}
+        <div className="att-kr-nav att-kr-fromto">
+          <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0 }}>From
+            <input type="date" value={from} max={to} onChange={(e) => e.target.value && pickDates(e.target.value, to)} aria-label="From date" />
+          </label>
+          <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0 }}>To
+            <input type="date" value={to} min={from} onChange={(e) => e.target.value && pickDates(from, e.target.value)} aria-label="To date" />
+          </label>
+        </div>
         <span className="att-kr-range">{rangeLabel(mode, from, to)}</span>
       </div>
 
@@ -265,6 +268,13 @@ export default function KpiReport({ onRangeChange, preset = null, onOpenSummary 
       </div>
 
       <SourceFilter value={src} onChange={(v) => { setSrc(v); setPick(noPick); }} totals={data?.facets?.punchSource} />
+      {/* ONE DASHBOARD (founder 2026-11-17): three lists below follow this one filter bar - one click to jump to each. */}
+      <div className="att-kr-jump" aria-label="Lists on this dashboard">
+        <span className="small-muted">On this page:</span>
+        {[['att-kr-days', 'Day-by-day status'], ['att-biometric', 'Biometric list'], ['att-punchlog', 'Punch log']].map(([id, label]) => (
+          <button key={id} type="button" className="att-kr-part" onClick={() => { const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>{label}</button>
+        ))}
+      </div>
       {error && <div className="notice red">{error}</div>}
       {!data && !error && <div className="small-muted">Loading…</div>}
 
@@ -349,7 +359,7 @@ export default function KpiReport({ onRangeChange, preset = null, onOpenSummary 
             {data.workedOnOff ? <> <b>{data.workedOnOff}</b> worked on a week off / holiday (counted in Present etc., tagged in the list).</> : null}
           </div>
 
-          <div className="att-kr-list">
+          <div className="att-kr-list" id="att-kr-days">
             <div className="att-kr-list-head">
               <b>{listTitle}</b> <span className="small-muted">— {list.length} {list.length === 1 ? 'day' : 'days'}</span>
               {pick.kpi && <button type="button" className="btn btn-sm" onClick={() => setPick(noPick)}>Show all days</button>}
@@ -385,6 +395,10 @@ export default function KpiReport({ onRangeChange, preset = null, onOpenSummary 
           </div>
         </>
       )}
+
+      {/* The biometric list and the punch log: same period, department, employee, method and source as everything above. */}
+      <BiometricList from={from} to={to} dept={dept} emp={emp} empCode={emp ? empCode() : ''} how={how} src={src} />
+      <PunchLogList from={from} to={to} dept={dept} emp={emp} how={how} src={src} />
     </div>
   );
 }
