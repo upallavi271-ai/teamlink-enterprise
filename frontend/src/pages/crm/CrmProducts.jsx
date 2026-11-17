@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateTimeOf } from './crmShared.jsx'; // eslint-disable-line import/no-cycle
-import { VideoStudio, SingleUpload } from './CrmProductVideo.jsx'; // eslint-disable-line import/no-cycle
+import { VideoStudio, SingleUpload, VideosSection } from './CrmProductVideo.jsx'; // eslint-disable-line import/no-cycle
 
 const copy = async (text, toast, words) => {
   try { await navigator.clipboard.writeText(text); toast(words || 'Copied.'); } catch { window.prompt('Copy this:', text); } // eslint-disable-line no-alert
@@ -258,37 +258,6 @@ function SalesFunnel() {
   );
 }
 
-// the 4th card (founder 2026-11-17 "add 4th card"): the full all-products video, the original of the last all-products upload saved.
-// Not a product: no prices, not in leads, quotes or the funnel. "Show on demo pages" (off by default) puts it under the product clips.
-const mmss = (n) => { const v = Math.round(Number(n) || 0); return `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`; };
-function FullVideoCard({ canEdit, onWatch, refreshKey }) {
-  const { toast } = useCrm();
-  const [fv, setFv] = useState(undefined);
-  const load = () => api.get('/crm/products-settings').then((r) => setFv(r.data.settings.fullVideo || null)).catch(() => setFv(null));
-  useEffect(load, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (!fv) return null;
-  const watch = () => api.get('/crm/products/FULL/watch').then((r) => onWatch(r.data)).catch((e) => toast(errOf(e, 'The video could not be opened.')));
-  async function show(on) {
-    try { const r = await api.put('/crm/products-settings', { fullVideoShowOnDemo: on }); setFv(r.data.settings.fullVideo); toast(on ? 'Leads now see "Watch the full demo" under the product clips.' : 'Taken off the demo pages.'); } catch (e) { toast(errOf(e, 'This could not be saved.')); }
-  }
-  return (
-    <div className="card" style={{ padding: 14 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <h3 style={{ margin: 0, fontSize: 16, flex: 1 }}>{fv.title}</h3>
-        <span className="status approved">{fv.duration ? mmss(fv.duration) : 'Video ready'}</span>
-      </div>
-      <div className="small-muted" style={{ margin: '4px 0 8px' }}>{fv.description}</div>
-      <div className="small-muted" style={{ fontSize: 12 }}>Every product in one video, as uploaded. Not a product: no prices, not in quotes. Uploading a newer all-products video replaces it.</div>
-      <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={watch}>▶ Watch video</button>
-      {canEdit && (
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 10, fontSize: 13 }}>
-          <input type="checkbox" checked={!!fv.showOnDemo} onChange={(e) => show(e.target.checked)} style={{ width: 'auto' }} /> Show on demo pages (as “Watch the full demo”)
-        </label>
-      )}
-    </div>
-  );
-}
-
 const lines = (a) => (a || []).join('\n');
 export function ProductCatalog() {
   const { me, toast } = useCrm();
@@ -337,24 +306,12 @@ export function ProductCatalog() {
             <ul style={{ margin: '0 0 8px 18px', padding: 0, fontSize: 13 }}>{(p.features || []).slice(0, 5).map((f, i) => <li key={i}>{f}</li>)}{(p.features || []).length > 5 && <li className="small-muted">+{p.features.length - 5} more</li>}</ul>
             <div style={{ fontSize: 13 }}>{(p.plans || []).map((x) => <div key={x.name}><b>{x.name}</b>: {x.price ? `${x.price} ${x.unit || ''}` : <span className="small-muted">price on request</span>}</div>)}</div>
             {p.hasVideo && <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 10, marginRight: 6 }} onClick={() => play(p)}>▶ Watch video</button>}
-            {(p.extraVideos || []).length > 0 && (
-              <div style={{ marginTop: 8, fontSize: 13 }}>
-                <div className="small-muted">More videos</div>
-                {p.extraVideos.map((x, n) => (
-                  <div key={`${x.file}${n}`} style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '3px 0' }}>
-                    <span style={{ flex: 1 }}>{x.title}</span>
-                    <button type="button" className="btn btn-sm" onClick={() => api.get(`/crm/products/${p.key}/watch`, { params: { extra: n } }).then((r) => setWatch(r.data)).catch((e) => toast(errOf(e, 'The video could not be opened.')))}>▶</button>
-                    {canEdit && <button type="button" className="btn btn-sm" aria-label={`Remove ${x.title}`} onClick={() => { if (window.confirm(`Remove "${x.title}" from ${p.name}?`)) api.delete(`/crm/products/${p.key}/videos/${n}`).then(load).catch((e) => toast(errOf(e, 'This did not work.'))); }}>✕</button>} {/* eslint-disable-line no-alert */}
-                  </div>
-                ))}
-              </div>
-            )}
             {canEdit && <SingleUpload product={p} onDone={() => setVidKey((n) => n + 1)} />}
             {canEdit && <button type="button" className="btn btn-sm" style={{ marginTop: 10 }} onClick={() => setEdit({ ...p, featuresText: lines(p.features), plans: (p.plans || []).length ? p.plans : [{ name: 'Starter', price: '', unit: 'per user / month', includes: '' }] })}>Edit</button>}
           </div>
         ))}
-        <FullVideoCard canEdit={canEdit} onWatch={setWatch} refreshKey={vidKey} />
       </div>
+      <VideosSection canEdit={canEdit} onWatch={setWatch} refreshKey={vidKey} />
       <SalesFunnel />
       {canEdit && <SalesSettings />}
       {watch && (

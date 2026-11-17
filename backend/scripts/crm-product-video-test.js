@@ -165,33 +165,39 @@ async function until(token, id, statuses, ms = 120000) {
   check('22 Save: Omni-Channel plays its own new clip', j2d && j2d.status === 'done' && /^OMNI-/.test(o2.videoFile || '') && Math.abs(durationOf(path.join(VID, o2.videoFile)) - 12) < 1.5, { j: j2d && [j2d.status, j2d.error], f: o2.videoFile });
   const list = await call('GET', '/crm/product-videos', null, tA);
   check('23 the uploads list shows both, newest first', list.status === 200 && list.body.jobs.length >= 2 && list.body.jobs[0].id === s2.body.id);
-  // ---- the 4th card: the full all-products video (founder 2026-11-17 "add 4th card")
-  const fv1 = (await call('GET', '/crm/products-settings', null, tA)).body.settings.fullVideo;
-  check('24a saving the all-products upload makes the full-video card: its original, a line from its narration, its length, off the demo pages', fv1 && fv1.jobId === id && fv1.title === 'TeamLink — all products (full demo)' && /TeamLink Enterprise, module by module/.test(fv1.description) && Math.abs(fv1.duration - 64) < 1 && fv1.showOnDemo === false, fv1);
-  const wf = await call('GET', '/crm/products/FULL/watch', null, tA);
+  // ---- Our products > Videos: every upload is a card (founder 2026-11-17)
+  const cardsNow = async () => (await call('GET', '/crm/video-cards', null, tA)).body.cards || [];
+  const c1 = await cardsNow();
+  const fullC = c1.find((c) => c.kind === 'full' && c.jobId === id);
+  const origC = c1.find((c) => c.kind === 'original' && c.productKey === 'OMNI');
+  check('24a every upload is a card: the all-products video whole ("All products", its length, who uploaded it; short, so on demo pages) and the Omni-Channel upload whole (off: its clip already shows); newest first',
+    fullC && fullC.belongsTo === 'All products' && Math.abs(fullC.duration - 64) < 1 && fullC.uploadedByName && fullC.showOnDemo === true && origC && origC.showOnDemo === false && /Omni/.test(origC.belongsTo) && c1.indexOf(origC) < c1.indexOf(fullC), c1);
+  const wf = await call('GET', `/crm/video-cards/${fullC.id}/watch`, null, tA);
   const wfs = wf.body.url ? (await fetch(`http://localhost:${PORT}${wf.body.url}`, { headers: { Range: 'bytes=0-99' } })).status : 0;
-  check('24b ▶ Watch video on the card streams the whole original (in parts)', wf.status === 200 && wfs === 206, [wf.body, wfs]);
+  check('24b ▶ Watch on a card streams the whole video (in parts)', wf.status === 200 && wfs === 206, [wf.body, wfs]);
   const FL = await call('POST', '/crm/leads', { company: `ZZTEST PV Full ${process.pid}`, contactName: 'Full Lead', source: 'Website' }, tA);
   await call('POST', `/crm/leads/${FL.body.lead.id}/products`, { products: ['HRMS'] }, tA);
   const fdm = await call('POST', `/crm/leads/${FL.body.lead.id}/demo`, { channel: 'link' }, tA);
   const fdt = fdm.body.url.split('/').pop();
-  const offPage = await fetch(fdm.body.url).then((r) => r.text());
-  const offVid = await fetch(`${API}/crm-public/demo/${fdt}/full-video`);
-  check('24c off (the default): the demo page has no full demo, and its video link gives nothing', !/Watch the full demo/.test(offPage) && offVid.status === 404, offVid.status);
-  await call('PUT', '/crm/products-settings', { fullVideoShowOnDemo: true }, tA);
   const onPage = await fetch(fdm.body.url).then((r) => r.text());
-  const onVid = await fetch(`${API}/crm-public/demo/${fdt}/full-video`, { headers: { Range: 'bytes=0-9' } });
-  check('24d "Show on demo pages" on: "Watch the full demo (1 min)" under the product clips, and it streams', /Watch the full demo \(1 min\)/.test(onPage) && onPage.indexOf('Watch the full demo') > onPage.indexOf('TeamLink HRMS') && onVid.status === 206, onVid.status);
-  await call('PUT', '/crm/products-settings', { autoDemo: true, paymentText: 'UPI: x@bank' }, tA);
-  const fv2 = (await call('GET', '/crm/products-settings', null, tA)).body.settings.fullVideo;
-  check('24e saving other settings keeps the card and its "show" choice', fv2 && fv2.jobId === id && fv2.showOnDemo === true, fv2);
-  const prodKeys = (await call('GET', '/crm/products?all=1', null, tA)).body.products.map((p) => p.key);
-  check('24f the card is not a product: no FULL in the products (leads, quotes, the funnel, the AI meeting)', !prodKeys.includes('FULL'), prodKeys);
+  const onVid = await fetch(`${API}/crm-public/demo/${fdt}/card/${fullC.id}`, { headers: { Range: 'bytes=0-9' } });
+  const omniVid = await fetch(`${API}/crm-public/demo/${fdt}/card/${origC.id}`);
+  check('24c on the demo page: "Watch the full demo (1 min)" under the product clips, it streams; the Omni-Channel video (off, another product) is not given', /Watch the full demo \(1 min\)/.test(onPage) && onPage.indexOf('Watch the full demo') > onPage.indexOf('TeamLink HRMS') && onVid.status === 206 && omniVid.status === 404, [onVid.status, omniVid.status]);
+  const off = await call('PUT', `/crm/video-cards/${fullC.id}`, { showOnDemo: false }, tA);
+  const offPage = await fetch(fdm.body.url).then((r) => r.text());
+  const offVid = await fetch(`${API}/crm-public/demo/${fdt}/card/${fullC.id}`);
+  check('24d "Show on demo pages" off: gone from the demo page, its link gives nothing', off.status === 200 && !/Watch the full demo/.test(offPage) && offVid.status === 404, offVid.status);
+  await call('PUT', `/crm/video-cards/${fullC.id}`, { showOnDemo: true }, tA);
+  const rn = await call('PUT', `/crm/video-cards/${fullC.id}`, { title: 'TeamLink - all products (full demo)' }, tA);
+  const rnBad = await call('PUT', `/crm/video-cards/${fullC.id}`, { title: '   ' }, tA);
+  const rnNo = await call('PUT', `/crm/video-cards/${fullC.id}`, { title: 'x' }, tP);
+  check('24e a manager renames a card (not to nothing); others cannot', rn.status === 200 && rn.body.card.title === 'TeamLink - all products (full demo)' && rnBad.status === 400 && rnNo.status === 403, [rn.status, rnBad.status, rnNo.status]);
+  const prodKeys = (await call('GET', '/crm/products?all=1', null, tA)).body.products.map((x) => x.key);
+  check('24f a video card is not a product (leads, quotes, the funnel, the AI meeting list unchanged)', !prodKeys.some((k) => ['FULL', 'CARD', 'COMPANY'].includes(k)), prodKeys);
   const jl = (await call('GET', '/crm/product-videos', null, tA)).body.jobs.find((j) => j.id === id);
-  check('24g the uploads list says this upload is what the card plays (so ✕ can ask)', jl && jl.usedByCard === true, jl);
+  check('24g the uploads list knows a card plays this upload (so ✕ asks first)', jl && jl.usedByCard === true, jl);
   const del = await call('DELETE', `/crm/product-videos/${id}`, null, tA);
-  const fv3 = (await call('GET', '/crm/products-settings', null, tA)).body.settings.fullVideo;
-  check('24 removing the upload but keeping the card: the live clips stay, and so does the original the card plays', del.status === 200 && fs.existsSync(hFile) && fs.existsSync(path.join(VID, 'sources', `${id}.mp4`)) && fv3 && fv3.jobId === id, del.body);
+  check('24 removing the upload but keeping its card: the live clips stay, the original stays, the card stays', del.status === 200 && fs.existsSync(hFile) && fs.existsSync(path.join(VID, 'sources', `${id}.mp4`)) && (await cardsNow()).some((c) => c.id === fullC.id), del.body);
 
   // ==== any video, any time (founder 2026-11-17: "whatever video we want to upload in future") ====
   const upload = async (buf, body) => {
@@ -230,8 +236,8 @@ async function until(token, id, statuses, ms = 120000) {
   await until(tA, again.id, ['done', 'failed'], 120000);
   const acc = (await call('GET', '/crm/products?all=1', null, tA)).body.products.find((p) => p.key === 'ACCOUNTS');
   check('28 Save: the new product has its clip and its text', /^ACCOUNTS-/.test(acc.videoFile || '') && acc.about === 'Accounts from the video.' && fs.existsSync(path.join(VID, acc.videoFile)), acc);
-  const fv4 = (await call('GET', '/crm/products-settings', null, tA)).body.settings.fullVideo;
-  check('28b a newer all-products upload saved: the card plays it now (still shown on demo pages as chosen)', fv4 && fv4.jobId === again.id && fv4.showOnDemo === true, fv4);
+  const c2 = await cardsNow();
+  check('28b the all-products video uploaded again is a new card too, first in the list (the earlier one stays)', c2[0] && c2[0].jobId === again.id && c2[0].kind === 'full' && c2.some((c) => c.id === fullC.id), c2.map((c) => [c.kind, c.jobId]));
 
   // another video for a product, next to its demo
   const hMain = (await call('GET', '/crm/products?all=1', null, tA)).body.products.find((p) => p.key === 'HRMS').videoFile;
@@ -240,38 +246,37 @@ async function until(token, id, statuses, ms = 120000) {
   await call('POST', `/crm/product-videos/${ex.id}/apply`, { draft: { products: { HRMS: ex.job.draft.products.HRMS }, title: 'Payroll walk-through' }, use: { HRMS: { video: true, text: true } } }, tA);
   await until(tA, ex.id, ['done', 'failed'], 120000);
   const h2 = (await call('GET', '/crm/products?all=1', null, tA)).body.products.find((p) => p.key === 'HRMS');
-  check('30 Save: HRMS keeps its demo and gets "Payroll walk-through" under it (its text is not rewritten)', h2.videoFile === hMain && h2.extraVideos.length === 1 && h2.extraVideos[0].title === 'Payroll walk-through' && h2.about === 'HRMS from the video.', { v: h2.videoFile, x: h2.extraVideos, a: h2.about });
+  const xC = (await cardsNow()).find((c) => c.kind === 'extra' && c.productKey === 'HRMS');
+  check('30 Save: HRMS keeps its demo clip; "Payroll walk-through" is a card for HRMS, on demo pages (short); the HRMS text is not rewritten', h2.videoFile === hMain && xC && xC.title === 'Payroll walk-through' && xC.showOnDemo === true && h2.about === 'HRMS from the video.', { v: h2.videoFile, xC, a: h2.about });
   // the company video
   const co = await upload(one, { kind: 'company', name: 'about-us.webm', title: 'About TeamLink Consultants' });
   await call('POST', `/crm/product-videos/${co.id}/apply`, { draft: { products: { COMPANY: co.job.draft.products.COMPANY }, title: 'About TeamLink Consultants' }, use: { COMPANY: { video: true } } }, tA);
   await until(tA, co.id, ['done', 'failed'], 120000);
-  const cst = (await call('GET', '/crm/products-settings', null, tA)).body.settings;
-  check('31 a company video: saved for the top of every demo page', /^COMPANY-/.test(cst.companyVideoFile || '') && cst.companyVideoTitle === 'About TeamLink Consultants', st);
+  const cC = (await cardsNow()).find((c) => c.kind === 'company');
+  check('31 a company video is a card ("Company"), on demo pages by default', cC && cC.title === 'About TeamLink Consultants' && cC.belongsTo === 'Company' && cC.showOnDemo === true, cC);
   // what a lead sees
   const L = await call('POST', '/crm/leads', { company: `ZZTEST PV ${process.pid}`, contactName: 'Pv Lead', phone: `91${String(Date.now()).slice(-8)}`, source: 'Website' }, tA);
   await call('POST', `/crm/leads/${L.body.lead.id}/products`, { products: ['HRMS', 'ACCOUNTS'] }, tA);
   const dm = await call('POST', `/crm/leads/${L.body.lead.id}/demo`, { channel: 'link' }, tA);
   const dt = dm.body.url.split('/').pop();
   const page = await fetch(dm.body.url).then((r) => r.text());
-  const xv = await fetch(`${API}/crm-public/demo/${dt}/xvideo/HRMS/0`, { headers: { Range: 'bytes=0-9' } });
-  const cv = await fetch(`${API}/crm-public/demo/${dt}/company-video`, { headers: { Range: 'bytes=0-9' } });
-  const xo = await fetch(`${API}/crm-public/demo/${dt}/xvideo/OMNI/0`);
-  check('32 the demo page: the company video first, HRMS with "More videos", the new product Accounts; videos stream; another product\'s video is not given', /About TeamLink Consultants/.test(page) && /More videos/.test(page) && /Payroll walk-through/.test(page) && /TeamLink Accounts/.test(page) && xv.status === 206 && cv.status === 206 && xo.status === 404, [xv.status, cv.status, xo.status, /About TeamLink Consultants/.test(page), /More videos/.test(page), /Payroll walk-through/.test(page), /TeamLink Accounts/.test(page), (page.match(/<h2>[^<]*<\/h2>/g) || []).slice(0, 8)]);
-  const wc = await call('GET', '/crm/products/COMPANY/watch', null, tA);
-  const wx = await call('GET', '/crm/products/HRMS/watch?extra=0', null, tA);
+  const xv = await fetch(`${API}/crm-public/demo/${dt}/card/${xC.id}`, { headers: { Range: 'bytes=0-9' } });
+  const cv = await fetch(`${API}/crm-public/demo/${dt}/card/${cC.id}`, { headers: { Range: 'bytes=0-9' } });
+  const xo = await fetch(`${API}/crm-public/demo/${dt}/card/${origC.id}`);
+  check('32 the demo page: the company video first, HRMS with "More videos", the new product Accounts, the full demos at the bottom; videos stream; another product\'s video is not given',
+    /About TeamLink Consultants/.test(page) && page.indexOf('About TeamLink Consultants') < page.indexOf('TeamLink HRMS') && /More videos/.test(page) && /Payroll walk-through/.test(page) && /TeamLink Accounts/.test(page) && page.lastIndexOf('Watch the full demo') > page.indexOf('TeamLink Accounts') && xv.status === 206 && cv.status === 206 && xo.status === 404, [xv.status, cv.status, xo.status]);
+  const wc = await call('GET', `/crm/video-cards/${cC.id}/watch`, null, tA);
   const wcs = wc.body.url ? (await fetch(`http://localhost:${PORT}${wc.body.url}`, { headers: { Range: 'bytes=0-9' } })).status : 0;
-  const wxs = wx.body.url ? (await fetch(`http://localhost:${PORT}${wx.body.url}`, { headers: { Range: 'bytes=0-9' } })).status : 0;
-  check('33 the team can watch the company video and the other videos from Our products', wcs === 206 && wxs === 206, [wc.body, wx.body, wcs, wxs]);
-  const rmx = await call('DELETE', '/crm/products/HRMS/videos/0', null, tA);
-  await call('PUT', '/crm/products-settings', { companyVideoFile: '' }, tA);
-  const h3 = (await call('GET', '/crm/products?all=1', null, tA)).body.products.find((p) => p.key === 'HRMS');
-  const st2 = (await call('GET', '/crm/products-settings', null, tA)).body.settings;
+  check('33 the team watches any card from Our products', wcs === 206, [wc.body, wcs]);
+  const rmx = await call('DELETE', `/crm/video-cards/${xC.id}`, null, tA);
+  const rmcC = await call('DELETE', `/crm/video-cards/${cC.id}`, null, tA);
   const page2 = await fetch(dm.body.url).then((r) => r.text());
-  check('34 remove: the other video and the company video come off the demo page', rmx.status === 200 && h3.extraVideos.length === 0 && !st2.companyVideoFile && !/More videos/.test(page2) && !/About TeamLink Consultants/.test(page2), [rmx.status, h3.extraVideos, st2.companyVideoFile]);
+  check('34 ✕ Remove: the other video and the company video come off the demo page; their files go (nothing else uses them); the HRMS clip stays', rmx.status === 200 && rmx.body.file === 'deleted' && rmcC.status === 200 && !/More videos/.test(page2) && !/About TeamLink Consultants/.test(page2) && fs.existsSync(path.join(VID, hMain)), [rmx.body, rmcC.body]);
   const rmc = await call('DELETE', `/crm/product-videos/${again.id}?removeCard=1`, null, tA);
-  const fv5 = (await call('GET', '/crm/products-settings', null, tA)).body.settings.fullVideo;
-  const page3 = await fetch(dm.body.url).then((r) => r.text());
-  check('35 removing the upload WITH the card: the card is gone, its original is deleted, the demo page has no full demo', rmc.status === 200 && !fv5 && !fs.existsSync(path.join(VID, 'sources', `${again.id}.mp4`)) && !/Watch the full demo/.test(page3), [rmc.status, fv5]);
+  const c3 = await cardsNow();
+  check('35 removing an upload WITH its card: the card is gone and its original deleted; the other full video stays', rmc.status === 200 && !c3.some((c) => c.jobId === again.id) && !fs.existsSync(path.join(VID, 'sources', `${again.id}.mp4`)) && c3.some((c) => c.id === fullC.id), [rmc.status, c3.map((c) => c.jobId)]);
+  const rmFull = await call('DELETE', `/crm/video-cards/${fullC.id}`, null, tA);
+  check('36 removing the last card of an upload that was removed earlier: now its original goes too', rmFull.status === 200 && !fs.existsSync(path.join(VID, 'sources', `${id}.mp4`)), rmFull.body);
 
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);

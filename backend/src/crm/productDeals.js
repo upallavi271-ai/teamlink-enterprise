@@ -33,7 +33,7 @@ const nowIso = () => new Date().toISOString();
 const ist = (ms = Date.now()) => new Date(ms + 5.5 * 3600000);
 
 // ---- settings ----------------------------------------------------------------------------------------------------------------
-const DEFAULTS = { autoDemo: true, waTemplate: '', waTemplateLang: 'en', paymentText: '', paymentLink: '', quoteValidityDays: 30, companyVideoFile: '', companyVideoTitle: '', fullVideo: null };
+const DEFAULTS = { autoDemo: true, waTemplate: '', waTemplateLang: 'en', paymentText: '', paymentLink: '', quoteValidityDays: 30, companyVideoFile: '', companyVideoTitle: '', cardsFilled: false };
 async function settings() {
   await ensure();
   const [r] = await prisma.$queryRawUnsafe('SELECT "json" FROM "CrmProductSettings" WHERE "id" = \'main\'');
@@ -53,7 +53,7 @@ async function saveSettings(user, body = {}) {
     companyVideoFile: body.companyVideoFile === '' ? '' : cur.companyVideoFile, // only cleared from the screen; set by an upload (crm/productVideo.js)
     companyVideoTitle: t(body.companyVideoTitle, 120) ?? cur.companyVideoTitle,
     // the full all-products video card (founder 2026-11-17): set by saving an all-products upload; here only "show on demo pages" and remove
-    fullVideo: body.fullVideoRemove ? null : (cur.fullVideo ? { ...cur.fullVideo, showOnDemo: body.fullVideoShowOnDemo === undefined ? !!cur.fullVideo.showOnDemo : !!body.fullVideoShowOnDemo } : null),
+    cardsFilled: !!cur.cardsFilled, // crm/videoCards.js filled the cards from the uploads once
   };
   if (next.paymentLink && !/^https:\/\//i.test(next.paymentLink)) return S.fail(400, 'The payment link must start with https://');
   await prisma.$executeRawUnsafe('INSERT INTO "CrmProductSettings" ("id","json","updatedAt") VALUES (\'main\',?,?) ON CONFLICT("id") DO UPDATE SET "json" = excluded."json", "updatedAt" = excluded."updatedAt"', JSON.stringify(next), nowIso());
@@ -68,12 +68,9 @@ async function setCompanyVideo(file, title) {
   await prisma.$executeRawUnsafe('INSERT INTO "CrmProductSettings" ("id","json","updatedAt") VALUES (\'main\',?,?) ON CONFLICT("id") DO UPDATE SET "json" = excluded."json", "updatedAt" = excluded."updatedAt"', JSON.stringify(next), nowIso());
 }
 
-// the full all-products video (the uploaded original of the last all-products video saved): { jobId, file, title, description, duration, showOnDemo }
-async function setFullVideo(fv) {
-  const cur = await settings();
-  const next = { ...cur, fullVideo: fv ? { showOnDemo: !!(cur.fullVideo && cur.fullVideo.showOnDemo), ...fv, setAt: nowIso() } : null };
+async function markCardsFilled() {
+  const next = { ...(await settings()), cardsFilled: true };
   await prisma.$executeRawUnsafe('INSERT INTO "CrmProductSettings" ("id","json","updatedAt") VALUES (\'main\',?,?) ON CONFLICT("id") DO UPDATE SET "json" = excluded."json", "updatedAt" = excluded."updatedAt"', JSON.stringify(next), nowIso());
-  return next.fullVideo;
 }
 
 // ---- a new lead gets the demo by itself ------------------------------------------------------------------------------------------
@@ -364,4 +361,4 @@ async function funnel(user, days = 90) {
   return S.okBody({ days: Number(days) || 90, rows });
 }
 
-module.exports = { ensure, settings, saveSettings, setCompanyVideo, setFullVideo, guessProducts, onNewLead, priceQuote, makeQuote, quoteByStaff, quoteByMeeting, quoteFor, decideQuote, quotesOf, requestTrial, slots, book, funnel };
+module.exports = { ensure, settings, saveSettings, setCompanyVideo, markCardsFilled, guessProducts, onNewLead, priceQuote, makeQuote, quoteByStaff, quoteByMeeting, quoteFor, decideQuote, quotesOf, requestTrial, slots, book, funnel };

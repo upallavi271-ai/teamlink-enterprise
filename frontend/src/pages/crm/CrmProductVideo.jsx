@@ -104,7 +104,7 @@ export function VideoStudio({ onSaved, refreshKey, products }) {
       if (what === 'delete') {
         if (!window.confirm(`Remove the upload "${j.fileName}"? Clips already live stay as they are.`)) return; // eslint-disable-line no-alert
         // this upload is what the full-video card plays: ask whether the card goes too (Cancel keeps the card and its file)
-        const card = j.usedByCard && window.confirm('This upload is also the full all-products video card on Our products. Remove that card too?\n\nOK = remove the card as well\nCancel = keep the card playing it'); // eslint-disable-line no-alert
+        const card = j.usedByCard && window.confirm('This upload is also shown under Videos on Our products. Remove that video too?\n\nOK = remove it from Videos as well\nCancel = keep it in Videos'); // eslint-disable-line no-alert
         await api.delete(`/crm/product-videos/${j.id}`, { params: card ? { removeCard: 1 } : {} });
         if (onSaved) onSaved();
       }
@@ -120,13 +120,6 @@ export function VideoStudio({ onSaved, refreshKey, products }) {
         <button type="button" className="btn btn-primary" disabled={!!up} onClick={() => input.current && input.current.click()}>⬆ Upload one video with all products</button>
         <button type="button" className="btn" disabled={!!up} onClick={() => companyInput.current && companyInput.current.click()}>⬆ Company / general video</button>
       </div>
-      {company && company.companyVideoFile && (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0', fontSize: 13 }}>
-          <span>On every demo page now: <b>{company.companyVideoTitle || 'Company video'}</b></span>
-          <button type="button" className="btn btn-sm" onClick={watchCompany}>▶ Watch</button>
-          <button type="button" className="btn btn-sm" onClick={removeCompany}>Remove</button>
-        </div>
-      )}
       <div className="small-muted" style={{ fontSize: 12, margin: '6px 0' }}>Upload as often as you like: MP4, MOV, M4V, WebM, MKV or AVI, up to 3 GB. For a video with all products, the server listens to the narration, finds where each product is (also products you add later, by their name) and writes each product's text from what is said about it. You review it all before anything changes. On each product's card: replace its demo video, or add another video for it (a feature walk-through, a customer story). “+ Add product” below adds something new to sell.</div>
       {up && (
         <div style={{ margin: '8px 0' }}>
@@ -296,5 +289,59 @@ function DraftEditor({ id, onClose, onSaved, nameOf }) {
         </div>
       )}
     </Modal>
+  );
+}
+
+// ---- OUR PRODUCTS > VIDEOS (founder 2026-11-17: "every video uploaded shows as a card under the product cards") ----------------------
+// One card per video, newest first: the all-products videos (whole), the company video, each product's other videos and its own originals.
+// Title (rename), length, when and by whom, what it belongs to, ▶ Watch, "Show on demo pages", ✕ Remove (asks; the file stays while anything
+// else uses it). Not products: leads, quotes, the funnel and the AI meeting's product list do not change.
+const KIND_WORD = { full: 'All products - full video', company: 'Company video', extra: 'Another video', original: 'Full original' };
+export function VideosSection({ canEdit, onWatch, refreshKey }) {
+  const { toast } = useCrm();
+  const [cards, setCards] = useState(null);
+  const load = () => api.get('/crm/video-cards').then((r) => setCards(r.data.cards || [])).catch(() => setCards([]));
+  useEffect(() => { load(); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!cards || !cards.length) return null;
+  const watch = (c) => api.get(`/crm/video-cards/${c.id}/watch`).then((r) => onWatch(r.data)).catch((e) => toast(errOf(e, 'The video could not be opened.')));
+  async function change(c, body, words) {
+    try { await api.put(`/crm/video-cards/${c.id}`, body); if (words) toast(words); load(); } catch (e) { toast(errOf(e, 'This could not be saved.')); }
+  }
+  function rename(c) {
+    const t = window.prompt('Title of this video:', c.title); // eslint-disable-line no-alert
+    if (t && t.trim() && t.trim() !== c.title) change(c, { title: t.trim() }, 'Renamed.');
+  }
+  async function remove(c) {
+    if (!window.confirm(`Remove the video "${c.title}"? Leads stop seeing it. The product demo clips stay as they are.`)) return; // eslint-disable-line no-alert
+    try { await api.delete(`/crm/video-cards/${c.id}`); toast('Removed.'); load(); } catch (e) { toast(errOf(e, 'This could not be removed.')); }
+  }
+  return (
+    <div style={{ marginTop: 18 }}>
+      <h3 style={{ margin: '0 0 4px' }}>Videos</h3>
+      <div className="small-muted" style={{ fontSize: 12, marginBottom: 10 }}>Every video uploaded, newest first. “Show on demo pages” puts it on the leads' demo page: the company video at the top, a product's videos under that product, full all-products videos at the bottom.</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 12 }}>
+        {cards.map((c) => (
+          <div key={c.id} className="card" style={{ padding: 14, opacity: c.available ? 1 : 0.6 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <h4 style={{ margin: 0, fontSize: 15, flex: 1, wordBreak: 'break-word' }}>{c.title}</h4>
+              <span className="status approved">{c.duration ? mmss(c.duration).replace(/\.\d$/, '') : 'Video'}</span>
+            </div>
+            <div className="small-muted" style={{ fontSize: 12.5, margin: '4px 0' }}>{c.belongsTo} · {KIND_WORD[c.kind] || c.kind}</div>
+            <div className="small-muted" style={{ fontSize: 12 }}>Uploaded {dateTimeOf(c.uploadedAt || c.createdAt)}{c.uploadedByName ? ` by ${c.uploadedByName}` : ''}</div>
+            {!c.available && <div className="small-muted" style={{ fontSize: 12, color: 'var(--red)' }}>The file is not on the server any more.</div>}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+              <button type="button" className="btn btn-primary btn-sm" disabled={!c.available} onClick={() => watch(c)}>▶ Watch</button>
+              {canEdit && <button type="button" className="btn btn-sm" onClick={() => rename(c)}>Rename</button>}
+              {canEdit && <button type="button" className="btn btn-sm" onClick={() => remove(c)} aria-label={`Remove ${c.title}`}>✕ Remove</button>}
+            </div>
+            {canEdit ? (
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 10, fontSize: 13 }}>
+                <input type="checkbox" checked={!!c.showOnDemo} onChange={(e) => change(c, { showOnDemo: e.target.checked }, e.target.checked ? 'Leads see it on their demo page now.' : 'Taken off the demo pages.')} style={{ width: 'auto' }} /> Show on demo pages
+              </label>
+            ) : <div className="small-muted" style={{ fontSize: 12, marginTop: 8 }}>{c.showOnDemo ? 'Shown on demo pages' : 'Not on demo pages'}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

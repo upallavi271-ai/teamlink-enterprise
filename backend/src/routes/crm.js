@@ -111,6 +111,12 @@ router.get('/product-videos/:id', wrap((req) => PV.jobDetail(req.user, req.param
 router.post('/product-videos/:id/apply', wrap((req) => PV.applyDraft(req.user, req.params.id, req.body || {})));
 router.post('/product-videos/:id/retry', wrap((req) => PV.retry(req.user, req.params.id)));
 router.delete('/product-videos/:id', wrap((req) => PV.remove(req.user, req.params.id, { removeCard: String(req.query.removeCard || '') === '1' })));
+// Our products > Videos: one card per uploaded video (crm/videoCards.js)
+const VC = require('../crm/videoCards');
+router.get('/video-cards', wrap((req) => VC.list(req.user)));
+router.get('/video-cards/:id/watch', wrap((req) => VC.watch(req.user, req.params.id)));
+router.put('/video-cards/:id', wrap((req) => VC.update(req.user, req.params.id, req.body || {})));
+router.delete('/video-cards/:id', wrap((req) => VC.remove(req.user, req.params.id)));
 router.get('/products/:key/watch', wrap((req) => PS.staffVideoLink(req.user, req.params.key, req.query.extra)));
 router.post('/products', wrap((req) => PS.addProduct(req.user, req.body || {})));
 router.delete('/products/:key/videos/:n', wrap((req) => PS.removeExtraVideo(req.user, req.params.key, req.params.n)));

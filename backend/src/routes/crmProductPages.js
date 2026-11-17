@@ -32,7 +32,7 @@ const plansHtml = (p) => { const pl = (p.plans || []).filter((x) => x.name); ret
 router.get('/product-video/:token', async (req, res) => {
   const v = PS.readToken(req.params.token, 'pv');
   if (!v) return res.status(404).end();
-  const file = v.p[0] === 'FULL' ? ((await require('../crm/productVideo').fullVideoFile().catch(() => null)) || {}).file // eslint-disable-line global-require
+  const file = v.p[0] === 'CARD' ? await require('../crm/videoCards').fileForStaff(v.x).catch(() => null) // eslint-disable-line global-require
     : v.p[0] === 'COMPANY' ? await companyFile() : await productFile(v.p[0], v.x && /^x\d+$/.test(v.x) ? v.x.slice(1) : null);
   if (!file) return res.status(404).end();
   noStore(res);
@@ -50,33 +50,20 @@ async function companyFile() {
   const f = require('path').join(PS.VIDEO_DIR(), require('path').basename(st.companyVideoFile)); // eslint-disable-line global-require
   return fs.existsSync(f) ? f : null;
 }
-// the company video and a product's other videos on the demo page and in the meeting room (same signed link as the page)
-router.get('/:kind(demo|meet)/:token/company-video', async (req, res) => {
-  const ok = PS.readToken(req.params.token, req.params.kind);
-  const f = ok ? await companyFile() : null;
-  if (!f) return res.status(404).end();
-  noStore(res);
-  return res.sendFile(f, { acceptRanges: true, headers: { 'Content-Type': 'video/mp4' } });
-});
-// the full all-products video under the product clips, only when the managers turned "Show on demo pages" on
-router.get('/demo/:token/full-video', async (req, res) => {
-  const v = PS.readToken(req.params.token, 'demo');
-  const f = v ? await require('../crm/productVideo').fullVideoFile().catch(() => null) : null; // eslint-disable-line global-require
-  if (!f || !f.fv.showOnDemo) return res.status(404).end();
-  noStore(res);
-  return res.sendFile(f.file, { acceptRanges: true });
-});
-router.get('/:kind(demo|meet)/:token/xvideo/:key/:n', async (req, res) => {
+// the video cards on the demo page and in the meeting room (crm/videoCards.js): only cards turned on, only the lead's products' own videos
+const CARDS = require('../crm/videoCards');
+router.get('/:kind(demo|meet)/:token/card/:id', async (req, res) => {
   const v = PS.readToken(req.params.token, req.params.kind);
-  const key = String(req.params.key).toUpperCase();
-  if (!v || !(v.p || []).includes(key)) return res.status(404).end();
-  const f = await productFile(key, req.params.n);
+  const f = v ? await CARDS.fileForDemo(req.params.id, v.p || []).catch(() => null) : null;
   if (!f) return res.status(404).end();
   noStore(res);
-  return res.sendFile(f, { acceptRanges: true, headers: { 'Content-Type': 'video/mp4' } });
+  return res.sendFile(f, { acceptRanges: true });
 });
-const moreVideos = (p, kind, t) => ((p.extraVideos || []).length ? `<h2 style="margin-top:14px">More videos</h2>${p.extraVideos.map((x, n) => `<p class="muted" style="margin:10px 0 4px">${esc(x.title)}</p><video controls preload="none" playsinline src="/api/crm-public/${kind}/${t}/xvideo/${esc(p.key)}/${n}"></video>`).join('')}` : '');
-const companyCard = async (kind, t) => { const st = await require('../crm/productDeals').settings().catch(() => ({})); return st.companyVideoFile && await companyFile() ? `<div class="card"><h2>${esc(st.companyVideoTitle || 'About TeamLink')}</h2><video controls preload="metadata" playsinline src="/api/crm-public/${kind}/${t}/company-video"></video></div>` : ''; }; // eslint-disable-line global-require
+const mins = (c) => Math.max(1, Math.round((Number(c.duration) || 60) / 60));
+const videoTag = (kind, t, c, preload = 'none') => `<video controls preload="${preload}" playsinline src="/api/crm-public/${kind}/${t}/card/${esc(c.id)}"></video>`;
+const moreVideos = (p, kind, t, cards) => { const mine = cards.filter((c) => ['extra', 'original'].includes(c.kind) && c.productKey === p.key); return mine.length ? `<h2 style="margin-top:14px">More videos</h2>${mine.map((c) => `<p class="muted" style="margin:10px 0 4px">${esc(c.title)}${c.kind === 'original' ? ' (full video)' : ''}</p>${videoTag(kind, t, c)}`).join('')}` : ''; };
+const companyCards = (kind, t, cards) => cards.filter((c) => c.kind === 'company').map((c) => `<div class="card"><h2>${esc(c.title || 'About TeamLink')}</h2>${videoTag(kind, t, c, 'metadata')}</div>`).join('');
+const fullCards = (kind, t, cards) => cards.filter((c) => c.kind === 'full').map((c) => `<div class="card"><h2>Watch the full demo (${mins(c)} min)</h2><p class="muted">${esc(c.title)}: every TeamLink product, module by module.</p>${videoTag(kind, t, c)}</div>`).join('');
 
 // ---- the demo ----
 // "Talk to a person" and "trial" are shared by the demo, the meeting and the quote page (crm/productDeals.js)
@@ -91,12 +78,12 @@ router.get('/demo/:token', async (req, res) => {
   if (!d || !d.products.length) return expired(res);
   const t = esc(req.params.token);
   const hi = d.lead.contactName ? `Hello ${esc(String(d.lead.contactName).split(' ')[0])},` : 'Hello,';
+  const vcards = await CARDS.forDemo(d.keys).catch(() => []);
   const cards = d.products.map((p) => `<div class="card"><h2>${d.pick ? `<label style="cursor:pointer"><input type="checkbox" class="pk" value="${esc(p.key)}" style="width:20px;height:20px;vertical-align:middle"> ` : ''}${esc(p.name)}${d.pick ? '</label>' : ''}</h2><p>${esc(p.tagline || '')}</p>
     ${p.hasVideo ? `<video controls preload="metadata" playsinline data-key="${esc(p.key)}" src="${p.videoFile ? `/api/crm-public/demo/${t}/video/${esc(p.key)}` : esc(p.videoUrl)}"></video>` : (p.demoUrl ? `<p><a href="${esc(p.demoUrl)}" target="_blank" rel="noopener">Open the live demo</a></p>` : '')}
-    <p>${esc(p.about || '')}</p><ul>${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>${moreVideos(p, 'demo', t)}${plansHtml(p) ? `<h2 style="margin-top:14px">Plans</h2>${plansHtml(p)}` : ''}</div>`).join('');
-  const company = await companyCard('demo', t);
-  const full = await require('../crm/productVideo').fullVideoFile().catch(() => null); // eslint-disable-line global-require
-  const fullCard = full && full.fv.showOnDemo ? `<div class="card"><h2>Watch the full demo (${Math.max(1, Math.round((full.fv.duration || 900) / 60))} min)</h2><p class="muted">${esc(full.fv.description || 'Every TeamLink product, module by module.')}</p><video controls preload="none" playsinline src="/api/crm-public/demo/${t}/full-video"></video></div>` : '';
+    <p>${esc(p.about || '')}</p><ul>${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>${moreVideos(p, 'demo', t, vcards)}${plansHtml(p) ? `<h2 style="margin-top:14px">Plans</h2>${plansHtml(p)}` : ''}</div>`).join('');
+  const company = companyCards('demo', t, vcards);
+  const fullCard = fullCards('demo', t, vcards);
   const body = `<div class="card"><h1>${hi} here is your demo</h1><p>${esc(d.lead.company ? `Made for ${d.lead.company}.` : '')} Watch at your own pace.${d.pick ? ' <b>Tick the products you need</b>, then' : ' If it looks right,'} press <b>I'm interested</b>: our AI assistant will walk you through it and answer your questions right away.</p></div>${company}${cards}${fullCard}
   <div class="card"><h2>What next?</h2><div class="btns"><button class="b b1" onclick="ev('interested')">I'm interested - start the AI meeting</button><button class="b b2" onclick="person()">Talk to a person</button><button class="b b2" onclick="trial()">Request a trial account</button><button class="b b3" onclick="ev('later')">Later</button></div><p class="muted" id="msg"></p><p class="muted" id="tmsg"></p><div id="book" class="card" style="display:none;margin-top:12px"></div></div>`;
   const script = `const T=${JSON.stringify(req.params.token)};const PICK=${d.pick ? 'true' : 'false'};function post(k,x){return fetch('/api/crm-public/demo/'+T+'/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({kind:k},x||{}))}).then(r=>r.json()).catch(()=>({}))}
@@ -134,7 +121,8 @@ router.get('/meet/:token', async (req, res) => {
   noStore(res);
   if (!m) return expired(res);
   const t = esc(req.params.token);
-  const slides = m.products.map((p) => `<div class="card"><h2>${esc(p.name)}</h2>${p.videoFile && PS.videoPathOf(p) ? `<video controls preload="metadata" playsinline src="/api/crm-public/meet/${t}/video/${esc(p.key)}"></video>` : ''}<p>${esc(p.tagline || '')}</p><p>${esc(p.about || '')}</p><ul>${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>${moreVideos(p, 'meet', t)}${plansHtml(p) ? `<h2 style="margin-top:12px">Plans</h2>${plansHtml(p)}` : ''}</div>`).join('');
+  const vcards = await CARDS.forDemo(m.products.map((p) => p.key)).catch(() => []);
+  const slides = m.products.map((p) => `<div class="card"><h2>${esc(p.name)}</h2>${p.videoFile && PS.videoPathOf(p) ? `<video controls preload="metadata" playsinline src="/api/crm-public/meet/${t}/video/${esc(p.key)}"></video>` : ''}<p>${esc(p.tagline || '')}</p><p>${esc(p.about || '')}</p><ul>${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>${moreVideos(p, 'meet', t, vcards)}${plansHtml(p) ? `<h2 style="margin-top:12px">Plans</h2>${plansHtml(p)}` : ''}</div>`).join('');
   // the quote builder shown after "Yes, I want to go ahead": a plan per product, how many people, yearly or monthly
   const qrows = m.products.map((p) => { const pl = (p.plans || []).filter((x) => x.name && x.price); if (!pl.length) return ''; return `<div style="margin:8px 0"><b>${esc(p.name)}</b><br><select data-k="${esc(p.key)}" class="qp" style="padding:8px;border-radius:8px;border:1px solid #c9d2e3;margin-top:4px">${pl.map((x) => `<option value="${esc(x.name)}" data-u="${esc(x.unit || '')}">${esc(x.name)} - ${esc(x.price)} ${esc(x.unit || '')}</option>`).join('')}</select> <input type="number" min="1" class="qn" data-k="${esc(p.key)}" placeholder="How many people" style="padding:8px;border-radius:8px;border:1px solid #c9d2e3;width:150px"></div>`; }).join('');
   const body = `<style>.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:860px){.grid{grid-template-columns:1fr}}#log{height:420px;overflow:auto;display:flex;flex-direction:column;gap:8px}.ai,.me{padding:9px 12px;border-radius:12px;max-width:88%;line-height:1.5}.ai{background:#eef3ff;align-self:flex-start}.me{background:#16a34a;color:#fff;align-self:flex-end}.row{display:flex;gap:8px;margin-top:10px}.row input{flex:1;padding:11px;border:1px solid #c9d2e3;border-radius:9px;font-size:15px}</style>
