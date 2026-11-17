@@ -12,6 +12,7 @@
     "sandbox": "node scripts/sandbox.js",
     "backup": "node scripts/backup.js",
     "backup:verify": "node scripts/backup.js --verify",
+    "backup:drill": "node scripts/backup.js --drill",
     "healthcheck": "node scripts/healthcheck.js",
     "posting-worker": "node src/workers/postingWorker.js",
     "whatsapp-qr-worker": "node src/workers/whatsappQrWorker.js",

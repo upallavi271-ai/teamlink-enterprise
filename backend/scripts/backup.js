@@ -50,6 +50,13 @@ async function notifyFail(title, text) {
 
 async function main() {
   const verifyOnly = has('--verify');
+  // npm run backup:drill - decrypt the newest encrypted off-site copy and prove it restores (utils/offsiteBackup.js)
+  if (has('--drill')) {
+    const d = await require('../src/utils/offsiteBackup').drill({ log }); // eslint-disable-line global-require
+    console.log(`RESTORE DRILL: ${d.ok ? 'OK' : 'FAIL'} ${d.file || ''} ${d.seconds != null ? `${d.seconds}s` : ''} ${(d.problems || []).join('; ')}`);
+    if (d.counts) Object.entries(d.counts).forEach(([t, n]) => console.log(`  ${t.padEnd(12)} ${n}`));
+    return d.ok ? 0 : 2;
+  }
   if (has('--list')) {
     const s = backup.summary();
     console.log(`Backup folder: ${s.folder}`);
@@ -83,6 +90,22 @@ async function main() {
   }
   if (!result.verify.ok && has('--notify-on-fail')) {
     await notifyFail('Backup restore test failed', `The restore test of backup ${result.verify.name || ''} failed: ${(result.verify.problems || []).join('; ')}. Open Administration → System.`);
+  }
+  // ENCRYPTED OFF-SITE COPY + RESTORE DRILL (utils/offsiteBackup.js): only after a good restore test of a NEW backup
+  if (result.verify.ok && !verifyOnly) {
+    const off = require('../src/utils/offsiteBackup'); // eslint-disable-line global-require
+    try {
+      const p = await off.pushLatest({ log });
+      if (!p.skipped) {
+        log(`encrypted copy ${mb(p.bytes)}${p.uploaded ? ` uploaded (${p.key})` : ' kept on this server (no off-site storage set)'}`);
+        const d = await off.drill({ log });
+        log(`RESTORE DRILL of the encrypted copy: ${d.ok ? 'OK' : `FAIL ${d.problems.join('; ')}`}`);
+        if (!d.ok && has('--notify-on-fail')) await notifyFail('Encrypted backup drill failed', `The encrypted backup could not be restored: ${d.problems.join('; ')}.`);
+      } else log('encrypted off-site copy: not set up (BACKUP_ENC_KEY)');
+    } catch (err) {
+      log(`ENCRYPTED COPY FAILED: ${err.message}`);
+      if (has('--notify-on-fail')) await notifyFail('Encrypted off-site backup failed', `Today's encrypted off-site copy did not finish: ${err.message}.`);
+    }
   }
   return result.verify.ok ? 0 : 2;
 }
