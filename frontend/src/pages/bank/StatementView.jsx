@@ -5,6 +5,7 @@
 // A line added by hand, or one no longer on file, says "Bank Statement Not Available" - nothing else is ever opened.
 // Opened from an invoice payment (InvoiceDetail.jsx) and from the bank line window (TxnDetail.jsx).
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { money2, fmtD } from '../invoices/invFormat';
@@ -46,7 +47,9 @@ export default function StatementView({ txnId, onClose }) {
   const s = d && d.statement;
   const o = d && d.original;
   const im = d && d.imported;
-  return (
+  // Drawn at <body>, not inside the page: opened from the Invoices table (sticky columns / transformed scroll boxes), the window
+  // was clipped and the table's headers and Actions buttons showed through it (founder 2026-11-17).
+  return createPortal((
     <Modal size="xwide" title="Bank statement" onClose={onClose} footer={<button type="button" className="btn btn-primary" onClick={onClose}>Close</button>}>
       {err && <div className="notice red"><span><b>Bank Statement Not Available.</b> {err.replace(/^Bank Statement Not Available\s*-?\s*/, '')}</span></div>}
       {!d && !err && <div className="small-muted">Opening the statement…</div>}
@@ -143,5 +146,5 @@ export default function StatementView({ txnId, onClose }) {
         </>
       )}
     </Modal>
-  );
+  ), document.body);
 }
