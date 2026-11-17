@@ -74,12 +74,15 @@ function resumeKind(buf, name = '') {
   if (buf.length > 4 && buf.toString('latin1', 0, 5) === '%PDF-') return 'pdf';
   if (buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4b) return 'docx';
   if (buf.length > 8 && buf.toString('hex', 0, 8) === 'd0cf11e0a1b11ae1') return 'doc';
+  // a photo of a resume: read with OCR when the server has it (utils/resumeOcr.js)
+  if (buf.length > 8 && buf.toString('hex', 0, 8) === '89504e470d0a1a0a') return 'png';
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
   return /\.txt$/i.test(name) ? 'txt' : null;
 }
 // -> { fields: { name, email, phone, location, experienceYears, skills }, kind } | { error }
 async function parseResume(buf, name) {
   const kind = resumeKind(buf, name);
-  if (!kind) return { error: 'Not a PDF, DOCX or DOC file.' };
+  if (!kind) return { error: 'Not a PDF, DOCX, DOC, JPG or PNG file.' };
   let out;
   if (kind === 'txt') out = { text: buf.toString('utf8'), parsed: await resumeParser.parseResumeText(buf.toString('utf8')) };
   else out = await resumeParser.extractAndParse(buf, kind);

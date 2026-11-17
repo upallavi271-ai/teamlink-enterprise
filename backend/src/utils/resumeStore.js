@@ -7,7 +7,8 @@
 //     the sandbox's ~/.teamlink-sandbox/uploads/resumes), OUTSIDE the repo;
 //   * the name on disk is 32 random hex chars + an extension chosen here;
 //     the client's filename is sanitised and kept for display only;
-//   * allow-list PDF / DOCX / DOC, and the first bytes must agree with the
+//   * allow-list PDF / DOCX / DOC, and a JPG / PNG photo of a resume (read
+//     with OCR, utils/resumeOcr.js), and the first bytes must agree with the
 //     extension (magic-byte check) — a renamed .exe/.html is refused;
 //   * 10 MB cap, enforced while reading the socket;
 //   * a stored ORIGINAL is never overwritten or deleted: a new upload is a
@@ -15,8 +16,8 @@
 //
 // PUBLIC API for other features (e.g. bulk resume upload in the Candidates
 // import) — keep these stable:
-//   validateResumeFile(file)                     -> { kind, ext, mime } or throws { code }
-//   saveOriginalResume({ candidateId, file, user, note }) -> CandidateResume row (+ text/parsed)
+//   validateResumeFile(file, { images })         -> { kind, ext, mime } or throws { code }
+//   saveOriginalResume({ candidateId, file, user, note, images }) -> CandidateResume row (+ text/parsed)
 //   extractAndParse(buffer, kind)                (re-exported from resumeParse.js)
 //   resolveResumeFile(storedName)                -> absolute path or null
 //   parseResumeUpload(req)                       -> { fields, file } (multipart, 10 MB cap)
@@ -37,14 +38,18 @@ const KINDS = {
   pdf: { ext: 'pdf', mime: 'application/pdf' },
   docx: { ext: 'docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
   doc: { ext: 'doc', mime: 'application/msword' },
+  // a photo of a resume (OCR reads its text, utils/resumeOcr.js)
+  jpg: { ext: 'jpg', mime: 'image/jpeg' },
+  png: { ext: 'png', mime: 'image/png' },
 };
-const STORED_NAME = /^[a-f0-9]{32}\.(pdf|docx|doc)$/;
+const EXT_ALIAS = { jpeg: 'jpg' };
+const STORED_NAME = /^[a-f0-9]{32}\.(pdf|docx|doc|jpg|png)$/;
 
 const RESUME_MESSAGE = {
   NO_FILE: 'Choose a resume file to upload.',
   TOO_LARGE: `That file is larger than ${RESUME_MAX_BYTES / (1024 * 1024)} MB.`,
-  BAD_TYPE: 'Only PDF, DOCX and DOC resumes can be uploaded.',
-  CONTENT_MISMATCH: "That file's contents do not match its type (it is not a real PDF / Word file).",
+  BAD_TYPE: 'Only PDF, DOCX and DOC resumes (or a JPG / PNG photo of one) can be uploaded.',
+  CONTENT_MISMATCH: "That file's contents do not match its type (it is not a real PDF / Word file / picture).",
   NOT_MULTIPART: 'Upload the file as a multipart/form-data request.',
 };
 
@@ -59,6 +64,8 @@ function sniffKind(buf) {
   if (!buf || buf.length < 8) return null;
   if (buf.slice(0, 5).toString('latin1') === '%PDF-') return 'pdf';
   if (buf.slice(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))) return 'doc';
+  if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
   // DOCX = a ZIP whose entries include word/document.xml (entry names are
   // stored uncompressed in the local headers).
   if (buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04
@@ -66,12 +73,16 @@ function sniffKind(buf) {
   return null;
 }
 
-function validateResumeFile(file) {
+// `images`: a JPG / PNG photo of a resume is taken too (the recruiters' own upload on the candidate's Resume tab; read with
+// OCR). Everywhere else (public job portal, partners, referrals) stays PDF / Word.
+const IMAGE_KINDS = ['jpg', 'png'];
+function validateResumeFile(file, { images = false } = {}) {
   const err = (code) => Object.assign(new Error(code), { code });
   if (!file || !file.data || !file.data.length) throw err('NO_FILE');
   if (file.data.length > RESUME_MAX_BYTES) throw err('TOO_LARGE');
-  const ext = (String(file.filename || '').toLowerCase().match(/\.([a-z0-9]{1,5})$/) || [])[1];
-  if (!ext || !KINDS[ext]) throw err('BAD_TYPE');
+  const raw = (String(file.filename || '').toLowerCase().match(/\.([a-z0-9]{1,5})$/) || [])[1];
+  const ext = EXT_ALIAS[raw] || raw;
+  if (!ext || !KINDS[ext] || (!images && IMAGE_KINDS.includes(ext))) throw err('BAD_TYPE');
   const sniffed = sniffKind(file.data);
   // A Word file saved under the other Word extension is still a Word file;
   // anything else whose bytes disagree with its name is refused.
@@ -104,12 +115,13 @@ function parseResumeUpload(req) {
 const safeParse = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
 
 async function saveOriginalResume({
-  candidateId, file, user = null, note = null,
+  candidateId, file, user = null, note = null, images = false,
 }) {
-  const { kind, ext, mime } = validateResumeFile(file);
+  const { kind, ext, mime } = validateResumeFile(file, { images });
   const candidate = await prisma.candidate.findUnique({ where: { id: candidateId }, select: { id: true } });
   if (!candidate) throw Object.assign(new Error('NO_CANDIDATE'), { code: 'NO_CANDIDATE' });
   const stored = writeStored(file.data, ext);
+  // a scanned PDF / a photo: OCR inside (utils/resumeOcr.js); "OCR not installed" comes back as `error`, never a failure
   const { text, parsed, parser, error } = await extractAndParse(file.data, kind);
   const fileName = attachments.safeDisplayName(file.filename);
   const row = await prisma.candidateResume.create({

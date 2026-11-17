@@ -134,7 +134,7 @@ export default function ResumeUploadDialog({ onClose, onDone }) {
         </div>
         <div className="atsio-row">
           <label className="field" style={{ margin: 0, flex: 1, minWidth: 240 }}><span>PDF or DOCX resumes — several at once</span>
-            <input type="file" multiple accept=".pdf,.docx,.doc,.txt" disabled={!!progress} onChange={(e) => { if (e.target.files?.length) pick(e.target.files); e.target.value = ''; }} />
+            <input type="file" multiple accept=".pdf,.docx,.doc,.txt,.jpg,.jpeg,.png" disabled={!!progress} onChange={(e) => { if (e.target.files?.length) pick(e.target.files); e.target.value = ''; }} />
           </label>
           <label className="field" style={{ margin: 0, minWidth: 200 }}><span>Add to requirement (code, optional)</span>
             <input value={reqCode} onChange={(e) => setReqCode(e.target.value)} placeholder="e.g. MED-0001" />

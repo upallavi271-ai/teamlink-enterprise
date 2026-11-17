@@ -78,6 +78,16 @@ async function myResults(user, query) {
   }
   const sourced = apps.filter((a) => inRange(a.createdAt, range)).length;
   const m = await countMetrics(apps, range);
+  // JOINED = the joinings credited to this login in the period (utils/recruiterJoinings.js creditedJoinings): the same number
+  // as the dashboard's joinings card and its list, by joining day (not by when the step was moved).
+  let joinedLabel = 'Joined';
+  try {
+    const ok = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const RJ = require('./recruiterJoinings'); // eslint-disable-line global-require
+    const cj = await RJ.creditedJoinings(user, { from: ok(query.from) ? query.from : null, to: ok(query.to) ? query.to : null, fresh: true });
+    m.joined = cj.count;
+    if (cj.clamped) joinedLabel = `Joined (from ${cj.from})`;
+  } catch (err) { console.error('[ownResults] credited joinings failed:', err.message); } // eslint-disable-line no-console
   return {
     range: range.label,
     scope: 'My requirements',
@@ -87,7 +97,7 @@ async function myResults(user, query) {
       { key: 'submittedToClient', label: 'Submitted to client', value: m.submittedToClient },
       { key: 'interviews', label: 'Interviews', value: m.interviews },
       { key: 'selected', label: 'Selected', value: m.selected },
-      { key: 'joined', label: 'Joined', value: m.joined },
+      { key: 'joined', label: joinedLabel, value: m.joined },
     ],
   };
 }

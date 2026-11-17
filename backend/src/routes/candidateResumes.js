@@ -4,7 +4,9 @@
 //   GET  /:id                          versions (originals + edited) + rights
 //   GET  /:id/version/:rid             one version's text / sections / parsed
 //   GET  /:id/file/:rid?format=&download=1   the bytes (auth + scope checked)
-//   POST /:id/upload                   multipart "file": a NEW original
+//   POST /:id/upload                   multipart "file": a NEW original (PDF / DOCX / DOC, or a JPG / PNG
+//                                      photo; a scanned one is read with OCR, utils/resumeOcr.js)
+//   GET  /ocr-status                   Admin: is OCR installed here, which languages (docs/OCR-SETUP.md)
 //   POST /:id/edit                     { sections, baseResumeId } -> Edited vN
 //   GET  /:id/eligible-requirements    3-number match, candidate -> requirements
 //   GET  /requirement/:reqId/matches   3-number match, requirement -> candidates
@@ -98,7 +100,7 @@ function metaFor(r, internal) {
     label: r.label,
     fileName: r.kind === 'EDITED' ? `${r.label}.pdf` : r.fileName,
     mime: r.kind === 'EDITED' ? 'application/pdf' : r.mime,
-    format: r.kind === 'EDITED' ? 'pdf' : (r.mime === 'application/pdf' ? 'pdf' : (r.mime === 'application/msword' ? 'doc' : 'docx')),
+    format: r.kind === 'EDITED' ? 'pdf' : (r.mime === 'application/pdf' ? 'pdf' : (r.mime === 'application/msword' ? 'doc' : (r.mime === 'image/jpeg' ? 'jpg' : (r.mime === 'image/png' ? 'png' : 'docx')))),
     size: r.kind === 'EDITED' ? null : r.size,
     hasPdf: r.kind === 'EDITED' ? !!r.file : r.mime === 'application/pdf',
     hasDocx: r.kind === 'EDITED' ? !!r.docxFile : false,
@@ -126,6 +128,7 @@ function metaFor(r, internal) {
       phones: parsed.phones || [],
       name: parsed.name || null,
       languages: parsed.languages || null, // Telugu / Hindi script found: the free parser read only e-mail, phone and name lines
+      ocr: parsed.ocr || null, // a scanned PDF / photo whose text was read with OCR: { used, pages, languages }
     } : null,
   };
 }
@@ -147,6 +150,32 @@ async function load(req, res) {
 const latestEdited = (versions) => visible(versions).filter((v) => v.kind === 'EDITED').slice(-1)[0] || null;
 
 const candidateView = requirePerm('ats', 'candidates', 'Candidate List', 'view');
+
+// --- OCR for scanned resumes: is it installed here? (Admin) ---------------------
+// GET /ocr-status -> { available, pdf, version, languages[], use, missingLanguages[], why, setup }. Registered before
+// '/:id' so "ocr-status" is never read as a candidate id. Install: docs/OCR-SETUP.md.
+router.get('/ocr-status', async (req, res) => {
+  const role = roleForProduct(req.user, 'ats');
+  if (!['SUPER_ADMIN', 'ADMIN'].includes(role) && !['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only an Admin can see the OCR set-up.' });
+  }
+  const OCR = require('../utils/resumeOcr'); // eslint-disable-line global-require
+  const st = await OCR.status({ fresh: req.query.fresh === '1' });
+  return res.json({
+    available: st.available,
+    pdf: st.pdf,
+    version: st.version,
+    languages: st.languages,
+    use: st.use,
+    missingLanguages: st.missingLanguages || [],
+    why: st.why,
+    setup: st.setup,
+    queue: OCR.queueLength(),
+    message: st.available
+      ? `OCR is on: scanned resumes are read in ${st.use}.${st.why ? ` ${st.why}` : ''}`
+      : 'OCR is not installed on the server: a scanned resume is saved, marked "text could not be read". See docs/OCR-SETUP.md.',
+  });
+});
 
 // --- 3-number match: requirement -> candidates ------------------------------
 const MATCH_SELECT = {
@@ -538,7 +567,8 @@ router.post('/:id/upload', candidateView, async (req, res) => {
     return res.status(code === 'TOO_LARGE' ? 413 : 400).json({ error: store.RESUME_MESSAGE[code] || 'Upload failed.' });
   }
   try {
-    const row = await store.saveOriginalResume({ candidateId: req.params.id, file: parsedBody.file, user: req.user });
+    // images: a JPG / PNG photo of a resume is taken here (read with OCR, utils/resumeOcr.js)
+    const row = await store.saveOriginalResume({ candidateId: req.params.id, file: parsedBody.file, user: req.user, images: true });
     const versions = await versionsOf(req.params.id);
     const v = versions.find((x) => x.id === row.id);
     // Wrong-person check (user, 2026-10-03): the resume's phone / e-mail /

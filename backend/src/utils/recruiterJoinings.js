@@ -182,7 +182,8 @@ const APP_SELECT = {
 
 const CACHE = new Map(); // month -> { at, value }
 const CACHE_MS = 120000; // a joining keyed in ATS shows within 2 minutes; decisions refresh at once
-function invalidate() { CACHE.clear(); }
+const LITE = new Map(); // month -> { at, promise } (creditedJoinings: one lite board per month, shared by every login)
+function invalidate() { CACHE.clear(); LITE.clear(); }
 
 // Every joining of the month, credited. -> { month, apps:[…], dir }
 async function monthApplications(month, { fresh = false } = {}) {
@@ -472,12 +473,13 @@ async function loadDecisions(month) {
 }
 
 // The whole company for one month (no role scope — routes apply it).
-async function monthBoard(month, { fresh = false, bde = false } = {}) {
+// lite: only what the joinings COUNT needs (creditedJoinings below): no "candidates generated", no decisions, no BDE rows.
+async function monthBoard(month, { fresh = false, bde = false, lite = false } = {}) {
   if (!isMonth(month)) throw Object.assign(new Error('Pick a month.'), { status: 400 });
   const [{ apps, undated, dir }, seats, rules, decisions, emps, gen] = await Promise.all([
-    monthApplications(month, { fresh }), loadSeats(), loadTargetRules(), loadDecisions(month),
+    monthApplications(month, { fresh }), loadSeats(), loadTargetRules(), lite ? [] : loadDecisions(month),
     prisma.employee.findMany({ select: { id: true, employeeCode: true } }),
-    generatedByMonth(month),
+    lite ? null : generatedByMonth(month),
   ]);
   const generatedOf = (employeeId, userId) => {
     if (!gen) return null;
@@ -587,7 +589,7 @@ async function monthBoard(month, { fresh = false, bde = false } = {}) {
   // BDE closings (signed client agreements): the BDE department rows are replaced by the BDE team's own rows. A BDE-department row that does carry
   // candidate joinings is a recruiter's work and stays as it is (and that person is not listed twice).
   let bdeSkipped = 0;
-  if (bde) {
+  if (bde && !lite) {
     const taken = new Set(rows.filter((r) => isBdeDept(r.department) && (r.joinings > 0 || r.notCountedCount > 0)).map((r) => r.employeeId).filter(Boolean));
     const extra = await bdeBoardRows(month, {
       dir, seats, rules, decisionOf, codeOf, from, to, taken,
@@ -739,15 +741,111 @@ async function personMonthDetail(month, key) {
   };
 }
 
-// The recruiter's own figure for a month (ATS dashboard, HRMS dashboard).
+// --- WHOSE ROWS A LOGIN READS ---------------------------------------------------------------------------------------------------
+//   sa / all   Super Admin, Admin, Manager, HR: everyone
+//   team       TL / STL: their own row, the rows whose seat reports to their TL seat (tlUserId), the seats / holders of their
+//              position scope, else their team's logins, else their departments
+//   self       everyone else (a Recruiter): their own row (their login, or their HRMS employee)
+// The Recruiter joinings screen (routes/recruiterJoinings.js) and creditedJoinings() below read this ONE rule.
+function viewerLevel(user) {
+  const sc = require('./scope').scopeOf(user); // eslint-disable-line global-require
+  if (sc.role === 'SUPER_ADMIN' || sc.hrmsRole === 'SUPER_ADMIN') return 'sa';
+  if (sc.adminGlobal || sc.global || sc.hrmsRole === 'HR' || sc.role === 'HR') return 'all';
+  if (['TL', 'STL'].includes(sc.atsRole)) return 'team';
+  return 'self';
+}
+function rowsForViewer(user, rows, level = viewerLevel(user)) {
+  if (level === 'sa' || level === 'all') return rows;
+  const own = (r) => (r.userId && r.userId === user.id) || (user.employeeId && r.employeeId === user.employeeId);
+  if (level === 'team') {
+    const sc = require('./scope').scopeOf(user); // eslint-disable-line global-require
+    const p = sc.positions;
+    if (p) {
+      const codes = new Set(p.positionCodes || []);
+      const holders = new Set(p.holderUserIds || []);
+      return rows.filter((r) => own(r) || r.tlUserId === user.id || (r.seat && codes.has(r.seat)) || (r.userId && holders.has(r.userId)));
+    }
+    if (sc.teamUserIds) {
+      const team = new Set(sc.teamUserIds);
+      return rows.filter((r) => own(r) || r.tlUserId === user.id || (r.userId && team.has(r.userId)));
+    }
+    const depts = new Set(sc.departments || []);
+    return rows.filter((r) => own(r) || r.tlUserId === user.id || (r.department && depts.has(r.department)));
+  }
+  return rows.filter(own);
+}
+
+// The lite board of a month, shared for a short while (the dashboard, the reports and My results all ask for it).
+function liteBoard(month, { fresh = false } = {}) {
+  const hit = LITE.get(month);
+  if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.promise;
+  const promise = monthBoard(month, { fresh, lite: true });
+  LITE.set(month, { at: Date.now(), promise });
+  while (LITE.size > 48) LITE.delete(LITE.keys().next().value);
+  promise.catch(() => LITE.delete(month));
+  return promise;
+}
+
+// =================================================================================================================================
+// JOININGS CREDITED TO THIS LOGIN IN THIS PERIOD — THE ONE FUNCTION (audit Checklist-120 #106, Practical P10.8, Extra 820).
+// The ATS dashboard's joinings card and the list it opens, the TL's team card and list, My results / the Team & person reports /
+// the Daily report ("Joined"), the HRMS "3 of 4" popup and the "is this my joining?" check all read THIS, so they always agree.
+// Before (2026-11-17) the card read the month board here, the list re-read the dashboard's own scope, and the reports counted the
+// login's scoped applications by who has the candidate NOW: a joining credited by NAME (an imported follow-up that names the
+// recruiter, utils/workers.js CONFIRMED_NAMES), or one whose job sits outside the recruiter's seat, was on the card and missing
+// from the reports (or the other way round).
+//   THE RULE   the month board's rule above (COUNTED; credited to who got the candidate Selected; a name matched to the login),
+//              the joining day inside [from, to], the rows this login reads (rowsForViewer: self / team / everyone).
+//   -> { level, from, to, months[], clamped, count, appIds[], list[] (board rows + creditedTo { key, userId, employeeId, name }),
+//        target (self: the person's target in the last month of the range) }
+// A range longer than 36 months is cut to the last 36 (clamped: true): the count is read month by month.
+// =================================================================================================================================
+const MAX_RANGE_MONTHS = 36;
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+async function creditedJoinings(user, {
+  from = null, to = null, month = null, fresh = false, level = null,
+} = {}) {
+  if (!user || !user.id) return { level: 'none', from, to, months: [], clamped: false, count: 0, appIds: [], list: [], target: null };
+  let f = from; let t = to;
+  if (month && isMonth(month)) { f = `${month}-01`; t = lastDay(month); }
+  if (!DAY_RE.test(String(t || ''))) t = lastDay(thisMonth());
+  if (!DAY_RE.test(String(f || ''))) f = `${addMonths(t.slice(0, 7), -(MAX_RANGE_MONTHS - 1))}-01`;
+  if (f > t) [f, t] = [t, f];
+  const months = [];
+  for (let m = t.slice(0, 7); m >= f.slice(0, 7) && months.length < MAX_RANGE_MONTHS; m = prevMonth(m)) months.push(m);
+  const clamped = months[months.length - 1] > f.slice(0, 7);
+  const lv = level || viewerLevel(user);
+  const boards = await Promise.all(months.map((m) => liteBoard(m, { fresh })));
+  const seen = new Set();
+  const list = [];
+  let target = null;
+  boards.forEach((b, i) => {
+    const mine = rowsForViewer(user, b.rows, lv).filter((r) => r.kind !== 'BDE');
+    if (i === 0 && lv === 'self' && mine[0]) target = mine[0].target;
+    mine.forEach((r) => r.joiningList.forEach((a) => {
+      if (seen.has(a.id) || !a.joiningDate || a.joiningDate < f || a.joiningDate > t) return;
+      seen.add(a.id);
+      list.push({ ...a, creditedTo: { key: r.key, userId: r.userId || null, employeeId: r.employeeId || null, name: r.name } });
+    }));
+  });
+  list.sort((a, b) => String(a.joiningDate).localeCompare(String(b.joiningDate)) || String(a.candidate).localeCompare(String(b.candidate)));
+  return {
+    level: lv, from: f, to: t, months: months.reverse(), clamped, count: list.length, appIds: list.map((a) => a.id), list, target,
+  };
+}
+
+// The recruiter's own figure for a month (ATS dashboard, HRMS dashboard): creditedJoinings at the "self" level.
 async function ownFigure(user, month = thisMonth()) {
   if (!user || !user.id) return null;
-  const b = await monthBoard(month);
-  const r = b.rows.find((x) => x.userId === user.id || (user.employeeId && x.employeeId === user.employeeId));
+  const b = await liteBoard(month);
+  const rows = rowsForViewer(user, b.rows, 'self');
+  const r = rows[0];
   if (!r) return null;
+  const cj = await creditedJoinings(user, { month, level: 'self' });
+  const tone = toneOf(cj.count, r.target);
   return {
-    month, label: b.label, target: r.target, joinings: r.joinings, tone: r.tone, toneWord: r.toneWord,
-    seat: r.seat, appIds: r.joiningList.map((a) => a.id), list: r.joiningList, notCounted: r.notCountedList,
+    month, label: b.label, target: r.target, joinings: cj.count, tone, toneWord: TONE_WORD[tone],
+    seat: r.seat, appIds: cj.appIds, list: cj.list, notCounted: rows.flatMap((x) => x.notCountedList),
   };
 }
 
@@ -779,4 +877,5 @@ module.exports = {
   DEFAULT_TARGET, PAYABLE, isMonth, thisMonth, prevMonth, nextMonth, monthLabel, todayIst, lastDay,
   guaranteeDays, targetOf, loadTargetRules, monthApplications, monthBoard, undatedJoinings, personHistory, personMonthDetail,
   ownFigure, targetFor, invalidate, toneOf, TONE_WORD, isBdeDept,
+  creditedJoinings, viewerLevel, rowsForViewer,
 };

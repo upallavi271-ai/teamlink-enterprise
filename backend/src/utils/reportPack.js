@@ -364,7 +364,8 @@ class Run {
     const allowed = await this.allowed();
     const today = DR.todayIst();
     const lastDay = P.to < today ? P.to : today;
-    const events = P.from > today ? [] : await DR.eventsIn(this.user, world, P.from, lastDay);
+    // joinedTo: a joining dated later in the period is counted, as on the dashboard's joinings card (creditedJoinings)
+    const events = P.from > today ? [] : await DR.eventsIn(this.user, world, P.from, lastDay, { joinedTo: P.to });
     const facts = events.filter((e) => allowed.has(e.person.key)).map((e) => ({
       pk: e.person.key, day: e.day, metric: e.metric, info: info(e.person.key),
     }));

@@ -245,7 +245,7 @@ function access(user) {
 // THE EVENTS of a date range [from, to] (IST days), each one { day, at, metric,
 // person, app, imported, detail }. Already scope-checked.
 // ---------------------------------------------------------------------------
-async function eventsIn(user, world, from, to) {
+async function eventsIn(user, world, from, to, { joinedTo = null } = {}) {
   const gte = istStart(from);
   const lt = istStart(addDays(to, 1));
   const { dir, byApp, people } = world;
@@ -374,15 +374,40 @@ async function eventsIn(user, world, from, to) {
       day: istDay(f.createdAt), at: f.createdAt, metric: 'feedback', person, ...appRef(info),
     });
   });
-  // Joined (by joining date).
-  byApp.forEach((info) => {
-    if (!['JOINED', 'HIRED'].includes(info.stage)) return;
-    const d = /^\d{4}-\d{2}-\d{2}/.test(String(info.joiningDate || '')) ? String(info.joiningDate).slice(0, 10) : istDay(info.joinedAt);
-    if (!d || d < from || d > to) return;
-    push({
-      day: d, at: istStart(d), metric: 'joined', person: info.recruiter, ...appRef(info),
+  // Joined: THE JOININGS CREDITED TO THIS LOGIN (utils/recruiterJoinings.js creditedJoinings, the ONE function the dashboard's
+  // joinings card and its list read), so My results / the Team & person reports / this report show the same number as the card:
+  // credited to who got the candidate Selected, a joining credited by NAME or on a job outside the login's scope included, on the
+  // joining day. `joinedTo`: the period's last day (a joining dated later this month is on the card too).
+  let joinedDone = false;
+  try {
+    const RJ = require('./recruiterJoinings'); // eslint-disable-line global-require
+    const cj = await RJ.creditedJoinings(user, { from, to: joinedTo && joinedTo > to ? joinedTo : to });
+    cj.list.forEach((r) => {
+      const c = r.creditedTo || {};
+      const person = (c.userId ? dir.person(c.userId) : null) || dir.person(null, c.name);
+      if (!person) return;
+      // the credited person is one this login reads (creditedJoinings decided it): listed even with no application in scope
+      if (!people.has(person.key)) people.set(person.key, { key: person.key, userId: person.userId || null, label: person.label });
+      const info = byApp.get(r.id);
+      out.push({
+        day: r.joiningDate, at: istStart(r.joiningDate), metric: 'joined', person,
+        ...(info ? appRef(info) : {
+          applicationId: r.id, candidateId: r.candidateId, candidate: r.candidate, job: r.job, client: r.client, department: null,
+        }),
+      });
     });
-  });
+    joinedDone = true;
+  } catch (err) { console.error('[dailyReport] credited joinings failed, the scoped count is used:', err.message); } // eslint-disable-line no-console
+  if (!joinedDone) {
+    byApp.forEach((info) => {
+      if (!['JOINED', 'HIRED'].includes(info.stage)) return;
+      const d = /^\d{4}-\d{2}-\d{2}/.test(String(info.joiningDate || '')) ? String(info.joiningDate).slice(0, 10) : istDay(info.joinedAt);
+      if (!d || d < from || d > to) return;
+      push({
+        day: d, at: istStart(d), metric: 'joined', person: info.recruiter, ...appRef(info),
+      });
+    });
+  }
 
   // Candidate names for rows that only carry the id.
   const missing = [...new Set(out.filter((e) => e.candidateId && !e.candidate).map((e) => e.candidateId))];

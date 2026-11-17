@@ -45,25 +45,10 @@ function viewerOf(user) {
   return { level: 'self', money: false, decide: false, decisions: false };
 }
 
-// The rows this viewer may see.
+// The rows this viewer may see: utils/recruiterJoinings.js rowsForViewer, the SAME rule the dashboard card, its list and the
+// reports read (creditedJoinings).
 function scopeRows(user, viewer, rows) {
-  if (viewer.level === 'sa' || viewer.level === 'all') return rows;
-  if (viewer.level === 'team') {
-    const sc = scopeOf(user);
-    const p = sc.positions;
-    if (p) {
-      const codes = new Set(p.positionCodes || []);
-      const holders = new Set(p.holderUserIds || []);
-      return rows.filter((r) => r.userId === user.id || r.tlUserId === user.id || (r.seat && codes.has(r.seat)) || (r.userId && holders.has(r.userId)));
-    }
-    if (sc.teamUserIds) {
-      const team = new Set(sc.teamUserIds);
-      return rows.filter((r) => r.userId === user.id || r.tlUserId === user.id || (r.userId && team.has(r.userId)));
-    }
-    const depts = new Set(sc.departments || []);
-    return rows.filter((r) => r.userId === user.id || r.tlUserId === user.id || (r.department && depts.has(r.department)));
-  }
-  return rows.filter((r) => (r.userId && r.userId === user.id) || (user.employeeId && r.employeeId === user.employeeId));
+  return RJ.rowsForViewer(user, rows, viewer.level);
 }
 
 // THE BOARD CARRIES ONLY ATS SUMMARY COUNTS (user, 2026-10-09): required joinings,

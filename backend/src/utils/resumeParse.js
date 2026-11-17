@@ -3,6 +3,8 @@
 //
 //   extractText(buffer, kind)      PDF (pdf-parse) · DOCX (mammoth) · DOC
 //                                  (word-extractor) -> { text, error }
+//                                  (a scanned PDF / a JPG / PNG photo: OCR in
+//                                  extractAndParse, utils/resumeOcr.js)
 //   parseResumeText(text, opts)    skills (vocabulary: the skills every
 //                                  requirement asks for + candidate
 //                                  specialisations + a built-in list), total
@@ -49,6 +51,9 @@ async function extractText(input, kind) {
       const mammoth = require('mammoth');
       const out = await mammoth.extractRawText({ buffer });
       text = out.value || '';
+    } else if (kind === 'jpg' || kind === 'png') {
+      // a photo of a resume has no text layer: extractAndParse reads it with OCR (utils/resumeOcr.js)
+      text = '';
     } else if (kind === 'doc') {
       // eslint-disable-next-line global-require
       const WordExtractor = require('word-extractor');
@@ -332,11 +337,39 @@ async function parseWithAi(text) {
   return out && typeof out === 'object' ? out : null;
 }
 
+// SCANNED RESUMES (OCR, 2026-11-17): a PDF whose text layer is empty or nearly empty (fewer than 80 letters), or a photo
+// (JPG / PNG), is read by utils/resumeOcr.js (the free `tesseract` program, one at a time, low priority, 60 s at most). When
+// OCR is not installed the resume is still saved, marked "Scanned resume - text could not be read (OCR not installed on the
+// server)" so the recruiter sees why nothing was read. -> { text, ocr: { used, pages, languages, error, notInstalled } | null }
+async function withOcr(buffer, kind, text, error) {
+  if (!['pdf', 'jpg', 'png'].includes(kind)) return { text, error, ocr: null };
+  const OCR = require('./resumeOcr'); // eslint-disable-line global-require
+  if (OCR.letterCount(text) >= OCR.MIN_LETTERS) return { text, error, ocr: null };
+  const r = await OCR.ocrBuffer(buffer, kind);
+  const ocr = {
+    used: !!(r.text && OCR.letterCount(r.text) > OCR.letterCount(text)), pages: r.pages || 0, languages: r.languages || null,
+    error: r.error || null, notInstalled: !!r.notInstalled,
+  };
+  if (ocr.used) {
+    // the little text the PDF had (a header line, a page number) stays in front of what was read off the pages
+    const joined = [text, r.text].filter(Boolean).join('\n\n').slice(0, MAX_TEXT);
+    return { text: joined, error: null, ocr };
+  }
+  return { text, error: r.error || error, ocr };
+}
+
 async function extractAndParse(buffer, kind) {
-  const { text, error } = await extractText(buffer, kind);
-  if (!text) return { text: '', parsed: null, parser: 'none', error: error || 'No text found in this file (a scanned image needs OCR, which is not available).' };
+  const first = await extractText(buffer, kind);
+  const { text, error, ocr } = await withOcr(buffer, kind, first.text, first.error);
+  if (!text) {
+    return {
+      text: '', parsed: null, parser: 'none', ocr,
+      error: error || (kind === 'jpg' || kind === 'png' ? 'No text was found in this picture.' : 'No text found in this file (a scanned image needs OCR, which is not available).'),
+    };
+  }
   const parsed = await parseResumeText(text);
-  let parser = 'free';
+  if (ocr) parsed.ocr = { used: ocr.used, pages: ocr.pages, languages: ocr.languages };
+  let parser = ocr && ocr.used ? 'free+ocr' : 'free';
   if (aiEnabled()) {
     try {
       const a = await parseWithAi(text);
@@ -349,7 +382,8 @@ async function extractAndParse(buffer, kind) {
       }
     } catch { /* free result stands */ }
   }
-  return { text, parsed, parser, error: null };
+  // a nearly empty scan that OCR could not read: the little text is kept and parsed, and the reason is shown
+  return { text, parsed, parser, ocr, error: ocr && !ocr.used && ocr.error ? ocr.error : null };
 }
 
 // --- "is this resume really this person's?" ---------------------------------

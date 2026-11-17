@@ -1846,6 +1846,16 @@ async function leadHome(c, b, k) {
     tile('my-review', L === 'tl' ? 'Waiting for my check' : 'Waiting for a review', review.length, 'now', { drill: 'my-review', zero: 'Nothing to check' }),
     T.interviews(), T.selected(),
   ];
+  // THE TEAM'S JOININGS THIS MONTH (TL / STL): utils/recruiterJoinings.js creditedJoinings - the joinings credited to the
+  // recruiters under this lead (and their own), the same rows as their Recruiter joinings screen and their team reports.
+  if (L === 'tl' || L === 'stl') {
+    try {
+      const month = c.today.slice(0, 7);
+      const team = await require('./recruiterJoinings').creditedJoinings(c.user, { month, level: 'team' }); // eslint-disable-line global-require
+      addSet(b, 'my-joins', { kind: 'app', title: "My team's joinings this month", ids: team.appIds });
+      b.top.push(tile('my-joins', "My team's joinings this month", team.appIds.length, 'range', { drill: 'my-joins', zero: 'No joinings yet this month' }));
+    } catch (err) { console.error('[atsHome] team joinings failed:', err.message); } // eslint-disable-line no-console
+  }
   const workload = { ...teamSnapshot(c, b, k, { title: L === 'tl' ? 'My recruiters' : 'Team snapshot' }), size: 'half' };
   // PENDING ON MY TEAM (user, 2026-10-10): approvals and overdue follow-ups waiting on the people under this lead: who, and since when.
   let chainW = null;
@@ -1957,16 +1967,14 @@ async function recruiterHome(c, b, k) {
   const month = c.today.slice(0, 7);
   let myJoinIds = ids(sel.filter((x) => joinedSince(x, `${month}-01`, c.today)));
   const tg = await targetFor(c.user, month);
-  // Recruiter joinings (utils/recruiterJoinings.js) — the SAME count as the
-  // HRMS popup / Recruiter joinings tab, credited to this recruiter, and its
-  // target (4 unless Super Admin set another) when no Monthly Target is set.
+  // JOININGS CREDITED TO THIS LOGIN (utils/recruiterJoinings.js creditedJoinings, the ONE function): the card, the list it
+  // opens and My results / the reports read the same rows, so they always agree - a joining credited by name, or on a job
+  // outside this recruiter's seat, included. Its target (4 unless Super Admin set another) when no Monthly Target is set.
   try {
-    const own = await require('./recruiterJoinings').ownFigure(c.user, month); // eslint-disable-line global-require
-    if (own) {
-      myJoinIds = own.appIds;
-      if (tg.joinings == null) tg.joinings = own.target;
-    }
-  } catch { /* the dashboard's own count stands */ }
+    const own = await require('./recruiterJoinings').creditedJoinings(c.user, { month, level: 'self' }); // eslint-disable-line global-require
+    myJoinIds = own.appIds;
+    if (tg.joinings == null && own.target != null) tg.joinings = own.target;
+  } catch (err) { console.error('[atsHome] my joinings failed:', err.message); } // eslint-disable-line no-console
   addSet(b, 'my-joins', { kind: 'app', title: 'My joinings this month', ids: myJoinIds });
   const target = { id: 'target', type: 'target', size: 'half', title: 'My joinings this month', value: myJoinIds.length, target: tg.joinings, drill: 'my-joins', zero: 'No joinings yet this month', noTarget: 'No target set yet' };
   b.top = [];
@@ -2737,6 +2745,9 @@ async function setRows(user, b, set) {
       // rows the tile counts. (founder: "3 ani chupisthundhi but open chesthey empty")
       const ew = await loadWorld({ id: { in: missing.slice(0, 2000) } }, { id: { in: [] } }, w.today || NA.todayIst());
       get = (id) => w.byId.get(id) || ew.byId.get(id);
+      // the drill must list exactly what the card counts (creditedJoinings): note any id that could not be loaded
+      const lost = missing.filter((id) => !ew.byId.has(id));
+      if (lost.length) console.error(`[atsHome] ${lost.length} id(s) of "${set.id}" could not be loaded for the list`); // eslint-disable-line no-console
     }
     return set.ids.map(get).filter(Boolean).map((x) => appRowOf(x, extra.get(x.a.id), b.clientDesk));
   }

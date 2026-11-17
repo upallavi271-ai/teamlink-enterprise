@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // CANDIDATE 360 → RESUME TAB (resume_). Backend: routes/candidateResumes.js.
 //
-//   * Upload PDF / DOCX / DOC (drag-drop or click). Every upload is a NEW
+//   * Upload PDF / DOCX / DOC, or a JPG / PNG photo (read with OCR on the server) (drag-drop or click). Every upload is a NEW
 //     original; earlier originals stay in the history, the newest is current.
 //   * Details on top (parsed: skills, experience, education, location,
 //     e-mail / phone), the resume below — a PDF in the browser's own viewer
@@ -133,7 +133,7 @@ function Details({ v }) {
         </div>
       )}
       <div className="small-muted rsm-note">
-        {`Read from ${v.label} by the ${v.parser === 'free+claude' ? 'free parser + Claude' : 'free parser'}. Used for the Resume % in every match.`}
+        {`Read from ${v.label} by the ${v.parser === 'free+claude' ? 'free parser + Claude' : 'free parser'}${p.ocr && p.ocr.used ? ` (a scanned resume: the text was read off ${p.ocr.pages === 1 ? 'the picture' : `${p.ocr.pages} pages`} with OCR, so check it)` : ''}. Used for the Resume % in every match.`}
       </div>
     </div>
   );
@@ -339,7 +339,7 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setDraft(null); setMode('view'); }}>← Back to resume</button>
             )}
           </div>
-          <input ref={fileRef} type="file" accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword" style={{ display: 'none' }} onChange={(e) => upload(e.target.files && e.target.files[0])} />
+          <input ref={fileRef} type="file" accept=".pdf,.docx,.doc,.jpg,.jpeg,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/jpeg,image/png" style={{ display: 'none' }} onChange={(e) => upload(e.target.files && e.target.files[0])} />
         </div>
         {data.canUpload && !current && (
           <div
@@ -354,7 +354,7 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
               <>
                 <b>Drop the resume file here, or click to choose</b>
                 <br />
-                {`PDF or Word, up to ${Math.round(data.maxBytes / 1048576)} MB.`}
+                {`PDF or Word, or a photo (JPG / PNG) of a paper resume, up to ${Math.round(data.maxBytes / 1048576)} MB.`}
               </>
             )}
           </div>
@@ -466,7 +466,7 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
                 <ol className="rsm-steps" style={{ margin: '8px 0 8px 18px', lineHeight: 1.9 }}>
                   <li>
                     <Downloads candidateId={candidateId} v={o} name={name} onError={setError} />
-                    <span className="small-muted">{` the original ${isPdf ? 'PDF' : 'Word file'} (${o.fileName || ''})`}</span>
+                    <span className="small-muted">{` the original ${isPdf ? 'PDF' : isWord ? 'Word file' : 'picture'} (${o.fileName || ''})`}</span>
                   </li>
                   {isPdf && (
                     <li>
@@ -477,7 +477,7 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
                   {isWord && <li><b>Open it in Word</b><span className="small-muted"> remove the contact details, make your changes, and save it as .docx (File → Save As).</span></li>}
                   <li>
                     <button type="button" className="btn btn-sm btn-primary" disabled={busy === 'edited'} onClick={() => editedRef.current && editedRef.current.click()}>
-                      {busy === 'edited' ? 'Checking and saving…' : `⬆ Upload the edited ${isPdf ? 'PDF' : 'Word file'}`}
+                      {busy === 'edited' ? 'Checking and saving…' : `⬆ Upload the edited ${isPdf ? 'PDF' : isWord ? 'Word file' : 'PDF or Word file'}`}
                     </button>
                     <span className="small-muted"> it becomes the next Edited resume.</span>
                   </li>
