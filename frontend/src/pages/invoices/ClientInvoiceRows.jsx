@@ -90,9 +90,19 @@ function DeleteLine({ m, onChanged }) {
   const go = async () => {
     const who = m.candidateName || '(no candidate linked)';
     if (!window.confirm(`Delete invoice ${m.invoiceNumber} — ${who} (${money2(m.invoiceValue)})?
-It is cancelled and no longer counts in billing or GST.`)) return;
+It is cancelled and no longer counts in billing or GST.
+If money was received on it, that payment (and its bank line proof) moves to this client's other open invoices, oldest first.`)) return;
     setBusy(true);
-    try { await api.patch(`/invoices/${m.id}/cancel`); onChanged(); } catch (e) { window.alert(e.response?.data?.error || 'That could not be deleted.'); }
+    try {
+      const { data } = await api.patch(`/invoices/${m.id}/cancel`, { release: true });
+      const r = data && data.released;
+      if (r && r.hadMoney > 0) {
+        const where = r.reapplied.length ? ` and now sits on ${r.reapplied.map((x) => `${x.invoiceNumber || 'invoice'} (${money2(x.amount)})`).join(', ')}` : '';
+        const left = r.leftoverTotal > 0.004 ? `. ${money2(r.leftoverTotal)} is left unapplied on the bank line - use Categorise > Customer payment to give it to a candidate.` : '.';
+        window.alert(`Deleted. ${money2(r.hadMoney)} was released${where}${left}`);
+      }
+      onChanged();
+    } catch (e) { window.alert(e.response?.data?.error || 'That could not be deleted.'); }
     setBusy(false);
   };
   return <button type="button" className="btn btn-sm" disabled={busy} onClick={go}>Delete</button>;
