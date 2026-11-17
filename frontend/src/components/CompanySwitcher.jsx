@@ -5,12 +5,12 @@ import { useAuth } from '../context/AuthContext.jsx';
 // COMPANY SWITCHER (utils/companyBridge.js on the server; docs/second-company.md section 9).
 //   * On TeamLink, a Super Admin sees "Companies": each company that was set up opens in a NEW tab, signed in, with no second password.
 //     With nothing set up the server answers an empty list and this renders nothing at all.
-//   * Inside a company that was opened this way, the same place shows "Back to TeamLink".
+//   * Inside a company nothing is shown here (founder 2026-11-17: no "Back to TeamLink" link in the company's screens; the company was opened in its OWN tab,
+//     so closing that tab is the way back).
 // The tab is opened first (a browser only allows a new tab straight after a click) and sent to the company when the server has signed the pass.
 export default function CompanySwitcher() {
   const { user } = useAuth();
   const [companies, setCompanies] = useState([]);
-  const [home, setHome] = useState(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
@@ -21,7 +21,6 @@ export default function CompanySwitcher() {
     if (!isSuper) return undefined;
     let live = true;
     api.get('/company-bridge/companies').then((r) => { if (live) setCompanies((r.data && r.data.companies) || []); }).catch(() => {});
-    api.get('/company-bridge/status').then((r) => { if (live && r.data && r.data.viaBridge) setHome(r.data.homeUrl || null); }).catch(() => {});
     return () => { live = false; };
   }, [isSuper]);
 
@@ -34,10 +33,7 @@ export default function CompanySwitcher() {
 
   if (!isSuper) return null;
 
-  // inside a company, opened from TeamLink: a way back
-  if (home) {
-    return <a className="btn btn-ghost btn-sm" href={home} data-testid="back-to-teamlink" title="Go back to TeamLink">← Back to TeamLink</a>;
-  }
+  // a company's own copy has no companies to open (the server answers an empty list): nothing is drawn
   if (!companies.length) return null;
 
   async function pick(c) {

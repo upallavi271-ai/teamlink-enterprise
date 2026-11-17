@@ -119,7 +119,7 @@ settings are not touched. Built as a **one-way door** between two separate copie
   for a **pass**: a signed note (Ed25519) that names the company, lives 60 seconds and works once. It goes in the address after the # sign, so it never reaches a server log.
 * The company's server checks the signature with TeamLink's **public** key only, that the pass is for **its own** key, not older than 2 minutes, not used before, and signs the person in as
   that company's **"<name> (TeamLink owner)"**: a Super Admin of THIS company only, with no Employee record (the company's headcount and attendance stay its own), no password anyone knows.
-  Inside the company the top bar shows **← Back to TeamLink**.
+  (A "← Back to TeamLink" link inside the company was removed again on 2026-11-17 at the founder's request: the company opens in its own tab, so closing that tab is the way back. The server still answers /api/company-bridge/status; nothing in the screens uses it.)
 * **There is no way from a company into TeamLink.** The company holds no key that can make a pass; TeamLink has no door that takes one (it answers "not found" to a pass); a company token is worthless on TeamLink.
 * The company's own admin is the "sub Super Admin": the top of that company, nothing of TeamLink. They **cannot lock the owner out**: at every visit the owner's login is made an Active Super Admin again.
 * TeamLink's database gets **nothing** (no table, no login, no setting): one audit line each time a company is opened. The company records each visit ("Signed in from TeamLink") and each refused pass. No pass and no TeamLink e-mail address is written anywhere.

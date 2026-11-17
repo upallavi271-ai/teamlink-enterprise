@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import api from '../api';
+import { BRAND } from '../brand.js';
 
 // ---------------------------------------------------------------------------
 // /sso/job-portal (founder 2026-10-29: "job portal kuda elane hrms logins to direct login avali recruiters ni separate logins adagakudadhu"):
@@ -36,7 +37,7 @@ export default function JobPortalLaunch() {
       {msg ? (
         <>
           <p>{msg}</p>
-          <p><a href="/jobs/">Open the public Job Portal</a> · <a href="/">Back to TeamLink</a></p>
+          <p><a href="/jobs/">Open the public Job Portal</a> · <a href="/">{BRAND.separate ? 'Back to the dashboard' : 'Back to TeamLink'}</a></p>
         </>
       ) : <p>Opening the Job Portal…</p>}
     </div>

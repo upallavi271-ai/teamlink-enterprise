@@ -10,7 +10,7 @@ import ModuleTabs from './ModuleTabs.jsx';
 import Logo from './Logo.jsx';
 import { BRAND } from '../brand.js'; // a separate company's copy shows its own name (frontend/src/brand.js); TeamLink's build is unchanged
 import AiAssistant, { AiStatusDot } from './AiAssistant.jsx';
-import CompanySwitcher from './CompanySwitcher.jsx'; // Super Admin: "Companies" menu on TeamLink / "Back to TeamLink" inside a company (2026-11-17)
+import CompanySwitcher from './CompanySwitcher.jsx'; // Super Admin: "Companies" menu on TeamLink; nothing inside a company (2026-11-17)
 import ProfileStatusBanner from './ProfileStatusBanner.jsx';
 import SetupTabs from './SetupTabs.jsx';
 import InterviewTabs from './InterviewTabs.jsx';
