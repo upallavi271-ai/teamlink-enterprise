@@ -79,23 +79,29 @@ async function moveBooks() {
   if (!holders.length) return { moved };
   const seats = await bdeSeats();
   const code = new Map(seats.map((s) => [s.id, s.code]));
-  // everybody who ever sat in a BDE desk seat, newest seat first; keep the ones who have left
+  // everybody who ever sat in a BDE desk seat and has left, with every BDE seat they held, the one they left last first
+  // (vasavi v sat on BDE-2 for one day and on BDE-MED for two months, both from 23 Sep: the seat that ended last is hers)
   const past = await prisma.positionAssignment.findMany({
     where: { positionId: { in: seats.map((s) => s.id) } },
-    select: { positionId: true, fromDate: true, employee: { select: { employmentStatus: true, user: { select: { id: true, name: true, status: true } } } } },
-    orderBy: { fromDate: 'desc' },
+    select: { positionId: true, fromDate: true, toDate: true, employee: { select: { employmentStatus: true, user: { select: { id: true, name: true, status: true } } } } },
   });
-  const seen = new Set();
-  const leavers = [];
-  past.forEach((a) => {
+  const ends = (a) => a.toDate || '9999-12-31';
+  const byLeaver = new Map(); // userId -> { from, seats: [positionId ...] }
+  past.sort((a, b) => ends(b).localeCompare(ends(a)) || String(b.fromDate).localeCompare(String(a.fromDate))).forEach((a) => {
     const u = a.employee && a.employee.user;
-    if (!u || seen.has(u.id)) return;
-    seen.add(u.id);
-    if (LEFT.includes(a.employee.employmentStatus) || u.status !== 'Active') leavers.push({ from: u, positionId: a.positionId });
+    if (!u || !(LEFT.includes(a.employee.employmentStatus) || u.status !== 'Active')) return;
+    if (!byLeaver.has(u.id)) byLeaver.set(u.id, { from: u, seats: [] });
+    const e = byLeaver.get(u.id);
+    if (!e.seats.includes(a.positionId)) e.seats.push(a.positionId);
   });
-  for (const { from, positionId } of leavers) {
-    const to = holders.filter((h) => h.positionId === positionId && h.user.atsRole === 'BDE' && h.user.id !== from.id)
-      .sort((a, b) => String(b.fromDate).localeCompare(String(a.fromDate)))[0];
+  for (const { from, seats: held } of byLeaver.values()) {
+    // the newest BDE holder of the latest of their seats that somebody sits in now
+    let to = null; let positionId = null;
+    for (const pid of held) {
+      to = holders.filter((h) => h.positionId === pid && h.user.atsRole === 'BDE' && h.user.id !== from.id)
+        .sort((a, b) => String(b.fromDate).localeCompare(String(a.fromDate)))[0] || null;
+      if (to) { positionId = pid; break; }
+    }
     if (!to) continue; // eslint-disable-line no-continue
     const nm = String(from.name || '').trim();
     // eslint-disable-next-line no-await-in-loop

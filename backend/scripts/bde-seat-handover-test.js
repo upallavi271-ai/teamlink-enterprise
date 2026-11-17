@@ -40,6 +40,7 @@ async function done(code) {
   const seat = await prisma.position.create({ data: { code: `BDE-ZZMED${P}`, department: 'BDE' } });
   const lone = await prisma.position.create({ data: { code: `BDE-ZZLONE${P}`, department: 'BDE' } });
   const tlSeat = await prisma.position.create({ data: { code: `BDE-ZZTLX${P}`, department: 'BDE' } });
+  const oneDay = await prisma.position.create({ data: { code: `BDE-ZZ2${P}`, department: 'BDE' } }); // vasavi's one-day BDE-2, same start date
 
   const L = await person('leaver', { status: 'Exited', atsRole: 'BDE' }); // Vasavi
   const N = await person('newbde', { role: 'RECRUITER', atsRole: 'RECRUITER' }); // Rajeshwari
@@ -47,6 +48,7 @@ async function done(code) {
   const T = await person('tlhold', { role: 'TL', atsRole: 'TL' }); // a TL put on a BDE seat on purpose
   await prisma.positionAssignment.createMany({
     data: [
+      { positionId: oneDay.id, employeeId: L.emp.id, fromDate: '2026-09-23', toDate: '2026-09-23' },
       { positionId: seat.id, employeeId: L.emp.id, fromDate: '2026-09-23', toDate: '2026-11-17' },
       { positionId: seat.id, employeeId: N.emp.id, fromDate: '2026-11-16' },
       { positionId: lone.id, employeeId: L2.emp.id, fromDate: '2026-09-23', toDate: '2026-11-10' },
