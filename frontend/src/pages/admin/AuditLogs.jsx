@@ -41,6 +41,36 @@ function SealCheck() {
   );
 }
 
+// ERRORS (backend utils/apiErrors.js): requests that failed on the server, same route + same error grouped, most frequent first.
+function ErrorGroups() {
+  const [rows, setRows] = useState(null);
+  const [days, setDays] = useState(7);
+  useEffect(() => { api.get('/admin/errors', { params: { days } }).then((r) => setRows(r.data.groups || [])).catch(() => setRows([])); }, [days]);
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ width: 'auto' }}>
+          {[1, 7, 30, 60].map((d) => <option key={d} value={d}>Last {d} day{d === 1 ? '' : 's'}</option>)}
+        </select>
+        <span className="small-muted">The same failure 5 times in 10 minutes sends Super Admins a bell note.</span>
+      </div>
+      <div className="tbl-wrap tbl-fit">
+        <table>
+          <thead><tr><th>Times</th><th>Where</th><th>Error</th><th>People</th><th>First</th><th>Last</th></tr></thead>
+          <tbody>
+            {(rows || []).map((g) => (
+              <tr key={g.groupKey}><td><b>{g.n}</b></td><td><code>{g.method} {g.route}</code></td><td>{g.message}</td><td>{g.people}</td>
+                <td>{new Date(g.first).toLocaleString('en-GB')}</td><td>{new Date(g.last).toLocaleString('en-GB')}</td></tr>
+            ))}
+            {rows && !rows.length && <tr><td colSpan={6} className="small-muted">No failed requests in this period.</td></tr>}
+            {!rows && <tr><td colSpan={6} className="small-muted">Loading…</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // WHO VIEWED (backend utils/readLog.js): candidate / employee records and documents opened, newest first.
 function WhoViewed() {
   const [rows, setRows] = useState([]);
@@ -126,7 +156,7 @@ export default function AuditLogs() {
     const { dateFrom, dateTo, ...rest } = lf.params;
     const params = { ...rest, page, pageSize: size, sort: lf.sort };
     if (view === 'hr') params.entity = 'HrSensitive';
-    if (view === 'access' || view === 'viewed') return undefined;
+    if (view === 'access' || view === 'viewed' || view === 'errors') return undefined;
     if (dateFrom) params.from = dateFrom;
     if (dateTo) params.to = dateTo;
     setError('');
@@ -165,8 +195,9 @@ export default function AuditLogs() {
         <button className={`btn btn-sm ${view === 'hr' ? 'btn-primary' : ''}`} onClick={() => setView('hr')}>HR sensitive actions</button>
         <button className={`btn btn-sm ${view === 'access' ? 'btn-primary' : ''}`} onClick={() => setView('access')}>Who has Internal HR access</button>
         <button className={`btn btn-sm ${view === 'viewed' ? 'btn-primary' : ''}`} onClick={() => setView('viewed')} title="Who opened which candidate / employee record or document">Who viewed</button>
+        <button className={`btn btn-sm ${view === 'errors' ? 'btn-primary' : ''}`} onClick={() => setView('errors')} title="Requests that failed on the server, grouped">Errors</button>
         <SealCheck />
-        {view !== 'access' && view !== 'viewed' && (
+        {view !== 'access' && view !== 'viewed' && view !== 'errors' && (
           <button
             className="btn btn-sm"
             style={{ marginLeft: 'auto' }}
@@ -191,7 +222,7 @@ export default function AuditLogs() {
           </button>
         )}
       </div>
-      {view === 'viewed' ? <WhoViewed /> : view === 'access' ? <HrSuperAccess /> : (<>
+      {view === 'errors' ? <ErrorGroups /> : view === 'viewed' ? <WhoViewed /> : view === 'access' ? <HrSuperAccess /> : (<>
       <ListFilterBar lf={lf} storageKey="admin-audit" />
       {error && <div className="error-text">{error}</div>}
 

@@ -1348,6 +1348,10 @@ router.get('/read-log', requirePerm(null, 'administration', 'Audit Logs', 'view'
     return res.json(await RL.list(req.query));
   } catch (e) { return next(e); }
 });
+// ERRORS (utils/apiErrors.js): failed requests of the last N days, grouped (same route + same error), most frequent first.
+router.get('/errors', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res, next) => {
+  try { res.json({ groups: await require('../utils/apiErrors').groups({ days: Math.min(60, Number(req.query.days) || 7) }) }); } catch (e) { next(e); } // eslint-disable-line global-require
+});
 // TAMPER CHECK (utils/auditSeal.js): seal what is new, then walk the whole chain.
 router.post('/audit/verify', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res, next) => {
   try {

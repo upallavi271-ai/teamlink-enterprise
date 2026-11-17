@@ -162,6 +162,8 @@ app.use('/api/public/mk-project', express.json({ limit: '700kb' })); // the clie
 app.use(express.json());
 // WHO LOOKED AT WHAT (utils/readLog.js): a candidate / employee record or document opened is written after the answer (200 only).
 app.use(require('./utils/readLog').middleware());
+// FAILED REQUESTS (utils/apiErrors.js): every 500+ answer recorded and grouped; 5 of the same in 10 minutes -> a bell to Super Admins.
+app.use(require('./utils/apiErrors').middleware());
 
 app.get('/api/health', (req, res) => res.json(process.env.COMPANY_KEY ? { ok: true, company: String(process.env.COMPANY_KEY).trim().toLowerCase() } : { ok: true }));
 // SUPER ADMIN "VIEW AS" IS READ-ONLY (utils/viewAs.js): a View-as token may
@@ -542,6 +544,7 @@ app.use('/api/shift-patterns', shiftPatternRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);
+  res.locals.errorMessage = (err && err.message) || String(err); // grouped in the Errors log (utils/apiErrors.js)
   if (res.headersSent) return next(err);
   // An exit that cannot be finished yet / a refused exit-date change: the reason, in plain words (utils/exitFlow.js, utils/exitDate.js).
   if (err && err.exitBlocked) return res.status(err.status || 403).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
@@ -646,7 +649,7 @@ const server = app.listen(PORT, () => {
   require('./utils/leaverHandover').startSweep();
   // TAMPER-EVIDENT AUDIT: new audit rows are sealed into a hash chain every 5 minutes (utils/auditSeal.js); the read log keeps 365 days.
   require('./utils/auditSeal').start();
-  setInterval(() => require('./utils/readLog').prune().catch(() => {}), 24 * 3600000).unref?.();
+  setInterval(() => { require('./utils/readLog').prune().catch(() => {}); require('./utils/apiErrors').prune().catch(() => {}); }, 24 * 3600000).unref?.();
   // Employee Monitoring: activity older than the retention days is deleted every 6 hours (utils/monitoring.js).
   require('./utils/monitoring').startSweep();
   // Employee Monitoring alerts, every 5 minutes; off until HR switches them on (utils/monitoringAlerts.js).
