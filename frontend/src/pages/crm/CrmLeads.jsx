@@ -2,7 +2,7 @@
 // search and filters; + Lead (duplicate check against the CRM's leads, accounts and contacts); Import from Excel /
 // CSV (preview first, duplicates skipped with the reason); tick leads to give them to a BDE (BDE TL / Admin) or set their
 // status / rating together; Download as CSV. A row opens the lead with its timeline, follow-ups and "Convert to deal".
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
@@ -115,9 +115,23 @@ export default function CrmLeads() {
   const [layout, setLayout] = useState('table'); // table | board (the board shows won and lost leads too)
   const [picked, setPicked] = useState(() => new Set());
   const [logging, setLogging] = useState(null); // 📞 Log on a row
-  const load = () => api.get('/crm/leads', { params: { q: q || undefined, status: (layout === 'board' ? 'all' : status) || undefined, stage: stage || undefined, from: from || undefined, to: to || undefined, source: source || undefined, rating: rating || undefined, owner: owner || undefined } })
-    .then((r) => { setRows(r.data.rows); setErr(''); setPicked(new Set()); }).catch((e) => setErr(errOf(e, 'The leads could not be read.')));
-  useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [q, status, stage, from, to, layout, source, rating, owner, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the table is paged and sorted on the server (50 a page, with the total); the board still reads every lead at once
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState('updated');
+  const [dir, setDir] = useState('desc');
+  const [paging, setPaging] = useState(null); // { total, page, pages }
+  const seq = useRef(0);
+  const load = () => { seq.current += 1; const mine = seq.current; return api.get('/crm/leads', { params: { q: q || undefined, status: (layout === 'board' ? 'all' : status) || undefined, stage: stage || undefined, from: from || undefined, to: to || undefined, source: source || undefined, rating: rating || undefined, owner: owner || undefined, ...(layout === 'table' ? { page, pageSize: 50, sort, dir } : {}) } })
+    .then((r) => { if (mine !== seq.current) return; setRows(r.data.rows); setPaging(layout === 'table' && r.data.total != null ? { total: r.data.total, page: r.data.page, pages: r.data.pages } : null); setErr(''); setPicked(new Set()); }).catch((e) => { if (mine === seq.current) setErr(errOf(e, 'The leads could not be read.')); }); };
+  // a changed filter or sort goes back to page 1 first (and loads from there)
+  const fkey = JSON.stringify([q, status, stage, from, to, layout, source, rating, owner, sort, dir]);
+  const lastKey = useRef(fkey);
+  useEffect(() => {
+    if (lastKey.current !== fkey) { lastKey.current = fkey; if (page !== 1) { setPage(1); return undefined; } }
+    const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t);
+  }, [fkey, version, page]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sortBy = (k) => { if (sort === k) setDir(dir === 'asc' ? 'desc' : 'asc'); else { setSort(k); setDir(['company', 'owner', 'stage', 'next'].includes(k) ? 'asc' : 'desc'); } };
+  const Th = ({ k, children }) => <th aria-sort={sort === k ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}><button type="button" className="crm-sort" onClick={() => sortBy(k)} title="Sort">{children}{sort === k ? (dir === 'asc' ? ' ▲' : ' ▼') : ''}</button></th>;
   useEffect(() => { if (sp.get('add') === '1') { const n = new URLSearchParams(sp); n.delete('add'); setSp(n, { replace: true }); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const today = istToday();
   const toggle = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -166,7 +180,7 @@ export default function CrmLeads() {
       {err && <div className="notice" role="alert">{err}</div>}
       {rows && (
         <div className="results-bar">
-          <span>{rows.length} lead{rows.length === 1 ? '' : 's'}</span>
+          <span>{paging ? `${paging.total.toLocaleString('en-IN')} lead${paging.total === 1 ? '' : 's'}${paging.pages > 1 ? ` · page ${paging.page} of ${paging.pages}` : ''}` : `${rows.length} lead${rows.length === 1 ? '' : 's'}`}</span>
           <span style={{ display: 'flex', gap: 4 }}>
             <button type="button" className={`btn btn-sm${layout === 'table' ? ' btn-primary' : ''}`} onClick={() => setLayout('table')}>Table</button>
             <button type="button" className={`btn btn-sm${layout === 'board' ? ' btn-primary' : ''}`} onClick={() => setLayout('board')}>Board</button>
@@ -188,7 +202,7 @@ export default function CrmLeads() {
           <thead>
             <tr>
               {me.canEdit && <th style={{ width: 28 }}><input type="checkbox" aria-label="Tick all" checked={!!allPicked} onChange={() => setPicked(allPicked ? new Set() : new Set((rows || []).map((l) => l.id)))} style={{ width: 'auto' }} /></th>}
-              <th>Company</th><th>Contact</th><th>Source</th><th>Rating</th><th>Stage</th><th>Value</th><th>Added</th><th>Last touched</th><th>Next follow-up</th>{me.seesAll && <th>Owner</th>}{me.canEdit && <th />}
+              <Th k="company">Company</Th><th>Contact</th><th>Source</th><th>Rating</th><Th k="stage">Stage</Th><Th k="value">Value</Th><Th k="created">Added</Th><Th k="touched">Last touched</Th><Th k="next">Next follow-up</Th>{me.seesAll && <Th k="owner">Owner</Th>}{me.canEdit && <th />}
             </tr>
           </thead>
           <tbody>
@@ -213,6 +227,15 @@ export default function CrmLeads() {
           </tbody>
         </table>
       </div>}
+      {layout === 'table' && paging && paging.pages > 1 && (
+        <div className="crm-pager">
+          <button type="button" className="btn btn-sm" disabled={paging.page <= 1} onClick={() => setPage(1)}>« First</button>
+          <button type="button" className="btn btn-sm" disabled={paging.page <= 1} onClick={() => setPage(paging.page - 1)}>‹ Before</button>
+          <span>Page {paging.page} of {paging.pages}</span>
+          <button type="button" className="btn btn-sm" disabled={paging.page >= paging.pages} onClick={() => setPage(paging.page + 1)}>Next ›</button>
+          <button type="button" className="btn btn-sm" disabled={paging.page >= paging.pages} onClick={() => setPage(paging.pages)}>Last »</button>
+        </div>
+      )}
       </>)}
       {adding && <RecordForm kind="lead" preset={{ source: '' }} onClose={() => setAdding(false)} onSaved={(row) => { setAdding(false); load(); setOpen({ kind: 'lead', id: row.id }); }} />}
       {importing && <ImportLeads onClose={() => setImporting(false)} onDone={() => { setImporting(false); load(); }} />}

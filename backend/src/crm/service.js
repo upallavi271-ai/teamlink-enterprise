@@ -257,7 +257,7 @@ async function list(user, kind, q = {}) {
     if (q.to && YMD.test(q.to)) { where.push('x."createdAt" <= ?'); params.push(`${q.to}T23:59:59.999Z`); }
     const SALES = require('./sales'); // eslint-disable-line global-require
     const names = SALES.stageNames(await SETTINGS.load());
-    const rows = (await DB.all(`SELECT x.*, (SELECT d."stage" FROM "CrmDeal" d WHERE d."id" = x."dealId") AS "dealStage", ${LAST_ACT('leadId')}, ${NEXT_TASK('leadId')} FROM "CrmLead" x WHERE ${where.join(' AND ')} ORDER BY x."updatedAt" DESC LIMIT 1000`, ...params)).map((l) => ({ ...l, stage: SALES.stageOf(l, names) }));
+    const rows = (await DB.all(`SELECT x.*, (SELECT d."stage" FROM "CrmDeal" d WHERE d."id" = x."dealId") AS "dealStage", ${LAST_ACT('leadId')}, ${NEXT_TASK('leadId')} FROM "CrmLead" x WHERE ${where.join(' AND ')} ORDER BY x."updatedAt" DESC LIMIT ${Math.max(1, Math.min(20000, Math.round(Number(q.max)) || 1000))}`, ...params)).map((l) => ({ ...l, stage: SALES.stageOf(l, names) }));
     if (q.stage) return rows.filter((l) => l.stage === q.stage);
     return q.status ? rows : rows.filter((l) => !['Won', 'Lost'].includes(l.stage)); // the open leads: a won or lost one stays on the board
   }
@@ -332,8 +332,14 @@ async function create(user, kind, body = {}) {
   if (!mayEdit(r) || !can(user, 'create')) return fail(403, 'Your CRM rights do not allow adding records. Ask a Sales manager.');
   const c = cleanFields(kind, body, { partial: false });
   if (c.error) return fail(400, c.error);
-  const own = await pickOwner(user, r, clip(body.ownerId, 60));
+  let own = await pickOwner(user, r, clip(body.ownerId, 60));
   if (!own) return fail(400, 'Pick the owner from the sales team list.');
+  // round robin for a "+ Lead" (CRM settings, off by default): a Sales manager / Admin who leaves the owner empty gives it to the next salesperson in turn
+  let byTurn = false;
+  if (kind === 'lead' && !clip(body.ownerId, 60) && mayAssign(r) && (await SETTINGS.load()).autoAssignManual) {
+    const t = await require('./sales').takeTurn().catch(() => null); // eslint-disable-line global-require
+    if (t) { own = { id: t.id, name: t.name }; byTurn = true; }
+  }
   const now = DB.nowIso();
   const row = { id: newId(kind), ...c.data, ownerId: own.id, ownerName: own.name, createdById: user.id, createdAt: now, updatedAt: now };
   if (kind === 'lead') {
@@ -371,7 +377,7 @@ async function create(user, kind, body = {}) {
   if (kind === 'lead') firstFollowUp = await require('./sales').firstFollowUp(saved).catch(() => null); // eslint-disable-line global-require
   // our products: the product the lead wants (or guessed from the notes) and the demo, sent by itself (crm/productDeals.js; off in Our products settings)
   if (kind === 'lead') setImmediate(() => require('./productDeals').onNewLead(saved, { products: body.products, text: body.notes }).catch(() => null)); // eslint-disable-line global-require
-  return okBody({ ok: true, [kind]: saved, ...(firstFollowUp ? { firstFollowUp } : {}) });
+  return okBody({ ok: true, [kind]: saved, ...(firstFollowUp ? { firstFollowUp } : {}), ...(byTurn ? { byTurn: true } : {}) });
 }
 
 // A lead may be called Contacted / Qualified, or stand on a later stage, only once somebody has LOGGED something on it - a call, meeting, email,
@@ -1039,7 +1045,7 @@ async function me(user) {
     salesTeam: mayAssign(r) ? st.salesTeam : [], // the CRM's own team: who may open it, and each one's rights
     team: mayAssign(r) ? { roles: SETTINGS.ROLES, rights: SETTINGS.RIGHTS, roleRights: SETTINGS.ROLE_RIGHTS } : null,
     invoiceFrom: st.invoiceFrom, invoiceTaxPercent: st.invoiceTaxPercent, invoiceDueDays: st.invoiceDueDays, invoiceSac: st.invoiceSac, invoiceNumberFormat: st.invoiceNumberFormat, overdueInvoiceAlert: st.overdueInvoiceAlert !== false, lostRecheck: st.lostRecheck !== false, meetingLink: st.meetingLink, bookingHours: st.bookingHours, discountApprovalLimit: st.discountApprovalLimit,
-    lists: { leadStages: st.leadStages, taskTypes: ['Call', 'Meeting', 'WhatsApp', 'Visit', 'Email', 'Other'], priorities: ['High', 'Medium', 'Low'], outcomes: ['Spoke', 'No answer', 'Meeting held', 'Sent details', 'Not interested'], overdueAlertManagers: st.overdueAlertManagers !== false, autoFirstFollowUp: st.autoFirstFollowUp !== false, defaultRemindBefore: st.defaultRemindBefore, stages: STAGES, stageProbability: st.stageProbability, leadStatuses: LEAD_STATUSES, sources: st.sources, contactRoles: CONTACT_ROLES, activityKinds: ACTIVITY_KINDS, lostReasons: st.lostReasons, ratings: RATINGS, staleDays: st.staleDays, proposalValidityDays: st.proposalValidityDays, ...ticketLists() },
+    lists: { leadStages: st.leadStages, taskTypes: ['Call', 'Meeting', 'WhatsApp', 'Visit', 'Email', 'Other'], priorities: ['High', 'Medium', 'Low'], outcomes: ['Spoke', 'No answer', 'Meeting held', 'Sent details', 'Not interested'], overdueAlertManagers: st.overdueAlertManagers !== false, autoFirstFollowUp: st.autoFirstFollowUp !== false, autoAssignManual: st.autoAssignManual === true, defaultRemindBefore: st.defaultRemindBefore, stages: STAGES, stageProbability: st.stageProbability, leadStatuses: LEAD_STATUSES, sources: st.sources, contactRoles: CONTACT_ROLES, activityKinds: ACTIVITY_KINDS, lostReasons: st.lostReasons, ratings: RATINGS, staleDays: st.staleDays, proposalValidityDays: st.proposalValidityDays, ...ticketLists() },
   });
 }
 

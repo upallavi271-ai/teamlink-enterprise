@@ -204,6 +204,14 @@ const DDL = [
     "createdById" TEXT, "createdByName" TEXT, "createdAt" TEXT NOT NULL
   )`,
   'CREATE INDEX IF NOT EXISTS "CrmDealFile_deal" ON "CrmDealFile"("dealId", "createdAt")',
+  // (2026-11-17) every CRM download (a report as Excel, a list as CSV): who, what, how many rows, when - read by the Sales managers / Admins (crm/analytics.js)
+  `CREATE TABLE IF NOT EXISTS "CrmExportLog" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "byId" TEXT, "byName" TEXT,
+    "what" TEXT NOT NULL, "format" TEXT, "rows" INTEGER NOT NULL DEFAULT 0, "filters" TEXT,
+    "at" TEXT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS "CrmExportLog_at" ON "CrmExportLog"("at")',
 ];
 // Columns added after the first release: added once, "duplicate column" is the normal answer afterwards.
 const COLUMNS = [

@@ -159,6 +159,14 @@ async function nextOwner(v) {
   const i = list.findIndex((o) => o.id === v.lastOwnerId);
   return list[(i + 1) % list.length];
 }
+// The next salesperson in turn, and the turn moves on (one turn for the website form and for a "+ Lead" saved with no owner, so the team gets leads evenly
+// whichever way they come). Re-read just before it is written, so two leads at once do not both go to the same person.
+async function takeTurn() {
+  const v = await websiteRow();
+  const own = await nextOwner(v);
+  if (own) await websiteWrite({ ...(await websiteRow()), lastOwnerId: own.id });
+  return own;
+}
 
 /** -> { status, body } A filled honeypot ("website_url") looks like a success to the robot, and nothing is saved. */
 async function capture(body = {}, headerKey = '') {
@@ -187,14 +195,13 @@ async function capture(body = {}, headerKey = '') {
     });
     return S.okBody({ ok: true, duplicate: true });
   }
-  const own = v.autoAssign ? await nextOwner(v) : null;
+  const own = v.autoAssign ? await takeTurn() : null;
   const saved = await S.insert('CrmLead', {
     id: S.newId('lead'), ...c.data, ...utm, source: 'Website', status: 'New', stage: (await SETTINGS.load()).leadStages[0].name, ownerId: own ? own.id : null, ownerName: own ? own.name : null, createdById: null, createdAt: now, updatedAt: now,
   });
   // the website form may say which product (products / product / interest = "HRMS,ATS"); else it is guessed from the message, and the demo goes by itself
   setImmediate(() => require('./productDeals').onNewLead(saved, { products: body.products || body.product || body.interest, text: [message, body.service, body.subject].filter(Boolean).join(' ') }).catch(() => null)); // eslint-disable-line global-require
   if (own) {
-    await websiteWrite({ ...v, lastOwnerId: own.id });
     await prisma.notification.create({ data: { userId: own.id, title: `New website lead: ${saved.company}`, message: `Open: /crm/leads?open=lead:${saved.id}`, channel: 'In-App', recipient: `crm-web|${saved.id}`, status: 'Sent' } }).catch(() => {});
     await firstFollowUp(saved).catch(() => null); // the first call, two hours on
   }
@@ -364,5 +371,5 @@ async function escalateOverdue({ now = Date.now(), notify } = {}) {
 }
 
 module.exports = {
-  PRIORITIES, OUTCOMES, firstFollowUp, escalateOverdue, managersToTell, TASK_TYPES, REMIND_BEFORE, stageOf, stageNames, moveLead, autoStage, reopenLead, capture, websiteGet, websiteSave, websiteNewKey, taskExtras, cancelTask, liveReminders, runDue,
+  PRIORITIES, OUTCOMES, firstFollowUp, takeTurn, nextOwner, escalateOverdue, managersToTell, TASK_TYPES, REMIND_BEFORE, stageOf, stageNames, moveLead, autoStage, reopenLead, capture, websiteGet, websiteSave, websiteNewKey, taskExtras, cancelTask, liveReminders, runDue,
 };

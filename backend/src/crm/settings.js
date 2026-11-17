@@ -38,6 +38,7 @@ const DEFAULTS = {
   defaultRemindBefore: 15,
   overdueAlertManagers: true, // a follow-up a day late is told to the Sales managers once (crm/sales.js escalateOverdue)
   autoFirstFollowUp: true, // a new lead with an owner gets "First call" as a follow-up two hours on (crm/sales.js firstFollowUp)
+  autoAssignManual: false, // a "+ Lead" a Sales manager / Admin saves with the owner left empty goes to the next salesperson in turn (crm/sales.js takeTurn)
 };
 
 // THE CRM IS ITS OWN MODULE (founder 2026-11-11: "crm completely separate, dhenitho combine cheyyoddhu"): who may open it and what they
@@ -167,6 +168,7 @@ function normalize(raw = {}) {
     staleDays: Number.isFinite(stale) && stale >= 1 && stale <= 365 ? stale : DEFAULTS.staleDays,
     overdueAlertManagers: raw.overdueAlertManagers !== false && raw.overdueAlertManagers !== 0 && raw.overdueAlertManagers !== 'false',
     autoFirstFollowUp: raw.autoFirstFollowUp !== false && raw.autoFirstFollowUp !== 0 && raw.autoFirstFollowUp !== 'false',
+    autoAssignManual: raw.autoAssignManual === true || raw.autoAssignManual === 'true',
     proposalValidityDays: Number.isFinite(valid) && valid >= 1 && valid <= 365 ? valid : DEFAULTS.proposalValidityDays,
     discountApprovalLimit: Number.isFinite(discLimit) && discLimit >= 0 && discLimit <= 100 ? discLimit : DEFAULTS.discountApprovalLimit,
   };

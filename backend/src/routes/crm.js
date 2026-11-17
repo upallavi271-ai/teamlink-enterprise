@@ -23,6 +23,11 @@
 //   GET    /crm/overview?period=month|last_month|quarter|year[&mine=1]   the dashboard cards, funnel, today, recent deals, flow
 //   GET    /crm/activities?kind=&from=&to=&owner=&q=   every call / meeting / email / WhatsApp / note in one list
 //   GET    /crm/reports?month=YYYY-MM      BDE performance vs target, forecast, funnel, deals going cold
+//   GET    /crm/charts?period=&mine=&owner=           lead sources, pipeline by stage, Booked / Invoiced / Collected (12 months), team, lost reasons, weighted forecast
+//   GET    /crm/report-tables?period=|from=&to=&owner=   by owner, funnel, sources, lost reasons, aging;  GET /crm/report-tables/:key/xlsx (export right, logged)
+//   GET    /crm/export-log                 every CRM download (Sales manager / Admin)     GET /crm/tasks/calendar?from=&to=&owner=
+//   GET    /crm/conversation/lead|deal|account/:id    the email / WhatsApp / SMS / call thread, oldest first
+//   GET    /crm/leads?page=&pageSize=&sort=company|created|touched|next|value|owner|stage&dir=asc|desc   (+ the list filters) -> rows, total, pages
 //   PUT    /crm/targets {month, ownerId, amount, deals}     PUT /crm/settings {sources, lostReasons, stageProbability, staleDays}
 //   POST   /crm/leads/bulk {ids, ownerId|status|rating}     POST /crm/leads/import?name=&ownerId=&dryRun=1 (the file as the body)
 //   GET    /crm/export/leads|deals|accounts|contacts|activities|tasks   (CSV)
@@ -64,6 +69,25 @@ router.get('/tasks', wrap(async (req) => {
   return { status: 200, body: { tasks: await CRM.tasks(req.user, { when: String(req.query.when || 'open'), mine: String(req.query.mine || '') === '1', all: String(req.query.all || '') === '1', from: req.query.from, to: req.query.to, owner: req.query.owner, priority: String(req.query.priority || ''), type: String(req.query.type || '') }) } };
 }));
 router.get('/tasks/counts', wrap((req) => CRM.taskCounts(req.user, { owner: String(req.query.owner || '') })));
+// the work and reporting side (crm/analytics.js): Follow-ups > Calendar, the dashboard charts, Dashboard > Reports (+ Excel, the download log),
+// the conversation thread of a lead / deal, and the Leads list paged on the server
+const AN = require('../crm/analytics');
+router.get('/tasks/calendar', wrap((req) => AN.calendar(req.user, { from: String(req.query.from || ''), to: String(req.query.to || ''), owner: String(req.query.owner || '') })));
+const periodQ = (req) => ({ period: String(req.query.period || ''), from: String(req.query.from || ''), to: String(req.query.to || ''), mine: String(req.query.mine || '') === '1', owner: String(req.query.owner || '') });
+router.get('/charts', wrap((req) => AN.charts(req.user, periodQ(req))));
+router.get('/report-tables', wrap((req) => AN.reportTables(req.user, periodQ(req))));
+router.get('/report-tables/:key/xlsx', async (req, res, next) => {
+  try {
+    const out = await AN.exportReport(req.user, String(req.params.key || ''), periodQ(req));
+    if (!out.buffer) return send(res, out);
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.set('Content-Disposition', `attachment; filename="${out.name}"`);
+    return res.send(out.buffer);
+  } catch (e) { return next(e); }
+});
+router.get('/export-log', wrap((req) => AN.exportLog(req.user, { limit: req.query.limit })));
+router.get('/conversation/:kind(lead|deal|account)/:id', wrap((req) => AN.conversation(req.user, req.params.kind, req.params.id)));
+router.get('/leads', (req, res, next) => (req.query.page ? wrap((r) => AN.leadPage(r.user, r.query || {}))(req, res, next) : next()));
 router.post('/tasks', wrap((req) => CRM.addTask(req.user, req.body || {})));
 router.post('/tasks/:id/done', wrap((req) => CRM.finishTask(req.user, req.params.id, req.body || {})));
 router.post('/tasks/:id/cancel', wrap((req) => SALES.cancelTask(req.user, req.params.id)));

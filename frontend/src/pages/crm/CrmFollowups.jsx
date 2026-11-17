@@ -7,8 +7,9 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, daysLate, RecLink, PriorityPill, DateField, InviteButton, MeetingInvitePrompt, meetingWhen, recordOfTask } from './crmShared.jsx';
+import FollowupCalendar from './CrmCalendar.jsx'; // eslint-disable-line import/no-cycle
 
-const TABS = [['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Completed']];
+const TABS = [['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Completed'], ['calendar', 'Calendar']];
 export const REMIND_WORDS = { 0: 'At the time', 15: '15 minutes before', 60: '1 hour before', 1440: '1 day before' };
 
 // "Done": what came of it, what happened, and optionally the next follow-up (used here and in TaskList)
@@ -190,7 +191,7 @@ export default function CrmFollowups() {
     .then((r) => { if (current()) { setRows(r.data.tasks); setErr(''); } }).catch((e) => { if (current()) setErr(errOf(e, 'The follow-ups could not be read.')); });
   const load = () => fetchRows();
   useEffect(() => { loadCounts(); }, [owner, version]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { let alive = true; setRows(null); fetchRows(() => alive); return () => { alive = false; }; }, [tab, from, to, owner, priority, type, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'calendar') return undefined; let alive = true; setRows(null); fetchRows(() => alive); return () => { alive = false; }; }, [tab, from, to, owner, priority, type, version]); // eslint-disable-line react-hooks/exhaustive-deps
   const refresh = () => { load(); loadCounts(); };
   async function cancel(t) {
     try { await api.post(`/crm/tasks/${t.id}/cancel`); toast('Cancelled.'); refresh(); } catch (e) { toast(errOf(e, 'This could not be cancelled.')); }
@@ -222,14 +223,15 @@ export default function CrmFollowups() {
         })}
       </div>
       <div className="filter-row">
-        <DateField value={from} onChange={setFrom} aria-label="From" style={{ width: 150 }} />
-        <DateField value={to} onChange={setTo} aria-label="To" style={{ width: 150 }} />
+        {tab !== 'calendar' && <DateField value={from} onChange={setFrom} aria-label="From" style={{ width: 150 }} />}
+        {tab !== 'calendar' && <DateField value={to} onChange={setTo} aria-label="To" style={{ width: 150 }} />}
         <select value={priority} onChange={(e) => setPriority(e.target.value)} aria-label="Priority"><option value="">Any priority</option>{me.lists.priorities.map((p) => <option key={p}>{p}</option>)}</select>
         <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type"><option value="">Any type</option>{me.lists.taskTypes.map((p) => <option key={p}>{p}</option>)}</select>
         {me.seesAll && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
       </div>
-      {err && <div className="notice" role="alert">{err}</div>}
-      <div className="tbl-wrap">
+      {tab === 'calendar' && <FollowupCalendar owner={owner} type={type} priority={priority} />}
+      {tab !== 'calendar' && err && <div className="notice" role="alert">{err}</div>}
+      {tab !== 'calendar' && <div className="tbl-wrap">
         <table>
           <thead><tr>{canTick && <th style={{ width: 28 }} aria-label="Done" />}<th>Due</th><th>Priority</th><th>Type</th><th>Follow-up</th><th>For</th>{me.seesAll && <th>Owner</th>}<th>Reminder</th><th>{tab === 'done' ? 'What came of it' : ''}</th></tr></thead>
           <tbody>
@@ -270,10 +272,10 @@ export default function CrmFollowups() {
             })}
           </tbody>
         </table>
-      </div>
+      </div>}
       {doing && <DoneDialog task={doing} onClose={() => setDoing(null)} onDone={() => { setDoing(null); refresh(); if (changed) changed(); }} />}
       {moving && <RescheduleDialog task={moving} onClose={() => setMoving(null)} onDone={() => { setMoving(null); refresh(); }} />}
-      {adding && <NewFollowUp onClose={() => setAdding(false)} onAdded={() => { setAdding(false); refresh(); }} />}
+      {adding && <NewFollowUp onClose={() => setAdding(false)} onAdded={() => { setAdding(false); refresh(); if (changed) changed(); }} />}
     </div>
   );
 }

@@ -308,6 +308,7 @@ async function exportCsv(user, kind) {
   const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
   const csv = `﻿${[e.cols.map((c) => esc(c[1])).join(','), ...rows.map((x) => e.cols.map((c) => esc(x[c[0]])).join(','))].join('\r\n')}`;
   await S.audit(user, 'CRM data downloaded', 'Crm', kind, `${rows.length} rows`);
+  await require('./analytics').logExport(user, `List: ${kind}`, 'csv', rows.length).catch(() => {}); // eslint-disable-line global-require
   return { status: 200, csv, name: `crm-${kind}-${S.istToday()}.csv`, rows: rows.length };
 }
 

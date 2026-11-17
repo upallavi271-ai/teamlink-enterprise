@@ -13,6 +13,8 @@ import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, money, moneyShort, dateOf, dateTimeOf, TaskList, ACT_ICON, RecLink, RecordForm, Pill, DateField, download, istToday, ActNote } from './crmShared.jsx';
 import { TeamTargets, ForecastFunnel, CrmSettings } from './CrmReports.jsx';
 import { TicketList } from './CrmSupport.jsx';
+import DashboardCharts from './CrmCharts.jsx';
+import ReportTables from './CrmReportTables.jsx';
 
 // EVERYTHING OPENS HERE (founder 2026-11-02: "ey buttons meedha click chesina, cards meedha click chesina, akkade display
 // avvali, vere modules loki vellakudadhu"): a card, a flow step or "View all" opens its list in a window on this page, and a
@@ -123,7 +125,7 @@ const Head = ({ title, onClick, link = 'View all' }) => (
 
 const FUNNEL_COLORS = ['var(--crm-blue)', 'var(--crm-green)', 'var(--crm-orange)', 'var(--crm-violet)', 'var(--crm-navy)'];
 
-function Overview({ mine, period, onTab }) {
+function Overview({ mine, period, owner, onTab }) {
   const navigate = useNavigate();
   const { me, version } = useCrm();
   const [win, setWin] = useState(null); // the list window open on this page
@@ -328,6 +330,8 @@ function Overview({ mine, period, onTab }) {
       </div>
 
       {win && <ListWindow what={win} onClose={() => setWin(null)} />}
+      {/* the charts follow Only mine, the period and the salesperson picked above (crm/analytics.js charts) */}
+      <DashboardCharts mine={mine} period={period} owner={owner} />
       {d && (
         <div className="crm-grid2">
           <div className="crm-card">
@@ -397,6 +401,7 @@ export default function CrmDashboard() {
   const [adding, setAdding] = useState(null); // 'lead' | 'deal' - the form opens here
   const [mine, setMine] = useState(!me.seesAll);
   const [period, setPeriod] = useState('month');
+  const [owner, setOwner] = useState(''); // one salesperson, for the charts and the reports
   const [tab, setTab] = useState(sp.get('tab') || 'overview'); // overview | activities | team | forecast
   const [settings, setSettings] = useState(false);
   return (
@@ -412,7 +417,12 @@ export default function CrmDashboard() {
               <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} style={{ width: 'auto' }} /> Only mine
             </label>
           )}
-          {tab === 'overview' && (
+          {me.seesAll && !mine && ['overview', 'reports'].includes(tab) && (
+            <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Salesperson (charts and reports)" title="The charts and the reports for one salesperson" style={{ width: 'auto' }}>
+              <option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          )}
+          {['overview', 'reports'].includes(tab) && (
             <select value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Period" style={{ width: 'auto' }}>
               <option value="month">This month</option><option value="last_month">Last month</option><option value="quarter">This quarter</option><option value="year">This year</option>
             </select>
@@ -426,11 +436,12 @@ export default function CrmDashboard() {
         </div>
       </div>
       <div className="tabs" role="tablist">
-        {[['overview', 'Overview'], ['activities', 'Activities'], ...(!me.seesAll || (me.rights && me.rights.reports) ? [['team', me.seesAll ? 'Team & targets' : 'My month & target']] : []), ...(me.rights && me.rights.reports ? [['forecast', 'Forecast & funnel']] : [])].map(([k, l]) => (
+        {[['overview', 'Overview'], ['activities', 'Activities'], ...(!me.seesAll || (me.rights && me.rights.reports) ? [['team', me.seesAll ? 'Team & targets' : 'My month & target']] : []), ...(me.rights && me.rights.reports ? [['forecast', 'Forecast & funnel']] : []), ...(!me.seesAll || (me.rights && me.rights.reports) ? [['reports', 'Reports']] : [])].map(([k, l]) => (
           <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>{l}</div>
         ))}
       </div>
-      {tab === 'overview' && <Overview mine={mine} period={period} onTab={setTab} />}
+      {tab === 'overview' && <Overview mine={mine} period={period} owner={mine ? '' : owner} onTab={setTab} />}
+      {tab === 'reports' && <ReportTables mine={mine} period={period} owner={mine ? '' : owner} />}
       {tab === 'activities' && <Activities mine={mine} />}
       {tab === 'team' && <TeamTargets />}
       {tab === 'forecast' && <ForecastFunnel />}

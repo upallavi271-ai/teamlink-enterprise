@@ -63,7 +63,25 @@ function insightOf(kind, d, st) {
     if (row.status === 'Qualified') add(20, 'Qualified.'); else if (row.status === 'Contacted') add(5, 'Contacted.');
     if (row.phone || row.email) add(5, 'Has a phone / email.'); else { add(-10, 'No phone or email.'); actions.push({ text: 'Find the HR / hiring manager\'s phone or email (LinkedIn, the company website).' }); }
     if (['Referral', 'Existing client'].includes(row.source)) add(10, `Came by ${row.source.toLowerCase()}.`);
-    if (!acts.length) { actions.push({ text: 'First call: introduce TeamLink and ask about their current hiring.', urgent: true }); } else if (quiet >= st.staleDays) { add(-10, `Nothing logged for ${quiet} days.`); actions.push({ text: `Follow up: last contact was ${quiet} days ago.`, urgent: true }); }
+    // ENGAGEMENT (2026-11-17): what THEY did counts most - wrote back, opened / played the demo, said they are interested, a meeting held -
+    // and a lead that has gone silent loses points week by week. Lines TeamLink writes by itself (stage moves, moved follow-ups) are not contact.
+    const subj = (a) => String(a.subject || '');
+    const recent = (a, days) => daysSince(a.at) != null && daysSince(a.at) <= days;
+    const replies = acts.filter((a) => /^Replied on /.test(subj(a)));
+    if (replies.length) add(replies.some((a) => recent(a, 30)) ? 15 : 5, `They replied (${replies.length}x, last on ${subj(replies[0]).replace(/^Replied on /, '')}, ${daysSince(replies[0].at) === 0 ? 'today' : `${daysSince(replies[0].at)} day(s) ago`}).`);
+    if (acts.some((a) => /^Interested after the demo/.test(subj(a)))) add(10, 'Pressed "I\'m interested" on the demo.');
+    if (acts.some((a) => /^Demo video played/.test(subj(a)))) add(5, 'Played the demo video.');
+    else if (acts.some((a) => /^Demo opened/.test(subj(a)))) add(5, 'Opened the demo.');
+    const met = acts.some((a) => /^AI meeting held/.test(subj(a)) || (a.kind === 'meeting' && /Meeting held/.test(String(a.note || ''))));
+    if (met) add(15, 'A meeting was held.'); else if (acts.some((a) => /^Meeting booked/.test(subj(a)))) add(5, 'A meeting is booked.');
+    const touches = acts.filter((a) => !/^(Stage:|Follow-up moved:)/.test(subj(a)));
+    const lastTouch = touches.length ? touches[0].at : null;
+    const silent = daysSince(lastTouch || row.createdAt);
+    if (lastTouch && silent <= 3) add(10, `Recent activity: ${silent === 0 ? 'today' : `${silent} day(s) ago`}.`);
+    else if (lastTouch && silent <= 7) add(5, `Activity this week (${silent} days ago).`);
+    else if (silent != null && silent > 7) add(-Math.min(30, Math.floor((silent - 7) / 7 + 1) * 5), `Silent for ${silent} days (fewer points every week without contact).`);
+    if (!acts.length) { actions.push({ text: 'First call: introduce TeamLink and ask about their current hiring.', urgent: true }); } else if (silent >= st.staleDays) { actions.push({ text: `Follow up: last contact was ${silent} days ago.`, urgent: true }); }
+    if (replies.length && recent(replies[0], 2)) actions.push({ text: 'They wrote back: answer them today (Conversation tab).', urgent: true });
     if (lateTasks.length) { add(-10, `${lateTasks.length} follow-up(s) late.`); actions.push({ text: `Do the late follow-up: "${lateTasks[0].title}".`, urgent: true }); }
     if (row.status === 'Qualified') actions.push({ text: 'They are qualified: convert the lead to a deal and plan the proposal.', urgent: true });
     if (row.status === 'Contacted' && acts.length >= 2) actions.push({ text: 'Two or more conversations: decide Qualified or Junk so the list stays clean.' });

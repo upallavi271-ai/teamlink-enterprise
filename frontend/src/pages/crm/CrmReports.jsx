@@ -205,8 +205,12 @@ function SampleData() {
 
 // The form for the company's website: the key, round-robin owners, and the code to paste on the site (POST /api/crm/leads/public).
 function WebsiteForm() {
-  const { toast } = useCrm();
+  const { toast, me, reloadMe } = useCrm();
   const [w, setW] = useState(null);
+  const [rr, setRr] = useState(!!me.lists.autoAssignManual);
+  async function manualTurn(v) {
+    try { await api.put('/crm/settings', { autoAssignManual: v }); setRr(v); toast('Saved.'); if (reloadMe) reloadMe(); } catch (e) { toast(errOf(e, 'This could not be saved.')); }
+  }
   useEffect(() => { api.get('/crm/website').then((r) => setW(r.data)).catch(() => setW(null)); }, []);
   if (!w) return null;
   const url = `${window.location.origin}/api/crm/leads/public`;
@@ -244,6 +248,7 @@ function WebsiteForm() {
       <div className="section-label">Website form</div>
       <p className="small-muted" style={{ marginTop: 0 }}>Paste this on your website. Leads come in with Source = Website, and with the page and the campaign (UTM) they came from. The same phone or email again is added as a note on the lead already here. The product they pick (or the words in their message) decides which demo they get, by itself, right away (Leads → Our products → Settings).</p>
       <label style={{ display: 'block', marginBottom: 8 }}><input type="checkbox" checked={w.autoAssign} onChange={(e) => auto(e.target.checked)} style={{ width: 'auto' }} /> Give new website leads to the sales team in turn (otherwise they wait with no owner)</label>
+      <label style={{ display: 'block', marginBottom: 8 }}><input type="checkbox" checked={rr} onChange={(e) => manualTurn(e.target.checked)} style={{ width: 'auto' }} /> A "+ Lead" saved with the owner left empty goes to the next salesperson in the same turn (otherwise it is yours)</label>
       <textarea readOnly rows={8} value={code} aria-label="The website form code" style={{ fontFamily: 'monospace', fontSize: 11.5 }} />
       <div style={{ display: 'flex', gap: 6, margin: '6px 0 14px' }}>
         <button type="button" className="btn btn-sm" onClick={() => navigator.clipboard.writeText(code).then(() => toast('Copied.')).catch(() => toast('Please select the text and copy it.'))}>Copy code</button>
