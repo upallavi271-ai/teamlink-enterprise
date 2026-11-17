@@ -447,6 +447,7 @@ app.use('/api/ats/handover', require('./routes/handover')); // recruiter handove
 app.use('/api/ats/hierarchy', require('./routes/atsHierarchy'));
 // The actual workflow with live counts per box (routes/atsWorkflow.js).
 app.use('/api/ats/workflow', require('./routes/atsWorkflow'));
+app.use('/api/ats/joining-ctc', require('./routes/joiningCtc')); // the joined candidate's yearly CTC, entered by the requirement's BDE / BDE TL / Admin
 app.use('/api/ats', atsExtrasRoutes);
 // Interviews & Joining (Interview Feedback, Offers, Joining, Internal Hiring)
 // shares the /api/ats prefix with the calendar above.
