@@ -11,6 +11,7 @@ import Logo from './Logo.jsx';
 import { BRAND } from '../brand.js'; // a separate company's copy shows its own name (frontend/src/brand.js); TeamLink's build is unchanged
 import AiAssistant, { AiStatusDot } from './AiAssistant.jsx';
 import BdeAgent from './BdeAgent.jsx';
+import WhatsNew from './WhatsNew.jsx';
 import CompanySwitcher from './CompanySwitcher.jsx'; // Super Admin: "Companies" menu on TeamLink; nothing inside a company (2026-11-17)
 import ProfileStatusBanner from './ProfileStatusBanner.jsx';
 import SetupTabs from './SetupTabs.jsx';
@@ -437,6 +438,8 @@ export default function Shell() {
         <footer style={{ padding: '6px 22px 8px', fontSize: 10.5, borderTop: 0, opacity: 0.6 }}>
           {/* No product names: this footer renders for clients and candidates too. */}
           {BRAND.separate ? `${BRAND.name} · ${BRAND.product}` : 'TeamLink.Enterprise · connected to the TeamLink Job Portal'}
+          {/* the version and the release notes: staff only (the notes name internal features) */}
+          {user && !BRAND.separate && !['CLIENT', 'CANDIDATE'].includes(user.role) && <> · <WhatsNew /></>}
         </footer>
       </div>
 
