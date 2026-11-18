@@ -8,6 +8,7 @@ import WaChatMedia from './WaChatMedia.jsx';
 import WaChatFollowUp from './WaChatFollowUp.jsx';
 import { useUsable } from './msgKit.js';
 import { useWaSender } from './WaSender.jsx';
+import { fmtNumber } from './waSender.js';
 import useVisiblePoll from './useVisiblePoll.js';
 import {
   groupByDay, mergeMessages, tickOf, windowInfo, composerMode, timeLabel, newSendKey, shouldMarkRead,
@@ -133,7 +134,12 @@ function AddNote({ personId, applicationId, onDone }) {
 
 // embedded = inside the candidate's own profile (CandidateConversation.jsx): no name / profile buttons / follow-up strip (the profile has them), just a slim line, the messages and the reply box.
 // hideIntent = no "Their answer: Interested / Not interested / Call back" tags (they are for candidates; the Organization Chart's chat with a colleague does not use them)
-export default function WaChatPane({ audience, personId, row, cfg, onBack, onRead, onChanged, embedded = false, nudge = 0, hideIntent = false }) {
+// variant = 'web': the look of Green Start's WhatsApp Web (founder 2026-11-18): the number chosen on a green bar, the name and the window under it, and ONE bar at the
+// bottom (emoji, approved / ready-made messages, "Type a message", send). Same chat, same rules; only the header and the box to write are drawn differently.
+// onOther = open Call / Mail / SMS for this person (the web look puts it in the header).
+export default function WaChatPane({
+  audience, personId, row, cfg, onBack, onRead, onChanged, embedded = false, nudge = 0, hideIntent = false, variant = 'classic', onOther = null,
+}) {
   const isCand = audience === 'candidates';
   const [chat, setChat] = useState(null);
   const [msgs, setMsgs] = useState([]);
@@ -148,6 +154,8 @@ export default function WaChatPane({ audience, personId, row, cfg, onBack, onRea
   const [tplPick, setTplPick] = useState('');
   const [tplText, setTplText] = useState('');
   const [quickPick, setQuickPick] = useState('');
+  const [tplOpen, setTplOpen] = useState(false); // web look: the list of approved / ready-made messages
+  const [tplQ, setTplQ] = useState('');
   const [fuKey, setFuKey] = useState(0);
   const [newBelow, setNewBelow] = useState(0);
   const cursor = useRef(0);
@@ -162,6 +170,14 @@ export default function WaChatPane({ audience, personId, row, cfg, onBack, onRea
   const usable = useUsable(audience);
   const planned = chat && chat.sender && chat.sender.label ? { label: chat.sender.label, displayNumber: chat.sender.displayNumber } : null;
   const wa = useWaSender(true, planned);
+  useEffect(() => { if (!text && taRef.current) taRef.current.style.height = ''; }, [text]); // the box grows with the words and shrinks back after sending
+  // web look: the number the person chose last stays chosen for every chat on the screen (messages leave from it, not from the server's pick for each chat)
+  useEffect(() => {
+    if (variant !== 'web' || !wa.state || wa.state.mode !== 'many' || wa.chosen) return;
+    let saved = '';
+    try { saved = localStorage.getItem('tl_wa_numpref') || ''; } catch { saved = ''; }
+    if (saved && wa.state.usable.some((u) => u.id === saved)) wa.setChosen(saved);
+  }, [variant, wa.state && wa.state.mode, wa.chosen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const base = `/wa-chats/person/${audience}/${personId}`;
   const markRead = useCallback(() => {
@@ -324,6 +340,104 @@ export default function WaChatPane({ audience, personId, row, cfg, onBack, onRea
   const profile = isCand ? `/candidates/${personId}` : audience === 'clients' ? `/clients/${personId}` : `/employees/${personId}`;
   const showPicker = wa.state && wa.state.mode === 'many';
 
+  if (variant === 'web') {
+    const nums = (wa.state && wa.state.usable) || [];
+    const plannedId = chat.sender && chat.sender.id && nums.some((u) => u.id === chat.sender.id) ? chat.sender.id : null;
+    const shownNum = wa.chosen || plannedId || (wa.state && wa.state.selected) || '';
+    const phone = p.phone || p.phoneHint || '';
+    const canType = mode.mode === 'text';
+    const sendMode = mode.mode === 'template';
+    const left = win.open ? win.short.replace(' left to write freely', '') : '';
+    const chooseNum = (id) => { wa.setChosen(id); try { localStorage.setItem('tl_wa_numpref', id); } catch { /* not kept */ } };
+    const initials = String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
+    const list = (sendMode ? approved : templates).filter((t) => !tplQ || `${t.purposeLabel || t.name} ${t.language || ''}`.toLowerCase().includes(tplQ.toLowerCase()));
+    const picked = sendMode ? tplPick : quickPick;
+    return (
+      <div className="wc-pane wcw">
+        <div className="wcw-bar">
+          <span className="wcw-bar-t">💬 WhatsApp</span>
+          <span className="wcw-sp" />
+          {wa.state && wa.state.mode === 'many' && (
+            <label className="wcw-num">
+              <span>Sending from</span>
+              <Combo value={shownNum} onChange={(e) => chooseNum(e.target.value)} emptyText="No such number" aria-label="Sending from">
+                {nums.map((n) => <option key={n.id} value={n.id}>{n.label} ({fmtNumber(n.displayNumber)})</option>)}
+              </Combo>
+            </label>
+          )}
+          {wa.state && wa.state.mode === 'one' && <span className="wcw-num one">{`From ${(chat.sender.label || nums[0].label)} (${fmtNumber((chat.sender.label ? chat.sender.displayNumber : nums[0].displayNumber))})`}</span>}
+        </div>
+        <div className="wcw-head">
+          <button type="button" className="btn btn-sm wc-back" onClick={onBack}>←</button>
+          <span className="wcw-av" aria-hidden="true">{initials}</span>
+          <div className="wcw-id">
+            <b>{p.name}</b>
+            <small>
+              {[p.department, phone].filter(Boolean).join(' · ')}
+              {win.known && <span className={win.open ? 'ok' : 'warn'}>{` · ${win.open ? `Replies allowed for ${left}` : 'Window closed: approved messages only'}`}</span>}
+            </small>
+          </div>
+          <span className="wcw-acts">
+            <Link className="wcw-ic" to={profile} title="Open the profile" aria-label="Open the profile">ⓘ</Link>
+            {onOther && <button type="button" className="wcw-ic" onClick={onOther} title="Call, Mail or SMS instead" aria-label="Call, Mail or SMS instead">⋮</button>}
+          </span>
+        </div>
+        {masked && <div className="msg-box blue">You reach {p.name} through TeamLink: their number and address stay hidden.</div>}
+
+        <div className="wc-scroll" ref={box} onScroll={onScroll} aria-live="polite" aria-label={`Chat with ${p.name}`}>
+          {older.has && <div className="wc-older"><button type="button" className="btn btn-sm" disabled={older.busy} onClick={loadOlder}>{older.busy ? 'Loading…' : 'Show earlier messages'}</button></div>}
+          {lines.length === 0 && <div className="wc-empty">No WhatsApp messages yet. Tap the clipboard below to send the first approved message.</div>}
+          {lines.map((l) => (l.kind === 'day'
+            ? <div key={`d${l.key}`} className="wc-day"><span>{l.label}</span></div>
+            : <Bubble key={l.m.id} m={l.m} tight={l.tight} masked={masked} onReply={startReply} />))}
+        </div>
+        {newBelow > 0 && <button type="button" className="wc-newpill" onClick={jumpDown}>{newBelow} new {newBelow === 1 ? 'message' : 'messages'} ↓</button>}
+
+        <div className="wcw-compose">
+          {sendErr && <div className="msg-box red" role="alert"><b>Not sent.</b> {sendErr.text}</div>}
+          {mode.mode === 'blocked' && <div className="wcw-note warn" role="alert"><b>You cannot write here.</b> {mode.reason}</div>}
+          {sendMode && chat.canSend && <div className="wcw-note" role="status">They have not written in the last 24 hours, so WhatsApp lets us start only with an approved message: tap the clipboard, pick one and send. When they answer, you can type here like normal WhatsApp.</div>}
+          {wa.state && ['none', 'down'].includes(wa.state.mode) ? wa.node : null}
+          {tplOpen && (
+            <div className="wcw-tpl" role="dialog" aria-label={sendMode ? 'Approved messages' : 'Ready-made messages'}>
+              <div className="wcw-tpl-h"><b>{sendMode ? 'Approved messages' : 'Ready-made messages'}</b><button type="button" className="wcw-x" onClick={() => setTplOpen(false)} aria-label="Close">×</button></div>
+              <input className="wcw-tpl-q" value={tplQ} onChange={(e) => setTplQ(e.target.value)} placeholder="Search a message" aria-label="Search a message" />
+              <div className="wcw-tpl-list">
+                {list.length === 0 && <div className="small-muted" style={{ padding: 10 }}>{sendMode ? (tplQ ? 'No approved message matches.' : 'No message is approved by Meta yet. An Admin approves them in Message templates.') : 'No ready-made message found.'}</div>}
+                {list.map((t) => (
+                  <button key={t.id} type="button" className={`wcw-tpl-row${picked === t.id ? ' on' : ''}`} onClick={() => { if (sendMode) pickTemplate(t.id); else { pickQuick(t.id); setTplOpen(false); } }}>
+                    <b>{t.purposeLabel || t.name}</b>
+                    {t.language ? <small>{t.language}</small> : null}
+                  </button>
+                ))}
+              </div>
+              {sendMode && tplPick && (
+                <div className="wcw-tpl-prev">
+                  <div className="msg-preview">{tplText || 'Preparing the words…'}</div>
+                  <button type="button" className="btn btn-primary" disabled={!tplText || sending || (wa.state && !wa.canSend)} onClick={() => { sendTemplate(); setTplOpen(false); }}>{sending ? 'Sending…' : 'Send this message'}</button>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="wcw-bar2">
+            <div className="wcw-emoji-wrap">
+              <button type="button" className="wcw-ic" aria-label="Add an emoji" aria-expanded={pop === 'emoji'} onClick={() => setPop(pop === 'emoji' ? '' : 'emoji')} disabled={!canType}>😊</button>
+              {pop === 'emoji' && <div className="wc-emojis" role="group" aria-label="Emoji">{EMOJI.map((e, i) => <button key={`${e}${i}`} type="button" onClick={() => insertEmoji(e)}>{e}</button>)}</div>}
+            </div>
+            <button type="button" className={`wcw-ic${sendMode ? ' hot' : ''}`} title={sendMode ? 'Approved messages' : 'Ready-made messages'} aria-label={sendMode ? 'Approved messages' : 'Ready-made messages'} aria-expanded={tplOpen} onClick={() => { setTplOpen((v) => !v); setTplQ(''); }} disabled={mode.mode === 'blocked'}>📋</button>
+            <textarea
+              ref={taRef} className="wcw-input" rows={1} value={text} maxLength={4000} aria-label="Type a message" disabled={!canType}
+              placeholder={canType ? 'Type a message' : sendMode ? 'Tap the clipboard to send an approved message' : (mode.reason || 'Nothing can be sent')}
+              onChange={(e) => { setText(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(120, e.target.scrollHeight)}px`; }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); sendText(); } }}
+            />
+            <button type="button" className="wcw-send" aria-label="Send" disabled={!canType || sending || !text.trim() || (wa.state && !wa.canSend)} onClick={sendText}>{sending ? '…' : '➤'}</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`wc-pane${embedded ? ' wc-embedded' : ''}`}>
       {embedded && (
@@ -389,7 +503,13 @@ export default function WaChatPane({ audience, personId, row, cfg, onBack, onRea
 
       <div className="wc-composer">
         {mode.mode === 'blocked' && <div className="msg-box orange" role="alert"><b>You cannot write here.</b> {mode.reason}</div>}
-        {mode.mode === 'template' && chat.canSend && <div className="msg-box orange" role="status">{mode.reason}</div>}
+        {mode.mode === 'template' && chat.canSend && (
+          <div className="msg-box orange" role="status">
+            {mode.reason}
+            {' '}
+            <span>WhatsApp lets a company start a chat only with an approved message: pick one below and press Send. When they answer, typing opens for 24 hours, like normal WhatsApp.</span>
+          </div>
+        )}
         {wa.state && ['many', 'none', 'down'].includes(wa.state.mode) ? wa.node : null}
         {showPicker && !embedded && chat.sender.label && <div className="small-muted">This chat runs on {chat.sender.label}. Pick another number above only if you want to start from it.</div>}
         {sendErr && <div className="msg-box red" role="alert"><b>Not sent.</b> {sendErr.text}</div>}

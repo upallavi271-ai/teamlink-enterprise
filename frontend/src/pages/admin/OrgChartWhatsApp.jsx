@@ -154,13 +154,11 @@ export default function OrgChartWhatsApp({ people, personId, onSelect, onUnread 
 
         <section className="ocw-chat">
           {key ? (
-            <>
-              <div className="ocw-other">
-                <span className="small-muted">Want to call or mail {firstName || 'them'} instead?</span>
-                <button type="button" className="btn btn-sm" onClick={() => setOther({ id: personId, name: selRow ? selRow.name : (who ? who.name : '') })}>Call · Mail · SMS</button>
-              </div>
-              <WaChatPane key={key} audience="employees" personId={personId} row={selRow && !selRow.fresh ? selRow : null} cfg={cfg} hideIntent onBack={() => onSelect(null)} onRead={onRead} onChanged={() => load(true)} />
-            </>
+            <WaChatPane
+              key={key} variant="web" audience="employees" personId={personId} row={selRow && !selRow.fresh ? selRow : null} cfg={cfg} hideIntent
+              onBack={() => onSelect(null)} onRead={onRead} onChanged={() => load(true)}
+              onOther={() => setOther({ id: personId, name: selRow ? selRow.name : (who ? who.name : '') })}
+            />
           ) : (
             <div className="ocw-none">
               <div className="ocw-none-ic" aria-hidden="true">💬</div>
