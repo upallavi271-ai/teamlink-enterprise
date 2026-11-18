@@ -340,6 +340,8 @@ export default function Shell() {
             {/* Always-on AI status: green = model ready, amber = model not
                 pulled, grey = offline. Opens the AI panel. */}
             <AiStatusDot />
+            {/* The BDE Agent: BDE, BDE TL, Super Admin and Developer logins only (it renders nothing for anyone else; the server checks again). */}
+            <BdeAgent />
             {/* Today's tasks (dashboard spec 2026-09-29): follow-ups, interviews and actions due today. */}
             <TodayTasks />
             {section === 'omni' && pathname.startsWith('/omni-channel-native') && <OmniTopChips />}
@@ -445,8 +447,6 @@ export default function Shell() {
 
       {/* Floating, role-aware assistant (bottom right). */}
       <AiAssistant />
-      {/* The BDE Agent: BDE and BDE TL logins only (components/BdeAgent.jsx renders nothing for anyone else). */}
-      <BdeAgent />
       {/* morning / afternoon / evening reminders and "complete this course" (staff only; utils/dayNudges.js) */}
       {user && !['CLIENT', 'CANDIDATE'].includes(user.role) && <NudgePopup />}
       {user && !['CLIENT', 'CANDIDATE'].includes(user.role) && <AnnouncementPopup />}
