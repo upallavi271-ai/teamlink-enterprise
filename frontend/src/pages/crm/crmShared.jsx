@@ -1225,7 +1225,7 @@ export function AskAi() {
     if (!question || busy) return;
     const history = chat.filter((m) => !m.err).slice(-8).map((m) => ({ role: m.who === 'me' ? 'user' : 'assistant', content: m.text }));
     setChat((c) => [...c, { who: 'me', text: question }]); setQ(''); setBusy(true);
-    try { const r = await api.post('/crm/ai/ask', { question, history }); setChat((c) => [...c, { who: 'ai', text: r.data.text, tag: r.data.provider ? `${r.data.provider}${r.data.ms ? ` · ${(r.data.ms / 1000).toFixed(1)}s` : ''}` : '' }]); } catch (e) { setChat((c) => [...c, { who: 'ai', text: errOf(e, 'The AI is not available right now.'), err: true }]); } finally { setBusy(false); }
+    try { const r = await api.post('/crm/ai/ask', { question, history }); setChat((c) => [...c, { who: 'ai', text: r.data.text, tag: r.data.provider ? `${r.data.provider}${r.data.ms ? ` · ${(r.data.ms / 1000).toFixed(1)}s` : ''}${r.data.note ? ` · ${r.data.note}` : ''}` : '' }]); } catch (e) { setChat((c) => [...c, { who: 'ai', text: errOf(e, 'The AI is not available right now.'), err: true }]); } finally { setBusy(false); }
   }
   return (
     <>

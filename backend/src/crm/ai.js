@@ -137,7 +137,7 @@ function factsText(kind, d) {
 async function askModel(system, question, history = []) {
   try {
     const r = await require('../utils/fastAi').chat(system, [...history, { role: 'user', content: question }], { maxTokens: 800 }); // eslint-disable-line global-require
-    return { ok: true, text: String(r.text || '').trim(), provider: r.provider, ms: r.ms };
+    return { ok: true, text: String(r.text || '').trim(), provider: r.provider, ms: r.ms, note: r.note || '' };
   } catch (e) {
     return { ok: false, error: (e && e.message) || 'The AI is not available right now.' };
   }
@@ -260,7 +260,7 @@ async function ask(user, { question, history } = {}) {
     ...(named ? ['', named] : []),
   ].join('\n');
   const res = await askModel(`${RULES}\nYou are the CRM Agent: answer quickly (1-5 short lines or a short list), in the language the salesperson writes in (English, Telugu, Hindi or those written in English letters). For a general sales doubt give short practical advice and say it is general advice.\nAnswer the salesperson's question from these CRM facts:\n${facts}`, q, hist);
-  return res.ok ? S.okBody({ text: res.text, provider: res.provider, ms: res.ms }) : S.fail(503, res.error);
+  return res.ok ? S.okBody({ text: res.text, provider: res.provider, ms: res.ms, note: res.note }) : S.fail(503, res.error);
 }
 
 module.exports = { insight, summary, draftEmail, ask, insightOf, meetingPrep, meetingNotes };

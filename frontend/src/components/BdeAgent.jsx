@@ -50,7 +50,7 @@ export default function BdeAgent() {
     setBusy(true);
     try {
       const r = await api.post('/bde-agent/ask', { question, history });
-      setChat((c) => [...c, { who: 'ai', text: r.data.text, tag: r.data.provider ? `${r.data.provider} · ${(r.data.ms / 1000).toFixed(1)}s` : '' }]);
+      setChat((c) => [...c, { who: 'ai', text: r.data.text, tag: r.data.provider ? `${r.data.provider} · ${(r.data.ms / 1000).toFixed(1)}s${r.data.note ? ` · ${r.data.note}` : ''}` : '' }]);
     } catch (e) {
       setChat((c) => [...c, { who: 'ai', text: (e.response && e.response.data && e.response.data.error) || 'The BDE Agent could not answer right now. Try again.', err: true }]);
     } finally {

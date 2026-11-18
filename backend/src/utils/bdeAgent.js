@@ -205,7 +205,7 @@ async function ask(user, { question, history } = {}) {
   const system = `${SYSTEM}\n\nFACTS (read ${new Date(built.at).toISOString().slice(11, 16)} UTC):\n${built.facts}${extra ? `\n\n${extra}` : ''}`;
   try {
     const r = await fastAi.chat(system, [...hist, { role: 'user', content: q }], { maxTokens: 700, temperature: 0.1 });
-    return { status: 200, body: { text: r.text, provider: r.provider, model: r.model, ms: Date.now() - t0 } };
+    return { status: 200, body: { text: r.text, provider: r.provider, model: r.model, ms: Date.now() - t0, note: r.note || '' } };
   } catch (err) {
     return { status: err.status && err.status < 600 ? err.status : 503, body: { error: err.message || 'The BDE Agent could not answer right now.' } };
   }
