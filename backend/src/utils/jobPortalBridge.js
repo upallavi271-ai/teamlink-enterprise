@@ -414,6 +414,7 @@ async function ingestOne(payload) {
     await require('./notify').notifyUsers([requirement.recruiterId, requirement.tlId].filter(Boolean), {
       title: 'New application from the job portal',
       message: `${candidate.name} → ${requirement.title}`,
+      open: `/candidates/${candidate.id}`,
     });
   } catch { /* the application is in; a bell that did not ring is not a failure */ }
   return {

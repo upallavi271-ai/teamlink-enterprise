@@ -21,6 +21,8 @@
     "comm-test": "node scripts/comm-automation-test.js",
     "org-chart-test": "node scripts/org-chart-test.js",
     "omni-mirror-test": "node scripts/omni-mirror-send-test.js",
+    "notify-open-test": "node scripts/notify-open-test.js",
+    "conversation-ticks-test": "node scripts/conversation-ticks-test.js",
     "portal-session": "node scripts/portal-session.js",
     "portal-calibrate": "node scripts/portal-calibrate.js",
     "posting-test": "node scripts/job-publish-test.js",

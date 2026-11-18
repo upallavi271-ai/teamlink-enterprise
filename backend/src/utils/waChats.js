@@ -625,6 +625,9 @@ async function notifyReply({ personType, personId, name, ownerUserId, text }) {
     await require('./notify').pushNotification({ // eslint-disable-line global-require
       userId: ownerUserId, title: `New WhatsApp reply from ${name || 'a person'}`,
       message: `${clip(String(text || '').replace(/\s+/g, ' ').trim(), 120) || 'A reply arrived.'} - open Follow-ups > WhatsApp chats`,
+      // the click opens that person's chat: a candidate's profile (Conversation tab), a client's card, or an employee's WhatsApp chat
+      // (/open/chat/employee/<id> sends an Admin to the Organization Chart's WhatsApp screen, anybody else to Follow-ups > WhatsApp chats)
+      open: personType === 'CANDIDATE' ? `/candidates/${personId}?tab=conversation` : personType === 'CLIENT' ? `/clients/${personId}` : `/open/chat/employee/${personId}`,
     });
     return { sent: true };
   } catch (e) { return { sent: false, why: e.message }; }

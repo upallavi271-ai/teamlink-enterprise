@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import ListFilterBar, { useListFilters } from '../../components/ui/ListFilters.jsx';
+import NotificationsPanel from '../../components/NotificationsPanel.jsx'; // the person's notifications (click opens the screen each is about)
 import OrgChartWhatsApp from './OrgChartWhatsApp.jsx'; // the WhatsApp screen: the chats on the left, the open chat on the right
 import useVisiblePoll from '../../components/messaging/useVisiblePoll.js';
 import { useContactRule } from '../../components/messaging/useMayMessage.js';
@@ -217,11 +218,13 @@ export default function OrgChart() {
   const [waUnread, setWaUnread] = useState(0); // chats with a reply nobody has read (employees only)
   const contact = useContactRule('employees'); // the server's answer: may this login contact employees at all
   // the number on the WhatsApp tab: asked every minute while the chart is shown (the WhatsApp screen keeps it up to date itself)
-  useVisiblePoll(async (signal) => {
+  const askUnread = useCallback(async (signal) => {
     const r = await api.get('/wa-chats', { params: { type: 'EMPLOYEE', state: 'unread' }, signal });
     setWaUnread(r.data.unreadChats || 0);
     return true;
-  }, 60000, { enabled: contact.allowed && view === 'chart', key: 'oc-wa-badge' });
+  }, []);
+  useEffect(() => { if (contact.allowed) askUnread().catch(() => {}); }, [contact.allowed, askUnread]); // right away, so the tab shows its number at once
+  useVisiblePoll(askUnread, 60000, { enabled: contact.allowed && view === 'chart', key: 'oc-wa-badge' });
 
   const load = useCallback(() => {
     setBusy(true); setError('');
@@ -311,6 +314,8 @@ export default function OrgChart() {
           <button type="button" className="btn" onClick={load} disabled={busy}>{busy ? 'Refreshing…' : '↻ Refresh'}</button>
         </div>
       </div>
+
+      <NotificationsPanel limit={3} storageKey="orgchart" />
 
       {contact.allowed && (
         <div className="oc-views" role="tablist" aria-label="Chart or WhatsApp chats">

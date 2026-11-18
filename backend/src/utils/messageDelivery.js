@@ -109,6 +109,9 @@ async function applyStatusInner(info, status) {
     matched += 1;
   }
 
+  // 1a. a message to an employee or a client (the Conversation rows): the same ticks as a candidate's message
+  matched += await require('./conversations').applyStatus(info.providerRef, status, { error: info.error || null }).catch(() => 0); // eslint-disable-line global-require
+
   // 1b. the adapter layer's record of this message (provider, status ticks history - channels/store.js)
   try {
     const rec = await require('../channels/store').applyStatus(String(info.providerRef), status.toLowerCase(), { at, error: info.error || null, extra: info.extra || null }); // eslint-disable-line global-require

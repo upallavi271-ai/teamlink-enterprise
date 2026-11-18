@@ -331,6 +331,7 @@ async function escalateOverdue({ limit = 300 } = {}) {
           message: rung.level === 1
             ? what
             : `${what} Already escalated past ${ESCALATION_LADDER[rung.level - 2].label}. ${who} is still the owner.`,
+          open: '/ats/followups',
         });
         // eslint-disable-next-line no-await-in-loop
         await prisma.applicationFollowUp.update({

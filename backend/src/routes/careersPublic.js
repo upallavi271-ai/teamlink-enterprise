@@ -526,6 +526,7 @@ router.post('/jobs/:id/apply', async (req, res) => {
   await notifyUsers([job.recruiterId, job.tlId], {
     title: 'New application from the job portal',
     message: `${candidate.name} → ${job.title}`,
+    open: `/candidates/${candidate.id}`,
   }).catch(() => null);
   // An application through a site's tracked link proves the post there is live (jobDist/signals.js, 2026-11-03)
   if (src || fields.utm_source) require('../jobDist/signals').record(job.id, src || fields.utm_source, 'apply').catch(() => {}); // eslint-disable-line global-require

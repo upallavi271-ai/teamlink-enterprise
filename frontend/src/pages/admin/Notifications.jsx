@@ -4,6 +4,7 @@ import PhoneAlerts from '../../components/PhoneAlerts.jsx'; // install the app /
 import api from '../../api';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { PAGE_SIZES } from '../../components/Pager.jsx';
+import { noteTarget, noteText } from '../../utils/noteTarget.js'; // where each line leads (the same answer as the bell and the Dashboard)
 
 // Notifications — the prototype's notificationsView() (line 10575): a central
 // event log across Email / WhatsApp / SMS / In-App, five columns wide.
@@ -19,7 +20,6 @@ import Pager, { PAGE_SIZES } from '../../components/Pager.jsx';
 
 // The password-changed alert ends with "Open: /admin/users?block=<id>": hidden from the text, shown as a button.
 const OPEN_TAIL = new RegExp(String.raw`\nOpen: (/[^\s]+)\s*$`);
-const noteText = (m) => String(m || '').replace(OPEN_TAIL, '');
 const blockPath = (m) => { const p = (String(m || '').match(OPEN_TAIL) || [])[1]; return p && p.startsWith('/admin/users?block=') ? p : null; };
 
 export default function Notifications() {
@@ -103,7 +103,8 @@ export default function Notifications() {
                 <td>{n.recipient || '—'}</td>
                 <td>{n.channel || 'In-App'}</td>
                 <td>{n.title}{n.message ? <div className="small-muted" style={{ fontSize: 11.5 }}>{noteText(n.message)}</div> : null}
-                  {blockPath(n.message) && <Link className="btn btn-sm" style={{ marginTop: 4 }} to={blockPath(n.message)}>Block this login</Link>}</td>
+                  {blockPath(n.message) && <Link className="btn btn-sm" style={{ marginTop: 4 }} to={blockPath(n.message)}>Block this login</Link>}
+                  {!blockPath(n.message) && (n.channel || 'In-App') !== 'Email' && noteTarget(n) && <Link className="btn btn-sm" style={{ marginTop: 4 }} to={noteTarget(n).to}>{noteTarget(n).label} ›</Link>}</td>
                 <td><span className={'status ' + (/^(failed|not sent)/i.test(n.status || '') ? 'failed' : /^(sent|delivered|read)/i.test(n.status || '') ? 'active' : 'pending')}>{n.status || 'Delivered'}</span></td>
                 <td>{new Date(n.createdAt).toLocaleString()}</td>
               </tr>

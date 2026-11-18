@@ -16,6 +16,7 @@ import AgreementsWaiting from '../components/agreements/AgreementsWaiting.jsx';
 import NewItems from '../components/dashboard/NewItems.jsx'; // the New button (2026-10-13)
 import ControlTower from '../components/dashboard/ControlTower.jsx'; // the Super Admin / Admin home (2026-10-23)
 import Vacancies from '../components/dashboard/Vacancies.jsx'; // vacancies per department (2026-11-02)
+import NotificationsPanel from '../components/NotificationsPanel.jsx'; // the person's notifications, a click opens the screen each is about (2026-11-18)
 
 // ---------------------------------------------------------------------------
 // THE OVERALL DASHBOARD (§18).
@@ -223,6 +224,7 @@ export default function Dashboard() {
   if (user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role) && can(user, null, 'administration', 'Users', 'view')) {
     return (
       <>
+        <NotificationsPanel limit={5} storageKey="home" />
         <ControlTower />
         <Vacancies />
         <AgreementsWaiting />
@@ -354,6 +356,7 @@ function ProductDashboard({ user }) {
   return (
     <>
       <PageHead user={user} extra={scoped ? ` · ${departments.join(', ')}` : ''} range={range} setRange={setRange} />
+      <NotificationsPanel limit={5} storageKey="home" />
       <NewItems />
       {/* Agreement steps (2026-10-13): only when something waits for this login */}
       <AgreementsWaiting />

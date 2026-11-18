@@ -48,6 +48,7 @@ import Timesheet from './pages/hrms/Timesheet.jsx';
 import MyProfile from './pages/hrms/MyProfile.jsx';
 import OrgStructure from './pages/admin/OrgStructure.jsx';
 import OrgChart from './pages/admin/OrgChart.jsx'; // the whole company as a tree, with a way to message anyone on it
+import OpenChat from './pages/OpenChat.jsx'; // where a "WhatsApp reply from <employee>" notification leads (picks the screen this login may use)
 
 import Invoices from './pages/Invoices.jsx';
 import InvoiceDetail from './pages/InvoiceDetail.jsx';
@@ -389,6 +390,7 @@ export default function App() {
             also stays a tab inside Performance & Development. */}
         <Route path="admin/org-structure" element={<OrgStructure />} />
         <Route path="admin/org-chart" element={<OrgChart />} />
+        <Route path="open/chat/:kind/:id" element={<OpenChat />} />
         <Route path="admin/notifications" element={<Notifications />} />
         <Route path="admin/audit" element={<AuditLogs />} />
         <Route path="admin/system" element={<SystemSafety />} />

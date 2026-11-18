@@ -614,8 +614,35 @@ async function sweepWaiting() {
   return due.length;
 }
 
+// A delivery report for a message WE sent to a client or an employee (founder 2026-11-18: a WhatsApp sent to an employee stayed on ONE tick for ever,
+// because only candidates' rows were updated): the tick moves Sent -> Delivered -> Read, or becomes "Not delivered" with the provider's reason.
+// Matched ONLY by the provider's message id; a row never goes backwards (a late "sent" after "read" changes nothing). Returns how many rows changed.
+const TICK_RANK = { SENT: 1, DELIVERED: 2, READ: 3 };
+async function applyStatus(providerRef, status, { error } = {}) {
+  const ref = String(providerRef || '');
+  const st = String(status || '').toUpperCase();
+  if (!ref || !['SENT', 'DELIVERED', 'READ', 'FAILED'].includes(st)) return 0;
+  if (!(await ready())) return 0;
+  const rows = await q('SELECT "id","status" FROM "ConversationMessage" WHERE "providerRef" = ? AND "direction" = ?', ref, 'OUT');
+  let changed = 0;
+  for (const r of rows) {
+    const cur = String(r.status || '').toUpperCase();
+    if (cur === st) continue; // eslint-disable-line no-continue
+    if (st !== 'FAILED' && (TICK_RANK[cur] || 0) >= TICK_RANK[st]) continue; // eslint-disable-line no-continue
+    if (st === 'FAILED') {
+      // eslint-disable-next-line no-await-in-loop
+      await run('UPDATE "ConversationMessage" SET "status" = ?, "statusDetail" = ? WHERE "id" = ?', st, clip(`Not delivered${error ? `: ${error}` : ''}`, 500), r.id);
+    } else {
+      // eslint-disable-next-line no-await-in-loop
+      await run('UPDATE "ConversationMessage" SET "status" = ? WHERE "id" = ?', st, r.id);
+    }
+    changed += 1;
+  }
+  return changed;
+}
+
 module.exports = {
   TYPES, AUDIENCE_OF, TYPE_WORD, CHANNELS, ready, getThread, getThreadById, ensureThread, personInfo,
-  recordOut, recordIn, findByPhone, findByEmail, timeline, visibleIds, allowedTypes, inbox, unreadCount,
+  applyStatus, recordOut, recordIn, findByPhone, findByEmail, timeline, visibleIds, allowedTypes, inbox, unreadCount,
   markRead, setDone, assign, setPreferred, setAwait, stopWaiting, sweepWaiting, myTeamIds, istDate, istTime, snippet,
 };

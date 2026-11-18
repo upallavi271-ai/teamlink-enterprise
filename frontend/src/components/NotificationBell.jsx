@@ -2,20 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api';
 import useAtsAlerts from '../utils/useAtsAlerts';
+import { noteLink, noteText } from '../utils/noteTarget.js';
 import { JoinMeeting, splitMeeting } from './MeetingLink.jsx';
 import './NotificationBell.css';
 
-// An announcement's notification opens that announcement (Employee Services
-// → Announcements); its "Join meeting: https://…" line becomes a button.
-const ANN_PREFIX = 'Announcement: ';
-const announcementLink = (n) => (String(n.title || '').startsWith(ANN_PREFIX)
-  ? `/employee-services?tab=announcements&open=${encodeURIComponent(n.title.slice(ANN_PREFIX.length))}&at=${encodeURIComponent(n.createdAt || '')}`
-  : null);
-// A notice whose last line is "Open: /some/path" opens that screen (e.g. the
-// client's Agreement card, 2026-10-05); the line itself is not shown.
-const OPEN_RE = /\nOpen: (\/[^\s]+)\s*$/;
-const noteLink = (n) => announcementLink(n) || ((String(n.message || '').match(OPEN_RE) || [])[1] || null);
-const noteText = (m) => String(m || '').replace(OPEN_RE, '');
+// WHERE A MESSAGE LEADS is decided in ONE place (utils/noteTarget.js, founder 2026-11-18): an announcement opens that announcement (its
+// "Join meeting: https://…" line becomes a button), a last line "Open: /some/path" opens that screen (the line is not shown), and an older
+// message opens the screen its title is about. The same answer is used by the Dashboard and Organization Chart lists and the Notifications page.
 
 // ---------------------------------------------------------------------------
 // 🔔 THE BELL — dashboard review 2026-10-03 §A8: "🔔 7,030 → nobody reads

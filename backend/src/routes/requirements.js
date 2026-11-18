@@ -3128,12 +3128,14 @@ async function notifyAssignment(requirement, actorId, verb = 'assigned to you') 
     title: `Requirement ${requirement.reqCode || requirement.title} ${verb}`,
     message: `${requirement.title} — ${requirement.department || 'no department'}.`,
     exceptUserId: actorId,
+    open: `/requirements/${requirement.id}`,
   });
   if (tlTodo) {
     await notifyUsers([requirement.tlId], {
       title: `You got a new requirement: ${requirement.reqCode || requirement.title}`,
       message: `${requirement.title} — post it anywhere you want. While posting, pick the recruiter who gets all its responses.`,
       exceptUserId: actorId,
+      open: `/requirements/${requirement.id}`,
     });
   }
 }
