@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
+import DropCandidate from '../candidate/DropCandidate.jsx'; // the real drop window: day + reason, saved in the Joining & Drop record
 import { ListToolbar, FacetSelect } from '../ui/ListPageHeader.jsx';
 import { useAtsIoAccess } from '../AtsDataTools.jsx';
 import './homeDrill.css';
@@ -122,9 +123,18 @@ function rollTone(v) {
 }
 const ROLL_HEX = { red: '#b42318', yellow: '#b45309', blue: '#1d4ed8', green: '#1a7f37' };
 function RollCell({ r, onRoll, busy }) {
+  // "Dropped" set earlier as a bare label (before it opened the drop window) has no drop record: say so and offer the real thing.
+  const [unrecorded, setUnrecorded] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    if (r.rollStatus === 'Dropped') {
+      api.get(`/join-drop/application/${r.id}`).then((x) => { if (alive) setUnrecorded(!(x.data && x.data.record && x.data.record.status === 'Dropped')); }).catch(() => {});
+    } else setUnrecorded(false);
+    return () => { alive = false; };
+  }, [r.id, r.rollStatus]);
   // Pick the roll status right here (founder 2026-11-13). Falls back to a chip when it cannot be edited.
   if (!onRoll) return r.rollStatus ? <StatusChip tone={rollTone(r.rollStatus)} status={r.rollStatus} /> : <span className="hd-sub">—</span>;
-  return (
+  const select = (
     <select
       className="hd-roll"
       value={r.rollStatus || ''}
@@ -136,6 +146,12 @@ function RollCell({ r, onRoll, busy }) {
       <option value="">—</option>
       {ROLL_OPTS.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
+  );
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      {select}
+      {unrecorded && <button type="button" className="btn btn-sm" style={{ color: '#b42318', borderColor: '#b42318' }} title="This was marked Dropped without the day and reason, so the counts do not show it yet" onClick={() => onRoll(r.id, 'Dropped')}>Record the drop</button>}
+    </span>
   );
 }
 
@@ -249,7 +265,13 @@ export default function HomeDrill({ listUrl, params, setId, onClose }) {
   const [rollBusy, setRollBusy] = useState('');
 
   // Set On roll / Off roll on a joined candidate straight from the list (founder 2026-11-13).
+  const [dropFor, setDropFor] = useState(null);
   async function setRoll(appId, rollStatus) {
+    if (rollStatus === 'Dropped') { // a drop is the day + the reason, saved in the Joining & Drop record: open that window instead of only changing a label
+      const row = ((data && data.rows) || []).find((r) => r.id === appId);
+      setDropFor({ id: appId, stage: (row && row.stage) || 'JOINED' });
+      return;
+    }
     setRollBusy(appId); setMsg(null);
     try {
       await api.patch(`/ats/applications/${appId}/roll-status`, { rollStatus });
@@ -349,6 +371,13 @@ export default function HomeDrill({ listUrl, params, setId, onClose }) {
           <div className="hd-empty">Nothing matches your search or filters. <button type="button" className="link-btn" onClick={clearAll}>Clear all</button></div>
         )}
         {data && rows.length > 0 && <div className="hd-wrap"><Rows data={data} onClose={onClose} onRoll={setRoll} rollBusy={rollBusy} /></div>}
+        {dropFor && (
+          <DropCandidate
+            app={dropFor}
+            onClose={() => setDropFor(null)}
+            onDone={(said) => { setDropFor(null); setMsg({ ok: true, text: said || 'Saved. The drop is recorded.' }); setTick((t) => t + 1); }}
+          />
+        )}
         {data && filtered > 0 && (
           <div className="hd-foot">
             <span>Showing {fmt(from)}–{fmt(to)} of {fmt(filtered)}</span>

@@ -1443,6 +1443,19 @@ router.patch('/applications/:id/roll-status', async (req, res) => {
   }
   const rollStatus = String((req.body || {}).rollStatus == null ? '' : req.body.rollStatus).trim();
   if (rollStatus && !ROLL_STATUSES.includes(rollStatus)) return res.status(400).json({ error: `Pick one of: ${ROLL_STATUSES.join(', ')}.` });
+  // "Dropped" is not just a label: the Joined badge, the month counts, the guarantee and the replacement task all read the Joining & Drop record.
+  // So the label may only say Dropped when that record says so (the screens open the drop window, which records the day and the reason).
+  {
+    const JD = require('../joindrop/core'); // eslint-disable-line global-require
+    await JD.ready();
+    const rec = await JD.byApplication(app.id).catch(() => null);
+    if (rollStatus === 'Dropped' && !(rec && rec.status === 'Dropped')) {
+      return res.status(409).json({ error: 'A drop needs the day and the reason, so it is saved in the Joining & Drop record (that is what moves the Joined and Dropped counts). Use "Report a drop" for this candidate.', needsDrop: true, applicationId: app.id, recorded: !!rec });
+    }
+    if (rec && rec.status === 'Dropped' && rollStatus !== 'Dropped') {
+      return res.status(409).json({ error: 'This drop is recorded. If it was reported by mistake, open the drop window and use "Withdraw the drop" (a reason is kept in the history).', needsReopen: true, applicationId: app.id });
+    }
+  }
   await prisma.application.update({ where: { id: app.id }, data: { rollStatus: rollStatus || null } });
   await logAudit({
     userId: req.user.id, action: rollStatus ? `Marked ${rollStatus}` : 'Cleared on roll / off roll',

@@ -1080,6 +1080,7 @@ export function CurrentApplication({
   // so a controlled <select> snapped back on any refresh lag and looked unsaved.
   const [rollVal, setRollVal] = useState((app && app.rollStatus) || '');
   const [rollErr, setRollErr] = useState('');
+  const [dropOpen, setDropOpen] = useState(false);
   useEffect(() => { setRollVal((app && app.rollStatus) || ''); setRollErr(''); }, [app && app.id, app && app.rollStatus]);
   const mayEdit = !!(user && onChanged && app && app.id && can(user, 'ats', 'recruiterbde', 'Team View', 'assign'));
   if (!app) return <div className="small-muted">Not on any requirement yet. Add them to a requirement to start.</div>;
@@ -1088,6 +1089,10 @@ export function CurrentApplication({
   // with the application through to joining (founder 2026-11-13). Same field and endpoint as the joined list's roll status.
   const canRoll = !!(user && onChanged && app.id && (can(user, 'ats', 'candidates', 'Applications', 'edit') || can(user, 'ats', 'interviews', 'Joining', 'edit')));
   const setRoll = async (v) => {
+    if (v === 'Dropped') { // a drop is the day + the reason in the Joining & Drop record, not just a label
+      if (['joined', 'offer'].includes(dropKind(app))) { setDropOpen(true); setRollErr(''); } else setRollErr('To drop a candidate who has not joined yet use Move, then Dropped.');
+      return;
+    }
     const prev = rollVal;
     setRollVal(v); setRollErr(''); setRollBusy(true);
     try {
@@ -1101,6 +1106,9 @@ export function CurrentApplication({
   };
   return (
     <>
+      {dropOpen && app && (
+        <DropCandidate app={app} onClose={() => setDropOpen(false)} onDone={async (said) => { setDropOpen(false); if (onChanged) await onChanged(); setRollVal('Dropped'); if (said) setRollErr(''); }} />
+      )}
       {/* One aligned label / value list; then who is on this. */}
       <div className="c360-facts">
         <div className="cdw-kv"><span>Requirement</span>{linkTo ? linkTo(app) : <b>{app.requirement?.title || '—'}</b>}</div>
@@ -1117,6 +1125,7 @@ export function CurrentApplication({
                   {ROLL_OPTS.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
                 {rollErr && <span className="small-muted" style={{ color: '#b42318' }}>{rollErr}</span>}
+                {(app.rollStatus === 'Dropped' || rollVal === 'Dropped') && ['joined', 'offer'].includes(dropKind(app)) && <button type="button" className="btn btn-sm" style={{ color: '#b42318', borderColor: '#b42318' }} onClick={() => setDropOpen(true)}>Record the drop</button>}
               </span>
             ) : <b>{app.rollStatus}</b>}
           </div>

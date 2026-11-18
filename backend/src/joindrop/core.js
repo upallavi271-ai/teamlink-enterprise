@@ -417,6 +417,8 @@ async function reportDrop(recordId, body, actor, { from, ctx = {} } = {}) {
     replacementDecidedById: null, replacementDecidedByName: null, replacementOnBehalf: 0, replacementStatus: null, replacementApplicationId: null, replacementLinkedAt: null,
   };
   const record = await update(recordId, patch);
+  // the Status / Roll status dropdown on the lists shows the same word as the record (it used to be a label of its own that no count read)
+  try { await prisma.application.update({ where: { id: rec.applicationId }, data: { rollStatus: 'Dropped' } }); } catch (e) { console.error('[join-drop] roll label:', e.message); } // eslint-disable-line no-console
   const ev = await addEvent({
     record, kind: 'DROP_REPORTED', actor, from,
     summary: `Drop reported: dropped on ${V.dmy(f.droppedOn)}. Reason: ${f.dropReason}${f.dropReasonDetail ? ` (${f.dropReasonDetail.slice(0, 120)})` : ''}. ${N.withinWords(record)}.`,
@@ -591,6 +593,7 @@ async function reopen(recordId, reason, actor, { from = null, ctx = {} } = {}) {
   if (V.clean(reason, 300).length < 5) throw new Bad('Say why the drop was wrong (a few words). It is kept in the history.');
   const old = dropSnapshot(rec);
   const record = await update(recordId, { status: 'Joined', ...clearDrop() });
+  try { await prisma.application.updateMany({ where: { id: rec.applicationId, rollStatus: 'Dropped' }, data: { rollStatus: null } }); } catch (e) { console.error('[join-drop] roll label:', e.message); } // eslint-disable-line no-console
   const ev = await addEvent({
     record, kind: 'DROP_REOPENED', actor, from, summary: `The drop reported for ${V.dmy(rec.droppedOn)} was withdrawn: ${V.cleanLong(reason, 200)}`, oldValue: old, newValue: { status: 'Joined' }, note: reason,
   });
