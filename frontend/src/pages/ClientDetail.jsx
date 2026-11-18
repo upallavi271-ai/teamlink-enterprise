@@ -619,6 +619,7 @@ export default function ClientDetail() {
                   <Row k="Client type">{c.clientType}</Row>
                   <Row k="Department">{c.ownerDepartment}</Row>
                   <Row k="Website">{c.website}</Row>
+                  {c.bedCapacity ? <Row k="Bed capacity">{`${c.bedCapacity} beds`}</Row> : null}
                   <Row k="Status"><StatusChip status={c.status || '—'} />{c.priority ? <span className="small-muted" style={{ fontSize: 11 }}>{` · ${c.priority} priority`}</span> : null}</Row>
                   <Row k="Since">{c.activeDate || (c.createdAt ? protoDate(c.createdAt) : null)}</Row>
                 </div>

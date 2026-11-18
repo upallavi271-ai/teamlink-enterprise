@@ -63,8 +63,17 @@ export default function ProfileLeft({
         <Row k="Location" v={[c.location, c.preferredLocation && c.preferredLocation !== c.location ? `wants ${c.preferredLocation}` : ''].filter(Boolean).join(' · ')} />
         {c.dob && <Row k="Date of birth" v={protoDate(c.dob)} />}
         {c.gender && <Row k="Gender" v={c.gender} />}
+        {/* more of the candidate's own details (ATS audit 2026-11-18 batch 1) */}
+        {c.alternatePhone && <Row k="Alternate phone" v={c.alternatePhone} />}
+        {c.nativePlace && <Row k="Native place" v={c.nativePlace} />}
+        {c.address && <Row k="Address" v={c.address} />}
+        {c.maritalStatus && <Row k="Marital status" v={c.maritalStatus} />}
+        {c.languagesKnown && <Row k="Languages" v={c.languagesKnown} />}
         <Row k="Current job" v={[c.currentDesignation, c.currentCompany].filter(Boolean).join(' · ')} />
         <Row k="Education" v={[c.education, c.specialization, c.institute].filter(Boolean).join(' · ')} />
+        {c.superSpecialization && <Row k="Super-speciality" v={c.superSpecialization} />}
+        {c.eligibilityTests && <Row k="Tests cleared" v={c.eligibilityTests} />}
+        {c.machineryExperience && <Row k="Machinery" v={c.machineryExperience} />}
         {/* PROFESSIONAL REGISTRATION (ATS audit 2026-11-18): council, number, state, validity and whether TeamLink verified it */}
         {(c.registrationNumber || c.registrationCouncil) && (() => {
           const expired = c.registrationValidTill && c.registrationValidTill < new Date().toISOString().slice(0, 10);

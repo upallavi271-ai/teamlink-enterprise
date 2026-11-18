@@ -59,7 +59,7 @@ export function guaranteeWords(d) {
 export function emptyClientForm(user, ownerLocked, defaults) {
   const d = defaults || {};
   return {
-    name: '', clientCode: '', companyType: '', industry: '', website: '', companyEmail: '', landline: '',
+    name: '', clientCode: '', companyType: '', industry: '', website: '', companyEmail: '', landline: '', bedCapacity: '',
     street: '', area: '', location: '', state: '', country: 'India', pincode: '',
     contactName: '', contactDesignation: '', contactEmail: '', contactPhone: '', contactAltPhone: '', contactWhatsApp: '',
     waSame: true, commPrimary: 'Email',
@@ -113,7 +113,7 @@ export const HR_BODY_KEYS = ['legalName', 'billingAddress', 'billingSameAsAddres
   'internalNotes', 'specialInstructions', 'recruitmentInstructions', 'internalRemarks'];
 export function bodyFromForm(f, { canCommercial = true, hrEditable = true } = {}) {
   const b = {};
-  ['name', 'clientCode', 'companyType', 'industry', 'website', 'companyEmail', 'landline', 'street', 'area', 'location', 'state', 'country', 'pincode',
+  ['name', 'clientCode', 'companyType', 'industry', 'website', 'companyEmail', 'landline', 'bedCapacity', 'street', 'area', 'location', 'state', 'country', 'pincode',
     'contactName', 'contactDesignation', 'contactEmail', 'contactPhone', 'contactAltPhone', 'commPrimary',
     'ownerDepartment', 'bdeOwner', 'secondaryBde', 'accountManager', 'clientSource',
     'replacementTerms', 'agreementTemplate', 'agreementStart', 'agreementEnd', 'specialTerms',
@@ -472,6 +472,8 @@ export default function ClientForm({
           </Combo>
         </Field>
         <Field id="website" label="Website">{inp('website', { placeholder: 'e.g. www.acme.com' })}</Field>
+        {/* hospitals (ATS audit 2026-11-18, Q278): the number of beds - shown on the client and used to size medical requirements */}
+        <Field id="bedCapacity" label="Bed capacity (hospitals)">{inp('bedCapacity', { type: 'number', min: 0, placeholder: 'e.g. 250' })}</Field>
         <Field id="companyEmail" label="Company email" error={errors.companyEmail}>{inp('companyEmail', { type: 'email', placeholder: 'e.g. info@acme.com' })}</Field>
         <Field id="landline" label="Company phone">{inp('landline', { inputMode: 'tel', placeholder: 'e.g. 040 2345 6789' })}</Field>
         <Field id="street" label="Company address" wide>{inp('street', { placeholder: 'e.g. Plot 12, Road No 5, Banjara Hills' })}</Field>

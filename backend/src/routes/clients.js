@@ -1740,7 +1740,7 @@ const CLIENT_FIELDS = {
     // Risk Monitoring
     'riskFlag', 'riskNotes',
   ],
-  numeric: ['agreementFeePercent', 'tdsPercent', 'gstPercent'],
+  numeric: ['agreementFeePercent', 'tdsPercent', 'gstPercent', 'bedCapacity'],
 };
 
 function pickClient(body) {
@@ -1751,6 +1751,8 @@ function pickClient(body) {
   for (const key of CLIENT_FIELDS.numeric) {
     if (body[key] !== undefined && body[key] !== '') data[key] = Number(body[key]);
   }
+  // beds: a whole number, or nothing (a typo never reaches the database as NaN)
+  if (data.bedCapacity !== undefined) data.bedCapacity = Number.isFinite(data.bedCapacity) && data.bedCapacity > 0 ? Math.round(data.bedCapacity) : null;
   // typed Industry / Company type (2026-10-14): no HTML, spaces collapsed, at most 80 characters
   ['industry', 'companyType'].forEach((k) => { if (typeof data[k] === 'string') data[k] = require('../utils/openVocab').clean(data[k]); }); // eslint-disable-line global-require
   return data;

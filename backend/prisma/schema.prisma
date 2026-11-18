@@ -134,6 +134,7 @@ model Client {
   website         String?
   ownerDepartment String?
   yearEstablished String?
+  bedCapacity     Int? // hospitals: number of beds (ATS audit 2026-11-18, Q278; migration 20261118150000)
   landline        String?
   status          String? @default("Active") // Active | Inactive | Suspended
   activeDate      String?
@@ -484,6 +485,15 @@ model Candidate {
   registrationVerifiedAt  DateTime?
   registrationVerifiedBy  String?
   registrationNote        String?
+  // MORE OF THE CANDIDATE'S OWN DETAILS (ATS audit 2026-11-18 batch 1, Q48 / Q53 / Q273 / Q282 / Q285; migration 20261118150000)
+  alternatePhone          String?
+  address                 String?
+  nativePlace             String? // home town / native place
+  maritalStatus           String? // Single | Married | Other
+  languagesKnown          String? // comma-separated
+  superSpecialization     String? // doctors: e.g. Interventional Cardiology (DM / MCh / Fellowship)
+  eligibilityTests        String? // comma-separated: NET, SET, GATE, Ph.D, NEET-PG, FMGE ...
+  machineryExperience     String? // manufacturing: machines / equipment / CNC controllers worked on
   goodToHaveSkills        String? // comma-separated
   technicalSkills         String? // comma-separated
   softSkills              String? // comma-separated

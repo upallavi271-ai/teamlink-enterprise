@@ -3646,6 +3646,8 @@ const CANDIDATE_FIELDS = {
     'resumeName', 'source', 'firstSource', 'sourceCampaign', 'profileStatus',
     // professional registration (ATS audit 2026-11-18, Q274-Q276 / Q280): council, number, state, valid till, verification status, note
     'registrationCouncil', 'registrationNumber', 'registrationState', 'registrationValidTill', 'registrationStatus', 'registrationNote',
+    // more of the candidate's own details (ATS audit 2026-11-18 batch 1)
+    'alternatePhone', 'address', 'nativePlace', 'maritalStatus', 'languagesKnown', 'superSpecialization', 'eligibilityTests', 'machineryExperience',
   ],
   numeric: ['experienceYears', 'relevantExperienceYears', 'resumeScore'],
 };
@@ -3676,9 +3678,10 @@ function pickCandidate(body) {
   if (data.source && !data.firstSource) data.firstSource = data.source;
   if (data.source && !data.preferredLocation && data.location) data.preferredLocation = data.location;
   // PROFESSIONAL REGISTRATION: tidy text, a real date, and only the known verification words
-  ['registrationCouncil', 'registrationNumber', 'registrationState', 'registrationNote'].forEach((k) => {
-    if (data[k] !== undefined) data[k] = String(data[k] == null ? '' : data[k]).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, k === 'registrationNote' ? 500 : 120) || null;
+  ['registrationCouncil', 'registrationNumber', 'registrationState', 'registrationNote', 'address', 'nativePlace', 'languagesKnown', 'superSpecialization', 'eligibilityTests', 'machineryExperience', 'alternatePhone'].forEach((k) => {
+    if (data[k] !== undefined) data[k] = String(data[k] == null ? '' : data[k]).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, ['registrationNote', 'address', 'machineryExperience'].includes(k) ? 500 : 160) || null;
   });
+  if (data.maritalStatus !== undefined) data.maritalStatus = ['Single', 'Married', 'Other'].includes(data.maritalStatus) ? data.maritalStatus : null;
   if (data.registrationValidTill !== undefined) data.registrationValidTill = /^\d{4}-\d{2}-\d{2}$/.test(String(data.registrationValidTill || '')) ? data.registrationValidTill : null;
   if (data.registrationStatus !== undefined && !REGISTRATION_STATUSES.includes(data.registrationStatus)) data.registrationStatus = data.registrationStatus ? 'Not checked' : null;
   return data;
