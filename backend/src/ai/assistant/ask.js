@@ -473,6 +473,131 @@ add({
   },
 });
 
+// --- CANDIDATE SEARCH IN PLAIN WORDS (ATS audit 2026-11-18, Q317/Q318) ------------------------------------------------------------------------------------------------------------------------
+// "Find 10 MD Cardiologists in Hyderabad", "5+ years java developers bangalore lo kavali": the question becomes filters - how many, the
+// qualification (MD, MBBS, B.Tech ...), the city, the minimum experience and the specialization / skill words - and is run over ONLY the
+// candidates this login may see (utils/scope.js candidateWhere, the same permission as the Candidates list). Ranked by how much matches.
+const prisma = require('../../db');
+const { candidateWhere, requirementWhere } = require('../../utils/scope');
+const { candidateViewFor } = require('../../utils/aiAgentTools');
+const { citiesOf } = require('../../utils/locationMatch');
+
+// qualifications: [label, regex over the RAW question (short ones must be written in capitals so "me" / "be" never match)]
+const QUALS = [
+  ['MBBS', /\bmbbs\b/i], ['MD', /\bMD\b/], ['MS', /\bMS\b/], ['DNB', /\bdnb\b/i], ['DM', /\bDM\b/], ['MCh', /\bm\.?ch\b/i], ['BDS', /\bbds\b/i], ['MDS', /\bmds\b/i],
+  ['BAMS', /\bbams\b/i], ['BHMS', /\bbhms\b/i], ['B.Sc Nursing', /\bb\.?\s?sc\.?\s*nursing\b/i], ['GNM', /\bgnm\b/i], ['ANM', /\banm\b/i],
+  ['B.Pharm', /\bb\.?\s?pharm/i], ['M.Pharm', /\bm\.?\s?pharm/i], ['Pharm.D', /\bpharm\.?\s?d\b/i], ['B.Tech', /\bb\.?\s?tech\b/i], ['M.Tech', /\bm\.?\s?tech\b/i],
+  ['B.E', /\bB\.?E\b/], ['MBA', /\bmba\b/i], ['MCA', /\bmca\b/i], ['BCA', /\bbca\b/i], ['PhD', /\bph\.?\s?d\b/i], ['M.Sc', /\bm\.?\s?sc\b/i], ['B.Sc', /\bb\.?\s?sc\b/i],
+  ['B.Com', /\bb\.?\s?com\b/i], ['M.Com', /\bm\.?\s?com\b/i], ['B.Ed', /\bb\.?\s?ed\b/i], ['M.Ed', /\bm\.?\s?ed\b/i], ['NET', /\bNET\b/], ['SET', /\bSET\b/], ['ITI', /\biti\b/i], ['Diploma', /\bdiploma\b/i],
+];
+const SEARCH_STOP = new Set(('find search show list get give need needs want looking look fetch pull top best good available any some all the a an of for with in at from on to and or who are is me my us please '
+  + 'candidates candidate profiles profile people persons person resumes resume cvs cv doctors doctor physicians physician staff '
+  + 'years year yrs yr experience exp experienced plus above more than least minimum min atleast fresher freshers '
+  + 'kavali kaavali chupinchu vethuku vetuku cheppu ivvu lo ki ni unna vunna undi evaru which what city location based').split(' '));
+const stem = (w) => w.replace(/(ologists?|ology)$/, 'olog').replace(/(icians?|ians?)$/, 'ic').replace(/(ists?|ers?|ies|s)$/, (m) => (m === 'ies' ? 'y' : ''));
+
+function parseCandidateSearch(raw) {
+  const text = String(raw || '');
+  const lower = text.toLowerCase();
+  const count = (() => { const m = /\b(\d{1,3})\s+(?!\+?\s*(?:years?|yrs?)\b)[a-z]/i.exec(text); return m ? Math.min(Math.max(Number(m[1]), 1), 25) : 10; })();
+  const exp = (() => { const m = /(\d{1,2})\s*\+?\s*(?:years?|yrs?)/i.exec(text); return m ? Number(m[1]) : null; })();
+  const quals = QUALS.filter(([, re]) => re.test(text)).map(([q]) => q);
+  const words = lower.replace(/[^a-z0-9.+# ]/g, ' ').split(/\s+/).filter(Boolean);
+  const cities = [];
+  for (let i = 0; i < words.length; i += 1) {
+    for (const span of [words.slice(i, i + 2).join(' '), words[i]]) {
+      const c = citiesOf(span)[0];
+      if (c && !cities.some((x) => x.key === c.key)) { cities.push(c); break; }
+    }
+  }
+  const cityWords = new Set(cities.flatMap((c) => String(c.name || c.key || '').toLowerCase().split(/\s+/)));
+  const qualWords = new Set(quals.flatMap((q) => q.toLowerCase().replace(/\./g, ' ').split(/\s+/)));
+  const terms = [...new Set(words
+    .filter((w) => !SEARCH_STOP.has(w) && !/^\d+\+?$/.test(w) && !cityWords.has(w) && !qualWords.has(w.replace(/\./g, '')) && !QUALS.some(([, re]) => re.test(w.toUpperCase())) && w.length > 1)
+    .map(stem).filter((w) => w.length > 1))].slice(0, 6);
+  return { count, exp, quals, cities, terms };
+}
+
+add({
+  id: 'candidate-search', product: 'ats',
+  test: (t) => !/\bhow many\b/.test(t) && /\b(find|search|show|list|get|need|want|looking for|fetch|give|kavali|kaavali|chupinchu|vethuku|vetuku)\b/.test(t)
+    && /\b(candidates?|profiles?|doctors?|nurses?|engineers?|developers?|teachers?|faculty|professors?|lecturers?|physicians?|consultants?|technicians?|executives?|resumes?|ologists?|pharmacists?|accountants?|supervisors?|operators?)\b/.test(t),
+  async run(ctx) {
+    if (!await can(ctx.user, 'ats', 'candidates', 'Candidate List', 'view')) {
+      return answer('You do not have access to the Candidates list, so I cannot search candidates for you.', { source: 'Checked against your role.' });
+    }
+    const view = await candidateViewFor(ctx.user);
+    const q = parseCandidateSearch(ctx.text);
+    const or = [];
+    const fields = ['specialization', 'skills', 'education', 'currentDesignation', 'technicalSkills'];
+    q.terms.forEach((w) => fields.forEach((f) => or.push({ [f]: { contains: w } })));
+    q.quals.forEach((ql) => ['education', 'specialization'].forEach((f) => or.push({ [f]: { contains: ql.replace(/\./g, '') } }, { [f]: { contains: ql } })));
+    const and = [];
+    if (or.length) and.push({ OR: or });
+    if (q.exp != null) and.push({ experienceYears: { gte: q.exp } });
+    if (q.cities.length && !view.bde) and.push({ OR: q.cities.flatMap((c) => [{ location: { contains: c.name || c.key } }, { preferredLocation: { contains: c.name || c.key } }]) });
+    const where = { AND: [candidateWhere(ctx.user), ...and] };
+    const pool = await prisma.candidate.findMany({
+      where,
+      select: { id: true, name: true, specialization: true, education: true, skills: true, technicalSkills: true, currentDesignation: true, location: true, experienceYears: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+      take: 400,
+    });
+    const has = (c, w) => fields.some((f) => String(c[f] || '').toLowerCase().includes(w));
+    const scored = pool.map((c) => {
+      const termHits = q.terms.filter((w) => has(c, w)).length;
+      const qualHit = q.quals.some((ql) => [c.education, c.specialization].some((v) => String(v || '').toLowerCase().replace(/\./g, '').includes(ql.toLowerCase().replace(/\./g, ''))));
+      return { c, termHits, qualHit, score: termHits * 2 + (qualHit ? 2 : 0) + (c.experienceYears || 0) / 100 };
+    })
+      // every word asked for should match when there are several (a specialization AND a skill); one is enough when only one was asked
+      .filter((x) => (q.terms.length ? x.termHits >= Math.min(q.terms.length, 2) || (q.terms.length === 1 && x.termHits === 1) : true) && (q.quals.length ? x.qualHit : true))
+      .sort((a, b) => b.score - a.score);
+    const top = scored.slice(0, q.count);
+    const asked = [q.quals.join(' / '), q.terms.join(' '), q.cities.length ? `in ${q.cities.map((c) => c.name || c.key).join(' / ')}` : '', q.exp != null ? `${q.exp}+ years` : ''].filter(Boolean).join(', ') || 'your words';
+    const source = `Searched the candidates you can see (specialization, skills, education, designation${view.bde ? '' : ', location'}). Your area: ${scopeText(ctx.user, 'ats')}.`;
+    if (!top.length) {
+      return answer(`No candidate in your access matches ${asked}. Try fewer words (for example only the specialization), or another city.`, { source, area: 'candidates', options: ['Find candidates in Hyderabad', 'Find 10 Java developers'] });
+    }
+    const rows = top.map(({ c }) => [c.name, [c.education, c.specialization].filter(Boolean).join(' · ') || '-', view.bde ? '-' : (c.location || '-'), c.experienceYears != null ? `${c.experienceYears} yrs` : '-']);
+    return answer(`Found ${scored.length} candidate${scored.length === 1 ? '' : 's'} for ${asked}${scored.length > top.length ? `; the best ${top.length} are below` : ''}. Open Candidates & Pipeline and search the name to see a profile.`, {
+      numbers: [{ label: 'Matching', value: scored.length }], rows, source, area: 'candidates',
+    });
+  },
+});
+
+// "Best candidates for REQ-0012" / "who should I put forward for the Java Developer job" (ATS audit 2026-11-18, Q319): the matching engine's
+// own ranking (utils/matching.js through the top_matches_for_requirement tool, which checks the permission and the requirement's scope).
+add({
+  id: 'best-for-requirement', product: 'ats',
+  test: (t) => /\b(best|top|suitable|right|matching|good)\s+(candidates?|profiles?|matches|people)\b.*\b(for|to)\b/.test(t) || /who (should|can) i (put forward|submit|send|share)/.test(t) || /\bbest candidates?\b/.test(t),
+  async run(ctx) {
+    const code = (/\b(req[-\s]?\d{2,6})\b/i.exec(ctx.text) || [])[1];
+    const scope = requirementWhere(ctx.user);
+    let r = null;
+    if (code) r = await prisma.requirement.findFirst({ where: { AND: [scope, { reqCode: { contains: code.toUpperCase().replace(/\s/, '-') } }] }, select: { id: true, title: true, reqCode: true } });
+    if (!r) {
+      const after = (/\b(?:for|to)\s+(?:the\s+)?(.+?)(?:\s+(?:job|requirement|role|position|opening))?\s*\??$/i.exec(ctx.text) || [])[1];
+      const words = String(after || '').toLowerCase().split(/\s+/).filter((w) => w.length > 2 && !SEARCH_STOP.has(w)).slice(0, 4);
+      if (words.length) {
+        const list = await prisma.requirement.findMany({ where: { AND: [scope, { status: 'OPEN' }, ...words.map((w) => ({ title: { contains: w } }))] }, select: { id: true, title: true, reqCode: true }, take: 3 });
+        if (list.length === 1) [r] = list;
+        else if (list.length > 1) return answer(`More than one open requirement matches: ${list.map((x) => `${x.reqCode || ''} ${x.title}`.trim()).join('; ')}. Ask again with the requirement code (for example "best candidates for ${list[0].reqCode || 'REQ-0001'}").`, { source: 'Searched the open requirements you can see.' });
+      }
+    }
+    if (!r) return answer('Tell me which requirement: for example "best candidates for REQ-0012" or "best candidates for Java Developer".', { source: 'No requirement was named.', options: ['Best candidates for REQ-0001'] });
+    const out = await runTool(ctx.user, 'top_matches_for_requirement', { requirementId: r.id, limit: 10 });
+    if (out.denied) return answer(out.message || 'You do not have access to matching candidates.', { source: 'Checked against your role.' });
+    const m = out.matches || [];
+    if (!m.length) return answer(`No candidate in your access matches ${r.reqCode || ''} ${r.title} yet.`, { source: out.note || 'utils/matching.js' });
+    return answer(`Best ${m.length} for ${r.reqCode ? `${r.reqCode} ` : ''}${r.title}, ranked by the matching engine (not by the AI):`, {
+      rows: m.map((c) => [c.name, c.score != null ? `${c.score}%` : '-', (c.reasons || []).slice(0, 2).join('; ') || '-', (c.gaps || []).slice(0, 1).join('; ') || '-']),
+      numbers: [{ label: 'Shown', value: m.length }], source: `${out.note || 'utils/matching.js'} Open the requirement > Matching candidates for the full list.`, area: 'requirements',
+    });
+  },
+});
+// these two go FIRST: a "find ... candidates" question must not be taken by a counting handler
+HANDLERS.unshift(HANDLERS.pop(), HANDLERS.pop());
+
 // ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 async function tryAnswer(user, auth, message, { now = new Date() } = {}) {
   const raw = String(message || '').trim();
