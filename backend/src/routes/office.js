@@ -349,8 +349,15 @@ async function stampJoinDays(invoices) {
   const candIds = [...new Set(invoices.map((i) => i.candidateId).filter(Boolean))];
   const apps = candIds.length ? await prisma.application.findMany({
     where: { candidateId: { in: candIds } },
-    select: { candidateId: true, requirementId: true, stage: true, joiningDate: true, requirement: { select: { clientId: true } } },
+    select: { id: true, candidateId: true, requirementId: true, stage: true, joiningStatus: true, joiningDate: true, requirement: { select: { clientId: true } } },
   }) : [];
+  // Applications recorded as dropped after joining (the Joining & Drop record) — never throws.
+  let droppedRec = new Set();
+  try {
+    const S = require('../joindrop/schema');
+    await S.ensure();
+    droppedRec = new Set((await S.rows('SELECT "applicationId" FROM "JoiningRecord" WHERE "status" = ?', 'Dropped')).map((r) => r.applicationId));
+  } catch (e) { /* no drop records available: only the application flag is used */ }
   const byCand = new Map();
   apps.forEach((a) => byCand.set(a.candidateId, [...(byCand.get(a.candidateId) || []), a]));
   invoices.forEach((inv) => {
@@ -359,6 +366,9 @@ async function stampJoinDays(invoices) {
     const same = list.filter((a) => a.requirement?.clientId === inv.clientId);
     const app = exact || same.find((a) => a.stage === 'JOINED' || a.stage === 'HIRED') || same[0] || null;
     inv.joinDay = String(inv.joiningDate || app?.joiningDate || '').slice(0, 10) || null;
+    // Dropped in the ATS (did not join, or left after joining) -> not counted, unless client money was received.
+    const left = app && (droppedRec.has(app.id) || (app.joiningStatus === 'Dropped' && app.stage !== 'JOINED' && app.stage !== 'HIRED'));
+    inv.droppedInAts = !!left;
   });
 }
 async function officeScope(query) {
@@ -379,7 +389,9 @@ async function officeScope(query) {
   const rejected = decorated.filter((r) => r.approvalStatus === 'REJECTED');
   const all = decorated.filter((r) => r.entryKind !== 'hand' && r.approvalStatus !== 'REJECTED');
   const hand = decorated.filter((r) => r.entryKind === 'hand' && r.approvalStatus !== 'REJECTED');
-  const live = invoices.filter((i) => deriveInvoiceStatus(i) !== 'Cancelled');
+  // Founder 2026-11-18: a candidate dropped in the ATS drops out of Accounts' GST / invoice totals by itself.
+  // An invoice that already has money received stays (that needs a credit note or refund, not a silent removal).
+  const live = invoices.filter((i) => deriveInvoiceStatus(i) !== 'Cancelled' && !(i.droppedInAts && !(Number(i.receivedAmount || 0) > 0.005)));
   return {
     range,
     all,
