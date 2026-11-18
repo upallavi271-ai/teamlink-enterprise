@@ -2400,6 +2400,7 @@ router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'I
     mailWorker.kick();
   }
   if (channel.id === 'ai-claude') aiAgent.resetClient();
+  if (channel.id === 'ai-fast') require('../utils/fastAi').resetCache(); // eslint-disable-line global-require
   if (channel.id === 'sms' || channel.id === 'whatsapp') {
     // Stage-change texts recorded in the last day can go out now.
     await mailWorker.requeueHeldMessages(channel.id === 'sms' ? 'SMS' : 'WhatsApp');
@@ -2638,6 +2639,7 @@ router.post('/integrations/:id/disconnect', requirePerm(null, 'administration', 
   // queued goes back to "recorded, not transmitted", which is true again.
   if (channel.id === 'email') { mailer.resetTransport(); await mailWorker.runOnce({}); }
   if (channel.id === 'ai-claude') aiAgent.resetClient();
+  if (channel.id === 'ai-fast') require('../utils/fastAi').resetCache(); // eslint-disable-line global-require
   await recordEvent(channel.id, { action: 'Disconnected', by: req.user.name, result: 'OK' });
   await logAudit({ userId: req.user.id, action: 'Integration disconnected', entity: 'Integration', entityId: channel.id, fromValue: row.state, toValue: 'Not Connected' });
   res.json(shapeIntegration(channel, next));
@@ -2809,6 +2811,19 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
   if (channel.id === 'stock-pexels' || channel.id === 'stock-pixabay') {
     const probe = await require('../marketing/stockclips').testKey(channel.id);
     const result = probe.ok ? probe.text : `Failed — ${probe.text}`;
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: probe.ok ? null : result.slice(0, 480), ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }) },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result });
+  }
+
+  // Fast AI (utils/fastAi.js): one tiny question to every saved provider.
+  if (channel.id === 'ai-fast') {
+    const probe = await require('../utils/fastAi').testConnection(); // eslint-disable-line global-require
+    const result = probe.ok ? probe.message : `Failed — ${probe.message}`;
     const nextRow = await prisma.integration.update({
       where: { id: channel.id },
       data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: probe.ok ? null : result.slice(0, 480), ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }) },

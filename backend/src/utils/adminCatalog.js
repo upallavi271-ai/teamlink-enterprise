@@ -258,6 +258,14 @@ const INTEGRATION_CATALOG = [
     fields: [['Anthropic API key', 'sk-ant-...'], ['Model', 'claude-opus-5'],
       ['Max answer tokens', '1500'], ['Questions per user per hour', '30'],
       ['Bill reading model', 'claude-opus-5-5'], ['Bill reads per vendor per day', '30']] },
+  // REAL (2026-11-18). FREE, FAST answers for the CRM Agent, the CRM Meeting Agent and the BDE Agent (utils/fastAi.js). Tried in this
+  // order: Groq, Gemini, OpenRouter, then the app's own AI (Ollama / Claude). Only one key is needed; the others are backups.
+  { id: 'ai-fast', name: 'Fast AI (free · Groq / Gemini / OpenRouter)', group: 'AI', glyph: '⚡',
+    desc: 'Quick, free answers for the CRM Agent, the CRM Meeting Agent and the BDE Agent. One free key is enough: Groq is the fastest (console.groq.com → API Keys, no card). Gemini (aistudio.google.com → Get API key) and OpenRouter (openrouter.ai → Keys) are backups used when the first one is busy. Keys are encrypted and only the server uses them. The agents answer only from TeamLink data the asking person may see.',
+    fields: [['Groq API key', 'gsk_...'], ['Groq model', 'llama-3.3-70b-versatile'],
+      ['Gemini API key', 'AIza...'], ['Gemini model', 'gemini-2.5-flash'],
+      ['OpenRouter API key', 'sk-or-...'], ['OpenRouter model', 'meta-llama/llama-3.3-70b-instruct:free']],
+    hints: ['Groq model', 'Gemini model', 'OpenRouter model'] },
   // REAL (2026-11-13). Google Gemini for Omni-Channel > AI Marketing > AI Images (marketing/images.js). The key is encrypted at rest and only
   // the server calls Google. Test connection reads the model's details (free); a picture is made only when a person presses Create.
   // Get a key: aistudio.google.com > Get API key. Picture models need billing switched on in Google AI Studio.
@@ -302,7 +310,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-fast','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 
