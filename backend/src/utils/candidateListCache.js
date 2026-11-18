@@ -67,6 +67,8 @@ const APPLICATION_SELECT = {
   interviewResult: true, interviewCompletedAt: true,
   // the Joining date column (2026-10-17)
   joiningDate: true, joinedAt: true,
+  // joined and then dropped (Joining & Drop): the lists show these as Dropped, not Joined (atsVocab.leftAfterJoining)
+  joiningStatus: true, rollStatus: true,
   // WHOSE CANDIDATE (founder 2026-11-04: "recruiters dhannlo, valla candidates profiles thappa, inka evariki kanipinchakudadhu"):
   // the lists decide a recruiter's reach with applicationInScope(), which reads the owner; without it here another recruiter's
   // people were listed and then refused on opening ("could not load").
