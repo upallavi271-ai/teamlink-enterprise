@@ -340,8 +340,8 @@ export default function Shell() {
             {/* Always-on AI status: green = model ready, amber = model not
                 pulled, grey = offline. Opens the AI panel. */}
             <AiStatusDot />
-            {/* The BDE Agent: BDE, BDE TL, Super Admin and Developer logins only (it renders nothing for anyone else; the server checks again). */}
-            <BdeAgent />
+            {/* The BDE Agent: only while ATS is open (not in HRMS / CRM / Accounts ...), and only for BDE, BDE TL, Super Admin and Developer logins (it renders nothing for anyone else; the server checks again). */}
+            {section === 'ats' && <BdeAgent />}
             {/* Today's tasks (dashboard spec 2026-09-29): follow-ups, interviews and actions due today. */}
             <TodayTasks />
             {section === 'omni' && pathname.startsWith('/omni-channel-native') && <OmniTopChips />}
