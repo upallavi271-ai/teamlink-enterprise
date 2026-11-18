@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import Shell from './components/Shell.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import OmniEntry, { OmniLegacyRedirect } from './components/outreach/OmniEntry.jsx'; // what the sidebar Omni-Channel opens (Green Start, 2026-10-21)
+import AppOmniEmbed from './components/omni/AppOmniEmbed.jsx'; // the Omni-Channel "Templates & campaigns" of one app, bare: the Job Portal's own button shows it (2026-11-19)
 import OmniApp from './components/omni/OmniApp.jsx'; // Omni-Channel (the Green Start page tree, 2026-10-17; the five-hub OutreachHome.jsx is kept on disk for its parts)
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -234,6 +235,7 @@ export default function App() {
           Green Start alone over the whole window with its own sidebar, already signed in (no TeamLink sidebar / header around it). */}
       <Route path="/green-start" element={<ProtectedRoute><OmniEntry full /></ProtectedRoute>} />
       {/* AI Marketing, bare (2026-11-16): the screens Green Start shows inside its own "AI Marketing" page (an iframe: no TeamLink sidebar, no tab bar). Same sign-in as the rest of TeamLink. */}
+      <Route path="/embed/app-omni/:app" element={<ProtectedRoute><AppOmniEmbed /></ProtectedRoute>} />
       <Route path="/embed/ai-marketing" element={<ProtectedRoute><OmniApp embedded /></ProtectedRoute>} />
       <Route path="/embed/ai-marketing/:view" element={<ProtectedRoute><OmniApp embedded /></ProtectedRoute>} />
       {/* The Job Portal already signed in with the TeamLink login (founder 2026-10-29: recruiters get no separate login). */}

@@ -679,6 +679,11 @@ export function teamlinkFrontRouter({ root, express }) {
       return M.omniMirror(kind, await mirrorDeps())(req, res, next);
     }));
   }
+  r.get('/tl-addon/omni-panel.js', (_req, res) => {
+    res.set('Content-Type', 'application/javascript; charset=utf-8');
+    res.set('Cache-Control', 'no-cache');
+    res.sendFile(join(import.meta.dirname, 'omni-panel-addon.js'));
+  });
   r.get('/tl-addon/kavya-bulk.js', (_req, res) => {
     res.set('Content-Type', 'application/javascript; charset=utf-8');
     res.set('Cache-Control', 'no-cache');

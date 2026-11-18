@@ -12,6 +12,33 @@ import './library/library.css';
 // The server holds both lists to what this login may see, so the same button is safe on every screen.
 //   <AppOmniPanel app="HRMS" />        app: 'ATS' | 'Job Portal' | 'HRMS' | 'Accounts'
 // ---------------------------------------------------------------------------
+// The panel's contents on their own (tabs + the lists): used inside the modal below and by the bare page the Job Portal opens in its own
+// "Templates & Campaigns" window (/embed/app-omni/<app>, components/omni/AppOmniEmbed.jsx).
+export function AppOmniBody({ app }) {
+  const [tab, setTab] = useState('templates');
+  const [msg, setMsg] = useState('');
+  const [omniPages, setOmniPages] = useState([]);
+  const navigate = useNavigate();
+  useEffect(() => { if (app === 'Job Portal') shared.get('/me').then((r) => setOmniPages(r.omniPages || [])).catch(() => {}); }, [app]);
+  return (
+    <>
+      <Tabs value={tab} onChange={setTab} tabs={[['templates', 'Templates'], ['campaigns', 'Campaigns'], ...(app === 'Job Portal' ? [['promote', 'Promote a job']] : [])]} />
+      {msg && <div className="lib-sub" role="status" style={{ margin: '6px 0' }}>{msg}</div>}
+      <div style={{ marginTop: 10 }}>
+        {tab === 'templates' && <TemplateLibrary app={app} embedded toast={setMsg} />}
+        {tab === 'campaigns' && <AppCampaignList app={app} embedded toast={setMsg} />}
+        {tab === 'promote' && (
+          <div className="lib-box">
+            <b>Promote a job to candidates.</b>
+            <p className="lib-sub" style={{ fontSize: 11 }}>A job promotion sends the job and its apply link to the people you pick, with a tracked link that counts who opened it and who applied. It is made in Omni-Channel &gt; Campaigns, from a requirement.</p>
+            {omniPages.includes('campaigns') ? <button type="button" className="btn btn-primary" onClick={() => { if (window.top !== window) window.open('/omni-channel-native/campaigns', '_blank'); else navigate('/omni-channel-native/campaigns'); }}>Open Omni-Channel Campaigns</button> : <p className="lib-sub">Your login does not make job promotions.</p>}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function AppOmniPanel({ app, label = 'Templates & campaigns', className = 'btn' }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState('templates');
