@@ -1631,7 +1631,7 @@ export default function Candidates() {
               <span>Upload Resume{fill.file && <span className="ff-tag ok">From your upload — kept as the original</span>}</span>
               <input
                 type="file"
-                accept=".pdf,.docx,.doc"
+                accept=".pdf,.docx,.doc,.rtf"
                 onChange={(e) => { resumeFileRef.current = e.target.files?.[0] || null; set({ resumeName: e.target.files?.[0]?.name || '' }); }}
               />
             </label>

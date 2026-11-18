@@ -108,6 +108,14 @@ function Downloads({ candidateId, v, name, onError }) {
   return <button type="button" className="btn btn-sm" onClick={() => go('', '')}>⬇ Download</button>;
 }
 
+// how sure the parser is about one value: high = a labelled line / exact pattern, medium = worked out, low = thin, AI = filled by the AI pass
+const FIELD_LABEL = { name: 'Name', email: 'E-mail', phone: 'Phone', totalExperienceYears: 'Experience', highestEducation: 'Education', location: 'Location', skills: 'Skills', currentCtc: 'Current CTC', expectedCtc: 'Expected CTC', noticePeriod: 'Notice period' };
+function Conf({ c }) {
+  if (!c) return null;
+  const tone = c === 'high' ? 'var(--teal, #0f9d74)' : c === 'AI' ? 'var(--blue, #2f6fed)' : 'var(--amber, #b7791f)';
+  return <span className="small-muted" style={{ marginLeft: 6, fontSize: 11, color: tone }} title="How sure the resume reader is about this value">{c === 'AI' ? '· AI' : `· ${c}`}</span>;
+}
+
 function Details({ v }) {
   const p = (v && v.parsed) || null;
   if (!v) return null;
@@ -119,6 +127,10 @@ function Details({ v }) {
         <div><div className="rsm-k">Total experience</div><div className="rsm-v">{p.totalExperienceYears != null ? `${p.totalExperienceYears} yrs` : '—'}{p.experienceSource === 'dates' && <span className="small-muted"> (from job dates)</span>}</div></div>
         <div><div className="rsm-k">Education</div><div className="rsm-v">{p.education && p.education.length ? p.education.join(', ') : '—'}</div></div>
         <div><div className="rsm-k">Current location</div><div className="rsm-v">{p.location || '—'}</div></div>
+        {/* ATS audit 2026-11-18 (Q77/Q78/Q95): salary and notice period the resume states, with how sure the parser is */}
+        <div><div className="rsm-k">Current CTC</div><div className="rsm-v">{p.currentCtc || '—'}<Conf c={p.confidence && p.confidence.currentCtc} /></div></div>
+        <div><div className="rsm-k">Expected CTC</div><div className="rsm-v">{p.expectedCtc || '—'}<Conf c={p.confidence && p.confidence.expectedCtc} /></div></div>
+        <div><div className="rsm-k">Notice period</div><div className="rsm-v">{p.noticePeriod || '—'}<Conf c={p.confidence && p.confidence.noticePeriod} /></div></div>
         <div className="rsm-full"><div className="rsm-k">E-mail</div><div className="rsm-v rsm-contact">{(p.emails || []).slice(0, 2).join(' · ') || '—'}</div></div>
         <div className="rsm-full"><div className="rsm-k">Phone</div><div className="rsm-v rsm-contact">{(p.phones || []).slice(0, 2).join(' · ') || '—'}</div></div>
         <div className="rsm-skills">
@@ -127,6 +139,9 @@ function Details({ v }) {
         </div>
       </div>
       {v.extractError && <div className="notice amber" style={{ margin: '10px 0 0' }}>{v.extractError}</div>}
+      {/* MISSING INFORMATION + LOW CONFIDENCE (ATS audit 2026-11-18, Q79/Q93/Q96): what the resume does not say, and what a person should check */}
+      {Array.isArray(p.missing) && p.missing.length > 0 && <div className="notice amber" style={{ margin: '10px 0 0' }}>{`Not in the resume: ${p.missing.map((k) => FIELD_LABEL[k] || k).join(', ')}. Ask the candidate and fill these on the profile.`}</div>}
+      {Array.isArray(p.review) && p.review.length > 0 && <div className="notice" style={{ margin: '10px 0 0' }}>{`Check before saving (read with medium / low confidence or by the AI): ${p.review.map((k) => FIELD_LABEL[k] || k).join(', ')}.`}</div>}
       {(p.languages || []).some((l) => l !== 'English') && (
         <div className="notice" style={{ margin: '10px 0 0' }}>
           {`This resume has ${p.languages.filter((l) => l !== 'English').join(' and ')} text. The free parser read the e-mail, phone and name; skills and experience are read from English words only. The AI pass (when it is switched on) translates the whole resume.`}
@@ -339,7 +354,7 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setDraft(null); setMode('view'); }}>← Back to resume</button>
             )}
           </div>
-          <input ref={fileRef} type="file" accept=".pdf,.docx,.doc,.jpg,.jpeg,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/jpeg,image/png" style={{ display: 'none' }} onChange={(e) => upload(e.target.files && e.target.files[0])} />
+          <input ref={fileRef} type="file" accept=".pdf,.docx,.doc,.rtf,.jpg,.jpeg,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/jpeg,image/png" style={{ display: 'none' }} onChange={(e) => upload(e.target.files && e.target.files[0])} />
         </div>
         {data.canUpload && !current && (
           <div

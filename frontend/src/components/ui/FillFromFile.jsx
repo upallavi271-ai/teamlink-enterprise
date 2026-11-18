@@ -26,7 +26,7 @@ import api from '../../api';
 import Modal from '../Modal.jsx';
 import './fillFromFile.css';
 
-export const ACCEPT = '.pdf,.docx,.doc,.txt,.jpg,.jpeg,.png';
+export const ACCEPT = '.pdf,.docx,.doc,.rtf,.txt,.jpg,.jpeg,.png';
 export const MAX_MB = 10;
 const OK_EXT = /\.(pdf|docx|doc|txt|jpe?g|png)$/i;
 
