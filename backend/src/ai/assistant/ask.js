@@ -478,7 +478,7 @@ add({
 // qualification (MD, MBBS, B.Tech ...), the city, the minimum experience and the specialization / skill words - and is run over ONLY the
 // candidates this login may see (utils/scope.js candidateWhere, the same permission as the Candidates list). Ranked by how much matches.
 const prisma = require('../../db');
-const { candidateWhere, requirementWhere } = require('../../utils/scope');
+const { candidateWhere, requirementWhere, applicationWhere } = require('../../utils/scope');
 const { candidateViewFor } = require('../../utils/aiAgentTools');
 const { citiesOf, CITY_ALIASES } = require('../../utils/locationMatch');
 
