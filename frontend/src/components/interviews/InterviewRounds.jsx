@@ -225,6 +225,7 @@ export default function InterviewRounds({ applicationId, user, canDecide, onDeci
               {r.meetingLink && <a href={r.meetingLink} target="_blank" rel="noreferrer">{r.linkProvider || 'Meeting'} link</a>}
             </div>
             {peopleOf.length > 0 && <div className="small-muted">Interviewers: {peopleOf.map((p) => p.name).join(', ')}</div>}
+            {isLead && peopleOf.length > 0 && <InterviewerAverages people={peopleOf} />}
             {r.feedback ? (
               <div style={{ margin: '6px 0' }}>
                 <span className={`status ${REC_TONE[r.feedback.recommendation] || ''}`}>{r.feedback.recommendation}</span>{' '}
@@ -247,6 +248,17 @@ export default function InterviewRounds({ applicationId, user, canDecide, onDeci
       })}
     </div>
   );
+}
+
+// TL / Admin only: the average rating each interviewer of the round has had so far (the server refuses everyone else).
+function InterviewerAverages({ people }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api.get('/ats/interviewer-ratings').then((r) => setRows(r.data.rows)).catch(() => setRows(null)); }, []);
+  if (!rows) return null;
+  const keyOf = (p) => (p.userId ? `u:${p.userId}` : `n:${String(p.name).toLowerCase().replace(/\s+/g, ' ').trim()}`);
+  const got = people.map((p) => ({ p, r: rows.find((x) => x.key === keyOf(p)) })).filter((x) => x.r);
+  if (!got.length) return null;
+  return <div className="small-muted">Interviewer ratings so far: {got.map(({ p, r }) => `${p.name} ${r.average}/5 (${r.count})`).join(' · ')}</div>;
 }
 
 // Admin / TL: how interviewers rate (average and last comments), for an interviewer's profile.
