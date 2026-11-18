@@ -12,7 +12,8 @@ import { money2, fmtD } from './invFormat';
 
 const STATUS_WORD = { Paid: 'Settled', 'Partially Paid': 'Partially paid' };
 
-export default function ClientAccountModal({ clientId, clientName, onClose }) {
+// `pending`: this client's joinings the ATS holds that have no invoice yet - shown in the account so they are never missing from it.
+export default function ClientAccountModal({ clientId, clientName, pending = [], onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
 
@@ -107,6 +108,30 @@ export default function ClientAccountModal({ clientId, clientName, onClose }) {
               </tbody>
             </table>
           </div>
+
+          {pending.length > 0 && (
+            <>
+              <h4 style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '16px 0 8px' }}>JOINED IN THE ATS — NO INVOICE YET ({pending.length})</h4>
+              <div className="tbl-wrap" style={{ maxHeight: '26vh' }}>
+                <table>
+                  <thead>
+                    <tr><th>Candidate</th><th>Position</th><th>Joined on</th><th>Joining status</th><th className="num">Fee before GST</th></tr>
+                  </thead>
+                  <tbody>
+                    {pending.map((r) => (
+                      <tr key={r.applicationId}>
+                        <td><b>{r.name}</b></td>
+                        <td>{r.role || r.requirement || '—'}</td>
+                        <td>{r.joiningDate ? fmtD(r.joiningDate) : 'date not recorded'}</td>
+                        <td><span className={`status ${r.joiningStatus === 'Dropped' ? 'priority-high' : 'priority-low'}`}>{r.joiningStatus || 'Joined'}</span></td>
+                        <td className="num">{r.billing != null ? money2(r.billing) : <span className="small-muted">CTC / fee needed</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </>
       )}
     </Modal>

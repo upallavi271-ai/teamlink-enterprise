@@ -1277,6 +1277,7 @@ export default function Invoices() {
         <ClientAccountModal
           clientId={accountFor.clientId}
           clientName={accountFor.client}
+          pending={joinAll.filter((r) => r.clientId === accountFor.clientId)}
           onClose={() => setAccountFor(null)}
         />
       )}
