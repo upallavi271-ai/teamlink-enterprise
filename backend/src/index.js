@@ -83,6 +83,10 @@ const mailWorker = require('./utils/mailWorker');
 const app = express();
 // Separate company copies only: answer nothing until the database has been confirmed as that company's own (utils/companyGuard.js).
 app.use(require('./utils/companyGuard').middleware);
+// APP VERSION (utils/releaseNotes.js, ATS audit 2026-11-18): /api/v1/... is the same API as /api/..., every answer names the version, GET /api/version
+app.use(require('./utils/releaseNotes').versionPrefix);
+app.use(require('./utils/releaseNotes').headers);
+app.get('/api/version', (req, res) => res.json(require('./utils/releaseNotes').info()));
 // WEB HARDENING (utils/webSecurity.js): no X-Powered-By; 'trust proxy' only when TRUST_PROXY is set (default off).
 require('./utils/webSecurity').configureApp(app);
 // CREDENTIAL MATERIAL NEVER LEAVES THE SERVER (hrms-24 §12). Many routes
