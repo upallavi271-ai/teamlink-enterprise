@@ -102,3 +102,10 @@ job-portal-app/**/run/
 # A separate company's sandbox copy on a PC (backend/scripts/company-sandbox.js): database + the one-time sign-in link.
 backend/prisma/company-sandbox.*
 backend/prisma/zz-sc-*
+
+# Never commit database copies or integration exports again (security audit 2026-11-18: these were in the public history).
+*.bak
+backend/**/*.bak
+integration-*.json
+backend/integration-*
+*-key.tmp
