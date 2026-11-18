@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
-import Modal from '../../components/Modal.jsx';
 import ListFilterBar, { useListFilters } from '../../components/ui/ListFilters.jsx';
-import OrgChartTalk from './OrgChartTalk.jsx'; // the WhatsApp chat with that person (+ Call / Mail / SMS)
+import OrgChartWhatsApp from './OrgChartWhatsApp.jsx'; // the WhatsApp screen: the chats on the left, the open chat on the right
+import useVisiblePoll from '../../components/messaging/useVisiblePoll.js';
 import { useContactRule } from '../../components/messaging/useMayMessage.js';
 import './org-chart.css';
 
@@ -203,8 +203,25 @@ export default function OrgChart() {
   const [selected, setSelected] = useState(null);
   const [focusId, setFocusId] = useState(null);
   const [openMap, setOpenMap] = useState({});
-  const [talk, setTalk] = useState(null); // the person whose conversation is open
+  // Chart | WhatsApp chats, and which chat is open, live in the address (?view=whatsapp&chat=EMPLOYEE:<id>): a link opens the same screen
+  const [sp, setSp] = useSearchParams();
+  const view = sp.get('view') === 'whatsapp' ? 'whatsapp' : 'chart';
+  const chatParam = sp.get('chat') || '';
+  const chatId = chatParam.startsWith('EMPLOYEE:') ? chatParam.slice(9) : null;
+  const go = useCallback((v, id) => {
+    const n = new URLSearchParams(sp);
+    if (v === 'whatsapp') n.set('view', 'whatsapp'); else n.delete('view');
+    if (v === 'whatsapp' && id) n.set('chat', `EMPLOYEE:${id}`); else n.delete('chat');
+    setSp(n, { replace: true });
+  }, [sp, setSp]);
+  const [waUnread, setWaUnread] = useState(0); // chats with a reply nobody has read (employees only)
   const contact = useContactRule('employees'); // the server's answer: may this login contact employees at all
+  // the number on the WhatsApp tab: asked every minute while the chart is shown (the WhatsApp screen keeps it up to date itself)
+  useVisiblePoll(async (signal) => {
+    const r = await api.get('/wa-chats', { params: { type: 'EMPLOYEE', state: 'unread' }, signal });
+    setWaUnread(r.data.unreadChats || 0);
+    return true;
+  }, 60000, { enabled: contact.allowed && view === 'chart', key: 'oc-wa-badge' });
 
   const load = useCallback(() => {
     setBusy(true); setError('');
@@ -218,7 +235,7 @@ export default function OrgChart() {
   // every person as one flat row, so the standard filter bar can search and filter them
   const rows = useMemo(() => {
     const out = [];
-    if (data) walk(data.root, (n) => { if (n.type === 'person') out.push({ id: n.id, name: n.name, code: n.code, title: n.title, levelLabel: n.levelLabel, department: n.department, team: n.team, seat: n.seat, today: todayChoice(n.presence) }); });
+    if (data) walk(data.root, (n) => { if (n.type === 'person') out.push({ id: n.id, isViewer: !!n.isViewer, messageable: n.messageable, name: n.name, code: n.code, title: n.title, levelLabel: n.levelLabel, department: n.department, team: n.team, seat: n.seat, today: todayChoice(n.presence) }); });
     return out;
   }, [data]);
   const lf = useListFilters(rows, [
@@ -267,7 +284,7 @@ export default function OrgChart() {
   const ctx = {
     selected, select, isOpen, toggle, focus: (id) => { setFocusId(id); setOpenMap({}); },
     parentOf: (id) => (index.get(id) ? index.get(id).parent : null),
-    canMessage: contact.allowed, messageLoaded: contact.loaded, noMessageReason: contact.reason, message: (n) => setTalk({ id: n.id, name: n.name }),
+    canMessage: contact.allowed, messageLoaded: contact.loaded, noMessageReason: contact.reason, message: (n) => { go('whatsapp', n.id); window.scrollTo({ top: 0, behavior: 'smooth' }); },
   };
 
   const sel = selected && index.has(selected) ? index.get(selected) : null;
@@ -288,22 +305,34 @@ export default function OrgChart() {
       <div className="page-head">
         <div>
           <h1>Organization Chart</h1>
-          <div className="page-sub">The whole company at a glance, from the Super Admin down to every team. Click anyone to see their details or start a conversation.</div>
+          <div className="page-sub">The whole company at a glance, from the Super Admin down to every team. Click anyone to see their details, or open a WhatsApp chat with them.</div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button type="button" className="btn" onClick={load} disabled={busy}>{busy ? 'Refreshing…' : '↻ Refresh'}</button>
         </div>
       </div>
 
-      {error && (
+      {contact.allowed && (
+        <div className="oc-views" role="tablist" aria-label="Chart or WhatsApp chats">
+          <button type="button" role="tab" aria-selected={view === 'chart'} className={`btn btn-sm${view === 'chart' ? ' btn-primary' : ''}`} onClick={() => go('chart')}>🌳 Chart</button>
+          <button type="button" role="tab" aria-selected={view === 'whatsapp'} className={`btn btn-sm${view === 'whatsapp' ? ' btn-primary' : ''}`} onClick={() => go('whatsapp', chatId)}>
+            💬 WhatsApp chats
+            {waUnread > 0 && <span className="oc-badge" aria-label={`${waUnread} chats with a new reply`}>{waUnread}</span>}
+          </button>
+        </div>
+      )}
+
+      {view === 'whatsapp' && <OrgChartWhatsApp people={rows} personId={chatId} onSelect={(id) => go('whatsapp', id)} onUnread={setWaUnread} />}
+
+      {view === 'chart' && error && (
         <div className="notice" role="alert" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <span>{error}</span>
           <button type="button" className="btn btn-sm" onClick={load}>Try again</button>
         </div>
       )}
-      {!data && !error && <div className="panel panel-pad"><div className="oc-skel">Loading the organization chart…</div></div>}
+      {view === 'chart' && !data && !error && <div className="panel panel-pad"><div className="oc-skel">Loading the organization chart…</div></div>}
 
-      {data && (
+      {view === 'chart' && data && (
         <>
           <div className="oc-stats">
             {cell('People on the chart', stats.people)}
@@ -389,11 +418,6 @@ export default function OrgChart() {
         </>
       )}
 
-      {talk && (
-        <Modal title={`Chat with ${talk.name}`} size="wide" onClose={() => setTalk(null)}>
-          <OrgChartTalk personId={talk.id} name={talk.name} />
-        </Modal>
-      )}
     </div>
   );
 }

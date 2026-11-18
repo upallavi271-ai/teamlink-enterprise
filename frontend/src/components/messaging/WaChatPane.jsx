@@ -132,7 +132,8 @@ function AddNote({ personId, applicationId, onDone }) {
 }
 
 // embedded = inside the candidate's own profile (CandidateConversation.jsx): no name / profile buttons / follow-up strip (the profile has them), just a slim line, the messages and the reply box.
-export default function WaChatPane({ audience, personId, row, cfg, onBack, onRead, onChanged, embedded = false, nudge = 0 }) {
+// hideIntent = no "Their answer: Interested / Not interested / Call back" tags (they are for candidates; the Organization Chart's chat with a colleague does not use them)
+export default function WaChatPane({ audience, personId, row, cfg, onBack, onRead, onChanged, embedded = false, nudge = 0, hideIntent = false }) {
   const isCand = audience === 'candidates';
   const [chat, setChat] = useState(null);
   const [msgs, setMsgs] = useState([]);
@@ -331,10 +332,12 @@ export default function WaChatPane({ audience, personId, row, cfg, onBack, onRea
           {win.known && <span className={`wc-chip ${win.open ? 'green' : 'amber'}`}>{win.open ? win.short : 'Window closed: templates only'}</span>}
           {chat.owner && <span className="wc-chip grey">Handled by {chat.owner.name}</span>}
           {p.phone ? <a href={`tel:${p.phone}`}>{p.phone}</a> : (p.phoneHint ? <span title="TeamLink dials and writes for you; the number stays hidden">{p.phoneHint}</span> : null)}
-          <span className="wc-embed-tags" role="group" aria-label="What did they say?">
-            <span className="small-muted">Their answer:</span>
-            {INTENTS.map(([k, label]) => <button key={k} type="button" className={`cv-chip${chat.intent === k ? ' on' : ''}`} onClick={() => setIntent(k)}>{label}</button>)}
-          </span>
+          {!hideIntent && (
+            <span className="wc-embed-tags" role="group" aria-label="What did they say?">
+              <span className="small-muted">Their answer:</span>
+              {INTENTS.map(([k, label]) => <button key={k} type="button" className={`cv-chip${chat.intent === k ? ' on' : ''}`} onClick={() => setIntent(k)}>{label}</button>)}
+            </span>
+          )}
         </div>
       )}
       {!embedded && <div className={`wc-head${headOpen ? ' open' : ''}`}>
@@ -355,10 +358,12 @@ export default function WaChatPane({ audience, personId, row, cfg, onBack, onRea
           <div className="wc-sub wc-head-more">
             {p.phone ? <a href={`tel:${p.phone}`}>{p.phone}</a> : (p.phoneHint ? <span title="TeamLink dials and writes for you; the number stays hidden">{p.phoneHint}</span> : null)}
           </div>
-          <div className="wc-tags wc-head-more" role="group" aria-label="What did they say?">
-            <span className="small-muted">Their answer:</span>
-            {INTENTS.map(([k, label]) => <button key={k} type="button" className={`cv-chip${chat.intent === k ? ' on' : ''}`} onClick={() => setIntent(k)}>{label}</button>)}
-          </div>
+          {!hideIntent && (
+            <div className="wc-tags wc-head-more" role="group" aria-label="What did they say?">
+              <span className="small-muted">Their answer:</span>
+              {INTENTS.map(([k, label]) => <button key={k} type="button" className={`cv-chip${chat.intent === k ? ' on' : ''}`} onClick={() => setIntent(k)}>{label}</button>)}
+            </div>
+          )}
         </div>
         <div className="wc-head-btns wc-head-more">
           <Link className="btn btn-sm" to={profile}>Open profile</Link>
