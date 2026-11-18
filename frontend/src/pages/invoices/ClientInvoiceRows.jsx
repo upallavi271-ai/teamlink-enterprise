@@ -17,6 +17,7 @@ import { money, money2, fmtD } from './invFormat';
 import WaButton from '../../components/wa/WaButton.jsx'; // free WhatsApp quick chat (payment reminder)
 import './clientInvoice.css';
 import StatementView from '../bank/StatementView.jsx';
+import TaxEditModal from './TaxEditModal.jsx';
 import BankLineView from './BankLineView.jsx'; // the one bank line behind a payment: narration, description, date, reference
 
 // Founder spec 2026-10-15: 24 columns, Invoice No pinned left, Actions pinned right.
@@ -108,6 +109,33 @@ If money was received on it, that payment (and its bank line proof) moves to thi
   return <button type="button" className="btn btn-sm" disabled={busy} onClick={go}>Delete</button>;
 }
 
+// Edit = change the amount before GST (and GST / TDS) of one candidate's invoice line: the same form as the invoice page's
+// "Edit GST / TDS"; the server recalculates everything and refuses an amount below what was already received.
+function EditLine({ m, onChanged }) {
+  const [inv, setInv] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const open = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.get(`/invoices/${m.id}`);
+      if (!data.tax) { window.alert('This invoice has no amount that can be edited here.'); } else setInv(data);
+    } catch (e) { window.alert(e.response?.data?.error || 'Could not open this invoice.'); }
+    setBusy(false);
+  };
+  return (
+    <>
+      <button type="button" className="btn btn-sm" disabled={busy} onClick={open} title="Change the amount (before GST), GST or TDS">Edit</button>
+      {inv && (
+        <TaxEditModal
+          invoice={inv}
+          onClose={() => setInv(null)}
+          onSaved={(said) => { setInv(null); window.alert(said); onChanged(); }}
+        />
+      )}
+    </>
+  );
+}
+
 function Panel({
   g, canPay, canJoin, onPay, onAccount, onView, onChanged, onClose,
 }) {
@@ -130,7 +158,7 @@ function Panel({
             <thead>
               <tr>
                 <th>#</th><th>Candidate name</th><th>Date of joining</th><th>Role / Designation</th>
-                <th className="num">Salary (CTC)</th><th className="num">Billing %</th><th className="num">Fee before GST</th><th className="num">GST</th><th className="num">Amount</th><th>Delete</th>
+                <th className="num">Salary (CTC)</th><th className="num">Billing %</th><th className="num">Fee before GST</th><th className="num">GST</th><th className="num">Amount</th><th>Edit / Delete</th>
               </tr>
             </thead>
             <tbody>
@@ -151,7 +179,7 @@ function Panel({
                   <td className="num">{money2(m.billing)}</td>
                   <td className="num">{money2(m.gst)}</td>
                   <td className="num"><b>{money2(m.invoiceValue)}</b></td>
-                  <td><DeleteLine m={m} onChanged={onChanged} /></td>
+                  <td style={{ whiteSpace: 'nowrap' }}><EditLine m={m} onChanged={onChanged} /> <DeleteLine m={m} onChanged={onChanged} /></td>
                 </tr>
               ))}
             </tbody>
