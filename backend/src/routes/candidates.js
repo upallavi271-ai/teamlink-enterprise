@@ -2804,6 +2804,8 @@ const slimMatch = (r, restricted = false) => ({
 // PROFILE DEPTH (founder audit 2026-11-17): education list, employment history, gaps, progression, standard titles, summary, tags,
 // custom fields - routes/candidateProfileDepth.js. Above GET /:id so /profile-tags and /profile-fields are not read as an id.
 router.use(require('./candidateProfileDepth'));
+// round 3 (2026-11-18): personal details, verify flags, rejoin / reapply timeline, score history, stale data - routes/candidateData.js
+router.use(require('./candidateData'));
 
 // A LIMITED CANDIDATE VIEW for the BDE team (founder, 2026-10-16): a person who is only in the "Good fit for this job" list is not in any
 // pipeline yet, so the full page (which needs an application in the login's scope) refuses. The BDE team can still open them here:
@@ -4101,6 +4103,20 @@ router.put('/:id', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'),
   // An approved "Do not use" block is not lifted by editing the profile.
   if (loaded.candidate.profileStatus === 'Do Not Use') delete picked.profileStatus;
   if (loaded.candidate.profileStatus === 'Archived') delete picked.profileStatus; // cand7_: bring back via /unarchive
+  // WHY A SALARY / EXPERIENCE CHANGES (founder audit 813): replacing a salary or the experience that is already on the profile needs a short reason
+  // (a pick list + a note). It goes into the audit log (on each changed field) and into the profile's timeline. Filling a blank needs none.
+  const CDATA = require('../utils/candidateData'); // eslint-disable-line global-require
+  const reasonFields = CDATA.changesNeedingReason(loaded.candidate, picked);
+  let changeReason = null;
+  if (reasonFields.length) {
+    changeReason = CDATA.reasonFrom(req.body);
+    if (!changeReason || changeReason.error) {
+      return res.status(400).json({
+        error: changeReason && changeReason.error ? changeReason.error : `Say why ${reasonFields.map((k) => CDATA.CHANGE_FIELDS[k].toLowerCase()).join(' and ')} is changing (pick a reason).`,
+        code: 'REASON_REQUIRED', fields: reasonFields, reasons: CDATA.CHANGE_REASONS,
+      });
+    }
+  }
   const candidate = await prisma.candidate.update({ where: { id: req.params.id }, data: picked });
   markCandidateDirty(candidate.id); // the paged list re-reads this row on its next request
   await writeSourceNote(candidate.id, req.user, req.body, loaded.candidate.source);
@@ -4110,7 +4126,15 @@ router.put('/:id', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'),
   const changed = Object.keys(picked).filter((k) => shown(loaded.candidate[k]) !== shown(candidate[k]));
   for (const k of changed) {
     // eslint-disable-next-line no-await-in-loop
-    await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Candidate field changed', entity: 'Candidate', entityId: candidate.id, field: k, fieldLabel: k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase()), fromValue: shown(loaded.candidate[k]) || '(blank)', toValue: shown(candidate[k]) || '(blank)' });
+    await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Candidate field changed', entity: 'Candidate', entityId: candidate.id, field: k, fieldLabel: k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase()), fromValue: shown(loaded.candidate[k]) || '(blank)', toValue: shown(candidate[k]) || '(blank)', ...(changeReason && reasonFields.includes(k) ? { reason: changeReason.text } : {}) });
+    if (changeReason && reasonFields.includes(k)) {
+      // eslint-disable-next-line no-await-in-loop
+      await CDATA.addEvent(candidate.id, { kind: 'data_change', title: `${CDATA.CHANGE_FIELDS[k]} changed: ${shown(loaded.candidate[k]) || '(blank)'} -> ${shown(candidate[k]) || '(blank)'}`, reason: changeReason.text }, req.user);
+    }
+  }
+  // the Fit scores follow the profile: a change of skills / experience / location / salary / education re-scores the open applications (kept in the score history)
+  if (changed.some((k) => ['skills', 'goodToHaveSkills', 'experienceYears', 'relevantExperienceYears', 'location', 'preferredLocation', 'currentSalary', 'expectedSalary', 'education', 'specialization', 'noticePeriod'].includes(k))) {
+    require('../utils/scoreHistory').rescoreCandidate(candidate.id, 'Profile changed', req.user).catch(() => {}); // eslint-disable-line global-require
   }
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Candidate updated', entity: 'Candidate', entityId: candidate.id, toValue: changed.length ? `Changed: ${changed.join(', ')}`.slice(0, 300) : 'No field changed' });
   return res.json({ ...candidate, salaryWarnings: salEdit.warnings });

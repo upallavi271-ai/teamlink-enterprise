@@ -34,6 +34,7 @@ import {
 } from '../components/Candidate360Tabs.jsx';
 // cand7_ (Candidates §7): the profile top and the other agents' mount points.
 import ProfileTop from '../components/candidate/ProfileTop.jsx';
+import { VerifyBanner } from '../components/candidate/CareerData.jsx'; // "needs verification" strip (round 3)
 import CareerProfile from '../components/candidate/CareerProfile.jsx'; // the Career tab: education, jobs, gaps, progression, summary, tags, custom fields
 import CandidateConversation from '../components/messaging/CandidateConversation.jsx'; // Conversation tab: this candidate's WhatsApp chat + the all-channels view (ConversationView, CommunicationTimeline)
 import ProfileLeft, { ResumeTabCard } from '../components/candidate/ProfileLeft.jsx';
@@ -498,6 +499,7 @@ export default function CandidateDetail() {
           right = Applications · Notes · Documents · Timeline (same as the big window). */}
       {/* Founder, 2026-10-22: the tabs sit on top, always in the same place. Overview shows the whole profile (personal info, work facts, skills, consent, the applications);
           every other tab (Resume, Notes, Documents, Timeline, Conversation) shows ONLY its own content, full width. */}
+      {internal && <VerifyBanner id={c.id} onOpen={() => setTab('career')} />}
       <C360Tabs tab={tab} setTab={setTab} c={c} className="pfl-tabs-top" />
       <div className={`pfl-frame${tab !== 'applications' ? ' pfl-conv' : ''}`}>
       <ProfileLeft c={c} user={user} internal={internal} slot={slot} onChanged={load} onDeleted={() => navigate('/candidates')} />

@@ -7,6 +7,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api';
 import Combo from '../Combo.jsx';
+import {
+  PersonalCard, VerifyCard, HistoryCard, ScoreHistoryCard,
+} from './CareerData.jsx'; // round 3: personal details, verify flags, applications before, score history
 import './CandidateRecord.css';
 
 const errText = (err, fallback) => err?.response?.data?.error || fallback;
@@ -317,12 +320,16 @@ export default function CareerProfile({ c }) {
       {d.currentTitle && d.currentTitle.standard && d.currentTitle.standard !== d.currentTitle.raw && (
         <div className="small-muted">{`Current designation: ${d.currentTitle.raw} → standard title: ${d.currentTitle.standard}`}</div>
       )}
+      <VerifyCard id={id} onChanged={load} />
       <SummaryCard {...props} />
       <TagsCard {...props} />
+      <PersonalCard id={id} />
       <EmploymentCard {...props} />
       <EducationCard {...props} />
       <CustomFieldsCard {...props} />
       <ParseCheckCard d={d} />
+      <HistoryCard id={id} />
+      <ScoreHistoryCard id={id} />
     </div>
   );
 }

@@ -80,10 +80,13 @@ function resumeKind(buf, name = '') {
   if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
   return /\.txt$/i.test(name) ? 'txt' : null;
 }
-// -> { fields: { name, email, phone, location, experienceYears, skills }, kind } | { error }
+// -> { fields, kind, parsed, confidence, evidence, flags, details } | { error }
+// ONE parser for this bulk path and the single-resume path (utils/resumeParse.js parseResumeText -> utils/resumeFields.js): name, email, phone, location,
+// experience, skills, CURRENT / EXPECTED CTC, NOTICE PERIOD, date of birth; jobs, degrees, personal details come back in `details`. `confidence` is a high / medium /
+// low chip per field, `evidence` the resume sentence each value came from, `flags` what must be verified (utils/resumeVerify.js).
 async function parseResume(buf, name) {
   const kind = resumeKind(buf, name);
-  if (!kind) return { error: 'Not a PDF, DOCX, DOC, JPG or PNG file.' };
+  if (!kind) return { error: 'Not a PDF, DOCX, DOC, RTF, JPG or PNG file.' };
   let out;
   if (kind === 'txt') out = { text: buf.toString('utf8'), parsed: await resumeParser.parseResumeText(buf.toString('utf8')) };
   else out = await resumeParser.extractAndParse(buf, kind);
@@ -96,11 +99,25 @@ async function parseResume(buf, name) {
   if (p.location) fields.location = p.location;
   if (typeof p.totalExperienceYears === 'number') fields.experienceYears = p.totalExperienceYears;
   if (Array.isArray(p.skills) && p.skills.length) fields.skills = p.skills.slice(0, 25).join(', ');
-  // ATS audit 2026-11-18 (Q77/Q78): salary and notice period the resume states, plus what a person should check
-  if (p.currentCtc) fields.currentSalary = p.currentCtc;
-  if (p.expectedCtc) fields.expectedSalary = p.expectedCtc;
+  // salary and notice period the resume states (the older names currentCtc / expectedCtc are kept in step by the parser)
+  if (p.currentSalary || p.currentCtc) fields.currentSalary = p.currentSalary || p.currentCtc;
+  if (p.expectedSalary || p.expectedCtc) fields.expectedSalary = p.expectedSalary || p.expectedCtc;
   if (p.noticePeriod) fields.noticePeriod = p.noticePeriod;
-  return { fields, kind, missing: p.missing || [], review: p.review || [], confidence: p.confidence || null };
+  if (p.dob) fields.dob = p.dob;
+  const RV = require('../utils/resumeVerify'); // eslint-disable-line global-require
+  const flags = RV.checkProfile({
+    name: fields.name, email: fields.email, phone: fields.phone, dob: fields.dob || null, experienceYears: fields.experienceYears, currentSalary: fields.currentSalary, expectedSalary: fields.expectedSalary,
+    noticePeriod: fields.noticePeriod, location: fields.location,
+  }, p);
+  const details = {
+    employment: p.employment || [], educationEntries: p.educationEntries || [], languagesKnown: p.languagesKnown || [], address: p.address || null, nativePlace: p.nativePlace || null,
+    maritalStatus: p.maritalStatus || null, fatherName: p.fatherName || null, gender: p.gender || null, skillCategories: p.skillCategories || null, highestEducation: p.highestEducation || null,
+  };
+  const confidence = { ...(p.confidence || {}) };
+  if (confidence.experience) { confidence.experienceYears = confidence.experience; }
+  return {
+    fields, kind, parsed: p, confidence, evidence: p.evidence || {}, flags, details, missing: p.missing || [], review: p.review || [],
+  };
 }
 const { pushNotification } = require('../utils/notify');
 const CSRC = require('../utils/candidateSource'); // the clean source list
@@ -2069,8 +2086,24 @@ router.post('/resumes/parse', guarded(async (req, res) => {
   }
   const f = parsed.fields || {};
   const missing = !parsed.error && !f.email && !f.phone ? 'No email or phone found in the resume — add one below, or the row is skipped.' : null;
+  const flags = parsed.flags || [];
+  // AUTO-CREATE (Admin switch "Auto-create candidates from staff uploads when nothing is flagged", default OFF): with it ON a clean resume (no flag, no
+  // duplicate, name + contact + both salaries read) is created at once; anything flagged still waits for a person's Confirm and the team lead's approval.
+  let autoCreated = null;
+  const fields = (upload && upload.fields) || {};
+  if (!parsed.error && !duplicate && !flags.length && f.name && (f.email || f.phone) && f.currentSalary && f.expectedSalary && /^(1|true|yes)$/i.test(String(fields.auto || ''))) {
+    const sets = await require('../utils/candidateData').settings(); // eslint-disable-line global-require
+    if (sets.autoCreateStaffUploads) {
+      try {
+        const done = await commitResumes(req, { requirementCode: String(fields.requirementCode || '').trim() || undefined, source: String(fields.source || '').trim() || undefined, items: [{ token }] });
+        const r = done.results[0];
+        autoCreated = r && r.action === 'create' ? { candidateId: r.candidateId, batchId: done.batch ? done.batch.id : null, message: r.message || 'created' } : { failed: true, message: r ? r.message : 'not created' };
+      } catch (e) { autoCreated = { failed: true, message: e.message }; }
+    }
+  }
   return res.json({
     token, fileName: file.filename, kind: parsed.kind || null, fields: f, error: parsed.error || null, duplicate, warning: missing,
+    confidence: parsed.confidence || {}, evidence: parsed.evidence || {}, flags, details: parsed.details || null, autoCreated,
   });
 }));
 
@@ -2078,6 +2111,64 @@ router.post('/resumes/commit', express.text({ type: () => true, limit: '2mb' }),
   await resumeGate(req);
   let b = {};
   try { b = JSON.parse(req.body || '{}'); } catch { throw new HttpError(400, { error: 'The request could not be read.' }); }
+  return res.json(await commitResumes(req, b));
+}));
+
+// A resume's extra fields onto the profile + the checks. -> the number of flags stored.
+const APPROVER = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'];
+async function saveParsedExtras({ candidateId, parsed, f, isNew, user, fileName }) {
+  const CD = require('../utils/candidateData'); // eslint-disable-line global-require
+  const PD = require('../utils/candidateProfileDepth'); // eslint-disable-line global-require
+  const RV = require('../utils/resumeVerify'); // eslint-disable-line global-require
+  const cur = await prisma.candidate.findUnique({ where: { id: candidateId } });
+  if (!cur) return 0;
+  if (isNew) {
+    const fill = {};
+    const latest = (parsed.employment || []).find((j) => j.isCurrent) || (parsed.employment || [])[0];
+    if (!cur.dob && parsed.dob) fill.dob = parsed.dob;
+    if (!cur.gender && parsed.gender) fill.gender = parsed.gender;
+    if (!cur.education && parsed.highestEducation) fill.education = parsed.highestEducation;
+    const edu = (parsed.educationEntries || []).find((e) => e.degree === parsed.highestEducation) || (parsed.educationEntries || [])[0];
+    if (edu) {
+      if (!cur.institute && edu.institute) fill.institute = edu.institute;
+      if (!cur.passingYear && edu.year) fill.passingYear = edu.year;
+      if (!cur.specialization && edu.specialisation) fill.specialization = edu.specialisation;
+    }
+    if (latest) {
+      if (!cur.currentDesignation && latest.title) fill.currentDesignation = latest.title;
+      if (!cur.currentCompany && latest.company) fill.currentCompany = latest.company;
+    }
+    if (Object.keys(fill).length) await prisma.candidate.update({ where: { id: candidateId }, data: fill });
+    // the Career tab: one row per job and per degree
+    for (const j of (parsed.employment || []).slice(0, 10)) {
+      // eslint-disable-next-line no-await-in-loop
+      await PD.addEmployment(candidateId, { company: j.company, title: j.title, fromMonth: j.fromMonth, toMonth: j.toMonth, isCurrent: j.isCurrent, notes: 'Read from the resume' }, user).catch(() => null);
+    }
+    for (const e of (parsed.educationEntries || []).slice(0, 8)) {
+      // eslint-disable-next-line no-await-in-loop
+      await PD.addEducation(candidateId, { degree: e.degree, specialisation: e.specialisation, institute: e.institute, year: e.year, score: e.score }, user).catch(() => null);
+    }
+    const extra = {};
+    if (parsed.address) extra.address = parsed.address;
+    if (parsed.nativePlace) extra.nativePlace = parsed.nativePlace;
+    if (parsed.maritalStatus) extra.maritalStatus = parsed.maritalStatus;
+    if (parsed.fatherName) extra.fatherName = parsed.fatherName;
+    if (parsed.languagesKnown && parsed.languagesKnown.length) extra.languages = parsed.languagesKnown;
+    const inp = CD.extraInput(extra);
+    if (inp.values && Object.keys(inp.values).length) await CD.saveExtra(candidateId, inp.values, user);
+  }
+  const fresh = await prisma.candidate.findUnique({ where: { id: candidateId } });
+  const flags = RV.checkProfile({
+    name: fresh.name, email: fresh.email, phone: fresh.phone, dob: fresh.dob || null, experienceYears: fresh.experienceYears, currentSalary: fresh.currentSalary, expectedSalary: fresh.expectedSalary,
+    noticePeriod: fresh.noticePeriod, location: fresh.location, education: fresh.education, passingYear: fresh.passingYear, currentDesignation: fresh.currentDesignation, currentCompany: fresh.currentCompany,
+  }, parsed);
+  const approver = [user.role, user.atsRole].some((r) => APPROVER.includes(r));
+  await RV.recordFlags(candidateId, flags, { source: 'bulk upload', user, needsTl: !approver });
+  if (flags.length) await logAudit({ userId: user.id, actorName: user.name, action: 'Resume upload needs verification', entity: 'Candidate', entityId: candidateId, toValue: `${flags.length} flag(s): ${[...new Set(flags.map((x) => x.label))].slice(0, 6).join(', ')} (${fileName})`.slice(0, 300) });
+  return flags.length;
+}
+
+async function commitResumes(req, b) {
   const items = Array.isArray(b.items) ? b.items.slice(0, 500) : [];
   if (!items.length) throw new HttpError(400, { error: 'Nothing to import.' });
   const reqCode = String(b.requirementCode || '').trim();
@@ -2130,6 +2221,8 @@ router.post('/resumes/commit', express.text({ type: () => true, limit: '2mb' }),
         // eslint-disable-next-line no-await-in-loop
         const action = await HANDLERS.candidate({ data, ix, dry: false, row: 0, note });
         const candidateId = findCandidate(ix, f.email || f.phone);
+        // the login that uploaded a NEW person keeps seeing them before any requirement (utils/candidateAddedBy.js)
+        if (candidateId && action !== 'updated') await require('../utils/candidateAddedBy').record(candidateId, req.user, 'resume upload'); // eslint-disable-line global-require
         if (requirement && candidateId && !(await prisma.application.count({ where: { candidateId, requirementId: requirement.id } }))) {
           // eslint-disable-next-line no-await-in-loop
           await HANDLERS.application({ data: { _candidate: f.email || f.phone, _requirement: reqCode, stage: 'NEW', source: srcPick === CSRC.JOB_PORTAL ? null : srcPick }, ix, dry: false, row: 0, note });
@@ -2150,6 +2243,15 @@ router.post('/resumes/commit', express.text({ type: () => true, limit: '2mb' }),
             });
           } catch { note('resume file not attached'); }
         }
+        // WHAT ELSE THE RESUME SAID (round 3): date of birth, jobs, degrees, personal details go onto a NEW profile; everything is checked, and what is flagged lands
+        // in the verify queue (the candidate is saved and marked "needs verification"; an upload by a recruiter also waits for the team lead's approval).
+        if (candidateId && parsed.parsed) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const flagged = await saveParsedExtras({ candidateId, parsed: parsed.parsed, f, isNew: action !== 'updated', user: req.user, fileName: meta.fileName });
+            if (flagged) note(`${flagged} thing(s) to verify`);
+          } catch (e) { note('extra details not saved'); console.error('[resume extras]', e.message); } // eslint-disable-line no-console
+        }
         results.push({ token: it.token, fileName: meta.fileName, action: action === 'updated' ? 'update' : 'create', candidateId, message: notes.join(' · ') });
       } catch (e) {
         results.push({ token: it.token, fileName: meta.fileName, action: 'error', message: e.message });
@@ -2168,8 +2270,8 @@ router.post('/resumes/commit', express.text({ type: () => true, limit: '2mb' }),
     entity: 'AtsImport', entityId: 'resumes',
     toValue: JSON.stringify({ ...totals, batchId: batch ? batch.id : null, requirement: reqCode || null }),
   });
-  return res.json({ totals, results, batch });
-}));
+  return { totals, results, batch };
+}
 
 // THE TEMPLATE IS FOR EVERYBODY (founder, 2026-10-23): it holds only column names and made-up example rows, never a real record, so any ATS login may
 // download it (to fill it in, or to hand it to the person who may import). Importing itself is still checked by role.

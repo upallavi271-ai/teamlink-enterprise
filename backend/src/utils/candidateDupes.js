@@ -116,7 +116,7 @@ const version = () => VERSION;
 const HOLD_MEMO = new Map(); // candidateId -> { at, flag }  (short-lived)
 
 // --- reading one candidate ------------------------------------------------------------------
-const CAND_COLS = 'id, name, phone, email, dob, location, institute, currentCompany, source, createdAt, profileStatus';
+const CAND_COLS = 'id, name, phone, email, dob, location, institute, currentCompany, education, qualificationId, source, createdAt, profileStatus';
 async function candidateRow(id) {
   const r = await q(`SELECT ${CAND_COLS} FROM Candidate WHERE id = ?`, id);
   return r[0] || null;

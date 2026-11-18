@@ -62,6 +62,7 @@ import { SalaryFitChips, SalaryFields, AddSalaryDialog, salaryCheck } from '../c
 import FitBreakdown, { useFitBreakdown } from '../components/match/FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary (four small chips)
 import JobPortalCandidates from '../components/portal/JobPortalCandidates.jsx';
 import DupWorklist from '../components/duplicates/DupWorklist.jsx'; // dup_: the Duplicates tab
+import { VerifyButton, VerifyPanel } from '../components/candidate/VerifyQueue.jsx'; // round 3: resume data that needs a person's check
 import { DupChip } from '../components/duplicates/DupChip.jsx';
 import StatusChip from '../components/ui/StatusChip.jsx';
 import EmptyState from '../components/ui/EmptyState.jsx';
@@ -456,6 +457,7 @@ export default function Candidates() {
   const portalTab = canSeePortalApplications(user);
   // dup_: the Duplicates tab is for the recruiting side (the server says who: GET /candidate-duplicates/status).
   const [dupStatus, setDupStatus] = useState(null);
+  const [verifyOpen, setVerifyOpen] = useState(false); // the verify queue (resume data to check)
   const dupTab = !!(dupStatus && dupStatus.show);
   const dupAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(user?.role) || ['SUPER_ADMIN', 'ADMIN'].includes(user?.atsRole);
   const initial = useMemo(() => fromUrl(searchParams, portalTab), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1350,6 +1352,7 @@ export default function Candidates() {
           {dupTab && Number(dupStatus.waiting) > 0 && main !== 'duplicates' && (
             <button type="button" className="dupx-badge" onClick={() => goMain('duplicates')} title="People who look like someone already on file. They cannot move on until you check them.">{`${Number(dupStatus.waiting).toLocaleString('en-IN')} duplicate${Number(dupStatus.waiting) === 1 ? '' : 's'} waiting`}</button>
           )}
+          <VerifyButton key={`vb-${tick}-${verifyOpen}`} onOpen={() => setVerifyOpen(true)} />
           <AppOmniPanel app="ATS" />
           {listOn && (
             <button
@@ -1735,6 +1738,7 @@ export default function Candidates() {
       {main === 'duplicates' && <DupWorklist onCountChange={() => loadDupStatus()} />}
       {main === 'sources' && <CandidateSources user={user} />}
       {main === 'contacts' && <ContactLists user={user} />}
+      {verifyOpen && <VerifyPanel onClose={() => setVerifyOpen(false)} />}
 
       {main === 'master' && (
         <>

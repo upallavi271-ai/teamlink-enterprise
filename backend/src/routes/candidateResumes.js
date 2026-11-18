@@ -245,9 +245,12 @@ router.get('/requirement/:reqId/matches', requirePerm('ats', 'requirements', 'Ma
   // A restricted login sorts by the (rounded) total or by name only: other orders would reveal the parts.
   const sort = restricted && !['overall', 'name'].includes(opts.sort) ? 'overall' : opts.sort;
   rm.sortRows(rows, sort);
+  // JD MATCH (checklist-168 #66): the whole job description against the whole resume text (words and phrases, no AI), shown next to Fit. Not for the BDE team's limited view.
+  const JD = require('../utils/jdMatch'); // eslint-disable-line global-require
+  const jdOf = (candidateId) => { const ev = evidence.get(candidateId); return restricted || !ev || !ev.text ? null : JD.jdMatch(JD.jdTextOf(requirement), ev.text); };
   const shown = rows.slice(0, opts.limit).map((r) => (restricted
     ? { ...r, aiScore: undefined, match: FB.shapeMatch(r.match, true) }
-    : { ...r, match: FB.shapeMatch(r.match, false) }));
+    : { ...r, match: FB.shapeMatch(r.match, false), jdMatch: jdOf(r.id) }));
   const budget = SALARY.budgetOf(requirement);
   const canAdd = requirementIsLive(requirement.status) && await can(req.user, 'ats', 'candidates', 'Applications', 'create');
   const canSetMinFit = rm.minFitSupported() && await can(req.user, 'ats', 'requirements', 'Requirement Detail', 'edit');
@@ -844,7 +847,11 @@ router.get('/:id/eligible-requirements', candidateView, async (req, res) => {
   if (opts.eligibleOnly) rows = rows.filter((r) => r.match.eligible);
   const sort = restricted && !['overall', 'name'].includes(opts.sort) ? 'overall' : opts.sort;
   rm.sortRows(rows, sort);
-  const shown = rows.slice(0, opts.limit).map((r) => ({ ...r, match: FB.shapeMatch(r.match, restricted) }));
+  const JD = require('../utils/jdMatch'); // eslint-disable-line global-require
+  const reqById = new Map(openNew.map((r) => [r.id, r]));
+  const shown = rows.slice(0, opts.limit).map((r) => ({
+    ...r, match: FB.shapeMatch(r.match, restricted), jdMatch: restricted || !evidence || !evidence.text ? null : JD.jdMatch(JD.jdTextOf(reqById.get(r.id)), evidence.text),
+  }));
   const canAdd = await can(req.user, 'ats', 'candidates', 'Applications', 'create');
   return res.json({
     threshold: rm.thresholdFor(null), ...opts, sort, total, eligible: eligibleCount, hasResume: !!evidence, shown: shown.length, rows: shown, canAdd, restricted, salary: { counts: salaryCounts },

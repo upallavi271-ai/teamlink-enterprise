@@ -313,7 +313,7 @@ const ROLE_ACCESS_MODULES = [
     'Client Contacts', 'Client Follow-ups', 'Client Documents', 'Client Approval Submission', 'Client Invoice Status', 'Client Invoice Amount'] },
   // 'Bulk Import' on candidates (2026-10-03): the candidate / application
   // sheet import, separate from adding one candidate by hand.
-  { id: 'candidates', label: 'Candidates & Pipeline', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold', 'Resume & Scores', 'Bulk Import', 'Candidate Portal Invite', 'Candidate Contact & Salary', 'Contact (Mail / WhatsApp / SMS / Call)'] },
+  { id: 'candidates', label: 'Candidates & Pipeline', features: ['Candidate List', 'Add Candidate', 'Candidate Master', 'Applications', 'Pipeline Stages', 'Rejection & Hold', 'Resume & Scores', 'Bulk Import', 'Candidate Portal Invite', 'Candidate Contact & Salary', 'ID Documents', 'Contact (Mail / WhatsApp / SMS / Call)'] },
   { id: 'recruiterbde', label: 'Recruiter & BDE', features: ['Recruiter Workload', 'BDE Workload', 'Team View', 'Pending Actions'] },
   // Interviews & Joining: Interview Calendar - Interview Feedback - Offers -
   // Joining - Internal Hiring. Client Feedback is its own feature because a

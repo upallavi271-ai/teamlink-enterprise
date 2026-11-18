@@ -523,6 +523,9 @@ const DEFAULT_RULES = [
   // (utils/clientRedact.js). ON for every role that works with candidates today;
   // OFF for the BDE (Q4: a BDE sees name, step, client feedback, outcome).
   { module: 'candidates', features: ['Candidate Contact & Salary'], actions: ['view'], roles: [...SET.PIPELINE.filter((r) => r !== 'BDE'), 'HR'] },
+  // ID DOCUMENTS (founder audit 2026-11-18, item 784): an Aadhaar / PAN / Passport file opens only for a login with this switch - by default Super Admin,
+  // Admin, HR, the TL and the owning Recruiter (routes/candidateRecord.js adds the "owning" test for a Recruiter). Every open is logged (utils/readLog.js).
+  { module: 'candidates', features: ['ID Documents'], actions: ['view'], roles: [...SET.ADMIN, 'HR', 'TL', 'RECRUITER'] },
   // CONTACT (user, 2026-10-10): "Contact (Mail / WhatsApp / SMS / Call)" is its OWN right, separate from
   // view / edit / approve: every role that follows people up may use all four channels for the people in
   // its own area (utils/contactAccess.js decides WHICH kinds of people, and whether the number is shown or

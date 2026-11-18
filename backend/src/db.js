@@ -91,6 +91,18 @@ prisma.$use(async (params, next) => {
   return next(params);
 });
 
+// scorehist_: every change of an application's Fit score (matchScore) is kept with its date, weights version and reason (utils/scoreHistory.js);
+// a requirement whose key fields change re-scores its open applications in the background. Never throws, never waits.
+prisma.$use(async (params, next) => {
+  const result = await next(params);
+  if (params.model === 'Application' && (params.action === 'create' || params.action === 'update')) {
+    try { await require('./utils/scoreHistory').afterApplicationWrite(params, result); } catch { /* the trail catches up on the next change */ } // eslint-disable-line global-require
+  } else if (params.model === 'Requirement' && params.action === 'update') {
+    try { require('./utils/scoreHistory').afterRequirementWrite(params, result); } catch { /* the Fit catches up on the next change */ } // eslint-disable-line global-require
+  }
+  return result;
+});
+
 // seat_: a Naukri / Shine mailbox follows its HRMS position at once (founder 2026-10-29: "aa recruiter position kii avaraina ostey
 // automatic gaa aa recruiter kii assign ayii povali"): any write to a seat, a seat tenure or a person's status / joining / email
 // asks utils/mailboxSeats.js to move the mailboxes to the new holder (debounced, in the background). Never throws, never waits.

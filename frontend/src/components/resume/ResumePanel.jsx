@@ -14,6 +14,7 @@
 // login the API refuses (403) simply does not get this panel.
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ConfChip } from '../candidate/VerifyBits.jsx'; // the Sure / Likely / Not sure chip beside a parsed value
 import api from '../../api';
 import ResumeEditForm from './ResumeEditForm.jsx';
 import './ResumePanel.css';
@@ -120,19 +121,23 @@ function Details({ v }) {
   const p = (v && v.parsed) || null;
   if (!v) return null;
   if (!p) return null;
+  const cf = p.confidence || {}; // a chip per value (round 3): Sure / Likely / Not sure
+  const more = [
+    ['Current CTC', p.currentSalary, 'currentSalary'], ['Expected CTC', p.expectedSalary, 'expectedSalary'], ['Notice period', p.noticePeriod, 'noticePeriod'], ['Date of birth', p.dob, 'dob'],
+    ['Languages known', (p.languagesKnown || []).join(', '), 'languagesKnown'], ['Native place', p.nativePlace, 'nativePlace'], ['Marital status', p.maritalStatus, 'maritalStatus'], ["Father's name", p.fatherName, 'fatherName'],
+  ].filter(([, val]) => val);
   return (
     <div className="rsm-card rsm-read">
       <div className="rsm-sub">What the resume says</div>
       <div className="rsm-details">
-        <div><div className="rsm-k">Total experience</div><div className="rsm-v">{p.totalExperienceYears != null ? `${p.totalExperienceYears} yrs` : '—'}{p.experienceSource === 'dates' && <span className="small-muted"> (from job dates)</span>}</div></div>
-        <div><div className="rsm-k">Education</div><div className="rsm-v">{p.education && p.education.length ? p.education.join(', ') : '—'}</div></div>
-        <div><div className="rsm-k">Current location</div><div className="rsm-v">{p.location || '—'}</div></div>
-        {/* ATS audit 2026-11-18 (Q77/Q78/Q95): salary and notice period the resume states, with how sure the parser is */}
-        <div><div className="rsm-k">Current CTC</div><div className="rsm-v">{p.currentCtc || '—'}<Conf c={p.confidence && p.confidence.currentCtc} /></div></div>
-        <div><div className="rsm-k">Expected CTC</div><div className="rsm-v">{p.expectedCtc || '—'}<Conf c={p.confidence && p.confidence.expectedCtc} /></div></div>
-        <div><div className="rsm-k">Notice period</div><div className="rsm-v">{p.noticePeriod || '—'}<Conf c={p.confidence && p.confidence.noticePeriod} /></div></div>
-        <div className="rsm-full"><div className="rsm-k">E-mail</div><div className="rsm-v rsm-contact">{(p.emails || []).slice(0, 2).join(' · ') || '—'}</div></div>
-        <div className="rsm-full"><div className="rsm-k">Phone</div><div className="rsm-v rsm-contact">{(p.phones || []).slice(0, 2).join(' · ') || '—'}</div></div>
+        <div><div className="rsm-k">Total experience</div><div className="rsm-v">{p.totalExperienceYears != null ? `${p.totalExperienceYears} yrs` : '—'}{p.experienceSource === 'dates' && <span className="small-muted"> (from job dates)</span>}{p.totalExperienceYears != null && <ConfChip level={cf.experience} />}</div></div>
+        <div><div className="rsm-k">Education</div><div className="rsm-v">{p.education && p.education.length ? p.education.join(', ') : '—'}{p.education && p.education.length ? <ConfChip level={cf.education} /> : null}</div></div>
+        <div><div className="rsm-k">Current location</div><div className="rsm-v">{p.location || '—'}{p.location ? <ConfChip level={cf.location} /> : null}</div></div>
+        <div className="rsm-full"><div className="rsm-k">E-mail</div><div className="rsm-v rsm-contact">{(p.emails || []).slice(0, 2).join(' · ') || '—'}{(p.emails || []).length ? <ConfChip level={cf.email} /> : null}</div></div>
+        <div className="rsm-full"><div className="rsm-k">Phone</div><div className="rsm-v rsm-contact">{(p.phones || []).slice(0, 2).join(' · ') || '—'}{(p.phones || []).length ? <ConfChip level={cf.phone} /> : null}</div></div>
+        {more.map(([label, val, key]) => <div key={key}><div className="rsm-k">{label}</div><div className="rsm-v">{val}<ConfChip level={cf[key]} /></div></div>)}
+        {(p.employment || []).length > 0 && <div className="rsm-full"><div className="rsm-k">Jobs read<ConfChip level={cf.employment} /></div><div className="rsm-v">{p.employment.map((j) => `${[j.title, j.company].filter(Boolean).join(' at ')} (${j.fromMonth || '?'} to ${j.isCurrent ? 'now' : (j.toMonth || '?')})`).join(' · ')}</div></div>}
+        {(p.educationEntries || []).length > 0 && <div className="rsm-full"><div className="rsm-k">Degrees read<ConfChip level={cf.educationEntries} /></div><div className="rsm-v">{p.educationEntries.map((e) => [e.degree, e.specialisation && `(${e.specialisation})`, e.institute, e.year].filter(Boolean).join(' ')).join(' · ')}</div></div>}
         <div className="rsm-skills">
           <div className="rsm-k">{`Skills found in the resume (${(p.skills || []).length})`}</div>
           {/* SKILL GROUPS (ATS audit 2026-11-18, Q97): technical / soft / domain */}

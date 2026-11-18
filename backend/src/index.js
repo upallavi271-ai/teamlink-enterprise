@@ -427,6 +427,7 @@ app.use('/api/crm', require('./routes/crm'));
 // THE BDE AGENT (2026-11-18): quick, accurate answers for BDE / BDE TL logins only, from their own scoped data (utils/bdeAgent.js).
 app.use('/api/bde-agent', require('./routes/bdeAgent'));
 app.use('/api/call-lists', require('./routes/callLists')); // the call sheet split among recruiters, who call it from VICIdial
+app.use('/api/ats/data-verify', require('./routes/dataVerify')); // verify queue, stale data, switches, parsing quality (round 3, 2026-11-18)
 app.use('/api/ats/data-quality', require('./routes/dataQuality')); // profile completeness, duplicates, stale profiles (utils/dataQuality.js)
 app.use('/api/privacy', require('./routes/privacy')); // DPDP: a candidate's data export, legal hold, erasure, consent review (utils/candidatePrivacy.js)
 app.use('/api/crm-public', require('./routes/crmPublic')); // the campaign email unsubscribe link (no login)

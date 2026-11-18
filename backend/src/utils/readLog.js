@@ -49,6 +49,16 @@ async function write(req, entity, entityId, what) {
     new Date().toISOString(), u.id, u.name || null, entity, entityId, what, ip, req.viewAs ? req.viewAs.byName : null);
 }
 
+// EVERY open of something sensitive is its own row (an ID document: Aadhaar / PAN / Passport) - no 10-minute merge.
+async function writeAlways(req, entity, entityId, what) {
+  const u = req.user;
+  if (!u) return;
+  await ensure();
+  const ip = (() => { try { return require('./clientIp').ipOf(req); } catch { return null; } })(); // eslint-disable-line global-require
+  await prisma.$executeRawUnsafe('INSERT INTO "ReadLog" ("at","userId","userName","entity","entityId","what","ip","viewAsBy") VALUES (?,?,?,?,?,?,?,?)',
+    new Date().toISOString(), u.id, u.name || null, entity, entityId, what, ip, req.viewAs ? req.viewAs.byName : null);
+}
+
 function middleware() {
   return (req, res, next) => {
     if (req.method !== 'GET' || !String(req.originalUrl || '').startsWith('/api/')) return next();
@@ -91,4 +101,4 @@ async function prune() {
   await prisma.$executeRawUnsafe('DELETE FROM "ReadLog" WHERE "at" < ?', new Date(Date.now() - 365 * 86400000).toISOString());
 }
 
-module.exports = { middleware, list, prune, ensure, RULES };
+module.exports = { middleware, list, prune, ensure, RULES, writeAlways };

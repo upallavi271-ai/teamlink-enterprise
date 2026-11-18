@@ -83,7 +83,7 @@ async function main() {
 
   // ----------------------------------------------------------------------- READ
   const t0 = Date.now();
-  const cands = await q('SELECT id, name, phone, email, dob, location, institute, currentCompany, source, createdAt, profileStatus FROM Candidate');
+  const cands = await q('SELECT id, name, phone, email, dob, location, institute, currentCompany, education, qualificationId, source, createdAt, profileStatus FROM Candidate');
   const byId = new Map(cands.map((c) => [c.id, c]));
   const resumes = new Map();
   const addResume = (id, sha, text) => {

@@ -61,7 +61,7 @@ const ymd = (d) => new Date(Date.now() + 5.5 * 3600e3 + d * 86400e3).toISOString
   console.log('1. A candidate edit records what changed, field by field');
   const cand = await prisma.candidate.findFirst({ where: { currentSalary: { not: null }, expectedSalary: { not: null }, profileStatus: { notIn: ['Archived', 'Do Not Use'] } }, select: { id: true, location: true, currentSalary: true, expectedSalary: true } });
   const newLoc = `Zz Town ${process.pid}`;
-  const up = await call('PUT', `/candidates/${cand.id}`, { location: newLoc, expectedSalary: '9.5 LPA' });
+  const up = await call('PUT', `/candidates/${cand.id}`, { location: newLoc, expectedSalary: '9.5 LPA', changeReason: 'Negotiation with the candidate' });
   check('the edit is saved', up.status === 200 && up.body.location === newLoc, [up.status, up.body && up.body.error]);
   const rows = await prisma.auditLog.findMany({ where: { entity: 'Candidate', entityId: cand.id, action: 'Candidate field changed' }, orderBy: { createdAt: 'desc' }, take: 10 });
   const loc = rows.find((r) => r.field === 'location');

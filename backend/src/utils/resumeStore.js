@@ -155,7 +155,23 @@ async function saveOriginalResume({
     entityId: candidateId,
     toValue: `${fileName} · ${Math.round(file.data.length / 1024)} KB · ${parser}${note ? ` · ${note}` : ''}`,
   });
+  // ROUND 3 (2026-11-18): the resume is checked against the profile (what it says vs what is saved) and anything doubtful goes into the verify queue; the open
+  // applications are scored again with the new resume and the change is kept in the score history. Background, never a reason to fail the upload.
+  afterResumeSaved(candidateId, parsed, row.id, user).catch((e) => console.error('[resume checks]', e.message)); // eslint-disable-line no-console
   return { ...row, version, parsed: safeParse(row.parsed), extractError: error };
+}
+
+async function afterResumeSaved(candidateId, parsed, resumeId, user) {
+  if (!parsed) return;
+  const RV = require('./resumeVerify'); // eslint-disable-line global-require
+  const c = await prisma.candidate.findUnique({ where: { id: candidateId } });
+  if (!c) return;
+  const flags = RV.checkProfile({
+    name: c.name, email: c.email, phone: c.phone, dob: c.dob || null, experienceYears: c.experienceYears, currentSalary: c.currentSalary, expectedSalary: c.expectedSalary, noticePeriod: c.noticePeriod,
+    location: c.location, education: c.education, passingYear: c.passingYear, currentDesignation: c.currentDesignation, currentCompany: c.currentCompany,
+  }, parsed);
+  await RV.recordFlags(candidateId, flags, { source: 'resume tab', resumeId, user });
+  await require('./scoreHistory').rescoreCandidate(candidateId, 'Resume added', user); // eslint-disable-line global-require
 }
 
 module.exports = {

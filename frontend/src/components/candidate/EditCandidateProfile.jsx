@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import api from '../../api';
 import Modal from '../Modal.jsx';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // EDIT A CANDIDATE'S PROFILE (founder 2026-10-29: "keep the edit option in candidates profiles page - the edit access is
@@ -58,12 +59,16 @@ export function EditProfileButton({ c, user, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [dupes, setDupes] = useState(null);
+  // why a salary / experience that is already on the profile is changing (the server asks: code REASON_REQUIRED)
+  const [ask, setAsk] = useState(null); // { fields, reasons }
+  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
   if (!c || !mayEditProfile(user)) return null;
 
   const start = () => {
     const f = {};
     FIELDS.forEach(([k]) => { f[k] = valueOf(c, k); });
-    setForm(f); setErr(''); setDupes(null); setOpen(true);
+    setForm(f); setErr(''); setDupes(null); setAsk(null); setReason(''); setNote(''); setOpen(true);
   };
   // only what changed goes back: an untouched field is never rewritten
   const changes = () => {
@@ -82,12 +87,14 @@ export function EditProfileButton({ c, user, onSaved }) {
     if ('phone' in body && !body.phone) { setErr('The phone number cannot be empty.'); return; }
     setBusy(true); setErr('');
     try {
-      await api.put(`/candidates/${c.id}`, override ? { ...body, overrideDuplicate: true } : body);
+      const extra = ask ? { changeReason: reason, changeNote: note } : {};
+      await api.put(`/candidates/${c.id}`, { ...body, ...extra, ...(override ? { overrideDuplicate: true } : {}) });
       setOpen(false);
       if (onSaved) onSaved();
     } catch (e) {
       const d = e.response?.data || {};
       if (d.duplicate) setDupes(d.matches || []);
+      if (d.code === 'REASON_REQUIRED') setAsk({ fields: d.fields || [], reasons: d.reasons || [] });
       setErr(d.error || 'The profile could not be saved. Please try again.');
     } finally { setBusy(false); }
   }
@@ -104,7 +111,7 @@ export function EditProfileButton({ c, user, onSaved }) {
             <>
               <button type="button" className="btn" onClick={() => setOpen(false)}>Cancel</button>
               {dupes && dupes.length > 0 && <button type="button" className="btn" disabled={busy} onClick={() => save(true)}>Save anyway</button>}
-              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => save(false)}>{busy ? 'Saving…' : 'Save'}</button>
+              <button type="button" className="btn btn-primary" disabled={busy || (!!ask && !reason)} onClick={() => save(false)}>{busy ? 'Saving…' : 'Save'}</button>
             </>
           )}
         >
@@ -134,6 +141,20 @@ export function EditProfileButton({ c, user, onSaved }) {
               </label>
             ))}
           </div>
+          {ask && (
+            <div className="notice amber" style={{ marginTop: 8 }}>
+              <div><b>Why is {ask.fields.map((k) => ({ currentSalary: 'the current salary', expectedSalary: 'the expected salary', experienceYears: 'the experience' }[k] || k)).join(' and ')} changing?</b> A salary or experience that is already on the profile needs a reason. It is kept in the history.</div>
+              <div className="grid-2" style={{ marginTop: 6 }}>
+                <label className="field"><span>Reason *</span>
+                  <Combo value={reason} onChange={(e) => setReason(e.target.value)}>
+                    <option value="">Pick a reason</option>
+                    {ask.reasons.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </Combo>
+                </label>
+                <label className="field"><span>Short note{reason === 'Other' ? ' *' : ''}</span><input value={note} onChange={(e) => setNote(e.target.value)} maxLength={400} /></label>
+              </div>
+            </div>
+          )}
           <div className="small-muted" style={{ marginTop: 6 }}>Only the boxes you change are saved. Every change is recorded with your name.</div>
         </Modal>
       )}

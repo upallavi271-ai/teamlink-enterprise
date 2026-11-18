@@ -11,15 +11,17 @@
 //                 a candidate: it is confirmed by comparing the two signatures (estimated Jaccard of the word sets)
 //                 and is LIKELY only together with the same name, otherwise POSSIBLE.
 //   NAME_CITY / NAME_COLLEGE / NAME_COMPANY   same name + the same city / college / current company -> POSSIBLE
+//   NAME_DOB_QUAL same name + date of birth + qualification (audit 2026-11-18, item 46)                       -> POSSIBLE (an additional warning key;
+//                 name + date of birth alone is already LIKELY, so this one adds the qualification to the reason)
 //
 // Everything here is deterministic so a profile gets the same keys every time (the backfill relies on it).
 // ---------------------------------------------------------------------------
 const crypto = require('crypto');
 const { phoneKeys, emailKey, nameKey, nameIsHintable } = require('./candidateDedupe');
 
-const KINDS = ['PHONE', 'EMAIL', 'NAME_DOB', 'RESUME_HASH', 'RESUME_BAND', 'NAME_COMPANY', 'NAME_CITY', 'NAME_COLLEGE'];
+const KINDS = ['PHONE', 'EMAIL', 'NAME_DOB', 'NAME_DOB_QUAL', 'RESUME_HASH', 'RESUME_BAND', 'NAME_COMPANY', 'NAME_CITY', 'NAME_COLLEGE'];
 // A key shared by more profiles than this is a placeholder / shared number (an agency's switchboard), not a person.
-const MAX_SHARERS = { PHONE: 8, EMAIL: 8, NAME_DOB: 8, RESUME_HASH: 8, RESUME_BAND: 12, NAME_COMPANY: 6, NAME_CITY: 6, NAME_COLLEGE: 6 };
+const MAX_SHARERS = { PHONE: 8, EMAIL: 8, NAME_DOB: 8, NAME_DOB_QUAL: 8, RESUME_HASH: 8, RESUME_BAND: 12, NAME_COMPANY: 6, NAME_CITY: 6, NAME_COLLEGE: 6 };
 
 // --- phone / email ----------------------------------------------------------------
 function normPhones(raw) { return phoneKeys(raw); }
@@ -136,6 +138,8 @@ function fingerprintsOf(c, resume = {}) {
   const hint = nameIsHintable(nk) || nk.replace(/ /g, '').length >= 8; // "Pravalika Chitturi" yes, "Ravi" no
   const dob = normDob(c.dob);
   if (nk && dob && nk.replace(/ /g, '').length >= 4) add('NAME_DOB', `${nk}|${dob}`);
+  const qual = slug(c.education) || (c.qualificationId ? `q ${c.qualificationId}` : '');
+  if (nk && dob && qual && nk.replace(/ /g, '').length >= 4) add('NAME_DOB_QUAL', `${nk}|${dob}|${qual}`);
   (resume.shas || []).forEach((s) => add('RESUME_HASH', String(s).toLowerCase()));
   bandKeys(resume.sig).forEach((v) => add('RESUME_BAND', v));
   if (hint) {
@@ -160,6 +164,7 @@ function classify(kinds, extra = {}) {
   if (kinds.has('PHONE')) { reasons.push('phone'); up('CERTAIN'); }
   if (kinds.has('EMAIL')) { reasons.push('email'); up('CERTAIN'); }
   if (kinds.has('NAME_DOB')) { reasons.push('name_dob'); up('LIKELY'); }
+  if (kinds.has('NAME_DOB_QUAL')) { reasons.push('name_dob_qual'); up('POSSIBLE'); }
   if (kinds.has('RESUME_HASH')) { reasons.push('resume_same'); up('LIKELY'); }
   if (kinds.has('RESUME_BAND') && (extra.similarity || 0) >= 0.75) {
     reasons.push('resume_like');
@@ -176,6 +181,7 @@ const REASON_TEXT = {
   phone: 'Same phone number',
   email: 'Same email',
   name_dob: 'Same name and date of birth',
+  name_dob_qual: 'Same name, date of birth and qualification',
   resume_same: 'Same resume file',
   resume_like: 'Resume looks the same',
   name_city: 'Same name and city',
@@ -183,7 +189,7 @@ const REASON_TEXT = {
   name_company: 'Same name and company',
 };
 const REASON_SHORT = {
-  phone: 'phone', email: 'email', name_dob: 'name + birth date', resume_same: 'resume file', resume_like: 'resume text',
+  phone: 'phone', email: 'email', name_dob: 'name + birth date', name_dob_qual: 'name + birth date + qualification', resume_same: 'resume file', resume_like: 'resume text',
   name_city: 'name + city', name_college: 'name + college', name_company: 'name + company',
 };
 const LEVEL_TEXT = { CERTAIN: 'Same person', LIKELY: 'Looks like the same person', POSSIBLE: 'Maybe the same person' };

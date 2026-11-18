@@ -28,6 +28,7 @@ const { requirePerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 const rec = require('../utils/candidateRecord');
 const docs = require('../utils/candidateDocStore');
+const CD = require('../utils/candidateData'); // ID documents: who may open one
 
 const router = express.Router();
 const cand = () => require('./candidates'); // eslint-disable-line global-require
@@ -57,7 +58,7 @@ async function load(req, res, { internalOnly = false } = {}) {
 
 // `resume`: the newest original resume file on the Resume tab. A Resume row written by the Add Candidate form holds only the
 // file's NAME (founder 2026-11-09: "keep the view option for documents"), so its View / Download open that file instead.
-const docOut = (d, internal, resume = null) => ({
+const docOut = (d, internal, resume = null, idOk = true) => ({
   id: d.id,
   docType: d.docType,
   name: d.name,
@@ -66,6 +67,9 @@ const docOut = (d, internal, resume = null) => ({
   uploadedByName: d.uploadedByName,
   createdAt: d.createdAt,
   hasFile: !!d.file,
+  // an ID document (Aadhaar / PAN / Passport) opens only for a login with the 'ID Documents' switch (the file link is withheld otherwise)
+  idDocument: CD.isIdDocument(d) || undefined,
+  locked: CD.isIdDocument(d) && !idOk ? true : undefined,
   resumeId: internal && !d.file && d.docType === 'Resume' && resume ? resume.id : undefined,
   fileName: internal ? (d.fileName || (!d.file && d.docType === 'Resume' && resume ? resume.fileName : undefined)) : undefined,
   mime: internal ? d.mime : undefined,
@@ -113,6 +117,7 @@ router.get('/:id/record', async (req, res) => {
   const fromResume = latestResume ? rec.certificationsFromText(latestResume.text)
     .filter((c) => !have.has(c.name.toLowerCase())) : [];
   const canEdit = internal && await require('../middleware/auth').can(req.user, 'ats', 'candidates', 'Candidate Master', 'edit'); // eslint-disable-line global-require
+  const idOk = internal && await CD.mayOpenIdDocs(req.user, candidate);
   // Who referred, per application (the ones this login sees).
   const visibleApps = ctx.decorated.applications || [];
   const appRows = visibleApps.length ? await prisma.application.findMany({
@@ -129,7 +134,7 @@ router.get('/:id/record', async (req, res) => {
     referredBy: candidate.referredByName ? { name: candidate.referredByName, employeeId: internal ? candidate.referredByEmployeeId : undefined } : null,
     campusDrive: drive ? { id: drive.id, collegeName: drive.collegeName, driveDate: drive.driveDate } : null,
     attribution: internal ? appRows.map((a) => ({ ...a, requirementTitle: titleOf.get(a.id) || null })) : [],
-    documents: documents.map((d) => docOut(d, internal, resumeFile)),
+    documents: documents.map((d) => docOut(d, internal, resumeFile, idOk)),
     docTypes: DOC_TYPES,
     certifications: certifications.map((c) => certOut(c, internal)),
     fromResume,
@@ -232,6 +237,14 @@ router.get('/:id/documents/:docId/file', async (req, res) => {
   if (!d || d.deletedAt) return res.status(404).json({ error: 'Document not found' });
   if (!d.file) return res.status(404).json({ error: 'Only the name of this document was recorded — there is no file.' });
   const download = req.query.download === '1';
+  if (CD.isIdDocument(d)) {
+    // ID DOCUMENTS (item 784): a login without the switch (or a Recruiter who does not own this person) cannot open it; every open is logged
+    if (!(await CD.mayOpenIdDocs(req.user, ctx.candidate, d))) {
+      await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'ID document open refused', entity: 'Candidate', entityId: ctx.candidate.id, toValue: d.name });
+      return res.status(403).json({ error: 'ID documents (Aadhaar, PAN, Passport) can be opened only by the Super Admin, Admin, HR, the team lead and the owning recruiter.', code: 'ID_DOC_RESTRICTED' });
+    }
+    try { await require('../utils/readLog').writeAlways(req, 'Candidate', ctx.candidate.id, `ID document opened: ${d.name}`); } catch { /* the audit row below still records it */ } // eslint-disable-line global-require
+  }
   await logAudit({
     userId: req.user.id, actorName: req.user.name, action: `Document ${download ? 'downloaded' : 'viewed'} (${d.docType})`,
     entity: 'Candidate', entityId: ctx.candidate.id, toValue: d.name,

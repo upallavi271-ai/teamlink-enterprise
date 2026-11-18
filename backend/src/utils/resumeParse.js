@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const { citiesOf, CITY_ALIASES } = require('./locationMatch');
+const RF = require('./resumeFields'); // CTC, notice, per-job / per-degree entries, personal details, confidence
 
 const MAX_TEXT = 200000;
 
@@ -92,6 +93,8 @@ async function extractText(input, kind) {
     } else if (kind === 'jpg' || kind === 'png') {
       // a photo of a resume has no text layer: extractAndParse reads it with OCR (utils/resumeOcr.js)
       text = '';
+    } else if (kind === 'rtf') {
+      text = RF.rtfToText(buffer);
     } else if (kind === 'doc') {
       // eslint-disable-next-line global-require
       const WordExtractor = require('word-extractor');
@@ -461,6 +464,20 @@ async function parseResumeText(text, { vocabulary } = {}) {
   out.skillGroups = classifySkills(out.skills);
   out.confidence = confidenceOf(out, t, comp);
   Object.assign(out, reviewLists(out.confidence));
+  // The shared second pass (round 3, 2026-11-18): CTC (labelled, unlabelled, conflicts), notice period, jobs, degrees, personal details, skill categories, a
+  // confidence + the resume sentence for every field (utils/resumeFields.js). Both passes are kept: where they read the same thing the second one (which also
+  // notices two different values) wins, and the older names currentCtc / expectedCtc stay in step with currentSalary / expectedSalary.
+  const firstConf = out.confidence;
+  try { RF.enrich(t, out, { DEGREES }); } catch (e) { out.enrichError = String((e && e.message) || e).slice(0, 120); }
+  const conf = { ...firstConf, ...(out.confidence || {}) };
+  [['currentCtc', 'currentSalary'], ['expectedCtc', 'expectedSalary']].forEach(([old, now]) => {
+    if (!out[now] && out[old]) { out[now] = out[old]; if (firstConf[old]) conf[now] = firstConf[old]; }
+    out[old] = out[now] || null;
+    if (conf[now]) conf[old] = conf[now];
+  });
+  conf.totalExperienceYears = conf.experience || conf.totalExperienceYears;
+  out.confidence = conf;
+  Object.assign(out, reviewLists(conf));
   return out;
 }
 
@@ -591,5 +608,5 @@ function resumeOwnerCheck(parsed, person) {
 
 module.exports = {
   extractText, parseResumeText, extractAndParse, skillVocabulary, textHasTerm, parsePhones, aiEnabled, resumeOwnerCheck, rtfToText, parseCompensation, salaryValue, noticeValue, classifySkills,
-  detectLanguages, asciiDigits, parseName, parseExperienceYears, BUILTIN_SKILLS,
+  detectLanguages, asciiDigits, parseName, parseExperienceYears, BUILTIN_SKILLS, DEGREES,
 };

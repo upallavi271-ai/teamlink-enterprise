@@ -13,7 +13,7 @@
 // that follows is already held. Inside a transaction it is deferred a moment (never a nested write on SQLite's single
 // writer). A burst of creates (an import) is raised silently — flagged, nobody notified. NEVER throws.
 // ---------------------------------------------------------------------------
-const WATCH = ['name', 'phone', 'email', 'dob', 'location', 'institute', 'currentCompany'];
+const WATCH = ['name', 'phone', 'email', 'dob', 'location', 'institute', 'currentCompany', 'education', 'qualificationId'];
 let burst = []; // times of recent creates
 const pending = new Map();
 

@@ -4,7 +4,8 @@
 //                    specialization, skills, current + expected salary, notice period, resume) + the missing items, in words.
 //   report()         the whole database: average completeness and its spread, profiles missing phone / email, duplicate
 //                    flags still open and the duplicate rate, merges done, profiles not touched for 6 months (stale),
-//                    consent not recorded. Reports & Team -> Data quality.
+//                    consent not recorded, and STALE DATA: salary / phone / resume older than N days (Admin setting, default 180) that nobody confirmed.
+//                    Reports & Team -> Data quality.
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 
@@ -106,6 +107,9 @@ async function report() {
     if (rows.length < 5000) break;
   }
   const since = new Date(Date.now() - 182 * 86400000);
+  // STALE PROFILE DATA (A6): salary / phone / resume older than the Admin's N days (default 180) with nobody confirming it is still current
+  let staleData = null;
+  try { const r = await require('./candidateData').staleOf({ limit: 5 }); staleData = { days: r.days, total: r.total, oldest: r.rows.map((x) => ({ id: x.id, name: x.name, days: x.oldestDays })) }; } catch { staleData = null; } // eslint-disable-line global-require
   const safeCount = (p) => p.catch(() => null);
   const [openDup, merges, noConsent, staleN, noPhoneEmail, flagStates] = await Promise.all([
     safeCount(prisma.candidateDupFlag.count({ where: { status: 'OPEN' } })),
@@ -131,6 +135,7 @@ async function report() {
     noPhoneNoEmail: noPhoneEmail,
     duplicates: { openFlags: openDup, merged: merges, ratePct: total && openDup != null ? Math.round((openDup / total) * 1000) / 10 : null, accuracy },
     staleSixMonths: staleN,
+    staleData,
     consentNotRecorded: noConsent,
     items: ITEMS.map(([k, l, w]) => ({ key: k, label: l, weight: w })),
     // wrong values (Q707/Q708): how many of each, and the profiles to fix first
