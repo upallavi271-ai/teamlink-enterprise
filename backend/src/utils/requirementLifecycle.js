@@ -86,7 +86,7 @@ async function onStatusChange(requirement, from, to, user) {
     if (!requirement || from === to) return null;
     const people = new Set([requirement.recruiterId, ...csv(requirement.recruiterIds), requirement.tlId, requirement.stlId].filter(Boolean));
     const label = `${requirement.reqCode ? `${requirement.reqCode} ` : ''}${requirement.title || 'Requirement'}`;
-    if ((to === 'ON_HOLD' || to === 'CLOSED') && !(from === 'ON_HOLD' && to === 'CLOSED' && false)) {
+    if (to === 'ON_HOLD' || to === 'CLOSED') {
       const r = await pauseCandidates(requirement, to, user);
       r.owners.forEach((id) => id && people.add(id));
       if (r.moved || r.followUpsClosed) {
