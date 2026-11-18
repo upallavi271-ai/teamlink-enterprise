@@ -54,6 +54,7 @@ const LOCKED = {
   locations: new Set(),
 };
 const LISTS = ['sources', 'rejectReasons', 'priorities', 'locations'];
+const FIXED_LISTS = ['sources']; // lists nobody can change from the screen (their words live in code); adminLists() tells the screen so it offers no change on them
 
 const clean = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
 const k = (v) => clean(v).toLowerCase();
@@ -150,7 +151,7 @@ async function usage(list) {
 
 async function adminLists() {
   const m = await load();
-  const out = { savedAt: m.savedAt };
+  const out = { savedAt: m.savedAt, fixed: FIXED_LISTS };
   // eslint-disable-next-line no-restricted-syntax
   for (const l of LISTS) {
     // eslint-disable-next-line no-await-in-loop
@@ -165,7 +166,7 @@ const bad = (status, message) => Object.assign(new Error(message), { status });
 // One change at a time: { action: 'add' | 'rename' | 'off' | 'on' | 'remove' | 'sides', name, newName, sides }
 async function change(list, body, user) {
   if (!LISTS.includes(list)) throw bad(404, 'No such list.');
-  if (list === 'sources') throw bad(409, 'The source list is fixed in the app so every screen says the same word. Ask the developer to change it.');
+  if (FIXED_LISTS.includes(list)) throw bad(409, 'The source list is fixed in the app so every screen says the same word. Ask the developer to change it.');
   const m = await load();
   const items = m[list].map((x) => ({ ...x }));
   const name = clean(body.name);

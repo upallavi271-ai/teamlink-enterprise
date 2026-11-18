@@ -404,16 +404,19 @@ function SimpleListTab({ list, canEdit, setFlash }) {
   if (err) return <div className="error-text">{err}</div>;
   if (!data) return <div className="small-muted">Loading…</div>;
   const items = data[list] || [];
+  const fixed = (data.fixed || []).includes(list); // the server says nobody can change this list: offer no change at all
+  const canChange = canEdit && !fixed;
   const shown = (name) => (list === 'priorities' && PRIORITY_SHOWN[name] ? `${PRIORITY_SHOWN[name]} (saved as "${name}")` : name);
   return (
     <>
-      {canEdit && (
+      {canChange && (
         <div className="mlx-bar">
           <span />
           <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>{words.add}</button>
         </div>
       )}
-      {!data.savedAt && <p className="small-muted">These are the starting values. Change them any time.</p>}
+      {fixed && <div className="notice">This list is fixed in the app so every screen says the same word. You can look at it here; ask the developer to change it.</div>}
+      {!fixed && !data.savedAt && <p className="small-muted">These are the starting values. Change them any time.</p>}
       <section className="mlx-group">
         {items.map((x) => (
           <div key={x.name} className={`mlx-row${x.active ? '' : ' is-off'}`}>
@@ -448,7 +451,7 @@ function SimpleListTab({ list, canEdit, setFlash }) {
               )}
             </div>
             {!x.active && <span className="mlx-off-tag">Switched off</span>}
-            {canEdit && !x.locked && (
+            {canChange && !x.locked && (
               <div className="mlx-acts">
                 {!x.used && <button type="button" className="btn btn-sm" onClick={() => setRenaming(x)}>Rename</button>}
                 <button
@@ -468,7 +471,7 @@ function SimpleListTab({ list, canEdit, setFlash }) {
           </div>
         ))}
       </section>
-      {canEdit && items.some((x) => x.used && !x.locked) && (
+      {canChange && items.some((x) => x.used && !x.locked) && (
         <p className="small-muted">Used values can&apos;t be renamed. Switch it off and add a new one.</p>
       )}
       {adding && (

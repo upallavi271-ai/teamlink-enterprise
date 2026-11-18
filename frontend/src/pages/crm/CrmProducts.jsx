@@ -145,7 +145,7 @@ function QuoteBox({ lead, all, mine, canEdit, onChanged }) {
   const [billing, setBilling] = useState('yearly');
   const [busy, setBusy] = useState(false);
   const load = () => api.get(`/crm/leads/${lead.id}/quotes`).then((r) => setQuotes(r.data.quotes || [])).catch(() => setQuotes([]));
-  useEffect(load, [lead.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [lead.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const prods = (all || []).filter((p) => mine.includes(p.key) && (p.plans || []).some((x) => x.price));
   const planOf = (p) => (p.plans || []).find((x) => x.name === (pick[p.key] || {}).plan) || (p.plans || []).find((x) => x.price);
   async function make(channel) {
@@ -268,7 +268,7 @@ export function ProductCatalog() {
   const canEdit = me && ['admin', 'tl'].includes(me.role);
   const play = (p) => api.get(`/crm/products/${p.key}/watch`).then((r) => setWatch(r.data)).catch((e) => toast(errOf(e, 'The video could not be opened.')));
   const load = () => api.get('/crm/products', { params: { all: 1 } }).then((r) => setRows(r.data.products || [])).catch((e) => { setRows([]); toast(errOf(e, 'The products could not be read.')); });
-  useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   async function save() {
     try {
       await api.put(`/crm/products/${edit.key}`, { ...edit, features: String(edit.featuresText || '').split('\n').map((x) => x.trim()).filter(Boolean) });

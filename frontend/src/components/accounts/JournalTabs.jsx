@@ -337,14 +337,15 @@ export function BooksReportsTab() {
   // Kept when you leave and come back (utils/useKeptState.js).
   const [which, setWhich] = useKeptState('journal.reports.which', 'tb');
   const [period, setPeriod] = useKeptState('journal.reports.period', ALL_TIME);
-  const [data, setData] = useState(null);
+  const [loaded, setLoaded] = useState(null); // { url, data }: a report is drawn only for the address it came from, so switching reports never reads one report's numbers as another's
   const [error, setError] = useState('');
   const url = which === 'tb' ? `/accounts/reports/trial-balance?${periodQs(period)}`
     : which === 'pl' ? `/accounts/reports/profit-loss?${periodQs(period)}`
       : `/accounts/reports/balance-sheet?${isAllTime(period) ? '' : `asOf=${period.to}`}`;
+  const data = loaded && loaded.url === url ? loaded.data : null;
   useEffect(() => {
-    setData(null); setError('');
-    api.get(url).then((r) => setData(r.data)).catch((err) => setError(errText(err, 'Could not load the report.')));
+    setError('');
+    api.get(url).then((r) => setLoaded({ url, data: r.data })).catch((err) => setError(errText(err, 'Could not load the report.')));
   }, [url]);
   return (
     <Panel style={{ marginTop: 16 }}>
