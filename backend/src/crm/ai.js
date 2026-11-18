@@ -159,9 +159,81 @@ async function draftEmail(user, kind, id, { purpose } = {}) {
   return r.ok ? S.okBody({ text: r.text }) : S.fail(503, r.error);
 }
 
-async function ask(user, { question } = {}) {
+// ---- 3. THE MEETING AGENT (2026-11-18): before a client meeting, a prep brief; after it, the notes turned into a summary, next steps
+// and a follow-up mail. Both read only the record the login may open (S.detail), and nothing is saved until the person presses Save.
+const MEETING_RULES = `${RULES}\nYou are the CRM Meeting Agent for a BDE / salesperson. Reply in the language the person writes in.`;
+async function meetingPrep(user, kind, id, { purpose } = {}) {
+  const f = await recordFacts(user, kind, id);
+  if (f.error) return f.error;
+  const st = await SETTINGS.load();
+  const ins = insightOf(kind, f.d, st);
+  const why = S.clip(purpose, 300);
+  const r = await askModel(`${MEETING_RULES}
+Write a short MEETING PREP BRIEF for a meeting with this ${kind}${why ? ` (purpose: ${why})` : ''}. Use these headings, each with 1-4 short bullets:
+1. Who and where we stand  2. What happened so far  3. Goal for this meeting  4. Questions to ask  5. Objections to expect and how to answer  6. Agenda (10-20 minutes)
+Only facts from the record; for advice say it is a suggestion. Never invent a price, number, name or date.`, `FACTS:\n${factsText(kind, f.d)}\nHealth: ${ins.score}/100 (${ins.label}). Suggested actions: ${ins.actions.map((a) => a.text).join(' | ') || 'none'}`);
+  return r.ok ? S.okBody({ text: r.text, provider: r.provider, ms: r.ms }) : S.fail(503, r.error);
+}
+
+async function meetingNotes(user, kind, id, { notes } = {}) {
+  const n = S.clip(notes, 6000);
+  if (!n || n.length < 10) return S.fail(400, 'Type or paste what was said in the meeting first.');
+  const f = await recordFacts(user, kind, id);
+  if (f.error) return f.error;
+  let out;
+  const fastAi = require('../utils/fastAi'); // eslint-disable-line global-require
+  try {
+    const r = await fastAi.chat(`${MEETING_RULES}
+Turn the salesperson's raw meeting notes into a clean record. Use ONLY what the notes and the facts say; never add a decision, number or date that is not there.
+Reply ONLY as JSON: {"summary": "<3-5 short sentences>", "decisions": ["..."], "nextSteps": [{"task": "<what to do>", "due": "YYYY-MM-DD or empty", "owner": "us|client"}], "followUpEmail": "Subject: ...\\n\\n<short email to the client confirming what was agreed>"}
+Today is ${S.istToday()}. Turn "next Monday", "in 2 days" etc. into dates from today.
+
+FACTS ABOUT THE RECORD:
+${factsText(kind, f.d)}`, [{ role: 'user', content: `MEETING NOTES:\n${n}` }], { json: true, maxTokens: 900 });
+    out = require('../utils/ai').parseJsonLoose(r.text); // eslint-disable-line global-require
+    if (out) out.provider = r.provider;
+  } catch (e) {
+    return S.fail(503, (e && e.message) || 'The AI is not available right now.');
+  }
+  if (!out || typeof out !== 'object') return S.fail(502, 'The AI answer could not be read. Try again.');
+  const steps = (Array.isArray(out.nextSteps) ? out.nextSteps : []).slice(0, 8).map((s) => ({
+    task: S.clip(s && s.task, 200), due: /^\d{4}-\d{2}-\d{2}$/.test(String(s && s.due)) ? s.due : '', owner: s && s.owner === 'client' ? 'client' : 'us',
+  })).filter((s) => s.task);
+  return S.okBody({
+    summary: S.clip(out.summary, 1500),
+    decisions: (Array.isArray(out.decisions) ? out.decisions : []).map((x) => S.clip(x, 300)).filter(Boolean).slice(0, 8),
+    nextSteps: steps,
+    followUpEmail: S.clip(out.followUpEmail, 3000),
+    provider: out.provider,
+  });
+}
+
+// ---- 4. THE CRM AGENT ("Ask AI", upgraded 2026-11-18): a conversation (the last turns are sent back), today's work, recent activity, and the
+// full record of any lead / deal / account the question names - all inside what this login may see.
+const ASK_STOP = new Set('which what who when where how many much have has are was were our your you my me all any can please tell show give list about from into this that with the and for deal deals lead leads follow ups follow-ups late today week month year target pipeline open won lost status next last call calls meeting meetings company client clients account accounts value stage should need needs attention far summary summarize enti emi entha ela evaru eppudu cheppu chupinchu kavali undi unnayi'.split(' '));
+async function mentionedRecords(user, q) {
+  const words = (String(q).toLowerCase().match(/[a-z0-9][a-z0-9&.-]{2,}/g) || []).filter((w) => !ASK_STOP.has(w)).slice(0, 8);
+  if (!words.length) return '';
+  const hits = [];
+  for (const [kind, table, col] of [['lead', 'CrmLead', 'company'], ['account', 'CrmAccount', 'name'], ['deal', 'CrmDeal', 'title']]) {
+    // eslint-disable-next-line no-await-in-loop
+    const rows = await DB.all(`SELECT "id", "${col}" AS "name" FROM "${table}" WHERE ${words.map(() => `LOWER("${col}") LIKE ?`).join(' OR ')} LIMIT 6`, ...words.map((w) => `%${w}%`)).catch(() => []);
+    rows.forEach((x) => { const nm = String(x.name || '').toLowerCase(); hits.push({ kind, id: x.id, s: words.reduce((s, w) => s + (nm.includes(w) ? w.length : 0), 0) }); });
+  }
+  hits.sort((a, b) => b.s - a.s);
+  const out = [];
+  for (const h of hits.filter((x) => x.s >= 4).slice(0, 3)) {
+    // eslint-disable-next-line no-await-in-loop
+    const f = await recordFacts(user, h.kind, h.id); // S.detail: a record this login may not open is skipped
+    if (!f.error) out.push(`RECORD (${h.kind}):\n${factsText(h.kind, f.d)}`);
+  }
+  return out.join('\n\n');
+}
+
+async function ask(user, { question, history } = {}) {
   const q = S.clip(question, 1000);
   if (!q) return S.fail(400, 'Ask a question.');
+  const hist = (Array.isArray(history) ? history : []).filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string').slice(-8).map((m) => ({ role: m.role, content: S.clip(m.content, 2000) }));
   // the facts: what this login may see, summarised
   const ov = await require('./extra').overview(user, { period: 'month' }); // eslint-disable-line global-require
   const o = ov.body;
