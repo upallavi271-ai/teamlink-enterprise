@@ -234,8 +234,10 @@ const INTEGRATION_CATALOG = [
     fields: [['Vendor', 'eSSL X2008 (ADMS/iClock)'], ['Serial', 'NFZ8250204996'],
       ['Endpoint', 'http://72.61.233.104:8080/iclock'], ['Status', 'Active']] },
   { id: 'webhooks', name: 'Webhooks', group: 'Developer', glyph: '\u{1FA9D}',
-    desc: 'Notify your own systems when a candidate joins, an invoice is paid, and similar events.',
-    fields: [['Endpoint URL', ''], ['Signing secret', ''], ['Events (comma separated)', 'candidate.joined, invoice.paid']] },
+    // REAL (2026-11-18, utils/webhooks.js): signed POSTs with retries; public https addresses only
+    desc: 'Tell your own systems when something happens: candidate.created, application.stage_changed, candidate.joined, requirement.status_changed, invoice.created (or * for all). Each POST is signed: X-TeamLink-Signature = sha256 HMAC of the body with the signing secret. Failed deliveries are retried after 1, 5, 15 and 60 minutes. No phone, e-mail or salary is sent.',
+    fields: [['Endpoint URL', 'https://your-system.example.com/teamlink'], ['Signing secret', ''], ['Events (comma separated)', 'candidate.joined, application.stage_changed']],
+    hints: ['Endpoint URL', 'Events (comma separated)'] },
   { id: 'api', name: 'REST API Access', group: 'Developer', glyph: '\u{1F511}',
     desc: 'Issue API keys for external systems to read and write platform data.',
     fields: [['Key label', ''], ['Allowed IP range', ''], ['Scope (read / write)', 'read']] },
@@ -310,7 +312,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-fast','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-fast', 'webhooks','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 

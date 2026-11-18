@@ -842,6 +842,8 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
   // client's agreed commercial terms — the prototype's confirmClientJoining()
   // (line 9099): fee = CTC x agreed fee %, GST 18%, TDS at the client's rate,
   // invoice 6 days after joining, payment due 6 days after that.
+  // OUTGOING WEBHOOK (utils/webhooks.js): every stage move, for the systems subscribed to it
+  require('../utils/webhooks').emit('application.stage_changed', { applicationId: application.id, candidateId: application.candidateId, requirementId: application.requirementId, fromStage: existing.stage, toStage: stage }); // eslint-disable-line global-require
   if (stage === 'JOINED') {
     await onApplicationJoined({
       application, existing, userId: user.id, ...(feeOverride != null ? { feePercent: feeOverride } : {}),

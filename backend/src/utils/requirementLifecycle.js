@@ -84,6 +84,7 @@ async function resumeCandidates(requirement, user) {
 async function onStatusChange(requirement, from, to, user) {
   try {
     if (!requirement || from === to) return null;
+    require('./webhooks').emit('requirement.status_changed', { requirementId: requirement.id, reqCode: requirement.reqCode || null, title: requirement.title || null, fromStatus: from, toStatus: to }); // eslint-disable-line global-require
     const people = new Set([requirement.recruiterId, ...csv(requirement.recruiterIds), requirement.tlId, requirement.stlId].filter(Boolean));
     const label = `${requirement.reqCode ? `${requirement.reqCode} ` : ''}${requirement.title || 'Requirement'}`;
     if (to === 'ON_HOLD' || to === 'CLOSED') {

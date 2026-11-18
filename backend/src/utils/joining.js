@@ -320,6 +320,7 @@ async function onApplicationJoined({
   application, existing, userId, feePercent = null, joinInfo = null, actor = null, via = null,
 }) {
   const internal = isInternalHire(application, existing.requirement);
+  require('./webhooks').emit('candidate.joined', { applicationId: application.id, candidateId: application.candidateId || existing.candidateId, requirementId: application.requirementId || existing.requirementId, joinedAt: (application.joinedAt || new Date()).toISOString ? (application.joinedAt || new Date()).toISOString() : String(application.joinedAt) }); // eslint-disable-line global-require
   await prisma.application.update({
     where: { id: application.id },
     data: {
@@ -379,6 +380,7 @@ async function onApplicationJoined({
       where: { id: application.id },
       data: { billingStatus: 'Invoiced' },
     });
+    require('./webhooks').emit('invoice.created', { invoiceId: invoice.id, number: invoice.invoiceNumber || invoice.number || null, clientId: invoice.clientId || null, total: invoice.total != null ? invoice.total : (invoice.amount != null ? invoice.amount : null) }); // eslint-disable-line global-require
   }
   // B7: a partner-sourced joining drafts the partner's payout (needs the
   // invoice) and tells the partner. Never throws; nothing for non-partner rows.

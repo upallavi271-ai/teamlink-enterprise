@@ -3786,6 +3786,7 @@ router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), as
   }
 
   const candidate = await prisma.candidate.create({ data });
+  require('../utils/webhooks').emit('candidate.created', { candidateId: candidate.id, name: candidate.name, source: candidate.source || null }); // eslint-disable-line global-require
   await ADDED.record(candidate.id, req.user, 'manual'); // this login keeps seeing the person even before any requirement
   await writeSourceNote(candidate.id, req.user, req.body);
   await logAudit({ userId: req.user.id, action: 'Candidate created (manual)', entity: 'Candidate', entityId: candidate.id, toValue: 'Active' });
