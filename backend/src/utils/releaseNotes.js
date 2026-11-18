@@ -13,6 +13,13 @@ const API_VERSION = 'v1';
 
 const NOTES = [
   {
+    version: '1.5.1', date: '2026-11-18', title: 'Agents no longer time out',
+    items: [
+      'BDE Agent sends the model only what the question needs (exact counts always, details for the part you asked about), so answers stay inside the free AI limits and the candidate count is exact (it showed 1,500 because the list was capped).',
+      'When the free AI plan is at its limit the agents wait the few seconds it asks, then try its smaller model, and always answer or explain within 40 seconds instead of ending in "TeamLink took too long".',
+    ],
+  },
+  {
     version: '1.5.0', date: '2026-11-18', title: 'One pipeline per industry',
     items: [
       'Administration > Company Setup > Pipeline & checks > Industry pipelines: each department (Medical, Education, Manufacturing, IT ...) can switch off the steps it does not use, and a step can need a TL / STL / Manager / Admin to approve. Nothing changes until an Admin sets it.',
