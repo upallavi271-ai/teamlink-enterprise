@@ -74,9 +74,16 @@ function LineTotals({ rows, filtered }) {
   const cr = list.filter((t) => t.type === 'Credit');
   const dr = list.filter((t) => t.type === 'Debit');
   const sum = (a) => a.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const st = (t) => t.displayState || t.state;
+  const rec = list.filter((t) => st(t) === 'Reconciled');
+  const unm = list.filter((t) => st(t) === 'Unmatched');
+  const other = list.length - rec.length - unm.length;
   return (
     <div className="notice" style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0' }} data-testid="bank-line-totals">
       <span><b>{list.length}</b> statement line{list.length === 1 ? '' : 's'}{filtered ? ' found' : ''}</span>
+      <span>Reconciled: <b>{rec.length}</b> ({money2(sum(rec))})</span>
+      <span>Unmatched: <b>{unm.length}</b> ({money2(sum(unm))})</span>
+      {other > 0 && <span>Other (review / matched / ignored): <b>{other}</b></span>}
       <span>Deposits: <b style={{ color: 'var(--teal)' }}>{money2(sum(cr))}</b> ({cr.length})</span>
       <span>Withdrawals: <b style={{ color: 'var(--red)' }}>{money2(sum(dr))}</b> ({dr.length})</span>
       <span>Net: <b>{money2(sum(cr) - sum(dr))}</b></span>
