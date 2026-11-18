@@ -194,7 +194,7 @@ function HrDashboard() {
           always add up to the Headcount. Present = everyone who came to work, so Late, Early
           logout, Missing check-in and Missing check-out are only small notes INSIDE it. */}
       <Tiles section="att" drill={drill} onPick={(sec, c, v) => (c.tile === 'vacancies' ? setVacOpen(true) : pick(sec, c, v))} cells={[
-        { id: 'headcount', tile: 'headcount', value: ao.headcount, label: 'Headcount on the rolls', help: 'Present + Absent + Half day + On leave + Week off / Holiday (+ Not checked in yet) = Headcount. Late, early logout and missing punches are already inside Present.', sub: headcountNote,
+        { id: 'headcount', tile: 'headcount', value: ao.headcount, label: 'Headcount on the rolls', sub: headcountNote,
           help: 'Everyone on the company rolls on this date: joined on or before it and not yet left. The five tiles beside it add up to this number.' },
         {
           id: 'present', tile: 'present', value: ao.present, label: 'Present', sub: 'Came to work',

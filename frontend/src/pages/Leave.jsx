@@ -1008,7 +1008,9 @@ export default function Leave() {
 
   const banner = canEditPolicy
     ? <ScopeNote amber>Full, unrestricted access — configures Leave Types/Policy and every approval cap itself.</ScopeNote>
-    : <ScopeNote>You can action requests and read the policy. Only a Super Admin changes leave types and caps.</ScopeNote>;
+    : canApprove
+      ? <ScopeNote>You can action requests and read the policy. Only a Super Admin changes leave types and caps.</ScopeNote>
+      : null; // a plain employee, who cannot action requests, is not told about powers they do not have
 
   return (
     <>
