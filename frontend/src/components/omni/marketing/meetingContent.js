@@ -1,7 +1,8 @@
 // THE AI MARKETING PLANS MEETING: slides, narration, standard lines and answers in English, Telugu and Hindi.
 // GENERATED from the meeting script document (AI-Marketing-meeting-script.docx, generator make-meeting-doc.js) on 17 Nov 2026: change the words in the document's data and generate again,
 // or edit here. Prices are written as words in the narration so the voice reads them correctly. Nothing here is invented by an AI: every sentence is fixed text.
-export const LANGS = [['en', 'English', 'en-IN'], ['te', 'తెలుగు', 'te-IN'], ['hi', 'हिन्दी', 'hi-IN']];
+// 18 Nov 2026: the plans were changed by the founder to Basic / Growth / Premium for doctors (Rs 3,999 / 7,999 / 14,999 + GST; posts, reels, stories, Google Business Profile, SEO, GEO, AEO). Edited here, so the .docx script no longer matches.
+export const LANGS = [["en","English","en-IN"],["te","తెలుగు","te-IN"],["hi","हिन्दी","hi-IN"]];
 export const SLIDES = [
   {
     "id": "S0",
@@ -38,27 +39,27 @@ export const SLIDES = [
     "screen": {
       "en": [
         "We run your social media",
-        "Ready pictures and videos every month",
+        "Ready posts, reels and stories every month",
         "In your brand colours, with your logo",
         "You approve before anything is posted"
       ],
       "te": [
         "మీ సోషల్ మీడియాను మేమే నడుపుతాం",
-        "ప్రతి నెలా రెడీ చిత్రాలు, వీడియోలు",
+        "ప్రతి నెలా రెడీ పోస్ట్‌లు, రీల్స్, స్టోరీలు",
         "మీ బ్రాండ్ రంగులతో, మీ లోగోతో",
         "మీరు ఆమోదించాకే ఏదైనా పోస్ట్"
       ],
       "hi": [
         "हम आपका सोशल मीडिया चलाते हैं",
-        "हर महीने तैयार तस्वीरें और वीडियो",
+        "हर महीने तैयार पोस्ट, रील और स्टोरी",
         "आपके ब्रांड के रंगों और लोगो के साथ",
         "आपकी मंज़ूरी के बाद ही पोस्ट"
       ]
     },
     "voice": {
-      "en": "We run your social media for you. Every month you get ready pictures and videos, made in your brand colours and with your logo. You see each one first, and nothing is posted until you approve it.",
-      "te": "మీ సోషల్ మీడియాను మేమే నడుపుతాం. ప్రతి నెలా మీ బ్రాండ్ రంగులతో, మీ లోగోతో రెడీ చిత్రాలు, వీడియోలు ఇస్తాం. ప్రతిదీ ముందు మీరు చూస్తారు, మీరు ఆమోదించే వరకు ఏదీ పోస్ట్ కాదు.",
-      "hi": "हम आपका सोशल मीडिया आपके लिए चलाते हैं। हर महीने आपके ब्रांड के रंगों और लोगो के साथ तैयार तस्वीरें और वीडियो मिलते हैं। हर चीज़ पहले आप देखते हैं, और आपकी मंज़ूरी तक कुछ भी पोस्ट नहीं होता।"
+      "en": "We run your social media for you. Every month you get ready posts, reels and stories, made in your brand colours and with your logo. You see each one first, and nothing is posted until you approve it.",
+      "te": "మీ సోషల్ మీడియాను మేమే నడుపుతాం. ప్రతి నెలా మీ బ్రాండ్ రంగులతో, మీ లోగోతో రెడీ పోస్ట్‌లు, రీల్స్, స్టోరీలు ఇస్తాం. ప్రతిదీ ముందు మీరు చూస్తారు, మీరు ఆమోదించే వరకు ఏదీ పోస్ట్ కాదు.",
+      "hi": "हम आपका सोशल मीडिया आपके लिए चलाते हैं। हर महीने आपके ब्रांड के रंगों और लोगो के साथ तैयार पोस्ट, रील और स्टोरी मिलते हैं। हर चीज़ पहले आप देखते हैं, और आपकी मंज़ूरी तक कुछ भी पोस्ट नहीं होता।"
     }
   },
   {
@@ -67,62 +68,65 @@ export const SLIDES = [
     "screen": {
       "en": [
         "1  You tell us your business, logo and colours, once",
-        "2  We make your pictures and videos",
+        "2  We make your posts, reels and stories",
         "3  You get a link on WhatsApp: approve, or ask for changes",
         "4  Approved items are posted"
       ],
       "te": [
         "1  మీ వ్యాపారం, లోగో, రంగులు ఒక్కసారి చెప్పండి",
-        "2  మేము చిత్రాలు, వీడియోలు తయారు చేస్తాం",
+        "2  మేము పోస్ట్‌లు, రీల్స్, స్టోరీలు తయారు చేస్తాం",
         "3  వాట్సాప్‌లో లింక్ వస్తుంది: ఆమోదించండి లేదా మార్పులు కోరండి",
         "4  ఆమోదించినవి పోస్ట్ అవుతాయి"
       ],
       "hi": [
         "1  अपना व्यापार, लोगो और रंग एक बार बताइए",
-        "2  हम तस्वीरें और वीडियो बनाते हैं",
+        "2  हम पोस्ट, रील और स्टोरी बनाते हैं",
         "3  व्हाट्सऐप पर लिंक आता है: मंज़ूर कीजिए या बदलाव माँगिए",
         "4  मंज़ूर हुए आइटम पोस्ट होते हैं"
       ]
     },
     "voice": {
-      "en": "Here is how a month works. First, you tell us about your business and share your logo and colours, just once. Then we make your pictures and videos. You get a link on WhatsApp, with no login, and you approve each item or ask for changes. Approved items are posted.",
-      "te": "ఒక నెల ఎలా సాగుతుందో చూడండి. మొదట మీ వ్యాపారం గురించి చెప్పి, మీ లోగో, రంగులను ఒక్కసారి ఇస్తారు. తర్వాత మేము చిత్రాలు, వీడియోలు తయారు చేస్తాం. వాట్సాప్‌లో లింక్ వస్తుంది, లాగిన్ అవసరం లేదు, ప్రతి అంశాన్ని ఆమోదించవచ్చు లేదా మార్పులు కోరవచ్చు. ఆమోదించినవి పోస్ట్ అవుతాయి.",
-      "hi": "एक महीना ऐसे चलता है। पहले आप अपने व्यापार के बारे में बताते हैं और अपना लोगो और रंग एक बार देते हैं। फिर हम तस्वीरें और वीडियो बनाते हैं। आपको व्हाट्सऐप पर लिंक मिलता है, लॉगिन की ज़रूरत नहीं, और आप हर आइटम को मंज़ूर करते हैं या बदलाव माँगते हैं। मंज़ूर हुए आइटम पोस्ट होते हैं।"
+      "en": "Here is how a month works. First, you tell us about your business and share your logo and colours, just once. Then we make your posts, reels and stories. You get a link on WhatsApp, with no login, and you approve each item or ask for changes. Approved items are posted.",
+      "te": "ఒక నెల ఎలా సాగుతుందో చూడండి. మొదట మీ వ్యాపారం గురించి చెప్పి, మీ లోగో, రంగులను ఒక్కసారి ఇస్తారు. తర్వాత మేము పోస్ట్‌లు, రీల్స్, స్టోరీలు తయారు చేస్తాం. వాట్సాప్‌లో లింక్ వస్తుంది, లాగిన్ అవసరం లేదు, ప్రతి అంశాన్ని ఆమోదించవచ్చు లేదా మార్పులు కోరవచ్చు. ఆమోదించినవి పోస్ట్ అవుతాయి.",
+      "hi": "एक महीना ऐसे चलता है। पहले आप अपने व्यापार के बारे में बताते हैं और अपना लोगो और रंग एक बार देते हैं। फिर हम पोस्ट, रील और स्टोरी बनाते हैं। आपको व्हाट्सऐप पर लिंक मिलता है, लॉगिन की ज़रूरत नहीं, और आप हर आइटम को मंज़ूर करते हैं या बदलाव माँगते हैं। मंज़ूर हुए आइटम पोस्ट होते हैं।"
     }
   },
   {
     "id": "S3",
-    "title": "Starter",
+    "title": "Basic",
     "screen": {
       "en": [
-        "Starter: Rs 3,999 a month + GST",
-        "8 pictures and 2 videos",
+        "Basic: Rs 3,999 a month + GST",
+        "8 posts, 2 reels (30 to 50 seconds), 4 stories",
         "Instagram + Facebook",
-        "1 round of changes",
-        "Delivery: 3 working days",
-        "Good for: small shops, new businesses"
+        "4 Google Business Profile posts",
+        "Captions, hashtags, monthly calendar, monthly report",
+        "You approve before anything is posted",
+        "Good for: small clinics and new doctors building their name"
       ],
       "te": [
-        "స్టార్టర్: నెలకు ₹3,999 + జీఎస్టీ",
-        "8 చిత్రాలు, 2 వీడియోలు",
+        "బేసిక్: నెలకు ₹3,999 + జీఎస్టీ",
+        "8 పోస్ట్‌లు, 2 రీల్స్ (30 నుండి 50 సెకన్లు), 4 స్టోరీలు",
         "ఇన్‌స్టాగ్రామ్ + ఫేస్‌బుక్",
-        "1 సవరణ రౌండ్",
-        "డెలివరీ: 3 పని దినాలు",
-        "ఎవరికి: చిన్న షాపులు, కొత్త వ్యాపారాలు"
+        "4 గూగుల్ బిజినెస్ ప్రొఫైల్ పోస్ట్‌లు",
+        "క్యాప్షన్లు, హ్యాష్‌ట్యాగ్‌లు, నెలవారీ క్యాలెండర్, నెలవారీ రిపోర్ట్",
+        "పోస్ట్ చేసే ముందు మీ ఆమోదం",
+        "ఎవరికి: చిన్న క్లినిక్‌లు, తమ పేరు నిర్మించుకునే కొత్త డాక్టర్లు"
       ],
       "hi": [
-        "स्टार्टर: हर महीने ₹3,999 + जीएसटी",
-        "8 तस्वीरें और 2 वीडियो",
+        "बेसिक: हर महीने ₹3,999 + जीएसटी",
+        "8 पोस्ट, 2 रील (30 से 50 सेकंड), 4 स्टोरी",
         "इंस्टाग्राम + फेसबुक",
-        "1 बार बदलाव",
-        "डिलीवरी: 3 कार्य दिवस",
-        "किसके लिए: छोटी दुकानें, नए व्यापार"
+        "4 गूगल बिज़नेस प्रोफ़ाइल पोस्ट",
+        "कैप्शन, हैशटैग, मासिक कैलेंडर, मासिक रिपोर्ट",
+        "पोस्ट से पहले आपकी मंज़ूरी",
+        "किसके लिए: छोटे क्लिनिक और अपना नाम बनाते नए डॉक्टर"
       ]
     },
     "voice": {
-      "en": "Starter costs three thousand nine hundred ninety-nine rupees a month, plus GST. You get eight pictures and two videos every month, for Instagram and Facebook, with one round of changes. Each item is delivered in three working days. It is good for small shops and new businesses.",
-      "te": "స్టార్టర్ ప్లాన్ నెలకు మూడు వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం. ప్రతి నెలా ఎనిమిది చిత్రాలు, రెండు వీడియోలు, ఇన్‌స్టాగ్రామ్, ఫేస్‌బుక్ కోసం, ఒకసారి మార్పులతో. ఒక్కో అంశం మూడు పని దినాల్లో వస్తుంది. చిన్న షాపులకు, కొత్త వ్యాపారాలకు బాగుంటుంది.",
-      "hi": "स्टार्टर प्लान की कीमत हर महीने तीन हज़ार नौ सौ निन्यानवे रुपये है, जीएसटी अलग। हर महीने आठ तस्वीरें और दो वीडियो, इंस्टाग्राम और फेसबुक के लिए, एक बार बदलाव के साथ। हर आइटम तीन कार्य दिवस में मिलता है। छोटी दुकानों और नए व्यापार के लिए अच्छा है।"
+      "en": "Basic costs three thousand nine hundred ninety-nine rupees a month, plus GST. You get eight posts, two short reels and four stories every month, for Instagram and Facebook. You also get four Google Business Profile posts, captions and hashtags, a monthly content calendar and a monthly report. You approve everything before it is posted. It is good for small clinics and for new doctors who are building their name.",
+      "te": "బేసిక్ ప్లాన్ నెలకు మూడు వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం. ప్రతి నెలా ఎనిమిది పోస్ట్‌లు, రెండు చిన్న రీల్స్, నాలుగు స్టోరీలు, ఇన్‌స్టాగ్రామ్, ఫేస్‌బుక్ కోసం. దానితో పాటు నాలుగు గూగుల్ బిజినెస్ ప్రొఫైల్ పోస్ట్‌లు, క్యాప్షన్లు, హ్యాష్‌ట్యాగ్‌లు, నెలవారీ కంటెంట్ క్యాలెండర్, నెలవారీ రిపోర్ట్ ఉంటాయి. పోస్ట్ చేసే ముందు ప్రతిదీ మీరు ఆమోదిస్తారు. చిన్న క్లినిక్‌లకు, తమ పేరు నిర్మించుకునే కొత్త డాక్టర్లకు ఇది బాగుంటుంది.",
+      "hi": "बेसिक प्लान की कीमत हर महीने तीन हज़ार नौ सौ निन्यानवे रुपये है, जीएसटी अलग। हर महीने आठ पोस्ट, दो छोटी रील और चार स्टोरी, इंस्टाग्राम और फेसबुक के लिए। साथ में चार गूगल बिज़नेस प्रोफ़ाइल पोस्ट, कैप्शन और हैशटैग, मासिक कंटेंट कैलेंडर और मासिक रिपोर्ट मिलती है। पोस्ट होने से पहले हर चीज़ आप मंज़ूर करते हैं। यह छोटे क्लिनिक और अपना नाम बना रहे नए डॉक्टरों के लिए अच्छा है।"
     }
   },
   {
@@ -130,34 +134,40 @@ export const SLIDES = [
     "title": "Growth",
     "screen": {
       "en": [
-        "Growth: Rs 9,999 a month + GST",
-        "16 pictures and 4 videos",
-        "3 platforms (adds LinkedIn or X)",
-        "2 rounds of changes",
-        "Delivery: 2 days",
-        "Good for: growing businesses"
+        "Growth: Rs 7,999 a month + GST",
+        "12 posts, 4 reels, 8 stories",
+        "Instagram + Facebook",
+        "Google Business Profile managed, with 8 posts",
+        "Local SEO (basic) + AEO: 4 patient-question answers",
+        "Review replies drafted + basic competitor check",
+        "Monthly report. You approve, then we post",
+        "Good for: doctors who want regular branding and more patient enquiries"
       ],
       "te": [
-        "గ్రోత్: నెలకు ₹9,999 + జీఎస్టీ",
-        "16 చిత్రాలు, 4 వీడియోలు",
-        "3 ప్లాట్‌ఫామ్‌లు (లింక్డ్‌ఇన్ లేదా ఎక్స్ అదనం)",
-        "2 సవరణ రౌండ్లు",
-        "డెలివరీ: 2 రోజులు",
-        "ఎవరికి: ఎదుగుతున్న వ్యాపారాలు"
+        "గ్రోత్: నెలకు ₹7,999 + జీఎస్టీ",
+        "12 పోస్ట్‌లు, 4 రీల్స్, 8 స్టోరీలు",
+        "ఇన్‌స్టాగ్రామ్ + ఫేస్‌బుక్",
+        "గూగుల్ బిజినెస్ ప్రొఫైల్ నిర్వహణ, 8 పోస్ట్‌లతో",
+        "బేసిక్ లోకల్ ఎస్ఈఓ + ఏఈఓ: 4 రోగి-ప్రశ్న సమాధానాలు",
+        "రివ్యూ సమాధానాల డ్రాఫ్ట్‌లు + బేసిక్ పోటీదారుల పరిశీలన",
+        "నెలవారీ రిపోర్ట్. మీరు ఆమోదిస్తారు, తర్వాత మేము పోస్ట్ చేస్తాం",
+        "ఎవరికి: క్రమం తప్పని బ్రాండింగ్, ఎక్కువ రోగుల విచారణలు కోరుకునే డాక్టర్లు"
       ],
       "hi": [
-        "ग्रोथ: हर महीने ₹9,999 + जीएसटी",
-        "16 तस्वीरें और 4 वीडियो",
-        "3 प्लेटफ़ॉर्म (लिंक्डइन या एक्स जुड़ता है)",
-        "2 बार बदलाव",
-        "डिलीवरी: 2 दिन",
-        "किसके लिए: बढ़ते व्यापार"
+        "ग्रोथ: हर महीने ₹7,999 + जीएसटी",
+        "12 पोस्ट, 4 रील, 8 स्टोरी",
+        "इंस्टाग्राम + फेसबुक",
+        "गूगल बिज़नेस प्रोफ़ाइल का प्रबंधन, 8 पोस्ट के साथ",
+        "बेसिक लोकल एसईओ + एईओ: 4 मरीज़-प्रश्न के जवाब",
+        "रिव्यू के जवाब के ड्राफ़्ट + बेसिक प्रतिस्पर्धी जाँच",
+        "मासिक रिपोर्ट। आप मंज़ूर करते हैं, फिर हम पोस्ट करते हैं",
+        "किसके लिए: नियमित ब्रांडिंग और ज़्यादा मरीज़ों की पूछताछ चाहने वाले डॉक्टर"
       ]
     },
     "voice": {
-      "en": "Growth costs nine thousand nine hundred ninety-nine rupees a month, plus GST. You get sixteen pictures and four videos, for three platforms, with two rounds of changes, delivered in two days. It is good for growing businesses.",
-      "te": "గ్రోత్ ప్లాన్ నెలకు తొమ్మిది వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం. పదహారు చిత్రాలు, నాలుగు వీడియోలు, మూడు ప్లాట్‌ఫామ్‌లకు, రెండుసార్లు మార్పులతో, రెండు రోజుల్లో డెలివరీ. ఎదుగుతున్న వ్యాపారాలకు బాగుంటుంది.",
-      "hi": "ग्रोथ प्लान की कीमत हर महीने नौ हज़ार नौ सौ निन्यानवे रुपये है, जीएसटी अलग। सोलह तस्वीरें और चार वीडियो, तीन प्लेटफ़ॉर्म के लिए, दो बार बदलाव के साथ, दो दिन में डिलीवरी। बढ़ते व्यापार के लिए अच्छा है।"
+      "en": "Growth costs seven thousand nine hundred ninety-nine rupees a month, plus GST. You get twelve posts, four reels and eight stories every month, for Instagram and Facebook. We manage your Google Business Profile with eight posts, and we draft replies to your reviews. You also get basic local SEO and AEO, with four patient-question answers a month. There is a basic competitor check and a monthly report too. It is good for doctors who want regular branding and more patient enquiries.",
+      "te": "గ్రోత్ ప్లాన్ నెలకు ఏడు వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం. ప్రతి నెలా పన్నెండు పోస్ట్‌లు, నాలుగు రీల్స్, ఎనిమిది స్టోరీలు, ఇన్‌స్టాగ్రామ్, ఫేస్‌బుక్ కోసం. ఎనిమిది పోస్ట్‌లతో మీ గూగుల్ బిజినెస్ ప్రొఫైల్‌ను నిర్వహిస్తాం, మీ రివ్యూలకు సమాధానాల డ్రాఫ్ట్‌లు రాస్తాం. బేసిక్ లోకల్ ఎస్ఈఓ, ఏఈఓ కూడా ఉంటాయి, నెలకు నాలుగు రోగి-ప్రశ్న సమాధానాలతో. బేసిక్ పోటీదారుల పరిశీలన, నెలవారీ రిపోర్ట్ కూడా వస్తాయి. క్రమం తప్పని బ్రాండింగ్, ఎక్కువ రోగుల విచారణలు కోరుకునే డాక్టర్లకు బాగుంటుంది.",
+      "hi": "ग्रोथ प्लान की कीमत हर महीने सात हज़ार नौ सौ निन्यानवे रुपये है, जीएसटी अलग। हर महीने बारह पोस्ट, चार रील और आठ स्टोरी, इंस्टाग्राम और फेसबुक के लिए। हम आठ पोस्ट के साथ आपकी गूगल बिज़नेस प्रोफ़ाइल सँभालते हैं और आपके रिव्यू के जवाब के ड्राफ़्ट लिखते हैं। बेसिक लोकल एसईओ और एईओ भी मिलते हैं, हर महीने चार मरीज़-प्रश्नों के जवाब के साथ। साथ में बेसिक प्रतिस्पर्धी जाँच और मासिक रिपोर्ट भी मिलती है। यह नियमित ब्रांडिंग और ज़्यादा मरीज़ों की पूछताछ चाहने वाले डॉक्टरों के लिए अच्छा है।"
     }
   },
   {
@@ -165,37 +175,43 @@ export const SLIDES = [
     "title": "Premium",
     "screen": {
       "en": [
-        "Premium: Rs 19,999 a month + GST",
-        "30 pictures and 8 videos",
-        "All 5 platforms (adds WhatsApp status)",
-        "3 rounds of changes",
-        "Delivery: 24 hours",
-        "Weekly report + monthly call",
-        "Good for: many branches or a lot of content"
+        "Premium: Rs 14,999 a month + GST",
+        "16 posts, 8 reels, 12 stories",
+        "Instagram, Facebook, LinkedIn + YouTube Shorts",
+        "Google Business Profile managed, with 12 posts",
+        "Advanced local SEO, 4 SEO articles, website content updates",
+        "GEO + AEO: 8 patient-question answers + AI-answer check",
+        "Competitor analysis, keyword tracking, review replies",
+        "Detailed monthly analytics, enquiry tracking, priority approval",
+        "Good for: senior doctors, specialists and hospitals"
       ],
       "te": [
-        "ప్రీమియం: నెలకు ₹19,999 + జీఎస్టీ",
-        "30 చిత్రాలు, 8 వీడియోలు",
-        "మొత్తం 5 ప్లాట్‌ఫామ్‌లు (వాట్సాప్ స్టేటస్ అదనం)",
-        "3 సవరణ రౌండ్లు",
-        "డెలివరీ: 24 గంటలు",
-        "వారపు రిపోర్ట్ + నెలవారీ కాల్",
-        "ఎవరికి: చాలా బ్రాంచ్‌లు లేదా చాలా కంటెంట్ అవసరం"
+        "ప్రీమియం: నెలకు ₹14,999 + జీఎస్టీ",
+        "16 పోస్ట్‌లు, 8 రీల్స్, 12 స్టోరీలు",
+        "ఇన్‌స్టాగ్రామ్, ఫేస్‌బుక్, లింక్డ్‌ఇన్ + యూట్యూబ్ షార్ట్స్",
+        "గూగుల్ బిజినెస్ ప్రొఫైల్ నిర్వహణ, 12 పోస్ట్‌లతో",
+        "అడ్వాన్స్‌డ్ లోకల్ ఎస్ఈఓ, 4 ఎస్ఈఓ వ్యాసాలు, వెబ్‌సైట్ కంటెంట్ అప్‌డేట్‌లు",
+        "జీఈఓ + ఏఈఓ: 8 రోగి-ప్రశ్న సమాధానాలు + ఏఐ సమాధానాల తనిఖీ",
+        "పోటీదారుల విశ్లేషణ, కీవర్డ్ ట్రాకింగ్, రివ్యూ సమాధానాలు",
+        "వివరమైన నెలవారీ అనలిటిక్స్, విచారణల ట్రాకింగ్, ప్రాధాన్య ఆమోదం",
+        "ఎవరికి: సీనియర్ డాక్టర్లు, స్పెషలిస్టులు, ఆసుపత్రులు"
       ],
       "hi": [
-        "प्रीमियम: हर महीने ₹19,999 + जीएसटी",
-        "30 तस्वीरें और 8 वीडियो",
-        "कुल 5 प्लेटफ़ॉर्म (व्हाट्सऐप स्टेटस जुड़ता है)",
-        "3 बार बदलाव",
-        "डिलीवरी: 24 घंटे",
-        "साप्ताहिक रिपोर्ट + मासिक कॉल",
-        "किसके लिए: कई शाखाएँ या बहुत सारा कंटेंट"
+        "प्रीमियम: हर महीने ₹14,999 + जीएसटी",
+        "16 पोस्ट, 8 रील, 12 स्टोरी",
+        "इंस्टाग्राम, फेसबुक, लिंक्डइन + यूट्यूब शॉर्ट्स",
+        "गूगल बिज़नेस प्रोफ़ाइल का प्रबंधन, 12 पोस्ट के साथ",
+        "एडवांस्ड लोकल एसईओ, 4 एसईओ लेख, वेबसाइट कंटेंट अपडेट",
+        "जीईओ + एईओ: 8 मरीज़-प्रश्न के जवाब + एआई जवाबों की जाँच",
+        "प्रतिस्पर्धी विश्लेषण, कीवर्ड ट्रैकिंग, रिव्यू के जवाब",
+        "विस्तृत मासिक एनालिटिक्स, पूछताछ ट्रैकिंग, प्राथमिकता से मंज़ूरी",
+        "किसके लिए: वरिष्ठ डॉक्टर, विशेषज्ञ और अस्पताल"
       ]
     },
     "voice": {
-      "en": "Premium costs nineteen thousand nine hundred ninety-nine rupees a month, plus GST. You get thirty pictures and eight videos, for all five platforms, with three rounds of changes, delivery in twenty-four hours, a weekly report and a monthly call with our team. It is good for businesses with many branches or a lot of content.",
-      "te": "ప్రీమియం ప్లాన్ నెలకు పంతొమ్మిది వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం. ముప్పై చిత్రాలు, ఎనిమిది వీడియోలు, ఐదు ప్లాట్‌ఫామ్‌లన్నింటికీ, మూడుసార్లు మార్పులతో, ఇరవై నాలుగు గంటల్లో డెలివరీ, వారపు రిపోర్ట్, మా టీమ్‌తో నెలవారీ కాల్. చాలా బ్రాంచ్‌లు లేదా చాలా కంటెంట్ అవసరమైన వ్యాపారాలకు బాగుంటుంది.",
-      "hi": "प्रीमियम प्लान की कीमत हर महीने उन्नीस हज़ार नौ सौ निन्यानवे रुपये है, जीएसटी अलग। तीस तस्वीरें और आठ वीडियो, सभी पाँच प्लेटफ़ॉर्म के लिए, तीन बार बदलाव के साथ, चौबीस घंटे में डिलीवरी, साप्ताहिक रिपोर्ट और हमारी टीम के साथ मासिक कॉल। कई शाखाओं या बहुत सारे कंटेंट वाले व्यापार के लिए अच्छा है।"
+      "en": "Premium costs fourteen thousand nine hundred ninety-nine rupees a month, plus GST. You get sixteen posts, eight reels and twelve stories every month, for Instagram, Facebook, LinkedIn and YouTube Shorts. We manage your Google Business Profile with twelve posts. You get advanced local SEO, four SEO articles a month, and updates to the content on your existing website. We also do GEO and AEO, with eight patient-question answers a month and a check of how AI assistants describe you. You get competitor analysis, keyword tracking and review replies, plus detailed monthly analytics, enquiry tracking and priority approval. It is good for senior doctors, specialists and hospitals.",
+      "te": "ప్రీమియం ప్లాన్ నెలకు పద్నాలుగు వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం. ప్రతి నెలా పదహారు పోస్ట్‌లు, ఎనిమిది రీల్స్, పన్నెండు స్టోరీలు, ఇన్‌స్టాగ్రామ్, ఫేస్‌బుక్, లింక్డ్‌ఇన్, యూట్యూబ్ షార్ట్స్ కోసం. పన్నెండు పోస్ట్‌లతో మీ గూగుల్ బిజినెస్ ప్రొఫైల్‌ను నిర్వహిస్తాం. అడ్వాన్స్‌డ్ లోకల్ ఎస్ఈఓ, నెలకు నాలుగు ఎస్ఈఓ వ్యాసాలు, మీ ప్రస్తుత వెబ్‌సైట్ కంటెంట్ అప్‌డేట్‌లు ఉంటాయి. జీఈఓ, ఏఈఓ కూడా చేస్తాం, నెలకు ఎనిమిది రోగి-ప్రశ్న సమాధానాలు, ఏఐ అసిస్టెంట్లు మిమ్మల్ని ఎలా వివరిస్తున్నాయో తనిఖీతో. పోటీదారుల విశ్లేషణ, కీవర్డ్ ట్రాకింగ్, రివ్యూ సమాధానాలు, వివరమైన నెలవారీ అనలిటిక్స్, విచారణల ట్రాకింగ్, ప్రాధాన్య ఆమోదం కూడా వస్తాయి. సీనియర్ డాక్టర్లకు, స్పెషలిస్టులకు, ఆసుపత్రులకు బాగుంటుంది.",
+      "hi": "प्रीमियम प्लान की कीमत हर महीने चौदह हज़ार नौ सौ निन्यानवे रुपये है, जीएसटी अलग। हर महीने सोलह पोस्ट, आठ रील और बारह स्टोरी, इंस्टाग्राम, फेसबुक, लिंक्डइन और यूट्यूब शॉर्ट्स के लिए। हम बारह पोस्ट के साथ आपकी गूगल बिज़नेस प्रोफ़ाइल सँभालते हैं। एडवांस्ड लोकल एसईओ, हर महीने चार एसईओ लेख और आपकी मौजूदा वेबसाइट के कंटेंट के अपडेट मिलते हैं। हम जीईओ और एईओ भी करते हैं, हर महीने आठ मरीज़-प्रश्नों के जवाब और इस जाँच के साथ कि एआई असिस्टेंट आपको कैसे बताते हैं। प्रतिस्पर्धी विश्लेषण, कीवर्ड ट्रैकिंग और रिव्यू के जवाब, साथ में विस्तृत मासिक एनालिटिक्स, पूछताछ ट्रैकिंग और प्राथमिकता से मंज़ूरी भी मिलती है। यह वरिष्ठ डॉक्टरों, विशेषज्ञों और अस्पतालों के लिए अच्छा है।"
     }
   },
   {
@@ -205,29 +221,29 @@ export const SLIDES = [
       "en": [
         "Pick by your monthly budget (with GST)",
         "Trial (one time): Rs 999 + GST  →  Rs 1,179",
-        "Starter: Rs 3,999 + GST  →  Rs 4,719",
-        "Growth: Rs 9,999 + GST  →  Rs 11,799",
-        "Premium: Rs 19,999 + GST  →  Rs 23,599"
+        "Basic: Rs 3,999 + GST  →  Rs 4,719",
+        "Growth: Rs 7,999 + GST  →  Rs 9,439",
+        "Premium: Rs 14,999 + GST  →  Rs 17,699"
       ],
       "te": [
         "మీ నెలవారీ బడ్జెట్‌ను బట్టి ఎంచుకోండి (జీఎస్టీతో)",
         "ట్రయల్ (ఒకసారి): ₹999 + జీఎస్టీ  →  ₹1,179",
-        "స్టార్టర్: ₹3,999 + జీఎస్టీ  →  ₹4,719",
-        "గ్రోత్: ₹9,999 + జీఎస్టీ  →  ₹11,799",
-        "ప్రీమియం: ₹19,999 + జీఎస్టీ  →  ₹23,599"
+        "బేసిక్: ₹3,999 + జీఎస్టీ  →  ₹4,719",
+        "గ్రోత్: ₹7,999 + జీఎస్టీ  →  ₹9,439",
+        "ప్రీమియం: ₹14,999 + జీఎస్టీ  →  ₹17,699"
       ],
       "hi": [
         "अपने मासिक बजट के हिसाब से चुनें (जीएसटी के साथ)",
         "ट्रायल (एक बार): ₹999 + जीएसटी  →  ₹1,179",
-        "स्टार्टर: ₹3,999 + जीएसटी  →  ₹4,719",
-        "ग्रोथ: ₹9,999 + जीएसटी  →  ₹11,799",
-        "प्रीमियम: ₹19,999 + जीएसटी  →  ₹23,599"
+        "बेसिक: ₹3,999 + जीएसटी  →  ₹4,719",
+        "ग्रोथ: ₹7,999 + जीएसटी  →  ₹9,439",
+        "प्रीमियम: ₹14,999 + जीएसटी  →  ₹17,699"
       ]
     },
     "voice": {
-      "en": "Which plan is right for you? Think of your monthly budget for social media, including GST. The trial is nine hundred ninety-nine rupees plus GST, one time. Starter is three thousand nine hundred ninety-nine rupees plus GST, which is four thousand seven hundred nineteen with GST. Growth is nine thousand nine hundred ninety-nine plus GST, which is eleven thousand seven hundred ninety-nine with GST. Premium is nineteen thousand nine hundred ninety-nine plus GST, which is twenty-three thousand five hundred ninety-nine with GST. Pick the plan that fits your budget.",
-      "te": "మీకు ఏ ప్లాన్ సరిపోతుంది? జీఎస్టీతో కలిపి సోషల్ మీడియా కోసం మీ నెలవారీ బడ్జెట్ ఆలోచించండి. ట్రయల్ తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం, ఒకసారి మాత్రమే. స్టార్టర్ మూడు వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం, అంటే జీఎస్టీతో నాలుగు వేల ఏడు వందల పంతొమ్మిది. గ్రోత్ తొమ్మిది వేల తొమ్మిది వందల తొంభై తొమ్మిది, జీఎస్టీ అదనం, అంటే జీఎస్టీతో పదకొండు వేల ఏడు వందల తొంభై తొమ్మిది. ప్రీమియం పంతొమ్మిది వేల తొమ్మిది వందల తొంభై తొమ్మిది, జీఎస్టీ అదనం, అంటే జీఎస్టీతో ఇరవై మూడు వేల ఐదు వందల తొంభై తొమ్మిది. మీ బడ్జెట్‌కు సరిపోయే ప్లాన్ ఎంచుకోండి.",
-      "hi": "आपके लिए कौन सा प्लान सही है? जीएसटी मिलाकर सोशल मीडिया के लिए अपना मासिक बजट सोचिए। ट्रायल नौ सौ निन्यानवे रुपये है, जीएसटी अलग, सिर्फ़ एक बार। स्टार्टर तीन हज़ार नौ सौ निन्यानवे रुपये, जीएसटी अलग, यानी जीएसटी के साथ चार हज़ार सात सौ उन्नीस। ग्रोथ नौ हज़ार नौ सौ निन्यानवे, जीएसटी अलग, यानी जीएसटी के साथ ग्यारह हज़ार सात सौ निन्यानवे। प्रीमियम उन्नीस हज़ार नौ सौ निन्यानवे, जीएसटी अलग, यानी जीएसटी के साथ तेईस हज़ार पाँच सौ निन्यानवे। अपने बजट के हिसाब से प्लान चुनिए।"
+      "en": "Which plan is right for you? Think of your monthly budget for social media, including GST. The trial is nine hundred ninety-nine rupees plus GST, one time. Basic is three thousand nine hundred ninety-nine rupees plus GST, which is four thousand seven hundred nineteen with GST. Growth is seven thousand nine hundred ninety-nine plus GST, which is nine thousand four hundred thirty-nine with GST. Premium is fourteen thousand nine hundred ninety-nine plus GST, which is seventeen thousand six hundred ninety-nine with GST. Pick the plan that fits your budget.",
+      "te": "మీకు ఏ ప్లాన్ సరిపోతుంది? జీఎస్టీతో కలిపి సోషల్ మీడియా కోసం మీ నెలవారీ బడ్జెట్ ఆలోచించండి. ట్రయల్ తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం, ఒకసారి మాత్రమే. బేసిక్ మూడు వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, జీఎస్టీ అదనం, అంటే జీఎస్టీతో నాలుగు వేల ఏడు వందల పంతొమ్మిది. గ్రోత్ ఏడు వేల తొమ్మిది వందల తొంభై తొమ్మిది, జీఎస్టీ అదనం, అంటే జీఎస్టీతో తొమ్మిది వేల నాలుగు వందల ముప్పై తొమ్మిది. ప్రీమియం పద్నాలుగు వేల తొమ్మిది వందల తొంభై తొమ్మిది, జీఎస్టీ అదనం, అంటే జీఎస్టీతో పదిహేడు వేల ఆరు వందల తొంభై తొమ్మిది. మీ బడ్జెట్‌కు సరిపోయే ప్లాన్ ఎంచుకోండి.",
+      "hi": "आपके लिए कौन सा प्लान सही है? जीएसटी मिलाकर सोशल मीडिया के लिए अपना मासिक बजट सोचिए। ट्रायल नौ सौ निन्यानवे रुपये है, जीएसटी अलग, सिर्फ़ एक बार। बेसिक तीन हज़ार नौ सौ निन्यानवे रुपये, जीएसटी अलग, यानी जीएसटी के साथ चार हज़ार सात सौ उन्नीस। ग्रोथ सात हज़ार नौ सौ निन्यानवे, जीएसटी अलग, यानी जीएसटी के साथ नौ हज़ार चार सौ उनतालीस। प्रीमियम चौदह हज़ार नौ सौ निन्यानवे, जीएसटी अलग, यानी जीएसटी के साथ सत्रह हज़ार छह सौ निन्यानवे। अपने बजट के हिसाब से प्लान चुनिए।"
     }
   },
   {
@@ -303,27 +319,30 @@ export const SLIDES = [
     "screen": {
       "en": [
         "Nothing is posted without your approval",
+        "For medical content, the doctor checks every claim",
         "If we miss what we promised, you get a credit",
         "After 3 months, cancel with 15 days notice",
         "We do not promise followers or sales"
       ],
       "te": [
         "మీ ఆమోదం లేకుండా ఏదీ పోస్ట్ కాదు",
+        "వైద్య సమాచారంలో ప్రతి విషయాన్ని డాక్టర్ తనిఖీ చేస్తారు",
         "మేము చెప్పినవి ఇవ్వకపోతే క్రెడిట్",
         "3 నెలల తర్వాత 15 రోజుల నోటీసుతో రద్దు",
         "ఫాలోవర్లు, అమ్మకాలకు హామీ ఇవ్వం"
       ],
       "hi": [
         "आपकी मंज़ूरी के बिना कुछ पोस्ट नहीं होता",
+        "मेडिकल कंटेंट में हर दावा डॉक्टर जाँचते हैं",
         "वादा पूरा न करें तो क्रेडिट",
         "3 महीने बाद 15 दिन के नोटिस पर रद्द",
         "फ़ॉलोअर या बिक्री की गारंटी नहीं"
       ]
     },
     "voice": {
-      "en": "Our promise to you. Nothing is posted without your approval. If we miss what we promised, you get a credit for that share of the month. After the first three months you can cancel with fifteen days notice. And we are honest: we prepare strong content, but we cannot promise a number of followers or sales.",
-      "te": "మీకు మా వాగ్దానం. మీ ఆమోదం లేకుండా ఏదీ పోస్ట్ కాదు. మేము చెప్పినవి ఇవ్వకపోతే, ఆ నెలలో ఆ భాగానికి సమానమైన క్రెడిట్ వస్తుంది. మొదటి మూడు నెలల తర్వాత పదిహేను రోజుల నోటీసుతో రద్దు చేయవచ్చు. నిజాయితీగా చెప్పాలంటే: మంచి కంటెంట్ సిద్ధం చేస్తాం, కానీ ఫాలోవర్ల సంఖ్యకు, అమ్మకాలకు హామీ ఇవ్వలేం.",
-      "hi": "आपसे हमारा वादा। आपकी मंज़ूरी के बिना कुछ भी पोस्ट नहीं होता। हम जो वादा करें और न दें, तो उस महीने के उतने हिस्से का क्रेडिट मिलता है। पहले तीन महीने के बाद आप पंद्रह दिन के नोटिस पर रद्द कर सकते हैं। और हम ईमानदार हैं: हम बढ़िया कंटेंट तैयार करते हैं, पर फ़ॉलोअर की संख्या या बिक्री की गारंटी नहीं दे सकते।"
+      "en": "Our promise to you. Nothing is posted without your approval. For medical content, the doctor checks every claim before it goes out, and we never use cure guarantees or patient details. If we miss what we promised, you get a credit for that share of the month. After the first three months you can cancel with fifteen days notice. And we are honest: we prepare strong content, but we cannot promise a number of followers or sales.",
+      "te": "మీకు మా వాగ్దానం. మీ ఆమోదం లేకుండా ఏదీ పోస్ట్ కాదు. వైద్య సమాచారంలో, ప్రతి విషయాన్ని బయటకు వెళ్లే ముందు డాక్టర్ తనిఖీ చేస్తారు, నయం చేస్తామనే హామీలను, రోగుల వివరాలను మేము ఎప్పుడూ వాడం. మేము చెప్పినవి ఇవ్వకపోతే, ఆ నెలలో ఆ భాగానికి సమానమైన క్రెడిట్ వస్తుంది. మొదటి మూడు నెలల తర్వాత పదిహేను రోజుల నోటీసుతో రద్దు చేయవచ్చు. నిజాయితీగా చెప్పాలంటే: మంచి కంటెంట్ సిద్ధం చేస్తాం, కానీ ఫాలోవర్ల సంఖ్యకు, అమ్మకాలకు హామీ ఇవ్వలేం.",
+      "hi": "आपसे हमारा वादा। आपकी मंज़ूरी के बिना कुछ भी पोस्ट नहीं होता। मेडिकल कंटेंट में हर दावे को जाने से पहले डॉक्टर जाँचते हैं, और हम इलाज की गारंटी या मरीज़ों की निजी जानकारी कभी इस्तेमाल नहीं करते। हम जो वादा करें और न दें, तो उस महीने के उतने हिस्से का क्रेडिट मिलता है। पहले तीन महीने के बाद आप पंद्रह दिन के नोटिस पर रद्द कर सकते हैं। और हम ईमानदार हैं: हम बढ़िया कंटेंट तैयार करते हैं, पर फ़ॉलोअर की संख्या या बिक्री की गारंटी नहीं दे सकते।"
     }
   },
   {
@@ -403,9 +422,9 @@ export const FAQ = [
       "hi": "कीमत कितनी है?"
     },
     "answer": {
-      "en": "Starter is three thousand nine hundred ninety-nine rupees a month, Growth is nine thousand nine hundred ninety-nine, and Premium is nineteen thousand nine hundred ninety-nine. All prices are plus eighteen percent GST.",
-      "te": "స్టార్టర్ నెలకు మూడు వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, గ్రోత్ తొమ్మిది వేల తొమ్మిది వందల తొంభై తొమ్మిది, ప్రీమియం పంతొమ్మిది వేల తొమ్మిది వందల తొంభై తొమ్మిది. అన్ని ధరలకు పద్దెనిమిది శాతం జీఎస్టీ అదనం.",
-      "hi": "स्टार्टर हर महीने तीन हज़ार नौ सौ निन्यानवे रुपये, ग्रोथ नौ हज़ार नौ सौ निन्यानवे, और प्रीमियम उन्नीस हज़ार नौ सौ निन्यानवे। सभी कीमतों पर अठारह प्रतिशत जीएसटी अलग है।"
+      "en": "Basic is three thousand nine hundred ninety-nine rupees a month, Growth is seven thousand nine hundred ninety-nine, and Premium is fourteen thousand nine hundred ninety-nine. All prices are plus eighteen percent GST.",
+      "te": "బేసిక్ నెలకు మూడు వేల తొమ్మిది వందల తొంభై తొమ్మిది రూపాయలు, గ్రోత్ ఏడు వేల తొమ్మిది వందల తొంభై తొమ్మిది, ప్రీమియం పద్నాలుగు వేల తొమ్మిది వందల తొంభై తొమ్మిది. అన్ని ధరలకు పద్దెనిమిది శాతం జీఎస్టీ అదనం.",
+      "hi": "बेसिक हर महीने तीन हज़ार नौ सौ निन्यानवे रुपये, ग्रोथ सात हज़ार नौ सौ निन्यानवे, और प्रीमियम चौदह हज़ार नौ सौ निन्यानवे। सभी कीमतों पर अठारह प्रतिशत जीएसटी अलग है।"
     },
     "keywords": [
       "plans",
@@ -495,9 +514,9 @@ export const FAQ = [
       "hi": "मेरे लिए कौन सा प्लान सही है?"
     },
     "answer": {
-      "en": "It depends on your budget and how much you want to post. A small shop or a new business usually starts with Starter. A growing business that wants more posts chooses Growth. Many branches or a lot of content need Premium. Tell me your monthly budget and I will suggest one.",
-      "te": "అది మీ బడ్జెట్‌పై, ఎంత పోస్ట్ చేయాలనుకుంటున్నారన్నదానిపై ఆధారపడి ఉంటుంది. చిన్న షాపు లేదా కొత్త వ్యాపారం సాధారణంగా స్టార్టర్‌తో మొదలుపెడుతుంది. ఎదుగుతూ, ఎక్కువ పోస్ట్‌లు కావాలనుకునే వ్యాపారం గ్రోత్ తీసుకుంటుంది. చాలా బ్రాంచ్‌లు లేదా చాలా కంటెంట్ అవసరమైతే ప్రీమియం. మీ నెలవారీ బడ్జెట్ చెప్పండి, నేను ఒకటి సూచిస్తాను.",
-      "hi": "यह आपके बजट और आप कितना पोस्ट करना चाहते हैं, उस पर निर्भर है। छोटी दुकान या नया व्यापार आमतौर पर स्टार्टर से शुरू करता है। बढ़ता व्यापार जो ज़्यादा पोस्ट चाहता है, ग्रोथ लेता है। कई शाखाएँ या बहुत सारा कंटेंट हो तो प्रीमियम। अपना मासिक बजट बताइए, हम एक सुझाएँगे।"
+      "en": "It depends on your budget and how much you want to grow. Small clinics and new doctors usually start with Basic. Doctors who want regular branding, local visibility and more patient enquiries choose Growth. Senior doctors, specialists and hospitals choose Premium. Tell me your monthly budget and I will suggest one.",
+      "te": "అది మీ బడ్జెట్‌పై, ఎంత ఎదగాలనుకుంటున్నారన్నదానిపై ఆధారపడి ఉంటుంది. చిన్న క్లినిక్‌లు, కొత్త డాక్టర్లు సాధారణంగా బేసిక్‌తో మొదలుపెడతారు. క్రమం తప్పని బ్రాండింగ్, స్థానికంగా కనిపించడం, ఎక్కువ రోగుల విచారణలు కావాలనుకునే డాక్టర్లు గ్రోత్ తీసుకుంటారు. సీనియర్ డాక్టర్లు, స్పెషలిస్టులు, ఆసుపత్రులు ప్రీమియం తీసుకుంటారు. మీ నెలవారీ బడ్జెట్ చెప్పండి, నేను ఒకటి సూచిస్తాను.",
+      "hi": "यह आपके बजट और आप कितना बढ़ना चाहते हैं, उस पर निर्भर है। छोटे क्लिनिक और नए डॉक्टर आमतौर पर बेसिक से शुरू करते हैं। जो डॉक्टर नियमित ब्रांडिंग, स्थानीय पहचान और ज़्यादा मरीज़ों की पूछताछ चाहते हैं, वे ग्रोथ लेते हैं। वरिष्ठ डॉक्टर, विशेषज्ञ और अस्पताल प्रीमियम लेते हैं। अपना मासिक बजट बताइए, हम एक सुझाएँगे।"
     },
     "keywords": [
       "best",
@@ -640,9 +659,9 @@ export const FAQ = [
       "hi": "क्या हर चीज़ मुझे मंज़ूर करनी होगी?"
     },
     "answer": {
-      "en": "Yes. You see every picture and video first on a private link, and you choose to approve or ask for changes. Nothing is posted without your approval.",
-      "te": "అవును. ప్రతి చిత్రాన్ని, వీడియోను ముందు ప్రైవేట్ లింక్‌లో చూస్తారు, ఆమోదించవచ్చు లేదా మార్పులు కోరవచ్చు. మీ ఆమోదం లేకుండా ఏదీ పోస్ట్ కాదు.",
-      "hi": "जी हाँ। हर तस्वीर और वीडियो आप पहले निजी लिंक पर देखते हैं, और मंज़ूर करते हैं या बदलाव माँगते हैं। आपकी मंज़ूरी के बिना कुछ पोस्ट नहीं होता।"
+      "en": "Yes. You see every post and reel first on a private link, and you choose to approve or ask for changes. Nothing is posted without your approval. For medical content, the doctor checks every claim before it goes out.",
+      "te": "అవును. ప్రతి పోస్ట్‌ను, రీల్‌ను ముందు ప్రైవేట్ లింక్‌లో చూస్తారు, ఆమోదించవచ్చు లేదా మార్పులు కోరవచ్చు. మీ ఆమోదం లేకుండా ఏదీ పోస్ట్ కాదు. వైద్య సమాచారంలో ప్రతి విషయాన్ని బయటకు వెళ్లే ముందు డాక్టర్ తనిఖీ చేస్తారు.",
+      "hi": "जी हाँ। हर पोस्ट और रील आप पहले निजी लिंक पर देखते हैं, और मंज़ूर करते हैं या बदलाव माँगते हैं। आपकी मंज़ूरी के बिना कुछ पोस्ट नहीं होता। मेडिकल कंटेंट में हर दावे को जाने से पहले डॉक्टर जाँचते हैं।"
     },
     "keywords": [
       "approve",
@@ -668,9 +687,9 @@ export const FAQ = [
       "hi": "पसंद न आए तो?"
     },
     "answer": {
-      "en": "You can ask for changes. Starter includes one round of changes, Growth two, and Premium three. More rounds cost five hundred rupees each.",
-      "te": "మార్పులు కోరవచ్చు. స్టార్టర్‌లో ఒక సవరణ రౌండ్, గ్రోత్‌లో రెండు, ప్రీమియంలో మూడు ఉంటాయి. అదనపు రౌండ్‌కు ఐదు వందల రూపాయలు.",
-      "hi": "आप बदलाव माँग सकते हैं। स्टार्टर में एक दौर, ग्रोथ में दो और प्रीमियम में तीन दौर शामिल हैं। अतिरिक्त दौर के पाँच सौ रुपये लगते हैं।"
+      "en": "You can ask for changes. Basic includes one round of changes, Growth two, and Premium three. More rounds cost five hundred rupees each.",
+      "te": "మార్పులు కోరవచ్చు. బేసిక్‌లో ఒక సవరణ రౌండ్, గ్రోత్‌లో రెండు, ప్రీమియంలో మూడు ఉంటాయి. అదనపు రౌండ్‌కు ఐదు వందల రూపాయలు.",
+      "hi": "आप बदलाव माँग सकते हैं। बेसिक में एक दौर, ग्रोथ में दो और प्रीमियम में तीन दौर शामिल हैं। अतिरिक्त दौर के पाँच सौ रुपये लगते हैं।"
     },
     "keywords": [
       "change",
@@ -742,9 +761,9 @@ export const FAQ = [
       "hi": "कितना समय लगता है?"
     },
     "answer": {
-      "en": "Starter takes three working days for each item, Growth two days, and Premium twenty-four hours.",
-      "te": "స్టార్టర్‌లో ఒక్కో అంశానికి మూడు పని దినాలు, గ్రోత్‌లో రెండు రోజులు, ప్రీమియంలో ఇరవై నాలుగు గంటలు.",
-      "hi": "स्टार्टर में हर आइटम के लिए तीन कार्य दिवस, ग्रोथ में दो दिन, और प्रीमियम में चौबीस घंटे।"
+      "en": "Basic takes three working days for each item, Growth two days, and Premium twenty-four hours.",
+      "te": "బేసిక్‌లో ఒక్కో అంశానికి మూడు పని దినాలు, గ్రోత్‌లో రెండు రోజులు, ప్రీమియంలో ఇరవై నాలుగు గంటలు.",
+      "hi": "बेसिक में हर आइटम के लिए तीन कार्य दिवस, ग्रोथ में दो दिन, और प्रीमियम में चौबीस घंटे।"
     },
     "keywords": [
       "how long",
@@ -777,9 +796,9 @@ export const FAQ = [
       "hi": "क्या यह एआई से बना होता है?"
     },
     "answer": {
-      "en": "We prepare the pictures quickly with computer tools, using real photos with your words, your logo and your colours. You see everything and approve it before it is posted.",
-      "te": "చిత్రాలను కంప్యూటర్ టూల్స్‌తో త్వరగా తయారు చేస్తాం, నిజమైన ఫోటోలు, మీ మాటలు, మీ లోగో, రంగులతో. పోస్ట్ చేసే ముందు మీరు అన్నీ చూసి ఆమోదిస్తారు.",
-      "hi": "हम कंप्यूटर टूल से तस्वीरें जल्दी तैयार करते हैं, असली फ़ोटो, आपके शब्द, आपके लोगो और रंगों के साथ। पोस्ट होने से पहले आप सब देखकर मंज़ूर करते हैं।"
+      "en": "We prepare the posts and reels quickly with computer and AI tools, using your words, your logo and your colours. Reels are made from pictures, a voice-over and subtitles. We do not film the doctor. You see everything and approve it before it is posted.",
+      "te": "పోస్ట్‌లను, రీల్స్‌ను కంప్యూటర్, ఏఐ టూల్స్‌తో త్వరగా తయారు చేస్తాం, మీ మాటలు, మీ లోగో, రంగులతో. రీల్స్ చిత్రాలు, వాయిస్‌ఓవర్, సబ్‌టైటిల్స్‌తో తయారవుతాయి. డాక్టర్ వీడియో షూటింగ్ ఇందులో ఉండదు. పోస్ట్ చేసే ముందు మీరు అన్నీ చూసి ఆమోదిస్తారు.",
+      "hi": "हम पोस्ट और रील कंप्यूटर और एआई टूल से जल्दी तैयार करते हैं, आपके शब्द, आपके लोगो और रंगों के साथ। रील तस्वीरों, वॉइस-ओवर और सबटाइटल से बनती हैं। हम डॉक्टर की वीडियो शूटिंग नहीं करते। पोस्ट होने से पहले आप सब देखकर मंज़ूर करते हैं।"
     },
     "keywords": [
       "ai",
@@ -809,9 +828,9 @@ export const FAQ = [
       "hi": "कौन से प्लेटफ़ॉर्म?"
     },
     "answer": {
-      "en": "Starter covers Instagram and Facebook. Growth covers three platforms, adding LinkedIn or X. Premium covers all five, adding WhatsApp status.",
-      "te": "స్టార్టర్ ఇన్‌స్టాగ్రామ్, ఫేస్‌బుక్‌కు. గ్రోత్ మూడు ప్లాట్‌ఫామ్‌లకు, లింక్డ్‌ఇన్ లేదా ఎక్స్ అదనం. ప్రీమియం ఐదింటికీ, వాట్సాప్ స్టేటస్ అదనం.",
-      "hi": "स्टार्टर इंस्टाग्राम और फेसबुक के लिए। ग्रोथ तीन प्लेटफ़ॉर्म के लिए, लिंक्डइन या एक्स जुड़ता है। प्रीमियम पाँचों के लिए, व्हाट्सऐप स्टेटस जुड़ता है।"
+      "en": "Basic covers Instagram and Facebook, with four Google Business Profile posts. Growth covers Instagram and Facebook, and manages your Google Business Profile. Premium adds LinkedIn and YouTube Shorts. WhatsApp status is not included. Ask our team if you would like it.",
+      "te": "బేసిక్ ఇన్‌స్టాగ్రామ్, ఫేస్‌బుక్‌కు, నాలుగు గూగుల్ బిజినెస్ ప్రొఫైల్ పోస్ట్‌లతో. గ్రోత్ ఇన్‌స్టాగ్రామ్, ఫేస్‌బుక్‌కు, మీ గూగుల్ బిజినెస్ ప్రొఫైల్ నిర్వహణ కూడా. ప్రీమియంలో లింక్డ్‌ఇన్, యూట్యూబ్ షార్ట్స్ కూడా వస్తాయి. వాట్సాప్ స్టేటస్ ఇందులో లేదు. కావాలంటే మా టీమ్‌ను అడగండి.",
+      "hi": "बेसिक इंस्टाग्राम और फेसबुक के लिए, चार गूगल बिज़नेस प्रोफ़ाइल पोस्ट के साथ। ग्रोथ इंस्टाग्राम और फेसबुक के लिए, और आपकी गूगल बिज़नेस प्रोफ़ाइल का प्रबंधन भी। प्रीमियम में लिंक्डइन और यूट्यूब शॉर्ट्स भी जुड़ते हैं। व्हाट्सऐप स्टेटस इसमें शामिल नहीं है। चाहिए तो हमारी टीम से पूछिए।"
     },
     "keywords": [
       "platform",
@@ -843,9 +862,9 @@ export const FAQ = [
       "hi": "ज़्यादा चाहिए तो?"
     },
     "answer": {
-      "en": "Yes. An extra picture is two hundred fifty rupees, an extra video is eight hundred, and an extra round of changes is five hundred rupees.",
-      "te": "అవును. అదనపు చిత్రం రెండు వందల యాభై రూపాయలు, అదనపు వీడియో ఎనిమిది వందలు, అదనపు సవరణ రౌండ్ ఐదు వందల రూపాయలు.",
-      "hi": "जी हाँ। अतिरिक्त तस्वीर दो सौ पचास रुपये, अतिरिक्त वीडियो आठ सौ, और बदलाव का अतिरिक्त दौर पाँच सौ रुपये।"
+      "en": "Yes. An extra post is two hundred fifty rupees, an extra reel is eight hundred, and an extra round of changes is five hundred rupees.",
+      "te": "అవును. అదనపు పోస్ట్ రెండు వందల యాభై రూపాయలు, అదనపు రీల్ ఎనిమిది వందలు, అదనపు సవరణ రౌండ్ ఐదు వందల రూపాయలు.",
+      "hi": "जी हाँ। अतिरिक्त पोस्ट दो सौ पचास रुपये, अतिरिक्त रील आठ सौ, और बदलाव का अतिरिक्त दौर पाँच सौ रुपये।"
     },
     "keywords": [
       "extra picture",
@@ -866,7 +885,15 @@ export const FAQ = [
       "अतिरिक्त",
       "ज़्यादा",
       "ज्यादा",
-      "aur zyada"
+      "aur zyada",
+      "extra post",
+      "extra posts",
+      "extra reel",
+      "extra reels",
+      "more posts",
+      "more reels",
+      "extra story",
+      "extra stories"
     ]
   },
   {
@@ -878,9 +905,9 @@ export const FAQ = [
       "hi": "क्या फ़ॉलोअर या बिक्री की गारंटी है?"
     },
     "answer": {
-      "en": "We cannot promise a number of followers or sales, and nobody honestly can. What we promise is steady, good-looking content in your brand style, delivered on time and approved by you.",
-      "te": "ఫాలోవర్ల సంఖ్యకు, అమ్మకాలకు మేము హామీ ఇవ్వలేం, నిజాయితీగా ఎవరూ ఇవ్వలేరు. మేము హామీ ఇచ్చేది: మీ బ్రాండ్ శైలిలో క్రమం తప్పని, చక్కని కంటెంట్, సమయానికి, మీ ఆమోదంతో.",
-      "hi": "हम फ़ॉलोअर की संख्या या बिक्री की गारंटी नहीं दे सकते, ईमानदारी से कोई नहीं दे सकता। हम यह वादा करते हैं: आपके ब्रांड के अंदाज़ में लगातार, अच्छा कंटेंट, समय पर, आपकी मंज़ूरी के साथ।"
+      "en": "We cannot promise a number of followers, patients or sales, and nobody honestly can. We also cannot promise a Google rank, or that an AI assistant will name you. What we promise is steady, good content in your brand style, delivered on time and approved by you.",
+      "te": "ఫాలోవర్లు, రోగులు లేదా అమ్మకాల సంఖ్యకు మేము హామీ ఇవ్వలేం, నిజాయితీగా ఎవరూ ఇవ్వలేరు. గూగుల్ ర్యాంక్‌కు, లేదా ఏఐ అసిస్టెంట్ మీ పేరు చెబుతుందనే దానికి కూడా హామీ ఇవ్వలేం. మేము హామీ ఇచ్చేది: మీ బ్రాండ్ శైలిలో క్రమం తప్పని, చక్కని కంటెంట్, సమయానికి, మీ ఆమోదంతో.",
+      "hi": "हम फ़ॉलोअर, मरीज़ों या बिक्री की संख्या की गारंटी नहीं दे सकते, ईमानदारी से कोई नहीं दे सकता। हम गूगल रैंक की, या एआई असिस्टेंट आपका नाम लेगा इसकी भी गारंटी नहीं दे सकते। हम यह वादा करते हैं: आपके ब्रांड के अंदाज़ में लगातार, अच्छा कंटेंट, समय पर, आपकी मंज़ूरी के साथ।"
     },
     "keywords": [
       "guarantee",
@@ -1061,6 +1088,95 @@ export const FAQ = [
       "matladali",
       "matladali",
       "call cheyyandi"
+    ]
+  },
+  {
+    "id": "F20",
+    "topic": "SEO, GEO and AEO",
+    "ask": {
+      "en": "What are SEO, GEO and AEO?",
+      "te": "ఎస్ఈఓ, జీఈఓ, ఏఈఓ అంటే ఏమిటి?",
+      "hi": "एसईओ, जीईओ, एईओ क्या हैं?"
+    },
+    "answer": {
+      "en": "SEO helps people find you on Google when they search for a doctor near them. AEO means writing clear answers to the questions patients ask, so that Google and voice search can quote you. GEO helps AI assistants such as ChatGPT and Gemini find you and describe you correctly. Basic does not include these. Growth has basic local SEO and four patient-question answers a month. Premium has advanced local SEO, four SEO articles, eight patient-question answers and a monthly check of how AI assistants describe you. We do the work, but nobody can promise a rank or a mention.",
+      "te": "ఎస్ఈఓ వల్ల మీ దగ్గరి డాక్టర్ కోసం గూగుల్‌లో వెతికినప్పుడు జనం మిమ్మల్ని కనుగొంటారు. ఏఈఓ అంటే రోగులు అడిగే ప్రశ్నలకు స్పష్టమైన సమాధానాలు రాయడం, అప్పుడు గూగుల్, వాయిస్ సెర్చ్ మిమ్మల్ని చూపగలవు. జీఈఓ వల్ల చాట్‌జీపీటీ, జెమినీ వంటి ఏఐ అసిస్టెంట్లు మిమ్మల్ని కనుగొని సరిగ్గా వివరిస్తాయి. బేసిక్‌లో ఇవి ఉండవు. గ్రోత్‌లో బేసిక్ లోకల్ ఎస్ఈఓ, నెలకు నాలుగు రోగి-ప్రశ్న సమాధానాలు ఉంటాయి. ప్రీమియంలో అడ్వాన్స్‌డ్ లోకల్ ఎస్ఈఓ, నాలుగు ఎస్ఈఓ వ్యాసాలు, ఎనిమిది రోగి-ప్రశ్న సమాధానాలు, ఏఐ అసిస్టెంట్లు మిమ్మల్ని ఎలా వివరిస్తున్నాయో నెలకోసారి తనిఖీ ఉంటాయి. పని మేము చేస్తాం, కానీ ర్యాంక్‌కు, ప్రస్తావనకు ఎవరూ హామీ ఇవ్వలేరు.",
+      "hi": "एसईओ से लोग आपके पास के डॉक्टर को गूगल पर खोजते समय आपको पा लेते हैं। एईओ का मतलब है मरीज़ों के सवालों के साफ़ जवाब लिखना, ताकि गूगल और वॉइस सर्च आपको दिखा सकें। जीईओ से चैटजीपीटी, जेमिनी जैसे एआई असिस्टेंट आपको ढूँढकर सही तरह से बताते हैं। बेसिक में ये नहीं हैं। ग्रोथ में बेसिक लोकल एसईओ और हर महीने चार मरीज़-प्रश्नों के जवाब हैं। प्रीमियम में एडवांस्ड लोकल एसईओ, चार एसईओ लेख, आठ मरीज़-प्रश्नों के जवाब और हर महीने यह जाँच है कि एआई असिस्टेंट आपको कैसे बताते हैं। काम हम करते हैं, लेकिन रैंक या ज़िक्र की गारंटी कोई नहीं दे सकता।"
+    },
+    "keywords": [
+      "seo",
+      "geo",
+      "aeo",
+      "search engine",
+      "google ranking",
+      "ranking",
+      "rank",
+      "chatgpt",
+      "gemini",
+      "ai search",
+      "answer engine",
+      "generative",
+      "voice search",
+      "blog",
+      "blogs",
+      "article",
+      "articles",
+      "keyword",
+      "keywords",
+      "local seo",
+      "ఎస్ఈఓ",
+      "జీఈఓ",
+      "ఏఈఓ",
+      "గూగుల్ ర్యాంక్",
+      "ర్యాంక్",
+      "బ్లాగ్",
+      "చాట్‌జీపీటీ",
+      "एसईओ",
+      "जीईओ",
+      "एईओ",
+      "रैंक",
+      "ब्लॉग",
+      "लेख",
+      "कीवर्ड",
+      "चैटजीपीटी",
+      "seo enti",
+      "seo kya"
+    ]
+  },
+  {
+    "id": "F21",
+    "topic": "Google profile and reviews",
+    "ask": {
+      "en": "Do you manage my Google profile and reviews?",
+      "te": "నా గూగుల్ ప్రొఫైల్‌ను, రివ్యూలను చూసుకుంటారా?",
+      "hi": "क्या आप मेरी गूगल प्रोफ़ाइल और रिव्यू सँभालते हैं?"
+    },
+    "answer": {
+      "en": "Basic includes four Google Business Profile posts a month. Growth and Premium go further. We manage your Google profile, keep it up to date, and post eight times a month on Growth and twelve on Premium. We also watch your reviews and write reply drafts, which you approve before anything is posted. We never write fake reviews.",
+      "te": "బేసిక్‌లో నెలకు నాలుగు గూగుల్ బిజినెస్ ప్రొఫైల్ పోస్ట్‌లు ఉంటాయి. గ్రోత్, ప్రీమియంలో ఇంకా ఎక్కువ. మీ గూగుల్ ప్రొఫైల్‌ను నిర్వహిస్తాం, తాజాగా ఉంచుతాం, గ్రోత్‌లో నెలకు ఎనిమిది, ప్రీమియంలో పన్నెండు పోస్ట్‌లు చేస్తాం. మీ రివ్యూలను గమనించి సమాధానాల డ్రాఫ్ట్‌లు రాస్తాం, పోస్ట్ చేసే ముందు మీరు ఆమోదిస్తారు. నకిలీ రివ్యూలు మేము ఎప్పుడూ రాయం.",
+      "hi": "बेसिक में हर महीने चार गूगल बिज़नेस प्रोफ़ाइल पोस्ट हैं। ग्रोथ और प्रीमियम में इससे ज़्यादा। हम आपकी गूगल प्रोफ़ाइल सँभालते हैं, उसे अपडेट रखते हैं, और ग्रोथ में महीने में आठ और प्रीमियम में बारह पोस्ट करते हैं। हम आपके रिव्यू पर नज़र रखते हैं और जवाब के ड्राफ़्ट लिखते हैं, जो पोस्ट होने से पहले आप मंज़ूर करते हैं। हम नकली रिव्यू कभी नहीं लिखते।"
+    },
+    "keywords": [
+      "google business",
+      "google profile",
+      "gbp",
+      "google maps",
+      "maps",
+      "review",
+      "reviews",
+      "google review",
+      "ratings",
+      "rating",
+      "గూగుల్ బిజినెస్",
+      "గూగుల్ ప్రొఫైల్",
+      "మ్యాప్",
+      "రివ్యూ",
+      "రివ్యూలు",
+      "गूगल बिज़नेस",
+      "गूगल प्रोफ़ाइल",
+      "गूगल प्रोफाइल",
+      "मैप",
+      "रिव्यू"
     ]
   }
 ];

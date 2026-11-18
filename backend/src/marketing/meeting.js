@@ -370,9 +370,9 @@ const INVITE = {
 const inviteText = (lang, first, link) => (INVITE[lang] || INVITE.en)(first, link);
 // what the client gets when THEY tap "Send me the plans on WhatsApp" (never sent by itself)
 const SUMMARY = {
-  en: (n, link) => `${n ? `Thank you ${n}, ` : 'Thank you '}for joining the TeamLink Digital Marketing plans meeting. Our plans, per month plus 18% GST: Starter Rs 3,999 (Rs 4,719 with GST), Growth Rs 9,999 (Rs 11,799), Premium Rs 19,999 (Rs 23,599). Trial: Rs 999. Open the meeting again: ${link}`,
-  te: (n, link) => `${n ? `ధన్యవాదాలు ${n} గారు, ` : 'ధన్యవాదాలు, '}టీమ్‌లింక్ డిజిటల్ మార్కెటింగ్ ప్లాన్ల మీటింగ్‌లో చేరినందుకు. మా ప్లాన్లు, నెలకు + 18% జీఎస్టీ: స్టార్టర్ ₹3,999 (జీఎస్టీతో ₹4,719), గ్రోత్ ₹9,999 (₹11,799), ప్రీమియం ₹19,999 (₹23,599). ట్రయల్: ₹999. మీటింగ్ మళ్ళీ చూడటానికి: ${link}`,
-  hi: (n, link) => `${n ? `धन्यवाद ${n} जी, ` : 'धन्यवाद, '}टीमलिंक डिजिटल मार्केटिंग प्लान मीटिंग में शामिल होने के लिए। हमारे प्लान, प्रति माह + 18% जीएसटी: स्टार्टर ₹3,999 (जीएसटी के साथ ₹4,719), ग्रोथ ₹9,999 (₹11,799), प्रीमियम ₹19,999 (₹23,599)। ट्रायल: ₹999। मीटिंग फिर से देखने के लिए: ${link}`,
+  en: (n, link) => `${n ? `Thank you ${n}, ` : 'Thank you '}for joining the TeamLink Digital Marketing plans meeting. Our plans, per month plus 18% GST: Basic Rs 3,999 (Rs 4,719 with GST), Growth Rs 7,999 (Rs 9,439), Premium Rs 14,999 (Rs 17,699). Trial: Rs 999. Open the meeting again: ${link}`,
+  te: (n, link) => `${n ? `ధన్యవాదాలు ${n} గారు, ` : 'ధన్యవాదాలు, '}టీమ్‌లింక్ డిజిటల్ మార్కెటింగ్ ప్లాన్ల మీటింగ్‌లో చేరినందుకు. మా ప్లాన్లు, నెలకు + 18% జీఎస్టీ: బేసిక్ ₹3,999 (జీఎస్టీతో ₹4,719), గ్రోత్ ₹7,999 (₹9,439), ప్రీమియం ₹14,999 (₹17,699). ట్రయల్: ₹999. మీటింగ్ మళ్ళీ చూడటానికి: ${link}`,
+  hi: (n, link) => `${n ? `धन्यवाद ${n} जी, ` : 'धन्यवाद, '}टीमलिंक डिजिटल मार्केटिंग प्लान मीटिंग में शामिल होने के लिए। हमारे प्लान, प्रति माह + 18% जीएसटी: बेसिक ₹3,999 (जीएसटी के साथ ₹4,719), ग्रोथ ₹7,999 (₹9,439), प्रीमियम ₹14,999 (₹17,699)। ट्रायल: ₹999। मीटिंग फिर से देखने के लिए: ${link}`,
 };
 const summaryText = (lang, first, link) => (SUMMARY[lang] || SUMMARY.en)(first, link);
 
@@ -507,7 +507,7 @@ async function publicEvent(token, b = {}, base = '') {
     const when = slot != null ? `at ${istText(slot)} (India time)` : WINDOW_WORDS[window];
     await S.run(`UPDATE "${TABLE}" SET name = ?, phone = ?, choice = ?, callbackWindow = ?, handoverAt = ?, updatedAt = ? WHERE id = ?`, name || null, phone, choice, window, now, now, r.id);
     const asked = parse(r.questions, []).map((x) => x.q).slice(-3).join('; ');
-    const what = { trial: 'wants to start the Rs 999 trial', starter: 'chose the Starter plan', growth: 'chose the Growth plan', premium: 'chose the Premium plan', team: 'asked for a call from the team' }[choice];
+    const what = { trial: 'wants to start the Rs 999 trial', starter: 'chose the Basic plan', growth: 'chose the Growth plan', premium: 'chose the Premium plan', team: 'asked for a call from the team' }[choice];
     await tellOwner(r, `Plans meeting: ${who({ name })} ${what} (Hot)`, `${who({ name })} (${phone}) ${what}. Call ${when}.${asked ? ` They asked: ${asked}.` : ''} Open AI Marketing > Client projects > Plans meeting.`);
     const leadId = await crmLead(r, { name, phone, what, when, slot, asked });
     if (leadId && leadId !== r.crmLeadId) await S.run(`UPDATE "${TABLE}" SET crmLeadId = ? WHERE id = ?`, leadId, r.id);

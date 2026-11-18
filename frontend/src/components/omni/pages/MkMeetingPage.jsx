@@ -14,7 +14,7 @@ import './mkMeeting.css';
 // Server: marketing/meeting.js. The client's page: components/omni/marketing/PlansMeetingPage.jsx.
 const LANG = { en: 'English', te: 'తెలుగు', hi: 'हिन्दी' };
 const TONE = { Hot: 'red', Warm: 'warn', Cold: 'draft', 'Not opened': 'draft' };
-const CHOICE = { trial: 'wants the ₹999 trial', starter: 'chose Starter', growth: 'chose Growth', premium: 'chose Premium', team: 'asked for a call' };
+const CHOICE = { trial: 'wants the ₹999 trial', starter: 'chose Basic', growth: 'chose Growth', premium: 'chose Premium', team: 'asked for a call' };
 const WINDOW = { asap: 'as soon as possible', morning: 'morning (9 to 12)', afternoon: 'afternoon (12 to 4)', evening: 'evening (4 to 7)' };
 const linkOf = (m) => `${window.location.origin}/m/${m.id}`; // the short address: it opens the full link behind it
 const telOf = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 10 ? `+91${d}` : `+${d}`; }; // opens the phone's own dialler

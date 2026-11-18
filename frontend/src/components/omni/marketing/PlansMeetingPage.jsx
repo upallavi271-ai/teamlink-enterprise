@@ -32,7 +32,7 @@ const T = {
     hello: (n) => (n ? `Hello ${n}` : 'Hello'), chooseLang: 'Choose your language', start: 'Start the meeting', soundOn: 'Please turn your sound on. This is an automated assistant, not a person. It takes about 5 minutes.',
     next: 'Next', back: 'Back', pause: 'Pause', play: 'Play', mute: 'Sound off', unmute: 'Sound on', ask: 'Ask a question', team: 'Talk to our team', send: 'Ask', typeHere: 'Type your question', mic: 'Speak', listening: 'Listening…',
     chips: 'Common questions', cont: 'Continue the meeting', slide: (a, b) => `Slide ${a} of ${b}`, noVoice: (l) => `This phone has no ${l} voice, so please read the words on the screen. Every button still works.`,
-    formTitle: 'How can our team reach you?', optTrial: 'Start the ₹999 trial', optStarter: 'Starter · ₹3,999 a month', optGrowth: 'Growth · ₹9,999 a month', optPremium: 'Premium · ₹19,999 a month', optTeam: 'I want to talk to your team first',
+    formTitle: 'How can our team reach you?', optTrial: 'Start the ₹999 trial', optStarter: 'Basic · ₹3,999 a month', optGrowth: 'Growth · ₹7,999 a month', optPremium: 'Premium · ₹14,999 a month', optTeam: 'I want to talk to your team first',
     yourName: 'Your name', yourPhone: 'Your WhatsApp number', otherPhone: 'Use another number (optional)', usePhone: (m) => `We will use ${m}.`, slotToday: 'Today', slotTomorrow: 'Tomorrow', slotLoading: 'Loading the times…', slotNone: 'No times are free in the next days. Please choose “As soon as possible”.', slotNote: 'Times are India time. We call from 9 am to 7 pm, Monday to Saturday.', thanksAt: (n, when) => `Thank you${n ? `, ${n}` : ''}. Your call is booked for ${when}. Our team will call you then.`, callWhen: 'When should we call?', asap: 'As soon as possible', morning: 'Morning (9 to 12)', afternoon: 'Afternoon (12 to 4)', evening: 'Evening (4 to 7)',
     submit: 'Send to our team', cancel: 'Back to the meeting', needPhone: 'Please type your WhatsApp number.', pickOne: 'Please pick one option.', fail: 'It could not be sent. Please try again.',
     thanks: (n) => `Thank you${n ? `, ${n}` : ''}. Our team has your request and will contact you soon.`, seeWork: 'See our finished work', plansTitle: 'Our plans (+ 18% GST)', again: 'Try again', loading: 'Opening your meeting…',
@@ -43,7 +43,7 @@ const T = {
     hello: (n) => (n ? `నమస్కారం ${n} గారు` : 'నమస్కారం'), chooseLang: 'మీ భాషను ఎంచుకోండి', start: 'మీటింగ్ మొదలుపెట్టండి', soundOn: 'దయచేసి మీ సౌండ్ ఆన్ చేయండి. ఇది ఆటోమేటెడ్ అసిస్టెంట్, మనిషి కాదు. సుమారు 5 నిమిషాలు పడుతుంది.',
     next: 'తరువాత', back: 'వెనక్కి', pause: 'ఆపండి', play: 'ప్లే', mute: 'సౌండ్ ఆఫ్', unmute: 'సౌండ్ ఆన్', ask: 'ప్రశ్న అడగండి', team: 'మా టీమ్‌తో మాట్లాడండి', send: 'అడగండి', typeHere: 'మీ ప్రశ్న రాయండి', mic: 'మాట్లాడండి', listening: 'వింటున్నాను…',
     chips: 'సాధారణ ప్రశ్నలు', cont: 'మీటింగ్ కొనసాగించండి', slide: (a, b) => `స్లైడ్ ${a} / ${b}`, noVoice: () => 'ఈ ఫోన్‌లో తెలుగు వాయిస్ లేదు, కాబట్టి దయచేసి స్క్రీన్ మీద ఉన్న అక్షరాలను చదవండి. అన్ని బటన్లు పనిచేస్తాయి.',
-    formTitle: 'మా టీమ్ మిమ్మల్ని ఎలా సంప్రదించాలి?', optTrial: '₹999 ట్రయల్ మొదలుపెట్టండి', optStarter: 'Starter · నెలకు ₹3,999', optGrowth: 'Growth · నెలకు ₹9,999', optPremium: 'Premium · నెలకు ₹19,999', optTeam: 'ముందు మీ టీమ్‌తో మాట్లాడాలి',
+    formTitle: 'మా టీమ్ మిమ్మల్ని ఎలా సంప్రదించాలి?', optTrial: '₹999 ట్రయల్ మొదలుపెట్టండి', optStarter: 'Basic · నెలకు ₹3,999', optGrowth: 'Growth · నెలకు ₹7,999', optPremium: 'Premium · నెలకు ₹14,999', optTeam: 'ముందు మీ టీమ్‌తో మాట్లాడాలి',
     yourName: 'మీ పేరు', yourPhone: 'మీ వాట్సాప్ నంబర్', otherPhone: 'వేరే నంబర్ వాడాలంటే (ఐచ్ఛికం)', usePhone: (m) => `మేము ${m} నంబర్‌ను వాడతాము.`, slotToday: 'ఈ రోజు', slotTomorrow: 'రేపు', slotLoading: 'సమయాలు లోడ్ అవుతున్నాయి…', slotNone: 'రాబోయే రోజుల్లో ఖాళీ సమయాలు లేవు. దయచేసి “వీలైనంత త్వరగా” ఎంచుకోండి.', slotNote: 'సమయాలు భారత సమయం. మేము సోమవారం నుండి శనివారం, ఉదయం 9 నుండి సాయంత్రం 7 వరకు కాల్ చేస్తాం.', thanksAt: (n, when) => `ధన్యవాదాలు${n ? ` ${n} గారు` : ''}. మీ కాల్ ${when} కు బుక్ అయింది. అప్పుడు మా టీమ్ మీకు కాల్ చేస్తుంది.`, callWhen: 'ఎప్పుడు కాల్ చేయాలి?', asap: 'వీలైనంత త్వరగా', morning: 'ఉదయం (9 నుండి 12)', afternoon: 'మధ్యాహ్నం (12 నుండి 4)', evening: 'సాయంత్రం (4 నుండి 7)',
     submit: 'మా టీమ్‌కు పంపండి', cancel: 'మీటింగ్‌కు తిరిగి వెళ్ళండి', needPhone: 'దయచేసి మీ వాట్సాప్ నంబర్ రాయండి.', pickOne: 'దయచేసి ఒకటి ఎంచుకోండి.', fail: 'పంపడం కుదరలేదు. దయచేసి మళ్ళీ ప్రయత్నించండి.',
     thanks: (n) => `ధన్యవాదాలు${n ? ` ${n} గారు` : ''}. మీ అభ్యర్థన మా టీమ్‌కు అందింది, త్వరలో సంప్రదిస్తారు.`, seeWork: 'మేము చేసిన పని చూడండి', plansTitle: 'మా ప్లాన్లు (+ 18% జీఎస్టీ)', again: 'మళ్ళీ ప్రయత్నించండి', loading: 'మీ మీటింగ్ తెరుస్తున్నాను…',
@@ -54,7 +54,7 @@ const T = {
     hello: (n) => (n ? `नमस्ते ${n} जी` : 'नमस्ते'), chooseLang: 'अपनी भाषा चुनें', start: 'मीटिंग शुरू करें', soundOn: 'कृपया अपनी आवाज़ चालू करें। यह एक ऑटोमैटिक असिस्टेंट है, इंसान नहीं। इसमें करीब 5 मिनट लगेंगे।',
     next: 'अगला', back: 'पीछे', pause: 'रोकें', play: 'चलाएँ', mute: 'आवाज़ बंद', unmute: 'आवाज़ चालू', ask: 'सवाल पूछें', team: 'हमारी टीम से बात करें', send: 'पूछें', typeHere: 'अपना सवाल लिखें', mic: 'बोलें', listening: 'सुन रहा हूँ…',
     chips: 'आम सवाल', cont: 'मीटिंग जारी रखें', slide: (a, b) => `स्लाइड ${a} / ${b}`, noVoice: () => 'इस फ़ोन में हिंदी आवाज़ नहीं है, इसलिए कृपया स्क्रीन पर लिखा हुआ पढ़ें। सभी बटन काम करेंगे।',
-    formTitle: 'हमारी टीम आपसे कैसे संपर्क करे?', optTrial: '₹999 का ट्रायल शुरू करें', optStarter: 'Starter · ₹3,999 प्रति माह', optGrowth: 'Growth · ₹9,999 प्रति माह', optPremium: 'Premium · ₹19,999 प्रति माह', optTeam: 'पहले हमारी टीम से बात करनी है',
+    formTitle: 'हमारी टीम आपसे कैसे संपर्क करे?', optTrial: '₹999 का ट्रायल शुरू करें', optStarter: 'Basic · ₹3,999 प्रति माह', optGrowth: 'Growth · ₹7,999 प्रति माह', optPremium: 'Premium · ₹14,999 प्रति माह', optTeam: 'पहले हमारी टीम से बात करनी है',
     yourName: 'आपका नाम', yourPhone: 'आपका व्हाट्सऐप नंबर', otherPhone: 'दूसरा नंबर देना हो तो (वैकल्पिक)', usePhone: (m) => `हम ${m} नंबर का इस्तेमाल करेंगे।`, slotToday: 'आज', slotTomorrow: 'कल', slotLoading: 'समय लोड हो रहे हैं…', slotNone: 'अगले दिनों में कोई समय खाली नहीं है। कृपया “जितनी जल्दी हो सके” चुनिए।', slotNote: 'समय भारतीय समय में हैं। हम सोमवार से शनिवार, सुबह 9 से शाम 7 बजे तक कॉल करते हैं।', thanksAt: (n, when) => `धन्यवाद${n ? ` ${n} जी` : ''}। आपकी कॉल ${when} के लिए बुक हो गई है। तब हमारी टीम आपको कॉल करेगी।`, callWhen: 'कब कॉल करें?', asap: 'जितनी जल्दी हो सके', morning: 'सुबह (9 से 12)', afternoon: 'दोपहर (12 से 4)', evening: 'शाम (4 से 7)',
     submit: 'हमारी टीम को भेजें', cancel: 'मीटिंग पर वापस जाएँ', needPhone: 'कृपया अपना व्हाट्सऐप नंबर लिखें।', pickOne: 'कृपया एक विकल्प चुनें।', fail: 'भेजा नहीं जा सका। कृपया फिर से कोशिश करें।',
     thanks: (n) => `धन्यवाद${n ? ` ${n} जी` : ''}। आपकी रिक्वेस्ट हमारी टीम को मिल गई है, वे जल्द संपर्क करेंगे।`, seeWork: 'हमारा किया हुआ काम देखें', plansTitle: 'हमारे प्लान (+ 18% जीएसटी)', again: 'फिर से कोशिश करें', loading: 'आपकी मीटिंग खुल रही है…',
@@ -155,14 +155,14 @@ function linesOf(i, lang, ctx) {
   if (i === 8) lines = lines.map((l) => fillProof(l, ctx.proof));
   return lines.filter((l) => !/^\[.{3,}\]/.test(l)).map((l) => l.replace(/\bRs\.? ?/g, '₹'));
 }
-const PLANS = [['Starter', '₹3,999', '8 + 2'], ['Growth', '₹9,999', '16 + 4'], ['Premium', '₹19,999', '30 + 8']];
+const PLANS = [['Basic', '₹3,999', '8 + 2 + 4'], ['Growth', '₹7,999', '12 + 4 + 8'], ['Premium', '₹14,999', '16 + 8 + 12']]; // posts + reels + stories
 const SR = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
 
 
 // ---- the look of each slide (the words are the slide's own lines in meetingContent.js; only the layout is here) ----------------------------------------------------------------
 const PLAN_OF = { 3: 'starter', 4: 'growth', 5: 'premium' };
-const PLAN_MONEY = { starter: ['₹3,999', '₹4,719'], growth: ['₹9,999', '₹11,799'], premium: ['₹19,999', '₹23,599'] }; // price, price with 18% GST (the approved plan sheet)
-const FEAT_ICON = ['🖼️', '📱', '✏️', '⏱️', '📊'];
+const PLAN_MONEY = { starter: ['₹3,999', '₹4,719'], growth: ['₹7,999', '₹9,439'], premium: ['₹14,999', '₹17,699'] }; // price, price with 18% GST (founder, 18 Nov 2026; the first plan keeps the key `starter` but is called Basic)
+const FEAT_ICON = ['🖼️', '📱', '📍']; // posts and reels, platforms, Google profile; every other line gets a tick
 const colon = (l) => { const t = String(l); const i = t.indexOf(':'); return i < 0 ? [t.trim(), ''] : [t.slice(0, i).trim(), t.slice(i + 1).trim()]; };
 const offerBadge = (d) => { const m = /₹\s?[\d,]+/.exec(d) || /\d+%/.exec(d); if (m) return m[0].replace(/\s/g, ''); const q = /(\d+)\D+(\d+)/.exec(d); return q ? `${q[1]}→${q[2]}` : '★'; };
 const Bot = () => (
