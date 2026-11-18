@@ -22,7 +22,53 @@ const ITEMS = [
   ['resume', 'Resume', 10, (c) => !!c.resumeName],
 ];
 const TOTAL = ITEMS.reduce((s, i) => s + i[2], 0);
-const SELECT = { id: true, phone: true, email: true, location: true, experienceYears: true, education: true, qualificationId: true, specialization: true, specialisationId: true, skills: true, technicalSkills: true, currentSalary: true, expectedSalary: true, noticePeriod: true, resumeName: true };
+const SELECT = { id: true, name: true, dob: true, passingYear: true, phone: true, email: true, location: true, experienceYears: true, education: true, qualificationId: true, specialization: true, specialisationId: true, skills: true, technicalSkills: true, currentSalary: true, expectedSalary: true, noticePeriod: true, resumeName: true };
+
+// --- WRONG VALUES, NOT ONLY MISSING ONES (ATS audit 2026-11-18, Q707 / Q708) ----------------------------------------------------
+// validity(c) -> [{ key, label }] for values that are filled in but cannot be right: an e-mail that is not an address, a phone that is
+// not a 10-digit Indian mobile (or one digit repeated), a date of birth that is not a date / in the future / an age under 15 or over 80,
+// and values that contradict each other (more experience than the age allows, a passing year in the future on an experienced profile).
+const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
+const ISSUES = {
+  email: 'E-mail is not a valid address',
+  phone: 'Phone is not a valid 10-digit mobile number',
+  dob: 'Date of birth is not a real date',
+  age: 'Age from the date of birth is under 15 or over 80',
+  experience: 'Experience is negative or more than 50 years',
+  experienceAge: 'Experience is more than the age allows',
+  passingYear: 'Passing year is in the future but the profile has experience',
+};
+function mobileDigits(v) {
+  let d = String(v || '').replace(/\D/g, '');
+  if (d.length === 12 && d.startsWith('91')) d = d.slice(2);
+  if (d.length === 11 && d.startsWith('0')) d = d.slice(1);
+  return d;
+}
+function dobDate(v) {
+  const s = String(v || '').trim();
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+  if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s);
+  if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
+  return null;
+}
+function validity(c, now = new Date()) {
+  const out = [];
+  if (!c) return out;
+  if (c.email && !EMAIL_OK.test(String(c.email).trim())) out.push('email');
+  if (c.phone) { const d = mobileDigits(c.phone); if (d.length !== 10 || !/^[6-9]/.test(d) || /^(\d)\1{9}$/.test(d)) out.push('phone'); }
+  let age = null;
+  if (c.dob) {
+    const d = dobDate(c.dob);
+    if (!d || Number.isNaN(d.getTime()) || d > now) out.push('dob');
+    else { age = (now - d) / (365.25 * 86400000); if (age < 15 || age > 80) out.push('age'); }
+  }
+  const exp = c.experienceYears != null ? Number(c.experienceYears) : null;
+  if (exp != null && (exp < 0 || exp > 50)) out.push('experience');
+  if (exp != null && age != null && age >= 15 && exp > age - 14) out.push('experienceAge');
+  if (exp != null && exp > 0 && /^\d{4}$/.test(String(c.passingYear || '').trim()) && Number(c.passingYear) > now.getFullYear()) out.push('passingYear');
+  return out.map((key) => ({ key, label: ISSUES[key] }));
+}
 
 function completeness(c) {
   if (!c) return { score: 0, missing: [] };
@@ -36,6 +82,9 @@ async function report() {
   const buckets = { '0-39': 0, '40-59': 0, '60-79': 0, '80-100': 0 };
   const missingBy = Object.fromEntries(ITEMS.map(([, l]) => [l, 0]));
   let sum = 0; let cursor = null; let seen = 0;
+  const invalidBy = Object.fromEntries(Object.keys(ISSUES).map((k) => [k, 0]));
+  const toFix = []; // the first 200 profiles with a wrong value, for the list on the screen
+  let invalidProfiles = 0;
   // in pages, so 50,000 profiles never sit in memory at once
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
@@ -46,6 +95,12 @@ async function report() {
       sum += score; seen += 1;
       buckets[score < 40 ? '0-39' : score < 60 ? '40-59' : score < 80 ? '60-79' : '80-100'] += 1;
       missing.forEach((m) => { missingBy[m] += 1; });
+      const bad = validity(c);
+      if (bad.length) {
+        invalidProfiles += 1;
+        bad.forEach((b) => { invalidBy[b.key] += 1; });
+        if (toFix.length < 200) toFix.push({ id: c.id, name: c.name, issues: bad.map((b) => b.label) });
+      }
     });
     cursor = rows[rows.length - 1].id;
     if (rows.length < 5000) break;
@@ -78,7 +133,14 @@ async function report() {
     staleSixMonths: staleN,
     consentNotRecorded: noConsent,
     items: ITEMS.map(([k, l, w]) => ({ key: k, label: l, weight: w })),
+    // wrong values (Q707/Q708): how many of each, and the profiles to fix first
+    invalid: {
+      profiles: invalidProfiles,
+      pct: total ? Math.round((invalidProfiles / total) * 1000) / 10 : 0,
+      byIssue: Object.entries(invalidBy).filter(([, n]) => n > 0).map(([key, n]) => ({ key, label: ISSUES[key], count: n })).sort((a, b) => b.count - a.count),
+      toFix,
+    },
   };
 }
 
-module.exports = { completeness, report, ITEMS };
+module.exports = { completeness, report, ITEMS, validity, ISSUES };
