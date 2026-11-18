@@ -484,6 +484,8 @@ export default function AtsHome() {
   const deptList = ((data && data.deptChoices) || []).filter((o) => o.count > 0 || o.jobs > 0 || o.value === f.department);
   const showDept = deptList.length > 1 || !!f.department;
   const deptName = f.department ? ((deptList.find((o) => o.value === f.department) || {}).label || (f.department === '__none__' ? 'No department' : f.department)) : '';
+  // the overall count on "All departments" (2026-11-18): every department's in-process count added up
+  const deptAllText = `All departments (${fmt(deptList.reduce((s, o) => s + (Number(o.count) || 0), 0))} in process)`;
   const deptText = (o) => `${o.label} (${o.count ? `${fmt(o.count)} in process` : `${fmt(o.jobs)} open ${o.jobs === 1 ? 'requirement' : 'requirements'}`})`;
   const [moreOpen, setMoreOpen] = useState(false);
   // Team leads load on their own (a second request) so the page shows fast.
@@ -614,7 +616,7 @@ export default function AtsHome() {
               <label className={`lph-facet av4-dept-f${f.department ? ' is-picked' : ''}`}>
                 <span className="lph-facet-lbl">Department</span>
                 <Combo value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department">
-                  <option value="">All departments</option>
+                  <option value="">{deptAllText}</option>
                   {deptList.map((o) => <option key={o.value} value={o.value}>{deptText(o)}</option>)}
                 </Combo>
               </label>
@@ -680,7 +682,7 @@ export default function AtsHome() {
         <label className="ah-deptpick">
             <span className="ah-deptpick-l">Department:</span>
             <Combo value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department">
-              <option value="">All departments</option>
+              <option value="">{deptAllText}</option>
               {deptList.map((o) => <option key={o.value} value={o.value}>{deptText(o)}</option>)}
             </Combo>
           </label>

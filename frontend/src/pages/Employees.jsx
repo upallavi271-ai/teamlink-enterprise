@@ -332,6 +332,12 @@ export default function Employees() {
     rows.forEach((e) => { STATUS_CHOICES.forEach((st) => { if (inStatus(e, st)) out[st] += 1; }); });
     return out;
   }, [rows]);
+  // how many people hold each department / designation / role (2026-11-18: every filter shows its counts and the overall count)
+  const countOf = useMemo(() => {
+    const out = { department: {}, designation: {}, role: {} };
+    rows.forEach((e) => ['department', 'designation', 'role'].forEach((k) => { if (e[k]) out[k][e[k]] = (out[k][e[k]] || 0) + 1; }));
+    return out;
+  }, [rows]);
   const rowDepts = useMemo(() => [...new Set(rows.map((e) => e.department).filter(Boolean))].sort(), [rows]);
   // Every configured designation (incl. Role Catalog custom roles), not only
   // the ones somebody already holds — a role added a minute ago is filterable.
@@ -792,20 +798,20 @@ export default function Employees() {
           value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
         />
         <Combo value={filters.dept} onChange={(e) => setFilters((f) => ({ ...f, dept: e.target.value }))}>
-          <option value="">All departments</option>
-          {rowDepts.map((d) => <option key={d}>{d}</option>)}
+          <option value="">{`All departments (${rows.filter((e) => e.department).length})`}</option>
+          {rowDepts.map((d) => <option key={d} value={d}>{`${d} (${countOf.department[d] || 0})`}</option>)}
         </Combo>
         <Combo value={filters.designation} onChange={(e) => setFilters((f) => ({ ...f, designation: e.target.value }))}>
-          <option value="">All designations</option>
-          {rowDesignations.map((d) => <option key={d}>{d}</option>)}
+          <option value="">{`All designations (${rows.filter((e) => e.designation).length})`}</option>
+          {rowDesignations.map((d) => <option key={d} value={d}>{`${d} (${countOf.designation[d] || 0})`}</option>)}
         </Combo>
         <Combo value={filters.position} onChange={(e) => setFilters((f) => ({ ...f, position: e.target.value }))}>
-          <option value="">All positions</option>
+          <option value="">{`All positions (${positionOptions.reduce((s, o) => s + (Number(o.n) || 0), 0)})`}</option>
           {positionOptions.map((o) => <option key={o.code} value={o.code}>{`${o.code} · ${o.n} ${o.n === 1 ? 'person' : 'people'}`}</option>)}
         </Combo>
         <Combo value={filters.role} onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}>
-          <option value="">All roles</option>
-          {rowRoles.map((r) => <option key={r} value={r}>{atsRoleLabel(r)}</option>)}
+          <option value="">{`All roles (${rows.filter((e) => e.role).length})`}</option>
+          {rowRoles.map((r) => <option key={r} value={r}>{`${atsRoleLabel(r)} (${countOf.role[r] || 0})`}</option>)}
         </Combo>
         <Combo value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           <option value="">All statuses ({rows.length})</option>
