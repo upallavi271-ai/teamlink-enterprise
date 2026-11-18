@@ -804,6 +804,8 @@ async function buildPagedRows(user, st, s, shared = false) {
     const apps = row.applications || [];
     const latest = apps.find((a) => a.id === row.latestApplicationId) || null;
     row.pipelineStatus = pipelineStatusOf(row.currentStage);
+    // joined and then dropped: shown as Dropped (closed, outside Joined), not as Joined
+    if (latest && leftAfterJoining(latest)) { row.pipelineStatus = 'Rejected'; row.currentStageLabel = 'Dropped'; row.stageDetailLabel = 'Dropped'; row.left = true; }
     // The joining date (user, 2026-10-22): the day the person joined, from the joined application this login sees (the shown one first).
     const ji = JL.joinInfoOfPerson(apps, row.latestApplicationId, joinMoves);
     if (ji) { row.joiningDay = ji.day; row.joinedOther = ji.other; row.joinedDays = ji.days; }
@@ -1123,12 +1125,13 @@ async function buildPipelineRows(user, st, s, snap) {
         clientId: r && !internal ? r.clientId : null,
         clientName: r ? (internal ? 'TeamLink (internal)' : (r.client && r.client.name) || null) : null,
         currentStage: a.stage,
-        currentStageLabel: stageLabelFor(a.stage, { internal }),
+        currentStageLabel: leftAfterJoining(a) ? 'Dropped' : stageLabelFor(a.stage, { internal }),
         stageGroup: groupIdOfStage(a.stage),
         stageGroupLabel: groupLabelOfStage(a.stage),
-        stageDetailLabel: stageDetail(a, { internal }),
-        stageKey: stageKeyOf(a, internal, snap),
-        pipelineStatus: pipelineStatusOf(a.stage),
+        stageDetailLabel: leftAfterJoining(a) ? 'Dropped' : stageDetail(a, { internal }),
+        stageKey: leftAfterJoining(a) ? 'rejected' : stageKeyOf(a, internal, snap),
+        pipelineStatus: leftAfterJoining(a) ? 'Rejected' : pipelineStatusOf(a.stage),
+        left: leftAfterJoining(a),
         lifeStatus: applicationLifeStatus(a),
         // One named owner with a login, or none ('No owner named').
         owner: na.live ? (na.ownerName || null) : '—',

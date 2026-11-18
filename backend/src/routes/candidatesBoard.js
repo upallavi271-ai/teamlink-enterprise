@@ -200,7 +200,7 @@ module.exports = function mountCandidatesBoard(router, deps) {
           return;
         }
         if (r.pipelineStatus === 'Rejected') rejected += 1;
-        const k = COLUMN_OF.get(r.currentStage);
+        const k = COLUMN_OF.get(r.left ? 'REJECTED' : r.currentStage); // joined then dropped sits with Rejected, not Joined
         if (k) byCol.get(k).push(r);
       });
       // idsOnly=1 (bulk Call / Message): every person of ONE step (column=) or of every live step.

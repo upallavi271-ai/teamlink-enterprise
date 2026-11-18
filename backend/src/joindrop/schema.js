@@ -155,4 +155,22 @@ function plain(row) {
 const rows = async (sql, ...p) => (await q(sql, ...p)).map(plain);
 const one = async (sql, ...p) => (await rows(sql, ...p))[0] || null;
 
-module.exports = { ensure, q, run, rows, one, plain, DDL };
+// Drops recorded before the Roll status was set: give the application the same word the record has, so the lists stop showing a dropped person as Joined.
+// Only an empty roll status is filled; never throws; safe to run again.
+async function healDroppedRollStatus() {
+  try {
+    if (!(await ensure())) return 0;
+    const got = await rows('SELECT "applicationId" FROM "JoiningRecord" WHERE "status" = 'Dropped'');
+    const ids = got.map((r) => r.applicationId).filter(Boolean);
+    let n = 0;
+    for (let i = 0; i < ids.length; i += 400) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await prisma.application.updateMany({ where: { id: { in: ids.slice(i, i + 400) }, OR: [{ rollStatus: null }, { rollStatus: '' }] }, data: { rollStatus: 'Dropped' } });
+      n += r.count;
+    }
+    if (n) console.log(`[join-drop] ${n} dropped candidate(s) now show as Dropped in the lists`); // eslint-disable-line no-console
+    return n;
+  } catch (e) { console.error('[join-drop] heal:', e.message); return 0; } // eslint-disable-line no-console
+}
+
+module.exports = { ensure, q, run, rows, one, plain, DDL, healDroppedRollStatus };
