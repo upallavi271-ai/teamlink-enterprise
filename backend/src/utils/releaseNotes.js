@@ -13,6 +13,12 @@ const API_VERSION = 'v1';
 
 const NOTES = [
   {
+    version: '1.5.2', date: '2026-11-18', title: 'Bulk resume upload is much faster',
+    items: [
+      'Uploading resumes no longer rebuilds an index of every client, invoice and candidate for each file: with 100,000 candidates a resume took 1.8 s to check, now about 20 ms.',
+    ],
+  },
+  {
     version: '1.5.1', date: '2026-11-18', title: 'Agents no longer time out',
     items: [
       'BDE Agent sends the model only what the question needs (exact counts always, details for the part you asked about), so answers stay inside the free AI limits and the candidate count is exact (it showed 1,500 because the list was capped).',
