@@ -42,7 +42,7 @@ function resetCache() { cache = null; }
 
 const wants = (c, event) => event === 'ping' || c.events.includes('*') || c.events.includes(event) || (!c.events.length && EVENTS.includes(event));
 
-async function deliver(c, body, event, attempt) {
+async function deliver(c, body, event, attempt, { noRetry = false } = {}) {
   const raw = JSON.stringify(body);
   const sig = c.secret ? `sha256=${crypto.createHmac('sha256', c.secret).update(raw).digest('hex')}` : '';
   let status = 0; let error = '';
@@ -61,7 +61,7 @@ async function deliver(c, body, event, attempt) {
   const ok = status >= 200 && status < 300;
   await recordEvent(CHANNEL, { action: `Webhook ${event}`, by: 'System', result: ok ? `Delivered (HTTP ${status}), try ${attempt + 1}` : `Failed: ${error}, try ${attempt + 1}` }).catch(() => {});
   const retryable = !ok && (status === 0 || status === 429 || status >= 500);
-  if (retryable && attempt < RETRY_MIN.length) {
+  if (retryable && !noRetry && attempt < RETRY_MIN.length) {
     const t = setTimeout(() => { deliver(c, body, event, attempt + 1).catch(() => {}); }, RETRY_MIN[attempt] * 60000);
     if (t.unref) t.unref();
   }
@@ -86,7 +86,7 @@ async function test() {
   const c = await config();
   if (!c.url) return { ok: false, message: 'Type the Endpoint URL first.' };
   const body = { id: crypto.randomUUID(), event: 'ping', at: new Date().toISOString(), data: { message: 'TeamLink webhook test' } };
-  const r = await deliver(c, body, 'ping', RETRY_MIN.length); // no retries for a test
+  const r = await deliver(c, body, 'ping', 0, { noRetry: true }); // no retries for a test
   return r.ok ? { ok: true, message: `Delivered to ${new URL(c.url).host} (HTTP ${r.status}). Events: ${c.events.length ? c.events.join(', ') : 'all'}.` } : { ok: false, message: r.error || `HTTP ${r.status}` };
 }
 
