@@ -872,6 +872,12 @@ function guaranteeEndOf(application, guaranteeDays) {
   return new Date(d.getTime() + guaranteeDays * 86400000);
 }
 const LEFT_STATUSES = [JOINING_REPLACEMENT_DUE, JOINING_REPLACED, JOINING_LEFT_AFTER_GUARANTEE, 'Dropped'];
+// A person who JOINED and then dropped / left (a drop recorded in Joining & Drop, or a Roll status of Dropped). The application stays at stage
+// Joined on purpose (billing, guarantee and the history read it), but every LIST must show them as Dropped, not under Joined (2026-11-18).
+function leftAfterJoining(a) {
+  if (!a || !['JOINED', 'HIRED'].includes(a.stage)) return false;
+  return LEFT_STATUSES.includes(a.joiningStatus) || a.rollStatus === 'Dropped';
+}
 const WORKFLOW_RULES = {
   DUPLICATE_CHECK_PENDING: (a, ctx) => !ctx.duplicateChecked,
   RESUME_SCORE_PENDING: (a, ctx) => !!ctx.duplicateChecked && !ctx.resumeScored,
