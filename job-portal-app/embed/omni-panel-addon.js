@@ -36,6 +36,29 @@
     document.addEventListener('keydown', onKey);
   }
 
+  /* The WhatsApp button opens Green Start's WhatsApp page (the one Omni-Channel uses: "WhatsApp Web", chats assigned to you) in a new tab, signed in with the
+     same one-click ticket TeamLink's own Omni-Channel entry uses (POST /api/omni-gs/session, /api/omni-gs/sso-ticket). Green Start is never framed. If the login
+     may not open Green Start (or anything fails) the tab is closed and the bare Omni-Channel WhatsApp inbox opens in a window instead. */
+  var GS_URL = 'https://greenstart.teamlinks.in';
+  function tlToken() { try { return localStorage.getItem('tl_token') || ''; } catch (e) { return ''; } }
+  function post(path) {
+    return fetch(path, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tlToken() }, body: '{}' })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j && j.error || String(r.status)); return j; }); });
+  }
+  function openGreenStartWhatsApp(fallback) {
+    if (!tlToken()) { fallback(); return; }
+    var tab = null;
+    try { tab = window.open('about:blank', '_blank'); } catch (e) { tab = null; }
+    if (tab) { try { tab.document.title = 'WhatsApp'; tab.document.body.innerHTML = '<p style="font-family:system-ui,sans-serif;padding:24px">Opening WhatsApp...</p>'; } catch (e) { /* blank is fine */ } }
+    var bail = function () { if (tab) { try { tab.close(); } catch (e) { /* gone */ } } fallback(); };
+    post('/api/omni-gs/session').then(function () { return post('/api/omni-gs/sso-ticket'); }).then(function (t) {
+      if (!t || t.blocked || !t.ticket) return bail();
+      var dest = GS_URL + '/auth/teamlink#ticket=' + encodeURIComponent(t.ticket) + '&next=' + encodeURIComponent('/app/inbox');
+      if (tab && !tab.closed) { try { tab.opener = null; } catch (e) { /* ignore */ } tab.location.href = dest; } else window.location.assign(dest);
+      return undefined;
+    }).catch(bail);
+  }
+
   var tries = 0;
   var iv = setInterval(function () {
     var done = true;
@@ -47,7 +70,7 @@
     /* the WhatsApp button: the chats of the Omni-Channel WhatsApp number(s), where the replies to every campaign arrive */
     if (typeof window.tlWhatsAppInbox === 'function' && !window.tlWhatsAppInbox.__tlOmni) {
       ownInbox = window.tlWhatsAppInbox;
-      window.tlWhatsAppInbox = function () { open('WhatsApp (Omni-Channel inbox)', INBOX, ownInbox); };
+      window.tlWhatsAppInbox = function () { openGreenStartWhatsApp(function () { open('WhatsApp (Omni-Channel inbox)', INBOX, ownInbox); }); };
       window.tlWhatsAppInbox.__tlOmni = true;
     } else if (!window.tlWhatsAppInbox || !window.tlWhatsAppInbox.__tlOmni) done = false;
     if (done || ++tries > 120) clearInterval(iv);
