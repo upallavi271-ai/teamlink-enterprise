@@ -661,6 +661,24 @@ export function teamlinkFrontRouter({ root, express }) {
    * THE BULK "Start AI Calls" BUTTON: Kavya places the calls (embed/kavya-campaign.mjs). The portal's own dialer is switched off
    * (OUTBOUND_CALLS_ENABLED stays off); this route answers the page's POST /api/ai-calling/campaign in the portal's own shape.
    */
+  /*
+   * TEMPLATES & CAMPAIGNS: the Omni-Channel WhatsApp templates / campaigns appear in the portal's own lists (embed/omni-mirror.mjs), and
+   * the portal's WhatsApp templates are read by TeamLink's Omni-Channel hub through GET /api/integrations/teamlink/comm-templates below.
+   */
+  const mirrorDeps = async () => {
+    const { withUser } = await portal();
+    const { resolveSession } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'auth.js')).href);
+    return {
+      resolveSession, api: teamlinkApi(), secret: pushSecret(),
+      emailOf: async (session) => ((await withUser(SYSTEM, (c) => c.query('select email from users where id = $1', [session.userId]))).rows[0] || {}).email,
+    };
+  };
+  for (const kind of ['templates', 'campaigns']) {
+    r.get(`/api/comm/${kind}`, wrap(async (req, res, next) => {
+      const M = await import(pathToFileURL(join(import.meta.dirname, 'omni-mirror.mjs')).href);
+      return M.omniMirror(kind, await mirrorDeps())(req, res, next);
+    }));
+  }
   r.get('/tl-addon/kavya-bulk.js', (_req, res) => {
     res.set('Content-Type', 'application/javascript; charset=utf-8');
     res.set('Cache-Control', 'no-cache');
@@ -1476,6 +1494,13 @@ export function teamlinkFrontRouter({ root, express }) {
       router().then((pr) => pr(req, res, next), next);
     });
   }
+
+  // behind the x-teamlink-token guard above
+  r.get('/api/integrations/teamlink/comm-templates', wrap(async (_req, res) => {
+    const M = await import(pathToFileURL(join(import.meta.dirname, 'omni-mirror.mjs')).href);
+    const { withUser } = await portal();
+    res.json({ templates: await M.portalWhatsAppTemplates(withUser, SYSTEM) });
+  }));
 
   r.put('/api/integrations/teamlink/jobs/:requirementId', wrap(async (req, res) => {
     const { withUser } = await portal();

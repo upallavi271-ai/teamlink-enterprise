@@ -71,6 +71,18 @@ router.post('/applications', async (req, res) => {
   return res.status(out.status).json(out.body);
 });
 
+// THE PORTAL'S "Templates & Campaigns" ALSO SHOWS WHAT WAS MADE IN OMNI-CHANNEL (2026-11-18): the WhatsApp templates and campaigns the signed-in
+// portal recruiter may see in Omni-Channel (utils/portalOmniMirror.js). Server to server: bridge secret + x-portal-user-email. Read-only.
+const mirror = (fn) => async (req, res) => {
+  if (!bridge.secretMatches(req.get('x-job-portal-secret'))) return res.status(401).json({ error: 'Invalid or missing job portal secret' });
+  try {
+    const out = await fn(String(req.get('x-portal-user-email') || ''));
+    return res.status(out.ok === false ? out.status || 400 : 200).json(out);
+  } catch (err) { return res.json({ ok: true, templates: [], campaigns: [], departments: [], note: 'Omni-Channel did not answer.' }); }
+};
+router.get('/omni-templates', mirror((e) => require('../utils/portalOmniMirror').omniTemplates(e))); // eslint-disable-line global-require
+router.get('/omni-campaigns', mirror((e) => require('../utils/portalOmniMirror').omniCampaigns(e))); // eslint-disable-line global-require
+
 // THE PORTAL'S SMS GO THROUGH TEAMLINK'S SMS CHANNEL (founder 2026-11-02): the portal cannot speak the SMS Push Platform, so its SMS provider
 // (job-portal-app/embed/teamlink-integration.mjs) hands each message here with the bridge secret. It leaves through TeamLink's own SMS
 // gateway - its DLT templates, its opt-out list and its "not proven until a real SMS was delivered" rule - and the answer says what happened.

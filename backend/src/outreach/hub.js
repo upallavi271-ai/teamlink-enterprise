@@ -45,6 +45,17 @@ async function messageItems(u) {
   }
   return out;
 }
+// The Job Portal's own WhatsApp templates (Templates & Campaigns there), shown here read-only under "Job Portal" (utils/portalOmniMirror.js).
+async function portalItems(u) {
+  if (!A.mayUse(u) || staffOnly(u)) return [];
+  const rows = await require('../utils/portalOmniMirror').portalTemplates().catch(() => []); // eslint-disable-line global-require
+  return rows.map((t) => ({
+    key: `portal:${t.id}`, source: 'portal', sourceWord: 'Job Portal template', where: ['Job Portal'], name: t.name, group: 'Job Portal', channel: 'WhatsApp', language: t.language || '', audience: 'candidate',
+    subject: t.subject || '', body: t.body || '', department: t.department && t.department !== 'All departments' ? t.department : '', updatedAt: iso(t.updatedAt), byName: t.createdBy || '',
+    wa: { status: ({ approved: 'Approved', waiting: 'Pending', changes_needed: 'Rejected' })[t.approval] || 'None', name: t.waName || '' },
+    canEdit: false, readOnlyWhy: 'This template was made in the Job Portal (Templates & Campaigns). Change it there.', oldPlace: 'Job Portal > Templates & Campaigns',
+  }));
+}
 async function outreachItems(u) {
   if (!(await S.ready())) return [];
   const out = [];
@@ -121,7 +132,7 @@ async function setDept(u, key, dept) {
 async function list(u, { where = '', q = '', channel = '', approval = '' } = {}) {
   if (!A.mayUse(u)) return { items: [], counts: {}, kinds: {} };
   const ov = await deptOverlay();
-  const all = [...await messageItems(u), ...await outreachItems(u), ...await jobItems(u), ...await postItems(u), ...scriptItems(u)]
+  const all = [...await messageItems(u), ...await outreachItems(u), ...await portalItems(u), ...await jobItems(u), ...await postItems(u), ...scriptItems(u)]
     .map((i) => ({ ...i, department: ov[i.key] || i.department }))
     .filter((i) => A.isAdmin(u) || !i.department || A.mayDepartment(u, i.department));
   const needle = String(q || '').trim().toLowerCase();
