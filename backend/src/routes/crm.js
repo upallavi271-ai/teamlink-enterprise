@@ -167,6 +167,9 @@ router.get('/ai/insight/:kind/:id', wrap((req) => AI.insight(req.user, req.param
 router.post('/ai/summary/:kind/:id', wrap((req) => AI.summary(req.user, req.params.kind, req.params.id)));
 router.post('/ai/draft/:kind/:id', wrap((req) => AI.draftEmail(req.user, req.params.kind, req.params.id, req.body || {})));
 router.post('/ai/ask', wrap((req) => AI.ask(req.user, req.body || {})));
+// the Meeting Agent (crm/ai.js): a prep brief before, and the notes turned into summary / next steps / follow-up mail after
+router.post('/ai/meeting-prep/:kind/:id', wrap((req) => AI.meetingPrep(req.user, req.params.kind, req.params.id, req.body || {})));
+router.post('/ai/meeting-notes/:kind/:id', wrap((req) => AI.meetingNotes(req.user, req.params.kind, req.params.id, req.body || {})));
 // Call, WhatsApp and Email from a lead / deal / customer (crm/contact.js): what is connected, the first words, the real send, the call, and "opened my own app"
 router.get('/contact/ready', wrap((req) => CONTACT.ready(req.user)));
 router.get('/contact/wa-plan', wrap((req) => CONTACT.whatsappPlan(req.user, { kind: String(req.query.kind || ''), id: String(req.query.id || ''), to: String(req.query.to || '') })));

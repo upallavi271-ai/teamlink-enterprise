@@ -242,17 +242,25 @@ async function ask(user, { question, history } = {}) {
   const p = S.seesAll(r) ? [] : [user.id];
   const deals = await DB.all(`SELECT d."title", d."stage", d."value", d."probability", d."expectedClose", d."ownerName", a."name" AS "account" FROM "CrmDeal" d LEFT JOIN "CrmAccount" a ON a."id" = d."accountId" WHERE ${own.replace('"ownerId"', 'd."ownerId"')} AND d."stage" NOT IN ('Won', 'Lost') ORDER BY d."value" DESC LIMIT 25`, ...p);
   const tasks = await S.tasks(user, { when: 'overdue' });
-  const leads = await DB.all(`SELECT "company", "status", "rating", "source" FROM "CrmLead" WHERE ${own} AND "status" NOT IN ('Converted', 'Junk') ORDER BY "updatedAt" DESC LIMIT 25`, ...p);
+  const todayTasks = await S.tasks(user, { when: 'today' }).catch(() => []);
+  const upcoming = await S.tasks(user, { when: 'upcoming' }).catch(() => []);
+  const leads = await DB.all(`SELECT "company", "contactName", "status", "rating", "source", "city" FROM "CrmLead" WHERE ${own} AND "status" NOT IN ('Converted', 'Junk') ORDER BY "updatedAt" DESC LIMIT 25`, ...p);
+  const recent = await DB.all(`SELECT "kind", "subject", "note", "at", "byName" FROM "CrmActivity" WHERE ${own} ORDER BY "at" DESC LIMIT 15`, ...p).catch(() => []);
+  const named = await mentionedRecords(user, `${q} ${hist.filter((m) => m.role === 'user').slice(-2).map((m) => m.content).join(' ')}`);
   const facts = [
     `Today: ${S.istToday()}. Scope: ${S.seesAll(r) ? 'the whole sales team' : `only ${user.name || 'me'}`}.`,
     `This month: ${o.cards.leads.value} leads added, revenue won Rs ${Math.round(o.cards.revenue.value)} in ${o.cards.revenue.deals} deals, target Rs ${Math.round(o.cards.target.value)}${o.cards.target.pct != null ? ` (${o.cards.target.pct}% done)` : ''}.`,
     `Open pipeline: ${o.cards.pipeline.open} deals worth Rs ${Math.round(o.cards.pipeline.value)}, likely Rs ${o.cards.pipeline.weighted}. Follow-ups: ${o.cards.followUps.today} today, ${o.cards.followUps.late} late.`,
     'Open deals:', ...deals.map((d) => `- ${d.title} (${d.account || '-'}), ${d.stage} ${d.probability}%, Rs ${Math.round(d.value || 0)}, close ${d.expectedClose || 'not set'}${S.seesAll(r) ? `, owner ${d.ownerName}` : ''}`),
     'Late follow-ups:', ...tasks.slice(0, 15).map((t) => `- ${t.title} on ${t.recordName || '-'} (due ${t.dueDate}${S.seesAll(r) ? `, ${t.ownerName}` : ''})`),
-    'Open leads:', ...leads.map((l) => `- ${l.company}, ${l.status}${l.rating ? `, ${l.rating}` : ''}${l.source ? `, from ${l.source}` : ''}`),
+    'Open leads:', ...leads.map((l) => `- ${l.company}${l.contactName ? ` (${l.contactName})` : ''}, ${l.status}${l.rating ? `, ${l.rating}` : ''}${l.source ? `, from ${l.source}` : ''}${l.city ? `, ${l.city}` : ''}`),
+    'Follow-ups due today:', ...todayTasks.slice(0, 15).map((t) => `- ${t.dueTime ? `${t.dueTime} ` : ''}${t.title} on ${t.recordName || '-'}${t.type ? ` (${t.type})` : ''}${S.seesAll(r) ? `, ${t.ownerName}` : ''}`),
+    'Coming follow-ups and meetings:', ...upcoming.slice(0, 15).map((t) => `- ${t.dueDate}${t.dueTime ? ` ${t.dueTime}` : ''} ${t.title} on ${t.recordName || '-'}${t.type ? ` (${t.type})` : ''}${S.seesAll(r) ? `, ${t.ownerName}` : ''}`),
+    'Recent activity:', ...recent.map((a) => `- ${String(a.at || '').slice(0, 10)} ${a.kind}: ${S.clip(a.subject, 100)}${a.note ? ` - ${S.clip(a.note, 140)}` : ''}${S.seesAll(r) && a.byName ? ` (${a.byName})` : ''}`),
+    ...(named ? ['', named] : []),
   ].join('\n');
-  const res = await askModel(`${RULES}\nAnswer the salesperson's question from these CRM facts:\n${facts}`, q);
-  return res.ok ? S.okBody({ text: res.text }) : S.fail(503, res.error);
+  const res = await askModel(`${RULES}\nYou are the CRM Agent: answer quickly (1-5 short lines or a short list), in the language the salesperson writes in (English, Telugu, Hindi or those written in English letters). For a general sales doubt give short practical advice and say it is general advice.\nAnswer the salesperson's question from these CRM facts:\n${facts}`, q, hist);
+  return res.ok ? S.okBody({ text: res.text, provider: res.provider, ms: res.ms }) : S.fail(503, res.error);
 }
 
-module.exports = { insight, summary, draftEmail, ask, insightOf };
+module.exports = { insight, summary, draftEmail, ask, insightOf, meetingPrep, meetingNotes };
