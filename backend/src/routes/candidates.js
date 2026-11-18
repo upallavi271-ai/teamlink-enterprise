@@ -76,6 +76,9 @@ router.use(require('../utils/applicationOwner').warmMiddleware); // eslint-disab
 // an empty list.
 router.use(requireProduct('ats'));
 router.use(requirePerm('ats', 'candidates', 'Candidate List', 'view'));
+// recruiter filters (utils/candidateFilters.js): a login only keeps the filter parameters it may use (no CTC for a role that cannot see pay ...)
+const FX = require('../utils/candidateFilters');
+router.use(FX.queryGuard);
 
 // ---------------------------------------------------------------------------
 // VIEW ≠ EDIT, and INTERNAL ≠ SHARED.
@@ -797,6 +800,7 @@ async function buildPagedRows(user, st, s, shared = false) {
   // The joining day of the people who joined (one read for the few joined applications that carry no day of their own).
   const joinMoves = await JL.movesFor(candidates.flatMap((c) => c.applications || []));
   const bdeView = isBdeViewer(user);
+  const fxIdx = await FX.loadIndex();
   return candidates.map((c) => {
     const row = decorate(c, { user, sharedIds, followUps: st.followUps });
     // Came on: the date + how far to trust it (utils/cameOn.js). TeamLink logins only (a client / the candidate is served none).
@@ -822,6 +826,8 @@ async function buildPagedRows(user, st, s, shared = false) {
     row.interviewStatus = latest ? latest.interviewStatus || null : null;
     row.ownerUserId = latest ? ownerUserIdOf(latest, row.followUp) : null;
     row.appIds = apps.map((a) => a.id);
+    // the recruiter filters' facts (utils/candidateFilters.js): never sent out
+    row.fx = FX.fxOf(c, fxIdx, { updatedDay: FX.istDay(row.lastActivityAt), sharedDay: FX.sharedDayOf(fxIdx, row.appIds) });
     // (login-specific, and only the pipeline rows' "My candidates" queue reads it: a shared copy has none)
     row.mine = shared ? undefined : apps.some((a) => {
       const r = a.requirement || {};
@@ -955,7 +961,8 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (q.desig && (r.desig || 'none') !== q.desig) return false;
   if (q.expBand && (r.expBand || 'none') !== q.expBand) return false;
   // Tag (profile depth, 2026-11-17): a free label on the person (utils/candidateProfileDepth.js).
-  if (q.tag && !PD.hasTagSync(r.id, q.tag)) return false;
+  if (q.tag && !FX.tagMatches(r.id, q.tag)) return false;
+  if (!FX.matches(r, q, ctx)) return false;
   if (q.status) {
     const wanted = String(q.status).split(',');
     const legacy = { 'On Hold': 'Hold', Closed: 'Joined' };
@@ -1076,6 +1083,7 @@ async function buildPipelineRows(user, st, s, snap) {
   let preAts = 0;
   let people = 0;
   const bdeView = isBdeViewer(user);
+  const fxIdx = await FX.loadIndex();
   candidates.forEach((c) => {
     const apps = s.global ? (c.applications || []) : visibleApplications(user, c.applications, sharedIds);
     if (s.global || apps.length) people += 1;
@@ -1205,6 +1213,7 @@ async function buildPipelineRows(user, st, s, snap) {
         .filter(Boolean).join(' ').toLowerCase();
       row.xhay = xhay;
       row.phoneDigits = String(c.phone || '').replace(/\D/g, '');
+      row.fx = FX.fxOf(c, fxIdx, { updatedDay: FX.istDay(row.lastActivityAt), contactedDay: row.lastContactAt ? FX.istDay(row.lastContactAt) : null, sharedDay: FX.sharedDayOf(fxIdx, [a.id]) });
       rows.push(row);
     });
   });
@@ -1274,7 +1283,8 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (q.qual && (r.qual || 'none') !== q.qual) return false;
   if (q.desig && (r.desig || 'none') !== q.desig) return false;
   if (q.expBand && (r.expBand || 'none') !== q.expBand) return false;
-  if (q.tag && !PD.hasTagSync(r.candidateId, q.tag)) return false;
+  if (q.tag && !FX.tagMatches(r.candidateId, q.tag)) return false;
+  if (!FX.matches(r, q, ctx)) return false;
   if (q.owner && ownerKeyOf(r) !== q.owner) return false;
   if (q.rejectedBefore === 'yes' && !(r.rejectedCount > 0)) return false;
   if (q.rejectedBefore === 'no' && r.rejectedCount > 0) return false;
@@ -1316,7 +1326,7 @@ function salaryLakhs(v) {
   if (/k/.test(s.slice(m.index + m[0].length, m.index + m[0].length + 2))) return (n * 1000 * 12) / 100000;
   return n >= 1000 ? n / 100000 : n;
 }
-const PIPELINE_HIDDEN = ['hay', 'xhay', 'phoneDigits', 'mine', 'interviewToday'];
+const PIPELINE_HIDDEN = ['hay', 'xhay', 'phoneDigits', 'mine', 'interviewToday', 'fx'];
 function pipelineOut(r) {
   const out = { ...r };
   PIPELINE_HIDDEN.forEach((k) => { delete out[k]; });
@@ -1579,10 +1589,18 @@ function lastApplicationActivity(row, snap) {
   return last || null;
 }
 
+// candidate id -> the IST day anyone last contacted them, from the pipeline rows this login sees (the People filter "Last contacted")
+async function contactDayMap(user) {
+  const built = await pipelineRowsFor(user);
+  const m = new Map();
+  built.rows.forEach((r) => { const d = r.fx && r.fx.contactedDay; if (d && (!m.get(r.candidateId) || d > m.get(r.candidateId))) m.set(r.candidateId, d); });
+  return m;
+}
 async function masterCore(req, sub, snap, all) {
   const q = req.query;
   const att = hasPersonQuery(q) ? await attributedApplications(req.user, q) : null;
   const ctx = await searchCtxOf(req.user, q.search, att ? att.ids : null);
+  if (q.contactedFrom || q.contactedTo) ctx.fxContact = await contactDayMap(req.user); // last-contacted day per person (the People rows carry none)
   const days = inactiveDaysOf(q);
   const cutoff = Date.now() - days * 86400000;
   const kind = viewerKind(req.user);

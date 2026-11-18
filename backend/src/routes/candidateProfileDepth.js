@@ -45,7 +45,11 @@ const dirty = (id) => { try { require('../utils/candidateListCache').markCandida
 // ---- shared lists -----------------------------------------------------------------------------------------------
 router.get('/profile-tags', wrap(async (req, res) => {
   if (!internalOnly(req, res)) return undefined;
-  return res.json({ tags: await PD.allTags() });
+  // counts over the people THIS login may see (they were over the whole database)
+  const FX = require('../utils/candidateFilters'); // eslint-disable-line global-require
+  const rows = await cand().pagedRowsFor(req.user);
+  await PD.ready();
+  return res.json({ tags: FX.scopedTags(new Set(rows.map((r) => r.id))) });
 }));
 router.get('/profile-fields', wrap(async (req, res) => {
   if (!internalOnly(req, res)) return undefined;

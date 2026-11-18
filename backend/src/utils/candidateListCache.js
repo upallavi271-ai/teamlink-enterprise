@@ -53,6 +53,9 @@ const CANDIDATE_SELECT = {
   currentCompany: true, technicalSkills: true, goodToHaveSkills: true, preferredLocation: true,
   // B7: the partner who owns this person (the "Partner: X" badge).
   ownerPartnerId: true, ownerUntil: true,
+  // Recruiter filters (utils/candidateFilters.js): work mode, employment type, resume on file; and the native / hometown place once that column exists on main.
+  preferredWorkMode: true, preferredEmploymentType: true, resumeName: true,
+  ...(((require('@prisma/client').Prisma || {}).CandidateScalarFieldEnum || {}).nativeLocation ? { nativeLocation: true } : {}),
 };
 // The application columns decorate(), the list and the filters read.
 const APPLICATION_SELECT = {

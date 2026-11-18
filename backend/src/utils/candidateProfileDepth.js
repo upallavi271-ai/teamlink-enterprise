@@ -342,7 +342,11 @@ async function removeTag(candidateId, tag) {
   if (TAG_INDEX.has(key)) { TAG_INDEX.get(key).delete(candidateId); if (!TAG_INDEX.get(key).size) { TAG_INDEX.delete(key); TAG_LABEL.delete(key); } }
   return { removed: !!n };
 }
-/** Every tag with how many people carry it (counts over the whole database; the list itself still applies the login's scope). */
+/** The tag index as [{ label, ids:Set }] (utils/candidateFilters.js counts it over the people in scope). */
+function tagSnapshot() {
+  return TAG_INDEX ? [...TAG_INDEX.entries()].map(([key, set]) => ({ label: TAG_LABEL.get(key) || key, ids: set })) : [];
+}
+/** Every tag with how many people carry it (counts over the whole database; the list route now counts over the login's scope instead). */
 async function allTags() {
   await ensure();
   return [...TAG_INDEX.entries()].map(([key, set]) => ({ value: TAG_LABEL.get(key) || key, label: TAG_LABEL.get(key) || key, count: set.size }))
@@ -506,7 +510,7 @@ module.exports = {
   ensure, ready, toMonth, normaliseTitle, levelOf, TITLE_RULES, findGaps, progression, GAP_MONTHS,
   educationOf, employmentOf, tagsOf, fieldDefs, customValuesOf, summaryOf, analyse,
   addEducation, updateEducation, addEmployment, updateEmployment, removeRow,
-  addTag, removeTag, allTags, hasTagSync, tagKeyOf,
+  addTag, removeTag, allTags, tagSnapshot, hasTagSync, tagKeyOf,
   FIELD_TYPES, createField, updateField, checkValue, saveCustomValues,
   ruleSummary, writeSummary, parseCheck,
 };

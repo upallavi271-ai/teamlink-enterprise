@@ -184,9 +184,12 @@ function contactBuckets(r) {
   return out;
 }
 
-async function candidateFacets(user, q) {
+async function candidateFacets(user, q0) {
   // eslint-disable-next-line global-require
   const cand = require('../routes/candidates');
+  // the recruiter filters: only the parameters this login may use, and only the options it may see (utils/candidateFilters.js)
+  const FX = require('./candidateFilters'); // eslint-disable-line global-require
+  const q = FX.guard(user, q0);
   if (typeof cand.pipelineRowsFor !== 'function') return { facets: {}, total: null };
   if (q && q.tag) await require('./candidateProfileDepth').ready().catch(() => {}); // eslint-disable-line global-require
   const built = await cand.pipelineRowsFor(user);
@@ -210,8 +213,9 @@ async function candidateFacets(user, q) {
   };
   const match = (r, qq, ctx) => cand.pipelineRowMatches(r, qq, ctx);
   const facets = {};
-  for (const f of CAND_FACETS) {
-    const qq = without(q, f.key === 'recruiter' ? ['recruiter', 'positionCode'] : [f.key]);
+  const fxDefs = FX.facetDefs(user);
+  for (const f of [...CAND_FACETS, ...fxDefs]) {
+    const qq = without(q, f.omit || (f.key === 'recruiter' ? ['recruiter', 'positionCode'] : [f.key]));
     // eslint-disable-next-line no-await-in-loop
     const ctx = { ...base, personIds: await personIds(qq) };
     const counts = new Map();
@@ -236,7 +240,25 @@ async function candidateFacets(user, q) {
       });
       continue; // eslint-disable-line no-continue
     }
+    if (f.omit) {
+      // a recruiter filter (comma list): every ticked value stays listed, even at 0, so it can be seen and unticked
+      let list = finish(counts, (v) => (f.labelOf ? f.labelOf(v) : String(v)), '');
+      list = FX.capOptions(list, f.cap);
+      FX.csvOf(q[f.key]).forEach((w) => { if (!list.some((o) => o.value.toLowerCase() === w.toLowerCase())) list.push({ value: w, label: f.labelOf ? f.labelOf(w) : w, count: 0 }); });
+      facets[f.key] = list;
+      continue; // eslint-disable-line no-continue
+    }
     facets[f.key] = finish(counts, (v) => labels.get(v) || (f.labelOf ? f.labelOf(v) : String(v)), q[f.key]);
+  }
+  // Tags: counted over the people in THIS login's scope (they were over the whole database), every other filter on.
+  if (FX.rightsOf(user).internal) {
+    const qT = without(q, ['tag']);
+    const ctxT = { ...base, personIds: await personIds(qT) };
+    const people = new Set();
+    rows.forEach((r) => { if (match(r, qT, ctxT)) people.add(r.candidateId); });
+    const tags = FX.scopedTags(people);
+    FX.csvOf(q.tag).forEach((w) => { if (!tags.some((o) => o.value.toLowerCase() === w.toLowerCase())) tags.push({ value: w, label: w, count: 0 }); });
+    facets.tag = tags;
   }
   // The People list counts PEOPLE, not applications.
   if (q.view === 'master' && typeof cand.masterSourceFacet === 'function') {
