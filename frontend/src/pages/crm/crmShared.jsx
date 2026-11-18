@@ -1059,6 +1059,101 @@ function DealFiles({ dealId, onChanged }) {
   );
 }
 
+// ---- THE MEETING AGENT on a record (2026-11-18): a prep brief before the meeting; after it, the raw notes become a summary,
+// decisions, next steps and a follow-up mail. Nothing is saved until "Save to timeline" (a Meeting activity + the ticked follow-ups).
+function MeetingAgent({ kind, id, onClose, onChanged, onEmail }) {
+  const { toast } = useCrm();
+  const [tab, setTab] = useState('prep');
+  const [purpose, setPurpose] = useState('');
+  const [prep, setPrep] = useState(null);
+  const [notes, setNotes] = useState('');
+  const [res, setRes] = useState(null);
+  const [pick, setPick] = useState({});
+  const [busy, setBusy] = useState('');
+  const link = { [`${kind}Id`]: id };
+  const tomorrow = new Date(Date.now() + 86400000 + 5.5 * 3600000).toISOString().slice(0, 10);
+  async function makePrep() {
+    setBusy('prep'); setPrep(null);
+    try { const r = await api.post(`/crm/ai/meeting-prep/${kind}/${id}`, { purpose }); setPrep(r.data); } catch (e) { toast(errOf(e, 'The AI is not available right now.')); } finally { setBusy(''); }
+  }
+  async function makeNotes() {
+    setBusy('notes'); setRes(null);
+    try {
+      const r = await api.post(`/crm/ai/meeting-notes/${kind}/${id}`, { notes });
+      setRes(r.data);
+      setPick(Object.fromEntries((r.data.nextSteps || []).map((s, i) => [i, s.owner !== 'client'])));
+    } catch (e) { toast(errOf(e, 'The AI is not available right now.')); } finally { setBusy(''); }
+  }
+  async function save() {
+    if (!res) return;
+    setBusy('save');
+    try {
+      const note = [res.summary, res.decisions.length ? `Decisions:\n${res.decisions.map((d) => `- ${d}`).join('\n')}` : '', res.nextSteps.length ? `Next steps:\n${res.nextSteps.map((s) => `- ${s.task}${s.due ? ` (by ${s.due})` : ''}${s.owner === 'client' ? ' [client]' : ''}`).join('\n')}` : ''].filter(Boolean).join('\n\n');
+      await api.post('/crm/activities', { kind: 'meeting', subject: 'Meeting summary (Meeting Agent)', note, ...link });
+      const chosen = res.nextSteps.filter((_, i) => pick[i]);
+      for (const s of chosen) { await api.post('/crm/tasks', { title: s.task, dueDate: s.due || tomorrow, ...link }); } // eslint-disable-line no-await-in-loop
+      toast(chosen.length ? `Saved to the timeline with ${chosen.length} follow-up${chosen.length > 1 ? 's' : ''}.` : 'Saved to the timeline.');
+      if (onChanged) onChanged();
+      onClose();
+    } catch (e) { toast(errOf(e, 'It could not be saved.')); } finally { setBusy(''); }
+  }
+  const copy = (t) => navigator.clipboard.writeText(t).then(() => toast('Copied.')).catch(() => {});
+  return (
+    <Modal title="🤝 Meeting Agent" size="wide" onClose={onClose} foot={tab === 'notes' && res ? <><button type="button" className="btn" onClick={onClose}>Close</button><button type="button" className="btn btn-primary" disabled={!!busy} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save to timeline'}</button></> : <button type="button" className="btn" onClick={onClose}>Close</button>}>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+        <button type="button" className={`btn btn-sm${tab === 'prep' ? ' btn-primary' : ''}`} onClick={() => setTab('prep')}>Before the meeting: prep brief</button>
+        <button type="button" className={`btn btn-sm${tab === 'notes' ? ' btn-primary' : ''}`} onClick={() => setTab('notes')}>After the meeting: notes → summary</button>
+      </div>
+      {tab === 'prep' && (
+        <div>
+          <label className="small-muted" htmlFor="ma-purpose" style={{ fontSize: 12 }}>What is this meeting for? (optional)</label>
+          <div style={{ display: 'flex', gap: 6, margin: '4px 0 10px' }}>
+            <input id="ma-purpose" type="text" value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. first call, agreement discussion, fee negotiation" style={{ flex: 1 }} maxLength={300} />
+            <button type="button" className="btn btn-primary btn-sm" disabled={!!busy} onClick={makePrep}>{busy === 'prep' ? 'Preparing…' : 'Make prep brief'}</button>
+          </div>
+          {prep && (
+            <div className="card" style={{ padding: 10, whiteSpace: 'pre-wrap', fontSize: 13 }}>
+              <div style={{ display: 'flex', marginBottom: 4 }}><b>Prep brief</b><span className="small-muted" style={{ fontSize: 10.5, marginLeft: 8 }}>{prep.provider ? `${prep.provider}${prep.ms ? ` · ${(prep.ms / 1000).toFixed(1)}s` : ''}` : ''}</span><button type="button" className="crm-linkbtn" style={{ marginLeft: 'auto' }} onClick={() => copy(prep.text)}>Copy</button></div>
+              {prep.text}
+            </div>
+          )}
+        </div>
+      )}
+      {tab === 'notes' && (
+        <div>
+          <label className="small-muted" htmlFor="ma-notes" style={{ fontSize: 12 }}>Type or paste what was said (rough notes are fine, any language)</label>
+          <textarea id="ma-notes" rows={6} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Met Ravi (HR head). Need 5 nurses by Dec 10. Ok with 8.33% fee, wants 60-day replacement. Send agreement by Friday." style={{ width: '100%', margin: '4px 0 8px' }} maxLength={6000} />
+          <button type="button" className="btn btn-primary btn-sm" disabled={!!busy || notes.trim().length < 10} onClick={makeNotes}>{busy === 'notes' ? 'Reading the notes…' : 'Make summary & next steps'}</button>
+          {res && (
+            <div className="card" style={{ padding: 10, marginTop: 10, fontSize: 13 }}>
+              <b>Summary</b><div style={{ whiteSpace: 'pre-wrap', margin: '4px 0 8px' }}>{res.summary}</div>
+              {res.decisions.length > 0 && <><b>Decisions</b><ul style={{ margin: '4px 0 8px', paddingLeft: 18 }}>{res.decisions.map((d) => <li key={d}>{d}</li>)}</ul></>}
+              {res.nextSteps.length > 0 && (
+                <>
+                  <b>Next steps</b> <span className="small-muted" style={{ fontSize: 11.5 }}>ticked ones become follow-ups</span>
+                  {res.nextSteps.map((s, i) => (
+                    <label key={`${s.task}-${i}`} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', padding: '3px 0' }}> {/* eslint-disable-line react/no-array-index-key */}
+                      <input type="checkbox" checked={!!pick[i]} onChange={(e) => setPick((p) => ({ ...p, [i]: e.target.checked }))} />
+                      <span>{s.task} <span className="small-muted">{s.due ? `by ${s.due}` : `(no date: ${tomorrow})`}{s.owner === 'client' ? ' · client' : ''}</span></span>
+                    </label>
+                  ))}
+                </>
+              )}
+              {res.followUpEmail && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center' }}><b>Follow-up email</b><span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8 }}><button type="button" className="crm-linkbtn" onClick={() => copy(res.followUpEmail)}>Copy</button>{onEmail && kind !== 'account' && <button type="button" className="crm-linkbtn" onClick={() => { const m = /^subject:\s*(.+)\n+([\s\S]*)$/i.exec(res.followUpEmail.trim()); onEmail({ subject: m ? m[1].trim() : '', text: m ? m[2].trim() : res.followUpEmail }); }}>Open in email</button>}</span></div>
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 12.5, background: 'var(--line-soft)', padding: 8, borderRadius: 8, marginTop: 4 }}>{res.followUpEmail}</div>
+                </div>
+              )}
+              {res.provider && <div className="small-muted" style={{ fontSize: 10.5, marginTop: 6 }}>{res.provider}</div>}
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // ---- the AI assistant on a record: health score, next best actions (rules, always), summary / email draft (the model) ------
 function AiInsight({ kind, id, refresh, onChanged }) {
   const { toast } = useCrm();
@@ -1066,6 +1161,7 @@ function AiInsight({ kind, id, refresh, onChanged }) {
   const [out, setOut] = useState(null); // { title, text }
   const [compose, setCompose] = useState(null); // the AI's email draft, open in the mail window with Send (CrmContact.jsx)
   const [busy, setBusy] = useState('');
+  const [meeting, setMeeting] = useState(false);
   useEffect(() => { if (!['lead', 'deal', 'account'].includes(kind)) return; api.get(`/crm/ai/insight/${kind}/${id}`).then((r) => setD(r.data)).catch(() => setD(null)); }, [kind, id, refresh]);
   async function ask(what) {
     setBusy(what); setOut(null);
@@ -1086,7 +1182,8 @@ function AiInsight({ kind, id, refresh, onChanged }) {
         <span className="crm-ai-badge" aria-hidden="true">✨</span>
         <b>AI assistant</b>
         <span className="small-muted" style={{ fontSize: 11.5 }}>{d.ai && d.ai.available ? `model: ${d.ai.provider}` : 'insights from your CRM data'}</span>
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-sm" onClick={() => setMeeting(true)}>🤝 Meeting Agent</button>
           <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => ask('summary')}>{busy === 'summary' ? 'Thinking…' : 'Summarize'}</button>
           {kind !== 'account' && <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => ask('draft')}>{busy === 'draft' ? 'Writing…' : 'Draft follow-up email'}</button>}
         </span>
@@ -1103,6 +1200,7 @@ function AiInsight({ kind, id, refresh, onChanged }) {
           <details style={{ marginTop: 4 }}><summary className="small-muted" style={{ fontSize: 11.5, cursor: 'pointer' }}>Why this score</summary>{d.reasons.map((r) => <div key={r.why} className="small-muted" style={{ fontSize: 12 }}>{r.pts > 0 ? `+${r.pts}` : r.pts || ''} {r.why}</div>)}</details>
         </div>
       </div>
+      {meeting && <MeetingAgent kind={kind} id={id} onClose={() => setMeeting(false)} onChanged={onChanged} onEmail={(draft) => { setMeeting(false); setCompose(draft); }} />}
       {compose && <CrmContactDialog record={{ kind, id }} channel="Email" initialDraft={compose} onClose={() => setCompose(null)} onDone={onChanged} />}
       {out && (
         <div className="card" style={{ padding: 10, marginTop: 8, whiteSpace: 'pre-wrap', fontSize: 13 }}>
