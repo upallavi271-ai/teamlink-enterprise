@@ -237,6 +237,7 @@ export function RequirementMatchesPanel({
                 </td>
                 <td data-k="Fit">
                   <Pct n={c.match.overall} sub={c.match.approx ? 'about' : c.match.label} title={c.match.breakdown ? c.match.breakdown.text : undefined} />
+                  {c.jdMatch && <div className="small-muted" title={`The whole job description against the whole resume, by words and phrases (no AI). Matched: ${(c.jdMatch.matched || []).slice(0, 8).join(', ')}. Missing: ${(c.jdMatch.missing || []).slice(0, 8).join(', ')}`}>{`JD match ${c.jdMatch.pct}%`}</div>}
                   {c.jdMatch && <div className="small-muted" title={c.jdMatch.matched.length ? `Words and phrases of the job description found in the resume: ${c.jdMatch.matched.join(', ')}. Missing: ${(c.jdMatch.missing || []).join(', ')}` : 'Job description against the resume text'}>{`JD match ${c.jdMatch.pct}%`}</div>}
                 </td>
                 <td data-k={restricted ? 'Salary' : 'Resume · AI · Location · Salary'}>
