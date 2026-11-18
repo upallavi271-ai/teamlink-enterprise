@@ -539,8 +539,8 @@ add({
     const where = { AND: [candidateWhere(ctx.user), ...and] };
     const pool = await prisma.candidate.findMany({
       where,
-      select: { id: true, name: true, specialization: true, education: true, skills: true, technicalSkills: true, currentDesignation: true, location: true, experienceYears: true, updatedAt: true },
-      orderBy: { updatedAt: 'desc' },
+      select: { id: true, name: true, specialization: true, education: true, skills: true, technicalSkills: true, currentDesignation: true, location: true, experienceYears: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
       take: 400,
     });
     const has = (c, w) => fields.some((f) => String(c[f] || '').toLowerCase().includes(w));
