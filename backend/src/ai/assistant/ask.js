@@ -558,13 +558,19 @@ add({
       take: 400,
     });
     const has = (c, w) => fields.some((f) => String(c[f] || '').toLowerCase().includes(w));
+    // ROLE words ("developer", "engineer", "nurse") are rarely written in a skills list: they only add to the rank, while the other words
+    // (java, cardiology, react ...) must match. A question made only of role words needs one of them to match.
+    const ROLE = /^(develop|engineer|nurse|teacher|professor|lecturer|consultant|technician|executive|pharmacist|accountant|supervisor|operator|analyst|manager|designer|tester|programmer|coder|specialist|surgeon|faculty)/;
+    const core = q.terms.filter((w) => !ROLE.test(w));
+    const roles = q.terms.filter((w) => ROLE.test(w));
     const scored = pool.map((c) => {
-      const termHits = q.terms.filter((w) => has(c, w)).length;
+      const coreHits = core.filter((w) => has(c, w)).length;
+      const roleHits = roles.filter((w) => has(c, w)).length;
       const qualHit = q.quals.some((ql) => [c.education, c.specialization].some((v) => String(v || '').toLowerCase().replace(/\./g, '').includes(ql.toLowerCase().replace(/\./g, ''))));
-      return { c, termHits, qualHit, score: termHits * 2 + (qualHit ? 2 : 0) + (c.experienceYears || 0) / 100 };
+      return { c, coreHits, roleHits, qualHit, score: coreHits * 3 + roleHits + (qualHit ? 2 : 0) + (c.experienceYears || 0) / 100 };
     })
-      // every word asked for should match when there are several (a specialization AND a skill); one is enough when only one was asked
-      .filter((x) => (q.terms.length ? x.termHits >= Math.min(q.terms.length, 2) || (q.terms.length === 1 && x.termHits === 1) : true) && (q.quals.length ? x.qualHit : true))
+      // two of the main words when several were asked (a specialization AND a skill), the one when only one was asked
+      .filter((x) => (core.length ? x.coreHits >= Math.min(core.length, 2) : (roles.length ? x.roleHits > 0 : true)) && (q.quals.length ? x.qualHit : true))
       .sort((a, b) => b.score - a.score);
     const top = scored.slice(0, q.count);
     const asked = [q.quals.join(' / '), q.terms.join(' '), q.cities.length ? `in ${q.cities.map((c) => c.label).join(' / ')}` : '', q.exp != null ? `${q.exp}+ years` : ''].filter(Boolean).join(', ') || 'your words';
