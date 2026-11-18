@@ -184,7 +184,32 @@ async function clientSharedApplicationIds(user, candidates) {
 const maskPhone = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length >= 4 ? `${'x'.repeat(Math.max(0, d.length - 4))}${d.slice(-4)}` : null; };
 const maskEmail = (e) => { const k = emailKey(e); if (!k) return null; const [u, dom] = k.split('@'); return `${u.slice(0, 2)}***@${dom}`; };
 
-async function duplicateMatches(user, { email, phone, name, excludeId }) {
+// NAME + DATE OF BIRTH + QUALIFICATION (ATS audit 2026-11-18, Q46): a person who comes back with a new phone and e-mail is still caught when
+// the same name, the same date of birth and the same qualification are on file. All three = strong (as a same phone); name + date of
+// birth only = possible (never blocks).
+const normName = (v) => String(v || '').toLowerCase().replace(/^(dr|mr|mrs|ms)\.?\s+/, '').replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
+const normQual = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+function dobForms(v) {
+  const s = String(v || '').trim();
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  let y; let mo; let d;
+  if (m) [, y, mo, d] = m; else { m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s); if (!m) return s ? [s] : []; [, d, mo, y] = m; }
+  const dd = String(d).padStart(2, '0'); const mm = String(mo).padStart(2, '0');
+  return [...new Set([`${y}-${mm}-${dd}`, `${dd}/${mm}/${y}`, `${dd}-${mm}-${y}`, `${Number(d)}/${Number(mo)}/${y}`, s])];
+}
+async function dobMatches({ name, dob, education, excludeId }) {
+  const forms = dobForms(dob);
+  const nn = normName(name);
+  if (!forms.length || !nn) return [];
+  const rows = await prisma.candidate.findMany({ where: { dob: { in: forms }, ...(excludeId ? { id: { not: excludeId } } : {}) }, select: { id: true, name: true, education: true, specialization: true }, take: 50 });
+  const q = normQual(education);
+  return rows.filter((r) => normName(r.name) === nn).map((r) => {
+    const sameQual = !!q && [r.education, r.specialization].some((v) => { const x = normQual(v); return x && (x === q || x.includes(q) || q.includes(x)); });
+    return { id: r.id, reasons: [sameQual ? 'Same name, date of birth and qualification' : 'Same name and date of birth'], strength: sameQual ? 'strong' : 'possible' };
+  });
+}
+
+async function duplicateMatches(user, { email, phone, name, excludeId, dob, education }) {
   const pk = phoneKeys(phone);
   const ek = emailKey(email);
   if (!pk.length && !ek && !String(name || '').trim()) return [];
@@ -196,6 +221,12 @@ async function duplicateMatches(user, { email, phone, name, excludeId }) {
     ? await prisma.candidate.findMany({ where: { OR: or }, select: { id: true, name: true, email: true, phone: true }, take: 50 })
     : [];
   const hits = matchEntry({ email, phone, name, excludeId }, st.candidates, st.version, extra);
+  if (dob) {
+    (await dobMatches({ name, dob, education, excludeId }).catch(() => [])).forEach((m) => {
+      const have = hits.find((h) => h.id === m.id);
+      if (have) { have.reasons = [...new Set([...(have.reasons || []), ...m.reasons])]; if (m.strength === 'strong') have.strength = 'strong'; } else hits.push(m);
+    });
+  }
   if (!hits.length) return [];
   const rows = await prisma.candidate.findMany({
     where: { id: { in: hits.slice(0, 20).map((h) => h.id) } },
@@ -1849,6 +1880,8 @@ router.get('/check-duplicate', async (req, res, next) => {
       phone: String(req.query.phone || '').trim(),
       name: String(req.query.name || '').trim(),
       excludeId: req.query.excludeId || null,
+      dob: String(req.query.dob || '').trim(),
+      education: String(req.query.education || '').trim(),
     });
     const matches = found.filter((m) => m.strength === 'strong');
     return res.json({ duplicate: matches.length > 0, matches, possible: found.filter((m) => m.strength !== 'strong') });
@@ -3769,7 +3802,7 @@ router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), as
   // profile is created only on an explicit "Create New Profile"
   // (overrideDuplicate: true), and that override is audit-logged with the
   // records it was warned about. A name-only resemblance never blocks.
-  const found = await duplicateMatches(req.user, { email, phone, name: data.name });
+  const found = await duplicateMatches(req.user, { email, phone, name: data.name, dob: data.dob, education: data.education });
   const strong = found.filter((m) => m.strength === 'strong');
   // cand7_ (§7): "no second profile" — only a Super Admin / Admin may still
   // create one over a same-phone / same-email match (audited below).
