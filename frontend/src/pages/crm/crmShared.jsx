@@ -1120,19 +1120,21 @@ export function AskAi() {
   const [q, setQ] = useState('');
   const [chat, setChat] = useState([]);
   const [busy, setBusy] = useState(false);
-  const SUGGEST = ['Which deals need my attention this week?', 'Which follow-ups are late?', 'How far am I from my target this month?', 'Which leads should I call today?'];
+  const SUGGEST = ['Which deals need my attention this week?', 'Which follow-ups are late?', 'What meetings and follow-ups do I have coming up?', 'How far am I from my target this month?', 'Which leads should I call today?'];
+  // THE CRM AGENT (2026-11-18): the conversation goes back with each question, so "and the second one?" works; answers come from the free fast AI
   async function send(text) {
     const question = (text || q).trim();
-    if (!question) return;
+    if (!question || busy) return;
+    const history = chat.filter((m) => !m.err).slice(-8).map((m) => ({ role: m.who === 'me' ? 'user' : 'assistant', content: m.text }));
     setChat((c) => [...c, { who: 'me', text: question }]); setQ(''); setBusy(true);
-    try { const r = await api.post('/crm/ai/ask', { question }); setChat((c) => [...c, { who: 'ai', text: r.data.text }]); } catch (e) { setChat((c) => [...c, { who: 'ai', text: errOf(e, 'The AI is not available right now.'), err: true }]); } finally { setBusy(false); }
+    try { const r = await api.post('/crm/ai/ask', { question, history }); setChat((c) => [...c, { who: 'ai', text: r.data.text, tag: r.data.provider ? `${r.data.provider}${r.data.ms ? ` · ${(r.data.ms / 1000).toFixed(1)}s` : ''}` : '' }]); } catch (e) { setChat((c) => [...c, { who: 'ai', text: errOf(e, 'The AI is not available right now.'), err: true }]); } finally { setBusy(false); }
   }
   return (
     <>
-      <button type="button" className="crm-ask-fab" onClick={() => setOpen((o) => !o)} aria-expanded={open}>✨ Ask AI</button>
+      <button type="button" className="crm-ask-fab" onClick={() => setOpen((o) => !o)} aria-expanded={open}>✨ CRM Agent</button>
       {open && (
-        <div className="crm-ask-panel" role="dialog" aria-label="Ask AI about your sales">
-          <div className="crm-ask-head"><b>✨ AI assistant</b><span className="small-muted" style={{ fontSize: 11.5 }}>answers from your CRM data</span><button type="button" className="close-x" style={{ marginLeft: 'auto' }} onClick={() => setOpen(false)} aria-label="Close">×</button></div>
+        <div className="crm-ask-panel" role="dialog" aria-label="CRM Agent">
+          <div className="crm-ask-head"><b>✨ CRM Agent</b><span className="small-muted" style={{ fontSize: 11.5 }}>answers from your CRM data</span>{chat.length > 0 && <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setChat([])}>New</button>}<button type="button" className="close-x" style={{ marginLeft: chat.length ? 0 : 'auto' }} onClick={() => setOpen(false)} aria-label="Close">×</button></div>
           <div className="crm-ask-body">
             {!chat.length && (
               <div>
@@ -1140,11 +1142,11 @@ export function AskAi() {
                 {SUGGEST.map((s) => <button key={s} type="button" className="btn btn-sm" style={{ display: 'block', marginBottom: 6, textAlign: 'left', width: '100%' }} onClick={() => send(s)}>{s}</button>)}
               </div>
             )}
-            {chat.map((m, i) => <div key={i} className={`crm-ask-msg ${m.who}${m.err ? ' err' : ''}`}>{m.text}</div>)} {/* eslint-disable-line react/no-array-index-key */}
+            {chat.map((m, i) => <div key={i} className={`crm-ask-msg ${m.who}${m.err ? ' err' : ''}`}>{m.text}{m.tag && <div style={{ fontSize: 10.5, opacity: 0.55, marginTop: 4 }}>{m.tag}</div>}</div>)} {/* eslint-disable-line react/no-array-index-key */}
             {busy && <div className="crm-ask-msg ai small-muted">Thinking…</div>}
           </div>
           <div className="crm-ask-foot">
-            <input type="text" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send(); }} placeholder="Ask a question" aria-label="Question" />
+            <input type="text" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send(); }} placeholder="Ask the CRM Agent" aria-label="Question" />
             <button type="button" className="btn btn-primary btn-sm" disabled={busy || !q.trim()} onClick={() => send()}>Ask</button>
           </div>
         </div>
