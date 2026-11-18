@@ -13,6 +13,14 @@ const API_VERSION = 'v1';
 
 const NOTES = [
   {
+    version: '1.5.3', date: '2026-11-18', title: 'Candidate, Clients and Board lists stay fast with many people',
+    items: [
+      'Page 2, page 3, a refresh, or a second person opening the same view no longer re-counts every candidate: the filter, the tab counts and the sort are worked out once and reused for a few seconds.',
+      'Clients, Requirements and the Progress board reuse their answer for 10 seconds, and are rebuilt at once after anyone saves a change.',
+      'Load test with 100,000 candidates and 100 people at once: 14 requests a second (was 2), no errors, a typical click answers in about 2 seconds (was about 40).',
+    ],
+  },
+  {
     version: '1.5.2', date: '2026-11-18', title: 'Bulk resume upload is much faster',
     items: [
       'Uploading resumes no longer rebuilds an index of every client, invoice and candidate for each file: with 100,000 candidates a resume took 1.8 s to check, now about 20 ms.',
