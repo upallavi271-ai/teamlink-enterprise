@@ -475,6 +475,15 @@ model Candidate {
   specialization          String?
   institute               String?
   passingYear             String?
+  // PROFESSIONAL REGISTRATION (ATS audit 2026-11-18, Q274-Q276 / Q280; migration 20261118130000): medical / nursing / pharmacy council
+  registrationCouncil     String? // e.g. National Medical Commission, Telangana State Medical Council, Indian Nursing Council
+  registrationNumber      String?
+  registrationState       String?
+  registrationValidTill   String? // YYYY-MM-DD
+  registrationStatus      String? // Not checked | Verification pending | Verified | Failed | Expired
+  registrationVerifiedAt  DateTime?
+  registrationVerifiedBy  String?
+  registrationNote        String?
   goodToHaveSkills        String? // comma-separated
   technicalSkills         String? // comma-separated
   softSkills              String? // comma-separated

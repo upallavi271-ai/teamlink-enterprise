@@ -65,6 +65,22 @@ export default function ProfileLeft({
         {c.gender && <Row k="Gender" v={c.gender} />}
         <Row k="Current job" v={[c.currentDesignation, c.currentCompany].filter(Boolean).join(' · ')} />
         <Row k="Education" v={[c.education, c.specialization, c.institute].filter(Boolean).join(' · ')} />
+        {/* PROFESSIONAL REGISTRATION (ATS audit 2026-11-18): council, number, state, validity and whether TeamLink verified it */}
+        {(c.registrationNumber || c.registrationCouncil) && (() => {
+          const expired = c.registrationValidTill && c.registrationValidTill < new Date().toISOString().slice(0, 10);
+          const status = expired ? 'Expired' : (c.registrationStatus || 'Not checked');
+          const tone = status === 'Verified' ? 'var(--teal, #0f9d74)' : (status === 'Failed' || status === 'Expired') ? 'var(--red, #b42318)' : 'var(--amber, #b7791f)';
+          return (
+            <>
+              <Row k="Registration" v={[c.registrationCouncil, c.registrationNumber, c.registrationState].filter(Boolean).join(' · ')} />
+              <div className="pfl-row" style={{ display: 'flex', gap: 8, fontSize: 13, padding: '2px 0' }}>
+                <span className="small-muted" style={{ minWidth: 96 }}>Verification</span>
+                <span style={{ color: tone, fontWeight: 600 }}>{status}</span>
+                <span className="small-muted">{[c.registrationValidTill ? `valid till ${c.registrationValidTill}` : '', c.registrationVerifiedBy ? `by ${c.registrationVerifiedBy}` : '', c.registrationVerifiedAt ? protoDate(c.registrationVerifiedAt) : ''].filter(Boolean).join(' · ')}</span>
+              </div>
+            </>
+          );
+        })()}
         <Row k="Where from" v={c.sourceKey || [c.source, c.firstSource && c.firstSource !== c.source ? `first: ${c.firstSource}` : ''].filter(Boolean).join(' · ')} />
         {c.sourceKey && c.sourceRaw && c.sourceRaw !== c.sourceKey && <Row k="Recorded as" v={c.sourceRaw} />}
         <Row k="Added" v={protoDate(c.createdAt)} />

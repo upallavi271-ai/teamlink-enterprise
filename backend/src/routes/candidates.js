@@ -3644,6 +3644,8 @@ const CANDIDATE_FIELDS = {
     'education', 'specialization', 'institute', 'passingYear',
     'skills', 'goodToHaveSkills', 'technicalSkills', 'softSkills',
     'resumeName', 'source', 'firstSource', 'sourceCampaign', 'profileStatus',
+    // professional registration (ATS audit 2026-11-18, Q274-Q276 / Q280): council, number, state, valid till, verification status, note
+    'registrationCouncil', 'registrationNumber', 'registrationState', 'registrationValidTill', 'registrationStatus', 'registrationNote',
   ],
   numeric: ['experienceYears', 'relevantExperienceYears', 'resumeScore'],
 };
@@ -3673,8 +3675,15 @@ function pickCandidate(body) {
   // first source is recorded once and never overwritten.
   if (data.source && !data.firstSource) data.firstSource = data.source;
   if (data.source && !data.preferredLocation && data.location) data.preferredLocation = data.location;
+  // PROFESSIONAL REGISTRATION: tidy text, a real date, and only the known verification words
+  ['registrationCouncil', 'registrationNumber', 'registrationState', 'registrationNote'].forEach((k) => {
+    if (data[k] !== undefined) data[k] = String(data[k] == null ? '' : data[k]).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, k === 'registrationNote' ? 500 : 120) || null;
+  });
+  if (data.registrationValidTill !== undefined) data.registrationValidTill = /^\d{4}-\d{2}-\d{2}$/.test(String(data.registrationValidTill || '')) ? data.registrationValidTill : null;
+  if (data.registrationStatus !== undefined && !REGISTRATION_STATUSES.includes(data.registrationStatus)) data.registrationStatus = data.registrationStatus ? 'Not checked' : null;
   return data;
 }
+const REGISTRATION_STATUSES = ['Not checked', 'Verification pending', 'Verified', 'Failed', 'Expired'];
 
 // The note that keeps what was typed in the Source box when it was tidied, or the "Other" explanation.
 async function writeSourceNote(candidateId, user, body, storedBefore = undefined) {
@@ -3911,6 +3920,11 @@ router.put('/:id', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'),
   // the source it had BEFORE this edit (the earlier touch), not the new one.
   if (loaded.candidate.firstSource) delete picked.firstSource;
   else if (picked.source !== undefined) picked.firstSource = loaded.candidate.source || picked.source;
+  // REGISTRATION VERIFIED / FAILED: who decided it and when are recorded with it (and the field-by-field audit below keeps the old value)
+  if (picked.registrationStatus !== undefined && picked.registrationStatus !== loaded.candidate.registrationStatus) {
+    if (['Verified', 'Failed'].includes(picked.registrationStatus)) { picked.registrationVerifiedAt = new Date(); picked.registrationVerifiedBy = req.user.name || req.user.email || req.user.id; }
+    else { picked.registrationVerifiedAt = null; picked.registrationVerifiedBy = null; }
+  }
   // An approved "Do not use" block is not lifted by editing the profile.
   if (loaded.candidate.profileStatus === 'Do Not Use') delete picked.profileStatus;
   if (loaded.candidate.profileStatus === 'Archived') delete picked.profileStatus; // cand7_: bring back via /unarchive

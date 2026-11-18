@@ -33,6 +33,13 @@ const FIELDS = [
   ['institute', 'Institute', 'text'],
   ['passingYear', 'Passing year', 'text'],
   ['skills', 'Skills (comma separated)', 'text', false, true],
+  // PROFESSIONAL REGISTRATION (ATS audit 2026-11-18): doctors, nurses, pharmacists, dentists - the council registration and whether it is verified
+  ['registrationCouncil', 'Registration council (e.g. Telangana State Medical Council, Indian Nursing Council)', 'text', false, true],
+  ['registrationNumber', 'Registration number', 'text'],
+  ['registrationState', 'Registration state', 'text'],
+  ['registrationValidTill', 'Registration valid till', 'date'],
+  ['registrationStatus', 'Registration verification', 'select', false, false, ['', 'Not checked', 'Verification pending', 'Verified', 'Failed', 'Expired']],
+  ['registrationNote', 'Verification note (how it was checked)', 'text', false, true],
 ];
 
 const valueOf = (c, k) => (c[k] === null || c[k] === undefined ? '' : String(c[k]));
@@ -100,16 +107,22 @@ export function EditProfileButton({ c, user, onSaved }) {
             </div>
           )}
           <div className="grid-2">
-            {FIELDS.map(([k, label, type, required, wide]) => (
+            {FIELDS.map(([k, label, type, required, wide, options]) => (
               <label key={k} className="field" style={wide ? { gridColumn: '1 / -1' } : undefined}>
                 <span>{label}{required ? ' *' : ''}</span>
-                <input
-                  type={type}
-                  value={form[k] ?? ''}
-                  step={type === 'number' ? '0.1' : undefined}
-                  min={type === 'number' ? '0' : undefined}
-                  onChange={(e) => setForm({ ...form, [k]: e.target.value })}
-                />
+                {type === 'select' ? (
+                  <select value={form[k] ?? ''} onChange={(e) => setForm({ ...form, [k]: e.target.value })}>
+                    {options.map((o) => <option key={o} value={o}>{o || '—'}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    type={type}
+                    value={form[k] ?? ''}
+                    step={type === 'number' ? '0.1' : undefined}
+                    min={type === 'number' ? '0' : undefined}
+                    onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+                  />
+                )}
               </label>
             ))}
           </div>
