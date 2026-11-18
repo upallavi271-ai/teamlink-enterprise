@@ -4077,7 +4077,9 @@ router.post('/:id/status', JC.requireJobManage(), requirePerm('ats', 'requiremen
     entityId: requirement.id, fromValue: existing.status, toValue: to,
   });
   await pushToPortal(requirement, { user: req.user, trigger: 'status', prevStatus: existing.status });
-  res.json(requirement);
+  // ON HOLD / CLOSED / REOPENED: its pipeline and follow-ups follow (utils/requirementLifecycle.js, ATS audit Q614/Q615)
+  const pipeline = await require('../utils/requirementLifecycle').onStatusChange(requirement, existing.status, to, req.user); // eslint-disable-line global-require
+  res.json({ ...requirement, pipeline });
 });
 
 // Open/close toggle — the prototype's toggleRequirementStatus(), kept so the
@@ -4102,7 +4104,8 @@ router.post('/:id/toggle-status', JC.requireJobManage(), requirePerm('ats', 'req
     entityId: requirement.id, fromValue: existing.status, toValue: status,
   });
   await pushToPortal(requirement, { user: req.user, trigger: 'status', prevStatus: existing.status });
-  res.json(requirement);
+  const pipeline = await require('../utils/requirementLifecycle').onStatusChange(requirement, existing.status, status, req.user); // eslint-disable-line global-require
+  res.json({ ...requirement, pipeline });
 });
 
 // DELETE (role spec §6 / §7 — Admin only). Only a requirement that never got
