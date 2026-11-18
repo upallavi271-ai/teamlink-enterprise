@@ -183,7 +183,7 @@ async function chat(system, history, opts = {}) {
     const none = !list.length;
     if (!none && tried.some((t) => /429/.test(t))) {
       const rest = Math.max(0, ...list.map((p) => (resting.get(p.id) || 0) - Date.now()));
-      throw new FastAiError(\`The free AI plan is at its limit for a moment (\${tried.join(', ')}). Wait about \${Math.max(10, Math.ceil(rest / 1000))} seconds and ask again; a shorter question uses less of the limit.\`, 503);
+      throw new FastAiError(`The free AI plan is at its limit for a moment (${tried.join(', ')}). Wait about ${Math.max(10, Math.ceil(rest / 1000))} seconds and ask again; a shorter question uses less of the limit.`, 503);
     }
     throw new FastAiError(none
       ? `No AI is set up yet. Add a free Groq key in Administration → Integrations → Fast AI (takes a minute: console.groq.com → API Keys). ${err.message || ''}`.trim()
