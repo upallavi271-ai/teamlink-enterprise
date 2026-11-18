@@ -132,11 +132,12 @@ function factsText(kind, d) {
   return lines.join('\n');
 }
 
-async function askModel(system, question) {
-  const ai = require('../utils/ai'); // eslint-disable-line global-require
+// 2026-11-18: the free fast model first (utils/fastAi.js: Groq / Gemini / OpenRouter), then the app's own AI - a summary or an answer in
+// a second or two instead of minutes on the local model.
+async function askModel(system, question, history = []) {
   try {
-    const text = await ai.chat(system, [{ role: 'user', content: question }]);
-    return { ok: true, text: String(text || '').trim() };
+    const r = await require('../utils/fastAi').chat(system, [...history, { role: 'user', content: question }], { maxTokens: 800 }); // eslint-disable-line global-require
+    return { ok: true, text: String(r.text || '').trim(), provider: r.provider, ms: r.ms };
   } catch (e) {
     return { ok: false, error: (e && e.message) || 'The AI is not available right now.' };
   }
