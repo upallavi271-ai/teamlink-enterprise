@@ -569,7 +569,7 @@ add({
 // own ranking (utils/matching.js through the top_matches_for_requirement tool, which checks the permission and the requirement's scope).
 add({
   id: 'best-for-requirement', product: 'ats',
-  test: (t) => /\b(best|top|suitable|right|matching|good)\s+(candidates?|profiles?|matches|people)\b.*\b(for|to)\b/.test(t) || /who (should|can) i (put forward|submit|send|share)/.test(t) || /\bbest candidates?\b/.test(t),
+  test: (t) => /\b(best|top|suitable|right|matching|good)\s+(\d+\s+)?(candidates?|profiles?|matches|people)\s+(for|to)\s+(req[-\s]?\d|the |this |[a-z])/.test(t) || /who (should|can) i (put forward|submit|send|share)/.test(t) || /\breq[-\s]?\d{2,6}\b.*\b(best|top|suitable)\b/.test(t),
   async run(ctx) {
     const code = (/\b(req[-\s]?\d{2,6})\b/i.exec(ctx.text) || [])[1];
     const scope = requirementWhere(ctx.user);
