@@ -149,6 +149,61 @@ function zohoCsv(rows, opts = {}) {
   return `﻿${lines.join('\r\n')}\r\n`;
 }
 
+// ---------------------------------------------------------------- receipts (payments)
+// The payments recorded on the invoices shown, as Tally RECEIPT vouchers (party Cr, bank / cash Dr) and as the Zoho Books customer-payments CSV.
+const BANK_DEFAULT = 'Bank Account';
+const CASH_DEFAULT = 'Cash';
+const paymentsOf = (rows) => rows.filter((r) => r.status !== 'Cancelled').flatMap((r) => (r.payments || []).filter((p) => Number(p.amount) > 0 && p.date).map((p, i) => ({ r, p, i })));
+function tallyReceiptsXml(rows, opts = {}) {
+  const company = String(opts.company || '').trim().slice(0, 100);
+  const bank = ledgerName(opts.ledgers && opts.ledgers.bank, BANK_DEFAULT);
+  const cash = ledgerName(opts.ledgers && opts.ledgers.cash, CASH_DEFAULT);
+  const vouchers = paymentsOf(rows).map(({ r, p, i }) => {
+    const party = String(r.client || 'Unknown client').trim();
+    const deposit = /cash/i.test(p.method || '') ? cash : bank;
+    const no = `RCPT-${r.invoiceNumber || r.id}-${i + 1}`;
+    const line = (name, amount, debit, isParty) => [
+      '      <ALLLEDGERENTRIES.LIST>',
+      `       <LEDGERNAME>${xml(name)}</LEDGERNAME>`,
+      `       <ISDEEMEDPOSITIVE>${debit ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>`,
+      `       <ISPARTYLEDGER>${isParty ? 'Yes' : 'No'}</ISPARTYLEDGER>`,
+      `       <AMOUNT>${debit ? '-' : ''}${amt(amount)}</AMOUNT>`,
+      '      </ALLLEDGERENTRIES.LIST>',
+    ].join('\n');
+    return [
+      '    <TALLYMESSAGE xmlns:UDF="TallyUDF">',
+      '     <VOUCHER VCHTYPE="Receipt" ACTION="Create" OBJVIEW="Accounting Voucher View">',
+      `      <DATE>${tallyDate(p.date)}</DATE>`,
+      `      <EFFECTIVEDATE>${tallyDate(p.date)}</EFFECTIVEDATE>`,
+      '      <VOUCHERTYPENAME>Receipt</VOUCHERTYPENAME>',
+      `      <VOUCHERNUMBER>${xml(no)}</VOUCHERNUMBER>`,
+      `      <REFERENCE>${xml(p.reference || r.invoiceNumber || '')}</REFERENCE>`,
+      `      <PARTYLEDGERNAME>${xml(party)}</PARTYLEDGERNAME>`,
+      '      <PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>',
+      `      <NARRATION>${xml(`Receipt against invoice ${r.invoiceNumber || ''} (${p.method || 'Bank Transfer'}${p.reference ? `, ref ${p.reference}` : ''})`)}</NARRATION>`,
+      line(deposit, p.amount, true, false),
+      line(party, p.amount, false, true),
+      '     </VOUCHER>',
+      '    </TALLYMESSAGE>',
+    ].join('\n');
+  });
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>', '<ENVELOPE>', ' <HEADER>', '  <TALLYREQUEST>Import Data</TALLYREQUEST>', ' </HEADER>', ' <BODY>', '  <IMPORTDATA>', '   <REQUESTDESC>', '    <REPORTNAME>Vouchers</REPORTNAME>',
+    company ? `    <STATICVARIABLES><SVCURRENTCOMPANY>${xml(company)}</SVCURRENTCOMPANY></STATICVARIABLES>` : null,
+    '   </REQUESTDESC>', '   <REQUESTDATA>', ...vouchers, '   </REQUESTDATA>', '  </IMPORTDATA>', ' </BODY>', '</ENVELOPE>', '',
+  ].filter((x) => x !== null).join('\n');
+}
+const ZOHO_PAY_HEAD = ['Payment Date', 'Payment Number', 'Customer Name', 'Payment Mode', 'Amount', 'Reference#', 'Invoice Number', 'Amount Applied to Invoice', 'Deposit To', 'Notes'];
+function zohoPaymentsCsv(rows, opts = {}) {
+  const lines = [ZOHO_PAY_HEAD.map((h) => csvCell(h)).join(',')];
+  paymentsOf(rows).forEach(({ r, p, i }) => {
+    const mode = /cash/i.test(p.method || '') ? 'Cash' : (/cheque|check/i.test(p.method || '') ? 'Check' : 'Bank Transfer');
+    const cells = [[p.date, false], [`PAY-${r.invoiceNumber || r.id}-${i + 1}`, true], [r.client, true], [mode, true], [amt(p.amount), false], [p.reference || '', true], [r.invoiceNumber, true], [amt(p.amount), false], [mode === 'Cash' ? 'Petty Cash' : (opts.depositTo || 'Bank'), true], [`Recorded in TeamLink${p.recordedBy ? ` by ${p.recordedBy}` : ''}`, true]];
+    lines.push(cells.map(([v, t]) => csvCell(v, t)).join(','));
+  });
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
+}
+
 module.exports = {
-  tallyXml, zohoCsv, DEFAULT_LEDGERS, ZOHO_HEAD, xml, csvCell, taxLines, ledgersOf,
+  tallyReceiptsXml, zohoPaymentsCsv, ZOHO_PAY_HEAD, tallyXml, zohoCsv, DEFAULT_LEDGERS, ZOHO_HEAD, xml, csvCell, taxLines, ledgersOf,
 };

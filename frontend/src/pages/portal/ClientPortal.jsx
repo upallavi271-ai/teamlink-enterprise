@@ -1,3 +1,4 @@
+import RequirementApprovals from '../../components/clients/RequirementApprovals.jsx'; // the client confirms a requirement before it goes live (optional step, audit #30)
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
@@ -171,6 +172,7 @@ export default function ClientPortal() {
           />
         )}
         {notice && <div className="notice"><span>{notice}</span></div>}
+        <RequirementApprovals />
         <FirstLoginGuide user={user} type={data.portalType} caps={lcaps} />
         {data.agreement && (
           <div className="tlp-card" style={{ maxWidth: 560, marginBottom: 12 }}>
@@ -255,6 +257,7 @@ export default function ClientPortal() {
       )}
       {error && <div className="notice red"><span>{error}</span></div>}
       {notice && <div className="notice"><span>{notice}</span></div>}
+      <RequirementApprovals />
       <FirstLoginGuide user={user} type={data.portalType} caps={data.portalCaps} />
 
       {jdWaiting > 0 && tab !== 'joindrop' && (

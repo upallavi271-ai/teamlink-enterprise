@@ -1,3 +1,4 @@
+import Renewals from '../components/clients/Renewals.jsx'; // agreements by end date: Upcoming / Due / Expired / Renewed (audit 720)
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api';
@@ -74,6 +75,7 @@ export default function Agreements() {
   // from /agreement/list); the server says no to anyone else.
   const blocked = false;
   const [clients, setClients] = useState([]);
+  const [section, setSection] = useState('agreements'); // 'agreements' | 'renewals' (audit 720)
   const [execution, setExecution] = useState(new Map());
   const [listError, setListError] = useState('');
   // Never "No agreements yet" (or a bare count) while the list is loading.
@@ -221,6 +223,22 @@ export default function Agreements() {
     />
   );
 
+  const sectionBar = (
+    <div className="iv4-seg" role="tablist" aria-label="Agreements section" style={{ margin: '0 0 12px' }}>
+      {[['agreements', 'Agreements'], ['renewals', 'Renewals']].map(([id, label]) => (
+        <button key={id} type="button" role="tab" aria-selected={section === id} className={section === id ? 'is-on' : ''} onClick={() => setSection(id)}>{label}</button>
+      ))}
+    </div>
+  );
+  if (section === 'renewals') {
+    return (
+      <div className={v4 ? 'crq4 crq4-agr' : undefined}>
+        <div className="page-head"><div><h1>Agreements</h1><div className="page-sub">Renewals: which agreements end soon, and who looks after each.</div></div></div>
+        {sectionBar}
+        <Renewals />
+      </div>
+    );
+  }
   return (
     <div className={v4 ? 'crq4 crq4-agr' : undefined}>
       {v4 ? <CrqHead sub={headSub} scope={headScope} tools={headTools} /> : (
@@ -236,6 +254,7 @@ export default function Agreements() {
         </div>
       )}
 
+      {sectionBar}
       {v4 && (
         <KpiRow className="crq4-kpis">
           <KpiTile icon="handshake" tone="blue" label="Total Agreements" value={loaded ? clients.length : null} loading={!loaded} sub="In your area" onClick={statusFilter ? () => setStatusFilter('') : undefined} />

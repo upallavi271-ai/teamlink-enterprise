@@ -396,6 +396,10 @@ async function resolveIdentity(userId, preloaded = null) {
       // Non IT Medical is the Non IT MFG team's Medical work (2026-10-29): it belongs to the MFG desk, not the Medical one.
       atsBdeDeskRequirementDepartments = reqDepts.map((o) => o.department)
         .filter((d) => desks.includes(/non[\s-]*it\s*medical/i.test(d) ? 'Manufacturing' : canonicalDepartment(d)));
+      // Admin setting "Desk BDEs see" (utils/clientDepth.js): "only their assigned clients" drops the desk-wide arms; the default keeps the desk.
+      if (await require('./clientDepth').deskMode().catch(() => 'desk') === 'assigned') { // eslint-disable-line global-require
+        atsBdeDeskDepartments = [];
+      }
       if (atsBdeDeskDepartments.length) {
         atsBdeUnownedClientIds = (await prisma.client.findMany({
           where: {

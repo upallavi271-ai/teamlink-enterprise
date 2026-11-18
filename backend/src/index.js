@@ -179,6 +179,7 @@ app.get('/api/health', (req, res) => res.json(process.env.COMPANY_KEY ? { ok: tr
 // SUPER ADMIN "VIEW AS" IS READ-ONLY (utils/viewAs.js): a View-as token may
 // only GET, plus a short allow-list of POSTs that just read. Ahead of every
 // router, so no route can forget it.
+app.use('/api', require('./utils/clientDepth').portalMiddleware); // counts what a client login does in the portal (utils/clientDepth.js)
 app.use('/api', require('./utils/viewAs').viewAsGuard);
 // EXIT GUARD scope (utils/exitFlow.js): marks a web request, so a leaving status (Relieved / Exited / Terminated) can only be
 // written with an approved exit behind it. Scripts and workers run outside a request and are not affected.
@@ -315,6 +316,7 @@ app.use('/api/job-portal', jobPortalRoutes);
 app.use('/api/voice-service', require('./routes/voiceService'));
 // Client portal + candidate portal (outside logins) and 'Invite to portal'.
 app.use('/api/portal/client/concerns', require('./routes/atsExperience').portalRouter); // a client login raises / follows its concerns (escalation matrix); ahead of routes/portal.js
+app.use('/api/portal/client', require('./routes/clientDepth').portalRouter); // the client confirms a requirement (optional step) - ahead of routes/portal.js
 app.use('/api/portal', require('./routes/portal'));
 // JOINING & DROP (2026-10-17): the joining record, the drop, the client's replacement decision, the journey, the client history (routes/joinDrop.js).
 app.use('/api/join-drop', require('./routes/joinDrop'));
@@ -496,6 +498,11 @@ app.use('/api/ats', interviewsJoiningRoutes);
 app.use('/api/ats', require('./routes/interviewTell'));
 // Google Meet link, the interview e-mails (with calendar invite) and Start interview (routes/interviewMeet.js).
 app.use('/api/ats', require('./routes/interviewMeet'));
+app.use('/api/ats-billing', require('./routes/billingDepth')); // overdue reminders, client profitability, payment approval, freelancer report (utils/billingDepth.js)
+app.use('/api/ats-clients', require('./routes/clientDepth')); // contacts, credit, positions, renewals, portal usage, desk rule (utils/clientDepth.js)
+app.use('/api/ats', require('./routes/offerDepth')); // several offer letter templates + salary breakup (utils/offerTemplates.js)
+app.use('/api/ats', require('./routes/atsCalendarAll')); // one calendar: interviews, joinings, follow-ups, tasks
+app.use('/api/ats', require('./routes/interviewRounds')); // multi-round interviews: typed per-round feedback, files, interviewer ratings (utils/interviewRounds.js)
 // Interview preparation: suggested questions from the JD for a client / team / AI interview (routes/interviewPrep.js,
 // utils/interviewPrep.js). The candidate's own page is public by signed link: /api/public/interview-prep/:token.
 app.use('/api/ats', require('./routes/interviewPrep'));
@@ -606,6 +613,8 @@ const server = app.listen(PORT, () => {
   require('./utils/atsFlowConfig').refreshLabels().catch(() => null);
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
   require('./utils/atsFlowConfig').startLabelRefresh();
+  // Overdue payment reminders to the owner BDE (and, if switched on, the client) + agreement renewal reminders: every 6 hours, once per invoice per 3 days, both OFF until an Admin switches them on (utils/billingDepth.js).
+  require('./utils/billingDepth').startSweep();
   // Morning / afternoon / evening reminders + "complete this course" (bell, email, popup) - utils/dayNudges.js (2026-11-04)
   require('./utils/dayNudges').start();
   // AI Marketing Content Calendar: the tab was removed on 2026-11-16 (founder: "not necessary now"), so its "post due in an hour" notice (marketing/calendar.js startSweep,

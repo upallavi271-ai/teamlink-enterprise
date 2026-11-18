@@ -4007,6 +4007,9 @@ router.post('/:id/activate', JC.requireJobManage(), requirePerm('ats', 'requirem
     return unsignedStop(res, req.user, held, existing.client, 'Cannot activate yet — it is held at Agreement Check');
   }
 
+  // OPTIONAL client approval (Admin switch, OFF): the client confirms the requirement in the portal before it goes live (utils/clientDepth.js).
+  const clientGate = await require('../utils/clientDepth').activationGate(existing, req.user); // eslint-disable-line global-require
+  if (clientGate) return res.status(clientGate.status).json(clientGate.body);
   // A draft (a client's / BDE's request) becomes a real job here: the twin check runs now too (utils/jobDupGuard.js).
   let openGuard = null;
   if (!existing.internal && existing.status === 'DRAFT') {

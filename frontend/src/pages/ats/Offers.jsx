@@ -10,6 +10,7 @@
 // TeamLink's own. Nothing here raises an invoice or creates an employee —
 // that happens at Joining.
 
+import { OfferExtras, OfferTemplatesAdmin } from '../../components/ats/OfferExtras.jsx'; // several templates + salary breakup (audit 252 / 253)
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
@@ -444,9 +445,8 @@ function LetterModal({ row, approve, onClose, onApprove, onSendBack }) {
   const [letter, setLetter] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    api.get(`/ats/offers/${row.id}/letter`).then((r) => setLetter(r.data)).catch((e) => setErr(e.response?.data?.error || 'Could not load the letter. Please try again.'));
-  }, [row.id]);
+  const loadLetter = () => api.get(`/ats/offers/${row.id}/letter`).then((r) => setLetter(r.data)).catch((e) => setErr(e.response?.data?.error || 'Could not load the letter. Please try again.'));
+  useEffect(() => { loadLetter(); }, [row.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const send = async () => { setBusy(true); try { await onApprove(); } finally { setBusy(false); } };
   return (
     <Modal
@@ -470,6 +470,7 @@ function LetterModal({ row, approve, onClose, onApprove, onSendBack }) {
               ? `Sent ${fmtDate(letter.sentAt)}${letter.recipient ? ` to ${letter.recipient}` : ''}.`
               : 'This is how the letter will read. The candidate answers on the offer link (or their TeamLink page).'}
           </div>
+          {!letter.sent && <OfferExtras row={row} onChanged={loadLetter} />}
           {!approve && <OfferVersions row={row} />}
         </>
       )}
@@ -527,6 +528,7 @@ function TemplateModal({ onClose, onSaved }) {
             {'Words in {{ }} are filled in for each person: '}
             {(t.tokens || []).map((k) => `{{${k}}}`).join(' ')}
           </div>
+          <OfferTemplatesAdmin />
         </div>
       )}
     </Modal>

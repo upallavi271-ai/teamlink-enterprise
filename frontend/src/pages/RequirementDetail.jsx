@@ -1,3 +1,4 @@
+import RequirementPositions from '../components/clients/RequirementPositions.jsx'; // several positions inside one requirement (audit 114)
 import { useEffect, useRef, useState } from 'react';
 import JobAutoMessages from '../components/automsg/JobAutoMessages.jsx'; // automatic stage messages: this job's setting
 import { RequirementIndustryCard } from '../components/ats/OfferBgv.jsx'; // industry checklist, BGV needed, gender/age criteria
@@ -686,6 +687,7 @@ export default function RequirementDetail() {
               {r.jobDescription || r.description || '—'}
             </div>
           </div>
+          {!r.internal && <RequirementPositions requirementId={r.id} onChanged={() => { if (typeof load === 'function') load(); }} />}
         </div>
         <div>
           {/* Review #3 §4 — Assigned Team: TL and recruiters with their seat

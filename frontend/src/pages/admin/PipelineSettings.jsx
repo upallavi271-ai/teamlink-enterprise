@@ -1,3 +1,4 @@
+import R3Settings from '../../components/ats/R3Settings.jsx'; // desk rule, client approval, renewal / overdue reminders, payment approval switches
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api';
 import Combo from '../../components/Combo.jsx';
@@ -282,6 +283,7 @@ export default function PipelineSettings() {
       <SubStatuses data={data} onSaved={saved} />
       <IndustryPipelines />
       <ShareChecklist />
+      <R3Settings />
     </div>
   );
 }

@@ -44,6 +44,8 @@ import { Modal } from '../../components/proto.jsx';
 import PanelView from '../../components/interviews/PanelView.jsx';
 import PanelPicker from '../../components/interviews/PanelPicker.jsx';
 import MeetingLinkButton from '../../components/interviews/MeetingLinkButton.jsx';
+import InterviewRounds from '../../components/interviews/InterviewRounds.jsx'; // every round: type, typed feedback, files, interviewer rating, suggested decision (audit 232-250)
+import AllCalendar from '../../components/ats/AllCalendar.jsx'; // interviews + joinings + follow-ups + tasks in one month / week calendar (audit 428)
 // 2026-10-14: Start interview (opens the Meet link), e-mail status with Resend, Admin e-mail / Meet settings.
 import { StartInterviewButton, InterviewMailStatus, MeetSettings } from '../../components/interviews/MeetStart.jsx';
 // A name opens the candidate window right here (checklist §13), not another page.
@@ -357,6 +359,7 @@ function fmtTime(iso) {
 export default function InterviewCalendar() {
   const { user } = useAuth();
   const [tab, setTab] = useState('recruitment');
+  const [section, setSection] = useState('interviews'); // 'interviews' (this page) | 'all' (one calendar of everything, audit 428)
   // One view per tab, so switching tabs does not carry "Pending Feedback"
   // across to the AI list (where it means something different).
   // ?view=today|upcoming|feedback|completed|cancelled|all (the dashboard's
@@ -890,6 +893,22 @@ export default function InterviewCalendar() {
     can(user, 'ats', 'interviews', 'Interview Feedback', 'view') && { key: 'fb', icon: 'chat', label: 'Interview feedback', sub: 'Decide after the interview', to: '/ats/interview-feedback', tone: 'red' },
   ].filter(Boolean).slice(0, 5);
 
+  const sectionTabs = (
+    <div className="iv4-seg" role="tablist" aria-label="Calendar section" style={{ margin: '0 0 12px' }}>
+      {[['interviews', 'Interviews'], ['all', 'All my calendar']].map(([id, label]) => (
+        <button key={id} type="button" role="tab" aria-selected={section === id} className={section === id ? 'is-on' : ''} onClick={() => setSection(id)}>{label}</button>
+      ))}
+    </div>
+  );
+  if (section === 'all') {
+    return (
+      <div className="ivcal-page iv4">
+        <div className="ak-page-head iv4-head"><div><h1>Calendar</h1><p>Interviews, joining dates, follow-ups and tasks in one place.</p></div></div>
+        {sectionTabs}
+        <AllCalendar />
+      </div>
+    );
+  }
   return (
     <div className="ivcal-page iv4">
       {/* HEADER — title, the calendar's date range, Day / Week / Month, Book. */}
@@ -920,6 +939,7 @@ export default function InterviewCalendar() {
           )}
         </div>
       </div>
+      {sectionTabs}
       {scheduling && (
         <ScheduleInterview
           preset={scheduling && scheduling.preset ? scheduling.preset : null}
@@ -1557,6 +1577,14 @@ function DetailPanel({
   row, canAct, advance, setDialog, onOpen, onNextRound = null, user = null, onChanged = null,
 }) {
   const link = row.meetingLink;
+  const [decideMsg, setDecideMsg] = useState('');
+  // The one-click accept of the suggested decision. Selected / Hold go through the usual decision route (the stage owner's rule is checked there);
+  // a rejection needs its reason, so it opens the Feedback screen's own Decide window.
+  async function decideSuggested(decision, why) {
+    setDecideMsg('');
+    if (decision === 'Rejected') { window.location.assign('/ats/interview-feedback'); return; }
+    try { await api.post(`/ats/interviews/${row.id}/decision`, { decision, comment: why, reasonDetail: why }); if (onChanged) onChanged({}); setDecideMsg(''); } catch (e) { setDecideMsg(e.response?.data?.error || 'The decision was not saved.'); }
+  }
   const [editPanel, setEditPanel] = useState(null);
   const [panelErr, setPanelErr] = useState('');
   const [mailKey, setMailKey] = useState(0);
@@ -1604,6 +1632,18 @@ function DetailPanel({
           </>
         )}
       </div>
+      {!row.ai && (
+        <>
+          {decideMsg && <div className="error-text" role="alert">{decideMsg}</div>}
+          <InterviewRounds
+            applicationId={row.id}
+            user={user}
+            canDecide={can(user, 'ats', 'interviews', 'Interview Feedback', 'approve') || ['TL', 'STL', 'MANAGER'].includes(user?.atsRole)}
+            onDecide={decideSuggested}
+            onChanged={() => { if (onChanged) onChanged({}); }}
+          />
+        </>
+      )}
       {row.canSetLink && !!link && <div style={{ marginBottom: 6 }}><StartInterviewButton row={{ ...row, start: { show: true, can: true, needsLink: true, online: true, label: 'Change the Meet link' } }} onChanged={() => { setMailKey((k) => k + 1); if (onChanged) onChanged({}); }} /></div>}
       <div style={{ marginBottom: 10 }}><InterviewMailStatus applicationId={row.id} reloadKey={mailKey} /></div>
       <InterviewPrepSection applicationId={row.id} />

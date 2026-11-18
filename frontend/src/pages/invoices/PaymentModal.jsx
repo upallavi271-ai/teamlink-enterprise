@@ -74,6 +74,7 @@ export default function PaymentModal({ rows, initialId, onClose, onSaved }) {
         left = Math.max(0, Math.round((inv.pending - res.data.total) * 100) / 100);
       } else {
         const res = await api.post(`/invoices/${inv.id}/payments`, body);
+        if (res.status === 202 || res.data.pendingApproval) { onSaved(inv.id, `${money2(amt)} against ${inv.invoiceNumber} is saved and waits for approval by an Admin or another Accountant.`); return; }
         const after = res.data.invoice;
         left = Math.max(0, Number(after.total || 0) - Number(after.receivedAmount || 0));
       }

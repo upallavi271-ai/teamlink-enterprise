@@ -1,3 +1,4 @@
+import BillingTools from '../components/accounts/BillingTools.jsx'; // payments to approve, client profitability, freelancer report (audit 389 / 394 / 410)
 import {
   Fragment, useCallback, useEffect, useMemo, useRef, useState,
 } from 'react';
@@ -153,6 +154,9 @@ const EXPORTS = [
   // Accounting software (file download only, no keys): Tally Sales vouchers (XML) and the Zoho Books invoice import (CSV). Cancelled left out.
   { k: 'tally', label: 'Tally XML', path: '/invoices/register/tally.xml', file: 'tally-vouchers.xml', title: 'Sales vouchers for Tally: Gateway of Tally → Import Data → Vouchers (the invoices shown; cancelled ones left out)' },
   { k: 'zoho', label: 'Zoho Books CSV', path: '/invoices/register/zoho.csv', file: 'zoho-books-invoices.csv', title: 'Zoho Books: Sales → Invoices → Import (the invoices shown; cancelled ones left out)' },
+  // The PAYMENTS of the same invoices (audit 395): Tally Receipt vouchers and the Zoho Books customer-payments import.
+  { k: 'tallyPay', label: 'Tally receipts', path: '/invoices/register/tally-receipts.xml', file: 'tally-receipts.xml', title: 'Receipt vouchers for Tally: the payments recorded on the invoices shown' },
+  { k: 'zohoPay', label: 'Zoho payments', path: '/invoices/register/zoho-payments.csv', file: 'zoho-books-payments.csv', title: 'Zoho Books: Sales → Payments Received → Import (the payments on the invoices shown)' },
 ];
 
 const sumOf = (list, f) => Math.round(list.reduce((s, r) => s + (Number(f(r)) || 0), 0) * 100) / 100;
@@ -225,6 +229,7 @@ export default function Invoices() {
   const [addClient, setAddClient] = useState(false); // "+ Add client" (a draft client in the central list)
   const [menu, setMenu] = useState(null); // null | 'bell'
   const [exporting, setExporting] = useState(''); // '' | an EXPORTS key
+  const [showTools, setShowTools] = useState(false);
   const [sort, setSort] = useKeptState('invoices.sort', 'new');
   const [showAll, setShowAllState] = useState(readShowAll);
   const setShowAll = (next) => { setShowAllState(next); writeStore(SHOWALL_KEY, next ? '1' : '0'); };
@@ -817,6 +822,8 @@ export default function Invoices() {
       </header>
 
       {tabBar}
+      {canExport && <div style={{ margin: '4px 0' }}><button type="button" className="btn btn-sm" aria-pressed={showTools} onClick={() => setShowTools((v) => !v)}>{showTools ? 'Hide billing tools' : 'Billing tools: approvals, profitability, freelancers'}</button></div>}
+      {showTools && <BillingTools onClose={() => setShowTools(false)} />}
       {importing && <AccountsImport kind="invoices" onClose={() => setImporting(false)} onDone={load} />}
       {error && <div className="notice red" style={{ margin: 0 }}><span>{error} <button type="button" className="link-btn" onClick={() => setError('')}>Dismiss</button></span></div>}
       {flash && <div className="notice" style={{ margin: 0 }} role="status"><span>{flash}</span></div>}

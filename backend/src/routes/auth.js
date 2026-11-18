@@ -190,6 +190,7 @@ async function finishSignIn(req, res, user, { mfaPassed = false, extra = {} } = 
   // Stamps the Users screen's "Last Login" column, and clears the failed
   // sign-in counter.
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), failedLoginCount: 0, lockedUntil: null } });
+  if (user.role === 'CLIENT' && user.clientId) require('../utils/clientDepth').recordPortal(user, 'login'); // eslint-disable-line global-require
 
   await logAudit({ userId: user.id, action: former ? 'Signed in (former employee, limited access)' : 'Signed in', entity: 'User', entityId: user.id, reason: `IP ${ipOf(req)}` });
   if (former) require('../utils/formerAccess').limit(identity, former); // eslint-disable-line global-require

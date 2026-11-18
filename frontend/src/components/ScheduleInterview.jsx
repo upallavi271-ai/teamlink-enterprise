@@ -5,7 +5,8 @@ import './interviews/Interviews.css';
 // B4 (2026-10-06): a PANEL of interviewers, and "Create meeting link".
 import PanelPicker from './interviews/PanelPicker.jsx';
 // 2026-10-14: Google Meet link field (Create a Meet link / paste / standing link); the booking e-mail goes with a calendar invite.
-import { MeetLinkField, linkCheck } from './interviews/MeetStart.jsx';
+import { linkCheck } from './interviews/MeetStart.jsx';
+import MeetingProviderField, { providerCheck } from './interviews/MeetingProviderField.jsx'; // Google Meet / Zoom / Teams / Other (audit 235)
 // 2026-10-10: the "Booked - now tell them" window: Call / WhatsApp / SMS / Mail to the candidate, and the team.
 import { InterviewTellWithPrep as InterviewTell } from './interviews/InterviewPrep.jsx'; // the booking window + the preparation-questions line
 
@@ -57,7 +58,7 @@ export default function ScheduleInterview({
   const pick = (row) => { setChosen(row); setRound(row ? roundOf({ round: row.suggestedRound }) : 1); };
   const [q, setQ] = useState('');
   const [list, setList] = useState(null);
-  const [form, setForm] = useState({ date: '', time: '', mode: 'Online', meetingLink: '', location: '', interviewer: '' });
+  const [form, setForm] = useState({ date: '', time: '', mode: 'Online', meetingLink: '', location: '', interviewer: '', provider: 'Google Meet', roundType: '' });
   const [panel, setPanel] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -91,7 +92,8 @@ export default function ScheduleInterview({
     return () => clearTimeout(t);
   }, [q, chosen]);
 
-  const ready = chosen && form.date && form.time && panel.length > 0 && !(form.mode === 'Online' && linkCheck(form.meetingLink).state === 'bad');
+  const linkState = form.provider === 'Google Meet' ? linkCheck(form.meetingLink).state : providerCheck(form.provider, form.meetingLink).state;
+  const ready = chosen && form.date && form.time && panel.length > 0 && !(form.mode === 'Online' && linkState === 'bad');
 
   async function submit() {
     setError(''); setBusy(true);
@@ -103,6 +105,8 @@ export default function ScheduleInterview({
         time: form.time,
         mode: form.mode,
         meetingLink: form.mode === 'Online' ? form.meetingLink.trim() : '',
+        linkProvider: form.mode === 'Online' && form.meetingLink.trim() ? form.provider : undefined,
+        roundType: form.roundType || undefined,
         location: form.mode === 'In Person' ? form.location.trim() : '',
         panel: panel.map((p) => (p.userId ? { userId: p.userId } : { name: p.name, email: p.email || null })),
       });
@@ -181,6 +185,10 @@ export default function ScheduleInterview({
             ))}
             <button type="button" aria-label="One more round" onClick={() => setRound(Math.min(20, round + 1))}>+</button>
           </div>
+          <select aria-label="Round type" value={form.roundType} onChange={(e) => set({ roundType: e.target.value })} style={{ marginTop: 6 }}>
+            <option value="">Round type (optional)</option>
+            {['Technical', 'HR', 'Management', 'Client', 'Other'].map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
         </div>
 
         <div className="ivx-sec">
@@ -194,13 +202,13 @@ export default function ScheduleInterview({
         <div className="ivx-sec">
           <b>How</b>
           <div className="ivx-modes" role="radiogroup" aria-label="Online or in person">
-            {[['Online', '💻 Online (Google Meet)'], ['In Person', '🏢 Offline — in person']].map(([v, label]) => (
+            {[['Online', '💻 Online (video call)'], ['In Person', '🏢 Offline — in person']].map(([v, label]) => (
               <button key={v} type="button" role="radio" aria-checked={form.mode === v} className={`ivx-mode${form.mode === v ? ' is-on' : ''}`} onClick={() => set({ mode: v })}>{label}</button>
             ))}
           </div>
           <div style={{ marginTop: 8 }}>
             {form.mode === 'Online' ? (
-              <MeetLinkField value={form.meetingLink} onChange={(v) => set({ meetingLink: v })} />
+              <MeetingProviderField provider={form.provider} onProvider={(p) => set({ provider: p })} value={form.meetingLink} onChange={(v) => set({ meetingLink: v })} />
             ) : (
               <input aria-label="Address" placeholder="Address, e.g. Apollo Hospital, 2nd floor HR" value={form.location} onChange={(e) => set({ location: e.target.value })} />
             )}

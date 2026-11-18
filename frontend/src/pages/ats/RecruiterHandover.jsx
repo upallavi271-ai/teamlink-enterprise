@@ -27,6 +27,15 @@ export default function RecruiterHandover() {
   const [hist, setHist] = useState(null);
 
   const loadRecs = () => api.get('/ats/handover/recruiters').then((r) => setRecs(r.data.rows)).catch((e) => { setErr(e.response?.data?.error || 'The recruiters could not be read.'); setRecs([]); });
+  // P10.9: the history as a file (the server writes the same lines as the table).
+  const exportHist = async () => {
+    try {
+      const r = await api.get('/ats/handover/history/export.csv', { responseType: 'blob' });
+      const url = URL.createObjectURL(r.data); const el = document.createElement('a');
+      el.href = url; el.download = `recruiter-handover-history-${new Date().toISOString().slice(0, 10)}.csv`; document.body.appendChild(el); el.click(); el.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch (e) { setErr('The history could not be downloaded.'); }
+  };
   const loadHist = () => api.get('/ats/handover/history').then((r) => setHist(r.data.rows)).catch(() => setHist([]));
   useEffect(() => { loadRecs(); loadHist(); }, []);
   useEffect(() => {
@@ -137,7 +146,10 @@ export default function RecruiterHandover() {
       )}
 
       <section className="panel">
-        <div className="panel-head"><h3>Handover history</h3></div>
+        <div className="panel-head">
+          <h3>Handover history</h3>
+          <button type="button" className="btn btn-sm" disabled={!hist || !hist.length} onClick={exportHist}>Download (CSV)</button>
+        </div>
         {!hist ? <div className="empty-mini">Loading…</div> : !hist.length ? <div className="empty-mini">No handovers yet.</div> : (
           <div className="tbl-wrap" style={{ border: 0, borderRadius: 0 }}>
             <table>

@@ -202,7 +202,7 @@ async function raiseJoiningInvoice({
       status: 'Pending',
       joiningDate,
       invoiceDate: offsetDate(joiningDate, 6),
-      dueDate: offsetDate(joiningDate, 12),
+      dueDate: (await require('./clientDepth').creditDueDate(client.id, offsetDate(joiningDate, 6))) || offsetDate(joiningDate, 12), // the client's credit days after the invoice date, else 6 days more as before
       feePercent,
       offeredCtc: ctc,
       ...(waitsForCtc ? { notes: FEE_TBD } : (fee.feeType !== 'PERCENT_CTC' ? { notes: `Fee: ${fee.basis}` } : {})),

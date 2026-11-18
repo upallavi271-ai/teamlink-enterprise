@@ -111,8 +111,7 @@ router.post('/', wrap(async (req, res) => {
   res.json({ moved: moved.length, skipped: ids.length - moved.length, message: `${moved.length} candidate${moved.length === 1 ? '' : 's'} handed over from ${fromUser.name} to ${target.name}.` });
 }));
 
-router.get('/history', wrap(async (req, res) => {
-  if (!allowed(req, res)) return;
+async function historyRows() {
   const rows = await prisma.auditLog.findMany({
     where: { entity: 'Application', action: { startsWith: H.ACTION } },
     select: { action: true, fromValue: true, toValue: true, reason: true, createdAt: true, actorName: true, user: { select: { name: true } } },
@@ -130,7 +129,23 @@ router.get('/history', wrap(async (req, res) => {
     groups.get(k).count += 1;
   });
   const KIND = { 'handed over by hand': 'By hand', 'the recruiter left': 'Recruiter left', 'taken off the requirement': 'Taken off the requirement', assigned: 'Assigned on a candidate' };
-  res.json({ rows: [...groups.values()].slice(0, 300).map((g) => ({ ...g, how: KIND[g.kind] || g.kind })) });
+  return [...groups.values()].slice(0, 300).map((g) => ({ ...g, how: KIND[g.kind] || g.kind }));
+}
+router.get('/history', wrap(async (req, res) => {
+  if (!allowed(req, res)) return;
+  res.json({ rows: await historyRows() });
+}));
+// P10.9: the handover history as a file (CSV; Excel opens it). Same people, same lines as the screen.
+router.get('/history/export.csv', wrap(async (req, res) => {
+  if (!allowed(req, res)) return;
+  const { toCsv } = require('../utils/tabularExport'); // eslint-disable-line global-require
+  const rows = await historyRows();
+  const day = (d) => new Date(new Date(d).getTime() + 330 * 60000).toISOString().slice(0, 10);
+  const csv = toCsv(['Date', 'From', 'To', 'Candidates', 'How', 'Done by', 'Why'], rows.map((h) => [day(h.at), h.from || '', h.to || '', h.count, h.how, h.by, h.reason || '']));
+  await logAudit({ userId: req.user.id, action: 'Handover history exported', entity: 'Application', entityId: 'handover-export', toValue: `${rows.length} line(s)` });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="recruiter-handover-history-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(`\uFEFF${csv}\r\n`);
 }));
 
 module.exports = router;

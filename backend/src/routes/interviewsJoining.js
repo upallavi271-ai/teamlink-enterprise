@@ -584,6 +584,7 @@ function fillLetter(text, app, sender, extra = {}) {
     offerDate: app.offerDate || new Date().toISOString().slice(0, 10),
     replyBy: extra.replyBy || plusDays(app.offerDate, 3),
     sender: (sender && sender.name) || 'Your recruiter',
+    breakup: extra.breakup || '',
   };
   return String(text || '').replace(/\{\{(\w+)\}\}/g, (_, k) => (tokens[k] == null ? '' : String(tokens[k])))
     .replace(/\n{3,}/g, '\n\n').trim();
@@ -620,7 +621,10 @@ router.get('/offers/:id/letter', requirePerm('ats', 'interviews', 'Offers', 'vie
     return res.json({ text: sent.body, sent: true, sentAt: sent.createdAt, status: sent.status, recipient: sent.recipient });
   }
   const t = await offerTemplate();
-  res.json({ text: fillLetter(t.text, app, req.user), sent: false });
+  const OTm = require('../utils/offerTemplates'); // eslint-disable-line global-require
+  const picked = await OTm.pick(app, t.text); // several templates: the offer's own, the client's, the industry's, the default (audit 252)
+  const block = await OTm.breakupText(app); // the salary breakup, when one was saved (audit 253)
+  res.json({ text: OTm.injectBreakup(fillLetter(picked.text, app, req.user, { breakup: block }), block, picked.text), sent: false, template: { id: picked.templateId, name: picked.templateName, why: picked.why }, hasBreakup: !!block });
 });
 
 router.post('/offers/:id/prepare', requirePerm('ats', 'interviews', 'Offers', 'edit'), async (req, res) => {
@@ -758,7 +762,10 @@ async function approveAndSend(req, res) {
     const OL = require('../utils/offerLink');
     const { expiryDays } = await OL.loadSettings();
     const replyBy = new Date(Date.now() + expiryDays * 86400000 + 330 * 60000).toISOString().slice(0, 10);
-    const text = fillLetter(t.text, sentApp, req.user, { replyBy });
+    const OTm = require('../utils/offerTemplates'); // eslint-disable-line global-require
+    const picked = await OTm.pick(sentApp, t.text);
+    const block = await OTm.breakupText(sentApp);
+    const text = OTm.injectBreakup(fillLetter(picked.text, sentApp, req.user, { replyBy, breakup: block }), block, picked.text);
     const made = await OL.createVersion(sentApp, { letterText: text, actor: req.user }).catch((e) => { console.error('[offers] version:', e.message); return null; }); // eslint-disable-line no-console
     offerLinkInfo = made ? { version: made.version.version, expiresAt: made.version.expiresAt, url: made.token ? OL.linkUrl(req, made.token) : null } : null;
     const body = offerLinkInfo && offerLinkInfo.url ? `${text}\n\nRead and sign your offer here: ${offerLinkInfo.url}` : text;
@@ -1583,7 +1590,14 @@ router.post('/interviews/:id/book', mayBookHere, async (req, res) => {
   if (parsedPanel.error) return res.status(400).json({ error: parsedPanel.error });
   const panelEntries = parsedPanel.entries && parsedPanel.entries.length ? parsedPanel.entries : null;
   const interviewer = (String(b.interviewer || '').trim() || (panelEntries ? PANEL.namesOf(panelEntries) : '')).slice(0, 120);
-  if (mode === 'Online' && meetingLink) {
+  // Meeting link provider (audit 235): Google Meet / Zoom / Teams / Other, the link checked against that provider's pattern.
+  let linkProvider = null;
+  if (mode === 'Online' && (meetingLink || b.linkProvider)) {
+    const pv = require('../utils/interviewRounds').checkMeetingLink(meetingLink, b.linkProvider); // eslint-disable-line global-require
+    if (!pv.ok) return res.status(400).json({ error: pv.error });
+    linkProvider = pv.provider;
+  }
+  if (mode === 'Online' && meetingLink && linkProvider !== 'Zoom' && linkProvider !== 'Teams') {
     const chk = IMEET.checkLink(meetingLink);
     if (!chk.ok) return res.status(400).json({ error: chk.error });
     meetingLink = chk.url;
@@ -1653,6 +1667,11 @@ router.post('/interviews/:id/book', mayBookHere, async (req, res) => {
     data: { applicationId: app.id, status: 'SCHEDULED', toSlot: interviewAt.toISOString(), by: req.user.name, reason: nextRound || round > 1 ? `Round ${round} booked` : 'Interview booked' },
   });
   if (panelEntries) await PANEL.setPanel(app.id, round, panelEntries);
+  // Round type, link provider and slot of this round (utils/interviewRounds.js). Never blocks the booking.
+  await require('../utils/interviewRounds').noteBooking(app.id, round, { // eslint-disable-line global-require
+    roundType: b.roundType, scheduledAt: interviewAt, mode, location: mode === 'In Person' ? location : null, meetingLink: mode === 'Online' ? meetingLink : null,
+    linkProvider: mode === 'Online' ? (linkProvider || (meetingLink && /meet\.google\.com/i.test(meetingLink) ? 'Google Meet' : null)) : null, panel: interviewer, status: 'SCHEDULED',
+  }).catch(() => null);
   if (!movedStage) {
     await logAudit({
       userId: req.user.id, action: 'Interview booked', entity: 'Application', entityId: app.id,

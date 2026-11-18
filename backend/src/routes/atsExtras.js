@@ -822,6 +822,17 @@ router.post('/interviews/:id/feedback', async (req, res) => {
   if (['CANCELLED', 'NO_SHOW'].includes(app.interviewStatus)) {
     return res.status(409).json({ error: `This interview is ${interviewStatusLabel(app.interviewStatus)} — book a new time before giving feedback.` });
   }
+  // Typed round feedback (utils/interviewRounds.js): Technical / HR / Management forms. The plain form still works (type "Other").
+  const IRn = require('../utils/interviewRounds'); // eslint-disable-line global-require
+  let roundFb = null;
+  if (req.body.roundType) {
+    const typed = IRn.cleanFeedback(req.body.roundType, { ...req.body, overall: req.body.overall || req.body.feedback, recommendation: req.body.recommendation || req.body.result });
+    if (typed.error) return res.status(400).json({ error: typed.error });
+    roundFb = typed.value;
+    req.body.feedback = roundFb.overall;
+    req.body.result = roundFb.recommendation;
+    ['technical', 'communication', 'experience', 'roleFit'].forEach((k) => { if (roundFb[k] != null) req.body[k] = roundFb[k]; });
+  }
   const feedback = (req.body.feedback || req.body.overall || '').trim();
   if (!feedback) return res.status(400).json({ error: 'Feedback is required' });
   // Selected / Rejected / Hold. The prototype’s older wording
@@ -869,6 +880,13 @@ router.post('/interviews/:id/feedback', async (req, res) => {
   });
   // every round and every edit kept (utils/feedbackHistory.js)
   await require('../utils/feedbackHistory').record(app.id, 'Internal', app.interviewRound || 1, data, req.user).catch(() => {}); // eslint-disable-line global-require
+  // ... and as that round's own feedback row (per round, typed).
+  try {
+    let fbType = roundFb && roundFb.roundType;
+    if (!fbType) { const cur = (await IRn.roundsOf(app, { withFeedback: false, withAttachments: false })).find((r) => r.round === (app.interviewRound || 1)); fbType = (cur && cur.roundType) || 'Other'; }
+    const val = roundFb || { roundType: fbType, technical: data.technical, communication: data.communication, experience: data.experience, roleFit: data.roleFit, details: {}, overall: data.overall, recommendation: data.recommendation };
+    await IRn.saveFeedback(app.id, app.interviewRound || 1, val, req.user);
+  } catch (e) { console.error('[round feedback]', e.message); } // eslint-disable-line no-console
   // Round N in the history (layout v3); "Next round" = passed this round, the
   // next one is booked through the same Schedule popup (stored as Selected).
   await recordEvent(app.id, 'FEEDBACK_SUBMITTED', { reason: `Round ${app.interviewRound || 1} feedback — ${req.body.nextRound === true ? 'Next round' : result}`, by: req.user.name });

@@ -329,6 +329,7 @@ router.post('/register/raise', requirePerm('accounts', 'accounts', 'Invoices', '
     const terms = client?.paymentTerms || 'Net 30';
     const d = new Date(today);
     d.setDate(d.getDate() + termDays(terms));
+    const creditDue = await require('../utils/clientDepth').creditDueDate(g.clientId, today); // the client's own credit period, when it has one
     // eslint-disable-next-line no-await-in-loop
     const invoice = await prisma.invoice.create({
       data: {
@@ -336,7 +337,7 @@ router.post('/register/raise', requirePerm('accounts', 'accounts', 'Invoices', '
         candidateId: rows[0].candidateId,
         ...TAX.writeData(tax, {}),
         invoiceDate: today,
-        dueDate: toIsoDate(d),
+        dueDate: creditDue || toIsoDate(d),
         paymentTerms: terms,
         status: 'Pending',
         // eslint-disable-next-line no-await-in-loop
@@ -1075,6 +1076,25 @@ async function accountingExport(req, res, kind) {
   return res.send(AE.zohoCsv(list, { stateOf: (g) => gstStateName(String(g).slice(0, 2)) || '' }));
 }
 router.post('/register/tally.xml', requirePerm('accounts', 'accounts', 'Invoices', 'export'), (req, res) => accountingExport(req, res, 'tally'));
+// The PAYMENTS of the invoices on screen (audit 395): Tally Receipt vouchers and the Zoho Books customer-payments import. Files only.
+router.post('/register/tally-receipts.xml', requirePerm('accounts', 'accounts', 'Invoices', 'export'), async (req, res) => {
+  const AE = require('../utils/accountingExport'); // eslint-disable-line global-require
+  const { list } = await pickedRegister(req);
+  const n = list.filter((r) => r.status !== 'Cancelled').reduce((s, r) => s + (r.payments || []).filter((p) => Number(p.amount) > 0).length, 0);
+  await logAudit({ userId: req.user.id, action: 'Payments exported for Tally (XML receipts)', entity: 'Invoice', entityId: 'export', toValue: `${n} payment(s)` });
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="tally-receipts-${new Date().toISOString().slice(0, 10)}.xml"`);
+  return res.send(AE.tallyReceiptsXml(list, { company: req.body && req.body.company, ledgers: req.body && req.body.ledgers }));
+});
+router.post('/register/zoho-payments.csv', requirePerm('accounts', 'accounts', 'Invoices', 'export'), async (req, res) => {
+  const AE = require('../utils/accountingExport'); // eslint-disable-line global-require
+  const { list } = await pickedRegister(req);
+  const n = list.filter((r) => r.status !== 'Cancelled').reduce((s, r) => s + (r.payments || []).filter((p) => Number(p.amount) > 0).length, 0);
+  await logAudit({ userId: req.user.id, action: 'Payments exported for Zoho Books (CSV)', entity: 'Invoice', entityId: 'export', toValue: `${n} payment(s)` });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="zoho-books-payments-${new Date().toISOString().slice(0, 10)}.csv"`);
+  return res.send(AE.zohoPaymentsCsv(list, {}));
+});
 router.post('/register/zoho.csv', requirePerm('accounts', 'accounts', 'Invoices', 'export'), (req, res) => accountingExport(req, res, 'zoho'));
 
 // Invoice accounts: one line per client (billed / received / pending) and the
@@ -1490,6 +1510,7 @@ router.get('/group/document', async (req, res) => {
 // and returns what was written the first time. Each row gets an ordinary receipt
 // (same fields as POST /:id/payments), so every invoice's own ledger stays true.
 router.post('/group/payments', requirePerm('accounts', 'accounts', 'Payments', 'create'), async (req, res) => {
+  if (await require('../utils/billingDepth').mustWait(req.user)) return res.status(409).json({ error: 'Payment approval is switched on: record this receipt on each invoice, so it can wait for approval.', code: 'APPROVAL_ON' }); // eslint-disable-line global-require
   const body = req.body || {};
   const key = String(body.key || '');
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) return res.status(400).json({ error: 'A payment key is required (8-64 letters or digits).' });
@@ -1891,14 +1912,15 @@ router.post('/', requirePerm('accounts', 'accounts', 'Invoices', 'create'), asyn
       invoiceDate,
       // A blank due date is derived from the payment terms rather than left empty,
       // otherwise nothing can ever go Overdue.
-      dueDate: dueDate || dueDateFor(invoiceDate, terms),
+      dueDate: dueDate || await require('../utils/clientDepth').creditDueDate(clientId, invoiceDate) || dueDateFor(invoiceDate, terms),
       paymentTerms: terms,
       notes: notes || null,
       invoiceNumber: await numberForNewInvoice(clientId, invoiceDate),
     },
   });
   await logAudit({ userId: req.user.id, action: 'Invoice created', entity: 'Invoice', entityId: invoice.id, toValue: invoice.invoiceNumber });
-  res.status(201).json(decorate(invoice));
+  const creditWarning = await require('../utils/clientDepth').creditWarning(clientId, invoice.amount); // eslint-disable-line global-require
+  res.status(201).json(creditWarning ? { ...decorate(invoice), creditWarning } : decorate(invoice));
 });
 
 // ---------------------------------------------------------------------------
@@ -2033,6 +2055,13 @@ router.post('/:id/payments', requirePerm('accounts', 'accounts', 'Payments', 'cr
   const date = String(req.body.date || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Enter the date the money arrived.' });
   if (date > new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)) return res.status(400).json({ error: 'A payment date cannot be in the future.' });
+  // PAYMENT APPROVAL (Admin switch, OFF): an Accountant's receipt waits for an Admin or another Accountant (utils/billingDepth.js).
+  const BDP = require('../utils/billingDepth'); // eslint-disable-line global-require
+  if (await BDP.mustWait(req.user)) {
+    const pid = await BDP.requestPayment(invoice, { amount, date, method: req.body.method, reference: req.body.reference, notes: req.body.notes }, req.user);
+    await logAudit({ userId: req.user.id, action: 'Payment recorded - waiting for approval', entity: 'Invoice', entityId: invoice.id, toValue: `Rs. ${amount}` });
+    return res.status(202).json({ pendingApproval: true, approvalId: pid, message: 'Saved. The receipt counts once an Admin or another Accountant approves it.', invoice: decorate(invoice) });
+  }
   const payment = await prisma.invoicePayment.create({
     data: {
       invoiceId: invoice.id,
@@ -2096,6 +2125,11 @@ router.patch('/:id/pay', requirePerm('accounts', 'accounts', 'Invoices', 'edit')
   const date = String(req.body?.date || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Enter the date the money arrived.' });
   if (date > new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)) return res.status(400).json({ error: 'A payment date cannot be in the future.' });
+  if (await require('../utils/billingDepth').mustWait(req.user)) { // eslint-disable-line global-require
+    const pid = await require('../utils/billingDepth').requestPayment(invoice, { amount: outstanding, date, method: req.body?.method, notes: 'Settled in full' }, req.user); // eslint-disable-line global-require
+    await logAudit({ userId: req.user.id, action: 'Payment recorded - waiting for approval', entity: 'Invoice', entityId: invoice.id, toValue: `Rs. ${outstanding}` });
+    return res.status(202).json({ pendingApproval: true, approvalId: pid, message: 'Saved. The receipt counts once an Admin or another Accountant approves it.', ...decorate(invoice) });
+  }
   const settled = await prisma.invoicePayment.create({
     data: {
       invoiceId: invoice.id, date, amount: outstanding,

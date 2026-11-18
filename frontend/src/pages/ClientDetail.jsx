@@ -1,3 +1,4 @@
+import { ClientContacts, ClientCredit, PortalUsage } from '../components/clients/ClientDepth.jsx'; // unlimited contacts with roles, credit terms, portal usage (audit 133 / 134 / 142 / 711)
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -764,7 +765,7 @@ export default function ClientDetail() {
             {convOpen && mayMessage && <ConversationView audience="clients" personId={c.id} name={meta?.level === 'billing' ? `${c.billingContactName || 'Billing contact'} (${c.name})` : (c.contactName ? `${c.contactName} (${c.name})` : c.name)} onChanged={load} />}
             {meta?.level === 'names' && <div className="notice">Names only. The BDE team has phones and emails.</div>}
             {meta?.level === 'billing' && <div className="notice">The billing contact. The BDE team has the others.</div>}
-            {cards.length ? (
+            {!data.redacted ? <ClientContacts clientId={c.id} onChanged={load} /> : cards.length ? (
               <div className="clrole-contacts">
                 {cards.map(([label, name, desig, phone, email, wa]) => (
                   <div key={label} className="card">
@@ -799,6 +800,8 @@ export default function ClientDetail() {
           <ClientPortalAccess clientId={c.id} />
         </div>
       )}
+      {activeTab === 'details' && !data.redacted && <ClientCredit clientId={c.id} />}
+      {activeTab === 'details' && !data.redacted && <PortalUsage clientId={c.id} />}
 
       {/* ---------------------------------------------------------------- */}
       {activeTab === 'requirements' && (
