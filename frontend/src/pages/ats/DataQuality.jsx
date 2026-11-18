@@ -40,6 +40,7 @@ export default function DataQuality() {
             <Tile label="Duplicate finder accuracy" value={pct(d.duplicates.accuracy && d.duplicates.accuracy.precisionPct)} sub={d.duplicates.accuracy && d.duplicates.accuracy.decided ? `${num(d.duplicates.accuracy.falseAlarms)} false alarms of ${num(d.duplicates.accuracy.decided)} checked (${pct(d.duplicates.accuracy.falseAlarmPct)})` : 'no flags decided yet'} />
             <Tile label="Not touched in 6 months" value={num(d.staleSixMonths)} sub="no application activity" />
             <Tile label="Consent not recorded" value={num(d.consentNotRecorded)} />
+            {d.invalid && <Tile label="Wrong values" value={num(d.invalid.profiles)} sub={`${pct(d.invalid.pct)} of profiles: bad e-mail, phone, date or experience`} />}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
             <div className="card section">
@@ -61,6 +62,27 @@ export default function DataQuality() {
                 <tbody>{d.missing.map((m) => <tr key={m.label}><td>{m.label}</td><td style={{ textAlign: 'right' }}>{num(m.count)}</td><td style={{ textAlign: 'right' }}>{m.pct}%</td></tr>)}</tbody>
               </table>
             </div>
+            {/* WRONG VALUES (ATS audit 2026-11-18, Q707/Q708): filled in, but cannot be right */}
+            {d.invalid && (
+              <div className="card section">
+                <h3 style={{ marginTop: 0 }}>Wrong values to fix</h3>
+                {!d.invalid.byIssue.length && <div className="small-muted">No wrong e-mail, phone, date of birth or experience found.</div>}
+                {d.invalid.byIssue.length > 0 && (
+                  <table style={{ width: '100%', marginBottom: 8 }}>
+                    <thead><tr><th style={{ textAlign: 'left' }}>Problem</th><th style={{ textAlign: 'right' }}>Profiles</th></tr></thead>
+                    <tbody>{d.invalid.byIssue.map((b) => <tr key={b.key}><td>{b.label}</td><td style={{ textAlign: 'right' }}>{num(b.count)}</td></tr>)}</tbody>
+                  </table>
+                )}
+                {d.invalid.toFix.length > 0 && (
+                  <details>
+                    <summary style={{ cursor: 'pointer' }}>{`Profiles to fix first (${d.invalid.toFix.length}${d.invalid.profiles > d.invalid.toFix.length ? ` of ${num(d.invalid.profiles)}` : ''})`}</summary>
+                    <div style={{ maxHeight: 280, overflow: 'auto', marginTop: 6 }}>
+                      {d.invalid.toFix.map((c) => <div key={c.id} style={{ fontSize: 13, padding: '3px 0', borderBottom: '1px solid var(--line-soft, #eee)' }}><b>{c.name}</b> <span className="small-muted">{c.issues.join(' · ')}</span></div>)}
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
           </div>
           <div className="small-muted" style={{ marginTop: 10 }}>Score weights: {d.items.map((i) => `${i.label} ${i.weight}`).join(' · ')}. Counted {new Date(d.at).toLocaleString('en-GB')}.</div>
         </>
