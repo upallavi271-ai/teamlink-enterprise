@@ -29,9 +29,39 @@ const PROVIDERS = [
   { id: 'openrouter', name: 'OpenRouter', url: 'https://openrouter.ai/api/v1/chat/completions', keyLabel: 'OpenRouter API key', modelLabel: 'OpenRouter model', env: 'OPENROUTER_API_KEY', model: 'meta-llama/llama-3.3-70b-instruct:free' },
 ];
 
+// THE MODEL NAMES CHANGE (2026-11-18: the live CRM Agent fell back to the local AI): when the saved / default model is refused (400 / 404),
+// the provider's own model list (GET <base>/models) is read and the first of these that it offers is used, else any chat model it offers.
+const PREFERRED = {
+  groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'qwen/qwen3-32b', 'moonshotai/kimi-k2-instruct', 'openai/gpt-oss-20b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'],
+  gemini: ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'],
+  openrouter: ['meta-llama/llama-3.3-70b-instruct:free', 'openai/gpt-oss-120b:free', 'qwen/qwen3-235b-a22b:free', 'google/gemini-2.0-flash-exp:free'],
+};
+const NOT_CHAT = /whisper|tts|guard|embed|playai|distil|orpheus|image|vision-preview|audio|transcri|moderation|compound/i;
+const modelLists = new Map(); // provider id -> { at, ids }
+async function availableModels(p) {
+  const hit = modelLists.get(p.id);
+  if (hit && Date.now() - hit.at < 6 * 3600000) return hit.ids;
+  const base = p.url.replace(/\/chat\/completions$/, '');
+  const res = await fetch(`${base}/models`, { headers: { authorization: `Bearer ${p.key}` }, signal: AbortSignal.timeout(10000) });
+  const data = await res.json().catch(() => ({}));
+  const ids = ((data && data.data) || []).map((m) => String(m.id || '').replace(/^models\//, '')).filter(Boolean);
+  if (ids.length) modelLists.set(p.id, { at: Date.now(), ids });
+  return ids;
+}
+async function pickModel(p, tried) {
+  let ids = [];
+  try { ids = await availableModels(p); } catch { return null; }
+  const pref = (PREFERRED[p.id] || []).find((m) => ids.includes(m) && !tried.includes(m));
+  if (pref) return pref;
+  const any = ids.filter((m) => !NOT_CHAT.test(m) && !tried.includes(m) && (p.id !== 'openrouter' || m.endsWith(':free')));
+  return any[0] || null;
+}
+
 let cache = null; // { at, list }
 // A provider that answered 429 / 401 rests for a while instead of being asked (and failing) on every question.
 const resting = new Map(); // id -> until (ms)
+const workingModel = new Map(); // id -> the model that last answered (asked first next time)
+const lastErrors = new Map(); // id -> { at, model, status, detail } for the Integrations test and the status
 
 async function providerList() {
   if (cache && Date.now() - cache.at < CONFIG_CACHE_MS) return cache.list;
@@ -94,17 +124,24 @@ async function chat(system, history, opts = {}) {
   const list = await providerList();
   for (const p of list) {
     if ((resting.get(p.id) || 0) > Date.now()) { tried.push(`${p.name}: resting`); continue; }
-    const models = [p.model, ...(p.backupModel && p.backupModel !== p.model ? [p.backupModel] : [])];
-    for (const model of models) {
+    const usedModels = [];
+    let model = (workingModel.get(p.id)) || p.model;
+    for (let attempt = 0; attempt < 3 && model; attempt += 1) {
+      usedModels.push(model);
       const t0 = Date.now();
       try {
         const text = await callProvider(p, model, system, history, { maxTokens, temperature, json: !!opts.json, timeoutMs });
+        workingModel.set(p.id, model);
         return { text, provider: p.name, model, ms: Date.now() - t0 };
       } catch (err) {
-        tried.push(`${p.name}/${model}: ${err.status || (err.name === 'TimeoutError' ? 'timeout' : 'error')}`);
-        if (err.status === 401 || err.status === 403) { resting.set(p.id, Date.now() + 10 * 60000); break; } // a bad key: the other model will not help
+        tried.push(`${p.name} ${err.status || (err.name === 'TimeoutError' ? 'timeout' : 'error')}`);
+        lastErrors.set(p.id, { at: Date.now(), model, status: err.status || err.name, detail: err.detail || '' });
+        if (err.status === 401 || err.status === 403) { resting.set(p.id, Date.now() + 10 * 60000); break; } // a bad key: another model will not help
         if (err.status === 429) { resting.set(p.id, Date.now() + 60000); break; }
-        // 400 / 404 (model name not offered any more) or 5xx / timeout: try the backup model, then the next provider
+        if (workingModel.get(p.id) === model) workingModel.delete(p.id);
+        // 400 / 404 = the model name is not offered (any more): ask the provider which models it has; 5xx / timeout: its backup model
+        if (err.status === 400 || err.status === 404) model = await pickModel(p, usedModels);
+        else model = p.backupModel && !usedModels.includes(p.backupModel) ? p.backupModel : null;
       }
     }
   }
@@ -114,7 +151,8 @@ async function chat(system, history, opts = {}) {
   const meta = {};
   try {
     const text = await ai.chat(system, cleanHistory(history), { meta, maxTokens, timeoutMs: Number(opts.appTimeoutMs) || 120000, waitMs: 5000 });
-    return { text, provider: meta.provider === 'claude' ? 'Claude' : 'Local AI', model: meta.model || null, ms: Date.now() - t0 };
+    // why the free fast AI did not answer, shown small under the answer ("Groq 401" = the key, "Groq 429" = busy, no note = no key saved)
+    return { text, provider: meta.provider === 'claude' ? 'Claude' : 'Local AI', model: meta.model || null, ms: Date.now() - t0, note: tried.length ? tried.join(', ') : (list.length ? '' : 'no fast AI key') };
   } catch (err) {
     const none = !list.length;
     throw new FastAiError(none
@@ -142,13 +180,22 @@ async function testConnection() {
   const lines = [];
   let ok = false;
   for (const p of list) {
-    const t0 = Date.now();
-    try {
-      await callProvider(p, p.model, 'Reply with the single word OK.', [{ role: 'user', content: 'Say OK' }], { maxTokens: 5, temperature: 0, json: false, timeoutMs: 15000 });
-      ok = true;
-      lines.push(`${p.name} (${p.model}): OK in ${Date.now() - t0} ms`);
-    } catch (err) {
-      lines.push(`${p.name} (${p.model}): failed — ${err.status || err.name}${err.detail ? ` ${err.detail}` : ''}`);
+    const usedModels = [];
+    let model = p.model;
+    let done = false;
+    for (let attempt = 0; attempt < 3 && model && !done; attempt += 1) {
+      usedModels.push(model);
+      const t0 = Date.now();
+      try {
+        await callProvider(p, model, 'Reply with the single word OK.', [{ role: 'user', content: 'Say OK' }], { maxTokens: 5, temperature: 0, json: false, timeoutMs: 15000 });
+        ok = true; done = true;
+        workingModel.set(p.id, model);
+        lines.push(`${p.name} (${model}): OK in ${Date.now() - t0} ms${model !== p.model ? ` - "${p.model}" is not offered any more, ${model} is used instead` : ''}`);
+      } catch (err) {
+        if ((err.status === 400 || err.status === 404) && attempt < 2) { model = await pickModel(p, usedModels); if (model) continue; } // eslint-disable-line no-continue
+        lines.push(`${p.name} (${model}): failed — ${err.status || err.name}${err.detail ? ` ${err.detail}` : ''}`);
+        done = true;
+      }
     }
   }
   return { ok, message: lines.join(' · ') };
