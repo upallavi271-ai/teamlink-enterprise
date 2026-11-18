@@ -653,7 +653,8 @@ add({
       .sort((a, b) => b.joined - a.joined || b.selected - a.selected || b.interviews - a.interviews || b.active - a.active);
     if (!list.length) return answer('There is no candidate activity in your area to rank.', { source: `Your area: ${scopeText(ctx.user, 'ats')}.` });
     const worst = /\b(worst|lowest|least)\b/.test(ctx.t);
-    const shown = (worst ? [...list].reverse() : list).slice(0, 10);
+    const wanted = Number((/\b(?:top|best|worst|lowest)\s+(\d{1,2})\b/.exec(ctx.t) || [])[1]) || 10;
+    const shown = (worst ? [...list].reverse() : list).slice(0, Math.min(wanted, 25));
     const totals = list.reduce((s, r) => ({ joined: s.joined + r.joined, selected: s.selected + r.selected, interviews: s.interviews + r.interviews, active: s.active + r.active }), { joined: 0, selected: 0, interviews: 0, active: 0 });
     const lead = list[0];
     return answer(`${worst ? 'Lowest' : 'Top'} ${shown.length} of ${list.length} by joinings ${label}. ${lead.joined ? `${lead.name} leads with ${lead.joined} joined.` : 'Nobody has a joining in this period yet.'} Ranked by joined, then selected, then interviews.`, {
