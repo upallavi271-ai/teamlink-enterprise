@@ -26,7 +26,8 @@ export default function TaxEditModal({ invoice, onClose, onSaved }) {
   const save = async () => {
     const e = taxFormErrors(f);
     if (!(b > 0)) e.base = 'Enter the amount before GST — more than ₹0.';
-    if (b > 0 && received > c.net + 0.5) e.base = `${money2(received)} has already been received — the net receivable cannot go below it.`;
+    if (b > 0 && received > c.net + 0.005
+      && !window.confirm(`${money2(received)} was already received, more than the new net receivable ${money2(c.net)}.\nThe extra ${money2(received - c.net)} will be taken off this invoice and added to this client's next open invoices (oldest first), with its bank line as proof.\n\nContinue?`)) return;
     setErrs(e);
     if (Object.keys(e).length) return;
     setBusy(true); setFail('');
@@ -44,7 +45,7 @@ export default function TaxEditModal({ invoice, onClose, onSaved }) {
       const d = res.data;
       onSaved(d.unchanged && !ref
         ? 'Nothing changed.'
-        : `Saved — GST ${money2(d.gst)}, TDS ${money2(d.tds)}, net receivable ${money2(d.total)} · ${d.status}.`);
+        : `Saved — GST ${money2(d.gst)}, TDS ${money2(d.tds)}, net receivable ${money2(d.total)} · ${d.status}.${d.movedMoney ? ` ${money2(d.movedMoney.amount)} of received money moved${d.movedMoney.reapplied.length ? ` to ${d.movedMoney.reapplied.map((x) => `${x.invoiceNumber || 'invoice'} (${money2(x.amount)})`).join(', ')}` : ''}${d.movedMoney.unappliedOnBank > 0.004 ? `; ${money2(d.movedMoney.unappliedOnBank)} is left unapplied on its bank line` : ''}.` : ''}`);
     } catch (err) {
       setFail(err.response?.data?.error || 'The changes could not be saved.');
       setBusy(false);

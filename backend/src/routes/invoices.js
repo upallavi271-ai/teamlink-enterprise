@@ -1919,10 +1919,75 @@ router.patch('/:id', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), as
   const taxIn = TAX.readTaxInput(req.body || {}, start, TAX.defaultsFor(invoice.client, company, { gst: 0, tds: 0 }));
   if (taxIn.error) return res.status(400).json({ error: taxIn.error });
   const received = ROUND(Number(invoice.receivedAmount || 0));
-  if (received > taxIn.calc.net + 0.5) {
-    return res.status(400).json({ error: `₹${received.toLocaleString('en-IN')} has already been received — more than the new net receivable ₹${taxIn.calc.net.toLocaleString('en-IN')}. Remove a payment first, or check the amounts.` });
-  }
   const data = taxIn.data;
+  // Founder 2026-11-18: lowering the amount below what was already received does not stop the edit - the extra money
+  // is taken off this invoice (newest receipts first) and goes, as a proper receipt (bank-linked when it was), to the
+  // SAME client's next open invoices, oldest first. A bank line's share nobody can take stays on the line, unapplied.
+  // Money with no bank line that no other invoice can take is refused (it would have nowhere to be kept).
+  const excess = ROUND(received - taxIn.calc.net);
+  if (excess > 0.005) {
+    const moved = await prisma.$transaction(async (tx) => {
+      const fresh = await tx.invoice.findUnique({ where: { id: invoice.id } });
+      const pays = (await tx.invoicePayment.findMany({ where: { invoiceId: invoice.id } }))
+        .filter((p) => Number(p.amount) > 0)
+        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      let need = Math.round(ROUND(Number(fresh.receivedAmount || 0) - taxIn.calc.net) * 100);
+      const cuts = [];
+      for (const p of pays) {
+        if (need <= 0) break;
+        const have = Math.round(Number(p.amount) * 100);
+        const cut = Math.min(need, have);
+        if (cut >= have) await tx.invoicePayment.delete({ where: { id: p.id } });
+        else await tx.invoicePayment.update({ where: { id: p.id }, data: { amount: (have - cut) / 100 } });
+        cuts.push({ p, cut });
+        need -= cut;
+      }
+      const newReceived = ROUND(Number(fresh.receivedAmount || 0) - cuts.reduce((s, c) => s + c.cut / 100, 0));
+      const merged = { ...fresh, ...data, receivedAmount: newReceived };
+      const st = deriveInvoiceStatus(merged);
+      await tx.invoice.update({ where: { id: invoice.id }, data: { ...data, receivedAmount: newReceived, status: st, paidDate: st === 'Paid' ? (fresh.paidDate || null) : (fresh.status === 'Paid' ? null : fresh.paidDate) } });
+      const others = (await tx.invoice.findMany({ where: { clientId: invoice.clientId, id: { not: invoice.id } } })).filter(isOpenInvoice)
+        .sort((a, b) => String(a.dueDate || a.invoiceDate || '9999').localeCompare(String(b.dueDate || b.invoiceDate || '9999')) || String(a.invoiceNumber || '').localeCompare(String(b.invoiceNumber || '')));
+      const reapplied = []; let unappliedOnBank = 0;
+      for (const { p, cut } of cuts) {
+        let left = cut;
+        const line = p.bankTxnId ? await tx.bankTransaction.findUnique({ where: { id: p.bankTxnId } }) : null;
+        for (const o of others) {
+          if (left <= 0) break;
+          const take = Math.min(left, Math.round(invoiceOutstanding(o) * 100));
+          if (take <= 0) continue;
+          const amt = take / 100;
+          const day = p.date || (line && line.date) || new Date().toISOString().slice(0, 10);
+          await tx.invoicePayment.create({
+            data: {
+              invoiceId: o.id, date: day, dateSource: 'entered', amount: amt, method: p.method || 'Bank Transfer', reference: p.reference || (line && line.reference) || null,
+              notes: `${line ? `Bank statement · ${line.description} · ` : ''}moved here when the amount of ${invoice.invoiceNumber || 'an invoice'} was edited`,
+              bankTxnId: line ? line.id : null, bankLinked: !!line, recordedBy: req.user.name || req.user.email || null,
+            },
+          });
+          const upd = invoiceAfterReceipt(o, amt, day);
+          await tx.invoice.update({ where: { id: o.id }, data: line ? { ...upd, bankTxnId: line.id } : upd });
+          Object.assign(o, upd);
+          reapplied.push({ invoiceId: o.id, invoiceNumber: o.invoiceNumber, amount: amt, date: day });
+          left -= take;
+        }
+        if (left > 0) {
+          if (!line) throw Object.assign(new Error(`₹${ROUND(left / 100).toLocaleString('en-IN')} of the money received has no bank line and no other open invoice of this client can take it. Add the client's next invoice first, or remove that payment.`), { http: 400 });
+          const over = ROUND(left / 100);
+          unappliedOnBank = ROUND(unappliedOnBank + over);
+          await tx.bankTransaction.update({ where: { id: line.id }, data: { excess: ROUND(Number(line.excess || 0) + over) } });
+        }
+      }
+      return { reapplied, unappliedOnBank, amount: ROUND(cuts.reduce((s, c) => s + c.cut / 100, 0)) };
+    }, { timeout: 30000, maxWait: 15000 }).catch((e) => { if (e && e.http) { res.status(e.http).json({ error: e.message }); return null; } throw e; });
+    if (!moved) return undefined;
+    const updated = await prisma.invoice.findUnique({ where: { id: invoice.id }, include: { client: true } });
+    await logAudit({ userId: req.user.id, action: 'Invoice GST / TDS edited', entity: 'Invoice', entityId: invoice.id, fromValue: taxLine(invoice), toValue: `${taxLine(updated)} · ₹${moved.amount} of received money moved to the next invoices` });
+    for (const r of moved.reapplied) {
+      await logAudit({ userId: req.user.id, action: 'Payment recorded', entity: 'Invoice', entityId: r.invoiceId, toValue: `₹${r.amount} moved from ${invoice.invoiceNumber || 'an invoice'} (its amount was edited)` });
+    }
+    return res.json({ ...decorate(updated), ...taxPayload(updated, company), changed: Object.keys(data), movedMoney: moved });
+  }
   const changed = Object.keys(data).filter((k) => data[k] !== undefined && String(data[k] ?? '') !== String(invoice[k] ?? ''));
   if (!changed.length) {
     return res.json({ ...decorate(invoice), ...taxPayload(invoice, company), unchanged: true });
