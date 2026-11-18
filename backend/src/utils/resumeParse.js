@@ -458,6 +458,7 @@ async function parseResumeText(text, { vocabulary } = {}) {
     languages,
     otherLanguage: languages.some((l) => l !== 'English'),
   };
+  out.skillGroups = classifySkills(out.skills);
   out.confidence = confidenceOf(out, t, comp);
   Object.assign(out, reviewLists(out.confidence));
   return out;
@@ -546,6 +547,7 @@ async function extractAndParse(buffer, kind) {
         if (!conf.skills && parsed.skills && parsed.skills.length) conf.skills = 'AI';
         parsed.confidence = conf;
         Object.assign(parsed, reviewLists(conf));
+        parsed.skillGroups = classifySkills(parsed.skills);
       }
     } catch { /* free result stands */ }
   }
@@ -588,6 +590,6 @@ function resumeOwnerCheck(parsed, person) {
 }
 
 module.exports = {
-  extractText, parseResumeText, extractAndParse, skillVocabulary, textHasTerm, parsePhones, aiEnabled, resumeOwnerCheck, rtfToText, parseCompensation, salaryValue, noticeValue,
+  extractText, parseResumeText, extractAndParse, skillVocabulary, textHasTerm, parsePhones, aiEnabled, resumeOwnerCheck, rtfToText, parseCompensation, salaryValue, noticeValue, classifySkills,
   detectLanguages, asciiDigits, parseName, parseExperienceYears, BUILTIN_SKILLS,
 };

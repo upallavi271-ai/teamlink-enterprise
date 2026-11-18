@@ -130,6 +130,8 @@ function metaFor(r, internal) {
       confidence: parsed.confidence || null,
       missing: parsed.missing || null,
       review: parsed.review || null,
+      // skills grouped into technical / soft / domain (ATS audit Q97); an older stored parse is grouped now
+      skillGroups: parsed.skillGroups || (Array.isArray(parsed.skills) ? require('../utils/resumeParse').classifySkills(parsed.skills) : null), // eslint-disable-line global-require
       emails: parsed.emails || [],
       phones: parsed.phones || [],
       name: parsed.name || null,
