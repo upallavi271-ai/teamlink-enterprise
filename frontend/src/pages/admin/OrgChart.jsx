@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import ListFilterBar, { useListFilters } from '../../components/ui/ListFilters.jsx';
-import ConversationView from '../../components/messaging/ConversationView.jsx';
+import OrgChartTalk from './OrgChartTalk.jsx'; // the WhatsApp chat with that person (+ Call / Mail / SMS)
 import { useContactRule } from '../../components/messaging/useMayMessage.js';
 import './org-chart.css';
 
@@ -15,8 +15,8 @@ import './org-chart.css';
 //     Departments -> STL -> TL -> employees
 //
 // It draws what the app already knows (GET /api/org-chart, built from the employee records: reporting manager, TL, STL,
-// department, team, seats and today's attendance); it keeps nothing of its own. "Message" opens the person's ONE
-// conversation (Mail, WhatsApp, SMS, Call — the same window as the Inbox), so what is said is logged on their history, and
+// department, team, seats and today's attendance); it keeps nothing of its own. "Message" opens the person's WhatsApp chat
+// (the same chat as Follow-ups > WhatsApp chats: sent, answered, ticks, live replies; Call / Mail / SMS one tab away), so what is said is logged on their history, and
 // the server decides who may contact whom. The tree only shows the people the signed-in login may see in Employee Management.
 // ---------------------------------------------------------------------------
 
@@ -390,8 +390,8 @@ export default function OrgChart() {
       )}
 
       {talk && (
-        <Modal title={`Conversation with ${talk.name}`} size="wide" onClose={() => setTalk(null)}>
-          <ConversationView audience="employees" personId={talk.id} name={talk.name} />
+        <Modal title={`Chat with ${talk.name}`} size="wide" onClose={() => setTalk(null)}>
+          <OrgChartTalk personId={talk.id} name={talk.name} />
         </Modal>
       )}
     </div>
