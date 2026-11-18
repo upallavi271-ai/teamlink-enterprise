@@ -565,6 +565,6 @@ function resumeOwnerCheck(parsed, person) {
 }
 
 module.exports = {
-  extractText, parseResumeText, extractAndParse, skillVocabulary, textHasTerm, parsePhones, aiEnabled, resumeOwnerCheck,
+  extractText, parseResumeText, extractAndParse, skillVocabulary, textHasTerm, parsePhones, aiEnabled, resumeOwnerCheck, rtfToText, parseCompensation, salaryValue, noticeValue,
   detectLanguages, asciiDigits, parseName, parseExperienceYears, BUILTIN_SKILLS,
 };

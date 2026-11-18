@@ -654,5 +654,5 @@ module.exports = {
   MAX_BYTES, MESSAGE, KINDS, TARGETS, REQUIRED, AI_KEYS,
   fill, textOf, validateFile, sniffAny, storeSource, resolveSource, sourceDir, parseUpload, aiAllowedFor, matchClient,
   // exposed for tests
-  rulesJob, rulesCandidate, rulesClient, labelled, section, salaryRange, expRange,
+  rulesJob, rulesCandidate, rulesClient, labelled, section, salaryRange, expRange, noticeOf,
 };

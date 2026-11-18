@@ -201,4 +201,7 @@ async function testConnection() {
   return { ok, message: lines.join(' · ') };
 }
 
-module.exports = { chat, status, testConnection, resetCache, FastAiError, CHANNEL, PROVIDERS };
+// true when at least one free fast AI key is saved (the resume parser's AI pass runs only then, utils/resumeParse.js)
+async function hasKey() { return (await providerList()).length > 0; }
+
+module.exports = { chat, status, testConnection, resetCache, hasKey, FastAiError, CHANNEL, PROVIDERS };

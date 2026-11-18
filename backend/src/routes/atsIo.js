@@ -72,6 +72,7 @@ const resumeParser = require('../utils/resumeParse');
 
 function resumeKind(buf, name = '') {
   if (buf.length > 4 && buf.toString('latin1', 0, 5) === '%PDF-') return 'pdf';
+  if (buf.length > 4 && buf.toString('latin1', 0, 5) === '{\\rtf') return 'rtf';
   if (buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4b) return 'docx';
   if (buf.length > 8 && buf.toString('hex', 0, 8) === 'd0cf11e0a1b11ae1') return 'doc';
   // a photo of a resume: read with OCR when the server has it (utils/resumeOcr.js)
@@ -95,7 +96,11 @@ async function parseResume(buf, name) {
   if (p.location) fields.location = p.location;
   if (typeof p.totalExperienceYears === 'number') fields.experienceYears = p.totalExperienceYears;
   if (Array.isArray(p.skills) && p.skills.length) fields.skills = p.skills.slice(0, 25).join(', ');
-  return { fields, kind };
+  // ATS audit 2026-11-18 (Q77/Q78): salary and notice period the resume states, plus what a person should check
+  if (p.currentCtc) fields.currentSalary = p.currentCtc;
+  if (p.expectedCtc) fields.expectedSalary = p.expectedCtc;
+  if (p.noticePeriod) fields.noticePeriod = p.noticePeriod;
+  return { fields, kind, missing: p.missing || [], review: p.review || [], confidence: p.confidence || null };
 }
 const { pushNotification } = require('../utils/notify');
 const CSRC = require('../utils/candidateSource'); // the clean source list
