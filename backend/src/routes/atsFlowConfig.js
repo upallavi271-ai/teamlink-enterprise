@@ -30,6 +30,42 @@ const isAdmin = (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) && !u.vi
 const ADMIN_ONLY = { error: 'Only a Super Admin or an Admin changes the pipeline settings.' };
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// ------------------------------------------------------- one pipeline per industry (utils/deptPipelines.js, ATS audit 2026-11-18)
+//   GET  /pipelines                  { stages: [{ code, label, mandatory }], approvers, departments, pipelines: { Department: { CODE: { enabled, approverRole, mandatory } } } }
+//                                    any internal login: the web app hides the steps a department does not use
+//   PUT  /pipelines/:department      { stages: { CODE: { enabled, approverRole } } }      Super Admin / Admin
+//   POST /pipelines/:department/reset                                                    Super Admin / Admin
+const DP = require('../utils/deptPipelines');
+router.get('/pipelines', requireAuth, requireInternal, wrap(async (req, res) => {
+  const cfg = await DP.all({ fresh: true });
+  const names = await DP.departments();
+  const pipelines = {};
+  names.forEach((d) => { pipelines[d] = DP.view(cfg[d]); });
+  res.json({
+    stages: V.STAGE_CODES.map((code) => ({ code, label: V.STAGE_LABELS[code] || code, mandatory: DP.MANDATORY.includes(code) })),
+    approvers: DP.APPROVERS,
+    departments: names,
+    pipelines,
+  });
+}));
+router.put('/pipelines/:department', requireAuth, wrap(async (req, res) => {
+  if (!isAdmin(req.user)) return res.status(403).json(ADMIN_ONLY);
+  const before = (await DP.all({ fresh: true }))[DP.deptKey(req.params.department)] || {};
+  const out = await DP.save(req.params.department, (req.body || {}).stages, req.user);
+  if (out.error) return res.status(400).json({ error: out.error });
+  const off = Object.entries(out.stages).filter(([, s]) => !s.enabled).map(([c]) => V.STAGE_LABELS[c] || c);
+  const appr = Object.entries(out.stages).filter(([, s]) => s.approverRole).map(([c, s]) => `${V.STAGE_LABELS[c] || c}: ${s.approverRole}`);
+  await logAudit({ userId: req.user.id, action: 'Industry pipeline saved', entity: 'Department', entityId: out.department, fromValue: JSON.stringify(before).slice(0, 300), toValue: `not used: ${off.join(', ') || 'none'}; approval: ${appr.join(', ') || 'none'}`.slice(0, 300) });
+  res.json({ ok: true, ...out, message: `${out.department}: ${off.length ? `${off.join(', ')} not used` : 'every step used'}${appr.length ? `; approval on ${appr.join(', ')}` : ''}.` });
+}));
+router.post('/pipelines/:department/reset', requireAuth, wrap(async (req, res) => {
+  if (!isAdmin(req.user)) return res.status(403).json(ADMIN_ONLY);
+  const out = await DP.reset(req.params.department);
+  if (out.error) return res.status(400).json({ error: out.error });
+  await logAudit({ userId: req.user.id, action: 'Industry pipeline reset', entity: 'Department', entityId: out.department, toValue: 'every step used, no extra approval' });
+  res.json({ ok: true, ...out, message: `${out.department}: back to every step, no extra approval.` });
+}));
+
 // ---------------------------------------------------------------- stage names
 async function labelsPayload(withAll) {
   const labels = await F.labelsFresh();

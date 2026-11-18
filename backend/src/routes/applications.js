@@ -594,6 +594,11 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     return { status: 200, body: { ...plain, unchanged: true } };
   }
 
+  // ONE PIPELINE PER INDUSTRY (utils/deptPipelines.js, ATS audit 2026-11-18): a step the candidate's department does not use is refused, and a
+  // step that needs a TL / STL / Manager approval tells the approvers. Hold and Reject are never gated; the offer / joining flows pass viaFlow.
+  const pipelineHold = await require('../utils/deptPipelines').gate(existing, stage, user, { viaFlow: !!opts.viaFlow }); // eslint-disable-line global-require
+  if (pipelineHold) return pipelineHold;
+
   // DUPLICATES ARE CHECKED AT THE FIRST STEP (user, 2026-10-10: "Duplicate profiles anni first stage lone verify avvali").
   // A person with an open CERTAIN / LIKELY duplicate flag cannot leave New / Recruiter review for a later step until the
   // flag is resolved (Merge · Not a duplicate · Same person, different job · Reject). Hold and Reject stay possible.
