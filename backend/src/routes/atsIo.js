@@ -106,7 +106,7 @@ const { pushNotification } = require('../utils/notify');
 const CSRC = require('../utils/candidateSource'); // the clean source list
 
 const {
-  readSheet, buildIndex, HANDLERS, isDry, findCandidate, contactMatch,
+  readSheet, buildIndex, candidateOnlyIndex, invalidateCandidateIndex, HANDLERS, isDry, findCandidate, contactMatch,
 } = internals;
 const candidateKeys = require('../utils/candidateDedupe');
 
@@ -2060,7 +2060,7 @@ router.post('/resumes/parse', guarded(async (req, res) => {
   const parsed = await parseResume(file.data, file.filename);
   let duplicate = null;
   if (!parsed.error) {
-    const ix = await buildIndex();
+    const ix = await candidateOnlyIndex(); // only the candidate keys, kept 30 s (the full buildIndex() per resume took 1.8 s at 100,000 candidates)
     const dupId = resumeDup(ix, parsed.fields);
     if (dupId) {
       const c = await prisma.candidate.findUnique({ where: { id: dupId }, select: { id: true, name: true } });

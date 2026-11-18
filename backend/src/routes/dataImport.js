@@ -421,6 +421,32 @@ async function unguessableHash() {
 // and the reference form. Trying only the plain key failed 10,218
 // applications whose candidates had been imported perfectly well moments
 // earlier.
+// THE CANDIDATE-ONLY INDEX (load test 2026-11-18): the resume upload asked buildIndex() for EVERY resume, and buildIndex reads clients,
+// requirements, all candidates, employees, users, invoices, bank rules ... (it is made for one Excel import). With 100,000 candidates that
+// was 1.8 s per resume (the parser itself takes 4 ms): 10,000 resumes = 5.7 hours. A resume only needs "is this e-mail / phone already a
+// candidate?", so this keeps just those keys, built the same way as ix.candidate above, for 30 s and until a commit adds people.
+// findCandidate(ix, v) only reads ix.norm and ix.candidate, so it works on this object unchanged.
+let candOnly = null; let candOnlyAt = 0; let candOnlyBuilding = null;
+async function candidateOnlyIndex({ fresh = false } = {}) {
+  if (!fresh && candOnly && Date.now() - candOnlyAt < 30000) return candOnly;
+  if (!fresh && candOnlyBuilding) return candOnlyBuilding;
+  candOnlyBuilding = (async () => {
+    const rows = await prisma.candidate.findMany({ select: { id: true, email: true, phone: true, externalRef: true } });
+    const norm = (s) => String(s || '').trim().toLowerCase();
+    const ix = { norm, candidate: new Map() };
+    rows.forEach((r) => {
+      if (r.email) ix.candidate.set(norm(r.email), r.id);
+      if (r.phone) ix.candidate.set(norm(r.phone), r.id);
+      if (r.externalRef) ix.candidate.set(norm(`ref:${r.externalRef}`), r.id);
+      indexCandidateContact(ix, r, r.id);
+    });
+    candOnly = ix; candOnlyAt = Date.now();
+    return ix;
+  })().finally(() => { candOnlyBuilding = null; });
+  return candOnlyBuilding;
+}
+function invalidateCandidateIndex() { candOnly = null; }
+
 function findCandidate(ix, value) {
   const v = ix.norm(value);
   if (!v) return null;
@@ -1980,5 +2006,5 @@ module.exports = router;
 // The row reader, the lookup maps and the per-sheet handlers, for the ATS
 // screens' one-sheet imports (routes/atsIo.js) — the same code, not a copy.
 module.exports.internals = {
-  readSheet, buildIndex, HANDLERS, rawText, isDry, findCandidate, IMPORTED_BY, contactMatch,
+  readSheet, buildIndex, candidateOnlyIndex, invalidateCandidateIndex, HANDLERS, rawText, isDry, findCandidate, IMPORTED_BY, contactMatch,
 };
