@@ -58,10 +58,12 @@ export default function BdeAgent() {
     }
   }
 
+  // A pill in the TOP BAR (next to the AI status), not a floating button over the page (founder 2026-11-18: it covered the Quick actions).
+  // The window opens under the top bar, drawn on the page body so no bar or card can clip it.
   return (
     <>
-      <button type="button" className="bde-agent-fab" onClick={() => setOpen((o) => !o)} aria-expanded={open} title="Ask the BDE Agent">🤝 BDE Agent</button>
-      {open && (
+      <button type="button" className={`bde-agent-pill${open ? ' is-open' : ''}`} onClick={() => setOpen((o) => !o)} aria-expanded={open} title="Ask the BDE Agent">🤝 BDE Agent</button>
+      {open && createPortal(
         <div className="bde-agent-panel" role="dialog" aria-label="BDE Agent">
           <div className="bde-agent-head">
             <div>
