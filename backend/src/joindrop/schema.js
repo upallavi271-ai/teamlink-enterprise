@@ -160,7 +160,7 @@ const one = async (sql, ...p) => (await rows(sql, ...p))[0] || null;
 async function healDroppedRollStatus() {
   try {
     if (!(await ensure())) return 0;
-    const got = await rows('SELECT "applicationId" FROM "JoiningRecord" WHERE "status" = 'Dropped'');
+    const got = await rows(`SELECT "applicationId" FROM "JoiningRecord" WHERE "status" = 'Dropped'`);
     const ids = got.map((r) => r.applicationId).filter(Boolean);
     let n = 0;
     for (let i = 0; i < ids.length; i += 400) {
