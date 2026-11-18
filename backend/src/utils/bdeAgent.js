@@ -273,4 +273,4 @@ async function overview(user) {
   return { status: 200, body: { clients: built.counts.clients, openRequirements: built.counts.openRequirements, unsignedAgreements: built.counts.unsigned, candidates: built.counts.candidates, aiReady: !!st.ready, fastReady: !!st.fastReady } };
 }
 
-module.exports = { isBdeAgentUser, ask, overview, factsFor, buildFacts };
+module.exports = { isBdeAgentUser, ask, overview, factsFor, buildFacts, compose, wanted };
