@@ -54,6 +54,12 @@ const channel = (req) => (CHANNELS.includes(String(req.params.ch || '').toLowerC
 const secretNames = (obj) => Object.keys((obj && typeof obj === 'object') ? obj : {}).filter((k) => obj[k] !== '' && obj[k] != null);
 
 /* ---- Connected accounts: WhatsApp, social media, AI calling - the Integrations list, seen from the portal (utils/portalIntegrations.js) ---- */
+// WHO IMPORTED HOW MUCH (2026-11-20): one row per portal recruiter (imported candidates that are theirs, files, rows, by way, last import).
+router.get('/imports', view, wrap(async (req, res) => {
+  try { res.json({ ok: true, ...(await portalFetch('/integrations/teamlink/import-summary', { timeoutMs: 20000 })) }); } catch (err) {
+    res.status(502).json({ error: `The Job Portal did not answer: ${String((err && err.message) || err).slice(0, 160)}` });
+  }
+}));
 router.get('/connected', view, wrap(async (req, res) => {
   res.json(await require('../utils/portalIntegrations').snapshot()); // eslint-disable-line global-require
 }));

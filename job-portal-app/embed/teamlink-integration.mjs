@@ -673,6 +673,12 @@ export function teamlinkFrontRouter({ root, express }) {
       emailOf: async (session) => ((await withUser(SYSTEM, (c) => c.query('select email from users where id = $1', [session.userId]))).rows[0] || {}).email,
     };
   };
+  // the Talent Pool / Find Candidates list says who imported each candidate (embed/import-stats.mjs)
+  r.get('/api/candidates', wrap(async (req, res, next) => {
+    const M = await import(pathToFileURL(join(import.meta.dirname, 'import-stats.mjs')).href);
+    const { withUser } = await portal();
+    return M.tagImportedBy(withUser, SYSTEM)(req, res, next);
+  }));
   for (const kind of ['templates', 'campaigns']) {
     r.get(`/api/comm/${kind}`, wrap(async (req, res, next) => {
       const M = await import(pathToFileURL(join(import.meta.dirname, 'omni-mirror.mjs')).href);
@@ -1512,6 +1518,12 @@ export function teamlinkFrontRouter({ root, express }) {
     const M = await import(pathToFileURL(join(import.meta.dirname, 'omni-mirror.mjs')).href);
     const { withUser } = await portal();
     res.json(await M.receiveWhatsAppTemplates(withUser, SYSTEM, (req.body || {}).templates));
+  }));
+  // WHO IMPORTED WHAT: one row per recruiter, for the admin page in TeamLink (backend/src/routes/portalAdmin.js GET /imports)
+  r.get('/api/integrations/teamlink/import-summary', wrap(async (_req, res) => {
+    const M = await import(pathToFileURL(join(import.meta.dirname, 'import-stats.mjs')).href);
+    const { withUser } = await portal();
+    res.json(await M.importSummary(withUser, SYSTEM));
   }));
   r.put('/api/integrations/teamlink/jobs/:requirementId', wrap(async (req, res) => {
     const { withUser } = await portal();

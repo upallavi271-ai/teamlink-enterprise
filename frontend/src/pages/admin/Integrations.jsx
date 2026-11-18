@@ -5,6 +5,7 @@ import Modal from '../../components/Modal.jsx';
 import { useJobPortalUrl } from '../JobPortalRedirect.jsx';
 import BiometricPanel from './BiometricPanel.jsx';
 import JobPortalSyncPanel from '../ats/JobPortalSyncPanel.jsx';
+import PortalImportsPanel from './PortalImportsPanel.jsx'; // Job Portal: who imported how much (2026-11-20)
 // Health tab (change list 2026-10-03 §16): Job Portal / Email / eSSL / AI in plain words.
 import IntegrationHealthPanel from './IntegrationHealth.jsx';
 // Save & Post (2026-10-05): a job board's own details panel on its card.
@@ -774,6 +775,7 @@ function JobPortalTab({ jp, stats, run }) {
           portal reachability, last sync, published requirements that did not
           reach the portal with Retry, and recent sync problems. */}
       <JobPortalSyncPanel refreshKey={jp} />
+      <PortalImportsPanel />
 
       <div className="statbar">
         <div className="statitem"><div className="n">{stats.candidates}</div><div className="l">Candidates synced</div></div>
