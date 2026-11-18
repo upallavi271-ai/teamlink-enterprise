@@ -143,7 +143,7 @@ function OwnershipCreditCard({ app }) {
     <div className="cdw-card c360-own">
       <div className="cdw-label">Ownership &amp; credit</div>
       <div className="c360-facts">
-        <div className="cdw-kv"><span>Pipeline stage</span><b><StatusChip status={app.stageGroupLabel || app.stageLabel} /></b></div>
+        <div className="cdw-kv"><span>Pipeline stage</span><b><StatusChip status={['JOINED', 'HIRED'].includes(app.stage) && app.rollStatus === 'Dropped' ? 'Dropped' : (app.stageGroupLabel || app.stageLabel)} /></b></div>
         {rows.map(([l, v]) => <div key={l} className="cdw-kv"><span>{l}</span><b>{v}</b></div>)}
       </div>
       {tl.length > 0 && (
