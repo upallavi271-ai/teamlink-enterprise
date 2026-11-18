@@ -1,0 +1,68 @@
+name: Android app (APK)
+
+# Builds the TeamLink Android app (android/): the live TeamLink site opened full screen (a Trusted Web Activity).
+# Run it from GitHub: Actions -> "Android app (APK)" -> Run workflow. The signed APK is the "TeamLink-Android" download of the finished run.
+# The signing key is NEVER in this repository. With the repository secrets ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD set, the build is signed
+# with the saved TeamLink key (the original is kept on the founder's computer, TeamLink-Android/keys); without them it makes a one-time key.
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-apk]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-apk.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD_SECRET: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASSWORD_SECRET" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/teamlink.p12"
+            PW="$KEYSTORE_PASSWORD_SECRET"
+            echo "Using the saved TeamLink signing key"
+          else
+            # No saved key in this repository: a ONE-TIME key for this build. The APK installs as a fresh app, but it can never be
+            # updated over (or replaced by) an app signed with a different key, so a phone must uninstall the old one first.
+            PW=$(openssl rand -hex 16)
+            keytool -genkeypair -keystore "$RUNNER_TEMP/teamlink.p12" -storetype PKCS12 -alias teamlink -keyalg RSA -keysize 2048 -validity 10000 -storepass "$PW" -dname "CN=TeamLink Android, O=TeamLink Consultants"
+            echo "No saved signing key: made a one-time key for this build"
+          fi
+          echo "::add-mask::$PW"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/teamlink.p12" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$PW" >> "$GITHUB_ENV"
+
+      - name: Build the app
+        working-directory: android
+        run: gradle --no-daemon --stacktrace assembleRelease
+
+      - name: Check the APK
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          ls -la "$APK"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | head -12
+          "$BT/aapt" dump badging "$APK" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^application-label:|^launchable-activity"
+          sha256sum "$APK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TeamLink-Android
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+          if-no-files-found: error

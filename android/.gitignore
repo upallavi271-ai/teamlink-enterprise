@@ -1,0 +1,9 @@
+# Never commit a signing key. The key lives on the founder's computer and in the repository's secrets.
+*.p12
+*.jks
+*.keystore
+PASSWORD*
+local.properties
+.gradle/
+build/
+.idea/

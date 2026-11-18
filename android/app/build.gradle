@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+}
+
+// TeamLink for Android = a Trusted Web Activity: the live TeamLink site, opened full screen in Chrome's own engine.
+// That keeps everything the web app does working as it does in Chrome (camera and location for check-in, downloads, file uploads, the
+// phone alerts from the app worker) and means the app never needs re-publishing when TeamLink itself is updated.
+def SITE_HOST = 'teamlink.teamlinks.in'
+def START_URL = "https://${SITE_HOST}/mobile?source=app"
+
+android {
+    namespace 'com.teamlink.enterprise'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.teamlink.enterprise'
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+        manifestPlaceholders = [
+            hostName    : SITE_HOST,
+            defaultUrl  : START_URL,
+            launcherName: 'TeamLink'
+        ]
+    }
+
+    signingConfigs {
+        release {
+            // Provided by the build (the key is never in the repository): KEYSTORE_PATH / KEYSTORE_PASSWORD
+            def ks = System.getenv('KEYSTORE_PATH')
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias 'teamlink'
+                keyPassword System.getenv('KEYSTORE_PASSWORD')
+                storeType 'pkcs12'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (System.getenv('KEYSTORE_PATH')) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+}
