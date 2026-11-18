@@ -119,7 +119,7 @@ const EMPTY = {
   education: 'B.Tech', specialization: '', institute: '', passingYear: '',
   skills: '', goodToHaveSkills: '', technicalSkills: '', softSkills: '',
   resumeName: '', source: "Recruiter's own search", sourceNote: '', firstSource: '', sourceCampaign: '',
-  applicationMethod: 'Manual', requirementId: '',
+  applicationMethod: 'Manual', requirementId: '', receivedOn: '',
 };
 
 // ---------------------------------------------------------------------------
@@ -1661,6 +1661,12 @@ export default function Candidates() {
                 <input placeholder="e.g. Friend of the owner" value={form.sourceNote} onChange={(e) => set({ sourceNote: e.target.value })} />
               </label>
             )}
+            <label className="field">
+              <span>Profile received on</span>
+              {/* A profile that reached you earlier (say in October) keeps that date; empty = today. Not a future date. */}
+              <input type="date" max={new Date().toISOString().slice(0, 10)} value={form.receivedOn || ''} onChange={(e) => set({ receivedOn: e.target.value })} />
+              <small className="muted">Leave empty for today. The candidate shows this as the date added.</small>
+            </label>
             <label className="field">
               <span>Source Campaign</span>
               <input placeholder="e.g. Sep-2026 Java drive" value={form.sourceCampaign} onChange={(e) => set({ sourceCampaign: e.target.value })} />

@@ -3889,7 +3889,23 @@ router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), as
     });
   }
 
+  // "Profile received on": a profile that reached the company earlier (an October CV added today) keeps its real date as the added date.
+  // Past dates only (today at most), nothing before 2000; an empty or odd value means today.
+  let receivedOn = null;
+  if (req.body.receivedOn) {
+    const d = new Date(`${String(req.body.receivedOn).slice(0, 10)}T09:00:00+05:30`);
+    if (!Number.isNaN(d.getTime()) && d.getFullYear() >= 2000) {
+      if (d.getTime() > Date.now()) {
+        // today picked before 09:00 is fine (it simply means now); a later day is refused
+        if (String(req.body.receivedOn).slice(0, 10) > istDay(new Date())) return res.status(400).json({ error: 'Profile received on cannot be a future date.', field: 'receivedOn' });
+      } else {
+        data.createdAt = d;
+        receivedOn = d;
+      }
+    }
+  }
   const candidate = await prisma.candidate.create({ data });
+  if (receivedOn) await logAudit({ userId: req.user.id, action: 'Candidate added with an earlier received date', entity: 'Candidate', entityId: candidate.id, toValue: receivedOn.toISOString().slice(0, 10) }).catch(() => {});
   require('../utils/webhooks').emit('candidate.created', { candidateId: candidate.id, name: candidate.name, source: candidate.source || null }); // eslint-disable-line global-require
   await ADDED.record(candidate.id, req.user, 'manual'); // this login keeps seeing the person even before any requirement
   await writeSourceNote(candidate.id, req.user, req.body);
