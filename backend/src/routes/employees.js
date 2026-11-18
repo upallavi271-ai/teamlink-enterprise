@@ -3651,25 +3651,45 @@ router.patch('/:id/toggle-pause', requirePerm(null, 'hrms', 'Employee Management
   res.json(withComputed(employee));
 });
 
-// Transfer an employee to a new department, keeping a note in the audit trail.
+// TRANSFER an employee: department, team, ROLE, seat and reporting line, as one confirmed change
+// (utils/employeeTransfer.js). The login moves with the person, the seat's tenure is closed and a new one opened, the team of
+// a TL who stops leading is handed over on purpose, and every change is in the history. `preview: true` returns what WOULD
+// change (and the options for each dropdown) without saving anything; the card shows that before "Confirm Transfer".
+// Same permission as before (Employee Management / assign); who may be given which role is the same rule as Add Employee
+// and utils/roleGuard.js, so a transfer can never hand out more than Assign Roles would.
 router.post('/:id/transfer', requirePerm(null, 'hrms', 'Employee Management', 'assign'), async (req, res) => {
-  const { department, team, reason } = req.body;
-  if (!department) return res.status(400).json({ error: 'department is required' });
-  const existing = await prisma.employee.findUnique({ where: { id: req.params.id } });
-  if (!existing) return res.status(404).json({ error: 'Employee not found' });
-  const employee = await prisma.employee.update({ where: { id: req.params.id }, data: { department, team: team || null } });
-  // THE LOGIN MOVES WITH THE PERSON. Without this the HR record said IT while
-  // the ATS scope still pointed at Medical — the same employee reading the old
-  // desk's requirements, candidates and clients.
-  const moved = await syncLoginToEmployee(employee, existing);
-  if (moved) {
-    await logAudit({
-      userId: req.user.id, actorName: req.user.name, action: 'Login scope followed transfer',
-      entity: 'User', entityId: employee.userId, toValue: moved.changes.join('; ').slice(0, 200),
-    });
+  try {
+    const transfer = require('../utils/employeeTransfer'); // eslint-disable-line global-require
+    const body = req.body || {};
+    const existing = await prisma.employee.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Employee not found' });
+    if (!(await assertInScope(req, existing))) return res.status(403).json({ error: 'This record is outside your department scope' });
+    const wantedDept = String(body.department || '').trim();
+    if (!wantedDept && body.preview !== true && !body.roleKey && body.seat === undefined) return res.status(400).json({ error: 'department is required' });
+    if (wantedDept && wantedDept !== existing.department) {
+      // The caller may only put somebody INTO a department they hold (the same check the edit form makes).
+      const allowed = assertDepartmentAllowed(req, wantedDept);
+      if (!allowed.ok) return res.status(403).json({ error: allowed.error });
+    }
+    const allowedRows = addEmployeeDesignations(req, await designationRows());
+    const plan = await transfer.planTransfer({ actor: req.user, employeeId: existing.id, body, allowedRows });
+    if (plan.notFound) return res.status(404).json({ error: 'Employee not found' });
+    const { resolved, ...shown } = plan; // eslint-disable-line no-unused-vars
+    if (body.preview === true) return res.json({ preview: true, ...shown });
+    if (!plan.ok) return res.status(400).json({ error: plan.blockers[0], ...shown });
+    if (plan.noChange) return res.status(400).json({ error: 'Nothing would change. Choose a different department, team, role or seat.', ...shown });
+    try {
+      await transfer.applyTransfer({ actor: req.user, plan });
+    } catch (err) {
+      if (err && err.status) return res.status(err.status).json({ error: err.message });
+      throw err;
+    }
+    const fresh = await prisma.employee.findUnique({ where: { id: existing.id } });
+    return res.json({ ...withComputed(fresh), transfer: { lines: plan.lines, warnings: plan.warnings } });
+  } catch (err) {
+    console.error('[employees] transfer failed:', err && err.message); // eslint-disable-line no-console
+    return res.status(500).json({ error: 'The transfer could not be saved, and nothing was changed. Please try again.' });
   }
-  await logAudit({ userId: req.user.id, action: 'Employee transferred' + (reason ? ` (${reason})` : ''), entity: 'Employee', entityId: employee.id, fromValue: existing.department, toValue: department });
-  res.json(withComputed(employee));
 });
 
 // Onboarding checklist

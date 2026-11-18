@@ -183,11 +183,12 @@ function csvList(value) {
   return String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-async function syncLoginToEmployee(employee, previous, { designationChanged = false, actor = null } = {}) {
-  if (!employee || !employee.userId) return null;
-  const user = await prisma.user.findUnique({ where: { id: employee.userId } });
-  if (!user) return null;
-
+// THE PLAN HALF OF IT: what the login row should become, WITHOUT writing it and without asking the role
+// guard. syncLoginToEmployee() below is this + the guard + the write. The Transfer card
+// (utils/employeeTransfer.js) uses the plan to show the change before it is saved, and to write it inside its own
+// transaction. `atsRoleOverride` is for a working ATS role that is not a designation of its own: a Recruiter or a
+// BDE is an "Employee" in HRMS and carries that ATS role on the same login.
+async function planLoginSync(user, employee, previous, { designationChanged = false, atsRoleOverride = null } = {}) {
   const data = {};
   const changes = [];
 
@@ -231,9 +232,18 @@ async function syncLoginToEmployee(employee, previous, { designationChanged = fa
         accountsAccess: !!mapping.accounts,
         landingWorkspace: mapping.landing || null,
       });
+      if (atsRoleOverride) { data.atsRole = atsRoleOverride; data.atsAccess = true; }
       changes.push(`role ${user.role} -> ${loginRoleFor(mapping)} (designation ${employee.designation})`);
     }
   }
+  return { data, changes };
+}
+
+async function syncLoginToEmployee(employee, previous, { designationChanged = false, actor = null } = {}) {
+  if (!employee || !employee.userId) return null;
+  const user = await prisma.user.findUnique({ where: { id: employee.userId } });
+  if (!user) return null;
+  const { data, changes } = await planLoginSync(user, employee, previous, { designationChanged });
 
   // SECURITY (2026-10-13): a designation change re-derives roles - the same guard as a direct role edit.
   // No actor (system code) = no role change; the department / team / scope parts above still follow.
@@ -481,6 +491,7 @@ function isLead(employee) {
 const TRANSFER_FIELDS = {
   department: 'Department', team: 'Team', tl: 'TL', stl: 'STL', reportingManagerId: 'Reporting manager',
   reportingManager: 'Reporting manager', designation: 'Designation', position: 'Position',
+  role: 'Role', // written by the Transfer card (utils/employeeTransfer.js), old role -> new role
 };
 function parseJson(s) { try { return JSON.parse(s); } catch { return null; } }
 function transferHistoryOf(auditRows, seats) {
@@ -533,6 +544,7 @@ module.exports = {
   defaultProductAccessByRole,
   loginRoleFor,
   productRolesForDesignation,
+  planLoginSync,
   syncLoginToEmployee,
   fmtDate,
   EMP_MGMT_INCLUDE,

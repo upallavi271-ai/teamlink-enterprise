@@ -1,0 +1,13 @@
+/* Transfer card: the "what will change" list and the team hand-over box. Uses the app's own notice / table / field styles. */
+.transfer-card .transfer-plan { margin: 12px 0; }
+.transfer-card .notice ul { margin: 0; padding-left: 18px; }
+.transfer-card .notice.red,
+.transfer-card .notice.amber { margin-bottom: 10px; }
+.transfer-card .transfer-lines { margin-bottom: 10px; }
+.transfer-card .transfer-lines table { margin: 6px 0; }
+.transfer-card .transfer-label { width: 130px; white-space: nowrap; vertical-align: top; }
+.transfer-card .transfer-from { color: var(--ink-soft); text-decoration: line-through; text-decoration-color: var(--line); }
+.transfer-card .transfer-team { margin-top: 12px; }
+.transfer-card .transfer-radio { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.transfer-card .transfer-radio input[type='radio'] { width: auto; flex: none; }
+.transfer-card .transfer-radio .combo, .transfer-card .transfer-radio > div { min-width: 240px; flex: 1 1 240px; }

@@ -30,6 +30,7 @@ import ManageFieldsModal from '../components/employees/ManageFieldsModal.jsx';
 // Manage Fields: HR's labels and Pause for the built-in fields.
 import { useFieldLayout } from '../utils/employeeFieldLayout';
 import GlobalExportPanel from '../components/employees/GlobalExportPanel.jsx';
+import TransferCard from '../components/employees/TransferCard.jsx'; // department + ROLE + seat + reporting line, with the changes shown first
 // Template export / import (every form field), for everyone who can open this
 // screen — scoped; view-only roles send an import REQUEST (Super Admin approves).
 import DataIoBar from '../components/dataio/DataIoBar.jsx';
@@ -186,7 +187,6 @@ export default function Employees() {
   // The employee just created — Add Employee makes the record and the login (no documents asked).
   const [justCreated, setJustCreated] = useState(null);
   const [transferTarget, setTransferTarget] = useState(null);
-  const [transferForm, setTransferForm] = useState({ department: '', team: '', reason: '' });
   // The inline Reject dialog. Rejecting needs a REASON — the API refuses
   // without one, because the employee has to be told what to correct.
   const [rejectFor, setRejectFor] = useState(null);
@@ -348,7 +348,6 @@ export default function Employees() {
   ].filter((r) => r && r !== 'NONE'))].sort(), [rows, options]);
   const hrById = useMemo(() => Object.fromEntries(hr.map((e) => [e.id, e])), [hr]);
   const deptTree = options?.departmentTree || [];
-  const transferTeams = deptTree.find((d) => d.name === transferForm.department)?.teams || [];
   const filtersOn = Object.values(filters).some(Boolean);
   // PEOPLE WHO HELD A SEAT HERE BUT ARE HIDDEN by the status filter — after a
   // department is picked, the list opens on today's team, and the ones they
@@ -409,12 +408,6 @@ export default function Employees() {
       `Edit access granted to ${grantFor.name} for ${grantForm.hours}h (${grantForm.section}).`,
     );
     if (ok) { setGrantFor(null); setGrantForm({ hours: 48, section: 'All fields', reason: '' }); }
-  }
-
-  async function submitTransfer(e) {
-    e.preventDefault();
-    const ok = await run(() => api.post(`/employees/${transferTarget.id}/transfer`, transferForm), `${transferTarget.name} transferred.`);
-    if (ok) setTransferTarget(null);
   }
 
   // CHANGE EMPLOYEE ID — unique in any case, audited old -> new on the record.
@@ -773,27 +766,13 @@ export default function Employees() {
       )}
 
       {transferTarget && (
-        <form className="card section" onSubmit={submitTransfer} style={{ borderColor: 'var(--warn)' }}>
-          <h3>Transfer {transferTarget.name}</h3>
-          <div className="grid-2">
-            <label className="field"><span>Department</span>
-              <Combo departments creatable required value={transferForm.department} onChange={(e) => setTransferForm({ ...transferForm, department: e.target.value, team: '' })}>
-                <option value="">Select department</option>
-                {deptTree.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
-              </Combo></label>
-            {transferTeams.length > 0 && (
-              <label className="field"><span>Team</span>
-                <Combo creatable value={transferForm.team} onChange={(e) => setTransferForm({ ...transferForm, team: e.target.value })}>
-                  <option value="">No team</option>
-                  {transferTeams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
-                </Combo></label>
-            )}
-            <label className="field"><span>Reason (optional)</span>
-              <input value={transferForm.reason} onChange={(e) => setTransferForm({ ...transferForm, reason: e.target.value })} /></label>
-          </div>
-          <button className="btn btn-primary btn-sm" type="submit">Confirm Transfer</button>{' '}
-          <button className="btn btn-sm" type="button" onClick={() => setTransferTarget(null)}>Cancel</button>
-        </form>
+        <TransferCard
+          key={transferTarget.id}
+          employee={transferTarget}
+          departments={deptTree}
+          onClose={() => setTransferTarget(null)}
+          onDone={(message) => { setError(''); setNotice(message); setTransferTarget(null); load(); }}
+        />
       )}
 
       {/* THE TWO VIEWS of the same scoped list: every employee, or grouped by TL. */}
@@ -1086,7 +1065,7 @@ export default function Employees() {
                           login administration, so it did not go to Users with
                           the roles, scope and password controls. */}
                       {caps.assign && (
-                        <button className="btn btn-sm" onClick={() => { setTransferTarget(e); setTransferForm({ department: e.department || '', team: '', reason: '' }); }}>
+                        <button className="btn btn-sm" onClick={() => setTransferTarget(e)}>
                           Transfer
                         </button>
                       )}
