@@ -55,7 +55,11 @@ if (-not $remoteUrl) { Write-Host "There is no git remote called '$Remote'." -Fo
 function Get-Branch { return (git branch --show-current 2>$null) }
 
 # ---- noise a watcher must ignore (never a reason to sync) ---------------------------------------------------------------
-$excludeRe = '\\(node_modules|\.git|dist|dist-ssr|build|coverage|\.vite|\.uploads|uploads|logs|\.vscode|\.idea|\.teamlink-[a-z]+|backups|test-results)(\\|$)' +
+# Runtime data that changes every second and is gitignored (2026-11-18): the Job Portal's heartbeat / logs (job-portal-app\run),
+# its embedded database (job_portal-main\var\dev-db) and Green Start's run\ (pgdata, redis). They kept resetting the quiet timer,
+# so a real save was never synced. green-start-helpers\run is real code and is still watched.
+$excludeRe = '\\job-portal-app\\run(\\|$)|\\job-portal-app\\.*\\var(\\|$)|\\green-start-app\\run(\\|$)|' +
+  '\\(node_modules|\.git|dist|dist-ssr|build|coverage|\.vite|\.uploads|uploads|logs|\.vscode|\.idea|\.teamlink-[a-z]+|backups|test-results)(\\|$)' +
   '|\.(log|tmp|swp|swo|tsbuildinfo|crdownload|db|db-wal|db-shm|db-journal|sqlite|sqlite3)$' +
   '|\\(Thumbs\.db|desktop\.ini|\.DS_Store|4913)$|~\$|\\\.#|~$'
 
