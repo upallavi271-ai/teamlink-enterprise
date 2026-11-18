@@ -742,13 +742,17 @@ function memoPut(map, id, entry) {
   map.set(id, entry);
   while (map.size > ROW_MEMO_MAX) map.delete(map.keys().next().value);
 }
-async function pagedRowsFor(user) {
-  const st = await getListState();
+// the key of the person rows (also the base of the People list's memoised core)
+function pagedKeyOf(user, st) {
   const s = scopeOf(user);
   const shared = s.global && s.role !== 'CANDIDATE' && viewerKind(user) === 'internal';
+  return { s, shared, key: (shared ? ['G', st.version, istDay(new Date())] : [user.id, st.version, istDay(new Date()), scopeSig(s), ADDED.version()]).join('|') };
+}
+async function pagedRowsFor(user) {
+  const st = await getListState();
+  const { s, shared, key } = pagedKeyOf(user, st);
   const memoId = shared ? 'G' : user.id;
   // (a shared copy is the same for every global login: their own department / team fields do not matter)
-  const key = (shared ? ['G', st.version, istDay(new Date())] : [user.id, st.version, istDay(new Date()), scopeSig(s), ADDED.version()]).join('|');
   const hit = memoGet(ROW_MEMO, memoId, key);
   if (hit) return hit.rows;
   // Requests that arrive together for the same login share one build.
@@ -1333,6 +1337,49 @@ function sortRows(rows, q) {
   return { rows: sorted, sortKey, dir };
 }
 
+// THE LIST CORE MEMO (load test 2026-11-18, 100,000 candidates: a list request spent ~10 passes over every row - filter, sub-tab counts, queue
+// counts, the tally, stage counts, a sort - and only THEN cut one page of 25, so every page, every refresh, every second person opening the same
+// view paid it all again; 100 people = 2 requests a second). Everything that does not depend on the page is now worked out once per
+// (data version, login, filters) and kept 20 s; page 2, page 3, a refresh and requests that arrive together reuse it. The key carries the
+// data version, so a change to any candidate / application makes the next request recompute (nobody sees an old list after an edit).
+const CORE_MEMO = new Map();
+const CORE_INFLIGHT = new Map();
+const CORE_TTL_MS = 20000;
+const CORE_MAX_ROWS = 2000000; // list entries are arrays of references to rows that already exist, so this is a few MB, not a copy
+let coreRows = 0;
+function coreSig(q) {
+  const skip = ['page', 'pageSize', 'idsOnly', 'all', '_'];
+  return Object.keys(q).filter((k) => !skip.includes(k)).sort().map((k) => `${k}=${Array.isArray(q[k]) ? q[k].join(',') : q[k]}`).join('&');
+}
+async function memoCore(key, compute) {
+  const hit = CORE_MEMO.get(key);
+  if (hit && Date.now() - hit.at < CORE_TTL_MS) { CORE_MEMO.delete(key); CORE_MEMO.set(key, hit); return hit.core; }
+  if (hit) { coreRows -= hit.size; CORE_MEMO.delete(key); }
+  if (CORE_INFLIGHT.has(key)) return CORE_INFLIGHT.get(key);
+  const job = (async () => {
+    const core = await compute();
+    const size = (core && core.rows && core.rows.length) || 0;
+    CORE_MEMO.set(key, { at: Date.now(), core, size });
+    coreRows += size;
+    // oldest first out when the total grows past the cap (a Map keeps insertion order; a hit re-inserts)
+    for (const [k, v] of CORE_MEMO) { if (coreRows <= CORE_MAX_ROWS || k === key) break; coreRows -= v.size; CORE_MEMO.delete(k); }
+    return core;
+  })().finally(() => { CORE_INFLIGHT.delete(key); });
+  CORE_INFLIGHT.set(key, job);
+  return job;
+}
+// "people waiting for a requirement" scans every candidate: kept 15 s per login / data version / search
+const WAIT_MEMO = new Map();
+async function waitingCached(user, search, version) {
+  const key = `${user.id}|${version}|${String(search || '')}`;
+  const hit = WAIT_MEMO.get(key);
+  if (hit && Date.now() - hit.at < 15000) return hit.v;
+  const v = await waitingPeople(user, search);
+  if (WAIT_MEMO.size > 400) WAIT_MEMO.clear();
+  WAIT_MEMO.set(key, { at: Date.now(), v });
+  return v;
+}
+
 function pageOf(rows, q) {
   const pageSize = PAGE_SIZES.includes(Number(q.pageSize)) ? Number(q.pageSize) : 25;
   const pages = Math.max(1, Math.ceil(rows.length / pageSize));
@@ -1373,12 +1420,11 @@ async function waitingPeople(user, search) {
   return { total: hits.length, rows };
 }
 
-async function pipelineList(req, res, sub) {
+async function pipelineCore(req, sub, built) {
   const q = req.query;
   const quick = QUEUES[q.quick] ? q.quick : null;
   const att = hasPersonQuery(q) ? await attributedApplications(req.user, q) : null;
   const ctx = await searchCtxOf(req.user, q.search, att ? att.ids : null);
-  const built = await pipelineRowsFor(req.user);
   // cand7_: archived people are not part of any pipeline count.
   const all = q.archived === '1' ? built.rows : built.rows.filter((r) => !r.archived);
   const noStage = all.filter((r) => pipelineRowMatches(r, q, ctx, { skipStage: true }));
@@ -1422,7 +1468,19 @@ async function pipelineList(req, res, sub) {
   let rows = filtered.filter((r) => inPipelineSub(effSub, r));
   if (quick) rows = rows.filter((r) => QUEUES[quick](r));
   const sorted = sortRows(rows, q);
-  rows = sorted.rows;
+  return {
+    quick, ctx, effSub, subs, tallyOut, queueCounts, noDue, stageOptions, role, rows: sorted.rows, sorted: { sortKey: sorted.sortKey, dir: sorted.dir }, scopeTotal: all.length,
+  };
+}
+
+async function pipelineList(req, res, sub) {
+  const q = req.query;
+  const built = await pipelineRowsFor(req.user);
+  const core = await memoCore(`P|${built.key}|${sub}|${coreSig(q)}`, () => pipelineCore(req, sub, built));
+  const {
+    quick, ctx, effSub, subs, tallyOut, queueCounts, noDue, stageOptions, role, sorted,
+  } = core;
+  let { rows } = core;
 
   if (q.idsOnly === '1') {
     return res.json({
@@ -1463,11 +1521,11 @@ async function pipelineList(req, res, sub) {
     quick,
     sort: sorted.sortKey,
     dir: sorted.dir === 1 ? 'asc' : 'desc',
-    scopeTotal: all.length,
+    scopeTotal: core.scopeTotal,
     searchMode: ctx.searchMode || null, // 'boolean' when AND / OR / NOT / "phrase" / ( ) was read as a boolean search
     searchError: ctx.searchError || null,
     counts: {
-      views: { pipeline: all.length, master: built.people, jobPortal: built.preAts },
+      views: { pipeline: core.scopeTotal, master: built.people, jobPortal: built.preAts },
       subs,
       tally: tallyOut,
       quick: queueCounts,
@@ -1476,7 +1534,7 @@ async function pipelineList(req, res, sub) {
       stageRole: role,
     },
     definitions: QUEUE_DEFINITIONS,
-    waiting: await waitingPeople(req.user, q.search).catch(() => ({ total: 0, rows: [] })),
+    waiting: await waitingCached(req.user, q.search, built.version).catch(() => ({ total: 0, rows: [] })),
   });
 }
 
@@ -1518,14 +1576,12 @@ function lastApplicationActivity(row, snap) {
   return last || null;
 }
 
-async function masterList(req, res, sub) {
+async function masterCore(req, sub, snap, all) {
   const q = req.query;
   const att = hasPersonQuery(q) ? await attributedApplications(req.user, q) : null;
   const ctx = await searchCtxOf(req.user, q.search, att ? att.ids : null);
-  const snap = await ensureNextActionContext();
   const days = inactiveDaysOf(q);
   const cutoff = Date.now() - days * 86400000;
-  const all = await pagedRowsFor(req.user);
   const kind = viewerKind(req.user);
   const qq = { ...q, stage: '', followUp: '' };
   // cand7_: People → Archived shows only archived people; every other view hides them.
@@ -1541,17 +1597,7 @@ async function masterList(req, res, sub) {
   });
   const withActivity = filtered.map((r) => ({ r, last: lastApplicationActivity(r, snap) }));
   const inactiveRows = withActivity.filter((x) => !x.last || x.last < cutoff);
-  let dupCount = null;
-  // dup_: the fast count of what waits at the first step (utils/candidateDupResolve.js); the older whole-database group count only
-  // when the duplicate tables are not there.
-  try {
-    const w = await require('../utils/candidateDupResolve').waitingCount(req.user); // eslint-disable-line global-require
-    if (w.supported && w.show) dupCount = w.waiting;
-    else if (!w.supported && isDupAdmin(req.user)) dupCount = (await visibleDuplicateGroups()).groups.contact.length;
-  } catch { dupCount = null; }
-  const subs = {
-    all: liveCount, inactive: inactiveRows.length, duplicates: dupCount, archived: archivedCount,
-  };
+  const subsBase = { all: liveCount, inactive: inactiveRows.length, archived: archivedCount };
   const pick = sub === 'inactive' ? inactiveRows : withActivity;
   const shaped = pick.map(({ r, last }) => {
     const apps = r.applications || [];
@@ -1569,6 +1615,32 @@ async function masterList(req, res, sub) {
   });
   const sorted = sortRows(shaped, q.sort === 'activity'
     ? { ...q, sort: 'masterActivity' } : q);
+  // people (with every other filter on) whose current or expected pay is missing - the Salary missing filter's count (page-independent: worked out here, once)
+  const salaryMissing = kind === 'internal' ? all.filter((r) => rowMatches(r, { ...qq, salaryMissing: '' }, ctx) && r.salaryMissing && (r.profileStatus === 'Archived') === (sub === 'archived')).length : null;
+  return {
+    ctx, days, kind, rows: sorted.rows, sorted: { sortKey: sorted.sortKey, dir: sorted.dir }, subsBase, salaryMissing, scopeTotal: all.length,
+  };
+}
+
+async function masterList(req, res, sub) {
+  const q = req.query;
+  const snap = await ensureNextActionContext();
+  const st = await getListState();
+  const all = await pagedRowsFor(req.user);
+  const core = await memoCore(`M|${pagedKeyOf(req.user, st).key}|${snap.stamp}|${sub}|${coreSig(q)}`, () => masterCore(req, sub, snap, all));
+  const {
+    ctx, days, kind, sorted, subsBase, salaryMissing,
+  } = core;
+  sorted.rows = core.rows;
+  // dup_: the fast count of what waits at the first step (utils/candidateDupResolve.js); the older whole-database group count only
+  // when the duplicate tables are not there. (Outside the memo: it changes the moment a flag is resolved.)
+  let dupCount = null;
+  try {
+    const w = await require('../utils/candidateDupResolve').waitingCount(req.user); // eslint-disable-line global-require
+    if (w.supported && w.show) dupCount = w.waiting;
+    else if (!w.supported && isDupAdmin(req.user)) dupCount = (await visibleDuplicateGroups()).groups.contact.length;
+  } catch { dupCount = null; }
+  const subs = { all: subsBase.all, inactive: subsBase.inactive, duplicates: dupCount, archived: subsBase.archived };
   if (q.idsOnly === '1') {
     return res.json({
       total: sorted.rows.length,
@@ -1605,15 +1677,14 @@ async function masterList(req, res, sub) {
     pageSize: pg.pageSize,
     sort: sorted.sortKey,
     dir: sorted.dir === 1 ? 'asc' : 'desc',
-    scopeTotal: all.length,
+    scopeTotal: core.scopeTotal,
     searchMode: ctx.searchMode || null, // 'boolean' when AND / OR / NOT / "phrase" / ( ) was read as a boolean search
     searchError: ctx.searchError || null,
     inactiveDays: days,
     counts: {
-      views: { pipeline: pipe.rows.length, master: all.length, jobPortal: pipe.preAts },
+      views: { pipeline: pipe.rows.length, master: core.scopeTotal, jobPortal: pipe.preAts },
       subs,
-      // people (with every other filter on) whose current or expected pay is missing - the Salary missing filter's count
-      salaryMissing: kind === 'internal' ? all.filter((r) => rowMatches(r, { ...qq, salaryMissing: '' }, ctx) && r.salaryMissing && (r.profileStatus === 'Archived') === (sub === 'archived')).length : null,
+      salaryMissing,
     },
     definitions: {
       inactive: `Inactive — no application activity (applied, stage move, screening step, note, call, message or follow-up) in the last ${days} days; a person with no application counts from the day their profile was added.`,
