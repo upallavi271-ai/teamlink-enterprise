@@ -19,6 +19,7 @@
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { workHistory, educationList } from './resume-enrich.mjs'; // the jobs and degrees of a resume, line by line (2026-11-20)
 
 const READ_AT_ONCE = 4;
 const newId = (p) => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -67,6 +68,21 @@ export function makeImport(P) {
           where id=$5`,
         [stored.displayName, stored.path, stored.mime, stored.size, candidateId,
          doc.parser, doc.chars, parsed.found, confidence, String(doc.text || '').slice(0, 200000)]);
+      // work history and education as rows: only for a profile that has none yet, and only when this reading found more than the portal's own
+      // (it lists every job and degree with the right year); the candidate's own list is never replaced. Never fails the import.
+      await c.query('savepoint resume_enrich');
+      try {
+        const eduNew = educationList(doc.text);
+        const expNew = workHistory(doc.text);
+        if (eduNew.length > ((parsed.fields || {}).educationRecords || []).length
+          && !(await c.query('select 1 from candidate_education where candidate_id=$1 limit 1', [candidateId])).rowCount) {
+          await c.query('select candidate_records_replace($1, $2::jsonb, null)', [candidateId, JSON.stringify(eduNew)]);
+        }
+        if (expNew.length > ((parsed.fields || {}).employmentHistory || []).length
+          && !(await c.query('select 1 from candidate_experience where candidate_id=$1 limit 1', [candidateId])).rowCount) {
+          await c.query('select candidate_records_replace($1, null, $2::jsonb)', [candidateId, JSON.stringify(expNew)]);
+        }
+      } catch (err) { await c.query('rollback to savepoint resume_enrich').catch(() => {}); console.error('[tl-resumes] work history / education not written:', err.message); }
       await P.apply.applyExtractedFields(c, candidateId, parsed.fields);
     });
     return stored;
