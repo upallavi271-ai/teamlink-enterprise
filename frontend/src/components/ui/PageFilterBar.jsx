@@ -1,5 +1,5 @@
-import { useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { atsRoleOf } from '../../nav';
 import { FacetSelect, useFacets } from './ListPageHeader.jsx';
@@ -95,10 +95,49 @@ export function rangeLabel(value) {
   return (DATE_RANGES.find(([k]) => k === (v.range || '')) || DATE_RANGES[0])[1];
 }
 
+// THE FILTERS ARE REMEMBERED PER PAGE (2026-11-18): going to another module and coming back used to drop them (a Custom
+// date range had to be picked again). Each page's filters are kept for this login in sessionStorage (this browser tab,
+// until it is closed) and put back in the URL when the page is opened again with no filters in its address. A link
+// that carries its own filters wins; "Clear filters" is remembered as cleared.
+const MEMORY_PREFIX = 'tl.pageFilters:';
+function readRemembered(key) {
+  try { const v = JSON.parse(window.sessionStorage.getItem(key) || 'null'); return v && typeof v === 'object' ? v : null; } catch { return null; }
+}
+function writeRemembered(key, value) {
+  try { window.sessionStorage.setItem(key, JSON.stringify(value)); } catch { /* storage off: the URL still works */ }
+}
+
 // Filters kept in the URL (so a link, Back and a refresh keep them).
 // defaults: e.g. { range: 'month' } when the URL says nothing.
-export function usePageFilters(defaults) {
+// opts.extraKeys: more URL keys of this page to remember with the filters (the ATS dashboard's Team lead, Dashboard of).
+// opts.remember: false = do not remember (PageFilterBar's own copy when the page passes value / onChange itself).
+export function usePageFilters(defaults, opts) {
   const [sp, setSp] = useSearchParams();
+  const { pathname } = useLocation();
+  const { user } = useAuth() || {};
+  const remember = !opts || opts.remember !== false;
+  const memKeys = [...KEYS, ...((opts && opts.extraKeys) || [])];
+  const memKeysKey = memKeys.join(',');
+  const storeKey = remember && user && user.id ? `${MEMORY_PREFIX}${user.id}:${pathname}` : '';
+  const restored = useRef('');
+  useEffect(() => {
+    if (!storeKey || restored.current === storeKey) return;
+    restored.current = storeKey;
+    if (memKeys.some((k) => sp.has(k))) return; // the address already says which filters
+    const saved = readRemembered(storeKey);
+    if (!saved || !Object.keys(saved).length) return;
+    setSp((prev) => {
+      const p = new URLSearchParams(prev);
+      memKeys.forEach((k) => { if (Object.prototype.hasOwnProperty.call(saved, k) && !p.has(k)) p.set(k, String(saved[k])); });
+      return p;
+    }, { replace: true });
+  }, [storeKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!storeKey || restored.current !== storeKey) return;
+    const out = {};
+    memKeys.forEach((k) => { const v = sp.get(k); if (v !== null) out[k] = v; });
+    writeRemembered(storeKey, out);
+  }, [sp, storeKey, memKeysKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const defKey = JSON.stringify(defaults || {});
   const value = useMemo(() => {
     const d = defaults || {};
@@ -143,7 +182,7 @@ export default function PageFilterBar({
   ranges, children, extraSet = false, onClear,
 }) {
   const { user } = useAuth() || {};
-  const [urlValue, setUrlValue] = usePageFilters();
+  const [urlValue, setUrlValue] = usePageFilters(undefined, { remember: !valueProp });
   const value = valueProp || urlValue;
   const onChange = onChangeProp || setUrlValue;
   const isRecruiter = atsRoleOf(user) === 'RECRUITER';

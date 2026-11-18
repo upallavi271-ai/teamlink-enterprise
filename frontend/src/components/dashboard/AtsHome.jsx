@@ -395,7 +395,7 @@ export default function AtsHome() {
   const alerts = useAtsAlerts();
   const { hash } = useLocation();
   const [sp, setSp] = useSearchParams();
-  const [f, setF] = usePageFilters({ range: 'month' });
+  const [f, setF] = usePageFilters({ range: 'month' }, { extraKeys: [...EXTRA_FILTERS.map(([k]) => k), 'as'] });
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [drill, setDrill] = useState(null);
