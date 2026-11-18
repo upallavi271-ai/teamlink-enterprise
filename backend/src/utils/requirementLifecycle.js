@@ -97,7 +97,7 @@ async function onStatusChange(requirement, from, to, user) {
         message: r.moved ? `${r.moved} candidate(s) in its pipeline were put on hold and ${r.followUpsClosed} follow-up(s) were closed. Candidates already selected, offered or joined were not changed.` : 'Nobody was in its active pipeline.',
         exceptUserId: user ? user.id : null,
       }).catch(() => {});
-      return r;
+      return { moved: r.moved, followUpsClosed: r.followUpsClosed, reason: r.reason };
     }
     if (LIVE.includes(to) && (from === 'ON_HOLD' || from === 'CLOSED')) {
       const r = await resumeCandidates(requirement, user);
@@ -106,7 +106,7 @@ async function onStatusChange(requirement, from, to, user) {
         await logAudit({ userId: user ? user.id : null, action: 'Requirement reopened: candidates back from hold', entity: 'Requirement', entityId: requirement.id, toValue: `${r.restored} candidate(s) back at their earlier stage` }).catch(() => {});
         await notifyUsers([...people], { title: `${label} is open again`, message: `${r.restored} candidate(s) went back to the stage they were at before the hold. Add their next follow-up.`, exceptUserId: user ? user.id : null }).catch(() => {});
       }
-      return r;
+      return { restored: r.restored };
     }
   } catch (err) {
     console.error('[requirement-lifecycle]', err.message); // eslint-disable-line no-console
