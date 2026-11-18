@@ -95,6 +95,27 @@ export default function ProfileLeft({
         <Row k="Added" v={protoDate(c.createdAt)} />
       </section>
 
+      {/* REJOIN / REAPPLY HISTORY (ATS audit 2026-11-18, Q68): how often this person applied, joined, dropped or came back after a rejection */}
+      {internal && Array.isArray(c.applications) && c.applications.length > 1 && (() => {
+        const apps = [...c.applications].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+        const joined = apps.filter((a) => a.joinedAt || ['JOINED', 'HIRED'].includes(a.stage));
+        const dropped = apps.filter((a) => /drop/i.test(String(a.joiningStatus || '')));
+        const rejected = apps.filter((a) => a.stage === 'REJECTED');
+        const firstReject = rejected.length ? Math.min(...rejected.map((a) => new Date(a.createdAt).getTime())) : null;
+        const reapplied = firstReject ? apps.filter((a) => new Date(a.createdAt).getTime() > firstReject && a.stage !== 'REJECTED').length : 0;
+        const label = (a) => [a.requirement && a.requirement.title, a.requirement && a.requirement.client && a.requirement.client.name].filter(Boolean).join(' · ') || 'a requirement';
+        return (
+          <section className="pfl-card">
+            <div className="pfl-label">Application history</div>
+            <Row k="Applied" v={`${apps.length} times, ${new Set(apps.map((a) => a.requirementId)).size} requirements`} />
+            {joined.length > 0 && <Row k="Joined before" v={joined.map((a) => `${label(a)}${a.joinedAt ? ` (${protoDate(a.joinedAt)})` : ''}`).join('; ')} />}
+            {dropped.length > 0 && <Row k="Dropped" v={`${dropped.length} time${dropped.length > 1 ? 's' : ''}: ${dropped.map(label).join('; ')}`} />}
+            {rejected.length > 0 && <Row k="Rejected" v={`${rejected.length} time${rejected.length > 1 ? 's' : ''}`} />}
+            {reapplied > 0 && <Row k="Came back" v={`${reapplied} application${reapplied > 1 ? 's' : ''} after an earlier rejection`} />}
+          </section>
+        );
+      })()}
+
       {internal && <ReachPriorityCard candidateId={c.id} />}
 
       <section className="pfl-card">
