@@ -3906,6 +3906,11 @@ router.put('/:id', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'),
   });
   // The edit form sends every field back: a source that was not touched keeps its stored word.
   if (req.body.source !== undefined && String(req.body.source || '') === String(loaded.candidate.source || '')) { delete picked.source; delete picked.firstSource; }
+  // THE FIRST SOURCE IS RECORDED ONCE AND NEVER OVERWRITTEN (ATS audit 2026-11-18, Q788/789/797): pickCandidate() copies the new source into
+  // firstSource for a CREATE; on an edit that would replace the original. A stored first source is kept; an old record without one gets
+  // the source it had BEFORE this edit (the earlier touch), not the new one.
+  if (loaded.candidate.firstSource) delete picked.firstSource;
+  else if (picked.source !== undefined) picked.firstSource = loaded.candidate.source || picked.source;
   // An approved "Do not use" block is not lifted by editing the profile.
   if (loaded.candidate.profileStatus === 'Do Not Use') delete picked.profileStatus;
   if (loaded.candidate.profileStatus === 'Archived') delete picked.profileStatus; // cand7_: bring back via /unarchive
