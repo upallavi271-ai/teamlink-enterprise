@@ -237,6 +237,7 @@ export function RequirementMatchesPanel({
                 </td>
                 <td data-k="Fit">
                   <Pct n={c.match.overall} sub={c.match.approx ? 'about' : c.match.label} title={c.match.breakdown ? c.match.breakdown.text : undefined} />
+                  {c.jdMatch && <div className="small-muted" title={c.jdMatch.matched.length ? `Words and phrases of the job description found in the resume: ${c.jdMatch.matched.join(', ')}. Missing: ${(c.jdMatch.missing || []).join(', ')}` : 'Job description against the resume text'}>{`JD match ${c.jdMatch.pct}%`}</div>}
                 </td>
                 <td data-k={restricted ? 'Salary' : 'Resume · AI · Location · Salary'}>
                   <FitBreakdown b={c.match.breakdown} compact showTotal={false} />
@@ -305,7 +306,8 @@ export function EligibleRequirementsPanel({ candidateId, onAdd, onData }) {
                   {r.alreadyRejected && <span className="msp-flag">{`Rejected for this requirement${r.alreadyRejected.reason ? `: ${r.alreadyRejected.reason}` : ''}`}</span>}
                   {r.clientRejected && <span className="msp-flag warn">{r.clientRejected.warning || `${r.clientRejected.clientName} rejected this person before`}</span>}
                 </td>
-                <td data-k="Fit"><Pct n={r.match.overall} sub={r.match.approx ? 'about' : r.match.label} title={r.match.breakdown ? r.match.breakdown.text : undefined} /></td>
+                <td data-k="Fit"><Pct n={r.match.overall} sub={r.match.approx ? 'about' : r.match.label} title={r.match.breakdown ? r.match.breakdown.text : undefined} />
+                  {r.jdMatch && <div className="small-muted" title={r.jdMatch.matched.length ? `Words and phrases of the job description found in the resume: ${r.jdMatch.matched.join(', ')}. Missing: ${(r.jdMatch.missing || []).join(', ')}` : 'Job description against the resume text'}>{`JD match ${r.jdMatch.pct}%`}</div>}</td>
                 <td data-k="Resume · AI · Location · Salary"><FitBreakdown b={r.match.breakdown} compact showTotal={false} /></td>
                 <td data-k="">
                   {data.canAdd && !r.blocked

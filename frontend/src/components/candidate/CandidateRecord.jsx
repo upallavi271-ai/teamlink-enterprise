@@ -424,7 +424,8 @@ export function RecordDocuments({ c, internal }) {
               {d.note && <span className="small-muted">{d.note}</span>}
             </div>
             {/* View is always offered: the file itself, or for a Resume row named on the Add Candidate form the resume on the Resume tab */}
-            {files && (() => {
+            {files && d.locked && <span className="small-muted" title="ID documents open only for Super Admin, Admin, HR, the team lead and the owning recruiter. Every open is logged.">Restricted - ID document</span>}
+            {files && !d.locked && (() => {
               const path = d.hasFile ? `/candidates/${c.id}/documents/${d.id}/file` : (d.resumeId ? `/candidate-resumes/${c.id}/file/${d.resumeId}` : null);
               if (!path) {
                 return <button type="button" className="btn btn-sm" title="Only the name was saved for this document" onClick={() => setMsg({ bad: true, text: `No file was saved for ${d.name} - only its name. Use + Upload document to add the file.` })}>View</button>;

@@ -39,6 +39,7 @@ export default function DataQuality() {
             <Tile label="Possible duplicates open" value={num(d.duplicates.openFlags)} sub={`${pct(d.duplicates.ratePct)} of profiles · ${num(d.duplicates.merged)} merged so far`} />
             <Tile label="Duplicate finder accuracy" value={pct(d.duplicates.accuracy && d.duplicates.accuracy.precisionPct)} sub={d.duplicates.accuracy && d.duplicates.accuracy.decided ? `${num(d.duplicates.accuracy.falseAlarms)} false alarms of ${num(d.duplicates.accuracy.decided)} checked (${pct(d.duplicates.accuracy.falseAlarmPct)})` : 'no flags decided yet'} />
             <Tile label="Not touched in 6 months" value={num(d.staleSixMonths)} sub="no application activity" />
+            {d.staleData && <Tile label={`Stale data (older than ${d.staleData.days} days)`} value={num(d.staleData.total)} sub={d.staleData.oldest && d.staleData.oldest[0] ? `oldest: ${d.staleData.oldest[0].name} (${d.staleData.oldest[0].days} days) - salary, phone or resume not confirmed` : 'salary, phone or resume not confirmed'} />}
             <Tile label="Consent not recorded" value={num(d.consentNotRecorded)} />
             {d.invalid && <Tile label="Wrong values" value={num(d.invalid.profiles)} sub={`${pct(d.invalid.pct)} of profiles: bad e-mail, phone, date or experience`} />}
           </div>
