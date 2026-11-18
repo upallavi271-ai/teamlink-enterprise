@@ -169,16 +169,20 @@ export function ListFooter({
 // A select whose options carry counts — "Orbit Software (12)". Options with
 // 0 are never offered (except the chosen one, so it can be seen and removed);
 // with nothing to choose the control is not drawn at all.
+// "All specializations (1,234)" (2026-11-18): the first option carries the OVERALL count - the counts of every option added up (or `total`
+// when the page passes the server's own total) - so every department / specialization / designation / qualification list shows it.
 export function FacetSelect({
-  label, value, onChange, options, allLabel, loading = false, style, title,
+  label, value, onChange, options, allLabel, loading = false, style, title, total,
 }) {
   const list = (options || []).filter((o) => Number(o.count) > 0 || String(o.value) === String(value || ''));
   if (!list.length && !value) return loading ? <span className="lph-facet lph-facet-loading">{label}…</span> : null;
+  const counted = list.some((o) => o.count !== undefined && o.count !== null);
+  const overall = total !== undefined && total !== null ? Number(total) : (counted ? list.reduce((s, o) => s + (Number(o.count) || 0), 0) : null);
   return (
     <label className="lph-facet" title={title || label}>
       <span className="lph-facet-lbl">{label}</span>
       <Combo value={value || ''} onChange={(e) => onChange(e.target.value)} style={style}>
-        <option value="">{allLabel || 'Any'}</option>
+        <option value="">{`${allLabel || 'Any'}${overall !== null && Number.isFinite(overall) ? ` (${overall.toLocaleString('en-IN')})` : ''}`}</option>
         {list.map((o) => (
           <option key={o.value} value={o.value}>{`${o.label}${o.count !== undefined && o.count !== null ? ` (${Number(o.count).toLocaleString('en-IN')})` : ''}`}</option>
         ))}
