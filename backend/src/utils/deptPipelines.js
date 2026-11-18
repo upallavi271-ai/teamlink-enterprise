@@ -59,6 +59,14 @@ async function departments() {
   return [...names].sort();
 }
 
+// raw department spelling on a requirement -> the department name the settings are kept under (Educational -> Education ...)
+async function aliases() {
+  const out = {};
+  const rows = await prisma.requirement.findMany({ distinct: ['department'], select: { department: true }, take: 200 }).catch(() => []);
+  rows.forEach((r) => { const k = deptKey(r.department); if (k && r.department !== k) out[r.department] = k; });
+  return out;
+}
+
 // the settings of one department, with the defaults filled in, for the Admin screen and the web app
 function view(cfg) {
   const stages = {};
@@ -142,4 +150,4 @@ async function gate(existing, toStage, user, { viaFlow = false } = {}) {
   }
 }
 
-module.exports = { MANDATORY, OPTIONAL, APPROVERS, all, departments, view, save, reset, gate, deptKey };
+module.exports = { MANDATORY, OPTIONAL, APPROVERS, all, departments, aliases, view, save, reset, gate, deptKey };
