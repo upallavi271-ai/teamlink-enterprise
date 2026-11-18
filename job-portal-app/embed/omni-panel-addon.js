@@ -10,7 +10,7 @@
   if (window.__tlOmniPanel) return;
   window.__tlOmniPanel = true;
   var SRC = '/embed/app-omni/Job%20Portal';
-  var INBOX = '/omni-channel-native/inbox/whatsapp';
+  var INBOX = '/omni-channel-native/inbox/whatsapp?bare=1';
   var own = null, ownInbox = null;
 
   function close() { var m = document.getElementById('tlOmniPanel'); if (m) m.remove(); document.removeEventListener('keydown', onKey); }

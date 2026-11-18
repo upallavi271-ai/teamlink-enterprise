@@ -169,6 +169,12 @@ export default function Shell() {
     document.title = `${parts.join(' · ')}${parts.length ? ' · ' : ''}${BRAND.separate ? `${BRAND.name} · ${BRAND.product}` : BRAND.product}`;
   }, [pathname, current, currentPath, section, user]);
 
+  // BARE (2026-11-20): the Job Portal shows the Omni-Channel WhatsApp inbox inside its own window (job-portal-app/embed/omni-panel-addon.js): only the page, no TeamLink sidebar / top bar.
+  // Only inside a frame, and only for the Omni-Channel pages, and only when asked (?bare=1).
+  let bare = false;
+  try { bare = window.self !== window.top && /(^|[?&])bare=1(&|$)/.test(search) && pathname.startsWith('/omni-channel-native') && mayRenderSection(user, pathname); } catch { bare = false; }
+  if (bare) return <div className="app-shell" style={{ display: 'block' }}><main style={{ padding: 8 }}><Outlet /></main></div>;
+
   return (
     <div className="app-shell">
       <aside
