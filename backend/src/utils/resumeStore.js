@@ -41,14 +41,16 @@ const KINDS = {
   // a photo of a resume (OCR reads its text, utils/resumeOcr.js)
   jpg: { ext: 'jpg', mime: 'image/jpeg' },
   png: { ext: 'png', mime: 'image/png' },
+  // RTF resumes (ATS audit 2026-11-18, Q71): the text is read by utils/resumeParse.js rtfToText
+  rtf: { ext: 'rtf', mime: 'application/rtf' },
 };
 const EXT_ALIAS = { jpeg: 'jpg' };
-const STORED_NAME = /^[a-f0-9]{32}\.(pdf|docx|doc|jpg|png)$/;
+const STORED_NAME = /^[a-f0-9]{32}\.(pdf|docx|doc|jpg|png|rtf)$/;
 
 const RESUME_MESSAGE = {
   NO_FILE: 'Choose a resume file to upload.',
   TOO_LARGE: `That file is larger than ${RESUME_MAX_BYTES / (1024 * 1024)} MB.`,
-  BAD_TYPE: 'Only PDF, DOCX and DOC resumes (or a JPG / PNG photo of one) can be uploaded.',
+  BAD_TYPE: 'Only PDF, DOCX, DOC and RTF resumes (or a JPG / PNG photo of one) can be uploaded.',
   CONTENT_MISMATCH: "That file's contents do not match its type (it is not a real PDF / Word file / picture).",
   NOT_MULTIPART: 'Upload the file as a multipart/form-data request.',
 };
@@ -63,6 +65,7 @@ function resumeDir() {
 function sniffKind(buf) {
   if (!buf || buf.length < 8) return null;
   if (buf.slice(0, 5).toString('latin1') === '%PDF-') return 'pdf';
+  if (buf.slice(0, 5).toString('latin1') === '{\\rtf') return 'rtf';
   if (buf.slice(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))) return 'doc';
   if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
