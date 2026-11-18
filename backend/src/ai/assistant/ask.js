@@ -526,10 +526,9 @@ function parseCandidateSearch(raw) {
   const cityWords = new Set(cities.flatMap((c) => [c.key, ...c.spellings].map((x) => String(x).toLowerCase())));
   words.forEach((w) => { const c = realCity(citiesOf(w)[0]); if (c && cities.some((x) => x.key === c.key)) cityWords.add(w); });
   const qualWords = new Set(quals.flatMap((q) => q.toLowerCase().replace(/\./g, ' ').split(/\s+/)));
-  const terms = [...new Set(words
-    .filter((w) => !SEARCH_STOP.has(w) && !/^\d+\+?$/.test(w) && !cityWords.has(w) && !qualWords.has(w.replace(/\./g, '')) && !QUALS.some(([, re]) => re.test(w.toUpperCase())) && w.length > 1)
-    .map(stem).filter((w) => w.length > 1))].slice(0, 6);
-  return { count, exp, quals, cities, terms };
+  const kept = words.filter((w) => !SEARCH_STOP.has(w) && !/^\d+\+?$/.test(w) && !cityWords.has(w) && !qualWords.has(w.replace(/\./g, '')) && !QUALS.some(([, re]) => re.test(w.toUpperCase())) && w.length > 1);
+  const terms = [...new Set(kept.map(stem).filter((w) => w.length > 1))].slice(0, 6);
+  return { count, exp, quals, cities, terms, shown: [...new Set(kept)].slice(0, 6) }; // shown: the words as typed, for the answer
 }
 
 add({
@@ -573,7 +572,7 @@ add({
       .filter((x) => (core.length ? x.coreHits >= Math.min(core.length, 2) : (roles.length ? x.roleHits > 0 : true)) && (q.quals.length ? x.qualHit : true))
       .sort((a, b) => b.score - a.score);
     const top = scored.slice(0, q.count);
-    const asked = [q.quals.join(' / '), q.terms.join(' '), q.cities.length ? `in ${q.cities.map((c) => c.label).join(' / ')}` : '', q.exp != null ? `${q.exp}+ years` : ''].filter(Boolean).join(', ') || 'your words';
+    const asked = [q.quals.join(' / '), q.shown.join(' '), q.cities.length ? `in ${q.cities.map((c) => c.label).join(' / ')}` : '', q.exp != null ? `${q.exp}+ years` : ''].filter(Boolean).join(', ') || 'your words';
     const source = `Searched the candidates you can see (specialization, skills, education, designation${view.bde ? '' : ', location'}). Your area: ${scopeText(ctx.user, 'ats')}.`;
     if (!top.length) {
       return answer(`No candidate in your access matches ${asked}. Try fewer words (for example only the specialization), or another city.`, { source, area: 'candidates', options: ['Find candidates in Hyderabad', 'Find 10 Java developers'] });
