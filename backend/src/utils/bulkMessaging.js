@@ -677,6 +677,8 @@ async function logHistory(job) {
         providerRef: r.providerRef || null, templateLabel: job.purpose, senderUserId: job.sender ? job.sender.senderUserId : null, senderName: job.sender ? job.sender.senderName : null,
         note: job.omniNote || null, at: r.sentAt || r.lastAttemptAt || new Date(),
       }).catch((e) => console.error('[bulk] conversation log:', e.message));
+      // a WhatsApp message to one employee also shows in that person's Omni-Channel chat (utils/omniMirrorSend.js; never in the way of the send)
+      require('./omniMirrorSend').afterSend(job, r); // eslint-disable-line global-require
     }
   }
   pending.forEach((r) => { r.logged = true; });

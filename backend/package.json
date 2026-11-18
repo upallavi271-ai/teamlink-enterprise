@@ -20,6 +20,7 @@
     "whatsapp-qr-worker": "node src/workers/whatsappQrWorker.js",
     "comm-test": "node scripts/comm-automation-test.js",
     "org-chart-test": "node scripts/org-chart-test.js",
+    "omni-mirror-test": "node scripts/omni-mirror-send-test.js",
     "portal-session": "node scripts/portal-session.js",
     "portal-calibrate": "node scripts/portal-calibrate.js",
     "posting-test": "node scripts/job-publish-test.js",
