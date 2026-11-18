@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { atsRoleOf } from '../nav';
@@ -103,7 +104,8 @@ export default function BdeAgent() {
             <input ref={inputRef} type="text" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send(); }} placeholder="Ask the BDE Agent" aria-label="Question for the BDE Agent" maxLength={1000} />
             <button type="button" className="btn btn-primary btn-sm" disabled={busy || !q.trim()} onClick={() => send()}>Ask</button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
