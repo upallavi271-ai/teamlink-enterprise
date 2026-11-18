@@ -614,8 +614,56 @@ add({
     });
   },
 });
-// these two go FIRST: a "find ... candidates" question must not be taken by a counting handler
-HANDLERS.unshift(HANDLERS.pop(), HANDLERS.pop());
+// "Team performance this month", "who joined the most", "top recruiters" (ATS audit 2026-11-18, Q328): per recruiter, over the applications
+// THIS login may see (utils/scope.js applicationWhere): people being worked on, interviews, selected / offered, joined in the period.
+// A Recruiter gets their own line; TL / STL / Manager / Admin get their team or the company.
+add({
+  id: 'team-performance', product: 'ats',
+  test: (t) => /\b(team|recruiter|recruiters)\s+(performance|ranking|leaderboard|productivity|scorecard)\b/.test(t) || /\b(who|which recruiter)\b.*\b(joined|placed|closed|selected)\b.*\bmost\b/.test(t)
+    || /\b(top|best|worst|lowest)\s+(\d+\s+)?recruiters?\b/.test(t) || /\bperformance of (my |the )?(team|recruiters?)\b/.test(t),
+  async run(ctx) {
+    const roles = [ctx.user.atsRole, ctx.user.role].filter(Boolean);
+    if (!roles.some((r) => ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'RECRUITER'].includes(r))) {
+      return answer('Team performance is shown to recruiters, team leads, managers and admins.', { source: 'Checked against your role.' });
+    }
+    const monthStart = `${ctx.today.slice(0, 8)}01`;
+    const from = ctx.period && !ctx.period.defaulted ? ctx.period.from : monthStart;
+    const to = ctx.period && !ctx.period.defaulted ? ctx.period.to : ctx.today;
+    const label = ctx.period && !ctx.period.defaulted ? ctx.period.label : `this month (${monthStart} to ${ctx.today})`;
+    const apps = await prisma.application.findMany({
+      where: applicationWhere(ctx.user),
+      select: { stage: true, ownerRecruiterId: true, joinedAt: true },
+      take: 20000,
+    });
+    const rows = new Map();
+    const line = (id) => { const k = id || '—'; if (!rows.has(k)) rows.set(k, { id, active: 0, interviews: 0, selected: 0, joined: 0 }); return rows.get(k); };
+    const ACTIVE = new Set(['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED', 'RECRUITER_REVIEW', 'RECRUITER_APPROVED', 'TL_REVIEW', 'WITH_BDE', 'BDE_APPROVED', 'SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED', 'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED']);
+    apps.forEach((a) => {
+      const r = line(a.ownerRecruiterId);
+      if (ACTIVE.has(a.stage)) r.active += 1;
+      if (['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED'].includes(a.stage)) r.interviews += 1;
+      if (['SELECTED', 'OFFER', 'OFFER_ACCEPTED'].includes(a.stage)) r.selected += 1;
+      const j = a.joinedAt ? new Date(a.joinedAt).toISOString().slice(0, 10) : null;
+      if (j && j >= from && j <= to) r.joined += 1;
+    });
+    const ids = [...rows.values()].map((r) => r.id).filter(Boolean);
+    const names = new Map((await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
+    const list = [...rows.values()].map((r) => ({ ...r, name: r.id ? (names.get(r.id) || 'Unknown') : 'Not assigned to a recruiter' }))
+      .sort((a, b) => b.joined - a.joined || b.selected - a.selected || b.interviews - a.interviews || b.active - a.active);
+    if (!list.length) return answer('There is no candidate activity in your area to rank.', { source: `Your area: ${scopeText(ctx.user, 'ats')}.` });
+    const worst = /\b(worst|lowest|least)\b/.test(ctx.t);
+    const shown = (worst ? [...list].reverse() : list).slice(0, 10);
+    const totals = list.reduce((s, r) => ({ joined: s.joined + r.joined, selected: s.selected + r.selected, interviews: s.interviews + r.interviews, active: s.active + r.active }), { joined: 0, selected: 0, interviews: 0, active: 0 });
+    const lead = list[0];
+    return answer(`${worst ? 'Lowest' : 'Top'} ${shown.length} of ${list.length} by joinings ${label}. ${lead.joined ? `${lead.name} leads with ${lead.joined} joined.` : 'Nobody has a joining in this period yet.'} Ranked by joined, then selected, then interviews.`, {
+      numbers: [{ label: 'Joined', value: totals.joined }, { label: 'Selected / offered now', value: totals.selected }, { label: 'In interviews now', value: totals.interviews }, { label: 'Being worked on', value: totals.active }],
+      rows: shown.map((r) => [r.name, `${r.joined} joined`, `${r.selected} selected`, `${r.interviews} interviews`, `${r.active} active`]),
+      source: `Counted from the applications in your area (${scopeText(ctx.user, 'ats')}), joined between ${from} and ${to}. Selected, interviews and active are as of today.`, area: 'reports',
+    });
+  },
+});
+// these three go FIRST: a "find ... candidates" or "team performance" question must not be taken by a counting handler
+HANDLERS.unshift(HANDLERS.pop(), HANDLERS.pop(), HANDLERS.pop());
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 async function tryAnswer(user, auth, message, { now = new Date() } = {}) {
