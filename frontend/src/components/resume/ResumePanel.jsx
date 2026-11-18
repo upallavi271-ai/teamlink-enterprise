@@ -135,7 +135,21 @@ function Details({ v }) {
         <div className="rsm-full"><div className="rsm-k">Phone</div><div className="rsm-v rsm-contact">{(p.phones || []).slice(0, 2).join(' · ') || '—'}</div></div>
         <div className="rsm-skills">
           <div className="rsm-k">{`Skills found in the resume (${(p.skills || []).length})`}</div>
-          <div>{(p.skills || []).length ? p.skills.map((s) => <span key={s} className="skillpill match">{s}</span>) : <span className="small-muted">None recognised</span>}</div>
+          {/* SKILL GROUPS (ATS audit 2026-11-18, Q97): technical / soft / domain */}
+          {p.skillGroups && (p.skills || []).length ? (
+            <div>
+              {[['Technical', p.skillGroups.technical || []], ...Object.entries(p.skillGroups.domain || {}).map(([d, list]) => [`${d} (domain)`, list]), ['Soft skills', p.skillGroups.soft || []]]
+                .filter(([, list]) => list.length)
+                .map(([label, list]) => (
+                  <div key={label} style={{ margin: '4px 0' }}>
+                    <span className="small-muted" style={{ fontSize: 11.5, marginRight: 6 }}>{label}</span>
+                    {list.map((s) => <span key={s} className="skillpill match">{s}</span>)}
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <div>{(p.skills || []).length ? p.skills.map((s) => <span key={s} className="skillpill match">{s}</span>) : <span className="small-muted">None recognised</span>}</div>
+          )}
         </div>
       </div>
       {v.extractError && <div className="notice amber" style={{ margin: '10px 0 0' }}>{v.extractError}</div>}
