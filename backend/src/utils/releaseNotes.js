@@ -13,6 +13,14 @@ const API_VERSION = 'v1';
 
 const NOTES = [
   {
+    version: '1.5.5', date: '2026-11-18', title: 'Dropped candidates no longer show as Joined',
+    items: [
+      'A candidate who joined and then dropped (Joining & Drop) now shows as Dropped in Candidates & Pipeline, the People list, the Progress board and the candidate page, and is counted under Rejected, not Joined. The joining record, guarantee and invoice keep reading the Joined step as before.',
+      'Drops recorded earlier are picked up automatically when the server starts.',
+      'The BDE Agent button now appears only while ATS is open (BDE, BDE TL, Super Admin and Developer logins only).',
+    ],
+  },
+  {
     version: '1.5.4', date: '2026-11-18', title: 'Add Candidate: Profile received on',
     items: [
       'Add Candidate has a new "Profile received on" date (Where from section). A profile that reached you earlier, say in October, keeps that date as its added date. Leave it empty for today; a future date is not accepted.',
