@@ -519,11 +519,12 @@ function parseCandidateSearch(raw) {
   const cities = [];
   for (let i = 0; i < words.length; i += 1) {
     for (const span of [words.slice(i, i + 2).join(' '), words[i]]) {
-      const c = citiesOf(span)[0];
-      if (c && !cities.some((x) => x.key === c.key)) { cities.push(c); break; }
+      const c = realCity(citiesOf(span)[0]);
+      if (c && !cities.some((x) => x.key === c.key)) { cities.push(c); if (span.includes(' ')) i += 1; break; }
     }
   }
-  const cityWords = new Set(cities.flatMap((c) => String(c.name || c.key || '').toLowerCase().split(/\s+/)));
+  const cityWords = new Set(cities.flatMap((c) => [c.key, ...c.spellings].map((x) => String(x).toLowerCase())));
+  words.forEach((w) => { const c = realCity(citiesOf(w)[0]); if (c && cities.some((x) => x.key === c.key)) cityWords.add(w); });
   const qualWords = new Set(quals.flatMap((q) => q.toLowerCase().replace(/\./g, ' ').split(/\s+/)));
   const terms = [...new Set(words
     .filter((w) => !SEARCH_STOP.has(w) && !/^\d+\+?$/.test(w) && !cityWords.has(w) && !qualWords.has(w.replace(/\./g, '')) && !QUALS.some(([, re]) => re.test(w.toUpperCase())) && w.length > 1)
@@ -548,7 +549,7 @@ add({
     const and = [];
     if (or.length) and.push({ OR: or });
     if (q.exp != null) and.push({ experienceYears: { gte: q.exp } });
-    if (q.cities.length && !view.bde) and.push({ OR: q.cities.flatMap((c) => [{ location: { contains: c.name || c.key } }, { preferredLocation: { contains: c.name || c.key } }]) });
+    if (q.cities.length && !view.bde) and.push({ OR: q.cities.flatMap((c) => c.spellings.flatMap((sp) => [{ location: { contains: sp } }, { preferredLocation: { contains: sp } }])) });
     const where = { AND: [candidateWhere(ctx.user), ...and] };
     const pool = await prisma.candidate.findMany({
       where,
@@ -566,7 +567,7 @@ add({
       .filter((x) => (q.terms.length ? x.termHits >= Math.min(q.terms.length, 2) || (q.terms.length === 1 && x.termHits === 1) : true) && (q.quals.length ? x.qualHit : true))
       .sort((a, b) => b.score - a.score);
     const top = scored.slice(0, q.count);
-    const asked = [q.quals.join(' / '), q.terms.join(' '), q.cities.length ? `in ${q.cities.map((c) => c.name || c.key).join(' / ')}` : '', q.exp != null ? `${q.exp}+ years` : ''].filter(Boolean).join(', ') || 'your words';
+    const asked = [q.quals.join(' / '), q.terms.join(' '), q.cities.length ? `in ${q.cities.map((c) => c.label).join(' / ')}` : '', q.exp != null ? `${q.exp}+ years` : ''].filter(Boolean).join(', ') || 'your words';
     const source = `Searched the candidates you can see (specialization, skills, education, designation${view.bde ? '' : ', location'}). Your area: ${scopeText(ctx.user, 'ats')}.`;
     if (!top.length) {
       return answer(`No candidate in your access matches ${asked}. Try fewer words (for example only the specialization), or another city.`, { source, area: 'candidates', options: ['Find candidates in Hyderabad', 'Find 10 Java developers'] });
