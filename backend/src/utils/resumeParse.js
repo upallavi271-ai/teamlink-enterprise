@@ -36,6 +36,44 @@ async function pdfText(buffer) {
   }
 }
 
+// RTF -> plain text: the header groups (fonts, colours, styles, document info, "\*" destinations) are skipped with their nested
+// braces, \par / \line become new lines, \'hh and \uN become characters, every other control word is dropped.
+function rtfToText(src) {
+  const s = String(src || '');
+  let out = '';
+  const skipDepth = [];
+  let depth = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s[i];
+    if (c === '{') {
+      depth += 1;
+      const ahead = s.slice(i + 1, i + 14);
+      if (/^\\(\*|fonttbl|colortbl|stylesheet|info|pict|header|footer|listtable|listoverridetable|rsidtbl|xmlnstbl|generator)/.test(ahead)) skipDepth.push(depth);
+      continue; // eslint-disable-line no-continue
+    }
+    if (c === '}') { if (skipDepth.length && skipDepth[skipDepth.length - 1] === depth) skipDepth.pop(); depth -= 1; continue; } // eslint-disable-line no-continue
+    if (skipDepth.length) continue; // eslint-disable-line no-continue
+    if (c === '\\') {
+      const nx = s[i + 1];
+      if (nx === '\\' || nx === '{' || nx === '}') { out += nx; i += 1; continue; } // eslint-disable-line no-continue
+      if (nx === "'") { out += String.fromCharCode(parseInt(s.slice(i + 2, i + 4), 16) || 32); i += 3; continue; } // eslint-disable-line no-continue
+      const m = /^\\([a-z]+)(-?\d+)? ?/i.exec(s.slice(i, i + 40));
+      if (m) {
+        const word = m[1];
+        if (word === 'par' || word === 'line' || word === 'row') out += '\n';
+        else if (word === 'tab' || word === 'cell') out += ' ';
+        else if (word === 'u' && m[2]) { let n = Number(m[2]); if (n < 0) n += 65536; out += String.fromCharCode(n); if (s[i + m[0].length] === '?') i += 1; }
+        i += m[0].length - 1;
+        continue; // eslint-disable-line no-continue
+      }
+      i += 1; // a control symbol such as \~ or \-
+      continue; // eslint-disable-line no-continue
+    }
+    if (c !== '\r' && c !== '\n') out += c;
+  }
+  return out;
+}
+
 async function extractText(input, kind) {
   try {
     // A fresh, un-pooled copy: a multipart slice (or a small Buffer.concat)
@@ -59,6 +97,9 @@ async function extractText(input, kind) {
       const WordExtractor = require('word-extractor');
       const doc = await new WordExtractor().extract(buffer);
       text = doc.getBody() || '';
+    } else if (kind === 'rtf') {
+      // RTF resumes (ATS audit 2026-11-18, Q71): the control words are dropped and the text kept
+      text = rtfToText(buffer.toString('latin1'));
     }
     text = String(text).replace(/\r\n?/g, '\n').replace(/[ \t ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
     return { text: text.slice(0, MAX_TEXT), error: null };
@@ -299,6 +340,74 @@ function parseName(text) {
   return null;
 }
 
+// --- CURRENT CTC, EXPECTED CTC, NOTICE PERIOD (ATS audit 2026-11-18, Q77/Q78) ----------------------------------------------------
+// Read the way the "Fill from file" form reads them (utils/docFill.js labelled / salaryRange / noticeOf), plus a monthly salary
+// ("35,000 per month" = 4.2 LPA) and the phrase inside a sentence ("my current CTC is 6 LPA"). Stored as "4.5 LPA" / "30 Days".
+const lakhWord = (v) => (v == null ? null : `${Math.round(v * 100) / 100} LPA`);
+function salaryValue(raw) {
+  if (!raw) return null;
+  const DF = require('./docFill'); // eslint-disable-line global-require
+  const monthly = /per\s*month|\/\s*month|\bp\.?\s*m\b\.?|monthly|\/\s*mo\b|\bpm\b/i.test(raw);
+  let [v] = DF.salaryRange(raw);
+  if (v == null) {
+    const n = /(\d{1,3}(?:,\d{2,3})+|\d{4,8})/.exec(String(raw).replace(/₹|rs\.?|inr/gi, ' '));
+    if (n) { const rupees = Number(n[1].replace(/,/g, '')); v = monthly ? (rupees * 12) / 100000 : (rupees >= 10000 ? rupees / 100000 : null); }
+  } else if (monthly && v < 5) v *= 12; // "35,000 per month" came back as 0.35 lakh a year
+  return v != null && v > 0 && v <= 500 ? lakhWord(v) : null;
+}
+function noticeValue(raw) {
+  if (!raw) return null;
+  const DF = require('./docFill'); // eslint-disable-line global-require
+  const n = DF.noticeOf(raw);
+  return n === '7 Days' ? '15 Days' : n;
+}
+function parseCompensation(text) {
+  const DF = require('./docFill'); // eslint-disable-line global-require
+  const find = (labels, inline) => {
+    const v = DF.labelled(text, labels, { maxLen: 120 });
+    if (v) return { raw: v, how: 'labelled' };
+    const m = inline.exec(text);
+    return m ? { raw: m[0], how: 'sentence' } : null;
+  };
+  const cur = find(['current ctc', 'current salary', 'present ctc', 'present salary', 'current package', 'current compensation', 'annual ctc', 'ctc', 'salary', 'cctc'],
+    /(?:current|present|existing)\s*(?:ctc|salary|package|compensation)[^\n]{0,50}/i);
+  const exp = find(['expected ctc', 'expected salary', 'expected package', 'expected compensation', 'salary expectation', 'ectc'],
+    /expect(?:ed|ing|ation)\s*(?:ctc|salary|package|compensation)?[^\n]{0,50}/i);
+  const np = find(['notice period', 'notice', 'np', 'joining time', 'availability to join'],
+    /(?:notice\s*period[^.\n]{0,40}|serving\s*notice[^.\n]{0,40}|immediate(?:ly)?\s*(?:joiner|available|joining)[^.\n]{0,20})/i);
+  return {
+    currentCtc: cur ? salaryValue(cur.raw) : null,
+    expectedCtc: exp ? salaryValue(exp.raw) : null,
+    noticePeriod: np ? noticeValue(np.raw) : null,
+    how: { currentCtc: cur && cur.how, expectedCtc: exp && exp.how, noticePeriod: np && np.how },
+  };
+}
+
+// --- CONFIDENCE + MISSING INFORMATION (ATS audit 2026-11-18, Q79/Q93/Q95/Q96) --------------------------------------------------
+// high = read from a labelled line or an exact pattern (e-mail, phone), medium = worked out (dates, a sentence, a guess at the name),
+// low = thin evidence, AI = filled by the AI pass. `review` lists what a person should check before saving; `missing` what the resume
+// does not say at all.
+const KEY_FIELDS = ['name', 'email', 'phone', 'totalExperienceYears', 'highestEducation', 'location', 'skills', 'currentCtc', 'expectedCtc', 'noticePeriod'];
+function confidenceOf(p, text, comp) {
+  const c = {};
+  const labelledName = /^\s*(name|full\s*name|candidate\s*name)\s*[:\-–]/im.test(text);
+  c.name = p.name ? (labelledName ? 'high' : 'medium') : null;
+  c.email = p.emails && p.emails.length ? 'high' : null;
+  c.phone = p.phones && p.phones.length ? 'high' : null;
+  c.totalExperienceYears = p.totalExperienceYears != null ? (p.experienceSource === 'stated' ? 'high' : 'medium') : null;
+  c.highestEducation = p.highestEducation ? 'medium' : null;
+  c.location = p.location ? 'medium' : null;
+  c.skills = p.skills && p.skills.length ? (p.skills.length >= 3 ? 'high' : 'low') : null;
+  ['currentCtc', 'expectedCtc', 'noticePeriod'].forEach((k) => { c[k] = p[k] ? (comp.how[k] === 'labelled' ? 'high' : 'medium') : null; });
+  return c;
+}
+function reviewLists(c) {
+  return {
+    missing: KEY_FIELDS.filter((k) => !c[k]),
+    review: KEY_FIELDS.filter((k) => c[k] === 'low' || c[k] === 'medium' || c[k] === 'AI'),
+  };
+}
+
 async function parseResumeText(text, { vocabulary } = {}) {
   const languages = detectLanguages(text);
   const t = asciiDigits(text);
@@ -307,7 +416,9 @@ async function parseResumeText(text, { vocabulary } = {}) {
   const skills = vocab.filter((s) => textHasTerm(lower, s));
   const exp = parseExperienceYears(t);
   const edu = parseEducation(t);
-  return {
+  let comp = { currentCtc: null, expectedCtc: null, noticePeriod: null, how: {} };
+  try { comp = parseCompensation(t); } catch { /* the other fields stand */ }
+  const out = {
     name: parseName(t),
     emails: [...new Set((t.match(EMAIL_RE) || []).map((e) => e.toLowerCase()))].slice(0, 5),
     phones: parsePhones(t),
@@ -317,23 +428,45 @@ async function parseResumeText(text, { vocabulary } = {}) {
     education: edu.list,
     highestEducation: edu.highest,
     location: parseLocation(t),
+    currentCtc: comp.currentCtc,
+    expectedCtc: comp.expectedCtc,
+    noticePeriod: comp.noticePeriod,
     // ['English'] for most; ['Telugu', 'English'] etc. when another script is in the text (the AI pass translates it)
     languages,
     otherLanguage: languages.some((l) => l !== 'English'),
   };
+  out.confidence = confidenceOf(out, t, comp);
+  Object.assign(out, reviewLists(out.confidence));
+  return out;
 }
 
-// --- optional Claude pass (RESUME_AI_EXTRACT=1) -----------------------------
-const aiEnabled = () => /^(1|true|yes|on)$/i.test(String(process.env.RESUME_AI_EXTRACT || ''));
+// --- the AI pass -------------------------------------------------------------------------------------------------------------
+// RESUME_AI_EXTRACT=1 = always (the app's own AI, as before). 2026-11-18 (ATS audit Q74/Q91): when it is NOT set to 0 and a FREE fast
+// AI key is saved (Administration > Integrations > Fast AI, utils/fastAi.js), the AI pass runs on that free model too. It only FILLS
+// GAPS the free parser left; any failure keeps the free result. RESUME_AI_EXTRACT=0 switches every AI pass off.
+const aiSetting = () => String(process.env.RESUME_AI_EXTRACT || '').trim().toLowerCase();
+const aiEnabled = () => /^(1|true|yes|on)$/.test(aiSetting());
+const aiOff = () => /^(0|false|no|off)$/.test(aiSetting());
+async function fastAiReady() {
+  if (aiOff()) return false;
+  try { return await require('./fastAi').hasKey(); } catch { return false; } // eslint-disable-line global-require
+}
 
-async function parseWithAi(text) {
-  // eslint-disable-next-line global-require
-  const ai = require('./ai');
-  const system = 'You extract fields from a resume. Return JSON with keys: name (string|null), emails (string[]), '
-    + 'phones (string[]), skills (string[] of short skill names, lowercase), totalExperienceYears (number|null), '
-    + 'highestEducation (string|null), education (string[]), location (current city, string|null). Use null when unknown. '
-    + 'The resume may be in Telugu, Hindi or another language: translate every value to English (names in English letters).';
-  const out = await ai.chatJson(system, [{ role: 'user', content: String(text).slice(0, 15000) }]);
+const AI_SYSTEM = 'You extract fields from a resume. Return JSON with keys: name (string|null), emails (string[]), '
+  + 'phones (string[]), skills (string[] of short skill names, lowercase), totalExperienceYears (number|null), '
+  + 'highestEducation (string|null), education (string[]), location (current city, string|null), '
+  + 'currentCtc (current yearly salary as written, e.g. "4.5 LPA" or "35000 per month", string|null), '
+  + 'expectedCtc (expected yearly salary as written, string|null), noticePeriod (e.g. "30 days", "2 months", "Immediate", string|null). '
+  + 'Use null when the resume does not say it - never guess a salary or notice period. '
+  + 'The resume may be in Telugu, Hindi or another language: translate every value to English (names in English letters).';
+async function parseWithAi(text, { fast = false } = {}) {
+  const ai = require('./ai'); // eslint-disable-line global-require
+  if (fast) {
+    const r = await require('./fastAi').chat(AI_SYSTEM, [{ role: 'user', content: String(text).slice(0, 15000) }], { json: true, maxTokens: 900, timeoutMs: 20000, fallbackToApp: false }); // eslint-disable-line global-require
+    const out = ai.parseJsonLoose(r.text);
+    return out && typeof out === 'object' && !Array.isArray(out) ? out : null;
+  }
+  const out = await ai.chatJson(AI_SYSTEM, [{ role: 'user', content: String(text).slice(0, 15000) }]);
   return out && typeof out === 'object' ? out : null;
 }
 
@@ -370,15 +503,26 @@ async function extractAndParse(buffer, kind) {
   const parsed = await parseResumeText(text);
   if (ocr) parsed.ocr = { used: ocr.used, pages: ocr.pages, languages: ocr.languages };
   let parser = ocr && ocr.used ? 'free+ocr' : 'free';
-  if (aiEnabled()) {
+  const useFast = !aiEnabled() && await fastAiReady();
+  if (aiEnabled() || useFast) {
     try {
-      const a = await parseWithAi(text);
+      const a = await parseWithAi(text, { fast: useFast });
       if (a && !a.clarify) {
-        parser = 'free+claude';
-        ['name', 'totalExperienceYears', 'highestEducation', 'location'].forEach((k) => { if (parsed[k] == null && a[k] != null) parsed[k] = a[k]; });
+        parser = useFast ? 'free+fast-ai' : 'free+claude';
+        const conf = parsed.confidence || {};
+        ['name', 'totalExperienceYears', 'highestEducation', 'location'].forEach((k) => { if (parsed[k] == null && a[k] != null) { parsed[k] = a[k]; conf[k] = 'AI'; } });
+        // salary and notice from the AI are normalised the same way as the free parser's ("4.5 LPA", "30 Days")
+        if (!parsed.currentCtc && a.currentCtc) { const v = salaryValue(String(a.currentCtc)); if (v) { parsed.currentCtc = v; conf.currentCtc = 'AI'; } }
+        if (!parsed.expectedCtc && a.expectedCtc) { const v = salaryValue(String(a.expectedCtc)); if (v) { parsed.expectedCtc = v; conf.expectedCtc = 'AI'; } }
+        if (!parsed.noticePeriod && a.noticePeriod) { const v = noticeValue(String(a.noticePeriod)); if (v) { parsed.noticePeriod = v; conf.noticePeriod = 'AI'; } }
         ['emails', 'phones', 'skills', 'education'].forEach((k) => {
           if (Array.isArray(a[k])) parsed[k] = [...new Set([...(parsed[k] || []), ...a[k].map((v) => (k === 'skills' || k === 'emails' ? String(v).toLowerCase() : String(v)).trim()).filter(Boolean)])];
         });
+        if (!conf.email && parsed.emails && parsed.emails.length) conf.email = 'AI';
+        if (!conf.phone && parsed.phones && parsed.phones.length) conf.phone = 'AI';
+        if (!conf.skills && parsed.skills && parsed.skills.length) conf.skills = 'AI';
+        parsed.confidence = conf;
+        Object.assign(parsed, reviewLists(conf));
       }
     } catch { /* free result stands */ }
   }
