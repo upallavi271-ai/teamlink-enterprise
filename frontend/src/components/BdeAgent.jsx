@@ -9,6 +9,7 @@ import './BdeAgent.css';
 // The server refuses everybody else (403), so hiding the button is never the control.
 export function isBdeLogin(user) {
   if (!user) return false;
+  if (user.bdeAgent !== undefined) return !!user.bdeAgent; // the server's rule (BDE, BDE TL, Super Admin, Developer logins)
   return atsRoleOf(user) === 'BDE' || !!(user.workflow && user.workflow.bdeTl);
 }
 

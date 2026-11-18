@@ -20,9 +20,13 @@ const fastAi = require('./fastAi');
 const FACTS_TTL_MS = 60000;
 const factsCache = new Map(); // userId -> { at, facts, clients, reqs }
 
+// Who may use it: BDE and BDE TL logins, plus (founder 2026-11-18) the Super Admin and Developer logins. Everybody still reads only their
+// OWN scope through the same helpers below (a Super Admin sees every client, a Developer only what their login may see).
 function isBdeAgentUser(user) {
   if (!user) return false;
   if (String(user.atsRole || '').toUpperCase() === 'BDE') return true;
+  if (String(user.role || '').toUpperCase() === 'SUPER_ADMIN' || String(user.atsRole || '').toUpperCase() === 'SUPER_ADMIN') return true;
+  if (/develop/i.test(String(user.designation || ''))) return true;
   try { return !!isBdeTl(user); } catch { return false; }
 }
 
