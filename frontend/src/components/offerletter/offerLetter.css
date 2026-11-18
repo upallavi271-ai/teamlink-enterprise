@@ -1,0 +1,36 @@
+/* Offer letter (mailed with the joining date): the Admin editor and the per-person card. */
+.olm { display: flex; flex-direction: column; gap: 4px; }
+.olm-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.olm-big { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; cursor: pointer; }
+.olm-big input { margin-top: 3px; width: 17px; height: 17px; }
+.olm-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.olm-form .card, .olm-side .card { margin-bottom: 12px; }
+.olm-side { position: sticky; top: 8px; }
+.olm-h { font-size: 14px; margin: 0 0 12px 0; }
+.olm-sub { font-size: 12.5px; font-weight: 600; margin: 4px 0 8px 0; color: var(--navy); }
+.olm-row { display: grid; grid-template-columns: 34% 1fr auto; gap: 8px; margin-bottom: 6px; align-items: center; }
+.olm-term { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-bottom: 8px; background: var(--paper-raised); }
+.olm-term-head { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.olm-term-head input { flex: 1; }
+.olm-term-btns { display: inline-flex; }
+.olm-term textarea { width: 100%; }
+.olm-check { display: flex; gap: 8px; align-items: flex-start; font-weight: 500; }
+.olm-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 4px 0 16px 0; }
+.olm-frame { width: 100%; height: 760px; border: 1px solid var(--line); border-radius: 8px; background: #f3f5f9; }
+.olm-tokens .msg-tokens { max-height: 220px; overflow: auto; }
+
+/* the per-person card (Joining screen) */
+.olc-state { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.olc-chip { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: var(--line-soft); color: var(--ink-soft); }
+.olc-chip.ok { background: #dff4e6; color: #17653a; }
+.olc-chip.bad { background: #fde4e4; color: #9b1c1c; }
+.olc-chip.wait { background: #fff1d6; color: #7a5416; }
+.olc-frame { width: 100%; height: 62vh; border: 1px solid var(--line); border-radius: 8px; background: #f3f5f9; }
+.olc-why { font-size: 12.5px; margin: 6px 0; }
+.olc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+
+@media (max-width: 1000px) {
+  .olm-cols { grid-template-columns: minmax(0, 1fr); }
+  .olm-side { position: static; }
+  .olm-row { grid-template-columns: 1fr; }
+}

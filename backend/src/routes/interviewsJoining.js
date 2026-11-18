@@ -521,6 +521,8 @@ require('./offerStaffRoutes')(router, { loadScoped });
 require('./clientTrackRoutes')(router, { loadScoped });
 // Counter-offers, BGV, the industry checklist and its templates (routes/atsOfferBgvRoutes.js, utils/atsOfferBgv.js).
 require('./atsOfferBgvRoutes')(router, { loadScoped });
+// The offer letter that is mailed with the joining date: template, switch, preview, PDF, Send / Send again (utils/offerLetterMail.js).
+require('./offerLetterMailRoutes')(router, { loadScoped });
 
 // ---------------------------------------------------------------------------
 // OFFER LETTER — template → approval → sent → the candidate accepts / declines
@@ -1062,7 +1064,10 @@ router.post('/joining/:id/schedule', requirePerm('ats', 'interviews', 'Joining',
   const fresh = await prisma.application.findUnique({ where: { id: app.id }, include: FULL_INCLUDE });
   // BGV / joining checklist: a WARNING with the answer, never a block (utils/atsOfferBgv.js).
   const warnings = await require('../utils/atsOfferBgv').joiningWarnings(app); // eslint-disable-line global-require
-  res.json({ ...shapeRow(fresh), warnings });
+  // The joining date is now set: the offer letter goes to a TeamLink internal hire by email, once (utils/offerLetterMail.js).
+  // It never fails the save - the answer rides along so the screen can say what happened.
+  const offerLetter = await require('../utils/offerLetterMail').maybeSendAuto(app.id, { trigger: `Joining date set to ${joiningDate}`, actor: req.user }); // eslint-disable-line global-require
+  res.json({ ...shapeRow(fresh), warnings, offerLetter });
 });
 
 router.post('/joining/:id/joined', requirePerm('ats', 'interviews', 'Joining', 'edit'), async (req, res) => {

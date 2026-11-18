@@ -647,6 +647,15 @@ async function logHistory(job) {
           data: { lastContactedAt: new Date(), contactMode: r.channel },
         }).catch(() => {});
       }
+      // A "Joining confirmation" / "Joining reminder" sent to one person from the Contact button: a TeamLink internal hire gets
+      // the offer letter with it, once (utils/offerLetterMail.js; it never throws and does nothing for a client placement or
+      // while the automatic offer letter is off).
+      if (/joining[\s_]*(confirmation|reminder|date)/i.test(String(job.purpose || ''))) {
+        for (const r of pending.filter((x) => x.status === 'sent' && x.applicationId)) {
+          // eslint-disable-next-line no-await-in-loop, global-require
+          await require('./offerLetterMail').maybeSendAuto(r.applicationId, { trigger: `${job.purpose} sent`, actor: job.createdBy ? { id: job.createdBy.id, name: job.createdBy.name } : null }).catch(() => {});
+        }
+      }
     }
   } else {
     // A client contact or an employee: the person's CONVERSATION is their history (ConversationMessage), and the audit

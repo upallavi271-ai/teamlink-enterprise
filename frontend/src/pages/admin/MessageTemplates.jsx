@@ -8,6 +8,7 @@ import {
   useTokens, renderSample, smsInfo, unknownIn, CHANNEL_ICON, STATUS_CLASS, STATUS_WORD, WA_STATUS_CLASS, WA_STATUS_WORD,
 } from '../../components/messaging/msgKit.js';
 import AutomaticMessagesTab from '../../components/automsg/AutomaticMessagesTab.jsx'; // Automatic messages: a message at every step
+import OfferLetterEditor from '../../components/offerletter/OfferLetterEditor.jsx'; // the offer letter mailed with the joining date
 import '../../components/messaging/messaging.css';
 import Combo from '../../components/Combo.jsx';
 import WaQuickChatTab from '../../components/wa/WaQuickChatTab.jsx'; // free WhatsApp click-to-chat: templates, log, settings
@@ -41,7 +42,7 @@ export default function MessageTemplates() {
   const deskRoles = [user && user.role, user && user.hrmsRole, user && user.atsRole];
   const fullDesk = deskRoles.some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR', 'TL', 'MANAGER', 'ASSISTANT_MANAGER', 'STL'].includes(r));
   const tabs = fullDesk
-    ? [['templates', 'Templates'], ['automatic', 'Automatic messages'], ['channels', 'Channels'], ['sent', 'Sent messages'], ['limits', 'Limits'], ['whatsapp', 'WhatsApp quick chat']]
+    ? [['templates', 'Templates'], ['automatic', 'Automatic messages'], ['offerletter', 'Offer letter'], ['channels', 'Channels'], ['sent', 'Sent messages'], ['limits', 'Limits'], ['whatsapp', 'WhatsApp quick chat']]
     : [['whatsapp', 'WhatsApp quick chat']];
   return (
     <div className="mt-page">
@@ -56,6 +57,7 @@ export default function MessageTemplates() {
       </div>
       {tab === 'templates' && <TemplatesTab />}
       {tab === 'automatic' && <AutomaticMessagesTab />}
+      {tab === 'offerletter' && <OfferLetterEditor />}
       {tab === 'channels' && <ChannelsTab />}
       {tab === 'sent' && <SentTab />}
       {tab === 'limits' && <LimitsTab />}

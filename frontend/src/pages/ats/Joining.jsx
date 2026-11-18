@@ -26,6 +26,7 @@ import JoinDropList from '../../components/joindrop/JoinDropList.jsx';
 import MonthlySalary, { salaryStart, yearlyOf } from '../../components/MonthlySalary.jsx';
 import { ctcAsk, CtcAsk, CtcAskButtons } from '../../components/CtcConfirm.jsx';
 import { DropDialog, errText } from '../../components/joindrop/JdParts.jsx';
+import OfferLetterModal, { offerLetterNote } from '../../components/offerletter/OfferLetterModal.jsx'; // the offer letter mailed with the joining date
 import {
   fmtDate, money, Banner, IntJoinEmpty, EMPTY_INTJOIN_FILTERS, useIntJoinPaged, ShowOlder, PAGE_SIZES_IJ,
 } from './intjoinShared.jsx';
@@ -214,6 +215,9 @@ export default function Joining() {
                       {canAct && v === 'dropped' && (
                         <button type="button" className="btn btn-sm" onClick={() => setDialog({ kind: 'checklist', id: r.id })}>Set a new date</button>
                       )}
+                      {internal && v !== 'dropped' && (
+                        <button type="button" className="btn btn-sm btn-ghost" title="The offer letter that is emailed to a new joiner with the joining date" onClick={() => setDialog({ kind: 'offerLetter', id: r.id })}>Offer letter</button>
+                      )}
                       {canAct && v === 'joined' && internal && canHire && !r.hrmsEmployeeId && (
                         <button type="button" className="btn btn-sm btn-primary" onClick={() => act(() => api.post(`/ats/internal-hiring/${r.id}/create-employee`), `Saved. ${first(r.candidate.name)} added as an employee; the joining pack (login, joining letter, welcome email) went out.`)}>Add as employee</button>
                       )}
@@ -283,6 +287,9 @@ export default function Joining() {
           onClose={close}
           onJoined={(body) => markJoined(live, body)}
         />
+      )}
+      {dialog?.kind === 'offerLetter' && live && (
+        <OfferLetterModal r={live} canSend={canAct} onClose={close} onChanged={load} />
       )}
       {dialog?.kind === 'clientRelease' && live && (
         <ReleaseLetterModal
@@ -410,7 +417,7 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
               <b>{c.date ? '✓ ' : '2 · '}Joining date</b>
               <div className="ivx-actions">
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-                <button type="button" className="btn btn-sm" disabled={busy || !date || (internal && !c.docs) || (c.date && date === r.joiningDate)} onClick={() => step(() => api.post(`/ats/joining/${r.id}/schedule`, { joiningDate: date }), `Saved. Joining on ${fmtDate(date)}.`)}>Save date</button>
+                <button type="button" className="btn btn-sm" disabled={busy || !date || (internal && !c.docs) || (c.date && date === r.joiningDate)} onClick={() => step(async () => { const res = await api.post(`/ats/joining/${r.id}/schedule`, { joiningDate: date }); res.data.message = `Saved. Joining on ${fmtDate(date)}.${offerLetterNote(res.data.offerLetter)}`; return res; })}>Save date</button>
               </div>
               {internal && !c.docs && <div className="ivx-hint">For an internal hire, check the documents first.</div>}
             </div>

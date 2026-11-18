@@ -811,7 +811,7 @@ async function joiningReminderToCandidate(app, { joiningDate, joiningTime, left,
   if (!cand) return [];
   const when = left === 0 ? 'today' : left === 1 ? 'tomorrow' : 'in 3 days';
   const pretty = new Date(`${joiningDate}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
-  return require('./interviewNotices').queueCandidateMessage(app, { // eslint-disable-line global-require
+  const rows = await require('./interviewNotices').queueCandidateMessage(app, { // eslint-disable-line global-require
     template: 'JOINING_REMINDER', label: 'Joining reminder', purpose: 'JOINING_REMINDER',
     trigger: trigger || `Joining reminder T-${left} (${joiningDate})`,
     subject: `Reminder: you join ${when}`,
@@ -822,6 +822,10 @@ async function joiningReminderToCandidate(app, { joiningDate, joiningTime, left,
     },
     actor: null,
   });
+  // A TeamLink internal hire gets the offer letter with the first joining mail it has not had yet (once: utils/offerLetterMail.js;
+  // it never throws and does nothing for a client placement or while the automatic offer letter is off).
+  try { await require('./offerLetterMail').maybeSendAuto(app.id, { trigger: `Joining reminder (${joiningDate})`, actor: null }); } catch { /* the reminder itself is done */ } // eslint-disable-line global-require
+  return rows;
 }
 
 module.exports = {
