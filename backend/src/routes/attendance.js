@@ -26,6 +26,16 @@ const router = express.Router();
 router.use((req, res, next) => { require('../utils/workingDays').ready().then(() => next(), () => next()); }); // eslint-disable-line global-require
 router.use(requireAuth);
 
+// IS THE BIOMETRIC MACHINE LATE? Read-only, for the notice at the top of the Attendance dashboard (utils/biometricNotice.js):
+// it says so only while the machine is silent or its punches arrive minutes after the thumb, so a late punch is not mistaken for a missing one.
+router.get('/device-notice', requirePerm(null, 'hrms', 'Attendance & Time', 'view'), async (req, res) => {
+  try {
+    res.json(await require('../utils/biometricNotice').deviceNotice()); // eslint-disable-line global-require
+  } catch (err) {
+    console.error('[attendance] device notice failed:', err && err.message); // eslint-disable-line no-console
+    res.json({ show: false }); // a notice that cannot be worked out is simply not shown
+  }
+});
 
 async function getConfig() {
   let config = await prisma.hrConfig.findFirst();
