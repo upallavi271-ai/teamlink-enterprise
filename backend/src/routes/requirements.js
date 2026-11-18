@@ -1149,7 +1149,7 @@ const LIST_INCLUDE = {
 //                  token, which made this 21 MB and ten seconds for 4,347
 //                  requirements.
 // ---------------------------------------------------------------------------
-router.get('/', async (req, res) => {
+router.get('/', require('../utils/responseMemo').memoRoute('requirements'), async (req, res) => {
   const q = req.query;
   const where = await listWhere(req);
   const permissions = await requirementPermissions(req.user, null);
