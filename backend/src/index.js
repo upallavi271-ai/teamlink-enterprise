@@ -416,6 +416,8 @@ app.use('/api/ai-calling', require('./routes/aiCalling'));
 app.use('/api/kavya', require('./routes/kavya'));
 // THE SALES CRM (2026-11-02): leads, accounts & contacts, deals pipeline, activities, follow-ups, dashboard (routes/crm.js, crm/*).
 app.use('/api/crm', require('./routes/crm'));
+// THE BDE AGENT (2026-11-18): quick, accurate answers for BDE / BDE TL logins only, from their own scoped data (utils/bdeAgent.js).
+app.use('/api/bde-agent', require('./routes/bdeAgent'));
 app.use('/api/call-lists', require('./routes/callLists')); // the call sheet split among recruiters, who call it from VICIdial
 app.use('/api/ats/data-quality', require('./routes/dataQuality')); // profile completeness, duplicates, stale profiles (utils/dataQuality.js)
 app.use('/api/privacy', require('./routes/privacy')); // DPDP: a candidate's data export, legal hold, erasure, consent review (utils/candidatePrivacy.js)
