@@ -177,6 +177,95 @@ function ShareChecklist() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// INDUSTRY PIPELINES (2026-11-18, backend utils/deptPipelines.js): each department's own pipeline. A step a department does not use is
+// switched off for it (the screens do not offer it, the server refuses it); a step can need a TL / STL / Manager / Admin to approve.
+// ---------------------------------------------------------------------------
+const PRESETS = [
+  ['Hide the AI interview steps', ['AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED']],
+  ['Hide the BDE steps', ['WITH_BDE', 'BDE_APPROVED']],
+];
+function IndustryPipelines() {
+  const [data, setData] = useState(null);
+  const [dept, setDept] = useState('');
+  const [draft, setDraft] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const load = useCallback(() => api.get('/ats/pipelines').then((r) => { setData(r.data); setDept((d) => d || (r.data.departments || [])[0] || ''); }).catch((e) => setMsg({ ok: false, text: errText(e, 'Could not load the industry pipelines.') })), []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (data && dept) setDraft(JSON.parse(JSON.stringify(data.pipelines[dept] || {}))); }, [data, dept]);
+  if (!data) return msg ? <div className="notice">{msg.text}</div> : null;
+  const saved = data.pipelines[dept] || {};
+  const differs = (s) => s && (!s.enabled || s.approverRole);
+  const set = (code, patch) => setDraft({ ...draft, [code]: { ...draft[code], ...patch } });
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  async function save() {
+    setBusy(true); setMsg(null);
+    try {
+      const stages = Object.fromEntries(Object.entries(draft).filter(([, s]) => differs(s)).map(([c, s]) => [c, { enabled: s.enabled, approverRole: s.approverRole || null }]));
+      const r = await api.put(`/ats/pipelines/${encodeURIComponent(dept)}`, { stages });
+      setMsg({ ok: true, text: r.data.message }); await load();
+    } catch (e) { setMsg({ ok: false, text: errText(e, 'Could not save.') }); } finally { setBusy(false); }
+  }
+  async function reset() {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Put ${dept} back to every step with no extra approval?`)) return;
+    setBusy(true); setMsg(null);
+    try { const r = await api.post(`/ats/pipelines/${encodeURIComponent(dept)}/reset`); setMsg({ ok: true, text: r.data.message }); await load(); } catch (e) { setMsg({ ok: false, text: errText(e, 'Could not reset.') }); } finally { setBusy(false); }
+  }
+  const preset = (codes) => setDraft({ ...draft, ...Object.fromEntries(codes.filter((c) => draft[c] && !draft[c].mandatory).map((c) => [c, { ...draft[c], enabled: false, approverRole: null }])) });
+  return (
+    <section className="card" style={{ padding: 16, marginBottom: 14 }}>
+      <div className="crx-title">
+        <h2 style={{ margin: 0 }}>Industry pipelines</h2>
+        <span className="crx-row">
+          <button type="button" className="btn btn-sm" onClick={reset} disabled={busy || !Object.values(saved).some(differs)}>Reset {dept}</button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={busy || !dirty}>{busy ? 'Saving…' : 'Save'}</button>
+        </span>
+      </div>
+      <p className="small-muted">Each department can have its own pipeline. Switch off a step the department does not use (for example the AI interview for Medical): its candidates cannot be moved into it and the screens do not offer it. A step can also need a TL, STL, Manager or Admin: anyone below that level who tries gets stopped and the approvers are told. Steps the offer, joining and client flows need are always used. Nothing is changed until you save.</p>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '8px 0' }}>
+        {data.departments.map((d) => {
+          const n = Object.values(data.pipelines[d] || {}).filter(differs).length;
+          return <button key={d} type="button" className={`btn btn-sm${d === dept ? ' btn-primary' : ''}`} onClick={() => setDept(d)}>{d}{n ? ` · ${n} set` : ''}</button>;
+        })}
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '4px 0 8px' }}>
+        <span className="small-muted" style={{ alignSelf: 'center' }}>Quick set for {dept}:</span>
+        {PRESETS.map(([label, codes]) => <button key={label} type="button" className="btn btn-sm" onClick={() => preset(codes)}>{label}</button>)}
+      </div>
+      {msg && <div className={`crx-flash ${msg.ok ? 'good' : 'bad'}`}>{msg.text}</div>}
+      <div className="table-wrap">
+        <table className="table">
+          <thead><tr><th>#</th><th>Step</th><th>{dept} uses it</th><th>Needs approval from</th></tr></thead>
+          <tbody>
+            {data.stages.map((s, i) => {
+              const d = draft[s.code] || { enabled: true, approverRole: null };
+              return (
+                <tr key={s.code} style={d.enabled ? undefined : { opacity: 0.55 }}>
+                  <td className="small-muted">{i + 1}</td>
+                  <td>{s.label}</td>
+                  <td>
+                    {s.mandatory
+                      ? <span className="small-muted" title="The offer, joining or client flow depends on this step">always used</span>
+                      : <input type="checkbox" checked={d.enabled} onChange={(e) => set(s.code, { enabled: e.target.checked, ...(e.target.checked ? {} : { approverRole: null }) })} aria-label={`${dept} uses ${s.label}`} />}
+                  </td>
+                  <td>
+                    <select value={d.approverRole || ''} disabled={!d.enabled} onChange={(e) => set(s.code, { approverRole: e.target.value || null })} aria-label={`Approval for ${s.label}`}>
+                      <option value="">No extra approval</option>
+                      {data.approvers.map((a) => <option key={a} value={a}>{a === 'TL' ? 'TL or above' : `${a.charAt(0)}${a.slice(1).toLowerCase()} or above`}</option>)}
+                    </select>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export default function PipelineSettings() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -191,6 +280,7 @@ export default function PipelineSettings() {
     <div>
       <StageNames data={data} onSaved={saved} />
       <SubStatuses data={data} onSaved={saved} />
+      <IndustryPipelines />
       <ShareChecklist />
     </div>
   );
