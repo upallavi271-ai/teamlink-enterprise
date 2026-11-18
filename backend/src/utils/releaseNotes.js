@@ -13,6 +13,12 @@ const API_VERSION = 'v1';
 
 const NOTES = [
   {
+    version: '1.5.4', date: '2026-11-18', title: 'Add Candidate: Profile received on',
+    items: [
+      'Add Candidate has a new "Profile received on" date (Where from section). A profile that reached you earlier, say in October, keeps that date as its added date. Leave it empty for today; a future date is not accepted.',
+    ],
+  },
+  {
     version: '1.5.3', date: '2026-11-18', title: 'Candidate, Clients and Board lists stay fast with many people',
     items: [
       'Page 2, page 3, a refresh, or a second person opening the same view no longer re-counts every candidate: the filter, the tab counts and the sort are worked out once and reused for a few seconds.',
