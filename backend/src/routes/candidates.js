@@ -1626,12 +1626,12 @@ async function masterList(req, res, sub) {
   const q = req.query;
   const snap = await ensureNextActionContext();
   const st = await getListState();
-  const all = await pagedRowsFor(req.user);
-  const core = await memoCore(`M|${pagedKeyOf(req.user, st).key}|${snap.stamp}|${sub}|${coreSig(q)}`, () => masterCore(req, sub, snap, all));
+  // (the person rows are only fetched when the memo has to be worked out afresh)
+  const core = await memoCore(`M|${req.user.id}|${pagedKeyOf(req.user, st).key}|${snap.stamp}|${sub}|${coreSig(q)}`, async () => masterCore(req, sub, snap, await pagedRowsFor(req.user)));
   const {
-    ctx, days, kind, sorted, subsBase, salaryMissing,
+    ctx, days, kind, subsBase, salaryMissing,
   } = core;
-  sorted.rows = core.rows;
+  const sorted = { rows: core.rows, sortKey: core.sorted.sortKey, dir: core.sorted.dir };
   // dup_: the fast count of what waits at the first step (utils/candidateDupResolve.js); the older whole-database group count only
   // when the duplicate tables are not there. (Outside the memo: it changes the moment a flag is resolved.)
   let dupCount = null;
