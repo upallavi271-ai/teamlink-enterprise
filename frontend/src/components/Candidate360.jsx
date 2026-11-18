@@ -16,6 +16,7 @@ import {
   HOLD_REASON_CATEGORIES, REJECTED_BY_OPTIONS, REJECTION_REASONS_BY_SIDE, REJECTION_REASON_CATEGORIES,
 } from '../atsVocab';
 import { STAGE_GROUPS } from '../pipelineView';
+import { usePipelines, stageUsed } from '../utils/deptPipelines';
 import {
   RejectFields, rejectReady, rejectPayload, EMPTY_REJECT, sendWithSameClientCheck,
 } from './rejections/rejectionUi.jsx';
@@ -573,6 +574,7 @@ export function CandidateActions({
   const [returning, setReturning] = useState(false);
   // ATS layout v3: Verify · TL check · BDE Review · Client response · Joined · Reject.
   const [stepPop, setStepPop] = useState(null);
+  const pipelines = usePipelines(); // the steps this candidate's department does not use are not offered (2026-11-18)
   const [offerOpen, setOfferOpen] = useState(false);
   const moreRef = useRef(null);
   useEffect(() => {
@@ -585,13 +587,14 @@ export function CandidateActions({
   const internal = !!(c && c.viewer && c.viewer.internal);
   if (!internal) return null;
   const stage = app ? app.stage : null;
-  const next = stage ? nextActionsFor(user, stage, app) : [];
+  const appDept = app && app.requirement ? app.requirement.department : null;
+  const next = stage ? nextActionsFor(user, stage, app).filter((f) => stageUsed(pipelines, appDept, f.to)) : [];
   // a candidate who reached the client is the BDE TL's: Reject, Hold and Dropped stop there for the Recruiter, TL and BDE (founder 2026-11-06)
   const pastClient = !!stage && !isInternalApp(app) && !(user.workflow && user.workflow.bdeTl) && ['recruiter', 'tl', 'bde'].includes(viewerStageRole(user)) && !['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED', 'RECRUITER_REVIEW', 'RECRUITER_APPROVED', 'TL_REVIEW', 'WITH_BDE', 'BDE_APPROVED', 'HOLD', 'REJECTED'].includes(stage);
   const mayHold = !!stage && !pastClient && !['HOLD', ...CLOSED].includes(stage) && canMoveToStage(user, 'HOLD');
   const mayReject = !!stage && !pastClient && stage !== 'REJECTED' && canMoveToStage(user, 'REJECTED');
   const otherStages = stage
-    ? workflowStages(user).filter((s) => s !== stage && !['HOLD', 'REJECTED'].includes(s) && !next.some((f) => f.to === s) && moveStepAllowed(user, stage, s))
+    ? workflowStages(user).filter((s) => s !== stage && !['HOLD', 'REJECTED'].includes(s) && !next.some((f) => f.to === s) && moveStepAllowed(user, stage, s) && stageUsed(pipelines, appDept, s))
     : [];
   const editMaster = can(user, 'ats', 'candidates', 'Candidate Master', 'edit');
   const dKind = dropKind(app);

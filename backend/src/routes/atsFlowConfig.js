@@ -45,6 +45,7 @@ router.get('/pipelines', requireAuth, requireInternal, wrap(async (req, res) => 
     stages: V.STAGE_CODES.map((code) => ({ code, label: V.STAGE_LABELS[code] || code, mandatory: DP.MANDATORY.includes(code) })),
     approvers: DP.APPROVERS,
     departments: names,
+    aliases: await DP.aliases(),
     pipelines,
   });
 }));
