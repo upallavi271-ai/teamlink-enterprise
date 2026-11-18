@@ -97,13 +97,13 @@ export default function JoinDropList({ onOpen }) {
         <label><span>Joined from</span><input type="date" value={f.from} onChange={(e) => set('from', e.target.value)} /></label>
         <label><span>Joined to</span><input type="date" value={f.to} onChange={(e) => set('to', e.target.value)} /></label>
         <label><span>Department</span>
-          <Combo value={f.department} onChange={(e) => set('department', e.target.value)}><option value="">All departments</option>{(fac.departments || []).map((d) => <option key={d.value} value={d.value}>{`${d.value} (${d.count})`}</option>)}</Combo>
+          <Combo value={f.department} onChange={(e) => set('department', e.target.value)}><option value="">{`All departments (${(fac.departments || []).reduce((s, d) => s + (Number(d.count) || 0), 0)})`}</option>{(fac.departments || []).map((d) => <option key={d.value} value={d.value}>{`${d.value} (${d.count})`}</option>)}</Combo>
         </label>
         <label><span>Client</span>
-          <Combo value={f.clientId} onChange={(e) => set('clientId', e.target.value)}><option value="">All clients</option>{(fac.clients || []).map((d) => <option key={d.value} value={d.value}>{`${d.label} (${d.count})`}</option>)}</Combo>
+          <Combo value={f.clientId} onChange={(e) => set('clientId', e.target.value)}><option value="">{`All clients (${(fac.clients || []).reduce((s, d) => s + (Number(d.count) || 0), 0)})`}</option>{(fac.clients || []).map((d) => <option key={d.value} value={d.value}>{`${d.label} (${d.count})`}</option>)}</Combo>
         </label>
         <label><span>Recruiter</span>
-          <Combo value={f.recruiter} onChange={(e) => set('recruiter', e.target.value)}><option value="">All recruiters</option>{(fac.recruiters || []).map((d) => <option key={d.value} value={d.value}>{`${d.label} (${d.count})`}</option>)}</Combo>
+          <Combo value={f.recruiter} onChange={(e) => set('recruiter', e.target.value)}><option value="">{`All recruiters (${(fac.recruiters || []).reduce((s, d) => s + (Number(d.count) || 0), 0)})`}</option>{(fac.recruiters || []).map((d) => <option key={d.value} value={d.value}>{`${d.label} (${d.count})`}</option>)}</Combo>
         </label>
         <label><span>Reason for the drop</span>
           <Combo value={f.reason} onChange={(e) => set('reason', e.target.value)}><option value="">Any reason</option>{(fac.reasons || []).map((d) => <option key={d.value} value={d.value}>{`${d.value} (${d.count})`}</option>)}</Combo>
