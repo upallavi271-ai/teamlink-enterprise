@@ -344,6 +344,9 @@ async function onApplicationJoined({
     // eslint-disable-next-line no-console
     console.error('[joining] could not write the joining record:', err.message);
   }
+  // REFERRAL PAYOUT (ATS audit 2026-11-18, Q616): a referred candidate's joining proposes the referral bonus from the bonus rules, for the
+  // Super Admin to approve (utils/referralPayout.js). Never blocks the joining.
+  try { await require('./referralPayout').onJoined({ applicationId: application.id, userId }); } catch { /* optional */ } // eslint-disable-line global-require
   // Change list §12 "Joined" (2026-10-03): an internal hire's HRMS employee
   // record is now created HERE, automatically, the moment they join — no
   // second button to forget. createHrmsEmployee() is idempotent (it returns

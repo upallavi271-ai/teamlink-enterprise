@@ -280,6 +280,17 @@ router.get('/referrals', async (req, res) => {
   });
 });
 
+// THE BONUS RULES (utils/referralPayout.js, ATS audit 2026-11-18): read by everyone who may record a bonus, saved by the same people.
+router.get('/referral-rules', async (req, res) => {
+  if (!mayRecordBonus(req.user)) return res.status(403).json({ error: 'Only Super Admin, Admin or HR can see the referral bonus rules.' });
+  return res.json(await require('../utils/referralPayout').rules({ fresh: true })); // eslint-disable-line global-require
+});
+router.put('/referral-rules', async (req, res) => {
+  if (!mayRecordBonus(req.user)) return res.status(403).json({ error: 'Only Super Admin, Admin or HR can change the referral bonus rules.' });
+  const saved = await require('../utils/referralPayout').saveRules(req.body || {}, req.user); // eslint-disable-line global-require
+  return res.json({ ok: true, rules: saved, message: 'Saved. A referred candidate who joins now gets this bonus proposed for Super Admin approval.' });
+});
+
 router.post('/referrals/:id/bonus', async (req, res) => {
   if (!mayRecordBonus(req.user)) return res.status(403).json({ error: 'Only Super Admin, Admin or HR can record a referral bonus.' });
   const r = await prisma.candidateReferral.findUnique({ where: { id: req.params.id } });
