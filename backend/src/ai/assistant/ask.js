@@ -632,14 +632,15 @@ add({
     const label = ctx.period && !ctx.period.defaulted ? ctx.period.label : `this month (${monthStart} to ${ctx.today})`;
     const apps = await prisma.application.findMany({
       where: applicationWhere(ctx.user),
-      select: { stage: true, ownerRecruiterId: true, joinedAt: true },
+      select: { stage: true, ownerRecruiterId: true, joinedAt: true, requirement: { select: { recruiterId: true } } },
       take: 20000,
     });
     const rows = new Map();
     const line = (id) => { const k = id || '—'; if (!rows.has(k)) rows.set(k, { id, active: 0, interviews: 0, selected: 0, joined: 0 }); return rows.get(k); };
     const ACTIVE = new Set(['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED', 'RECRUITER_REVIEW', 'RECRUITER_APPROVED', 'TL_REVIEW', 'WITH_BDE', 'BDE_APPROVED', 'SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED', 'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED']);
     apps.forEach((a) => {
-      const r = line(a.ownerRecruiterId);
+      // the person working the candidate; when none is named on the application, the recruiter of its requirement
+      const r = line(a.ownerRecruiterId || (a.requirement && a.requirement.recruiterId) || null);
       if (ACTIVE.has(a.stage)) r.active += 1;
       if (['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED'].includes(a.stage)) r.interviews += 1;
       if (['SELECTED', 'OFFER', 'OFFER_ACCEPTED'].includes(a.stage)) r.selected += 1;
