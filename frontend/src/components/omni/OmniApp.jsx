@@ -75,17 +75,19 @@ export default function OmniApp({ embedded = false } = {}) {
   const lit = inMk ? (MK_SUB_PARENT[page] || page) : page;
   const subs = inMk && MK_SUBTABS[lit] ? MK_SUBTABS[lit].filter((v) => openAll.includes(v)) : [];
   const viewing = !!viewAsToken() && !actAsMode(); // View as = read-only
+  // BARE (the Job Portal's WhatsApp window, ?bare=1 in a frame): only the WhatsApp chats, no tab bar and no sub-tab pills (Shell.jsx hides the sidebar / top bar)
+  const bare = (() => { try { return window.self !== window.top && /(^|[?&])bare=1(&|$)/.test(search); } catch { return false; } })();
   return (
     <OmniCtx.Provider value={ctx}>
       <div className="gsx" data-page={page}>
         <div className="content">
           {viewing && <div role="status" style={{ background: '#fff1d6', border: '1px solid #f0b34a', color: '#7a4a00', borderRadius: 10, padding: '9px 12px', fontSize: 11, marginBottom: 12 }}><b>You are in View as mode: this page is read-only.</b> Changes need &quot;Switch to Act as (edit)&quot;.</div>}
-          {!embedded && tabsOf.length > 1 && (
+          {!embedded && !bare && tabsOf.length > 1 && (
             <div className="tabs omni-sec-tabs" role="tablist" aria-label={sec ? sec.label : 'Omni-Channel'} style={{ marginBottom: 14 }}>
               {tabsOf.map((v) => <button key={v} type="button" role="tab" aria-selected={v === lit} className={`tab${v === lit ? ' active' : ''}`} onClick={() => navigate(sectionPath(route.section, v))}>{PAGES[v].label}{v === 'inbox' && store.badges.inboxUnread > 0 ? ` (${store.badges.inboxUnread})` : ''}{v === 'review' && store.badges.review > 0 ? ` (${store.badges.review})` : ''}</button>)}
             </div>
           )}
-          {subs.length > 1 && (
+          {!bare && subs.length > 1 && (
             <div className="omni-sub-tabs" role="tablist" aria-label={`${PAGES[lit].label}: more`} style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '-6px 0 14px 2px' }}>
               {subs.map((v) => (
                 <button key={v} type="button" role="tab" aria-selected={v === page} onClick={() => navigate(embedded ? embedPath(v) : sectionPath(route.section, v))}
