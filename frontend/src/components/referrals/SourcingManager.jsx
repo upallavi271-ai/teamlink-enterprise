@@ -159,6 +159,54 @@ function CampusDrives() {
   );
 }
 
+// --- the bonus rules (2026-11-18, backend utils/referralPayout.js): the amount a referral gets PROPOSED automatically when the referred
+// person joins, for Super Admin approval. One default and an amount per department; off = nothing is proposed automatically.
+function BonusRules() {
+  const [r, setR] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.get('/sourcing/referral-rules').then((res) => { setR(res.data); setRows(Object.entries(res.data.byDepartment || {}).map(([dept, amt]) => ({ dept, amt: String(amt) }))); }).catch(() => setR(null));
+  }, []);
+  if (!r) return null;
+  async function save() {
+    setBusy(true); setMsg(null);
+    try {
+      const byDepartment = Object.fromEntries(rows.filter((x) => x.dept.trim() && Number(x.amt) > 0).map((x) => [x.dept.trim(), Number(x.amt)]));
+      const res = await api.put('/sourcing/referral-rules', { enabled: r.enabled, defaultAmount: Number(r.defaultAmount) || 0, byDepartment });
+      setR(res.data.rules); setMsg({ text: res.data.message });
+    } catch (err) { setMsg({ bad: true, text: errText(err, 'Could not save the rules.') }); } finally { setBusy(false); }
+  }
+  return (
+    <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <b>Bonus rules</b>
+        <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
+          <input type="checkbox" checked={!!r.enabled} onChange={(e) => setR({ ...r, enabled: e.target.checked })} />
+          Propose the bonus automatically when a referred person joins
+        </label>
+      </div>
+      <div className="small-muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>The amount is only PROPOSED: the Super Admin still approves it below, and nothing is added to payroll automatically.</div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+        <label style={{ fontSize: 13 }}>Default amount (₹) <input type="number" min="0" value={r.defaultAmount || ''} onChange={(e) => setR({ ...r, defaultAmount: e.target.value })} style={{ width: 110 }} /></label>
+      </div>
+      {rows.map((x, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}> {/* eslint-disable-line react/no-array-index-key */}
+          <input placeholder="Department (e.g. Medical)" value={x.dept} onChange={(e) => setRows(rows.map((y, j) => (j === i ? { ...y, dept: e.target.value } : y)))} style={{ width: 200 }} />
+          <input type="number" min="0" placeholder="₹" value={x.amt} onChange={(e) => setRows(rows.map((y, j) => (j === i ? { ...y, amt: e.target.value } : y)))} style={{ width: 110 }} />
+          <button type="button" className="btn btn-sm" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label="Remove">✕</button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+        <button type="button" className="btn btn-sm" onClick={() => setRows([...rows, { dept: '', amt: '' }])}>+ Amount for a department</button>
+        <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save rules'}</button>
+      </div>
+      <Flash msg={msg} />
+    </div>
+  );
+}
+
 // --- referrals + bonuses -----------------------------------------------------------
 function Referrals() {
   const [data, setData] = useState(null);
@@ -177,6 +225,7 @@ function Referrals() {
   const { canRecordBonus, canApproveBonus } = data.rights;
   return (
     <div>
+      {canRecordBonus && <BonusRules />}
       <Flash msg={msg} />
       <div className="small-muted" style={{ marginBottom: 6 }}>{data.note}</div>
       <div className="tbl-wrap">
