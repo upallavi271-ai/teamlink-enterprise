@@ -487,14 +487,29 @@ async function askAi(system, history, kind, meta = {}, { localOk = true } = {}) 
   const AI = require('../utils/ai'); // eslint-disable-line global-require
   const st = await require('./salesAgent').load().catch(() => ({ useClaude: true })); // eslint-disable-line global-require
   const c = CLAUDE[kind] || CLAUDE.answer;
+  let failure = null;
   if (st.useClaude !== false) {
     try {
       return await AI.chatJson(system, history, { provider: 'claude', model: CLAUDE.model, effort: c.effort, fallbacks: true, timeoutMs: c.timeoutMs, maxTokens: c.maxTokens, meta });
     } catch (e) {
       meta.claudeError = S.clip(`${e.code || ''} ${e.message || e}`.trim(), 160);
-      if (!localOk) throw e;
+      failure = e;
     }
   }
+  // 2026-11-18: before the slow local model, the FREE fast one (utils/fastAi.js: Groq / Gemini / OpenRouter) - a reply in a second or two
+  try {
+    const r = await require('../utils/fastAi').chat(system, history, { json: true, maxTokens: c.maxTokens, timeoutMs: Math.min(c.timeoutMs, 20000), fallbackToApp: false }); // eslint-disable-line global-require
+    const parsed = AI.parseJsonLoose(r.text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      Object.assign(meta, { provider: `fast:${r.provider}`, model: r.model, ms: r.ms });
+      return parsed;
+    }
+    meta.fastError = 'not JSON';
+  } catch (e) {
+    meta.fastError = S.clip(e.message, 160);
+    if (!failure) failure = e;
+  }
+  if (!localOk && failure) throw failure;
   return AI.chatJson(system, history, { maxTokens: c.maxTokens, meta });
 }
 const LANGS = { 'en-IN': 'English', 'te-IN': 'Telugu', 'hi-IN': 'Hindi', 'ta-IN': 'Tamil', 'kn-IN': 'Kannada', 'ml-IN': 'Malayalam', 'mr-IN': 'Marathi', 'bn-IN': 'Bengali', 'gu-IN': 'Gujarati' };
