@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Shell from './components/Shell.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import OmniEntry, { OmniLegacyRedirect } from './components/outreach/OmniEntry.jsx'; // what the sidebar Omni-Channel opens (Green Start, 2026-10-21)
@@ -6,7 +6,6 @@ import AppOmniEmbed from './components/omni/AppOmniEmbed.jsx'; // the Omni-Chann
 import OmniApp from './components/omni/OmniApp.jsx'; // Omni-Channel (the Green Start page tree, 2026-10-17; the five-hub OutreachHome.jsx is kept on disk for its parts)
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
-import MobileHome from './pages/MobileHome.jsx'; // the screen the phone app opens on (2026-11-17)
 
 import Requirements from './pages/Requirements.jsx';
 import RequirementDetail from './pages/RequirementDetail.jsx';
@@ -134,6 +133,12 @@ import { useAuth } from './context/AuthContext.jsx';
 // SOMEONE WHO HAS LEFT (Exited / Relieved): one limited page, nothing else (founder 2026-11-14) - their own attendance, leave records, offer and joining letter.
 import FormerShell from './pages/FormerShell.jsx';
 
+// Old /mobile (and /mobile?source=app) addresses land on the home screen; the query string is kept.
+function MobileRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={{ pathname: '/', search }} replace />;
+}
+
 export default function App() {
   // A vendor signed in on this browser is kept inside the Vendor Portal: any
   // other address lands on /vendor/assets (the server refuses the APIs anyway).
@@ -250,7 +255,8 @@ export default function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="mobile" element={<MobileHome />} />
+        {/* /mobile was the Mobile Home screen (removed 2026-11-18). The Android app and apps installed before then still open it: they go to the normal home screen. */}
+        <Route path="mobile" element={<MobileRedirect />} />
 
         {/* HRMS — matches the prototype's 6-item sidebar; the long tail of
             sub-features lives as tabs inside Performance & Development and

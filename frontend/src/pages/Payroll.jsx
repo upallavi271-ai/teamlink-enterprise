@@ -934,7 +934,7 @@ export default function Payroll() {
   const canSeeRuns = canRun || viewOnly
     || can(user, 'hrms', 'hrms', 'Payroll & Compensation', 'approve')
     || can(user, 'accounts', 'accounts', 'Journal & Ledger', 'view');
-  const [tab, setTab] = useState('dashboard');
+  const [tab, setTab] = useState(() => { try { return new URLSearchParams(window.location.search).get('tab') === 'payslips' ? 'payslips' : 'dashboard'; } catch { return 'dashboard'; } });
 
   const banner = isAdmin
     ? <ScopeNote amber>Full, unrestricted access — configures pay structures, processes/approves any run, organization-wide.</ScopeNote>

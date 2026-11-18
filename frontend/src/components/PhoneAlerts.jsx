@@ -9,7 +9,7 @@ import './PhoneAlerts.css';
 
 // ---------------------------------------------------------------------------
 // "TeamLink on this phone": install the app, and switch phone alerts on or off for THIS phone.
-// Used on Mobile Home and on the Notifications page. Shows nothing in a separate company's build.
+// Used on the Notifications page. Shows nothing in a separate company's build.
 //
 // Never asks for the browser's permission by itself: the permission question only opens from the button tap, which is also the only
 // way an iPhone allows it.

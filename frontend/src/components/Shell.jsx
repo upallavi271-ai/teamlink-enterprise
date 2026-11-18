@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { workRoleLabel } from '../permissions';
 import {
-  sectionLabel, mayRenderSection, groupsForUser, flattenGroups, sectionOf, scoreMatch,
+  sectionLabel, mayRenderSection, groupsForUser, phoneGroupsFor, flattenGroups, sectionOf, scoreMatch,
   SECTION_ICON, SETUP_TABS, INTERVIEW_TABS, moduleTabLabel, isExternalUser,
 } from '../nav';
 import ModuleTabs from './ModuleTabs.jsx';
@@ -32,7 +32,8 @@ import GlobalSearch from './GlobalSearch.jsx';
 import { loadClientAliases, forgetClientAliases } from './clientAliases.js';
 import { loadStageLabels, forgetStageLabels } from '../utils/stageLabels'; // Admin-renamed stage names + sub-statuses (Company Setup -> Pipeline & checks)
 import { hasAtsWork } from '../utils/useAtsAlerts';
-import { syncPush, pwaAvailable } from '../pwa/pwa.js'; // phone alerts: keep this phone known to the server after a sign-in (2026-11-17)
+import { usePhoneMenu } from '../pwa/appMenu.js'; // the short menu on a phone and in the phone app (2026-11-18)
+import { syncPush } from '../pwa/pwa.js'; // phone alerts: keep this phone known to the server after a sign-in (2026-11-17)
 import { useJobPortalUrl } from '../pages/JobPortalRedirect.jsx';
 import { canOpenJobPortalStaff } from '../pages/JobPortalLaunch.jsx';
 import { useOmniEntry } from './outreach/useOmniChildren.js';
@@ -88,6 +89,11 @@ export default function Shell() {
   const drawer = useMobileDrawer(pathname + search);
   const open = drawer.open;
   const isPhone = useMediaQuery(PHONE_MQ);
+  // THE PHONE MENU: on a phone-width screen and inside the phone app the menu is the short, per-role one (nav.js phoneGroupsFor); "Full menu" at
+  // its bottom shows everything. Nothing else changes: same permissions, same addresses, and the computer menu is untouched.
+  const phoneMenu = usePhoneMenu(drawer.isMobile);
+  const phoneGroups = useMemo(() => (phoneMenu.short ? phoneGroupsFor(user) : null), [user, phoneMenu.short]);
+  const phoneShort = !!phoneGroups;
   // A person who switched phone alerts on stays switched on across sign-ins: tell the server this phone is theirs again.
   useEffect(() => { if (user && user.id) syncPush(user.id); }, [user && user.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // Old client names (ClientAlias) for every type-to-search box: loaded once per sign-in, refreshed when the tab comes back.
@@ -120,6 +126,16 @@ export default function Shell() {
 
   // The nav entry the current URL belongs to — the highest-scoring match.
   const allLeaves = useMemo(() => flattenGroups(groups), [groups]);
+  const phoneCurrentTo = useMemo(() => {
+    if (!phoneGroups) return null;
+    let best = null;
+    let bestScore = 0;
+    flattenGroups(phoneGroups).forEach((item) => {
+      const sc = scoreMatch(item.to, pathname, search);
+      if (sc > bestScore) { bestScore = sc; best = item.to; }
+    });
+    return best;
+  }, [phoneGroups, pathname, search]);
   const current = useMemo(() => {
     let best = null;
     let bestScore = 0;
@@ -166,7 +182,7 @@ export default function Shell() {
   useEffect(() => {
     const tab = (SETUP_TABS.find((t) => t.to === pathname) || INTERVIEW_TABS.find((t) => t.to === pathname) || {}).label || moduleTabLabel(pathname);
     const detail = current && pathname !== currentPath && pathname.startsWith(`${currentPath}/`) && !tab ? 'Details' : null;
-    const parts = [detail, tab && (!current || tab !== current.label) ? tab : null, current ? current.label : null, pathname === '/mobile' ? 'Mobile Home' : section === 'dashboard' ? 'Dashboard' : sectionLabel(section, user)]
+    const parts = [detail, tab && (!current || tab !== current.label) ? tab : null, current ? current.label : null, section === 'dashboard' ? 'Dashboard' : sectionLabel(section, user)]
       .filter((x, i, all) => x && all.indexOf(x) === i);
     document.title = `${parts.join(' · ')}${parts.length ? ' · ' : ''}${BRAND.separate ? `${BRAND.name} · ${BRAND.product}` : BRAND.product}`;
   }, [pathname, current, currentPath, section, user]);
@@ -201,24 +217,46 @@ export default function Shell() {
         {/* Search moves in here on a phone, where the top bar has no room for it. */}
         {isPhone && hasAtsWork(user) && <div className="sidebar-search"><GlobalSearch /></div>}
         <nav className="sidebar-nav" aria-label="Sections">
+          {phoneShort && (
+            <>
+              <div
+                className={'sb-item' + (pathname === '/' ? ' top-active' : '')}
+                {...press(() => navTo('/'), 'link')}
+                aria-current={pathname === '/' ? 'page' : undefined}
+              >
+                <Ico char="🏠" />Home
+              </div>
+              {phoneGroups.map(([gid, glabel, gitems, gicon]) => (
+                <div className="sb-group open" key={gid}>
+                  <div className="sb-group-head" style={{ cursor: 'default' }}>
+                    <span className="sb-group-label"><Ico char={gicon} />{glabel}</span>
+                  </div>
+                  <div className="sb-sub">
+                    {gitems.map((item) => (
+                      <div
+                        key={item.to}
+                        className={'sb-sub-item' + (phoneCurrentTo === item.to ? ' active' : '')}
+                        {...press(() => navTo(item.to), 'link')}
+                        aria-current={phoneCurrentTo === item.to ? 'page' : undefined}
+                      >
+                        <Ico char={item.icon} />{item.label}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+          {!phoneShort && (
           <div
-            className={'sb-item' + (section === 'dashboard' && pathname !== '/mobile' ? ' top-active' : '')}
+            className={'sb-item' + (section === 'dashboard' ? ' top-active' : '')}
             {...press(() => navTo('/'), 'link')}
-            aria-current={section === 'dashboard' && pathname !== '/mobile' ? 'page' : undefined}
+            aria-current={section === 'dashboard' ? 'page' : undefined}
           >
             <Ico char={SECTION_ICON.dashboard} />Dashboard
           </div>
-          {/* Phone menu only: the screen the phone app opens on (pages/MobileHome.jsx). Not offered to a client / candidate or a separate company's copy. */}
-          {drawer.isMobile && pwaAvailable && !isExternalUser(user) && (
-            <div
-              className={'sb-item' + (pathname === '/mobile' ? ' top-active' : '')}
-              {...press(() => navTo('/mobile'), 'link')}
-              aria-current={pathname === '/mobile' ? 'page' : undefined}
-            >
-              <Ico char="📱" />Mobile Home
-            </div>
           )}
-          {groups.map(([s, label, items, icon]) => (
+          {(phoneShort ? [] : groups).map(([s, label, items, icon]) => (
             <div className={'sb-group' + (isGroupOpen(s) ? ' open' : '')} key={s}>
               <div className="sb-group-head" {...press(() => toggleGroup(s, items))} aria-expanded={isGroupOpen(s)}>
                 <span className="sb-group-label"><Ico char={icon} />{label}</span>
@@ -257,7 +295,7 @@ export default function Shell() {
               </div>
             </div>
           ))}
-          {omniKids && omniKids.length > 0 && omniGreenStart && (
+          {omniKids && omniKids.length > 0 && omniGreenStart && !phoneShort && (
             <div className="sb-group">
               {/* Founder, 2026-10-21: Omni-Channel opens the Green Start product in a separate tab. */}
               {/* 2026-10-29 (founder: "full page open avali pakkana side bar full page open avali logins adakunda"): live AND on the PC it opens
@@ -270,7 +308,7 @@ export default function Shell() {
           )}
           {/* 2026-11-11: AI Marketing (the AI Marketing OS, Omni-Channel native pages). The logins sent to Green Start have no native Omni-Channel group, so they get their own entry;
               Marketing, BDE, BDE TL and the others already find it inside their Omni-Channel group. */}
-          {omniGreenStart && omniAiMarketing && (
+          {omniGreenStart && omniAiMarketing && !phoneShort && (
             <div className="sb-group">
               <div
                 className={'sb-item' + (pathname.startsWith('/omni-channel-native/aimarketing') ? ' top-active' : '')}
@@ -284,7 +322,7 @@ export default function Shell() {
           {/* Only for logins with ATS (user, 2026-09-29: R&D / non-ATS staff have
               nothing to do with the job portal). */}
           {/* (a separate company's copy shows the Job Portal only when it was built with its OWN one: VITE_BRAND_JOB_PORTAL, docs/second-company.md section 11) */}
-          {BRAND.jobPortal && user?.products?.ats && !isExternalUser(user) && (
+          {BRAND.jobPortal && user?.products?.ats && !isExternalUser(user) && !phoneShort && (
             <div className="sb-group">
               {/* 2026-10-29: Admins, Recruiters and TLs open the Job Portal already signed in with this login (no second login);
                   everyone else gets the public portal. */}
@@ -297,6 +335,14 @@ export default function Shell() {
                   <Ico char="🌐" />Job Portal (public) ↗
                 </a>
               )}
+            </div>
+          )}
+          {/* The phone menu's way out: everything the login may open, and back to the short menu */}
+          {phoneMenu.phone && !isExternalUser(user) && (
+            <div className="sb-group">
+              <div className="sb-item" {...press(() => { phoneMenu.setFull(!phoneMenu.full); })}>
+                <Ico char={phoneMenu.full ? '↩' : '☰'} />{phoneMenu.full ? 'Short menu' : 'Full menu'}
+              </div>
             </div>
           )}
         </nav>
@@ -326,7 +372,7 @@ export default function Shell() {
             <span className="hb-ico" aria-hidden="true">☰</span>
             <span className="hb-label">Menu</span>
           </button>
-          <div className="topbar-title">{pathname === '/mobile' ? 'Mobile Home' : sectionLabel(section, user)}</div>
+          <div className="topbar-title">{sectionLabel(section, user)}</div>
           {/* Review #3 §13 — "Search TeamLink": typed, grouped, scoped results
               (./GlobalSearch.jsx). The search API is part of ATS, so a login
               with no ATS work (plain Employee, Accounts) gets no box. */}
@@ -367,7 +413,7 @@ export default function Shell() {
 
         <div className="breadcrumb">
           {section === 'dashboard' ? (
-            <span className="bc-current">{pathname === '/mobile' ? 'Mobile Home' : 'Dashboard'}</span>
+            <span className="bc-current">Dashboard</span>
           ) : (
             <>
               <span className="bc-current">{sectionLabel(section, user)}</span>

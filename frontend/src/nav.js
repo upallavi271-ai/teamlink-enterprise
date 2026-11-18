@@ -516,6 +516,63 @@ export function flattenGroups(groups) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// THE PHONE MENU (founder 2026-11-18: "yes, trim it").
+//
+// On a phone-width screen and inside the installed / Android app the menu shows only the essentials; the computer menu is not touched.
+// It is a VIEW, never a lock: no permission changes, every screen still opens by its address, and a small "Full menu" link at the
+// bottom of the phone menu shows the whole menu again.
+//
+// Every entry is one of today's real screens, filtered by the SAME permission test as the full menu (visibleItems / leafVisible), so a
+// person only ever sees what their own role may open: a plain employee has no approvals entry, a recruiter's follow-ups need the
+// candidate-list permission, and so on.
+//
+//   everyone          Check in / out · Leave (apply, balance, status) · Payslips · My tasks · Notifications (the phone-alerts switch is
+//                     on that page) · My Employee Profile · Profile (password, two-step)
+//   approvers         Leave approvals · Regularization · Late coming   (whoever holds the approve permission: TL, STL, HR,
+//                     Assistant Manager, Manager, Super Admin)
+//   Recruiter / BDE   Follow-ups (call or WhatsApp from the row) · their candidates · their interviews
+//
+// Returns [[id, label, items, icon], ...] like groupsForUser, or null for a client / candidate login (their menu is their own portal).
+// ---------------------------------------------------------------------------
+export function phoneGroupsFor(user) {
+  if (!user || isExternalUser(user)) return null;
+  const find = (items, to) => items.find((i) => i.to === to);
+  const as = (item, patch) => (item ? { ...item, ...patch } : null);
+  const ats = atsItemsFor(user);
+  const atsRole = atsRoleOf(user);
+  const groups = [];
+  const add = (id, label, items, icon) => {
+    const shown = visibleItems(user, items.filter(Boolean));
+    if (shown.length) groups.push([id, label, shown, icon]);
+  };
+  add('phone-work', 'My work', [
+    // a person without the web tab "mine" (everyone who is not HR) lands on the same self-service screen from this address
+    as(find(HRMS_ITEMS, '/attendance'), { to: '/attendance?tab=mine', label: 'Check in / out', icon: '📍' }),
+    as(find(HRMS_ITEMS, '/leave'), { label: 'Leave' }),
+    as(find(HRMS_ITEMS, '/payroll'), { to: '/payroll?tab=payslips', label: 'Payslips' }),
+    as(find(HRMS_ITEMS, '/employee-services'), { to: '/timesheet', label: 'My tasks', icon: '✅' }),
+  ], '🕐');
+  add('phone-approvals', 'Approvals', [
+    leaf('🏖️', '/leave?tab=requests', 'Leave approvals', [['hrms', 'Leave & Holidays', 'approve']]),
+    leaf('🛠️', '/attendance?tab=regularization', 'Regularization', [['hrms', 'Attendance & Time', 'approve']]),
+    leaf('⏰', '/attendance?tab=late', 'Late coming', [['hrms', 'Attendance & Time', 'approve']]),
+  ], '✅');
+  if (['RECRUITER', 'BDE'].includes(atsRole)) {
+    add('phone-ats', 'Candidates', [
+      leaf('📞', '/ats/followups', 'Follow-ups', [['candidates', 'Candidate List', 'view']]),
+      ats.find((i) => i.id === 'candidates'),
+      ats.find((i) => i.id === 'calendar'),
+    ], '🎯');
+  }
+  add('phone-me', 'Me', [
+    find(ADMIN_ITEMS, '/admin/notifications'),
+    find(HRMS_ITEMS, '/my-profile'),
+    find(ADMIN_ITEMS, '/admin/profile'),
+  ], '👤');
+  return groups;
+}
+
 // Which sidebar section a URL belongs to, so the group opens and the topbar
 // title / breadcrumb name the right section.
 const SECTION_OF_PATH = [

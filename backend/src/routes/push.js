@@ -50,7 +50,7 @@ router.post('/test', notYou, async (req, res, next) => {
     const r = await push.sendToUser(req.user.id, {
       title: 'Phone alerts are on',
       body: 'This is a test. You will get leave decisions, approvals and follow-ups like this one.',
-      url: '/mobile',
+      url: '/admin/notifications',
       tag: 'tl-test',
     });
     res.json({ ok: r.sent > 0, ...r });

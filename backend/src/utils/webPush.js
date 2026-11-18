@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // PHONE ALERTS (Web Push) — 2026-11-17.
 //
-// A person who switches "Phone alerts" on (Mobile Home, or the Notifications page) registers their phone / browser here. From then on every
+// A person who switches "Phone alerts" on (Notifications page) registers their phone / browser here. From then on every
 // notification that lands in THEIR bell is also pushed to that phone, so a leave decision, an approval waiting on them or a follow-up due
 // reaches them with the app closed. Nobody gets anything until they switch it on, on that device.
 //

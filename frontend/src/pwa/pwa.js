@@ -161,8 +161,22 @@ export async function forgetThisDevice(token) {
   } catch { /* signing out never waits for this */ }
 }
 
-// Where a signed-in person lands: the app opened from the phone's Home Screen opens on Mobile Home.
-export function appHome(user, fallback = '/') {
-  const external = !!user && (['CLIENT', 'CANDIDATE'].includes(user.role) || ['CLIENT', 'CANDIDATE'].includes(user.atsRole));
-  return pwaAvailable && isStandalone() && !external ? '/mobile' : fallback;
+// ---- "the app" versus "the website on a phone" -----------------------------------------------------------------------------------
+// Inside the installed app (Android app, or the app added to the Home Screen) TeamLink shows the SHORT phone menu even on a wide
+// screen; the website in a browser tab shows it only on a phone-width screen. The app is recognised by:
+//   - its start address carries ?source=app (the manifest start_url and the Android app both open it), remembered for this session in
+//     sessionStorage (never localStorage: that is shared with Chrome, and a normal browser tab must keep the full menu);
+//   - the Android app's referrer (android-app://...);
+//   - an installed Home Screen app on a phone or tablet (display-mode: standalone).
+const APP_FLAG = 'tl_app_mode';
+try {
+  if (hasWindow && !BRAND.separate && (/[?&]source=app(&|$)/.test(window.location.search) || String(document.referrer || '').startsWith('android-app://'))) {
+    sessionStorage.setItem(APP_FLAG, '1');
+  }
+} catch { /* a blocked sessionStorage only means the menu follows the screen width */ }
+const phoneLike = () => /Android|iPhone|iPad|iPod/i.test(nav.userAgent || '') || (/Macintosh/.test(nav.userAgent || '') && Number(nav.maxTouchPoints || 0) > 1);
+export function isAppMode() {
+  if (!pwaAvailable) return false;
+  try { if (sessionStorage.getItem(APP_FLAG) === '1') return true; } catch { /* fall through */ }
+  return isStandalone() && phoneLike();
 }

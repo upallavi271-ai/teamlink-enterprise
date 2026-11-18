@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { TeamLinkMark } from '../components/Logo.jsx';
 import { BRAND } from '../brand.js';
-import { appHome } from '../pwa/pwa.js';
 import vendorApi, { setVendorToken, setVendorHome, vendorHome } from '../vendorApi';
 import api from '../api';
 import { RecoveryCodes, SetupBox } from '../components/TwoStepCard.jsx';
@@ -58,7 +57,7 @@ export default function Login() {
         setPicked(user.accounts.length ? user.accounts[0].choice : '');
         return;
       }
-      navigate(appHome(user, user?.landingPath || '/'), { replace: true });
+      navigate(user?.landingPath || '/', { replace: true });
     } catch (err) {
       // ONE login page for vendors too. Only a plain "no such staff login /
       // wrong password" (401) falls through to the vendor check; a locked or
@@ -99,7 +98,7 @@ export default function Login() {
         }
         return;
       }
-      navigate(appHome(user, user?.landingPath || '/'), { replace: true });
+      navigate(user?.landingPath || '/', { replace: true });
     } catch (err) {
       // The choice runs out after 5 minutes and works once: start again with a plain sentence.
       setError(err.response?.data?.error || 'That did not work. Please sign in again.');
@@ -127,7 +126,7 @@ export default function Login() {
       // new recovery codes (set-up) or few left: show them / say so before going in
       if (out.recoveryCodes || (out.recoveryLeft != null && out.recoveryLeft <= 3)) { setMfa({ ...mfa, done: out }); return; }
       out.commit();
-      navigate(appHome(out.user, out.user?.landingPath || '/'), { replace: true });
+      navigate(out.user?.landingPath || '/', { replace: true });
     } catch (err) {
       const msg = err.response?.data?.error || 'That did not work. Try again.';
       setError(msg);
@@ -139,7 +138,7 @@ export default function Login() {
     const done = mfa.done;
     return (
       <div className="login-shell">
-        <form className="login-card" onSubmit={done ? (e) => { e.preventDefault(); done.commit(); navigate(appHome(done.user, done.user?.landingPath || '/'), { replace: true }); } : onMfa} style={mfa.mode === 'enrol' && !done ? { maxWidth: 560 } : undefined}>
+        <form className="login-card" onSubmit={done ? (e) => { e.preventDefault(); done.commit(); navigate(done.user?.landingPath || '/', { replace: true }); } : onMfa} style={mfa.mode === 'enrol' && !done ? { maxWidth: 560 } : undefined}>
           <div className="logo-lockup"><TeamLinkMark width={168} /><div className="small-muted" style={{ marginTop: 6 }}>TeamLink.Enterprise</div></div>
           {done ? (
             <>

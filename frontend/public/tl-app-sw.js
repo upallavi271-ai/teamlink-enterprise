@@ -46,16 +46,16 @@ self.addEventListener('push', (event) => {
     badge: '/tl-app-icons/badge-96.png',
     tag: data.tag || undefined,
     renotify: !!data.tag,
-    data: { url: data.url || '/mobile' },
+    data: { url: data.url || '/' },
   }));
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   // Only ever a screen of this same site, whatever the push said.
-  let target = self.location.origin + '/mobile';
+  let target = self.location.origin + '/';
   try {
-    const u = new URL((event.notification.data && event.notification.data.url) || '/mobile', self.location.origin);
+    const u = new URL((event.notification.data && event.notification.data.url) || '/', self.location.origin);
     if (u.origin === self.location.origin) target = u.href;
   } catch (e) { /* keep the default */ }
   event.waitUntil((async () => {
