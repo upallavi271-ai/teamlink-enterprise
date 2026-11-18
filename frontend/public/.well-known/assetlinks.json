@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.teamlink.enterprise",
+      "sha256_cert_fingerprints": [
+        "0B:55:A3:EC:80:F2:E1:DA:95:BB:DB:4C:74:EA:DA:19:80:FB:C3:0E:DA:EE:BB:D2:FB:E3:85:07:2B:0C:97:CB"
+      ]
+    }
+  }
+]
