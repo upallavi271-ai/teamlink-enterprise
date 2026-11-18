@@ -47,6 +47,7 @@ import EmployeeServices from './pages/hrms/EmployeeServices.jsx';
 import Timesheet from './pages/hrms/Timesheet.jsx';
 import MyProfile from './pages/hrms/MyProfile.jsx';
 import OrgStructure from './pages/admin/OrgStructure.jsx';
+import OrgChart from './pages/admin/OrgChart.jsx'; // the whole company as a tree, with a way to message anyone on it
 
 import Invoices from './pages/Invoices.jsx';
 import InvoiceDetail from './pages/InvoiceDetail.jsx';
@@ -379,6 +380,7 @@ export default function App() {
         {/* The prototype files Organization Structure under Administration; it
             also stays a tab inside Performance & Development. */}
         <Route path="admin/org-structure" element={<OrgStructure />} />
+        <Route path="admin/org-chart" element={<OrgChart />} />
         <Route path="admin/notifications" element={<Notifications />} />
         <Route path="admin/audit" element={<AuditLogs />} />
         <Route path="admin/system" element={<SystemSafety />} />

@@ -331,6 +331,7 @@ app.use('/api/nudges', require('./routes/nudges')); // reminder popups (utils/da
 app.use('/api/new-items', require('./routes/newItems')); // the New button on every dashboard (2026-10-13)
 app.use('/api/employees', employeeRoutes);
 app.use('/api/employee-fields', employeeFieldRoutes);
+app.use('/api/org-chart', require('./routes/orgChart')); // the overall organisation chart (Administration -> Organization Chart): read only, built from the employee records
 app.use('/api/attendance', attendanceRoutes);
 // Employee Monitoring (2026-11-04): the desktop agent (device token) and the HR / Admin screens (routes/monitoring.js).
 app.use('/api/monitoring', require('./routes/monitoring'));

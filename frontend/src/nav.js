@@ -324,6 +324,8 @@ export const ADMIN_ITEMS = [
   leaf('🔐', '/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]),
   leaf('🔌', '/admin/integrations', 'Integrations', [['administration', 'Integrations', 'view']]),
   leaf('🏗️', '/admin/org-structure', 'Organization Structure', [['administration', 'Organization Structure', 'view']]),
+  // ORGANIZATION CHART (founder 2026-11-17): the whole company as a tree, Super Admin down to every employee, with a Message button on each person (pages/admin/OrgChart.jsx)
+  leaf('🌳', '/admin/org-chart', 'Organization Chart', [['administration', 'Organization Structure', 'view']]),
   leaf('📜', '/admin/audit', 'Audit Logs', [['administration', 'Audit Logs', 'view']]),
   leaf('🔔', '/admin/notifications', 'Notifications', null),
   leaf('👤', '/admin/profile', 'Profile', null),
