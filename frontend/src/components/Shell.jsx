@@ -10,6 +10,7 @@ import ModuleTabs from './ModuleTabs.jsx';
 import Logo from './Logo.jsx';
 import { BRAND } from '../brand.js'; // a separate company's copy shows its own name (frontend/src/brand.js); TeamLink's build is unchanged
 import AiAssistant, { AiStatusDot } from './AiAssistant.jsx';
+import BdeAgent from './BdeAgent.jsx';
 import CompanySwitcher from './CompanySwitcher.jsx'; // Super Admin: "Companies" menu on TeamLink; nothing inside a company (2026-11-17)
 import ProfileStatusBanner from './ProfileStatusBanner.jsx';
 import SetupTabs from './SetupTabs.jsx';
@@ -441,6 +442,8 @@ export default function Shell() {
 
       {/* Floating, role-aware assistant (bottom right). */}
       <AiAssistant />
+      {/* The BDE Agent: BDE and BDE TL logins only (components/BdeAgent.jsx renders nothing for anyone else). */}
+      <BdeAgent />
       {/* morning / afternoon / evening reminders and "complete this course" (staff only; utils/dayNudges.js) */}
       {user && !['CLIENT', 'CANDIDATE'].includes(user.role) && <NudgePopup />}
       {user && !['CLIENT', 'CANDIDATE'].includes(user.role) && <AnnouncementPopup />}
