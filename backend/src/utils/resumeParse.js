@@ -408,6 +408,29 @@ function reviewLists(c) {
   };
 }
 
+// --- SKILL CLASSIFICATION (ATS audit 2026-11-18, Q97) -----------------------------------------------------------------------------
+// Each skill found goes into one group: soft skills, a DOMAIN (Medical, Education, Manufacturing, Finance, Sales & HR) or technical (the rest).
+const SOFT = /communicat|leadership|team ?work|team player|problem solv|negotiat|time management|presentation|interpersonal|customer service|adaptab|critical thinking|creativ|multitask|decision making|stakeholder|people management|mentor|conflict/i;
+const DOMAINS = [
+  ['Medical', /\bicu\b|clinical|patient|nurs|cardio|radiolog|patholog|pharma|\bgcp\b|regulatory|trial|surgery|surgical|anaesth|anesth|gynae|paediat|pediat|ortho|dental|physio|medical|hospital|emergency|ot\b|opd|ipd|phlebotomy|lab tech|ecg|dialysis/i],
+  ['Education', /teach|curriculum|counsell|lesson|classroom|pedagog|academic|lectur|tutor|syllabus|admission|exam|b\.?ed|student/i],
+  ['Manufacturing', /\bcnc\b|quality control|quality assurance|\bqc\b|\bqa\b|lean|six sigma|kaizen|5s\b|welding|production|assembly|machin|lathe|plc|scada|autocad|solidworks|maintenance|tool room|casting|forging|injection mould|sheet metal|iso 9001|tpm\b/i],
+  ['Finance', /account|tally|\bgst\b|taxation|\btds\b|audit|payroll|financ|book ?keeping|\bsap fico\b|reconcil|ledger|invoice|budget/i],
+  ['Sales & HR', /business development|lead generation|\bsales\b|marketing|recruit|sourcing|talent acquisition|onboarding|\bhr\b|human resource|crm|cold call|client acquisition|account management/i],
+];
+function classifySkills(skills) {
+  const out = { technical: [], soft: [], domain: {} };
+  (skills || []).forEach((s) => {
+    const k = String(s || '').trim();
+    if (!k) return;
+    if (SOFT.test(k)) { out.soft.push(k); return; }
+    const d = DOMAINS.find(([, re]) => re.test(k));
+    if (d) { (out.domain[d[0]] = out.domain[d[0]] || []).push(k); return; }
+    out.technical.push(k);
+  });
+  return out;
+}
+
 async function parseResumeText(text, { vocabulary } = {}) {
   const languages = detectLanguages(text);
   const t = asciiDigits(text);
