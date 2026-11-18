@@ -199,7 +199,9 @@ async function pendingJoinGroups(hier) {
   });
   const invs = await prisma.invoice.findMany({ select: { candidateId: true, requirementId: true, clientId: true } });
   const billedPair = new Set(invs.filter((i) => i.candidateId && i.requirementId).map((i) => `${i.candidateId}|${i.requirementId}`));
-  const billedLoose = new Set(invs.filter((i) => i.candidateId && !i.requirementId).map((i) => `${i.candidateId}|${i.clientId}`));
+  // A candidate who already has an invoice at this client is billed, even when that invoice names another requirement of the
+  // client than the joined application does (e.g. the invoice was made against an older job) - raising again would double-bill.
+  const billedLoose = new Set(invs.filter((i) => i.candidateId).map((i) => `${i.candidateId}|${i.clientId}`));
   const waiting = joined.filter((a) => !isInternalHire(a, a.requirement)
     && !billedPair.has(`${a.candidateId}|${a.requirementId}`)
     && !billedLoose.has(`${a.candidateId}|${a.requirement?.clientId}`));
