@@ -480,7 +480,20 @@ add({
 const prisma = require('../../db');
 const { candidateWhere, requirementWhere } = require('../../utils/scope');
 const { candidateViewFor } = require('../../utils/aiAgentTools');
-const { citiesOf } = require('../../utils/locationMatch');
+const { citiesOf, CITY_ALIASES } = require('../../utils/locationMatch');
+
+// citiesOf() names ANY word (a "find" becomes the city "Find"), so only real cities count: the app's own city list (with its spellings,
+// "bangalore" = Bengaluru) plus the other common Indian cities. The location search uses the city's main spellings.
+const MORE_CITIES = ['Pune', 'Kolkata', 'Ahmedabad', 'Jaipur', 'Lucknow', 'Kochi', 'Coimbatore', 'Nagpur', 'Indore', 'Bhopal', 'Chandigarh', 'Mysuru', 'Mysore',
+  'Guntur', 'Nellore', 'Tirupati', 'Warangal', 'Kurnool', 'Kakinada', 'Rajahmundry', 'Noida', 'Thane', 'Surat', 'Vadodara', 'Patna', 'Bhubaneswar', 'Madurai',
+  'Trichy', 'Mangaluru', 'Mangalore', 'Thiruvananthapuram', 'Trivandrum', 'Goa', 'Nashik', 'Ranchi', 'Raipur', 'Dehradun', 'Kanpur', 'Agra', 'Varanasi', 'Karimnagar', 'Khammam', 'Nizamabad', 'Ongole', 'Anantapur', 'Kadapa', 'Eluru'];
+const MORE_CITY_KEYS = new Map(MORE_CITIES.map((c) => [c.toLowerCase(), c]));
+function realCity(c) {
+  if (!c) return null;
+  if (CITY_ALIASES[c.label]) return { key: c.key, label: c.label, spellings: [c.label, ...CITY_ALIASES[c.label].filter((a) => a.length > 3).slice(0, 4)] };
+  const more = MORE_CITY_KEYS.get(String(c.key || c.label || '').toLowerCase());
+  return more ? { key: more.toLowerCase(), label: more, spellings: [more] } : null;
+}
 
 // qualifications: [label, regex over the RAW question (short ones must be written in capitals so "me" / "be" never match)]
 const QUALS = [
