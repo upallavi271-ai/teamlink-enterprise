@@ -172,6 +172,8 @@ app.use(require('./utils/readLog').middleware());
 app.use(require('./utils/apiErrors').middleware());
 // OVERLOAD PROTECTION (utils/heavyGate.js): the big list / report requests take turns (12 at a time) instead of all at once.
 app.use(require('./utils/heavyGate').middleware());
+// a write through the API raises the data version the short answer memo (utils/responseMemo.js) is keyed on
+app.use('/api', require('./utils/responseMemo').writeWatcher());
 
 app.get('/api/health', (req, res) => res.json(process.env.COMPANY_KEY ? { ok: true, company: String(process.env.COMPANY_KEY).trim().toLowerCase() } : { ok: true }));
 // SUPER ADMIN "VIEW AS" IS READ-ONLY (utils/viewAs.js): a View-as token may

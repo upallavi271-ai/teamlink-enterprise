@@ -172,7 +172,7 @@ module.exports = function mountCandidatesBoard(router, deps) {
     pipelineRowsFor, pipelineRowMatches, QUEUES, hasPersonQuery, attributedApplications, loadInScope, viewerKind,
   } = deps;
 
-  router.get('/board', async (req, res, next) => {
+  router.get('/board', require('../utils/responseMemo').memoRoute('board'), async (req, res, next) => {
     try {
       const q = req.query;
       if (viewerKind(req.user) !== 'internal') return res.status(403).json({ error: 'The Progress board is for TeamLink staff.' });

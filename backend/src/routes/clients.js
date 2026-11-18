@@ -753,7 +753,7 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
   return { rows: out, canSeeInvoices };
 }
 
-router.get('/', async (req, res) => {
+router.get('/', require('../utils/responseMemo').memoRoute('clients'), async (req, res) => {
   // Scoped by utils/scope.js: a client sees their own company, a BDE and a
   // recruiter their assigned clients, a TL / Manager the directory.
   // ARCHIVED clients are hidden from every default list (and every picker

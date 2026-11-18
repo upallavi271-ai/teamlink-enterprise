@@ -116,4 +116,6 @@ prisma.$use(async (params, next) => {
   }
   return result;
 });
+// memo_: a write made by the server itself (job, import, hook) raises the data version the short answer memo is keyed on (utils/responseMemo.js)
+prisma.$use(require('./utils/responseMemo').prismaHook());
 module.exports = prisma;
