@@ -37,7 +37,7 @@ const { getListState, markCandidateDirty } = require('../utils/candidateListCach
 const ADDED = require('../utils/candidateAddedBy'); // who typed / uploaded each person: that login keeps seeing them before any requirement
 // THE ACTUAL WORKFLOW (2026-09-29): an internal opening's stages read HR Review /
 // Dept Head / TL, and its next action is the internal chain's.
-const { stageLabelFor, nextActionForStage: wfNextAction } = require('../utils/atsVocab');
+const { stageLabelFor, nextActionForStage: wfNextAction, leftAfterJoining } = require('../utils/atsVocab');
 const isInternalApp = (a, r) => (a && a.hiringType
   ? a.hiringType === 'TeamLink Internal Hire'
   : !!(r && (r.internal || r.hiringType === 'TeamLink Internal Hire')));
