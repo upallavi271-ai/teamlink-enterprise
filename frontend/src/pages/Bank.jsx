@@ -67,6 +67,23 @@ const LINE_SORTS = [
 // The reconciliation table has its own State tabs, so its bar leaves State out.
 const RECON_FIELDS = LINE_FIELDS.filter((f) => f.key !== 'state');
 
+// What the search / filters found, in full (every page, not just the one on screen): how many statement
+// lines, and the money in and out across them.
+function LineTotals({ rows, filtered }) {
+  const list = rows || [];
+  const cr = list.filter((t) => t.type === 'Credit');
+  const dr = list.filter((t) => t.type === 'Debit');
+  const sum = (a) => a.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  return (
+    <div className="notice" style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0' }} data-testid="bank-line-totals">
+      <span><b>{list.length}</b> statement line{list.length === 1 ? '' : 's'}{filtered ? ' found' : ''}</span>
+      <span>Deposits: <b style={{ color: 'var(--teal)' }}>{money2(sum(cr))}</b> ({cr.length})</span>
+      <span>Withdrawals: <b style={{ color: 'var(--red)' }}>{money2(sum(dr))}</b> ({dr.length})</span>
+      <span>Net: <b>{money2(sum(cr) - sum(dr))}</b></span>
+    </div>
+  );
+}
+
 const gapColor = (g) => (g == null ? undefined : (Math.abs(g) < 1 ? 'var(--teal)' : 'var(--red)'));
 
 export default function Bank() {
@@ -706,6 +723,7 @@ function AccountView({
       )}
 
       <ListFilterBar lf={lf} storageKey="bank-lines" noun="lines" />
+      <LineTotals rows={lf.rows} filtered={lf.activeCount > 0} />
       <div className="tbl-wrap">
         <table>
           <thead>
@@ -1102,6 +1120,7 @@ function Recon({
       )}
 
       <ListFilterBar lf={lf} storageKey="bank-recon" noun="lines" />
+      <LineTotals rows={stateRows} filtered={narrowed || state !== 'All'} />
       <div className="tabbar">
         {STATES.map((s) => (
           <button key={s} className={`tab-btn ${state === s ? 'active' : ''}`} onClick={() => setState(s)}>
