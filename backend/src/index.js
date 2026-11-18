@@ -634,6 +634,7 @@ const server = app.listen(PORT, () => {
   require('./utils/jobPortalEmbed').start();
   // Job Portal: a full sync 30s after boot, then hourly (JOB_PORTAL_SYNC_INTERVAL_MS).
   require('./utils/jobPortalBridge').startSchedule();
+  require('./utils/portalOmniMirror').startSync(); // the approved Omni-Channel WhatsApp templates are given to the Job Portal's Send WhatsApp (every 10 minutes)
   require('./utils/candidateLogins').startSchedule();
   require('./utils/requirementExpiry').startSchedule(); // once a day after 9 am: open requirements closing in 3 days, or past their closing date, to their recruiters / TL / BDEs
   require('./calling/voiceCampaigns').startSchedule(); // AI Voice campaigns: dispatch the waiting calls, at most `concurrency` lines at once

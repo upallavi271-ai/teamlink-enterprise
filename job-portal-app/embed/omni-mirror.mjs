@@ -60,3 +60,18 @@ export async function portalWhatsAppTemplates(withUser, SYSTEM) {
     waName: t.wa_name || '', language: t.wa_language || '', createdBy: t.created_by_name || '', updatedAt: t.updated_at,
   }));
 }
+
+/** Approved WhatsApp templates from TeamLink -> the portal's comm_templates (so Send WhatsApp Message lists them). One bad row never stops the rest. */
+export async function receiveWhatsAppTemplates(withUser, SYSTEM, list) {
+  let done = 0; const failed = [];
+  for (const t of (Array.isArray(list) ? list : []).slice(0, 300)) {
+    try {
+      const wa = { category: 'utility', header: { type: 'none' }, footer: null, buttons: [], params: Array.isArray(t.params) ? t.params : [], fallbacks: {}, syncedAt: new Date().toISOString(), from: 'TeamLink Omni-Channel' };
+      // eslint-disable-next-line no-await-in-loop
+      await withUser(SYSTEM, (c) => c.query('select * from comm_template_wa_upsert($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::text[],$10,$11)',
+        [String(t.id), String(t.waName), String(t.language), String(t.name), String(t.body), JSON.stringify(wa), 'approved', t.department || null, t.usedIn || ['Omni-Channel'], 'portal', 'TeamLink Omni-Channel']));
+      done += 1;
+    } catch (err) { failed.push({ name: t && t.name, reason: String((err && err.message) || err).slice(0, 160) }); }
+  }
+  return { ok: true, saved: done, failed };
+}

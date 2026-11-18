@@ -70,4 +70,47 @@ async function portalTemplates() {
   return cache.rows;
 }
 
-module.exports = { omniTemplates, omniCampaigns, portalTemplates, identityFor };
+// ---- the approved WhatsApp templates of Omni-Channel / Message templates, given to the portal's "Send WhatsApp Message" ------------------
+// The portal sends a template only when it holds an APPROVED WhatsApp template row (comm_templates). So the approved ones are pushed there
+// (embed PUT /api/integrations/teamlink/comm-templates -> comm_template_wa_upsert), at start and every 10 minutes. Variables are renamed to the
+// portal's field names; a template that uses a variable the portal cannot fill (unsubscribe) is left out and named in the answer.
+const KEY_OF = { name: 'candidate_name', job_title: 'job_title', company: 'company_name', apply_link: 'job_link', candidate_name: 'candidate_name', first_name: 'first_name', job_location: 'job_location', location: 'location', notice_period: 'notice_period', recruiter_name: 'recruiter_name', company_name: 'company_name', job_link: 'job_link' };
+const slugLang = (l) => { const v = String(l || '').trim(); const m = { english: 'en', telugu: 'te', hindi: 'hi' }; return m[v.toLowerCase()] || v || 'en_US'; };
+function portalShape({ id, name, body, waName, language, department }) {
+  const used = [...String(body || '').matchAll(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/gi)].map((m) => m[1].toLowerCase());
+  if (used.some((k) => !KEY_OF[k])) return { skip: `${name}: uses a detail the portal cannot fill (${used.find((k) => !KEY_OF[k])})` };
+  const text = String(body || '').replace(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/gi, (m, k) => `{{${KEY_OF[k.toLowerCase()]}}}`);
+  return { row: { id: clip(id, 60), name: clip(name, 120), body: clip(text, 8000), waName: clip(waName, 200), language: slugLang(language), params: used.map((k) => KEY_OF[k]), department: department || '', usedIn: ['Omni-Channel'] } };
+}
+async function approvedWhatsApp() {
+  const rows = []; const skipped = [];
+  try {
+    const S = require('../outreach/store'); // eslint-disable-line global-require
+    if (await S.ready()) {
+      const ot = await S.q("SELECT id, name, body, waTemplateName, waLanguage FROM \"OutreachTemplate\" WHERE channel = 'whatsapp' AND status = 'active' AND LOWER(COALESCE(waApprovalStatus,'')) = 'approved' AND COALESCE(waTemplateName,'') <> ''");
+      ot.forEach((r) => { const o = portalShape({ id: `omni_${r.id}`, name: r.name, body: r.body, waName: r.waTemplateName, language: r.waLanguage }); if (o.row) rows.push(o.row); else skipped.push(o.skip); });
+    }
+  } catch { /* outreach tables not there yet */ }
+  try {
+    const mt = await prisma.messageTemplate.findMany({ where: { channel: 'WhatsApp', active: true, waStatus: 'Approved', audience: 'candidate', NOT: { waTemplateName: null } } });
+    mt.forEach((r) => { const o = portalShape({ id: `msg_${r.id}`, name: r.name, body: r.body, waName: r.waTemplateName, language: r.waLanguageCode || r.language }); if (o.row) rows.push(o.row); else skipped.push(o.skip); });
+  } catch { /* none */ }
+  return { rows, skipped };
+}
+async function pushTemplatesToPortal() {
+  const { rows, skipped } = await approvedWhatsApp();
+  if (!rows.length) return { ok: true, pushed: 0, skipped };
+  const bridge = require('./jobPortalBridge'); // eslint-disable-line global-require
+  const out = await bridge.portalFetch('/integrations/teamlink/comm-templates', { method: 'PUT', body: { templates: rows }, timeoutMs: 20000 });
+  return { ok: true, pushed: rows.length, result: out, skipped };
+}
+let timer = null;
+function startSync() {
+  if (timer) return;
+  const run = () => pushTemplatesToPortal().catch(() => {});
+  setTimeout(run, 60000).unref();
+  timer = setInterval(run, 10 * 60 * 1000);
+  timer.unref();
+}
+
+module.exports = { omniTemplates, omniCampaigns, portalTemplates, identityFor, pushTemplatesToPortal, approvedWhatsApp, portalShape, startSync };

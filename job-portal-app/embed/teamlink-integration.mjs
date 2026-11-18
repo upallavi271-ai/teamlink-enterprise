@@ -1507,6 +1507,12 @@ export function teamlinkFrontRouter({ root, express }) {
     res.json({ templates: await M.portalWhatsAppTemplates(withUser, SYSTEM) });
   }));
 
+  // TeamLink gives its approved WhatsApp templates (Omni-Channel / Message templates) to the portal's Send WhatsApp Message (backend/src/utils/portalOmniMirror.js)
+  r.put('/api/integrations/teamlink/comm-templates', json, wrap(async (req, res) => {
+    const M = await import(pathToFileURL(join(import.meta.dirname, 'omni-mirror.mjs')).href);
+    const { withUser } = await portal();
+    res.json(await M.receiveWhatsAppTemplates(withUser, SYSTEM, (req.body || {}).templates));
+  }));
   r.put('/api/integrations/teamlink/jobs/:requirementId', wrap(async (req, res) => {
     const { withUser } = await portal();
     const out = await withUser(SYSTEM, (c) => upsertJob(c, req.params.requirementId, req.body));
