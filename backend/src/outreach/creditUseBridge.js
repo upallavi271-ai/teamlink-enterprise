@@ -154,10 +154,10 @@ async function forOmni(viewerId, month, opts = {}) {
   let detail = [];
   if (ids.length) {
     const marks = ids.map(() => '?').join(',');
-    const lines = await prisma.$queryRawUnsafe(`SELECT userId u, strftime('%Y-%m-%d', (at + 19800000) / 1000, 'unixepoch') day, COALESCE(templateLabel,'') t, channel c, COUNT(*) n, COALESCE(SUM(credits),0) cr
+    const lines = await prisma.$queryRawUnsafe(`SELECT userId u, strftime('%Y-%m-%d', (at + 19800000) / 1000, 'unixepoch') day, COALESCE(templateLabel,'') t, channel c, COALESCE(source,'') s, COUNT(*) n, COALESCE(SUM(credits),0) cr
       FROM "OmniCreditLedger" WHERE at >= ? AND at < ? AND mode = 'live' AND result <> 'failed' AND userId IN (${marks}) AND COALESCE(templateLabel,'') <> ?
-      GROUP BY userId, day, t, c ORDER BY day DESC LIMIT 6000`, from, to, ...ids, AI_LABEL).catch(() => []);
-    detail = lines.map((r) => ({ userId: r.u, day: r.day, label: r.t || 'Message', channel: r.c, messages: num(r.n), tokens: num(r.cr) }));
+      GROUP BY userId, day, t, c, s ORDER BY day DESC LIMIT 6000`, from, to, ...ids, AI_LABEL).catch(() => []);
+    detail = lines.map((r) => ({ userId: r.u, day: r.day, label: r.t || 'Message', channel: r.c, source: r.s || 'messaging', messages: num(r.n), tokens: num(r.cr) })); // source = where it was sent from: campaign (Omni-Channel), console, sequence, or messaging (ATS, Job Portal, Inbox, CRM sends)
   }
 
   // promotions per person (distinct campaigns in the ledger) and what a token costs in rupees (from the recharges: rupees paid / tokens bought, per way of sending)
