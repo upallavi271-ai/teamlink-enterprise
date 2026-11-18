@@ -136,7 +136,11 @@ export default function OfferLetterEditor() {
             <h3 className="olm-h">2. The letter</h3>
             <div className="field"><label>Title</label><input type="text" {...field('title')} /></div>
             <div className="field"><label>Opening paragraph</label><textarea rows="5" {...field('intro')} /></div>
-            <div className="field"><label className="olm-check"><input type="checkbox" checked={t.showCtc !== false} disabled={!edit} onChange={(e) => set('showCtc', e.target.checked)} /> Print the salary (annual CTC) in the letter, when it is on the candidate&apos;s record</label></div>
+            <div className="grid-2">
+              <div className="field"><label>Salary per month (₹) <span className="small-muted">- the same for every new joiner</span></label><input type="text" inputMode="numeric" {...field('monthlySalary')} placeholder="10000" /></div>
+              <div className="field"><label>Working hours <span className="small-muted">- empty = this line is left out</span></label><input type="text" {...field('workingHours')} placeholder="e.g. 9:30 am to 6:30 pm, Monday to Friday" /></div>
+            </div>
+            <div className="field"><label className="olm-check"><input type="checkbox" checked={t.showCtc !== false} disabled={!edit} onChange={(e) => set('showCtc', e.target.checked)} /> Print the salary in the letter</label></div>
 
             <div className="olm-sub">Details table <span className="small-muted">(a row is left out when the record has no value for it)</span></div>
             {t.details.map((r, i) => (

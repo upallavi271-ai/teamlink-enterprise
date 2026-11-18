@@ -7,7 +7,7 @@
 //
 // WHAT GOES OUT: one email to the candidate with the letter in the mail itself (HTML) AND as a PDF (pdfkit, A4, the TeamLink logo).
 // The wording is one editable template (Administration -> Company Setup -> Message templates -> Offer letter); every {{placeholder}}
-// is filled from the application / candidate / job. A line that needs a detail nobody has (no reporting manager, no CTC on file)
+// is filled from the application / candidate / job. A line that needs a detail nobody has (no reporting manager on file, no working hours typed in the editor)
 // is LEFT OUT, never printed with a blank.
 //
 // WHEN (utils/offerLetterMail.js maybeSendAuto, called from three places, all wrapped so they can never break the real action):
@@ -24,7 +24,7 @@
 //
 // THE RECORD: Candidate -> Communications (a CandidateMessage row, with the real result), the application's pipeline history and the
 // Audit Log - none of them carries the salary. A mail that could not go says why in plain words, on the card, and the recruiter and
-// the team lead get a bell. The CTC is printed ONLY inside the letter that goes to the candidate and to staff who may open Offers.
+// the team lead get a bell. The salary is printed ONLY inside the letter that goes to the candidate and to staff who may open Offers.
 // ---------------------------------------------------------------------------
 const fs = require('fs');
 const crypto = require('crypto');
@@ -50,7 +50,9 @@ const TOKENS = [
   { key: 'location', label: 'Place of work', sample: 'Hyderabad' },
   { key: 'joiningDate', label: 'Joining date', sample: '1 December 2026' },
   { key: 'joiningDay', label: 'Day of the week of joining', sample: 'Tuesday' },
-  { key: 'ctc', label: 'Annual CTC (only if on file)', sample: '₹ 6,00,000 per annum' },
+  { key: 'monthlySalary', label: 'Salary per month (set below in the editor)', sample: '₹ 10,000 per month' },
+  { key: 'workingHours', label: 'Working hours (set below in the editor)', sample: '9:30 am to 6:30 pm, Monday to Friday' },
+  { key: 'ctc', label: 'Annual CTC from the offer (not used in the standard letter)', sample: '₹ 1,20,000 per annum' },
   { key: 'manager', label: 'Reporting manager (the job’s team lead)', sample: 'Ravi Kumar, Team Lead' },
   { key: 'company', label: 'Company name', sample: 'TeamLink Consultants' },
   { key: 'probationMonths', label: 'Probation (months)', sample: '6' },
@@ -79,19 +81,26 @@ const DEFAULT_TEMPLATE = {
     '',
     'Further to your application and the discussions you had with us, we are pleased to offer you the position of {{designation}} at {{company}}, on the terms set out below.',
   ].join('\n'),
+  // TeamLink pays one flat salary per month to every new and experienced employee (founder 2026-11-18): no CTC break-up.
+  // showCtc is the old name of the "print the salary" tick; it switches the salary lines off when false.
   showCtc: true,
+  monthlySalary: 10000,
+  workingHours: '', // the founder types the real hours once; until then the working-hours lines are left out
   details: [
     { label: 'Designation', value: '{{designation}}' },
     { label: 'Department', value: '{{department}}' },
     { label: 'Date of joining', value: '{{joiningDate}} ({{joiningDay}})' },
     { label: 'Place of work', value: '{{location}}' },
     { label: 'Reporting to', value: '{{manager}}' },
-    { label: 'Annual CTC', value: '{{ctc}}' },
+    { label: 'Salary', value: '{{monthlySalary}}' },
+    { label: 'Working hours', value: '{{workingHours}}' },
   ],
   terms: [
     { title: 'Probation', text: 'You will be on probation for {{probationMonths}} months from your date of joining. Your employment will be confirmed in writing after a satisfactory review of your work and conduct.' },
     { title: 'Notice period', text: 'After confirmation, either you or the company may end the employment by giving 30 days’ written notice, or salary in lieu of the notice period. During probation, 7 days’ written notice from either side is enough.' },
-    { title: 'Salary and benefits', text: 'Your annual cost to company (CTC) is {{ctc}}. Salary is paid every month into your bank account, after the deductions the law requires. Your detailed salary break-up is shared with you when you join.' },
+    { title: 'Salary', text: 'Your salary is {{monthlySalary}}. It is paid every month into your bank account, after any deduction that the law requires.' },
+    { title: 'Working hours', text: 'Your normal working hours are {{workingHours}}. You may be asked to work extra hours, or on a weekly off, when the work needs it, as the Company’s policy allows.' },
+    { title: 'Leave and holidays', text: 'Leave and public holidays follow the Company’s leave policy, which HR will explain to you when you join.' },
     { title: 'Documents on your first day', text: 'Please bring the originals and one copy of: your ID proof (Aadhaar), PAN card, education certificates, experience / relieving letters from your earlier employers, two passport-size photographs and your bank account details.' },
     { title: 'Conduct and confidentiality', text: 'You will follow the policies of the company, and you will keep the information of the company and of its clients confidential, during your employment and after it.' },
     { title: 'Verification', text: 'This offer stands on the documents and details you gave us being true, and on a satisfactory verification of your background.' },
@@ -104,8 +113,9 @@ const DEFAULT_TEMPLATE = {
 };
 const LIMITS = {
   subject: 200, coverNote: 3000, title: 80, intro: 2000, closing: 1000, signatoryName: 80, signatoryTitle: 120, acceptanceLine: 600, footerNote: 300,
-  rowLabel: 60, rowValue: 200, termTitle: 80, termText: 1500, maxDetails: 12, maxTerms: 20,
+  rowLabel: 60, rowValue: 200, termTitle: 80, termText: 1500, maxDetails: 12, maxTerms: 20, workingHours: 120, maxMonthlySalary: 1000000,
 };
+const monthlyText = (n) => (Number(n) > 0 ? `₹ ${Math.round(Number(n)).toLocaleString('en-IN')} per month` : '');
 
 // --- settings (one AppSetting row: { enabled, template }) ---------------------------------------------------------------
 function parse(row) {
@@ -147,12 +157,18 @@ async function setAutomatic(enabled, user) {
 function cleanTemplate(body) {
   const b = body && typeof body === 'object' ? body : {};
   const s = (v, n) => (v == null ? '' : String(v).replace(/\r\n/g, '\n').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, n));
+  // the salary per month: one flat figure for everyone; blank / 0 = no salary line is printed
+  const rawSalary = b.monthlySalary == null ? '' : String(b.monthlySalary).replace(/[,\s₹]/g, '');
+  const salary = rawSalary === '' ? 0 : Number(rawSalary);
+  if (!Number.isFinite(salary) || salary < 0 || salary > LIMITS.maxMonthlySalary) return { error: 'Write the salary per month as a number of rupees, for example 10000.' };
   const value = {
     subject: s(b.subject, LIMITS.subject),
     coverNote: s(b.coverNote, LIMITS.coverNote),
     title: s(b.title, LIMITS.title),
     intro: s(b.intro, LIMITS.intro),
     showCtc: b.showCtc !== false,
+    monthlySalary: Math.round(salary),
+    workingHours: s(b.workingHours, LIMITS.workingHours),
     details: (Array.isArray(b.details) ? b.details : []).map((r) => ({ label: s(r && r.label, LIMITS.rowLabel), value: s(r && r.value, LIMITS.rowValue) })).filter((r) => r.label && r.value),
     terms: (Array.isArray(b.terms) ? b.terms : []).map((r) => ({ title: s(r && r.title, LIMITS.termTitle), text: s(r && r.text, LIMITS.termText) })).filter((r) => r.text),
     closing: s(b.closing, LIMITS.closing),
@@ -228,6 +244,8 @@ async function valuesFor(app, tpl) {
     joiningDate: longDay(app.joiningDate),
     joiningDay: longDay(app.joiningDate, { day: undefined, month: undefined, year: undefined, weekday: 'long' }),
     ctc: tpl.showCtc === false ? '' : inr(app.offeredCtc),
+    monthlySalary: tpl.showCtc === false ? '' : monthlyText(tpl.monthlySalary),
+    workingHours: tpl.workingHours || '',
     manager: await managerOf(r),
     company: company.name,
     probationMonths: String(Number(process.env.PROBATION_MONTHS) || 6),
@@ -259,17 +277,20 @@ async function buildModel(app, tpl, { sample = false } = {}) {
   const vals = sample ? sampleValues() : await valuesFor(app, tpl);
   if (sample) vals.company = company.name;
   if (sample && tpl.showCtc === false) vals.ctc = '';
+  // the salary and the working hours are typed once in the editor, so the sample shows exactly what the editor holds
+  if (sample) { vals.monthlySalary = tpl.showCtc === false ? '' : monthlyText(tpl.monthlySalary); vals.workingHours = tpl.workingHours || ''; }
+  const why = (missing) => missing.map((k) => (k === 'monthlySalary' ? 'salary not written in the editor' : k === 'workingHours' ? 'working hours not written in the editor' : `no ${k} on file`)).join(', ');
   const omitted = [];
   const details = [];
   (tpl.details || []).forEach((row) => {
     const v = fillLine(row.value, vals);
-    if (v.skip) omitted.push(`${row.label} (no ${v.missing.join(', ')} on file)`); else details.push({ label: fillPlain(row.label, vals), value: v.text });
+    if (v.skip) omitted.push(`${row.label} (${why(v.missing)})`); else details.push({ label: fillPlain(row.label, vals), value: v.text });
   });
   const terms = [];
   (tpl.terms || []).forEach((row) => {
     const v = fillLine(row.text, vals);
     const title = fillPlain(row.title, vals);
-    if (v.skip) omitted.push(`${title || 'A term'} (no ${v.missing.join(', ')} on file)`); else terms.push({ title, text: v.text });
+    if (v.skip) omitted.push(`${title || 'A term'} (${why(v.missing)})`); else terms.push({ title, text: v.text });
   });
   return {
     company,
@@ -595,7 +616,7 @@ async function messageRow(app, { status, detail, trigger, subject, actor, provid
       data: {
         candidateId: app.candidateId, applicationId: app.id, channel: 'Email', template: TEMPLATE_PURPOSE, templateLabel: LABEL, trigger,
         recipient: c.email || '', subject: subject || null,
-        // no salary here: staff who open Communications do not all see CTC
+        // no salary here: staff who open Communications do not all see the salary
         body: `The offer letter for ${r.title || 'the job'}, joining ${longDay(app.joiningDate) || 'date to be confirmed'}, was sent as an email with the letter in the mail and attached as a PDF.`,
         status, statusDetail: String(detail || '').slice(0, 400),
         senderUserId: actor && actor.id ? actor.id : null, senderName: (actor && actor.name) || 'TeamLink',
