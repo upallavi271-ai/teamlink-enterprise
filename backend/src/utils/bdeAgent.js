@@ -46,7 +46,7 @@ async function safe(fn, fallback) { try { return await fn(); } catch (err) { con
 // always (read from the database, not from a capped list), and the DETAIL sections only for what the question is about, each capped, the lot
 // kept under MAX_FACT_CHARS (about 3,500 tokens).
 const MAX_FACT_CHARS = 14000;
-const CAPS = { clients: 40, reqs: 40, cands: 12, pending: 6, crm: 10 };
+const CAPS = { clients: 60, reqs: 40, cands: 12, pending: 6, crm: 10 };
 
 async function buildFacts(user) {
   const today = istToday();
@@ -260,7 +260,7 @@ async function ask(user, { question, history } = {}) {
   const hist = (Array.isArray(history) ? history : []).filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string').slice(-8);
   const system = `${SYSTEM}\n\nFACTS (read ${new Date(built.at).toISOString().slice(11, 16)} UTC):\n${compose(built, q)}${extra ? `\n\n${extra}` : ''}`;
   try {
-    const r = await fastAi.chat(system, [...hist, { role: 'user', content: q }], { maxTokens: 700, temperature: 0.1 });
+    const r = await fastAi.chat(system, [...hist, { role: 'user', content: q }], { maxTokens: 900, temperature: 0.1 });
     return { status: 200, body: { text: r.text, provider: r.provider, model: r.model, ms: Date.now() - t0, note: r.note || '' } };
   } catch (err) {
     return { status: err.status && err.status < 600 ? err.status : 503, body: { error: err.message || 'The BDE Agent could not answer right now.' } };
