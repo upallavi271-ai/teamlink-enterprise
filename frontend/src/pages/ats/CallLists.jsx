@@ -3,6 +3,7 @@ import api from '../../api';
 import { Modal } from '../../components/proto.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 
 // ---------------------------------------------------------------------------
 // CALL LISTS (founder 2026-11-17): the recruiters get data as sheets; a manager splits a sheet among recruiters; each recruiter calls the contacts of their own block from VICIdial.
@@ -147,6 +148,7 @@ function ListView({ id, onBack, onChanged }) {
   const [filter, setFilter] = useState('pending');
   const [q, setQ] = useState('');
   const [recFilter, setRecFilter] = useState('');
+  const xf = useListXf('callrows', user); // location, added date, called, interest (components/ats/ListFilters.jsx)
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
   const [move, setMove] = useState({ from: '', to: new Set() });
@@ -154,9 +156,9 @@ function ListView({ id, onBack, onChanged }) {
   const iHave = !!(det && det.progress.some((p) => p.recruiterId === (user && user.id)));
   const loadDet = () => api.get(`/call-lists/${id}`).then((r) => setDet(r.data)).catch((e) => setErr(errOf(e, 'This list could not be opened.')));
   const loadNext = () => api.get(`/call-lists/${id}/next`).then((r) => setNxt(r.data)).catch(() => setNxt({ row: null, left: 0 }));
-  const loadRows = () => api.get(`/call-lists/${id}/rows`, { params: { status: filter === 'all' ? undefined : filter, q: q || undefined, recruiter: recFilter || undefined, size: 100 } }).then((r) => setRows(r.data)).catch(() => setRows({ rows: [], total: 0 }));
+  const loadRows = () => api.get(`/call-lists/${id}/rows`, { params: { status: filter === 'all' ? undefined : filter, q: q || undefined, recruiter: recFilter || undefined, size: 100, ...xf.params } }).then((r) => setRows(r.data)).catch(() => setRows({ rows: [], total: 0 }));
   useEffect(() => { loadDet(); loadNext(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { const t = setTimeout(loadRows, 250); return () => clearTimeout(t); }, [id, filter, q, recFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const t = setTimeout(loadRows, 250); return () => clearTimeout(t); }, [id, filter, q, recFilter, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (det && det.canManage) api.get('/call-lists/recruiters').then((r) => setRecs(r.data.recruiters)).catch(() => {}); }, [det && det.canManage]); // eslint-disable-line react-hooks/exhaustive-deps
   const refresh = () => { setPicked(null); loadDet(); loadNext(); loadRows(); onChanged(); };
   async function doMove() {
@@ -215,6 +217,7 @@ function ListView({ id, onBack, onChanged }) {
       )}
 
       <section className="panel" style={{ marginTop: 14 }}>
+        <div className="panel-pad"><ListFilterStrip list="callrows" xf={xf} user={user} noun="contacts" total={rows ? rows.total : null} /></div>
         <div className="panel-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <h3 style={{ margin: 0, marginRight: 8 }}>{det.canManage ? 'Contacts' : 'My contacts'}</h3>
           {[['pending', 'To call'], ['done', 'Finished'], ['all', 'All']].map(([k, label]) => <button key={k} type="button" className={`msg-chip${filter === k ? ' on' : ''}`} onClick={() => setFilter(k)}>{label}</button>)}
@@ -248,8 +251,9 @@ export default function CallLists() {
   const [open, setOpen] = useState(null);
   const [upload, setUpload] = useState(false);
   const [made, setMade] = useState('');
-  const load = () => api.get('/call-lists').then((r) => setData(r.data)).catch((e) => setErr(errOf(e, 'The call lists could not be loaded.')));
-  useEffect(() => { load(); }, []);
+  const xf = useListXf('calllists'); // source, made-on date (components/ats/ListFilters.jsx)
+  const load = () => api.get('/call-lists', { params: xf.params }).then((r) => setData(r.data)).catch((e) => setErr(errOf(e, 'The call lists could not be loaded.')));
+  useEffect(() => { load(); }, [xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   if (open) return <ListView id={open} onBack={() => setOpen(null)} onChanged={load} />;
   return (
     <div>
@@ -260,6 +264,7 @@ export default function CallLists() {
         </div>
         {data && data.canManage && <button type="button" className="btn btn-primary" onClick={() => setUpload(true)}>⬆ Upload a call sheet</button>}
       </div>
+      <ListFilterStrip list="calllists" xf={xf} noun="call lists" />
       {err && <div className="notice red">{err}</div>}
       {made && <div className="notice green">{made}</div>}
       <section className="panel">

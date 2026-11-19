@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ListToolbar, FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import api from '../../api';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import Combo from '../../components/Combo.jsx';
 import { clientAliasText } from '../../components/searchMatch.js'; // old client names find a row (matching only)
 import PeopleFilter, { useAtsWorkers, personOptions } from '../../components/PeopleFilter.jsx';
@@ -394,6 +395,7 @@ export function useIntJoinList(allRows, {
   }, [searched, fields, values, sort]); // eslint-disable-line react-hooks/exhaustive-deps
   const label = (key, v) => ((facets[key] || []).find((o) => String(o.value) === String(v)) || {}).label || v;
   const NAMES = { department: 'Department', client: 'Client', job: 'Requirement', recruiter: 'Recruiter', hiringType: 'Hiring', status: status ? status.label : 'Status' };
+  const xfCount = Object.keys(xf.params).length;
   const chips = [
     ...fields.filter((x) => f[x.key]).map((x) => ({ key: x.key, label: NAMES[x.key], value: label(x.key, f[x.key]), onRemove: () => set({ [x.key]: '' }) })),
     f.q && { key: 'q', label: 'Search', value: f.q, onRemove: () => set({ q: '' }) },
@@ -442,6 +444,9 @@ export function useIntJoinPaged(url, {
   view = 'all', status = null, placeholder = 'Search name or requirement…', sortOptions = null, defaultSort = '',
 } = {}) {
   const { user } = useAuth();
+  // the extra filters of Offers (date, status, CTC, BGV, counter-offer) and Joining (date, guarantee, invoice): components/ats/ListFilters.jsx
+  const xfList = url === '/ats/offers' ? 'offers' : url === '/ats/joining' ? 'joining' : '';
+  const xf = useListXf(xfList || 'none', user);
   const clientDesk = can(user, null, 'clients', 'Client List', 'view');
   const [f, setF] = useState(EMPTY_LIST);
   const [qSent, setQSent] = useState('');
@@ -464,8 +469,9 @@ export function useIntJoinPaged(url, {
     if (qSent) p.q = qSent;
     FILTER_KEYS_IJ.forEach((k) => { if (f[k]) p[k] = f[k]; });
     if (sort) p.sort = sort;
+    Object.assign(p, xf.params);
     return p;
-  }, [qSent, f, sort, view, older]);
+  }, [qSent, f, sort, view, older, xf.key]);
   const fkey = `${JSON.stringify(filterParams)}|${size}`;
   // Page 1 again whenever the filters, the tab or the page size change.
   const [pg, setPg] = useState({ key: fkey, page: 1 });
@@ -514,8 +520,10 @@ export function useIntJoinPaged(url, {
     ...fields.filter((x) => f[x.key]).map((x) => ({ key: x.key, label: NAMES[x.key], value: label(x.key, f[x.key]), onRemove: () => set({ [x.key]: '' }) })),
     f.q && { key: 'q', label: 'Search', value: f.q, onRemove: () => set({ q: '' }) },
   ].filter(Boolean);
-  const clear = () => setF(EMPTY_LIST);
+  const clear = () => { setF(EMPTY_LIST); xf.clear(); };
   const toolbar = (
+    <>
+    {xfList && <ListFilterStrip list={xfList} xf={xf} user={user} total={Number(data.total) || 0} noun={xfList === 'offers' ? 'offers' : 'joinings'} />}
     <ListToolbar
       search={f.q}
       onSearch={(v) => set({ q: v })}
@@ -542,6 +550,7 @@ export function useIntJoinPaged(url, {
         </>
       )}
     />
+    </>
   );
   const total = Number(data.total) || 0;
   const cur = data.page || page;
@@ -550,14 +559,14 @@ export function useIntJoinPaged(url, {
   };
   // Export "This list" = the whole list under the filters and the tab, not just this page.
   const exportBody = async () => {
-    if (!chips.length && view === 'all' && older) return { ids: null };
+    if (!chips.length && !xfCount && view === 'all' && older) return { ids: null };
     const res = await api.get(url, { params: { ...filterParams, idsOnly: 1 } });
     return { ids: res.data.ids || [] };
   };
   return {
     data: { ...data, loading: data.loading || fetching, failed: !!error && !(data.rows || []).length },
     error, notice, busy, act, load, setError, setNotice,
-    list: { toolbar, active: chips.length, clear },
+    list: { toolbar, active: chips.length + xfCount, clear },
     pager, counts: data.counts || {}, older, setOlder, olderCount: data.olderCount || 0, exportBody,
   };
 }

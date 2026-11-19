@@ -91,9 +91,52 @@ function Range({ f, values, onChange, facets, loading }) {
   );
 }
 
+// A list of fixed words (no counts): tick several, or pick one.
+function StaticMulti({ f, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const chosen = csvOf(value);
+  const toggle = (v) => onChange((chosen.includes(v) ? chosen.filter((x) => x !== v) : [...chosen, v]).join(','));
+  const summary = !chosen.length ? (f.allLabel || 'Any') : chosen.length <= 2 ? chosen.map((v) => (f.options.find((o) => o.value === v) || {}).label || v).join(', ') : `${chosen.length} ${f.plural || 'selected'}`;
+  return (
+    <div className="lph-facet mfs" title={f.title || f.label}>
+      <span className="lph-facet-lbl">{f.label}</span>
+      <button type="button" className={`mfs-btn${chosen.length ? ' is-set' : ''}`} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="mfs-sum">{summary}</span><span aria-hidden="true">{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <div className="mfs-pop" role="listbox" aria-multiselectable="true" aria-label={f.label}>
+          {f.options.map((o) => (
+            <label key={o.value} className={`mfs-item${chosen.includes(o.value) ? ' is-on' : ''}`}>
+              <input type="checkbox" checked={chosen.includes(o.value)} onChange={() => toggle(o.value)} />
+              <span className="mfs-name">{o.label}</span>
+            </label>
+          ))}
+          <div className="mfs-foot">
+            <button type="button" className="link-btn" disabled={!chosen.length} onClick={() => onChange('')}>Clear</button>
+            <button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>Done</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Control({ f, values, onChange, facets, loading }) {
   const key = f.keys.value;
   const opts = f.options || facets[f.facet || key] || [];
+  const fixed = !!f.options && f.options.every((o) => o.count === undefined);
+  if (fixed && f.type === 'multi') return <StaticMulti f={f} value={values[key]} onChange={(v) => onChange({ [key]: v })} />;
+  if (fixed && f.type === 'select') {
+    return (
+      <label className="lph-facet" title={f.title || f.label}>
+        <span className="lph-facet-lbl">{f.label}</span>
+        <select value={values[key] || ''} onChange={(e) => onChange({ [key]: e.target.value })}>
+          <option value="">{f.allLabel || 'Any'}</option>
+          {f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </label>
+    );
+  }
   if (f.type === 'multi' || f.type === 'multimode') {
     return (
       <span className={f.type === 'multimode' ? 'fbar-multimode' : 'fbar-cell'}>

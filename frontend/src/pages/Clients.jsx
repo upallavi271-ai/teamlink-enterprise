@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ListFilterStrip, useListXf } from '../components/ats/ListFilters.jsx';
 import api from '../api';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import ScopeLine from '../components/ScopeLine.jsx';
@@ -209,6 +210,7 @@ export default function Clients() {
   const [adding, setAdding] = useState(false);
   // Links from the BDE workspace: /clients?add=1 opens Add client, ?panel=requests / followups opens that panel.
   const [urlParams, setUrlParams] = useSearchParams();
+  const xf = useListXf('clients', user); // priority, agreement status, requirement count, has joinings, industry (components/ats/ListFilters.jsx)
   const urlPanel = urlParams.get('panel') || '';
   // From a Won CRM deal ("Add as client", 2026-11-02): /clients?add=1&crmDeal=<id>&name=...&contactName=... opens Add client
   // filled in; once saved, the deal and its CRM account are linked to the new client and the deal opens again.
@@ -235,12 +237,12 @@ export default function Clients() {
   // Archived clients come too (?archived=1) — hidden below unless the
   // Status filter asks for them.
   function load() {
-    api.get('/clients', { params: { archived: 1 } })
+    api.get('/clients', { params: { archived: 1, ...xf.params } })
       .then((res) => { setClients(res.data); setLoadError(''); })
       .catch((err) => setLoadError(err.response?.data?.error || 'Could not load clients. Please try again.'))
       .finally(() => setLoaded(true));
   }
-  useEffect(() => { if (allowed) load(); }, [allowed]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (allowed) load(); }, [allowed, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Columns: only what this role may see (§4); defaults are the spec's list.
   const allowedCols = meta?.columns || [];
@@ -694,6 +696,7 @@ export default function Clients() {
           {/* [ Filters (n) ] [ Sort ] [ Columns ] — the other filters (only those
               /clients/meta gives this role) sit in ONE panel; chips + Clear all.
               Search, Status, Signed? and Location are on the filter card above. */}
+          <ListFilterStrip list="clients" xf={xf} user={user} noun="clients" />
           <ListToolbar
             filterCount={Object.entries(filters).filter(([k, v]) => !['search', 'status', 'signed', 'location'].includes(k) && v).length}
             panel={(meta?.filters || []).some((k) => ['industry', 'agreement', 'expiring', 'hasOpen', 'outstanding', 'overdue', 'unassigned'].includes(k)) ? (

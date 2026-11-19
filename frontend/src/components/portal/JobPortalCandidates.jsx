@@ -11,6 +11,7 @@ import SendManyDialog from '../messaging/SendMessage.jsx';
 import { DupChip, AlreadyInAtsChip } from '../duplicates/DupChip.jsx';
 import AiCallDialog from '../aicalling/AiCallDialog.jsx'; // JOB PORTAL AI calling (separate from the ATS one): AI interview pending
 import { KavyaGiveDialog } from '../aicalling/KavyaTab.jsx'; // Kavya: the Telugu / Hindi / English AI caller on our own server (2026-11-12)
+import { ListFilterStrip, useListXf } from '../ats/ListFilters.jsx';
 import JobMatchDialog from './JobMatchDialog.jsx'; // JOB PORTAL AI calling: another matching job
 
 // ---------------------------------------------------------------------------
@@ -87,16 +88,17 @@ export default function JobPortalCandidates({ onSentToAts }) {
     try { return { ...EMPTY_FILTERS, origin: new URLSearchParams(window.location.search).get('source') || '' }; } catch { return EMPTY_FILTERS; }
   });
   const setFilter = (patch) => setFilters((f) => ({ ...f, ...patch }));
+  const xf = useListXf('portal', user); // applied date, status, source, location (components/ats/ListFilters.jsx)
 
   const load = useCallback(() => {
     if (!allowed) return;
-    api.get('/job-portal/applications')
+    api.get('/job-portal/applications', { params: xf.params })
       .then((r) => { setApps(r.data); })
       .catch((e) => {
         setApps({ applications: [], permissions: { import: false } });
         setError(e.response?.data?.error || 'Could not load the job portal list. Please try again.');
       });
-  }, [allowed]);
+  }, [allowed, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(load, [load]);
 
   const applications = apps?.applications || [];
@@ -184,6 +186,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
         ))}
       </div>
 
+      <ListFilterStrip list="portal" xf={xf} user={user} noun="applications" />
       <div className="filter-row">
         <input
           type="text"

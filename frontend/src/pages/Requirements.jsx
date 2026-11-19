@@ -1,5 +1,6 @@
 import { cloneElement, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { ListFilterStrip, useListXf } from '../components/ats/ListFilters.jsx';
 import api from '../api';
 import RequirementForm from '../components/RequirementForm.jsx';
 import PostingStatusPanel from '../components/jobs/PostingStatusPanel.jsx';
@@ -428,14 +429,16 @@ export default function Requirements() {
     if (mayRequestJob) setShowRequest(true);
   }, [newDone, clientsReady, mayRequestJob]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const xf = useListXf('requirements', user); // days open, openings left, CTC, industry, posted, work mode (components/ats/ListFilters.jsx)
   const params = useMemo(() => {
     const p = { ...(canFilter.hierarchy ? toRequirementParams(h, tree.data) : {}) };
     Object.entries(filters).forEach(([k, v]) => { if (v && k !== 'bde') p[k] = v; });
     if (filters.bde) { const b = splitPersonValue(filters.bde); if (b.id) p.bdeId = b.id; else if (b.name) p.bdeName = b.name; }
     if (postWaitOn) p.postWait = '1';
     if (postedOn) p.postedOn = postedOn;
+    Object.assign(p, xf.params);
     return p;
-  }, [filters, h, tree.data, postWaitOn, postedOn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filters, h, tree.data, postWaitOn, postedOn, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   const paramKey = JSON.stringify(params);
 
   useEffect(() => { setPage(1); }, [paramKey, view, sort, dir, size, showClosed]);
@@ -1189,6 +1192,7 @@ export default function Requirements() {
               />
               {/* [ Filters (n) ] [ Sort ] [ quick views ] — chips + Clear all below.
                   Search is on the filter card; Columns ⚙ in the Filters panel footer. */}
+              <ListFilterStrip list="requirements" xf={xf} user={user} total={data && data.total != null ? data.total : null} noun="requirements" />
               <ListToolbar
                 filterCount={panelCount}
                 panel={panel}

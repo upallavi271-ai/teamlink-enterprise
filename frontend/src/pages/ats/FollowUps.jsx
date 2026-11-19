@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import InboxPanel from '../../components/messaging/InboxPanel.jsx';
 import useUnreadReplies from '../../components/messaging/useUnreadReplies.js';
 import WaChats from '../../components/messaging/WaChats.jsx';
@@ -160,16 +161,17 @@ export default function FollowUps({ embedded = false }) {
   const [hier, setHier] = useState(EMPTY_HIERARCHY);
   const tree = useHierarchy();
   const hierKey = JSON.stringify(toParams(hier, tree.data));
+  const xf = useListXf('followups', user); // due, type, priority, candidate, requirement (components/ats/ListFilters.jsx)
   const lv = (tree.data && tree.data.viewer && tree.data.viewer.levels) || {};
   const showHier = !!(lv.department || lv.section || lv.tl || lv.recruiter);
 
   const load = useCallback(() => {
-    api.get('/followups/dashboard', { params: { rows: 'all', ...(older ? { older: '1' } : {}), ...JSON.parse(hierKey) } })
+    api.get('/followups/dashboard', { params: { rows: 'all', ...(older ? { older: '1' } : {}), ...JSON.parse(hierKey), ...xf.params } })
       .then((r) => { setData(r.data); setError(''); })
       .catch((err) => setError(err.response?.data?.error || (err.response?.status === 403
         ? 'Follow-ups are not part of your role.'
         : 'Could not load follow-ups. Please try again.')));
-  }, [hierKey, older]);
+  }, [hierKey, older, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(load, [load]);
 
   const mineLf = useListFilters((data && data.mine && data.mine.rows) || [], [
@@ -236,6 +238,7 @@ export default function FollowUps({ embedded = false }) {
           <HierarchyFilter value={hier} onChange={setHier} />
         </div>
       )}
+      <ListFilterStrip list="followups" xf={xf} user={user} noun="follow-ups" />
       <FilterChips filters={hierarchyChips(hier, tree.data, setHier)} onClearAll={() => setHier(EMPTY_HIERARCHY)} />
 
       {/* §27 — first, short, and each one has a button. */}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useSearchParams } from 'react-router-dom';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
@@ -443,8 +444,9 @@ export default function InterviewCalendar() {
     reminders && reminders.enabled ? 'Candidate emails are off. Messages are still saved on Communications. In-app notices still go.' : 'Candidate emails are on. Step messages, interview messages and offer letters now go out.',
   );
 
+  const xf = useListXf('interviews', user); // date range, status, round, mode, interviewer (components/ats/ListFilters.jsx)
   function serverParams() {
-    const params = {};
+    const params = { ...xf.params };
     const hp = toParams(hier, hierTree.data);
     ['tl', 'recruiter', 'positionCode'].forEach((k) => { if (hp[k]) params[k] = hp[k]; });
     if (mine && user && user.id) { params.recruiter = `id:${user.id}`; delete params.positionCode; }
@@ -1186,6 +1188,7 @@ export default function InterviewCalendar() {
             <>
               {layout === 'list' && <ViewBar view={views.recruitment} setView={(v) => { setDrill(null); setQuick(''); setView(v); }} counts={clientCounts} labels={CLIENT_VIEW_LABELS} hideZero={!isAdmin} base={['upcoming', 'completed', 'all']} />}
 
+              <ListFilterStrip list="interviews" xf={xf} user={user} noun="interviews" />
               <ListToolbar
                 filterCount={chips.length}
                 sort={sort}
