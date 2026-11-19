@@ -4,6 +4,7 @@ import api from '../../api';
 import FilterChips from '../../components/FilterChips.jsx';
 import './Search.css';
 import Combo from '../../components/Combo.jsx';
+import HistorySearch from '../../components/ats/HistorySearch.jsx'; // requirement / client history, as you type
 
 // ---------------------------------------------------------------------------
 // GLOBAL SEARCH (spec §24) — one simple box. Searches candidate name, phone
@@ -92,6 +93,7 @@ export default function Search() {
           <div className="page-sub">Candidate name, phone or Candidate ID · requirement ID or requirement title · client name, GSTIN or client code · employee name or Employee ID — only what your role may see</div>
         </div>
       </div>
+      <HistorySearch initial={urlQ} />
       <form className="filter-row" onSubmit={search}>
         <input
           style={{ flex: 1 }}

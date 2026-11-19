@@ -30,6 +30,7 @@ import AgreementTextEditor from '../components/agreements/AgreementTextEditor.js
 import TeamLinkSeal, { AuthImg } from '../components/agreements/TeamLinkSeal.jsx';
 // Spec B1: Client 360 -> Portal access (who at the client can sign in).
 import ClientPortalAccess from '../components/clients/ClientPortalAccess.jsx';
+import ClientHistory from '../components/ats/ClientHistory.jsx'; // History tab, top: shared / selected / joined / dropped across all the client's requirements
 import ClientHistoryView from '../components/joindrop/ClientHistoryView.jsx'; // History tab: the client date by date
 // Spec 6 — the agreement step badge (+ "Step N of 6").
 import {
@@ -592,6 +593,7 @@ export default function ClientDetail() {
       </div>
 
       {activeTab === 'work' && work && <ClientWork key={c.id} clientId={c.id} initial={work} onGoTab={setTab} />}
+      {activeTab === 'history' && <div className="card section"><ClientHistory key={`h${c.id}`} clientId={c.id} /></div>}
       {activeTab === 'history' && <div className="card section"><ClientHistoryView key={c.id} endpoint={`/join-drop/client-history/${c.id}`} /></div>}
       {activeTab === 'followups' && <FollowUpLog key={c.id} clientId={c.id} />}
 

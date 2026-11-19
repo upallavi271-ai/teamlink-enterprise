@@ -26,6 +26,7 @@ import { LocationCandidatesPanel } from '../components/jobs/RequirementReach.jsx
 import { JobLifecycleBar } from '../components/jobs/JobLifecycle.jsx';
 import JobPostingSites from '../components/jobs/JobPostingSites.jsx';
 import PostingStatusPanel from '../components/jobs/PostingStatusPanel.jsx'; // Save & Post: what happened on each site, right after saving
+import HistoryTab from '../components/ats/HistoryTab.jsx'; // History tab: shared / selected / joined / dropped with dates
 import DistributeTab from '../components/jobdist/DistributeTab.jsx'; // job distribution: the "Distribute" tab (Posting Kit, tracked links, Posted tracker)
 import JobPostingCard from '../components/jobpublish/JobPostingCard.jsx'; // job publishing engine: status per site + Post this job
 import PostingsTab from '../components/jobs/reqsplit/PostingsTab.jsx'; // the Postings tab: portal buttons + Post Status + copy-ready details (2026-10-16)
@@ -185,9 +186,9 @@ export const JOB_PORTAL = 'TeamLink Job Portal';
 //   → Candidates Available → On Hold / Closed
 const FLOW = ['DRAFT', 'AGREEMENT_CHECK', 'OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
 const PARKED = ['ON_HOLD', 'CLOSED'];
-const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', 'distribute', 'activity'];
+const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', 'distribute', 'history', 'activity'];
 const TAB_LABELS = {
-  overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', distribute: 'Postings', activity: 'Activity',
+  overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', distribute: 'Postings', history: 'History', activity: 'Activity',
 };
 // Pipeline filter on the Candidates tab — same buckets as the count tiles.
 const PIPE_FILTERS = [
@@ -1167,7 +1168,7 @@ export default function RequirementDetail() {
   const tabs = TABS.filter((t) => (t !== 'client' || r.internal || !r.sections || !!r.sections.clientContact)
     && (t !== 'agreement' || showAgreementTab));
   const bodies = {
-    overview, candidates: candidatesTab, recruiter: recruiterTab, client: clientTab, interviews: interviewsTab, agreement: agreementTab, distribute: <PostingsTab job={r} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load}><DistributeTab job={r} onChanged={load} /></PostingsTab>, activity: activityTab,
+    overview, candidates: candidatesTab, recruiter: recruiterTab, client: clientTab, interviews: interviewsTab, agreement: agreementTab, distribute: <PostingsTab job={r} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load}><DistributeTab job={r} onChanged={load} /></PostingsTab>, history: <div className="card section"><HistoryTab key={r.id} requirementId={r.id} /></div>, activity: activityTab,
   };
   const tabCount = { candidates: applications.length, interviews: interviewRows.length };
 

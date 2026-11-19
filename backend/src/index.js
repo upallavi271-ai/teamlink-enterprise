@@ -486,6 +486,8 @@ app.use('/api/ats/workflow', require('./routes/atsWorkflow'));
 app.use('/api/ats/joining-ctc', require('./routes/joiningCtc')); // the joined candidate's yearly CTC, entered by the requirement's BDE / BDE TL / Admin
 // Compare candidates, interview clash check, shared saved filters, leave cover (routes/atsTeamTools.js). Ahead of the calendar-gated /api/ats routers.
 app.use('/api/ats/team-tools', require('./routes/atsTeamTools'));
+// ATS History: one search + the complete history of a requirement and of a client (routes/atsHistory.js). Ahead of the calendar-gated /api/ats routers.
+app.use('/api/ats/history', require('./routes/atsHistory'));
 // Pipeline & checks (founder ATS audit 2026-11-17): stage names, sub-statuses, the share checklist, fee slabs (routes/atsFlowConfig.js).
 // Ahead of the calendar-gated /api/ats routers: GET /api/ats/stage-labels is read by every login.
 app.use('/api/ats', require('./routes/atsFlowConfig'));
