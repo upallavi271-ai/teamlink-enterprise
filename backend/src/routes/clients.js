@@ -551,6 +551,14 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
   const interviewsBy = sumBy(interviewRows);
   const selectedBy = sumBy(selectedRows);
   const joinedBy = sumBy(selectedRows.filter((g) => JOINED_SET.includes(g.stage)));
+  // utils/joinedRule.js: a person whose joining record says Dropped is not in the client's Joined number (the default); they are under Dropped.
+  const leftOut = await require('../utils/joinedRule').excludedIds(); // eslint-disable-line global-require
+  if (leftOut.size) {
+    const gone = sumBy(await prisma.application.groupBy({
+      by: ['requirementId'], where: { AND: [appScope, appClient, { stage: { in: JOINED_SET } }, { id: { in: [...leftOut] } }] }, _count: { _all: true },
+    }));
+    gone.forEach((n, cid) => joinedBy.set(cid, Math.max(0, (joinedBy.get(cid) || 0) - n)));
+  }
   const candidatesBy = sumBy(allAppRows);
   const jobsEverBy = new Map((jobsEverRows || []).map((g) => [g.clientId, g._count._all]));
 
@@ -1683,7 +1691,8 @@ router.get('/:id/overview', async (req, res) => {
   if (show('interviews')) out.interviews = shaped.filter((a) => a.interviewAt || a.interviewStatus || a.interviewCode);
   if (show('selected')) {
     out.selections = shaped.filter((a) => SELECTED_STAGES.includes(a.stage));
-    out.joinings = shaped.filter((a) => JOINED_STAGES.includes(a.stage));
+    const leftOut = await require('../utils/joinedRule').excludedIds(); // eslint-disable-line global-require
+    out.joinings = shaped.filter((a) => JOINED_STAGES.includes(a.stage) && !leftOut.has(a.id)); // a dropped person is under Dropped (utils/joinedRule.js)
   }
   if (replacements) out.replacements = replacements;
   if (replacementCases) {

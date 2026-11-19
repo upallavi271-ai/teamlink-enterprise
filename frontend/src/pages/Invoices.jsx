@@ -541,7 +541,7 @@ export default function Invoices() {
   // Header counts (S7.6): candidates on the invoices shown, and how many of
   // those placements the ATS marks as dropped.
   const shownCands = new Set(rows.map((r) => r.candidateId).filter(Boolean)).size;
-  const dropped = rows.filter((r) => /drop/i.test(String(r.joiningStatus || ''))).length;
+  const dropped = rows.filter((r) => /drop/i.test(String(r.joiningStatus || '')) || r.leftAfterJoining).length;
 
   // A saved view keeps EVERYTHING on screen: period (with its "Apply to"),
   // every filter incl. Recruiter, the age chip, grouping, sort and the
@@ -1093,7 +1093,7 @@ export default function Invoices() {
                         <td>{r.recruiter || '—'}</td>
                         <td>{r.tl || '—'}</td>
                         <td>{r.department || '—'}</td>
-                        <td><span className={`status ${r.joiningStatus === 'Dropped' ? 'priority-high' : 'priority-low'}`}>{r.joiningStatus || 'Joined'}</span></td>
+                        <td><span className={`status ${r.joiningStatus === 'Dropped' || r.leftAfterJoining ? 'priority-high' : 'priority-low'}`}>{r.leftAfterJoining ? 'Left after joining' : (r.joiningStatus || 'Joined')}</span></td>
                         <td>{r.rollStatus || '—'}</td>
                         <td style={{ whiteSpace: 'nowrap' }}>{r.joiningDate ? fmtD(r.joiningDate) : 'date not recorded'}</td>
                         <td className="num">{r.offeredCtc != null ? money(r.offeredCtc) : '—'}</td>

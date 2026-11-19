@@ -320,6 +320,10 @@ async function monthApplications(month, { fresh = false, withTest = false } = {}
         const got = await S.rows(`SELECT "applicationId","status","droppedOn","lastWorkingDay","dropReason","dropReasonDetail","dropWithinGuarantee","dropAfterIncentive" FROM "JoiningRecord" WHERE "applicationId" IN (${chunk.map(() => '?').join(',')})`, ...chunk);
         got.forEach((g) => byApp.set(g.applicationId, g));
       }
+      // utils/joinedRule.js: a person whose record says Dropped is NOT counted as Joined (switch "Count people who left after joining as Joined" OFF,
+      // the default): they move to the "not counted" side as "Left after joining", so every figure built from this (the dashboard card and its list,
+      // My results, the Daily report, the HRMS "3 of 4", payroll, Accounts' placements) is the same still-working number.
+      const leave = await require('./joinedRule').excludeDropped(); // eslint-disable-line global-require
       apps.forEach((r) => {
         const d = byApp.get(r.id);
         if (!d || d.status !== 'Dropped') return;
@@ -327,9 +331,13 @@ async function monthApplications(month, { fresh = false, withTest = false } = {}
           droppedOn: d.droppedOn, lastWorkingDay: d.lastWorkingDay || null, reason: d.dropReason, detail: d.dropReasonDetail || null,
           withinGuarantee: d.dropWithinGuarantee === 1, afterIncentive: d.dropAfterIncentive === 1,
         };
-        const note = `Dropped after joining${d.droppedOn ? ` on ${d.droppedOn}` : ''}${d.dropReason ? ` (${d.dropReason})` : ''}. Still counted here: a drop does not change a past count or incentive.${d.dropAfterIncentive === 1 ? ' An incentive was already decided for this month: HR to review.' : ''}`;
+        const rule = leave
+          ? 'Not counted as Joined (shown under Dropped); an incentive that was already decided is not changed.'
+          : 'Still counted here: a drop does not change a past count or incentive.';
+        const note = `Dropped after joining${d.droppedOn ? ` on ${d.droppedOn}` : ''}${d.dropReason ? ` (${d.dropReason})` : ''}. ${rule}${d.dropAfterIncentive === 1 ? ' An incentive was already decided for this month: HR to review.' : ''}`;
         r.note = r.note ? `${r.note} ${note}` : note;
         r.tone = 'orange';
+        if (leave && r.counted) { r.counted = false; r.status = 'Left after joining'; r.tone = 'red'; r.leftAfterJoining = true; }
       });
     }
   } catch { /* the note is a bonus: the count never depends on it */ }
@@ -341,7 +349,8 @@ async function monthApplications(month, { fresh = false, withTest = false } = {}
 // DROP-OUTS (founder 2026-11-11: "which joinings came and how many dropped, with the reason, in the monthly targets").
 //   left     a person who joined and then left: a Joining & Drop record says Dropped, or the step moved off Joined to Rejected
 //   notjoin  a person who had a joining date this month and never joined: did not join / offer declined
-// A drop never changes the Joinings count or an incentive (the rule above); it is shown beside it.
+// A drop leaves the Joinings count while the switch "Count people who left after joining as Joined" is OFF (utils/joinedRule.js, the default);
+// it never changes an incentive decision that was already made. Either way the person is listed here as a drop-out.
 function dropKind(r) {
   if (r.drop || /^Left after joining/.test(r.status || '')) return 'left';
   if (!r.counted && /^(Did not join|Offer declined)/.test(r.status || '')) return 'notjoin';
@@ -838,8 +847,19 @@ async function creditedJoinings(user, {
     }));
   });
   list.sort((a, b) => String(a.joiningDate).localeCompare(String(b.joiningDate)) || String(a.candidate).localeCompare(String(b.candidate)));
+  // The people who joined in the range and then left: NOT in `count` (utils/joinedRule.js), but said beside it ("2 left after joining").
+  const leftSeen = new Set();
+  const left = [];
+  boards.forEach((b) => {
+    rowsForViewer(user, b.rows, lv).filter((r) => r.kind !== 'BDE').forEach((r) => r.notCountedList.forEach((a) => {
+      if (!a.leftAfterJoining || leftSeen.has(a.id) || seen.has(a.id) || !a.joiningDate || a.joiningDate < f || a.joiningDate > t) return;
+      leftSeen.add(a.id);
+      left.push(a);
+    }));
+  });
   return {
     level: lv, from: f, to: t, months: months.reverse(), clamped, count: list.length, appIds: list.map((a) => a.id), list, target,
+    leftCount: left.length, leftAppIds: left.map((a) => a.id), left,
   };
 }
 
@@ -854,7 +874,7 @@ async function ownFigure(user, month = thisMonth()) {
   const tone = toneOf(cj.count, r.target);
   return {
     month, label: b.label, target: r.target, joinings: cj.count, tone, toneWord: TONE_WORD[tone],
-    seat: r.seat, appIds: cj.appIds, list: cj.list, notCounted: rows.flatMap((x) => x.notCountedList),
+    seat: r.seat, appIds: cj.appIds, list: cj.list, notCounted: rows.flatMap((x) => x.notCountedList), leftCount: cj.leftCount, leftAppIds: cj.leftAppIds,
   };
 }
 

@@ -4,6 +4,7 @@ const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth
 const { requireInternal, can } = require('../utils/permissions');
 const { invoiceWhere, matches, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
+const JRULE = require('../utils/joinedRule');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, dueDateFor,
   receiptProblem, invoiceAfterReceipt, isOpenInvoice,
@@ -187,6 +188,7 @@ async function selectedNotJoined() {
 // exists for that candidate + requirement. An older invoice that carries no
 // requirement is matched on candidate + client instead.
 async function pendingJoinGroups(hier) {
+  await JRULE.refresh();
   const joined = await prisma.application.findMany({
     where: {
       stage: { in: ['JOINED', 'HIRED'] },
@@ -249,6 +251,7 @@ async function pendingJoinGroups(hier) {
       recruiter: a.requirement?.recruiter?.name || null,
       // what the ATS knows about this joining, shown beside it in Accounts (founder 2026-11-14)
       joiningStatus: a.joiningStatus || null,
+      leftAfterJoining: ['JOINED', 'HIRED'].includes(a.stage) && JRULE.droppedNow(a.id),
       rollStatus: a.rollStatus || null,
       reqCode: a.requirement?.reqCode || null,
       phone: a.candidate?.phone || null,
@@ -457,6 +460,7 @@ async function placementFacts(invoices, hier) {
   }
   const byCand = new Map();
   apps.forEach((a) => byCand.set(a.candidateId, [...(byCand.get(a.candidateId) || []), a]));
+  await JRULE.refresh(); // a person who left after joining keeps their invoice, tagged "Left after joining" (utils/joinedRule.js)
   return (inv) => {
     const list = byCand.get(inv.candidateId) || [];
     const exact = inv.requirementId ? list.find((a) => a.requirementId === inv.requirementId) : null;
@@ -498,6 +502,8 @@ async function placementFacts(invoices, hier) {
       // the joining record). If the ATS has since moved the person to Joined/Hired, they joined.
       joiningStatus: app && app.joiningStatus === 'Dropped' && (app.stage === 'JOINED' || app.stage === 'HIRED')
         ? 'Joined' : (app?.joiningStatus || null),
+      // joined, then left (the joining record says Dropped): the invoice stays as it is; only the tag changes
+      leftAfterJoining: !!(app && (app.stage === 'JOINED' || app.stage === 'HIRED') && JRULE.droppedNow(app.id)),
     };
   };
 }
@@ -712,6 +718,7 @@ async function buildRegister(user, query) {
       // Payment-date period filter — no figure is worked out from them.
       candidatePhone: i.candidate?.phone || null,
       joiningStatus: fx.joiningStatus || null,
+      leftAfterJoining: !!fx.leftAfterJoining,
       paidDate: i.paidDate || null,
       clientPayingGst: gst > 0.5,
       // Money, in the prototype's own column order: before GST, GST, after GST,
@@ -826,6 +833,7 @@ async function buildRegister(user, query) {
     tlSeat: tlSeatOf(hier, r),
     // what the ATS knows about the joining, shown beside it in Accounts (founder 2026-11-14)
     joiningStatus: r.joiningStatus || null,
+    leftAfterJoining: !!r.leftAfterJoining,
     rollStatus: r.rollStatus || null,
     reqCode: r.reqCode || null,
     phone: r.phone || null,

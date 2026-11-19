@@ -56,6 +56,10 @@ const isTest = (s) => TEST_RE.test(String(s || ''));
 const CLOSED = ['REJECTED', 'JOINED', 'HIRED'];
 const NOT_ACTIVE = ['REJECTED', 'HOLD', 'JOINED', 'HIRED'];
 const JOINED = ['JOINED', 'HIRED'];
+// utils/joinedRule.js: a person whose Joining & Drop record says Dropped is not a Joined person for any count or list here (switch
+// "Count people who left after joining as Joined", OFF by default). The step stays Joined (history); worldOf() loads the rule first.
+const JRULE = require('./joinedRule');
+const isJoined = (x) => JOINED.includes(x.a.stage) && !JRULE.excluded(x.a.id);
 const SELECTED_NOT_JOINED = ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'];
 const CLIENT_DECISION = ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'];
 const CLIENT_CHAIN = ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED', 'INTERVIEW_SCHEDULED',
@@ -339,6 +343,7 @@ async function worldFor(user, opts = {}) {
 // department out of it (dropsAndMonths), so a TL sees every joining / drop / replacement of their department.
 const companyWorld = (opts = {}) => worldOf({}, {}, opts);
 async function worldOf(appWhere, reqWhere, { fresh = false } = {}) {
+  await JRULE.refresh({ fresh }); // who is a dropped person (utils/joinedRule.js): the Joined counts below read it synchronously
   // ?fresh=1 (a bulk action, the reminders, the tests): the next-action snapshot must be current too, not only the rows.
   if (fresh) await NA.ensureNextActionContext({ fresh: true });
   const today = NA.todayIst();
@@ -647,12 +652,14 @@ const joinDay = (x) => {
   const ev = evs.find((e) => JOINED.includes(e.to) && !JOINED.includes(e.from)) || [...evs].reverse().find((e) => JOINED.includes(e.to));
   return ev && ev.at ? NA.istDay(ev.at) : null;
 };
-const joinedSince = (x, dayFrom, dayTo, any = false) => {
-  if (!JOINED.includes(x.a.stage)) return false;
+const joinDayIn = (x, dayFrom, dayTo, any = false) => {
   if (any) return true;
   const d = joinDay(x);
   return !!d && d >= dayFrom && d <= dayTo;
 };
+const joinedSince = (x, dayFrom, dayTo, any = false) => isJoined(x) && joinDayIn(x, dayFrom, dayTo, any);
+// Joined in the period and since left (a Dropped record), while the Joined count leaves them out: "N left after joining" under the Joined card.
+const leftSince = (x, dayFrom, dayTo, any = false) => JOINED.includes(x.a.stage) && JRULE.excluded(x.a.id) && joinDayIn(x, dayFrom, dayTo, any);
 // WHERE A JOINED PERSON'S DAY COMES FROM (2026-10-10, "why is Joined empty?"):
 //   entered  a joining date someone typed (year 2015–2100)
 //   stamp    the joinedAt stamp
@@ -693,7 +700,7 @@ function isBacklogJob(r) {
 // Everyone marked Joined in `rows`, split by where their joining day comes from.
 // Makes the lists: joined-total, joined-nodate, joined-wrongdate.
 function joinedFigures(b, rows) {
-  const joined = rows.filter((x) => JOINED.includes(x.a.stage));
+  const joined = rows.filter(isJoined);
   const facts = joined.map((x) => ({ x, f: joinFacts(x) }));
   const noDate = facts.filter(({ f }) => !f.day && !f.wrong).map(({ x }) => x);
   const wrong = facts.filter(({ f }) => f.wrong).map(({ x }) => x);
@@ -754,6 +761,12 @@ function dropExtra(r) {
     replacement: repl, replTone, note: `Left ${r.droppedOn ? dmyShort(r.droppedOn) : '(day not recorded)'}${reason ? ` · ${reason}` : ''} · ${repl}`, tone: replTone === 'red' ? 'red' : 'amber',
   };
 }
+// The list behind "N left after joining" on a joinings card credited by utils/recruiterJoinings.js (ids only): the drop day and reason from the record.
+const leftExtraOfIds = (appIds) => new Map(appIds.map((id) => {
+  const d = JRULE.dropInfo(id) || {};
+  const within = d.within === true ? ' · inside the replacement period' : (d.within === false ? ' · after the replacement period' : '');
+  return [id, { dropKind: 'left', droppedOn: d.droppedOn || null, dropReason: d.reason || null, inGuarantee: d.within === undefined ? null : d.within, note: `Left ${d.droppedOn ? dmyShort(d.droppedOn) : '(day not recorded)'}${d.reason ? ` · ${d.reason}` : ''}${within}`, tone: 'amber' }];
+}));
 const nojoinExtra = (day) => ({ dropKind: 'nojoin', droppedOn: day, joinedOn: null, dropReason: null, replacement: null, note: `Did not join · ${dmyShort(day)}`, tone: 'amber' });
 // a set over these rows (the department / company copy for a TL, the BDE TL and the admins: setRows reads set.world)
 const recSetOf = (b, w, id, title, list) => {
@@ -805,7 +818,7 @@ function monthsWidget(c, b, rows, w, recs, scopeWord = '') {
   for (let m = c.today.slice(0, 7), i = 0; i < 6; i += 1, m = prevMonthOf(m)) months.push(m);
   const ids = new Set(rows.map((x) => x.a.id));
   const left = recs.filter((r) => ids.has(r.applicationId));
-  const joined = rows.filter((x) => JOINED.includes(x.a.stage)).map((x) => ({ x, day: joinFacts(x).day }));
+  const joined = rows.filter(isJoined).map((x) => ({ x, day: joinFacts(x).day }));
   const noJoin = noJoinOf(rows, recs);
   const asked = (r) => r.replacementDecision === 'NEEDED' || ['Requested', 'New candidate added', 'Closed'].includes(r.replacementStatus);
   const sfx = scopeWord ? ` · ${scopeWord}` : '';
@@ -1013,7 +1026,7 @@ function departmentsTable(c, b, k) {
       if (x.na.dueStatus === 'overdue') row(dep).late.push(x.a.id);
       if (SELECTED_NOT_JOINED.includes(x.a.stage)) row(dep).selected.push(x.a.id);
     }
-    if (JOINED.includes(x.a.stage)) row(dep).joinedTotal.push(x.a.id);
+    if (isJoined(x)) row(dep).joinedTotal.push(x.a.id);
     if (joinedSince(x, c.period.from, c.period.to, c.period.key === 'all')) row(dep).joined.push(x.a.id);
   });
   const TITLE = {
@@ -1118,7 +1131,7 @@ function funnel(c, b, sel, { title = 'Hiring progress' } = {}) {
     ['Sent to client', (x) => hit(x, CLIENT_CHAIN) || interviewed(x), 'Reached "Sent to client" or any later step, or has an interview date.'],
     ['Interview', (x) => hit(x, INTERVIEW_ON) || interviewed(x), 'Has an interview date, or reached "Interview fixed" or later.'],
     ['Selected', (x) => hit(x, SELECTED_ON), 'Reached Selected, Offer, Waiting to join or Joined.'],
-    ['Joined', (x) => hit(x, JOINED), 'Joined.'],
+    ['Joined', (x) => hit(x, JOINED) && !JRULE.excluded(x.a.id), 'Joined.'],
   ];
   const n0 = apps.length;
   return {
@@ -1256,8 +1269,15 @@ async function buildHome(user, req) {
   addSet(b, 'people', { kind: 'app', title: 'Applications in process', ids: ids(people), extra: extraOf(people.filter((x) => x.na)) });
   addSet(b, 'selected', { kind: 'app', title: 'Selected — not joined yet', ids: ids(selected), extra: extraOf(selected) });
   addSet(b, 'joined', { kind: 'app', title: `Joined ${c.word}`, ids: ids(joined), extra: joinExtraOf(joined) });
+  // Joined in the period and left since (their record says Dropped): not in the Joined number, listed under Dropped; the card says how many and opens them.
+  const leftOfJoined = sel.filter((x) => leftSince(x, c.period.from, c.period.to, c.period.key === 'all'));
+  if (leftOfJoined.length) {
+    const leftIds = new Set(leftOfJoined.map((x) => x.a.id));
+    const leftRecs = (await droppedRecords()).filter((r) => leftIds.has(r.applicationId));
+    recSetOf(b, w, 'joined-left', `Left after joining · joined ${c.word}`, leftRecs);
+  }
   // Everyone marked Joined in this view, whatever the date: the tile says so under the number.
-  const joinedEver = sel.filter((x) => JOINED.includes(x.a.stage)).length;
+  const joinedEver = sel.filter(isJoined).length;
   // "New" / "added" never count a bulk import's own rows (they are not work).
   const bulk = NA.snapshot().bulkDays || new Set();
   const real = (v) => !bulk.has(NA.istDay(v));
@@ -1271,6 +1291,7 @@ async function buildHome(user, req) {
     selected: (label = 'Selected, not joined') => tile('selected', label, selected.length, 'now', { drill: 'selected', sub: selectedIn(c.period) ? `${fmtN(selectedIn(c.period))} selected ${c.word}` : null, zero: 'Nobody waiting to join' }),
     joined: (label = `Joined ${c.word}`) => tile('joined', label, joined.length, 'range', {
       drill: 'joined', delta: delta(c, joined.length, joinedPrev),
+      ...(leftOfJoined.length ? { stillWorking: joined.length, left: { n: leftOfJoined.length, drill: 'joined-left', text: `${fmtN(leftOfJoined.length)} left after joining (shown under Dropped)` } } : {}),
       sub: c.period.key !== 'all' && joinedEver ? `${fmtN(joinedEver)} joined in total` : null,
       zero: c.period.key !== 'all' && joinedEver ? `None ${c.word} · ${fmtN(joinedEver)} in total` : `No joinings ${c.word}`,
     }),
@@ -1642,7 +1663,7 @@ function departmentsV3(c, b, k) {
       if (x.na.dueStatus === 'overdue') row(dep).late.push(x.a.id);
       if (SELECTED_NOT_JOINED.includes(x.a.stage)) row(dep).selected.push(x.a.id);
     }
-    if (JOINED.includes(x.a.stage)) row(dep).joinedTotal.push(x.a.id);
+    if (isJoined(x)) row(dep).joinedTotal.push(x.a.id);
     if (joinedSince(x, c.period.from, c.period.to, c.period.key === 'all')) row(dep).joined.push(x.a.id);
   });
   const TITLE = { openJobs: 'Open requirements', submitted: `Sent to client ${c.word}`, interviews: `Interviews ${c.word}`, selected: 'Selected, not joined', joined: `Joined ${c.word}`, joinedTotal: 'Joined in total', late: 'Late' };
@@ -1853,7 +1874,11 @@ async function leadHome(c, b, k) {
       const month = c.today.slice(0, 7);
       const team = await require('./recruiterJoinings').creditedJoinings(c.user, { month, level: 'team' }); // eslint-disable-line global-require
       addSet(b, 'my-joins', { kind: 'app', title: "My team's joinings this month", ids: team.appIds });
-      b.top.push(tile('my-joins', "My team's joinings this month", team.appIds.length, 'range', { drill: 'my-joins', zero: 'No joinings yet this month' }));
+      if (team.leftCount) addSet(b, 'my-joins-left', { kind: 'app', title: "My team: left after joining (joined this month)", ids: team.leftAppIds, extra: leftExtraOfIds(team.leftAppIds) });
+      b.top.push(tile('my-joins', "My team's joinings this month", team.appIds.length, 'range', {
+        drill: 'my-joins', zero: 'No joinings yet this month',
+        ...(team.leftCount ? { stillWorking: team.appIds.length, left: { n: team.leftCount, drill: 'my-joins-left', text: `${fmtN(team.leftCount)} left after joining (shown under Dropped)` } } : {}),
+      }));
     } catch (err) { console.error('[atsHome] team joinings failed:', err.message); } // eslint-disable-line no-console
   }
   const workload = { ...teamSnapshot(c, b, k, { title: L === 'tl' ? 'My recruiters' : 'Team snapshot' }), size: 'half' };
@@ -1966,6 +1991,7 @@ async function recruiterHome(c, b, k) {
   // My joins this month vs target.
   const month = c.today.slice(0, 7);
   let myJoinIds = ids(sel.filter((x) => joinedSince(x, `${month}-01`, c.today)));
+  let myLeft = null;
   const tg = await targetFor(c.user, month);
   // JOININGS CREDITED TO THIS LOGIN (utils/recruiterJoinings.js creditedJoinings, the ONE function): the card, the list it
   // opens and My results / the reports read the same rows, so they always agree - a joining credited by name, or on a job
@@ -1973,10 +1999,11 @@ async function recruiterHome(c, b, k) {
   try {
     const own = await require('./recruiterJoinings').creditedJoinings(c.user, { month, level: 'self' }); // eslint-disable-line global-require
     myJoinIds = own.appIds;
+    if (own.leftCount) { myLeft = { n: own.leftCount, drill: 'my-joins-left', text: `${fmtN(own.leftCount)} left after joining (shown under Dropped)` }; addSet(b, 'my-joins-left', { kind: 'app', title: 'Left after joining (joined this month)', ids: own.leftAppIds, extra: leftExtraOfIds(own.leftAppIds) }); }
     if (tg.joinings == null && own.target != null) tg.joinings = own.target;
   } catch (err) { console.error('[atsHome] my joinings failed:', err.message); } // eslint-disable-line no-console
   addSet(b, 'my-joins', { kind: 'app', title: 'My joinings this month', ids: myJoinIds });
-  const target = { id: 'target', type: 'target', size: 'half', title: 'My joinings this month', value: myJoinIds.length, target: tg.joinings, drill: 'my-joins', zero: 'No joinings yet this month', noTarget: 'No target set yet' };
+  const target = { id: 'target', type: 'target', size: 'half', title: 'My joinings this month', value: myJoinIds.length, target: tg.joinings, drill: 'my-joins', zero: 'No joinings yet this month', noTarget: 'No target set yet', ...(myLeft ? { stillWorking: myJoinIds.length, left: myLeft } : {}) };
   b.top = [];
   // MY MISSED ITEMS (user, 2026-10-12): what I missed - follow-ups, tasks and to-dos, late steps, feedback not recorded, calls not made - with an Open button each.
   // The box asks for its own rows (GET /pending-work/my-missed, utils/missedItems.js), so the reminders have a place to land.
@@ -2228,7 +2255,7 @@ const STEP5 = ['On this requirement', 'Sent to client', 'Interview', 'Selected',
 // an interview date counts as proof of the interview (old imported trackers).
 function stepLevel(x) {
   const hit = (set) => set.includes(x.a.stage) || x.evs.some((e) => set.includes(e.to));
-  if (hit(JOINED)) return 4;
+  if (hit(JOINED) && !JRULE.excluded(x.a.id)) return 4;
   if (hit(SELECTED_ON)) return 3;
   if (hit(INTERVIEW_ON) || (x.a.interviewAt && liveInterview(x.a))) return 2;
   if (hit(CLIENT_CHAIN)) return 1;
@@ -2493,7 +2520,7 @@ async function tlsList(user, b) {
       interviews: { kind: 'app', ids: ids(mine.filter((x) => x.a.interviewAt && liveInterview(x.a) && inPeriod(msOf(x.a.interviewAt), c.period))), title: `Interviews ${c.word}` },
       selected: { kind: 'app', ids: ids(mine.filter((x) => SELECTED_NOT_JOINED.includes(x.a.stage))), title: 'Selected, not joined' },
       joined: { kind: 'app', ids: ids(mine.filter((x) => joinedSince(x, c.period.from, c.period.to, c.period.key === 'all'))), title: `Joined ${c.word}` },
-      joinedTotal: { kind: 'app', ids: ids(mine.filter((x) => JOINED.includes(x.a.stage))), title: 'Joined in total' },
+      joinedTotal: { kind: 'app', ids: ids(mine.filter(isJoined)), title: 'Joined in total' },
       late: { kind: 'app', ids: ids(mine.filter((x) => x.live && x.na && x.na.dueStatus === 'overdue')), title: 'Late' },
     };
     const out = { drills: {} };
@@ -2936,6 +2963,8 @@ async function closeStale(user, { target, reason, stages, expected }) {
 const BOARDS = new Map(); // key -> { at, b }
 const BOARD_MAX = 60;
 const BOARD_MAX_AGE_MS = 120 * 1000;
+// a drop reported / withdrawn, or the Joined-count switch changed (utils/joinedRule.js): every finished board was counted under the old rule
+const forgetBoards = () => BOARDS.clear();
 const DRILL_KEY = (k) => k.startsWith('d_') || ['set', 'limit', 'format', 'fresh'].includes(k);
 function boardKey(user, req) {
   const q = (req && req.query) || {};
@@ -2948,13 +2977,13 @@ async function buildHomeCached(user, req) {
   if (!fresh) {
     const hit = BOARDS.get(key);
     if (hit && Date.now() - hit.at < BOARD_MAX_AGE_MS) {
-      const w = await worldFor(user);
-      if (w === hit.b.world) return hit.b;
+      const w = await worldFor(user); // (also reloads utils/joinedRule.js, so stateKey() below is current)
+      if (w === hit.b.world && hit.sk === JRULE.stateKey()) return hit.b;
     }
   }
   const b = await buildHome(user, req);
   BOARDS.delete(key);
-  BOARDS.set(key, { at: Date.now(), b });
+  BOARDS.set(key, { at: Date.now(), b, sk: JRULE.stateKey() });
   while (BOARDS.size > BOARD_MAX) BOARDS.delete(BOARDS.keys().next().value);
   return b;
 }
@@ -2987,7 +3016,7 @@ async function pendingLoad(user, { by = 'recruiter', fresh = false } = {}) {
 
 module.exports = {
   pendingLoad, personGroups,
-  healthDot, buildHome, buildHomeCached, homeList, exportTable, publicHome, closeStale, layoutOf, worldFor, STALE_TARGETS, STEP_WORDS, stepWord, DUE_WORDS,
+  forgetBoards, healthDot, buildHome, buildHomeCached, homeList, exportTable, publicHome, closeStale, layoutOf, worldFor, STALE_TARGETS, STEP_WORDS, stepWord, DUE_WORDS,
   warmCompanyWorld, // utils/candidateWarmup.js runs after it (the dashboard is the first page)
   // Reports hide test / demo rows by this same rule (routes/atsReports.js, 2026-10-03).
   isTest,

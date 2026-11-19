@@ -148,6 +148,7 @@ const PIPE_OF = {};
 PIPE.forEach((g) => g.stages.forEach((s) => { PIPE_OF[s] = g; }));
 const CLOSED_STAGES = ['REJECTED', 'JOINED', 'HIRED']; // the dashboard's own list
 const JOINED_STAGES = ['JOINED', 'HIRED'];
+const JRULE = require('../utils/joinedRule');
 const BEFORE_SELECTED = PIPE.slice(0, PIPE.findIndex((g) => g.id === 'selected')).flatMap((g) => g.stages);
 
 // The steps "reached" is measured at, as positions on the stage chain.
@@ -473,6 +474,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   await resolveReportPeople(f);
+  await JRULE.refresh(); // utils/joinedRule.js: a person whose record says Dropped is not a Joined person in any report
   const appWhere = applicationsWhere(user, f, appDate);
   // The company-wide rows are shared (utils/reportAggregates.js); the scope is
   // the SAME Prisma where as before, asked only for its ids, and applied to them.
@@ -525,7 +527,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
   // Everything about an application that does NOT depend on the clock is worked
   // out once per copy of the data (DERIVED, keyed like utils/reportAggregates.js);
   // each request only adds what depends on today / its own scope.
-  const derivedKey = `${base.key}#${users.map((u) => `${u.id}:${u.name}:${u.team}`).join('|')}`; // person() reads the users
+  const derivedKey = `${base.key}#${JRULE.stateKey()}#${users.map((u) => `${u.id}:${u.name}:${u.team}`).join('|')}`; // person() reads the users
   if (DERIVED.key !== derivedKey) DERIVED = { key: derivedKey, map: new Map() };
   const derived = DERIVED.map;
   const deriveApp = (a, r) => {
@@ -540,7 +542,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
     if (a.offerStatus === 'Offer Accepted') reach = Math.max(reach, M.accepted);
     const lastReject = [...evs].reverse().find((e) => e.toStage === 'REJECTED');
     if (lastReject && lastReject.actorSide === 'Client') reach = Math.max(reach, M.shared);
-    const joined = JOINED_STAGES.includes(a.stage);
+    const joined = JOINED_STAGES.includes(a.stage) && !JRULE.excluded(a.id); // a drop leaves Joined (utils/joinedRule.js)
     if (!joined) reach = Math.min(reach, M.accepted);
 
     // When it entered the stage it is in: its last move INTO that stage, or

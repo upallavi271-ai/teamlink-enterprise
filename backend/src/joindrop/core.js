@@ -123,6 +123,10 @@ async function update(recordId, patch) {
   if (!keys.length) return get(recordId);
   const sets = keys.map((k) => `"${k}" = ?`).join(', ');
   await S.run(`UPDATE "JoiningRecord" SET ${sets}, "updatedAt" = ? WHERE "id" = ?`, ...keys.map((k) => (patch[k] === undefined ? null : patch[k])), V.nowIso(), recordId);
+  // a drop reported / withdrawn (and its day / reason corrected) changes who is "Joined" in every list and number (utils/joinedRule.js)
+  if (keys.some((k) => k === 'status' || k === 'droppedOn' || k === 'dropReason' || k === 'dropReasonDetail' || k === 'dropWithinGuarantee')) {
+    try { require('../utils/joinedRule').invalidate(); } catch (e) { console.error('[join-drop] joined rule:', e.message); } // eslint-disable-line global-require
+  }
   return get(recordId);
 }
 

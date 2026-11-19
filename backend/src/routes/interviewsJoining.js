@@ -29,6 +29,7 @@ const prisma = require('../db');
 const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
 const { applicationWhere, atsScopeOf: scopeOf, OUT_OF_SCOPE } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
+const JRULE = require('../utils/joinedRule');
 const { notifyUsers } = require('../utils/notify');
 const { withClientBdes } = require('../utils/clientBdes');
 const {
@@ -922,6 +923,7 @@ router.get('/joining', requirePerm('ats', 'interviews', 'Joining', 'view'), asyn
   // over to Accounts; an internal hire goes on to HRMS.
   const got = await listOrPage(req, res, { stage: { in: ['OFFER_ACCEPTED', 'JOINED', 'HIRED'] } }, 'joining');
   if (got.done) return;
+  await JRULE.refresh();
   const { rows, paging } = got;
   const clientIds = [...new Set(rows.map((r) => r.requirement.client && r.requirement.client.id).filter(Boolean))];
   const terms = clientIds.length
@@ -956,6 +958,8 @@ router.get('/joining', requirePerm('ats', 'interviews', 'Joining', 'view'), asyn
       ...r,
       // "Waiting to join": accepted, not joined, not dropped — oldest first.
       waitingToJoin: r.stage === 'OFFER_ACCEPTED' && !['Joined', 'Dropped'].includes(r.joiningStatus),
+      // joined, then left (the record says Dropped): shown under "Left / did not join", not Joined (utils/joinedRule.js)
+      leftAfterJoining: ['JOINED', 'HIRED'].includes(r.stage) && JRULE.excluded(r.id),
       waitingSince,
       daysWaiting: waitingSince ? Math.max(0, Math.floor((Date.now() - new Date(waitingSince).getTime()) / DAYMS)) : null,
       call: call ? { at: call.createdAt, note: call.comment, by: call.actorName } : null,

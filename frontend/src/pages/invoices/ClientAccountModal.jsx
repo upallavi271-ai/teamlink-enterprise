@@ -123,7 +123,7 @@ export default function ClientAccountModal({ clientId, clientName, pending = [],
                         <td><b>{r.name}</b></td>
                         <td>{r.role || r.requirement || '—'}</td>
                         <td>{r.joiningDate ? fmtD(r.joiningDate) : 'date not recorded'}</td>
-                        <td><span className={`status ${r.joiningStatus === 'Dropped' ? 'priority-high' : 'priority-low'}`}>{r.joiningStatus || 'Joined'}</span></td>
+                        <td><span className={`status ${r.joiningStatus === 'Dropped' || r.leftAfterJoining ? 'priority-high' : 'priority-low'}`}>{r.leftAfterJoining ? 'Left after joining' : (r.joiningStatus || 'Joined')}</span></td>
                         <td className="num">{r.billing != null ? money2(r.billing) : <span className="small-muted">CTC / fee needed</span>}</td>
                       </tr>
                     ))}

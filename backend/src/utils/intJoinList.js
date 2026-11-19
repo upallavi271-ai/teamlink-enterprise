@@ -94,7 +94,8 @@ function joiningViewId(app) {
   // A stale "did not join" flag does not undo a Joined/Hired stage (the person did join).
   if (app.joiningStatus === 'Dropped' && !['JOINED', 'HIRED'].includes(app.stage)) return 'dropped';
   if (waitingToJoin(app)) return 'waiting';
-  if (['JOINED', 'HIRED'].includes(app.stage)) return 'joined';
+  // utils/joinedRule.js: a joined person whose record says Dropped is under "Left / did not join", not Joined (the default)
+  if (['JOINED', 'HIRED'].includes(app.stage)) return require('./joinedRule').excluded(app.id) ? 'dropped' : 'joined'; // eslint-disable-line global-require
   return 'all';
 }
 
@@ -261,6 +262,7 @@ async function leanApps(req, where, kind) {
 
 // One lean row per application in the caller's area.
 async function leanItems(req, where, kind) {
+  await require('./joinedRule').refresh(); // eslint-disable-line global-require
   const select = kind === 'feedback'
     ? { ...LEAN_SELECT, interviewFeedbacks: { where: { kind: 'Internal' }, select: { id: true } } }
     : LEAN_SELECT;

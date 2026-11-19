@@ -131,9 +131,11 @@ async function build(user, clientId, { kind = 'full' } = {}) {
   // --- joinings, drops, replacements (this feature) ---
   const recs = await S.rows('SELECT * FROM "JoiningRecord" WHERE "clientId" = ? ORDER BY COALESCE("joinedOn", \'\') ASC', clientId);
   const liveRecs = recs.filter((r) => !isTest(r.candidateName));
+  // utils/joinedRule.js: a person who dropped is under Dropped, not Joined (the default); their joining day is said inside the drop line instead.
+  const leave = await require('../utils/joinedRule').excludeDropped(); // eslint-disable-line global-require
   liveRecs.forEach((r) => {
-    if (r.joinedOn) push({ group: 'Joining', title: `${r.candidateName} joined as ${r.designation || r.jobTitle || 'the job'}`, day: r.joinedOn, who: null, detail: `${r.location || 'Place not recorded'}${r.guaranteeEndsOn ? ` · replacement period until ${V.dmy(r.guaranteeEndsOn)}` : ''}` });
-    if (r.status === 'Dropped' && r.droppedOn) push({ group: 'Drop', title: `${r.candidateName} dropped`, day: r.droppedOn, who: portal ? null : r.dropReportedByName, detail: `Reason: ${r.dropReason || 'Not recorded'}${r.dropWithinGuarantee === 1 ? ' · inside the replacement period' : ''}` });
+    if (r.joinedOn && !(leave && r.status === 'Dropped')) push({ group: 'Joining', title: `${r.candidateName} joined as ${r.designation || r.jobTitle || 'the job'}`, day: r.joinedOn, who: null, detail: `${r.location || 'Place not recorded'}${r.guaranteeEndsOn ? ` · replacement period until ${V.dmy(r.guaranteeEndsOn)}` : ''}` });
+    if (r.status === 'Dropped' && (r.droppedOn || (leave && r.joinedOn))) push({ group: 'Drop', title: `${r.candidateName} dropped`, day: r.droppedOn || r.joinedOn, who: portal ? null : r.dropReportedByName, detail: `${leave && r.joinedOn ? `Joined ${V.dmy(r.joinedOn)}, left ${r.droppedOn ? V.dmy(r.droppedOn) : '(day not recorded)'} · ` : ''}Reason: ${r.dropReason || 'Not recorded'}${r.dropWithinGuarantee === 1 ? ' · inside the replacement period' : (r.dropWithinGuarantee === 0 ? ' · after the replacement period' : '')}` });
     if (r.replacementDecision) push({ group: 'Replacement', title: `Replacement: ${V.DECISIONS[r.replacementDecision].label} (${r.candidateName})`, at: r.replacementDecidedAt, who: portal ? null : r.replacementDecidedByName, detail: r.replacementComment || null });
     if (r.replacementStatus === V.REPL.CLOSED) push({ group: 'Replacement', title: `Replacement joined for ${r.candidateName}`, at: r.updatedAt, who: null, detail: null });
   });
@@ -156,7 +158,7 @@ async function build(user, clientId, { kind = 'full' } = {}) {
     jobsTotal: reqs.length, jobsOpen: open, jobsClosed: reqs.filter((r) => ['CLOSED', 'Closed'].includes(r.status)).length,
     jobsPerMonth: [...perMonth.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 12).map(([month, count]) => ({ month, count })),
     candidatesSent: sentTotal, interviewsDone,
-    joined: liveRecs.length, dropped: liveRecs.filter((r) => r.status === 'Dropped').length,
+    joined: leave ? liveRecs.filter((r) => r.status !== 'Dropped').length : liveRecs.length, dropped: liveRecs.filter((r) => r.status === 'Dropped').length,
     replacementRequests: liveRecs.filter((r) => r.replacementDecision === 'NEEDED').length,
     ...(loginSummary || {}), ...(invoiceSummary ? { invoicesRaised: invoiceSummary.raised, invoicesPaid: invoiceSummary.paid } : {}),
   };

@@ -38,7 +38,8 @@ const todayIso = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0,
 function viewOf(r) {
   if (r.joiningStatus === 'Dropped' && !['JOINED', 'HIRED'].includes(r.stage)) return 'dropped';
   if (r.waitingToJoin) return 'waiting';
-  if (['JOINED', 'HIRED'].includes(r.stage)) return 'joined';
+  if (['JOINED', 'HIRED'].includes(r.stage)) return r.leftAfterJoining ? 'dropped' : 'joined'; // joined, then left: under "Left / did not join"
+
   return 'all';
 }
 // The checklist, as four done / not-done facts.
@@ -56,7 +57,7 @@ function nextStep(r) {
   if (!c.call) return 'Confirmation call';
   return 'Mark joined';
 }
-const VIEWS = [['waiting', 'Waiting to join'], ['joined', 'Joined'], ['dropped', 'Did not join'], ['all', 'All']];
+const VIEWS = [['waiting', 'Waiting to join'], ['joined', 'Joined'], ['dropped', 'Left / did not join'], ['all', 'All']];
 
 export default function Joining() {
   const { user } = useAuth();
@@ -176,7 +177,7 @@ export default function Joining() {
                       ? <StatusChip status="Joining date passed" tone="red" />
                       : <StatusChip status={r.daysWaiting ? `Waiting ${r.daysWaiting} day${r.daysWaiting === 1 ? '' : 's'}` : 'Waiting since today'} tone={r.daysWaiting > 14 ? 'red' : 'amber'} />)}
                     {v === 'joined' && <StatusChip status={`Joined ${r.joinedAt ? fmtDate(r.joinedAt) : ''}`.trim()} tone="green" />}
-                    {v === 'dropped' && <StatusChip status="Did not join" tone="red" />}
+                    {v === 'dropped' && <StatusChip status={r.leftAfterJoining ? 'Left after joining' : 'Did not join'} tone="red" />}
                     {/* BGV: a WARNING when the job needs it and it is not Clear (joining is not blocked) */}
                     {r.bgv && (
                       <div style={{ marginTop: 3 }} title={r.bgv.warn ? 'This job needs background verification. Joining is allowed, but check it first.' : ''}>

@@ -97,13 +97,15 @@ async function list(user, q = {}) {
 }
 
 // ---- the report ----------------------------------------------------------------------------------------------------------------------
-function tally(rows) {
-  const joined = rows.length;
+// leave: the Joined number leaves out the people who dropped (utils/joinedRule.js; the default). `placed` = everyone who ever joined, the base of the drop rate.
+function tally(rows, leave = false) {
+  const placed = rows.length;
   const dropped = rows.filter((r) => r.status === 'Dropped');
+  const joined = leave ? placed - dropped.length : placed;
   const within = dropped.filter((r) => r.dropWithinGuarantee === 1).length;
   const asked = dropped.filter((r) => r.replacementDecision === 'NEEDED').length;
   return {
-    joined, dropped: dropped.length, dropRate: joined ? Math.round((dropped.length / joined) * 1000) / 10 : 0, withinGuarantee: within,
+    joined, placed, dropped: dropped.length, dropRate: placed ? Math.round((dropped.length / placed) * 1000) / 10 : 0, withinGuarantee: within,
     replacementsRequested: asked, replacementsDelivered: dropped.filter((r) => r.replacementStatus === V.REPL.CLOSED).length,
     replacementsNotNeeded: dropped.filter((r) => r.replacementDecision === 'NOT_NEEDED').length,
     waitingForClient: dropped.filter((r) => !r.replacementDecision).length,
@@ -115,20 +117,24 @@ async function report(user, q = {}) {
   const rt = await A.rights(user);
   const all = await allVisible(user, rt);
   const rows = applyFilters(all, q);
+  const leave = await require('../utils/joinedRule').excludeDropped(); // eslint-disable-line global-require
   const groupKey = ['client', 'recruiter', 'department', 'month'].includes(q.groupBy) ? q.groupBy : 'client';
   const keyOf = (r) => ({ client: r.clientName, recruiter: r.recruiterName, department: r.department, month: r.joinedOn ? r.joinedOn.slice(0, 7) : null }[groupKey]) || 'Not recorded';
   const groups = new Map();
   rows.forEach((r) => { const k = keyOf(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
-  const by = [...groups.entries()].map(([name, list]) => ({ name, ...tally(list) })).sort((a, b) => (groupKey === 'month' ? b.name.localeCompare(a.name) : b.joined - a.joined || a.name.localeCompare(b.name)));
+  const by = [...groups.entries()].map(([name, list]) => ({ name, ...tally(list, leave) })).sort((a, b) => (groupKey === 'month' ? b.name.localeCompare(a.name) : b.joined - a.joined || a.name.localeCompare(b.name)));
   const reasonMap = countBy(rows.filter((r) => r.status === 'Dropped'), 'dropReason');
   const dropsInPeriod = all.filter((r) => r.status === 'Dropped' && (q.from || q.to ? inRange(r.droppedOn, q.from, q.to) : true) && (!q.department || lc(r.department) === lc(q.department)) && (!q.clientId || r.clientId === q.clientId)).length;
   return {
     period: { from: q.from || null, to: q.to || null },
     groupBy: groupKey,
-    totals: { ...tally(rows), droppedInPeriod: dropsInPeriod },
+    totals: { ...tally(rows, leave), droppedInPeriod: dropsInPeriod },
+    joinedCountsDropped: !leave,
     by,
     topReasons: [...reasonMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([reason, count]) => ({ reason, count })),
-    note: 'Joined = people whose joining day is in the period. Drop rate = how many of them have dropped. Recruiter joinings for incentives are counted on their own screen and are not changed by a drop.',
+    note: leave
+      ? 'Joined = people whose joining day is in the period and who are still working (a person who left is counted under Dropped, not Joined). Drop rate = people who dropped out of everyone who joined in the period (Joined + Dropped).'
+      : 'Joined = people whose joining day is in the period, including those who later dropped. Drop rate = how many of them have dropped.',
     rights: { kind: rt.kind, export: rt.export },
   };
 }
