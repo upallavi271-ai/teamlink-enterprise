@@ -38,6 +38,8 @@ t('older lines without a destination open the screen their title is about', () =
   assert.equal(to('⏰ 3 of your tasks are late'), '/timesheet');
   assert.equal(to('2 tasks you gave are late'), '/timesheet');
   assert.equal(to('Overdue follow-up escalated to you — Asha'), '/ats/followups');
+  assert.equal(to('CRM follow-up today — Teamlink'), '/crm/followups');
+  assert.equal(to('CRM follow-up late — Teamlink'), '/crm/followups');
   assert.equal(to('Requirement REQ-1234 assigned to you'), '/requirements');
   assert.equal(to('New application from the job portal'), '/candidates');
   assert.equal(to('Leave request from Ravi'), '/leave');

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api';
 import useVisiblePoll from './messaging/useVisiblePoll.js';
@@ -7,20 +7,23 @@ import { noteTarget, noteText, ago } from '../utils/noteTarget.js';
 import './NotificationsPanel.css';
 
 // ---------------------------------------------------------------------------
-// NOTIFICATIONS ON THE DASHBOARD AND THE ORGANIZATION CHART (founder 2026-11-18: "all notifications on the dashboard, and a click goes straight to where it
-// belongs; the organization chart too"). The person's own latest notifications (the same list as the bell: GET /api/admin/notifications), unread in bold with a
-// dot. A click marks it read and opens the screen it is about (utils/noteTarget.js: the "Open: /path" line, an announcement, or what the title is about);
-// a notification that leads nowhere in particular opens the full Notifications list. Nothing new is stored. Fresh ones arrive by themselves (every minute,
-// only while the page is visible). The panel folds away (and remembers it) so a busy screen can keep it closed.
+// NOTIFICATIONS ON THE DASHBOARD AND THE ORGANIZATION CHART (founder 2026-11-18: "all notifications on the dashboard, a click goes straight to where it belongs; the
+// organization chart too" - then 2026-11-19: "not that much: give me the notification icon only, and when I click it, it opens the list").
+// So the page shows ONE small bell with the number of unread ones; a click opens the list under it (the same list as before): the person's own latest
+// notifications (GET /api/admin/notifications, the bell's list), unread in bold with a dot. Clicking a notification marks it read and opens the screen it is about
+// (utils/noteTarget.js: the "Open: /path" line, an announcement, or what the title is about); one that leads nowhere in particular opens the full Notifications list.
+// The list closes on a click outside, on Escape, and when a notification is opened. Nothing new is stored. New ones arrive by themselves (every minute, only while
+// the page is visible), so the number on the bell stays true.
 // ---------------------------------------------------------------------------
 const errOf = (e, d) => (e && e.response && e.response.data && e.response.data.error) || d;
 
-export default function NotificationsPanel({ limit = 6, storageKey = 'home', title = 'Notifications' }) {
+export default function NotificationsPanel({ limit = 8, title = 'Notifications' }) {
   const navigate = useNavigate();
   const [items, setItems] = useState(null); // null = loading
   const [err, setErr] = useState('');
   const [all, setAll] = useState(false);
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem(`tl_np_closed_${storageKey}`) !== '1'; } catch { return true; } });
+  const [open, setOpen] = useState(false);
+  const wrap = useRef(null);
 
   const load = useCallback(async (signal) => {
     const r = await api.get('/admin/notifications', { signal });
@@ -37,12 +40,22 @@ export default function NotificationsPanel({ limit = 6, storageKey = 'home', tit
       setErr(errOf(e, 'Could not load your notifications.'));
       throw e;
     }
-  }, 60000, { enabled: true, key: `np-${storageKey}` });
+  }, 60000, { enabled: true, key: 'np-bell' });
   const retry = () => { setErr(''); setItems(null); load().catch((e) => { setErr(errOf(e, 'Could not load your notifications.')); setItems([]); }); };
 
-  const toggle = () => { const next = !open; setOpen(next); try { localStorage.setItem(`tl_np_closed_${storageKey}`, next ? '0' : '1'); } catch { /* not kept */ } };
+  // closes on a click outside and on Escape
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (wrap.current && !wrap.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+
   const unread = (items || []).filter((n) => !n.read).length;
   const shown = (items || []).slice(0, all ? 20 : limit);
+  const word = unread > 0 ? `${title}: ${unread} new` : title;
 
   const go = (n) => {
     if (!n.read) {
@@ -50,57 +63,62 @@ export default function NotificationsPanel({ limit = 6, storageKey = 'home', tit
       api.patch(`/admin/notifications/${n.id}/read`).catch(() => {});
     }
     const t = noteTarget(n);
+    setOpen(false);
     navigate(t ? t.to : '/admin/notifications');
   };
-  const readAll = async () => {
+  const readAll = () => {
     setItems((list) => (list || []).map((x) => ({ ...x, read: true })));
     api.post('/admin/notifications/read-all').catch(() => {});
   };
 
   return (
-    <div className="panel np" aria-label={title}>
-      <div className="panel-head np-head">
-        <button type="button" className="np-fold" onClick={toggle} aria-expanded={open} aria-label={open ? `Fold away ${title}` : `Show ${title}`}>{open ? '▾' : '▸'}</button>
-        <h3>{`🔔 ${title}`}</h3>
-        {unread > 0 && <span className="np-count" aria-label={`${unread} unread`}>{`${unread} new`}</span>}
-        <span className="np-right">
-          {open && unread > 0 && <button type="button" className="link-btn np-linkbtn" onClick={readAll}>Mark all read</button>}
-          <Link className="link-btn np-linkbtn" to="/admin/notifications">All notifications ›</Link>
-        </span>
-      </div>
+    <div className="np" ref={wrap}>
+      <button type="button" className={`np-icon${unread > 0 ? ' has' : ''}`} onClick={() => { setOpen((v) => !v); setAll(false); }} aria-expanded={open} aria-haspopup="dialog" title={word} aria-label={word}>
+        <span aria-hidden="true">🔔</span>
+        {unread > 0 && <span className="np-badge" aria-hidden="true">{unread > 99 ? '99+' : unread}</span>}
+      </button>
       {open && (
-        <>
-          {err && !items && <div className="np-note" role="alert">{err} <button type="button" className="btn btn-sm" onClick={retry}>Try again</button></div>}
-          {err && items && items.length === 0 && <div className="np-note" role="alert">{err} <button type="button" className="btn btn-sm" onClick={retry}>Try again</button></div>}
-          {!items && !err && <div className="np-skel" aria-busy="true"><span /><span /><span /></div>}
-          {items && items.length === 0 && !err && <div className="empty-mini">No notifications yet. They show here when something needs you.</div>}
-          {shown.length > 0 && (
-            <ul className="np-list">
-              {shown.map((n) => {
-                const t = noteTarget(n);
-                const text = splitMeeting(noteText(n.message)).text;
-                return (
-                  <li key={n.id}>
-                    <button type="button" className={`np-row${n.read ? '' : ' unread'}`} onClick={() => go(n)} title={t ? t.label : 'Open all notifications'}>
-                      <span className="np-dot" aria-hidden="true" />
-                      <span className="np-main">
-                        <span className="np-title">{n.title}</span>
-                        {text && <span className="np-text">{text}</span>}
-                      </span>
-                      <span className="np-side">
-                        <span className="np-when">{ago(n.createdAt)}</span>
-                        <span className="np-go">{t ? `${t.label} ›` : 'See all ›'}</span>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          {items && items.length > limit && (
-            <div className="np-more"><button type="button" className="link-btn" onClick={() => setAll((v) => !v)}>{all ? 'Show fewer' : `Show more (${Math.min(20, items.length) - limit} more)`}</button></div>
-          )}
-        </>
+        <div className="panel np-pop" role="dialog" aria-label={title}>
+          <div className="panel-head np-head">
+            <h3>{`🔔 ${title}`}</h3>
+            {unread > 0 && <span className="np-count" aria-label={`${unread} unread`}>{`${unread} new`}</span>}
+            <span className="np-right">
+              {unread > 0 && <button type="button" className="link-btn np-linkbtn" onClick={readAll}>Mark all read</button>}
+              <Link className="link-btn np-linkbtn" to="/admin/notifications" onClick={() => setOpen(false)}>All notifications ›</Link>
+            </span>
+          </div>
+          <div className="np-body">
+            {err && <div className="np-note" role="alert">{err} <button type="button" className="btn btn-sm" onClick={retry}>Try again</button></div>}
+            {!items && !err && <div className="np-skel" aria-busy="true"><span /><span /><span /></div>}
+            {items && items.length === 0 && !err && <div className="empty-mini">No notifications yet. They show here when something needs you.</div>}
+            {shown.length > 0 && (
+              <ul className="np-list">
+                {shown.map((n) => {
+                  const t = noteTarget(n);
+                  const text = splitMeeting(noteText(n.message)).text;
+                  return (
+                    <li key={n.id}>
+                      <button type="button" className={`np-row${n.read ? '' : ' unread'}`} onClick={() => go(n)} title={t ? t.label : 'Open all notifications'}>
+                        <span className="np-dot" aria-hidden="true" />
+                        <span className="np-main">
+                          <span className="np-title">{n.title}</span>
+                          {text && <span className="np-text">{text}</span>}
+                        </span>
+                        <span className="np-side">
+                          <span className="np-when">{ago(n.createdAt)}</span>
+                          <span className="np-go">{t ? `${t.label} ›` : 'See all ›'}</span>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {items && items.length > limit && (
+              <div className="np-more"><button type="button" className="link-btn" onClick={() => setAll((v) => !v)}>{all ? 'Show fewer' : `Show more (${Math.min(20, items.length) - limit} more)`}</button></div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

@@ -224,7 +224,7 @@ export default function Dashboard() {
   if (user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role) && can(user, null, 'administration', 'Users', 'view')) {
     return (
       <>
-        <NotificationsPanel limit={5} storageKey="home" />
+        <NotificationsPanel />
         <ControlTower />
         <Vacancies />
         <AgreementsWaiting />
@@ -356,7 +356,7 @@ function ProductDashboard({ user }) {
   return (
     <>
       <PageHead user={user} extra={scoped ? ` · ${departments.join(', ')}` : ''} range={range} setRange={setRange} />
-      <NotificationsPanel limit={5} storageKey="home" />
+      <NotificationsPanel />
       <NewItems />
       {/* Agreement steps (2026-10-13): only when something waits for this login */}
       <AgreementsWaiting />

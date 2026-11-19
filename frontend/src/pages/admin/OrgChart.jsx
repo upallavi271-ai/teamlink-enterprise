@@ -315,7 +315,7 @@ export default function OrgChart() {
         </div>
       </div>
 
-      <NotificationsPanel limit={3} storageKey="orgchart" />
+      <NotificationsPanel />
 
       {contact.allowed && (
         <div className="oc-views" role="tablist" aria-label="Chart or WhatsApp chats">

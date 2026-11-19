@@ -1,11 +1,17 @@
-/* Notifications on the Dashboard and the Organization Chart (scoped under .np so nothing else is restyled). */
-.np .np-head { display: flex; align-items: center; justify-content: flex-start; gap: 8px; flex-wrap: wrap; text-align: left; }
+/* The notification bell of the Dashboard and the Organization Chart: ONE small icon, the list opens under it (scoped under .np so nothing else is restyled). */
+.np { position: relative; display: flex; justify-content: flex-end; margin: 0 0 10px; }
+.np .np-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: var(--paper-raised); cursor: pointer; font-size: 19px; box-shadow: var(--shadow-sm); }
+.np .np-icon:hover { background: var(--navy-tint); }
+.np .np-icon:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--brand-ring); }
+.np .np-icon[aria-expanded="true"] { border-color: var(--brand); background: var(--brand-tint); }
+.np .np-badge { position: absolute; top: -5px; right: -5px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700; line-height: 20px; text-align: center; box-shadow: 0 0 0 2px #fff; }
+.np .np-pop { position: absolute; right: 0; top: 48px; z-index: 60; width: min(640px, calc(100vw - 32px)); max-height: min(72vh, 640px); overflow: hidden; display: flex; flex-direction: column; margin: 0; box-shadow: var(--shadow-md); }
+.np .np-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-start; text-align: left; flex: 0 0 auto; }
 .np .np-head h3 { margin: 0; font-size: 15px; text-align: left; }
-.np .np-fold { border: 0; background: none; cursor: pointer; font-size: 14px; color: var(--ink-soft); width: 24px; height: 24px; border-radius: 6px; padding: 0; }
-.np .np-fold:hover { background: var(--line-soft); color: var(--ink); }
 .np .np-count { background: var(--red); color: #fff; font-size: 11px; font-weight: 700; border-radius: 10px; padding: 1px 8px; }
 .np .np-right { margin-left: auto; display: inline-flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .np .np-linkbtn { background: none; border: 0; padding: 0; font: inherit; font-size: 12.5px; cursor: pointer; }
+.np .np-body { overflow-y: auto; min-height: 0; }
 .np ul.np-list { list-style: none; margin: 0; padding: 0; }
 .np .np-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; text-align: left; background: #fff; border: 0; border-top: 1px solid var(--line-soft); padding: 9px 14px; cursor: pointer; font: inherit; color: inherit; }
 .np li:first-child .np-row { border-top: 0; }
@@ -27,6 +33,7 @@
 .np .np-skel { padding: 10px 14px; display: grid; gap: 8px; }
 .np .np-skel span { height: 14px; border-radius: 6px; background: var(--line-soft); }
 @media (max-width: 640px) {
+  .np .np-pop { position: fixed; left: 8px; right: 8px; top: 64px; width: auto; max-height: 76vh; }
   .np .np-row { grid-template-columns: 12px minmax(0, 1fr); }
   .np .np-side { grid-column: 2; flex-direction: row; gap: 10px; align-items: baseline; }
 }

@@ -30,6 +30,7 @@ const labelOfPath = (to) => {
 const BY_TITLE = [
   [/missing check-?(in|out)|early logout|\blate (check-?in|arrival)\b|^late\b/i, '/attendance'],
   [/task (overdue|due today)|tasks? (is|are) late|tasks? you gave|new task from|of your tasks/i, '/timesheet'],
+  [/\bcrm\b.*follow-?ups?|follow-?ups?.*\bcrm\b/i, '/crm/followups'],
   [/whatsapp reply/i, '/ats/followups?sub=chats'],
   [/follow-?up/i, '/ats/followups'],
   [/interview/i, '/ats/calendar'],
