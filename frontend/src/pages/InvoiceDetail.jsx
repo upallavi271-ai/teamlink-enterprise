@@ -631,6 +631,17 @@ export default function InvoiceDetail() {
             ? <> <button type="button" className="link-btn" onClick={viewProofFile}>View uploaded proof{invoice.proofName ? ` (${invoice.proofName})` : ''}</button></>
             : <span className="small-muted"> No proof document uploaded yet</span>}
           {invoice.proofRef && <span className="small-muted"> · reference {invoice.proofRef}</span>}
+          {canEditTax && (invoice.proofHasFile || invoice.proofRef) && (
+            <> <button
+              type="button"
+              className="link-btn"
+              style={{ color: 'var(--red)' }}
+              onClick={async () => {
+                if (!window.confirm('Delete the proof on this invoice? The payments and bank lines stay; only the uploaded file / reference is removed.')) return;
+                try { await api.delete(`/dashboard/accounts/control/proof/invoice/${invoice.id}`); load(); } catch (e) { window.alert(e.response?.data?.error || 'The proof could not be deleted.'); }
+              }}
+            >Delete proof</button></>
+          )}
         </div>
         {payments.length === 0 && invoice.receivedAmount > 0 && (
           <div className="pf-line">

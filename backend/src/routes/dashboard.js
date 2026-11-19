@@ -1941,6 +1941,25 @@ router.post('/accounts/control/proof/invoice/:id', ...MONEY_GUARDS, INVOICE_EDIT
     return res.json({ ok: true, attached: !!data.proofFile, by: stamp.proofBy, at: stamp.proofAt });
   } catch (err) { return next(err); }
 });
+// DELETE the proof on an invoice: the uploaded file and/or the typed reference. The payments and their bank lines are
+// not touched - this only takes the proof document away (so a wrong file can be replaced).
+router.delete('/accounts/control/proof/invoice/:id', ...MONEY_GUARDS, INVOICE_EDIT, async (req, res, next) => {
+  try {
+    const attachments = require('../utils/attachments'); // eslint-disable-line global-require
+    const { logAudit } = require('../utils/audit'); // eslint-disable-line global-require
+    const { invoiceWhere } = require('../utils/scope'); // eslint-disable-line global-require
+    const inv = await prisma.invoice.findFirst({ where: { AND: [invoiceWhere(req.user), { id: req.params.id }] } });
+    if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+    if (!inv.proofFile && !inv.proofRef) return res.status(400).json({ error: 'There is no proof on this invoice to delete.' });
+    if (inv.proofFile) { try { attachments.remove(inv.proofFile); } catch { /* the file may already be gone */ } }
+    await prisma.invoice.update({ where: { id: inv.id }, data: { proofFile: null, proofName: null, proofMime: null, proofRef: null, proofAt: null, proofBy: null } });
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name || null, action: 'Invoice proof deleted', entity: 'Invoice', entityId: inv.id,
+      fromValue: `${inv.invoiceNumber || inv.id} · ${inv.proofName || 'reference only'}${inv.proofRef ? ` · ref ${inv.proofRef}` : ''}`,
+    });
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
 router.get('/accounts/control/proof/invoice/:id/file', ...MONEY_GUARDS, async (req, res, next) => {
   try {
     const attachments = require('../utils/attachments'); // eslint-disable-line global-require
