@@ -527,10 +527,11 @@ export function flattenGroups(groups) {
 // person only ever sees what their own role may open: a plain employee has no approvals entry, a recruiter's follow-ups need the
 // candidate-list permission, and so on.
 //
-//   everyone          Check in / out · Leave (apply, balance, status) · Payslips · My tasks · Notifications (the phone-alerts switch is
-//                     on that page) · My Employee Profile · Profile (password, two-step)
-//   approvers         Leave approvals · Regularization · Late coming   (whoever holds the approve permission: TL, STL, HR,
-//                     Assistant Manager, Manager, Super Admin)
+//   everyone          Check in / out · Leave (apply, balance, status) · Regularization (ask for a correction) · Late coming (tell why) ·
+//                     Payslips · My tasks · Notifications (the phone-alerts switch is on that page) · My Employee Profile · Profile
+//   approvers         Approve leave · Approve regularization · Approve late coming   (whoever holds the approve permission: TL, HR,
+//                     Assistant Manager, Manager, Super Admin). Regularization and Late coming are one screen each: an employee sees
+//                     their own requests there, an approver also the requests waiting on them.
 //   Recruiter / BDE   Follow-ups (call or WhatsApp from the row) · their candidates · their interviews
 //
 // Returns [[id, label, items, icon], ...] like groupsForUser, or null for a client / candidate login (their menu is their own portal).
@@ -550,13 +551,16 @@ export function phoneGroupsFor(user) {
     // a person without the web tab "mine" (everyone who is not HR) lands on the same self-service screen from this address
     as(find(HRMS_ITEMS, '/attendance'), { to: '/attendance?tab=mine', label: 'Check in / out', icon: '📍' }),
     as(find(HRMS_ITEMS, '/leave'), { label: 'Leave' }),
+    // the same Attendance & Time permission as Check in / out: every employee may ask for a correction or tell why they were late
+    as(find(HRMS_ITEMS, '/attendance'), { to: '/attendance?tab=regularization', label: 'Regularization', icon: '🛠️' }),
+    as(find(HRMS_ITEMS, '/attendance'), { to: '/attendance?tab=late', label: 'Late coming', icon: '⏰' }),
     as(find(HRMS_ITEMS, '/payroll'), { to: '/payroll?tab=payslips', label: 'Payslips' }),
     as(find(HRMS_ITEMS, '/employee-services'), { to: '/timesheet', label: 'My tasks', icon: '✅' }),
   ], '🕐');
   add('phone-approvals', 'Approvals', [
-    leaf('🏖️', '/leave?tab=requests', 'Leave approvals', [['hrms', 'Leave & Holidays', 'approve']]),
-    leaf('🛠️', '/attendance?tab=regularization', 'Regularization', [['hrms', 'Attendance & Time', 'approve']]),
-    leaf('⏰', '/attendance?tab=late', 'Late coming', [['hrms', 'Attendance & Time', 'approve']]),
+    leaf('🏖️', '/leave?tab=requests', 'Approve leave', [['hrms', 'Leave & Holidays', 'approve']]),
+    leaf('✔️', '/attendance?tab=regularization', 'Approve regularization', [['hrms', 'Attendance & Time', 'approve']]),
+    leaf('✔️', '/attendance?tab=late', 'Approve late coming', [['hrms', 'Attendance & Time', 'approve']]),
   ], '✅');
   if (['RECRUITER', 'BDE'].includes(atsRole)) {
     add('phone-ats', 'Candidates', [
