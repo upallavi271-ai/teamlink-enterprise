@@ -127,9 +127,9 @@ async function stop(code) {
   console.log('\n--- A. template, switches, who may change them');
   const t0 = await call('GET', '/ats/offer-letter-mail/template', null, tA);
   check('the Admin reads the template: switch OFF, starting words, the placeholder list', t0.status === 200 && t0.body.enabled === false && t0.body.custom === false && t0.body.canEdit === true && t0.body.template.terms.length >= 6 && t0.body.tokens.some((x) => x.key === 'joiningDate'), t0.body);
-  check('the starting terms carry probation and notice period as editable text', t0.body.template.terms.some((x) => /probation/i.test(x.title)) && t0.body.template.terms.some((x) => /notice/i.test(x.title)));
+  check('the starting terms carry the trainee period and notice period as editable text', t0.body.template.terms.some((x) => /trainee/i.test(x.title)) && t0.body.template.terms.some((x) => /notice/i.test(x.title)));
   const dt = t0.body.template;
-  check('the starting letter has a flat monthly salary (Rs 10,000), a Salary row and term, and NO annual CTC / salary break-up', dt.monthlySalary === 10000 && dt.details.some((r) => r.label === 'Salary') && !dt.details.some((r) => /ctc/i.test(r.label + r.value)) && !dt.terms.some((r) => /ctc|break-up/i.test(r.title + r.text)) && dt.terms.some((r) => r.title === 'Salary' && /\{\{monthlySalary\}\}/.test(r.text)), dt);
+  check('the starting letter has the reference terms: a 3-month trainee period on a Rs 10,000 stipend, and Rs 3,00,000 CTC on confirmation', dt.monthlySalary === 10000 && dt.traineeMonths === 3 && dt.confirmedCtc === 300000 && dt.terms.some((r) => /trainee/i.test(r.title) && /\{\{monthlySalary\}\}/.test(r.text) && /\{\{probationMonths\}\}/.test(r.text)) && dt.terms.some((r) => /\{\{confirmedCtc\}\}/.test(r.text)) && dt.details.some((r) => /\{\{confirmedCtc\}\}/.test(r.value)), dt);
   check('working hours have a row and a term, and the hours are EMPTY until the founder writes them (no invented hours)', dt.workingHours === '' && dt.details.some((r) => r.label === 'Working hours') && dt.terms.some((r) => r.title === 'Working hours'));
   const t1 = await call('GET', '/ats/offer-letter-mail/template', null, tTL);
   check('a team lead may read it but not edit (canEdit false)', t1.status === 200 && t1.body.canEdit === false, t1.body);
@@ -179,7 +179,7 @@ async function stop(code) {
   check('exactly one mail reached the candidate', m1.length === 1, m1.length);
   const mail = m1[0] || {};
   check('subject comes from the template (designation + company)', /Your offer letter - Talent Acquisition Executive at TeamLink Consultants/.test(mail.subject || ''), mail.subject);
-  check('the letter is IN the mail: name, designation, department, joining date, place, reporting manager, monthly salary, working hours, signatory', [c1.name, 'Talent Acquisition Executive', 'HR', longDay(d3), 'Hyderabad', TL.name.replace(/ZZTEST /, ''), '10,000 per month', '10 am to 7 pm, Monday to Saturday', 'Priya Sharma', 'Terms of employment', 'acceptance'].every((s) => (mail.html || '').toLowerCase().includes(String(s).toLowerCase())), (mail.html || '').slice(0, 300));
+  check('the letter is IN the mail: name, designation, department, joining date, place, reporting manager, monthly salary, working hours, signatory', [c1.name, 'Talent Acquisition Executive', 'HR', longDay(d3), 'Hyderabad', TL.name.replace(/ZZTEST /, ''), '10,000 per month', '3,00,000 per annum', 'trainee period', '10 am to 7 pm, Monday to Saturday', 'Priya Sharma', 'Terms of employment', 'acceptance'].every((s) => (mail.html || '').toLowerCase().includes(String(s).toLowerCase())), (mail.html || '').slice(0, 300));
   check('the edited notice period is in the mail (45 days), not the starting one', /45 days/.test(mail.html || '') && !/30 days/.test(mail.html || ''));
   check('the mail has a plain-text part too', /OFFER OF EMPLOYMENT/.test(mail.text || '') && (mail.text || '').includes(c1.name));
   const pdf = (mail.attachments || []).find((a) => a.pdf);
@@ -192,7 +192,7 @@ async function stop(code) {
   check('the pipeline history says the letter was emailed (automatic) and the audit log too', (await events(a1.id, /Offer letter emailed to the candidate \(automatic\)/)).length === 1 && (await audited(a1.id, /Offer letter emailed automatically/)).length === 1);
   const everything = JSON.stringify([msgs, await prisma.applicationStageEvent.findMany({ where: { applicationId: a1.id } }), await prisma.auditLog.findMany({ where: { entityId: a1.id } }), await prisma.notification.findMany({ where: { message: { contains: 'offer letter' } }, take: 50 })]);
   check('the salary is in the letter only: not in Communications, the timeline, the audit log or any bell', !/10,000|10000/.test(everything), everything.match(/.{30}10,?000.{20}/));
-  check('the annual CTC on the record (Rs 6,12,345) is NOT printed: the letter says the flat monthly salary', !/6,12,345|612345/.test(mail.html + mail.text) && /Rs?\.? ?10,000 per month|₹ 10,000 per month/.test(mail.html || ''));
+  check('the annual CTC on the record (Rs 6,12,345) is NOT printed: the letter prints the reference stipend and CTC instead', !/6,12,345|612345/.test(mail.html + mail.text) && /10,000 per month/.test(mail.html || '') && /3,00,000 per annum/.test(mail.html || ''));
 
   console.log('\n--- E. once per joining');
   const s4 = await schedule(tA, a1.id, d4);
@@ -290,7 +290,7 @@ async function stop(code) {
   check('a bad placeholder can never get into a sent letter: an unfilled {{ }} is never printed', !/\{\{/.test(p9.body.html));
   const noCtc = await call('PUT', '/ats/offer-letter-mail/template', { ...edited, showCtc: false }, tA);
   const p1 = await call('GET', `/ats/offer-letter-mail/${a1.id}/preview`, null, tA);
-  check('"print the salary" switched off keeps every salary line out of the letter', noCtc.status === 200 && !/10,000/.test(p1.body.html) && !/Your salary is/.test(p1.body.html) && !/>Salary</.test(p1.body.html), noCtc.body && noCtc.body.error);
+  check('"print the salary" switched off keeps the stipend and the CTC out of the letter', noCtc.status === 200 && !/10,000/.test(p1.body.html) && !/3,00,000/.test(p1.body.html) && !/Trainee period and stipend/.test(p1.body.html) && !/Confirmation and CTC/.test(p1.body.html), noCtc.body && noCtc.body.error);
   await call('PUT', '/ats/offer-letter-mail/template', { ...edited, showCtc: true }, tA);
   const rs = await call('POST', '/ats/offer-letter-mail/template/reset', {}, tA);
   check('"Back to the starting words" restores the starting template (audited)', rs.status === 200 && rs.body.custom === false && rs.body.template.signatoryName === '' && (await audited('offer-letter-mail', /reset to the starting words/)).length === 1, rs.body && rs.body.custom);

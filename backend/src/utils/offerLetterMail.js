@@ -50,12 +50,13 @@ const TOKENS = [
   { key: 'location', label: 'Place of work', sample: 'Hyderabad' },
   { key: 'joiningDate', label: 'Joining date', sample: '1 December 2026' },
   { key: 'joiningDay', label: 'Day of the week of joining', sample: 'Tuesday' },
-  { key: 'monthlySalary', label: 'Salary per month (set below in the editor)', sample: '₹ 10,000 per month' },
+  { key: 'monthlySalary', label: 'Trainee stipend per month (set below in the editor)', sample: '₹ 10,000 per month' },
+  { key: 'confirmedCtc', label: 'Annual CTC on confirmation (set below in the editor)', sample: '₹ 3,00,000 per annum' },
   { key: 'workingHours', label: 'Working hours (set below in the editor)', sample: '9:30 am to 6:30 pm, Monday to Friday' },
   { key: 'ctc', label: 'Annual CTC from the offer (not used in the standard letter)', sample: '₹ 1,20,000 per annum' },
   { key: 'manager', label: 'Reporting manager (the job’s team lead)', sample: 'Ravi Kumar, Team Lead' },
   { key: 'company', label: 'Company name', sample: 'TeamLink Consultants' },
-  { key: 'probationMonths', label: 'Probation (months)', sample: '6' },
+  { key: 'probationMonths', label: 'Trainee period in months (set below in the editor)', sample: '3' },
   { key: 'offerDate', label: 'Date of this letter', sample: '17 November 2026' },
   { key: 'refNo', label: 'Letter reference number', sample: 'TL/OL/2026/A1B2C3' },
 ];
@@ -84,7 +85,9 @@ const DEFAULT_TEMPLATE = {
   // TeamLink pays one flat salary per month to every new and experienced employee (founder 2026-11-18): no CTC break-up.
   // showCtc is the old name of the "print the salary" tick; it switches the salary lines off when false.
   showCtc: true,
-  monthlySalary: 10000,
+  monthlySalary: 10000, // the trainee stipend per month (the founder's reference offer letter, 2026-11-19)
+  traineeMonths: 3, // the trainee period (probation) in months
+  confirmedCtc: 300000, // the annual CTC on confirmation (the same reference letter)
   workingHours: '', // the founder types the real hours once; until then the working-hours lines are left out
   details: [
     { label: 'Designation', value: '{{designation}}' },
@@ -92,13 +95,14 @@ const DEFAULT_TEMPLATE = {
     { label: 'Date of joining', value: '{{joiningDate}} ({{joiningDay}})' },
     { label: 'Place of work', value: '{{location}}' },
     { label: 'Reporting to', value: '{{manager}}' },
-    { label: 'Salary', value: '{{monthlySalary}}' },
+    { label: 'Trainee period', value: '{{probationMonths}} months, on a stipend of {{monthlySalary}}' },
+    { label: 'Annual CTC on confirmation', value: '{{confirmedCtc}}' },
     { label: 'Working hours', value: '{{workingHours}}' },
   ],
   terms: [
-    { title: 'Probation', text: 'You will be on probation for {{probationMonths}} months from your date of joining. Your employment will be confirmed in writing after a satisfactory review of your work and conduct.' },
-    { title: 'Notice period', text: 'After confirmation, either you or the company may end the employment by giving 30 days’ written notice, or salary in lieu of the notice period. During probation, 7 days’ written notice from either side is enough.' },
-    { title: 'Salary', text: 'Your salary is {{monthlySalary}}. It is paid every month into your bank account, after any deduction that the law requires.' },
+    { title: 'Trainee period and stipend', text: 'You join as a trainee, on probation, for {{probationMonths}} months from your date of joining. During this period you receive a stipend of {{monthlySalary}}, paid every month into your bank account, after any deduction that the law requires. Standard regular employee benefits do not apply during the trainee period.' },
+    { title: 'Confirmation and CTC', text: 'On successful evaluation, and when you meet the performance targets your reporting manager gives you in writing during the trainee period, your employment will be confirmed as a permanent employee with an annual Cost to Company (CTC) of {{confirmedCtc}} from the date of confirmation.' },
+    { title: 'Notice period', text: 'After confirmation, either you or the company may end the employment by giving 30 days’ written notice, or salary in lieu of the notice period. During the trainee period, 7 days’ written notice from either side is enough.' },
     { title: 'Working hours', text: 'Your normal working hours are {{workingHours}}. You may be asked to work extra hours, or on a weekly off, when the work needs it, as the Company’s policy allows.' },
     { title: 'Leave and holidays', text: 'Leave and public holidays follow the Company’s leave policy, which HR will explain to you when you join.' },
     { title: 'Documents on your first day', text: 'Please bring the originals and one copy of: your ID proof (Aadhaar), PAN card, education certificates, experience / relieving letters from your earlier employers, two passport-size photographs and your bank account details.' },
@@ -113,9 +117,10 @@ const DEFAULT_TEMPLATE = {
 };
 const LIMITS = {
   subject: 200, coverNote: 3000, title: 80, intro: 2000, closing: 1000, signatoryName: 80, signatoryTitle: 120, acceptanceLine: 600, footerNote: 300,
-  rowLabel: 60, rowValue: 200, termTitle: 80, termText: 1500, maxDetails: 12, maxTerms: 20, workingHours: 120, maxMonthlySalary: 1000000,
+  rowLabel: 60, rowValue: 200, termTitle: 80, termText: 1500, maxDetails: 12, maxTerms: 20, workingHours: 120, maxMonthlySalary: 1000000, maxConfirmedCtc: 100000000, maxTraineeMonths: 12,
 };
 const monthlyText = (n) => (Number(n) > 0 ? `₹ ${Math.round(Number(n)).toLocaleString('en-IN')} per month` : '');
+const yearlyText = (n) => (Number(n) > 0 ? `₹ ${Math.round(Number(n)).toLocaleString('en-IN')} per annum` : '');
 
 // --- settings (one AppSetting row: { enabled, template }) ---------------------------------------------------------------
 function parse(row) {
@@ -160,7 +165,13 @@ function cleanTemplate(body) {
   // the salary per month: one flat figure for everyone; blank / 0 = no salary line is printed
   const rawSalary = b.monthlySalary == null ? '' : String(b.monthlySalary).replace(/[,\s₹]/g, '');
   const salary = rawSalary === '' ? 0 : Number(rawSalary);
-  if (!Number.isFinite(salary) || salary < 0 || salary > LIMITS.maxMonthlySalary) return { error: 'Write the salary per month as a number of rupees, for example 10000.' };
+  if (!Number.isFinite(salary) || salary < 0 || salary > LIMITS.maxMonthlySalary) return { error: 'Write the trainee stipend per month as a number of rupees, for example 10000.' };
+  // the annual CTC on confirmation (blank = no CTC line); the trainee period is 1 to 12 months (default 3)
+  const rawCtc = b.confirmedCtc == null ? '' : String(b.confirmedCtc).replace(/[,\s₹]/g, '');
+  const ctc = rawCtc === '' ? 0 : Number(rawCtc);
+  if (!Number.isFinite(ctc) || ctc < 0 || ctc > LIMITS.maxConfirmedCtc) return { error: 'Write the annual CTC on confirmation as a number of rupees, for example 300000.' };
+  const months = b.traineeMonths == null || b.traineeMonths === '' ? 3 : Math.round(Number(b.traineeMonths));
+  if (!Number.isFinite(months) || months < 1 || months > LIMITS.maxTraineeMonths) return { error: 'The trainee period is 1 to 12 months.' };
   const value = {
     subject: s(b.subject, LIMITS.subject),
     coverNote: s(b.coverNote, LIMITS.coverNote),
@@ -168,6 +179,8 @@ function cleanTemplate(body) {
     intro: s(b.intro, LIMITS.intro),
     showCtc: b.showCtc !== false,
     monthlySalary: Math.round(salary),
+    traineeMonths: months,
+    confirmedCtc: Math.round(ctc),
     workingHours: s(b.workingHours, LIMITS.workingHours),
     details: (Array.isArray(b.details) ? b.details : []).map((r) => ({ label: s(r && r.label, LIMITS.rowLabel), value: s(r && r.value, LIMITS.rowValue) })).filter((r) => r.label && r.value),
     terms: (Array.isArray(b.terms) ? b.terms : []).map((r) => ({ title: s(r && r.title, LIMITS.termTitle), text: s(r && r.text, LIMITS.termText) })).filter((r) => r.text),
@@ -245,10 +258,11 @@ async function valuesFor(app, tpl) {
     joiningDay: longDay(app.joiningDate, { day: undefined, month: undefined, year: undefined, weekday: 'long' }),
     ctc: tpl.showCtc === false ? '' : inr(app.offeredCtc),
     monthlySalary: tpl.showCtc === false ? '' : monthlyText(tpl.monthlySalary),
+    confirmedCtc: tpl.showCtc === false ? '' : yearlyText(tpl.confirmedCtc),
     workingHours: tpl.workingHours || '',
     manager: await managerOf(r),
     company: company.name,
-    probationMonths: String(Number(process.env.PROBATION_MONTHS) || 6),
+    probationMonths: String(tpl.traineeMonths || 3),
     offerDate: longDay(istToday()),
     refNo: `TL/OL/${year}/${String(app.id).slice(-6).toUpperCase()}`,
   };
@@ -278,8 +292,13 @@ async function buildModel(app, tpl, { sample = false } = {}) {
   if (sample) vals.company = company.name;
   if (sample && tpl.showCtc === false) vals.ctc = '';
   // the salary and the working hours are typed once in the editor, so the sample shows exactly what the editor holds
-  if (sample) { vals.monthlySalary = tpl.showCtc === false ? '' : monthlyText(tpl.monthlySalary); vals.workingHours = tpl.workingHours || ''; }
-  const why = (missing) => missing.map((k) => (k === 'monthlySalary' ? 'salary not written in the editor' : k === 'workingHours' ? 'working hours not written in the editor' : `no ${k} on file`)).join(', ');
+  if (sample) {
+    vals.monthlySalary = tpl.showCtc === false ? '' : monthlyText(tpl.monthlySalary);
+    vals.confirmedCtc = tpl.showCtc === false ? '' : yearlyText(tpl.confirmedCtc);
+    vals.probationMonths = String(tpl.traineeMonths || 3);
+    vals.workingHours = tpl.workingHours || '';
+  }
+  const why = (missing) => missing.map((k) => (k === 'monthlySalary' ? 'trainee stipend not written in the editor' : k === 'confirmedCtc' ? 'annual CTC on confirmation not written in the editor' : k === 'workingHours' ? 'working hours not written in the editor' : `no ${k} on file`)).join(', ');
   const omitted = [];
   const details = [];
   (tpl.details || []).forEach((row) => {

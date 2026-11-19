@@ -137,10 +137,12 @@ export default function OfferLetterEditor() {
             <div className="field"><label>Title</label><input type="text" {...field('title')} /></div>
             <div className="field"><label>Opening paragraph</label><textarea rows="5" {...field('intro')} /></div>
             <div className="grid-2">
-              <div className="field"><label>Salary per month (₹) <span className="small-muted">- the same for every new joiner</span></label><input type="text" inputMode="numeric" {...field('monthlySalary')} placeholder="10000" /></div>
-              <div className="field"><label>Working hours <span className="small-muted">- empty = this line is left out</span></label><input type="text" {...field('workingHours')} placeholder="e.g. 9:30 am to 6:30 pm, Monday to Friday" /></div>
+              <div className="field"><label>Trainee stipend per month (₹) <span className="small-muted">- during the trainee period</span></label><input type="text" inputMode="numeric" {...field('monthlySalary')} placeholder="10000" /></div>
+              <div className="field"><label>Trainee period (months) <span className="small-muted">- 1 to 12</span></label><input type="text" inputMode="numeric" {...field('traineeMonths')} placeholder="3" /></div>
+              <div className="field"><label>Annual CTC on confirmation (₹) <span className="small-muted">- empty = this line is left out</span></label><input type="text" inputMode="numeric" {...field('confirmedCtc')} placeholder="300000" /></div>
+              <div className="field"><label>Working hours <span className="small-muted">- empty = this line is left out</span></label><input type="text" {...field('workingHours')} placeholder="e.g. 9:00 am to 6:00 pm, Monday to Saturday" /></div>
             </div>
-            <div className="field"><label className="olm-check"><input type="checkbox" checked={t.showCtc !== false} disabled={!edit} onChange={(e) => set('showCtc', e.target.checked)} /> Print the salary in the letter</label></div>
+            <div className="field"><label className="olm-check"><input type="checkbox" checked={t.showCtc !== false} disabled={!edit} onChange={(e) => set('showCtc', e.target.checked)} /> Print the stipend and the CTC in the letter</label></div>
 
             <div className="olm-sub">Details table <span className="small-muted">(a row is left out when the record has no value for it)</span></div>
             {t.details.map((r, i) => (

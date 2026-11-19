@@ -63,7 +63,7 @@ async function letterValues({ employee, application }) {
     employmentType: employee.employeeType || 'Full-time',
     manager: mgr ? `${mgr.name}${mgr.designation ? `, ${mgr.designation}` : ''}` : 'Will be introduced on your first day',
     ctc: inr(application && application.offeredCtc),
-    probationMonths: Number(process.env.PROBATION_MONTHS) || 6,
+    probationMonths: Number(process.env.PROBATION_MONTHS) || 3, // the trainee period in the reference offer letter (3 months, 2026-11-19)
   };
 }
 
