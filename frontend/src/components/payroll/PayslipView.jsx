@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { Modal } from '../proto.jsx';
 import logo from '../../assets/teamlink-full-logo.png';
+import { useMediaQuery, PHONE_MQ } from '../useMobileDrawer.js';
+import './payslipPhoneList.css';
 
 // ---------------------------------------------------------------------------
 // PAYSLIP — on screen, laid out exactly like the user's sample payslip and like
@@ -133,10 +135,55 @@ export function PayslipSheet({ p }) {
   );
 }
 
+// THE SAME PAYSLIP, STACKED, for a phone-width screen (founder 2026-11-19): the printed-style sheet above is an 8-column grid that does not fit a
+// phone, so on a phone the View window shows the very same payload (GET /payroll/payslips/:id) as short lists: net pay first, then earnings,
+// deductions, and the employee / statutory / bank lines. The PDF is unchanged.
+export function PayslipPhoneSheet({ p }) {
+  const e = p.employee;
+  const rows = (list) => list.map(([k, v]) => (
+    <div className="pssheet-row" key={k}><span>{k}</span><b>{show(v)}</b></div>
+  ));
+  const lines = (list) => list.map((x, i) => (
+    // eslint-disable-next-line react/no-array-index-key
+    <div className="pssheet-row" key={i}><span>{x.label}</span><b>{money(x.amount)}</b></div>
+  ));
+  return (
+    <div className="pssheet">
+      <div className="pssheet-net">
+        <span>Net salary (bank transfer)</span>
+        <b>₹ {money(p.netPay)}</b>
+        <small>{p.periodLabel || p.period}{p.periodRange ? ` · ${p.periodRange}` : ''}</small>
+      </div>
+      <h4>Earnings</h4>
+      {lines(p.earnings)}
+      <div className="pssheet-row pssheet-tot"><span>Gross salary</span><b>{money(p.gross)}</b></div>
+      <h4>Deductions</h4>
+      {p.deductions.length ? lines(p.deductions) : <div className="pssheet-row"><span>None</span><b>{DASH}</b></div>}
+      <div className="pssheet-row pssheet-tot"><span>Total deductions</span><b>{money(p.totalDeductions)}</b></div>
+      <h4>Days</h4>
+      {rows([['Days worked', p.daysWorked], ['LOP days', p.lopDays], ...(p.periodRange ? [['Days in period', p.periodDays]] : []), ['Monthly gross', `₹${money(p.monthlyGross)}`]])}
+      {p.absentNoLeave && (
+        <div className="pssheet-note">
+          <b>{p.absentNoLeave.text}</b> — ₹{money(p.absentNoLeave.amount)} (inside the LOP line).
+          {(p.absentNoLeave.dates.length + p.absentNoLeave.halfDates.length) > 0 && <> Dates: {[...p.absentNoLeave.dates, ...p.absentNoLeave.halfDates].join(', ')}.</>}
+        </div>
+      )}
+      <h4>Employee</h4>
+      {rows([['Employee code', e.employeeCode], ['Name', e.name], ['Department', e.department], ['Designation', e.designation], ['Location', e.location], ['Date of joining', e.dateOfJoining]])}
+      <details className="pssheet-more">
+        <summary>Statutory and bank details</summary>
+        {rows([['PAN', e.panNumber], ['UAN', e.uanNumber], ['ESI number', e.esiNumber], ['PF number', e.pfNumber], ['Bank', e.bankName], ['Bank A/C', e.bankAccountNumber]])}
+      </details>
+      <div className="pssheet-foot">This is a computer generated payslip, needs no signature</div>
+    </div>
+  );
+}
+
 export default function PayslipView({ payslipId, onClose }) {
   const [slip, setSlip] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const phone = useMediaQuery(PHONE_MQ); // a phone gets the stacked payslip and no Print button (a print window is not a phone thing)
 
   useEffect(() => {
     api.get(`/payroll/payslips/${payslipId}`)
@@ -169,7 +216,7 @@ export default function PayslipView({ payslipId, onClose }) {
       footer={slip && (
         <>
           <button className="btn btn-sm" onClick={onClose}>Close</button>
-          <button className="btn btn-sm" onClick={print}>Print</button>
+          {!phone && <button className="btn btn-sm" onClick={print}>Print</button>}
           <button className="btn btn-primary btn-sm" disabled={busy} onClick={download}>{busy ? 'Preparing…' : 'Download PDF'}</button>
         </>
       )}
@@ -186,7 +233,8 @@ export default function PayslipView({ payslipId, onClose }) {
           ))}
         </div>
       )}
-      {slip && <div id="payslip-sheet" style={{ overflowX: 'auto' }}><div style={{ minWidth: 620 }}><PayslipSheet p={slip} /></div></div>}
+      {slip && phone && <div id="payslip-sheet"><PayslipPhoneSheet p={slip} /></div>}
+      {slip && !phone && <div id="payslip-sheet" style={{ overflowX: 'auto' }}><div style={{ minWidth: 620 }}><PayslipSheet p={slip} /></div></div>}
     </Modal>
   );
 }

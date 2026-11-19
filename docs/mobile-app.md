@@ -20,7 +20,7 @@ menu shows the whole menu for the session (**Short menu** takes you back). A sep
 | Leave | `/leave` (Apply Leave, balance, status) | Leave & Holidays view |
 | Regularization | `/attendance?tab=regularization` (ask for a correction of a day) | Attendance & Time view (every employee) |
 | Late coming | `/attendance?tab=late` (tell why you were late) | Attendance & Time view (every employee) |
-| Payslips | `/payroll?tab=payslips` | Payroll & Compensation view |
+| Payslips | `/payroll?tab=payslips`. On a phone-width screen a person's OWN payslips are one card per month (net pay, **Download PDF**, **View**; `components/payroll/PayslipPhoneList.jsx`) and View opens a stacked, readable payslip instead of the wide printed-style sheet (`PayslipPhoneSheet` in `PayslipView.jsx`, no Print button). The table, the printed-style sheet, the PDF and everything for payroll staff are unchanged. | Payroll & Compensation view |
 | My tasks | `/timesheet` (Given to me, Checklist) | Employee Services view |
 | Approve leave / Approve regularization / Approve late coming | `/leave?tab=requests`, `/attendance?tab=regularization`, `/attendance?tab=late` (the same Regularization and Late coming screens: an approver also sees the requests waiting on them) | the **approve** permission on Leave & Holidays / Attendance & Time (TL, HR, Assistant Manager, Manager, Super Admin today; an STL does not hold it) |
 | Follow-ups, candidates, interviews | `/ats/followups` (opens the follow-up lists; call / WhatsApp from the row), the candidate list, the interview calendar | ATS role Recruiter or BDE with the candidate-list permission |

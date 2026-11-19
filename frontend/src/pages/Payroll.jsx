@@ -9,6 +9,8 @@ import { canRunPayroll, isAdmin as hasAdminAccess, can } from '../permissions';
 import Combo from '../components/Combo.jsx';
 import SalaryStructureCard from '../components/payroll/SalaryStructureCard.jsx';
 import PayslipView, { downloadPayslipPdf } from '../components/payroll/PayslipView.jsx';
+import PayslipPhoneList from '../components/payroll/PayslipPhoneList.jsx'; // my payslips as cards on a phone (2026-11-19)
+import { useMediaQuery, PHONE_MQ } from '../components/useMobileDrawer.js';
 import ExportMenu from '../components/ExportMenu.jsx';
 import DataIoBar from '../components/dataio/DataIoBar.jsx';
 import InsightsPanel from '../components/charts/InsightsPanel.jsx';
@@ -841,6 +843,8 @@ function PayslipsTab({ seesOthers }) {
   const [payslips, setPayslips] = useState([]);
   const [viewing, setViewing] = useState(null);
   const [error, setError] = useState('');
+  // A person's OWN payslips on a phone-width screen are cards with a big Download PDF button; the table stays everywhere else.
+  const phoneOwn = useMediaQuery(PHONE_MQ) && !seesOthers;
 
   useEffect(() => { api.get('/payroll').then((res) => setPayslips(res.data)); }, []);
 
@@ -869,7 +873,7 @@ function PayslipsTab({ seesOthers }) {
   return (
     <Panel style={{ marginTop: 16 }}>
       <PanelHead title={seesOthers ? 'Payslips' : 'My Payslips'} />
-      {payslips.length > 0 && (
+      {payslips.length > 0 && !phoneOwn && (
         <div style={{ padding: '12px 18px 0' }}>
           <ListFilterBar
             lf={lf} storageKey="payroll-payslips" noun="payslips"
@@ -885,7 +889,16 @@ function PayslipsTab({ seesOthers }) {
         </div>
       )}
       {error && <div className="error-text" style={{ padding: '0 18px' }}>{error}</div>}
-      {payslips.length === 0 ? <EmptyMini>{seesOthers ? 'No payslips generated yet — run payroll from the Process Payroll tab.' : 'No payslips yet — they appear here once payroll is run for a month.'}</EmptyMini> : filtered.length === 0 ? <ListEmpty lf={lf} noun="payslips" /> : (
+      {payslips.length === 0 ? <EmptyMini>{seesOthers ? 'No payslips generated yet — run payroll from the Process Payroll tab.' : 'No payslips yet — they appear here once payroll is run for a month.'}</EmptyMini> : phoneOwn ? (
+        <PayslipPhoneList
+          payslips={payslips}
+          monthHeading={monthHeading}
+          inr={inr}
+          totalDed={totalDed}
+          onView={setViewing}
+          onDownload={(p) => downloadPayslipPdf({ id: p.id, month: p.month, employee: p.employee })}
+        />
+      ) : filtered.length === 0 ? <ListEmpty lf={lf} noun="payslips" /> : (
         <div className="tbl-wrap">
           <table>
             <thead><tr><th>Period</th><th>Code</th><th>Employee</th><th>Pay Type</th><th>Gross</th><th>Deductions</th><th>LOP Days</th><th>Net</th><th></th></tr></thead>
@@ -915,7 +928,7 @@ function PayslipsTab({ seesOthers }) {
           </table>
         </div>
       )}
-      {page.total > 0 && <Pager page={page} noun="payslips" />}
+      {page.total > 0 && !phoneOwn && <Pager page={page} noun="payslips" />}
       {viewing && <PayslipView payslipId={viewing} onClose={() => setViewing(null)} />}
     </Panel>
   );

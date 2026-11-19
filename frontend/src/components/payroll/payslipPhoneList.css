@@ -1,0 +1,28 @@
+/* My payslips as cards on a phone (PayslipPhoneList.jsx) */
+.psphone{display:flex;flex-direction:column;gap:10px;padding:12px 14px 16px}
+.psphone-card{border:1px solid var(--line);border-radius:12px;background:var(--paper-raised);padding:12px 14px}
+.psphone-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:15px}
+.psphone-net{font-weight:700;font-size:18px}
+.psphone-sub{font-size:12.5px;color:var(--ink-soft);margin:4px 0 10px;line-height:1.45}
+.psphone-btns{display:flex;gap:8px}
+.psphone-btns .btn{flex:1 1 0;min-height:44px}
+.psphone-btns .btn-primary{flex:2 1 0}
+.psphone-hint{font-size:12px;color:var(--teal);margin-top:8px}
+.psphone-error{background:var(--red-tint);color:var(--red);border-radius:8px;padding:8px 10px;font-size:13px}
+.psphone-more{width:100%;min-height:44px}
+
+/* The payslip in the View window on a phone (PayslipView.jsx PayslipPhoneSheet) */
+.pssheet{display:flex;flex-direction:column;gap:2px;font-size:14px}
+.pssheet h4{margin:14px 0 4px;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft)}
+.pssheet-net{background:var(--navy);color:#fff;border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+.pssheet-net span{font-size:12.5px;opacity:.85}
+.pssheet-net b{font-size:24px}
+.pssheet-net small{font-size:12px;opacity:.85}
+.pssheet-row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line)}
+.pssheet-row span{color:var(--ink-soft);min-width:0}
+.pssheet-row b{text-align:right;overflow-wrap:anywhere;font-weight:600}
+.pssheet-tot span,.pssheet-tot b{color:var(--ink);font-weight:700}
+.pssheet-note{font-size:12.5px;color:#7c2d12;margin-top:6px;line-height:1.45}
+.pssheet-more{margin-top:10px}
+.pssheet-more summary{cursor:pointer;font-weight:600;min-height:40px;display:flex;align-items:center}
+.pssheet-foot{text-align:center;color:var(--ink-soft);font-size:12px;margin-top:14px}
