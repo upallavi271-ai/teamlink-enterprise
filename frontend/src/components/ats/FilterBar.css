@@ -1,0 +1,31 @@
+/* FilterBar (components/ats/FilterBar.jsx): the one filter bar of every ATS list. */
+.fbar{margin:6px 0 8px}
+.fbar-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 10px}
+.fbar-row>.lph-facet,.fbar-row>.fbar-cell,.fbar-row>.fbar-multimode,.fbar-row>.fbar-range{min-width:150px}
+.fbar .lph-pair{display:flex;gap:6px}
+.fbar .lph-pair input{width:84px;min-width:0}
+.fbar .fbar-dates .lph-pair input{width:140px}
+.fbar-count{margin-left:auto;align-self:center;font-size:12.5px}
+.fbar-multimode{display:inline-flex;flex-direction:column;gap:4px}
+.fbar-mode{display:inline-flex;gap:0}
+.fbar-mode button{font:inherit;font-size:12px;padding:3px 10px;border:1px solid var(--line,#d6dbe6);background:var(--surface,#fff);color:var(--ink,#1c2540);cursor:pointer}
+.fbar-mode button:first-child{border-radius:8px 0 0 8px}
+.fbar-mode button:last-child{border-radius:0 8px 8px 0;border-left:0}
+.fbar-mode button.is-on{background:var(--blue-tint,#eef3ff);border-color:var(--blue,#2459d6);color:var(--blue,#2459d6);font-weight:600}
+.fbar-backdrop{display:none}
+.fbar-panel{margin-top:8px;padding:12px;border:1px solid var(--line,#d6dbe6);border-radius:12px;background:var(--surface,#fff)}
+.fbar-panel-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}
+.fbar-panel-head>span{display:inline-flex;align-items:center;gap:10px}
+.fbar-panel-body{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end}
+.fbar-panel-body>.lph-facet,.fbar-panel-body>.fbar-cell,.fbar-panel-body>.fbar-multimode{min-width:170px}
+/* on a phone the panel is a drawer from the right */
+@media (max-width:720px){
+  .fbar-row>*{flex:1 1 100%}
+  .fbar-count{margin-left:0}
+  .fbar-backdrop{display:block;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:80}
+  .fbar-panel{position:fixed;top:0;right:0;bottom:0;width:min(92vw,380px);margin:0;border-radius:14px 0 0 14px;z-index:81;overflow:auto;box-shadow:-8px 0 28px rgba(20,32,70,.25)}
+  .fbar-panel-head{position:sticky;top:-12px;background:var(--surface,#fff);padding:6px 0;z-index:1}
+  .fbar-panel-body{flex-direction:column;align-items:stretch}
+  .fbar-panel-body>*{min-width:0!important;width:100%}
+  .fbar .lph-pair input,.fbar .fbar-dates .lph-pair input{flex:1;width:auto}
+}

@@ -53,6 +53,9 @@ import { WaOptInModal } from '../components/wa/WaOptIn.jsx';
 import { useWaConfig, waMayUse } from '../components/wa/waKit.js';
 import { useReachRights } from '../components/reach/reachKit.js';
 import SavedViews from '../components/SavedViews.jsx';
+import CandidateFilterBar, {
+  useCandidateXf, readUrlFilters, writeUrlFilters, URL_FILTER_KEYS,
+} from '../components/ats/CandidateFilterBar.jsx';
 import BooleanHint from '../components/BooleanHint.jsx'; // the boolean search line under the search box
 import CandidateDuplicatePanel from '../components/CandidateDuplicatePanel.jsx';
 import { SalaryFitChips, SalaryFields, AddSalaryDialog, salaryCheck } from '../components/SalaryFit.jsx'; // required salary + Salary fit chips (utils/salaryFit.js)
@@ -429,7 +432,7 @@ function fromUrl(sp, portalAllowed, dupAllowed = true) {
     sub,
     quick: sp.get('quick') || '',
     filters: {
-      ...EMPTY_FILTERS, stage: stageFilter, status, followUp, bde: sp.get('bde') || '', source: sp.get('source') || '',
+      ...EMPTY_FILTERS, ...readUrlFilters(sp), stage: stageFilter, status, followUp, bde: sp.get('bde') || '', source: sp.get('source') || '',
       cameFrom: sp.get('cameFrom') || '', cameTo: sp.get('cameTo') || '', cameKind: sp.get('cameKind') || '',
       joinedFrom: sp.get('joinedFrom') || '', joinedTo: sp.get('joinedTo') || '',
       requirementId: sp.get('requirementId') || '', clientId: sp.get('clientId') || '',
@@ -537,6 +540,8 @@ export default function Candidates() {
   // Keep ?view= / ?sub= in the address bar (shareable), without re-reading
   // our own write as a new deep link.
   const ownWrite = useRef(false);
+  // The recruiter filters (CTC, locations, skills, notice ...): kept in the address bar (components/ats/CandidateFilterBar.jsx).
+  const xf = useCandidateXf({ onWrite: () => { ownWrite.current = true; } });
   function writeUrl(nextMain, nextSub) {
     const sp = new URLSearchParams(searchParams);
     sp.set('view', nextMain);
@@ -604,6 +609,14 @@ export default function Candidates() {
     ownWrite.current = true;
     setSearchParams(sp, { replace: true });
   }, [filters.source]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The other filters are in the address bar too (shareable; kept when a candidate is opened and Back is pressed).
+  const urlFilterSig = URL_FILTER_KEYS.map((k) => filters[k] || '').join('\u0001');
+  useEffect(() => {
+    const sp = new URLSearchParams(searchParams);
+    if (!writeUrlFilters(sp, filters)) return;
+    ownWrite.current = true;
+    setSearchParams(sp, { replace: true });
+  }, [urlFilterSig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Search waits for typing to pause.
   const [search, setSearch] = useState(filters.search);
@@ -628,6 +641,7 @@ export default function Candidates() {
     if (master) p.inactiveDays = String(inactiveDays);
     if (!master && quick) p.quick = quick;
     if (search) p.search = search;
+    Object.assign(p, xf.params);
     Object.entries(filters).forEach(([k, v]) => {
       if (!v || k === 'search' || TYPED_KEYS.includes(k)) return;
       if (master && PIPELINE_ONLY.includes(k)) return;
@@ -638,7 +652,7 @@ export default function Candidates() {
       typed.split('\u0001').forEach((v, i) => { if (v) p[TYPED_KEYS[i]] = v; });
     }
     return p;
-  }, [main, pipeSub, masterSub, sort, masterSort, hier, hierTree.data, quick, search, filters, typed, inactiveDays]);
+  }, [main, pipeSub, masterSub, sort, masterSort, hier, hierTree.data, quick, search, filters, typed, inactiveDays, xf.key]);
   const baseKey = JSON.stringify(baseParams);
   useEffect(() => { setPage(1); }, [baseKey, pageSize]);
 
@@ -943,6 +957,7 @@ export default function Candidates() {
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' }));
   }
   function clearAll() {
+    xf.clear();
     setFilters(EMPTY_FILTERS);
     setHier(EMPTY_HIERARCHY);
     setQuick('');
@@ -973,8 +988,8 @@ export default function Candidates() {
 
   // Saved Views: the view, sub-tab, queue, filters and hierarchy picks.
   const savedState = useMemo(() => ({
-    view: main, sub: main === 'master' ? masterSub : pipeSub, quick, filters, hier,
-  }), [main, masterSub, pipeSub, quick, filters, hier]);
+    view: main, sub: main === 'master' ? masterSub : pipeSub, quick, filters, hier, xf: xf.values,
+  }), [main, masterSub, pipeSub, quick, filters, hier, xf.values]);
   function applySaved(s) {
     // Views saved before the three-view structure: view = any | pipeline |
     // hold | selected | joined | master | rejected.
@@ -991,6 +1006,7 @@ export default function Candidates() {
     setQuick(s.quick || '');
     setFilters({ ...EMPTY_FILTERS, ...(s.filters || {}), ...(legacyRejected ? { status: 'Rejected' } : {}) });
     setHier({ ...EMPTY_HIERARCHY, ...(s.hier || {}) });
+    xf.replace(s.xf || {});
     writeUrl(m, sub);
   }
 
@@ -1990,6 +2006,20 @@ export default function Candidates() {
               </div>
             )}
           />
+          {!['CLIENT', 'CANDIDATE'].includes(user?.role) && (
+            <CandidateFilterBar
+              xf={xf}
+              master={main === 'master'}
+              filters={filters}
+              setFilter={setFilter}
+              facets={facets}
+              loading={facetsLoading}
+              total={fresh ? fresh.total : null}
+              stageOptions={(counts.stageOptions || []).filter((o) => o.relevant || o.count > 0).map((o) => ({ value: `st:${o.key}`, label: plainStep(o), count: o.count }))}
+              onClear={clearAll}
+              canClear={filterCount > 0 || Object.keys(xf.values).length > 0 || !!quick}
+            />
+          )}
           <ListToolbar
             search={filters.search}
             onSearch={(v) => setFilter({ search: v })}
