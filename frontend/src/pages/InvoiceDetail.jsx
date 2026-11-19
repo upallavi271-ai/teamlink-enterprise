@@ -138,6 +138,11 @@ export default function InvoiceDetail() {
     fd.append('file', file);
     await api.post(`/invoices/${id}/tds-certificate/file`, fd);
   });
+  // Remove the attached proof (uploaded file / typed reference); payments and bank lines are untouched.
+  const deleteProof = async () => {
+    if (!window.confirm('Delete the proof on this invoice? The payments and bank lines stay; only the uploaded file / reference is removed.')) return;
+    try { await api.delete(`/dashboard/accounts/control/proof/invoice/${id}`); load(); } catch (e) { window.alert(e.response?.data?.error || 'The proof could not be deleted.'); }
+  };
   // The uploaded payment proof (Invoice.proofFile) - fetched with the login's token.
   const viewProofFile = async () => {
     try {
@@ -537,7 +542,8 @@ export default function InvoiceDetail() {
                             : (hOf(p).bankTxnId && canBank ? <span className="small-muted">Bank Statement Not Available</span> : null)}
                           {' · '}
                           {invoice.proofHasFile
-                            ? <button type="button" className="link-btn" onClick={viewProofFile}>View Payment Proof</button>
+                            ? <><button type="button" className="link-btn" onClick={viewProofFile}>View Payment Proof</button>
+                              {canEditTax && <> · <button type="button" className="link-btn" style={{ color: 'var(--red)' }} onClick={deleteProof}>Delete proof</button></>}</>
                             : <span className="small-muted">Payment Proof Not Available</span>}
                         </div>
                       </td>
@@ -636,10 +642,7 @@ export default function InvoiceDetail() {
               type="button"
               className="link-btn"
               style={{ color: 'var(--red)' }}
-              onClick={async () => {
-                if (!window.confirm('Delete the proof on this invoice? The payments and bank lines stay; only the uploaded file / reference is removed.')) return;
-                try { await api.delete(`/dashboard/accounts/control/proof/invoice/${invoice.id}`); load(); } catch (e) { window.alert(e.response?.data?.error || 'The proof could not be deleted.'); }
-              }}
+              onClick={deleteProof}
             >Delete proof</button></>
           )}
         </div>
