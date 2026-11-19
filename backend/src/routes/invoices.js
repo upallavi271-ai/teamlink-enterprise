@@ -1584,6 +1584,10 @@ router.get('/:id/document', async (req, res) => {
   res.json(await documentPayload(invoice, (await prisma.company.findFirst()) || {}));
 });
 
+// (declared before GET /:id so the word is not read as an id)
+router.get('/dropped-cleanup', async (req, res) => {
+  res.json({ rows: await droppedInvoices(req.user) });
+});
 router.get('/:id', async (req, res) => {
   const invoice = await prisma.invoice.findUnique({
     where: { id: req.params.id },
@@ -2108,6 +2112,58 @@ router.patch('/:id/pay', requirePerm('accounts', 'accounts', 'Invoices', 'edit')
   res.json({ ...decorate(updated), bankLink: { linked: bankLink.linked, review: bankLink.review || null, why: bankLink.why || null } });
 });
 
+// Cancel an invoice and release its money (see the Delete button): used by the cancel route and the dropped-candidates clean-up.
+async function releaseAndCancel(invoice, user) {
+  return prisma.$transaction(async (tx) => {
+    const fresh = await tx.invoice.findUnique({ where: { id: invoice.id } });
+    if (!fresh || fresh.status === 'Cancelled') throw Object.assign(new Error('Already cancelled'), { http: 400 });
+    const pays = await tx.invoicePayment.findMany({ where: { invoiceId: invoice.id } });
+    const freed = new Map(); // bank line -> money that was on this invoice
+    pays.forEach((p) => { if (p.bankTxnId) freed.set(p.bankTxnId, ROUND((freed.get(p.bankTxnId) || 0) + Number(p.amount || 0))); });
+    await tx.invoicePayment.deleteMany({ where: { invoiceId: invoice.id } });
+    await tx.invoice.update({ where: { id: invoice.id }, data: { status: 'Cancelled', receivedAmount: 0, paidDate: null, bankTxnId: null } });
+    const lines = await tx.bankTransaction.findMany({ where: { OR: [{ matchedInvoiceId: invoice.id }, { id: { in: [...freed.keys()] } }] } });
+    for (const l of lines) if (!freed.has(l.id)) freed.set(l.id, 0);
+    const others = (await tx.invoice.findMany({ where: { clientId: invoice.clientId, id: { not: invoice.id } } })).filter(isOpenInvoice)
+      .sort((a, b) => String(a.dueDate || a.invoiceDate || '9999').localeCompare(String(b.dueDate || b.invoiceDate || '9999')) || String(a.invoiceNumber || '').localeCompare(String(b.invoiceNumber || '')));
+    const reapplied = []; let leftoverTotal = 0;
+    for (const l of lines) {
+      let left = Math.round(freed.get(l.id) * 100);
+      const mine = [];
+      for (const o of others) {
+        if (left <= 0) break;
+        const take = Math.min(left, Math.round(invoiceOutstanding(o) * 100));
+        if (take <= 0) continue;
+        const amt = take / 100;
+        await tx.invoicePayment.create({
+          data: {
+            invoiceId: o.id, date: l.date, dateSource: 'entered', amount: amt, method: 'Bank Transfer', reference: l.reference || null,
+            notes: `Bank statement · ${l.description} · moved here when ${invoice.invoiceNumber || 'an invoice'} was deleted`,
+            bankTxnId: l.id, bankLinked: true, recordedBy: user.name || user.email || null,
+          },
+        });
+        const upd = invoiceAfterReceipt(o, amt, l.date);
+        await tx.invoice.update({ where: { id: o.id }, data: { ...upd, bankTxnId: l.id } });
+        Object.assign(o, upd); // the next line sees what this one left
+        mine.push({ invoiceId: o.id, invoiceNumber: o.invoiceNumber, amount: amt });
+        left -= take;
+      }
+      reapplied.push(...mine.map((m) => ({ ...m, line: l.date })));
+      const remaining = await tx.invoicePayment.findMany({ where: { bankTxnId: l.id }, select: { invoiceId: true } });
+      const keep = remaining.length > 0;
+      const over = ROUND(left / 100);
+      leftoverTotal = ROUND(leftoverTotal + over);
+      await tx.bankTransaction.update({
+        where: { id: l.id },
+        data: keep
+          ? { matched: true, matchedInvoiceId: remaining[0].invoiceId, reconStatus: 'Reconciled', excess: ROUND(Number(l.excess || 0) + over) > 0.004 ? ROUND(Number(l.excess || 0) + over) : null }
+          : { matched: false, matchedInvoiceId: null, reconStatus: 'Unmatched', matchedBy: null, matchedDate: null, clientName: null, excess: null },
+      });
+    }
+    return { reapplied, leftoverTotal, lines: lines.length, hadMoney: ROUND(pays.reduce((a, p) => a + Number(p.amount || 0), 0)) };
+}, { timeout: 30000, maxWait: 15000 });
+}
+
 router.patch('/:id/cancel', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id } });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
@@ -2119,54 +2175,7 @@ router.patch('/:id/cancel', requirePerm('accounts', 'accounts', 'Invoices', 'edi
   // bank line's share goes to the SAME client's other open invoices, oldest first, as a proper bank-linked receipt
   // (that is its proof there). Whatever they cannot take stays on the bank line, unapplied. One transaction.
   if (req.body && req.body.release) {
-    const out = await prisma.$transaction(async (tx) => {
-      const fresh = await tx.invoice.findUnique({ where: { id: invoice.id } });
-      if (!fresh || fresh.status === 'Cancelled') throw Object.assign(new Error('Already cancelled'), { http: 400 });
-      const pays = await tx.invoicePayment.findMany({ where: { invoiceId: invoice.id } });
-      const freed = new Map(); // bank line -> money that was on this invoice
-      pays.forEach((p) => { if (p.bankTxnId) freed.set(p.bankTxnId, ROUND((freed.get(p.bankTxnId) || 0) + Number(p.amount || 0))); });
-      await tx.invoicePayment.deleteMany({ where: { invoiceId: invoice.id } });
-      await tx.invoice.update({ where: { id: invoice.id }, data: { status: 'Cancelled', receivedAmount: 0, paidDate: null, bankTxnId: null } });
-      const lines = await tx.bankTransaction.findMany({ where: { OR: [{ matchedInvoiceId: invoice.id }, { id: { in: [...freed.keys()] } }] } });
-      for (const l of lines) if (!freed.has(l.id)) freed.set(l.id, 0);
-      const others = (await tx.invoice.findMany({ where: { clientId: invoice.clientId, id: { not: invoice.id } } })).filter(isOpenInvoice)
-        .sort((a, b) => String(a.dueDate || a.invoiceDate || '9999').localeCompare(String(b.dueDate || b.invoiceDate || '9999')) || String(a.invoiceNumber || '').localeCompare(String(b.invoiceNumber || '')));
-      const reapplied = []; let leftoverTotal = 0;
-      for (const l of lines) {
-        let left = Math.round(freed.get(l.id) * 100);
-        const mine = [];
-        for (const o of others) {
-          if (left <= 0) break;
-          const take = Math.min(left, Math.round(invoiceOutstanding(o) * 100));
-          if (take <= 0) continue;
-          const amt = take / 100;
-          await tx.invoicePayment.create({
-            data: {
-              invoiceId: o.id, date: l.date, dateSource: 'entered', amount: amt, method: 'Bank Transfer', reference: l.reference || null,
-              notes: `Bank statement · ${l.description} · moved here when ${invoice.invoiceNumber || 'an invoice'} was deleted`,
-              bankTxnId: l.id, bankLinked: true, recordedBy: req.user.name || req.user.email || null,
-            },
-          });
-          const upd = invoiceAfterReceipt(o, amt, l.date);
-          await tx.invoice.update({ where: { id: o.id }, data: { ...upd, bankTxnId: l.id } });
-          Object.assign(o, upd); // the next line sees what this one left
-          mine.push({ invoiceId: o.id, invoiceNumber: o.invoiceNumber, amount: amt });
-          left -= take;
-        }
-        reapplied.push(...mine.map((m) => ({ ...m, line: l.date })));
-        const remaining = await tx.invoicePayment.findMany({ where: { bankTxnId: l.id }, select: { invoiceId: true } });
-        const keep = remaining.length > 0;
-        const over = ROUND(left / 100);
-        leftoverTotal = ROUND(leftoverTotal + over);
-        await tx.bankTransaction.update({
-          where: { id: l.id },
-          data: keep
-            ? { matched: true, matchedInvoiceId: remaining[0].invoiceId, reconStatus: 'Reconciled', excess: ROUND(Number(l.excess || 0) + over) > 0.004 ? ROUND(Number(l.excess || 0) + over) : null }
-            : { matched: false, matchedInvoiceId: null, reconStatus: 'Unmatched', matchedBy: null, matchedDate: null, clientName: null, excess: null },
-        });
-      }
-      return { reapplied, leftoverTotal, lines: lines.length, hadMoney: ROUND(pays.reduce((a, p) => a + Number(p.amount || 0), 0)) };
-    }, { timeout: 30000, maxWait: 15000 }).catch((e) => { if (e && e.http) { res.status(e.http).json({ error: e.message }); return null; } throw e; });
+    const out = await releaseAndCancel(invoice, req.user).catch((e) => { if (e && e.http) { res.status(e.http).json({ error: e.message }); return null; } throw e; });
     if (!out) return undefined;
     await logAudit({
       userId: req.user.id, action: 'Invoice deleted (cancelled, money released)', entity: 'Invoice', entityId: invoice.id, fromValue: invoice.status, toValue: 'Cancelled',
@@ -2185,6 +2194,69 @@ router.patch('/:id/cancel', requirePerm('accounts', 'accounts', 'Invoices', 'edi
   const updated = await prisma.invoice.update({ where: { id: invoice.id }, data: { status: 'Cancelled' } });
   await logAudit({ userId: req.user.id, action: 'Invoice cancelled', entity: 'Invoice', entityId: invoice.id, fromValue: invoice.status, toValue: 'Cancelled' });
   res.json(decorate(updated));
+});
+
+// ---------------------------------------------------------------------------
+// DROPPED CANDIDATES CLEAN-UP (founder 2026-11-19): a candidate the ATS shows as dropped (did not join, or left after joining)
+// should not sit in Accounts. This lists their live invoices, and removes (cancels) them with the same "Delete" that releases
+// received money: the payment moves, bank-linked, to the client's other open invoices (the rest stays on its bank line).
+// An invoice with a credit note, or with money that has no bank line behind it, is NOT touched - it is listed for a person.
+// ---------------------------------------------------------------------------
+async function droppedInvoices(user) {
+  const invoices = await prisma.invoice.findMany({
+    where: { AND: [invoiceWhere(user), { candidateId: { not: null }, status: { not: 'Cancelled' } }] },
+    include: { client: true, candidate: { select: { name: true } }, payments: true },
+  });
+  if (!invoices.length) return [];
+  let droppedRec = new Set();
+  try {
+    const S = require('../joindrop/schema'); // eslint-disable-line global-require
+    await S.ensure();
+    droppedRec = new Set((await S.rows('SELECT "applicationId" FROM "JoiningRecord" WHERE "status" = ?', 'Dropped')).map((r) => r.applicationId));
+  } catch { /* only the application flag is used */ }
+  const factsOf = await placementFacts(invoices, null);
+  const noteCounts = CNU.ready() ? await prisma.creditNote.groupBy({ by: ['invoiceId'], where: { status: { not: 'Cancelled' } }, _count: { _all: true } }) : [];
+  const hasNote = new Set(noteCounts.map((n) => n.invoiceId));
+  const out = [];
+  invoices.forEach((inv) => {
+    const fx = factsOf(inv);
+    const dropped = fx.joiningStatus === 'Dropped' || !!(fx.app && droppedRec.has(fx.app.id));
+    if (!dropped) return;
+    const pays = (inv.payments || []).filter((p) => Number(p.amount) > 0);
+    const nonBank = pays.filter((p) => !p.bankTxnId).length;
+    let why = null;
+    if (hasNote.has(inv.id)) why = 'has a credit / debit note - cancel the note first';
+    else if (nonBank) why = 'has money received with no bank line behind it - move that payment by hand first';
+    out.push({
+      id: inv.id,
+      invoiceNumber: inv.invoiceNumber || null,
+      client: inv.client?.name || null,
+      clientId: inv.clientId,
+      candidate: inv.candidate?.name || null,
+      received: ROUND(Number(inv.receivedAmount || 0)),
+      eligible: !why,
+      why,
+    });
+  });
+  return out.sort((a, b) => String(a.client).localeCompare(String(b.client)) || String(a.invoiceNumber).localeCompare(String(b.invoiceNumber)));
+}
+router.post('/dropped-cleanup', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
+  const want = new Set(Array.isArray(req.body && req.body.ids) ? req.body.ids.map(String) : []);
+  const list = (await droppedInvoices(req.user)).filter((r) => r.eligible && want.has(r.id));
+  const done = []; const failed = [];
+  for (const r of list) {
+    const invoice = await prisma.invoice.findUnique({ where: { id: r.id } });
+    if (!invoice) continue;
+    try {
+      const out = await releaseAndCancel(invoice, req.user);
+      await logAudit({ userId: req.user.id, action: 'Invoice removed (candidate dropped in the ATS)', entity: 'Invoice', entityId: invoice.id, fromValue: invoice.status, toValue: 'Cancelled', reason: `${r.candidate || ''} · ${r.client || ''}` });
+      for (const x of out.reapplied) {
+        await logAudit({ userId: req.user.id, action: 'Payment recorded', entity: 'Invoice', entityId: x.invoiceId, toValue: `₹${x.amount} moved from ${invoice.invoiceNumber || 'an invoice'} (candidate dropped in the ATS)` });
+      }
+      done.push({ id: r.id, invoiceNumber: r.invoiceNumber, candidate: r.candidate, moved: out.reapplied, leftover: out.leftoverTotal, hadMoney: out.hadMoney });
+    } catch (e) { failed.push({ id: r.id, invoiceNumber: r.invoiceNumber, error: e.message }); }
+  }
+  res.json({ done, failed, skipped: want.size - list.length });
 });
 
 // Form 16A against an invoice the client deducted TDS on. Until it is in hand

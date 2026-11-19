@@ -284,6 +284,25 @@ export default function Invoices() {
   useEffect(() => () => { loadSeq.current += 1; if (loadCtl.current) loadCtl.current.abort(); }, []);
   useEffect(load, [load]);
 
+  // Candidates the ATS shows as dropped whose invoices are still live in Accounts (removed with the button below).
+  const [dropRows, setDropRows] = useState([]);
+  const [dropBusy, setDropBusy] = useState(false);
+  const loadDrops = useCallback(() => { api.get('/invoices/dropped-cleanup').then((r) => setDropRows(r.data.rows || [])).catch(() => setDropRows([])); }, []);
+  useEffect(() => { loadDrops(); }, [loadDrops]);
+  const removeDrops = async () => {
+    const ok = dropRows.filter((r) => r.eligible);
+    const money = ok.filter((r) => r.received > 0);
+    if (!window.confirm(`Remove ${ok.length} invoice(s) of candidates the ATS shows as dropped?\n${money.length ? `${money.length} of them have money received: it moves to the same client's other open invoices (oldest first), with its bank line as proof; whatever they cannot take stays on the bank line.\n` : ''}The invoices are cancelled, not erased.`)) return;
+    setDropBusy(true);
+    try {
+      const { data: d } = await api.post('/invoices/dropped-cleanup', { ids: ok.map((r) => r.id) });
+      const moved = d.done.reduce((s, x) => s + (Number(x.hadMoney) || 0), 0);
+      window.alert(`Removed ${d.done.length} invoice(s).${moved ? ` ${money2(moved)} of received money was moved.` : ''}${d.failed.length ? ` ${d.failed.length} failed: ${d.failed.map((f) => `${f.invoiceNumber} (${f.error})`).join('; ')}` : ''}`);
+      load(); loadDrops();
+    } catch (e) { window.alert(e.response?.data?.error || 'That could not be done.'); }
+    setDropBusy(false);
+  };
+
   useEffect(() => { writeStore(GROUP_KEY, group); }, [group]);
   useEffect(() => {
     if (!flash) return undefined;
@@ -987,6 +1006,38 @@ export default function Invoices() {
       {/* Joinings that are on the register and in every total, but carry no
           invoice number yet — so they cannot appear in the table below. */}
       {/* ATS candidates in Accounts, read only (founder 2026-11-14): joined with no invoice yet, and selected / offered but not joined. Nothing is raised from here. */}
+      {dropRows.length > 0 && (
+        <section className="inv-notice" aria-live="polite">
+          <div className="inv-notice-head">
+            <div>
+              <strong>{dropRows.length} invoice(s) belong to candidates the ATS shows as dropped</strong>
+              <p>They did not join, or left after joining. Remove them from Accounts: money already received moves to the client&apos;s other open invoices, with its bank line as proof. Invoices with a credit note, or with money that has no bank line, are left for you.</p>
+            </div>
+            {dropRows.some((r) => r.eligible) && (
+              <button type="button" className="btn btn-gold" disabled={dropBusy} onClick={removeDrops}>{dropBusy ? 'Removing…' : `Remove ${dropRows.filter((r) => r.eligible).length} from Accounts`}</button>
+            )}
+          </div>
+          <details>
+            <summary>See the list ({dropRows.length})</summary>
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr><th>Invoice</th><th>Candidate</th><th>Client</th><th className="num">Received</th><th>Can it be removed?</th></tr></thead>
+                <tbody>
+                  {dropRows.map((r) => (
+                    <tr key={r.id}>
+                      <td className="inv-mono"><Link to={`/invoices/${r.id}`}>{r.invoiceNumber || '—'}</Link></td>
+                      <td>{r.candidate || '—'}</td>
+                      <td>{r.client || '—'}</td>
+                      <td className="num">{r.received > 0 ? money2(r.received) : '—'}</td>
+                      <td>{r.eligible ? 'Yes' : <span className="small-muted">No — {r.why}</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+      )}
       {joinShown.length > 0 && (
         <section className="inv-notice" ref={noticeRef} aria-live="polite">
           <div className="inv-notice-head">
