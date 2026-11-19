@@ -122,8 +122,10 @@ export function DropDialog({
   rec, meta, endpoint, method = 'post', correcting = false, audience = 'staff', onClose, onDone,
 }) {
   const [f, setF] = useState({
-    droppedOn: rec.droppedOn || todayIst(), lastWorkingDay: rec.lastWorkingDay || '', reason: rec.dropReason || '', reasonDetail: rec.dropReasonDetail || '', correctionReason: '',
+    // RECORDING a drop starts with NO day and NO reason (a saved default had 13 drops all dated the same day with the same reason); correcting keeps what is recorded
+    droppedOn: correcting ? (rec.droppedOn || '') : '', lastWorkingDay: rec.lastWorkingDay || '', reason: correcting ? (rec.dropReason || '') : '', reasonDetail: correcting ? (rec.dropReasonDetail || '') : '', correctionReason: '',
   });
+  const [todayOk, setTodayOk] = useState(false); // "Is this the day they left?" when the chosen day is today
   const [step, setStep] = useState(1);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -133,10 +135,11 @@ export function DropDialog({
   const other = meta?.otherReason || 'Other (type it)';
   function next() {
     setErr('');
-    if (!f.droppedOn) return setErr('Enter the day the candidate dropped.');
+    if (!f.droppedOn) return setErr('Choose the day they actually left.');
     if (rec.joinedOn && f.droppedOn < rec.joinedOn) return setErr(`The drop day cannot be before the joining day (${dmy(rec.joinedOn)}).`);
     if (f.droppedOn > todayIst()) return setErr('The drop day cannot be a day that has not come yet.');
     if (!f.reason.trim()) return setErr('Choose why the candidate dropped, or type your own reason.');
+    if (!correcting && f.droppedOn === todayIst() && !todayOk) return setErr('The day you chose is today. Tick "Yes, they left today" if that is right, or pick the day they actually left.');
     if (f.reason === other && !f.reasonDetail.trim()) return setErr('You chose "Other". Please type the reason in the details box.');
     if (correcting && f.correctionReason.trim().length < 3) return setErr('Say in a few words why you are correcting it.');
     return setStep(2);
@@ -163,9 +166,15 @@ export function DropDialog({
       {step === 1 ? (
         <>
           <div className="jd-grid">
-            <label className="field"><span>Day they dropped</span><input type="date" min={rec.joinedOn || undefined} max={todayIst()} value={f.droppedOn} onChange={(e) => set('droppedOn', e.target.value)} /></label>
+            <label className="field"><span>{correcting ? 'Day they dropped' : 'The day they actually left'}</span><input type="date" min={rec.joinedOn || undefined} max={todayIst()} value={f.droppedOn} onChange={(e) => { set('droppedOn', e.target.value); setTodayOk(false); }} aria-required="true" /></label>
             <label className="field"><span>Last working day (if you know it)</span><input type="date" min={rec.joinedOn || undefined} max={todayIst()} value={f.lastWorkingDay} onChange={(e) => set('lastWorkingDay', e.target.value)} /></label>
           </div>
+          {!correcting && f.droppedOn === todayIst() && (
+            <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }} data-testid="drop-today-confirm">
+              <input type="checkbox" checked={todayOk} onChange={(e) => setTodayOk(e.target.checked)} />
+              <span><b>Is this the day they left?</b> Yes, they left today.</span>
+            </label>
+          )}
           <label className="field"><span>Why did they drop?</span>
             <Combo creatable value={f.reason} onChange={(e) => set('reason', e.target.value)}><option value="">Choose, or type your own reason</option>{reasons.map((x) => <option key={x} value={x}>{x}</option>)}</Combo>
           </label>

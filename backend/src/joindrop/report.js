@@ -32,6 +32,31 @@ function inRange(day, from, to) {
   return true;
 }
 
+// DROPS TO DOUBLE-CHECK (founder 2026-11-19: 13 drops were recorded on 18 Nov, all dated that day, all with the same reason, all by one TL - the saved
+// defaults, probably). Three or more drops reported by the SAME person on the SAME day with the SAME reason are listed so an Admin / TL can look at
+// them and use "Correct the drop details". Read only: nothing is changed by this. Returns Map(recordId -> { n, by, day, reason }).
+const istDayOfIso = (v) => (v ? new Date(new Date(v).getTime() + 330 * 60000).toISOString().slice(0, 10) : null);
+function doubleCheck(rows) {
+  const groups = new Map();
+  rows.filter((r) => r.status === 'Dropped').forEach((r) => {
+    const by = r.dropReportedById || lc(r.dropReportedByName);
+    const day = istDayOfIso(r.dropReportedAt) || r.droppedOn;
+    const reason = lc(r.dropReason);
+    if (!by || !day || !reason) return;
+    const k = `${by}|${day}|${reason}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  });
+  const out = new Map();
+  groups.forEach((list) => {
+    if (list.length < 3) return;
+    const first = list[0];
+    list.forEach((r) => out.set(r.id, { n: list.length, by: first.dropReportedByName || null, day: istDayOfIso(first.dropReportedAt) || first.droppedOn, reason: first.dropReason }));
+  });
+  return out;
+}
+const MAY_CHECK = ['admin', 'mgmt', 'tl', 'stl'];
+
 // q: { q, from, to, clientId, recruiter, department, status, reason, within, replacement, needs, page, pageSize }
 function applyFilters(rows, q, { skip = [] } = {}) {
   const f = (key, fn) => (skip.includes(key) ? (x) => x : fn);
@@ -65,7 +90,10 @@ async function list(user, q = {}) {
   const rt = await A.rights(user);
   if (!['admin', 'mgmt', 'tl', 'stl', 'recruiter', 'bde', 'hr', 'accounts', 'client'].includes(rt.kind)) return { rows: [], total: 0, counts: {}, facets: {}, rights: rt };
   const all = await allVisible(user, rt);
-  const base = applyFilters(all, q, { skip: [] });
+  let base = applyFilters(all, q, { skip: [] });
+  const checkMap = MAY_CHECK.includes(rt.kind) ? doubleCheck(all) : new Map();
+  if (q.check === 'same' && checkMap.size) base = base.filter((r) => checkMap.has(r.id));
+  else if (q.check === 'same') base = [];
   const status = q.view === 'Joined' || q.view === 'Dropped' ? q.view : null;
   const shown = status ? base.filter((r) => r.status === status) : base;
   // facets: each list is narrowed by the OTHER filters (department -> client / recruiter), with counts
@@ -81,13 +109,18 @@ async function list(user, q = {}) {
     all: base.length, Joined: base.filter((r) => r.status === 'Joined').length, Dropped: base.filter((r) => r.status === 'Dropped').length,
     needsDecision: base.filter((r) => r.status === 'Dropped' && !r.replacementDecision).length,
     needsDetails: base.filter((r) => !r.joinedOn || !r.location).length,
+    ...(MAY_CHECK.includes(rt.kind) ? { check: checkMap.size } : {}),
   };
   const size = Math.min(200, Math.max(5, Number(q.pageSize) || 25));
   const page = Math.max(1, Number(q.page) || 1);
   const slice = shown.slice((page - 1) * size, page * size);
   const keys = rt.kind === 'client' ? new Map() : await JR.keyDates(slice.map((r) => r.applicationId));
   const tasks = await A.taskStates(slice.map((r) => r.replacementTaskId));
-  const rows = slice.map((r) => ({ ...A.shape(r, rt, { tasks }), ...(rt.kind === 'client' ? {} : { journey: keys.get(r.applicationId) || null }) }));
+  const rows = slice.map((r) => ({
+    ...A.shape(r, rt, { tasks }),
+    ...(rt.kind === 'client' ? {} : { journey: keys.get(r.applicationId) || null }),
+    ...(checkMap.has(r.id) ? { doubleCheck: checkMap.get(r.id) } : {}),
+  }));
   return {
     rows, total: shown.length, page, pageSize: size, counts,
     facets: { departments: deptOpts, clients: await require('../utils/clientLocations').labelClientOptions([...clientCounts.values()].sort((a, b) => String(a.label).localeCompare(String(b.label)))), // eslint-disable-line global-require
@@ -185,4 +218,4 @@ async function reportCsv(user, q = {}) {
   return { csv: `${lines.join('\r\n')}\r\n` };
 }
 
-module.exports = { list, report, csvRows, reportCsv, applyFilters, allVisible, tally };
+module.exports = { doubleCheck, list, report, csvRows, reportCsv, applyFilters, allVisible, tally };

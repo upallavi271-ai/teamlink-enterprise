@@ -324,6 +324,7 @@ function loadWorldNow(user, key, background = false, company = false) {
 }
 
 async function buildWorld(user, opts = {}) {
+  await require('./joinedRule').refresh(); // eslint-disable-line global-require
   const [, basePeople, positions, current, reqs, apps, joinedApps, dir] = await Promise.all([
     nextAction.ensureNextActionContext(),
     peopleFor(user, opts),
@@ -523,7 +524,8 @@ async function buildWorld(user, opts = {}) {
     };
   };
   const activeApps = apps.filter((a) => !isPreAtsApplication(a)).map(shapeApp);
-  const joined = joinedApps.map(shapeApp);
+  // a person whose joining record says Dropped is not in the Team page's Joined (utils/joinedRule.js)
+  const joined = joinedApps.filter((a) => !require('./joinedRule').excluded(a.id)).map(shapeApp); // eslint-disable-line global-require
 
   // THE NEXT ACTION of every active application (one each).
   const today = nextAction.todayIst();

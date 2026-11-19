@@ -86,6 +86,8 @@ const excludeDropped = async () => (await refresh()).exclude;
 async function excludedIds() { const s = await refresh(); return s.exclude ? s.ids : new Set(); }
 
 // true for ANY dropped application, whatever the switch (Accounts' "Left after joining" tag); needs refresh() first
+// a Prisma where fragment that leaves the dropped people out of a Joined count: {} (switch ON) or { id: { notIn: [...] } }; needs refresh() first
+const notInWhere = () => (state.exclude && state.ids.size ? { id: { notIn: [...state.ids] } } : {});
 const droppedNow = (appId) => state.ids.has(appId);
 const excluded = (appId) => state.exclude && state.ids.has(appId);
 const dropInfo = (appId) => state.info.get(appId) || null;
@@ -97,6 +99,7 @@ function invalidate() {
   state = { ...state, at: 0 };
   try { require('./recruiterJoinings').invalidate(); } catch { /* not loaded yet */ } // eslint-disable-line global-require
   try { require('./atsHome').forgetBoards(); } catch { /* not loaded yet */ } // eslint-disable-line global-require
+  try { require('./teamWorkload').forgetWorld(); } catch { /* not loaded yet */ } // eslint-disable-line global-require
 }
 
 async function getSwitch() { return { joinedCountsDropped: !(await excludeDropped()) }; }
@@ -115,5 +118,5 @@ async function setSwitch(on, user) {
 }
 
 module.exports = {
-  KEY, droppedAppIds, isDropped, excludeDropped, excludedIds, refresh, excluded, droppedNow, dropInfo, stateKey, invalidate, getSwitch, setSwitch,
+  KEY, droppedAppIds, isDropped, excludeDropped, excludedIds, refresh, excluded, droppedNow, notInWhere, dropInfo, stateKey, invalidate, getSwitch, setSwitch,
 };

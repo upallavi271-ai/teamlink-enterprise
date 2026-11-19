@@ -1268,9 +1268,12 @@ async function buildHome(user, req) {
   addSet(b, 'open-jobs', { kind: 'req', title: 'Open requirements', ids: openJobs.map((r) => r.id) });
   addSet(b, 'people', { kind: 'app', title: 'Applications in process', ids: ids(people), extra: extraOf(people.filter((x) => x.na)) });
   addSet(b, 'selected', { kind: 'app', title: 'Selected — not joined yet', ids: ids(selected), extra: extraOf(selected) });
-  addSet(b, 'joined', { kind: 'app', title: `Joined ${c.word}`, ids: ids(joined), extra: joinExtraOf(joined) });
   // Joined in the period and left since (their record says Dropped): not in the Joined number, listed under Dropped; the card says how many and opens them.
   const leftOfJoined = sel.filter((x) => leftSince(x, c.period.from, c.period.to, c.period.key === 'all'));
+  addSet(b, 'joined', {
+    kind: 'app', title: `Joined ${c.word}`, ids: ids(joined), extra: joinExtraOf(joined),
+    ...(leftOfJoined.length ? { stillWorking: joined.length, left: { n: leftOfJoined.length, drill: 'joined-left', text: `${fmtN(leftOfJoined.length)} left after joining (shown under Dropped)` } } : {}),
+  });
   if (leftOfJoined.length) {
     const leftIds = new Set(leftOfJoined.map((x) => x.a.id));
     const leftRecs = (await droppedRecords()).filter((r) => leftIds.has(r.applicationId));
@@ -1873,7 +1876,10 @@ async function leadHome(c, b, k) {
     try {
       const month = c.today.slice(0, 7);
       const team = await require('./recruiterJoinings').creditedJoinings(c.user, { month, level: 'team' }); // eslint-disable-line global-require
-      addSet(b, 'my-joins', { kind: 'app', title: "My team's joinings this month", ids: team.appIds });
+      addSet(b, 'my-joins', {
+        kind: 'app', title: "My team's joinings this month", ids: team.appIds,
+        ...(team.leftCount ? { stillWorking: team.appIds.length, left: { n: team.leftCount, drill: 'my-joins-left', text: `${fmtN(team.leftCount)} left after joining (shown under Dropped)` } } : {}),
+      });
       if (team.leftCount) addSet(b, 'my-joins-left', { kind: 'app', title: "My team: left after joining (joined this month)", ids: team.leftAppIds, extra: leftExtraOfIds(team.leftAppIds) });
       b.top.push(tile('my-joins', "My team's joinings this month", team.appIds.length, 'range', {
         drill: 'my-joins', zero: 'No joinings yet this month',
@@ -2002,7 +2008,7 @@ async function recruiterHome(c, b, k) {
     if (own.leftCount) { myLeft = { n: own.leftCount, drill: 'my-joins-left', text: `${fmtN(own.leftCount)} left after joining (shown under Dropped)` }; addSet(b, 'my-joins-left', { kind: 'app', title: 'Left after joining (joined this month)', ids: own.leftAppIds, extra: leftExtraOfIds(own.leftAppIds) }); }
     if (tg.joinings == null && own.target != null) tg.joinings = own.target;
   } catch (err) { console.error('[atsHome] my joinings failed:', err.message); } // eslint-disable-line no-console
-  addSet(b, 'my-joins', { kind: 'app', title: 'My joinings this month', ids: myJoinIds });
+  addSet(b, 'my-joins', { kind: 'app', title: 'My joinings this month', ids: myJoinIds, ...(myLeft ? { stillWorking: myJoinIds.length, left: myLeft } : {}) });
   const target = { id: 'target', type: 'target', size: 'half', title: 'My joinings this month', value: myJoinIds.length, target: tg.joinings, drill: 'my-joins', zero: 'No joinings yet this month', noTarget: 'No target set yet', ...(myLeft ? { stillWorking: myJoinIds.length, left: myLeft } : {}) };
   b.top = [];
   // MY MISSED ITEMS (user, 2026-10-12): what I missed - follow-ups, tasks and to-dos, late steps, feedback not recorded, calls not made - with an Open button each.
@@ -2842,6 +2848,8 @@ async function homeList(user, b, setId, q = {}) {
     total: all.length, filtered: rows.length, page, pageSize: size,
     rows: rows.slice((page - 1) * size, page * size).map(({ clientKey, recKey, tlKey, bdeKey, ...r }) => (bdeTeam ? r : (({ bde, ...rest }) => rest)(r))), // eslint-disable-line no-unused-vars
     facets, picked, search: term, searchable: !!SEARCH_OF[set.kind],
+    // "Still working: N" and "N left after joining (shown under Dropped)" on a Joined list (utils/joinedRule.js)
+    ...(set.left ? { stillWorking: set.stillWorking, left: set.left } : {}),
     _all: rows, _bdeTeam: bdeTeam,
   };
 }

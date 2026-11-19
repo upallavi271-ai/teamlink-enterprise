@@ -32,6 +32,7 @@ const SET = require('../joindrop/settings');
 const R = require('../joindrop/report');
 const JR = require('../joindrop/journey');
 const CH = require('../joindrop/clientHistory');
+const JRULE_ = require('../utils/joinedRule');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -174,14 +175,17 @@ router.get('/settings', wrap(async (req, res) => {
   return res.json({
     hrPeopleNames: settings.hrPeople.map((c) => ({ code: c, name: nameOf.get(c) || null })),
     peopleOptions: emps.map((e) => ({ code: e.employeeCode, name: e.name, department: e.department })),
-    settings, parties: SET.PARTIES, partyWords: SET.PARTY_WORDS, momentWords: SET.MOMENT_WORDS, ways: { candidate: SET.waysOf('candidate'), other: SET.waysOf('x') },
+    settings: { ...settings, ...(await JRULE_.getSwitch()) }, parties: SET.PARTIES, partyWords: SET.PARTY_WORDS, momentWords: SET.MOMENT_WORDS, ways: { candidate: SET.waysOf('candidate'), other: SET.waysOf('x') },
     emailsOn: (await HN.getSettings()).emailsOn === true,
   });
 }));
 router.put('/settings', wrap(async (req, res) => {
   const rt = await A.rights(req.user);
   if (!rt.admin) return res.status(403).json({ error: 'Only an Admin can change these switches.' });
-  return res.json({ settings: await SET.save(req.body || {}, req.user) });
+  const body = req.body || {};
+  // "Count people who left after joining as Joined" (AppSetting ats.joinedCountsDropped, default OFF: they are shown under Dropped only)
+  if (typeof body.joinedCountsDropped === 'boolean') await JRULE_.setSwitch(body.joinedCountsDropped, req.user);
+  return res.json({ settings: { ...(await SET.save(body, req.user)), ...(await JRULE_.getSwitch()) } });
 }));
 
 // ---- by application / candidate / journey ---------------------------------------------------------------------------------------------------

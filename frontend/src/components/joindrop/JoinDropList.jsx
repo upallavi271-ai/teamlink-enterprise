@@ -24,6 +24,8 @@ export default function JoinDropList({ onOpen }) {
   const [sp] = useSearchParams();
   const [f, setF] = useState(EMPTY);
   const [view, setView] = useState('all');
+  const [check, setCheck] = useState(false); // "Same day and same reason (check)": drops to double-check (Admin / TL)
+  const [fixing, setFixing] = useState(null); // a drop being corrected from the check list
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(25);
   const [data, setData] = useState({ rows: [], total: 0, counts: {}, facets: {}, rights: {} });
@@ -39,8 +41,9 @@ export default function JoinDropList({ onOpen }) {
     const p = { page, pageSize: size };
     Object.entries(f).forEach(([k, v]) => { if (v) p[k] = v; });
     if (view !== 'all') p.view = view;
+    if (check) p.check = 'same';
     return p;
-  }, [f, view, page, size]);
+  }, [f, view, check, page, size]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -48,7 +51,7 @@ export default function JoinDropList({ onOpen }) {
   }, [params]);
   useEffect(load, [load]);
   useEffect(() => { api.get('/join-drop/meta').then((r) => setMeta(r.data)).catch(() => {}); }, []);
-  useEffect(() => { setPage(1); }, [f, view, size]);
+  useEffect(() => { setPage(1); }, [f, view, check, size]);
 
   // a bell link: ?record=<id> opens that candidate's drawer
   useEffect(() => {
@@ -123,6 +126,15 @@ export default function JoinDropList({ onOpen }) {
         {[['all', 'All'], ['Joined', 'Still working'], ['Dropped', 'Dropped']].map(([k, label]) => (
           <button key={k} type="button" className={`btn btn-sm${view === k ? ' btn-primary' : ''}`} onClick={() => setView(k)}>{`${label} (${k === 'all' ? c.all || 0 : c[k] || 0})`}</button>
         ))}
+        {c.check !== undefined && (
+          <button
+            type="button"
+            className={`btn btn-sm${check ? ' btn-primary' : ''}`}
+            onClick={() => setCheck((v) => !v)}
+            title="Three or more drops reported by the same person on the same day with the same reason. Look at them: the day or the reason may have been saved without thinking."
+            data-testid="drop-check-chip"
+          >{`Same day and same reason (check) (${c.check || 0})`}</button>
+        )}
         <span style={{ flex: 1 }} />
         {data.rights?.export && <button type="button" className="btn btn-sm" onClick={() => download('/join-drop/export', 'joinings-and-drops.csv')}>Download CSV</button>}
         <button type="button" className="btn btn-sm" onClick={openReport}>Small report</button>
@@ -147,6 +159,7 @@ export default function JoinDropList({ onOpen }) {
                   <StatusChip status={r.status === 'Dropped' ? 'Dropped' : 'Joined'} tone={statusTone(r.status)} />
                   {r.status === 'Dropped' && <div className="small-muted">{`${dmy(r.droppedOn)} · ${r.dropReason || 'Not recorded'}`}</div>}
                   {r.dropAfterIncentive && <div className="small-muted" style={{ color: '#b91c1c' }}>After the incentive: HR to review</div>}
+                  {r.doubleCheck && <div className="small-muted" style={{ color: '#b45309' }}>{`Check: ${r.doubleCheck.n} drops by ${r.doubleCheck.by || 'one person'} on ${dmy(r.doubleCheck.day)}, all "${r.doubleCheck.reason}"`}</div>}
                 </td>
                 <td>{r.dropDaysSinceJoining != null && r.status === 'Dropped' ? r.dropDaysSinceJoining : (r.daysSinceJoining != null ? r.daysSinceJoining : '—')}</td>
                 <td className="jd-cell-wrap">
@@ -173,6 +186,7 @@ export default function JoinDropList({ onOpen }) {
                     <button type="button" className="btn btn-sm" onClick={() => setDetail(r)}>Joining details</button>
                     {data.rights?.kind !== 'hr' && <button type="button" className="btn btn-sm btn-ghost" onClick={() => onOpen && onOpen({ id: r.applicationId, candidate: { id: r.candidateId, name: r.candidateName } })}>Candidate page</button>}
                     {r.status === 'Joined' && data.rights?.report && r.hiringType !== 'TeamLink Internal Hire' && <button type="button" className="btn btn-sm" onClick={() => setDrop(r)}>Report a drop</button>}
+                    {r.doubleCheck && data.rights?.record && <button type="button" className="btn btn-sm btn-primary" onClick={() => setFixing(r)}>Correct the drop details</button>}
                   </div>
                 </td>
               </tr>
@@ -194,6 +208,7 @@ export default function JoinDropList({ onOpen }) {
           <JoiningDropPanel app={{ id: detail.applicationId, stage: 'JOINED' }} onChanged={load} />
         </Modal>
       )}
+      {fixing && <DropDialog rec={fixing} meta={meta} correcting method="patch" endpoint={`/join-drop/${fixing.id}/drop`} onClose={() => setFixing(null)} onDone={(r) => { setFixing(null); setMsg(r.message || 'Saved.'); load(); }} />}
       {drop && <DropDialog rec={drop} meta={meta} endpoint={`/join-drop/${drop.id}/drop`} onClose={() => setDrop(null)} onDone={(r) => { setDrop(null); setMsg(r.message || 'Saved.'); load(); }} />}
     </div>
   );

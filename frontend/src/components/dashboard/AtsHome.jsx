@@ -92,6 +92,7 @@ function Kpis({ w, onDrill }) {
           <div className="ah-tile-l">{t.label}</div>
           <Num value={t.value} drill={t.drill} onDrill={onDrill} zero={t.zero} className="ah-tile-n" />
           {t.value > 0 && t.sub && <div className="ah-tile-s">{t.sub}</div>}
+          {t.left && <div className="ah-tile-s">Still working: {fmt(t.stillWorking != null ? t.stillWorking : t.value)} · <button type="button" className="link-btn" onClick={() => onDrill(t.left.drill)}>{t.left.text}</button></div>}
           <Delta d={t.delta} />
         </div>
       ))}
@@ -301,6 +302,7 @@ function Target({ w, onDrill }) {
       <div className="ah-target">
         <Num value={w.value} drill={w.drill} onDrill={onDrill} zero={w.zero} className="ah-target-n" />
         {w.target ? <span className="small-muted"> of {fmt(w.target)} target</span> : <span className="small-muted"> · {w.noTarget}</span>}
+        {w.left && <div className="small-muted">Still working: {fmt(w.stillWorking != null ? w.stillWorking : w.value)} · <button type="button" className="link-btn" onClick={() => onDrill(w.left.drill)}>{w.left.text}</button></div>}
         {pct != null && <div className="ah-progress"><span style={{ width: `${pct}%` }} className={pct >= 100 ? 'done' : ''} /></div>}
       </div>
     </Box>

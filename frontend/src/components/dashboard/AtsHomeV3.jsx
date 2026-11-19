@@ -61,10 +61,11 @@ export function Cards({ w, onDrill, prevWord }) {
       {w.tiles.map((t) => {
         // "0 → 0" says nothing: no arrow on an empty card that did not change.
         const dp = !t.value && (!t.delta || t.delta.dir === 'same') ? {} : deltaProps(t.delta, prevWord);
-        const hint = [t.value > 0 ? t.sub : null, dp.extraHint].filter(Boolean).join(' · ') || undefined;
-        return (
+        // a Joined card says how many are still working and how many left after joining (those are under Dropped, not in this number)
+        const hint = [t.value > 0 ? t.sub : null, t.left ? `Still working: ${fmt(t.stillWorking != null ? t.stillWorking : t.value)}` : null, dp.extraHint].filter(Boolean).join(' · ') || undefined;
+        const card = (
           <StatCard
-            key={t.id}
+            key={t.left ? undefined : t.id}
             label={t.label}
             value={t.value}
             tone={t.value ? t.tone || 'blue' : 'grey'}
@@ -76,6 +77,13 @@ export function Cards({ w, onDrill, prevWord }) {
             help={t.help}
             onClick={t.drill && t.value ? () => onDrill(t.drill) : undefined}
           />
+        );
+        if (!t.left) return card;
+        return (
+          <div key={t.id} className="ahv3-cardwrap">
+            {card}
+            <button type="button" className="link-btn small-muted" style={{ fontSize: 12, marginTop: 2 }} onClick={() => onDrill(t.left.drill)}>{t.left.text}</button>
+          </div>
         );
       })}
     </StatRow>

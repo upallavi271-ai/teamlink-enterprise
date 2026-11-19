@@ -35,6 +35,7 @@
 
 const express = require('express');
 const prisma = require('../db');
+const JRULE = require('../utils/joinedRule');
 const { requireAuth, can } = require('../middleware/auth');
 const {
   employeeWhere, employeeRecordWhere, employeeInScope, scopeLabel, applicationWhere,
@@ -985,6 +986,7 @@ async function atsInsights(req, period) {
   const dept = str(req.query.department);
   const scope = { AND: [applicationWhere(req.user), ...(dept ? [{ requirement: { is: { department: dept } } }] : [])] };
   const inScope = (extra) => ({ AND: [scope, extra] });
+  await JRULE.refresh(); // a person whose joining record says Dropped is not a joining (utils/joinedRule.js)
   const [apps, events, interviews, joined, reqDepts] = await Promise.all([
     // requirementId, not the relation: the department is looked up once per
     // distinct requirement below rather than once per application.
@@ -994,7 +996,7 @@ async function atsInsights(req, period) {
       select: { applicationId: true, toStage: true },
     }),
     prisma.application.count({ where: inScope({ interviewAt: when, OR: [{ interviewStatus: null }, { interviewStatus: { notIn: ['CANCELLED', 'NO_SHOW'] } }] }) }),
-    prisma.application.count({ where: inScope({ stage: { in: JOINED_STAGES }, OR: [{ joiningDate: dateRange.dayStringIn(period) }, { joiningDate: null, joinedAt: when }] }) }),
+    prisma.application.count({ where: inScope({ stage: { in: JOINED_STAGES }, ...JRULE.notInWhere(), OR: [{ joiningDate: dateRange.dayStringIn(period) }, { joiningDate: null, joinedAt: when }] }) }),
     prisma.requirement.findMany({ where: requirementWhere(req.user), select: { department: true }, distinct: ['department'] }),
   ]);
   const reqIds = [...new Set(apps.map((a) => a.requirementId))];

@@ -43,6 +43,16 @@ export default function JoinDropSettings() {
           Tick who is told when a candidate joins, when a joined candidate drops, and when the client answers about a replacement. The client is not told about their own answer.
           The candidate&apos;s drop notice is off by default because it is sensitive: the HR head can still send it by hand from the drop screen. An automatic candidate message goes only when there is a valid reason, an address with consent, and an approved message.
         </div>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+          <input type="checkbox" checked={!!form.joinedCountsDropped} onChange={(e) => setForm((f) => ({ ...f, joinedCountsDropped: e.target.checked }))} aria-label="Count people who left after joining as Joined" />
+          <span>
+            <b>Count people who left after joining as Joined</b>
+            <span className="small-muted" style={{ display: 'block' }}>
+              Off (recommended): a person whose drop is recorded is shown under Dropped only. They are not in the Joined lists, the Joined numbers, the month tables, the reports, the recruiter results and targets, the HRMS figure or the client&apos;s Joined totals.
+              On: they are counted in both, as before. Invoices and incentive decisions that were already made never change.
+            </span>
+          </span>
+        </label>
         {msg && <div className="notice">{msg}</div>}
         {err && <div className="error-text">{err}</div>}
         {['join', 'drop', 'decision'].map((m) => (

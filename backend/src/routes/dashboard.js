@@ -1,5 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
+const JRULE = require('../utils/joinedRule');
 const RT = require('../utils/reqTeamLeads');
 const { requireAuth, requirePerm, requireProduct, can } = require('../middleware/auth');
 const {
@@ -826,6 +827,8 @@ router.get(
     const appScope = f.app.length ? { AND: [baseApp, ...f.app] } : baseApp;
     const reqScope = f.reqs.length ? { AND: [baseReq, ...f.reqs] } : baseReq;
     const scoped = (extra) => ({ AND: [appScope, extra] });
+    await JRULE.refresh(); // a person whose joining record says Dropped is not in a Joined number (utils/joinedRule.js)
+    const leftOut = JRULE.notInWhere();
 
     const activityCounts = Promise.all([
       external ? null : (f.narrowed
@@ -838,7 +841,7 @@ router.get(
       }),
       // A joining is dated by its joining date; joinedAt only where none was set.
       prisma.application.count({
-        where: scoped({ stage: { in: JOINED_STAGES }, OR: [{ joiningDate: days }, { joiningDate: null, joinedAt: when }] }),
+        where: scoped({ stage: { in: JOINED_STAGES }, ...leftOut, OR: [{ joiningDate: days }, { joiningDate: null, joinedAt: when }] }),
       }),
       prisma.requirement.count({ where: { AND: [reqScope, { createdAt: when }] } }),
     ]);
@@ -1060,7 +1063,7 @@ router.get(
     const FOLLOWUPS_DUE_LINK = '/candidates?followUp=Due%20Today,Overdue';
     const FOLLOWUPS_OVERDUE_LINK = '/candidates?followUp=Overdue';
     const selectedCount = countIn(['SELECTED', 'OFFER', 'OFFER_ACCEPTED']);
-    const joinedCount = countIn(JOINED_STAGES);
+    const joinedCount = countIn(JOINED_STAGES) - (leftOut.id ? await prisma.application.count({ where: scoped({ stage: { in: JOINED_STAGES }, id: { in: [...leftOut.id.notIn] } }) }) : 0);
     const queueCount = (id) => (pendingActions.find((q) => q.id === id) || {}).count || 0;
 
     const row = (label, value, to) => ({ label, value, to });
@@ -1396,7 +1399,7 @@ router.get(
         prisma.requirement.findMany({ select: { id: true, department: true } }),
         prisma.requirement.groupBy({ by: ['department'], where: { AND: [reqScope, { status: { in: REQUIREMENT_LIVE_STATUSES } }] }, _count: { _all: true } }),
         prisma.application.findMany({
-          where: scoped({ stage: { in: JOINED_STAGES }, OR: [{ joiningDate: days }, { joiningDate: null, joinedAt: when }] }),
+          where: scoped({ stage: { in: JOINED_STAGES }, ...leftOut, OR: [{ joiningDate: days }, { joiningDate: null, joinedAt: when }] }),
           select: { requirementId: true },
         }),
       ]);
@@ -2065,6 +2068,8 @@ router.get('/', require('../utils/permissions').requireInternal, async (req, res
   if (!period) return;
   const when = dateRange.dateTimeIn(period);
   const inScope = (extra) => prisma.application.count({ where: { AND: [appScope, extra] } });
+  await JRULE.refresh();
+  const leftOut = JRULE.notInWhere(); // a person whose joining record says Dropped is not in a Joined number (utils/joinedRule.js)
   // Company-wide figures only for those allowed to see them: the audit trail
   // for Audit Logs viewers, invoices for Accounts invoice viewers; headcount
   // and pending leave are held to the viewer's own employee scope.
@@ -2085,7 +2090,7 @@ router.get('/', require('../utils/permissions').requireInternal, async (req, res
     count({ stage: { in: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'] } }),
     // "Interviews upcoming" counts scheduled interviews, not the stage.
     count({ interviewStatus: 'SCHEDULED' }),
-    count({ stage: { in: ['JOINED', 'HIRED'] } }),
+    inScope({ stage: { in: ['JOINED', 'HIRED'] }, ...leftOut }),
     // "Recent activity" is the COMPANY'S audit trail, and it was being handed
     // to every signed-in login — including a Client and a Candidate, who are
     // outside this company. It showed them staff bulk imports, internal-hire
@@ -2111,7 +2116,7 @@ router.get('/', require('../utils/permissions').requireInternal, async (req, res
       select: { id: true, name: true },
     }),
     // Dated by the joining date; joinedAt only where none was set.
-    inScope({ stage: { in: JOINED_STAGES }, OR: [{ joiningDate: dateRange.dayStringIn(period) }, { joiningDate: null, joinedAt: when }] }),
+    inScope({ stage: { in: JOINED_STAGES }, ...leftOut, OR: [{ joiningDate: dateRange.dayStringIn(period) }, { joiningDate: null, joinedAt: when }] }),
     // A NULL interviewStatus is a live interview, so it is kept explicitly.
     inScope({ interviewAt: when, OR: [{ interviewStatus: null }, { interviewStatus: { notIn: ['CANCELLED', 'NO_SHOW'] } }] }),
   ]);

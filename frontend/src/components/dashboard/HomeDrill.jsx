@@ -251,7 +251,11 @@ function Rows({ data, onClose, onRoll, rollBusy }) {
   return null;
 }
 
-export default function HomeDrill({ listUrl, params, setId, onClose }) {
+export default function HomeDrill({ listUrl, params, setId: setIdProp, onClose }) {
+  // "N left after joining" under a Joined list opens the Dropped list in the same window
+  const [over, setOver] = useState(null);
+  const setId = over || setIdProp;
+  useEffect(() => { setOver(null); }, [setIdProp]);
   const access = useAtsIoAccess();
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
@@ -362,6 +366,13 @@ export default function HomeDrill({ listUrl, params, setId, onClose }) {
               right={exportBtns}
             />
             {msg && <div className={`hd-msg ${msg.ok ? 'ok' : 'bad'}`} role="status">{msg.text}</div>}
+          </div>
+        )}
+        {data && data.left && (
+          <div className="hd-left small-muted" style={{ padding: '6px 12px' }} data-testid="joined-left-note">
+            <b>Still working: {fmt(data.stillWorking != null ? data.stillWorking : data.total)}</b>
+            {' · '}
+            <button type="button" className="link-btn" onClick={() => setOver(data.left.drill)}>{data.left.text}</button>
           </div>
         )}
         {error && <div className="notice red" style={{ margin: 12 }}>{error} <button type="button" className="btn btn-sm" onClick={() => setTick((n) => n + 1)}>Try again</button></div>}
