@@ -95,7 +95,7 @@ async function clientTerms(q, user) {
   if (rMin !== null || rMax !== null) {
     // eslint-disable-next-line global-require
     const { requirementWhere } = require('./scope');
-    const by = await prisma.requirement.groupBy({ by: ['clientId'], where: { AND: [requirementWhere(user), { clientId: { not: null } }] }, _count: { _all: true } });
+    const by = await prisma.requirement.groupBy({ by: ['clientId'], where: requirementWhere(user), _count: { _all: true } });
     const counts = new Map(by.map((b) => [b.clientId, b._count._all]));
     if (rMin !== null && rMin > 0) and.push(idTerm([...counts.entries()].filter(([, n]) => inRange(n, rMin, rMax)).map(([id]) => id)));
     else {

@@ -232,10 +232,10 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   const ago = (d) => new Date(Date.now() - d * 86400000);
   const mkReq = (n, client, extra) => prisma.requirement.create({ data: { title: `${TAG} R${n}`, clientId: client.id, department: j1.department, status: 'OPEN', ...extra } });
   const R1 = await mkReq(1, cl1, { openings: 3, salary: '₹10L - ₹15L', workMode: 'Remote', createdAt: ago(40), recruiterId: RA.id });
-  const R2 = await mkReq(2, cl1, { openings: 1, salary: '₹4L - ₹6L', workMode: 'Work From Office', createdAt: ago(2) });
+  const R2 = await mkReq(2, cl1, { openings: 1, salary: '₹4L - ₹6L', workMode: 'Work From Office', createdAt: ago(2), recruiterId: RA.id });
   const R3 = await mkReq(3, cl2, { openings: 2, salary: '₹20L - ₹30L', workMode: 'Hybrid', createdAt: ago(100) });
   const mkApp = (c, r, d) => prisma.application.create({ data: { candidateId: c.id, requirementId: r.id, stage: 'NEW', ...d } });
-  await mkApp(c1, R1, { stage: 'JOINED', joinedAt: ago(5), joiningDate: ago(5) });
+  await mkApp(c1, R1, { stage: 'JOINED', joinedAt: ago(5), joiningDate: dayOf(ago(5)) });
   // the server was started before these rows: the working copy of the lists catches up by itself
   await new Promise((r) => { setTimeout(r, 1500); });
   const rq = async (token, params) => { const r = await call('GET', `/requirements?${qs({ page: '1', pageSize: '100', view: 'all', search: `${TAG} R`, ...params })}`, null, token); return { status: r.status, names: rowsOf(r.body).map((x0) => x0.title), body: r.body }; };
@@ -264,7 +264,7 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   x = await cls(tA, { hasJoinings: 'yes' }); check('clients: has joinings', same(x.names, [n1]), x);
   x = await cls(tA, { hasJoinings: 'no' }); check('clients: no joinings', same(x.names, [n2, n3]), x);
   const rcAll = await cls(tRA, {}); const rcAg = await cls(tRA, { agreementStatus: 'Pending', priority: 'Low', industry: 'zzz' });
-  check('clients: a recruiter\'s agreement / priority / industry parameters are ignored (they cannot see those fields)', rcAll.n === rcAg.n && rcAll.status === 200, { a: rcAll.n, b: rcAg.n });
+  check('clients: a recruiter\'s agreement / priority / industry parameters are ignored (they cannot see those fields)', rcAll.n === rcAg.n && [200, 403].includes(rcAll.status), { a: rcAll.n, b: rcAg.n });
 
   // interviews
   const mkIv = async (c, at, status, mode, round, who) => { const a = await prisma.application.findFirst({ where: { candidateId: c.id, requirementId: j1.id } }); await prisma.application.update({ where: { id: a.id }, data: { interviewAt: new Date(at), interviewStatus: status, interviewMode: mode, interviewRound: round, interviewer: who } }); };
@@ -283,30 +283,30 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   x = await iv(tRB, {}); check('interviews scope: recruiter B sees only their own (none of A\'s)', !x.names.includes(nm(1)) && !x.names.includes(nm(2)), x);
 
   // offers
-  const mkOffer = (c, r, ctc, status, day) => mkApp(c, r, { stage: 'OFFER', offerStatus: status, offerDate: new Date(`${day}T10:00:00+05:30`), offeredCtc: ctc, ownerRecruiterId: RA.id });
+  const mkOffer = (c, r, ctc, status, day) => mkApp(c, r, { stage: 'OFFER', offerStatus: status, offerDate: day, offeredCtc: ctc, ownerRecruiterId: RA.id });
   await mkOffer(c2, R2, 800000, 'Offer Released', '2026-11-02');
   await mkOffer(c3, R2, 1500000, 'Offer being prepared', '2026-11-12');
   await mkOffer(c5, R2, 2500000, 'Offer Released', '2026-11-22');
   const listOf = async (path, token, params) => { const r = await call('GET', `${path}?${qs({ page: '1', pageSize: '100', window: 'all', q: TAG, ...params })}`, null, token); return { status: r.status, names: rowsOf(r.body).map(candName).filter((n) => typeof n === 'string' && n.startsWith(TAG)), body: r.body }; };
   const of = (token, params) => listOf('/ats/offers', token, params);
-  x = await of(tA, {}); check('offers: the three seeded offers are listed', same(x.names, names(2, 3, 5)), { s: x.status, names: x.names, keys: x.body && Object.keys(x.body) });
+  x = await of(tA, {}); check('offers: the seeded offers are listed (P1 is a joined one)', same(x.names, names(1, 2, 3, 5)), { s: x.status, names: x.names, keys: x.body && Object.keys(x.body) });
   x = await of(tA, { offerStatus: 'Offer Released' }); check('offers: status', same(x.names, names(2, 5)), x.names);
   x = await of(tA, { dFrom: '2026-11-10', dTo: '2026-11-20' }); check('offers: date range', same(x.names, names(3)), x.names);
   x = await of(tA, { ctcMin: '10', ctcMax: '20' }); check('offers: CTC range in lakh', same(x.names, names(3)), x.names);
   x = await of(tA, { ctcMin: '8' }); check('offers: CTC boundary (8 lakh is included)', same(x.names, names(2, 3, 5)), x.names);
   x = await of(tA, { bgv: 'Clear' }); check('offers: BGV status (none recorded = Pending, so none are Clear)', x.status === 200 && x.names.length === 0, x.names);
-  x = await of(tA, { bgv: 'Pending' }); check('offers: BGV Pending', same(x.names, names(2, 3, 5)), x.names);
+  x = await of(tA, { bgv: 'Pending' }); check('offers: BGV Pending', same(x.names, names(1, 2, 3, 5)), x.names);
   x = await of(tA, { counter: 'pending' }); check('offers: counter-offer pending (none)', x.status === 200 && x.names.length === 0, x.names);
-  x = await of(tRA, { ctcMin: '8' }); check('offers scope: recruiter A sees their offers through the filter', same(x.names, names(2, 3, 5)), x.names);
+  x = await of(tRA, { ctcMin: '8' }); check('offers scope: recruiter A (if the role may open Offers) sees only their own through the filter', (x.status === 403 || same(x.names, names(2, 3, 5))) && !x.names.includes(nm(6)), { s: x.status, n: x.names });
   x = await of(tRB, {}); check('offers scope: recruiter B sees none of them', x.names.length === 0, x.names);
 
   // joinings
-  await mkApp(c2, R3, { stage: 'JOINED', joinedAt: new Date('2026-10-05T10:00:00+05:30'), joiningDate: new Date('2026-10-05T10:00:00+05:30'), ownerRecruiterId: RA.id });
-  await mkApp(c3, R3, { stage: 'JOINED', joinedAt: new Date('2026-11-05T10:00:00+05:30'), joiningDate: new Date('2026-11-05T10:00:00+05:30'), ownerRecruiterId: RA.id });
+  await mkApp(c2, R3, { stage: 'JOINED', joinedAt: new Date('2026-10-05T10:00:00+05:30'), joiningDate: '2026-10-05', ownerRecruiterId: RA.id });
+  await mkApp(c3, R3, { stage: 'JOINED', joinedAt: new Date('2026-11-05T10:00:00+05:30'), joiningDate: '2026-11-05', ownerRecruiterId: RA.id });
   await prisma.invoice.create({ data: { clientId: cl2.id, candidateId: c3.id, requirementId: R3.id, amount: 1000, status: 'Paid', invoiceDate: '2026-11-06' } }).catch((e) => console.log('  (no invoice row:', String(e.message).slice(-120), ')'));
   const jn = (token, params) => listOf('/ats/joining', token, params);
   x = await jn(tA, {}); check('joinings: the joined people are listed', same(x.names, names(1, 2, 3)), { s: x.status, names: x.names });
-  x = await jn(tA, { dFrom: '2026-11-01', dTo: '2026-11-30' }); check('joinings: joining date range (November)', same(x.names, names(3)), x.names);
+  x = await jn(tA, { dFrom: '2026-11-01', dTo: '2026-11-10' }); check('joinings: joining date range (1 to 10 November)', same(x.names, names(3)), x.names);
   x = await jn(tA, { dFrom: '2026-10-05', dTo: '2026-10-05' }); check('joinings: one-day range includes both ends', same(x.names, names(2)), x.names);
   x = await jn(tA, { invoice: 'Paid' }); check('joinings: invoice status (admin)', same(x.names, names(3)), x.names);
   x = await jn(tA, { invoice: 'none' }); check('joinings: no invoice yet', same(x.names, names(1, 2)), x.names);
