@@ -22,7 +22,7 @@ const send = (res, out) => res.status(out.status).json(out.body);
 const wrap = (fn) => async (req, res, next) => { try { return send(res, await fn(req)); } catch (e) { return next(e); } };
 const rawUpload = express.raw({ type: () => true, limit: '10mb' }); // the Excel / CSV file itself
 
-router.get('/', wrap((req) => CL.lists(req.user)));
+router.get('/', wrap((req) => CL.lists(req.user, req.query || {})));
 router.get('/recruiters', wrap((req) => CL.recruiterPick(req.user)));
 router.post('/import', rawUpload, wrap((req) => CL.importList(req.user, Buffer.isBuffer(req.body) ? req.body : null, {
   fileName: String(req.query.name || ''), listName: String(req.query.listName || ''), dryRun: String(req.query.dryRun || '') === '1',

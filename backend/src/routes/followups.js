@@ -59,6 +59,7 @@ const APPLICATION_INCLUDE = {
 // else. The candidate contributes only its name.
 const LIST_REQUIREMENT_SELECT = {
   title: true,
+  priority: true,
   reqCode: true,
   internal: true,
   recruiterId: true,
@@ -144,6 +145,7 @@ async function buildList(req) {
     const wanted = String(req.query.status).split(',').map((x) => x.trim()).filter(Boolean);
     out = out.filter((f) => wanted.includes(f.status));
   }
+  out = require('../utils/atsListFilters').followUpFilter(req.query, out); // due bucket, type, priority, owner, candidate, requirement // eslint-disable-line global-require
   const ORDER = { Overdue: 0, 'Due Today': 1, Upcoming: 2, Completed: 3 };
   return [...out].sort((a, b) => (ORDER[a.status] - ORDER[b.status])
     || String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
@@ -151,7 +153,7 @@ async function buildList(req) {
 const LIST_CACHE = new Map();
 const LIST_MAX_AGE_MS = 60 * 1000;
 // Query keys that only narrow / page / order the finished rows.
-const LIST_UNCACHED_KEYS = ['mine', 'status', 'page', 'pageSize', 'older', 'rows'];
+const LIST_UNCACHED_KEYS = ['mine', 'status', 'page', 'pageSize', 'older', 'rows', 'fuDue', 'fuType', 'fuPriority', 'fuOwner', 'fuCandidate', 'fuRequirement'];
 
 async function buildRows(req) {
   const where = { ...applicationWhere(req.user) };
@@ -231,6 +233,7 @@ async function buildRows(req) {
       requirementId: a.requirementId,
       requirementTitle: r.title || null,
       requirementCode: r.reqCode || null,
+      requirementPriority: r.priority || null,
       clientName: r.internal ? 'TeamLink Internal' : (r.client && r.client.name) || null,
       stage: a.stage,
       stageLabel: stageLabel(a.stage),

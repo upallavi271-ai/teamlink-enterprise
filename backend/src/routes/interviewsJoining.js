@@ -221,7 +221,7 @@ async function rowsByIds(req, ids) {
 // The list's rows: the whole array (no `page` in the query: the old answer, which
 // the Excel export still uses), or one page + its counts. `done` = already answered.
 async function listOrPage(req, res, where, kind) {
-  const a = IJ.ask(req.query);
+  const a = IJ.ask(req.query, req.user);
   if (!a) return { rows: await listScoped(req, where), paging: null, done: false };
   const pg = await IJ.pageOf(req, where, kind, a);
   if (a.idsOnly) { res.json({ ids: pg.ids }); return { done: true }; }

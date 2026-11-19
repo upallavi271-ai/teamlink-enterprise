@@ -770,7 +770,10 @@ router.get('/', require('../utils/responseMemo').memoRoute('clients'), async (re
   const withArchived = ['1', 'true', 'yes'].includes(String(req.query.archived || '').toLowerCase())
     || String(req.query.status || '').toLowerCase() === 'archived';
   const scopeW = clientWhere(req.user);
-  const where = withArchived ? scopeW : { AND: [scopeW, { OR: [{ status: null }, { status: { not: 'Archived' } }] }] };
+  let where = withArchived ? scopeW : { AND: [scopeW, { OR: [{ status: null }, { status: { not: 'Archived' } }] }] };
+  // priority, agreement status, industry, requirement count, has joinings (utils/atsListFilters.js)
+  const extraTerms = await require('../utils/atsListFilters').clientTerms(req.query, req.user); // eslint-disable-line global-require
+  if (extraTerms.length) where = { AND: [where, ...extraTerms] };
   const [clients, permissions, lifecycleBase] = await Promise.all([
     prisma.client.findMany({ where, orderBy: { name: 'asc' } }),
     clientPermissions(req.user),

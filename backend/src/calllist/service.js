@@ -165,13 +165,19 @@ async function progressOf(listId, onlyRecruiterId) {
   return [...by.values()].sort((a, b) => String(a.recruiterName).localeCompare(String(b.recruiterName)));
 }
 
-async function lists(user) {
+async function lists(user, q = {}) {
   const mgr = isManager(user);
-  const base = await all('SELECT * FROM "CallList" WHERE "status" = \'Active\' ORDER BY "createdAt" DESC LIMIT 200');
+  let base = await all('SELECT * FROM "CallList" WHERE "status" = \'Active\' ORDER BY "createdAt" DESC LIMIT 200');
+  // FILTERS (2026-11-18): source = the list's name or file, from / to = the day it was made, owner = a recruiter holding a block of it
+  const src = clip(q.source, 60).toLowerCase();
+  if (src) base = base.filter((l) => `${l.name || ''} ${l.fileName || ''}`.toLowerCase().includes(src));
+  if (q.from) base = base.filter((l) => String(l.createdAt).slice(0, 10) >= String(q.from));
+  if (q.to) base = base.filter((l) => String(l.createdAt).slice(0, 10) <= String(q.to));
   const out = [];
   for (const l of base) {
     // eslint-disable-next-line no-await-in-loop
     const prog = await progressOf(l.id, mgr ? null : user.id);
+    if (mgr && q.owner && !prog.some((p) => p.recruiterId === q.owner)) continue;
     if (!mgr && !prog.length) continue; // a recruiter sees only the lists that hold a block of theirs
     const sum = prog.reduce((a, p) => ({ assigned: a.assigned + p.assigned, called: a.called + p.called, remaining: a.remaining + p.remaining, interested: a.interested + p.interested }), { assigned: 0, called: 0, remaining: 0, interested: 0 });
     out.push({ id: l.id, name: l.name, fileName: l.fileName, total: l.total, createdAt: l.createdAt, createdByName: l.createdByName, recruiters: mgr ? prog.length : undefined, ...sum });
@@ -199,6 +205,12 @@ async function rows(user, listId, q = {}) {
   if (q.status === 'pending') where.push(`"status" IN (${PENDING.map(() => '?').join(',')})`) && params.push(...PENDING);
   else if (q.status === 'done') where.push(`"status" NOT IN (${PENDING.map(() => '?').join(',')})`) && params.push(...PENDING);
   else if (q.status) { where.push('"status" = ?'); params.push(clip(q.status, 40)); }
+  // FILTERS (2026-11-18): location, interest (what they want), the day it was added (cFrom / cTo), called yes / no
+  if (q.location) { where.push('"location" LIKE ?'); params.push(`%${clip(q.location, 60)}%`); }
+  if (q.interest) { where.push('"interest" LIKE ?'); params.push(`%${clip(q.interest, 60)}%`); }
+  if (q.cFrom) { where.push('substr("createdAt", 1, 10) >= ?'); params.push(clip(q.cFrom, 10)); }
+  if (q.cTo) { where.push('substr("createdAt", 1, 10) <= ?'); params.push(clip(q.cTo, 10)); }
+  if (q.called === 'yes') where.push('"calledCount" > 0'); else if (q.called === 'no') where.push('"calledCount" = 0');
   if (q.q) { const like = `%${clip(q.q, 60)}%`; where.push('("name" LIKE ? OR "phone" LIKE ? OR "location" LIKE ? OR "interest" LIKE ?)'); params.push(like, like, like, like); }
   const page = Math.max(1, Number(q.page) || 1); const size = Math.min(200, Math.max(10, Number(q.size) || 50));
   const total = (await one(`SELECT COUNT(*) AS "n" FROM "CallListRow" WHERE ${where.join(' AND ')}`, ...params)).n;

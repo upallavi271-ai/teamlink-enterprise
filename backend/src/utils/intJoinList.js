@@ -59,6 +59,7 @@ const LEAN_SELECT = {
   joiningStatus: true,
   joinedAt: true,
   offerAcceptedAt: true,
+  offeredCtc: true,
   interviewAt: true,
   interviewStatus: true,
   candidate: { select: { id: true, name: true, specialization: true, specialisationId: true, education: true, qualificationId: true, currentDesignation: true, experienceYears: true } },
@@ -174,7 +175,7 @@ function fieldsFor(spec) {
 
 // ---- the query -----------------------------------------------------------
 // null = the old behaviour (full array). Otherwise the parsed ask.
-function ask(query) {
+function ask(query, user) {
   const q = query || {};
   const idsOnly = q.idsOnly === '1' || q.idsOnly === 'true';
   const paged = q.page !== undefined || q.pageSize !== undefined || q.paged === '1';
@@ -190,11 +191,42 @@ function ask(query) {
       status: str('status'), department: str('department'), client: str('client'), job: str('job'), recruiter: str('recruiter'), hiringType: str('hiringType'),
       spec: str('spec'), qual: str('qual'), desig: str('desig'), expBand: str('expBand'),
     },
+    x: extraAsk(q, user),
     sort: str('sort'),
     view: str('view') || 'all',
     window: str('window') === 'all' ? 'all' : 'open',
   };
 }
+
+// THE EXTRA FILTERS (founder 2026-11-18): a date range on the list's own date (dFrom / dTo, IST days), Offers: offerStatus (csv),
+// ctcMin / ctcMax (lakh), bgv (csv of Pending / In progress / Clear / Discrepancy / Not needed), counter=pending; Joining: guarantee (csv
+// of active / ended / none), invoice (csv of none / Pending / Partially Paid / Paid / Overdue). Pay and invoice filters only for logins that see them.
+const DAYRE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+const csvOf = (v) => String(v === undefined || v === null ? '' : v).split(',').map((s) => s.trim()).filter(Boolean);
+const numOf = (v) => { if (v === undefined || v === null || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
+function extraAsk(q, user) {
+  let payOk = false;
+  let invOk = false;
+  try {
+    const flags = require('./clientRedact').privacyFlagsFor(user); // eslint-disable-line global-require
+    payOk = !flags;
+    invOk = ['admin', 'mgmt', 'accounts', 'bde'].includes(require('./scope').clientViewRole(user)); // eslint-disable-line global-require
+  } catch { /* no pay / invoice filters */ }
+  const x = {
+    dFrom: DAYRE.test(String(q.dFrom || '')) ? String(q.dFrom) : '',
+    dTo: DAYRE.test(String(q.dTo || '')) ? String(q.dTo) : '',
+    offerStatus: csvOf(q.offerStatus),
+    ctcMin: payOk ? numOf(q.ctcMin) : null,
+    ctcMax: payOk ? numOf(q.ctcMax) : null,
+    bgv: csvOf(q.bgv),
+    counter: q.counter === 'pending' ? 'pending' : '',
+    guarantee: csvOf(q.guarantee),
+    invoice: invOk ? csvOf(q.invoice) : [],
+  };
+  x.on = !!(x.dFrom || x.dTo || x.offerStatus.length || x.ctcMin !== null || x.ctcMax !== null || x.bgv.length || x.counter || x.guarantee.length || x.invoice.length);
+  return x;
+}
+const istDayOf = (v) => { const t = v ? new Date(v).getTime() : NaN; return Number.isFinite(t) ? new Date(t + 5.5 * 3600e3).toISOString().slice(0, 10) : null; };
 
 // The lean rows by ONE joined SQL query (the Prisma nested select below takes
 // ~1.4 s for 4,000 rows because it runs one query per relation and decodes the
@@ -215,7 +247,7 @@ async function leanApps(req, where, kind) {
     // eslint-disable-next-line no-await-in-loop
     const rows = await prisma.$queryRawUnsafe(
       `SELECT a.id, a.stage, a.updatedAt, a.hiringType, a.offerStatus, a.offerDate, a.joiningDate, a.joiningStatus, a.joinedAt,
-              a.offerAcceptedAt, a.interviewAt, a.interviewStatus,
+              a.offerAcceptedAt, a.offeredCtc, a.interviewAt, a.interviewStatus,
               c.id AS cId, c.name AS cName, c.specialization AS cSpec, c.specialisationId AS cSpecId, c.education AS cEdu, c.qualificationId AS cQualId,
               c.currentDesignation AS cDesig, c.experienceYears AS cExp,
               r.id AS rId, r.title AS rTitle, r.department AS rDepartment, r.internal AS rInternal, r.hiringType AS rHiringType,
@@ -239,6 +271,7 @@ async function leanApps(req, where, kind) {
       joiningStatus: x.joiningStatus,
       joinedAt: x.joinedAt,
       offerAcceptedAt: x.offerAcceptedAt,
+      offeredCtc: x.offeredCtc == null ? null : Number(x.offeredCtc),
       interviewAt: x.interviewAt,
       interviewStatus: x.interviewStatus,
       candidate: x.cId ? {
@@ -261,7 +294,7 @@ async function leanApps(req, where, kind) {
 }
 
 // One lean row per application in the caller's area.
-async function leanItems(req, where, kind) {
+async function leanItems(req, where, kind, a) {
   await require('./joinedRule').refresh(); // eslint-disable-line global-require
   const select = kind === 'feedback'
     ? { ...LEAN_SELECT, interviewFeedbacks: { where: { kind: 'Internal' }, select: { id: true } } }
@@ -282,6 +315,7 @@ async function leanItems(req, where, kind) {
   const tracks = kind === 'offers' ? await require('./clientTrack').loadAll().catch(() => new Map()) : null; // eslint-disable-line global-require
   const CF = require('./candidateFields'); // eslint-disable-line global-require
   const lab = await CF.labels();
+  const X = a && a.x && a.x.on ? await extraFacts(apps, kind, a.x) : null;
   return apps.map((app) => {
     const r = app.requirement || {};
     const hiring = hiringTypeOf(app, r);
@@ -306,8 +340,67 @@ async function leanItems(req, where, kind) {
       ...CF.fieldsOf(app.candidate || {}, lab), // Specialization · Qualification · Designation · Experience (2026-11-17)
     };
     if (kind === 'feedback') it.statusText = feedbackStepText(app, (app.interviewFeedbacks || []).length > 0, now);
+    if (X) Object.assign(it, X.of(app));
     return it;
   });
+}
+
+// The facts the extra filters need, read only when one of them is on: BGV and counter-offer (offers), invoice and guarantee (joining).
+async function extraFacts(apps, kind, x) {
+  const ids = apps.map((p) => p.id);
+  let bgv = new Map(); let counter = new Map(); let inv = new Map(); let period = new Map();
+  if (kind === 'offers' && (x.bgv.length || x.counter)) {
+    const XB = require('./atsOfferBgv'); // eslint-disable-line global-require
+    [bgv, counter] = await Promise.all([XB.bgvMap(ids), XB.latestCounterMap(ids)]);
+  }
+  if (kind === 'joining' && x.invoice.length) {
+    const cids = [...new Set(apps.map((p) => p.candidate && p.candidate.id).filter(Boolean))];
+    const rows = cids.length ? await prisma.invoice.findMany({ where: { candidateId: { in: cids } }, select: { candidateId: true, requirementId: true, status: true } }) : [];
+    rows.forEach((r) => { if (!inv.has(`${r.candidateId}|${r.requirementId}`) || r.status === 'Paid') inv.set(`${r.candidateId}|${r.requirementId}`, r.status); });
+  }
+  if (kind === 'joining' && x.guarantee.length) {
+    const clientIds = [...new Set(apps.map((p) => p.requirement && p.requirement.client && p.requirement.client.id).filter(Boolean))];
+    const cl = clientIds.length ? await prisma.client.findMany({ where: { id: { in: clientIds } }, select: { id: true, guaranteePeriod: true } }) : [];
+    period = new Map(cl.map((c) => [c.id, c.guaranteePeriod]));
+  }
+  const { guaranteeDaysOf } = require('./workflowFlow'); // eslint-disable-line global-require
+  const { guaranteeEndOf } = require('./atsVocab'); // eslint-disable-line global-require
+  return {
+    of(app) {
+      const r = app.requirement || {};
+      const out = {};
+      if (kind === 'offers') {
+        const c = counter.get(app.id);
+        out.bgvOverall = bgv.has(app.id) ? bgv.get(app.id).overall : 'Pending';
+        out.counterPending = !!(c && !c.decision);
+      }
+      if (kind === 'joining') {
+        out.invoiceStatus = inv.get(`${app.candidate && app.candidate.id}|${r.id}`) || 'none';
+        const internal = hiringTypeOf(app, r) === INTERNAL_HIRE;
+        const days = internal || !r.client ? null : guaranteeDaysOf(period.get(r.client.id));
+        if (!['JOINED', 'HIRED'].includes(app.stage)) out.guarantee = 'na';
+        else if (!days) out.guarantee = 'none';
+        else { const end = guaranteeEndOf(app, days); out.guarantee = end && end.getTime() > Date.now() ? 'active' : 'ended'; }
+      }
+      return out;
+    },
+  };
+}
+function extraOk(it, spec, x) {
+  if (!x || !x.on) return true;
+  const day = istDayOf(spec.dateOf(it));
+  if ((x.dFrom || x.dTo) && (!day || (x.dFrom && day < x.dFrom) || (x.dTo && day > x.dTo))) return false;
+  if (x.offerStatus.length && !x.offerStatus.includes(it.app.offerStatus || 'Not Issued')) return false;
+  if (x.ctcMin !== null || x.ctcMax !== null) {
+    const raw = it.app.offeredCtc;
+    const l = raw === null || raw === undefined ? null : (raw >= 1000 ? raw / 100000 : raw);
+    if (l === null || (x.ctcMin !== null && l < x.ctcMin) || (x.ctcMax !== null && l > x.ctcMax)) return false;
+  }
+  if (x.bgv.length && !x.bgv.includes(it.bgvOverall)) return false;
+  if (x.counter === 'pending' && !it.counterPending) return false;
+  if (x.guarantee.length && !x.guarantee.includes(it.guarantee)) return false;
+  if (x.invoice.length && !x.invoice.includes(it.invoiceStatus)) return false;
+  return true;
 }
 
 // Filter, count, sort and cut the page. Pure; mirrors the browser code it replaces
@@ -317,7 +410,7 @@ function run(items, kind, a) {
   const fields = fieldsFor(spec);
   const cutoff = Date.now() - WINDOW_DAYS * DAY;
   const inWindow = a.window === 'all' ? items : items.filter((it) => spec.open(it, cutoff));
-  const textOk = (it) => !a.q || `${it.name} ${it.title} ${it.clientName} ${it.clientOldNames || ''}`.toLowerCase().includes(a.q);
+  const textOk = (it) => extraOk(it, spec, a.x) && (!a.q || `${it.name} ${it.title} ${it.clientName} ${it.clientOldNames || ''}`.toLowerCase().includes(a.q));
   const fieldOk = (it, skip) => fields.every((f) => f.key === skip || !a.filters[f.key] || String(f.get(it) ?? '') === a.filters[f.key]);
   const searched = inWindow.filter(textOk);
 
@@ -365,7 +458,7 @@ function run(items, kind, a) {
 
 // Everything the endpoint needs: the ids of this page, or all ids (idsOnly).
 async function pageOf(req, where, kind, a) {
-  const items = await leanItems(req, where, kind);
+  const items = await leanItems(req, where, kind, a);
   const out = run(items, kind, a);
   if (a.idsOnly) return { ids: out.shown.map((it) => it.id) };
   const total = out.shown.length;

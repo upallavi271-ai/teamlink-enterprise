@@ -798,6 +798,8 @@ async function listWhere(req) {
       and.push(due({ gte: today, lte: end }));
     }
   }
+  // days open, openings left, CTC, industry, posted yes / no, work mode (utils/atsListFilters.js)
+  and.push(...(await require('../utils/atsListFilters').requirementTerms(q, req.user))); // eslint-disable-line global-require
   return where;
 }
 

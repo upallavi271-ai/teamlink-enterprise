@@ -311,7 +311,7 @@ router.get('/calendar', async (req, res) => {
   // spreading the AI list's own OR over it dropped the scope entirely.
   const [recruitmentApps, aiApps, shortlistedApps] = await Promise.all([
     prisma.application.findMany({
-      where: { AND: [scope, { interviewStatus: { not: null } }] },
+      where: { AND: [scope, { interviewStatus: { not: null } }, ...require('../utils/atsListFilters').calendarTerms(req.query)] }, // eslint-disable-line global-require
       include: CALENDAR_INCLUDE,
       orderBy: { interviewAt: 'asc' },
     }),

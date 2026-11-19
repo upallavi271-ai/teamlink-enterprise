@@ -433,7 +433,7 @@ router.get('/applications', perm(APPLICATIONS, 'view'), wrap(async (req, res) =>
   const apps = await prisma.application.findMany({
     where: { ...PORTAL_APPLICATION_FILTER, ...applicationWhere(req.user) },
     include: {
-      candidate: { select: { id: true, name: true, email: true, phone: true, source: true, firstSource: true, skills: true } },
+      candidate: { select: { id: true, name: true, email: true, phone: true, source: true, firstSource: true, skills: true, location: true } },
       requirement: { select: { id: true, reqCode: true, title: true, department: true, portalPublished: true, internal: true, hiringType: true, recruiterId: true, recruiterIds: true, tlId: true, stlId: true, bdeId: true, clientId: true, client: { select: { name: true } } } },
     },
     orderBy: { createdAt: 'desc' },
@@ -485,6 +485,19 @@ router.get('/applications', perm(APPLICATIONS, 'view'), wrap(async (req, res) =>
     r.aiScore = r.screening ? r.screening.aiInterviewScore : null;
     r.resumeScore = r.screening ? r.screening.resumeScore : null;
   });
+  // Status, source, date, recruiter and location filters (utils/atsListFilters.js); a BDE never filters on where a person lives.
+  {
+    const FI = require('../utils/atsListFilters'); // eslint-disable-line global-require
+    const byId = new Map(apps.map((a) => [a.id, a]));
+    rows.forEach((r) => {
+      const a = byId.get(r.id);
+      Object.defineProperty(r, 'recruiterId', { value: a.requirement.recruiterId || null, enumerable: false });
+      Object.defineProperty(r, 'location', { value: a.candidate.location || null, enumerable: false });
+    });
+    const bde = require('../utils/scope').clientViewRole(req.user) === 'bde'; // eslint-disable-line global-require
+    const kept = FI.portalFilter(bde ? { ...req.query, jpLocation: '' } : req.query, rows);
+    if (kept.length !== rows.length) rows.splice(0, rows.length, ...kept);
+  }
   // dup_: the red "Duplicate" chip and "Already in ATS (matched by phone)" on the screening list.
   await require('../utils/candidateDupes').attachFlags(rows); // eslint-disable-line global-require
   await require('../utils/candidateDupes').attachAlreadyInAts(rows); // eslint-disable-line global-require
