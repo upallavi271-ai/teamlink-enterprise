@@ -4,6 +4,7 @@ import { Modal } from '../proto.jsx';
 import logo from '../../assets/teamlink-full-logo.png';
 import { useMediaQuery, PHONE_MQ } from '../useMobileDrawer.js';
 import './payslipPhoneList.css';
+import LopBreakdown, { LopLink } from './LopBreakdown.jsx'; // the LOP number opens the dates behind it (2026-11-19)
 
 // ---------------------------------------------------------------------------
 // PAYSLIP — on screen, laid out exactly like the user's sample payslip and like
@@ -16,7 +17,7 @@ import './payslipPhoneList.css';
 // ---------------------------------------------------------------------------
 
 const DASH = '—';
-const show = (v) => (v === null || v === undefined || v === '' ? DASH : String(v));
+const show = (v) => (v === null || v === undefined || v === '' ? DASH : (typeof v === 'object' ? v : String(v))); // (a React element - the LOP link - passes through)
 const money = (n) => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 // Inline so the print window (which has none of the app's CSS) gets it too.
@@ -35,6 +36,7 @@ const SHEET_CSS = `
 .ps-table tr.ps-tot td{font-weight:700;font-size:14px}
 .ps-table .ps-net-sub{font-weight:400;font-size:11.5px;display:block}
 .ps-table .ps-amt{white-space:nowrap}
+.ps-sheet .lop-link{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:none;cursor:pointer}
 .ps-awl{font-size:12.5px;margin-top:10px;color:#7c2d12;font-family:Arial,Helvetica,sans-serif}
 .ps-foot{text-align:center;color:#1f4fa0;font-size:14px;margin-top:14px;font-family:Georgia,"Times New Roman",serif}
 `;
@@ -53,13 +55,13 @@ export async function downloadPayslipPdf(slip) {
 
 // The sheet itself — an 8-column grid so the three bands (header, 4-column
 // details, earnings | deductions) can each keep the sample's proportions.
-export function PayslipSheet({ p }) {
+export function PayslipSheet({ p, onLop = null }) {
   const e = p.employee;
   const grid = [
     ['Employee Code', e.employeeCode, 'PAN Number', e.panNumber],
     ['Employee Name', e.name, 'UAN Number', e.uanNumber],
     ['ESI Number', e.esiNumber, 'PF Number', e.pfNumber],
-    ['Days Worked', p.daysWorked, 'LOP Days', p.lopDays],
+    ['Days Worked', p.daysWorked, 'LOP Days', onLop ? <LopLink value={p.lopDays} onOpen={onLop} /> : p.lopDays],
     ['DOJ', e.dateOfJoining, 'Salary month', p.periodLabel || p.period],
     ...(p.periodRange ? [['Pay period', p.periodRange, 'Days in period', p.periodDays]] : []),
     ['Department', e.department, 'Designation', e.designation],
@@ -138,7 +140,7 @@ export function PayslipSheet({ p }) {
 // THE SAME PAYSLIP, STACKED, for a phone-width screen (founder 2026-11-19): the printed-style sheet above is an 8-column grid that does not fit a
 // phone, so on a phone the View window shows the very same payload (GET /payroll/payslips/:id) as short lists: net pay first, then earnings,
 // deductions, and the employee / statutory / bank lines. The PDF is unchanged.
-export function PayslipPhoneSheet({ p }) {
+export function PayslipPhoneSheet({ p, onLop = null }) {
   const e = p.employee;
   const rows = (list) => list.map(([k, v]) => (
     <div className="pssheet-row" key={k}><span>{k}</span><b>{show(v)}</b></div>
@@ -161,7 +163,7 @@ export function PayslipPhoneSheet({ p }) {
       {p.deductions.length ? lines(p.deductions) : <div className="pssheet-row"><span>None</span><b>{DASH}</b></div>}
       <div className="pssheet-row pssheet-tot"><span>Total deductions</span><b>{money(p.totalDeductions)}</b></div>
       <h4>Days</h4>
-      {rows([['Days worked', p.daysWorked], ['LOP days', p.lopDays], ...(p.periodRange ? [['Days in period', p.periodDays]] : []), ['Monthly gross', `₹${money(p.monthlyGross)}`]])}
+      {rows([['Days worked', p.daysWorked], ['LOP days', onLop ? <LopLink value={p.lopDays} onOpen={onLop} /> : p.lopDays], ...(p.periodRange ? [['Days in period', p.periodDays]] : []), ['Monthly gross', `₹${money(p.monthlyGross)}`]])}
       {p.absentNoLeave && (
         <div className="pssheet-note">
           <b>{p.absentNoLeave.text}</b> — ₹{money(p.absentNoLeave.amount)} (inside the LOP line).
@@ -183,6 +185,7 @@ export default function PayslipView({ payslipId, onClose }) {
   const [slip, setSlip] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [lopOpen, setLopOpen] = useState(false); // the LOP dates drawer
   const phone = useMediaQuery(PHONE_MQ); // a phone gets the stacked payslip and no Print button (a print window is not a phone thing)
 
   useEffect(() => {
@@ -233,8 +236,9 @@ export default function PayslipView({ payslipId, onClose }) {
           ))}
         </div>
       )}
-      {slip && phone && <div id="payslip-sheet"><PayslipPhoneSheet p={slip} /></div>}
-      {slip && !phone && <div id="payslip-sheet" style={{ overflowX: 'auto' }}><div style={{ minWidth: 620 }}><PayslipSheet p={slip} /></div></div>}
+      {slip && phone && <div id="payslip-sheet"><PayslipPhoneSheet p={slip} onLop={() => setLopOpen(true)} /></div>}
+      {slip && !phone && <div id="payslip-sheet" style={{ overflowX: 'auto' }}><div style={{ minWidth: 620 }}><PayslipSheet p={slip} onLop={() => setLopOpen(true)} /></div></div>}
+      {slip && lopOpen && <LopBreakdown payslipId={slip.id} onClose={() => setLopOpen(false)} />}
     </Modal>
   );
 }

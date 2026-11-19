@@ -319,6 +319,15 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     });
   });
 
+  // WHICH DATES ARE THE LOP DAYS (founder 2026-11-19): the dates behind a record's LOP number, each with its reason, attendance,
+  // and the leave / correction / late request with its approval. Read-only; the same guards as the Details drawer above
+  // (Payroll view right + the caller's payroll scope). utils/payrollLopBreakdown.js rebuilds it from the payroll's own rules.
+  router.get('/entries/:id/lop-breakdown', need('view'), async (req, res) => {
+    const e = await scopedEntry(req, res);
+    if (!e) return undefined;
+    return res.json(await require('../utils/payrollLopBreakdown').forEntry(e, { desk: true }));
+  });
+
   // ---- Payroll edit and recalculate (utils/payrollEdit.js) ---------------------------------------
   const editFail = (res, err) => {
     if (err && err.status) return res.status(err.status).json({ error: err.message, ...(err.extra || {}) });

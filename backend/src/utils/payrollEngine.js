@@ -699,6 +699,7 @@ async function historyOf(entryId) {
 module.exports = {
   STATUSES, STATUS_LABEL, FINAL_STATUSES, PAYABLE_STATUSES, TRANSITIONS, PayrollError,
   getPolicy, isMonth, monthParts, payrollWorkingDays, overlapProblem, readSnapshot,
+  leaversIn, awlContext, // read-only helpers reused by utils/payrollLopBreakdown.js (the LOP dates screen)
   attendanceDefaults, attendanceInputs, computeEntry, computeRegisterEntry, registerFor, calculateMonth, engineRowFor, refreshMonthRun,
   writePayslip, transition, historyOf, incentivesFor,
 };

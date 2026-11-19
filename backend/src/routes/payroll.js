@@ -673,6 +673,24 @@ router.get('/payslips/:id', async (req, res) => {
   return res.json(payload);
 });
 
+// THE LOP DATES BEHIND A PAYSLIP (founder 2026-11-19): the same breakdown as the payroll run's LOP click, opened from the payslip. Whoever may
+// read the payslip (slipForReader: their own, or inside the payroll desk's scope) may read this; the payroll desk sees who edited / why HR typed
+// the days, the employee does not (as for editInfo above). No salary amounts in it.
+router.get('/payslips/:id/lop-breakdown', async (req, res) => {
+  const slip = await slipForReader(req, res);
+  if (!slip) return undefined;
+  const run = slip.payrollEntryId
+    ? await prisma.employeePayrollRun.findUnique({ where: { id: slip.payrollEntryId }, include: { employee: true } })
+    : await prisma.employeePayrollRun.findUnique({ where: { employeeId_month: { employeeId: slip.employeeId, month: slip.month } }, include: { employee: true } });
+  // a payslip of an older month without a per-employee record: its own stored figures
+  const entry = run || {
+    id: null, employeeId: slip.employeeId, employee: slip.employee, month: slip.month, status: null, attendanceSource: null,
+    daysLop: slip.lopDays, workingDays: slip.workingDays, daysPresent: null,
+  };
+  const desk = await can(req.user, 'hrms', 'hrms', 'Payroll & Compensation', 'edit');
+  return res.json(await require('../utils/payrollLopBreakdown').forEntry(entry, { desk: !!desk }));
+});
+
 router.get('/payslips/:id/pdf', async (req, res) => {
   const slip = await slipForReader(req, res);
   if (!slip) return undefined;

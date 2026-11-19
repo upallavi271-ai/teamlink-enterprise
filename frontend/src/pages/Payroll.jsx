@@ -9,6 +9,7 @@ import { canRunPayroll, isAdmin as hasAdminAccess, can } from '../permissions';
 import Combo from '../components/Combo.jsx';
 import SalaryStructureCard from '../components/payroll/SalaryStructureCard.jsx';
 import PayslipView, { downloadPayslipPdf } from '../components/payroll/PayslipView.jsx';
+import LopBreakdown, { LopLink } from '../components/payroll/LopBreakdown.jsx'; // LOP number -> the dates behind it (2026-11-19)
 import PayslipPhoneList from '../components/payroll/PayslipPhoneList.jsx'; // my payslips as cards on a phone (2026-11-19)
 import { useMediaQuery, PHONE_MQ } from '../components/useMobileDrawer.js';
 import ExportMenu from '../components/ExportMenu.jsx';
@@ -842,6 +843,7 @@ function PayslipsTab({ seesOthers }) {
   usePayrollCycle(); // so "Sep 2026 payroll · 16 Aug – 15 Sep" shows as soon as the dates are known
   const [payslips, setPayslips] = useState([]);
   const [viewing, setViewing] = useState(null);
+  const [lopSlip, setLopSlip] = useState(null); // payslip whose LOP dates are open
   const [error, setError] = useState('');
   // A person's OWN payslips on a phone-width screen are cards with a big Download PDF button; the table stays everywhere else.
   const phoneOwn = useMediaQuery(PHONE_MQ) && !seesOthers;
@@ -911,7 +913,7 @@ function PayslipsTab({ seesOthers }) {
                   <td className="cell-muted">{p.payMode || 'Package'}</td>
                   <td className="cell-muted">{inr(p.gross)}</td>
                   <td className="cell-muted">{inr(totalDed(p))}</td>
-                  <td className="cell-muted">{p.lopDays || 0}</td>
+                  <td className="cell-muted"><LopLink value={p.lopDays} onOpen={() => setLopSlip(p.id)} /></td>
                   <td><b>{inr(p.netPay)}</b></td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <button className="btn btn-sm" onClick={() => setViewing(p.id)}>View</button>{' '}
@@ -930,6 +932,7 @@ function PayslipsTab({ seesOthers }) {
       )}
       {page.total > 0 && !phoneOwn && <Pager page={page} noun="payslips" />}
       {viewing && <PayslipView payslipId={viewing} onClose={() => setViewing(null)} />}
+      {lopSlip && <LopBreakdown payslipId={lopSlip} onClose={() => setLopSlip(null)} />}
     </Panel>
   );
 }

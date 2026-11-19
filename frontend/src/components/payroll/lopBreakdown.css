@@ -1,0 +1,65 @@
+/* LOP days drawer (components/payroll/LopBreakdown.jsx) and the link-styled LOP number. */
+.lop-link { background: none; border: 0; padding: 0; margin: 0; font: inherit; font-weight: 700; color: var(--blue, #1d4ed8); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; cursor: pointer; }
+.lop-link:hover { text-decoration-style: solid; }
+.lop-link:focus-visible { outline: 2px solid var(--blue, #1d4ed8); outline-offset: 2px; border-radius: 3px; }
+.lop-link.zero { font-weight: 500; opacity: .85; }
+.ps-sheet .lop-link, .pssheet .lop-link { color: inherit; }
+
+.lop-back { position: fixed; inset: 0; background: rgba(15, 23, 42, .35); z-index: 1300; }
+.lop-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(880px, 100vw); background: #fff; z-index: 1301; box-shadow: -8px 0 24px rgba(0, 0, 0, .18); display: flex; flex-direction: column; }
+.lop-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.lop-head h3 { font-size: 16px; margin: 0; }
+.lop-subhead { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
+.lop-body { padding: 14px 18px 20px; overflow-y: auto; flex: 1; }
+.lop-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 10px 18px; border-top: 1px solid var(--line); background: #fff; }
+
+.lop-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.lop-tiles > div { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: var(--paper, #fafafa); }
+.lop-tiles span { display: block; font-size: 11.5px; color: var(--ink-soft); }
+.lop-tiles b { display: block; font-size: 22px; margin-top: 2px; }
+.lop-tiles b.small { font-size: 13.5px; line-height: 1.35; margin-top: 4px; font-weight: 600; }
+
+.lop-ok { background: var(--teal-tint, #e4f0ed); color: var(--teal, #0f6b5c); border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.lop-warn { background: var(--amber-tint, #fbf0de); color: var(--amber, #8a5206); border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 8px; }
+.lop-notes { margin: 0 0 10px; padding-left: 18px; font-size: 12.5px; line-height: 1.55; color: var(--ink); }
+.lop-manual { border: 1px solid #ecd7ac; background: #fffaf0; border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; }
+.lop-manual h4, .lop-terms h4 { font-family: inherit; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-soft); margin: 0 0 4px; font-weight: 600; }
+.lop-manual ul, .lop-terms ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+.lop-terms { margin-bottom: 12px; }
+.lop-terms ul { columns: 2; column-gap: 24px; }
+.lop-h { font-family: inherit; font-size: 13.5px; font-weight: 700; margin: 14px 0 8px; }
+.lop-empty { border: 1px dashed var(--line); border-radius: 10px; padding: 14px; font-size: 13px; color: var(--ink-soft); text-align: center; }
+
+.lop-day { border: 1px solid var(--line); border-left: 4px solid var(--red, #b42318); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; background: #fff; }
+.lop-day.light { border-left-color: var(--teal, #0f6b5c); background: var(--paper, #fafafa); }
+.lop-day-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.lop-date { font-size: 14px; }
+.lop-badge { font-size: 11.5px; font-weight: 700; padding: 2px 9px; border-radius: 20px; background: var(--red-tint, #fdecea); color: var(--red, #b42318); }
+.lop-badge.ok { background: var(--teal-tint, #e4f0ed); color: var(--teal, #0f6b5c); }
+.lop-att { font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 20px; background: var(--line-soft, #eef1f3); color: var(--ink-soft); }
+.lop-att.att-red { background: var(--red-tint, #fdecea); color: var(--red, #b42318); }
+.lop-att.att-orange { background: var(--amber-tint, #fbf0de); color: var(--amber, #8a5206); }
+.lop-att.att-green { background: var(--teal-tint, #e4f0ed); color: var(--teal, #0f6b5c); }
+.lop-att.att-blue { background: var(--blue-tint, #e8f0fd); color: var(--blue, #1d4ed8); }
+.lop-line { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; font-size: 13px; padding: 3px 0; border-top: 1px dashed var(--line-soft, #eef1f3); }
+.lop-line:first-of-type { border-top: 0; }
+.lop-line > span { color: var(--ink-soft); font-size: 12px; padding-top: 1px; }
+.lop-sub { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
+.lop-why, .lop-req { margin: 0; padding-left: 16px; }
+.lop-req { list-style: none; padding-left: 0; }
+.lop-req li { margin-bottom: 6px; }
+.lop-why li { margin-bottom: 2px; }
+.status.lop-neutral { background: var(--line-soft, #eef1f3); color: var(--ink-soft); }
+.lop-light { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-top: 12px; background: #fff; }
+.lop-light > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink-soft); padding: 2px 0 8px; }
+.lop-rules { font-size: 12px; color: var(--ink-soft); line-height: 1.6; margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--line-soft, #eef1f3); }
+
+@media (max-width: 640px) {
+  .lop-line { grid-template-columns: 1fr; }
+  .lop-terms ul { columns: 1; }
+  .lop-body { padding: 12px 12px 18px; }
+}
+@media print {
+  .lop-back, .lop-foot { display: none; }
+  .lop-drawer { position: static; width: auto; box-shadow: none; }
+}

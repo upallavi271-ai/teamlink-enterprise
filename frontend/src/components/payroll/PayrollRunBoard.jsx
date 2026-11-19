@@ -23,6 +23,8 @@ import { usePayrollCycle, monthHeading } from './payrollCycleUi.jsx';
 import PayrollEditor from './PayrollEditor.jsx';
 import PayrollEditHistory, { ChangesInRun } from './PayrollEditHistory.jsx';
 import Combo from '../Combo.jsx';
+// Which dates are the LOP days (2026-11-19): the LOP number opens the dates, reasons and approvals behind it
+import LopBreakdown, { LopLink } from './LopBreakdown.jsx';
 
 // Paise are shown when there are any (pay-register months are worked out to the paisa, 2026-10-28).
 const inr0 = (n) => { const v = Math.round((Number(n) || 0) * 100) / 100; return `₹${v.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 })}`; };
@@ -266,6 +268,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
   const [stripKey, setStripKey] = useState(0);
   const [editId, setEditId] = useState(null); // the pay editor (Edit / Adjust)
   const [histId, setHistId] = useState(null); // the history drawer
+  const [lopId, setLopId] = useState(null); // the LOP dates drawer
   const [changesKey, setChangesKey] = useState(0);
 
   function load() {
@@ -406,7 +409,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
                     <td>{e.employee.name}</td>
                     <td className="cell-muted">{groupOf(e)}</td>
                     <td>{e.workingDays - e.daysLop}<span className="cell-muted"> / {e.workingDays}</span>{e.attendanceSource === 'OVERRIDE' ? <span className="cell-muted" title="Days typed or imported by HR"> *</span> : null}</td>
-                    <td className="cell-muted">{e.daysLop || 0}</td>
+                    <td className="cell-muted"><LopLink value={e.daysLop} onOpen={() => setLopId(e.id)} title={`Click to see which dates were counted as loss of pay for ${e.employee.name}, and why`} /></td>
                     <td>{inr0(e.earnedGross)}</td>
                     <td className="cell-muted">{inr0(e.pfEmployee)}</td>
                     <td className="cell-muted">{inr0(e.esiEmployee)}</td>
@@ -446,6 +449,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
         />
       )}
       {histId && <PayrollEditHistory entryId={histId} onClose={() => setHistId(null)} />}
+      {lopId && <LopBreakdown entryId={lopId} onClose={() => setLopId(null)} />}
     </div>
   );
 }
