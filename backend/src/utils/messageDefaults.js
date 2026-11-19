@@ -48,6 +48,8 @@ const EXTRA = [
   ['APPLICATION_RECEIVED', 'Application received', 'candidate', ALL, 'We received your application for {{role}}', 'Hi {{name}}, thank you for applying for {{role}}. We have received your application and a recruiter will contact you soon. - {{company}}'],
   ['JOINING_REMINDER', 'Joining reminder', 'candidate', ALL, 'Your joining date for {{role}}', 'Hi {{name}}, a reminder that your joining for {{role}} at {{client}} is on {{joiningDate}}. Please reply if you need anything. - {{recruiterName}}'],
   ['JOB_ALERT', 'Job alert', 'candidate', ALL, 'A job for you: {{role}}', 'Hi {{firstName}}, a new job for you: {{role}}. See it and apply here: {{jobLink}} - {{company}}'],
+  // the opener of the Organization Chart's WhatsApp screen ("Say hello", founder 2026-11-18): one friendly message that asks them to reply, so the 24 hours open
+  ['EMPLOYEE_HELLO', 'Say hello', 'employee', ALL, 'Hello from {{company}}', 'Hi {{firstName}}, this is {{recruiterName}} from {{company}}. Please reply to this message so we can chat here.'],
   ['EMPLOYEE_NOTICE', 'General notice', 'employee', ALL, 'A notice from {{company}}', 'Hi {{firstName}}, a notice from {{recruiterName}}, {{company}}: '],
   ['EMPLOYEE_REMINDER', 'Reminder', 'employee', ALL, 'A reminder from {{company}}', 'Hi {{firstName}}, a reminder from {{recruiterName}}: please complete the pending item. Thank you.'],
   ['CLIENT_PAYMENT_REMINDER', 'Payment reminder', 'client', ALL, 'A reminder about your payment to {{company}}', 'Hi {{firstName}}, a gentle reminder about the payment due to {{company}} for the placement at {{client}}. If you have already paid, please ignore this message and share the payment details. Thank you. - {{recruiterName}}'],

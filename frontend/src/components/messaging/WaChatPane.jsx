@@ -350,7 +350,11 @@ export default function WaChatPane({
     const left = win.open ? win.short.replace(' left to write freely', '') : '';
     const chooseNum = (id) => { wa.setChosen(id); try { localStorage.setItem('tl_wa_numpref', id); } catch { /* not kept */ } };
     const initials = String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
-    const list = (sendMode ? approved : templates).filter((t) => !tplQ || `${t.purposeLabel || t.name} ${t.language || ''}`.toLowerCase().includes(tplQ.toLowerCase()));
+    // EVERY usable message is offered, not only the ones marked Approved: the server decides how each goes (an approved template, or the number's bulk template) and says plainly when it cannot
+    const isApproved = (t) => t.waStatus === 'Approved' && !!t.waTemplateName;
+    const list = [...templates].sort((a, b) => Number(isApproved(b)) - Number(isApproved(a))).filter((t) => !tplQ || `${t.purposeLabel || t.name} ${t.language || ''}`.toLowerCase().includes(tplQ.toLowerCase()));
+    const hello = templates.find((t) => t.purpose === 'EMPLOYEE_HELLO');
+    const firstName = String(p.name || '').trim().split(/\s+/)[0] || 'them';
     const picked = sendMode ? tplPick : quickPick;
     return (
       <div className="wc-pane wcw">
@@ -396,18 +400,24 @@ export default function WaChatPane({
         <div className="wcw-compose">
           {sendErr && <div className="msg-box red" role="alert"><b>Not sent.</b> {sendErr.text}</div>}
           {mode.mode === 'blocked' && <div className="wcw-note warn" role="alert"><b>You cannot write here.</b> {mode.reason}</div>}
-          {sendMode && chat.canSend && <div className="wcw-note" role="status">They have not written in the last 24 hours, so WhatsApp lets us start only with an approved message: tap the clipboard, pick one and send. When they answer, you can type here like normal WhatsApp.</div>}
+          {sendMode && chat.canSend && hello && (
+            <button type="button" className="wcw-hello" disabled={sending || (wa.state && !wa.canSend)} onClick={() => doSend({ purposeKey: hello.purpose, templateId: hello.id })}>
+              <b>{sending ? 'Sending…' : `👋 Say hello to ${firstName}`}</b>
+              <small>One friendly message that asks them to reply. When they answer, you can type here like normal WhatsApp.</small>
+            </button>
+          )}
+          {sendMode && chat.canSend && <div className="wcw-note" role="status">They have not written in the last 24 hours, so WhatsApp lets us start only with a ready message. {hello ? 'Tap Say hello, or the clipboard for other messages.' : 'Tap the clipboard and pick one.'} When they answer, you can type here like normal WhatsApp.</div>}
           {wa.state && ['none', 'down'].includes(wa.state.mode) ? wa.node : null}
           {tplOpen && (
-            <div className="wcw-tpl" role="dialog" aria-label={sendMode ? 'Approved messages' : 'Ready-made messages'}>
-              <div className="wcw-tpl-h"><b>{sendMode ? 'Approved messages' : 'Ready-made messages'}</b><button type="button" className="wcw-x" onClick={() => setTplOpen(false)} aria-label="Close">×</button></div>
+            <div className="wcw-tpl" role="dialog" aria-label={sendMode ? 'Messages to start the chat' : 'Ready-made messages'}>
+              <div className="wcw-tpl-h"><b>{sendMode ? 'Messages to start the chat' : 'Ready-made messages'}</b><button type="button" className="wcw-x" onClick={() => setTplOpen(false)} aria-label="Close">×</button></div>
               <input className="wcw-tpl-q" value={tplQ} onChange={(e) => setTplQ(e.target.value)} placeholder="Search a message" aria-label="Search a message" />
               <div className="wcw-tpl-list">
-                {list.length === 0 && <div className="small-muted" style={{ padding: 10 }}>{sendMode ? (tplQ ? 'No approved message matches.' : 'No message is approved by Meta yet. An Admin approves them in Message templates.') : 'No ready-made message found.'}</div>}
+                {list.length === 0 && <div className="small-muted" style={{ padding: 10 }}>{tplQ ? 'No message matches.' : 'No ready-made message found. An Admin adds them in Message templates.'}</div>}
                 {list.map((t) => (
                   <button key={t.id} type="button" className={`wcw-tpl-row${picked === t.id ? ' on' : ''}`} onClick={() => { if (sendMode) pickTemplate(t.id); else { pickQuick(t.id); setTplOpen(false); } }}>
                     <b>{t.purposeLabel || t.name}</b>
-                    {t.language ? <small>{t.language}</small> : null}
+                    <small>{[isApproved(t) ? 'Approved' : null, t.language].filter(Boolean).join(' · ')}</small>
                   </button>
                 ))}
               </div>
@@ -424,10 +434,10 @@ export default function WaChatPane({
               <button type="button" className="wcw-ic" aria-label="Add an emoji" aria-expanded={pop === 'emoji'} onClick={() => setPop(pop === 'emoji' ? '' : 'emoji')} disabled={!canType}>😊</button>
               {pop === 'emoji' && <div className="wc-emojis" role="group" aria-label="Emoji">{EMOJI.map((e, i) => <button key={`${e}${i}`} type="button" onClick={() => insertEmoji(e)}>{e}</button>)}</div>}
             </div>
-            <button type="button" className={`wcw-ic${sendMode ? ' hot' : ''}`} title={sendMode ? 'Approved messages' : 'Ready-made messages'} aria-label={sendMode ? 'Approved messages' : 'Ready-made messages'} aria-expanded={tplOpen} onClick={() => { setTplOpen((v) => !v); setTplQ(''); }} disabled={mode.mode === 'blocked'}>📋</button>
+            <button type="button" className={`wcw-ic${sendMode ? ' hot' : ''}`} title={sendMode ? 'Messages to start the chat' : 'Ready-made messages'} aria-label={sendMode ? 'Messages to start the chat' : 'Ready-made messages'} aria-expanded={tplOpen} onClick={() => { setTplOpen((v) => !v); setTplQ(''); }} disabled={mode.mode === 'blocked'}>📋</button>
             <textarea
               ref={taRef} className="wcw-input" rows={1} value={text} maxLength={4000} aria-label="Type a message" disabled={!canType}
-              placeholder={canType ? 'Type a message' : sendMode ? 'Tap the clipboard to send an approved message' : (mode.reason || 'Nothing can be sent')}
+              placeholder={canType ? 'Type a message' : sendMode ? (hello ? 'Tap Say hello above to start the chat' : 'Tap the clipboard to start the chat') : (mode.reason || 'Nothing can be sent')}
               onChange={(e) => { setText(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(120, e.target.scrollHeight)}px`; }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); sendText(); } }}
             />
