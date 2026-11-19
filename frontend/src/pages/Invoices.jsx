@@ -2,7 +2,7 @@ import BillingTools from '../components/accounts/BillingTools.jsx'; // payments 
 import {
   Fragment, useCallback, useEffect, useMemo, useRef, useState,
 } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
