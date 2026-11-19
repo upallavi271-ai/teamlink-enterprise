@@ -290,6 +290,24 @@ export default function InvoiceDetail() {
             {canEditTax && invoice.status !== 'Cancelled' && tax && !(invoice.creditNotes || []).some((n) => n.status === 'Issued') && (
               <button type="button" className="btn btn-sm" onClick={() => { setSaidTax(''); setEditTax(true); }}>Edit GST / TDS</button>
             )}
+            {canEditTax && invoice.status !== 'Cancelled' && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{ color: 'var(--red)' }}
+                onClick={async () => {
+                  if (!window.confirm(`Remove ${invoice.candidate?.name || 'this candidate'} from Accounts (delete invoice ${invoice.invoiceNumber || ''})?\nThe invoice is cancelled and no longer counts in billing or GST.\nIf money was received on it, it moves to this client's other open invoices (oldest first), with its bank line as proof.`)) return;
+                  try {
+                    const { data: d } = await api.patch(`/invoices/${id}/cancel`, { release: true });
+                    const r = d && d.released;
+                    window.alert(r && r.hadMoney > 0
+                      ? `Removed. ${money2(r.hadMoney)} was moved${r.reapplied.length ? ` to ${r.reapplied.map((x) => `${x.invoiceNumber || 'invoice'} (${money2(x.amount)})`).join(', ')}` : ''}${r.leftoverTotal > 0.004 ? `; ${money2(r.leftoverTotal)} is left unapplied on its bank line` : ''}.`
+                      : 'Removed.');
+                    load();
+                  } catch (e) { window.alert(e.response?.data?.error || 'That could not be removed.'); }
+                }}
+              >Remove candidate</button>
+            )}
           </div>
           <table className="invx-sum" style={{ marginTop: 8 }}>
             <tbody>

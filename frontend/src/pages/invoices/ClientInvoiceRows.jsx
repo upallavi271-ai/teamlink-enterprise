@@ -106,7 +106,7 @@ If money was received on it, that payment (and its bank line proof) moves to thi
     } catch (e) { window.alert(e.response?.data?.error || 'That could not be deleted.'); }
     setBusy(false);
   };
-  return <button type="button" className="btn btn-sm" disabled={busy} onClick={go}>Delete</button>;
+  return <button type="button" className="btn btn-sm" disabled={busy} onClick={go}>Remove candidate</button>;
 }
 
 // Unmatch = take the bank line away from the payment (POST /bank/:id/unmatch). A receipt keyed in by hand that only had the
@@ -176,7 +176,7 @@ function Panel({
             <thead>
               <tr>
                 <th>#</th><th>Candidate name</th><th>Date of joining</th><th>Role / Designation</th>
-                <th className="num">Salary (CTC)</th><th className="num">Billing %</th><th className="num">Fee before GST</th><th className="num">GST</th><th className="num">Amount</th><th>Edit / Delete</th>
+                <th className="num">Salary (CTC)</th><th className="num">Billing %</th><th className="num">Fee before GST</th><th className="num">GST</th><th className="num">Amount</th><th>Edit / Remove</th>
               </tr>
             </thead>
             <tbody>
