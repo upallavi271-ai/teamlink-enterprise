@@ -876,7 +876,9 @@ const LEFT_STATUSES = [JOINING_REPLACEMENT_DUE, JOINING_REPLACED, JOINING_LEFT_A
 // Joined on purpose (billing, guarantee and the history read it), but every LIST must show them as Dropped, not under Joined (2026-11-18).
 function leftAfterJoining(a) {
   if (!a || !['JOINED', 'HIRED'].includes(a.stage)) return false;
-  return LEFT_STATUSES.includes(a.joiningStatus) || a.rollStatus === 'Dropped';
+  if (LEFT_STATUSES.includes(a.joiningStatus) || a.rollStatus === 'Dropped') return true;
+  // the Joining & Drop record is the authority (utils/joinedRule.js, the same fact the Joined counts leave out); sync, needs its refresh() to have run
+  try { return !!(a.id && require('./joinedRule').droppedNow(a.id)); } catch { return false; } // eslint-disable-line global-require
 }
 const WORKFLOW_RULES = {
   DUPLICATE_CHECK_PENDING: (a, ctx) => !ctx.duplicateChecked,

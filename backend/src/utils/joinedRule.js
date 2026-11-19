@@ -13,6 +13,8 @@
 // Withdrawing a drop ("Withdraw the drop", joindrop/core.js reopen) puts the record back to Joined and so the person back in Joined everywhere.
 // Invoices and incentive decisions are never changed by any of this (they are stored facts); only the counts and lists move.
 //
+// atsVocab.leftAfterJoining(app) (the candidate lists' "Dropped" label) asks this file's droppedNow() too, so there is ONE definition of "left after joining".
+//
 // API
 //   droppedAppIds()    async  Set of every application whose JoiningRecord says Dropped (cached ~20 s, invalidate() on any record change)
 //   isDropped(appId)   async  boolean
