@@ -109,6 +109,24 @@ If money was received on it, that payment (and its bank line proof) moves to thi
   return <button type="button" className="btn btn-sm" disabled={busy} onClick={go}>Delete</button>;
 }
 
+// Unmatch = take the bank line away from the payment (POST /bank/:id/unmatch). A receipt keyed in by hand that only had the
+// line linked as proof keeps its money; a receipt that came from the line itself is reversed (the invoice is owed again).
+function UnmatchProof({ txnId, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const go = async (e) => {
+    e.stopPropagation();
+    if (!window.confirm('Unmatch this bank line from the payment?\n\nThe bank line goes back to "Unmatched". If the payment was only linked to the line as proof, the payment stays; if it came from the line itself, it is reversed and the invoice is owed again. If the line is shared by several invoices, all of them are affected.')) return;
+    setBusy(true);
+    try {
+      await api.post(`/bank/${txnId}/unmatch`, {});
+      window.alert('Unmatched.');
+      onChanged();
+    } catch (err) { window.alert(err.response?.data?.error || 'That could not be unmatched.'); }
+    setBusy(false);
+  };
+  return <button type="button" className="link-btn" style={{ color: 'var(--red)' }} disabled={busy} onClick={go}>Unmatch</button>;
+}
+
 // Edit = change the amount before GST (and GST / TDS) of one candidate's invoice line: the same form as the invoice page's
 // "Edit GST / TDS"; the server recalculates everything and refuses an amount below what was already received.
 function EditLine({ m, onChanged }) {
@@ -244,6 +262,7 @@ function Panel({
                             <button type="button" className="link-btn" aria-expanded={lineOf === p.id} onClick={(e) => { e.stopPropagation(); setLineOf(lineOf === p.id ? null : p.id); }}>{lineOf === p.id ? 'Hide bank line' : 'Bank line'}</button>
                             {' · '}
                             <button type="button" className="link-btn" onClick={(e) => { e.stopPropagation(); setStmtOf(p.bankTxnId); }}>Bank statement</button>
+                            {canPay && <> · <UnmatchProof txnId={p.bankTxnId} onChanged={onChanged} /></>}
                           </>
                           : <Link to={`/invoices/${p.invoiceId}#proof`}>Bank statement</Link>)
                         : (p.proof || <span className="small-muted">—</span>)}
