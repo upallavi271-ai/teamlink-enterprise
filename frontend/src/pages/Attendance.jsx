@@ -33,7 +33,6 @@ import DataIoBar from '../components/dataio/DataIoBar.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import PeopleFilterBar from '../components/PeopleFilterBar.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
-import BiometricDelayNotice from './attendance/BiometricDelayNotice.jsx'; // "the machine is late" (only while true)
 
 // The daily-marking status filter. "On Leave" is stored as Leave; "Not marked"
 // is a row with no attendance yet for the day.
@@ -212,7 +211,6 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
 
   return (
     <div className="att-day">
-      <BiometricDelayNotice />
       {/* PEOPLE, NOT RECORDS. One day: the people on the rolls that day, each
           in exactly one bucket. A range: people with at least one such day
           and per-day averages, plus the date-wise totals. The same
