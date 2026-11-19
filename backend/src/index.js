@@ -603,6 +603,7 @@ const server = app.listen(PORT, () => {
   require('./utils/candidateWarmup').start();
   // a drop recorded before the Roll status was set shows as Dropped (not Joined) in the lists (joindrop/schema.js)
   setTimeout(() => { require('./joindrop/schema').healDroppedRollStatus(); }, 4000).unref();
+  require('./utils/atsFilterIndexes').ensure().catch(() => null); // indexes for the ATS filters (CREATE INDEX IF NOT EXISTS)
   // GREEN START (Omni-Channel): this backend starts it and keeps it running (database, Redis, server, worker, entrance), like the Job Portal below.
   // Memory guard, back-off, no start without Redis. GREENSTART_ENABLED / GREENSTART_AUTOSTART switch it off. In the test sandbox it only runs with a test settings file.
   require('./utils/greenStartSupervisor').start();

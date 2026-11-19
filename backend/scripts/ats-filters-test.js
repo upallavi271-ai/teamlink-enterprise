@@ -222,6 +222,123 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   const linesA = String(exA.text || '').split(/\r?\n/).filter((x) => x.includes(TAG));
   check('export scope: recruiter A\'s export never holds recruiter B\'s person', linesA.length === 2 && !linesA.some((x) => x.includes(nm(6))), { status: exA.status, n: linesA.length });
 
+  // =====================================================================================================================
+  // THE OTHER LISTS
+  // =====================================================================================================================
+  const rowsOf = (b) => (b && (b.rows || b.requirements || b.recruitment || (Array.isArray(b) ? b : []))) || [];
+  const cl1 = await prisma.client.create({ data: { name: `${TAG} cone`, industry: 'Healthcare', priority: 'High', agreementStatus: 'Signed' } });
+  const cl2 = await prisma.client.create({ data: { name: `${TAG} ctwo`, industry: 'IT Services', priority: 'Low', agreementStatus: 'Pending' } });
+  const cl3 = await prisma.client.create({ data: { name: `${TAG} cthree`, industry: 'Healthcare', priority: 'Medium', agreementStatus: 'Signed' } });
+  const ago = (d) => new Date(Date.now() - d * 86400000);
+  const mkReq = (n, client, extra) => prisma.requirement.create({ data: { title: `${TAG} R${n}`, clientId: client.id, department: j1.department, status: 'OPEN', ...extra } });
+  const R1 = await mkReq(1, cl1, { openings: 3, salary: '₹10L - ₹15L', workMode: 'Remote', createdAt: ago(40), recruiterId: RA.id });
+  const R2 = await mkReq(2, cl1, { openings: 1, salary: '₹4L - ₹6L', workMode: 'Work From Office', createdAt: ago(2) });
+  const R3 = await mkReq(3, cl2, { openings: 2, salary: '₹20L - ₹30L', workMode: 'Hybrid', createdAt: ago(100) });
+  const mkApp = (c, r, d) => prisma.application.create({ data: { candidateId: c.id, requirementId: r.id, stage: 'NEW', ...d } });
+  await mkApp(c1, R1, { stage: 'JOINED', joinedAt: ago(5), joiningDate: ago(5) });
+  // the server was started before these rows: the working copy of the lists catches up by itself
+  await new Promise((r) => { setTimeout(r, 1500); });
+  const rq = async (token, params) => { const r = await call('GET', `/requirements?${qs({ page: '1', pageSize: '100', view: 'all', search: `${TAG} R`, ...params })}`, null, token); return { status: r.status, names: rowsOf(r.body).map((x0) => x0.title), body: r.body }; };
+  const T = (n) => `${TAG} R${n}`;
+  let x = await rq(tA, {}); check('requirements: the three seeded jobs are listed', same(x.names, [T(1), T(2), T(3)]), { s: x.status, names: x.names, keys: x.body && Object.keys(x.body) });
+  x = await rq(tA, { daysOpenMin: '30' }); check('requirements: days open 30 or more', same(x.names, [T(1), T(3)]), x.names);
+  x = await rq(tA, { daysOpenMax: '30' }); check('requirements: days open up to 30', same(x.names, [T(2)]), x.names);
+  x = await rq(tA, { daysOpenMin: '30', daysOpenMax: '60' }); check('requirements: days open 30 to 60', same(x.names, [T(1)]), x.names);
+  x = await rq(tA, { openLeftMin: '2' }); check('requirements: openings left 2 or more (R1 has 3 openings, 1 joined)', same(x.names, [T(1), T(3)]), x.names);
+  x = await rq(tA, { openLeftMax: '1' }); check('requirements: openings left up to 1', same(x.names, [T(2)]), x.names);
+  x = await rq(tA, { ctcMin: '12', ctcMax: '25' }); check('requirements: CTC band overlaps 12-25 lakh', same(x.names, [T(1), T(3)]), x.names);
+  x = await rq(tA, { ctcMax: '5' }); check('requirements: CTC up to 5 lakh', same(x.names, [T(2)]), x.names);
+  x = await rq(tA, { industry: 'Healthcare' }); check('requirements: industry', same(x.names, [T(1), T(2)]), x.names);
+  x = await rq(tA, { workMode: 'Remote' }); check('requirements: work mode', same(x.names, [T(1)]), x.names);
+  x = await rq(tRA, { daysOpenMin: '30' }); check('requirements scope: recruiter A sees only their own job through the filter', same(x.names, [T(1)]), x.names);
+  x = await rq(tRB, { daysOpenMin: '30' }); check('requirements scope: recruiter B sees none', x.names.length === 0, x.names);
+
+  const cls = async (token, params) => { const r = await call('GET', `/clients?${qs(params)}`, null, token); return { status: r.status, names: (Array.isArray(r.body) ? r.body : []).map((c) => c.name).filter((n) => n.startsWith(TAG)), n: Array.isArray(r.body) ? r.body.length : -1 }; };
+  const [n1, n2, n3] = [`${TAG} cone`, `${TAG} ctwo`, `${TAG} cthree`];
+  x = await cls(tA, {}); check('clients: the three seeded clients are listed', same(x.names, [n1, n2, n3]), x);
+  x = await cls(tA, { priority: 'High' }); check('clients: priority', same(x.names, [n1]), x);
+  x = await cls(tA, { industry: 'Healthcare' }); check('clients: industry', same(x.names, [n1, n3]), x);
+  x = await cls(tA, { agreementStatus: 'Pending' }); check('clients: agreement status', same(x.names, [n2]), x);
+  x = await cls(tA, { reqMin: '2' }); check('clients: requirement count 2 or more', same(x.names, [n1]), x);
+  x = await cls(tA, { reqMax: '1' }); check('clients: requirement count up to 1 (a client with none counts as 0)', same(x.names, [n2, n3]), x);
+  x = await cls(tA, { hasJoinings: 'yes' }); check('clients: has joinings', same(x.names, [n1]), x);
+  x = await cls(tA, { hasJoinings: 'no' }); check('clients: no joinings', same(x.names, [n2, n3]), x);
+  const rcAll = await cls(tRA, {}); const rcAg = await cls(tRA, { agreementStatus: 'Pending', priority: 'Low', industry: 'zzz' });
+  check('clients: a recruiter\'s agreement / priority / industry parameters are ignored (they cannot see those fields)', rcAll.n === rcAg.n && rcAll.status === 200, { a: rcAll.n, b: rcAg.n });
+
+  // interviews
+  const mkIv = async (c, at, status, mode, round, who) => { const a = await prisma.application.findFirst({ where: { candidateId: c.id, requirementId: j1.id } }); await prisma.application.update({ where: { id: a.id }, data: { interviewAt: new Date(at), interviewStatus: status, interviewMode: mode, interviewRound: round, interviewer: who } }); };
+  await mkIv(c1, '2026-12-01T10:00:00+05:30', 'SCHEDULED', 'Online', 1, 'Ravi Kumar');
+  await mkIv(c2, '2026-12-10T10:00:00+05:30', 'COMPLETED', 'In Person', 2, 'Sita Rao');
+  await mkIv(c3, '2026-12-20T10:00:00+05:30', 'SCHEDULED', 'Online', 1, 'Ravi Kumar');
+  const candName = (y) => (y.candidate && (y.candidate.name || y.candidate)) || y.candidateName || '';
+  const iv = async (token, params) => { const r = await call('GET', `/ats/calendar?${qs(params)}`, null, token); return { status: r.status, names: rowsOf(r.body).map(candName).filter((n) => typeof n === 'string' && n.startsWith(TAG)), keys: r.body && Object.keys(r.body) }; };
+  x = await iv(tA, {}); check('interviews: the three seeded interviews are listed', same(x.names, names(1, 2, 3)), x);
+  x = await iv(tA, { ivFrom: '2026-12-05', ivTo: '2026-12-15' }); check('interviews: date range', same(x.names, names(2)), x);
+  x = await iv(tA, { ivStatus: 'SCHEDULED' }); check('interviews: status', same(x.names, names(1, 3)), x);
+  x = await iv(tA, { ivRound: '2' }); check('interviews: round', same(x.names, names(2)), x);
+  x = await iv(tA, { ivMode: 'Online' }); check('interviews: mode', same(x.names, names(1, 3)), x);
+  x = await iv(tA, { ivInterviewer: 'ravi' }); check('interviews: interviewer', same(x.names, names(1, 3)), x);
+  x = await iv(tRA, { ivMode: 'Online' }); check('interviews scope: recruiter A sees only their own interviews', same(x.names, names(1, 3)), x);
+  x = await iv(tRB, {}); check('interviews scope: recruiter B sees only their own (none of A\'s)', !x.names.includes(nm(1)) && !x.names.includes(nm(2)), x);
+
+  // offers
+  const mkOffer = (c, r, ctc, status, day) => mkApp(c, r, { stage: 'OFFER', offerStatus: status, offerDate: new Date(`${day}T10:00:00+05:30`), offeredCtc: ctc, ownerRecruiterId: RA.id });
+  await mkOffer(c2, R2, 800000, 'Offer Released', '2026-11-02');
+  await mkOffer(c3, R2, 1500000, 'Offer being prepared', '2026-11-12');
+  await mkOffer(c5, R2, 2500000, 'Offer Released', '2026-11-22');
+  const listOf = async (path, token, params) => { const r = await call('GET', `${path}?${qs({ page: '1', pageSize: '100', window: 'all', q: TAG, ...params })}`, null, token); return { status: r.status, names: rowsOf(r.body).map(candName).filter((n) => typeof n === 'string' && n.startsWith(TAG)), body: r.body }; };
+  const of = (token, params) => listOf('/ats/offers', token, params);
+  x = await of(tA, {}); check('offers: the three seeded offers are listed', same(x.names, names(2, 3, 5)), { s: x.status, names: x.names, keys: x.body && Object.keys(x.body) });
+  x = await of(tA, { offerStatus: 'Offer Released' }); check('offers: status', same(x.names, names(2, 5)), x.names);
+  x = await of(tA, { dFrom: '2026-11-10', dTo: '2026-11-20' }); check('offers: date range', same(x.names, names(3)), x.names);
+  x = await of(tA, { ctcMin: '10', ctcMax: '20' }); check('offers: CTC range in lakh', same(x.names, names(3)), x.names);
+  x = await of(tA, { ctcMin: '8' }); check('offers: CTC boundary (8 lakh is included)', same(x.names, names(2, 3, 5)), x.names);
+  x = await of(tA, { bgv: 'Clear' }); check('offers: BGV status (none recorded = Pending, so none are Clear)', x.status === 200 && x.names.length === 0, x.names);
+  x = await of(tA, { bgv: 'Pending' }); check('offers: BGV Pending', same(x.names, names(2, 3, 5)), x.names);
+  x = await of(tA, { counter: 'pending' }); check('offers: counter-offer pending (none)', x.status === 200 && x.names.length === 0, x.names);
+  x = await of(tRA, { ctcMin: '8' }); check('offers scope: recruiter A sees their offers through the filter', same(x.names, names(2, 3, 5)), x.names);
+  x = await of(tRB, {}); check('offers scope: recruiter B sees none of them', x.names.length === 0, x.names);
+
+  // joinings
+  await mkApp(c2, R3, { stage: 'JOINED', joinedAt: new Date('2026-10-05T10:00:00+05:30'), joiningDate: new Date('2026-10-05T10:00:00+05:30'), ownerRecruiterId: RA.id });
+  await mkApp(c3, R3, { stage: 'JOINED', joinedAt: new Date('2026-11-05T10:00:00+05:30'), joiningDate: new Date('2026-11-05T10:00:00+05:30'), ownerRecruiterId: RA.id });
+  await prisma.invoice.create({ data: { clientId: cl2.id, candidateId: c3.id, requirementId: R3.id, amount: 1000, status: 'Paid', invoiceDate: '2026-11-06' } }).catch((e) => console.log('  (no invoice row:', String(e.message).slice(-120), ')'));
+  const jn = (token, params) => listOf('/ats/joining', token, params);
+  x = await jn(tA, {}); check('joinings: the joined people are listed', same(x.names, names(1, 2, 3)), { s: x.status, names: x.names });
+  x = await jn(tA, { dFrom: '2026-11-01', dTo: '2026-11-30' }); check('joinings: joining date range (November)', same(x.names, names(3)), x.names);
+  x = await jn(tA, { dFrom: '2026-10-05', dTo: '2026-10-05' }); check('joinings: one-day range includes both ends', same(x.names, names(2)), x.names);
+  x = await jn(tA, { invoice: 'Paid' }); check('joinings: invoice status (admin)', same(x.names, names(3)), x.names);
+  x = await jn(tA, { invoice: 'none' }); check('joinings: no invoice yet', same(x.names, names(1, 2)), x.names);
+  x = await jn(tA, { guarantee: 'none,active,ended' }); check('joinings: guarantee status answers', x.status === 200 && x.names.length === 3, x);
+  const jr = await jn(tRA, {}); const jr2 = await jn(tRA, { invoice: 'Paid' });
+  check('joinings: the invoice filter is ignored for a role that does not see invoices (recruiter)', jr.status === 200 && jr.names.length === jr2.names.length, { a: jr.names.length, b: jr2.names.length });
+  x = await jn(tRB, {}); check('joinings scope: recruiter B sees none of them', x.names.length === 0, x.names);
+
+  // follow-ups
+  const todayStr = dayOf(new Date());
+  const fuFor = async (c, due, mode) => {
+    const a = await prisma.application.findFirst({ where: { candidateId: c.id, requirementId: j1.id } });
+    await prisma.applicationFollowUp.create({ data: { applicationId: a.id, candidateId: c.id, requirementId: j1.id, ownerUserId: RA.id, ownerName: RA.name, ownerRole: 'Recruiter', dueDate: due, contactMode: mode, nextAction: 'Call back' } });
+  };
+  await fuFor(c1, todayStr, 'Call'); await fuFor(c2, dayOf(new Date(Date.now() - 3 * 86400000)), 'WhatsApp'); await fuFor(c3, dayOf(new Date(Date.now() + 4 * 86400000)), 'Call');
+  const fu = async (token, params) => { const r = await call('GET', `/followups?${qs({ fuRequirement: j1.id, fuCandidate: TAG, ...params })}`, null, token); return { status: r.status, names: (Array.isArray(r.body) ? r.body : []).map((y) => y.candidateName), n: Array.isArray(r.body) ? r.body.length : -1 }; };
+  x = await fu(tA, {}); check('follow-ups: candidate + requirement filter lists the seeded people on that job', x.status === 200 && x.names.includes(nm(1)) && x.names.includes(nm(4)) && !x.names.includes(nm(6)), x);
+  x = await fu(tA, { fuDue: 'today' }); check('follow-ups: due today', same(x.names, names(1)), x.names);
+  x = await fu(tA, { fuDue: 'overdue' }); check('follow-ups: overdue', same(x.names, names(2)), x.names);
+  x = await fu(tA, { fuDue: 'week' }); check('follow-ups: due this week (today and the next seven days)', same(x.names, names(1, 3)), x.names);
+  x = await fu(tA, { fuType: 'WhatsApp' }); check('follow-ups: type', same(x.names, names(2)), x.names);
+  x = await fu(tA, { fuOwner: RA.id, fuType: 'Call' }); check('follow-ups: owner + type', same(x.names, names(1, 3)), x.names);
+  x = await fu(tA, { fuOwner: RB.id }); check('follow-ups: another owner', x.names.length === 0, x.names);
+  x = await fu(tRB, { fuDue: 'today' }); check('follow-ups scope: recruiter B sees none of recruiter A\'s', x.names.length === 0, x);
+  x = await fu(tRA, { fuDue: 'overdue' }); check('follow-ups scope: recruiter A sees their own', same(x.names, names(2)), x);
+
+  // job portal applications and call lists answer their filters
+  const jp = await call('GET', `/job-portal/applications?${qs({ jpSource: 'zzz-none' })}`, null, tA);
+  check('job portal: a source that matches nothing gives an empty list (200)', jp.status === 200 && rowsOf(jp.body).length === 0, { s: jp.status });
+  const cll = await call('GET', `/call-lists?${qs({ source: 'zzz-nothing' })}`, null, tA);
+  check('call lists: source filter answers (nothing matches)', cll.status === 200 && (cll.body.lists || []).length === 0, { s: cll.status, b: cll.body });
+
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);
 })().catch(async (e) => { console.error(e); await stop(1); });
