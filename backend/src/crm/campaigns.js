@@ -111,8 +111,11 @@ function cleanCampaign(body) {
   return { data: { name, channel, subject: channel === 'email' ? subject : null, body: text, waTemplate: channel === 'whatsapp' ? S.clip(body.waTemplate, 120) : null, waLanguage: channel === 'whatsapp' ? (S.clip(body.waLanguage, 10) || 'en') : null, audienceJson: JSON.stringify(cleanAudience(body.audience)) } };
 }
 
-async function list(user) {
-  const rows = await DB.all('SELECT * FROM "CrmCampaign" ORDER BY "createdAt" DESC LIMIT 200');
+async function list(user, q = {}) {
+  const FL = require('./listFilters'); // eslint-disable-line global-require
+  const where = ['1=1']; const params = [];
+  FL.campaign(q, where, params);
+  const rows = await DB.all(`SELECT * FROM "CrmCampaign" WHERE ${where.join(' AND ')} ORDER BY "createdAt" DESC LIMIT ${FL.any(q) ? 20000 : 200}`, ...params);
   return S.okBody({ rows: rows.map((c) => ({ ...c, audience: JSON.parse(c.audienceJson || '{}') })), canEdit: S.mayAssign(S.roleOf(user)) });
 }
 async function save(user, id, body = {}) {

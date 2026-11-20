@@ -66,7 +66,7 @@ router.post('/duplicates', wrap(async (req) => ({ status: 200, body: { duplicate
 
 router.get('/tasks', wrap(async (req) => {
   await CRM.remind({ userId: req.user.id }).catch(() => 0);
-  return { status: 200, body: { tasks: await CRM.tasks(req.user, { when: String(req.query.when || 'open'), mine: String(req.query.mine || '') === '1', all: String(req.query.all || '') === '1', from: req.query.from, to: req.query.to, owner: req.query.owner, priority: String(req.query.priority || ''), type: String(req.query.type || '') }) } };
+  return { status: 200, body: { tasks: await CRM.tasks(req.user, { when: String(req.query.when || 'open'), mine: String(req.query.mine || '') === '1', all: String(req.query.all || '') === '1', from: req.query.from, to: req.query.to, owner: req.query.owner, priority: String(req.query.priority || ''), type: String(req.query.type || ''), q: req.query.q }) } };
 }));
 router.get('/tasks/counts', wrap((req) => CRM.taskCounts(req.user, { owner: String(req.query.owner || '') })));
 // the work and reporting side (crm/analytics.js): Follow-ups > Calendar, the dashboard charts, Dashboard > Reports (+ Excel, the download log),
@@ -153,7 +153,7 @@ router.get('/tickets/:id', wrap((req) => SUP.detail(req.user, req.params.id)));
 router.put('/tickets/:id', wrap((req) => SUP.edit(req.user, req.params.id, req.body || {})));
 router.post('/tickets/:id/comments', wrap((req) => SUP.comment(req.user, req.params.id, req.body || {})));
 // Campaigns (crm/campaigns.js)
-router.get('/campaigns', wrap((req) => CMP.list(req.user)));
+router.get('/campaigns', wrap((req) => CMP.list(req.user, req.query || {})));
 router.post('/campaigns/preview', wrap((req) => CMP.preview(req.user, req.body || {})));
 router.post('/campaigns', wrap((req) => CMP.save(req.user, null, req.body || {})));
 router.get('/campaigns/:id', wrap((req) => CMP.detail(req.user, req.params.id)));
@@ -191,7 +191,7 @@ router.post('/leads/import', rawUpload, wrap((req) => X.importLeads(req.user, Bu
 })));
 router.get('/export/:kind', async (req, res, next) => {
   try {
-    const out = await X.exportCsv(req.user, req.params.kind);
+    const out = await X.exportCsv(req.user, req.params.kind, req.query || {});
     if (!out.csv) return send(res, out);
     res.set('Content-Type', 'text/csv; charset=utf-8');
     res.set('Content-Disposition', `attachment; filename="${out.name}"`);

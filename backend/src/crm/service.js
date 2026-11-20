@@ -247,8 +247,13 @@ async function list(user, kind, q = {}) {
   const s = scopeSql(user, r, 'x.');
   const where = [s.sql]; const params = [...s.params];
   const text = clip(q.q, 80);
+  // WHOLE HISTORY (founder 2026-11-20): a search or any filter drops the default windows (open leads only, closed deals of 30 days, the 1,000-row cut) - crm/listFilters.js
+  const FL = require('./listFilters'); // eslint-disable-line global-require
+  const anyF = FL.any(q);
+  const capN = FL.cap(q);
   if (kind === 'lead') {
-    if (q.status && LEAD_STATUSES.includes(q.status)) { where.push('x."status" = ?'); params.push(q.status); } else if (q.status !== 'all') where.push('x."status" NOT IN (\'Converted\', \'Junk\')');
+    FL.lead(q, where, params);
+    if (q.status && LEAD_STATUSES.includes(q.status)) { where.push('x."status" = ?'); params.push(q.status); } else if (q.status !== 'all' && !anyF) where.push('x."status" NOT IN (\'Converted\', \'Junk\')');
     if (text) { where.push('(x."company" LIKE ? OR x."contactName" LIKE ? OR x."phone" LIKE ? OR x."email" LIKE ? OR x."city" LIKE ?)'); params.push(...Array(5).fill(`%${text}%`)); }
     if (q.source) { where.push('x."source" = ?'); params.push(clip(q.source)); }
     if (q.rating && RATINGS.includes(q.rating)) { where.push('x."rating" = ?'); params.push(q.rating); }
@@ -257,35 +262,38 @@ async function list(user, kind, q = {}) {
     if (q.to && YMD.test(q.to)) { where.push('x."createdAt" <= ?'); params.push(`${q.to}T23:59:59.999Z`); }
     const SALES = require('./sales'); // eslint-disable-line global-require
     const names = SALES.stageNames(await SETTINGS.load());
-    const rows = (await DB.all(`SELECT x.*, (SELECT d."stage" FROM "CrmDeal" d WHERE d."id" = x."dealId") AS "dealStage", ${LAST_ACT('leadId')}, ${NEXT_TASK('leadId')} FROM "CrmLead" x WHERE ${where.join(' AND ')} ORDER BY x."updatedAt" DESC LIMIT ${Math.max(1, Math.min(20000, Math.round(Number(q.max)) || 1000))}`, ...params)).map((l) => ({ ...l, stage: SALES.stageOf(l, names) }));
+    const rows = (await DB.all(`SELECT x.*, (SELECT d."stage" FROM "CrmDeal" d WHERE d."id" = x."dealId") AS "dealStage", ${LAST_ACT('leadId')}, ${NEXT_TASK('leadId')} FROM "CrmLead" x WHERE ${where.join(' AND ')} ORDER BY x."updatedAt" DESC LIMIT ${Math.max(1, Math.min(20000, Math.round(Number(q.max)) || capN))}`, ...params)).map((l) => ({ ...l, stage: SALES.stageOf(l, names) }));
     if (q.stage) return rows.filter((l) => l.stage === q.stage);
-    return q.status ? rows : rows.filter((l) => !['Won', 'Lost'].includes(l.stage)); // the open leads: a won or lost one stays on the board
+    return q.status || anyF ? rows : rows.filter((l) => !['Won', 'Lost'].includes(l.stage)); // the open leads: a won or lost one stays on the board
   }
   if (kind === 'account') {
+    FL.account(q, where, params);
     if (q.kind === 'Prospect' || q.kind === 'Client') { where.push('x."kind" = ?'); params.push(q.kind); }
     if (text) { where.push('(x."name" LIKE ? OR x."city" LIKE ? OR x."industry" LIKE ?)'); params.push(...Array(3).fill(`%${text}%`)); }
     if (q.owner && seesAll(r)) { where.push('x."ownerId" = ?'); params.push(clip(q.owner, 60)); }
     return DB.all(`SELECT x.*, (SELECT COUNT(*) FROM "CrmContact" c WHERE c."accountId" = x."id") AS "contacts",
       (SELECT COUNT(*) FROM "CrmDeal" d WHERE d."accountId" = x."id" AND d."stage" NOT IN ('Won', 'Lost')) AS "openDeals",
       (SELECT COALESCE(SUM(d."value"), 0) FROM "CrmDeal" d WHERE d."accountId" = x."id" AND d."stage" NOT IN ('Won', 'Lost')) AS "openValue",
-      ${LAST_ACT('accountId')} FROM "CrmAccount" x WHERE ${where.join(' AND ')} ORDER BY x."name" COLLATE NOCASE LIMIT 1000`, ...params);
+      ${LAST_ACT('accountId')} FROM "CrmAccount" x WHERE ${where.join(' AND ')} ORDER BY x."name" COLLATE NOCASE LIMIT ${capN}`, ...params);
   }
   if (kind === 'contact') {
+    FL.contact(q, where, params);
     if (text) { where.push('(x."name" LIKE ? OR x."phone" LIKE ? OR x."email" LIKE ? OR a."name" LIKE ?)'); params.push(...Array(4).fill(`%${text}%`)); }
     if (q.accountId) { where.push('x."accountId" = ?'); params.push(clip(q.accountId, 60)); }
-    return DB.all(`SELECT x.*, a."name" AS "accountName" FROM "CrmContact" x LEFT JOIN "CrmAccount" a ON a."id" = x."accountId" WHERE ${where.join(' AND ')} ORDER BY x."name" COLLATE NOCASE LIMIT 1000`, ...params);
+    return DB.all(`SELECT x.*, a."name" AS "accountName" FROM "CrmContact" x LEFT JOIN "CrmAccount" a ON a."id" = x."accountId" WHERE ${where.join(' AND ')} ORDER BY x."name" COLLATE NOCASE LIMIT ${capN}`, ...params);
   }
   if (kind === 'deal') {
+    FL.deal(q, where, params);
     if (text) { where.push('(x."title" LIKE ? OR a."name" LIKE ?)'); params.push(`%${text}%`, `%${text}%`); }
     if (q.owner && seesAll(r)) { where.push('x."ownerId" = ?'); params.push(clip(q.owner, 60)); }
     // closed deals: the last 30 days only on the board, so Won / Lost stay readable (older ones stay on their account); a list that needs more
     // (the Revenue card's Won deals) asks with ?closedDays=
     const closedDays = Math.max(1, Math.min(3650, Math.round(Number(q.closedDays)) || 30));
     const since = new Date(Date.now() - closedDays * 86400000).toISOString();
-    where.push('(x."stage" NOT IN (\'Won\', \'Lost\') OR COALESCE(x."wonAt", x."lostAt", x."updatedAt") >= ?)'); params.push(since);
+    if (!anyF) { where.push('(x."stage" NOT IN (\'Won\', \'Lost\') OR COALESCE(x."wonAt", x."lostAt", x."updatedAt") >= ?)'); params.push(since); }
     return DB.all(`SELECT x.*, a."name" AS "accountName", c."name" AS "contactName", ${LAST_ACT('dealId')}, ${NEXT_TASK('dealId')}
       FROM "CrmDeal" x LEFT JOIN "CrmAccount" a ON a."id" = x."accountId" LEFT JOIN "CrmContact" c ON c."id" = x."contactId"
-      WHERE ${where.join(' AND ')} ORDER BY x."updatedAt" DESC LIMIT 1000`, ...params);
+      WHERE ${where.join(' AND ')} ORDER BY x."updatedAt" DESC LIMIT ${capN}`, ...params);
   }
   return [];
 }
@@ -530,7 +538,10 @@ async function invoices(user, q = {}) {
   if (q.status && INVOICE_STATUSES.includes(q.status)) { where.push('x."status" = ?'); params.push(q.status); }
   if (q.accountId) { where.push('x."accountId" = ?'); params.push(clip(q.accountId, 60)); }
   if (q.dealId) { where.push('x."dealId" = ?'); params.push(clip(q.dealId, 60)); }
-  const rows = await DB.all(`SELECT x.* FROM "CrmInvoice" x WHERE ${where.join(' AND ')} ORDER BY x."createdAt" DESC LIMIT 1000`, ...params);
+  const FL = require('./listFilters'); // eslint-disable-line global-require
+  FL.invoice(q, where, params);
+  if (q.owner && seesAll(r)) { where.push('x."ownerId" = ?'); params.push(clip(q.owner, 60)); }
+  const rows = await DB.all(`SELECT x.* FROM "CrmInvoice" x WHERE ${where.join(' AND ')} ORDER BY x."createdAt" DESC LIMIT ${FL.cap(q)}`, ...params);
   // Won deals (in the viewer's scope) that have no invoice yet - the ones won before invoices existed; "Create missing invoices" makes them
   const ds = scopeSql(user, r, 'd.');
   const miss = await DB.one(`SELECT COUNT(*) AS "n" FROM "CrmDeal" d WHERE d."stage" = 'Won' AND ${ds.sql} AND NOT EXISTS (SELECT 1 FROM "CrmInvoice" i WHERE i."dealId" = d."id")`, ...ds.params);
@@ -848,7 +859,7 @@ async function finishTask(user, id, input) {
 }
 
 // Follow-ups in my scope: overdue, today, upcoming (7 days), or done (last 30 days). mine=1: only mine.
-async function tasks(user, { when = 'open', mine, all, from, to, owner, priority, type } = {}) {
+async function tasks(user, { when = 'open', mine, all, from, to, owner, priority, type, q: search } = {}) {
   const r = roleOf(user);
   const s = (mine || !seesAll(r)) ? { sql: 't."ownerId" = ?', params: [user.id] } : { sql: '1=1', params: [] };
   if (owner && seesAll(r)) { s.sql += ' AND t."ownerId" = ?'; s.params.push(clip(owner, 60)); }
@@ -857,6 +868,9 @@ async function tasks(user, { when = 'open', mine, all, from, to, owner, priority
   if (type) { s.sql += ' AND COALESCE(t."type", \'Call\') = ?'; s.params.push(clip(type, 20)); }
   if (from && YMD.test(from)) { s.sql += ' AND t."dueDate" >= ?'; s.params.push(from); }
   if (to && YMD.test(to)) { s.sql += ' AND t."dueDate" <= ?'; s.params.push(to); }
+  const text = clip(search, 80);
+  if (text) { s.sql += ' AND (t."title" LIKE ? OR COALESCE(d."title", l."company", a."name") LIKE ?)'; s.params.push(`%${text}%`, `%${text}%`); }
+  const wide = !!(text || from || to || owner || priority || type); // WHOLE HISTORY: a search or filter looks at every follow-up, not a window or the first 300
   const today = istToday();
   const week = new Date(Date.parse(`${today}T00:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10);
   const cond = {
@@ -866,13 +880,13 @@ async function tasks(user, { when = 'open', mine, all, from, to, owner, priority
     today: ['t."status" = \'Open\' AND t."dueDate" = ?', [today]],
     upcoming: all ? ['t."status" = \'Open\' AND t."dueDate" > ?', [today]] : ['t."status" = \'Open\' AND t."dueDate" > ? AND t."dueDate" <= ?', [today, week]],
     open: ['t."status" = \'Open\'', []],
-    done: from || to ? ['t."status" = \'Done\'', []] : ['t."status" = \'Done\' AND t."doneAt" >= ?', [new Date(Date.now() - 30 * 86400000).toISOString()]],
+    done: from || to || text ? ['t."status" = \'Done\'', []] : ['t."status" = \'Done\' AND t."doneAt" >= ?', [new Date(Date.now() - 30 * 86400000).toISOString()]],
   }[when] || ['t."status" = \'Open\'', []];
   return DB.all(`SELECT t.*, COALESCE(d."title", l."company", a."name") AS "recordName",
       CASE WHEN t."dealId" IS NOT NULL THEN 'deal' WHEN t."leadId" IS NOT NULL THEN 'lead' ELSE 'account' END AS "recordKind",
       COALESCE(t."dealId", t."leadId", t."accountId") AS "recordId"
     FROM "CrmTask" t LEFT JOIN "CrmDeal" d ON d."id" = t."dealId" LEFT JOIN "CrmLead" l ON l."id" = t."leadId" LEFT JOIN "CrmAccount" a ON a."id" = t."accountId"
-    WHERE ${s.sql} AND ${cond[0]} ORDER BY t."dueDate" ${when === 'done' ? 'DESC' : 'ASC'}, CASE COALESCE(t."priority", 'Medium') WHEN 'High' THEN 0 WHEN 'Low' THEN 2 ELSE 1 END ASC, t."dueTime" ASC LIMIT 300`, ...s.params, ...cond[1]);
+    WHERE ${s.sql} AND ${cond[0]} ORDER BY t."dueDate" ${when === 'done' ? 'DESC' : 'ASC'}, CASE COALESCE(t."priority", 'Medium') WHEN 'High' THEN 0 WHEN 'Low' THEN 2 ELSE 1 END ASC, t."dueTime" ASC LIMIT ${wide ? 20000 : 300}`, ...s.params, ...cond[1]);
 }
 // Move an open follow-up to another day (and time): "snooze". It reminds again and, if it is late again, tells the managers again (founder 2026-11-14).
 async function snoozeTask(user, id, { dueDate, dueTime } = {}) {

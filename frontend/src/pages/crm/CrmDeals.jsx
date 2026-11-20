@@ -7,6 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import { useCrm, errOf, money, moneyShort, dateOf, istToday, RecordForm, useMoveDeal, staleDays, download } from './crmShared.jsx';
 import CrmInvoices from './CrmInvoices.jsx';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 
 export default function CrmDeals() {
   const { me, toast, openRecord, version } = useCrm();
@@ -20,9 +21,10 @@ export default function CrmDeals() {
   const [view, setView] = useState(sp.get('view') === 'invoices' ? 'invoices' : 'board'); // ?view=invoices: the old /crm/invoices address
   const [dragId, setDragId] = useState(null);
   const [over, setOver] = useState(null);
-  const load = () => api.get('/crm/deals', { params: { q: q || undefined, owner: owner || undefined } })
+  const xf = useListXf('crmdeals'); // value, stage, expected close, added-on (components/ats/ListFilters.jsx)
+  const load = () => api.get('/crm/deals', { params: { q: q || undefined, owner: owner || undefined, ...xf.params } })
     .then((r) => { setRows(r.data.rows); setErr(''); }).catch((e) => setErr(errOf(e, 'The deals could not be read.')));
-  useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [q, owner, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [q, owner, version, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (sp.get('add') === '1') { const n = new URLSearchParams(sp); n.delete('add'); setSp(n, { replace: true }); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const { move, dialog } = useMoveDeal(() => load());
   const today = istToday();
@@ -85,10 +87,11 @@ export default function CrmDeals() {
             <button type="button" className={`btn btn-sm${view === 'list' ? ' btn-primary' : ''}`} onClick={() => setView('list')}>List</button>
             <button type="button" className={`btn btn-sm${view === 'invoices' ? ' btn-primary' : ''}`} onClick={() => setView('invoices')}>Invoices</button>
           </div>
-          {view !== 'invoices' && me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download('/crm/export/deals', `crm-deals-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
+          {view !== 'invoices' && me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/deals?${new URLSearchParams(Object.entries({ q, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-deals-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
           {view !== 'invoices' && me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Deal</button>}
         </div>
       </div>
+      {view !== 'invoices' && <ListFilterStrip list="crmdeals" xf={xf} total={rows ? rows.length : null} noun="deals" allTime={Object.keys(xf.values).length > 0 || !!(q || owner)} />}
       {view !== 'invoices' && (
         <div className="filter-row">
           <input type="text" placeholder="Search deal or account" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 240 }} aria-label="Search deals" />

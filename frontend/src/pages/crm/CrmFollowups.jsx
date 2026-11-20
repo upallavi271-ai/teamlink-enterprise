@@ -5,6 +5,7 @@
 // overdue alert to the managers is crm/sales.js escalateOverdue().
 import { useEffect, useState } from 'react';
 import api from '../../api';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, daysLate, RecLink, PriorityPill, DateField, InviteButton, MeetingInvitePrompt, meetingWhen, recordOfTask } from './crmShared.jsx';
 import FollowupCalendar from './CrmCalendar.jsx'; // eslint-disable-line import/no-cycle
@@ -173,6 +174,7 @@ function RescheduleDialog({ task, onClose, onDone }) {
 
 export default function CrmFollowups() {
   const { me, toast, version, changed } = useCrm();
+  const xf = useListXf('crmtasks'); // search (components/ats/ListFilters.jsx)
   const [tab, setTab] = useState('action'); // Needs action = due today + overdue
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -187,11 +189,11 @@ export default function CrmFollowups() {
   const [adding, setAdding] = useState(false);
   const loadCounts = () => api.get('/crm/tasks/counts', { params: { owner: owner || undefined } }).then((r) => setCounts(r.data.counts)).catch(() => setCounts(null));
   // `current()` says whether this answer is still the one wanted: a slow answer for a tab already left must never replace the newer list
-  const fetchRows = (current = () => true) => api.get('/crm/tasks', { params: { when: tab, all: 1, from: from || undefined, to: to || undefined, owner: owner || undefined, priority: priority || undefined, type: type || undefined } })
+  const fetchRows = (current = () => true) => api.get('/crm/tasks', { params: { when: tab, all: 1, from: from || undefined, to: to || undefined, owner: owner || undefined, priority: priority || undefined, type: type || undefined, ...xf.params } })
     .then((r) => { if (current()) { setRows(r.data.tasks); setErr(''); } }).catch((e) => { if (current()) setErr(errOf(e, 'The follow-ups could not be read.')); });
   const load = () => fetchRows();
   useEffect(() => { loadCounts(); }, [owner, version]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (tab === 'calendar') return undefined; let alive = true; setRows(null); fetchRows(() => alive); return () => { alive = false; }; }, [tab, from, to, owner, priority, type, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'calendar') return undefined; let alive = true; setRows(null); fetchRows(() => alive); return () => { alive = false; }; }, [tab, from, to, owner, priority, type, xf.key, version]); // eslint-disable-line react-hooks/exhaustive-deps
   const refresh = () => { load(); loadCounts(); };
   async function cancel(t) {
     try { await api.post(`/crm/tasks/${t.id}/cancel`); toast('Cancelled.'); refresh(); } catch (e) { toast(errOf(e, 'This could not be cancelled.')); }
@@ -222,6 +224,7 @@ export default function CrmFollowups() {
           );
         })}
       </div>
+      {tab !== 'calendar' && <ListFilterStrip list="crmtasks" xf={xf} noun="follow-ups" total={rows ? rows.length : null} allTime={Object.keys(xf.values).length > 0 || !!(from || to || owner || priority || type)} />}
       <div className="filter-row">
         {tab !== 'calendar' && <DateField value={from} onChange={setFrom} aria-label="From" style={{ width: 150 }} />}
         {tab !== 'calendar' && <DateField value={to} onChange={setTo} aria-label="To" style={{ width: 150 }} />}

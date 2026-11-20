@@ -91,6 +91,42 @@ export function configFor(list, user) {
       { id: 'called', label: 'Called', type: 'yesno', primary: true, keys: { value: 'called' }, yesLabel: 'Called', noLabel: 'Not called yet' },
       { id: 'interest', label: 'Interested in', type: 'text', keys: { value: 'interest' }, placeholder: 'Text' },
     ];
+    // ---- CRM lists (2026-11-20): the search boxes and filters the pages already have stay; these add dates, amounts and places
+    case 'crmleads': return [
+      { id: 'cDate', label: 'Added on', type: 'daterange', primary: true, keys: { from: 'cFrom', to: 'cTo' } },
+      { id: 'city', label: 'City', type: 'text', primary: true, keys: { value: 'city' }, placeholder: 'City' },
+      { id: 'industry', label: 'Industry', type: 'text', primary: true, keys: { value: 'industry' }, placeholder: 'e.g. Hospital' },
+    ];
+    case 'crmaccounts': return [
+      { id: 'cDate', label: 'Added on', type: 'daterange', primary: true, keys: { from: 'cFrom', to: 'cTo' } },
+      { id: 'city', label: 'City', type: 'text', primary: true, keys: { value: 'city' }, placeholder: 'City' },
+      { id: 'industry', label: 'Industry', type: 'text', primary: true, keys: { value: 'industry' }, placeholder: 'e.g. Hospital' },
+      { id: 'source', label: 'Source', type: 'text', keys: { value: 'source' }, placeholder: 'e.g. Website' },
+    ];
+    case 'crmcontacts': return [
+      { id: 'cDate', label: 'Added on', type: 'daterange', primary: true, keys: { from: 'cFrom', to: 'cTo' } },
+      { id: 'role', label: 'Role', type: 'multi', primary: true, keys: { value: 'role' }, options: opt([['Decision maker', 'Decision maker'], ['HR', 'HR'], ['Influencer', 'Influencer'], ['Finance', 'Finance'], ['Other', 'Other']]), allLabel: 'Any', plural: 'roles' },
+    ];
+    case 'crmdeals': return [
+      { id: 'dealValue', label: 'Deal value', type: 'range', primary: true, unit: 'rupees', step: 1000, keys: { min: 'valueMin', max: 'valueMax' } },
+      { id: 'dealStage', label: 'Stage', type: 'multi', primary: true, keys: { value: 'stage' }, options: opt(['Prospecting', 'Contacted', 'Meeting', 'Requirement discussed', 'Proposal sent', 'Negotiation', 'Won', 'Lost'].map((s) => [s, s])), allLabel: 'Any', plural: 'stages' },
+      { id: 'close', label: 'Expected close', type: 'daterange', primary: true, keys: { from: 'closeFrom', to: 'closeTo' } },
+      { id: 'cDate', label: 'Added on', type: 'daterange', keys: { from: 'cFrom', to: 'cTo' } },
+    ];
+    case 'crminvoices': return [
+      { id: 'amount', label: 'Invoice total', type: 'range', primary: true, unit: 'rupees', step: 1000, keys: { min: 'amtMin', max: 'amtMax' } },
+      { id: 'issue', label: 'Issued on', type: 'daterange', primary: true, keys: { from: 'issueFrom', to: 'issueTo' } },
+      { id: 'due', label: 'Due on', type: 'daterange', primary: true, keys: { from: 'dueFrom', to: 'dueTo' } },
+    ];
+    case 'crmtasks': return [
+      { id: 'q', label: 'Search follow-ups', type: 'text', primary: true, keys: { value: 'q' }, placeholder: 'Task, lead, deal or account' },
+    ];
+    case 'crmcampaigns': return [
+      { id: 'q', label: 'Search campaigns', type: 'text', primary: true, keys: { value: 'q' }, placeholder: 'Campaign name' },
+      { id: 'status', label: 'Status', type: 'multi', primary: true, keys: { value: 'status' }, options: opt([['Draft', 'Draft'], ['Sending', 'Sending'], ['Sent', 'Sent'], ['Cancelled', 'Cancelled']]), allLabel: 'Any', plural: 'statuses' },
+      { id: 'channel', label: 'Sent by', type: 'multi', primary: true, keys: { value: 'channel' }, options: opt([['email', 'Email'], ['whatsapp', 'WhatsApp']]), allLabel: 'Any', plural: 'channels' },
+      { id: 'cDate', label: 'Made on', type: 'daterange', keys: { from: 'cFrom', to: 'cTo' } },
+    ];
     case 'team': return [
       { id: 'period', label: 'Results for', type: 'period', primary: true, keys: { range: 'range', from: 'from', to: 'to' }, title: 'Sent to client, interviews, joinings and target for a date range' },
       { id: 'location', label: 'Location', type: 'select', primary: true, keys: { value: 'location' }, allLabel: 'All locations' },

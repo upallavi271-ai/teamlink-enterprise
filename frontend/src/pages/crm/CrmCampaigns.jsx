@@ -4,6 +4,7 @@
 // why). A sales manager / Admin sends; a salesperson reads. The rules are on the server (backend/src/crm/campaigns.js).
 import { useEffect, useState } from 'react';
 import api from '../../api';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateTimeOf } from './crmShared.jsx';
 
@@ -168,13 +169,15 @@ function CampaignView({ id, onClose, onChanged, onEdit }) {
 }
 
 export default function CrmCampaigns() {
+  const xf = useListXf('crmcampaigns'); // search, status, channel, made-on (components/ats/ListFilters.jsx)
   const [d, setD] = useState(null);
   const [form, setForm] = useState(null); // { row } | {}
   const [openId, setOpenId] = useState(null);
-  const load = () => api.get('/crm/campaigns').then((r) => setD(r.data)).catch(() => setD({ rows: [], canEdit: false }));
-  useEffect(() => { load(); }, []);
+  const load = () => api.get('/crm/campaigns', { params: xf.params }).then((r) => setD(r.data)).catch(() => setD({ rows: [], canEdit: false }));
+  useEffect(() => { load(); }, [xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div>
+      <ListFilterStrip list="crmcampaigns" xf={xf} noun="campaigns" total={d ? d.rows.length : null} />
       <div className="filter-row">
         <span className="small-muted">Email or WhatsApp to many leads / contacts at once, with an unsubscribe link and a result for every person.</span>
         {d && d.canEdit && <button type="button" className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setForm({})}>+ Campaign</button>}

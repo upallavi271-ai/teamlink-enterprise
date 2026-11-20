@@ -8,6 +8,7 @@ import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, moneyShort, istToday, Pill, RecordForm, download } from './crmShared.jsx';
 import { TicketList } from './CrmSupport.jsx';
 import CrmContactDialog from './CrmContact.jsx';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 
 
 export default function CrmAccounts() {
@@ -24,20 +25,21 @@ export default function CrmAccounts() {
   const [adding, setAdding] = useState(null); // 'account' | 'contact' | 'client'
   const [editContact, setEditContact] = useState(null);
   const [reach, setReach] = useState(null); // a contact's phone or email clicked: the Call / Email window ({ record, channel })
+  const xf = useListXf(tab === 'contacts' ? 'crmcontacts' : 'crmaccounts'); // added-on, city, industry, source / role (components/ats/ListFilters.jsx)
   const load = () => {
     if (tab === 'tickets') return Promise.resolve();
     setRows(null);
-    const params = tab === 'accounts' ? { q: q || undefined, kind: kind || undefined, owner: owner || undefined } : { q: q || undefined };
+    const params = tab === 'accounts' ? { q: q || undefined, kind: kind || undefined, owner: owner || undefined, ...xf.params } : { q: q || undefined, ...xf.params };
     return api.get(`/crm/${tab}`, { params }).then((r) => { setRows(r.data.rows); setErr(''); }).catch((e) => setErr(errOf(e, 'This list could not be read.')));
   };
-  useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [tab, q, kind, owner, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [tab, q, kind, owner, version, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="page">
       <div className="page-head">
         <div><h1>Accounts &amp; Contacts</h1><div className="page-sub">The companies we sell to and the people we talk to</div></div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/${tab === 'tickets' ? 'accounts' : tab}`, `crm-${tab === 'tickets' ? 'accounts' : tab}-${istToday()}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
+          {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/${tab === 'tickets' ? 'accounts' : tab}?${new URLSearchParams(Object.entries({ q, kind, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-${tab === 'tickets' ? 'accounts' : tab}-${istToday()}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
           {me.canCreate && (<>
             <button type="button" className="btn" onClick={() => setAdding('contact')}>+ Contact</button>
             <button type="button" className="btn btn-primary" onClick={() => setAdding('account')}>+ Account</button>
@@ -51,6 +53,7 @@ export default function CrmAccounts() {
       </div>
       {tab === 'tickets' && <TicketList />}
       {tab !== 'tickets' && (<>
+      <ListFilterStrip key={tab} list={tab === 'contacts' ? 'crmcontacts' : 'crmaccounts'} xf={xf} total={rows ? rows.length : null} noun={tab} allTime={Object.keys(xf.values).length > 0 || !!(q || kind || owner)} />
       <div className="filter-row">
         <input type="text" placeholder={tab === 'accounts' ? 'Search company, city, industry' : 'Search name, phone, email, company'} value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 260 }} aria-label="Search" />
         {tab === 'accounts' && <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Type"><option value="">Prospects and customers</option><option value="Prospect">Prospects</option><option value="Client">Customers</option></select>}

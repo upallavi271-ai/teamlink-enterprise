@@ -4,6 +4,7 @@
 // (`embedded`), not a module of its own: the CRM stays at five (founder 2026-11-14).
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, shareInvoiceWhatsApp, InvoiceEmailDialog, InvoiceEditDialog, INVOICE_STATUSES, balanceOf } from './crmShared.jsx';
 
 export default function CrmInvoices({ embedded = false }) {
@@ -16,12 +17,13 @@ export default function CrmInvoices({ embedded = false }) {
   const [busy, setBusy] = useState(false);
   const [mailInv, setMailInv] = useState(null); // the invoice whose email window is open
   const [editInv, setEditInv] = useState(null); // the Draft being edited
-  const load = () => api.get('/crm/invoices').then((r) => { setRows(r.data.invoices); setMissing(r.data.missing || 0); setErr(''); }).catch((e) => setErr(errOf(e, 'The invoices could not be read.')));
+  const xf = useListXf('crminvoices'); // total, issued-on, due-on (components/ats/ListFilters.jsx)
+  const load = () => api.get('/crm/invoices', { params: { ...xf.params, q: q || undefined } }).then((r) => { setRows(r.data.invoices); setMissing(r.data.missing || 0); setErr(''); }).catch((e) => setErr(errOf(e, 'The invoices could not be read.')));
   async function backfill() {
     setBusy(true);
     try { const r = await api.post('/crm/invoices/backfill'); toast(`${r.data.created} invoice${r.data.created === 1 ? '' : 's'} made, each dated the day its deal was won.`); await load(); } catch (e) { toast(errOf(e, 'The invoices could not be made.')); } finally { setBusy(false); }
   }
-  useEffect(() => { load(); }, [version]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [version, xf.key, q]); // eslint-disable-line react-hooks/exhaustive-deps
   const live = (rows || []).filter((x) => x.status !== 'Cancelled');
   const sum = (list, f) => list.reduce((a, x) => a + (f(x) || 0), 0);
   const owed = sum(live.filter((x) => x.status !== 'Paid'), balanceOf);
@@ -57,6 +59,7 @@ export default function CrmInvoices({ embedded = false }) {
           <div className="card" style={{ padding: 12 }}><div className="small-muted">Received (cash)</div><div style={{ fontSize: 20, fontWeight: 700 }}>{money(received)}</div>{tds > 0 && <div className="small-muted" style={{ fontSize: 12 }}>+ {money(tds)} TDS deducted by customers</div>}</div>
         </div>
       )}
+      <ListFilterStrip list="crminvoices" xf={xf} total={rows ? rows.length : null} noun="invoices" allTime={Object.keys(xf.values).length > 0 || !!q} />
       <div className="filter-row">
         <input type="text" placeholder="Search invoice, customer or deal" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 240 }} aria-label="Search invoices" />
         <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">

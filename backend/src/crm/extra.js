@@ -298,13 +298,19 @@ const EXPORTS = {
   activities: { sql: 'SELECT x.*, COALESCE(d."title", l."company", a."name") AS "record" FROM "CrmActivity" x LEFT JOIN "CrmDeal" d ON d."id" = x."dealId" LEFT JOIN "CrmLead" l ON l."id" = x."leadId" LEFT JOIN "CrmAccount" a ON a."id" = x."accountId"', alias: 'x.', ownerCol: 'byId', cols: [['at', 'When'], ['kind', 'Type'], ['subject', 'Subject'], ['note', 'What happened'], ['record', 'Lead / deal / account'], ['byName', 'By']] },
   tasks: { sql: 'SELECT x.*, COALESCE(d."title", l."company", a."name") AS "record" FROM "CrmTask" x LEFT JOIN "CrmDeal" d ON d."id" = x."dealId" LEFT JOIN "CrmLead" l ON l."id" = x."leadId" LEFT JOIN "CrmAccount" a ON a."id" = x."accountId"', alias: 'x.', cols: [['title', 'Follow-up'], ['dueDate', 'Due'], ['dueTime', 'Time'], ['status', 'Status'], ['record', 'Lead / deal / account'], ['ownerName', 'Owner'], ['doneAt', 'Done on']] },
 };
-async function exportCsv(user, kind) {
+async function exportCsv(user, kind, q = {}) {
   const r = S.roleOf(user);
   if (!S.can(user, 'export')) return S.fail(403, 'Your CRM rights do not allow downloading. Ask a Sales manager.');
   const e = EXPORTS[kind];
   if (!e) return S.fail(404, 'Nothing to download here.');
   const own = S.seesAll(r) ? '' : ` WHERE ${e.alias || ''}"${e.ownerCol || 'ownerId'}" = ?`;
-  const rows = await DB.all(`${e.sql}${own} LIMIT 20000`, ...(own ? [user.id] : []));
+  let rows = await DB.all(`${e.sql}${own} LIMIT 20000`, ...(own ? [user.id] : []));
+  // the list's own filters: the download holds exactly the rows the screen shows (the same list function, the same scope)
+  const KIND_OF = { leads: 'lead', deals: 'deal', accounts: 'account', contacts: 'contact' };
+  if (KIND_OF[kind] && require('./listFilters').any(q)) { // eslint-disable-line global-require
+    const ids = new Set((await S.list(user, KIND_OF[kind], { ...q, max: 20000 })).map((x) => x.id));
+    rows = rows.filter((x) => ids.has(x.id));
+  }
   const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
   const csv = `﻿${[e.cols.map((c) => esc(c[1])).join(','), ...rows.map((x) => e.cols.map((c) => esc(x[c[0]])).join(','))].join('\r\n')}`;
   await S.audit(user, 'CRM data downloaded', 'Crm', kind, `${rows.length} rows`);

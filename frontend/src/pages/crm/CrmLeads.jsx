@@ -8,6 +8,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, Pill, DateField, QuickLog, RecordForm, download } from './crmShared.jsx';
 import CrmCampaigns from './CrmCampaigns.jsx';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import CrmLeadBoard from './CrmLeadBoard.jsx';
 import { ProductCatalog } from './CrmProducts.jsx';
 
@@ -120,11 +121,12 @@ export default function CrmLeads() {
   const [sort, setSort] = useState('updated');
   const [dir, setDir] = useState('desc');
   const [paging, setPaging] = useState(null); // { total, page, pages }
+  const xf = useListXf('crmleads'); // added-on date range, city, industry (components/ats/ListFilters.jsx)
   const seq = useRef(0);
-  const load = () => { seq.current += 1; const mine = seq.current; return api.get('/crm/leads', { params: { q: q || undefined, status: (layout === 'board' ? 'all' : status) || undefined, stage: stage || undefined, from: from || undefined, to: to || undefined, source: source || undefined, rating: rating || undefined, owner: owner || undefined, ...(layout === 'table' ? { page, pageSize: 50, sort, dir } : {}) } })
+  const load = () => { seq.current += 1; const mine = seq.current; return api.get('/crm/leads', { params: { q: q || undefined, status: (layout === 'board' ? 'all' : status) || undefined, stage: stage || undefined, from: from || undefined, to: to || undefined, source: source || undefined, rating: rating || undefined, owner: owner || undefined, ...xf.params, ...(layout === 'table' ? { page, pageSize: 50, sort, dir } : {}) } })
     .then((r) => { if (mine !== seq.current) return; setRows(r.data.rows); setPaging(layout === 'table' && r.data.total != null ? { total: r.data.total, page: r.data.page, pages: r.data.pages } : null); setErr(''); setPicked(new Set()); }).catch((e) => { if (mine === seq.current) setErr(errOf(e, 'The leads could not be read.')); }); };
   // a changed filter or sort goes back to page 1 first (and loads from there)
-  const fkey = JSON.stringify([q, status, stage, from, to, layout, source, rating, owner, sort, dir]);
+  const fkey = JSON.stringify([q, status, stage, from, to, layout, source, rating, owner, sort, dir, xf.key]);
   const lastKey = useRef(fkey);
   useEffect(() => {
     if (lastKey.current !== fkey) { lastKey.current = fkey; if (page !== 1) { setPage(1); return undefined; } }
@@ -152,7 +154,7 @@ export default function CrmLeads() {
       <div className="page-head">
         <div><h1>Leads</h1><div className="page-sub">Companies to sell to, before they become a deal · campaigns to reach many at once</div></div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download('/crm/export/leads', `crm-leads-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
+          {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/leads?${new URLSearchParams(Object.entries({ q, status, stage, from, to, source, rating, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-leads-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
           {me.rights && me.rights.import && <button type="button" className="btn" onClick={() => setImporting(true)}>Import Excel</button>}
           {me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Lead</button>}
         </div>
@@ -163,6 +165,7 @@ export default function CrmLeads() {
       {view === 'campaigns' && <CrmCampaigns />}
       {view === 'products' && <ProductCatalog />}
       {view === 'leads' && (<>
+      <ListFilterStrip list="crmleads" xf={xf} total={paging ? paging.total : null} noun="leads" allTime={Object.keys(xf.values).length > 0 || !!(q || stage || from || to || source || rating || owner)} />
       <div className="filter-row">
         <input type="text" placeholder="Search company, person, phone, email, city" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 260 }} aria-label="Search leads" />
         <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
