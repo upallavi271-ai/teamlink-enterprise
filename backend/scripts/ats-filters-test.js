@@ -616,6 +616,17 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
     const rr = await call('GET', `/ats-reports/recruiters?${qs({ recruiter: `${rOpts[0].value},${rOpts[1].value}` })}`, null, tA); check('reports multi: the recruiter report with two people answers 200', rr.status === 200, { s: rr.status, b: rr.body && rr.body.error });
   } else check('reports multi: two recruiters (fixture has one, skipped)', true);
 
+  // the Search page (/ats/history/search): Type, Status / step and Owner take several values
+  const srch = async (params) => { const r = await call('GET', `/ats/history/search?${qs({ q: TAG, ...params })}`, null, tA); const gs = (r.body && r.body.groups) || []; return { status: r.status, ids: gs.filter((g) => (g.rows || []).length > 0).map((g) => g.id).sort(), total: r.body && r.body.total, body: r.body }; };
+  const sReq = await srch({ type: 'requirements' }); const sCand = await srch({ type: 'candidates' }); const sBoth = await srch({ type: 'requirements,candidates' });
+  check('search multi: one type shows only that group', sReq.status === 200 && sReq.ids.every((i) => i === 'requirements') && sCand.ids.every((i) => i === 'candidates'), { r: sReq.ids, c: sCand.ids });
+  check('search multi: two types show the groups of both and nothing else', sBoth.ids.every((i) => ['requirements', 'candidates'].includes(i)) && sBoth.ids.length >= Math.max(sReq.ids.length, sCand.ids.length), { b: sBoth.ids });
+  const sBad = await srch({ type: 'zzz-no-type' }); check('search multi: an unknown type is ignored (all groups stay)', sBad.status === 200 && sBad.ids.length >= sBoth.ids.length, { n: sBad.ids });
+  const sj = await srch({ status: 'joined' }); const sa = await srch({ status: 'active' }); const sja = await srch({ status: 'joined,active' });
+  check('search multi: two steps hold at least the candidates of each', sja.status === 200 && sja.total >= Math.max(sj.total, sa.total), { j: sj.total, a: sa.total, ja: sja.total });
+  const so1 = await srch({ owner: RA.id }); const so2 = await srch({ owner: `${RA.id},${RB.id}` });
+  check('search multi: two owners hold at least the results of one', so1.status === 200 && so2.status === 200 && so2.total >= so1.total, { one: so1.total, two: so2.total });
+
   // job portal applications and call lists answer their filters
   const jp = await call('GET', `/job-portal/applications?${qs({ jpSource: 'zzz-none' })}`, null, tA);
   check('job portal: a source that matches nothing gives an empty list (200)', jp.status === 200 && rowsOf(jp.body).length === 0, { s: jp.status });

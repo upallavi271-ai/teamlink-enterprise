@@ -161,13 +161,17 @@ const dayOf = (d) => H.istDay(d);
 
 // ---- the filters of the full results page ----------------------------------------------------------------------------------------------
 const BY = ['name', 'client', 'requirement', 'recruiter', 'tl', 'bde'];
+// Type, Status / step and Owner take SEVERAL values (a comma list, OR inside one filter; founder 2026-11-20)
+const MPS = require('./multiParam');
+const listOf = (v) => MPS.parseMulti(v);
+const typeHas = (f, g) => !f.type || listOf(f.type).includes(g);
 function filtersOf(q) {
   const ok = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
   const txt = (v, n = 60) => String(v || '').trim().slice(0, n) || null;
   const num = (v) => { const n = Number(v); return String(v === undefined || v === null ? '' : v).trim() !== '' && Number.isFinite(n) ? n : null; };
   return {
-    type: GROUP_ORDER.includes(q.type) ? q.type : null,
-    from: ok(q.from) ? q.from : null, to: ok(q.to) ? q.to : null, status: txt(q.status, 30), owner: txt(q.owner, 40), client: txt(q.client), dept: txt(q.dept), loc: txt(q.loc), src: txt(q.src),
+    type: (() => { const t = MPS.parseMulti(q.type).filter((x) => GROUP_ORDER.includes(x)); return t.length ? t.join(',') : null; })(),
+    from: ok(q.from) ? q.from : null, to: ok(q.to) ? q.to : null, status: txt(MPS.multiCsv(q.status), 300), owner: txt(MPS.multiCsv(q.owner), 800), client: txt(q.client), dept: txt(q.dept), loc: txt(q.loc), src: txt(q.src),
     by: BY.includes(q.by) ? q.by : null, ctcMin: num(q.ctcMin), ctcMax: num(q.ctcMax), expMin: num(q.expMin), expMax: num(q.expMax), notice: txt(q.notice, 20), skills: txt(q.skills, 80),
   };
 }
@@ -187,6 +191,9 @@ const stageGroup = (s) => ({
   active: { stage: { notIn: ['JOINED', 'HIRED', 'REJECTED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED'] } },
   selected: { stage: { in: ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'] } },
 }[s] || null);
+// several steps at once (OR); several owners at once (the owner's own applications, or the jobs they lead or manage)
+const stageGroupsOf = (s) => { const w = listOf(s).map(stageGroup).filter(Boolean); return w.length ? (w.length === 1 ? w[0] : { OR: w }) : null; };
+const ownerAppArm = (o) => ({ OR: listOf(o).flatMap((u) => [{ ownerRecruiterId: u }, { requirement: { tlId: u } }, { requirement: { bdeId: u } }]) });
 const csvOf = (v) => String(v || '').split(/[,;]+/).map((x) => x.trim()).filter(Boolean);
 
 // the filters on a CANDIDATE (pay / notice only for a login that reads them: a BDE or a role without the contact-and-salary right never has them)
@@ -210,8 +217,8 @@ async function candidateFilters(v, f, limited) {
     }
   }
   const app = [];
-  if (f.status && stageGroup(f.status)) app.push(stageGroup(f.status));
-  if (f.owner) app.push({ OR: [{ ownerRecruiterId: f.owner }, { requirement: { tlId: f.owner } }, { requirement: { bdeId: f.owner } }] });
+  if (stageGroupsOf(f.status)) app.push(stageGroupsOf(f.status));
+  if (f.owner) app.push(ownerAppArm(f.owner));
   if (f.client) app.push({ requirement: { client: { name: { contains: f.client } } } });
   if (f.dept) app.push({ requirement: { department: { contains: f.dept } } });
   if (app.length) out.push({ applications: { some: { AND: app } } });
@@ -293,7 +300,7 @@ async function clientsGroup(user, v, ctx) {
   const arms = [{ AND: perTok }, ...(phoneHit.length ? [{ id: { in: phoneHit } }] : []), ...(/^cl[-\s#:]/i.test(text) && idLike ? [{ id: idLike }, { id: { endsWith: idLike } }] : [])];
   const scope = SC.clientWhere(user);
   const extra = [...dateWhere(f), ...(f.dept ? [{ ownerDepartment: { contains: f.dept } }] : []), ...(f.loc ? [{ location: { contains: f.loc } }] : []), ...(f.client ? [{ name: { contains: f.client } }] : []),
-    ...(f.owner && ctx.links.names.get(f.owner) ? [{ bdeOwner: { contains: ctx.links.names.get(f.owner) } }] : [])];
+    ...(() => { const nm = listOf(f.owner).map((o) => ctx.links.names.get(o)).filter(Boolean); return nm.length ? [{ OR: nm.map((n) => ({ bdeOwner: { contains: n } })) }] : []; })()];
   let where = { AND: [...(browse ? [] : [{ OR: arms }]), scope, ...extra] };
   let fuzzy = false;
   const cSel = { id: true, name: true, clientCode: true, location: true, contactName: true, agreementStatus: true };
@@ -346,9 +353,9 @@ async function requirementsGroup(user, v, ctx) {
   const { toks, take, full, f, links } = ctx;
   const browse = !toks.length;
   const scope = SC.requirementWhere(user);
-  const st = f.status;
-  const extra = [...dateWhere(f), ...(f.owner ? [{ OR: [{ recruiterId: f.owner }, { tlId: f.owner }, { bdeId: f.owner }] }] : []),
-    ...(st && ['open', 'closed'].includes(st) ? [st === 'open' ? { status: { notIn: ['CLOSED', 'DRAFT'] } } : { status: 'CLOSED' }] : []),
+  const sts = listOf(f.status).filter((x) => ['open', 'closed'].includes(x));
+  const extra = [...dateWhere(f), ...(f.owner ? [{ OR: listOf(f.owner).flatMap((o) => [{ recruiterId: o }, { tlId: o }, { bdeId: o }]) }] : []),
+    ...(sts.length ? [{ OR: sts.map((st) => (st === 'open' ? { status: { notIn: ['CLOSED', 'DRAFT'] } } : { status: 'CLOSED' })) }] : []),
     ...(f.client ? [{ client: { name: { contains: f.client } } }] : []), ...(f.dept ? [{ department: { contains: f.dept } }] : []), ...(f.loc ? [{ location: { contains: f.loc } }] : [])];
   const own = new Set(links.reqOwn);
   // own matches, then the requirements of the matched recruiters / TLs / BDEs, then the requirements a matched candidate applied to
@@ -550,7 +557,7 @@ async function eventsGroup(user, v, ctx) {
   const match = toks.length ? allWordsX(toks, [...builders, (t) => ({ interviewer: { contains: t } })]) : {};
   const matchNoInterviewer = toks.length ? allWordsX(toks, builders) : {};
   const scope = SC.applicationWhere(user);
-  const appExtra = [...dateWhere(f), ...(f.owner ? [{ OR: [{ ownerRecruiterId: f.owner }, { requirement: { tlId: f.owner } }, { requirement: { bdeId: f.owner } }] }] : []), ...(f.status && stageGroup(f.status) ? [stageGroup(f.status)] : []),
+  const appExtra = [...dateWhere(f), ...(f.owner ? [ownerAppArm(f.owner)] : []), ...(stageGroupsOf(f.status) ? [stageGroupsOf(f.status)] : []),
     ...(f.client ? [{ requirement: { client: { name: { contains: f.client } } } }] : []), ...(f.dept ? [{ requirement: { department: { contains: f.dept } } }] : [])];
   const sel = {
     id: true, candidateId: true, stage: true, interviewAt: true, interviewStatus: true, interviewer: true, interviewRound: true, offerStatus: true, offerDate: true, joiningDate: true, joiningStatus: true, joinedAt: true,
@@ -599,7 +606,7 @@ async function moneyGroup(user, v, ctx) {
       // eslint-disable-next-line no-await-in-loop
       perTok.push({ OR: [{ invoiceNumber: { contains: tok.t } }, { notes: { contains: tok.t } }, { candidate: { name: { contains: tok.t } } }, { requirement: { title: { contains: tok.t } } }, await CS.clientRelationTerm(tok.t)] });
     }
-    const extra = [...(f.from || f.to ? [{ invoiceDate: { ...(f.from ? { gte: f.from } : {}), ...(f.to ? { lte: f.to } : {}) } }] : []), ...(f.status ? [{ status: { contains: f.status } }] : [])];
+    const extra = [...(f.from || f.to ? [{ invoiceDate: { ...(f.from ? { gte: f.from } : {}), ...(f.to ? { lte: f.to } : {}) } }] : []), ...(f.status ? [{ OR: listOf(f.status).map((s) => ({ status: { contains: s } })) }] : [])];
     const where = { AND: [{ AND: perTok }, SC.invoiceWhere(user), ...extra] };
     const inv = await prisma.invoice.findMany({ where, select: { id: true, invoiceNumber: true, status: true, invoiceDate: true, clientId: true, client: { select: { name: true } }, candidate: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' }, take: take + 1 });
     count += full ? await prisma.invoice.count({ where }) : inv.length;
@@ -717,7 +724,7 @@ async function search(user, textIn, opts = {}) {
     timed('reqOwn', async () => { links.reqOwn = await requirementOwnIds(user, ctx); }), timed('direct', direct),
   ]);
   // phase 2
-  const sized = (g) => (only && only !== g ? { ...ctx, take: 1 } : (f.type && f.type !== g && !only ? { ...ctx, take: 1 } : ctx));
+  const sized = (g) => (only && only !== g ? { ...ctx, take: 1 } : (!typeHas(f, g) && !only ? { ...ctx, take: 1 } : ctx));
   const [requirements, candidates, events, money, other] = await Promise.all([
     timed('requirements', () => requirementsGroup(user, v, sized('requirements'))), timed('candidates', () => candidatesGroup(user, v, sized('candidates'))),
     timed('events', () => eventsGroup(user, v, sized('events'))), timed('money', () => moneyGroup(user, v, sized('money'))), timed('other', () => otherGroup(user, v, sized('other'))),
@@ -725,7 +732,7 @@ async function search(user, textIn, opts = {}) {
   const byId = {
     people, clients, requirements, candidates, events, money, other,
   };
-  const wanted = (id) => (only ? only === id : (!f.type || f.type === id));
+  const wanted = (id) => (only ? only === id : typeHas(f, id));
   const groups = GROUP_ORDER.filter((id) => wanted(id)).map((id) => {
     const g = byId[id];
     const cap = id === 'events' || id === 'money' || id === 'other' ? take * 3 : take;

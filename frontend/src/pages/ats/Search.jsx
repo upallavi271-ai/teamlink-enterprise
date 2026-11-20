@@ -25,10 +25,10 @@ const STATUS_OPTIONS = [['joined', 'Joined (still working)'], ['selected', 'Sele
 const BY_OPTIONS = [['name', 'Name / number'], ['client', 'Client'], ['requirement', 'Requirement'], ['recruiter', 'Recruiter'], ['tl', 'TL'], ['bde', 'BDE']].map(([value, label]) => ({ value, label }));
 
 const configOf = (viewer, owners, facets = {}) => [
-  { id: 'type', label: 'Type', type: 'select', primary: true, keys: { value: 'type' }, allLabel: 'All types', options: facets.type || TYPE_OPTIONS },
+  { id: 'type', label: 'Type', type: 'multi', primary: true, keys: { value: 'type' }, allLabel: 'All types', options: facets.type || TYPE_OPTIONS },
   { id: 'added', label: 'Added / created', type: 'daterange', primary: true, keys: { from: 'from', to: 'to' } },
-  { id: 'status', label: 'Status / step', type: 'select', primary: true, keys: { value: 'status' }, allLabel: 'Any step', options: facets.status || STATUS_OPTIONS },
-  { id: 'owner', label: 'Owner (recruiter, TL, BDE)', type: 'select', primary: true, show: owners.length > 0, keys: { value: 'owner' }, allLabel: 'Anyone', options: owners },
+  { id: 'status', label: 'Status / step', type: 'multi', primary: true, keys: { value: 'status' }, allLabel: 'Any step', options: facets.status || STATUS_OPTIONS },
+  { id: 'owner', label: 'Owner (recruiter, TL, BDE)', type: 'multi', primary: true, show: owners.length > 0, keys: { value: 'owner' }, allLabel: 'Anyone', options: owners },
   { id: 'by', label: 'Matched by', type: 'select', primary: true, keys: { value: 'by' }, allLabel: 'Anything', options: facets.by || BY_OPTIONS },
   { id: 'client', label: 'Client', type: 'text', keys: { value: 'client' }, placeholder: 'client name' },
   { id: 'dept', label: 'Department', type: 'text', keys: { value: 'dept' }, placeholder: 'e.g. IT' },
