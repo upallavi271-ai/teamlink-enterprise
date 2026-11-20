@@ -71,7 +71,7 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   const c6 = await mk(6, { ...base, currentSalary: '7 LPA', expectedSalary: '9 LPA', experienceYears: 6, location: 'Hyderabad', noticePeriod: '45 Days', skills: 'Go' }, j2, RB);
   // P1 was shared with the client today
   const app1 = await prisma.application.findFirst({ where: { candidateId: c1.id } });
-  await prisma.applicationStageEvent.create({ data: { applicationId: app1.id, candidateId: c1.id, fromStage: 'NEW', toStage: 'CLIENT_REVIEW', action: 'Moved to Client Review' } });
+  await prisma.applicationStageEvent.create({ data: { applicationId: app1.id, candidateId: c1.id, fromStage: 'NEW', toStage: 'CLIENT_REVIEW', action: 'Moved to Client Review', actorUserId: RA.id, actorName: RA.name, actorRole: 'RECRUITER' } });
   let dupSeeded = false;
   try {
     await prisma.$executeRawUnsafe('INSERT INTO CandidateDupFlag (id, candidateId, matchCandidateId, pairKey, level, status, reasons, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)', `fxd${P}`, c3.id, c4.id, `fx${P}`, 'CERTAIN', 'OPEN', '[]', Date.now(), Date.now());
@@ -354,6 +354,26 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   f = await facet(tA, { skillSet: 'java', skillMode: 'all', ctcCurMin: '3' }, 'workMode');
   l = await list(tA, { skillSet: 'java', skillMode: 'all', ctcCurMin: '3', workMode: 'Hybrid' });
   check('facet count equals the list (work mode Hybrid, java, CTC from 3)', optCount(f, 'Hybrid') === new Set(l.names).size, { c: optCount(f, 'Hybrid'), l: l.names });
+
+  // ---- TEAM PAGE: results for a date range, scoped to the viewer (founder 2026-11-20)
+  const tp = async (token, params) => { const r = await call('GET', `/ats/team/period?${qs(params)}`, null, token); return { status: r.status, body: r.body }; };
+  x = await tp(tA, { range: 'this_month' });
+  check('team period: this month answers with the range and one row per listed person', x.status === 200 && x.body.range.key === 'this_month' && x.body.rows && x.body.rows[RA.id] && typeof x.body.rows[RA.id].joined === 'number' && typeof x.body.rows[RA.id].target === 'number', x.body && { s: x.status, k: Object.keys(x.body) });
+  check('team period: sent to the client is counted for the recruiter who had the person (P1 was shared today)', x.body.rows[RA.id].sent >= 1, x.body.rows[RA.id]);
+  check('team period: a person with no joinings has a performance word and a target band', typeof x.body.rows[RB.id].band === 'string' && ['none', 'below', 'half', 'met'].includes(x.body.rows[RB.id].achBand), x.body.rows[RB.id]);
+  x = await tp(tA, { range: 'custom', from: '2026-12-01', to: '2026-12-31' });
+  check('team period: a custom range counts the interviews booked in it (three for recruiter A)', x.status === 200 && x.body.rows[RA.id].interviews === 3 && x.body.rows[RA.id].joined === 0, x.body && x.body.rows && x.body.rows[RA.id]);
+  x = await tp(tA, { range: 'custom', from: '2026-12-31', to: '2026-12-01' });
+  check('team period: a reversed custom range is refused or swapped, never a crash', [200, 400].includes(x.status), x.status);
+  x = await tp(tA, { range: 'custom', from: 'not-a-date', to: '2026-12-01' });
+  check('team period: a bad date is a plain 400', x.status === 400, x.status);
+  x = await tp(tRA, { range: 'this_month' });
+  check('team period scope: a recruiter sees only their own row (or is refused the Team page)', x.status === 403 || (x.status === 200 && Object.keys(x.body.rows).every((id) => id === RA.id)), x.body && x.body.rows && Object.keys(x.body.rows));
+  x = await tp(tRB, { range: 'custom', from: '2026-12-01', to: '2026-12-31' });
+  check('team period scope: recruiter B never gets recruiter A\'s numbers', x.status === 403 || (x.status === 200 && !x.body.rows[RA.id]), x.body && x.body.rows && Object.keys(x.body.rows));
+  const tv = await call('GET', '/ats/team?shape=v2', null, tA);
+  const meRow = ((tv.body && tv.body.rows) || []).find((p) => p.id === RA.id);
+  check('team rows carry location, joined-the-company date and HR status for the filters', !!meRow && 'location' in meRow && 'joinedCompanyOn' in meRow && 'employmentStatus' in meRow && 'seat' in meRow, meRow && Object.keys(meRow));
 
   // job portal applications and call lists answer their filters
   const jp = await call('GET', `/job-portal/applications?${qs({ jpSource: 'zzz-none' })}`, null, tA);
