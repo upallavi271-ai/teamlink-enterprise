@@ -22,6 +22,8 @@
 .bde-agent-note{font-size:12px;opacity:.75;margin-bottom:4px}
 .bde-agent-items{list-style:none;margin:6px 0 0;padding:0}
 .bde-agent-item{font-size:12.5px;padding:3px 0;border-top:1px solid rgba(0,0,0,.04)}
+.bde-agent-items.is-long{max-height:340px;overflow-y:auto;padding-right:4px}
+.bde-agent-items.is-long .bde-agent-item{padding:2px 0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bde-agent-link{font-weight:600;color:var(--blue,#2f6fed);text-decoration:none}
 .bde-agent-link:hover,.bde-agent-hist:hover{text-decoration:underline}
 .bde-agent-sub2{opacity:.8}

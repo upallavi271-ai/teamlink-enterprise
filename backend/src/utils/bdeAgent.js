@@ -190,7 +190,7 @@ async function overview(user) {
   const st = await fastAi.status().catch(() => ({ ready: false }));
   const unsigned = ctx.clients.filter((c) => !require('./atsVocab').agreementIsSigned(c.agreementStatus)).length; // eslint-disable-line global-require
   const chips = [
-    "What is pending today?", "Today's interviews", 'Pending client feedback', 'Profiles shared this week', 'Follow-ups due', 'Joinings this month',
+    "What is pending today?", "Today's interviews", 'Pending client feedback', 'Profiles shared this week', 'Follow-ups due', 'Joinings this month', 'Joinings till now',
     'Replacements due', 'Overdue invoices', 'Agreements expiring in 30 days', 'Agreements not signed',
     ...(ctx.role === 'bde' ? ['My target this month'] : ['Clients with no activity']),
     ...(ctx.billing ? ['Pending invoice amount'] : []),

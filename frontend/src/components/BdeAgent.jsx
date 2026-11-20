@@ -26,7 +26,7 @@ const narrow = () => (typeof window !== 'undefined' && window.innerWidth < 700);
 function Item({ it, onGo }) {
   const sameHistory = !it.history || it.history === it.to;
   return (
-    <li className="bde-agent-item">
+    <li className="bde-agent-item" title={`${it.label}${it.sub ? ` · ${it.sub}` : ''}`}>
       <HLink to={it.to} onClick={onGo} className="bde-agent-link">{it.label}</HLink>
       {it.sub && <span className="bde-agent-sub2"> · {it.sub}</span>}
       {!sameHistory && <> <HLink to={it.history} onClick={onGo} className="bde-agent-hist" title="Complete history (opens beside the page)">history</HLink></>}
@@ -40,11 +40,16 @@ function Answer({ a, onGo, compact }) {
       <div className="bde-agent-title">{a.title}</div>
       {!compact && (a.lines || []).map((l, i) => <div key={i} className="bde-agent-line">{l}</div>)} {/* eslint-disable-line react/no-array-index-key */}
       {(a.items || []).length > 0 && (
-        <ul className="bde-agent-items">
+        <ul className={`bde-agent-items${a.items.length > 12 ? ' is-long' : ''}`}>
           {a.items.map((it, i) => <Item key={`${it.kind}-${it.id}-${i}`} it={it} onGo={onGo} />)} {/* eslint-disable-line react/no-array-index-key */}
         </ul>
       )}
-      {a.more > 0 && <div className="bde-agent-more">+{a.more} more{a.open ? '' : ' (ask about one by name, or narrow the question)'}</div>}
+      {a.more > 0 && (
+        <div className="bde-agent-more">
+          {`${a.items.length} shown of ${a.items.length + a.more}. `}
+          {a.open ? <HLink to={a.open.to} onClick={onGo} className="bde-agent-link">{a.open.label}</HLink> : 'Narrow the question (a client, a month) to see the rest.'}
+        </div>
+      )}
     </div>
   );
 }

@@ -81,9 +81,9 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
       const t0 = Date.now();
       await chip.click();
       const thinking = await panel.locator('.bde-agent-typing').isVisible().catch(() => false);
-      const ans1 = panel.locator('.bde-agent-msg.ai .bde-agent-title', { hasText: '1 interview today' });
+      const ans1 = panel.locator('.bde-agent-msg.ai .bde-agent-title', { hasText: '1 interview' });
       const a1 = await ans1.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
-      check(`the chip answers "1 interview today" (${Date.now() - t0} ms${thinking ? ', "Thinking" showed first' : ''})`, a1);
+      check(`the chip answers "Today (..): 1 interview" (${Date.now() - t0} ms${thinking ? ', "Thinking" showed first' : ''})`, a1);
       const link1 = panel.locator('.bde-agent-link', { hasText: 'Lakshmi Prasanna' });
       check('...with the candidate named as a link to their history', await link1.count() === 1 && /\/ats\/history\/candidate\//.test(await link1.getAttribute('href') || ''));
       const body1 = await panel.innerText();
@@ -103,6 +103,13 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
       await input.fill('ee roju interviews enni');
       await input.press('Enter');
       check('Telugu in English letters is understood', await panel.locator('.bde-agent-msg.ai .bde-agent-title', { hasText: 'ee roju' }).last().waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false));
+      await input.fill('kovida requiremnts list');
+      await input.press('Enter');
+      check('a list question answers the whole list with the window first ("All time (till ...): 1 requirement ...")', await panel.locator('.bde-agent-msg.ai .bde-agent-title', { hasText: 'All time (till' }).last().waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false));
+      await input.fill('january 2026 to november 2026 joinings list');
+      await input.press('Enter');
+      check('a date range is answered for that range ("Jan 2026 - Nov 2026: ...")', await panel.locator('.bde-agent-msg.ai .bde-agent-title', { hasText: 'Jan 2026 - Nov 2026:' }).last().waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false));
+      await page.screenshot({ path: path.join(SHOTS, '3b-range-and-list.png') });
       // the history link opens the drawer over the page
       await panel.locator('.bde-agent-msg.ai').nth(0).locator('.bde-agent-link', { hasText: 'Lakshmi Prasanna' }).click();
       check('a candidate link opens their history (side drawer, the agent keeps its chat)', await page.waitForURL(/open=candidate/, { timeout: 15000 }).then(() => true).catch(() => false));

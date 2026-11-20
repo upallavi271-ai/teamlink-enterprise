@@ -29,7 +29,7 @@ const LIVE = V.REQUIREMENT_LIVE_STATUSES; // OPEN, RECRUITER_ASSIGNED, SOURCING,
 const JOINED = ['JOINED', 'HIRED'];
 const SELECTED_NOW = ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'];
 const LEFT_STATUS = [V.JOINING_REPLACEMENT_DUE, V.JOINING_REPLACED, V.JOINING_LEFT_AFTER_GUARANTEE, 'Dropped'];
-const SHOW = 8; // records listed under an answer (the count is always the exact total)
+const SHOW = 100; // records listed under an answer, one compact line each (the count is always the exact total; beyond it, a link to the full list)
 const TTL = 60000;
 
 const money = (n) => `Rs ${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
@@ -143,16 +143,39 @@ const scopeFact = (ctx) => {
 // ============================================================================================================================================
 // THE INTENTS
 // ============================================================================================================================================
+// "Now (20 Nov)" for the answers that are a state, not a period (the window is always the first words of an answer)
+const nowLabel = (ctx, lang) => say(lang, { en: `Now (${L.dm(ctx.today)})`, tl: `Ippudu (${L.dm(ctx.today)})`, te: `ఇప్పుడు (${L.dm(ctx.today)})` });
+// "By month: Jan 2026 12 · Feb 2026 15 ..." when the window covers more than one month (a long all-time window lists only the months with data)
+function monthLine(days, p, ctx) {
+  const list = days.filter(Boolean).map((d) => String(d).slice(0, 7));
+  if (!list.length) return null;
+  const lo = p.all ? list.reduce((a, b) => (a < b ? a : b)) : p.from.slice(0, 7);
+  const hi = (p.to > ctx.today && !list.some((m) => m > ctx.today.slice(0, 7)) ? ctx.today : p.to).slice(0, 7);
+  if (lo >= hi) return null;
+  const count = new Map();
+  list.forEach((m) => count.set(m, (count.get(m) || 0) + 1));
+  const months = [];
+  for (let m = lo; m <= hi && months.length < 400; m = L.addDays(`${L.lastOfMonth(`${m}-01`)}`, 1).slice(0, 7)) months.push(m);
+  const shown = months.length > 18 ? months.filter((m) => count.get(m)) : months;
+  return `By month: ${shown.map((m) => `${L.monthLabel(`${m}-01`)} ${count.get(m) || 0}`).join(' · ')}`;
+}
+const qs = (o) => Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+// the screen that shows the same list with the same filters, for a list longer than the answer shows
+const searchOpen = (type, f, extra = {}) => ({ to: `/ats/search?${qs({ type, client: f && f.clientId ? f.name : undefined, ...extra })}`, label: 'Open the full list in Search' });
+const joinOpen = (p, f, view) => ({ to: `/ats/joining?${qs({ view: 'joindrop', jdview: view, from: p.all ? undefined : p.from, to: p.to, clientId: f && f.clientId })}`, label: 'Open the full list (Joining > Joined and dropped)' });
+const forName = (f) => (f && f.name ? ` - ${f.name}` : '');
+
 async function interviews(ctx, p, lang, f) {
   const where = appWhere(ctx, { interviewAt: { gte: L.startOf(p.from), lt: L.endOf(p.to) } }, { stage: { not: 'REJECTED' } },
     { OR: [{ interviewStatus: null }, { interviewStatus: { not: 'CANCELLED' } }] }, filterArm(f));
-  const [n, rows] = await Promise.all([prisma.application.count({ where }), prisma.application.findMany({ where, select: APP_SELECT, orderBy: { interviewAt: 'asc' }, take: 12 })]);
+  const [n, rows] = await Promise.all([prisma.application.count({ where }), prisma.application.findMany({ where, select: APP_SELECT, orderBy: { interviewAt: p.to < ctx.today || p.all ? 'desc' : 'asc' }, take: SHOW })]);
   const when = p.label(lang);
+  const days = n > SHOW ? (await prisma.application.findMany({ where, select: { interviewAt: true } })).map((a) => L.istDay(a.interviewAt)) : rows.map((a) => L.istDay(a.interviewAt));
   return answer(ctx, {
-    intent: 'interviews', count: n, total: n,
-    title: say(lang, { en: `${plural(n, 'interview', 'interviews')} ${when}`, tl: `${when} ${n} interview${n === 1 ? '' : 's'}`, te: `${when} ${n} ఇంటర్వ్యూ${n === 1 ? '' : 'లు'}` }),
-    lines: n ? [] : [say(lang, { en: 'Nothing booked for this period.', tl: 'Ee period lo emi book avvaledu.', te: 'ఈ సమయంలో ఏదీ బుక్ కాలేదు.' })],
-    items: rows.map((a) => candItem(a, `${jobOf(a)} · ${L.dm(L.istDay(a.interviewAt))} ${L.timeOf(a.interviewAt)}${a.interviewRound > 1 ? ` · round ${a.interviewRound}` : ''}${a.interviewMode ? ` · ${a.interviewMode}` : ''} · ${V.stageLabel(a.stage)}`, `interview-${a.id}`)),
+    intent: 'interviews', count: n, total: n, open: searchOpen('events', f, { ev: 'interview:upcoming,interview:done' }),
+    title: say(lang, { en: `${when}: ${plural(n, 'interview', 'interviews')}${forName(f)}`, tl: `${when}: ${n} interview${n === 1 ? '' : 's'}${forName(f)}`, te: `${when}: ${n} ఇంటర్వ్యూ${n === 1 ? '' : 'లు'}${forName(f)}` }),
+    lines: n ? [monthLine(days, p, ctx)] : [say(lang, { en: 'Nothing booked for this period.', tl: 'Ee period lo emi book avvaledu.', te: 'ఈ సమయంలో ఏదీ బుక్ కాలేదు.' })],
+    items: rows.map((a) => candItem(a, `${jobOf(a)} · ${L.dmy(L.istDay(a.interviewAt))} ${L.timeOf(a.interviewAt)}${a.interviewRound > 1 ? ` · round ${a.interviewRound}` : ''}${a.interviewMode ? ` · ${a.interviewMode}` : ''} · ${V.stageLabel(a.stage)}`, `interview-${a.id}`)),
     facts: [`Counted: candidates with an interview between ${L.dmy(p.from)} and ${L.dmy(p.to)} (India time), not cancelled, not rejected${f && f.name ? `, for ${f.name}` : ''}.`, scopeFact(ctx)],
   });
 }
@@ -168,20 +191,26 @@ async function distinctEventApps(ctx, toStages, p, f) {
 }
 async function appsById(ids) {
   if (!ids.length) return [];
-  return prisma.application.findMany({ where: { id: { in: ids } }, select: APP_SELECT });
+  const out = [];
+  for (let i = 0; i < ids.length; i += 400) {
+    // eslint-disable-next-line no-await-in-loop
+    out.push(...await prisma.application.findMany({ where: { id: { in: ids.slice(i, i + 400) } }, select: APP_SELECT }));
+  }
+  return out;
 }
 
 async function shared(ctx, p, lang, f) {
   const m = await distinctEventApps(ctx, ['SHARED_WITH_CLIENT'], p, f);
   const n = m.size;
-  const top = [...m.entries()].slice(0, 12);
+  const top = [...m.entries()].slice(0, SHOW);
   const rows = await appsById(top.map(([id]) => id));
   const byId = new Map(rows.map((a) => [a.id, a]));
   const when = p.label(lang);
   return answer(ctx, {
-    intent: 'shared', count: n, total: n,
-    title: say(lang, { en: `${plural(n, 'profile', 'profiles')} sent to clients ${when}`, tl: `${when} clients ki ${n} profile${n === 1 ? '' : 's'} share chesam`, te: `${when} క్లయింట్లకు ${n} ప్రొఫైల్‌లు పంపాం` }),
-    items: top.map(([id, at]) => byId.get(id)).filter(Boolean).map((a) => candItem(a, `${jobOf(a)} · sent ${L.dm(L.istDay(m.get(a.id)))} · now ${stepOf(a)}`)),
+    intent: 'shared', count: n, total: n, open: searchOpen('candidates', f),
+    title: say(lang, { en: `${when}: ${plural(n, 'profile', 'profiles')} sent to clients${forName(f)}`, tl: `${when}: clients ki ${n} profile${n === 1 ? '' : 's'} share chesam${forName(f)}`, te: `${when}: క్లయింట్లకు ${n} ప్రొఫైల్‌లు పంపాం${forName(f)}` }),
+    lines: [monthLine([...m.values()].map((d) => L.istDay(d)), p, ctx)],
+    items: top.map(([id]) => byId.get(id)).filter(Boolean).map((a) => candItem(a, `${jobOf(a)} · sent ${L.dmy(L.istDay(m.get(a.id)))} · now ${stepOf(a)}`)),
     facts: [`Counted: each candidate once, whose profile moved to "Sent to client" between ${L.dmy(p.from)} and ${L.dmy(p.to)} (the stage history)${f && f.name ? `, for ${f.name}` : ''}.`, scopeFact(ctx)],
   });
 }
@@ -200,9 +229,10 @@ async function feedback(ctx, p, lang, f) {
   const days = (pend && pend.feedbackDays) || 3;
   const n = sentAll.length + done.length;
   const it = (i, why) => candItem(i, `${i.job} (${i.client}) · ${why}`);
+  const now = nowLabel(ctx, lang);
   return answer(ctx, {
     intent: 'feedback', count: n, total: n + short.length,
-    title: say(lang, { en: `${plural(n, 'profile is', 'profiles are')} waiting for client feedback`, tl: `${n} profile${n === 1 ? '' : 's'} client feedback kosam waiting`, te: `${n} ప్రొఫైల్‌లు క్లయింట్ ఫీడ్‌బ్యాక్ కోసం ఎదురుచూస్తున్నాయి` }),
+    title: say(lang, { en: `${now}: ${plural(n, 'profile is', 'profiles are')} waiting for client feedback${forName(f)}`, tl: `${now}: ${n} profile${n === 1 ? '' : 's'} client feedback kosam waiting${forName(f)}`, te: `${now}: ${n} ప్రొఫైల్‌లు క్లయింట్ ఫీడ్‌బ్యాక్ కోసం ఎదురుచూస్తున్నాయి${forName(f)}` }),
     lines: [
       `Sent, no reply yet: ${sentAll.length} (${late.length} waiting ${days}+ days)`,
       `Interview done, no feedback: ${done.length}`,
@@ -223,45 +253,65 @@ async function selections(ctx, p, lang, f) {
   const [m, nowN, nowRows] = await Promise.all([
     distinctEventApps(ctx, ['SELECTED'], p, f),
     prisma.application.count({ where: nowWhere }),
-    prisma.application.findMany({ where: nowWhere, select: APP_SELECT, orderBy: { updatedAt: 'desc' }, take: 12 }),
+    prisma.application.findMany({ where: nowWhere, select: APP_SELECT, orderBy: { updatedAt: 'desc' }, take: SHOW }),
   ]);
   const when = p.label(lang);
   if (!p.named) {
+    const now = nowLabel(ctx, lang);
     return answer(ctx, {
-      intent: 'selections', count: nowN, total: nowN,
-      title: say(lang, { en: `${plural(nowN, 'candidate is', 'candidates are')} selected and not joined yet`, tl: `${nowN} candidates select ayyaru, inka join avvaledu`, te: `${nowN} మంది ఎంపికయ్యారు, ఇంకా చేరలేదు` }),
+      intent: 'selections', count: nowN, total: nowN, open: searchOpen('candidates', f, { status: 'selected' }),
+      title: say(lang, { en: `${now}: ${plural(nowN, 'candidate is', 'candidates are')} selected and not joined yet${forName(f)}`, tl: `${now}: ${nowN} candidates select ayyaru, inka join avvaledu${forName(f)}`, te: `${now}: ${nowN} మంది ఎంపికయ్యారు, ఇంకా చేరలేదు${forName(f)}` }),
       lines: [`Selected ${when}: ${m.size}`],
-      items: nowRows.map((a) => candItem(a, `${jobOf(a)} · ${V.stageLabel(a.stage)}${a.joiningDate ? ` · joining ${L.dm(String(a.joiningDate).slice(0, 10))}` : ''}`)),
+      items: nowRows.map((a) => candItem(a, `${jobOf(a)} · ${V.stageLabel(a.stage)}${a.joiningDate ? ` · joining ${L.dmy(String(a.joiningDate).slice(0, 10))}` : ''}`)),
       facts: ['Counted: candidates now at Selected, Offer or Offer accepted (not joined, not rejected).', `"Selected ${when}" = moved to Selected in that period (stage history).`, scopeFact(ctx)],
     });
   }
-  const top = [...m.keys()].slice(0, 12);
-  const rows = await appsById(top);
+  const rows = await appsById([...m.keys()].slice(0, SHOW));
+  const byId = new Map(rows.map((a) => [a.id, a]));
   return answer(ctx, {
-    intent: 'selections', count: m.size, total: m.size,
-    title: say(lang, { en: `${plural(m.size, 'selection', 'selections')} ${when}`, tl: `${when} ${m.size} selections`, te: `${when} ${m.size} ఎంపికలు` }),
-    lines: [`Selected now, not joined yet: ${nowN}`],
-    items: rows.map((a) => candItem(a, `${jobOf(a)} · selected ${L.dm(L.istDay(m.get(a.id)))} · now ${stepOf(a)}`)),
+    intent: 'selections', count: m.size, total: m.size, open: searchOpen('candidates', f, { status: 'selected' }),
+    title: say(lang, { en: `${when}: ${plural(m.size, 'selection', 'selections')}${forName(f)}`, tl: `${when}: ${m.size} selections${forName(f)}`, te: `${when}: ${m.size} ఎంపికలు${forName(f)}` }),
+    lines: [monthLine([...m.values()].map((d) => L.istDay(d)), p, ctx), `Selected now, not joined yet: ${nowN}`],
+    items: [...m.keys()].slice(0, SHOW).map((id) => byId.get(id)).filter(Boolean).map((a) => candItem(a, `${jobOf(a)} · selected ${L.dmy(L.istDay(m.get(a.id)))} · now ${stepOf(a)}`)),
     facts: [`Counted: each candidate once, moved to Selected between ${L.dmy(p.from)} and ${L.dmy(p.to)} (the stage history)${f && f.name ? `, for ${f.name}` : ''}.`, scopeFact(ctx)],
   });
 }
 
 async function offers(ctx, p, lang, f) {
+  if (p.named) {
+    // offers RELEASED in the window (the Offer step in the stage history, or the offer date), and where each one stands now
+    const ev = await distinctEventApps(ctx, ['OFFER', 'OFFER_ACCEPTED'], p, f);
+    const byDate = await prisma.application.findMany({ where: appWhere(ctx, { offerDate: { gte: p.from, lt: L.addDays(p.to, 1) } }, filterArm(f)), select: { id: true, offerDate: true } });
+    const dayOf = new Map([...ev.entries()].map(([id, at]) => [id, L.istDay(at)]));
+    byDate.forEach((a) => { if (!dayOf.has(a.id)) dayOf.set(a.id, String(a.offerDate).slice(0, 10)); });
+    const rows = (await appsById([...dayOf.keys()])).sort((a, b) => String(dayOf.get(b.id)).localeCompare(String(dayOf.get(a.id))));
+    const stateOf = (a) => (JOINED.includes(a.stage) ? 'joined' : a.offerStatus === 'Offer Declined' ? 'declined' : a.stage === 'REJECTED' ? 'rejected' : (a.stage === 'OFFER_ACCEPTED' || a.offerStatus === 'Offer Accepted') ? 'accepted' : 'waiting');
+    const c = { joined: 0, accepted: 0, declined: 0, waiting: 0, rejected: 0 };
+    rows.forEach((a) => { c[stateOf(a)] += 1; });
+    const when = p.label(lang);
+    return answer(ctx, {
+      intent: 'offers', count: rows.length, total: rows.length, open: searchOpen('events', f, { ev: 'offer:released,offer:accepted,offer:declined' }),
+      title: say(lang, { en: `${when}: ${plural(rows.length, 'offer', 'offers')} released${forName(f)} (${c.joined} joined, ${c.accepted} accepted, ${c.declined} declined, ${c.waiting} waiting)`, tl: `${when}: ${rows.length} offers release ayyayi${forName(f)} (${c.joined} joined, ${c.accepted} accepted, ${c.declined} declined, ${c.waiting} waiting)`, te: `${when}: ${rows.length} ఆఫర్లు${forName(f)} (${c.joined} చేరారు, ${c.accepted} అంగీకరించారు, ${c.declined} తిరస్కరించారు, ${c.waiting} ఎదురుచూపు)` }),
+      lines: [monthLine(rows.map((a) => dayOf.get(a.id)), p, ctx), c.rejected ? `Rejected later: ${c.rejected}` : null],
+      items: rows.map((a) => candItem(a, `${jobOf(a)} · offer ${L.dmy(dayOf.get(a.id))} · now ${stateOf(a) === 'waiting' ? 'waiting for the answer' : stateOf(a)}`)),
+      facts: [`Counted: candidates whose offer was released between ${L.dmy(p.from)} and ${L.dmy(p.to)} (the Offer step in the stage history, or the offer date), each once, with where they stand now. The offered pay is never shown here.`, scopeFact(ctx)],
+    });
+  }
   const notDone = { stage: { notIn: [...JOINED, 'REJECTED'] } };
   const relW = appWhere(ctx, notDone, { OR: [{ stage: 'OFFER' }, { offerStatus: 'Offer Released' }] }, { NOT: { stage: 'OFFER_ACCEPTED' } }, { OR: [{ offerStatus: null }, { offerStatus: { notIn: ['Offer Accepted', 'Offer Declined'] } }] }, filterArm(f));
   const accW = appWhere(ctx, notDone, { OR: [{ stage: 'OFFER_ACCEPTED' }, { offerStatus: 'Offer Accepted' }] }, filterArm(f));
-  const decW = appWhere(ctx, { offerStatus: 'Offer Declined' }, { updatedAt: { gte: L.startOf(p.from), lt: L.endOf(p.to) } }, filterArm(f));
-  const [rel, acc, dec, relRows, accRows] = await Promise.all([
-    prisma.application.count({ where: relW }), prisma.application.count({ where: accW }), prisma.application.count({ where: decW }),
-    prisma.application.findMany({ where: relW, select: APP_SELECT, orderBy: { updatedAt: 'desc' }, take: 10 }),
-    prisma.application.findMany({ where: accW, select: APP_SELECT, orderBy: { updatedAt: 'desc' }, take: 10 }),
+  const [rel, acc, relRows, accRows] = await Promise.all([
+    prisma.application.count({ where: relW }), prisma.application.count({ where: accW }),
+    prisma.application.findMany({ where: relW, select: APP_SELECT, orderBy: { updatedAt: 'desc' }, take: SHOW }),
+    prisma.application.findMany({ where: accW, select: APP_SELECT, orderBy: { updatedAt: 'desc' }, take: SHOW }),
   ]);
   const n = rel + acc;
+  const now = nowLabel(ctx, lang);
   return answer(ctx, {
-    intent: 'offers', count: n, total: n,
-    title: say(lang, { en: `${plural(n, 'offer is', 'offers are')} open: ${rel} waiting for the candidate, ${acc} accepted (not joined yet)`, tl: `${n} offers open: ${rel} candidate answer kosam, ${acc} accept chesaru (inka join avvaledu)`, te: `${n} ఆఫర్లు: ${rel} అభ్యర్థి సమాధానం కోసం, ${acc} అంగీకరించారు (ఇంకా చేరలేదు)` }),
-    lines: [`Declined ${p.label(lang)}: ${dec}`],
-    items: [...relRows.map((a) => candItem(a, `${jobOf(a)} · offer released${a.offerDate ? ` ${L.dm(String(a.offerDate).slice(0, 10))}` : ''}`)), ...accRows.map((a) => candItem(a, `${jobOf(a)} · offer accepted${a.joiningDate ? ` · joining ${L.dm(String(a.joiningDate).slice(0, 10))}` : ''}`))],
+    intent: 'offers', count: n, total: n, open: searchOpen('events', f, { ev: 'offer:released,offer:accepted' }),
+    title: say(lang, { en: `${now}: ${plural(n, 'offer is', 'offers are')} open${forName(f)}: ${rel} waiting for the candidate, ${acc} accepted (not joined yet)`, tl: `${now}: ${n} offers open${forName(f)}: ${rel} candidate answer kosam, ${acc} accept chesaru (inka join avvaledu)`, te: `${now}: ${n} ఆఫర్లు${forName(f)}: ${rel} అభ్యర్థి సమాధానం కోసం, ${acc} అంగీకరించారు (ఇంకా చేరలేదు)` }),
+    lines: ['Ask "offers this month" or "offers from January to March" for the offers released in a period.'],
+    items: [...relRows.map((a) => candItem(a, `${jobOf(a)} · offer released${a.offerDate ? ` ${L.dmy(String(a.offerDate).slice(0, 10))}` : ''}`)), ...accRows.map((a) => candItem(a, `${jobOf(a)} · offer accepted${a.joiningDate ? ` · joining ${L.dmy(String(a.joiningDate).slice(0, 10))}` : ''}`))],
     facts: ['Waiting = step Offer or offer status "Offer Released", not yet accepted or declined; accepted = step Offer accepted or status "Offer Accepted", not joined. The offered pay is never shown here.', scopeFact(ctx)],
   });
 }
@@ -281,28 +331,43 @@ async function droppedAppIds(appIds) {
 const dayArm = (p) => ({
   OR: [{ joiningDate: { gte: p.from, lt: L.addDays(p.to, 1) } }, { AND: [{ OR: [{ joiningDate: null }, { joiningDate: '' }] }, { joinedAt: { gte: L.startOf(p.from), lt: L.endOf(p.to) } }] }],
 });
-async function joinings(ctx, p, lang, f) {
-  const joinedW = appWhere(ctx, { stage: { in: JOINED } }, { OR: [{ joiningStatus: null }, { joiningStatus: { notIn: LEFT_STATUS } }] }, { OR: [{ rollStatus: null }, { rollStatus: { not: 'Dropped' } }] }, dayArm(p), filterArm(f));
-  const from = p.from > ctx.today ? p.from : ctx.today;
-  const dueW = from <= p.to ? appWhere(ctx, { stage: { in: SELECTED_NOW } }, { joiningDate: { gte: from, lt: L.addDays(p.to, 1) } }, filterArm(f)) : null;
+// JOININGS in a window: everybody who joined in it (step Joined / Hired with the joining day in the window), split into still working and left
+// after joining; the ones still due to join in the window; the month-by-month count; the whole list (newest first)
+async function joinings(ctx, p, lang, f, t = '') {
+  const joinedW = appWhere(ctx, { stage: { in: JOINED } }, dayArm(p), filterArm(f));
+  const dueFrom = p.from > ctx.today ? p.from : ctx.today;
+  const dueW = dueFrom <= p.to && !p.all ? appWhere(ctx, { stage: { in: SELECTED_NOW } }, { joiningDate: { gte: dueFrom, lt: L.addDays(p.to, 1) } }, filterArm(f)) : null;
   const [joinedAll, dueRows] = await Promise.all([
-    prisma.application.findMany({ where: joinedW, select: APP_SELECT, orderBy: { joinedAt: 'desc' } }),
+    prisma.application.findMany({ where: joinedW, select: APP_SELECT }),
     dueW ? prisma.application.findMany({ where: dueW, select: APP_SELECT, orderBy: { joiningDate: 'asc' } }) : [],
   ]);
   const gone = await droppedAppIds(joinedAll.map((a) => a.id));
-  const joined = joinedAll.filter((a) => !gone.has(a.id));
+  const left = (a) => gone.has(a.id) || LEFT_STATUS.includes(a.joiningStatus) || a.rollStatus === 'Dropped';
+  const dayOf = (a) => (a.joiningDate ? String(a.joiningDate).slice(0, 10) : L.istDay(a.joinedAt));
+  joinedAll.sort((a, b) => String(dayOf(b)).localeCompare(String(dayOf(a))));
+  const working = joinedAll.filter((a) => !left(a));
+  const leftN = joinedAll.length - working.length;
+  const onlyWorking = /\bstill working\b|\bworking\b|\bactive\b/.test(t);
+  const list = onlyWorking ? working : joinedAll;
   const when = p.label(lang);
   const future = p.from > ctx.today;
-  const dayOf = (a) => (a.joiningDate ? String(a.joiningDate).slice(0, 10) : L.istDay(a.joinedAt));
-  const n = future ? dueRows.length : joined.length;
+  if (future) {
+    return answer(ctx, {
+      intent: 'joinings', count: dueRows.length, total: dueRows.length,
+      title: say(lang, { en: `${when}: ${plural(dueRows.length, 'candidate is', 'candidates are')} due to join${forName(f)}`, tl: `${when}: ${dueRows.length} candidates join avvali${forName(f)}`, te: `${when}: ${dueRows.length} మంది చేరాల్సి ఉంది${forName(f)}` }),
+      items: dueRows.map((a) => candItem(a, `${jobOf(a)} · joining ${L.dmy(String(a.joiningDate).slice(0, 10))} · ${V.stageLabel(a.stage)}`)),
+      facts: ['Due to join = Selected / Offer / Offer accepted with a joining date in the period.', scopeFact(ctx)],
+    });
+  }
+  const n = list.length;
   return answer(ctx, {
-    intent: 'joinings', count: n, total: future ? dueRows.length : joined.length + dueRows.length,
-    title: future
-      ? say(lang, { en: `${plural(n, 'candidate is', 'candidates are')} due to join ${when}`, tl: `${when} ${n} candidates join avvali`, te: `${when} ${n} మంది చేరాల్సి ఉంది` })
-      : say(lang, { en: `${plural(n, 'joining', 'joinings')} ${when}`, tl: `${when} ${n} joinings`, te: `${when} ${n} జాయినింగ్‌లు` }),
-    lines: future ? [] : [dueRows.length ? `Still due to join ${when} (joining date set, not joined yet): ${dueRows.length}` : null],
-    items: [...(future ? [] : joined.map((a) => candItem(a, `${jobOf(a)} · joined ${L.dm(dayOf(a))}`, `joining-${a.id}`))), ...dueRows.map((a) => candItem(a, `${jobOf(a)} · joining ${L.dm(String(a.joiningDate).slice(0, 10))} · ${V.stageLabel(a.stage)}`))],
-    facts: [`Joined = step Joined / Hired with the joining day (joining date, else the day it was marked joined) between ${L.dmy(p.from)} and ${L.dmy(p.to)}, and not left after joining.`, 'Due to join = Selected / Offer / Offer accepted with a joining date in the period, from today on.', scopeFact(ctx)],
+    intent: 'joinings', count: n, total: n + (onlyWorking ? 0 : dueRows.length), open: joinOpen(p, f, onlyWorking ? 'Joined' : undefined),
+    title: onlyWorking
+      ? say(lang, { en: `${when}: ${plural(n, 'joining', 'joinings')} still working${forName(f)} (${leftN} more joined and left)`, tl: `${when}: ${n} joinings inka work chestunnaru${forName(f)} (${leftN} join ayyi vellipoyaru)`, te: `${when}: ${n} మంది ఇంకా పని చేస్తున్నారు${forName(f)} (${leftN} మానేశారు)` })
+      : say(lang, { en: `${when}: ${plural(n, 'joining', 'joinings')}${forName(f)} (${working.length} still working, ${leftN} left after joining)`, tl: `${when}: ${n} joinings${forName(f)} (${working.length} inka work chestunnaru, ${leftN} join ayyi vellipoyaru)`, te: `${when}: ${n} జాయినింగ్‌లు${forName(f)} (${working.length} ఇంకా పని చేస్తున్నారు, ${leftN} చేరి మానేశారు)` }),
+    lines: [monthLine(list.map(dayOf), p, ctx), dueRows.length ? `Still due to join in this window (joining date set, not joined yet): ${dueRows.length}` : null],
+    items: [...list.map((a) => candItem(a, `${jobOf(a)} · joined ${L.dmy(dayOf(a))}${left(a) ? ' · left after joining' : ''}`, `joining-${a.id}`)), ...(onlyWorking ? [] : dueRows.map((a) => candItem(a, `${jobOf(a)} · due to join ${L.dmy(String(a.joiningDate).slice(0, 10))} · ${V.stageLabel(a.stage)}`)))],
+    facts: [`Joined = step Joined / Hired with the joining day (the joining date, else the day it was marked joined) between ${L.dmy(p.from)} and ${L.dmy(p.to)}${f && f.name ? `, for ${f.name}` : ''}. "Left after joining" = the Joining & Drop record says Dropped (or the joining / roll status does).`, 'Due to join = Selected / Offer / Offer accepted with a joining date in the window, from today on.', scopeFact(ctx)],
   });
 }
 
@@ -325,10 +390,10 @@ async function drops(ctx, p, lang, f) {
   const n = recs.length;
   const when = p.label(lang);
   return answer(ctx, {
-    intent: 'drops', count: n, total: n,
-    title: say(lang, { en: `${plural(n, 'candidate', 'candidates')} left after joining ${when}`, tl: `${when} ${n} candidates join ayyi vellipoyaru (drops)`, te: `${when} ${n} మంది చేరి మానేశారు` }),
-    lines: [n ? `Inside the guarantee (replacement owed): ${within}` : null],
-    items: recs.map((r) => candItem({ candidateId: r.candidateId, candidateName: r.candidateName }, `${r.jobTitle || '-'} (${r.clientName || '-'}) · dropped ${L.dm(r.droppedOn)}${r.dropReason ? ` · ${r.dropReason}` : ''} · ${RP.describe(r, null, { today: ctx.today }).words || ''}`, `drop-${r.applicationId}`)),
+    intent: 'drops', count: n, total: n, open: joinOpen(p, f, 'Dropped'),
+    title: say(lang, { en: `${when}: ${plural(n, 'candidate', 'candidates')} left after joining${forName(f)}`, tl: `${when}: ${n} candidates join ayyi vellipoyaru (drops)${forName(f)}`, te: `${when}: ${n} మంది చేరి మానేశారు${forName(f)}` }),
+    lines: [monthLine(recs.map((r) => r.droppedOn), p, ctx), n ? `Inside the guarantee (replacement owed): ${within}` : null],
+    items: recs.map((r) => candItem({ candidateId: r.candidateId, candidateName: r.candidateName }, `${r.jobTitle || '-'} (${r.clientName || '-'}) · dropped ${L.dmy(r.droppedOn)}${r.dropReason ? ` · ${r.dropReason}` : ''} · ${RP.describe(r, null, { today: ctx.today }).words || ''}`, `drop-${r.applicationId}`)),
     facts: [`Counted: Joining & Drop records marked Dropped with a drop day between ${L.dmy(p.from)} and ${L.dmy(p.to)}${f && f.name ? `, for ${f.name}` : ''}.`, scopeFact(ctx)],
   });
 }
@@ -339,11 +404,12 @@ async function replacements(ctx, p, lang, f) {
   recs.sort((a, b) => String(dueBy(a.r) || '9999').localeCompare(String(dueBy(b.r) || '9999')));
   const late = recs.filter((x) => dueBy(x.r) && dueBy(x.r) < ctx.today).length;
   const n = recs.length;
+  const now = nowLabel(ctx, lang);
   return answer(ctx, {
-    intent: 'replacements', count: n, total: n,
-    title: say(lang, { en: `${plural(n, 'replacement is', 'replacements are')} due`, tl: `${n} replacement${n === 1 ? '' : 's'} ivvali (due)`, te: `${n} రీప్లేస్‌మెంట్లు ఇవ్వాలి` }),
+    intent: 'replacements', count: n, total: n, open: joinOpen({ all: true, to: ctx.today }, f, 'Dropped'),
+    title: say(lang, { en: `${now}: ${plural(n, 'replacement is', 'replacements are')} due${forName(f)}`, tl: `${now}: ${n} replacement${n === 1 ? '' : 's'} ivvali (due)${forName(f)}`, te: `${now}: ${n} రీప్లేస్‌మెంట్లు ఇవ్వాలి${forName(f)}` }),
     lines: [n ? `Past the due date: ${late}` : say(lang, { en: 'No replacement is owed right now.', tl: 'Ippudu e replacement due ledu.', te: 'ప్రస్తుతం ఏ రీప్లేస్‌మెంట్ బాకీ లేదు.' })],
-    items: recs.map(({ r }) => candItem({ candidateId: r.candidateId, candidateName: r.candidateName }, `${r.jobTitle || '-'} (${r.clientName || '-'}) · dropped ${L.dm(r.droppedOn)} · replace by ${dueBy(r) ? L.dm(dueBy(r)) : 'a date not set'}`, `drop-${r.applicationId}`)),
+    items: recs.map(({ r }) => candItem({ candidateId: r.candidateId, candidateName: r.candidateName }, `${r.jobTitle || '-'} (${r.clientName || '-'}) · dropped ${L.dmy(r.droppedOn)} · replace by ${dueBy(r) ? L.dmy(dueBy(r)) : 'a date not set'}`, `drop-${r.applicationId}`)),
     facts: ['Counted: dropped inside the guarantee (or the client asked for a replacement), no replacement candidate linked yet, the period not over (the Joining & Drop rule, joindrop/replacement.js).', scopeFact(ctx)],
   });
 }
@@ -385,17 +451,18 @@ async function invoices(ctx, p, lang, f, t) {
     return answer(ctx, {
       intent: 'invoices', count: list.length, total: list.length,
       title: say(lang, kind === 'paid'
-        ? { en: `${plural(list.length, 'invoice', 'invoices')} paid ${when}${fName}`, tl: `${when} ${list.length} invoices paid ayyayi${fName}`, te: `${when} ${list.length} ఇన్వాయిస్‌లు చెల్లించారు${fName}` }
-        : { en: `${plural(list.length, 'invoice', 'invoices')} raised ${when}${fName}`, tl: `${when} ${list.length} invoices raise chesam${fName}`, te: `${when} ${list.length} ఇన్వాయిస్‌లు ఇచ్చాం${fName}` }),
-      lines: [ctx.billing ? `Total ${kind === 'paid' ? 'received' : 'billed'}: ${money(list.reduce((s, i) => s + (kind === 'paid' ? Number(i.receivedAmount || 0) : Number(i.amount || 0) + Number(i.gst || 0)), 0))}` : amountNote],
-      items: list.map((i) => invoiceItem(ctx, i, `${i.status} · ${kind === 'paid' ? `paid ${L.dm(String(i.paidDate).slice(0, 10))}` : `dated ${L.dm(String(i.invoiceDate).slice(0, 10))}`}`)),
+        ? { en: `${when}: ${plural(list.length, 'invoice', 'invoices')} paid${fName}`, tl: `${when}: ${list.length} invoices paid ayyayi${fName}`, te: `${when}: ${list.length} ఇన్వాయిస్‌లు చెల్లించారు${fName}` }
+        : { en: `${when}: ${plural(list.length, 'invoice', 'invoices')} raised${fName}`, tl: `${when}: ${list.length} invoices raise chesam${fName}`, te: `${when}: ${list.length} ఇన్వాయిస్‌లు ఇచ్చాం${fName}` }),
+      lines: [monthLine(list.map((i) => String(i[field]).slice(0, 10)), p, ctx), ctx.billing ? `Total ${kind === 'paid' ? 'received' : 'billed'}: ${money(list.reduce((s, i) => s + (kind === 'paid' ? Number(i.receivedAmount || 0) : Number(i.amount || 0) + Number(i.gst || 0)), 0))}` : amountNote],
+      items: list.map((i) => invoiceItem(ctx, i, `${i.status} · ${kind === 'paid' ? `paid ${L.dmy(String(i.paidDate).slice(0, 10))}` : `dated ${L.dmy(String(i.invoiceDate).slice(0, 10))}`}`)),
       facts: [`Counted: invoices of your clients (not cancelled) ${kind === 'paid' ? 'marked Paid with a paid date' : 'with an invoice date'} between ${L.dmy(p.from)} and ${L.dmy(p.to)}.`, scopeFact(ctx)],
     });
   }
+  const now = nowLabel(ctx, lang);
   if (kind === 'open') {
     return answer(ctx, {
       intent: 'invoices', count: open.length, total: open.length,
-      title: say(lang, { en: `${plural(open.length, 'invoice is', 'invoices are')} not paid yet${amt(open)}${fName}`, tl: `${open.length} invoices inka paid kaaledu${amt(open)}${fName}`, te: `${open.length} ఇన్వాయిస్‌లు ఇంకా చెల్లించలేదు${amt(open)}${fName}` }),
+      title: say(lang, { en: `${now}: ${plural(open.length, 'invoice is', 'invoices are')} not paid yet${amt(open)}${fName}`, tl: `${now}: ${open.length} invoices inka paid kaaledu${amt(open)}${fName}`, te: `${now}: ${open.length} ఇన్వాయిస్‌లు ఇంకా చెల్లించలేదు${amt(open)}${fName}` }),
       lines: [`Past the due date: ${overdue.length}${amt(overdue)}`, amountNote],
       items: open.map((i) => invoiceItem(ctx, i, `${i.status}${i.dueDate ? ` · due ${L.dm(String(i.dueDate).slice(0, 10))}` : ''}${ctx.billing ? ` · ${money(outstandingOf(i))}` : ''}`)),
       facts: ['Counted: invoices of your clients that are not Paid and not Cancelled.', ctx.billing ? 'Pending amount = amount + GST - TDS - received - credit notes - adjustments.' : 'Invoice amounts are not part of the BDE view.', scopeFact(ctx)],
@@ -404,7 +471,7 @@ async function invoices(ctx, p, lang, f, t) {
   overdue.sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
   return answer(ctx, {
     intent: 'invoices', count: overdue.length, total: overdue.length,
-    title: say(lang, { en: `${plural(overdue.length, 'invoice is', 'invoices are')} overdue${amt(overdue)}${fName}`, tl: `${overdue.length} invoices overdue${amt(overdue)}${fName}`, te: `${overdue.length} ఇన్వాయిస్‌లు గడువు దాటాయి${amt(overdue)}${fName}` }),
+    title: say(lang, { en: `${now}: ${plural(overdue.length, 'invoice is', 'invoices are')} overdue${amt(overdue)}${fName}`, tl: `${now}: ${overdue.length} invoices overdue${amt(overdue)}${fName}`, te: `${now}: ${overdue.length} ఇన్వాయిస్‌లు గడువు దాటాయి${amt(overdue)}${fName}` }),
     lines: [`Not paid in all: ${open.length}`, amountNote, overdue.length ? say(lang, { en: 'Next step: call the client\'s billing contact and log a follow-up on the client page.', tl: 'Next step: client billing contact ki call chesi client page lo follow-up add cheyandi.', te: 'తదుపరి: క్లయింట్ బిల్లింగ్ వ్యక్తికి కాల్ చేసి క్లయింట్ పేజీలో ఫాలో-అప్ నమోదు చేయండి.' }) : null],
     items: overdue.map((i) => invoiceItem(ctx, i, `due ${L.dm(String(i.dueDate).slice(0, 10))} · ${days(i)} days late · ${i.status}${ctx.billing ? ` · ${money(outstandingOf(i))}` : ''}`)),
     facts: [`Counted: invoices of your clients, not Paid / Cancelled, whose due date is before today (${L.dmy(ctx.today)}).`, scopeFact(ctx)],
@@ -447,7 +514,7 @@ async function agreements(ctx, p, lang, f, t) {
     const notSent = list.filter((c) => V.normalizeAgreementStatus(c.agreementStatus) === 'DRAFT').length;
     return answer(ctx, {
       intent: 'agreements', count: list.length, total: list.length,
-      title: say(lang, { en: `${plural(list.length, 'client', 'clients')} with open requirements ${list.length === 1 ? 'has' : 'have'} no signed agreement`, tl: `${list.length} clients ki open requirements unnayi kani agreement sign avvaledu`, te: `${list.length} క్లయింట్లకు ఓపెన్ రిక్వైర్‌మెంట్లు ఉన్నాయి కానీ ఒప్పందం సంతకం కాలేదు` }),
+      title: say(lang, { en: `${nowLabel(ctx, lang)}: ${plural(list.length, 'client', 'clients')} with open requirements ${list.length === 1 ? 'has' : 'have'} no signed agreement`, tl: `${nowLabel(ctx, lang)}: ${list.length} clients ki open requirements unnayi kani agreement sign avvaledu`, te: `${nowLabel(ctx, lang)}: ${list.length} క్లయింట్లకు ఓపెన్ రిక్వైర్‌మెంట్లు ఉన్నాయి కానీ ఒప్పందం సంతకం కాలేదు` }),
       lines: [`Not sent yet: ${notSent}; waiting for the client: ${list.length - notSent}`, `All clients without a signed agreement: ${allUnsigned}`],
       items: list.map((c) => clientItem(c, `${V.agreementStatusLabel(V.normalizeAgreementStatus(c.agreementStatus))}${c.agreementSentAt ? ` · sent ${L.dm(L.istDay(c.agreementSentAt))}` : ''}`)),
       facts: ['The dashboard\'s rule: active clients with a live requirement whose agreement is not Signed / Active.', scopeFact(ctx)],
@@ -459,10 +526,10 @@ async function agreements(ctx, p, lang, f, t) {
   const soon = withEnd.filter((c) => c.agreementEnd.slice(0, 10) >= from && c.agreementEnd.slice(0, 10) <= to).sort((a, b) => a.agreementEnd.localeCompare(b.agreementEnd));
   const expired = withEnd.filter((c) => c.agreementEnd.slice(0, 10) < ctx.today);
   const daysN = L.daysBetween(ctx.today, to);
-  const win = p.named && p.key !== 'days' ? p.label(lang) : say(lang, { en: `in the next ${daysN} days`, tl: `next ${daysN} rojullo`, te: `రాబోయే ${daysN} రోజుల్లో` });
+  const win = p.named && p.key !== 'days' ? (from > p.from ? L.rangeText(from, to) : p.label(lang)) : say(lang, { en: `Next ${daysN} days (${L.dm(ctx.today)} - ${L.dm(to)})`, tl: `Next ${daysN} rojullo (${L.dm(ctx.today)} - ${L.dm(to)})`, te: `రాబోయే ${daysN} రోజుల్లో` });
   return answer(ctx, {
-    intent: 'agreements', count: soon.length, total: soon.length,
-    title: say(lang, { en: `${plural(soon.length, 'agreement ends', 'agreements end')} ${win}`, tl: `${win} ${soon.length} agreements expire avuthayi`, te: `${win} ${soon.length} ఒప్పందాలు ముగుస్తాయి` }),
+    intent: 'agreements', count: soon.length, total: soon.length, open: { to: '/ats/agreements', label: 'Open Agreements' },
+    title: say(lang, { en: `${win}: ${plural(soon.length, 'agreement ends', 'agreements end')}`, tl: `${win}: ${soon.length} agreements expire avuthayi`, te: `${win}: ${soon.length} ఒప్పందాలు ముగుస్తాయి` }),
     lines: [`Already past the end date: ${expired.length}`, soon.length ? 'Next step: start the renewal from the client page (Agreement) before the end date.' : null],
     items: soon.map((c) => clientItem(c, `ends ${L.dmy(c.agreementEnd.slice(0, 10))} · ${L.daysBetween(ctx.today, c.agreementEnd.slice(0, 10))} days left · ${V.agreementStatusLabel(V.normalizeAgreementStatus(c.agreementStatus))}`)),
     facts: [`Counted: your clients whose agreement end date is between ${L.dmy(from)} and ${L.dmy(to)} (not cancelled / rejected).`, scopeFact(ctx)],
@@ -492,7 +559,7 @@ async function followups(ctx, p, lang, f) {
   const n = items.length + chases.length + crm.length;
   return answer(ctx, {
     intent: 'followups', count: n, total: n,
-    title: say(lang, { en: `${plural(n, 'follow-up is', 'follow-ups are')} due${upto === ctx.today ? ' today (or late)' : ` by ${L.dm(upto)}`}`, tl: `${n} follow-ups due${upto === ctx.today ? ' (ee roju / late)' : ` (${L.dm(upto)} varaku)`}`, te: `${n} ఫాలో-అప్‌లు చేయాలి${upto === ctx.today ? ' (ఈ రోజు / ఆలస్యం)' : ''}` }),
+    title: say(lang, { en: `${upto === ctx.today ? `Today (${L.dm(ctx.today)})` : `Till ${L.dmy(upto)}`}: ${plural(n, 'follow-up is', 'follow-ups are')} due${upto === ctx.today ? ' (or late)' : ''}`, tl: `${upto === ctx.today ? `Ee roju (${L.dm(ctx.today)})` : `${L.dmy(upto)} varaku`}: ${n} follow-ups due${upto === ctx.today ? ' (late kuda)' : ''}`, te: `${upto === ctx.today ? `ఈ రోజు (${L.dm(ctx.today)})` : `${L.dmy(upto)} వరకు`}: ${n} ఫాలో-అప్‌లు చేయాలి` }),
     lines: [`Client follow-ups and meetings: ${items.length} (${late} late)`, chases.length ? `Your candidate follow-ups: ${chases.length}` : null, crm.length ? `CRM follow-ups: ${crm.length}` : null],
     items: [
       ...items.map((x) => { const c = ctx.clientById.get(x.clientId); return { ...clientItem(c || { id: x.clientId, name: 'Client' }, `${x.kind === 'meeting' ? 'Meeting' : 'Follow-up'}: ${x.title || '-'} · ${x.dueDate < ctx.today ? `late since ${L.dm(x.dueDate)}` : 'today'}`) }; }),
@@ -512,7 +579,7 @@ async function target(ctx, p, lang) {
     .filter((c) => ctx.role !== 'bde' || String(c.bdeOwner || '').trim().toLowerCase() === me);
   const RJ = require('./recruiterJoinings'); // eslint-disable-line global-require
   const tgt = await safe(async () => (ctx.role === 'bde' ? RJ.targetOf(await RJ.loadTargetRules(), { employeeId: ctx.user.employeeId || null, department: 'BDE' }, month).target : null), null);
-  const jp = { from, to, named: true, key: 'month', label: () => L.monthLabel(from) };
+  const jp = { from, to, named: true, key: 'month', all: false, label: () => L.monthLabel(from) };
   const j = await joinings(ctx, jp, lang, null);
   let crm = null;
   await safe(async () => {
@@ -527,8 +594,8 @@ async function target(ctx, p, lang) {
   }, null);
   const n = signed.length;
   const title = ctx.role === 'bde'
-    ? say(lang, { en: `${n} of ${tgt == null ? '?' : tgt} new clients signed in ${L.monthLabel(from)}${tgt != null ? ` (${Math.max(0, tgt - n)} to go)` : ''}`, tl: `${L.monthLabel(from)} lo ${n} / ${tgt == null ? '?' : tgt} kotha clients sign ayyaru${tgt != null ? ` (inka ${Math.max(0, tgt - n)})` : ''}`, te: `${L.monthLabel(from)}లో ${n} / ${tgt == null ? '?' : tgt} కొత్త క్లయింట్లు సంతకం చేశారు` })
-    : say(lang, { en: `${plural(n, 'new client', 'new clients')} signed in ${L.monthLabel(from)}`, tl: `${L.monthLabel(from)} lo ${n} kotha clients sign ayyaru`, te: `${L.monthLabel(from)}లో ${n} కొత్త క్లయింట్లు` });
+    ? say(lang, { en: `${L.monthLabel(from)}: ${n} of ${tgt == null ? '?' : tgt} new clients signed${tgt != null ? ` (${Math.max(0, tgt - n)} to go)` : ''}`, tl: `${L.monthLabel(from)} lo ${n} / ${tgt == null ? '?' : tgt} kotha clients sign ayyaru${tgt != null ? ` (inka ${Math.max(0, tgt - n)})` : ''}`, te: `${L.monthLabel(from)}లో ${n} / ${tgt == null ? '?' : tgt} కొత్త క్లయింట్లు సంతకం చేశారు` })
+    : say(lang, { en: `${L.monthLabel(from)}: ${plural(n, 'new client', 'new clients')} signed`, tl: `${L.monthLabel(from)} lo ${n} kotha clients sign ayyaru`, te: `${L.monthLabel(from)}లో ${n} కొత్త క్లయింట్లు` });
   return answer(ctx, {
     intent: 'target', count: n, total: n,
     title,
@@ -543,6 +610,8 @@ async function clientsList(ctx, p, lang, f, t) {
   const active = /\bactive\b/.test(t) && !/inactive/.test(t);
   if (active) list = list.filter((c) => /^active$/i.test(String(c.status || 'Active')));
   if (/\binactive\b|\bsuspend/.test(t)) list = list.filter((c) => /inactive|suspend/i.test(String(c.status || '')));
+  // a window named ("new clients this month", "clients added since january"): the clients ADDED in it
+  if (p && p.named && !p.all) list = list.filter((c) => { const d = L.istDay(c.createdAt); return d >= p.from && d <= p.to; });
   const openBy = new Map();
   ctx.reqs.filter((r) => LIVE.includes(r.status)).forEach((r) => openBy.set(r.clientId, (openBy.get(r.clientId) || 0) + 1));
   const byStatus = {};
@@ -550,49 +619,90 @@ async function clientsList(ctx, p, lang, f, t) {
   const withOpen = list.filter((c) => openBy.get(c.id)).length;
   const sorted = [...list].sort((a, b) => (openBy.get(b.id) || 0) - (openBy.get(a.id) || 0) || a.name.localeCompare(b.name));
   const n = list.length;
+  const added = p && p.named && !p.all;
+  const when = added ? p.label(lang) : nowLabel(ctx, lang);
+  const word = active ? 'active client' : 'client';
   return answer(ctx, {
-    intent: 'clients', count: n, total: n,
-    title: say(lang, { en: `You have ${plural(n, active ? 'active client' : 'client', active ? 'active clients' : 'clients')}`, tl: `Meeku ${n} ${active ? 'active ' : ''}clients unnaru`, te: `మీకు ${n} క్లయింట్లు ఉన్నారు` }),
-    lines: [Object.entries(byStatus).map(([k, v]) => `${k} ${v}`).join(', '), `With open requirements: ${withOpen}`],
-    items: sorted.map((c) => clientItem(c, `${openBy.get(c.id) || 0} open requirements · agreement ${V.agreementStatusLabel(V.normalizeAgreementStatus(c.agreementStatus))}${ctx.role !== 'bde' && c.bdeOwner ? ` · BDE ${c.bdeOwner}` : ''}`)),
-    facts: ['Counted: the clients your Clients list shows (utils/scope.js clientWhere).', scopeFact(ctx)],
+    intent: 'clients', count: n, total: n, open: { to: '/clients', label: 'Open the Clients list' },
+    title: added
+      ? say(lang, { en: `${when}: ${plural(n, 'new client', 'new clients')} added`, tl: `${when}: ${n} kotha clients add ayyaru`, te: `${when}: ${n} కొత్త క్లయింట్లు` })
+      : say(lang, { en: `${when}: you have ${plural(n, word, `${word}s`)}`, tl: `${when}: meeku ${n} ${active ? 'active ' : ''}clients unnaru`, te: `${when}: మీకు ${n} క్లయింట్లు ఉన్నారు` }),
+    lines: [Object.entries(byStatus).map(([k, v]) => `${k} ${v}`).join(', '), `With open requirements: ${withOpen}`, added ? monthLine(list.map((c) => L.istDay(c.createdAt)), p, ctx) : null],
+    items: sorted.map((c) => clientItem(c, `${openBy.get(c.id) || 0} open requirements · agreement ${V.agreementStatusLabel(V.normalizeAgreementStatus(c.agreementStatus))}${added ? ` · added ${L.dmy(L.istDay(c.createdAt))}` : ''}${ctx.role !== 'bde' && c.bdeOwner ? ` · BDE ${c.bdeOwner}` : ''}`)),
+    facts: [added ? `Counted: your clients added between ${L.dmy(p.from)} and ${L.dmy(p.to)}.` : 'Counted: the clients your Clients list shows (utils/scope.js clientWhere).', scopeFact(ctx)],
   });
 }
 
 async function appCountsByReq(ctx, reqIds) {
   if (!reqIds.length) return new Map();
-  const g = await prisma.application.groupBy({ by: ['requirementId'], where: appWhere(ctx, { requirementId: { in: reqIds } }), _count: { _all: true } });
-  return new Map(g.map((x) => [x.requirementId, x._count._all]));
+  const out = new Map();
+  for (let i = 0; i < reqIds.length; i += 400) {
+    // eslint-disable-next-line no-await-in-loop
+    const g = await prisma.application.groupBy({ by: ['requirementId'], where: appWhere(ctx, { requirementId: { in: reqIds.slice(i, i + 400) } }), _count: { _all: true } });
+    g.forEach((x) => out.set(x.requirementId, x._count._all));
+  }
+  return out;
 }
+// the requirement statuses in plain words, in the order a list shows them
+const REQ_GROUPS = [
+  ['open', 'Open', (s) => LIVE.includes(s)],
+  ['agreement', 'Waiting for the agreement', (s) => s === 'AGREEMENT_CHECK'],
+  ['paused', 'Paused / on hold', (s) => s === 'ON_HOLD'],
+  ['request', 'Request, not live yet', (s) => s === 'DRAFT'],
+  ['closed', 'Closed', (s) => s === 'CLOSED'],
+];
+const reqGroupOf = (s) => (REQ_GROUPS.find(([, , fn]) => fn(s)) || ['other', V.requirementStatusLabel(s)])[0];
+const reqGroupWord = (k) => (REQ_GROUPS.find(([g]) => g === k) || [k, 'Other'])[1];
+// REQUIREMENTS: "open requirements" = the live ones; "closed" / "paused" / "requests" = those; anything else ("requirements list", "how many
+// requirements from vcare", "all requirements") = EVERY requirement with the split by status, newest first. A window = created in it.
 async function requirements(ctx, p, lang, f, t) {
-  let live = ctx.reqs.filter((r) => LIVE.includes(r.status));
-  if (f && f.clientId) live = live.filter((r) => r.clientId === f.clientId);
-  const counts = await appCountsByReq(ctx, live.map((r) => r.id));
+  let scoped = f && f.clientId ? ctx.reqs.filter((r) => r.clientId === f.clientId) : ctx.reqs;
+  const windowed = p && p.named && !p.all;
+  if (windowed) scoped = scoped.filter((r) => { const d = L.istDay(r.createdAt); return d >= p.from && d <= p.to; });
+  const fName = forName(f);
   const noProfiles = /\b(no|without|zero|0)\s+(candidates?|profiles?|applications?)\b|\bempty\b|\bnobody\b|\bprofiles? ledu\b|\bprofiles? levu\b/.test(t);
-  const fName = f && f.name ? ` - ${f.name}` : '';
-  const scoped = f && f.clientId ? ctx.reqs.filter((r) => r.clientId === f.clientId) : ctx.reqs;
-  const others = [
-    `Paused: ${scoped.filter((r) => r.status === 'ON_HOLD').length}`,
-    `Waiting for the agreement: ${scoped.filter((r) => r.status === 'AGREEMENT_CHECK').length}`,
-    `Requests not live yet: ${scoped.filter((r) => r.status === 'DRAFT').length}`,
-  ].join(' · ');
+  const want = /\b(closed|close|filled)\b/.test(t) ? 'closed'
+    : /\b(paused|on hold|hold)\b/.test(t) ? 'paused'
+      : /\b(drafts?|requests?|not live)\b/.test(t) ? 'request'
+        : /\b(open|live|active|running|current|ongoing)\b/.test(t) ? 'open'
+          : /\b(all|every|total|list|motham)\b/.test(t) ? 'all'
+            : /\bpositions?\b|\bvacanc\w*\b|\bopenings?\b/.test(t) ? 'open'
+              : /\bagreement\b/.test(t) ? 'agreement' : 'all';
   if (noProfiles) {
+    const live = scoped.filter((r) => LIVE.includes(r.status));
+    const counts = await appCountsByReq(ctx, live.map((r) => r.id));
     const list = live.filter((r) => !counts.get(r.id));
+    const now = nowLabel(ctx, lang);
     return answer(ctx, {
       intent: 'requirements_empty', count: list.length, total: list.length,
-      title: say(lang, { en: `${plural(list.length, 'open requirement has', 'open requirements have')} no profile with you yet${fName}`, tl: `${list.length} open requirements ki inka profiles raaledu${fName}`, te: `${list.length} ఓపెన్ రిక్వైర్‌మెంట్లకు ఇంకా ప్రొఫైల్‌లు రాలేదు${fName}` }),
+      title: say(lang, { en: `${now}: ${plural(list.length, 'open requirement has', 'open requirements have')} no profile with you yet${fName}`, tl: `${now}: ${list.length} open requirements ki inka profiles raaledu${fName}`, te: `${now}: ${list.length} ఓపెన్ రిక్వైర్‌మెంట్లకు ఇంకా ప్రొఫైల్‌లు రాలేదు${fName}` }),
       lines: [list.length ? 'Ask the team lead of each one when the first profiles will come.' : null],
-      items: list.map((r) => reqItem(r, `${(r.client && r.client.name) || '-'} · ${r.openings} opening${r.openings === 1 ? '' : 's'} · opened ${L.dm(L.istDay(r.createdAt))}${r.tl ? ` · TL ${r.tl}` : ''}`)),
+      items: list.map((r) => reqItem(r, `${(r.client && r.client.name) || '-'} · ${r.openings} opening${r.openings === 1 ? '' : 's'} · opened ${L.dmy(L.istDay(r.createdAt))}${r.tl ? ` · TL ${r.tl}` : ''}`)),
       facts: ['Counted: live requirements (open, assigned, sourcing, candidates available) with no candidate at "Check by client manager" or later.', scopeFact(ctx)],
     });
   }
-  const openings = live.reduce((s, r) => s + (Number(r.openings) || 0), 0);
+  const split = {};
+  scoped.forEach((r) => { const g = reqGroupOf(r.status); split[g] = (split[g] || 0) + 1; });
+  const splitLine = [...REQ_GROUPS.map(([g]) => g), 'other'].filter((g) => split[g]).map((g) => `${reqGroupWord(g)} ${split[g]}`).join(' · ') || 'none';
+  const order = [...REQ_GROUPS.map(([g]) => g), 'other'];
+  const list = (want === 'all' ? scoped : scoped.filter((r) => reqGroupOf(r.status) === want))
+    .sort((a, b) => order.indexOf(reqGroupOf(a.status)) - order.indexOf(reqGroupOf(b.status)) || new Date(b.createdAt) - new Date(a.createdAt));
+  const counts = await appCountsByReq(ctx, list.slice(0, SHOW).map((r) => r.id));
+  const openings = list.filter((r) => LIVE.includes(r.status)).reduce((s, r) => s + (Number(r.openings) || 0), 0);
+  const when = windowed ? p.label(lang) : (want === 'all' ? say(lang, { en: `All time (till ${L.dmy(ctx.today)})`, tl: `Ippati varaku (${L.dmy(ctx.today)} varaku)`, te: `ఇప్పటి వరకు (${L.dmy(ctx.today)} వరకు)` }) : nowLabel(ctx, lang));
+  const n = list.length;
+  const what = want === 'all' ? 'requirement' : `${reqGroupWord(want).toLowerCase()} requirement`;
+  const title = want === 'open'
+    ? say(lang, { en: `${when}: ${plural(n, 'open requirement', 'open requirements')} (${openings} openings)${fName}`, tl: `${when}: ${n} open requirements (${openings} openings)${fName}`, te: `${when}: ${n} ఓపెన్ రిక్వైర్‌మెంట్లు (${openings} ఖాళీలు)${fName}` })
+    : say(lang, { en: `${when}: ${plural(n, what, `${what}s`)}${fName}${want === 'all' ? ` (${splitLine})` : ''}`, tl: `${when}: ${n} requirements${fName}${want === 'all' ? ` (${splitLine})` : ` (${reqGroupWord(want)})`}`, te: `${when}: ${n} రిక్వైర్‌మెంట్లు${fName}${want === 'all' ? ` (${splitLine})` : ` (${reqGroupWord(want)})`}` });
   return answer(ctx, {
-    intent: 'requirements', count: live.length, total: live.length,
-    title: say(lang, { en: `${plural(live.length, 'open requirement', 'open requirements')} (${openings} openings)${fName}`, tl: `${live.length} open requirements (${openings} openings)${fName}`, te: `${live.length} ఓపెన్ రిక్వైర్‌మెంట్లు (${openings} ఖాళీలు)${fName}` }),
-    lines: [others, `With no profile yet: ${live.filter((r) => !counts.get(r.id)).length}`],
-    items: live.map((r) => reqItem(r, `${(r.client && r.client.name) || '-'} · ${r.openings} opening${r.openings === 1 ? '' : 's'} · ${counts.get(r.id) || 0} profiles with you or the client`)),
-    facts: ['Counted: requirements at Open / Recruiter assigned / Sourcing / Candidates available (live), client work only.', scopeFact(ctx)],
+    intent: want === 'open' ? 'requirements' : 'requirements_all', count: n, total: n,
+    title,
+    open: { to: `/ats/search?${qs({ type: 'requirements', client: f && f.clientId ? f.name : undefined, status: want === 'open' ? 'open' : want === 'closed' ? 'closed' : undefined, from: windowed ? p.from : undefined, to: windowed ? p.to : undefined })}`, label: 'Open the full list in Search' },
+    lines: [want === 'all' ? null : `All statuses: ${splitLine}`, windowed ? monthLine(scoped.map((r) => L.istDay(r.createdAt)), p, ctx) : null,
+      want === 'open' ? `With no profile yet: ${list.slice(0, SHOW).filter((r) => !counts.get(r.id)).length}${list.length > SHOW ? ' (of the first 100)' : ''}` : null],
+    items: list.map((r) => reqItem(r, `${(r.client && r.client.name) || '-'} · ${reqGroupWord(reqGroupOf(r.status))} · ${r.openings} opening${r.openings === 1 ? '' : 's'} · opened ${L.dmy(L.istDay(r.createdAt))}${counts.has(r.id) ? ` · ${plural(counts.get(r.id), "profile", "profiles")} with you or the client` : ''}`)),
+    facts: [want === 'open' ? 'Counted: requirements at Open / Recruiter assigned / Sourcing / Candidates available (live), client work only.' : `Counted: ${want === 'all' ? 'every' : `every ${reqGroupWord(want).toLowerCase()}`} client requirement in your scope${windowed ? ` created between ${L.dmy(p.from)} and ${L.dmy(p.to)}` : ''}${f && f.name ? `, for ${f.name}` : ''}; newest first within each status.`, scopeFact(ctx)],
   });
 }
 
@@ -627,7 +737,7 @@ async function health(ctx, p, lang) {
   const cnt = (k) => rows.filter((x) => x.h.health === k).length;
   return answer(ctx, {
     intent: 'health', count: bad.length, total: bad.length,
-    title: say(lang, { en: `${plural(bad.length, 'client needs', 'clients need')} attention: ${cnt('dormant')} dormant, ${cnt('quiet')} with no activity for 30 days`, tl: `${bad.length} clients ni chudali: ${cnt('dormant')} dormant, ${cnt('quiet')} 30 rojulu activity ledu`, te: `${bad.length} క్లయింట్లను చూడాలి: ${cnt('dormant')} నిద్రాణం, ${cnt('quiet')} 30 రోజులుగా కదలిక లేదు` }),
+    title: say(lang, { en: `${nowLabel(ctx, lang)}: ${plural(bad.length, 'client needs', 'clients need')} attention: ${cnt('dormant')} dormant, ${cnt('quiet')} with no activity for 30 days`, tl: `${nowLabel(ctx, lang)}: ${bad.length} clients ni chudali: ${cnt('dormant')} dormant, ${cnt('quiet')} 30 rojulu activity ledu`, te: `${bad.length} క్లయింట్లను చూడాలి: ${cnt('dormant')} నిద్రాణం, ${cnt('quiet')} 30 రోజులుగా కదలిక లేదు` }),
     lines: [`Active: ${cnt('active')}`],
     items: bad.map(({ c, h }) => clientItem(c, `${h.label}${h.days != null ? ` · last activity ${h.days} days ago` : ' · no activity on record'}`)),
     facts: ['Health = the Clients list rule: last activity (candidate steps, client follow-ups, new requirements) within 30 days = Active; 31-90 days = No activity 30 days; more than 90 days, none at all, or no live requirement and 60+ days = Dormant.', scopeFact(ctx)],
@@ -657,7 +767,7 @@ async function complaints(ctx, p, lang, f) {
   const late = rows.filter((r) => r.dueAt && Date.parse(r.dueAt) < Date.now()).length;
   return answer(ctx, {
     intent: 'complaints', count: rows.length, total: rows.length,
-    title: say(lang, { en: `${plural(rows.length, 'client complaint is', 'client complaints are')} open${f && f.name ? ` - ${f.name}` : ''}`, tl: `${rows.length} client complaints open lo unnayi`, te: `${rows.length} క్లయింట్ ఫిర్యాదులు తెరిచి ఉన్నాయి` }),
+    title: say(lang, { en: `${nowLabel(ctx, lang)}: ${plural(rows.length, 'client complaint is', 'client complaints are')} open${forName(f)}`, tl: `${nowLabel(ctx, lang)}: ${rows.length} client complaints open lo unnayi${forName(f)}`, te: `${nowLabel(ctx, lang)}: ${rows.length} క్లయింట్ ఫిర్యాదులు తెరిచి ఉన్నాయి${forName(f)}` }),
     lines: [`Past their due time: ${late}`],
     items: rows.map((r) => { const c = ctx.clientById.get(r.clientId); return { ...clientItem(c || { id: r.clientId, name: r.clientName || 'Client' }, `#${r.id} ${r.subject} · ${r.status} · level ${r.level}${r.ownerName ? ` · with ${r.ownerName}` : ''}`), label: `${(c && c.name) || r.clientName} - complaint #${r.id}` }; }),
     facts: ['Counted: client-side complaints (Experience > Complaints) of your clients that are Open or In progress.', scopeFact(ctx)],
@@ -672,7 +782,7 @@ async function nps(ctx, p, lang, f) {
   return answer(ctx, {
     intent: 'nps', count: n.nps,
     title: n.responses
-      ? say(lang, { en: `Client NPS ${n.nps} from ${plural(n.responses, 'answer', 'answers')} (last 12 months)${f && f.name ? ` - ${f.name}` : ''}`, tl: `Client NPS ${n.nps} (${n.responses} answers, last 12 nelalu)`, te: `క్లయింట్ NPS ${n.nps} (${n.responses} సమాధానాలు)` })
+      ? say(lang, { en: `Last 12 months: client NPS ${n.nps} from ${plural(n.responses, 'answer', 'answers')}${f && f.name ? ` - ${f.name}` : ''}`, tl: `Client NPS ${n.nps} (${n.responses} answers, last 12 nelalu)`, te: `క్లయింట్ NPS ${n.nps} (${n.responses} సమాధానాలు)` })
       : say(lang, { en: 'No client has answered the survey in the last 12 months', tl: 'Last 12 nelallo e client survey ki answer ivvaledu', te: 'గత 12 నెలల్లో ఏ క్లయింట్ సర్వేకు జవాబు ఇవ్వలేదు' }),
     lines: n.responses ? [`Promoters ${n.promoters}, passives ${n.passives}, detractors ${n.detractors}`] : [],
     items: low.map((r) => { const c = ctx.clientById.get(r.clientId); return c ? clientItem(c, `gave ${r.nps}/10 on ${L.dm(String(r.answeredAt).slice(0, 10))}${r.comment ? ` · "${String(r.comment).slice(0, 60)}"` : ''}`) : null; }).filter(Boolean),
@@ -753,7 +863,7 @@ async function client360(ctx, c, lang) {
   const p = pend ? require('./clientWork').forClient(pend, c.id) : null; // eslint-disable-line global-require
   const contact = [c.contactName, c.contactDesignation, c.contactPhone, c.contactEmail].filter(Boolean).join(', ');
   return answer(ctx, {
-    intent: 'client', count: live.length, show: 10, record: { kind: 'client', id: c.id, name: c.name },
+    intent: 'client', count: live.length, record: { kind: 'client', id: c.id, name: c.name },
     title: `${c.name}${c.clientCode ? ` (${c.clientCode})` : ''}: ${plural(live.length, 'open requirement', 'open requirements')}, ${plural(shared, 'profile', 'profiles')} shared, ${sum(JOINED)} joined`,
     lines: [
       `Status ${c.status || 'Active'}${c.priority ? `, priority ${c.priority}` : ''}${c.industry ? `, ${c.industry}` : ''}${c.location ? `, ${c.location}` : ''}${c.ownerDepartment ? `, desk ${c.ownerDepartment}` : ''}; BDE ${c.bdeOwner || 'not set'}; health ${h.label}${h.days != null ? ` (last activity ${h.days} days ago)` : ''}`,
@@ -761,6 +871,7 @@ async function client360(ctx, c, lang) {
       `Last contact: ${lastDone ? `${lastDone.kind === 'meeting' ? 'meeting' : 'follow-up'} "${lastDone.title || '-'}" on ${L.dm(String(lastDone.doneAt || lastDone.createdAt).slice(0, 10))}` : 'no follow-up logged'}${nextOpen ? `; next: "${nextOpen.title || '-'}" due ${L.dm(nextOpen.dueDate)}` : ''}`,
       ...agreementTerms(c),
       `Credit: ${cr && cr.days != null ? `${cr.days} days` : 'no credit period set'}${cr && cr.limit != null ? `, limit ${money(cr.limit)}` : ''}`,
+      `Requirements: ${reqs.length} in all (${[...REQ_GROUPS.map(([g]) => g), 'other'].map((g) => [g, reqs.filter((r) => reqGroupOf(r.status) === g).length]).filter(([, k]) => k).map(([g, k]) => `${reqGroupWord(g)} ${k}`).join(' · ') || 'none'}) - ask "${c.name} requirements list" for all of them`,
       `Pipeline (with you or later): with BDE ${sum(['WITH_BDE', 'BDE_APPROVED'])}, sent to client ${sum(['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'])}, shortlisted ${sum(['CLIENT_SHORTLISTED'])}, interview ${sum(['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED'])} (${upcoming} upcoming), selected / offer ${sum(SELECTED_NOW)}, joined ${sum(JOINED)}, rejected ${st.REJECTED || 0}`,
       p ? `Pending work: ${p.total} (no reply ${p.counts.noReply || 0}, no feedback ${p.counts.feedback || 0}, interview to book ${p.counts.shortlisted || 0})` : null,
       `Invoices: ${open.length} not paid, ${overdue.length} overdue${ctx.billing ? ` (${money(open.reduce((s, i) => s + outstandingOf(i), 0))} pending)` : ''}`,
@@ -774,14 +885,14 @@ async function requirement360(ctx, r, lang) {
   const appW = appWhere(ctx, { requirementId: r.id });
   const [byStage, rows, nextIv] = await Promise.all([
     prisma.application.groupBy({ by: ['stage'], where: appW, _count: { _all: true } }),
-    prisma.application.findMany({ where: appW, select: APP_SELECT, orderBy: { updatedAt: 'desc' }, take: 12 }),
+    prisma.application.findMany({ where: appW, select: APP_SELECT, orderBy: { updatedAt: 'desc' }, take: SHOW }),
     prisma.application.findMany({ where: appWhere(ctx, { requirementId: r.id }, { interviewAt: { gte: L.startOf(ctx.today) } }, { stage: { not: 'REJECTED' } }), select: APP_SELECT, orderBy: { interviewAt: 'asc' }, take: 3 }),
   ]);
   const st = Object.fromEntries(byStage.map((g) => [g.stage, g._count._all]));
   const sum = (codes) => codes.reduce((s, k) => s + (st[k] || 0), 0);
   const total = byStage.reduce((s, g) => s + g._count._all, 0);
   return answer(ctx, {
-    intent: 'requirement', count: total, show: 12, record: { kind: 'requirement', id: r.id, name: r.title },
+    intent: 'requirement', count: total, record: { kind: 'requirement', id: r.id, name: r.title },
     title: `${r.title}${r.reqCode ? ` (${r.reqCode})` : ''} for ${(r.client && r.client.name) || '-'}: ${V.requirementStateWords(r.status) === 'open' ? 'open' : V.requirementStateWords(r.status)}, ${r.openings} opening${r.openings === 1 ? '' : 's'}, ${plural(total, 'profile', 'profiles')} in your view`,
     lines: [
       `Opened ${L.dmy(L.istDay(r.createdAt))}${r.closingDate ? `, closes ${L.dmy(String(r.closingDate).slice(0, 10))}` : ''}${r.location ? `, ${r.location}` : ''}${r.department ? `, ${r.department}` : ''}${r.tl ? `; TL ${r.tl}` : ''}; priority ${r.priority}`,
@@ -864,10 +975,14 @@ meeku mee gurinchi lo ki ni ga ee roju repu ninna vaaram nela gatha ledu levu ch
 current currently latest recent recently ok okay thanks thank hello hi dear sir madam
 evi avi adi idi vati valla ku tho kuda anni inni entho enduku ippudu eppatiki varaku nundi daaka chusi chesi cheyandi pettandi ivvandi vachina vacche raabooye
 kottha kotha unnara unnaru unnadi ayina aina sari sare ante kada kadu emaina edaina chesina chesaru pampina pampinchina ayyaru avvali cheyali cheyyali book booked
-person people name named whom someone anyone cheppandi chepu chupinchandi telusu teliyali kanipinchu`.split(/\s+/));
+person people name named whom someone anyone cheppandi chepu chupinchandi telusu teliyali kanipinchu
+january february march april may june july august september october november december jan feb mar apr jun jul aug sep sept oct nov dec
+till until upto since before after between nundi nunchi varaku daaka onwards onward date dates completed complete done finished finish total totally overall ever alltime
+time far list lists motham mottham year years samvatsaram wise breakdown month-wise still working left range period whole entire
+are there have been got happened came made raised released per each`.split(/\s+/));
 
 function residualOf(norm) {
-  return norm.split(' ').filter((w) => w && !STOP.has(w) && !/^\d{1,3}$/.test(w) && w.length >= 2).join(' ').trim();
+  return norm.split(' ').filter((w) => w && !STOP.has(w) && !/^[\d/.-]+$/.test(w) && !/^\d{1,2}(st|nd|rd|th)$/.test(w) && w.length >= 2).join(' ').trim();
 }
 
 // ---- name resolution: the login's own clients and requirements in memory, then the one scoped search engine -------------------
@@ -1028,7 +1143,7 @@ async function routeUncached(ctx, question, norm, lang) {
     const answers = [];
     for (const t of pick) { // eslint-disable-line no-restricted-syntax
       const [fn, def] = RUN[t];
-      const p = L.periodOf(norm, def, ctx.today);
+      const p = L.periodOf(norm, def, ctx.today, { future: t === 'agreements' });
       // eslint-disable-next-line no-await-in-loop
       answers.push(await fn(ctx, p, lang, t === 'clients' ? null : fr, norm));
     }

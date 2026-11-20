@@ -24,8 +24,9 @@ const REPL_WORDS = { waiting: 'Waiting for the client', Requested: 'Replacement 
 
 export default function JoinDropList({ onOpen }) {
   const [sp] = useSearchParams();
-  const [f, setF] = useState(EMPTY);
-  const [view, setView] = useState('all');
+  // the address may open the list already filtered (the BDE Agent's "Open the full list": ?from=&to=&clientId=&jdview=Joined|Dropped)
+  const [f, setF] = useState(() => ({ ...EMPTY, from: sp.get('from') || '', to: sp.get('to') || '', clientId: sp.get('clientId') || '' }));
+  const [view, setView] = useState(() => (['Joined', 'Dropped'].includes(sp.get('jdview')) ? sp.get('jdview') : 'all'));
   const [check, setCheck] = useState(false); // "Same day and same reason (check)": drops to double-check (Admin / TL)
   const [fixing, setFixing] = useState(null); // a drop being corrected from the check list
   const [page, setPage] = useState(1);

@@ -154,6 +154,51 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   await CD.ensure();
   await prisma.$executeRawUnsafe('INSERT INTO "ClientCredit" ("clientId","creditDays","creditLimit","byName","at") VALUES (?,?,?,?,?)', A1.id, 30, 500000, 'test', new Date().toISOString());
 
+
+  // ------------------------------------------------------------------ BDE C: a long book (founder 2026-11-20: "till now", "january 2026 to november 2026", "vcare requirements list")
+  // 25 requirements at one client (1 open, 1 paused, 1 request, 22 closed), 130 joinings from Jun 2025 to Oct 2026 (6 left after joining), each with an
+  // interview, a share, a selection and an offer before it; 12 invoices; a second client added in March 2026.
+  const C = await mk('c', `Chandana Bq${RUN}`, { role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: 'BDE' });
+  const VC = await cl('VCare Diagnostics Centre', C, { agreementStatus: 'ACTIVE', agreementEnd: day(400), agreementSignedAt: new Date('2025-05-02T10:00:00+05:30'), createdAt: new Date('2025-05-01T10:00:00+05:30') });
+  const SI = await cl('Sitara Eye Care', C, { agreementStatus: 'SENT', createdAt: new Date('2026-03-10T10:00:00+05:30') });
+  const VREQ = [];
+  VREQ.push({ r: await req(VC, 'Staff Nurse Ward', C, { createdAt: at(-15) }), status: 'OPEN', created: day(-15) });
+  for (let i = 0; i < 22; i += 1) {
+    const created = L.addDays('2025-07-01', i * 20);
+    // eslint-disable-next-line no-await-in-loop
+    VREQ.push({ r: await req(VC, `Lab Assistant Batch ${i + 1}`, C, { status: 'CLOSED', createdAt: new Date(`${created}T10:00:00+05:30`) }), status: 'CLOSED', created });
+  }
+  VREQ.push({ r: await req(VC, 'Radiographer', C, { status: 'ON_HOLD', createdAt: new Date('2026-09-15T10:00:00+05:30') }), status: 'ON_HOLD', created: '2026-09-15' });
+  VREQ.push({ r: await req(VC, 'Phlebotomist', C, { status: 'DRAFT', createdAt: new Date('2026-11-01T10:00:00+05:30') }), status: 'DRAFT', created: '2026-11-01' });
+  const CJ = []; // { day, left, dropped, shared, selected, offer, interview }
+  for (let i = 0; i < 130; i += 1) {
+    const jd = L.addDays('2025-06-01', i * 4);
+    const left = i % 20 === 10; // 10, 30, 50, 70, 90, 110
+    const r = VREQ[1 + (i % 22)].r;
+    // eslint-disable-next-line no-await-in-loop
+    const cand = await prisma.candidate.create({ data: { name: `Vc${RUN} Person ${String(i + 1).padStart(3, '0')}`, phone: `97${String(Date.now() + 1000 + i).slice(-8)}` } });
+    // eslint-disable-next-line no-await-in-loop
+    const app = await prisma.application.create({ data: { candidateId: cand.id, requirementId: r.id, stage: 'JOINED', joiningDate: jd, joinedAt: new Date(`${jd}T10:00:00+05:30`), joiningStatus: 'Joined', hiringType: 'Client Placement', interviewAt: new Date(`${L.addDays(jd, -20)}T11:00:00+05:30`), interviewStatus: 'COMPLETED', offerStatus: 'Offer Accepted', offerDate: L.addDays(jd, -10) } });
+    const ev = [['SHARED_WITH_CLIENT', L.addDays(jd, -30)], ['SELECTED', L.addDays(jd, -15)], ['OFFER', L.addDays(jd, -10)], ['JOINED', jd]];
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.applicationStageEvent.createMany({ data: ev.map(([to, d]) => ({ applicationId: app.id, candidateId: cand.id, toStage: to, action: `Moved to ${to}`, createdAt: new Date(`${d}T09:30:00+05:30`), requirementId: r.id, requirementTitle: r.title, clientId: VC.id })) });
+    if (left) {
+      // eslint-disable-next-line no-await-in-loop
+      await JS.run(`INSERT INTO "JoiningRecord" ("id","applicationId","candidateId","candidateName","requirementId","jobTitle","clientId","clientName","status","joinedOn","guaranteeDays","guaranteeEndsOn","droppedOn","dropReason","dropWithinGuarantee","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `jr-${app.id}`, app.id, cand.id, cand.name, r.id, r.title, VC.id, VC.name, 'Dropped', jd, 90, L.addDays(jd, 90), L.addDays(jd, 20), 'Better offer', 0, new Date().toISOString(), new Date().toISOString());
+    }
+    CJ.push({ day: jd, left, dropped: left ? L.addDays(jd, 20) : null, shared: L.addDays(jd, -30), selected: L.addDays(jd, -15), offer: L.addDays(jd, -10), interview: L.addDays(jd, -20) });
+  }
+  const CINV = [];
+  for (let i = 0; i < 12; i += 1) {
+    const d = new Date('2025-12-05T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + i);
+    const invDay = d.toISOString().slice(0, 10);
+    const paid = i < 10;
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.invoice.create({ data: { invoiceNumber: `VC${RUN}-${String(i + 1).padStart(2, '0')}`, clientId: VC.id, amount: 40000, gst: 7200, status: paid ? 'Paid' : 'Pending', invoiceDate: invDay, dueDate: i === 10 ? '2026-10-25' : (i === 11 ? day(10) : L.addDays(invDay, 15)), paidDate: paid ? L.addDays(invDay, 20) : null, receivedAmount: paid ? 47200 : 0 } });
+    CINV.push({ invDay, paidDay: paid ? L.addDays(invDay, 20) : null });
+  }
+
   // ------------------------------------------------------------------ the server
   const stampOf = async () => JSON.stringify(await Promise.all([
     prisma.application.aggregate({ _count: { _all: true }, _max: { updatedAt: true } }), prisma.client.aggregate({ _count: { _all: true } }), prisma.requirement.aggregate({ _count: { _all: true }, _max: { updatedAt: true } }),
@@ -171,7 +216,7 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   await new Promise((r) => { setTimeout(r, 6000); }); // the server's own start-up jobs (index.js: the drop roll-status heal after 4 s) finish first
   const before = await stampOf();
   const tok = async (u) => jwt.sign({ ...tokenPayload(await resolveIdentity(u.id)), tms: Date.now() }, env.JWT_SECRET, { expiresIn: '1h' });
-  const tA = await tok(A); const tB = await tok(B); const tT = await tok(TL); const tS = await tok(SA); const tAD = await tok(AD); const tR = await tok(RC);
+  const tA = await tok(A); const tB = await tok(B); const tC = await tok(C); const tT = await tok(TL); const tS = await tok(SA); const tAD = await tok(AD); const tR = await tok(RC);
 
   // ------------------------------------------------------------------ who may use it
   check('a recruiter is refused (403)', (await call('POST', '/bde-agent/ask', { question: 'my clients' }, tR)).status === 403);
@@ -186,7 +231,7 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   const AK = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9', 'c10', 'c12'];
   const exp = {
     sharedWeek: evIn(AK, 'SHARED_WITH_CLIENT', inWeek), sharedMonth: evIn(AK, 'SHARED_WITH_CLIENT', inMonth), selectedMonth: evIn(AK, 'SELECTED', inMonth),
-    ivWeek: [day(0), day(1), day(-2)].filter(inWeek).length, joinMonth: inMonth(day(-6)) ? 1 : 0, dropMonth: inMonth(day(-2)) ? 1 : 0, paidMonth: inMonth(day(-1)) ? 1 : 0,
+    ivWeek: [day(0), day(1), day(-2)].filter(inWeek).length, joinMonth: [day(-6), day(-15)].filter(inMonth).length, dropMonth: inMonth(day(-2)) ? 1 : 0, paidMonth: inMonth(day(-1)) ? 1 : 0,
     targetMonth: inMonth(day(-2)) ? 1 : 0,
     ivKovidaWeek: [day(0)].filter(inWeek).length,
   };
@@ -195,6 +240,8 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   const allClients = (await prisma.client.findMany({ select: { name: true, agreementEnd: true, agreementStatus: true } })).filter((c) => notTest(c.name));
   const expTlExpiring = allClients.filter((c) => /^\d{4}-\d{2}-\d{2}/.test(String(c.agreementEnd || '')) && !['CANCELLED', 'REJECTED'].includes(c.agreementStatus) && c.agreementEnd.slice(0, 10) >= T && c.agreementEnd.slice(0, 10) <= day(30)).length;
 
+  const J = (from, to) => CJ.filter((x) => x.day >= from && x.day <= to).length; // BDE C's joinings in a window (all of them, left or not)
+  const last3 = (() => { const d = new Date(`${T}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() - 3); return L.addDays(d.toISOString().slice(0, 10), 1); })();
   // ------------------------------------------------------------------ THE QUESTION BANK
   // [who, question, { intent, count, has: [names in items/title], hasNot: [], text: RegExp, lang }]
   const inv1 = `Invoice BQ${RUN}-01`;
@@ -221,7 +268,7 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     ['A', 'selections this month', { intent: 'selections', count: exp.selectedMonth }],
     ['A', 'open offers', { intent: 'offers', count: 2, has: ['Keerthi Naidu', 'Bhavana Chowdary'] }],
     ['A', 'offers pending', { intent: 'offers', count: 2 }],
-    ['A', 'joinings this month', { intent: 'joinings', count: exp.joinMonth, ...(exp.joinMonth ? { has: ['Swathi Gorantla'] } : {}), hasNot: ['Mounika Pydi'] }],
+    ['A', 'joinings this month', { intent: 'joinings', count: exp.joinMonth, ...(exp.joinMonth ? { has: ['Swathi Gorantla'] } : {}), text: new RegExp(`^This month \\(${L.monthLabel(T)}\\): ${exp.joinMonth} joining`) }],
     ['A', 'ee nela joinings entha', { intent: 'joinings', count: exp.joinMonth, lang: 'tl' }],
     ['A', 'drops this month', { intent: 'drops', count: exp.dropMonth, ...(exp.dropMonth ? { has: ['Mounika Pydi'] } : {}) }],
     ['A', 'replacements due', { intent: 'replacements', count: 1, has: ['Mounika Pydi'] }],
@@ -273,10 +320,55 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     ['SA', 'overdue invoices of Kovida', { intent: 'invoices', count: 1, text: /Rs 59,000/ }],
     ['SA', 'Nandini Rao', { intent: 'candidate', text: /Nandini Rao: Check by recruiter/ }],
     ['SA', 'how many clients', { intent: 'clients', count: allClients.length }],
+    // ---- BDE C: time windows, totals and whole lists (the founder's own questions first)
+    ['C', 'how many joinings completed till now', { intent: 'joinings', count: 130, text: new RegExp(`^All time \\(till ${L.dmy(T)}\\): 130 joinings \\(124 still working, 6 left after joining\\)`) }],
+    ['C', 'january 2026 to november 2026 joinings list', { intent: 'joinings', count: J('2026-01-01', '2026-11-30'), text: new RegExp(`^Jan 2026 - Nov 2026: ${J('2026-01-01', '2026-11-30')} joinings[\\s\\S]*By month: Jan 2026 ${J('2026-01-01', '2026-01-31')} · Feb 2026 ${J('2026-02-01', '2026-02-28')}`) }],
+    ['C', 'vcare requiremnts list', { intent: 'requirements_all', count: 25, text: /: 25 requirements - VCare Diagnostics Centre \(Open 1 · Paused \/ on hold 1 · Request, not live yet 1 · Closed 22\)/, has: ['Staff Nurse Ward', 'Lab Assistant Batch 1 ', 'Lab Assistant Batch 22', 'Radiographer', 'Phlebotomist'], items: 25 }],
+    ['C', 'how many requiremnts are there from vcare', { intent: 'requirements_all', count: 25, text: /Open 1 · Paused \/ on hold 1 · Request, not live yet 1 · Closed 22/ }],
+    ['C', 'joinings till now', { intent: 'joinings', count: 130, items: 100, more: 30 }],
+    ['C', 'ippati varaku enni joinings', { intent: 'joinings', count: 130, lang: 'tl', text: /^Ippati varaku/ }],
+    ['C', 'total joinings', { intent: 'joinings', count: 130 }],
+    ['C', 'joinings so far', { intent: 'joinings', count: 130 }],
+    ['C', 'how many joinings in 2025', { intent: 'joinings', count: J('2025-01-01', '2025-12-31'), text: /^2025: / }],
+    ['C', 'ee samvatsaram joinings enni', { intent: 'joinings', count: J(`${T.slice(0, 4)}-01-01`, `${T.slice(0, 4)}-12-31`), lang: 'tl' }],
+    ['C', 'gatha samvatsaram joinings', { intent: 'joinings', count: J(`${Number(T.slice(0, 4)) - 1}-01-01`, `${Number(T.slice(0, 4)) - 1}-12-31`) }],
+    ['C', 'janavari nundi navambar varaku joinings', { intent: 'joinings', count: J(`${T.slice(0, 4)}-01-01`, `${T.slice(0, 4)}-11-30`), lang: 'tl' }],
+    ['C', 'joinings from march to june 2026', { intent: 'joinings', count: J('2026-03-01', '2026-06-30'), text: /^Mar 2026 - Jun 2026: / }],
+    ['C', 'joinings between 01/02/2026 and 15/03/2026', { intent: 'joinings', count: J('2026-02-01', '2026-03-15'), text: /^1 Feb 2026 - 15 Mar 2026: / }],
+    ['C', 'joinings since august 2026', { intent: 'joinings', count: J('2026-08-01', T) }],
+    ['C', 'joinings before june 2026', { intent: 'joinings', count: J('2000-01-01', '2026-05-31'), text: /^Till 31 May 2026: / }],
+    ['C', 'joinings in october 2026', { intent: 'joinings', count: J('2026-10-01', '2026-10-31') }],
+    ['C', 'jan 2026 joinings', { intent: 'joinings', count: J('2026-01-01', '2026-01-31'), text: /^Jan 2026: / }],
+    ['C', 'oct 2025 to feb 2026 joinings', { intent: 'joinings', count: J('2025-10-01', '2026-02-28') }],
+    ['C', 'joinings 2026-01-05 to 2026-02-10', { intent: 'joinings', count: J('2026-01-05', '2026-02-10') }],
+    ['C', 'joinings last 3 months', { intent: 'joinings', count: J(last3, T) }],
+    ['C', 'joinings still working till now', { intent: 'joinings', count: 124 }],
+    ['C', 'how many joinings in total for vcare', { intent: 'joinings', count: 130 }],
+    ['C', 'జనవరి నుండి నవంబర్ వరకు జాయినింగ్స్', { intent: 'joinings', count: J(`${T.slice(0, 4)}-01-01`, `${T.slice(0, 4)}-11-30`), lang: 'te' }],
+    ['C', 'drops till now', { intent: 'drops', count: 6 }],
+    ['C', 'drops in 2026', { intent: 'drops', count: CJ.filter((x) => x.dropped && x.dropped.startsWith('2026')).length }],
+    ['C', 'profiles shared from march to june 2026', { intent: 'shared', count: CJ.filter((x) => x.shared >= '2026-03-01' && x.shared <= '2026-06-30').length }],
+    ['C', 'profiles shared till now', { intent: 'shared', count: 130 }],
+    ['C', 'selections in 2025', { intent: 'selections', count: CJ.filter((x) => x.selected.startsWith('2025')).length }],
+    ['C', 'offers from january to march 2026', { intent: 'offers', count: CJ.filter((x) => x.offer >= '2026-01-01' && x.offer <= '2026-03-31').length }],
+    ['C', 'interviews in august 2025', { intent: 'interviews', count: CJ.filter((x) => x.interview.startsWith('2025-08')).length, text: /^Aug 2025: / }],
+    ['C', 'vcare closed requirements', { intent: 'requirements_all', count: 22 }],
+    ['C', 'vcare open requirements', { intent: 'requirements', count: 1, has: ['Staff Nurse Ward'] }],
+    ['C', 'paused requirements of vcare', { intent: 'requirements_all', count: 1, has: ['Radiographer'] }],
+    ['C', 'requirements created this year', { intent: 'requirements_all', count: VREQ.filter((x) => x.created.startsWith(T.slice(0, 4))).length }],
+    ['C', 'requirements list', { intent: 'requirements_all', count: 25 }],
+    ['C', 'invoices paid from january to june 2026', { intent: 'invoices', count: CINV.filter((x) => x.paidDay && x.paidDay >= '2026-01-01' && x.paidDay <= '2026-06-30').length }],
+    ['C', 'invoices raised in 2026', { intent: 'invoices', count: CINV.filter((x) => x.invDay.startsWith('2026')).length }],
+    ['C', 'new clients this year', { intent: 'clients', count: 1, has: ['Sitara Eye Care'] }],
+    ['C', 'clients added in march 2026', { intent: 'clients', count: 1, has: ['Sitara Eye Care'] }],
+    ['C', 'how many clients', { intent: 'clients', count: 2, text: /^Now \(/ }],
+    ['C', 'Tell me about VCare', { intent: 'client', text: /Requirements: 25 in all \(Open 1 · Paused \/ on hold 1 · Request, not live yet 1 · Closed 22\)/ }],
+    ['A', `agreements expiring in ${['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'][Number(day(20).slice(5, 7)) - 1]}`, { intent: 'agreements', count: 1, has: ['Kovida Heartcare Hospital'] }],
+
   ];
-  const tokOf = { A: tA, B: tB, TL: tT, SA: tS };
+  const tokOf = { A: tA, B: tB, C: tC, TL: tT, SA: tS };
   const lat = [];
-  const answersBy = { A: [], B: [], TL: [], SA: [] };
+  const answersBy = { A: [], B: [], C: [], TL: [], SA: [] };
   let right = 0;
   for (const [who, q, e] of BANK) {
     // eslint-disable-next-line no-await-in-loop
@@ -295,6 +387,8 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     (e.hasNot || []).forEach((n) => { if (blob.includes(n)) why.push(`should not show ${n}`); });
     if (e.text && !e.text.test(b.text || '')) why.push(`text ${String(b.text || '').slice(0, 160)}`);
     if (e.lang && b.lang !== e.lang) why.push(`lang ${b.lang}`);
+    if (e.items !== undefined && (a0.items || []).length !== e.items) why.push(`items ${(a0.items || []).length} (expected ${e.items})`);
+    if (e.more !== undefined && a0.more !== e.more) why.push(`more ${a0.more} (expected ${e.more})`);
     if (!why.length) right += 1;
     check(`[${who}] "${q}" -> ${e.intent}${e.count !== undefined ? ` ${e.count}` : ''} (${r.ms} ms)`, !why.length, why);
   }
@@ -303,6 +397,20 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   console.log(`\n  QUESTION BANK: ${right}/${BANK.length} right; latency median ${pct(50)} ms, 95th percentile ${pct(95)} ms, slowest ${ms[ms.length - 1]} ms ("${lat.sort((a, b) => b.ms - a.ms)[0].q}")\n`);
   check(`the question bank is 100% right (${right}/${BANK.length})`, right === BANK.length);
   check(`router answers come back under 1.5 s (95th percentile ${pct(95)} ms)`, pct(95) < 1500);
+
+  // the founder's questions, as answered now (printed for the report)
+  for (const q of ['how many joinings completed till now', 'january 2026 to november 2026 joinings list', 'vcare requiremnts list', 'how many requiremnts are there from vcare', 'joinings till now']) {
+    // eslint-disable-next-line no-await-in-loop
+    const a = (await call('POST', '/bde-agent/ask', { question: q }, tC)).body.answers[0];
+    console.log(`      "${q}" -> ${a.title}${a.lines.length ? ` | ${a.lines.join(' | ').slice(0, 220)}` : ''} | ${a.items.length} lines${a.more ? `, +${a.more} more -> ${a.open && a.open.to}` : ''}`);
+  }
+  // a list longer than 100: the first 100, the exact count, and a link that opens the same list with the filters
+  const longList = (await call('POST', '/bde-agent/ask', { question: 'joinings till now' }, tC)).body.answers[0];
+  check('a list longer than 100 lines shows 100, says how many more, and links the same list (Joining > Joined and dropped)', longList.items.length === 100 && longList.more === 30 && longList.open && /^\/ats\/joining\?view=joindrop/.test(longList.open.to), { n: longList.items.length, more: longList.more, open: longList.open });
+  const vreq = (await call('POST', '/bde-agent/ask', { question: 'vcare requiremnts list' }, tC)).body.answers[0];
+  check('a client\'s requirement list: all 25, the open one first, then by status, newest first inside a status', vreq.items.length === 25 && /Staff Nurse Ward/.test(vreq.items[0].label) && /Closed/.test(vreq.items[24].sub) && /Lab Assistant Batch 22/.test(vreq.items.find((i) => /Closed/.test(i.sub)).label), vreq.items.slice(0, 4).map((i) => `${i.label} | ${i.sub}`));
+  const cBlob = answersBy.C.join('\n');
+  check('scope: BDE C sees none of BDE A\'s or BDE B\'s clients, and A / B never see VCare', !['Kovida Heartcare Hospital', 'Vishrant Steel Works', ...A_PEOPLE, ...B_PEOPLE].some((n) => cBlob.includes(n)) && ![answersBy.A.join(''), answersBy.B.join('')].some((x) => x.includes('VCare Diagnostics')));
 
   // links on every record
   const linkAns = await call('POST', '/bde-agent/ask', { question: 'Tell me about Kovida Heartcare' }, tA);
