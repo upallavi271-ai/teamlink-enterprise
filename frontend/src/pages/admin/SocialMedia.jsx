@@ -33,16 +33,36 @@ function DeptCell({ a, canAssign, onAssign, busy }) {
     </div>
   );
 }
-function AccountList({ rows, noun, onDefault, onRemove, onEdit, busy, extra, canAssign, onAssign, hiddenCount = 0 }) {
-  if (!rows.length) return <div className="small-muted" style={{ padding: '6px 0' }}>{hiddenCount ? `No ${noun} for this department.` : `No ${noun} connected yet.`}</div>;
+// Meta numbers (founder 2026-11-20, "label and filter only", like the departments): the Meta (WhatsApp) numbers an account is given to.
+export const NO_NUM = '__none__';
+export const matchesNumber = (a, filter) => {
+  if (!filter) return true;
+  const list = Array.isArray(a.numberIds) ? a.numberIds : [];
+  if (filter === NO_NUM) return list.length === 0;
+  return list.includes(filter);
+};
+function NumCell({ a, canAssign, onAssign, busy, numMaster }) {
+  const list = a.numberIds || [];
+  return (
+    <div className="sm-dept">
+      {list.length
+        ? list.map((id) => { const n = (numMaster || []).find((m) => m.id === id); return <span key={id} className={`sm-num-chip${n ? '' : ' gone'}`} title={n ? [n.displayNumber, n.portfolio].filter(Boolean).join(' · ') : 'This number is not in the Meta numbers list any more'}>{n ? n.label : 'Removed number'}</span>; })
+        : <span className="small-muted">Not assigned</span>}
+      {canAssign && onAssign && <button type="button" className="btn btn-sm sm-dept-btn" disabled={busy} onClick={() => onAssign(a)}>{list.length ? 'Change' : 'Assign'}</button>}
+    </div>
+  );
+}
+function AccountList({ rows, noun, onDefault, onRemove, onEdit, busy, extra, canAssign, onAssign, numMaster = [], hiddenCount = 0 }) {
+  if (!rows.length) return <div className="small-muted" style={{ padding: '6px 0' }}>{hiddenCount ? `No ${noun} for this filter.` : `No ${noun} connected yet.`}</div>;
   return (
     <div className="tbl-wrap"><table>
-      <thead><tr><th>{noun.charAt(0).toUpperCase() + noun.slice(1, -1)}</th><th>Default</th><th>Departments</th><th>Status</th><th>Connected by</th><th /></tr></thead>
+      <thead><tr><th>{noun.charAt(0).toUpperCase() + noun.slice(1, -1)}</th><th>Default</th><th>Departments</th><th>Meta numbers</th><th>Status</th><th>Connected by</th><th /></tr></thead>
       <tbody>{rows.map((a) => (
         <tr key={a.id}>
           <td><b>{a.name}</b>{a.username && a.name !== `@${a.username}` ? <span className="small-muted"> · @{a.username}</span> : null}<div className="small-muted" style={{ fontSize: 11.5 }}>{extra ? extra(a) : a.externalId}</div></td>
           <td>{a.isDefault ? <b style={{ color: '#1c7c4a' }}>★ Default</b> : <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onDefault(a)}>Make default</button>}</td>
           <td><DeptCell a={a} canAssign={canAssign} onAssign={onAssign} busy={busy} /></td>
+          <td><NumCell a={a} canAssign={canAssign} onAssign={onAssign} busy={busy} numMaster={numMaster} /></td>
           <td>{a.status === 'Connected' ? <span style={{ color: '#1c7c4a', fontWeight: 600 }}>Connected</span> : <span style={{ color: '#b42318' }} title={a.error || ''}>{a.status}{a.error ? `: ${a.error}` : ''}</span>}</td>
           <td className="small-muted">{a.connectedByName || ''}{a.connectedAt ? ` · ${new Date(a.connectedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : ''}</td>
           <td style={{ whiteSpace: 'nowrap' }}>
@@ -68,7 +88,9 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
   const [canAssign, setCanAssign] = useState(false); // only the Super Admin gives accounts to departments
   const [deptMaster, setDeptMaster] = useState([]); // every department there is (sent to the Super Admin only)
   const [deptFilter, setDeptFilter] = useState(''); // '' = all, NO_DEPT = not assigned, else a department name
-  const [assigning, setAssigning] = useState(null); // { a, picked: [names], withIg } - the Departments box
+  const [assigning, setAssigning] = useState(null); // { a, picked: [names], pickedNums: [ids], withIg } - the Assign box (Meta numbers + departments)
+  const [numMaster, setNumMaster] = useState([]); // every Meta number: { id, label, displayNumber, portfolio, isMain, active, departments }
+  const [numFilter, setNumFilter] = useState(''); // '' = all, NO_NUM = not assigned, else a number id
   const [li, setLi] = useState(null); // LinkedIn app: { hasApp, clientId, hasSecret, redirectUri }
   const [liForm, setLiForm] = useState({ clientId: '', clientSecret: '' });
   const [liPage, setLiPage] = useState('');
@@ -119,7 +141,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
     try { const r = await api.post('/admin/social-accounts/linkedin/start', { pageId: liPageOn ? liPage.trim() : '' }); window.location.href = r.data.url; } catch (e) { setErr(e.response?.data?.error || 'Could not open the LinkedIn sign-in.'); setBusy(false); }
   }
 
-  const load =() => api.get('/admin/social-accounts').then((r) => { setAcc(r.data.accounts); setCanAssign(!!r.data.canAssign); setDeptMaster(Array.isArray(r.data.departments) ? r.data.departments : []); }).catch((e) => setErr(e.response?.data?.error || 'Could not load the accounts.'));
+  const load =() => api.get('/admin/social-accounts').then((r) => { setAcc(r.data.accounts); setCanAssign(!!r.data.canAssign); setDeptMaster(Array.isArray(r.data.departments) ? r.data.departments : []); setNumMaster(Array.isArray(r.data.numbers) ? r.data.numbers : []); }).catch((e) => setErr(e.response?.data?.error || 'Could not load the accounts.'));
   useEffect(() => { load(); }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function act(fn) {
@@ -127,11 +149,26 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
     try { const r = await fn(); if (r.data.accounts) setAcc(r.data.accounts); setMsg(r.data.message || 'Done.'); } catch (e) { if (e.response?.data?.accounts) setAcc(e.response.data.accounts); setErr(e.response?.data?.error || 'That did not work.'); } finally { setBusy(false); }
   }
   const openEdit = (a) => setEditing({ a, name: a.name, token: '' });
-  const openAssign = (a) => setAssigning({ a, picked: [...(a.departments || [])], withIg: true });
+  const openAssign = (a) => setAssigning({ a, picked: [...(a.departments || [])], pickedNums: (a.numberIds || []).filter((id) => numMaster.some((m) => m.id === id)), withIg: true });
   async function saveAssign() {
-    const s = assigning;
-    await act(() => api.post(`/admin/social-accounts/${s.a.id}/departments`, { departments: s.picked, withInstagram: s.withIg }));
-    setAssigning(null);
+    const sAss = assigning;
+    const low = (l) => JSON.stringify([...(l || [])].map((x) => String(x).toLowerCase()).sort());
+    const depsChanged = low(sAss.a.departments) !== low(sAss.picked);
+    const numsChanged = JSON.stringify([...(sAss.a.numberIds || [])].sort()) !== JSON.stringify([...sAss.pickedNums].sort());
+    if (!depsChanged && !numsChanged) { setAssigning(null); setErr(''); setMsg('Nothing changed.'); return; }
+    setBusy(true); setErr(''); setMsg('');
+    try {
+      let r = null;
+      const said = [];
+      if (depsChanged) { r = await api.post(`/admin/social-accounts/${sAss.a.id}/departments`, { departments: sAss.picked, withInstagram: sAss.withIg }); said.push(r.data.message); }
+      if (numsChanged) { r = await api.post(`/admin/social-accounts/${sAss.a.id}/numbers`, { numberIds: sAss.pickedNums, withInstagram: sAss.withIg }); said.push(r.data.message); }
+      if (r && r.data.accounts) setAcc(r.data.accounts);
+      setMsg(said.join(' ') || 'Done.');
+      setAssigning(null);
+    } catch (e) {
+      if (e.response?.data?.accounts) setAcc(e.response.data.accounts);
+      setErr(e.response?.data?.error || 'That did not work.');
+    } finally { setBusy(false); }
   }
   async function saveEdit() {
     const e = editing;
@@ -152,9 +189,10 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
   const allRows = Object.values(acc).flat();
   const deptNames = [...new Map([...deptMaster, ...allRows.flatMap((a) => a.departments || [])].map((d) => [String(d).toLowerCase(), d])).values()].sort((x, y) => String(x).localeCompare(String(y)));
   const showDeptFilter = canAssign || allRows.some((a) => (a.departments || []).length > 0);
-  const vis = (rows) => (rows || []).filter((a) => matchesDept(a, deptFilter));
+  const showNumFilter = numMaster.length > 0 && (canAssign || allRows.some((a) => (a.numberIds || []).length > 0));
+  const vis = (rows) => (rows || []).filter((a) => matchesDept(a, deptFilter) && matchesNumber(a, numFilter));
   const hid = (rows) => (rows || []).length - vis(rows).length;
-  const deptProps = { canAssign, onAssign: openAssign };
+  const deptProps = { canAssign, onAssign: openAssign, numMaster };
   const igOfAssigning = assigning && assigning.a.platform === 'facebook' ? acc.instagram.filter((i) => i.parentId === assigning.a.externalId) : [];
 
   const NAMES = { facebook: 'Page access token', instagram: 'Page access token (of the Page it comes with)', threads: 'Threads access token' };
@@ -179,18 +217,42 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
         </Modal>
       )}
       {assigning && (
-        <Modal title={`Departments for ${assigning.a.name}`} onClose={() => setAssigning(null)}
+        <Modal title={`Assign ${assigning.a.name}`} onClose={() => setAssigning(null)}
           foot={<><button className="btn" onClick={() => setAssigning(null)}>Cancel</button><button className="btn btn-primary" onClick={saveAssign} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></>}>
-          <div className="small-muted" style={{ fontSize: 12.5, marginBottom: 8 }}>
-            Tick the departments this account belongs to. It is a label and a filter only: job posts and Omni-Channel still use the ★ default account, and nobody loses or gains access.
+          <div className="small-muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
+            Tick the Meta numbers and the departments this account belongs to. It is a label and a filter only: job posts and Omni-Channel still use the ★ default account, nothing is changed in Meta, and nobody loses or gains access.
           </div>
+          <div className="sm-assign-h">Meta numbers <span className="small-muted">({assigning.pickedNums.length} of {numMaster.length} ticked)</span>
+            {numMaster.length > 1 && (
+              <span className="sm-assign-all">
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => setAssigning((x) => ({ ...x, pickedNums: numMaster.map((m) => m.id) }))}>Tick all</button>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => setAssigning((x) => ({ ...x, pickedNums: [] }))}>Tick none</button>
+              </span>
+            )}
+          </div>
+          {numMaster.length === 0 && <div className="small-muted">No Meta numbers were found. Add them under Integrations → WhatsApp numbers.</div>}
+          <div className="sm-num-pick">
+            {numMaster.map((n) => {
+              const on = assigning.pickedNums.includes(n.id);
+              return (
+                <label key={n.id} className="sm-num-opt">
+                  <input type="checkbox" checked={on} onChange={(e) => setAssigning((x) => ({ ...x, pickedNums: e.target.checked ? [...x.pickedNums, n.id] : x.pickedNums.filter((p) => p !== n.id) }))} />
+                  <span>
+                    <b>{n.label}</b>{n.isMain ? ' (main)' : ''}{n.active ? '' : <span className="sm-num-off"> · switched off</span>}
+                    <span className="small-muted sm-num-sub">{[n.displayNumber, n.portfolio, n.departments.length ? n.departments.join(', ') : ''].filter(Boolean).join(' · ') || 'No details'}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <div className="sm-assign-h">Departments</div>
           {deptNames.length === 0 && <div className="small-muted">No departments were found.</div>}
           <div className="sm-dept-pick">
             {deptNames.map((d) => {
               const on = assigning.picked.some((p) => String(p).toLowerCase() === String(d).toLowerCase());
               return (
                 <label key={d} className="sm-dept-opt">
-                  <input type="checkbox" checked={on} onChange={(e) => setAssigning((s) => ({ ...s, picked: e.target.checked ? [...s.picked, d] : s.picked.filter((p) => String(p).toLowerCase() !== String(d).toLowerCase()) }))} />
+                  <input type="checkbox" checked={on} onChange={(e) => setAssigning((x) => ({ ...x, picked: e.target.checked ? [...x.picked, d] : x.picked.filter((p) => String(p).toLowerCase() !== String(d).toLowerCase()) }))} />
                   <span>{d}</span>
                 </label>
               );
@@ -198,8 +260,8 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
           </div>
           {igOfAssigning.length > 0 && (
             <label className="sm-dept-opt" style={{ marginTop: 10 }}>
-              <input type="checkbox" checked={assigning.withIg} onChange={(e) => setAssigning((s) => ({ ...s, withIg: e.target.checked }))} />
-              <span>Give its Instagram account the same departments ({igOfAssigning.map((i) => i.name).join(', ')})</span>
+              <input type="checkbox" checked={assigning.withIg} onChange={(e) => setAssigning((x) => ({ ...x, withIg: e.target.checked }))} />
+              <span>Give its Instagram account the same numbers and departments ({igOfAssigning.map((i) => i.name).join(', ')})</span>
             </label>
           )}
           <div className="small-muted" style={{ fontSize: 12, marginTop: 8 }}>Tick none to mark it as not assigned.</div>
@@ -212,15 +274,29 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
           </div>
         ))}
       </div>
-      {showDeptFilter && (
+      {(showDeptFilter || showNumFilter) && (
         <div className="sm-filter">
-          <label htmlFor="sm-dept-filter">Show accounts of</label>
-          <select id="sm-dept-filter" value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}>
-            <option value="">All departments</option>
-            {deptNames.map((d) => <option key={d} value={d}>{d}</option>)}
-            <option value={NO_DEPT}>Not assigned</option>
-          </select>
-          {deptFilter && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDeptFilter('')}>Clear</button>}
+          {showDeptFilter && (
+            <>
+              <label htmlFor="sm-dept-filter">Show accounts of</label>
+              <select id="sm-dept-filter" value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}>
+                <option value="">All departments</option>
+                {deptNames.map((d) => <option key={d} value={d}>{d}</option>)}
+                <option value={NO_DEPT}>Not assigned</option>
+              </select>
+            </>
+          )}
+          {showNumFilter && (
+            <>
+              <label htmlFor="sm-num-filter">Meta number</label>
+              <select id="sm-num-filter" value={numFilter} onChange={(e) => setNumFilter(e.target.value)}>
+                <option value="">All Meta numbers</option>
+                {numMaster.map((n) => <option key={n.id} value={n.id}>{n.label}{n.displayNumber ? ` (${n.displayNumber})` : ''}</option>)}
+                <option value={NO_NUM}>Not assigned</option>
+              </select>
+            </>
+          )}
+          {(deptFilter || numFilter) && <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setDeptFilter(''); setNumFilter(''); }}>Clear</button>}
         </div>
       )}
       {msg && <div className="small-muted" role="status" style={{ marginBottom: 10, color: '#1c7c4a' }}>{msg}</div>}

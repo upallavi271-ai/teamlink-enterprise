@@ -27,6 +27,17 @@ or loses access, no platform is called, and the audit log records who changed it
 Super Admin only unless the Role Catalog grants it, and the save is refused for anyone who is not the Super Admin). Test:
 `node scripts/social-departments-test.js` (copy database only).
 
+## Meta numbers on each account (label and filter only, 2026-11-20)
+The same **Assign / Change** window also lists **every Meta (WhatsApp) number** (label, number, business portfolio, the departments it is given to,
+"switched off" when it is) and the Super Admin ticks the numbers an account belongs to (`POST /api/admin/social-accounts/:id/numbers`,
+`utils/socialAccounts.js setNumbers`; the list comes from `utils/waNumbers.js numbersMaster`, the old single connection showing as "Main number").
+Each row has a *Meta numbers* column, and the list can be filtered by Meta number or "Not assigned". Same rules as the departments: **only a label**
+(job posts, Omni-Channel and AI Marketing still use the default account, **nothing is changed in Meta or in Green Start**), a Facebook Page can take its
+Instagram account along, the audit log says who changed it, only the Super Admin can. A number that is not in the list is refused; a number removed
+from the list later stays on the account as "Removed number" and can be unticked. Making it REAL (a number's Omni-Channel workspace using that Page /
+account) would go through Green Start (`omni.gs.waMap` maps a number to its workspace; today a Facebook Page is connected to the main workspace only)
+and is not built. Test: `node scripts/social-numbers-test.js` (copy database only).
+
 ## One-time setup
 * **Facebook + Instagram**: connect the Page (Social Media > Facebook). The Instagram account must be **Business or Creator**, linked to the Page
   (Page > Settings > Linked accounts). The Meta login asks for `instagram_basic` and `instagram_content_publish`. While the Meta app is not Live,

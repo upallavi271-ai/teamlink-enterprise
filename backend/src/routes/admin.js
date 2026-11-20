@@ -1842,7 +1842,10 @@ router.get('/social-accounts', requirePerm(null, 'administration', 'Integrations
   const canAssign = mayAssignSocial(req.user);
   let departments = [];
   if (canAssign) { try { departments = await require('../utils/waNumbers').departmentsMaster(); } catch { departments = []; } } // eslint-disable-line global-require
-  res.json({ accounts: await SA.list(), canAssign, departments });
+  // the Meta numbers, so every row can show the labels of the numbers it is given to (label, number and portfolio only; the same people already read the numbers list)
+  let numbers = [];
+  try { numbers = await require('../utils/waNumbers').numbersMaster(); } catch { numbers = []; } // eslint-disable-line global-require
+  res.json({ accounts: await SA.list(), canAssign, departments, numbers });
 });
 // Label only (nothing is posted, no platform is called, the default account is untouched): registered BEFORE the "mirror the defaults" hook below on purpose.
 router.post('/social-accounts/:id/departments', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
@@ -1852,6 +1855,15 @@ router.post('/social-accounts/:id/departments', requirePerm(null, 'administratio
   if (r.error) return res.status(r.status || 400).json({ error: r.error });
   if (r.changed.length) await logAudit({ userId: req.user.id, action: 'Social account departments set', entity: 'Integration', entityId: 'social', toValue: `${r.account.platform}: ${r.account.name} -> ${r.departments.length ? r.departments.join(', ') : 'not assigned'}${r.alsoInstagram ? ` (+${r.alsoInstagram} Instagram)` : ''}` });
   return res.json({ accounts: await SA.list(), message: r.departments.length ? `${r.account.name} is given to ${r.departments.join(', ')}.` : `${r.account.name} is not assigned to any department now.` });
+});
+// Meta numbers: also a label only, same rule (Super Admin), also registered BEFORE the hook below so nothing is mirrored or posted.
+router.post('/social-accounts/:id/numbers', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  if (!mayAssignSocial(req.user)) return res.status(403).json({ error: 'Only the Super Admin can give social media accounts to Meta numbers.' });
+  const b = req.body || {};
+  const r = await SA.setNumbers(req.user, req.params.id, { numberIds: b.numberIds, withInstagram: b.withInstagram !== false });
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  if (r.changed.length) await logAudit({ userId: req.user.id, action: 'Social account Meta numbers set', entity: 'Integration', entityId: 'social', toValue: `${r.account.platform}: ${r.account.name} -> ${r.labels.length ? r.labels.join(', ') : 'no Meta number'}${r.alsoInstagram ? ` (+${r.alsoInstagram} Instagram)` : ''}` });
+  return res.json({ accounts: await SA.list(), message: r.labels.length ? `${r.account.name} is given to ${r.labels.join(', ')}.` : `${r.account.name} is not given to any Meta number now.` });
 });
 // Job posting follows the default account of each platform (Instagram, Threads, LinkedIn): after ANY change of the list the default is
 // copied to that place's job-posting connection and checked (read-only). Posting itself stays OFF until an Admin switches it on.

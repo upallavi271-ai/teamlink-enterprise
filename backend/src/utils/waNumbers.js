@@ -1427,6 +1427,24 @@ async function adminList() {
   };
 }
 
+// The Meta numbers as a PICKER lists them (Social Media > Assign): every number in the list, whatever its status, with its label, the number, the
+// business portfolio and the departments it is given to; nothing secret. The old single connection shows as "Main number" (id "legacy") until it is
+// moved into the list, exactly as in the Admin's list.
+async function numbersMaster() {
+  const ready = await tableReady();
+  const { rows, access } = ready ? await load() : { rows: [], access: [] };
+  const out = rows.map((r) => ({
+    id: r.id, label: r.label || 'WhatsApp number', displayNumber: r.displayNumber || '', portfolio: r.portfolio || '',
+    isMain: r.credSource === 'legacy', active: !!r.active,
+    departments: access.filter((a) => a.numberId === r.id && a.kind === 'DEPARTMENT').map((a) => a.refId),
+  }));
+  if (!rows.some((r) => r.credSource === 'legacy')) {
+    const legacy = await wa().legacyConfig().catch(() => null);
+    if (legacy && legacy.phoneId) out.unshift({ id: 'legacy', label: 'Main number', displayNumber: legacy.display || '', portfolio: '', isMain: true, active: !!legacy.configured, departments: [] });
+  }
+  return out;
+}
+
 // People for the Assign window (type-to-search checkbox list).
 async function people() {
   const emps = await prisma.employee.findMany({ where: { userId: { not: null }, employmentStatus: 'Active' }, select: { userId: true, name: true, designation: true, department: true, employeeCode: true }, orderBy: { name: 'asc' }, take: 2000 });
@@ -1499,5 +1517,5 @@ module.exports = {
   statusFromMeta, check, wabaFix, ensureSubscribed, noteSendOk, afterLegacyTokenChange, keepOldNumbers, tagOf, reconnectAllowed, reconnectLimit: () => RECONNECT_LIMIT, noteSendFailure,
   importMain, create, update, setDefault, setActive, remove, setAccess, historyCount,
   adminList, people, departmentCounts, effectivePeople, myNumbers, labelsOf, chipOf, validate, cleanE164,
-  ASSIGNABLE_ROLES, WORDS, CHIP, UNKNOWN_PROVIDER, DDL, departmentsMaster,
+  ASSIGNABLE_ROLES, WORDS, CHIP, UNKNOWN_PROVIDER, DDL, departmentsMaster, numbersMaster,
 };

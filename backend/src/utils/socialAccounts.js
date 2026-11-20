@@ -36,6 +36,7 @@ const shape = (a) => ({
   parentName: a.parentName || null, isDefault: !!a.isDefault, status: expired(a) ? 'Expired' : (a.status || 'Connected'), error: expired(a) ? (a.platform === 'youtube' ? 'The YouTube sign-in has expired. Press Connect YouTube again.' : 'The LinkedIn token has expired (they last 60 days). Press Connect LinkedIn again.') : (a.error || null),
   connectedByName: a.connectedByName || null, connectedAt: a.connectedAt || null, viaLogin: a.viaLogin || null, expiresAt: a.expiresAt || null, kind: a.kind || null,
   departments: Array.isArray(a.departments) ? a.departments.map(String) : [],
+  numberIds: Array.isArray(a.numberIds) ? a.numberIds.map(String) : [],
 });
 
 async function getJson(url) {
@@ -327,4 +328,35 @@ async function setDepartments(user, id, { departments, withInstagram = true } = 
   return { ok: true, account: shape(acc), departments: picked, changed: changed.map((t) => ({ id: t.id, platform: t.platform, name: t.name })), alsoInstagram: targets.length - 1 };
 }
 
-module.exports = { addX, defaultXKeys, defaultLinkedin, defaultYoutube, edit, list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, addYoutube, tokenOf, setDefault, remove, writeThreadsChannel, readAll, withToken, setDepartments, PLATFORMS };
+// META NUMBERS (founder 2026-11-20: "social media connected accounts ... which accounts to assign to which Meta numbers, all the options"): a plain
+// label too, like the departments - the Meta (WhatsApp) numbers an account belongs to, taken from the numbers list (utils/waNumbers.js). Empty list
+// = not assigned. Nothing reads it for posting: job posts, Omni-Channel and AI Marketing still use the default account, no platform is called and
+// nothing in Meta changes. A number that is not in the list is refused; a number removed from the list later still shows on the account as removed.
+// A Facebook Page can take its Instagram account along.
+async function setNumbers(user, id, { numberIds, withInstagram = true } = {}) {
+  if (!Array.isArray(numberIds)) return { error: 'Numbers are a list of number ids.', status: 400 };
+  const all = await readAll();
+  const acc = all.find((a) => a.id === id);
+  if (!acc) return { error: 'That account is not in the list any more.', status: 404 };
+  let master = [];
+  try { master = await require('./waNumbers').numbersMaster(); } catch { master = []; } // eslint-disable-line global-require
+  const picked = [];
+  for (const n of numberIds) {
+    if (typeof n !== 'string') return { error: 'A number is an id, typed as text.', status: 400 };
+    const typed = n.trim();
+    if (!typed) continue; // eslint-disable-line no-continue
+    const hit = master.find((m) => m.id === typed);
+    if (!hit) return { error: 'One of the numbers is not in the Meta numbers list.', status: 400 };
+    if (!picked.includes(hit.id)) picked.push(hit.id);
+  }
+  if (picked.length > 30) return { error: 'Pick at most 30 numbers for one account.', status: 400 };
+  const targets = [acc, ...(withInstagram && acc.platform === 'facebook' ? all.filter((a) => a.platform === 'instagram' && a.parentId === acc.externalId) : [])];
+  const key = (l) => JSON.stringify([...(Array.isArray(l) ? l : [])].map(String).sort());
+  const changed = targets.filter((t) => key(t.numberIds) !== key(picked));
+  changed.forEach((t) => { t.numberIds = picked; t.updatedAt = new Date().toISOString(); });
+  if (changed.length) await writeAll(all);
+  const labels = picked.map((i) => { const m = master.find((x) => x.id === i); return m ? m.label : i; });
+  return { ok: true, account: shape(acc), numberIds: picked, labels, changed: changed.map((t) => ({ id: t.id, platform: t.platform, name: t.name })), alsoInstagram: targets.length - 1 };
+}
+
+module.exports = { addX, defaultXKeys, defaultLinkedin, defaultYoutube, edit, list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, addYoutube, tokenOf, setDefault, remove, writeThreadsChannel, readAll, withToken, setDepartments, setNumbers, PLATFORMS };

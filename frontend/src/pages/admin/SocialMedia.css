@@ -13,3 +13,14 @@
   .sm-dept { min-width: 0; }
   .sm-dept-pick { grid-template-columns: 1fr; }
 }
+.sm-num-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #e6f6ec; color: #17623a; border: 1px solid #bfe3cd; font-size: 12px; font-weight: 600; line-height: 1.6; white-space: nowrap; }
+.sm-num-chip.gone { background: #f1f1f1; color: #666; border-color: #ddd; font-style: italic; }
+.sm-assign-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-weight: 700; font-size: 13.5px; margin: 14px 0 6px; }
+.sm-assign-h:first-of-type { margin-top: 4px; }
+.sm-assign-all { margin-left: auto; display: inline-flex; gap: 4px; }
+.sm-num-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px 14px; max-height: 40vh; overflow: auto; padding: 2px; }
+.sm-num-opt { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.sm-num-opt input { width: 18px; height: 18px; flex: 0 0 auto; margin-top: 2px; }
+.sm-num-sub { display: block; font-size: 12px; }
+.sm-num-off { color: #b42318; font-weight: 600; font-size: 12px; }
+@media (max-width: 640px) { .sm-num-pick { grid-template-columns: 1fr; } }
