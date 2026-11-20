@@ -404,7 +404,9 @@ export default function AtsHome() {
   const [error, setError] = useState('');
   const [drill, setDrill] = useState(null);
   const [carry, setCarry] = useState(null); // "Carried over from yesterday" (utils/atsWork/targets.js carryOver)
-  useEffect(() => { api.get('/ats/work/carry-over').then((r) => setCarry(r.data)).catch(() => setCarry(null)); }, []);
+  // A Super Admin / developer login does no recruiter work: no "Carried over", no "My end-of-day report" (founder 2026-11-20)
+  const ownWork = !!user && user.role !== 'SUPER_ADMIN';
+  useEffect(() => { if (ownWork) api.get('/ats/work/carry-over').then((r) => setCarry(r.data)).catch(() => setCarry(null)); }, [ownWork]);
   const [legacy] = useState(() => !!(sp.get('due') || sp.get('queue') || hash === '#pending'));
   // Refresh (v4 header): the same read again, nothing cached in between.
   const [reload, setReload] = useState(0);
@@ -638,7 +640,7 @@ export default function AtsHome() {
           </div>
         </header>
         <NewItems module="ats" />
-        {data && !asUser && <HomeWorkCards />}
+        {data && !asUser && ownWork && <HomeWorkCards />}
         {ofBanner}
         {(f.department || extraChips.length > 0) && (
           <div className="av4-chips">

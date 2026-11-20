@@ -137,7 +137,12 @@ async function optionsFor(user, app, scope, curIn = null) {
     select: { id: true, name: true, atsRole: true, atsDepartment: true, atsScopeDepartments: true },
   });
   const uById = new Map(users.map((u) => [u.id, u]));
-  const inJob = (u, seat) => !jobDepts.length || deptsOfUser(u).some((d) => jobDepts.includes(d)) || (seat.department && jobDepts.includes(lc(seat.department)));
+  // A login with company-wide reach (Super Admin / developer, Admin) may hand the candidate to ANY team lead, whatever the department: the job's
+  // own department comes first, the others follow with their department named (founder 2026-11-20: "I search a team lead's name and it says
+  // no match"). Everyone else is offered only the job's department(s), the same bench as Change recruiter.
+  const wide = !!(scope && scope.global);
+  const inJobOnly = (u, seat) => !jobDepts.length || deptsOfUser(u).some((d) => jobDepts.includes(d)) || (seat.department && jobDepts.includes(lc(seat.department)));
+  const inJob = (u, seat) => wide || inJobOnly(u, seat);
   // a team name is a "section" only where the department has more than one team (same rule as the profile's Section)
   const teamsOf = new Map();
   seats.forEach((p) => { if (p.team && p.department) { if (!teamsOf.has(p.department)) teamsOf.set(p.department, new Set()); teamsOf.get(p.department).add(p.team); } });
@@ -157,10 +162,11 @@ async function optionsFor(user, app, scope, curIn = null) {
     if (!u || u.atsRole !== 'TL' || !inJob(u, p) || (other.includes(u.id) && u.id !== cur.leads.tlUserId)) return;
     out.push({
       tlUserId: u.id, tlName: u.name, section: sectionOf(p), seatCode: p.code, current: u.id === cur.leads.tlUserId,
+      department: p.department || null, otherDept: !inJobOnly(u, p),
       recruiters: (recruitersOf.get(p.id) || []).sort((a, b) => a.name.localeCompare(b.name)),
     });
   });
-  out.sort((a, b) => a.tlName.localeCompare(b.tlName));
+  out.sort((a, b) => (a.otherDept === b.otherDept ? 0 : a.otherDept ? 1 : -1) || a.tlName.localeCompare(b.tlName)); // the job's department first
   return out;
 }
 

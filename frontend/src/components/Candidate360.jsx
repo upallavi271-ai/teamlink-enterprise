@@ -1079,7 +1079,7 @@ function ChangeTeamLead({ app, ownership, onClose, onDone }) {
         <span>The new team lead</span>
         <Combo value={tl} onChange={(e) => pickTl(e.target.value)}>
           <option value="">{data === null ? 'Loading…' : 'Choose…'}</option>
-          {options.map((o) => <option key={o.tlUserId} value={o.tlUserId} disabled={!!o.current}>{`${o.tlName}${o.section ? ` - ${o.section}` : (o.seatCode ? ` - ${o.seatCode}` : '')}${o.current ? ' (current)' : ''}`}</option>)}
+          {options.map((o) => <option key={o.tlUserId} value={o.tlUserId} disabled={!!o.current}>{`${o.tlName}${o.section ? ` - ${o.section}` : (o.seatCode ? ` - ${o.seatCode}` : '')}${o.otherDept && o.department ? ` · ${o.department}` : ''}${o.current ? ' (current)' : ''}`}</option>)}
         </Combo>
       </label>
       {noRecruiter && <div className="notice red" style={{ marginBottom: 8 }}>{`${chosen.tlName} has no recruiter in this department yet, so the candidate cannot be moved to this team. Add a recruiter seat under them first.`}</div>}

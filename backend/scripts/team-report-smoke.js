@@ -40,7 +40,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
 (async () => {
   const mk = (tag, data, emp) => prisma.user.create({ data: { name: `Tz ${tag} ${RUN}`, email: `tz.${tag}.${RUN}@tz-test.in`, username: `tz.${tag}.${RUN}@tz-test.in`, passwordHash: 'x', status: 'Active', hrmsRole: 'NONE', ...data } })
     .then(async (u) => { if (emp) await prisma.employee.create({ data: { employeeCode: `TZ-${tag}-${RUN}`, name: u.name, userId: u.id, designation: 'Employee', employmentStatus: 'Active', department: 'IT', email: u.email, ...emp } }); return u; });
-  const sa = await mk('admin', { role: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN', accountsAccess: true, accountsRole: 'SUPER_ADMIN' });
+  const sa = await mk('admin', { role: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN', accountsAccess: true, accountsRole: 'SUPER_ADMIN', atsAccess: true });
   const tl = await mk('tl', { role: 'TL', atsRole: 'TL', atsDepartment: 'IT', atsScopeDepartments: 'IT', atsScopeTeams: `Tz Team ${RUN}` }, { designation: 'TL', department: 'IT', team: `Tz Team ${RUN}` });
   const rec = await mk('rec', { role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: 'IT', atsScopeDepartments: 'IT' }, { tl: tl.name, department: 'IT', team: `Tz Team ${RUN}` });
   const client = await prisma.client.create({ data: { name: `Tzorbit Systems ${RUN}`, ownerDepartment: 'IT', agreementStatus: 'ACTIVE' } });
@@ -113,10 +113,12 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
       const there = await btn.waitFor({ state: 'visible', timeout: 90000 }).then(() => true).catch(() => false);
       check('Admin: the dashboard has an Overall report button, and no team card of its own', there && (await page.locator('.trc', { hasText: 'Report of your team' }).count()) === 0);
       if (there) {
+        await page.waitForTimeout(3000);
+        check('Admin: no "Carried over from yesterday" and no "My end-of-day report" on the dashboard', !(await page.evaluate(() => /Carried over from yesterday|My end-of-day report/.test(document.body.innerText))));
         await btn.click();
         const panel = page.locator('.trd-panel', { hasText: 'Overall report' });
         const ok = await panel.locator('tr', { hasText: rec.name }).waitFor({ state: 'visible', timeout: 90000 }).then(() => true).catch(() => false);
-        check('Admin: the Overall report lists everybody, with their TL', ok && (await panel.innerText()).includes(tl.name), (await panel.innerText().catch(() => '')).slice(0, 400));
+        check('Admin: the Overall report lists everybody, with their TL', ok && (await panel.innerText()).includes(tl.name), (await page.evaluate(() => { const w = document.querySelector('.trd-wrap'); return w ? w.innerText.slice(0, 500) : `no panel; body: ${document.body.innerText.slice(0, 200)}`; }).catch(() => 'eval failed')));
         await page.screenshot({ path: path.join(SHOTS, 'admin-overall.png') });
         if (ok) {
           await panel.locator('tr', { hasText: rec.name }).locator('button', { hasText: 'View' }).click();

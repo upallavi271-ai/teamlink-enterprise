@@ -67,6 +67,10 @@ const old = new Date(Date.now() - 3600e3);
   const sTL1 = await seat('TL1', 'TL', tl1, 'Team A', sSTL.id);
   const sTL2 = await seat('TL2', 'TL', tl2, 'Team B', sSTL.id);
   await seat('TL3', 'TL', tl3, 'Team B', sSTL.id);
+  // a team lead of ANOTHER department (founder 2026-11-20: a company-wide login searches any team lead's name)
+  const tlM = await mk('tlm', 'TL', { dept: 'Medical' });
+  const sTLM = await prisma.position.create({ data: { code: `TLM-${P}`, name: 'TLM', department: 'Medical', team: 'Team M', kind: 'TL', active: true } });
+  await prisma.positionAssignment.create({ data: { positionId: sTLM.id, employeeId: tlM.e.id, fromDate: '2026-01-01' } });
   const sR1 = await seat('R1', 'RECRUITER', r1, 'Team A', sTL1.id);
   const sR2 = await seat('R2', 'RECRUITER', r2, 'Team B', sTL2.id);
   const client = await prisma.client.findFirst({});
@@ -107,6 +111,14 @@ const old = new Date(Date.now() - 3600e3);
     check(`options as ${who}: the current team lead (TL1) is listed but marked current, the others are not`, list.some((x) => x.tlUserId === tl1.u.id && x.current === true) && list.filter((x) => x.current).length === 1);
     check(`options as ${who}: "now" names TL1 and the recruiter`, o.body && o.body.now && o.body.now.tlUserId === tl1.u.id && o.body.now.recruiterId === r1.u.id, o.body && o.body.now);
     check(`options as ${who}: a team lead with no recruiter is listed with none`, !!three && three.recruiters.length === 0, three);
+  }
+  {
+    const oa = await call('GET', `/applications/${app.id}/team-lead-options`, null, tA);
+    const ot = await call('GET', `/applications/${app.id}/team-lead-options`, null, tT1);
+    const mA = ((oa.body && oa.body.options) || []).find((x) => x.tlUserId === tlM.u.id);
+    const la = ((oa.body && oa.body.options) || []);
+    check('options as an Admin: a team lead of another department is offered, marked with its department, after those of the own department', !!mA && mA.otherDept === true && mA.department === 'Medical' && la.findIndex((x) => x.tlUserId === tlM.u.id) > la.findIndex((x) => x.tlUserId === tl2.u.id), mA);
+    check('options as TL1: a team lead of another department is NOT offered (same bench as Change recruiter)', !((ot.body && ot.body.options) || []).some((x) => x.tlUserId === tlM.u.id));
   }
   check('a recruiter login cannot read the options (403)', (await call('GET', `/applications/${app.id}/team-lead-options`, null, tR1)).status === 403);
   check('a BDE login cannot read the options (403)', (await call('GET', `/applications/${app.id}/team-lead-options`, null, tB)).status === 403);
