@@ -17,7 +17,7 @@
 // rule GET /candidates/:id/limited uses: jobs inside requirementWhere).
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
-const { stageLabelFor } = require('./atsVocab');
+const { stageLabelFor, stepShown } = require('./atsVocab');
 const { requirementWhere, applicationInScope } = require('./scope');
 
 const ADDED_STATES = {
@@ -48,7 +48,7 @@ function shape(app, requirement, { full, addedBy }) {
     requirementCode: requirement.reqCode || null,
     clientName: internal ? 'TeamLink Internal' : (requirement.client && requirement.client.name) || null,
     stage: app.stage,
-    step: stageLabelFor(app.stage, { internal }),
+    step: stepShown(app, stageLabelFor(app.stage, { internal })), // a person who joined and then left reads Dropped
     status: stateOf(app, requirement),
     addedOn: app.createdAt,
     addedOnText: ymd(app.createdAt),

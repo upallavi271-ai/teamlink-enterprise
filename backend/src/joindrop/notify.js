@@ -313,6 +313,21 @@ async function sendNoticeByHand({
   return out;
 }
 
+// WHO REPLACED WHOM, as one sentence the notices can carry: "Replacement: A replaces B." (on the dropped person's record) or
+// "Joined as the replacement for B (dropped on ..., client, requirement)." (on the replacement's record). Empty when no link exists.
+async function replacementNote(record) {
+  try {
+    const S = require('./schema'); // eslint-disable-line global-require
+    if (record.replacementApplicationId) {
+      const a = await prisma.application.findUnique({ where: { id: record.replacementApplicationId }, select: { candidate: { select: { name: true } } } });
+      if (a && a.candidate) return `Replacement: ${a.candidate.name} replaces ${record.candidateName || 'the dropped candidate'}.`;
+    }
+    const back = await S.rows('SELECT "candidateName","droppedOn","clientName","jobTitle" FROM "JoiningRecord" WHERE "replacementApplicationId" = ?', record.applicationId);
+    if (back.length) return `Joined as the replacement for ${back.map((b) => `${b.candidateName || 'a candidate'} (dropped on ${V.dmy(b.droppedOn)}${b.clientName ? `, ${b.clientName}` : ''}${b.jobTitle ? `, ${b.jobTitle}` : ''})`).join('; ')}.`;
+  } catch { /* the note is a bonus */ }
+  return '';
+}
+
 // --- the moment --------------------------------------------------------------------------
 // ev: the JoiningEvent row ({ id, byId, byName, kind, ... }). Returns { bells, emails:[{to,status}], candidate:[], problems:[], emailsOn }.
 async function tell({ moment, record, ev, ctx = {} }) {
@@ -332,6 +347,10 @@ async function tell({ moment, record, ev, ctx = {} }) {
     const clientName = record.clientName || 'the client';
     let title;
     let shortLine;
+    const replNote = moment === 'drop' ? '' : await replacementNote(record);
+    const withRepl = (b) => (replNote ? `${b}
+
+${replNote}` : b);
     if (moment === 'join') {
       title = `${who} joined ${clientName} on ${V.dmy(record.joinedOn)}`;
       shortLine = `${record.jobTitle || 'Requirement'}: joined ${V.dmy(record.joinedOn)}${record.location ? ` at ${record.location}` : ''}.`;
@@ -348,6 +367,7 @@ async function tell({ moment, record, ev, ctx = {} }) {
       title = `${who} dropped from ${clientName} (${V.dmy(record.droppedOn)})`;
       shortLine = `${record.jobTitle || 'Requirement'}: reason ${record.dropReason || 'not recorded'}. ${withinWords(record)}.`;
     }
+    if (replNote) shortLine = `${shortLine} ${replNote}`;
     const staffParties = [['recruiter', ppl.recruiter], ['tl', ppl.tl], ['bde', ppl.bde], ['hr', ppl.hr]];
     for (const [party, people] of staffParties) {
       const sw = cfg[party];
@@ -361,7 +381,7 @@ async function tell({ moment, record, ev, ctx = {} }) {
           : await wording(purpose, 'Email', tokensFor(record, person, { openPath: OPEN(record) }));
         // eslint-disable-next-line no-await-in-loop
         await sendOne({
-          moment, record, ev, party, person, bell: sw.bell, email: sw.email, title: custom ? title : (w.subject || title), shortLine, body: w.body, html: htmlOf(w.subject || title, w.body, OPEN(record)), openPath: OPEN(record), ctx, out,
+          moment, record, ev, party, person, bell: sw.bell, email: sw.email, title: custom ? title : (w.subject || title), shortLine, body: withRepl(w.body), html: htmlOf(w.subject || title, withRepl(w.body), OPEN(record)), openPath: OPEN(record), ctx, out,
         });
       }
     }

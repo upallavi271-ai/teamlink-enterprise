@@ -99,10 +99,15 @@ const stateKey = () => `${version}:${state.exclude ? 'x' : 'i'}:${state.ids.size
 function invalidate() {
   version += 1;
   state = { ...state, at: 0 };
+  // keep the SYNC readers (atsVocab.leftAfterJoining, dropInfo) current for every screen that does not await refresh() itself
+  setImmediate(() => { refresh({ fresh: true }).catch(() => null); });
   try { require('./recruiterJoinings').invalidate(); } catch { /* not loaded yet */ } // eslint-disable-line global-require
   try { require('./atsHome').forgetBoards(); } catch { /* not loaded yet */ } // eslint-disable-line global-require
   try { require('./teamWorkload').forgetWorld(); } catch { /* not loaded yet */ } // eslint-disable-line global-require
 }
+
+// warm at start, so a screen that reads the sync helpers first (a list, an export, a message) already knows who dropped
+setTimeout(() => { refresh().catch(() => null); }, 1500).unref();
 
 async function getSwitch() { return { joinedCountsDropped: !(await excludeDropped()) }; }
 async function setSwitch(on, user) {

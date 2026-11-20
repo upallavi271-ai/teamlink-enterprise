@@ -2756,8 +2756,10 @@ function appRowOf(x, extra, clientDesk) {
     bde: x.who.bde && !x.internal ? x.who.bde.label : null,
     bdeKey: x.who.bde && !x.internal ? x.who.bde.key : null,
     stage: x.a.stage,
-    step: stepWord(x.a.stage),
-    stageLabel: V.stageLabelFor(x.a.stage, { internal: x.internal }),
+    // a person who joined and then left: the step says Dropped (the stage code stays Joined for billing, the guarantee and history)
+    step: V.stepShown(x.a, stepWord(x.a.stage)),
+    stageLabel: V.stepShown(x.a, V.stageLabelFor(x.a.stage, { internal: x.internal })),
+    ...(V.leftAfterJoining(x.a) ? { left: true, dropNote: V.dropWords(x.a.id) } : {}),
     interviewAt: x.a.interviewAt,
     joiningDate: x.a.joiningDate,
     rollStatus: x.a.rollStatus || null,
@@ -2865,6 +2867,12 @@ async function homeList(user, b, setId, q = {}) {
   const layout = b.layout;
   const bdeTeam = layout === 'bde';
   const all0 = await setRows(user, b, set);
+  // WHO REPLACED WHOM on every row of an application list (linked pairs); the page of rows below adds the due / expired sentence of the dropped ones
+  if (set.kind === 'app' && all0.length) {
+    const RPm = require('../joindrop/replacement'); // eslint-disable-line global-require
+    const idx = await RPm.linkIndex(user).catch(() => new Map());
+    all0.forEach((r) => RPm.put(r, idx.get(r.id)));
+  }
   // The BDE team's lists carry no recruiter / team lead at all (they are not searched either).
   const all = bdeTeam ? all0.map(withoutPeople) : all0;
   const s = (v) => (typeof v === 'string' ? v.trim().slice(0, 200) : '');
@@ -2899,6 +2907,14 @@ async function homeList(user, b, setId, q = {}) {
   });
   const page = Math.max(1, Math.min(10000, Number(q.d_page) || 1));
   const size = Math.max(10, Math.min(200, Number(q.d_size) || DRILL_PAGE));
+  if (set.kind === 'app') {
+    const droppedIds = rows.slice((page - 1) * size, page * size).filter((r) => r.left || r.dropKind === 'left').map((r) => r.id);
+    if (droppedIds.length) {
+      const RPm = require('../joindrop/replacement'); // eslint-disable-line global-require
+      const tg = await RPm.tags(user, droppedIds).catch(() => new Map());
+      rows.forEach((r) => { if (droppedIds.includes(r.id)) RPm.put(r, tg.get(r.id)); });
+    }
+  }
   return {
     id: setId, title: set.title, kind: set.kind === 'event' ? 'event' : set.kind,
     total: all.length, filtered: rows.length, page, pageSize: size,
@@ -2916,7 +2932,9 @@ const DAYF = (v) => { if (!v) return ''; if (/^\d{4}-\d{2}-\d{2}$/.test(String(v
 const EXPORT_COLUMNS = {
   app: [['Candidate', (r) => r.candidate], ['Requirement', (r) => r.requirement], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''],
     ['Recruiter', (r) => r.recruiter || ''], ['Team lead', (r) => r.tl || ''], ['Step', (r) => r.step], ['Due', (r) => (r.note ? r.note : `${DUE_WORDS[r.dueKey || 'no_due']}${r.due ? ` · ${r.due}` : ''}`)],
-    ['Interview', (r) => DAYF(r.interviewAt)], ['Joining date', (r) => DAYF(r.joiningDate)], ['Roll status', (r) => r.rollStatus || ''], ['Updated', (r) => DAYF(r.updatedAt)]],
+    ['Interview', (r) => DAYF(r.interviewAt)], ['Joining date', (r) => DAYF(r.joiningDate)], ['Roll status', (r) => r.rollStatus || ''], ['Updated', (r) => DAYF(r.updatedAt)],
+    ['Replaced by', (r) => (r.replacedBy ? (r.replacedBy.hidden ? 'another candidate' : r.replacedBy.candidateName) : '')], ['Replacement for', (r) => (r.replacementFor || []).map((f) => (f.hidden ? 'another candidate' : f.candidateName)).join('; ')],
+    ['Dropped (day and reason)', (r) => (r.left ? (r.dropNote || 'Dropped') : '')]],
   tjoin: [['Candidate', (r) => r.candidate], ['Requirement', (r) => r.requirement], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Recruiter', (r) => r.recruiter || ''], ['Joining date', (r) => DAYF(r.joiningDate)]],
   req: [['Requirement', (r) => r.title], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''], ['Recruiter', (r) => r.recruiter || 'No recruiter'], ['Status', (r) => r.status], ['Openings', (r) => r.openings ?? ''], ['Created', (r) => DAYF(r.createdAt)]],
   client: [['Client', (r) => r.name], ['Agreement', (r) => r.agreement || ''], ['Client manager (BDE)', (r) => r.owner || ''], ['Open requirements', (r) => r.openJobs ?? '']],

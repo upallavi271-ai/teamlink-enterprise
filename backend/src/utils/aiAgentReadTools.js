@@ -30,7 +30,7 @@ const { can } = require('./permissions');
 const {
   scopeOf, applicationWhere, invoiceWhere, employeeWhere, CLIENT_SHARED_STAGES,
 } = require('./scope');
-const { stageLabel } = require('./atsVocab');
+const { stageLabel, stepShown } = require('./atsVocab');
 const { invoiceOutstanding, invoiceTotal, daysOverdue } = require('./accounts');
 const { visibleWhere: taskVisibleWhere, assignable } = require('../routes/tasks');
 
@@ -465,7 +465,7 @@ const READ_TOOLS = [
           mode: a.interviewMode || null,
           interviewer: a.interviewer || null,
           status: a.interviewStatus || null,
-          stage: stageLabel(a.stage),
+          stage: stepShown(a, stageLabel(a.stage)),
         })),
       };
     },
@@ -508,7 +508,7 @@ const READ_TOOLS = [
             ? 'TeamLink (internal)'
             : (a.requirement && a.requirement.client ? a.requirement.client.name : null),
           hiringType: a.hiringType || null,
-          stage: stageLabel(a.stage),
+          stage: stepShown(a, stageLabel(a.stage)),
           offerStatus: a.offerStatus || null,
           offerDate: a.offerDate || null,
           joiningStatus: a.joiningStatus || null,

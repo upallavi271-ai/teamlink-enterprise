@@ -62,7 +62,7 @@ const {
 const { isBdeDepartment, parseBdeSeat } = require('./bdeDesk');
 const RT = require('./reqTeamLeads'); // extra team leads of a job (2026-10-14)
 const {
-  REQUIREMENT_LIVE_STATUSES, stageLabel, isPreAtsApplication, requirementStatusLabel, requirementStatusUser,
+  REQUIREMENT_LIVE_STATUSES, stageLabel, isPreAtsApplication, requirementStatusLabel, requirementStatusUser, stepShown, leftAfterJoining,
 } = require('./atsVocab');
 const {
   ATTR_SELECT, attribute, creditAt, joinCredit, stepAt, loadDirectory,
@@ -508,7 +508,9 @@ async function buildWorld(user, opts = {}) {
       section: req ? req.section : null,
       reqTl: req ? req.tl : null,
       stage: a.stage,
-      stageLabel: stageLabel(a.stage),
+      // Team and Recruiter pages: a person who joined and then left reads Dropped (the stage code stays Joined)
+      stageLabel: stepShown(a, stageLabel(a.stage)),
+      ...(leftAfterJoining(a) ? { left: true } : {}),
       updatedAt: a.updatedAt,
       createdAt: a.createdAt,
       interviewAt: a.interviewAt,

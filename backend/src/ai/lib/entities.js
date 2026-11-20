@@ -17,7 +17,7 @@
 const prisma = require('../../db');
 const scope = require('../../utils/scope');
 const { withoutSystemAccounts } = require('../../utils/systemAccounts');
-const { stageLabel } = require('../../utils/atsVocab');
+const { stageLabel, stepShown } = require('../../utils/atsVocab');
 const clientSearch = require('../../utils/clientSearch');
 // Client ids whose OLD name (ClientAlias) contains any typed word: the assistant also finds "VCare" for "Prabs VCare Health Clinic".
 async function aliasIdsOf(ws) { return [...new Set((await Promise.all(ws.map((w) => clientSearch.aliasClientIds(w)))).flat())]; }
@@ -103,7 +103,7 @@ async function findApplications(user, text, { extra = '' } = {}) {
     reqCode: a.requirement ? a.requirement.reqCode : null,
     client: a.requirement && a.requirement.internal ? 'TeamLink (internal)' : (a.requirement && a.requirement.client ? a.requirement.client.name : null),
     stage: a.stage,
-    stageLabel: stageLabel(a.stage),
+    stageLabel: stepShown(a, stageLabel(a.stage)),
     interviewAt: a.interviewAt,
     interviewStatus: a.interviewStatus,
     open: OPEN_STAGE(a.stage),
@@ -133,7 +133,7 @@ async function applicationById(user, id) {
     reqCode: a.requirement ? a.requirement.reqCode : null,
     client: a.requirement && a.requirement.internal ? 'TeamLink (internal)' : (a.requirement && a.requirement.client ? a.requirement.client.name : null),
     stage: a.stage,
-    stageLabel: stageLabel(a.stage),
+    stageLabel: stepShown(a, stageLabel(a.stage)),
     interviewAt: a.interviewAt,
     interviewStatus: a.interviewStatus,
     open: OPEN_STAGE(a.stage),

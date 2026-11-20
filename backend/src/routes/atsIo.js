@@ -241,7 +241,9 @@ const WS_HEAD = [
   ['TL', (r) => (r.requirement && r.requirement.tl) || '', NO_PDF],
   ['BDE', (r) => nm(r.requirement && r.requirement.bde), NO_PDF],
   ['Hiring Type', (r) => r.hiringType || ''],
-  ['Stage', (r) => r.stageLabel || stageLabel(r.stage) || ''],
+  ['Stage', (r) => r.stageLabel || stageLabel(r.stage) || ''], // a person who joined and then left reads Dropped (the list rows carry it)
+  ['Replaced by', (r) => (r.replacedBy ? (r.replacedBy.hidden ? 'another candidate' : r.replacedBy.candidateName) : ''), NO_PDF],
+  ['Replacement for', (r) => (r.replacementFor || []).map((f) => (f.hidden ? 'another candidate' : f.candidateName)).join('; '), NO_PDF],
 ];
 
 const workspace = (path) => async (req) => ((await screen(req, path)) || {}).rows || [];
@@ -412,6 +414,8 @@ const EXPORTS = {
       ['Client', (c) => c.clientName || ''],
       ['Stage', (c) => c.currentStageLabel || stageLabel(c.currentStage) || ''],
       ['Pipeline Stage', (c) => c.stageGroupLabel || '', NO_PDF],
+      ['Replaced by', (c) => (c.replacedBy ? (c.replacedBy.hidden ? 'another candidate' : c.replacedBy.candidateName) : ''), NO_PDF],
+      ['Replacement for', (c) => (c.replacementFor || []).map((f) => (f.hidden ? 'another candidate' : f.candidateName)).join('; '), NO_PDF],
       // The day the person joined, as plain text (12 Oct 2026). "Not recorded" for a joined person with no day on file; a person not
       // joined yet is blank (or the planned day). One rule: utils/joinDayShared.js; the same value the list shows.
       ['Joining date', (c) => joiningText(c)],

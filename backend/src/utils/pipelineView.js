@@ -97,7 +97,7 @@ function stageDetail(application, { internal = false } = {}) {
   if (g && g.id === 'interview' && application.interviewStatus) {
     return interviewStatusLabel(application.interviewStatus);
   }
-  return stageLabelFor(application.stage, { internal });
+  return require('./atsVocab').stepShown(application, stageLabelFor(application.stage, { internal })); // eslint-disable-line global-require
 }
 
 // How far along the visible pipeline a stage sits (-1 for Hold / Rejected /

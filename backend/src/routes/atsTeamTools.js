@@ -102,7 +102,8 @@ router.get('/compare', requireProduct('ats'), wrap(async (req, res) => {
       },
       matchScore: a.matchScore ?? a.resumeScore ?? null,
       stage: a.stage,
-      stageLabel: stageLabelFor(a.stage, { internal: !!r.internal }),
+      stageLabel: require('../utils/atsVocab').stepShown(a, stageLabelFor(a.stage, { internal: !!r.internal })), // eslint-disable-line global-require
+      ...(require('../utils/atsVocab').leftAfterJoining(a) ? { left: true } : {}), // eslint-disable-line global-require
       interviewRound: a.interviewStatus ? (a.interviewRound || 1) : null,
       lastFeedback: lastOf(a.id),
     };

@@ -15,6 +15,7 @@ const S = require('./schema');
 const V = require('./vocab');
 const A = require('./access');
 const JR = require('./journey');
+const RP = require('./replacement');
 
 const lc = (s) => String(s || '').trim().toLowerCase();
 const isTestName = (s) => !require('../utils/sandbox').isSandbox() && /zztest|example\.test/i.test(String(s || '')); // eslint-disable-line global-require
@@ -108,6 +109,7 @@ async function list(user, q = {}) {
   const counts = {
     all: base.length, Joined: base.filter((r) => r.status === 'Joined').length, Dropped: base.filter((r) => r.status === 'Dropped').length,
     needsDecision: base.filter((r) => r.status === 'Dropped' && !r.replacementDecision).length,
+    replaced: base.filter((r) => r.status === 'Dropped' && r.replacementApplicationId).length,
     needsDetails: base.filter((r) => !r.joinedOn || !r.location).length,
     ...(MAY_CHECK.includes(rt.kind) ? { check: checkMap.size } : {}),
   };
@@ -116,8 +118,9 @@ async function list(user, q = {}) {
   const slice = shown.slice((page - 1) * size, page * size);
   const keys = rt.kind === 'client' ? new Map() : await JR.keyDates(slice.map((r) => r.applicationId));
   const tasks = await A.taskStates(slice.map((r) => r.replacementTaskId));
+  const links = await RP.enrich(user, rt, slice); // who replaced whom (both directions), in words
   const rows = slice.map((r) => ({
-    ...A.shape(r, rt, { tasks }),
+    ...A.shape(r, rt, { tasks, links }),
     ...(rt.kind === 'client' ? {} : { journey: keys.get(r.applicationId) || null }),
     ...(checkMap.has(r.id) ? { doubleCheck: checkMap.get(r.id) } : {}),
   }));
@@ -157,11 +160,15 @@ async function report(user, q = {}) {
   rows.forEach((r) => { const k = keyOf(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
   const by = [...groups.entries()].map(([name, list]) => ({ name, ...tally(list, leave) })).sort((a, b) => (groupKey === 'month' ? b.name.localeCompare(a.name) : b.joined - a.joined || a.name.localeCompare(b.name)));
   const reasonMap = countBy(rows.filter((r) => r.status === 'Dropped'), 'dropReason');
+  // WHO REPLACED WHOM: the Replacement table (dropped person -> replacement, dates, days to replace) and the counts replaced / pending / expired
+  const links = await RP.enrich(user, rt, rows.filter((r) => r.status === 'Dropped'));
+  const replacements = { ...RP.tally(rows, links), table: RP.table(rows, links, { client: rt.kind === 'client' }) };
   const dropsInPeriod = all.filter((r) => r.status === 'Dropped' && (q.from || q.to ? inRange(r.droppedOn, q.from, q.to) : true) && (!q.department || lc(r.department) === lc(q.department)) && (!q.clientId || r.clientId === q.clientId)).length;
   return {
     period: { from: q.from || null, to: q.to || null },
     groupBy: groupKey,
-    totals: { ...tally(rows, leave), droppedInPeriod: dropsInPeriod },
+    totals: { ...tally(rows, leave), droppedInPeriod: dropsInPeriod, replacementsPending: replacements.pending, replacementsExpired: replacements.expired },
+    replacements,
     joinedCountsDropped: !leave,
     by,
     topReasons: [...reasonMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([reason, count]) => ({ reason, count })),
@@ -186,21 +193,24 @@ async function csvRows(user, q = {}) {
   const status = q.view === 'Joined' || q.view === 'Dropped' ? q.view : null;
   const list = status ? rows.filter((r) => r.status === status) : rows;
   const keys = rt.kind === 'client' ? new Map() : await JR.keyDates(list.map((r) => r.applicationId));
+  const links = await RP.enrich(user, rt, list);
   const staff = rt.kind !== 'client';
   const head = ['Candidate', 'Client', 'Requirement', ...(staff ? ['Department'] : []), 'Status', 'Joined on', 'Place', 'Designation', 'Days since joining',
     'Replacement period ends', 'Replacement period days', 'How the period was decided', 'Dropped on', 'Last working day', 'Reason', 'Reason details', 'Dropped inside the period',
-    ...(staff ? ['Reported by', 'Reported from'] : []), 'Replacement decision', 'Replacement status',
+    ...(staff ? ['Reported by', 'Reported from'] : []), 'Replacement decision', 'Replacement status', 'Replaced by', 'Replacement for',
     ...(staff ? ['Recruiter', 'TL', 'BDE', 'Came to us on', 'Reached BDE on', 'Sent to client on', 'First interview on', 'Offer made on', 'Offer accepted on'] : []),
     ...(rt.seePay ? ['Pay (CTC)'] : [])];
   const out = [head.map(cell).join(',')];
   list.forEach((r) => {
-    const s = A.shape(r, rt);
+    const s = A.shape(r, rt, { links });
     const k = keys.get(r.applicationId) || {};
+    const by = s.replacedBy ? (s.replacedBy.hidden ? 'another candidate' : s.replacedBy.candidateName) : '';
+    const forNames = (s.replacementFor || []).map((f) => (f.hidden ? 'another candidate' : f.candidateName)).join('; ');
     out.push([
       s.candidateName, s.clientName, s.jobTitle, ...(staff ? [s.department] : []), s.status, s.joinedOn || 'Not recorded', s.location || 'Not recorded', s.designation, s.daysSinceJoining,
       s.guaranteeEndsOn, s.guaranteeDays, s.guaranteeSourceWords, s.droppedOn, s.lastWorkingDay, s.dropReason, s.dropReasonDetail,
       s.status === 'Dropped' ? (s.dropWithinGuarantee === 1 ? 'Yes' : (s.dropWithinGuarantee === 0 ? 'No' : 'Not known')) : '',
-      ...(staff ? [s.dropReportedByName, s.dropReportedFrom] : []), s.replacementDecisionWords, s.replacementStatus,
+      ...(staff ? [s.dropReportedByName, s.dropReportedFrom] : []), s.replacementDecisionWords, s.replacementStatus, by, forNames,
       ...(staff ? [s.recruiterName, s.tlName, s.bdeName, k.cameOn || 'Not recorded', k.bdeOn || 'Not recorded', k.sentToClientOn || 'Not recorded', k.firstInterviewOn || 'Not recorded', k.offerOn || 'Not recorded', k.offerAcceptedOn || 'Not recorded'] : []),
       ...(rt.seePay ? [s.offeredCtc] : []),
     ].map(cell).join(','));
@@ -215,6 +225,12 @@ async function reportCsv(user, q = {}) {
   [{ name: 'ALL', ...r.totals }, ...r.by].forEach((g) => lines.push([g.name, g.joined, g.dropped, g.dropRate, g.withinGuarantee, g.replacementsRequested, g.replacementsDelivered, g.replacementsNotNeeded, g.waitingForClient].map(cell).join(',')));
   lines.push('', ['Top reasons', 'Count'].map(cell).join(','));
   r.topReasons.forEach((t) => lines.push([t.reason, t.count].map(cell).join(',')));
+  // the Replacement table: dropped candidate -> replacement candidate
+  const rp = r.replacements || { table: [] };
+  lines.push('', ['Replacements', 'Replaced', 'Pending', 'Expired (period over, nobody replaced)', 'The client said no', 'Not owed (after the period)'].map(cell).join(','));
+  lines.push(['', rp.replaced, rp.pending, rp.expired, rp.declined, rp.notOwed].map(cell).join(','));
+  lines.push(['Dropped candidate', 'Replaced by', 'Client', 'Requirement', 'Dropped on', 'Replacement joined on', 'Days to replace', 'Where it stands'].map(cell).join(','));
+  (rp.table || []).forEach((t) => lines.push([t.droppedCandidate, t.replacementCandidate || '', t.clientName, t.jobTitle, t.droppedOn, t.replacementJoinedOn || '', t.daysToReplace == null ? '' : t.daysToReplace, t.words].map(cell).join(',')));
   return { csv: `${lines.join('\r\n')}\r\n` };
 }
 

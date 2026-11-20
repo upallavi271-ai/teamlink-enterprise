@@ -41,6 +41,8 @@ const {
   stageAllowedForHiringType, dateYearProblem,
 } = require('../utils/joining');
 const { REJECTED_BY, REJECTED_BY_LABEL } = require('../utils/atsVocab');
+const { stepShown, leftAfterJoining: leftAfterJoiningApp, dropWords } = require('../utils/atsVocab'); // the Dropped step (one helper for every list)
+const RPL = require('../joindrop/replacement'); // who replaced whom
 // §32 — every stage these routes move writes Pipeline History, candidate
 // communications, follow-ups and the next person's notification.
 const { recordWorkflowMove } = require('../utils/stageEvents');
@@ -149,7 +151,9 @@ function shapeRowFull(app) {
     },
     hiringType: hiringTypeOf(app, req),
     stage: app.stage,
-    stageLabel: stageLabel(app.stage),
+    // a person who joined and then left: every Interviews / Offers / Joining list and the calendar window say Dropped (the stage code stays Joined)
+    stageLabel: stepShown(app, stageLabel(app.stage)),
+    ...(leftAfterJoiningApp(app) ? { left: true, dropNote: dropWords(app.id) } : {}),
     interviewAt: app.interviewAt,
     interviewType: app.interviewType,
     interviewer: app.interviewer,
@@ -193,6 +197,7 @@ function filterOptionsFor(rows) {
 }
 
 async function listScoped(req, where) {
+  await JRULE.refresh().catch(() => null); // who left after joining (the Dropped step)
   const bdeView = bdeViewOf(req.user);
   const rows = await prisma.application.findMany({
     // AND, never a spread: a scope that is itself an OR (a seat-scoped lead)
@@ -210,6 +215,7 @@ async function listScoped(req, where) {
 const IJ = require('../utils/intJoinList'); // eslint-disable-line import/order
 async function rowsByIds(req, ids) {
   if (!ids.length) return [];
+  await JRULE.refresh().catch(() => null);
   const bdeView = bdeViewOf(req.user);
   const apps = await prisma.application.findMany({
     where: { AND: [applicationWhere(req.user), { id: { in: ids } }] },
@@ -947,6 +953,7 @@ router.get('/joining', requirePerm('ats', 'interviews', 'Joining', 'view'), asyn
   const callOf = new Map();
   calls.forEach((c) => { if (!callOf.has(c.applicationId)) callOf.set(c.applicationId, c); });
   const DAYMS = 86400000;
+  const replTags = await RPL.tags(req.user, rows.map((r) => r.id)).catch(() => new Map()); // "Replacement for ..." / "Replaced by ..."
   const withInvoice = rows.map((r) => {
     const inv = invoices.find((i) => i.candidateId === r.candidate.id && i.requirementId === r.requirement.id);
     const period = r.requirement.client ? periodOf.get(r.requirement.client.id) : null;
@@ -960,6 +967,7 @@ router.get('/joining', requirePerm('ats', 'interviews', 'Joining', 'view'), asyn
       waitingToJoin: r.stage === 'OFFER_ACCEPTED' && !['Joined', 'Dropped'].includes(r.joiningStatus),
       // joined, then left (the record says Dropped): shown under "Left / did not join", not Joined (utils/joinedRule.js)
       leftAfterJoining: ['JOINED', 'HIRED'].includes(r.stage) && JRULE.excluded(r.id),
+      ...RPL.put({}, replTags.get(r.id)),
       waitingSince,
       daysWaiting: waitingSince ? Math.max(0, Math.floor((Date.now() - new Date(waitingSince).getTime()) / DAYMS)) : null,
       call: call ? { at: call.createdAt, note: call.comment, by: call.actorName } : null,
@@ -1477,6 +1485,18 @@ router.patch('/applications/:id/roll-status', async (req, res) => {
     }
     if (rec && rec.status === 'Dropped' && rollStatus !== 'Dropped') {
       return res.status(409).json({ error: 'This drop is recorded. If it was reported by mistake, open the drop window and use "Withdraw the drop" (a reason is kept in the history).', needsReopen: true, applicationId: app.id });
+    }
+    // "Replacement" is not a bare label either: it must say WHO this person replaces (the dialog "Who is this a replacement for?" links them first).
+    if (rollStatus === 'Replacement') {
+      const S = require('../joindrop/schema'); // eslint-disable-line global-require
+      const linked = await S.one('SELECT "id" FROM "JoiningRecord" WHERE "replacementApplicationId" = ?', app.id);
+      if (!linked) {
+        const RP = require('../joindrop/replacement'); // eslint-disable-line global-require
+        const A = require('../joindrop/access'); // eslint-disable-line global-require
+        const w = await RP.waitingFor(req.user, await A.rights(req.user), app.id).catch(() => null);
+        if (!w || !w.records.length) return res.status(409).json({ error: 'No dropped candidate of this client is waiting for a replacement.', nobodyWaiting: true, applicationId: app.id });
+        return res.status(409).json({ error: 'Say who this person replaces first: choose the dropped candidate in the window that opens.', needsReplacementLink: true, applicationId: app.id, waiting: w.records.length });
+      }
     }
   }
   await prisma.application.update({ where: { id: app.id }, data: { rollStatus: rollStatus || null } });

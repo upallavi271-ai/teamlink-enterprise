@@ -49,6 +49,7 @@ const KINDS = {
   CLIENT_DECISION: 'Replacement decision',
   REPLACEMENT_LINKED: 'Replacement candidate linked',
   REPLACEMENT_CLOSED: 'Replacement closed',
+  REPLACEMENT_UNLINKED: 'Replacement link removed',
   DROP_REOPENED: 'Drop withdrawn (wrongly reported)',
   REPLACEMENT_TASK_CANCELLED: 'Replacement task cancelled',
   REPLACEMENT_TASK_OPENED: 'Replacement task opened by hand',

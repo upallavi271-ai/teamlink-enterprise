@@ -880,6 +880,19 @@ function leftAfterJoining(a) {
   // the Joining & Drop record is the authority (utils/joinedRule.js, the same fact the Joined counts leave out); sync, needs its refresh() to have run
   try { return !!(a.id && require('./joinedRule').droppedNow(a.id)); } catch { return false; } // eslint-disable-line global-require
 }
+// THE ONE WORD for the step a person is shown at (founder 2026-11-20: "when a drop is recorded, the candidate's profile STEP must also show Dropped").
+// The stage itself stays Joined in the database (billing, guarantee and history read it); every list, page, export and message that SAYS the step
+// asks this: stepShown(app, 'Joined') -> 'Dropped' for a person who left after joining, else the normal word. dropWords(appId) is the same fact in a
+// sentence ("Dropped on 12 Nov 2026 - Resigned"). Needs joinedRule.refresh() to have run (it is warmed at start and after every drop / withdrawal).
+function stepShown(a, normal) { return leftAfterJoining(a) ? 'Dropped' : normal; }
+function dropWords(appId) {
+  try {
+    const d = require('./joinedRule').dropInfo(appId); // eslint-disable-line global-require
+    if (!d) return 'Dropped';
+    const day = d.droppedOn && /^d{4}-d{2}-d{2}$/.test(d.droppedOn) ? new Date(`${d.droppedOn}T00:00:00Z`).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : null;
+    return `Dropped${day ? ` on ${day}` : ''}${d.reason ? ` - ${d.reason}` : ''}`;
+  } catch { return 'Dropped'; }
+}
 const WORKFLOW_RULES = {
   DUPLICATE_CHECK_PENDING: (a, ctx) => !ctx.duplicateChecked,
   RESUME_SCORE_PENDING: (a, ctx) => !!ctx.duplicateChecked && !ctx.resumeScored,
@@ -1003,6 +1016,8 @@ module.exports = {
   JOINING_REPLACED,
   JOINING_LEFT_AFTER_GUARANTEE,
   leftAfterJoining,
+  stepShown,
+  dropWords,
   WORKFLOW_STAGE_GROUPS,
   WORKFLOW_RULES,
   WORKFLOW_FLOW,

@@ -57,6 +57,16 @@ router.get('/requirement/:id/export', wrap(async (req, res) => {
   return sendFile(req, res, format, out);
 }));
 
+// the Replacement table: dropped candidate -> replacement candidate, dates, days to replace
+function replacementSheet(rp) {
+  if (!rp) return null;
+  return {
+    name: 'Replacements',
+    headers: ['Dropped candidate', 'Replaced by', 'Client', 'Requirement', 'Dropped on', 'Replacement joined on', 'Days to replace', 'Where it stands'],
+    rows: (rp.table || []).map((t) => [t.droppedCandidate, t.replacementCandidate || '', t.clientName || '', t.jobTitle || '', t.droppedOn || '', t.replacementJoinedOn || '', t.daysToReplace == null ? '' : t.daysToReplace, t.words || '']),
+  };
+}
+
 async function sendFile(req, res, format, out) {
   const shown = out.exportRows; // the rows of the screen: the same status / step filter and sort
   const r = out.requirement;
@@ -77,7 +87,8 @@ async function sendFile(req, res, format, out) {
       },
       H.funnelSheet(out.funnel),
       { name: 'Candidates', headers: H.ROW_HEADERS, rows: shown.map((x) => H.exportRow(x)) },
-    ],
+      replacementSheet(out.replacements),
+    ].filter(Boolean),
   });
 }
 
@@ -117,7 +128,8 @@ router.get('/client/:id/export', wrap(async (req, res) => {
       rows: out.joinings.map((x) => [x.candidate, x.requirement, x.recruiterName || '', x.joinDay || '', x.guaranteeEnd || '', x.guarantee, x.left ? x.left.day || '' : '', x.left ? x.left.reason || '' : '']),
     },
     { name: 'Drop reasons', headers: ['Reason', 'Candidates'], rows: out.dropSummary.byReason.map((x) => [x.reason, x.count]) },
-  ];
+    replacementSheet(out.replacements),
+  ].filter(Boolean);
   if (out.billing) {
     sheets.push({ name: 'Billing', headers: ['Candidate', 'Invoice', 'Invoice date', 'Amount', 'Status', 'Paid on'], rows: out.billing.perJoining.map((x) => [x.candidate, x.invoiceNumber || '', x.invoiceDay || '', x.amount === null ? '' : x.amount, x.status, x.paidDay || '']) });
   }

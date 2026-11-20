@@ -129,7 +129,7 @@ function shapeApplication(a) {
     requirementId: a.requirementId,
     client: a.requirement && a.requirement.client ? a.requirement.client.name : null,
     stage: a.stage,
-    stageLabel: stageLabel(a.stage),
+    stageLabel: require('./atsVocab').stepShown(a, stageLabel(a.stage)), // eslint-disable-line global-require
     owner: applicationOwner(a, a.requirement),
     nextAction: applicationNextAction(a),
     due: applicationDueDate(a),

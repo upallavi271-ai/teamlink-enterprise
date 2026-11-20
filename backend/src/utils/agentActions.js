@@ -635,7 +635,7 @@ function appAmbiguity(ctx, a, ignore = []) {
   const rivals = list.filter((r) => r.id !== a.id && score(r) >= mine);
   if (mine > 0 && !rivals.length) return null;
   const options = [a, ...rivals].slice(0, 5)
-    .map((r) => `${r.candidate} — ${r.requirement}${r.client ? ` (${r.client})` : ''}, at ${stageLabel(r.stage)}`);
+    .map((r) => `${r.candidate} — ${r.requirement}${r.client ? ` (${r.client})` : ''}, at ${require('./atsVocab').stepShown(r, stageLabel(r.stage))}`); // eslint-disable-line global-require
   return mine > 0
     ? `Which one do you mean? ${options.join('; ')}.`
     : 'Which candidate? Give me their name (and the requirement if they are on more than one).';
@@ -670,7 +670,7 @@ const passed = (r, okMessage) => (r.ok
   : { ok: false, status: r.status, message: (r.data && r.data.error) || `The request was refused (${r.status}).` });
 
 function appLine(a) {
-  return `${a.candidate} — ${a.requirement}${a.client ? ` (${a.client})` : ''}, now at ${stageLabel(a.stage)}`;
+  return `${a.candidate} — ${a.requirement}${a.client ? ` (${a.client})` : ''}, now at ${require('./atsVocab').stepShown(a, stageLabel(a.stage))}`; // eslint-disable-line global-require
 }
 
 // ---------------------------------------------------------------------------

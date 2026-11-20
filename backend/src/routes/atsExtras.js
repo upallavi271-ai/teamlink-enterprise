@@ -1006,7 +1006,8 @@ router.get('/search', async (req, res) => {
   // eslint-disable-next-line global-require
   const { displayCode } = require('../utils/clientDuplicates');
   // eslint-disable-next-line global-require
-  const { stageLabel } = require('../utils/atsVocab');
+  const { stageLabel, stepShown } = require('../utils/atsVocab');
+  await require('../utils/joinedRule').refresh().catch(() => null); // eslint-disable-line global-require
   const q = String(req.query.q || '').trim().slice(0, 100);
   const take = Math.min(SEARCH_TAKE, Math.max(1, Number(req.query.limit) || SEARCH_TAKE));
   const s = scopeOf(req.user);
@@ -1082,7 +1083,7 @@ router.get('/search', async (req, res) => {
           where: appScope,
           orderBy: { updatedAt: 'desc' },
           take: 1,
-          select: { stage: true, requirementId: true, requirement: { select: { title: true, reqCode: true } } },
+          select: { id: true, stage: true, rollStatus: true, joiningStatus: true, requirementId: true, requirement: { select: { title: true, reqCode: true } } },
         },
       },
       orderBy: { name: 'asc' },
@@ -1127,7 +1128,7 @@ router.get('/search', async (req, res) => {
         phone: c.phone || null,
         requirement: last && last.requirement ? last.requirement.title : null,
         requirementCode: last && last.requirement ? last.requirement.reqCode || null : null,
-        stageLabel: last ? stageLabel(last.stage) : null,
+        stageLabel: last ? stepShown(last, stageLabel(last.stage)) : null, // a person who joined and then left reads Dropped
         to: `/candidates/${c.id}`,
       };
     }),

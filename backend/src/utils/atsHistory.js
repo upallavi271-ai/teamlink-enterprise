@@ -325,7 +325,7 @@ async function loadRecords(user, reqRows, { fresh = true, candidateId = null } =
     const interviewResult = a.interviewResult || (fb ? fb.recommendation : null);
     recs.push({
       applicationId: a.id, candidateId: a.candidateId, candidate: (a.candidate && a.candidate.name) || '—', requirementId: a.requirementId,
-      stage: a.stage, stageLabel: left ? 'Left after joining' : V.stageLabel(a.stage), outcome, recruiterId, recruiterName, steps,
+      stage: a.stage, stageLabel: left ? 'Dropped' : V.stageLabel(a.stage), outcome, recruiterId, recruiterName, steps,
       interviewDates: slots.sort(), interviewResult,
       joinDay: counted || left ? joinDayAny || null : null, guaranteeEnd: counted || left ? (cj && cj.guaranteeEnd) || (rec && rec.guaranteeEndsOn) || null : null,
       joinedCounted: counted, joinedUncounted: JOINED.includes(a.stage) && !counted && !left,
@@ -579,13 +579,18 @@ async function requirementHistory(user, id, q = {}) {
   const f = funnelOf(recs, period);
   const recruiters = [...new Map(all.filter((x) => x.recruiterId).map((x) => [x.recruiterId, x.recruiterName || x.recruiterId])).entries()].map(([rid, name]) => ({ id: rid, name })).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const rows = tableRows(recs, q).map(rowOut); // the status / step filter and the sort of the screen
+  // WHO REPLACED WHOM: a chip on each row and the Replacement table of this requirement
+  const RPm = require('../joindrop/replacement'); // eslint-disable-line global-require
+  const tg = await RPm.tags(user, rows.map((x) => x.applicationId)).catch(() => new Map());
+  rows.forEach((x) => RPm.put(x, tg.get(x.applicationId)));
+  const replacements = await RPm.sectionFor(user, all.map((x) => x.applicationId)).catch(() => null);
   const timeline = await timelineOf(header, recs);
   delete header._audits; delete header._nm;
   const exportRows = q._export ? rows : undefined;
   return {
     exportRows,
     requirement: header, definitions: DEFINITIONS, period, funnel: f.tiles, dropSummary: f.dropSummary, joinedDetail: f.joinedDetail, inprocessDetail: f.inprocessDetail,
-    rows, total: rows.length, recruiters, timeline,
+    rows, total: rows.length, recruiters, timeline, replacements,
     notes: { estimatedDates: f.tiles.reduce((n, t) => n + t.estimated, 0), joinedWithoutDate: all.filter((x) => x.joinedUncounted).length },
   };
 }
@@ -648,13 +653,17 @@ async function clientHistory(user, id, q = {}) {
   });
   const shareToJoin = recs.filter((x) => x.steps.joined && x.steps.shared).map((x) => daysBetween(x.steps.shared.day, x.steps.joined.day));
   const reqTitle = new Map(reqs.map((r) => [r.id, r.reqCode ? `${r.reqCode} · ${r.title}` : r.title]));
+  const RPc = require('../joindrop/replacement'); // eslint-disable-line global-require
+  const tgc = await RPc.tags(user, recs.filter((x) => x.outcome === 'joined' || x.joinDay).map((x) => x.applicationId)).catch(() => new Map());
+  const replacementsC = await RPc.sectionFor(user, all.map((x) => x.applicationId)).catch(() => null);
   const joinings = recs.filter((x) => x.outcome === 'joined' || x.joinDay).map((x) => {
     const row = rowOut(x);
-    return {
+    return RPc.put({
       applicationId: x.applicationId, candidate: x.candidate, requirementId: x.requirementId, requirement: reqTitle.get(x.requirementId) || '', recruiterName: x.recruiterName,
       joinDay: x.joinDay, guaranteeEnd: x.guaranteeEnd, guarantee: !x.joinDay ? 'No joining date' : x.drop ? `Left${x.drop.day ? ` on ${x.drop.day}` : ''}` : (x.guaranteeEnd ? (today <= x.guaranteeEnd ? 'In guarantee' : 'Past guarantee') : 'Guarantee not set'),
       left: row.drop && row.drop.type === 'left_after_joining' ? row.drop : null,
-    };
+      stageLabel: x.stageLabel,
+    }, tgc.get(x.applicationId));
   }).sort((a, b) => String(a.joinDay || '9999').localeCompare(String(b.joinDay || '9999')));
   const recruiters = [...new Map(all.filter((x) => x.recruiterId).map((x) => [x.recruiterId, x.recruiterName || x.recruiterId])).entries()].map(([rid, name]) => ({ id: rid, name })).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   // agreements (hidden for the logins that never see them)
@@ -696,7 +705,7 @@ async function clientHistory(user, id, q = {}) {
     big: { requirementsGiven: reqs.length, joinings: (f.tiles.find((t) => t.key === 'joined') || {}).count || 0, leftAfterJoining: (f.tiles.find((t) => t.key === 'left') || {}).count || 0 },
     requirements: { opened, closed: closedN, total: reqs.length, open: reqs.filter((r) => !['CLOSED', 'DRAFT'].includes(r.status)).length },
     averages: { daysToFill: avg(fill), daysShareToJoin: avg(shareToJoin), filledRequirements: fill.length },
-    joinings, requirementRows: reqRows, recruiters, agreements, billing,
+    joinings, requirementRows: reqRows, recruiters, agreements, billing, replacements: replacementsC,
     notes: { estimatedDates: f.tiles.reduce((n, t) => n + t.estimated, 0) },
   };
 }
@@ -749,13 +758,14 @@ async function search(user, textIn, { clientDesk = false } = {}) {
 // ---- Excel / CSV -----------------------------------------------------------------------------------------------------------------------------
 const dash = (d) => d || '';
 const mark = (x) => (x ? `${x.day}${x.est ? ' (estimated)' : ''}` : '');
-const ROW_HEADERS = ['Candidate', 'Recruiter', 'Shared with client', 'Client shortlisted', 'Current step', 'Interview date(s)', 'Interview result', 'Selected on', 'Offer released', 'Offer accepted', 'Joining date', 'Guarantee ends', 'Status', 'Dropped on', 'Dropped at step', 'Who dropped / why type', 'Drop reason', 'Reported by'];
+const ROW_HEADERS = ['Candidate', 'Recruiter', 'Shared with client', 'Client shortlisted', 'Current step', 'Interview date(s)', 'Interview result', 'Selected on', 'Offer released', 'Offer accepted', 'Joining date', 'Guarantee ends', 'Status', 'Dropped on', 'Dropped at step', 'Who dropped / why type', 'Drop reason', 'Reported by', 'Replaced by', 'Replacement for'];
 function exportRow(r, extra = []) {
   const d = r.drop;
-  const status = r.outcome === 'joined' ? (d && d.type === 'left_after_joining' ? 'Joined, then left' : 'Joined') : r.outcome === 'dropped' ? 'Dropped' : r.outcome === 'selected' ? 'Selected, not joined yet' : 'In process';
+  const status = r.outcome === 'joined' ? (d && d.type === 'left_after_joining' ? 'Dropped (joined, then left)' : 'Joined') : r.outcome === 'dropped' ? 'Dropped' : r.outcome === 'selected' ? 'Selected, not joined yet' : 'In process';
   return [
     ...extra, r.candidate, dash(r.recruiterName), mark(r.shared), mark(r.shortlisted), r.stageLabel, (r.interviewDates || []).join(', '), dash(r.interviewResult), mark(r.selected), mark(r.offer), mark(r.offerAccepted),
     dash(r.joinDay), dash(r.guaranteeEnd), status, d ? `${d.day || ''}${d.estimated ? ' (estimated)' : ''}` : '', d && d.stageLabel ? d.stageLabel : '', d ? d.typeLabel : '', d ? dash(d.reason) : '', d ? [d.byName, d.by].filter(Boolean).join(' / ') : '',
+    r.replacedBy ? (r.replacedBy.hidden ? 'another candidate' : r.replacedBy.candidateName) : '', (r.replacementFor || []).map((f) => (f.hidden ? 'another candidate' : f.candidateName)).join('; '),
   ];
 }
 function funnelSheet(tiles) {

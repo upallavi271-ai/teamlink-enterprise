@@ -198,6 +198,7 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
     orderBy: { createdAt: 'desc' },
   });
   const reqIds = requirements.map((r) => r.id);
+  await require('../utils/joinedRule').refresh().catch(() => null); // eslint-disable-line global-require
   const apps = reqIds.length ? await prisma.application.findMany({
     where: { requirementId: { in: reqIds } },
     select: {
@@ -270,7 +271,8 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
   const candidates = shared.map((a) => {
     const mine = clientEvents.get(a.id) || [];
     const lastDecision = mine.length ? decisionCode(mine[mine.length - 1].action) : null;
-    const st = clientStatus(a.stage, lastDecision);
+    // the client's own people who joined and then left read "Dropped" (the stage code stays Joined)
+    const st = require('../utils/atsVocab').leftAfterJoining(a) ? { label: 'Dropped', tone: 'red', decide: false } : clientStatus(a.stage, lastDecision); // eslint-disable-line global-require
     const fb = feedbackOf.get(a.id);
     return {
       applicationId: a.id,
@@ -304,7 +306,7 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
   const yourContact = client.bdeOwner ? { name: client.bdeOwner, position: bdeDir.positionFor(client.bdeOwner), label: bdeDir.labelFor(client.bdeOwner) } : null;
   const count = (reqId, pred) => shared.filter((a) => a.requirementId === reqId && pred(a)).length;
   const reqRows = requirements.map((r) => {
-    const joined = count(r.id, (a) => JOINED.includes(a.stage));
+    const joined = count(r.id, (a) => JOINED.includes(a.stage) && !require('../utils/joinedRule').excluded(a.id)); // eslint-disable-line global-require
     return {
       id: r.id,
       reqCode: r.reqCode,
@@ -342,7 +344,7 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
     applicationId: a.id,
     candidate: a.candidate.name,
     requirement: reqById.get(a.requirementId) ? reqById.get(a.requirementId).title : null,
-    status: JOINED.includes(a.stage) ? 'Joined' : (a.stage === 'OFFER_ACCEPTED' ? 'Offer accepted' : a.stage === 'OFFER' ? 'Offer made' : 'Selected'),
+    status: JOINED.includes(a.stage) ? require('../utils/atsVocab').stepShown(a, 'Joined') : (a.stage === 'OFFER_ACCEPTED' ? 'Offer accepted' : a.stage === 'OFFER' ? 'Offer made' : 'Selected'),
     joiningDate: a.joiningDate || null,
     joinedAt: a.joinedAt || null,
   }));

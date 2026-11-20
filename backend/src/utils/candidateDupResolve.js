@@ -24,7 +24,7 @@ const D = require('./candidateDedupe');
 const SC = require('./scope');
 const PERM = require('./permissions');
 const CS = require('./candidateSource');
-const { stageLabel } = require('./atsVocab');
+const { stageLabel, stepShown } = require('./atsVocab');
 const { logAudit } = require('./audit');
 
 const { MergeError } = D;
@@ -165,7 +165,7 @@ function card(c, { user, kind, inArea, reasons = [] }) {
     skills: c.skills ? String(c.skills).slice(0, 120) : null, hasResume: !!c.resumeName,
     phone: showContact ? c.phone || null : null, email: showContact ? c.email || null : null,
     phoneHint: !showContact ? null : undefined,
-    stage: latest ? latest.stage : null, stageLabel: latest ? stageLabel(latest.stage) : 'No requirement yet',
+    stage: latest ? latest.stage : null, stageLabel: latest ? stepShown(latest, stageLabel(latest.stage)) : 'No requirement yet',
     owner: own.recruiter || null, ownerTl: own.tl, department: own.department,
     lastActivity: lastActivityOf(c),
     applicationCount: (c.applications || []).length,
@@ -174,7 +174,7 @@ function card(c, { user, kind, inArea, reasons = [] }) {
     applications: sorted.slice(0, 8).map((a) => ({
       id: a.id, requirementId: a.requirementId, title: a.requirement ? a.requirement.title : null,
       client: a.requirement ? (a.requirement.internal ? 'TeamLink Internal' : (a.requirement.client && a.requirement.client.name) || null) : null,
-      stage: a.stage, stageLabel: stageLabel(a.stage), createdAt: DUP.iso(a.createdAt),
+      stage: a.stage, stageLabel: stepShown(a, stageLabel(a.stage)), createdAt: DUP.iso(a.createdAt),
     })),
   };
 }

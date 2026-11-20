@@ -7,7 +7,7 @@
 // (utils/controlTower.js): live requirement statuses, active = not Rejected / On hold / Joined, the ATS pending stages, the invoice maths.
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
-const { REQUIREMENT_LIVE_STATUSES, stageLabel } = require('./atsVocab');
+const { REQUIREMENT_LIVE_STATUSES, stageLabel, stepShown } = require('./atsVocab');
 const A = require('./accounts');
 const CNU = require('./creditNotes');
 const { withoutSystemAccounts } = require('./systemAccounts');
@@ -61,7 +61,7 @@ function appRow(a) {
   const c = a.candidate || {}; const r = a.requirement || {};
   return {
     id: a.id,
-    c: { candidate: c.name || '-', stage: stageLabel(a.stage) || a.stage, requirement: r.title || '-', client: (r.client && r.client.name) || '-', added: a.createdAt, updated: a.updatedAt },
+    c: { candidate: c.name || '-', stage: stepShown(a, stageLabel(a.stage) || a.stage), requirement: r.title || '-', client: (r.client && r.client.name) || '-', added: a.createdAt, updated: a.updatedAt },
     d: [field('Requirement code', r.reqCode), field('Department', r.department), field('Source', a.source || c.source), field('Location', c.location), field('Email', c.email), field('Phone', c.phone),
       field('Interview', a.interviewAt ? new Date(a.interviewAt).toISOString().slice(0, 16).replace('T', ' ') : null)],
   };

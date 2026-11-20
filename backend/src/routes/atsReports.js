@@ -143,6 +143,8 @@ const PIPE = [
   ...STAGE_GROUPS.map((g) => ({ id: g.id, label: g.label, stages: g.stages })),
   { id: 'hold', label: 'Hold', stages: ['HOLD'] },
   { id: 'rejected', label: 'Rejected', stages: ['REJECTED'] },
+  // a person who joined and then left shows at "Dropped" in every stage view (the stage code stays Joined; utils/joinedRule.js is the one fact)
+  { id: 'dropped', label: 'Dropped', stages: [] },
 ];
 const PIPE_OF = {};
 PIPE.forEach((g) => g.stages.forEach((s) => { PIPE_OF[s] = g; }));
@@ -308,7 +310,7 @@ function parseFilters(q = {}) {
   const [fam, val] = f.status.split(':');
   f.reqStatuses = fam === 'req' && REQ_STATUS_FILTERS[val] ? REQ_STATUS_FILTERS[val].statuses : null;
   f.candStatus = fam === 'cand' && CAND_STATUS_FILTERS[val] ? CAND_STATUS_FILTERS[val].where : null;
-  f.stageCodes = (PIPE.find((g) => g.id === f.stage) || {}).stages || null;
+  f.stageCodes = f.stage === 'dropped' ? ['JOINED', 'HIRED'] : ((PIPE.find((g) => g.id === f.stage) || {}).stages || null);
   return f;
 }
 
@@ -596,7 +598,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
     fus.forEach((y) => { if (!y.completedAt && y.dueDate && (openDue === null || y.dueDate < openDue)) openDue = y.dueDate; });
 
     return Object.assign(Object.create(ReportAppProto), {
-      id: a.id, a, stage: a.stage, pipe: PIPE_OF[a.stage] || PIPE[0], reach,
+      id: a.id, a, stage: a.stage, pipe: (JOINED_STAGES.includes(a.stage) && JRULE.excluded(a.id) ? PIPE.find((g) => g.id === 'dropped') : null) || PIPE_OF[a.stage] || PIPE[0], reach,
       lastReject: a.stage === 'REJECTED' ? (lastReject || null) : null,
       reached: (k) => (k === 'joined' ? joined : reach >= M[k]),
       screened: a.stage !== 'NEW' || reach > 0,
@@ -637,6 +639,9 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
       x.source = sourceOf({ ...a, candidate: sourceless.has(a.candidateId) ? base.candById.get(a.candidateId) || null : null });
     }
     x.joinOutcome = x.reached('selected') ? joiningOutcome(x, today) : null;
+    // the Stage filter: "Dropped" = people who joined and then left; "Joined" = the ones still working
+    if (f.stage === 'dropped' && x.pipe.id !== 'dropped') return;
+    if (f.stage === 'joined' && x.pipe.id === 'dropped') return;
     apps.push(x);
   });
 
@@ -1034,7 +1039,7 @@ function stageAgingSection(ctx, id = 'aging') {
   ], {
     sub: 'Measured from the last recorded move into the stage; where no move was recorded, from the day the candidate was added.',
   });
-  PIPE.filter((g) => !['joined', 'rejected'].includes(g.id)).forEach((g) => { sec.row(g.id).cells.stage = g.label; });
+  PIPE.filter((g) => !['joined', 'rejected', 'dropped'].includes(g.id)).forEach((g) => { sec.row(g.id).cells.stage = g.label; });
   const days = new Map();
   ctx.apps.forEach((x) => {
     if (!sec.rows.has(x.pipe.id)) return;
@@ -1052,7 +1057,7 @@ function stageAgingSection(ctx, id = 'aging') {
 function buildCandidates(ctx) {
   const t = tileSet();
   const byPipe = {};
-  PIPE.forEach((g) => { byPipe[g.id] = t.add(g.id, g.label, 'app', g.stages.map(stageLabel).join(', ')); });
+  PIPE.forEach((g) => { byPipe[g.id] = t.add(g.id, g.label, 'app', g.stages.length ? g.stages.map(stageLabel).join(', ') : 'Joined, then left'); });
   const people = t.add('people', 'Unique Candidates', 'cand');
   ctx.apps.forEach((x) => {
     byPipe[x.pipe.id].add(x.id, x.daysInStage);

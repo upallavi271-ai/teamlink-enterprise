@@ -25,7 +25,7 @@ const {
 } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
-const { stageLabel } = require('../utils/atsVocab');
+const { stageLabel, stepShown } = require('../utils/atsVocab');
 const { dataStamp } = require('../utils/dataStamp');
 const { hasPersonQuery, attributedApplications } = require('../utils/workers');
 const {
@@ -98,7 +98,7 @@ function shape(row, application) {
     ...d,
     candidateName: application.candidate ? application.candidate.name : null,
     applicationStage: application.stage,
-    applicationStageLabel: stageLabel(application.stage),
+    applicationStageLabel: stepShown(application, stageLabel(application.stage)),
     requirementTitle: r.title || null,
     requirementCode: r.reqCode || null,
     clientName: r.internal ? 'TeamLink Internal' : (r.client && r.client.name) || null,
@@ -236,7 +236,7 @@ async function buildRows(req) {
       requirementPriority: r.priority || null,
       clientName: r.internal ? 'TeamLink Internal' : (r.client && r.client.name) || null,
       stage: a.stage,
-      stageLabel: stageLabel(a.stage),
+      stageLabel: stepShown(a, stageLabel(a.stage)),
       // Owner / Owner Role / TL / BDE — from the row where one exists (the
       // snapshot at the time it was recorded), otherwise resolved live from
       // the assignment chain so an un-followed-up application still says who

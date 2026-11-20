@@ -463,7 +463,7 @@ router.get('/applications', perm(APPLICATIONS, 'view'), wrap(async (req, res) =>
       sourceKey: sourceOfApp(a).key,
       sourceRaw: sourceOfApp(a).raw,
       stage: a.stage,
-      stageLabel: stageLabel(a.stage),
+      stageLabel: require('../utils/atsVocab').stepShown(a, stageLabel(a.stage)), // eslint-disable-line global-require
       appliedAt: a.createdAt,
       imported: !!a.portalImportedAt,
       importedAt: a.portalImportedAt,
@@ -880,7 +880,7 @@ router.get('/client', perm(CLIENT_VIEW, 'view'), wrap(async (req, res) => {
       skills: a.candidate.skills,
       requirementId: a.requirementId,
       stage: a.stage,
-      stageLabel: stageLabel(a.stage),
+      stageLabel: require('../utils/atsVocab').stepShown(a, stageLabel(a.stage)), // eslint-disable-line global-require
       interviewAt: a.interviewAt,
       interviewStatus: a.interviewStatus,
       sharedAt: a.createdAt,

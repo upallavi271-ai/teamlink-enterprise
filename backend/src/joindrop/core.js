@@ -124,7 +124,7 @@ async function update(recordId, patch) {
   const sets = keys.map((k) => `"${k}" = ?`).join(', ');
   await S.run(`UPDATE "JoiningRecord" SET ${sets}, "updatedAt" = ? WHERE "id" = ?`, ...keys.map((k) => (patch[k] === undefined ? null : patch[k])), V.nowIso(), recordId);
   // a drop reported / withdrawn (and its day / reason corrected) changes who is "Joined" in every list and number (utils/joinedRule.js)
-  if (keys.some((k) => k === 'status' || k === 'droppedOn' || k === 'dropReason' || k === 'dropReasonDetail' || k === 'dropWithinGuarantee')) {
+  if (keys.some((k) => k === 'status' || k === 'droppedOn' || k === 'dropReason' || k === 'dropReasonDetail' || k === 'dropWithinGuarantee' || k === 'replacementApplicationId' || k === 'replacementStatus' || k === 'replacementDecision')) {
     try { require('../utils/joinedRule').invalidate(); } catch (e) { console.error('[join-drop] joined rule:', e.message); } // eslint-disable-line global-require
   }
   return get(recordId);
@@ -527,23 +527,55 @@ async function decide(recordId, body, actor, { from, onBehalf = false, ctx = {} 
 // ===========================================================================================
 // THE REPLACEMENT CANDIDATE
 // ===========================================================================================
-async function linkReplacement(recordId, newApplicationId, actor, { from = null } = {}) {
+// opts.loose (the "Who is this a replacement for?" dialog of the Roll status): the replacement may be on ANOTHER requirement of the SAME client, and the
+// client's yes / no may still be pending (a "No replacement needed" answer is still refused). opts.setLabel: also put "Replacement" on the new
+// person's Roll status, so the label is never a bare word that links to nobody.
+async function linkReplacement(recordId, newApplicationId, actor, { from = null, loose = false, setLabel = false } = {}) {
   await ready();
   const rec = await get(recordId);
   if (!rec) throw new Bad('That joining record was not found.', 404);
   if (rec.status !== 'Dropped') throw new Bad('Only a dropped candidate has a replacement to link.', 409);
-  if (rec.replacementDecision !== 'NEEDED') throw new Bad('The client has not asked for a replacement. Ask the client, or record their answer first.', 409);
+  if (loose) {
+    if (rec.replacementDecision === 'NOT_NEEDED') throw new Bad(`The client said no replacement is needed for ${rec.candidateName || 'this candidate'}.`, 409);
+  } else if (rec.replacementDecision !== 'NEEDED') throw new Bad('The client has not asked for a replacement. Ask the client, or record their answer first.', 409);
   if ([V.REPL.CLOSED].includes(rec.replacementStatus)) throw new Bad('This replacement is already closed.', 409);
-  const app = await prisma.application.findUnique({ where: { id: String(newApplicationId || '') }, include: { candidate: { select: { id: true, name: true } } } });
+  const app = await prisma.application.findUnique({ where: { id: String(newApplicationId || '') }, include: { candidate: { select: { id: true, name: true } }, requirement: { select: { id: true, title: true, clientId: true, internal: true } } } });
   if (!app) throw new Bad('Choose the new candidate from the list.', 404);
-  if (app.requirementId !== rec.requirementId) throw new Bad('The replacement must be a candidate on the same requirement.', 409);
+  if (loose) {
+    if ((app.requirement && app.requirement.internal) || !rec.clientId || !app.requirement || app.requirement.clientId !== rec.clientId) throw new Bad('A replacement must be a candidate of the same client.', 409);
+  } else if (app.requirementId !== rec.requirementId) throw new Bad('The replacement must be a candidate on the same requirement.', 409);
   if (app.id === rec.applicationId || app.candidateId === rec.candidateId) throw new Bad('The replacement must be a different person.', 409);
+  const taken = await S.one('SELECT "id","candidateName" FROM "JoiningRecord" WHERE "replacementApplicationId" = ? AND "id" <> ?', app.id, rec.id);
+  if (taken) throw new Bad(`${app.candidate ? app.candidate.name : 'This candidate'} is already the replacement for ${taken.candidateName || 'another candidate'}.`, 409);
   const old = { replacementApplicationId: rec.replacementApplicationId, replacementStatus: rec.replacementStatus };
+  const newName = app.candidate ? app.candidate.name : 'a new candidate';
+  const oldName = rec.candidateName || 'the dropped candidate';
   const record = await update(recordId, { replacementApplicationId: app.id, replacementStatus: V.REPL.LINKED, replacementLinkedAt: V.nowIso() });
   const ev = await addEvent({
-    record, kind: 'REPLACEMENT_LINKED', actor, from, summary: `Replacement candidate linked: ${app.candidate ? app.candidate.name : 'a new candidate'}`, oldValue: old, newValue: { replacementApplicationId: app.id },
+    record, kind: 'REPLACEMENT_LINKED', actor, from,
+    summary: `Replacement candidate linked: ${newName} will replace ${oldName} (dropped on ${V.dmy(rec.droppedOn)}${app.requirement && app.requirement.title ? `; ${newName} is on ${app.requirement.title}` : ''})${rec.replacementDecision === 'NEEDED' ? '' : ". The client's answer was still pending"}`,
+    oldValue: old, newValue: { replacementApplicationId: app.id, replacementName: newName },
   });
-  await audit(actor, 'Replacement candidate linked', record, app.candidate ? app.candidate.name : app.id);
+  await audit(actor, 'Replacement candidate linked', record, `${newName} replaces ${oldName}`);
+  // the replacement person's own side: a line on their joining record (when they have one) and on their Pipeline history
+  try {
+    const own = await byApplication(app.id);
+    if (own) {
+      await addEvent({
+        record: own, kind: 'REPLACEMENT_LINKED', actor, from,
+        summary: `${newName} is the replacement for ${oldName} (dropped on ${V.dmy(rec.droppedOn)}, ${rec.clientName || 'the client'}${rec.jobTitle ? `, ${rec.jobTitle}` : ''})`, newValue: { replacementFor: rec.id, replacementForName: oldName },
+      });
+    }
+    await prisma.applicationStageEvent.create({
+      data: {
+        applicationId: app.id, candidateId: app.candidateId, fromStage: app.stage, toStage: app.stage,
+        action: `Replacement for ${oldName} (dropped on ${V.dmy(rec.droppedOn)}${rec.clientName ? `, ${rec.clientName}` : ''}${rec.jobTitle ? `, ${rec.jobTitle}` : ''})`, comment: null,
+        actorUserId: actor && actor.id ? actor.id : null, actorName: actor ? actor.name : 'TeamLink', actorRole: actor ? (actor.atsRole || actor.role) : null, actorSide: 'Internal',
+        requirementId: app.requirementId, requirementTitle: app.requirement ? app.requirement.title : null, clientId: rec.clientId || null, clientName: rec.clientName || null,
+      },
+    });
+  } catch (e) { console.error('[join-drop] replacement side:', e.message); } // eslint-disable-line no-console
+  if (setLabel) { try { await prisma.application.update({ where: { id: app.id }, data: { rollStatus: 'Replacement' } }); } catch (e) { console.error('[join-drop] roll label:', e.message); } } // eslint-disable-line no-console
   // If that person has already joined, this closes the replacement straight away.
   if (JOINED_STAGES.includes(app.stage)) await closeReplacementIfLinked(app.id, actor, {});
   return { record: await get(recordId), event: ev };
@@ -564,9 +596,23 @@ async function closeReplacementIfLinked(joinedApplicationId, actor, ctx) {
     const open = await S.rows('SELECT * FROM "JoiningRecord" WHERE "replacementApplicationId" = ? AND "replacementStatus" = ?', joinedApplicationId, V.REPL.LINKED);
     for (const rec of open) {
       // eslint-disable-next-line no-await-in-loop
+      const own = await byApplication(joinedApplicationId);
+      const newName = (own && own.candidateName) || 'The replacement';
+      const oldName = rec.candidateName || 'the dropped candidate';
+      const joinedOn = own && own.joinedOn ? own.joinedOn : null;
+      const took = joinedOn && rec.droppedOn ? V.daysBetween(rec.droppedOn, joinedOn) : null;
+      // eslint-disable-next-line no-await-in-loop
       const record = await update(rec.id, { replacementStatus: V.REPL.CLOSED });
       // eslint-disable-next-line no-await-in-loop
-      await addEvent({ record, kind: 'REPLACEMENT_CLOSED', actor, from: 'The replacement joined', summary: 'The replacement candidate joined: the replacement is closed.', oldValue: { replacementStatus: V.REPL.LINKED }, newValue: { replacementStatus: V.REPL.CLOSED } });
+      await addEvent({
+        record, kind: 'REPLACEMENT_CLOSED', actor, from: 'The replacement joined',
+        summary: `${newName} replaced ${oldName}: the replacement joined${joinedOn ? ` on ${V.dmy(joinedOn)}` : ''}${took != null && took >= 0 ? ` (${took} day${took === 1 ? '' : 's'} after the drop)` : ''} and the replacement is closed.`,
+        oldValue: { replacementStatus: V.REPL.LINKED }, newValue: { replacementStatus: V.REPL.CLOSED, replacementName: newName },
+      });
+      if (own) {
+        // eslint-disable-next-line no-await-in-loop
+        await addEvent({ record: own, kind: 'REPLACEMENT_CLOSED', actor, from: 'The replacement joined', summary: `${newName} joined as the replacement for ${oldName} (dropped on ${V.dmy(rec.droppedOn)}, ${rec.clientName || 'the client'}${rec.jobTitle ? `, ${rec.jobTitle}` : ''}).`, newValue: { replacementFor: rec.id, replacementForName: oldName } });
+      }
       // eslint-disable-next-line no-await-in-loop
       await setLegacyReplaced(rec.applicationId);
     }
@@ -593,19 +639,44 @@ async function reopen(recordId, reason, actor, { from = null, ctx = {} } = {}) {
   const rec = await get(recordId);
   if (!rec) throw new Bad('That joining record was not found.', 404);
   if (rec.status !== 'Dropped') throw new Bad('This candidate is not shown as dropped.', 409);
-  if ([V.REPL.LINKED, V.REPL.CLOSED].includes(rec.replacementStatus)) throw new Bad('A replacement candidate was already added, so the drop cannot be withdrawn here. Ask an Admin.', 409);
   if (V.clean(reason, 300).length < 5) throw new Bad('Say why the drop was wrong (a few words). It is kept in the history.');
   const old = dropSnapshot(rec);
+  // A replacement was already linked: it STAYS on the job (nothing is deleted); only the link is removed, with a line on both people.
+  let unlinked = null;
+  if (rec.replacementApplicationId) {
+    const ra = await prisma.application.findUnique({ where: { id: rec.replacementApplicationId }, select: { id: true, candidateId: true, rollStatus: true, requirementId: true, candidate: { select: { name: true } } } }).catch(() => null);
+    unlinked = { applicationId: rec.replacementApplicationId, candidateId: ra ? ra.candidateId : null, name: (ra && ra.candidate && ra.candidate.name) || 'the replacement', hadLabel: !!(ra && ra.rollStatus === 'Replacement') };
+  }
   const record = await update(recordId, { status: 'Joined', ...clearDrop() });
   try { await prisma.application.updateMany({ where: { id: rec.applicationId, rollStatus: 'Dropped' }, data: { rollStatus: null } }); } catch (e) { console.error('[join-drop] roll label:', e.message); } // eslint-disable-line no-console
   const ev = await addEvent({
-    record, kind: 'DROP_REOPENED', actor, from, summary: `The drop reported for ${V.dmy(rec.droppedOn)} was withdrawn: ${V.cleanLong(reason, 200)}`, oldValue: old, newValue: { status: 'Joined' }, note: reason,
+    record, kind: 'DROP_REOPENED', actor, from,
+    summary: `The drop reported for ${V.dmy(rec.droppedOn)} was withdrawn: ${V.cleanLong(reason, 200)}${unlinked ? `. The link to the replacement ${unlinked.name} was removed (${unlinked.name} stays on the job)` : ''}`,
+    oldValue: old, newValue: { status: 'Joined' }, note: reason,
   });
+  if (unlinked) {
+    try {
+      // the "Replacement" label would now be a bare word that links to nobody
+      if (unlinked.hadLabel) await prisma.application.updateMany({ where: { id: unlinked.applicationId, rollStatus: 'Replacement' }, data: { rollStatus: null } });
+      const own = await byApplication(unlinked.applicationId);
+      if (own) await addEvent({ record: own, kind: 'REPLACEMENT_UNLINKED', actor, from, summary: `${unlinked.name} is no longer the replacement for ${rec.candidateName || 'the dropped candidate'}: the drop was withdrawn (${V.cleanLong(reason, 120)}). ${unlinked.name} stays on the job.`, newValue: { replacementFor: null } });
+      if (unlinked.candidateId) {
+        await prisma.applicationStageEvent.create({
+          data: {
+            applicationId: unlinked.applicationId, candidateId: unlinked.candidateId,
+            fromStage: 'JOINED', toStage: 'JOINED', action: `No longer the replacement for ${rec.candidateName || 'the dropped candidate'}: the drop was withdrawn`, comment: V.cleanLong(reason, 300),
+            actorUserId: actor && actor.id ? actor.id : null, actorName: actor ? actor.name : 'TeamLink', actorRole: actor ? (actor.atsRole || actor.role) : null, actorSide: 'Internal',
+            requirementId: rec.requirementId || null, requirementTitle: rec.jobTitle || null, clientId: rec.clientId || null, clientName: rec.clientName || null,
+          },
+        });
+      }
+    } catch (e) { console.error('[join-drop] unlink replacement:', e.message); } // eslint-disable-line no-console
+  }
   await audit(actor, 'Drop withdrawn (wrongly reported)', record, 'Joined', reason);
   try {
     const V2 = require('../utils/atsVocab'); // eslint-disable-line global-require
     const a = await prisma.application.findUnique({ where: { id: rec.applicationId }, select: { id: true, joiningStatus: true } });
-    if (a && [V2.JOINING_REPLACEMENT_DUE, V2.JOINING_LEFT_AFTER_GUARANTEE].includes(a.joiningStatus)) await prisma.application.update({ where: { id: a.id }, data: { joiningStatus: 'Joined' } });
+    if (a && [V2.JOINING_REPLACEMENT_DUE, V2.JOINING_REPLACED, V2.JOINING_LEFT_AFTER_GUARANTEE].includes(a.joiningStatus)) await prisma.application.update({ where: { id: a.id }, data: { joiningStatus: 'Joined' } });
   } catch (e) { console.error('[join-drop] legacy reopen:', e.message); } // eslint-disable-line no-console
   // the replacement task of a drop that never happened is cancelled (it is moot); it stays in the list as Cancelled
   await cancelTaskRow(rec, 'The drop was withdrawn (reported by mistake)', actor);

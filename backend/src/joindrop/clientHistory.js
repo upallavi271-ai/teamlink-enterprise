@@ -133,11 +133,25 @@ async function build(user, clientId, { kind = 'full' } = {}) {
   const liveRecs = recs.filter((r) => !isTest(r.candidateName));
   // utils/joinedRule.js: a person who dropped is under Dropped, not Joined (the default); their joining day is said inside the drop line instead.
   const leave = await require('../utils/joinedRule').excludeDropped(); // eslint-disable-line global-require
+  // WHO REPLACED WHOM: both names on the Drop and Replacement lines, and the counts / table below
+  const RP = require('./replacement'); // eslint-disable-line global-require
+  const rtv = await A.rights(user).catch(() => null);
+  const droppedRecs = liveRecs.filter((r) => r.status === 'Dropped');
+  const links = rtv ? await RP.enrich(user, rtv, droppedRecs).catch(() => new Map()) : new Map();
+  const nameOfBy = (e) => (e && e.replacedBy ? (e.replacedBy.hidden ? 'another candidate' : e.replacedBy.candidateName) : null);
   liveRecs.forEach((r) => {
     if (r.joinedOn && !(leave && r.status === 'Dropped')) push({ group: 'Joining', title: `${r.candidateName} joined as ${r.designation || r.jobTitle || 'the job'}`, day: r.joinedOn, who: null, detail: `${r.location || 'Place not recorded'}${r.guaranteeEndsOn ? ` · replacement period until ${V.dmy(r.guaranteeEndsOn)}` : ''}` });
-    if (r.status === 'Dropped' && (r.droppedOn || (leave && r.joinedOn))) push({ group: 'Drop', title: `${r.candidateName} dropped`, day: r.droppedOn || r.joinedOn, who: portal ? null : r.dropReportedByName, detail: `${leave && r.joinedOn ? `Joined ${V.dmy(r.joinedOn)}, left ${r.droppedOn ? V.dmy(r.droppedOn) : '(day not recorded)'} · ` : ''}Reason: ${r.dropReason || 'Not recorded'}${r.dropWithinGuarantee === 1 ? ' · inside the replacement period' : (r.dropWithinGuarantee === 0 ? ' · after the replacement period' : '')}` });
+    if (r.status === 'Dropped' && (r.droppedOn || (leave && r.joinedOn))) push({ group: 'Drop', title: `${r.candidateName} dropped`, day: r.droppedOn || r.joinedOn, who: portal ? null : r.dropReportedByName, detail: `${leave && r.joinedOn ? `Joined ${V.dmy(r.joinedOn)}, left ${r.droppedOn ? V.dmy(r.droppedOn) : '(day not recorded)'} · ` : ''}Reason: ${r.dropReason || 'Not recorded'}${r.dropWithinGuarantee === 1 ? ' · inside the replacement period' : (r.dropWithinGuarantee === 0 ? ' · after the replacement period' : '')}${links.get(r.id) && links.get(r.id).words ? ` · ${links.get(r.id).words}` : ''}` });
     if (r.replacementDecision) push({ group: 'Replacement', title: `Replacement: ${V.DECISIONS[r.replacementDecision].label} (${r.candidateName})`, at: r.replacementDecidedAt, who: portal ? null : r.replacementDecidedByName, detail: r.replacementComment || null });
-    if (r.replacementStatus === V.REPL.CLOSED) push({ group: 'Replacement', title: `Replacement joined for ${r.candidateName}`, at: r.updatedAt, who: null, detail: null });
+    const byName = nameOfBy(links.get(r.id));
+    const byInfo = links.get(r.id) && links.get(r.id).replacedBy;
+    if (byName && r.replacementLinkedAt) push({ group: 'Replacement', title: `${byName} linked as the replacement for ${r.candidateName}`, at: r.replacementLinkedAt, who: null, detail: byInfo && byInfo.jobTitle ? byInfo.jobTitle : null });
+    if (r.replacementStatus === V.REPL.CLOSED) {
+      push({
+        group: 'Replacement', title: byName ? `${byName} replaced ${r.candidateName}` : `Replacement joined for ${r.candidateName}`, at: r.updatedAt, who: null,
+        detail: byInfo && byInfo.joinedOn ? `Joined ${V.dmy(byInfo.joinedOn)}${byInfo.daysToReplace != null && byInfo.daysToReplace >= 0 ? ` · ${byInfo.daysToReplace} day${byInfo.daysToReplace === 1 ? '' : 's'} after the drop` : ''}` : null,
+      });
+    }
   });
 
   // --- invoices ---
@@ -160,10 +174,11 @@ async function build(user, clientId, { kind = 'full' } = {}) {
     candidatesSent: sentTotal, interviewsDone,
     joined: leave ? liveRecs.filter((r) => r.status !== 'Dropped').length : liveRecs.length, dropped: liveRecs.filter((r) => r.status === 'Dropped').length,
     replacementRequests: liveRecs.filter((r) => r.replacementDecision === 'NEEDED').length,
+    ...(() => { const t = RP.tally(droppedRecs, links); return { replaced: t.replaced, replacementsPending: t.pending, replacementsExpired: t.expired }; })(),
     ...(loginSummary || {}), ...(invoiceSummary ? { invoicesRaised: invoiceSummary.raised, invoicesPaid: invoiceSummary.paid } : {}),
   };
   void blind;
-  return { clientId, clientName: client.name, kind, summary, events: ev };
+  return { clientId, clientName: client.name, kind, summary, events: ev, replacements: { ...RP.tally(droppedRecs, links), table: RP.table(droppedRecs, links, { client: portal }) } };
 }
 
 // Which cut of the history this login gets. null = it may not open it.

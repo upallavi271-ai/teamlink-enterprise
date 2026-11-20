@@ -144,7 +144,7 @@ async function shapeApps(ids, { extra = new Map(), clientDesk = false, limit = 3
       bde: r.bde ? r.bde.name : null,
       internal,
       stage: f.stage,
-      stageLabel: V.stageLabelFor(f.stage, { internal }),
+      stageLabel: V.stepShown(f, V.stageLabelFor(f.stage, { internal })),
       resumeScore: f.resumeScore ?? f.matchScore ?? (f.candidate ? f.candidate.resumeScore : null) ?? null,
       aiScore: f.aiInterviewScore ?? null,
       interviewAt: f.interviewAt,

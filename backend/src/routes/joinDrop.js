@@ -16,6 +16,9 @@
 //   POST   /:id/reopen                            a drop reported by mistake
 //   GET/POST /:id/candidate-notice                the manual drop notice to the candidate (preview + send)
 //   GET    /open-for-job/:requirementId           dropped candidates of that job still waiting for a replacement
+//   GET    /waiting/:applicationId                "Who is this a replacement for?": the SAME client's dropped candidates still waiting for a replacement
+//   GET    /replacing/:applicationId              who this application replaced (the chip) + whether the "Replacement" label has a link
+//   POST   /replacement-link                      { droppedRecordId, applicationId }: link the new person as the replacement (the Roll status dialog)
 //   GET    /client-history/:clientId              the client's lifecycle history
 //   GET/PUT /settings                             the Admin switches (Admin only)
 // ---------------------------------------------------------------------------
@@ -32,6 +35,7 @@ const SET = require('../joindrop/settings');
 const R = require('../joindrop/report');
 const JR = require('../joindrop/journey');
 const CH = require('../joindrop/clientHistory');
+const RP = require('../joindrop/replacement');
 const JRULE_ = require('../utils/joinedRule');
 
 const router = express.Router();
@@ -89,8 +93,9 @@ async function recordPayload(rec, rt, user, { withNotices = true } = {}) {
   const told = withNotices && rt.kind !== 'client' ? await Core.notices(rec.id) : [];
   const emailsOn = (await require('../utils/hrmsNotify').getSettings()).emailsOn === true; // eslint-disable-line global-require
   const dropped = rec.status === 'Dropped';
+  const links = await RP.enrich(user, rt, [rec]);
   return {
-    record: A.shape(rec, rt, { tasks }),
+    record: A.shape(rec, rt, { tasks, links }),
     history,
     told,
     emailsOn,
@@ -212,10 +217,10 @@ router.get('/application/:appId', wrap(async (req, res) => {
   if (!rec && Core.JOINED_STAGES.includes(app.stage)) rec = await Core.ensureForApplication(app.id);
   const journey = await JR.journey(app.id, { forBde: rt.kind === 'bde' });
   if (!rec) {
-    return res.json({ record: null, history: [], told: [], rights: { record: false }, journey, canRecord: false });
+    return res.json({ record: null, history: [], told: [], rights: { record: false }, journey, canRecord: false, replacementFor: (await RP.forApplications(req.user, rt, [app.id])).get(app.id) || [] });
   }
   const p = await recordPayload(rec, rt, req.user);
-  return res.json({ ...p, journey });
+  return res.json({ ...p, journey, replacementFor: p.record.replacementFor || (await RP.forApplications(req.user, rt, [app.id])).get(app.id) || [] });
 }));
 
 router.get('/journey/:appId', wrap(async (req, res) => {
@@ -232,7 +237,8 @@ router.get('/candidate/:candidateId', wrap(async (req, res) => {
   const rows = await S.rows('SELECT * FROM "JoiningRecord" WHERE "candidateId" = ? ORDER BY COALESCE("joinedOn", \'\') DESC', req.params.candidateId);
   const vis = await A.visible(req.user, rows, rt);
   const tasks = await A.taskStates(vis.map((r) => r.replacementTaskId));
-  return res.json({ records: vis.map((r) => A.shape(r, rt, { tasks })) });
+  const links = await RP.enrich(req.user, rt, vis);
+  return res.json({ records: vis.map((r) => A.shape(r, rt, { tasks, links })) });
 }));
 
 // ---- one record --------------------------------------------------------------------------------------------------------------------------
@@ -243,6 +249,43 @@ router.get('/open-for-job/:requirementId', wrap(async (req, res) => {
   const rows = await S.rows('SELECT * FROM "JoiningRecord" WHERE "requirementId" = ? AND "status" = ? AND "replacementDecision" = ? AND COALESCE("replacementStatus", \'\') NOT IN (?, ?)', req.params.requirementId, 'Dropped', 'NEEDED', V.REPL.CLOSED, V.REPL.LINKED);
   const vis = await A.visible(req.user, rows, rt);
   return res.json({ records: vis.map((r) => ({ id: r.id, candidateName: r.candidateName, droppedOn: r.droppedOn, dropReason: r.dropReason })) });
+}));
+
+// "Who is this a replacement for?" - the dropped candidates of the SAME client (this requirement first) still waiting for a replacement.
+router.get('/waiting/:applicationId', wrap(async (req, res) => {
+  const rt = await staffOnly(req, res); if (!rt) return undefined;
+  const app = await appInScope(req, rt, req.params.applicationId);
+  if (!app) return res.status(403).json({ error: 'That candidate is outside your access.' });
+  const out = await RP.waitingFor(req.user, rt, app.id);
+  if (!out) return res.status(404).json({ error: 'Application not found.' });
+  return res.json({
+    candidateName: out.application.candidate ? out.application.candidate.name : null, clientName: out.clientName, records: out.records, canLink: !!rt.link,
+    message: out.records.length ? null : 'No dropped candidate of this client is waiting for a replacement.',
+  });
+}));
+
+// who this application replaced, and whether a bare "Replacement" label still needs its link
+router.get('/replacing/:applicationId', wrap(async (req, res) => {
+  const rt = await staffOnly(req, res); if (!rt) return undefined;
+  const app = await appInScope(req, rt, req.params.applicationId);
+  if (!app) return res.status(403).json({ error: 'That candidate is outside your access.' });
+  const lines = (await RP.forApplications(req.user, rt, [app.id])).get(app.id) || [];
+  const row = await prisma.application.findUnique({ where: { id: app.id }, select: { rollStatus: true } });
+  return res.json({ replacementFor: lines, rollStatus: row ? row.rollStatus : null, needsLink: !!(row && row.rollStatus === 'Replacement' && !lines.length), canLink: !!rt.link });
+}));
+
+router.post('/replacement-link', wrap(async (req, res) => {
+  const rt = await staffOnly(req, res); if (!rt) return undefined;
+  if (!rt.link) return res.status(403).json({ error: 'Linking a replacement is for the recruiter, team lead, BDE team and Admin.' });
+  const b = req.body || {};
+  const app = await appInScope(req, rt, String(b.applicationId || ''));
+  if (!app) return res.status(403).json({ error: 'That candidate is outside your access.' });
+  await Core.ready();
+  const rec = await Core.get(String(b.droppedRecordId || ''));
+  if (!rec) return res.status(404).json({ error: 'Choose the dropped candidate this person replaces.' });
+  if (!(await A.canSee(req.user, rec, rt))) return res.status(403).json({ error: 'That record is outside your access.' });
+  const out = await Core.linkReplacement(rec.id, app.id, req.user, { from: fromOf(rt), loose: true, setLabel: !!b.setLabel });
+  return res.json({ ok: true, message: `Saved. ${out.event.summary.replace(/^Replacement candidate linked: /, '')}`, ...(await recordPayload(out.record, rt, req.user)) });
 }));
 
 router.get('/client-history/:clientId', wrap(async (req, res) => {

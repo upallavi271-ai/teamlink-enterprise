@@ -6,7 +6,7 @@ const { requireAuth, requirePerm } = require('../middleware/auth');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, txnState,
 } = require('../utils/accounts');
-const { requirementIsLive, stageLabel } = require('../utils/atsVocab');
+const { requirementIsLive, stageLabel, stepShown } = require('../utils/atsVocab');
 const { applicationWhere, scopeLabel } = require('../utils/scope');
 const CSRC = require('../utils/candidateSource'); // the clean source list (one word per place, never free text)
 
@@ -66,7 +66,7 @@ const GROUPINGS = {
   },
   source: { label: 'Source', of: (a) => CSRC.sourceOfApplication(a, a.candidate).key },
   location: { label: 'Location', of: (a) => a.requirement?.location || '—' },
-  stage: { label: 'Stage', of: (a) => stageLabel(a.stage) },
+  stage: { label: 'Stage', of: (a) => stepShown(a, stageLabel(a.stage)) }, // a person who joined and then left is under Dropped
 };
 
 const IN_PIPELINE_OUT = ['JOINED', 'HIRED', 'REJECTED'];

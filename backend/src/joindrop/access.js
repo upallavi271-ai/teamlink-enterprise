@@ -135,7 +135,8 @@ const nameOf = (rec) => rec.candidateName;
 
 // THE SHAPE EACH VIEWER GETS. Picked field by field (nothing is spread from the row).
 // Key names avoid the ones the client / candidate guards treat as markers (guaranteePeriod, contactName, gst ...).
-function shape(rec, rt, { tasks = null, today = V.todayIst() } = {}) {
+// links: Map(recordId -> { replacedBy, replacementFor, state, words }) from joindrop/replacement.js enrich(): WHO replaced whom, in words and as data.
+function shape(rec, rt, { tasks = null, today = V.todayIst(), links = null } = {}) {
   if (!rec) return null;
   const client = rt.kind === 'client';
   const dropped = rec.status === 'Dropped';
@@ -197,6 +198,13 @@ function shape(rec, rt, { tasks = null, today = V.todayIst() } = {}) {
     createdAt: rec.createdAt,
     updatedAt: rec.updatedAt,
   };
+  const L = links ? links.get(rec.id) : null;
+  if (L) {
+    out.replacementState = L.state || undefined;
+    out.replacementWords = L.words || undefined;
+    out.replacedBy = L.replacedBy || undefined;
+    out.replacementFor = L.replacementFor && L.replacementFor.length ? L.replacementFor : undefined;
+  }
   if (client) {
     // the client is told the plain fact, never who at TeamLink holds it
     out.replacementTold = !!rec.replacementDecidedAt;

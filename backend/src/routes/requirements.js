@@ -2572,6 +2572,18 @@ router.get('/:id', async (req, res) => {
       if (a.candidate) { delete a.candidate.currentSalary; delete a.candidate.expectedSalary; }
     });
   }
+  // THE DROPPED STEP + WHO REPLACED WHOM on this job's candidate pipeline: a person who joined and then left is shown at Dropped (the stage code stays Joined),
+  // with the day and reason; a replacement carries "Replacement for <name> ...", a dropped person "Replaced by <name>" (or the due date).
+  {
+    const AV = require('../utils/atsVocab'); // eslint-disable-line global-require
+    await require('../utils/joinedRule').refresh().catch(() => null); // eslint-disable-line global-require
+    const RPm = require('../joindrop/replacement'); // eslint-disable-line global-require
+    const tg = await RPm.tags(req.user, requirement.applications.map((a) => a.id)).catch(() => new Map());
+    requirement.applications.forEach((a) => {
+      if (AV.leftAfterJoining(a)) { a.left = true; a.stageLabel = 'Dropped'; a.dropNote = AV.dropWords(a.id); }
+      RPm.put(a, tg.get(a.id));
+    });
+  }
   const apps = requirement.applications;
   const stages = apps.map((a) => a.stage);
   const [people, permissions, desk, activityOf, seats, lastWork, manageAgreement, clientOpenable] = await Promise.all([
@@ -2768,7 +2780,7 @@ router.get('/:id/candidate-search', async (req, res) => {
   const on = new Map(apps.map((a) => [a.candidateId, a]));
   return res.json(rows.map((c) => {
     const a = on.get(c.id);
-    return { ...c, onJob: a ? { applicationId: a.id, step: require('../utils/atsVocab').stageLabelFor(a.stage, { internal: !!req.requirement.internal }), link: `/candidates/${c.id}?application=${a.id}` } : null };
+    return { ...c, onJob: a ? { applicationId: a.id, step: require('../utils/atsVocab').stepShown(a, require('../utils/atsVocab').stageLabelFor(a.stage, { internal: !!req.requirement.internal })), link: `/candidates/${c.id}?application=${a.id}` } : null };
   }));
 });
 

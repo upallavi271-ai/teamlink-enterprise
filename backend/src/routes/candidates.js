@@ -38,7 +38,9 @@ const { getListState, markCandidateDirty } = require('../utils/candidateListCach
 const ADDED = require('../utils/candidateAddedBy'); // who typed / uploaded each person: that login keeps seeing them before any requirement
 // THE ACTUAL WORKFLOW (2026-09-29): an internal opening's stages read HR Review /
 // Dept Head / TL, and its next action is the internal chain's.
-const { stageLabelFor, nextActionForStage: wfNextAction, leftAfterJoining } = require('../utils/atsVocab');
+const { stageLabelFor, nextActionForStage: wfNextAction, leftAfterJoining, stepShown, dropWords } = require('../utils/atsVocab');
+const JRULE = require('../utils/joinedRule'); // who left after joining: one fact for every list, page and export (Dropped step)
+const RP = require('../joindrop/replacement'); // who replaced whom: the "Replacement for ..." chips
 const isInternalApp = (a, r) => (a && a.hiringType
   ? a.hiringType === 'TeamLink Internal Hire'
   : !!(r && (r.internal || r.hiringType === 'TeamLink Internal Hire')));
@@ -218,6 +220,7 @@ async function duplicateMatches(user, { email, phone, name, excludeId, dob, educ
   const pk = phoneKeys(phone);
   const ek = emailKey(email);
   if (!pk.length && !ek && !String(name || '').trim()) return [];
+  await JRULE.refresh().catch(() => null);
   const st = await getListState();
   // Fresh rows straight from the table as well, so a phone edited a second
   // ago elsewhere is still caught before the working set notices.
@@ -286,7 +289,8 @@ async function duplicateMatches(user, { email, phone, name, excludeId, dob, educ
           requirementTitle: a.requirement ? a.requirement.title : null,
           clientName: a.requirement ? (a.requirement.internal ? 'TeamLink Internal' : (a.requirement.client && a.requirement.client.name) || null) : null,
           stage: a.stage,
-          stageLabel: stageLabel(a.stage),
+          stageLabel: stepShown(a, stageLabel(a.stage)),
+          ...(leftAfterJoining(a) ? { left: true } : {}),
           createdAt: a.createdAt,
         })),
     };
@@ -312,7 +316,9 @@ function decorate(candidate, { user, sharedIds = null, followUps = null, withApp
   const sp = kind === 'internal' ? CS.sourceOfPerson(candidate, latest) : null;
   const srcFields = sp ? { sourceKey: sp.key, sourceRaw: sp.raw } : { sourceKey: null, sourceRaw: null };
   const shaped = applications.map((a) => {
-    const out = redactApplication(a, kind);
+    let out = redactApplication(a, kind);
+    // a person who joined and then left: every application row says Dropped (the stage code stays Joined)
+    if (leftAfterJoining(a)) out = { ...out, left: true, stageLabel: 'Dropped' };
     if (!withAppSource || kind !== 'internal') return out;
     const ap = CS.sourceOfApplication(a, candidate);
     return { ...out, sourceKey: ap.key, sourceRaw: ap.raw };
@@ -341,12 +347,12 @@ function decorate(candidate, { user, sharedIds = null, followUps = null, withApp
     ...srcFields,
     applications: shaped,
     currentStage: latest.stage,
-    currentStageLabel: stageLabelFor(latest.stage, { internal: isInternalApp(latest, requirement) }),
+    currentStageLabel: stepShown(latest, stageLabelFor(latest.stage, { internal: isInternalApp(latest, requirement) })),
     // The VISIBLE stage — one of the ten groups. The precise status inside it
     // travels alongside as stageDetailLabel; nothing is lost, it is folded.
     stageGroup: groupIdOfStage(latest.stage),
-    stageGroupLabel: groupLabelOfStage(latest.stage),
-    stageDetailLabel: stageDetail(latest, { internal: isInternalApp(latest, requirement) }),
+    stageGroupLabel: stepShown(latest, groupLabelOfStage(latest.stage)),
+    stageDetailLabel: stepShown(latest, stageDetail(latest, { internal: isInternalApp(latest, requirement) })),
     requirementId: latest.requirementId,
     requirementTitle: requirement ? requirement.title : null,
     requirementDepartment: requirement ? requirement.department : null,
@@ -754,7 +760,8 @@ function memoPut(map, id, entry) {
 function pagedKeyOf(user, st) {
   const s = scopeOf(user);
   const shared = s.global && s.role !== 'CANDIDATE' && viewerKind(user) === 'internal';
-  return { s, shared, key: (shared ? ['G', st.version, istDay(new Date()), DATES.version()] : [user.id, st.version, istDay(new Date()), scopeSig(s), ADDED.version(), DATES.version()]).join('|') };
+  // JRULE.stateKey(): a drop reported / withdrawn or a replacement linked changes what the rows SAY (Dropped, "Replacement for ...") without touching the data version
+  return { s, shared, key: (shared ? ['G', st.version, istDay(new Date()), DATES.version(), JRULE.stateKey()] : [user.id, st.version, istDay(new Date()), scopeSig(s), ADDED.version(), DATES.version(), JRULE.stateKey()]).join('|') };
 }
 async function pagedRowsFor(user) {
   const st = await getListState();
@@ -808,6 +815,8 @@ async function buildPagedRows(user, st, s, shared = false) {
   const joinMoves = await JL.movesFor(candidates.flatMap((c) => c.applications || []));
   const bdeView = isBdeViewer(user);
   const fxIdx = await FX.loadIndex();
+  await JRULE.refresh().catch(() => null); // who left after joining (the Dropped step) - read synchronously below
+  const linkIdx = await RP.linkIndex(user).catch(() => new Map()); // who replaced whom
   return candidates.map((c) => {
     const row = decorate(c, { user, sharedIds, followUps: st.followUps });
     // Came on: the date + how far to trust it (utils/cameOn.js). TeamLink logins only (a client / the candidate is served none).
@@ -816,7 +825,8 @@ async function buildPagedRows(user, st, s, shared = false) {
     const latest = apps.find((a) => a.id === row.latestApplicationId) || null;
     row.pipelineStatus = pipelineStatusOf(row.currentStage);
     // joined and then dropped: shown as Dropped (closed, outside Joined), not as Joined
-    if (latest && leftAfterJoining(latest)) { row.pipelineStatus = 'Rejected'; row.currentStageLabel = 'Dropped'; row.stageDetailLabel = 'Dropped'; row.left = true; }
+    if (latest && leftAfterJoining(latest)) { row.pipelineStatus = 'Rejected'; row.currentStageLabel = 'Dropped'; row.stageDetailLabel = 'Dropped'; row.stageGroupLabel = 'Dropped'; row.left = true; const di = JRULE.dropInfo(latest.id); if (di) { row.leftOn = di.droppedOn || null; row.leftReason = di.reason || null; } }
+    if (row.latestApplicationId) RP.put(row, linkIdx.get(row.latestApplicationId));
     // The joining date (user, 2026-10-22): the day the person joined, from the joined application this login sees (the shown one first).
     const ji = JL.joinInfoOfPerson(apps, row.latestApplicationId, joinMoves);
     if (ji) { row.joiningDay = ji.day; row.joinedOther = ji.other; row.joinedDays = ji.days; }
@@ -1007,6 +1017,8 @@ const PAGED_EXTRA_FIELDS = [
   'bdeName', 'section', 'lastActivityAt',
   'salaryMissing', // "Add salary" prompt + the Salary missing filter
   'cameOn', 'cameOnDay', 'cameOnKind', // Source · Came on
+  'left', 'leftOn', 'leftReason', // joined, then left: the step says Dropped (with the day and the reason)
+  'replacedBy', 'replacementFor', 'replacementWords', 'replacementState', // who replaced whom (the chips)
   'joiningDay', 'joiningPlanned', 'joinedOther', // Joining date column (joinedOther: the person joined on ANOTHER application than the shown one)
 ];
 function pagedOut(row) {
@@ -1032,7 +1044,7 @@ async function pipelineRowsFor(user) {
   const s = scopeOf(user);
   // The due-date and follow-up rules are settings an admin can change: their versions are part of the key.
   const rulesAt = viewerKind(user) === 'internal' ? ((await FV.loadRules().catch(() => null)) || {}).updatedAt || '' : '';
-  const key = [user.id, st.version, snap.stamp, istDay(new Date()), scopeSig(s), require('../utils/atsAlertSettings').alertSettingsVersion(), rulesAt, DATES.version()].join('|'); // eslint-disable-line global-require
+  const key = [user.id, st.version, snap.stamp, istDay(new Date()), scopeSig(s), require('../utils/atsAlertSettings').alertSettingsVersion(), rulesAt, DATES.version(), JRULE.stateKey()].join('|'); // eslint-disable-line global-require
   const hit = memoGet(APP_ROW_MEMO, user.id, key);
   if (hit) return hit;
   // SPEED (2026-10-03): the page asks for the list, the filter counts and the
@@ -1093,6 +1105,8 @@ async function buildPipelineRows(user, st, s, snap) {
   let people = 0;
   const bdeView = isBdeViewer(user);
   const fxIdx = await FX.loadIndex();
+  await JRULE.refresh().catch(() => null);
+  const linkIdx = await RP.linkIndex(user).catch(() => new Map()); // who replaced whom
   candidates.forEach((c) => {
     const apps = s.global ? (c.applications || []) : visibleApplications(user, c.applications, sharedIds);
     if (s.global || apps.length) people += 1;
@@ -1144,7 +1158,7 @@ async function buildPipelineRows(user, st, s, snap) {
         currentStage: a.stage,
         currentStageLabel: leftAfterJoining(a) ? 'Dropped' : stageLabelFor(a.stage, { internal }),
         stageGroup: groupIdOfStage(a.stage),
-        stageGroupLabel: groupLabelOfStage(a.stage),
+        stageGroupLabel: stepShown(a, groupLabelOfStage(a.stage)),
         stageDetailLabel: leftAfterJoining(a) ? 'Dropped' : stageDetail(a, { internal }),
         stageKey: leftAfterJoining(a) ? 'rejected' : stageKeyOf(a, internal, snap),
         pipelineStatus: leftAfterJoining(a) ? 'Rejected' : pipelineStatusOf(a.stage),
@@ -1216,6 +1230,8 @@ async function buildPipelineRows(user, st, s, snap) {
       };
       row.mine = (fu && fu.ownerUserId === me) || (!!r && (r.recruiterId === me || r.tlId === me || r.bdeId === me
         || String(r.recruiterIds || '').split(',').includes(me)));
+      if (row.left) { const di = JRULE.dropInfo(a.id); if (di) { row.leftOn = di.droppedOn || null; row.leftReason = di.reason || null; } }
+      RP.put(row, linkIdx.get(a.id));
       row.interviewToday = !!a.interviewAt && istDay(a.interviewAt) === today
         && !['CANCELLED', 'NO_SHOW'].includes(a.interviewStatus);
       row.hay = [c.name, c.email, c.phone, r ? r.title : '', r ? r.reqCode : '', row.clientName, ...(r && r.clientId ? aliasOf.get(r.clientId) || [] : []), a.requirementId]
@@ -1863,6 +1879,7 @@ function slimForList(row) {
     id: a.id,
     requirementId: a.requirementId,
     stage: a.stage,
+    ...(a.left ? { left: true, stageLabel: 'Dropped' } : {}),
     createdAt: a.createdAt,
     requirement: a.requirement
       ? {
@@ -2189,7 +2206,7 @@ router.get('/duplicates/groups', requireDupAdmin, async (req, res, next) => {
           applications: c.applications
             .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
             .map((a) => ({
-              id: a.id, requirementId: a.requirementId, stage: a.stage, stageLabel: stageLabel(a.stage), createdAt: a.createdAt,
+              id: a.id, requirementId: a.requirementId, stage: a.stage, stageLabel: stepShown(a, stageLabel(a.stage)), ...(leftAfterJoining(a) ? { left: true } : {}), createdAt: a.createdAt,
               requirementTitle: a.requirement ? a.requirement.title : null,
               clientName: a.requirement ? (a.requirement.internal ? 'TeamLink Internal' : (a.requirement.client && a.requirement.client.name) || null) : null,
               department: a.requirement ? a.requirement.department : null,
@@ -2676,16 +2693,24 @@ async function pipelineHistoryFor(applications, kind) {
           when: a.updatedAt,
           who: '—',
           role: null,
-          action: `Currently at ${stageLabel(a.stage)}`,
+          action: `Currently at ${stepShown(a, stageLabel(a.stage))}`,
           fromStage: null,
           toStage: a.stage,
-          toStageLabel: stageLabel(a.stage),
-          stageGroupLabel: groupLabelOfStage(a.stage),
+          toStageLabel: stepShown(a, stageLabel(a.stage)),
+          stageGroupLabel: stepShown(a, groupLabelOfStage(a.stage)),
           comment: null,
           derived: true,
         });
       }
       return;
+    }
+    // a person who left after joining with no "Left ..." row of their own (a drop copied from the sheets): the timeline ends with Dropped
+    if (leftAfterJoining(a) && !own.some((e) => /^Left (within|after) the guarantee/i.test(e.action || ''))) {
+      const di = JRULE.dropInfo(a.id);
+      out.push({
+        applicationId: a.id, requirementTitle: ctx, when: di && di.droppedOn ? new Date(`${di.droppedOn}T12:00:00+05:30`) : a.updatedAt, who: '—', role: null,
+        action: dropWords(a.id), fromStage: a.stage, fromStageLabel: stageLabel(a.stage), toStage: a.stage, toStageLabel: 'Dropped', stageGroupLabel: 'Dropped', comment: null, derived: true,
+      });
     }
     own.forEach((e) => {
       out.push({
@@ -2698,8 +2723,9 @@ async function pipelineHistoryFor(applications, kind) {
         fromStage: e.fromStage,
         fromStageLabel: e.fromStage ? stageLabel(e.fromStage) : null,
         toStage: e.toStage,
-        toStageLabel: stageLabel(e.toStage),
-        stageGroupLabel: groupLabelOfStage(e.toStage),
+        // the older "Left the job" / drop rows keep the stage code Joined, but the label says what happened
+        toStageLabel: /^Left (within|after) the guarantee/i.test(e.action || '') ? 'Dropped' : stageLabel(e.toStage),
+        stageGroupLabel: /^Left (within|after) the guarantee/i.test(e.action || '') ? 'Dropped' : groupLabelOfStage(e.toStage),
         // A transition comment is an INTERNAL recruiter note by another name,
         // so it is withheld from every external login exactly like the Notes
         // tab is — from the candidate being discussed as well as the client.
@@ -2994,6 +3020,13 @@ router.get('/:id', async (req, res) => {
         dueDate: null, dueStatus: null, overdue: false, lifeStatus: 'Closed',
       });
     });
+  }
+
+  // WHO REPLACED WHOM: "Replacement for <dropped candidate> (dropped on ..., client, requirement)" on the replacement's application, and "Replaced by <name>"
+  // (or the due / expired sentence) on the dropped person's. Names the viewer may not open come back as "another candidate".
+  {
+    const tg = await RP.tags(req.user, applications.map((x) => x.id)).catch(() => new Map());
+    applications.forEach((row) => RP.put(row, tg.get(row.id)));
   }
 
   // "Interview requested by <recruiter>" on the application (internal logins; no contact data is involved).
