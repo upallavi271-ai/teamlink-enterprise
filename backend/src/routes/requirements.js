@@ -661,17 +661,19 @@ async function listWhere(req) {
 
   if (q.department) and.push(RD.deptArm(String(q.department).split(',')));
   // spec D: Qualification / Specialization filters (master ids).
-  if (q.qualificationId) and.push({ qualificationId: q.qualificationId === 'none' ? null : q.qualificationId });
-  if (q.specialisationId) and.push({ specialisationId: q.specialisationId === 'none' ? null : q.specialisationId });
-  if (q.title) and.push({ title: String(q.title) }); // the Designation filter (2026-11-17)
+  // MANY VALUES per filter (founder 2026-11-20): OR inside one filter, AND across filters (utils/multiParam.js)
+  const MP = require('../utils/multiParam'); // eslint-disable-line global-require
+  const orNone = (field, raw) => { const w = MP.parseMulti(raw); if (!w.length) return null; const ids = w.filter((x) => x !== 'none'); const arms = []; if (ids.length) arms.push({ [field]: { in: ids } }); if (w.includes('none')) arms.push({ [field]: null }); return arms.length === 1 ? arms[0] : { OR: arms }; };
+  if (q.qualificationId) and.push(orNone('qualificationId', q.qualificationId));
+  if (q.specialisationId) and.push(orNone('specialisationId', q.specialisationId));
+  if (q.title) and.push({ title: { in: MP.parseMulti(q.title) } }); // the Designation filter (2026-11-17)
   // ?type=client | internal — the Client | Internal split of the actual
   // workflow (internal hiring is not a separate module; it is this filter).
-  if (q.type === 'internal') and.push({ internal: true });
-  if (q.type === 'client') and.push({ internal: false });
-  if (q.clientId) and.push({ clientId: q.clientId });
-  if (q.location) and.push({ location: q.location });
+  { const tw = MP.parseMulti(q.type).filter((x) => x === 'client' || x === 'internal'); if (tw.length === 1) and.push({ internal: tw[0] === 'internal' }); }
+  if (q.clientId) and.push({ clientId: { in: MP.parseMulti(q.clientId) } });
+  if (q.location) and.push({ location: { in: MP.parseMulti(q.location) } });
   if (q.recruiterId) {
-    and.push({ OR: [{ recruiterId: q.recruiterId }, { recruiterIds: { contains: q.recruiterId } }] });
+    and.push({ OR: MP.parseMulti(q.recruiterId).flatMap((rid) => [{ recruiterId: rid }, { recruiterIds: { contains: rid } }]) });
   }
   if (q.tlId) {
     // A TL's jobs include the jobs of the department they are the ONE team lead of.
@@ -696,7 +698,7 @@ async function listWhere(req) {
       { applications: { some: { followUps: { some: { tlName: q.tlName } } } } },
     ] });
   }
-  if (q.bdeId) and.push({ bdeId: q.bdeId });
+  if (q.bdeId) and.push({ bdeId: { in: MP.parseMulti(q.bdeId) } });
   // ?postWait=1 — live jobs that wait for a person to post them by hand on a board (Save & Post, 2026-10-10).
   if (q.postWait === '1') and.push(require('../utils/jobConnectors').waitingHandWhere()); // eslint-disable-line global-require
   // ?postedOn=any | none | naukri | foundit | shine | linkedin | career: jobs really posted on that site (PortalPosting PUBLISHED), 2026-10-13.
@@ -765,8 +767,19 @@ async function listWhere(req) {
   // (routes/atsIo.js, which only knows all / open / closed) is that tab.
   // (not for a TL / STL / Recruiter / HR: the filter would tell them which jobs wait for an agreement - 2026-10-12)
   if (q.agreement === 'pending' && !agreementPrivacy.blindTo(req.user)) and.push(AGREEMENT_PENDING_WHERE);
-  if (q.status === 'LIVE' || q.status === 'OPEN') and.push({ status: { not: 'CLOSED' } }); // Open = every stored status except CLOSED (2026-10-13; LIVE is the old spelling)
-  else if (q.status && !(q.status === 'AGREEMENT_CHECK' && agreementPrivacy.blindTo(req.user))) and.push({ status: q.status });
+  { // Open = every stored status except CLOSED (2026-10-13; LIVE is the old spelling); several statuses are OR-ed, Open + Closed = all
+    const sw = MP.parseMulti(q.status).filter((x) => !(x === 'AGREEMENT_CHECK' && agreementPrivacy.blindTo(req.user)));
+    if (sw.length) {
+      const wantOpen = sw.some((x) => x === 'LIVE' || x === 'OPEN');
+      const exact = sw.filter((x) => x !== 'LIVE' && x !== 'OPEN');
+      if (!(wantOpen && exact.includes('CLOSED'))) {
+        const arms = [];
+        if (wantOpen) arms.push({ status: { not: 'CLOSED' } });
+        if (exact.length) arms.push({ status: { in: exact } });
+        and.push(arms.length === 1 ? arms[0] : { OR: arms });
+      }
+    }
+  }
   // ?dstatus= — the status chain people see (Draft · Agreement Approved ·
   // Assigned · Open · On Hold · Filled · Closed), utils/requirementDisplayStatus.js.
   if (q.dstatus && reqDisplay.normKey(q.dstatus)) and.push(reqDisplay.DISPLAY_WHERE[reqDisplay.normKey(q.dstatus)]);

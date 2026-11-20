@@ -415,7 +415,9 @@ function run(items, kind, a) {
   const cutoff = Date.now() - WINDOW_DAYS * DAY;
   const inWindow = a.window === 'all' ? items : items.filter((it) => spec.open(it, cutoff));
   const textOk = (it) => extraOk(it, spec, a.x) && (!a.q || `${it.name} ${it.title} ${it.clientName} ${it.clientOldNames || ''}`.toLowerCase().includes(a.q));
-  const fieldOk = (it, skip) => fields.every((f) => f.key === skip || !a.filters[f.key] || String(f.get(it) ?? '') === a.filters[f.key]);
+  const MPJ = require('./multiParam'); // eslint-disable-line global-require
+  // several values per filter: OR inside one filter (utils/multiParam.js), AND across filters
+  const fieldOk = (it, skip) => fields.every((f) => f.key === skip || !a.filters[f.key] || MPJ.multiHas(a.filters[f.key], String(f.get(it) ?? '')));
   const searched = inWindow.filter(textOk);
 
   // The Filters panel: each field counted with every OTHER field applied.

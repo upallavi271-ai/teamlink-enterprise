@@ -127,8 +127,8 @@ function calendarTerms(q) {
   if (rounds.length) and.push({ interviewRound: { in: rounds } });
   if (q.ivMode) and.push({ interviewMode: { in: csv(q.ivMode) } });
   if (q.ivInterviewer) and.push({ interviewer: { contains: String(q.ivInterviewer).trim() } });
-  if (q.ivClient) and.push({ requirement: { is: { clientId: String(q.ivClient) } } });
-  if (q.ivRecruiter) and.push({ OR: [{ ownerRecruiterId: String(q.ivRecruiter) }, { requirement: { is: { recruiterId: String(q.ivRecruiter) } } }] });
+  if (q.ivClient) and.push({ requirement: { is: { clientId: { in: csv(q.ivClient) } } } });
+  if (q.ivRecruiter) and.push({ OR: [{ ownerRecruiterId: { in: csv(q.ivRecruiter) } }, { requirement: { is: { recruiterId: { in: csv(q.ivRecruiter) } } } }] });
   return and;
 }
 
@@ -174,7 +174,7 @@ function portalFilter(q, rows) {
     if (q.jpFrom && DAY_RE.test(String(q.jpFrom)) && !(day && day >= q.jpFrom)) return false;
     if (q.jpTo && DAY_RE.test(String(q.jpTo)) && !(day && day <= q.jpTo)) return false;
     if (st.length && !st.includes(r.portalTab)) return false;
-    if (q.jpRecruiter && r.recruiterId !== String(q.jpRecruiter)) return false;
+    if (q.jpRecruiter && !csv(q.jpRecruiter).includes(r.recruiterId)) return false;
     if (loc && !String(r.location || '').toLowerCase().includes(loc)) return false;
     return true;
   });

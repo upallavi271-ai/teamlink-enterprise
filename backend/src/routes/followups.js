@@ -166,7 +166,7 @@ async function buildRows(req) {
   // ever narrow the scoped list; they never widen it.
   const narrow = [];
   const department = typeof req.query.department === 'string' ? req.query.department.trim() : '';
-  if (department) narrow.push({ requirement: { is: { department } } });
+  if (department) narrow.push({ requirement: { is: { department: { in: require('../utils/multiParam').parseMulti(department) } } } }); // several departments at once
   if (hasPersonQuery(req.query)) {
     const att = await attributedApplications(req.user, req.query, { scope: applicationWhere(req.user) });
     narrow.push({ id: { in: [...att.ids] } });
