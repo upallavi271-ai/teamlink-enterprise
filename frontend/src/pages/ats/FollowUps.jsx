@@ -130,7 +130,8 @@ function Rows({ rows, empty, onChat }) {
 // BDE page keeps the stand-alone screen, so nobody loses it.
 export function FollowUpsRoute() {
   const { user } = useAuth();
-  if (can(user, null, 'recruiterbde', 'Team View', 'view')) return <Navigate to="/ats/team?view=followups" replace />;
+  const [sp] = useSearchParams();
+  if (can(user, null, 'recruiterbde', 'Team View', 'view')) return <Navigate to={`/ats/team?view=followups${sp.get('sub') ? `&sub=${encodeURIComponent(sp.get('sub'))}` : ''}`} replace />;
   return <FollowUps />;
 }
 

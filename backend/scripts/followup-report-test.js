@@ -203,10 +203,10 @@ const Z = (s) => new Date(s); // an instant, written in UTC ("...Z")
   check('day table: call-backs by their own date (Oct 8: promised 2, kept 1, overdue 1)', col(3, 'promised') === 2 && col(3, 'kept') === 1 && col(3, 'overdue') === 1, d.map((x) => [x[4], x[5], x[6]]));
   check('day table: the trend bar numbers are added + done + logged per day', rowOf(s1, r1a).trend[1] === 3 + 1 + 2 && rowOf(s1, r1a).trend.length === 7, rowOf(s1, r1a).trend);
   check('day table: the day columns add up to the Total row', FIELDS.every((f, i) => f === 'contacted' || f === 'carried' || d.reduce((a, x) => a + x[i], 0) === rowOf(s1, r1a).m[i]), d);
-  const wk = await call('GET', '/followup-report/summary?from=2026-10-05&to=2026-10-18&period=week', null, T.tl1);
+  const wk = await call('GET', '/followup-report/summary?from=2026-10-05&to=2026-10-18&period=week&columns=week', null, T.tl1);
   const wr = rowOf(wk, r1a);
   check('week table: two weeks, Oct 5-11 and Oct 12-18; the 00:00 IST Oct 12 log is in week 2', wk.body.buckets.length === 2 && wr.buckets[0][0] === 8 && wr.buckets[1][2] === 1 && wr.buckets[0][2] === 4, wr && wr.buckets);
-  const mo = await call('GET', '/followup-report/summary?from=2026-09-28&to=2026-10-11&period=month', null, T.tl1);
+  const mo = await call('GET', '/followup-report/summary?from=2026-09-28&to=2026-10-11&period=month&columns=month', null, T.tl1);
   const mr = rowOf(mo, r1a);
   check('month table: Sep (28-30) and Oct (1-11); the Sep 28 task is added in September', mo.body.buckets.length === 2 && mo.body.buckets[0].label === 'Sep 2026' && mr.buckets[0][0] === 1 && mr.buckets[1][0] === 8, mr && mr.buckets);
   const dflt = await call('GET', '/followup-report/summary?period=month', null, T.tl1);
@@ -351,6 +351,95 @@ const Z = (s) => new Date(s); // an instant, written in UTC ("...Z")
   const ex = await fetch(`${API}/client-followlog/export?candidateId=${shared.id}&format=csv`, { headers: { Authorization: `Bearer ${T.r1a}` } });
   const exT = await ex.text();
   check('candidate page export follows the same scope', ex.status === 200 && !R2NAMES.some((x) => exT.includes(x)) && !exT.includes(r1b.u.name));
+
+  // ================= the screens, in a real browser (FUR_BROWSER=1): the TL's tab, the recruiter's tab, the manager's picker, the candidate page
+  if (process.env.FUR_BROWSER) {
+    const { chromium } = require('playwright-core');
+    const VPORT = Number(process.env.FUR_VITE_PORT) || 5291;
+    const vite = spawn(process.execPath, [path.join(BACK, '..', 'frontend', 'node_modules', 'vite', 'bin', 'vite.js'), 'preview', '--port', String(VPORT), '--strictPort'], { cwd: path.join(BACK, '..', 'frontend'), env: { ...process.env, API_PROXY: `http://localhost:${PORT}` }, stdio: 'ignore' });
+    let vup = false;
+    for (let i = 0; i < 120 && !vup; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      vup = await fetch(`http://localhost:${VPORT}/`).then((r) => r.ok).catch(() => false);
+      // eslint-disable-next-line no-await-in-loop
+      if (!vup) await new Promise((r) => { setTimeout(r, 500); });
+    }
+    const shots = path.join(BACK, '..', 'docs', 'followup-report-2026-11-20');
+    fs.mkdirSync(shots, { recursive: true });
+    let browser; let lastPage;
+    try {
+      browser = await chromium.launch({ channel: 'msedge' });
+      const open = async (token, url) => {
+        const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 } });
+        await ctx.addInitScript((tk) => { try { localStorage.setItem('tl_token', tk); } catch { /* none */ } }, token);
+        const page = await ctx.newPage();
+        lastPage = page;
+        await page.goto(`http://localhost:${VPORT}${url}`, { waitUntil: 'domcontentloaded', timeout: 180000 });
+        return { ctx, page };
+      };
+      const setDays = async (page, from, to) => {
+        await page.locator('.fur-bar label:has-text("From") input[type=date]').first().fill(from);
+        await page.locator('.fur-bar label:has-text("To") input[type=date]').first().fill(to);
+        await page.waitForTimeout(1500);
+      };
+      const text = (page) => page.locator('.fur').innerText();
+      // TL
+      let { ctx, page } = await open(T.tl1, '/ats/team?view=followups&sub=report');
+      await page.waitForSelector('.fur-table', { timeout: 90000 });
+      await setDays(page, '2026-10-05', '2026-10-11');
+      let t = await text(page);
+      check('browser, TL1: the Follow-up report tab shows a row per recruiter and a Total row', [r1a.u.name, r1b.u.name].every((x) => t.includes(x)) && /Total/.test(t) && (await page.locator('.fur-table tbody tr').count()) >= 3, t.slice(0, 300));
+      check('browser, TL1: no name from TL2\'s team on the screen', !R2NAMES.some((x) => t.includes(x)));
+      await page.screenshot({ path: path.join(shots, '1-tl-by-recruiter.png') });
+      await page.locator('.fur-table tbody tr', { hasText: r1a.u.name }).first().click();
+      await page.waitForSelector('.fur-drill', { timeout: 20000 });
+      await page.waitForTimeout(1200);
+      check('browser, TL1: a recruiter row opens that recruiter\'s day-by-day table and their list', (await page.locator('.fur-drill tbody tr').count()) === 7 && (await page.locator('.fur-list tbody tr').count()) > 5);
+      await page.screenshot({ path: path.join(shots, '2-tl-recruiter-drill.png'), fullPage: true });
+      await page.getByRole('tab', { name: /Day by day/ }).click();
+      await page.waitForTimeout(600);
+      await page.screenshot({ path: path.join(shots, '3-tl-day-by-day.png') });
+      await ctx.close();
+      // recruiter
+      ({ ctx, page } = await open(T.r1a, '/ats/followups?sub=report'));
+      await page.waitForSelector('.fur-table', { timeout: 90000 });
+      await setDays(page, '2026-10-05', '2026-10-11');
+      t = await text(page);
+      check('browser, R1a: only their own row, no other name, no Total row', t.includes(r1a.u.name) && ![r1b.u.name, tl1.u.name, r1x.u.name, ...R2NAMES].some((x) => t.includes(x)) && (await page.locator('.fur-table tbody tr').count()) === 1 && !/Total/.test(t), t.slice(0, 300));
+      await page.getByRole('tab', { name: /My follow-ups/ }).click();
+      await page.waitForTimeout(1500);
+      t = await text(page);
+      check('browser, R1a: their list shows only their own follow-ups', ![r1b.u.name, tl1.u.name, ...R2NAMES].some((x) => t.includes(x)) && (await page.locator('.fur-list tbody tr').count()) > 5);
+      await page.screenshot({ path: path.join(shots, '4-recruiter-own.png') });
+      await ctx.close();
+      // Manager: the team picker
+      ({ ctx, page } = await open(T.mgr, '/ats/team?view=followups&sub=report'));
+      await page.waitForSelector('.fur-table', { timeout: 90000 });
+      await setDays(page, '2026-10-05', '2026-10-11');
+      const picker = page.locator('select[aria-label="Team lead"]');
+      check('browser, Manager: a team-lead picker is there with every TL', (await picker.locator('option').count()) >= 4);
+      await picker.selectOption(tl2.u.id);
+      await page.waitForTimeout(1500);
+      t = await text(page);
+      check('browser, Manager picks TL2: TL2\'s recruiters only', t.includes(r2a.u.name) && !t.includes(r1a.u.name), t.slice(0, 200));
+      await page.screenshot({ path: path.join(shots, '5-manager-picker.png') });
+      await ctx.close();
+      // the candidate page
+      ({ ctx, page } = await open(T.tl1, `/candidates/${shared.id}?tab=followups`));
+      await page.waitForSelector('select[aria-label="Who"]', { timeout: 90000 });
+      const wopts = await page.locator('select[aria-label="Who"] option').allInnerTexts();
+      check('browser, candidate page, TL1: the Who list is Everyone (team) and each recruiter by name', wopts[0] === 'Everyone (team)' && wopts.some((o) => o.includes(r1a.u.name)) && wopts.some((o) => o.includes(r1b.u.name)) && !wopts.some((o) => R2NAMES.some((x) => o.includes(x))), wopts);
+      check('browser, candidate page: a from-to date filter is there', (await page.locator('input[aria-label="From date"]').count()) === 1 && (await page.locator('input[aria-label="To date"]').count()) === 1);
+      await page.screenshot({ path: path.join(shots, '6-candidate-who.png') });
+      await ctx.close();
+    } catch (e) {
+      let seen = ''; try { seen = (await lastPage.innerText('body')).slice(0, 400); await lastPage.screenshot({ path: path.join(os.tmpdir(), 'fur-fail.png') }); } catch { /* none */ }
+      check(`browser check ran (${e.message.slice(0, 80)})`, false, { url: lastPage && lastPage.url(), seen });
+    } finally {
+      if (browser) await browser.close().catch(() => {});
+      vite.kill();
+    }
+  }
 
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);

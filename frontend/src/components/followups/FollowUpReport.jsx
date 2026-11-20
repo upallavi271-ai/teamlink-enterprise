@@ -68,6 +68,7 @@ export default function FollowUpReport() {
   const [preset, setPreset] = useState('thisweek');
   const [pick, setPick] = useState({ leadId: '', department: '', team: '' });
   const [imported, setImported] = useState('include');
+  const [columns, setColumns] = useState(''); // '' = the usual for the period; day | week | month
   const [view, setView] = useState('who');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -88,7 +89,7 @@ export default function FollowUpReport() {
     }).catch((e) => setError(e.response?.data?.error || 'The follow-up report could not be opened.'));
   }, []);
 
-  const base = useMemo(() => ({ from: range.from || undefined, to: range.to || undefined, period, imported, leadId: pick.leadId || undefined, department: pick.department || undefined, team: pick.team || undefined }), [range, period, imported, pick]);
+  const base = useMemo(() => ({ from: range.from || undefined, to: range.to || undefined, period, columns: columns || undefined, imported, leadId: pick.leadId || undefined, department: pick.department || undefined, team: pick.team || undefined }), [range, period, columns, imported, pick]);
 
   useEffect(() => {
     if (!opts || !range.from) return;
@@ -123,7 +124,7 @@ export default function FollowUpReport() {
   const showLead = !!data && data.table.headers.includes('TL');
   const chooseRange = (key, from, to) => { setPreset(key); setRange({ from, to }); setPersonId(''); setLimit(200); };
   const choosePeriod = (p) => {
-    setPeriod(p);
+    setPeriod(p); setColumns('');
     const k = p === 'day' ? 'today' : p === 'week' ? 'thisweek' : 'thismonth';
     const x = presetsFor(today).find((y) => y[0] === k);
     chooseRange(k, x[2], x[3]);
@@ -190,6 +191,11 @@ export default function FollowUpReport() {
             {data.teams.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
         )}
+        <select value={columns || data.columns} onChange={(e) => setColumns(e.target.value)} aria-label="Columns of the table" title="The columns of the day-by-day table">
+          <option value="day">Columns: days</option>
+          <option value="week">Columns: weeks</option>
+          <option value="month">Columns: months</option>
+        </select>
         <select value={imported} onChange={(e) => setImported(e.target.value)} aria-label="Imported follow-ups" title="Follow-ups brought in from the old sheets are counted on their own date">
           <option value="include">With imported</option>
           <option value="exclude">Without imported</option>

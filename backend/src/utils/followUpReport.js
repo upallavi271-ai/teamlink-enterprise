@@ -74,7 +74,8 @@ const HELP = {
 function monday(d) { const w = new Date(`${d}T00:00:00Z`).getUTCDay(); return addDays(d, -((w + 6) % 7)); }
 function endOfMonth(d) { const x = new Date(`${d.slice(0, 7)}-01T00:00:00Z`); x.setUTCMonth(x.getUTCMonth() + 1); return addDays(x.toISOString().slice(0, 10), -1); }
 
-/** -> { from, to, period } or { error } . period = day | week | month: the columns of the day-by-day table (and the default days). */
+/** -> { from, to, period, columns } or { error } . period = day | week | month: the default days; columns = day | week | month: the columns of the
+ *  day-by-day table (default: a day period or a week -> days, a month -> weeks). */
 function rangeOf(q = {}) {
   const t = today();
   const period = ['day', 'week', 'month'].includes(String(q.period || '')) ? String(q.period) : 'day';
@@ -88,14 +89,15 @@ function rangeOf(q = {}) {
   } else { from = from || to; to = to || from; }
   if (from > to) return { error: 'The first day is after the last day. Swap them.' };
   if (daysBetween(from, to) + 1 > MAX_DAYS) return { error: `Choose at most ${MAX_DAYS} days at a time.` };
-  return { from, to, period };
+  const columns = ['day', 'week', 'month'].includes(String(q.columns || '')) ? String(q.columns) : (period === 'month' ? 'week' : 'day');
+  return { from, to, period, columns };
 }
 
 /** The columns of the day-by-day table: days, weeks (Monday to Sunday) or months, clipped to the range. */
-function bucketsOf(from, to, period) {
+function bucketsOf(from, to, columns) {
   const n = daysBetween(from, to) + 1;
   // a long range in day columns would be unreadable: step up one level
-  let g = period;
+  let g = columns;
   if (g === 'day' && n > 62) g = 'week';
   if (g === 'week' && n > 210) g = 'month';
   const out = [];
@@ -372,7 +374,7 @@ function filterItems(items, q) {
 async function summary(scope, q = {}) {
   const r = rangeOf(q);
   if (r.error) return { status: 400, body: { error: r.error } };
-  const { granularity, buckets } = bucketsOf(r.from, r.to, r.period);
+  const { granularity, buckets } = bucketsOf(r.from, r.to, r.columns);
   const members = scope.members;
   const byId = new Map(members.map((m) => [m.id, m]));
   const ids = members.map((m) => m.id);
@@ -393,7 +395,7 @@ async function summary(scope, q = {}) {
   return {
     status: 200,
     body: {
-      from: r.from, to: r.to, period: r.period, granularity, today: today(), mode: scope.mode, kind: scope.kind, label: scope.label,
+      from: r.from, to: r.to, period: r.period, columns: r.columns, granularity, today: today(), mode: scope.mode, kind: scope.kind, label: scope.label,
       fields: FIELDS, labels: FIELDS.map((f) => LABELS[f]), help: FIELDS.map((f) => HELP[f]),
       buckets, rows, total, table,
       leads: scope.leads, departments: scope.departments, teams: scope.teams, leadId: scope.leadId,
