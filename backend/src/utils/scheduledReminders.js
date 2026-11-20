@@ -1103,7 +1103,7 @@ async function whatsappSend(row, to, text, purpose = 'Interview and joining remi
   }
   return require('./messaging').send('WhatsApp', { // eslint-disable-line global-require
     to: m.e164, text, kind: open ? 'session' : 'bulk', ...(open ? {} : { vars: [text] }), automatic: true, actorUserId: creditActor(row) || undefined,
-    meta: { audience: 'candidates', personId: row.candidateId, senderUserId: creditActor(row) || undefined, purpose, template: row.templateKey, module: 'ATS' },
+    meta: { audience: 'candidates', personId: row.candidateId, senderUserId: creditActor(row) || undefined, purpose, template: row.templateKey, module: 'ATS', ...(row.idemKey ? { idempotencyKey: row.idemKey } : {}) },
   });
 }
 async function deliver(row, app, settings, tpls) {
@@ -1172,15 +1172,32 @@ async function run(opts = {}) {
   const t = now.getTime();
   const settings = await loadSettings();
   const summary = { at: now.toISOString(), enabled: settings.enabled, considered: 0, sent: 0, failed: 0, skipped: 0, retried: 0, deferred: 0, cancelled: 0, items: [] };
-  // a pass that died half way: 'sending' for over 10 minutes was never confirmed, it is not sent a second time
-  await x('UPDATE "ScheduledReminder" SET "status" = \'failed\', "reason" = ?, "updatedAt" = ? WHERE "status" = \'sending\' AND "kind" = \'custom\' AND "updatedAt" < ?',
-    'The server stopped while this was sending. It was not sent again by itself: use Send again to schedule it once more.', nowIso(), new Date(Date.now() - 10 * MIN).toISOString()).catch(() => {});
+  // RECOVERY AFTER A RESTART (utils/messageSchedules.js). A person's message (kind 'custom') left in 'sending' for over 10 minutes:
+  //   claimed by this code (claimedAt) but the provider was never called (no providerCallAt) -> it never left: back to 'planned', it goes on the next pass;
+  //   the provider call had started (or an older claim with no marker) -> it may have gone, so it is NEVER sent again by itself (failed, with the reason).
+  await require('./messageSchedules').ensure().catch(() => {}); // eslint-disable-line global-require
+  {
+    const stuck = await q('SELECT * FROM "ScheduledReminder" WHERE "status" = \'sending\' AND "kind" = \'custom\' AND "claimedAt" IS NOT NULL AND "providerCallAt" IS NULL AND "updatedAt" < ?', new Date(Date.now() - 10 * MIN).toISOString()).catch(() => []);
+    for (const r of stuck) {
+      // eslint-disable-next-line no-await-in-loop
+      await x('UPDATE "ScheduledReminder" SET "status" = \'planned\', "claimedAt" = NULL, "updatedAt" = ?, "history" = ? WHERE "id" = ? AND "status" = \'sending\' AND "providerCallAt" IS NULL',
+        nowIso(), addHistory(r, 'System', 'Picked up again after a restart: it had not reached the provider yet'), r.id);
+    }
+  }
+  {
+    const maybe = await q('SELECT "id", "scheduleId" FROM "ScheduledReminder" WHERE "status" = \'sending\' AND "kind" = \'custom\' AND "updatedAt" < ?', new Date(Date.now() - 10 * MIN).toISOString()).catch(() => []);
+    await x('UPDATE "ScheduledReminder" SET "status" = \'failed\', "reason" = ?, "updatedAt" = ? WHERE "status" = \'sending\' AND "kind" = \'custom\' AND "updatedAt" < ?',
+      'The server stopped while this was sending. It may or may not have reached the candidate, so it was not sent again by itself: use Send again to schedule it once more.', nowIso(), new Date(Date.now() - 10 * MIN).toISOString()).catch(() => {});
+    for (const sid of [...new Set(maybe.map((r) => r.scheduleId).filter(Boolean))]) await require('./messageSchedules').refresh(sid).catch(() => {}); // eslint-disable-line global-require, no-await-in-loop
+  }
   await x('UPDATE "ScheduledReminder" SET "status" = \'failed\', "reason" = ?, "updatedAt" = ? WHERE "status" = \'sending\' AND "kind" <> \'custom\' AND "updatedAt" < ?',
     'The server stopped while this was sending. It was not sent again by itself: press Send now to try again.', nowIso(), new Date(Date.now() - 10 * MIN).toISOString()).catch(() => {});
   // THE ONE SWITCH covers the AUTOMATIC interview / joining reminders only. A person's own scheduled message (kind 'custom', utils/scheduledMessages.js)
   // is a deliberate human action: it goes when due even while the switch is OFF (quiet hours, STOP / do-not-contact, credits, retries still apply).
   const autoOff = !settings.enabled && opts.force !== true;
   if (autoOff) summary.off = true;
+  // the rolling window of the repeating schedules (utils/messageSchedules.js): the next messages are planned before the due ones are read
+  summary.planned = await require('./messageSchedules').extendDue(now).catch((e) => { console.error('[scheduledReminders] extend:', e.message); return 0; }); // eslint-disable-line global-require, no-console
   const tpls = await loadTemplates();
   const allPlanned = await q('SELECT * FROM "ScheduledReminder" WHERE "status" = \'planned\' ORDER BY "sendAt" LIMIT 1000');
   const planned = autoOff ? allPlanned.filter((r) => r.kind === 'custom') : allPlanned;
@@ -1376,6 +1393,7 @@ const RANK = { Sent: 1, Delivered: 2, Read: 3 };
 async function applyDeliveryStatus(providerRef, status, error, at) {
   try {
     await ensure();
+    await require('./messageSchedules').ensure().catch(() => {}); // eslint-disable-line global-require
     const word = { SENT: 'Sent', DELIVERED: 'Delivered', READ: 'Read', FAILED: 'Failed' }[String(status || '').toUpperCase()];
     if (!word || !providerRef) return 0;
     const rows = await q('SELECT * FROM "ScheduledReminder" WHERE "providerRef" = ?', String(providerRef));
@@ -1384,8 +1402,12 @@ async function applyDeliveryStatus(providerRef, status, error, at) {
       if (word !== 'Failed' && (RANK[r.deliveryStatus] || 0) >= RANK[word]) continue; // eslint-disable-line no-continue
       const st = word === 'Failed' ? 'failed' : (word === 'Sent' ? r.status : 'delivered');
       const reason = word === 'Failed' ? `Not delivered: ${txt(error, 250) || 'the provider reported it as not delivered'}` : r.reason;
+      // DELIVERED only from the provider's own report (this callback), never from the API accepting it: the time is kept on the row
+      const deliveredAt = ['Delivered', 'Read'].includes(word) && !r.deliveredAt ? new Date(at || Date.now()).toISOString() : (r.deliveredAt || null);
       // eslint-disable-next-line no-await-in-loop
-      await x('UPDATE "ScheduledReminder" SET "deliveryStatus" = ?, "status" = ?, "reason" = ?, "updatedAt" = ?, "history" = ? WHERE "id" = ?', word, st, reason, nowIso(), addHistory(r, 'Provider', `${word} ${stamp(at || new Date())}`), r.id);
+      await x('UPDATE "ScheduledReminder" SET "deliveryStatus" = ?, "status" = ?, "reason" = ?, "updatedAt" = ?, "history" = ?, "deliveredAt" = ? WHERE "id" = ?', word, st, reason, nowIso(), addHistory(r, 'Provider', `${word} ${stamp(at || new Date())}`), deliveredAt, r.id);
+      // eslint-disable-next-line no-await-in-loop
+      if (r.scheduleId) await require('./messageSchedules').refresh(r.scheduleId).catch(() => {}); // eslint-disable-line global-require
       if (word === 'Failed') {
         // eslint-disable-next-line no-await-in-loop
         const app = r.kind === 'custom' ? null : await loadApp(r.applicationId);

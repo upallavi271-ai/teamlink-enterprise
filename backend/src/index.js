@@ -496,9 +496,12 @@ app.use('/api/ats/joining-ctc', require('./routes/joiningCtc')); // the joined c
 app.use('/api/ats/team-tools', require('./routes/atsTeamTools'));
 // ATS History: one search + the complete history of a requirement and of a client (routes/atsHistory.js). Ahead of the calendar-gated /api/ats routers.
 app.use('/api/ats/history', require('./routes/atsHistory'));
+// Communication -> Scheduled Messages: one-time / recurring schedules to one or many candidates, the ATS triggers, tracking of every message (routes/messageSchedules.js).
+app.use('/api/ats/scheduled-messages', require('./routes/messageSchedules'));
 // Pipeline & checks (founder ATS audit 2026-11-17): stage names, sub-statuses, the share checklist, fee slabs (routes/atsFlowConfig.js).
 // Ahead of the calendar-gated /api/ats routers: GET /api/ats/stage-labels is read by every login.
 app.use('/api/ats', require('./utils/scheduledReminders').autoSyncMiddleware); // keeps the reminder plan in line with a booking / move / cancel / joining change
+app.use('/api/ats', require('./utils/messageSchedules').eventMiddleware); // the stop rules / ATS triggers of the scheduled messages after a booking / move / cancel / documents / joining
 app.use('/api/ats', require('./routes/atsFlowConfig'));
 app.use('/api/ats', atsExtrasRoutes);
 // Interviews & Joining (Interview Feedback, Offers, Joining, Internal Hiring)
@@ -721,6 +724,8 @@ const server = app.listen(PORT, () => {
   require('./utils/interviewNotices').startSweep();
   // Scheduled messages to the candidate (interview + joining plans), every 5 minutes - OFF until an Admin switches it on (utils/scheduledReminders.js).
   require('./utils/scheduledReminders').startSweep();
+  // Scheduled messages (utils/messageSchedules.js): the tables, and the one-time adoption of the messages scheduled before (guarded, idempotent). The sending is the sweep above.
+  require('./utils/messageSchedules').ensure().catch((e) => console.error('[messageSchedules] start-up:', e.message)); // eslint-disable-line no-console
   // A recruiter who left: their candidates go to the recruiter on the job following them up now, every hour (utils/leaverHandover.js).
   require('./utils/leaverHandover').startSweep();
   // ON LEAVE TODAY: their due follow-ups / tasks go to their backup or TL, and come back after the leave (utils/leaveCover.js), hourly

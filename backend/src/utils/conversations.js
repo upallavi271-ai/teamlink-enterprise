@@ -168,6 +168,8 @@ async function recordOut(m) {
 // A message the person SENT US (a reply). Candidates' reply rows are written by messageDelivery.applyInbound into
 // CandidateMessage; here the thread is updated, a client's / employee's row is written, and the owner is told.
 async function recordIn(m) {
+  // THE CANDIDATE REPLIED (WhatsApp / SMS from utils/messageDelivery, email from utils/imapInbox): their no-response follow-ups stop (utils/messageSchedules.js)
+  if (m && m.personType === 'CANDIDATE' && m.personId) await require('./messageSchedules').onCandidateReply(String(m.personId), m.channel).catch(() => 0); // eslint-disable-line global-require
   if (!(await ready())) return null;
   const type = m.personType;
   const info = await personInfo(type, m.personId) || {};

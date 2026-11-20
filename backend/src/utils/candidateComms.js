@@ -239,6 +239,12 @@ async function recordStageCommunications({
 }) {
   // silent: imports and historical loads never message anybody (no row, no log).
   if (silent) return [];
+  // SCHEDULED MESSAGES (utils/messageSchedules.js): the stop rules (rejected / withdrew / joined) and the ATS triggers of this step (all OFF by default). Never blocks a move.
+  try {
+    await require('./messageSchedules').onStageMove({ application, candidate, requirement, fromStage, toStage, user }); // eslint-disable-line global-require
+  } catch (err) {
+    console.error('[message-schedules] stage move:', err && err.message); // eslint-disable-line no-console
+  }
   // A Job Portal applicant sees the new stage on the portal right away (utils/jobPortalBridge.js pushStagesSoon), not at the hourly sync.
   if (application && (application.source === 'TeamLink Job Portal' || application.portalImportedAt)) {
     try { require('./jobPortalBridge').pushStagesSoon(); } catch { /* the hourly sync still carries it */ } // eslint-disable-line global-require

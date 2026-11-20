@@ -428,6 +428,8 @@ async function addApplication(user, {
       reason: override.reason,
     });
   }
+  // SCHEDULED MESSAGES: the "Application received" / "Initial follow-up" triggers (utils/messageSchedules.js, OFF until an Admin switches them on)
+  try { await require('../utils/messageSchedules').onApplicationCreated(application, user); } catch (err) { console.error('[message-schedules] application:', err && err.message); } // eslint-disable-line global-require, no-console
   return application;
 }
 

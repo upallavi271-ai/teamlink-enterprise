@@ -174,7 +174,15 @@ function shape(r, full = true) {
     attempts: Number(r.attempts) || 0, nextAttemptAt: r.nextAttemptAt,
   };
 }
-const customRows = (candidateId) => q('SELECT * FROM "ScheduledReminder" WHERE "kind" = \'custom\' AND "candidateId" = ? ORDER BY "sendAt"', String(candidateId));
+// the person's own ONE-TIME messages (a repeating or automatic schedule is listed with its schedule: utils/messageSchedules.js)
+const MS = () => require('./messageSchedules'); // eslint-disable-line global-require
+const customRows = async (candidateId) => {
+  await MS().ensure();
+  return q(`SELECT r.* FROM "ScheduledReminder" r LEFT JOIN "MessageSchedule" s ON s."id" = r."scheduleId"
+    WHERE r."kind" = 'custom' AND r."candidateId" = ? AND (s."id" IS NULL OR (s."kind" = 'one-time' AND s."trigger" IS NULL)) ORDER BY r."sendAt"`, String(candidateId));
+};
+const ONE_TIME_WAITING = `SELECT COUNT(*) AS n FROM "ScheduledReminder" r LEFT JOIN "MessageSchedule" s ON s."id" = r."scheduleId"
+  WHERE r."kind" = 'custom' AND r."candidateId" = ? AND r."status" IN ('planned','sending') AND (s."id" IS NULL OR s."kind" = 'one-time')`;
 
 // ------------------------------------------------------------------ reading
 async function list(user, candidateId, { applicationId = null } = {}) {
@@ -212,8 +220,13 @@ async function list(user, candidateId, { applicationId = null } = {}) {
     reason: !c.hasContact ? `No ${c.channel === 'Email' ? 'email address' : 'mobile number'} on this candidate` : (!c.ready ? `Not connected${c.reason ? ` (${String(c.reason).replace(/^Not ready: /, '')})` : ''}` : ''),
   }));
   const blocked = cand.doNotContact ? 'This candidate asked not to be contacted: no message can be scheduled.' : (cand.consentStatus === 'WITHDRAWN' ? 'This candidate withdrew consent: no message can be scheduled.' : '');
+  // ADVANCED SCHEDULING (utils/messageSchedules.js): the repeating and automatic schedules of this person, and the options of the Advanced section
+  const adv = await MS().forCandidate(user, cand.id).catch(() => null);
+  const opts = await MS().options(user).catch(() => null);
   return {
     status: 200, access: 'full', canCreate: true, blocked,
+    schedules: adv && adv.schedules ? adv.schedules.filter((s) => s.kind === 'recurring' || s.automatic) : [],
+    advanced: opts && opts.status === 200 ? { timezones: opts.timezones, limits: opts.limits, window: { start: opts.hours.windowStart, end: opts.hours.windowEnd } } : null,
     candidate: { id: cand.id, name: cand.name, firstName: ctx.name },
     context: { name: ctx.name, recruiter: ctx.recruiter, company: ctx.company, requirement: ctx.requirement, client: ctx.client, applicationId: ctx.applicationId },
     messages: rows.map((r) => shape(r)), automatic, counts, channels, templates: TEMPLATES, placeholders: PLACEHOLDERS.map(([key, label]) => ({ key, label })), footer: FOOTER,
@@ -236,8 +249,11 @@ async function create(user, candidateId, b = {}) {
   if (m.error) return m;
   const tm = checkTime(b.sendAt, settings);
   if (tm.error) return tm;
-  const planned = await q('SELECT COUNT(*) AS n FROM "ScheduledReminder" WHERE "kind" = \'custom\' AND "candidateId" = ? AND "status" IN (\'planned\',\'sending\')', cand.id);
+  await MS().ensure();
+  const planned = await q(ONE_TIME_WAITING, cand.id);
   if (Number(planned[0].n) >= MAX_PLANNED) return { status: 409, error: `There are already ${MAX_PLANNED} messages waiting for this candidate. Cancel one or wait until some are sent.` };
+  const allPlanned = await require('./messageSchedules').internals.plannedFor(cand.id); // eslint-disable-line global-require
+  if (allPlanned >= require('./messageSchedules').MAX_PLANNED_CANDIDATE) return { status: 409, error: `There are already ${allPlanned} messages planned for this candidate (repeating ones included): the most is ${require('./messageSchedules').MAX_PLANNED_CANDIDATE}.` }; // eslint-disable-line global-require
   const iso = tm.t.toISOString();
   const dup = await q('SELECT "id" FROM "ScheduledReminder" WHERE "kind" = \'custom\' AND "candidateId" = ? AND "channel" = ? AND "sendAt" = ? AND "body" = ? AND "status" IN (\'planned\',\'sending\') LIMIT 1', cand.id, channel, iso, m.text);
   if (dup.length) return { status: 409, error: 'This same message is already scheduled for that time.' };
@@ -255,6 +271,8 @@ async function create(user, candidateId, b = {}) {
     VALUES (?,?,?,'custom',?,?,?,'custom',?,'planned','MSG',?,?,?,?,?,?,?,?)`,
   id, applicationId, cand.id, iso, iso, channel, ['en', 'te'].includes(b.language) ? b.language : 'en', user.id, who(user), t, t, user.id, history, channel === 'Email' ? (m.subj || DEFAULT_SUBJECT) : null, m.text);
   await logAudit({ userId: user.id, actorName: who(user), action: 'Message scheduled to candidate', entity: 'Candidate', entityId: cand.id, toValue: `${channel} on ${stamp(iso)}: ${m.text.slice(0, 120)}`.slice(0, 300) }).catch(() => {});
+  // every message is an occurrence of a schedule (here: a one-time schedule around this one row)
+  await MS().adoptRow(id, { note: `One-time message for ${stamp(iso)} by ${channel}`, idemKey: `row:${id}` }).catch((e) => console.error('[scheduledMessages] schedule:', e.message)); // eslint-disable-line no-console
   const [row] = await q('SELECT * FROM "ScheduledReminder" WHERE "id" = ?', id);
   return { status: 201, message: shape(row), warning: await whatsappWarning(cand, channel) };
 }
@@ -274,6 +292,10 @@ async function edit(user, id, b = {}) {
   if (got.error) return got;
   const { r, cand } = got;
   if (r.status !== 'planned') return { status: 409, error: r.status === 'cancelled' ? 'This message was cancelled.' : (r.status === 'sending' ? 'This message is going out right now.' : 'This message has already been handled and cannot be changed. Schedule a new one instead.') };
+  if (r.scheduleId) {
+    const s = await MS().internals.getSched(r.scheduleId);
+    if (s && (s.kind === 'recurring' || s.trigger)) return { status: 409, error: 'This message is one of a repeating or automatic schedule: change the schedule itself (Edit on the schedule), or cancel just this one message.' };
+  }
   const settings = await SR.loadSettings();
   const next = {
     channel: b.channel !== undefined ? b.channel : r.channel,
@@ -303,6 +325,7 @@ async function edit(user, id, b = {}) {
     iso, iso, next.channel, m.text, next.channel === 'Email' ? (m.subj || DEFAULT_SUBJECT) : null, user.id, who(user), nowIso(), addHistory(r, who(user), notes.join('; ')), r.id);
   if (!claimed) return { status: 409, error: 'This message has just been handled and cannot be changed.' };
   await logAudit({ userId: user.id, actorName: who(user), action: 'Scheduled message changed', entity: 'Candidate', entityId: cand.id, toValue: notes.join('; ').slice(0, 300) }).catch(() => {});
+  await MS().syncFromRow(r.id, user);
   const [row] = await q('SELECT * FROM "ScheduledReminder" WHERE "id" = ?', r.id);
   return { status: 200, message: shape(row), warning: await whatsappWarning(cand, next.channel) };
 }
@@ -318,6 +341,7 @@ async function cancel(user, id, reason) {
     text, user.id, who(user), nowIso(), addHistory(r, who(user), text), r.id);
   if (!done) return { status: 409, error: 'This message has just been handled, so it cannot be cancelled.' };
   await logAudit({ userId: user.id, actorName: who(user), action: 'Scheduled message cancelled', entity: 'Candidate', entityId: cand.id, reason: why || undefined, toValue: `${r.channel} on ${stamp(r.sendAt)}`.slice(0, 300) }).catch(() => {});
+  await MS().syncFromRow(r.id, user);
   const [row] = await q('SELECT * FROM "ScheduledReminder" WHERE "id" = ?', r.id);
   return { status: 200, message: shape(row) };
 }
@@ -335,11 +359,11 @@ async function failBell(row, reason) {
     });
   } catch { /* the bell is a courtesy */ }
 }
-async function logToCandidate(row, cand, text, subject, res) {
+async function logToCandidate(row, cand, text, subject, res, label = null) {
   try {
     await prisma.candidateMessage.create({
       data: {
-        candidateId: row.candidateId, applicationId: row.applicationId || null, channel: row.channel, template: 'SCHEDULED_MESSAGE', templateLabel: 'Scheduled message',
+        candidateId: row.candidateId, applicationId: row.applicationId || null, channel: row.channel, template: 'SCHEDULED_MESSAGE', templateLabel: label || 'Scheduled message',
         trigger: 'Scheduled message', recipient: row.channel === 'Email' ? (cand.email || '') : (cand.phone || ''), subject: row.channel === 'Email' ? subject : null, body: text,
         status: 'SENT', statusDetail: `Accepted by the provider${res && res.response ? ` - ${String(res.response).slice(0, 200)}` : ''}`, providerRef: res.providerRef || null, sentAt: new Date(), attempts: 1,
         senderUserId: row.createdById || null, senderName: row.createdBy || 'TeamLink',
@@ -351,20 +375,35 @@ async function logToCandidate(row, cand, text, subject, res) {
 // One due row. -> { kind: 'none'|'deferred'|'sent'|'failed'|'skipped'|'retried', status, reason, sent }
 async function runRow(r, { now = new Date(), settings } = {}) {
   const I = SR.internals;
+  await MS().ensure();
   const t = now.getTime();
   const due = Date.parse(r.sendAt) <= t && (!r.nextAttemptAt || Date.parse(r.nextAttemptAt) <= t);
   if (!due) return { kind: 'none' };
   const st = settings || await SR.loadSettings();
-  const skip = async (why) => { await I.setStatus(r.id, 'skipped', why); await failBell(r, why); return { kind: 'skipped', status: 'skipped', reason: why }; };
+  // a message of a schedule (utils/messageSchedules.js): paused / stopped / its ATS reason gone -> not sent; its own time zone and sending window
+  const g = r.scheduleId ? await MS().gate(r, now) : null;
+  if (g && g.stop) {
+    await I.setStatus(r.id, g.status || 'cancelled', g.reason);
+    await MS().after(r, now);
+    return { kind: 'skipped', status: g.status || 'cancelled', reason: g.reason };
+  }
+  const done = async (out) => { await MS().after(r, now); return out; };
+  const skip = async (why) => { await I.setStatus(r.id, 'skipped', why); await failBell(r, why); return done({ kind: 'skipped', status: 'skipped', reason: why }); };
   // too late (the server was down): not sent any more, and its person is told
   if (t - Date.parse(r.sendAt) > I.STALE_MS && !r.attempts) {
     const why = 'Too late to send: its time passed more than 3 hours ago. Schedule it again.';
     await I.setStatus(r.id, 'skipped', why); await failBell(r, why);
-    return { kind: 'skipped', status: 'skipped', reason: why };
+    return done({ kind: 'skipped', status: 'skipped', reason: why });
   }
-  const mm = istMinutes(now);
-  if (mm < st.earliestHour * 60 || mm > st.latestHour * 60 + 5) return { kind: 'deferred' };
-  const claimed = await x('UPDATE "ScheduledReminder" SET "status" = \'sending\', "updatedAt" = ? WHERE "id" = ? AND "status" = \'planned\'', nowIso(), r.id);
+  if (g && g.window) {
+    const lm = MS().internals.localMin(now.getTime(), g.window.tz);
+    if (lm < g.window.lo || lm > g.window.hi + 5) return { kind: 'deferred' };
+  } else {
+    const mm = istMinutes(now);
+    if (mm < st.earliestHour * 60 || mm > st.latestHour * 60 + 5) return { kind: 'deferred' };
+  }
+  // claimedAt marks a claim made by this code: a restart that finds it 'sending' with no providerCallAt knows the provider was never called
+  const claimed = await x('UPDATE "ScheduledReminder" SET "status" = \'sending\', "claimedAt" = ?, "providerCallAt" = NULL, "updatedAt" = ? WHERE "id" = ? AND "status" = \'planned\'', nowIso(), nowIso(), r.id);
   if (!claimed) return { kind: 'none' };
   const cand = await prisma.candidate.findUnique({ where: { id: String(r.candidateId) } });
   if (!cand) return skip('The candidate is not there any more.');
@@ -383,8 +422,10 @@ async function runRow(r, { now = new Date(), settings } = {}) {
   const core = require('./messagingCore'); // eslint-disable-line global-require
   const delivery = require('./messageDelivery'); // eslint-disable-line global-require
   const actor = r.createdById || undefined;
-  const meta = { audience: 'candidates', personId: r.candidateId, senderUserId: actor, purpose: 'Scheduled message', template: 'custom', module: 'ATS' };
+  const meta = { audience: 'candidates', personId: r.candidateId, senderUserId: actor, purpose: 'Scheduled message', template: 'custom', module: 'ATS', ...(r.idemKey ? { idempotencyKey: r.idemKey } : {}) };
   let res;
+  // the provider is about to be called: from here a crash means "it may have gone", and it is never sent again by itself
+  await x('UPDATE "ScheduledReminder" SET "providerCallAt" = ? WHERE "id" = ?', nowIso(), r.id);
   try {
     if (r.channel === 'WhatsApp') res = await I.whatsappSend(r, cand.phone, text, 'Scheduled message');
     else if (r.channel === 'SMS') {
@@ -399,8 +440,8 @@ async function runRow(r, { now = new Date(), settings } = {}) {
   const attempts = (Number(r.attempts) || 0) + 1;
   if (res && res.ok) {
     await I.setStatus(r.id, 'sent', null, { sentAt: now.toISOString(), providerRef: res.providerRef || null, deliveryStatus: 'Sent', attempts, message: text, nextAttemptAt: null });
-    await logToCandidate(r, cand, text, subject, res);
-    return { kind: 'sent', status: 'sent', sent: true };
+    await logToCandidate(r, cand, text, subject, res, labelOf(r, g));
+    return done({ kind: 'sent', status: 'sent', sent: true });
   }
   if (res && res.optout) return skip(I.WHY(res));
   if (res && res.transient && attempts < I.MAX_TRIES) {
@@ -413,10 +454,19 @@ async function runRow(r, { now = new Date(), settings } = {}) {
   const reason = `${I.WHY(res)}${attempts > 1 ? ` (after ${attempts} tries)` : ''}`;
   await I.setStatus(r.id, 'failed', reason, { attempts, nextAttemptAt: null });
   await failBell({ ...r, attempts }, reason);
-  return { kind: 'failed', status: 'failed', reason };
+  return done({ kind: 'failed', status: 'failed', reason });
+}
+// the Communications line of a message of a schedule: "Scheduled message 2 of 5 (Daily x 5)" / "Automatic message: Interview reminder"
+function labelOf(r, g) {
+  const s = g && g.schedule;
+  if (!s) return null;
+  if (s.trigger) { const d = MS().TRIGGERS.find((t) => t.key === s.trigger); return `Automatic message: ${d ? d.label : s.trigger}`; }
+  if (s.kind !== 'recurring') return null;
+  const label = MS().frequencyLabel({ ...s, totalCount: Number(s.totalCount), weekdays: String(s.weekdays || '').split(',').filter(Boolean).map(Number), monthDay: Number(s.monthDay), intervalValue: Number(s.intervalValue) });
+  return `Scheduled message ${Number(r.seq) || ''}${s.endMode === 'count' ? ` of ${Number(s.totalCount)}` : ''} (${label})`;
 }
 
 module.exports = {
   CHANNELS, MAX_PLANNED, MAX_BODY, PLACEHOLDERS, TEMPLATES, FOOTER, DEFAULT_SUBJECT,
-  accessOf, list, create, edit, cancel, runRow, failBell, fill, finalText, contextFor, checkTime, shape,
+  accessOf, list, create, edit, cancel, runRow, failBell, fill, finalText, contextFor, checkTime, shape, checkMessage, unknownPlaceholders,
 };
