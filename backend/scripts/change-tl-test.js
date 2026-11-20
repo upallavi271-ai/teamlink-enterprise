@@ -19,7 +19,7 @@ src.exec(`VACUUM INTO '${COPY.replace(/'/g, "''")}'`);
 src.close();
 const PORT = Number(process.env.TEST_PORT) || 4201;
 const API = `http://localhost:${PORT}/api`;
-const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'changetl-test', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}` };
+const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'changetl-test', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}`, TEAM_LEAD_CHANGE_DEPARTMENTS: `Education,Ctl${process.pid}` }; // the rule: Education only (the test's own department is added)
 Object.assign(process.env, env);
 const jwt = require('jsonwebtoken');
 const prisma = require('../src/db');
@@ -113,12 +113,15 @@ const old = new Date(Date.now() - 3600e3);
     check(`options as ${who}: a team lead with no recruiter is listed with none`, !!three && three.recruiters.length === 0, three);
   }
   {
-    const oa = await call('GET', `/applications/${app.id}/team-lead-options`, null, tA);
-    const ot = await call('GET', `/applications/${app.id}/team-lead-options`, null, tT1);
-    const mA = ((oa.body && oa.body.options) || []).find((x) => x.tlUserId === tlM.u.id);
-    const la = ((oa.body && oa.body.options) || []);
-    check('options as an Admin: a team lead of another department is offered, marked with its department, after those of the own department', !!mA && mA.otherDept === true && mA.department === 'Medical' && la.findIndex((x) => x.tlUserId === tlM.u.id) > la.findIndex((x) => x.tlUserId === tl2.u.id), mA);
-    check('options as TL1: a team lead of another department is NOT offered (same bench as Change recruiter)', !((ot.body && ot.body.options) || []).some((x) => x.tlUserId === tlM.u.id));
+    // Change team lead is for the Education teams only (founder 2026-11-20): a job of any other department has no such option, from the page or by hand
+    const medReq = await prisma.requirement.create({ data: { title: `Ctl medical job ${P}`, clientId: client.id, department: 'Medical', status: 'RECRUITER_ASSIGNED', tlId: tlM.u.id, positionCode: sTLM.code } });
+    const medCand = await prisma.candidate.create({ data: { name: `Ctl Person med ${P}`, phone: `6${String(P).padStart(9, '4').slice(-9)}`, email: `ctl.person.med.${P}@ctl-test.in` } });
+    const medApp = await prisma.application.create({ data: { candidateId: medCand.id, requirementId: medReq.id, stage: 'SOURCED', ownerRecruiterId: r1.u.id } });
+    const om = await call('GET', `/applications/${medApp.id}/team-lead-options`, null, tA);
+    check('a job of another department (Medical): the options are refused for an Admin, with the reason', om.status === 403 && /Education/.test((om.body && om.body.error) || ''), om.body);
+    const bm = await call('POST', '/applications/bulk', { action: 'assign', correct: true, applicationIds: [medApp.id], recruiterId: r1.u.id, comment: 'test reason', teamLeadChange: { toTlUserId: tl2.u.id } }, tA);
+    check('...and a hand-made change request for it is refused too', !(bm.body && bm.body.results && bm.body.results[0] && bm.body.results[0].ok) && /Education/.test(JSON.stringify(bm.body)), bm.body);
+    check('...while the Education test job still gets its options', (await call('GET', `/applications/${app.id}/team-lead-options`, null, tA)).status === 200);
   }
   check('a recruiter login cannot read the options (403)', (await call('GET', `/applications/${app.id}/team-lead-options`, null, tR1)).status === 403);
   check('a BDE login cannot read the options (403)', (await call('GET', `/applications/${app.id}/team-lead-options`, null, tB)).status === 403);

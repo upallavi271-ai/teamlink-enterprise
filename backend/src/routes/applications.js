@@ -1142,6 +1142,7 @@ router.get('/:id/team-lead-options', async (req, res, next) => {
     if (!app) return res.status(404).json({ error: 'Application not found' });
     if (!applicationInScope(req.user, app)) return res.status(403).json({ error: 'Outside your access' });
     const TLC = require('../utils/teamLeadChange'); // eslint-disable-line global-require
+    if (!TLC.allowedFor(app)) return res.status(403).json({ error: TLC.REFUSAL });
     const cur = await TLC.currentLeads(app, { positionCode: req.query.positionCode ? String(req.query.positionCode) : null });
     return res.json({
       now: { tlUserId: cur.leads.tlUserId, tlName: cur.leads.tlName, source: cur.source, recruiterId: cur.owner.userId, recruiterName: cur.owner.name, seatCode: cur.seatCode },
@@ -1215,6 +1216,10 @@ router.post('/bulk', async (req, res, next) => {
     if (tlChange) {
       if (appIds.length + candIds.length !== 1) return res.status(400).json({ error: 'Change the team lead of one candidate at a time.' });
       if (String(b.comment || '').trim().length < 3) return res.status(400).json({ error: 'Say in a few words why the team lead is changed.' });
+      if (appIds.length === 1) { // Change team lead is for the Education teams only: refuse before anything else
+        const one = await prisma.application.findUnique({ where: { id: appIds[0] }, include: { requirement: true } });
+        if (one && !require('../utils/teamLeadChange').allowedFor(one)) return res.status(403).json({ error: require('../utils/teamLeadChange').REFUSAL }); // eslint-disable-line global-require
+      }
       const leadOfTarget = targetSeat.ownerPositionId || targetSeat.ownerPositionCode
         ? await require('../utils/positionScope').leadsOfPosition({ positionId: targetSeat.ownerPositionId, positionCode: targetSeat.ownerPositionId ? undefined : targetSeat.ownerPositionCode }).catch(() => null) // eslint-disable-line global-require
         : null;
@@ -1294,6 +1299,10 @@ router.post('/bulk', async (req, res, next) => {
       // credit (no handover), and a joined person gets no new task - only a closed note saying who corrected it.
       const correct = b.correct === true;
       const settled = ['JOINED', 'HIRED'].includes(app.stage);
+      if (tlChange && !require('../utils/teamLeadChange').allowedFor(app)) { // eslint-disable-line global-require
+        results.push({ ...base, ok: false, error: require('../utils/teamLeadChange').REFUSAL }); // eslint-disable-line global-require
+        continue;
+      }
       // a correction stays inside the job's department (founder 2026-11-11: "ey dep vallaki ahh dept valaley"), for every login
       if (correct && app.requirement) {
         const jobDepts = require('../utils/reqDepartments').departmentsOf(app.requirement).map((d) => String(d).trim().toLowerCase()); // eslint-disable-line global-require

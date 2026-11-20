@@ -3134,6 +3134,7 @@ router.get('/:id', async (req, res) => {
     section: sectionOfCode(sections, decorated.positionCode),
     positionCode: decorated.positionCode || null,
     tl: ownershipTl,
+    tlChange: require('../utils/teamLeadChange').departmentAllowed(decorated.requirementDepartment), // eslint-disable-line global-require
     recruiter: decorated.recruiterName || null,
     bde: decorated.bdeName || null,
   } : null;

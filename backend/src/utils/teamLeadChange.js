@@ -120,6 +120,14 @@ async function repairStamps({ dryRun = true, sinceDays = 30 } = {}) {
   return { checked: rows.length, wrong: todo.length, fixed };
 }
 
+// WHO MAY USE "CHANGE TEAM LEAD" (founder 2026-11-20): only the Education teams, where two team leads (Team A, Team B) work the same jobs and the
+// candidate's data can end up under the wrong one. Other departments have one team lead each, so the button is not there. The list can be widened
+// without code: TEAM_LEAD_CHANGE_DEPARTMENTS=Education,Medical.
+const TL_CHANGE_DEPARTMENTS = () => String(process.env.TEAM_LEAD_CHANGE_DEPARTMENTS || 'Education').split(',').map(lc).filter(Boolean);
+const departmentAllowed = (dept) => RD.departmentsOf({ department: dept }).map(lc).some((d) => TL_CHANGE_DEPARTMENTS().includes(d));
+const allowedFor = (app) => RD.departmentsOf((app && app.requirement) || {}).map(lc).some((d) => TL_CHANGE_DEPARTMENTS().includes(d));
+const REFUSAL = 'Change team lead is only for the Education teams (Team A and Team B).';
+
 async function optionsFor(user, app, scope, curIn = null) {
   const jobDepts = RD.departmentsOf(app.requirement || {}).map(lc);
   const cur = curIn || await currentLeads(app);
@@ -137,12 +145,7 @@ async function optionsFor(user, app, scope, curIn = null) {
     select: { id: true, name: true, atsRole: true, atsDepartment: true, atsScopeDepartments: true },
   });
   const uById = new Map(users.map((u) => [u.id, u]));
-  // A login with company-wide reach (Super Admin / developer, Admin) may hand the candidate to ANY team lead, whatever the department: the job's
-  // own department comes first, the others follow with their department named (founder 2026-11-20: "I search a team lead's name and it says
-  // no match"). Everyone else is offered only the job's department(s), the same bench as Change recruiter.
-  const wide = !!(scope && scope.global);
-  const inJobOnly = (u, seat) => !jobDepts.length || deptsOfUser(u).some((d) => jobDepts.includes(d)) || (seat.department && jobDepts.includes(lc(seat.department)));
-  const inJob = (u, seat) => wide || inJobOnly(u, seat);
+  const inJob = (u, seat) => !jobDepts.length || deptsOfUser(u).some((d) => jobDepts.includes(d)) || (seat.department && jobDepts.includes(lc(seat.department)));
   // a team name is a "section" only where the department has more than one team (same rule as the profile's Section)
   const teamsOf = new Map();
   seats.forEach((p) => { if (p.team && p.department) { if (!teamsOf.has(p.department)) teamsOf.set(p.department, new Set()); teamsOf.get(p.department).add(p.team); } });
@@ -162,11 +165,10 @@ async function optionsFor(user, app, scope, curIn = null) {
     if (!u || u.atsRole !== 'TL' || !inJob(u, p) || (other.includes(u.id) && u.id !== cur.leads.tlUserId)) return;
     out.push({
       tlUserId: u.id, tlName: u.name, section: sectionOf(p), seatCode: p.code, current: u.id === cur.leads.tlUserId,
-      department: p.department || null, otherDept: !inJobOnly(u, p),
       recruiters: (recruitersOf.get(p.id) || []).sort((a, b) => a.name.localeCompare(b.name)),
     });
   });
-  out.sort((a, b) => (a.otherDept === b.otherDept ? 0 : a.otherDept ? 1 : -1) || a.tlName.localeCompare(b.tlName)); // the job's department first
+  out.sort((a, b) => a.tlName.localeCompare(b.tlName));
   return out;
 }
 
@@ -222,4 +224,4 @@ async function recordAndNotify({ app, by, reason, oldLeads, newTl, newRecruiter,
   return note;
 }
 
-module.exports = { ACTION, optionsFor, currentLeads, teamLeadOfApplication, currentOwnerOf, recordAndNotify, ensureIndex, peekByUser, peekByCode, repairStamps };
+module.exports = { ACTION, departmentAllowed, allowedFor, REFUSAL, optionsFor, currentLeads, teamLeadOfApplication, currentOwnerOf, recordAndNotify, ensureIndex, peekByUser, peekByCode, repairStamps };
