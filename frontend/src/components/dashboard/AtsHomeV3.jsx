@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FunnelChart, BarChart, DonutChart, MiniBar, ProgressBar } from '../charts';
 import StatCard, { StatRow } from '../ui/StatCard.jsx';
@@ -327,13 +328,17 @@ function Activity({ w, onDrill }) {
 // JOININGS, DROPS & REPLACEMENTS MONTH BY MONTH (utils/atsHome.js monthsWidget, 2026-11-10): a department TL sees their department,
 // the BDE TL and the admins every department. Every number opens its list.
 const MONTH_COLS = [['joined', 'Joined'], ['left', 'Left after joining'], ['nojoin', 'Did not join'], ['asked', 'Replacement asked'], ['replaced', 'Replaced']];
+const MONTHS_FIRST = 6; // the first six months show; the rest sit behind "More months"
 function Months({ w, onDrill }) {
+  const [all, setAll] = useState(false);
+  const rows = all ? w.rows : w.rows.slice(0, MONTHS_FIRST);
+  const more = Math.max(0, w.rows.length - MONTHS_FIRST);
   return (
     <Box title={w.title} className="ahv3-months">
       <div className="tbl-wrap" style={{ border: 0 }}>
         <table>
           <thead><tr><th>Month</th>{MONTH_COLS.map(([k, l]) => <th key={k} className="num">{l}</th>)}</tr></thead>
-          <tbody>{w.rows.map((r) => (
+          <tbody>{rows.map((r) => (
             <tr key={r.month}>
               <td>{r.label}</td>
               {MONTH_COLS.map(([k]) => (
@@ -345,6 +350,11 @@ function Months({ w, onDrill }) {
           ))}</tbody>
         </table>
       </div>
+      {more > 0 && (
+        <div style={{ padding: '8px 12px' }}>
+          <button type="button" className="btn btn-sm" onClick={() => setAll((v) => !v)}>{all ? 'Show fewer months' : `More months (${more})`}</button>
+        </div>
+      )}
     </Box>
   );
 }

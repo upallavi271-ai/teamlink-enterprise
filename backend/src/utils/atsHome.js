@@ -814,12 +814,19 @@ async function dropsWidget(c, b, k, rows = k.sel, w = b.world, recsIn = null, sc
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const prevMonthOf = (m) => { const [y, mo] = m.split('-').map(Number); return mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, '0')}`; };
 function monthsWidget(c, b, rows, w, recs, scopeWord = '') {
-  const months = [];
-  for (let m = c.today.slice(0, 7), i = 0; i < 6; i += 1, m = prevMonthOf(m)) months.push(m);
   const ids = new Set(rows.map((x) => x.a.id));
   const left = recs.filter((r) => ids.has(r.applicationId));
   const joined = rows.filter(isJoined).map((x) => ({ x, day: joinFacts(x).day }));
   const noJoin = noJoinOf(rows, recs);
+  // Every month that has anything in it, newest first: at least six, at most 24 (founder 2026-11-20: a "More" button shows the remaining months;
+  // the screen draws the first six and reveals the rest on click)
+  let first = c.today.slice(0, 7);
+  [...joined.map((o) => o.day), ...left.map((r) => r.droppedOn), ...noJoin.map((o) => o.day)].forEach((d) => {
+    const mo = String(d || '').slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(mo) && mo < first) first = mo;
+  });
+  const months = [];
+  for (let m = c.today.slice(0, 7), i = 0; i < 24; i += 1, m = prevMonthOf(m)) { months.push(m); if (i >= 5 && m <= first) break; }
   const asked = (r) => r.replacementDecision === 'NEEDED' || ['Requested', 'New candidate added', 'Closed'].includes(r.replacementStatus);
   const sfx = scopeWord ? ` · ${scopeWord}` : '';
   const out = months.map((m) => {
