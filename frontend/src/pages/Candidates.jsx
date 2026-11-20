@@ -405,12 +405,17 @@ const dueLabel = (ymd) => {
 };
 
 // Deep links (?stage= ?status= ?view= ?sub= ?followUp= ?quick= ?requirementId=).
+const DEEP_KEYS = ['stage', 'status', 'requirementId', 'clientId', 'followUp', 'hiring', 'bde'];
 const STATUS_VALUES = ['Active', 'Hold', 'Rejected', 'Joined', 'None'];
-function normStatus(v) {
+function normOneStatus(v) {
   const s = String(v || '').trim().toLowerCase();
   if (!s) return '';
   if (s === 'on hold') return 'Hold';
   return STATUS_VALUES.find((x) => x.toLowerCase() === s) || '';
+}
+// the checkbox Status filter writes several (?status=Active,Hold)
+function normStatus(v) {
+  return String(v || '').split(',').map(normOneStatus).filter(Boolean).join(',');
 }
 function stageFromUrl(raw) {
   const v = String(raw || '').trim();
@@ -665,10 +670,17 @@ export default function Candidates() {
     setSearchParams(sp, { replace: true });
   }, [filters.source]); // eslint-disable-line react-hooks/exhaustive-deps
   // The other filters are in the address bar too (shareable; kept when a candidate is opened and Back is pressed).
-  const urlFilterSig = URL_FILTER_KEYS.map((k) => filters[k] || '').join('\u0001');
+  // The filters the page reads from a deep link (?stage= ?status= ?requirementId= ?clientId= ?followUp= ?hiring= ?bde=) are written
+  // back too (2026-11-20): Stage is on the one filter bar now, and a ticked Stage / Client / Requirement survives a reload or Back.
+  const urlFilterSig = [...URL_FILTER_KEYS, ...DEEP_KEYS].map((k) => filters[k] || '').join('\u0001');
   useEffect(() => {
     const sp = new URLSearchParams(searchParams);
-    if (!writeUrlFilters(sp, filters)) return;
+    let changed = writeUrlFilters(sp, filters);
+    DEEP_KEYS.forEach((k) => {
+      const v = filters[k] || '';
+      if ((sp.get(k) || '') !== v) { if (v) sp.set(k, v); else sp.delete(k); changed = true; }
+    });
+    if (!changed) return;
     ownWrite.current = true;
     setSearchParams(sp, { replace: true });
   }, [urlFilterSig]); // eslint-disable-line react-hooks/exhaustive-deps

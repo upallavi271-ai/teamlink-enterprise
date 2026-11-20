@@ -2,6 +2,8 @@
 .fbar{margin:6px 0 8px}
 .fbar-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 10px}
 .fbar-row>.lph-facet,.fbar-row>.fbar-cell,.fbar-row>.fbar-multimode,.fbar-row>.fbar-range{min-width:150px}
+/* a filter with nothing to pick draws nothing: no blank 150 px gap in the bar (2026-11-20) */
+.fbar-row>.fbar-cell:empty,.fbar-panel-body>.fbar-cell:empty{display:none}
 .fbar .lph-pair{display:flex;gap:6px}
 .fbar .lph-pair input{width:84px;min-width:0}
 .fbar .fbar-dates .lph-pair input{width:140px}

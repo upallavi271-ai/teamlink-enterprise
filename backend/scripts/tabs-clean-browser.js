@@ -193,7 +193,8 @@ const api = async (url, token) => {
     { key: 'Super Admin', u: ADM, first: 'People' },
   ];
 
-  for (const R of ROLES) {
+  const ONLY = process.env.TABS_ROLES ? process.env.TABS_ROLES.split(',') : null; // a quicker run for one role (debugging)
+  for (const R of ROLES.filter((x) => !ONLY || ONLY.includes(x.key))) {
     console.log(`\n== ${R.key}`);
     const token = await tok(R.u.id); // eslint-disable-line no-await-in-loop
     try { // one role's slip is reported, the other roles still run
@@ -245,13 +246,17 @@ const api = async (url, token) => {
     await p.getByRole('button', { name: 'Simple view' }).first().click();
     await sleep(800);
     check(`${R.key}: back to the Simple view`, (await cols()).simple);
-    // a checkbox filter: the rows follow and the address keeps it
-    const fb = p.locator('.fbar-row .msel-btn').first();
-    const fLabel = ((await fb.innerText().catch(() => '')) || '').split(':')[0].trim();
+    // a checkbox filter: the rows follow and the address keeps it (on All: a login with nothing Active still has options)
+    await p.goto(`${W}/candidates?view=pipeline&sub=all`, { waitUntil: 'domcontentloaded' });
+    await settle(p);
+    const fb = p.locator('.fbar-row .msel-btn:visible').first();
+    const hasFb = await fb.waitFor({ timeout: 30000 }).then(() => true).catch(() => false);
+    const fLabel = hasFb ? ((await fb.innerText().catch(() => '')) || '').split(':')[0].trim() : '(none)';
     const before = (await p.locator('.fbar-count').first().innerText().catch(() => '')).trim();
-    await fb.click();
+    const url0 = p.url();
+    if (hasFb) await fb.click();
     const item = p.locator('.msel-pop .msel-item').first();
-    const hasItem = await item.waitFor({ timeout: 30000 }).then(() => true).catch(() => false);
+    const hasItem = hasFb && await item.waitFor({ timeout: 30000 }).then(() => true).catch(() => false);
     if (hasItem) {
       const name = (await item.locator('.msel-name').innerText()).trim();
       await item.locator('input[type=checkbox]').check();
@@ -259,11 +264,12 @@ const api = async (url, token) => {
       await p.keyboard.press('Escape');
       const after = (await p.locator('.fbar-count').first().innerText().catch(() => '')).trim();
       const url1 = decodeURIComponent(p.url());
-      check(`${R.key}: ticking "${name}" in ${fLabel} puts it in the address and a chip`, url1.includes(name) && (await p.locator('.fbar .filter-chips-chip').count()) > 0, { url1, before, after });
+      const added = [...new URL(p.url()).searchParams.keys()].filter((k) => !new URL(url0).searchParams.has(k));
+      check(`${R.key}: ticking "${name}" in ${fLabel} puts it in the address (${added.join(', ')}) and a chip`, added.length > 0 && (await p.locator('.filter-chips-chip').count()) > 0, { url1, before, after });
       await p.reload({ waitUntil: 'domcontentloaded' });
       await settle(p);
       const again = (await p.locator('.fbar-count').first().innerText().catch(() => '')).trim();
-      check(`${R.key}: after a reload the filter is still on (same count, chip still there)`, again === after && (await p.locator('.fbar .filter-chips-chip').count()) > 0, { after, again });
+      check(`${R.key}: after a reload the filter is still on (same count, chip still there)`, again === after && (await p.locator('.filter-chips-chip').count()) > 0, { after, again });
     } else check(`${R.key}: a filter of the bar has options to tick`, false, fLabel);
     // More filters reaches the old panel's filters, as checkbox lists
     await p.locator('.fbar-more').first().click();
@@ -338,12 +344,16 @@ const api = async (url, token) => {
       check(`${R.key}: 375 px ${url.split('?')[0]}: no sideways page scroll, 16 px gutters`, d.over <= 1 && d.gutterL >= 12 && d.gutterL <= 24, d);
       await m.ctx.close(); // eslint-disable-line no-await-in-loop
     }
-    } catch (e) { check(`${R.key}: the run finished (${String(e.message).split('\n')[0].slice(0, 160)})`, false); }
+    } catch (e) {
+      check(`${R.key}: the run finished (${String(e.message).split('\n')[0].slice(0, 160)})`, false, String(e.message).slice(0, 500));
+      try { for (const c of browser.contexts()) for (const pg of c.pages()) await pg.screenshot({ path: path.join(os.tmpdir(), `tabs-fail-${R.key.replace(/\W/g, '')}.png`) }); } catch { /* none */ } // eslint-disable-line no-await-in-loop
+      for (const c of browser.contexts()) await c.close().catch(() => {}); // eslint-disable-line no-await-in-loop
+    }
   }
 
   // ---------------------------------------------------------------- the other ATS screens (Super Admin sees every tab)
   console.log('\n== the other ATS screens (Super Admin, then a TL and a Recruiter)');
-  for (const [who, u] of [['Super Admin', ADM], ['TL', TL], ['Recruiter', REC]]) {
+  for (const [who, u] of [['Super Admin', ADM], ['TL', TL], ['Recruiter', REC]].filter(([k]) => !ONLY || ONLY.includes(k))) {
     const token = await tok(u.id); // eslint-disable-line no-await-in-loop
     const s = await open(token, '/requirements'); // eslint-disable-line no-await-in-loop
     try {

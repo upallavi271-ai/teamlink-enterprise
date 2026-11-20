@@ -4,4 +4,13 @@
 @media (max-width: 600px) {
   .topbar .tb-role,
   .topbar .tb-ai { display: none !important; }
+  /* 2026-11-20: the initials circle is in the menu's footer too (sidebar-user); a BDE's extra top-bar button pushed it
+     14 px past the screen edge, so the page scrolled sideways */
+  .topbar .topbar-right > .avatar { display: none; }
+  .topbar .topbar-right { min-width: 0; gap: 6px; }
+  .topbar .topbar-title { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+/* a 375 px phone with every top-bar button (an Admin's health dot, a BDE's agent): the ☰ alone says Menu */
+@media (max-width: 400px) {
+  .topbar .hamburger .hb-label { display: none; }
 }
