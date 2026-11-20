@@ -396,7 +396,7 @@ const Z = (s) => new Date(s); // an instant, written in UTC ("...Z")
       await page.waitForTimeout(1200);
       check('browser, TL1: a recruiter row opens that recruiter\'s day-by-day table and their list', (await page.locator('.fur-drill tbody tr').count()) === 7 && (await page.locator('.fur-list tbody tr').count()) > 5);
       await page.screenshot({ path: path.join(shots, '2-tl-recruiter-drill.png'), fullPage: true });
-      await page.getByRole('tab', { name: /Day by day/ }).click();
+      await page.locator('.fur-tabs').getByRole('tab', { name: 'Day by day' }).click();
       await page.waitForTimeout(600);
       await page.screenshot({ path: path.join(shots, '3-tl-day-by-day.png') });
       await ctx.close();
@@ -406,7 +406,7 @@ const Z = (s) => new Date(s); // an instant, written in UTC ("...Z")
       await setDays(page, '2026-10-05', '2026-10-11');
       t = await text(page);
       check('browser, R1a: only their own row, no other name, no Total row', t.includes(r1a.u.name) && ![r1b.u.name, tl1.u.name, r1x.u.name, ...R2NAMES].some((x) => t.includes(x)) && (await page.locator('.fur-table tbody tr').count()) === 1 && !/Total/.test(t), t.slice(0, 300));
-      await page.getByRole('tab', { name: /My follow-ups/ }).click();
+      await page.locator('.fur-tabs').getByRole('tab', { name: 'My follow-ups' }).click();
       await page.waitForTimeout(1500);
       t = await text(page);
       check('browser, R1a: their list shows only their own follow-ups', ![r1b.u.name, tl1.u.name, ...R2NAMES].some((x) => t.includes(x)) && (await page.locator('.fur-list tbody tr').count()) > 5);
