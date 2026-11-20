@@ -901,21 +901,12 @@ const VIEW_ONLY_ROLES = ['MANAGER', 'ASSISTANT_MANAGER'];
 // Catalog row can re-grant 'assign' per role. Seeing
 // more (the Manager reads every department) never adds an edit.
 // A stored Role Catalog row still re-grants any of it per role.
+// 2026-11-20 (founder, after the 360 audit): Manager and Assistant Manager are VIEW ONLY in ATS - they read and export everything in their
+// reach, and create, edit, approve or assign nothing (jobs, candidates, clients, interviews, offers, joinings). A Role Catalog row can still
+// re-grant an action per role.
 const LEAD_ATS_WRITES = {
-  MANAGER: {
-    requirements: { 'Requirement Detail': ['approve'], 'Requirement Request': ['approve', 'create'] },
-    clients: { 'Client Notes': ['create'], 'Pause / Reactivate Client': ['edit'], 'Resume Client': ['edit'], 'Deactivate Client': ['edit'], 'Client Portal Logins': ['approve'] },
-    candidates: { 'Pipeline Stages': ['approve'], 'Rejection & Hold': ['approve'] },
-    recruiterbde: {},
-    interviews: {},
-  },
-  ASSISTANT_MANAGER: {
-    requirements: { 'Requirement Detail': ['approve'], 'Requirement Request': ['create'] },
-    clients: {},
-    candidates: { 'Pipeline Stages': ['approve'], 'Rejection & Hold': ['approve'] },
-    recruiterbde: {},
-    interviews: {},
-  },
+  MANAGER: { requirements: {}, clients: {}, candidates: {}, recruiterbde: {}, interviews: {} },
+  ASSISTANT_MANAGER: { requirements: {}, clients: {}, candidates: {}, recruiterbde: {}, interviews: {} },
   // The STL approves what the section's TLs send up, and signs off interview
   // decisions, offers and joinings of the section.
   STL: {

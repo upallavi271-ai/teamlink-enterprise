@@ -30,7 +30,7 @@ const L = require('./bdeAgentLang');
 function isBdeAgentUser(user) {
   if (!user) return false;
   if (String(user.atsRole || '').toUpperCase() === 'BDE') return true;
-  if (String(user.role || '').toUpperCase() === 'SUPER_ADMIN' || String(user.atsRole || '').toUpperCase() === 'SUPER_ADMIN') return true;
+  if (['SUPER_ADMIN', 'ADMIN'].includes(String(user.role || '').toUpperCase()) || ['SUPER_ADMIN', 'ADMIN'].includes(String(user.atsRole || '').toUpperCase())) return true; // Admin too (founder 2026-11-20)
   if (/develop/i.test(String(user.designation || ''))) return true;
   try { return !!isBdeTl(user); } catch { return false; }
 }
