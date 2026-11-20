@@ -75,7 +75,8 @@ async function calendar(user, { from, to, owner } = {}) {
   if ((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 > 62) return S.fail(400, 'At most two months at a time.');
   const where = ['t."dueDate" >= ?', 't."dueDate" <= ?', 't."status" IN (\'Open\', \'Done\')'];
   const params = [from, to];
-  if (!S.seesAll(r)) { where.push('t."ownerId" = ?'); params.push(user.id); } else if (owner) { where.push('t."ownerId" = ?'); params.push(S.clip(owner, 60)); }
+  const owners = require('./listFilters').csv(owner).map((v) => S.clip(v, 60)); // eslint-disable-line global-require
+  if (!S.seesAll(r)) { where.push('t."ownerId" = ?'); params.push(user.id); } else if (owners.length) { where.push(`t."ownerId" IN (${owners.map(() => '?').join(',')})`); params.push(...owners); }
   const rows = await DB.all(`SELECT t."id", t."title", t."dueDate", t."dueTime", t."status", t."type", t."priority", t."ownerId", t."ownerName", t."leadId", t."dealId", t."accountId", t."outcome",
       COALESCE(d."title", l."company", a."name") AS "recordName",
       CASE WHEN t."dealId" IS NOT NULL THEN 'deal' WHEN t."leadId" IS NOT NULL THEN 'lead' ELSE 'account' END AS "recordKind",

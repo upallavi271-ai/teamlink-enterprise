@@ -242,6 +242,16 @@ async function duplicatesOf({ company, phone, email }, { exceptLeadId } = {}) {
 const LAST_ACT = (col) => `(SELECT MAX(a."at") FROM "CrmActivity" a WHERE a."${col}" = x."id") AS "lastActivityAt"`;
 const NEXT_TASK = (col) => `(SELECT MIN(t."dueDate") FROM "CrmTask" t WHERE t."${col}" = x."id" AND t."status" = 'Open') AS "nextTaskDue"`;
 
+// SEVERAL VALUES PER FILTER (founder 2026-11-20: checkboxes everywhere): status / source / rating / owner / type / stage take a comma list;
+// the values are OR-ed inside one filter, the filters AND-ed; an owner filter only ever narrows a viewer who sees everyone.
+function inCsv(where, params, col, raw, allowed = null, max = 60) {
+  const FLm = require('./listFilters'); // eslint-disable-line global-require
+  const vals = FLm.csv(raw).map((v) => clip(v, max)).filter((v) => !allowed || allowed.includes(v));
+  if (!vals.length) return false;
+  where.push(`${col} IN (${vals.map(() => '?').join(',')})`); params.push(...vals);
+  return true;
+}
+
 async function list(user, kind, q = {}) {
   const r = roleOf(user);
   const s = scopeSql(user, r, 'x.');
@@ -253,24 +263,25 @@ async function list(user, kind, q = {}) {
   const capN = FL.cap(q);
   if (kind === 'lead') {
     FL.lead(q, where, params);
-    if (q.status && LEAD_STATUSES.includes(q.status)) { where.push('x."status" = ?'); params.push(q.status); } else if (q.status !== 'all' && !anyF) where.push('x."status" NOT IN (\'Converted\', \'Junk\')');
+    if (!inCsv(where, params, 'x."status"', q.status, LEAD_STATUSES) && q.status !== 'all' && !anyF) where.push('x."status" NOT IN (\'Converted\', \'Junk\')');
     if (text) { where.push('(x."company" LIKE ? OR x."contactName" LIKE ? OR x."phone" LIKE ? OR x."email" LIKE ? OR x."city" LIKE ?)'); params.push(...Array(5).fill(`%${text}%`)); }
-    if (q.source) { where.push('x."source" = ?'); params.push(clip(q.source)); }
-    if (q.rating && RATINGS.includes(q.rating)) { where.push('x."rating" = ?'); params.push(q.rating); }
-    if (q.owner && seesAll(r)) { where.push('x."ownerId" = ?'); params.push(clip(q.owner, 60)); }
+    inCsv(where, params, 'x."source"', q.source);
+    inCsv(where, params, 'x."rating"', q.rating, RATINGS);
+    if (seesAll(r)) inCsv(where, params, 'x."ownerId"', q.owner);
     if (q.from && YMD.test(q.from)) { where.push('x."createdAt" >= ?'); params.push(q.from); }
     if (q.to && YMD.test(q.to)) { where.push('x."createdAt" <= ?'); params.push(`${q.to}T23:59:59.999Z`); }
     const SALES = require('./sales'); // eslint-disable-line global-require
     const names = SALES.stageNames(await SETTINGS.load());
     const rows = (await DB.all(`SELECT x.*, (SELECT d."stage" FROM "CrmDeal" d WHERE d."id" = x."dealId") AS "dealStage", ${LAST_ACT('leadId')}, ${NEXT_TASK('leadId')} FROM "CrmLead" x WHERE ${where.join(' AND ')} ORDER BY x."updatedAt" DESC LIMIT ${Math.max(1, Math.min(20000, Math.round(Number(q.max)) || capN))}`, ...params)).map((l) => ({ ...l, stage: SALES.stageOf(l, names) }));
-    if (q.stage) return rows.filter((l) => l.stage === q.stage);
+    const stages = FL.csv(q.stage);
+    if (stages.length) return rows.filter((l) => stages.includes(l.stage));
     return q.status || anyF ? rows : rows.filter((l) => !['Won', 'Lost'].includes(l.stage)); // the open leads: a won or lost one stays on the board
   }
   if (kind === 'account') {
     FL.account(q, where, params);
-    if (q.kind === 'Prospect' || q.kind === 'Client') { where.push('x."kind" = ?'); params.push(q.kind); }
+    inCsv(where, params, 'x."kind"', q.kind, ['Prospect', 'Client']);
     if (text) { where.push('(x."name" LIKE ? OR x."city" LIKE ? OR x."industry" LIKE ?)'); params.push(...Array(3).fill(`%${text}%`)); }
-    if (q.owner && seesAll(r)) { where.push('x."ownerId" = ?'); params.push(clip(q.owner, 60)); }
+    if (seesAll(r)) inCsv(where, params, 'x."ownerId"', q.owner);
     return DB.all(`SELECT x.*, (SELECT COUNT(*) FROM "CrmContact" c WHERE c."accountId" = x."id") AS "contacts",
       (SELECT COUNT(*) FROM "CrmDeal" d WHERE d."accountId" = x."id" AND d."stage" NOT IN ('Won', 'Lost')) AS "openDeals",
       (SELECT COALESCE(SUM(d."value"), 0) FROM "CrmDeal" d WHERE d."accountId" = x."id" AND d."stage" NOT IN ('Won', 'Lost')) AS "openValue",
@@ -285,7 +296,7 @@ async function list(user, kind, q = {}) {
   if (kind === 'deal') {
     FL.deal(q, where, params);
     if (text) { where.push('(x."title" LIKE ? OR a."name" LIKE ?)'); params.push(`%${text}%`, `%${text}%`); }
-    if (q.owner && seesAll(r)) { where.push('x."ownerId" = ?'); params.push(clip(q.owner, 60)); }
+    if (seesAll(r)) inCsv(where, params, 'x."ownerId"', q.owner);
     // closed deals: the last 30 days only on the board, so Won / Lost stay readable (older ones stay on their account); a list that needs more
     // (the Revenue card's Won deals) asks with ?closedDays=
     const closedDays = Math.max(1, Math.min(3650, Math.round(Number(q.closedDays)) || 30));
@@ -535,12 +546,12 @@ async function invoices(user, q = {}) {
   const r = roleOf(user);
   const s = scopeSql(user, r, 'x.');
   const where = [s.sql]; const params = [...s.params];
-  if (q.status && INVOICE_STATUSES.includes(q.status)) { where.push('x."status" = ?'); params.push(q.status); }
+  inCsv(where, params, 'x."status"', q.status, INVOICE_STATUSES);
   if (q.accountId) { where.push('x."accountId" = ?'); params.push(clip(q.accountId, 60)); }
   if (q.dealId) { where.push('x."dealId" = ?'); params.push(clip(q.dealId, 60)); }
   const FL = require('./listFilters'); // eslint-disable-line global-require
   FL.invoice(q, where, params);
-  if (q.owner && seesAll(r)) { where.push('x."ownerId" = ?'); params.push(clip(q.owner, 60)); }
+  if (seesAll(r)) inCsv(where, params, 'x."ownerId"', q.owner);
   const rows = await DB.all(`SELECT x.* FROM "CrmInvoice" x WHERE ${where.join(' AND ')} ORDER BY x."createdAt" DESC LIMIT ${FL.cap(q)}`, ...params);
   // Won deals (in the viewer's scope) that have no invoice yet - the ones won before invoices existed; "Create missing invoices" makes them
   const ds = scopeSql(user, r, 'd.');
@@ -862,10 +873,13 @@ async function finishTask(user, id, input) {
 async function tasks(user, { when = 'open', mine, all, from, to, owner, priority, type, q: search } = {}) {
   const r = roleOf(user);
   const s = (mine || !seesAll(r)) ? { sql: 't."ownerId" = ?', params: [user.id] } : { sql: '1=1', params: [] };
-  if (owner && seesAll(r)) { s.sql += ' AND t."ownerId" = ?'; s.params.push(clip(owner, 60)); }
+  // several owners / priorities / types at once (comma lists)
+  const FLt = require('./listFilters'); // eslint-disable-line global-require
+  const sqlIn = (col, vals) => { if (!vals.length) return; s.sql += ` AND ${col} IN (${vals.map(() => '?').join(',')})`; s.params.push(...vals); };
+  if (seesAll(r)) sqlIn('t."ownerId"', FLt.csv(owner).map((v) => clip(v, 60)));
   // High / Medium / Low (a follow-up from before priorities counts as Medium)
-  if (['High', 'Medium', 'Low'].includes(priority)) { s.sql += priority === 'Medium' ? ' AND COALESCE(t."priority", \'Medium\') = ?' : ' AND t."priority" = ?'; s.params.push(priority); }
-  if (type) { s.sql += ' AND COALESCE(t."type", \'Call\') = ?'; s.params.push(clip(type, 20)); }
+  sqlIn('COALESCE(t."priority", \'Medium\')', FLt.csv(priority).filter((p) => ['High', 'Medium', 'Low'].includes(p)));
+  sqlIn('COALESCE(t."type", \'Call\')', FLt.csv(type).map((v) => clip(v, 20)));
   if (from && YMD.test(from)) { s.sql += ' AND t."dueDate" >= ?'; s.params.push(from); }
   if (to && YMD.test(to)) { s.sql += ' AND t."dueDate" <= ?'; s.params.push(to); }
   const text = clip(search, 80);
@@ -908,7 +922,8 @@ async function snoozeTask(user, id, { dueDate, dueTime } = {}) {
 async function taskCounts(user, { owner } = {}) {
   const r = roleOf(user);
   const s = !seesAll(r) ? { sql: 't."ownerId" = ?', params: [user.id] } : { sql: '1=1', params: [] };
-  if (owner && seesAll(r)) { s.sql += ' AND t."ownerId" = ?'; s.params.push(clip(owner, 60)); }
+  const owners = require('./listFilters').csv(owner).map((v) => clip(v, 60)); // eslint-disable-line global-require
+  if (owners.length && seesAll(r)) { s.sql += ` AND t."ownerId" IN (${owners.map(() => '?').join(',')})`; s.params.push(...owners); }
   const today = istToday();
   const one = await DB.one(`SELECT
       SUM(CASE WHEN t."dueDate" < ? THEN 1 ELSE 0 END) AS "overdue",

@@ -8,6 +8,7 @@ import api from '../../api';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, daysLate, RecLink, PriorityPill, DateField, InviteButton, MeetingInvitePrompt, meetingWhen, recordOfTask } from './crmShared.jsx';
+import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 import FollowupCalendar from './CrmCalendar.jsx'; // eslint-disable-line import/no-cycle
 
 const TABS = [['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Completed'], ['calendar', 'Calendar']];
@@ -228,9 +229,9 @@ export default function CrmFollowups() {
       <div className="filter-row">
         {tab !== 'calendar' && <DateField value={from} onChange={setFrom} aria-label="From" style={{ width: 150 }} />}
         {tab !== 'calendar' && <DateField value={to} onChange={setTo} aria-label="To" style={{ width: 150 }} />}
-        <select value={priority} onChange={(e) => setPriority(e.target.value)} aria-label="Priority"><option value="">Any priority</option>{me.lists.priorities.map((p) => <option key={p}>{p}</option>)}</select>
-        <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type"><option value="">Any type</option>{me.lists.taskTypes.map((p) => <option key={p}>{p}</option>)}</select>
-        {me.seesAll && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
+        <MultiSelect label="Priority" allLabel="Any priority" value={priority} onChange={setPriority} options={me.lists.priorities.map((p) => ({ value: p, label: p }))} />
+        <MultiSelect label="Type" allLabel="Any type" value={type} onChange={setType} options={me.lists.taskTypes.map((p) => ({ value: p, label: p }))} />
+        {me.seesAll && <MultiSelect label="Owner" allLabel="Everyone" value={owner} onChange={setOwner} options={me.owners.map((o) => ({ value: o.id, label: o.name }))} />}
       </div>
       {tab === 'calendar' && <FollowupCalendar owner={owner} type={type} priority={priority} />}
       {tab !== 'calendar' && err && <div className="notice" role="alert">{err}</div>}

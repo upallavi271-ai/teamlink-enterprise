@@ -6,6 +6,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, moneyShort, istToday, Pill, RecordForm, download } from './crmShared.jsx';
+import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 import { TicketList } from './CrmSupport.jsx';
 import CrmContactDialog from './CrmContact.jsx';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
@@ -56,8 +57,8 @@ export default function CrmAccounts() {
       <ListFilterStrip key={tab} list={tab === 'contacts' ? 'crmcontacts' : 'crmaccounts'} xf={xf} total={rows ? rows.length : null} noun={tab} allTime={Object.keys(xf.values).length > 0 || !!(q || kind || owner)} />
       <div className="filter-row">
         <input type="text" placeholder={tab === 'accounts' ? 'Search company, city, industry' : 'Search name, phone, email, company'} value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 260 }} aria-label="Search" />
-        {tab === 'accounts' && <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Type"><option value="">Prospects and customers</option><option value="Prospect">Prospects</option><option value="Client">Customers</option></select>}
-        {tab === 'accounts' && me.seesAll && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
+        {tab === 'accounts' && <MultiSelect label="Type" allLabel="Prospects and customers" value={kind} onChange={setKind} options={[{ value: 'Prospect', label: 'Prospects' }, { value: 'Client', label: 'Customers' }]} />}
+        {tab === 'accounts' && me.seesAll && <MultiSelect label="Owner" allLabel="Everyone" value={owner} onChange={setOwner} options={me.owners.map((o) => ({ value: o.id, label: o.name }))} />}
       </div>
       {err && <div className="notice" role="alert">{err}</div>}
       <div className="tbl-wrap">

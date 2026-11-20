@@ -265,6 +265,8 @@ export function ProductCatalog() {
   const [edit, setEdit] = useState(null); // the product being edited
   const [watch, setWatch] = useState(null); // { name, url } of the clip playing
   const [vidKey, setVidKey] = useState(0); // a product's own upload refreshes the uploads list
+  const [pq, setPq] = useState(''); // search the products (founder 2026-11-20: a search on every list)
+  const [shownAs, setShownAs] = useState(''); // '' all | 'on' on sale | 'off' not on sale
   const canEdit = me && ['admin', 'tl'].includes(me.role);
   const play = (p) => api.get(`/crm/products/${p.key}/watch`).then((r) => setWatch(r.data)).catch((e) => toast(errOf(e, 'The video could not be opened.')));
   const load = () => api.get('/crm/products', { params: { all: 1 } }).then((r) => setRows(r.data.products || [])).catch((e) => { setRows([]); toast(errOf(e, 'The products could not be read.')); });
@@ -295,8 +297,14 @@ export function ProductCatalog() {
         </div>
       )}
       <div className="small-muted" style={{ margin: '6px 0 12px' }}>What we sell. The demo page and the AI meeting read from here, so the AI only says what is written here. A plan with no price is quoted by a person.</div>
+      {rows.length > 1 && (
+        <div className="filter-row">
+          <input type="text" placeholder="Search a product, a feature or a plan" value={pq} onChange={(e) => setPq(e.target.value)} style={{ minWidth: 240 }} aria-label="Search products" />
+          {canEdit && rows.some((p) => !p.active) && <select value={shownAs} onChange={(e) => setShownAs(e.target.value)} aria-label="On sale"><option value="">On sale and not</option><option value="on">On sale</option><option value="off">Not on sale</option></select>}
+        </div>
+      )}
       <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: 12 }}>
-        {rows.map((p) => (
+        {rows.filter((p) => (!shownAs || (shownAs === 'on' ? p.active : !p.active)) && (!pq.trim() || [p.name, p.about, ...(p.features || []), ...((p.plans || []).map((x) => x.name))].some((v) => String(v || '').toLowerCase().includes(pq.trim().toLowerCase())))).map((p) => (
           <div key={p.key} className="card" style={{ padding: 14, opacity: p.active ? 1 : 0.6 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: 16, flex: 1 }}>{p.name}</h3>

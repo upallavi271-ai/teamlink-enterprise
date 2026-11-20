@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, shareInvoiceWhatsApp, InvoiceEmailDialog, InvoiceEditDialog, INVOICE_STATUSES, balanceOf } from './crmShared.jsx';
+import MultiSelect, { csvToList } from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 
 export default function CrmInvoices({ embedded = false }) {
   const { me, toast, openRecord, version } = useCrm();
@@ -30,7 +31,7 @@ export default function CrmInvoices({ embedded = false }) {
   const overdue = live.filter((x) => x.overdue);
   const received = sum(live, (x) => x.paidAmount);
   const tds = sum(live, (x) => x.tdsAmount);
-  const shown = useMemo(() => (rows || []).filter((x) => (!status || (status === 'Overdue' ? x.overdue : x.status === status))
+  const shown = useMemo(() => (rows || []).filter((x) => (!status || csvToList(status).some((s) => (s === 'Overdue' ? x.overdue : x.status === s)))
     && (!q || `${x.code} ${x.accountName} ${x.title}`.toLowerCase().includes(q.toLowerCase()))), [rows, q, status]);
   const replace = (inv) => setRows((list) => (list || []).map((x) => (x.id === inv.id ? inv : x)));
 
@@ -62,11 +63,7 @@ export default function CrmInvoices({ embedded = false }) {
       <ListFilterStrip list="crminvoices" xf={xf} total={rows ? rows.length : null} noun="invoices" allTime={Object.keys(xf.values).length > 0 || !!q} />
       <div className="filter-row">
         <input type="text" placeholder="Search invoice, customer or deal" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 240 }} aria-label="Search invoices" />
-        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          <option value="">All statuses</option>
-          <option value="Overdue">Overdue</option>
-          {INVOICE_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+        <MultiSelect label="Status" allLabel="All statuses" value={status} onChange={setStatus} options={['Overdue', ...INVOICE_STATUSES].map((s) => ({ value: s, label: s, count: (rows || []).filter((x) => (s === 'Overdue' ? x.overdue : x.status === s)).length }))} hideZero={false} />
       </div>
       {err && <div className="notice" role="alert">{err}</div>}
       {rows == null && !err && <div className="small-muted">Loading…</div>}

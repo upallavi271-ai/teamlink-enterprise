@@ -7,6 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, Pill, DateField, QuickLog, RecordForm, download } from './crmShared.jsx';
+import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 import CrmCampaigns from './CrmCampaigns.jsx';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import CrmLeadBoard from './CrmLeadBoard.jsx';
@@ -168,17 +169,13 @@ export default function CrmLeads() {
       <ListFilterStrip list="crmleads" xf={xf} total={paging ? paging.total : null} noun="leads" allTime={Object.keys(xf.values).length > 0 || !!(q || stage || from || to || source || rating || owner)} />
       <div className="filter-row">
         <input type="text" placeholder="Search company, person, phone, email, city" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 260 }} aria-label="Search leads" />
-        <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          <option value="">Open leads</option>
-          {me.lists.leadStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
-          <option value="all">All leads</option>
-        </select>
-        <select value={stage} onChange={(e) => setStage(e.target.value)} aria-label="Stage"><option value="">Any stage</option>{me.lists.leadStages.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}</select>
+        <MultiSelect label="Status" allLabel="Open leads" value={status} onChange={setStatus} options={me.lists.leadStatuses.map((s) => ({ value: s, label: s }))} />
+        <MultiSelect label="Stage" allLabel="Any stage" value={stage} onChange={setStage} options={me.lists.leadStages.map((s) => ({ value: s.name, label: s.name }))} />
         <DateField value={from} onChange={setFrom} aria-label="Added from" style={{ width: 145 }} />
         <DateField value={to} onChange={setTo} aria-label="Added to" style={{ width: 145 }} />
-        <select value={rating} onChange={(e) => setRating(e.target.value)} aria-label="Rating"><option value="">Any rating</option>{me.lists.ratings.map((s) => <option key={s} value={s}>{s}</option>)}</select>
-        <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Source"><option value="">Any source</option>{me.lists.sources.map((s) => <option key={s} value={s}>{s}</option>)}</select>
-        {me.seesAll && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
+        <MultiSelect label="Rating" allLabel="Any rating" value={rating} onChange={setRating} options={me.lists.ratings.map((s) => ({ value: s, label: s }))} />
+        <MultiSelect label="Source" allLabel="Any source" value={source} onChange={setSource} options={me.lists.sources.map((s) => ({ value: s, label: s }))} />
+        {me.seesAll && <MultiSelect label="Owner" allLabel="Everyone" value={owner} onChange={setOwner} options={me.owners.map((o) => ({ value: o.id, label: o.name }))} />}
       </div>
       {err && <div className="notice" role="alert">{err}</div>}
       {rows && (

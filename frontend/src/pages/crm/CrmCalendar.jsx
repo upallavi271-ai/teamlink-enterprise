@@ -47,7 +47,9 @@ export default function FollowupCalendar({ owner, type, priority }) {
       .then((r) => { if (alive) { setRows(r.data.tasks); setErr(''); } }).catch((e) => { if (alive) setErr(errOf(e, 'The calendar could not be read.')); });
     return () => { alive = false; };
   }, [range, owner, version, tick]);
-  const shown = (rows || []).filter((t) => (!type || t.type === type) && (!priority || t.priority === priority));
+  // type / priority may be several ticked values (a comma list)
+  const has = (csv, v) => !csv || String(csv).split(',').includes(v);
+  const shown = (rows || []).filter((t) => has(type, t.type) && has(priority, t.priority));
   const byDay = useMemo(() => { const m = new Map(); shown.forEach((t) => { if (!m.has(t.dueDate)) m.set(t.dueDate, []); m.get(t.dueDate).push(t); }); return m; }, [shown]);
   const open = (t) => openRecord(t.recordKind, t.recordId);
   async function move(id, dueDate, dueTime) {

@@ -344,5 +344,72 @@ module.exports = async function more(ctx) {
   c = await cr({ recruiter: `${RB.id}`, outcome: 'Interested,New,Busy' }, tRA);
   check('call lists scope: recruiter A asking for B\'s rows still sees only their own', c.status === 200 && c.rows.every((r) => r.recruiterId === RA.id) && c.n === 3, { s: c.status, n: c.n });
 
+  // =====================================================================================================================
+  // 5. CRM (its own application): status / stage / source / rating / owner / type / priority take several values
+  // =====================================================================================================================
+  await call('GET', '/crm/me', null, tA); // the CRM tables are made on first use
+  const K = `${ctx.TAG}mq`;
+  const nowC = new Date().toISOString();
+  const ins = async (table, o) => {
+    const cols = Object.keys(o);
+    await prisma.$executeRawUnsafe(`INSERT INTO "${table}" (${cols.map((x) => `"${x}"`).join(',')}) VALUES (${cols.map(() => '?').join(',')})`, ...cols.map((x) => o[x]));
+  };
+  const by = (u) => ({ ownerId: u.id, ownerName: u.name, createdById: u.id, createdAt: nowC, updatedAt: nowC });
+  const leads = [['M1', 'New', 'Website', 'Hot', adminRow], ['M2', 'Contacted', 'Referral', 'Warm', RA], ['M3', 'New', 'Referral', 'Cold', RB], ['M4', 'Qualified', 'Event', 'Hot', RB]];
+  try {
+    for (const [n, status, source, rating, u] of leads) {
+      // eslint-disable-next-line no-await-in-loop
+      await ins('CrmLead', { id: `fxl${n}${ctx.P}`, company: `${K} ${n}`, status, source, rating, ...by(u) });
+    }
+    await ins('CrmDeal', { id: `fxd1${ctx.P}`, title: `${K} D1`, stage: 'Prospecting', value: 1000, ...by(adminRow) });
+    await ins('CrmDeal', { id: `fxd2${ctx.P}`, title: `${K} D2`, stage: 'Meeting', value: 2000, ...by(RA) });
+    await ins('CrmDeal', { id: `fxd3${ctx.P}`, title: `${K} D3`, stage: 'Meeting', value: 3000, ...by(RB) });
+    await ins('CrmInvoice', { id: `fxi1${ctx.P}`, code: `${K} I1`, title: 'a', status: 'Sent', issueDate: '2026-11-01', dueDate: '2026-11-30', amount: 1, total: 1, ...by(adminRow) });
+    await ins('CrmInvoice', { id: `fxi2${ctx.P}`, code: `${K} I2`, title: 'b', status: 'Paid', issueDate: '2026-11-02', dueDate: '2026-11-30', amount: 2, total: 2, ...by(adminRow) });
+    await ins('CrmInvoice', { id: `fxi3${ctx.P}`, code: `${K} I3`, title: 'c', status: 'Draft', issueDate: '2026-11-03', dueDate: '2026-11-30', amount: 3, total: 3, ...by(adminRow) });
+    const today2 = ctx.dayOf(new Date());
+    await ins('CrmTask', { id: `fxt1${ctx.P}`, title: `${K} T1`, dueDate: today2, status: 'Open', priority: 'High', type: 'Call', ...by(adminRow) });
+    await ins('CrmTask', { id: `fxt2${ctx.P}`, title: `${K} T2`, dueDate: today2, status: 'Open', priority: 'Low', type: 'Meeting', ...by(RA) });
+    await ins('CrmTask', { id: `fxt3${ctx.P}`, title: `${K} T3`, dueDate: today2, status: 'Open', priority: null, type: 'Email', ...by(RB) });
+  } catch (e) { check(`CRM multi: the sample rows could be added (${String(e.message).slice(0, 160)})`, false); }
+  const crmGet = async (path, params, token = tA) => { const r = await call('GET', `/crm/${path}?${qs(params)}`, null, token); return { status: r.status, b: r.body || {}, text: r.text }; };
+  const names = (list, key) => (list || []).map((x) => String(x[key] || '').replace(`${K} `, '')).sort();
+  const L = async (params, token) => names((await crmGet('leads', { q: K, ...params }, token)).b.rows, 'company');
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify([...b].sort());
+  let got = await L({ status: 'New' }); check('CRM leads: one status', eq(got, ['M1', 'M3']), got);
+  got = await L({ status: 'New,Contacted' }); check('CRM leads multi: two statuses', eq(got, ['M1', 'M2', 'M3']), got);
+  got = await L({ status: 'New,Contacted,Qualified' }); check('CRM leads multi: three statuses', eq(got, ['M1', 'M2', 'M3', 'M4']), got);
+  got = await L({ status: 'New,NotAStatus' }); check('CRM leads multi: an unknown status among them is ignored', eq(got, ['M1', 'M3']), got);
+  got = await L({ source: 'Website,Referral' }); check('CRM leads multi: two sources', eq(got, ['M1', 'M2', 'M3']), got);
+  got = await L({ rating: 'Hot,Warm' }); check('CRM leads multi: two ratings', eq(got, ['M1', 'M2', 'M4']), got);
+  got = await L({ rating: 'Hot,Warm,Cold', source: 'Referral' }); check('CRM leads multi: three ratings AND one source', eq(got, ['M2', 'M3']), got);
+  got = await L({ owner: `${adminRow.id},${RA.id}` }); check('CRM leads multi: two owners (Admin sees everyone)', eq(got, ['M1', 'M2']), got);
+  const exL = await crmGet('export/leads', { q: K, status: 'New,Contacted' });
+  const exLines = String(exL.text || '').replace(/^﻿/, '').trim().split(/\r?\n/).filter((x) => x.includes(K));
+  check('CRM leads export: the file follows the two statuses', exL.status === 200 && exLines.length === 3, { s: exL.status, n: exLines.length });
+  const D = async (params, token) => names((await crmGet('deals', { q: K, ...params }, token)).b.rows, 'title');
+  got = await D({ owner: `${RA.id},${RB.id}` }); check('CRM deals multi: two owners', eq(got, ['D2', 'D3']), got);
+  got = await D({ owner: `${adminRow.id},${RA.id},${RB.id}`, stage: 'Meeting' }); check('CRM deals multi: three owners AND one stage', eq(got, ['D2', 'D3']), got);
+  const I = async (params) => names((await crmGet('invoices', { q: K, ...params })).b.invoices, 'code');
+  got = await I({ status: 'Sent,Paid' }); check('CRM invoices multi: two statuses', eq(got, ['I1', 'I2']), got);
+  got = await I({ status: 'Sent,Paid,Draft' }); check('CRM invoices multi: three statuses', eq(got, ['I1', 'I2', 'I3']), got);
+  const T = async (params) => names((await crmGet('tasks', { when: 'open', all: 1, q: K, ...params })).b.tasks, 'title');
+  got = await T({ priority: 'High,Medium' }); check('CRM follow-ups multi: two priorities (no priority counts as Medium)', eq(got, ['T1', 'T3']), got);
+  got = await T({ type: 'Call,Meeting' }); check('CRM follow-ups multi: two types', eq(got, ['T1', 'T2']), got);
+  got = await T({ type: 'Call,Meeting,Email', owner: `${RA.id},${RB.id}` }); check('CRM follow-ups multi: three types AND two owners', eq(got, ['T2', 'T3']), got);
+  // a salesperson who sees only their own: the owner filter never widens it
+  const st0 = await crmGet('settings', {});
+  const team = ((st0.b.settings || st0.b).salesTeam || []).filter((m) => m.userId !== RA.id);
+  const put = await call('PUT', '/crm/settings', { salesTeam: [...team, { userId: RA.id, name: RA.name, role: 'rep' }] }, tA);
+  if (put.status === 200) {
+    got = await L({ owner: `${RB.id},${adminRow.id}` }, tRA);
+    check('CRM scope: a salesperson asking for other owners still sees only their own leads', eq(got, ['M2']), got);
+    got = await T({}).then(() => crmGet('tasks', { when: 'open', all: 1, q: K, owner: RB.id }, tRA)).then((x) => names(x.b.tasks, 'title'));
+    check('CRM scope: a salesperson\'s follow-ups stay their own whatever owner is asked', eq(got, ['T2']), got);
+    await call('PUT', '/crm/settings', { salesTeam: team }, tA);
+  } else check('CRM scope: the salesperson could be set up for the check', false, { s: put.status, e: put.body && put.body.error });
+  const notCrm = await crmGet('leads', { status: 'New,Contacted' }, tTL);
+  check('CRM: a recruiting team lead who is not on the sales team is refused the CRM lists', notCrm.status === 403, notCrm.status);
+
   return ctx;
 };
