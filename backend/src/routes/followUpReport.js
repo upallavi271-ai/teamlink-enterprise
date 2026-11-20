@@ -74,4 +74,63 @@ router.get('/export', async (req, res, next) => {
   } catch (e) { return next(e); }
 });
 
+// ---- IMPORT: follow-ups kept in a sheet before TeamLink (utils/followUpImport.js). Preview first, Apply, Undo. ----------------------------------
+//   GET  /import/template                 the .xlsx with the columns and two example rows
+//   POST /import/preview                  multipart: file (+ mapping JSON, sheet) -> every row Ready / Needs a choice / Refused; nothing written
+//   POST /import/check   { batchId, choices }   the preview again with the choices
+//   POST /import/apply   { batchId, choices }   writes the Ready rows; audited
+//   GET  /import/batches                  the recent imports (an Admin: everybody's)
+//   POST /import/batches/:id/undo         removes that batch's rows nobody edited since; the importer or an Admin; audited
+const FI = require('../utils/followUpImport');
+const { logAudit } = require('../utils/audit');
+const attachments = require('../utils/attachments');
+
+const guard = (fn) => async (req, res, next) => {
+  try { return await fn(req, res); } catch (e) {
+    if (e instanceof FI.ImportError) return res.status(e.status).json({ error: e.message, ...(e.extra || {}) });
+    return next(e);
+  }
+};
+const refuseUnless = (req) => { if (!FI.mayImport(req.user)) throw new FI.ImportError(403, 'Importing follow-ups is for the recruiting team: Admin, Manager, STL, TL, and recruiters for their own follow-ups.'); };
+
+router.get('/import/template', guard(async (req, res) => {
+  refuseUnless(req);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="teamlink-follow-ups-import-template.xlsx"');
+  return res.send(FI.template());
+}));
+router.post('/import/preview', guard(async (req, res) => {
+  refuseUnless(req);
+  let upload;
+  try {
+    upload = await attachments.parseMultipart(req, { maxBytes: FI.MAX_BYTES });
+  } catch (err) {
+    if (err.code === 'TOO_LARGE') throw new FI.ImportError(413, 'That file is over 5 MB. Split it into smaller files.');
+    throw new FI.ImportError(400, 'Send the sheet as a file upload.');
+  }
+  const { file, fields = {} } = upload;
+  if (!file || !file.data || !file.data.length) throw new FI.ImportError(400, 'Choose the sheet to import.');
+  let mapping = null;
+  if (fields.mapping) { try { mapping = JSON.parse(fields.mapping); } catch { mapping = null; } }
+  return res.json(await FI.preview(req.user, file, { mapping, sheet: fields.sheet || null }));
+}));
+router.post('/import/check', guard(async (req, res) => res.json(await FI.check(req.user, (req.body || {}).batchId, (req.body || {}).choices))));
+router.post('/import/apply', guard(async (req, res) => {
+  const out = await FI.apply(req.user, (req.body || {}).batchId, (req.body || {}).choices);
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: `Follow-ups imported from a sheet: ${out.created} (batch ${out.batchId})`, entity: 'FollowUpImport', entityId: out.batchId,
+    toValue: JSON.stringify({ file: out.fileName, created: out.created, skipped: out.skipped.length, people: out.people, days: out.days }).slice(0, 900),
+  });
+  return res.json({ ...out, message: `${out.created} follow-up${out.created === 1 ? '' : 's'} imported. They count in the report on the dates in the sheet. You can undo this import.` });
+}));
+router.get('/import/batches', guard(async (req, res) => res.json({ batches: await FI.batches(req.user) })));
+router.post('/import/batches/:id/undo', guard(async (req, res) => {
+  const out = await FI.undo(req.user, req.params.id);
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: `Follow-up import undone: ${out.removed} removed${out.kept ? `, ${out.kept} kept (edited since)` : ''} (batch ${out.batchId})`, entity: 'FollowUpImport', entityId: out.batchId,
+    toValue: JSON.stringify({ file: out.fileName, importedBy: out.byName, removed: out.removed, kept: out.kept, keptRows: out.keptRows }).slice(0, 900),
+  });
+  return res.json({ ...out, message: `${out.removed} imported follow-up${out.removed === 1 ? '' : 's'} removed.${out.kept ? ` ${out.kept} kept because somebody changed ${out.kept === 1 ? 'it' : 'them'} after the import.` : ''}` });
+}));
+
 module.exports = router;

@@ -165,6 +165,7 @@ app.get('/api/mk-image/:id/:file', async (req, res, next) => {
 app.use('/api/outreach/gs/marketing/brand/logo', express.json({ limit: '600kb' }));
 app.use('/api/outreach/gs/marketing/projects', express.json({ limit: '700kb' })); // a client's logo travels with the project (a picture of up to 300 KB)
 app.use('/api/public/mk-project', express.json({ limit: '700kb' })); // the client's request form can carry their logo
+app.use('/api/followup-report/import', express.json({ limit: '2mb' })); // the follow-up import's choices: one per row of a sheet of up to 5,000 rows
 app.use(express.json());
 // WHO LEFT AFTER JOINING (utils/joinedRule.js): a fresh set is loaded before ANY route runs, so no Joined list or number is ever built from an empty set
 app.use('/api', require('./utils/joinedRule').middleware());
