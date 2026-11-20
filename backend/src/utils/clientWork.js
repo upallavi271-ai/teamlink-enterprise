@@ -129,7 +129,8 @@ async function bdePending(user, { settings = null, fresh = false, load: given = 
     requests: requests.length, invoices: invoiceItems.length, logins: loginItems.length,
   };
   const total = counts.noReply + counts.shortlisted + counts.feedback + counts.agreement + counts.requests + counts.invoices + counts.logins;
-  return { userId: user.id, name: user.name, today, feedbackDays, counts, lists, total, clients: clients.length };
+  // noReplyAllItems: every profile sent with no reply yet (the N-days list above is the late part of it); read by the BDE Agent, not part of `lists`/`total`
+  return { userId: user.id, name: user.name, today, feedbackDays, counts, lists, total, clients: clients.length, noReplyAllItems: noReplyAll.map((x) => appItem(x, today)) };
 }
 
 // Same, cut to one client (the client page's Client work tab).
