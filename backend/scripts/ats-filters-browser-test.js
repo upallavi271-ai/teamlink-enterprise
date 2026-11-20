@@ -163,6 +163,88 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     } else check('Dashboard: two clients (fixture has fewer, skipped)', true);
     await page.keyboard.press('Escape');
 
+    // ---- the rows behind a dashboard number (HomeDrill): tick two clients, the count follows the server's, the date range is there
+    // the top number tiles (each opens its list in place); the page is opened again for each, so nothing picked before stays
+    const KPI = 'button.ak-kpi.ak-click, button.sc-card.sc-click';
+    await page.goto(`http://localhost:${WEB_PORT}/ats/dashboard?range=all`);
+    await page.locator(KPI).first().waitFor();
+    const nCards = Math.min(10, await page.locator(KPI).count());
+    let drillDone = false;
+    for (let i = 0; i < nCards && !drillDone; i += 1) {
+      if (i > 0) { await page.goto(`http://localhost:${WEB_PORT}/ats/dashboard?range=all`); await page.locator(KPI).first().waitFor(); }
+      const card = page.locator(KPI).nth(i);
+      if (!(await card.count())) break;
+      await card.click({ timeout: 10000 }).catch(() => {});
+      const opened = await page.locator('.hd').first().waitFor({ timeout: 8000 }).then(() => true).catch(() => false);
+      if (opened) {
+        await page.waitForTimeout(800);
+        // the list's filters sit behind its own Filters button
+        const fbtn = page.locator('.hd .lph-filters-btn').first();
+        if (await fbtn.count()) await fbtn.click();
+        await page.waitForTimeout(300);
+        const clientBtn = page.locator('.hd .msel-btn', { hasText: /^Client:/ }).first();
+        const hasClient = await clientBtn.count() > 0;
+        let nOpts = 0;
+        if (hasClient) { await clientBtn.click(); nOpts = await page.locator('.msel-pop .msel-item').count(); await clientBtn.click(); }
+        if (hasClient && nOpts >= 2) {
+          drillDone = true;
+          check('Drill list: the Client filter is a checkbox list', true);
+          const lastUrl = [];
+          const onReq = (req) => { if (req.url().includes('/api/dashboard/ats/home/list') && req.url().includes('d_client=')) lastUrl.push(req.url()); };
+          page.on('request', onReq);
+          // tick two clients without Esc (Esc would close the window)
+          await clientBtn.click();
+          const items = page.locator('.msel-pop .msel-item');
+          const ticked = [];
+          for (let k = 0; k < 2; k += 1) {
+            const it = items.nth(k);
+            ticked.push({ name: (await it.locator('.msel-name').innerText()).trim(), count: Number(String(await it.locator('.msel-n').innerText()).replace(/\D/g, '')) || 0 });
+            await it.locator('input[type=checkbox]').check();
+          }
+          await page.waitForTimeout(1500);
+          await clientBtn.click().catch(() => {});
+          await page.waitForTimeout(800);
+          page.off('request', onReq);
+          const foot = await page.locator('.hd .hd-foot').first().innerText().catch(() => '');
+          const uiN = Number((/of\s+([\d,]+)/.exec(foot) || [])[1]?.replace(/,/g, '') || NaN);
+          const u = lastUrl.length ? new URL(lastUrl[lastUrl.length - 1]) : null;
+          const apiN = u ? (await api(`/dashboard/ats/home/list?${u.searchParams.toString()}`)).filtered : null;
+          check('Drill list: ticking two clients asks the server for both', !!u && decodeURIComponent(u.search).split('d_client=')[1].split('&')[0].split(',').length === 2, lastUrl.slice(-1));
+          check('Drill list: the count on screen equals the server\'s for the two clients', uiN === apiN && uiN === ticked.reduce((s, x) => s + x.count, 0), { uiN, apiN, ticked });
+          const dateBox = await page.locator('.hd .fbar-dates').count();
+          check('Drill list: the list has its own From / To', dateBox > 0, dateBox);
+        }
+        await page.locator('.modal-head button').first().click().catch(() => page.keyboard.press('Escape'));
+        await page.waitForTimeout(300);
+      }
+    }
+    if (!drillDone) check('Drill list: no dashboard number with two clients behind it here (skipped)', true);
+
+    // ---- a CRM list: Leads, tick two statuses
+    await api('/crm/me');
+    const tagC = `Zfx${String(process.pid).replace(/[0-9]/g, (d) => 'abcdefghij'[d])}`;
+    const nowS = new Date().toISOString();
+    for (const [n, st] of [['A', 'New'], ['B', 'Contacted'], ['C', 'Qualified']]) {
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.$executeRawUnsafe('INSERT INTO "CrmLead" ("id","company","status","ownerId","ownerName","createdById","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,?)', `zfx${n}${process.pid}`, `${tagC} ${n}`, st, admin.id, admin.name, admin.id, nowS, nowS);
+    }
+    await page.goto(`http://localhost:${WEB_PORT}/crm/leads`);
+    await page.locator('input[aria-label="Search leads"]').waitFor();
+    await page.locator('input[aria-label="Search leads"]').fill(tagC);
+    await page.waitForTimeout(1200);
+    const crmUrls = [];
+    const onCrm = (req) => { if (req.url().includes('/api/crm/leads') && req.url().includes('status=')) crmUrls.push(req.url()); };
+    page.on('request', onCrm);
+    await page.locator('.msel-btn', { hasText: /^Status:/ }).first().click();
+    for (const st of ['New', 'Contacted']) await page.locator('.msel-pop .msel-item', { hasText: new RegExp(`^${st}`) }).first().locator('input[type=checkbox]').check();
+    await page.waitForTimeout(1500);
+    await page.keyboard.press('Escape');
+    page.off('request', onCrm);
+    await page.waitForTimeout(800);
+    const body = await page.locator('body').innerText();
+    check('CRM leads: ticking New and Contacted asks the server for both', crmUrls.some((x) => /status=New(%2C|,)Contacted/.test(x)), crmUrls.slice(-1));
+    check('CRM leads: both ticked statuses\' leads are on screen, the third is not', body.includes(`${tagC} A`) && body.includes(`${tagC} B`) && !body.includes(`${tagC} C`), { a: body.includes(`${tagC} A`), b: body.includes(`${tagC} B`), c: body.includes(`${tagC} C`) });
+
     await page.setViewportSize({ width: 375, height: 800 });
     await page.goto(`http://localhost:${WEB_PORT}/candidates?view=pipeline&sub=all`);
     await page.locator('.msel-btn', { hasText: /^Current location:/ }).first().click();
