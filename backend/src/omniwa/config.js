@@ -61,27 +61,21 @@ async function save(user, b = {}) {
   return { ok: true, config: await read() };
 }
 
-// ---- the questions after a YES (founder 2026-11-05, his screening script). One line = one question. [Job Role], [Location], [Salary], [Work Mode] come from the ATS
+// ---- the questions after a YES (founder 2026-11-05, his screening script). One line = one question. [Job Role], [Location], [Salary], [Work Mode], [Qualification], [Experience], [Skills], [Joining], [Employment Type], [Specialisation], [Department] come from the ATS
 // requirement, and a line whose value the requirement does not have is skipped. A line that starts "If working," is skipped for a person who is not working.
+// (founder 2026-11-20: "jd ki thaginaa questions mathrame adagali") the default questions come from the JOB only: every line names a field of the ATS requirement in [brackets], and a line whose field the job does not
+// have is skipped, so the candidate is asked only what this job's JD is about. Nothing generic (current company, notice period ...) unless an Admin adds it to the list.
 const DEFAULT_QUESTIONS = [
-  'Are you currently looking for a job change or a new job opportunity?',
   'Are you interested in the [Job Role] position?',
-  'Have you already applied for this position, or are you exploring new opportunities?',
-  'Are you currently working or not working?',
-  'If working, which company are you currently working with?',
-  'If working, what is your current designation?',
-  'What is your total work experience?',
-  'What is your relevant experience in this particular role?',
+  'This role needs [Qualification]. Do you have this qualification?',
+  'This role needs [Experience] of experience. Do you have this experience?',
+  'This role works with [Skills]. Do you have experience in these?',
   'Are you comfortable with the job location - [Location]?',
-  'Are you comfortable with the offered salary/package of [Salary]?',
   'Are you comfortable with the work mode - [Work Mode]?',
-  'Are you comfortable with the job shift and working hours?',
-  'If selected, how soon can you join?',
-  'What is your current notice period?',
-  'Are you available to attend the next interview round?',
-  'Which date and time would be convenient for you?',
+  'Are you comfortable with the offered salary/package of [Salary]?',
+  'If selected, can you join within [Joining]?',
+  'Which date and time would be convenient for your interview?',
   'Would you like to proceed with this job opportunity?',
-  'Is there anything you would like to know about this position?',
 ];
 const DEFAULT_CLOSING = 'Thank you for your time. I have recorded your responses. Our recruitment team will review your details and contact you regarding the next steps. Have a great day!';
 const Q_KEY = 'omni.wa.questions';

@@ -133,7 +133,12 @@ const isNo = (t) => /^\W*(n+o+|n+o+p+e+|no thanks|no thank you|not interested|v+
 // the next line of the list to ask from position i: { index, text } or null when the list is done. Placeholders come from the job; a line with no value is skipped.
 function nextQuestion(list, i, job, answers = {}) {
   const notWorking = Object.entries(answers).some(([q, v]) => /currently working/i.test(q) && /\b(not|no|nope|fresher|unemployed)\b/i.test(String(v)));
-  const vals = { 'job role': job && job.title, location: job && job.location, salary: job && job.salary, 'work mode': job && job.workMode, 'candidate name': job && job.candidate };
+  const vals = {
+    'job role': job && job.title, location: job && job.location, salary: job && job.salary, 'work mode': job && job.workMode, 'candidate name': job && job.candidate,
+    // the rest of the JD (founder 2026-11-20): a line that names one of these is asked only when the job has it
+    qualification: job && job.qualification, experience: job && job.experience, skills: job && Array.isArray(job.skills) ? job.skills.join(', ') : (job && job.skills),
+    joining: job && job.joining, 'employment type': job && job.employmentType, specialisation: job && job.specialisation, department: job && job.department,
+  };
   for (let n = i; n < list.length; n += 1) {
     const line = String(list[n]);
     const skipForWork = /^if working\b/i.test(line) && notWorking;
