@@ -56,6 +56,9 @@ export const C360_TABS = [
   ['documents', 'Documents'],
   ['history', 'Timeline'],
   ['conversation', 'Conversation'], // omnichannel: Call · Mail · WhatsApp · SMS in one timeline, with a reply box (internal logins only)
+  // 2026-11-20 (founder: "schedule ANY kind of message ... on the candidate's profile"): write a message and send it later on WhatsApp / SMS / Email;
+  // every scheduled, sent, failed and cancelled message of this person, plus their automatic interview / joining reminders (internal logins only)
+  ['scheduled', 'Schedule a message'],
   // 2026-11-04 (founder: "ai calling side bar lo vundakudadhu ... conversation vundhi aahh line lo place cheyyu"): this candidate's AI calls
   // and the Call button, in its own tab (internal logins only)
   ['aicalling', 'AI Calling'],
@@ -108,7 +111,7 @@ export function C360Tabs({ tab, setTab, c, className = '' }) {
   const n = tabCounts(c);
   const internal = !!(c && c.viewer && c.viewer.internal);
   // Fit and Notes are TeamLink's own; a client / candidate login has none.
-  const tabs = C360_TABS.filter(([key]) => internal || !['fit', 'notes', 'conversation', 'followups', 'aicalling', 'career'].includes(key));
+  const tabs = C360_TABS.filter(([key]) => internal || !['fit', 'notes', 'conversation', 'followups', 'aicalling', 'career', 'scheduled'].includes(key));
   return (
     <div className={`tabs c360t-tabs ${className}`} role="tablist">
       {tabs.map(([key, label]) => (

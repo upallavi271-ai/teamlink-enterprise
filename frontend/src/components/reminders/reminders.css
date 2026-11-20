@@ -23,3 +23,21 @@
 .rem-card-nums { display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline; }
 .rem-card-nums b { font-size: 22px; }
 @media (max-width: 640px) { .rem-grid { grid-template-columns: 1fr; } .rem-step { grid-template-columns: 1fr; } }
+
+/* Schedule a message (candidate profile tab) */
+.sm-wrap { display: grid; gap: 12px; }
+.sm-label { font-size: 12px; font-weight: 600; color: var(--muted, #64748b); margin: 10px 0 4px; }
+.sm-ways { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-start; }
+.sm-way { max-width: 220px; }
+.sm-area { width: 100%; box-sizing: border-box; padding: 8px 10px; font: inherit; border: 1px solid var(--line, #e2e8f0); border-radius: 8px; resize: vertical; min-height: 110px; margin-top: 6px; }
+.sm-subject { width: 100%; box-sizing: border-box; padding: 6px 8px; font: inherit; }
+.sm-count { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; font-size: 12px; }
+.sm-chip { border: 1px solid var(--line, #e2e8f0); }
+.sm-preview { margin-top: 8px; }
+.sm-group { margin-top: 6px; }
+.sm-row { border: 1px solid var(--line, #e2e8f0); border-radius: 8px; padding: 8px 10px; margin-top: 6px; background: var(--card, #fff); }
+.sm-row-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sm-by { margin-left: auto; }
+.sm-words { white-space: pre-wrap; font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
+.rem-hist { white-space: pre-line; }
+@media (max-width: 640px) { .sm-by { margin-left: 0; } .sm-way { max-width: none; } }

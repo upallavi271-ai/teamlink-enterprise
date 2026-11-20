@@ -23,17 +23,19 @@ export default function RemindersGoingOutCard() {
   if (!total) return null;
   const failed = d.today.failed + d.tomorrow.failed;
   const scopeWord = { own: 'your candidates', team: 'your team', all: 'everyone' }[d.scope] || '';
+  // "your own messages" (written by a person on a candidate's Schedule a message tab) apart from the automatic interview / joining reminders
   const num = (label, b) => (
     <span>
       <b>{b.total}</b> {label}
       {b.failed > 0 && <> · <span className="rem-bad">{`${b.failed} failed`}</span></>}
+      {b.total > 0 && b.own > 0 && <span className="small-muted">{` (${b.own} your own message${b.own === 1 ? '' : 's'}, ${b.automatic} automatic)`}</span>}
     </span>
   );
   return (
     <section className="panel rem-box" style={{ margin: '0 0 12px' }} aria-label="Reminders going out">
       <div className="rem-head">
         <b>Reminders going out</b>
-        <span className="small-muted">{`Messages to candidates before an interview or a joining${scopeWord ? ` · ${scopeWord}` : ''}`}</span>
+        <span className="small-muted">{`Your own scheduled messages and the automatic interview / joining reminders${scopeWord ? ` · ${scopeWord}` : ''}`}</span>
         {!d.switchOn && <StatusChip tone="amber">Switched off: not being sent</StatusChip>}
         {failed > 0 && <StatusChip tone="red">{`${failed} failed`}</StatusChip>}
       </div>
@@ -49,9 +51,9 @@ export default function RemindersGoingOutCard() {
             <tbody>
               {(d.rows || []).map((r) => (
                 <tr key={r.id}>
-                  <td><Link to={`/candidates/${r.candidateId}?app=${r.applicationId}`}>{r.candidate}</Link><div className="small-muted" style={{ fontSize: 11 }}>{r.role}</div></td>
-                  <td>{`${r.kind === 'joining' ? 'Joining' : 'Interview'} ${when(r.eventAt)}`}</td>
-                  <td><b>{when(r.sendAt)}</b><div className="small-muted" style={{ fontSize: 11 }}>{r.label}</div></td>
+                  <td><Link to={r.own ? `/candidates/${r.candidateId}?tab=scheduled` : `/candidates/${r.candidateId}?app=${r.applicationId}`}>{r.candidate}</Link><div className="small-muted" style={{ fontSize: 11 }}>{r.role}</div></td>
+                  <td>{r.own ? <span className="small-muted">Your own message</span> : `${r.kind === 'joining' ? 'Joining' : 'Interview'} ${when(r.eventAt)}`}</td>
+                  <td><b>{when(r.sendAt)}</b><div className="small-muted" style={{ fontSize: 11 }}>{r.own ? 'Written by a person' : `Automatic: ${r.label}`}</div></td>
                   <td>{r.channel}</td>
                   <td><StatusChip tone={STATUS_TONE[r.status] || 'grey'}>{STATUS_WORD[r.status] || r.status}</StatusChip>{r.reason && ['failed', 'skipped'].includes(r.status) && <div className="rem-hist">{r.reason}</div>}</td>
                 </tr>

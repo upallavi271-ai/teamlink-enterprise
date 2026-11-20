@@ -42,6 +42,7 @@ import ProfileLeft, { ResumeTabCard } from '../components/candidate/ProfileLeft.
 import { RecordDocuments } from '../components/candidate/CandidateRecord.jsx'; // ATS-100 B5
 import FollowUpLog from '../components/clients/FollowUpLog.jsx';
 import JoiningDropPanel from '../components/joindrop/JoiningDropPanel.jsx'; // Joining & Drop: the joining card, the drop, the history and the journey
+import ScheduleMessageTab from '../components/reminders/ScheduleMessageTab.jsx'; // the "Schedule a message" tab: any message, sent later (2026-11-20)
 import ScheduledMessagesPanel from '../components/reminders/ScheduledMessagesPanel.jsx'; // the scheduled messages to the candidate before an interview / joining (2026-11-20)
 import {
   FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot, AddApplicationSlot, AiCallingSlot,
@@ -660,6 +661,7 @@ export default function CandidateDetail() {
           Status is Upcoming / Due Today / Overdue / Completed, derived on the
           server from the due date so it is never stale. --- */}
       {tab === 'aicalling' && internal && <AiCallingSlot {...slot} refreshKey={refreshKey} />}
+      {tab === 'scheduled' && internal && <ScheduleMessageTab key={c.id} candidateId={c.id} applicationId={primary ? primary.id : undefined} />}
       {tab === 'conversation' && internal && <CandidateConversation candidateId={c.id} name={c.name} applicationId={primary ? primary.id : undefined} requirementId={primary ? primary.requirementId : undefined} onChanged={load} />}
       {tab === 'history' && internal && <div className="card section"><CandidateHistory key={c.id} candidateId={c.id} embedded /></div>}
       {tab === 'history' && <HistoryTimelineSlot {...slot} refreshKey={refreshKey} withActivity={false} />}

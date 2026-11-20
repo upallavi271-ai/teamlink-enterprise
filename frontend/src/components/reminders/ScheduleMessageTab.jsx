@@ -59,6 +59,7 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
   const [err, setErr] = useState('');
   const [suggest, setSuggest] = useState(null);
   const [note, setNote] = useState('');
+  const [warn, setWarn] = useState('');
   const [busy, setBusy] = useState(false);
   const area = useRef(null);
   const formRef = useRef(null);
@@ -109,21 +110,22 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
     setBody(next);
     setTimeout(() => { try { el.focus(); el.setSelectionRange(s + text.length, s + text.length); } catch { /* none */ } }, 0);
   };
-  const useTemplate = (t) => {
+  const applyTemplate = (t) => {
     setBody(t.body); if (channel === 'Email') setSubject(t.subject);
     setTimeout(() => { try { area.current && area.current.focus(); } catch { /* none */ } }, 0);
   };
   const toForm = () => { try { formRef.current && formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* none */ } };
 
   const submit = async () => {
-    setErr(''); setSuggest(null); setNote('');
+    setErr(''); setSuggest(null); setNote(''); setWarn('');
     if (!body.trim()) { setErr('Write the message first.'); return; }
     if (!sendAtIso) { setErr('Pick the date and time when the message should go.'); return; }
     setBusy(true);
     try {
       const payload = { channel, sendAt: sendAtIso, body, ...(channel === 'Email' ? { subject } : {}), ...(applicationId ? { applicationId } : {}) };
       const r = editing ? await api.patch(`/ats/reminders/messages/${editing.id}`, payload) : await api.post(`/ats/reminders/messages/candidate/${candidateId}`, payload);
-      setNote(`${editing ? 'Changes saved.' : 'Scheduled.'} It goes ${when(r.data.message.sendAt)} by ${r.data.message.channel}.${r.data.warning ? ` ${r.data.warning}` : ''}`);
+      setNote(`${editing ? 'Changes saved.' : 'Scheduled.'} It goes ${when(r.data.message.sendAt)} by ${r.data.message.channel}.`);
+      setWarn(r.data.warning || '');
       resetForm(); reload();
     } catch (e) {
       setErr(e.response?.data?.error || 'Could not schedule the message. Please try again.');
@@ -218,7 +220,7 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
 
         <div className="sm-label">Message</div>
         <div className="rem-quick" aria-label="Ready messages">
-          {d.templates.map((t) => <button type="button" key={t.key} className="btn btn-sm btn-ghost sm-chip" onClick={() => useTemplate(t)}>{t.label}</button>)}
+          {d.templates.map((t) => <button type="button" key={t.key} className="btn btn-sm btn-ghost sm-chip" onClick={() => applyTemplate(t)}>{t.label}</button>)}
         </div>
         <textarea ref={area} className="sm-area" aria-label="Message" rows={5} value={body} placeholder="Write your message here, or pick a ready message above and change it." onChange={(e) => setBody(e.target.value)} />
         <div className="sm-count">
@@ -241,6 +243,7 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
         {err && <div className="rem-bad" role="alert" style={{ marginTop: 6 }}>{err}</div>}
         {suggest && <div style={{ marginTop: 4 }}><button type="button" className="btn btn-sm" onClick={() => { setPick('custom'); setDate(istDate(suggest.sendAt)); setTime(istTime(suggest.sendAt)); setErr(''); setSuggest(null); }}>{`Use ${suggest.words}`}</button></div>}
         {note && <div className="rem-warn" style={{ marginTop: 6, color: 'var(--green, #15803d)' }} role="status">{note}</div>}
+        {warn && <div className="rem-warn" style={{ marginTop: 4 }}>{warn}</div>}
         <div className="rem-actions" style={{ marginTop: 8 }}>
           <button type="button" className="btn btn-primary" disabled={busy || over || !!d.blocked || offered === 0} onClick={submit}>{busy ? 'Saving...' : (editing ? 'Save changes' : 'Schedule message')}</button>
           {editing && <button type="button" className="btn btn-ghost" onClick={resetForm}>Stop editing</button>}

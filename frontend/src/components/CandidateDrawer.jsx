@@ -20,6 +20,7 @@ import ProfileLeft, { ResumeTabCard } from './candidate/ProfileLeft.jsx';
 import { RecordDocuments } from './candidate/CandidateRecord.jsx'; // ATS-100 B5
 import CareerProfile from './candidate/CareerProfile.jsx'; // the Career tab (education, jobs, gaps, progression, summary, tags, custom fields)
 import FollowUpLog from './clients/FollowUpLog.jsx';
+import ScheduleMessageTab from './reminders/ScheduleMessageTab.jsx'; // "Schedule a message" tab (2026-11-20)
 import { ApplicationExtrasCard } from './ats/OfferBgv.jsx'; // industry checklist, gender/age flag, BGV, counter-offers
 import {
   FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot, AddApplicationSlot, AiCallingSlot,
@@ -203,6 +204,7 @@ export default function CandidateDrawer({
             )}
 
             {tab === 'conversation' && internal && <CommunicationTimeline candidateId={c.id} />}
+            {tab === 'scheduled' && internal && <ScheduleMessageTab key={c.id} candidateId={c.id} applicationId={app ? app.id : undefined} />}
             {tab === 'aicalling' && internal && <AiCallingSlot {...slot} refreshKey={refreshKey} />}
             {tab === 'conversation' && internal && <ConversationView audience="candidates" personId={c.id} name={c.name} applicationId={app ? app.id : undefined} requirementId={app ? app.requirementId : undefined} onChanged={changed} />}
 
