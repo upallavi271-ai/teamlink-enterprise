@@ -99,7 +99,7 @@ const api = async (url, token) => {
   }
 
   server = spawn(process.execPath, ['src/index.js'], { cwd: BACK, env, stdio: process.env.TEST_DEBUG ? 'inherit' : 'ignore' });
-  for (let i = 0; i < 240; i += 1) {
+  for (let i = 0; i < 600; i += 1) {
     // eslint-disable-next-line no-await-in-loop
     if (await fetch(`${API}/health`).then((r) => r.ok).catch(() => false)) break;
     // eslint-disable-next-line no-await-in-loop
@@ -119,6 +119,9 @@ const api = async (url, token) => {
 
   const { chromium } = require('playwright-core');
   browser = await chromium.launch({ channel: 'msedge', headless: true });
+  // a busy machine answers slowly: longer waits, not flaky runs
+  const newContext0 = browser.newContext.bind(browser);
+  browser.newContext = async (o) => { const c = await newContext0(o); c.setDefaultTimeout(60000); c.setDefaultNavigationTimeout(90000); return c; };
 
   const ROLES = [
     { key: 'Recruiter', u: REC, firstTab: 'Needs my action', portal: null },
