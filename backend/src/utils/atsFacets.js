@@ -32,13 +32,19 @@ const without = (q, keys) => {
   keys.forEach((k) => { delete out[k]; });
   return out;
 };
-const finish = (map, labelOf, chosen) => {
+const { parseMulti } = require('./multiParam');
+const finish = (map, labelOf, chosenRaw) => {
+  // several ticked values at once (a comma list); an old single value that holds a comma still counts as one
+  const want = parseMulti(chosenRaw);
+  const isChosen = (v) => want.includes(String(v)) || String(chosenRaw || '') === String(v);
+  const chosen = '';
   const list = [...map.entries()]
-    .filter(([v, n]) => v !== null && v !== undefined && v !== '' && (n > 0 || String(v) === String(chosen || '')))
+    .filter(([v, n]) => v !== null && v !== undefined && v !== '' && (n > 0 || isChosen(v)))
     .map(([v, n]) => ({ value: String(v), label: labelOf ? labelOf(v) : String(v), count: n }));
   list.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-  // The chosen value stays visible even when the other filters leave it empty.
-  if (chosen && !list.some((o) => o.value === String(chosen))) list.unshift({ value: String(chosen), label: labelOf ? labelOf(chosen) : String(chosen), count: 0 });
+  // Every chosen value stays visible even when the other filters leave it empty.
+  [...want].reverse().forEach((w) => { if (!list.some((o) => o.value === String(w))) list.unshift({ value: String(w), label: labelOf ? labelOf(w) : String(w), count: 0 }); });
+  void chosen;
   return list;
 };
 

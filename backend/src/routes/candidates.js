@@ -82,6 +82,7 @@ router.use(requireProduct('ats'));
 router.use(requirePerm('ats', 'candidates', 'Candidate List', 'view'));
 // recruiter filters (utils/candidateFilters.js): a login only keeps the filter parameters it may use (no CTC for a role that cannot see pay ...)
 const FX = require('../utils/candidateFilters');
+const MP = require('../utils/multiParam'); // many values in one filter: OR inside a filter, AND across filters
 router.use(FX.queryGuard);
 
 // ---------------------------------------------------------------------------
@@ -965,18 +966,18 @@ function searchHit(r, ctx) {
 
 function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (ctx.search && !searchHit(r, ctx)) return false;
-  if (q.location && r.location !== q.location) return false;
+  if (q.location && !MP.multiHas(q.location, r.location)) return false;
   if (q.new === '1' && !isNewRow(r)) return false;
   if (q.source && !sourceSetOf(q.source).has(r.sourceKey)) return false;
   if (!cameMatches(r, q)) return false;
   if (!joinedMatches(r.joinedDays, q)) return false;
   // cand7_: the person's master Qualification / Specialisation ('none' = not mapped).
-  if (q.qualificationId && (r.qualificationId || 'none') !== q.qualificationId) return false;
-  if (q.specialisationId && (r.specialisationId || 'none') !== q.specialisationId) return false;
-  if (q.spec && (r.spec || 'none') !== q.spec) return false;
-  if (q.qual && (r.qual || 'none') !== q.qual) return false;
-  if (q.desig && (r.desig || 'none') !== q.desig) return false;
-  if (q.expBand && (r.expBand || 'none') !== q.expBand) return false;
+  if (q.qualificationId && !MP.multiHas(q.qualificationId, r.qualificationId || 'none')) return false;
+  if (q.specialisationId && !MP.multiHas(q.specialisationId, r.specialisationId || 'none')) return false;
+  if (q.spec && !MP.multiHas(q.spec, r.spec || 'none')) return false;
+  if (q.qual && !MP.multiHas(q.qual, r.qual || 'none')) return false;
+  if (q.desig && !MP.multiHas(q.desig, r.desig || 'none')) return false;
+  if (q.expBand && !MP.multiHas(q.expBand, r.expBand || 'none')) return false;
   // Tag (profile depth, 2026-11-17): a free label on the person (utils/candidateProfileDepth.js).
   if (q.tag && !FX.tagMatches(r.id, q.tag)) return false;
   if (!FX.matches(r, q, ctx)) return false;
@@ -993,13 +994,12 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (!skipStage && !stageMatches(r, q)) return false;
   const apps = r.applications || [];
   const any = (pred) => apps.length > 0 && apps.some(pred);
-  if (q.department && !any((a) => a.requirement && a.requirement.department === q.department)) return false;
+  if (q.department && !any((a) => a.requirement && MP.multiHas(q.department, a.requirement.department))) return false;
   // ?hiring=internal | client — the Client | Internal split of the actual
   // workflow (internal hiring is a filter here, not a separate module).
-  if (q.hiring === 'internal' && !any((a) => a.requirement && a.requirement.internal)) return false;
-  if (q.hiring === 'client' && !any((a) => a.requirement && !a.requirement.internal)) return false;
-  if (q.clientId && !any((a) => a.requirement && a.requirement.clientId === q.clientId)) return false;
-  if (q.requirementId && !any((a) => a.requirementId === q.requirementId)) return false;
+  if (q.hiring && !any((a) => a.requirement && hiringOk(q.hiring, !!a.requirement.internal))) return false;
+  if (q.clientId && !any((a) => a.requirement && MP.multiHas(q.clientId, a.requirement.clientId))) return false;
+  if (q.requirementId && !any((a) => MP.multiHas(q.requirementId, a.requirementId))) return false;
   if (q.appliedFrom && !any((a) => istDayOfDate(a.createdAt) >= q.appliedFrom)) return false;
   if (q.appliedTo && !any((a) => istDayOfDate(a.createdAt) <= q.appliedTo)) return false;
   if (ctx.personIds && !r.appIds.some((id) => ctx.personIds.has(id))) return false;
@@ -1248,17 +1248,33 @@ async function buildPipelineRows(user, st, s, snap) {
   return { rows, preAts, people };
 }
 
+// ?hiring=client,internal: both asked = everybody
+function hiringOk(raw, internal) {
+  const w = MP.parseMulti(raw).filter((x) => x === 'client' || x === 'internal');
+  if (!w.length || w.length === 2) return true;
+  return w[0] === 'internal' ? internal : !internal;
+}
 function pipelineStageMatches(r, q) {
   if (!q.stage) return true;
-  const st = String(q.stage);
-  if (st.startsWith('st:')) return st.slice(3).split(',').includes(r.stageKey);
-  if (st.startsWith('group:')) return r.stageGroup === st.slice(6);
-  if (st.startsWith('stage:')) return st.slice(6).split(',').includes(r.currentStage);
-  return true;
+  const items = MP.parseMulti(q.stage);
+  if (!items.length) return true;
+  let kind = '';
+  let any = false;
+  let ok = false;
+  items.forEach((it) => {
+    const m = /^(st|group|stage):(.*)$/.exec(it);
+    if (m) { kind = m[1]; any = true; }
+    const val = m ? m[2] : it;
+    if (!kind) return;
+    if (kind === 'st' && val === r.stageKey) ok = true;
+    if (kind === 'group' && val === r.stageGroup) ok = true;
+    if (kind === 'stage' && val === r.currentStage) ok = true;
+  });
+  return any ? ok : true;
 }
 function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (ctx.search && !searchHit(r, ctx)) return false;
-  if (q.location && r.location !== q.location) return false;
+  if (q.location && !MP.multiHas(q.location, r.location)) return false;
   if (q.new === '1' && !isNewRow(r)) return false;
   if (q.source && !sourceSetOf(q.source).has(r.sourceKey)) return false;
   if (!cameMatches(r, q)) return false;
@@ -1273,11 +1289,10 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
     if (!wanted.includes(r.followUp ? r.followUp.status : 'Not set')) return false;
   }
   if (!skipStage && !pipelineStageMatches(r, q)) return false;
-  if (q.department && r.requirementDepartment !== q.department) return false;
-  if (q.hiring === 'internal' && !r.internal) return false;
-  if (q.hiring === 'client' && r.internal) return false;
-  if (q.clientId && r.clientId !== q.clientId) return false;
-  if (q.requirementId && r.requirementId !== q.requirementId) return false;
+  if (q.department && !MP.multiHas(q.department, r.requirementDepartment)) return false;
+  if (q.hiring && !hiringOk(q.hiring, !!r.internal)) return false;
+  if (q.clientId && !MP.multiHas(q.clientId, r.clientId)) return false;
+  if (q.requirementId && !MP.multiHas(q.requirementId, r.requirementId)) return false;
   const day = r.appliedDate ? (istDayOfDate(r.appliedDate) || '') : '';
   if (q.appliedFrom && !(day && day >= q.appliedFrom)) return false;
   if (q.appliedTo && !(day && day <= q.appliedTo)) return false;
@@ -1288,7 +1303,7 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   }
   if (q.minExp !== undefined && q.minExp !== '' && !(r.experienceYears != null && r.experienceYears >= Number(q.minExp))) return false;
   if (q.maxExp !== undefined && q.maxExp !== '' && !(r.experienceYears != null && r.experienceYears <= Number(q.maxExp))) return false;
-  if (q.notice && String(r.noticePeriod || '') !== q.notice) return false;
+  if (q.notice && !MP.multiHas(q.notice, String(r.noticePeriod || ''))) return false;
   if (q.maxSalary !== undefined && q.maxSalary !== '') {
     const lakhs = salaryLakhs(r.expectedSalary);
     if (lakhs === null || lakhs > Number(q.maxSalary)) return false;
@@ -1297,24 +1312,24 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   // Salary fit: ?salaryFit=within,slightly,above,missing,nobudget (any of them)
   if (q.salaryFit && !(r.salaryFit && String(q.salaryFit).split(',').some((k) => r.salaryFit.keys.includes(k.trim())))) return false;
   // C1: ?contact=never | stale3 | overdue | not_followed | due_today | followed
-  if (q.contact && !FV.matchesContactFilter(q.contact, r)) return false;
+  if (q.contact && !MP.parseMulti(q.contact).some((k) => FV.matchesContactFilter(k, r))) return false;
   // cand7_: an ARCHIVED person is hidden from every list (People → Archived
   // brings them back); Qualification / Specialisation ('none' = not mapped);
   // Owner (whose move it is now, 'none' = nobody named); Rejected before.
   if (r.archived && q.archived !== '1') return false;
-  if (q.qualificationId && (r.qualificationId || 'none') !== q.qualificationId) return false;
-  if (q.specialisationId && (r.specialisationId || 'none') !== q.specialisationId) return false;
-  if (q.spec && (r.spec || 'none') !== q.spec) return false;
-  if (q.qual && (r.qual || 'none') !== q.qual) return false;
-  if (q.desig && (r.desig || 'none') !== q.desig) return false;
-  if (q.expBand && (r.expBand || 'none') !== q.expBand) return false;
+  if (q.qualificationId && !MP.multiHas(q.qualificationId, r.qualificationId || 'none')) return false;
+  if (q.specialisationId && !MP.multiHas(q.specialisationId, r.specialisationId || 'none')) return false;
+  if (q.spec && !MP.multiHas(q.spec, r.spec || 'none')) return false;
+  if (q.qual && !MP.multiHas(q.qual, r.qual || 'none')) return false;
+  if (q.desig && !MP.multiHas(q.desig, r.desig || 'none')) return false;
+  if (q.expBand && !MP.multiHas(q.expBand, r.expBand || 'none')) return false;
   if (q.tag && !FX.tagMatches(r.candidateId, q.tag)) return false;
   if (!FX.matches(r, q, ctx)) return false;
-  if (q.owner && ownerKeyOf(r) !== q.owner) return false;
+  if (q.owner && !MP.multiHas(q.owner, ownerKeyOf(r))) return false;
   if (q.rejectedBefore === 'yes' && !(r.rejectedCount > 0)) return false;
   if (q.rejectedBefore === 'no' && r.rejectedCount > 0) return false;
-  if (q.rejSide && r.rejSide !== q.rejSide) return false;
-  if (q.rejReason && r.rejReason !== q.rejReason) return false;
+  if (q.rejSide && !MP.multiHas(q.rejSide, r.rejSide)) return false;
+  if (q.rejReason && !MP.multiHas(q.rejReason, r.rejReason)) return false;
   // ATS layout v3: "Not followed up 7+ / 30+ days" (the Candidates cards).
   if (q.contactAge && !(contactAgeDays(r) != null && contactAgeDays(r) >= Number(q.contactAge))) return false;
   if (ctx.personIds && !ctx.personIds.has(r.id)) return false;
