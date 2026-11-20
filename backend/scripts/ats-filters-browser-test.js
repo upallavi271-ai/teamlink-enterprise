@@ -140,6 +140,29 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
       check('Team: the rows follow the two ticked options (no more than before, at least one)', rowsAfter >= 1 && rowsAfter <= rowsBefore, { rowsBefore, rowsAfter });
     }
     // ---- a phone: the dropdown is a sheet from the bottom
+    // ---- ATS Dashboard bar: Client, two options (and Department when the data has two)
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await page.goto(`http://localhost:${WEB_PORT}/ats/dashboard?range=all`);
+    await page.locator('.msel-btn', { hasText: /^Client:/ }).first().waitFor();
+    const dashBefore = await api('/dashboard/ats/home?range=all');
+    const dClients = ((dashBefore.filterOptions || {}).clientId || []).filter((o) => o.count > 0);
+    const dDepts = ((dashBefore.deptChoices || []).filter((o) => o.count > 0 || o.jobs > 0));
+    if (dDepts.length >= 2) {
+      const gotD = await tick('Department', 2);
+      check('Dashboard: the URL keeps both ticked departments', /department=[^&]+,[^&]+/.test(decodeURIComponent(page.url())), page.url());
+      check('Dashboard: ticking two departments gave two names', gotD.length === 2, gotD);
+    } else check('Dashboard: two departments (fixture has one, skipped)', true);
+    await page.goto(`http://localhost:${WEB_PORT}/ats/dashboard?range=all`);
+    await page.locator('.msel-btn', { hasText: /^Client:/ }).first().waitFor();
+    if (dClients.length >= 2) {
+      const got = await tick('Client', 2);
+      const urlNow = decodeURIComponent(page.url());
+      check('Dashboard: the URL keeps both ticked clients', /clientId=[^&]+,[^&]+/.test(urlNow), page.url());
+      const chipBtn = (await page.locator('.msel-btn', { hasText: /^Client:/ }).first().innerText()).replace(/\s+/g, ' ');
+      check('Dashboard: the Client button names the ticked clients', got.every((g) => chipBtn.includes(g.name.slice(0, 8))) || /2 clients|\+/.test(chipBtn), { chipBtn, got });
+    } else check('Dashboard: two clients (fixture has fewer, skipped)', true);
+    await page.keyboard.press('Escape');
+
     await page.setViewportSize({ width: 375, height: 800 });
     await page.goto(`http://localhost:${WEB_PORT}/candidates?view=pipeline&sub=all`);
     await page.locator('.msel-btn', { hasText: /^Current location:/ }).first().click();

@@ -18,6 +18,7 @@ import { FunnelChart } from '../charts';
 import PageFilterBar, { usePageFilters, filterParams } from '../ui/PageFilterBar.jsx';
 import { PRESETS } from '../../utils/dateRanges.js';
 import { FacetSelect } from '../ui/ListPageHeader.jsx';
+import MultiSelect, { csvToList, listToCsv } from '../ats/MultiSelect.jsx'; // several values per filter (checkboxes)
 import DashboardExport from './DashboardExport.jsx';
 import { V3_WIDGETS, Cards } from './AtsHomeV3.jsx';
 import AtsV4 from './ats-v4/AtsV4.jsx';
@@ -29,7 +30,6 @@ import { BdeWorkspace } from '../clients/ClientBusiness.jsx';
 import DashboardOfPicker from './DashboardOfPicker.jsx'; // Super Admin: see another login's dashboard (2026-11-10)
 import RemindersGoingOutCard from '../reminders/RemindersGoingOutCard.jsx'; // "Reminders going out": the scheduled messages to candidates, today and tomorrow (2026-11-20)
 import './atsHome.css';
-import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // THE ATS HOME — one page per role, drawn from ONE widget registry (the
@@ -467,7 +467,7 @@ export default function AtsHome() {
     return p;
   }, { replace: true });
   const opts = (data && data.filterOptions) || {};
-  const labelOf = (k, v) => ((opts[k] || []).find((o) => String(o.value) === String(v)) || {}).label || v;
+  const labelOf = (k, v) => csvToList(v).map((one) => ((opts[k] || []).find((o) => String(o.value) === String(one)) || {}).label || one).join(', ');
   const barOptions = {
     department: opts.department || [],
     clientId: opts.clientId || [],
@@ -484,14 +484,15 @@ export default function AtsHome() {
   // TEAM LEAD filter (cascading, with counts): only for logins that may pick a team
   // (a TL, a recruiter and HR never get it — the server leaves it out of their options).
   const tlOptions = (opts.tl && (opts.tl.length > 0 || extra.tl))
-    ? <FacetSelect label="Team lead" value={extra.tl || ''} onChange={(v) => { const p = new URLSearchParams(sp); if (v) p.set('tl', v); else p.delete('tl'); setSp(p, { replace: true }); }} options={opts.tl} allLabel="All team leads" />
+    ? <FacetSelect multi label="Team lead" value={extra.tl || ''} onChange={(v) => { const p = new URLSearchParams(sp); if (v) p.set('tl', v); else p.delete('tl'); setSp(p, { replace: true }); }} options={opts.tl} allLabel="All team leads" />
     : null;
-  const pickDept = (d) => setF({ ...f, department: f.department === d ? '' : d });
+  const pickDept = (d) => { const have = csvToList(f.department); setF({ ...f, department: listToCsv(have.includes(d) ? have.filter((x) => x !== d) : [...have, d]) }); };
   // THE DEPARTMENT CHOOSER (user, 2026-10-05): only when the login has 2+
   // departments (or one is already picked, so it can be cleared).
-  const deptList = ((data && data.deptChoices) || []).filter((o) => o.count > 0 || o.jobs > 0 || o.value === f.department);
+  const deptTicked = csvToList(f.department);
+  const deptList = ((data && data.deptChoices) || []).filter((o) => o.count > 0 || o.jobs > 0 || deptTicked.includes(o.value));
   const showDept = deptList.length > 1 || !!f.department;
-  const deptName = f.department ? ((deptList.find((o) => o.value === f.department) || {}).label || (f.department === '__none__' ? 'No department' : f.department)) : '';
+  const deptName = deptTicked.map((d) => (deptList.find((o) => o.value === d) || {}).label || (d === '__none__' ? 'No department' : d)).join(' + ');
   // the overall count on "All departments" (2026-11-18): every department's in-process count added up
   const deptAllText = `All departments (${fmt(deptList.reduce((s, o) => s + (Number(o.count) || 0), 0))} in process)`;
   const deptText = (o) => `${o.label} (${o.count ? `${fmt(o.count)} in process` : `${fmt(o.jobs)} open ${o.jobs === 1 ? 'requirement' : 'requirements'}`})`;
@@ -622,15 +623,9 @@ export default function AtsHome() {
           <div className="av4-tools">
             {dashboardOfPicker}
             {showDept && (
-              <label className={`lph-facet av4-dept-f${f.department ? ' is-picked' : ''}`}>
-                <span className="lph-facet-lbl">Department</span>
-                <Combo value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department">
-                  <option value="">{deptAllText}</option>
-                  {deptList.map((o) => <option key={o.value} value={o.value}>{deptText(o)}</option>)}
-                </Combo>
-              </label>
+              <MultiSelect label="Department" allLabel={deptAllText} value={f.department || ''} onChange={(csv) => setF({ ...f, department: csv })} options={deptList.map((o) => ({ value: o.value, label: deptText(o) }))} />
             )}
-            <PageFilterBar className="av4-pfb" value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} ranges={RANGES} extraSet={Object.keys(extra).length > 0} onClear={clearAll}>
+            <PageFilterBar multiClient multiPeople className="av4-pfb" value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} ranges={RANGES} extraSet={Object.keys(extra).length > 0} onClear={clearAll}>
               {tlOptions}
             </PageFilterBar>
             {data && data.mayExport && <DashboardExport url="/dashboard/ats/home/export" params={params} />}
@@ -692,20 +687,14 @@ export default function AtsHome() {
       {/* Row 1: the department chooser (2+ departments). "Your area" is in the top bar. */}
       {showDept && (
       <div className={`ah-deptbar${f.department ? ' is-picked' : ''}`}>
-        <label className="ah-deptpick">
-            <span className="ah-deptpick-l">Department:</span>
-            <Combo value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department">
-              <option value="">{deptAllText}</option>
-              {deptList.map((o) => <option key={o.value} value={o.value}>{deptText(o)}</option>)}
-            </Combo>
-          </label>
+        <MultiSelect label="Department" allLabel={deptAllText} value={f.department || ''} onChange={(csv) => setF({ ...f, department: csv })} options={deptList.map((o) => ({ value: o.value, label: deptText(o) }))} />
         {f.department && <button type="button" className="btn btn-sm ah-dept-all" onClick={() => setF({ ...f, department: '' })}>✕ All departments</button>}
         {f.department && <span className="small-muted">Everything below is {deptName} only.</span>}
       </div>
       )}
       {/* Row 2: date range, client, recruiter / BDE (+ chips from old links). */}
       <div className="ah-row2">
-        <PageFilterBar value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} />
+        <PageFilterBar multiClient multiPeople value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} />
         {extraChips}
       </div>
       {error && <div className="notice red">{error}</div>}

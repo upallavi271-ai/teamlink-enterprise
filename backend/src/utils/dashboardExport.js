@@ -113,7 +113,8 @@ function filterRows(b) {
   const p = b.period || {};
   out.push(['Date range', p.key === 'all' ? 'Any time' : (p.word ? `${p.word} (${p.from} to ${p.to})` : `${p.from} to ${p.to}`)]);
   Object.entries(b.filters || {}).forEach(([k, v]) => {
-    out.push([names[k] || k, k === 'department' && v === '__none__' ? 'No department' : labelOf(k, v)]);
+    // several values per filter: a comma list, each with its own word
+    out.push([names[k] || k, require('./multiParam').parseMulti(v).map((x) => (k === 'department' && x === '__none__' ? 'No department' : labelOf(k, x))).join(', ')]); // eslint-disable-line global-require
   });
   if (out.length === 1) out.push(['Other filters', 'None - everything in your area']);
   return out;

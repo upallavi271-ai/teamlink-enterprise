@@ -733,17 +733,19 @@ async function managementBoard(c, req) {
   const q = req.query || {};
   const str = (v) => (typeof v === 'string' ? v.trim() : '');
   const period = dateRange.resolve({ range: str(q.range) || 'this_month', from: str(q.from), to: str(q.to) });
-  const f = { clientId: str(q.clientId), department: str(q.department), source: str(q.source) };
+  const MPR = require('./multiParam'); // eslint-disable-line global-require
+  const f = { clientId: MPR.multiCsv(q.clientId), department: MPR.multiCsv(q.department), source: MPR.multiCsv(q.source) }; // several values per filter (comma list)
+  const inList = (v) => ({ in: MPR.parseMulti(v) });
   b.period = period;
   b.filters = f;
   const mayMoney = await can(c.user, 'accounts', 'accounts', 'Invoices', 'view');
   b.money = mayMoney;
 
-  const reqFilter = and(f.clientId ? { clientId: f.clientId } : null, f.department ? { department: f.department } : null);
+  const reqFilter = and(f.clientId ? { clientId: inList(f.clientId) } : null, f.department ? { department: inList(f.department) } : null);
   const appFilter = and(
     c.appScope,
     Object.keys(reqFilter).length ? { requirement: { is: reqFilter } } : null,
-    f.source ? { source: f.source } : null,
+    f.source ? { source: inList(f.source) } : null,
   );
   const inPeriod = { gte: dt(period.from), lt: dt(addDays(period.to, 1)) };
   const appsWhere = and(appFilter, { createdAt: inPeriod });
@@ -790,7 +792,7 @@ async function managementBoard(c, req) {
   let money = null;
   if (mayMoney) {
     const invs = await prisma.invoice.findMany({
-      where: and(invoiceWhere(c.user), f.clientId ? { clientId: f.clientId } : null),
+      where: and(invoiceWhere(c.user), f.clientId ? { clientId: inList(f.clientId) } : null),
       select: { id: true, clientId: true, amount: true, gst: true, tds: true, receivedAmount: true, status: true, invoiceDate: true, dueDate: true, client: { select: { name: true } } },
     });
     // B9.9: revenue NET of issued credit / debit notes (utils/creditNotes.js decorateNet).

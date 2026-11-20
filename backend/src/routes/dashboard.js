@@ -521,10 +521,13 @@ async function dashboardFilters(req, s) {
   const str = (v) => (typeof v === 'string' ? v.trim() : '');
   const app = [];
   const reqs = [];
-  const department = str(q.department);
-  if (department) {
-    app.push({ requirement: { is: { department } } });
-    reqs.push({ department });
+  // SEVERAL departments at once (a comma list): a row stays when it is in ANY of them
+  const MPD = require('../utils/multiParam'); // eslint-disable-line global-require
+  const deptList = MPD.parseMulti(q.department);
+  const department = MPD.multiCsv(q.department);
+  if (deptList.length) {
+    app.push({ requirement: { is: { department: { in: deptList } } } });
+    reqs.push({ department: { in: deptList } });
   }
   const mine = str(q.scope) === 'mine' && !!s.userId && !['RECRUITER', 'CLIENT', 'CANDIDATE'].includes(s.atsRole);
   if (mine) {
@@ -544,14 +547,10 @@ async function dashboardFilters(req, s) {
     // The requirement-level spelling of the same filter (routes/requirements.js
     // tlId / tlName / recruiterId / workedByName / positionCode).
     const split = (v) => (v.startsWith('id:') ? { id: v.slice(3) } : { name: v.replace(/^name:/, '') });
-    if (str(q.tl)) {
-      const t = split(str(q.tl));
-      reqs.push(t.id ? { tlId: t.id } : { tl: t.name });
-    }
-    if (str(q.recruiter)) {
-      const r = split(str(q.recruiter));
-      reqs.push(r.id ? { OR: [{ recruiterId: r.id }, { recruiterIds: { contains: r.id } }] } : { recruiter: { is: { name: r.name } } });
-    }
+    const tlArms = MPD.parseMulti(q.tl).map((v) => { const t = split(v); return t.id ? { tlId: t.id } : { tl: t.name }; });
+    if (tlArms.length) reqs.push(tlArms.length === 1 ? tlArms[0] : { OR: tlArms });
+    const recArms = MPD.parseMulti(q.recruiter).map((v) => { const r = split(v); return r.id ? { OR: [{ recruiterId: r.id }, { recruiterIds: { contains: r.id } }] } : { recruiter: { is: { name: r.name } } }; });
+    if (recArms.length) reqs.push(recArms.length === 1 ? recArms[0] : { OR: recArms });
     if (str(q.positionCode)) {
       const codes = str(q.positionCode).split(',').map((x) => x.trim()).filter(Boolean);
       reqs.push({ positionCode: { in: codes } });

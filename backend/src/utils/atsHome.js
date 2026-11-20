@@ -470,17 +470,22 @@ const HIDDEN_FILTERS = {
   // 2026-11-11: she gets the Super Admin's page, so the Super Admin's filters too (Recruiter / BDE, Team lead)
   bdetl: [],
 };
+// SEVERAL VALUES PER FILTER (founder 2026-11-20): each filter holds a comma list (or a repeated parameter); a row stays when it has ANY of them,
+// the filters are AND-ed. The list is kept as the cleaned csv (cache keys, links) and read with multiHas() / parseMulti().
+const MPH = require('./multiParam');
+const csvQ = (v) => MPH.multiCsv(Array.isArray(v) ? v.map((x) => (typeof x === 'string' ? x : '')) : (typeof v === 'string' ? v : ''));
+const hasAnyOf = (raw, values) => MPH.multiHasAny(raw, values);
 function readFilters(layout, q) {
-  const s = (v) => (typeof v === 'string' ? v.trim() : '');
+  const s = (v) => csvQ(v);
   const f = {};
-  FILTER_KEYS.forEach((k) => { if (s(q[k]) && !(HIDDEN_FILTERS[layout] || []).includes(k)) f[k] = s(q[k]).slice(0, 200); });
+  FILTER_KEYS.forEach((k) => { if (s(q[k]) && !(HIDDEN_FILTERS[layout] || []).includes(k)) f[k] = s(q[k]).slice(0, 1500); });
   // The v3 filter bar (components/ui/PageFilterBar.jsx) sends ONE person as
   // recruiterId / bdeId: a user id, or an attribution key ("n:…") as is.
   const asKey = (v) => (v.includes(':') ? v : `u:${v}`);
   [['recruiterId', 'recruiter'], ['bdeId', 'bde']].forEach(([qk, k]) => {
-    if (s(q[qk]) && !f[k] && !(HIDDEN_FILTERS[layout] || []).includes(k)) f[k] = asKey(s(q[qk]).slice(0, 200));
+    if (s(q[qk]) && !f[k] && !(HIDDEN_FILTERS[layout] || []).includes(k)) f[k] = MPH.multiCsv(MPH.parseMulti(s(q[qk]).slice(0, 1500)).map(asKey));
   });
-  if (f.hiring && !['client', 'internal'].includes(f.hiring)) delete f.hiring;
+  if (f.hiring) { const h = MPH.parseMulti(f.hiring).filter((x) => ['client', 'internal'].includes(x)); if (h.length === 1) f.hiring = h[0]; else delete f.hiring; } // both ticked = no filter
   return f;
 }
 // An application row against the filters (except some).
@@ -488,13 +493,13 @@ function rowMatches(x, f, except = []) {
   const { a } = x;
   const r = a.requirement || {};
   const on = (k) => !!f[k] && !except.includes(k);
-  if (on('department') && (f.department === '__none__' ? !!r.department : r.department !== f.department)) return false;
-  if (on('clientId') && r.clientId !== f.clientId) return false;
-  if (on('requirementId') && a.requirementId !== f.requirementId) return false;
+  if (on('department') && !MPH.multiHas(f.department, r.department || '__none__')) return false;
+  if (on('clientId') && !MPH.multiHas(f.clientId, r.clientId)) return false;
+  if (on('requirementId') && !MPH.multiHas(f.requirementId, a.requirementId)) return false;
   if (on('hiring') && x.internal !== (f.hiring === 'internal')) return false;
-  if (on('priority') && r.priority !== f.priority) return false;
-  if (on('source') && a.source !== f.source) return false;
-  for (const k of ['recruiter', 'tl', 'bde']) if (on(k) && !(x.who && x.who[k] && x.who[k].key === f[k])) return false;
+  if (on('priority') && !MPH.multiHas(f.priority, r.priority)) return false;
+  if (on('source') && !MPH.multiHas(f.source, a.source)) return false;
+  for (const k of ['recruiter', 'tl', 'bde']) if (on(k) && !(x.who && x.who[k] && MPH.multiHas(f[k], x.who[k].key))) return false;
   return true;
 }
 // A job against the filters: its own fields, or (people / source) the
@@ -502,17 +507,18 @@ function rowMatches(x, f, except = []) {
 const PERSON_FIELD = { recruiter: 'recruiterId', tl: 'tlId', bde: 'bdeId' };
 function reqMatches(w, r, f, except = []) {
   const on = (k) => !!f[k] && !except.includes(k);
-  if (on('department') && (f.department === '__none__' ? !!r.department : r.department !== f.department)) return false;
-  if (on('clientId') && r.clientId !== f.clientId) return false;
-  if (on('requirementId') && r.id !== f.requirementId) return false;
+  if (on('department') && !MPH.multiHas(f.department, r.department || '__none__')) return false;
+  if (on('clientId') && !MPH.multiHas(f.clientId, r.clientId)) return false;
+  if (on('requirementId') && !MPH.multiHas(f.requirementId, r.id)) return false;
   if (on('hiring') && (!!r.internal || r.hiringType === INTERNAL_HIRE) !== (f.hiring === 'internal')) return false;
-  if (on('priority') && r.priority !== f.priority) return false;
-  if (on('source') && !(w.reqSources.get(r.id) || new Set()).has(f.source)) return false;
+  if (on('priority') && !MPH.multiHas(f.priority, r.priority)) return false;
+  if (on('source') && !hasAnyOf(f.source, [...(w.reqSources.get(r.id) || new Set())])) return false;
   for (const k of ['recruiter', 'tl', 'bde']) {
     if (!on(k)) continue;
     const worked = (w.reqPeople.get(r.id) || {})[k];
-    const named = f[k].startsWith('u:') && (r[PERSON_FIELD[k]] === f[k].slice(2) || (k === 'recruiter' && String(r.recruiterIds || '').split(',').includes(f[k].slice(2))));
-    if (!(worked && worked.has(f[k])) && !named) return false;
+    const wantKeys = MPH.parseMulti(f[k]);
+    const named = wantKeys.some((key) => key.startsWith('u:') && (r[PERSON_FIELD[k]] === key.slice(2) || (k === 'recruiter' && String(r.recruiterIds || '').split(',').includes(key.slice(2)))));
+    if (!(worked && wantKeys.some((key) => worked.has(key))) && !named) return false;
   }
   return true;
 }
@@ -538,7 +544,7 @@ function filterOptions(c, base) {
     const list = [...m.values()].sort((x, y) => y.count - x.count || String(x.label).localeCompare(String(y.label)));
     const out = list.slice(0, limit);
     // The picked value always stays listed, so its chip can be read.
-    if (c.f[key] && !out.some((o) => o.value === c.f[key])) out.push({ value: c.f[key], label: (list.find((o) => o.value === c.f[key]) || {}).label || c.f[key], count: 0 });
+    MPH.parseMulti(c.f[key]).forEach((pv) => { if (!out.some((o) => o.value === pv)) out.push({ value: pv, label: (list.find((o) => o.value === pv) || {}).label || pv, count: 0 }); });
     return out;
   };
   const r = (x) => x.a.requirement || {};
@@ -865,7 +871,7 @@ async function resultsScope(c, k) {
   if (!deptLead && !overall) return { rows: k.sel, w: null, word: '' };
   const cw = await companyWorld();
   let rows = cw.rows.filter((x) => rowMatches(x, c.f));
-  let word = c.f.department || '';
+  let word = MPH.parseMulti(c.f.department).map((d) => (d === '__none__' ? 'No department' : d)).join(' · ');
   if (deptLead) {
     const want = new Set(depts.map(deptKey));
     rows = rows.filter((x) => want.has(deptKey(x.a.requirement && x.a.requirement.department)));
@@ -912,8 +918,8 @@ function cleanupSets(c, b, k) {
 async function moneyPanel(c, b) {
   if (!c.mayMoney) return null;
   // The Client / Department filters apply to money too (the client's owning department).
-  const invWhere = and(invoiceWhere(c.user), c.f.clientId ? { clientId: c.f.clientId } : null,
-    c.f.department && c.f.department !== '__none__' ? { client: { is: { ownerDepartment: c.f.department } } } : null);
+  const invWhere = and(invoiceWhere(c.user), c.f.clientId ? { clientId: { in: MPH.parseMulti(c.f.clientId) } } : null,
+    MPH.parseMulti(c.f.department).filter((d) => d !== '__none__').length ? { client: { is: { ownerDepartment: { in: MPH.parseMulti(c.f.department).filter((d) => d !== '__none__') } } } } : null);
   // RECEIVED = utils/moneyFacts.js (the same rule as Reports): payment rows,
   // else receivedAmount of a Paid / Partially paid invoice (old imports), on its paid date.
   const MF = require('./moneyFacts'); // eslint-disable-line global-require
@@ -1055,7 +1061,7 @@ function departmentsTable(c, b, k) {
     const drills = {};
     METRICS.forEach((m) => { drills[m] = setFor(`dept-${i}-${m}`, name, m, r[m]); });
     return {
-      department: r.department, fixNeeded: !r.department, picked: !!c.f.department && c.f.department === (r.department || '__none__'),
+      department: r.department, fixNeeded: !r.department, picked: !!c.f.department && MPH.multiHas(c.f.department, r.department || '__none__'),
       ...Object.fromEntries(METRICS.map((m) => [m, r[m].length])), drills,
     };
   });
@@ -1245,7 +1251,7 @@ async function buildHome(user, req) {
   b.scopeChip = SCOPE_CHIP[c.layout] || 'Me';
   if (c.layout === 'bde' && isBdeTl(user)) { b.title = 'BDE Team'; b.scopeChip = 'All clients'; b.about = 'All the BDE clients: who has work waiting, feedback to chase and open requirements.'; }
   if (c.layout === 'manager') { b.scopeChip = 'All departments'; b.title = 'Company overview'; b.about = 'Every department: requirements, candidates, team leads and what is late. You view and approve; the work is done by the teams.'; }
-  b.department = c.dept ? (c.dept === '__none__' ? 'No department' : c.dept) : null;
+  b.department = c.dept ? MPH.parseMulti(c.dept).map((d) => (d === '__none__' ? 'No department' : d)).join(', ') : null;
   b.period = { from: c.period.from, to: c.period.to, key: c.period.key, word: c.word, prevWord: c.prevWord, noPrev: !!c.noPrev };
   b.periods = PERIODS.map((k) => ({ id: k, label: { today: 'Today', this_week: 'This week', this_month: 'This month' }[k] }));
   b.today = c.today;
@@ -1482,7 +1488,7 @@ function deptChoices(c, k) {
   });
   k.w.reqs.forEach((r) => { if (isLiveReq(r) && reqMatches(k.w, r, c.f, ['department'])) add(r.department, 'jobs'); });
   const out = [...m.values()].sort((x, y) => (x.value === '__none__') - (y.value === '__none__') || y.count - x.count || y.jobs - x.jobs || String(x.label).localeCompare(String(y.label)));
-  if (c.f.department && !m.has(c.f.department)) out.push({ value: c.f.department, label: c.f.department === '__none__' ? 'No department' : c.f.department, count: 0, jobs: 0 });
+  MPH.parseMulti(c.f.department).forEach((pd) => { if (!m.has(pd)) out.push({ value: pd, label: pd === '__none__' ? 'No department' : pd, count: 0, jobs: 0 }); });
   return out;
 }
 
@@ -1690,7 +1696,7 @@ function departmentsV3(c, b, k) {
         drills[m] = addSet(b, `dept-${i}-${m}`, { kind: m === 'openJobs' ? 'req' : 'app', title: `${name} — ${TITLE[m]}`, ids: r[m], extra });
       });
       return {
-        department: r.department, fixNeeded: !r.department, picked: !!c.f.department && c.f.department === (r.department || '__none__'),
+        department: r.department, fixNeeded: !r.department, picked: !!c.f.department && MPH.multiHas(c.f.department, r.department || '__none__'),
         ...Object.fromEntries(METRICS.map((m) => [m, r[m].length])), drills,
       };
     });
@@ -2129,11 +2135,11 @@ async function bdeHome(c, b, k) {
   const { rows, sel, openJobs, T, clientDecision } = k;
   // A picked department: only clients of that department (their own department,
   // or a job of theirs in it) — user, 2026-10-05.
-  const wantDept = c.f.department ? (c.f.department === '__none__' ? '' : c.f.department) : null;
-  const deptClients = wantDept === null ? null : new Set(k.w.reqs.filter((r) => (r.department || '') === wantDept).map((r) => r.clientId));
+  const wantDepts = c.f.department ? new Set(MPH.parseMulti(c.f.department).map((d) => (d === '__none__' ? '' : d))) : null;
+  const deptClients = wantDepts === null ? null : new Set(k.w.reqs.filter((r) => wantDepts.has(r.department || '')).map((r) => r.clientId));
   const myClients = (await prisma.client.findMany({ where: clientWhere(c.user), select: { id: true, name: true, agreementStatus: true, status: true, createdAt: true, ownerDepartment: true } })).filter((x) => !isTest(x.name))
-    .filter((x) => !c.f.clientId || x.id === c.f.clientId)
-    .filter((x) => !deptClients || (x.ownerDepartment || '') === wantDept || deptClients.has(x.id));
+    .filter((x) => !c.f.clientId || MPH.multiHas(c.f.clientId, x.id))
+    .filter((x) => !deptClients || wantDepts.has(x.ownerDepartment || '') || deptClients.has(x.id));
   const submitted = rows.filter((x) => CLIENT_CHAIN.includes(x.a.stage) && !x.internal);
   addSet(b, 'submitted', { kind: 'app', title: 'People sent to clients (in process)', ids: ids(submitted), extra: extraOf(submitted) });
   addSet(b, 'my-clients', { kind: 'client', title: 'My clients', rows: myClients.map((x) => ({ id: x.id, name: x.name, agreement: V.agreementStatusLabel(x.agreementStatus) })) });
@@ -2594,7 +2600,7 @@ async function tlsList(user, b) {
     return out;
   };
   const people = tw.people.filter((p) => p.status === 'Active' && !isTest(p.name));
-  const want = c.f.department ? (c.f.department === '__none__' ? '' : c.f.department) : null;
+  const wantD = c.f.department ? new Set(MPH.parseMulti(c.f.department).map((d) => (d === '__none__' ? '' : d))) : null;
   const rows = people.filter((p) => p.role === 'TL').map((p) => {
     // (The BDE TL is not a recruiting team lead: utils/teamWorkload.js leaves her out of this list.)
     const team = people.filter((r) => r.roleGroup === 'RECRUITER' && r.tlUserId === p.id);
@@ -2609,7 +2615,7 @@ async function tlsList(user, b) {
     return { id: p.id, name: p.name, department: p.department || null, teamSize: team.length, ...own, recruiters };
   }).filter((r) => {
     const busy = r.openJobs + r.inProcess + r.interviews + r.selected + r.joined + r.joinedTotal + r.late > 0;
-    if (want !== null && (r.department || '') !== want && !busy) return false;
+    if (wantD !== null && !wantD.has(r.department || '') && !busy) return false;
     if (anyOther && !busy) return false;
     return true;
   }).sort((x, y) => String(x.department || '~').localeCompare(String(y.department || '~')) || y.late - x.late || y.inProcess - x.inProcess || String(x.name).localeCompare(String(y.name)));

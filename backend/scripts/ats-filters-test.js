@@ -627,6 +627,38 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   const so1 = await srch({ owner: RA.id }); const so2 = await srch({ owner: `${RA.id},${RB.id}` });
   check('search multi: two owners hold at least the results of one', so1.status === 200 && so2.status === 200 && so2.total >= so1.total, { one: so1.total, two: so2.total });
 
+  // =====================================================================================================================
+  // THE ATS DASHBOARD BAR (founder 2026-11-20): Department, Client, Recruiter / BDE, Team lead take several values; numbers, option counts and the export follow
+  // =====================================================================================================================
+  const home = async (params) => { const r = await call('GET', `/dashboard/ats/home?${qs({ range: 'all', ...params })}`, null, tA); return { status: r.status, b: r.body || {} }; };
+  const sumCount = (list) => (list || []).reduce((s, o) => s + (Number(o.count) || 0), 0);
+  const h0 = await home({});
+  const hClients = ((h0.b.filterOptions || {}).clientId || []).filter((o) => o.count > 0);
+  check('dashboard multi: the home answers and lists at least two clients', h0.status === 200 && hClients.length >= 2, { s: h0.status, n: hClients.length });
+  if (hClients.length >= 2) {
+    const c1 = hClients[0].value; const c2 = hClients[1].value;
+    const a1 = await home({ clientId: c1 }); const a2 = await home({ clientId: c2 }); const a12 = await home({ clientId: `${c1},${c2}` });
+    const dep = (h) => sumCount((h.b.filterOptions || {}).department);
+    check('dashboard multi: two clients count the sum of each (Department option counts, OR inside one filter)', dep(a1) > 0 && dep(a2) > 0 && dep(a12) === dep(a1) + dep(a2), { a: dep(a1), b: dep(a2), ab: dep(a12) });
+    check('dashboard multi: the Client list keeps both ticked clients (own filter left out)', ((a12.b.filterOptions || {}).clientId || []).filter((o) => [c1, c2].includes(o.value)).length === 2, ((a12.b.filterOptions || {}).clientId || []).length);
+    check('dashboard multi: the filters in force carry both clients', String((a12.b.filters || {}).clientId || '').split(',').length === 2, a12.b.filters);
+    const none = await home({ clientId: `${c1},${c2}`, department: 'Zzz-no-department' }); check('dashboard multi: two clients AND a department that matches nothing is empty (AND across filters)', sumCount((none.b.filterOptions || {}).clientId) === 0, sumCount((none.b.filterOptions || {}).clientId));
+    const ex = await call('GET', `/dashboard/ats/home/export?${qs({ range: 'all', clientId: `${c1},${c2}` })}`, null, tA); check('dashboard multi: the export with two clients answers 200', ex.status === 200, { s: ex.status });
+  }
+  const hDepts = ((h0.b.filterOptions || {}).department || []).filter((o) => o.count > 0);
+  if (hDepts.length >= 2) {
+    const dd1 = await home({ department: hDepts[0].value }); const dd2 = await home({ department: hDepts[1].value }); const dd12 = await home({ department: `${hDepts[0].value},${hDepts[1].value}` });
+    const cl = (h) => sumCount((h.b.filterOptions || {}).clientId);
+    check('dashboard multi: two departments count the sum of each (Client option counts)', cl(dd12) === cl(dd1) + cl(dd2), { a: cl(dd1), b: cl(dd2), ab: cl(dd12) });
+  } else check('dashboard multi: two departments (fixture has one department, skipped)', true);
+  const hRec = ((h0.b.filterOptions || {}).recruiter || []).filter((o) => o.count > 0);
+  if (hRec.length >= 2) {
+    const r1 = await home({ recruiter: hRec[0].value }); const r2 = await home({ recruiter: hRec[1].value }); const r12 = await home({ recruiter: `${hRec[0].value},${hRec[1].value}` });
+    const cl2 = (h) => sumCount((h.b.filterOptions || {}).clientId);
+    check('dashboard multi: two recruiters hold the rows of both (Client option counts)', cl2(r12) >= Math.max(cl2(r1), cl2(r2)) && cl2(r12) <= cl2(r1) + cl2(r2), { a: cl2(r1), b: cl2(r2), ab: cl2(r12) });
+    const rb = await home({ recruiterId: `${hRec[0].value},${hRec[1].value}` }); check('dashboard multi: the bar spelling recruiterId takes two people too', rb.status === 200 && sumCount((rb.b.filterOptions || {}).clientId) === cl2(r12), { n: sumCount((rb.b.filterOptions || {}).clientId), want: cl2(r12) });
+  } else check('dashboard multi: two recruiters (fixture has one, skipped)', true);
+
   // job portal applications and call lists answer their filters
   const jp = await call('GET', `/job-portal/applications?${qs({ jpSource: 'zzz-none' })}`, null, tA);
   check('job portal: a source that matches nothing gives an empty list (200)', jp.status === 200 && rowsOf(jp.body).length === 0, { s: jp.status });
