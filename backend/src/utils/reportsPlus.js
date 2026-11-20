@@ -759,14 +759,17 @@ module.exports = function reportsPlus(H) {
       location: (x) => String(x.req.location).trim(),
     };
     // The chosen values, in the same shape val() returns.
+    // SEVERAL VALUES per filter (a comma list or a repeated parameter): each filter holds a LIST of chosen values, OR-ed inside one filter
+    const MPF = require('./multiParam'); // eslint-disable-line global-require
     const want = {};
     FACET_KEYS.forEach((k) => {
-      let v = typeof q[k] === 'string' ? q[k].trim() : '';
-      if (!v) return;
-      if (['tl', 'recruiter', 'bde', 'stl'].includes(k)) v = v.replace(/^id:/, 'u:').replace(/^name:/, 'n:');
-      if (k === 'source') v = v.toLowerCase();
-      want[k] = v;
+      let vals = MPF.parseMulti(q[k]);
+      if (!vals.length) return;
+      if (['tl', 'recruiter', 'bde', 'stl'].includes(k)) vals = vals.map((v) => v.replace(/^id:/, 'u:').replace(/^name:/, 'n:'));
+      if (k === 'source') vals = vals.flatMap((v) => v.toLowerCase().split(',').map((s) => s.trim()).filter(Boolean));
+      want[k] = vals;
     });
+    const matchAny = (k, x, vals) => vals.some((v) => matchName(k, x, v));
     const matchName = (k, x, v) => {
       const got = val[k](x);
       if (got === v) return true;
@@ -784,7 +787,7 @@ module.exports = function reportsPlus(H) {
       const others = Object.keys(want).filter((o) => o !== k);
       const m = new Map();
       ctx.apps.forEach((x) => {
-        if (!others.every((o) => matchName(o, x, want[o]))) return;
+        if (!others.every((o) => matchAny(o, x, want[o]))) return;
         const v = val[k](x);
         if (!v) return;
         const e = m.get(v) || { value: v, label: label[k](x) || v, count: 0 };
@@ -792,10 +795,11 @@ module.exports = function reportsPlus(H) {
         m.set(v, e);
       });
       const list = [...m.values()].sort((a, b) => b.count - a.count || String(a.label).localeCompare(String(b.label)));
-      if (want[k] && !list.some((o) => o.value === want[k])) list.unshift({ value: q[k], label: q[k].replace(/^(u|n|id|name):/, ''), count: 0 });
+      // every chosen value stays on the list, even at 0, so it can be seen and unticked
+      (want[k] || []).slice().reverse().forEach((w) => { if (!list.some((o) => o.value === w)) list.unshift({ value: w, label: String(w).replace(/^(u|n|id|name):/, ''), count: 0 }); });
       facets[k] = list;
     });
-    const total = ctx.apps.filter((x) => Object.keys(want).every((o) => matchName(o, x, want[o]))).length;
+    const total = ctx.apps.filter((x) => Object.keys(want).every((o) => matchAny(o, x, want[o]))).length;
     return { facets, total };
   }
 

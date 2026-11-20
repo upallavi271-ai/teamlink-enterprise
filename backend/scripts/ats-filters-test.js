@@ -574,6 +574,48 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   x = await fu(tA, { recruiter: `id:${RA.id},id:${RB.id}`, fuDue: 'today,overdue' }); check('people multi: follow-ups of two recruiters and two due buckets', same(V(x.names), names(1, 2)), x.names);
   x = await iv(tA, { recruiter: `id:${RA.id},id:${RB.id}` }); check('people multi: interviews of two recruiters', same(V(x.names), names(1, 2, 3)), x.names);
 
+  // =====================================================================================================================
+  // HISTORY AND REPORTS TAKE SEVERAL VALUES (founder 2026-11-20): recruiters and statuses on History; client, department, people on Reports
+  // =====================================================================================================================
+  const hist = async (token, id, params) => { const r = await call('GET', `/ats/history/requirement/${id}?${qs(params)}`, null, token); const rows = (r.body && r.body.rows) || []; return { status: r.status, ids: new Set(rows.map((y) => y.applicationId)), n: rows.length, body: r.body }; };
+  const sameSet = (a, b) => a.size === b.size && [...a].every((v) => b.has(v));
+  let hx = await hist(tA, R1.id, {}); check('history multi: the requirement history answers', hx.status === 200 && hx.n > 0, { s: hx.status, n: hx.n });
+  const hxJ = await hist(tA, R1.id, { status: 'joined' }); const hxP = await hist(tA, R1.id, { status: 'inprocess' }); const hxJP = await hist(tA, R1.id, { status: 'joined,inprocess' });
+  check('history multi: two statuses give both groups', sameSet(hxJP.ids, new Set([...hxJ.ids, ...hxP.ids])) && hxJP.n >= Math.max(hxJ.n, hxP.n), { j: hxJ.n, p: hxP.n, jp: hxJP.n });
+  const hxNone = await hist(tA, R1.id, { status: 'zzz-no-status' }); check('history multi: an unknown status is ignored (everyone stays)', hxNone.n === hx.n, { n: hxNone.n, all: hx.n });
+  const rowsAll = (hx.body && hx.body.rows) || []; const recIds = [...new Set(rowsAll.map((y) => y.recruiterId).filter(Boolean))];
+  if (recIds.length) {
+    const h1 = await hist(tA, R1.id, { recruiter: recIds[0] }); const h2 = await hist(tA, R1.id, { recruiter: `${recIds[0]},no-such-user` });
+    check('history multi: one recruiter plus an unknown id equals the one recruiter', sameSet(h1.ids, h2.ids) && h1.n > 0, { a: h1.n, b: h2.n });
+    if (recIds.length > 1) { const h3 = await hist(tA, R1.id, { recruiter: recIds.slice(0, 2).join(',') }); check('history multi: two recruiters hold the rows of both', h3.n >= h1.n, { n: h3.n }); }
+  } else check('history multi: recruiter filter (no recruiter rows in the fixture, skipped)', true);
+
+  const repFacets = async (params) => { const r = await call('GET', `/ats-io/facets/reports?${qs(params)}`, null, tA); return { status: r.status, total: r.body && r.body.total, f: (r.body && r.body.facets) || {} }; };
+  const fAll = await repFacets({});
+  const cOpts = (fAll.f.clientId || []).filter((o) => String(o.label).includes(TAG));
+  check('reports multi: the two test clients are on the Client list', fAll.status === 200 && cOpts.length >= 2, { s: fAll.status, n: cOpts.length });
+  if (cOpts.length >= 2) {
+    const c1 = cOpts[0].value; const c2 = cOpts[1].value;
+    const t1 = await repFacets({ clientId: c1 }); const t2 = await repFacets({ clientId: c2 }); const t12 = await repFacets({ clientId: `${c1},${c2}` });
+    check('reports multi: two clients count the sum of each (OR inside one filter)', t1.total > 0 && t2.total > 0 && t12.total === t1.total + t2.total, { a: t1.total, b: t2.total, ab: t12.total });
+    check('reports multi: the Client list keeps both ticked clients (own filter left out)', ((t12.f.clientId || []).filter((o) => [c1, c2].includes(o.value)).length === 2), (t12.f.clientId || []).map((o) => o.label).slice(0, 4));
+    const t12x = await repFacets({ clientId: `${c1},${c2}`, location: 'zzz-no-place' }); check('reports multi: two clients AND a place that matches nothing is empty (AND across filters)', t12x.total === 0, { n: t12x.total });
+    const rp = await call('GET', `/ats-reports/funnel?${qs({ clientId: `${c1},${c2}` })}`, null, tA); check('reports multi: a report with two clients answers 200', rp.status === 200, { s: rp.status, b: rp.body && rp.body.error });
+    const rp1 = await call('GET', `/ats-reports/funnel?${qs({ clientId: c1 })}`, null, tA);
+    check('reports multi: the same report with one client answers 200', rp1.status === 200, { s: rp1.status });
+  }
+  const dOpts = (fAll.f.department || []).filter((o) => o.count > 0);
+  if (dOpts.length >= 2) {
+    const d1 = await repFacets({ department: dOpts[0].value }); const d2 = await repFacets({ department: dOpts[1].value }); const d12 = await repFacets({ department: `${dOpts[0].value},${dOpts[1].value}` });
+    check('reports multi: two departments count the sum of each', d12.total === d1.total + d2.total, { a: d1.total, b: d2.total, ab: d12.total });
+  } else check('reports multi: two departments (fixture has one department, skipped)', true);
+  const rOpts = (fAll.f.recruiter || []).filter((o) => o.count > 0 && o.value !== '—');
+  if (rOpts.length >= 2) {
+    const p1 = await repFacets({ recruiter: rOpts[0].value }); const p2 = await repFacets({ recruiter: rOpts[1].value }); const p12 = await repFacets({ recruiter: `${rOpts[0].value},${rOpts[1].value}` });
+    check('reports multi: two recruiters count the sum of each', p12.total === p1.total + p2.total, { a: p1.total, b: p2.total, ab: p12.total });
+    const rr = await call('GET', `/ats-reports/recruiters?${qs({ recruiter: `${rOpts[0].value},${rOpts[1].value}` })}`, null, tA); check('reports multi: the recruiter report with two people answers 200', rr.status === 200, { s: rr.status, b: rr.body && rr.body.error });
+  } else check('reports multi: two recruiters (fixture has one, skipped)', true);
+
   // job portal applications and call lists answer their filters
   const jp = await call('GET', `/job-portal/applications?${qs({ jpSource: 'zzz-none' })}`, null, tA);
   check('job portal: a source that matches nothing gives an empty list (200)', jp.status === 200 && rowsOf(jp.body).length === 0, { s: jp.status });

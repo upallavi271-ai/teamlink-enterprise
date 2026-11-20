@@ -303,8 +303,11 @@ function parseFilters(q = {}) {
     }
   }
   const f = { range, period, groupBy: s(q.groupBy) };
-  FILTER_KEYS.forEach((k) => { f[k] = s(q[k]); });
-  PERSON_KEYS.forEach((k) => { if (f[k]) f[k] = personKeyOf(f[k]); });
+  // SEVERAL VALUES PER FILTER (founder 2026-11-20): a comma list or a repeated parameter; OR inside one filter, AND across filters (utils/multiParam.js)
+  const MPR = require('../utils/multiParam'); // eslint-disable-line global-require
+  FILTER_KEYS.forEach((k) => { f[k] = Array.isArray(q[k]) ? q[k].map((x) => s(x)).filter(Boolean).join(',') : s(q[k]); });
+  PERSON_KEYS.forEach((k) => { const list = MPR.parseMulti(f[k]).map(personKeyOf); f[k] = list.length ? list : ''; });
+  ['department', 'clientId', 'requirementId', 'location', 'interviewStatus', 'aiStatus', 'joiningStatus'].forEach((k) => { f[`${k}L`] = MPR.parseMulti(f[k]); });
   // Status is one dropdown with two families: a requirement's status
   // ("req:open") or a candidate's ("cand:hold").
   const [fam, val] = f.status.split(':');
@@ -317,11 +320,16 @@ function parseFilters(q = {}) {
 // The requirement half of the filter bar, as Prisma conditions.
 function reqConditions(f) {
   const and = [];
-  if (f.department) and.push({ department: f.department });
-  if (f.clientId === INTERNAL_CLIENT) and.push({ internal: true });
-  else if (f.clientId) and.push({ clientId: f.clientId, internal: false });
-  if (f.requirementId) and.push({ id: f.requirementId });
-  if (f.location) and.push({ location: f.location });
+  if (f.departmentL && f.departmentL.length) and.push({ department: { in: f.departmentL } });
+  if (f.clientL && f.clientL.length) {
+    const ids = f.clientL.filter((c) => c !== INTERNAL_CLIENT);
+    const arms = [];
+    if (f.clientL.includes(INTERNAL_CLIENT)) arms.push({ internal: true });
+    if (ids.length) arms.push({ clientId: { in: ids }, internal: false });
+    and.push(arms.length === 1 ? arms[0] : { OR: arms });
+  }
+  if (f.requirementIdL && f.requirementIdL.length) and.push({ id: { in: f.requirementIdL } });
+  if (f.locationL && f.locationL.length) and.push({ location: { in: f.locationL } });
   if (f.reqStatuses) and.push({ status: { in: f.reqStatuses } });
   return and;
 }
@@ -336,8 +344,8 @@ function applicationsWhere(user, f, dateField) {
   if (rc.length) and.push({ requirement: { is: { AND: rc } } });
   if (f.stageCodes) and.push({ stage: { in: f.stageCodes } });
   if (f.candStatus) and.push(f.candStatus);
-  if (f.interviewStatus) and.push({ interviewStatus: f.interviewStatus });
-  if (f.aiStatus) and.push({ aiInterviewStatus: f.aiStatus });
+  if (f.interviewStatusL && f.interviewStatusL.length) and.push({ interviewStatus: { in: f.interviewStatusL } });
+  if (f.aiStatusL && f.aiStatusL.length) and.push({ aiInterviewStatus: { in: f.aiStatusL } });
   if (f.period && dateField) and.push({ [dateField]: dateRange.dateTimeIn(f.period) });
   // A person / seat is an ATTRIBUTION (see loadContext), so the where only
   // narrows to rows that COULD carry them (utils/workers.js
@@ -459,15 +467,16 @@ const FU_SELECT = {
 async function resolveReportPeople(f) {
   if (f.narrow) return;
   f.narrow = [];
-  const wanted = [['recruiter', 'RECRUITER'], ['tl', 'TL'], ['stl', null], ['bde', 'BDE']].filter(([k]) => f[k]);
+  const wanted = [['recruiter', 'RECRUITER'], ['tl', 'TL'], ['stl', null], ['bde', 'BDE']].filter(([k]) => f[k] && f[k].length);
   if (!wanted.length && !f.positionCode) return;
   const dir = await workers.loadDirectory();
   for (const [k, role] of wanted) {
+    const vals = Array.isArray(f[k]) ? f[k] : [f[k]];
     // eslint-disable-next-line no-await-in-loop
-    const p = await workers.resolvePersonValue(f[k], dir);
-    if (!p) continue;
-    f[k] = p.key;
-    if (role) f.narrow.push(workers.attributionWhere(role, p));
+    const resolved = await Promise.all(vals.map((v) => workers.resolvePersonValue(v, dir)));
+    f[k] = vals.map((v, i) => (resolved[i] ? resolved[i].key : v));
+    // narrow the query only when every value is a known person (an unknown one is settled by the exact match after the load)
+    if (role && resolved.every(Boolean)) f.narrow.push(resolved.length === 1 ? workers.attributionWhere(role, resolved[0]) : { OR: resolved.map((p) => workers.attributionWhere(role, p)) });
   }
   if (f.positionCode) f.narrow.push(workers.seatWhere(f.positionCode));
 }
@@ -646,7 +655,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
   });
 
   // The attribution filters: the exact match.
-  const keyIs = (p, want) => !!p && p.key === want;
+  const keyIs = (p, want) => !!p && (Array.isArray(want) ? want.includes(p.key) : p.key === want);
   let list = apps;
   if (f.recruiter) list = list.filter((x) => keyIs(x.recruiter, f.recruiter));
   if (f.tl) list = list.filter((x) => keyIs(x.tl, f.tl));
@@ -660,7 +669,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
   // "Nish Technologies" into one row.
   // Source: one or several clean names (?source=Naukri,Shine); an old raw word is mapped to its clean one.
   if (f.source) { const want = CSRC.parseSourceFilter(f.source); list = list.filter((x) => want.has(x.source)); }
-  if (f.joiningStatus) list = list.filter((x) => x.joinOutcome === f.joiningStatus);
+  if (f.joiningStatusL && f.joiningStatusL.length) list = list.filter((x) => f.joiningStatusL.includes(x.joinOutcome));
   const appIds = new Set(list.map((x) => x.id));
 
   // Requirements the report counts: those raised in the range (when one is
@@ -2052,7 +2061,7 @@ const specIsTest = (r) => SPEC_TEST_RE.test(`${r.department || ''} ${r.title || 
 const SOURCING_RATIO = 3; // fewer than 3 people per open job = sourcing needed
 function buildSpecialisations(ctx) {
   const { master, cands } = ctx.specPrep || { master: { specById: new Map() }, cands: [] };
-  const wantDept = ctx.f.department ? ctx.f.department.toLowerCase() : '';
+  const wantDept = new Set((ctx.f.departmentL || []).map((x) => x.toLowerCase()));
   const derive = (c) => {
     const vals = c.joined && c.joined.vals ? [...c.joined.vals.values()] : [];
     c.avgFill = avgOf(vals);
@@ -2094,7 +2103,7 @@ function buildSpecialisations(ctx) {
   });
   cands.forEach((p) => {
     const spec = master.specById.get(p.specialisationId);
-    if (!spec || (wantDept && String(spec.department || '').toLowerCase() !== wantDept)) return;
+    if (!spec || (wantDept.size && !wantDept.has(String(spec.department || '').toLowerCase()))) return;
     rowOf(spec.id).people.add(p.id);
   });
   ctx.apps.forEach((x) => {
@@ -2975,14 +2984,12 @@ const fmtCell = (v, type) => {
 function filterLine(f, ctx) {
   const parts = [];
   if (f.period) parts.push(`Date: ${f.period.label}`);
-  if (f.department) parts.push(`Department: ${f.department}`);
-  if (f.clientId) {
-    const r = [...ctx.reqMap.values()].find((x) => x.clientKey === f.clientId);
-    parts.push(`Client: ${r ? r.clientName : '(outside your scope)'}`);
+  if (f.departmentL && f.departmentL.length) parts.push(`Department: ${f.departmentL.join(', ')}`);
+  if (f.clientL && f.clientL.length) {
+    parts.push(`Client: ${f.clientL.map((id) => { const r = [...ctx.reqMap.values()].find((x) => x.clientKey === id); return r ? r.clientName : '(outside your scope)'; }).join(', ')}`);
   }
-  if (f.requirementId) {
-    const r = ctx.reqMap.get(f.requirementId);
-    parts.push(`Requirement: ${r ? `${r.reqCode || ''} ${r.title}`.trim() : '(outside your scope)'}`);
+  if (f.requirementIdL && f.requirementIdL.length) {
+    parts.push(`Requirement: ${f.requirementIdL.map((id) => { const r = ctx.reqMap.get(id); return r ? `${r.reqCode || ''} ${r.title}`.trim() : '(outside your scope)'; }).join(', ')}`);
   }
   const who = (key, pick) => {
     const x = ctx.apps.find((a) => pick(a) && pick(a).key === key);
@@ -2990,21 +2997,22 @@ function filterLine(f, ctx) {
     if (key.startsWith('u:') && ctx.userById.get(key.slice(2))) return ctx.userById.get(key.slice(2)).name;
     return key.slice(2);
   };
-  if (f.recruiter) parts.push(`Recruiter: ${who(f.recruiter, (a) => a.recruiter)}`);
-  if (f.tl) parts.push(`TL: ${who(f.tl, (a) => a.tl)}`);
-  if (f.stl) parts.push(`STL: ${who(f.stl, (a) => a.stl)}`);
-  if (f.bde) parts.push(`BDE: ${who(f.bde, (a) => a.bde)}`);
+  const whoAll = (keys, pick) => (Array.isArray(keys) ? keys : [keys]).map((k) => who(k, pick)).join(', ');
+  if (f.recruiter) parts.push(`Recruiter: ${whoAll(f.recruiter, (a) => a.recruiter)}`);
+  if (f.tl) parts.push(`TL: ${whoAll(f.tl, (a) => a.tl)}`);
+  if (f.stl) parts.push(`STL: ${whoAll(f.stl, (a) => a.stl)}`);
+  if (f.bde) parts.push(`BDE: ${whoAll(f.bde, (a) => a.bde)}`);
   if (f.positionCode) parts.push(`Position: ${f.positionCode}`);
-  if (f.location) parts.push(`Location: ${f.location}`);
+  if (f.locationL && f.locationL.length) parts.push(`Location: ${f.locationL.join(', ')}`);
   if (f.source) parts.push(`Source: ${f.source}`);
   if (f.status) {
     const [fam, v] = f.status.split(':');
     parts.push(`Status: ${((fam === 'req' ? REQ_STATUS_FILTERS : CAND_STATUS_FILTERS)[v] || {}).label || f.status}`);
   }
   if (f.stage) parts.push(`Stage: ${(PIPE.find((g) => g.id === f.stage) || {}).label || f.stage}`);
-  if (f.interviewStatus) parts.push(`Interview status: ${interviewStatusLabel(f.interviewStatus)}`);
-  if (f.aiStatus) parts.push(`AI interview: ${f.aiStatus}`);
-  if (f.joiningStatus) parts.push(`Joining: ${JOIN_OUTCOMES[f.joiningStatus] || f.joiningStatus}`);
+  if (f.interviewStatusL && f.interviewStatusL.length) parts.push(`Interview status: ${f.interviewStatusL.map(interviewStatusLabel).join(', ')}`);
+  if (f.aiStatusL && f.aiStatusL.length) parts.push(`AI interview: ${f.aiStatusL.join(', ')}`);
+  if (f.joiningStatusL && f.joiningStatusL.length) parts.push(`Joining: ${f.joiningStatusL.map((j) => JOIN_OUTCOMES[j] || j).join(', ')}`);
   return parts.length ? parts.join(' · ') : 'No filters';
 }
 

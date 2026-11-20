@@ -3,6 +3,7 @@ import { HLink } from '../search/historyOpen.jsx'; // a history link opens in th
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
+import MultiSelect from './MultiSelect.jsx';
 import { mayOpenRecruiter, useHistoryAccess } from './HistorySeries.jsx';
 import {
   Day, Definition, DropSummary, Filters, FunnelTiles, JoinedNote, cleanParams, fmtDay, stepLabel,
@@ -15,7 +16,7 @@ import { ReplacementTable } from '../joindrop/JoinDropList.jsx';
 // Header, the numbered funnel (each tile opens the people behind it), the candidate-by-candidate table, the timeline.
 // All numbers come from GET /api/ats/history/requirement/:id (utils/atsHistory.js); this file only draws them.
 // ---------------------------------------------------------------------------
-const STATUS = [['', 'Everyone'], ['joined', 'Joined'], ['dropped', 'Dropped'], ['inprocess', 'In process'], ['selected', 'Selected, not joined yet'], ['left', 'Left after joining']];
+const STATUS = [['joined', 'Joined'], ['dropped', 'Dropped'], ['inprocess', 'In process'], ['selected', 'Selected, not joined yet'], ['left', 'Left after joining']];
 const COLS = [
   ['candidate', 'Candidate'], ['recruiter', 'Recruiter'], ['shared', 'Sent to client'], ['stage', 'Step now'], ['interview', 'Interview'],
   ['selected', 'Selected'], ['offer', 'Offer'], ['joined', 'Joining date'], ['dropped', 'Dropped'],
@@ -79,11 +80,7 @@ export default function HistoryTab({ requirementId }) {
         <div className="hx-bar">
           <h3 style={{ margin: 0 }}>Candidate by candidate ({d.total}{busy ? '…' : ''})</h3>
           <span style={{ flex: 1 }} />
-          <label className="hx-muted">Show{' '}
-            <select value={status} onChange={(e) => { setStatus(e.target.value); setStep(''); }}>
-              {STATUS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
-          </label>
+          <MultiSelect label="Show" allLabel="Everyone" value={status} onChange={(csv) => { setStatus(csv); setStep(''); }} options={STATUS.map(([k, l]) => ({ value: k, label: l }))} />
           {d.canExport && <ExportMenu url={`/ats/history/requirement/${requirementId}/export`} params={params} formats={['xlsx', 'csv']} label="Download Excel" />}
         </div>
         {picked && <div className="hx-muted" style={{ marginBottom: 6 }}>Showing: {stepLabel(picked)}. <button type="button" className="btn btn-sm btn-ghost" onClick={() => setStep('')}>Show everyone</button></div>}

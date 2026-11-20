@@ -1,5 +1,6 @@
 import { stageLabel } from '../../atsVocab';
 import { PRESETS, presetDates, matchPreset, dateProblem } from '../../utils/dateRanges.js';
+import MultiSelect from './MultiSelect.jsx';
 import './history.css';
 
 // ---------------------------------------------------------------------------
@@ -105,12 +106,7 @@ export function Filters({ f, setF, recruiters = [] }) {
       </label>
       {dateProblem(f.from, f.to) && <span className="hx-muted" role="alert">{dateProblem(f.from, f.to)}</span>}
       {recruiters.length > 0 && (
-        <label>Recruiter
-          <select value={f.recruiter || ''} onChange={(e) => set('recruiter', e.target.value)}>
-            <option value="">Everyone</option>
-            {recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
-        </label>
+        <MultiSelect label="Recruiter" allLabel="Everyone" value={f.recruiter || ''} onChange={(csv) => set('recruiter', csv)} options={recruiters.map((r) => ({ value: r.id, label: r.name }))} />
       )}
       {(f.from || f.to || f.period || f.recruiter) && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setF({ ...f, from: '', to: '', period: '', recruiter: '' })}>Clear</button>}
     </div>

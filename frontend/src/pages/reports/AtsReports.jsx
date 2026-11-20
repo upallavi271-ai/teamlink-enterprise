@@ -47,6 +47,7 @@ import Modal from '../../components/Modal.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 // ATS layout v3 (2026-10-03): the shared filter bar, cards and charts.
 import PageFilterBar, { usePageFilters, rangeDates } from '../../components/ui/PageFilterBar.jsx';
+import MultiSelect from '../../components/ats/MultiSelect.jsx';
 import StatCard, { StatRow } from '../../components/ui/StatCard.jsx';
 import ReportCharts from './ReportCharts.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
@@ -509,7 +510,9 @@ const BAR_URL_KEYS = ['department', 'range', 'from', 'to', 'clientId', 'recruite
 const PF_RANGE = { today: 'today', week: 'this_week', month: 'this_month' };
 // The bar's value -> this report's filter keys. A person from the bar is the
 // report's own facet value ("u:<id>" / "n:<name>"), or a plain user id.
-const personOf = (v) => (!v ? '' : (/^(u|n|id|name):/.test(v) ? v : `id:${v}`));
+const personOf1 = (v) => (!v ? '' : (/^(u|n|id|name):/.test(v) ? v : `id:${v}`));
+// several people at once: a comma list (a comma inside a name is already written %2C)
+const personOf = (v) => String(v || '').split(',').filter(Boolean).map(personOf1).join(',');
 function barFilters(pf) {
   const out = {
     department: pf.department || '', clientId: pf.clientId || '', recruiter: personOf(pf.recruiterId), bde: personOf(pf.bdeId),
@@ -707,11 +710,13 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
   }
 
   const o = options || {};
-  const labelOf = (key, v) => labels.current[`${key}:${v}`] || String(v).replace(/^(u|n|id|name):/, '');
-  const labelIn = (list, v) => {
+  const items = (v) => String(v || '').split(',').filter(Boolean).map((x) => x.replace(/%2C/gi, ','));
+  const labelOf = (key, v) => items(v).map((x) => labels.current[`${key}:${x}`] || labels.current[`${key}:${x.replace(/,/g, '%2C')}`] || x.replace(/^(u|n|id|name):/, '')).join(', ');
+  const labelIn1 = (list, v) => {
     const x = (list || []).find((y) => (typeof y === 'string' ? y === v : y.id === v));
     return x ? (typeof x === 'string' ? x : x.label) : v;
   };
+  const labelIn = (list, v) => items(v).map((x) => labelIn1(list, x)).join(', ');
   const drop = (patch) => {
     setFilters((f) => ({ ...f, ...patch }));
     setDraft((d) => ({ ...d, ...patch }));
@@ -733,7 +738,9 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
     ]),
   ].filter((c) => c && c.value);
   // A fixed list in the panel; an empty list is not offered.
-  const pick = (key, label, list, allLabel) => (!(list || []).length && !draft[key] ? null : (
+  const pick = (key, label, list, allLabel, multi = false) => (!(list || []).length && !draft[key] ? null : (multi ? (
+    <MultiSelect label={label} allLabel={allLabel} value={draft[key]} onChange={(csv) => set({ [key]: csv })} options={(list || []).map((x) => (typeof x === 'string' ? { value: x, label: x } : { value: x.id, label: x.label }))} />
+  ) : (
     <PanelField label={label}>
       <Combo value={draft[key]} onChange={(e) => set({ [key]: e.target.value })} title={label}>
         <option value="">{allLabel}</option>
@@ -742,7 +749,7 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
           : <option key={x.id} value={x.id}>{x.label}</option>))}
       </Combo>
     </PanelField>
-  ));
+  )));
   const clearAll = () => { setDraft(EMPTY); setFilters(EMPTY); setCompare(''); };
   const ff = fac.facets || {};
   const barOptions = {
@@ -790,6 +797,9 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
           value={pf}
           onChange={setPf}
           options={barOptions}
+          multiDept
+          multiClient
+          multiPeople
           show={{ dateRange: !compare, people: tab !== 'revenue' && !own }}
         />
         {compare && <span className="small-muted">Compare is on — it shows {compare === 'quarter' ? 'this quarter and last quarter' : 'this month and last month'}.</span>}
@@ -813,15 +823,15 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
               const list = (fac.facets || {})[k] || [];
               // One choice only is no choice: not drawn unless it is set.
               if (list.filter((x) => x.count > 0).length < 2 && !draft[k]) return null;
-              return <FacetSelect key={k} label={label} value={draft[k]} onChange={(v) => set({ [k]: v })} options={list} allLabel={allLabel} loading={fac.loading} />;
+              return <FacetSelect multi key={k} label={label} value={draft[k]} onChange={(v) => set({ [k]: v })} options={list} allLabel={allLabel} loading={fac.loading} />;
             })}
             {!isRevenue && (
               <>
                 {pick('status', 'Status', o.statuses, 'Any status')}
                 {pick('stage', 'Step', o.stages, 'Any step')}
-                {['interviews', 'clients', 'sla'].includes(tab) && pick('interviewStatus', 'Interview', o.interviewStatuses, 'Any interview')}
-                {tab === 'ai' && pick('aiStatus', 'AI interview', o.aiStatuses, 'Any AI interview')}
-                {['joining', 'timetofill'].includes(tab) && pick('joiningStatus', 'Joining', o.joiningStatuses, 'Any joining')}
+                {['interviews', 'clients', 'sla'].includes(tab) && pick('interviewStatus', 'Interview', o.interviewStatuses, 'Any interview', true)}
+                {tab === 'ai' && pick('aiStatus', 'AI interview', o.aiStatuses, 'Any AI interview', true)}
+                {['joining', 'timetofill'].includes(tab) && pick('joiningStatus', 'Joining', o.joiningStatuses, 'Any joining', true)}
                 {tab === 'recruiters' && pick('people', 'Active / Former', PEOPLE_CHOICES, 'Everyone (active + former)')}
               </>
             )}

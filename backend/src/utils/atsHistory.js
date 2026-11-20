@@ -32,6 +32,7 @@ const prisma = require('../db');
 const SC = require('./scope');
 const V = require('./atsVocab');
 const RJ = require('./recruiterJoinings');
+const MPH = require('./multiParam'); // several recruiters / several statuses in one filter (founder 2026-11-20)
 
 const IST = 330 * 60000;
 const JOINED = ['JOINED', 'HIRED'];
@@ -355,7 +356,7 @@ const inRange = (day, p) => !!day && (!p.from || day >= p.from) && (!p.to || day
 function applyFilters(recs, q = {}) {
   const p = periodOf(q);
   let out = recs;
-  if (q.recruiter) out = out.filter((r) => r.recruiterId === q.recruiter);
+  if (q.recruiter) out = out.filter((r) => MPH.multiHas(q.recruiter, r.recruiterId));
   if (p.from || p.to) {
     out = out.filter((r) => STEP_KEYS.some((k) => r.steps[k] && inRange(r.steps[k].day, p)) || (r.drop && inRange(r.drop.day, p)));
   }
@@ -449,8 +450,9 @@ const SORTS = {
 };
 function tableRows(recs, q = {}) {
   let out = recs;
-  const st = String(q.status || '');
-  if (STATUS_OF[st]) out = out.filter(STATUS_OF[st]);
+  // one or several statuses (?status=joined,dropped): a candidate stays when ANY ticked status fits
+  const sts = MPH.parseMulti(q.status).filter((x) => STATUS_OF[x]);
+  if (sts.length) out = out.filter((r) => sts.some((x) => STATUS_OF[x](r)));
   const step = String(q.step || '');
   if (STEP_KEYS.includes(step)) out = out.filter((r) => r.steps[step]);
   else if (step === 'dropped') out = out.filter(STATUS_OF.dropped);
