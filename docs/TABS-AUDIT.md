@@ -41,7 +41,7 @@ Result: 4 main tabs + More (3 items). Same order and names for every role; a log
 | Green banner "N added in the last 7 days, not on a requirement yet" with a list of 8 | MOVE | one chip beside the search, opens the same list |
 | Filter bar + "Filters (n)" panel + right-hand Filters box (same filters three times) | MERGE | one filter bar: Current location, Specialization, Current CTC, Experience, Stage; everything else (Expected CTC, Notice, Department, Recruiter / BDE, Added date, Came on, Joined between, Designation, Salary fit, Last contact, Rejected before / by, Hiring type, Team lead, Follow-up, Expected salary, Fit, Show only, ...) under **More filters**; a filter set by an old link or a saved filter is drawn there while it is on and is always a chip |
 | Needs attention, Top requirements, Quick actions, Candidate insights donut, Hiring funnel, by location, by source, by client | MOVE | one **Insights** section under the table, closed by default, remembered per person |
-| Table: 9 columns incl. Joining date, horizontal scroll | MERGE | Simple view (default): Name + role/client, Source + came-on, Phone, Experience, Salary, Step, Next step (7) + the Contact buttons; **Columns** menu in both views (picking one opens the Full table); Joining date shows on the Joined status |
+| Table: 9 columns incl. Joining date, horizontal scroll | MERGE | Simple view (default): Name + role/client, Source + came-on, Phone, Experience, Salary, Step, Next step (7) + the Contact buttons. **Full view** (one click, remembered per person) is the old table with every column; the **Columns** menu is in both (picking a column opens the Full view). On the Joined status the Joining date takes Source's place (still 7) |
 
 Other sidebar entries named in the brief (People, Sources, Talent pool, Track lists, Good fit): the sidebar has only "Candidates & Pipeline". People, Sources and Duplicates are its tabs. "Talent pool" is the "Available for matching" count (People view / Insights). "Good fit" is a tab on the requirement page (see C). There are no separate Track lists tabs on this screen.
 
@@ -57,9 +57,12 @@ Other sidebar entries named in the brief (People, Sources, Talent pool, Track li
 | Documents | documents on file | everyone with access | none | KEEP | **Documents** |
 | Timeline | steps, interviews, messages, calls, changes | everyone with access (a client sees steps only) | overlaps Conversation's read side | KEEP, renamed | **History** (`?tab=timeline`, `?tab=activity` land here) |
 | Conversation | call / mail / WhatsApp / SMS with a reply box | logins that may contact the person | History lists the same messages read-only; this tab is the one that can reply | MORE | More > **Conversation** |
+| Schedule a message (added on main 2026-11-20) | write a WhatsApp / SMS / email now, send it later; the scheduled reminders | internal logins | none | MORE | More > **Schedule a message** (`?tab=scheduled`) |
 | AI Calling | AI calls to this person, Call button | logins that may contact the person | none | MORE | More > **AI Calling** |
 
-Result: 6 main tabs (Overview, Resume, Career, Follow-ups & notes, Documents, History) + More (Conversation, AI Calling). A client or candidate login sees Overview, Resume, Documents, History (as today). A BDE, BDE TL or Accounts login (who may not contact people) sees neither Conversation nor AI Calling; a link to them lands on Overview. Counts: Follow-ups & notes shows the note count, Documents the document count. Opens on the last tab the login used (Overview the first time).
+Career (education, jobs, gaps, tags) moved under More as well, so that five tabs are on screen (`?tab=career` still opens it).
+
+Result: 5 main tabs (Overview, Resume, Follow-ups & notes, Documents, History) + More (Career, Conversation, Schedule a message, AI Calling). A client or candidate login sees Overview, Resume, Documents, History (as today). A BDE, BDE TL or Accounts login (who may not contact people) sees neither Conversation nor AI Calling; a link to them lands on Overview. Counts: Follow-ups & notes shows the note count, Documents the document count. Opens on the last tab the login used (Overview the first time).
 
 ## C. Requirement page (the requirement's pipeline)
 
@@ -72,15 +75,33 @@ Result: 6 main tabs (Overview, Resume, Career, Follow-ups & notes, Documents, Hi
 | Postings | job portal, job sites, tracked links, posting status | recruiters, Admin | none | KEEP | **Postings** |
 | Client | client contact | client desk, internal | none | MORE | More > Client (hidden for a login without client-contact rights) |
 | Agreement | client agreement status | client desk | none | MORE | More > Agreement (hidden when not applicable) |
-| Activity | changes to the requirement | Admin, TL | History of the requirement lives in the History tab group | MORE | More > Activity |
+| History (added on main 2026-11-20) | the people history: shared, selected, joined, dropped, with dates | TL, BDE, Admin (search and history links open it) | none | MORE | More > History (`?tab=history`, the search bar's and the history drawer's links) |
+| Activity | every change to the requirement | Admin, TL | none | MORE | More > Activity |
 | Inside Candidates: Good fit / Rejected before, good fit / Rejected on this requirement | three lists of different people | recruiters | none | KEEP, tooltip added to each | unchanged |
 
-Result: 5 main tabs + More (Client, Agreement, Activity). `?tab=team`, `?tab=postings`, `?tab=history` and the old `#pipeline` / `#matching` anchors land on the right tab. Opens on the last tab the login used.
+Result: 5 main tabs + More (Client, Agreement, History, Activity). `?tab=team`, `?tab=postings`, `?tab=history` and the old `#pipeline` / `#matching` anchors land on the right tab. Opens on the last tab the login used.
 
 ## D. Defaults per role (Candidates & Pipeline)
 
 Recruiter: Needs my action. TL: Requirement applications (their team's). BDE: Requirement applications (their clients' submissions, scoped by the server). Admin / Manager: People (everyone). The last tab used wins when the address names none.
 
-## E. Not touched
+## E. Every other ATS tab strip (the same rule: at most five on screen, the rest under More, a tooltip on each, one caption line)
 
-The Requirements list's own status chips and its Duplicate jobs / Posting tabs, Clients, Interviews, Offers, Joining, Follow-ups screens: no change in this round.
+Every strip below is drawn by the one `components/ui/TabStrip.jsx`; `StatusTabs` (ListPageHeader.jsx) moves anything after the fifth tab under More by itself (a tab keyed `all` stays on screen). Each tab keeps its key or its address, so old links still open it.
+
+| Screen | Visible | Under More |
+|---|---|---|
+| Clients & Requirements bar | Clients · Requirements · Agreements | (none) |
+| Reports & Team bar | Reports (or My Results) · Team · Call lists | Handover · Data quality (only for logins that have them) |
+| Interview Calendar bar | Interviews · Feedback · Offers · Joining | (none) |
+| Client page | Details & Agreement · Requirements · Performance · Client work · Follow-ups | History (`?tab=history`) |
+| Requirements list views | Super Admin: All · Open · Closed · Needs a TL · Needs a recruiter (five). Admin / Manager / STL (six): All · Open · Needs a TL · Needs a recruiter | Admin / Manager / STL: Closed · My Requirements. TL / BDE / Recruiter have 2-4 views, all visible |
+| Requirements / Duplicate requirements / Posting | all three | (none) |
+| Offers steps | Waiting for the client's letter · Ready to share · To prepare · Waiting for approval · All | Waiting for candidate · Accepted (only when they hold rows: empty steps are hidden as before) |
+| Joining | Waiting to join and joined · Joined and dropped; then Waiting to join · Joined · Left / did not join · All | (none) |
+| Team sections | People & Workload · Assignments · Tasks · Follow-ups | Pending work · Follow-up history · Departments & teams (when there are more than five) |
+| Follow-ups | Follow-ups · Inbox · WhatsApp chats · Follow-up report | (none) |
+| Job portal screening (New from job portal) | All · New · AI interview done · Check by recruiter · Sent to ATS | Resume checked · AI interview sent · Rejected (empty ones hidden as before) |
+| Interview kind, Duplicates | unchanged (2-5 tabs), caption added | (none) |
+
+The status strip on Candidates & Pipeline (All · Active · On hold · Selected · Joined · Rejected, each with its count) is the one count strip the founder asked for, not a set of screens; it keeps its six counts.

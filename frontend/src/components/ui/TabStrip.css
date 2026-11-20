@@ -26,3 +26,9 @@
 .tabstrip-sm .n::before{content:"("}
 .tabstrip-sm .n::after{content:")"}
 .tabstrip-sm .tabstrip-cap{font-size:12px;margin-top:6px}
+/* a phone: the tabs wrap, the More menu never runs off the screen */
+@media (max-width:700px){
+  .tabstrip .tabstrip-tabs{flex-wrap:wrap}
+  .tabstrip-menu{min-width:0;width:max-content;max-width:calc(100vw - 32px)}
+  .tabstrip-moreWrap:last-child .tabstrip-menu{left:auto;right:0}
+}

@@ -68,6 +68,7 @@ export default function TabStrip({
     if (el) el.focus();
   }
   function onMoreKey(e) {
+    if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); return; }
     if (['ArrowDown', 'Enter', ' '].includes(e.key)) {
       e.preventDefault();
       setOpen(true);
