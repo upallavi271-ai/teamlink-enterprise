@@ -863,7 +863,7 @@ async function listAll(user, qs = {}, { exportAll = false, now = new Date() } = 
     && (!fReq.length || fReq.includes(s.requirementId || ''))
     && (!fCh.length || fCh.includes(s.channel))
     && (!fKind.length || fKind.includes(s.trigger ? 'automatic' : s.kind))
-    && (!qText || (ok.get(s.candidateId).name || '').toLowerCase().includes(qText) || (acc.level === 'full' && String(ok.get(s.candidateId).phone || '').replace(/\D/g, '').includes(qText.replace(/\D/g, '') || '~')))
+    && (!qText || (ok.get(s.candidateId).name || '').toLowerCase().includes(qText) || (acc.level === 'full' && qText.replace(/\D/g, '').length >= 4 && String(ok.get(s.candidateId).phone || '').replace(/\D/g, '').includes(qText.replace(/\D/g, '')))) // a phone match needs 4+ digits typed ("Sa c2" is a name, not a number)
     && inRange(s));
   const counts = { total: base.length };
   STATUSES.forEach((st) => { counts[st] = base.filter((s) => s.status === st).length; });
