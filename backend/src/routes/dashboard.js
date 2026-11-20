@@ -1044,7 +1044,8 @@ router.get(
         bdeId: r ? r.bdeId || null : null,
         tlId: r ? r.tlId || null : null,
         stage: a.stage,
-        stageLabel: stageLabel(a.stage),
+        stageLabel: require('../utils/atsVocab').stepShown(a, stageLabel(a.stage)), // eslint-disable-line global-require
+        ...(require('../utils/atsVocab').leftAfterJoining(a) ? { left: true } : {}), // eslint-disable-line global-require
         queue: q.label,
         queueId: q.id,
         // §5 — the stage's next action, the one table every screen reads.

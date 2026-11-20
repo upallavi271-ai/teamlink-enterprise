@@ -3,7 +3,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import api from '../api';
 import sharedGet from '../utils/sharedGet';
 import { useAuth } from '../context/AuthContext.jsx';
-import { stageLabel } from '../atsVocab';
+import { stageLabel, stepOf } from '../atsVocab';
 import { can, canModule, isClientUser, workRoleLabel } from '../permissions';
 import { REPORTS_ITEMS, visibleItems } from '../nav';
 import DateRangePicker, { useDateRange, rangeParams, resolveRange } from '../components/DateRangePicker.jsx';
@@ -566,7 +566,7 @@ function ClientDashboard({ user }) {
     { key: 'q', type: 'search', placeholder: 'Search candidate or requirement…',
       get: (a) => `${a.candidate?.name || ''} ${a.requirement?.title || ''}` },
     { key: 'req', label: 'Requirement', allLabel: 'All requirements', primary: true, get: (a) => a.requirement?.title },
-    { key: 'stage', label: 'Stage', allLabel: 'All stages', primary: true, get: (a) => stageLabel(a.stage) },
+    { key: 'stage', label: 'Stage', allLabel: 'All stages', primary: true, get: (a) => stepOf(a) },
   ]);
   const awaitingPage = usePaged(lf.rows);
   useEffect(() => {
@@ -604,7 +604,7 @@ function ClientDashboard({ user }) {
                 <tr key={a.id} className="row-link" onClick={() => navigate(`/candidates/${a.candidateId}`)}>
                   <td>{a.candidate?.name}</td>
                   <td>{a.requirement?.title}</td>
-                  <td><span className={`status ${STAGE_BADGE[a.stage] || 'new'}`}>{stageLabel(a.stage)}</span></td>
+                  <td><span className={`status ${a.left ? 'rejected' : (STAGE_BADGE[a.stage] || 'new')}`}>{stepOf(a)}</span></td>
                 </tr>
               ))}
               {awaiting.length === 0 && (

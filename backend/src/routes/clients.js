@@ -1309,6 +1309,8 @@ function shapeApplication(a, forClient) {
     interviewer: a.interviewer,
     interviewResult: a.interviewResult,
     joiningDate: a.joiningDate,
+    // joined, then left: the client page's lists say Dropped (the stage code stays Joined)
+    ...(require('../utils/atsVocab').leftAfterJoining(a) ? { left: true } : {}), // eslint-disable-line global-require
     // the day a JOINED person joined (one rule for every list: utils/joinDayShared.js); null = not recorded
     joinedDay: ['JOINED', 'HIRED'].includes(a.stage) ? joinDayShared.joinDay(a, null) : null,
   };
@@ -1482,6 +1484,7 @@ router.get('/:id/overview', async (req, res) => {
           replacementId: sub ? sub.candidateId : null,
           replacementName: sub && sub.candidate ? sub.candidate.name : null, // who came in his / her place
           replacementJoinedOn: subJoined ? (dayOf(sub.joiningDate) || dayOf(sub.joinedAt)) : null,
+          daysToReplace: subJoined && rec.droppedOn && (dayOf(sub.joiningDate) || dayOf(sub.joinedAt)) ? Math.round((new Date(`${dayOf(sub.joiningDate) || dayOf(sub.joinedAt)}T00:00:00Z`) - new Date(`${rec.droppedOn}T00:00:00Z`)) / 86400000) : null,
           replacementStage: sub ? sub.stage : null,
           guaranteeEnds: commercial && rec.guaranteeEndsOn ? rec.guaranteeEndsOn : undefined,
         };

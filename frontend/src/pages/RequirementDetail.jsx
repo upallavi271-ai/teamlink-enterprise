@@ -68,8 +68,9 @@ import { RequirementMatchesPanel } from '../components/resume/MatchSplit.jsx'; /
 import SimilarCandidatesPanel from '../components/match/SimilarCandidates.jsx';
 import { OverrideBadge, FitWithVersion } from '../components/match/OverridePrompt.jsx';
 import AddCandidateCard from '../components/applications/AddCandidateCard.jsx';
+import { ReplacementTags } from '../components/joindrop/ReplacementParts.jsx'; // who replaced whom
 import {
-  ALL_STAGE_CODES, stageLabel, stageBadgeClass,
+  ALL_STAGE_CODES, stageLabel, stageBadgeClass, stepOf, stepClass,
   requirementStatusLabel, requirementBadgeClass, requirementIsLive,
   agreementStatusLabel, agreementBadgeClass,
   PORTAL_SYNC_STATUSES, protoDate,
@@ -878,7 +879,9 @@ export default function RequirementDetail() {
                     <OverrideBadge reason={a.overrideReason} by={a.overrideByName} at={a.overrideAt} />
                   </td>
                   <td onClick={(e) => e.stopPropagation()}>
-                    <span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span>
+                    <span className={`status ${stepClass(a)}`}>{stepOf(a)}</span>
+                    {a.left && a.dropNote && <span className="small-muted">{` ${a.dropNote}`}</span>}
+                    <ReplacementTags row={a} />
                     <SubStatusChip app={a} canSet={canMoveToStage(user, a.stage)} onChanged={load} />
                   </td>
                   <td>{a.matchScore != null ? <FitWithVersion score={a.matchScore} version={a.matchVersion} /> : a.resumeScore != null ? `${a.resumeScore}%` : '—'}</td>
@@ -1038,7 +1041,7 @@ export default function RequirementDetail() {
               {ipaged.slice.map((a) => (
                 <tr key={a.id} {...rowClickProps(() => navigate(`/candidates/${a.candidateId}`), { href: `/candidates/${a.candidateId}` })}>
                   <td><Link to={`/candidates/${a.candidateId}`}>{a.candidate?.name}</Link></td>
-                  <td><span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span></td>
+                  <td><span className={`status ${stepClass(a)}`}>{stepOf(a)}</span><ReplacementTags row={a} /></td>
                   <td className="cell-muted">{[a.interviewCode, a.interviewType, a.interviewRound ? `Round ${a.interviewRound}` : null].filter(Boolean).join(' · ') || '—'}</td>
                   <td className="cell-muted">{a.interviewAt ? fmtWhen(a.interviewAt) : '—'}</td>
                   <td>{a.interviewStatus ? <span className="status review">{a.interviewStatus}</span> : <span className="cell-muted">—</span>}</td>

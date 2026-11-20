@@ -7,7 +7,7 @@ import {
   INTERVIEW_NEXT, INTERVIEW_TYPES,
   INTERVIEW_LIFECYCLE, INTERVIEW_EXCEPTIONS,
   INTERVIEW_RECOMMENDATIONS, FEEDBACK_CRITERIA,
-  interviewStatusLabel, interviewStatusClass, resultClass, aiStatusClass, stageLabel,
+  interviewStatusLabel, interviewStatusClass, resultClass, aiStatusClass, stageLabel, stepOf,
 } from '../../atsVocab';
 import './InterviewCalendar.css';
 import { productRole, can, canRaiseRequirement, canStartJob } from '../../permissions';
@@ -1693,7 +1693,7 @@ function aiOutcome(r) {
   if (r.stage === 'AI_INTERVIEW_COMPLETED') return { text: 'Check by recruiter', tone: 'pending' };
   if (r.stage === 'REJECTED') return { text: 'Rejected', tone: 'rejected' };
   if (r.stage === 'HOLD') return { text: 'On hold', tone: 'pending' };
-  return { text: `Moved on — ${stageLabel(r.stage)}`, tone: 'active' };
+  return { text: `Moved on — ${stepOf(r)}`, tone: 'active' };
 }
 
 function AiTab({

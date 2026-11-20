@@ -6,7 +6,7 @@ import api from '../api';
 import Modal from '../components/Modal.jsx';
 import {
   agreementIsActive,
-  stageLabel, stageBadgeClass, requirementStatusLabel, requirementBadgeClass,
+  stageLabel, stageBadgeClass, stepOf, stepClass, requirementStatusLabel, requirementBadgeClass,
   interviewStatusLabel, protoDate,
 } from '../atsVocab';
 import { isClientUser, can } from '../permissions';
@@ -291,7 +291,7 @@ export default function ClientDetail() {
   const reqPage = usePaged(reqLf.rows);
   const candLf = useListFilters(data.candidates, [
     { key: 'q', type: 'search', placeholder: 'Search name, requirement or role…', get: (a) => `${a.candidateName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''} ${a.candidateDesignation || ''}` },
-    { key: 'stage', label: 'Step', primary: true, get: (a) => stageLabel(a.stage) },
+    { key: 'stage', label: 'Step', primary: true, get: (a) => stepOf(a) },
     { key: 'requirement', label: 'Requirement', primary: true, get: reqLabel },
     { key: 'location', label: 'Location', get: (a) => a.candidateLocation },
   ], {
@@ -318,7 +318,7 @@ export default function ClientDetail() {
   const ivPage = usePaged(ivLf.rows);
   const selLf = useListFilters(data.selections, [
     { key: 'q', type: 'search', placeholder: 'Search name or requirement…', get: (a) => `${a.candidateName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''}` },
-    { key: 'stage', label: 'Step', primary: true, get: (a) => stageLabel(a.stage) },
+    { key: 'stage', label: 'Step', primary: true, get: (a) => stepOf(a) },
     { key: 'requirement', label: 'Requirement', primary: true, get: reqLabel },
     { key: 'joining', type: 'daterange', label: 'Joining date', get: (a) => a.joiningDate },
   ]);
@@ -898,7 +898,7 @@ export default function ClientDetail() {
                         <td className="cell-muted">{a.aiInterviewScore != null ? `${a.aiInterviewScore}%` : '—'}</td>
                       </>
                     )}
-                    <td><span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span></td>
+                    <td><span className={`status ${stepClass(a)}`}>{stepOf(a)}</span></td>
                     <td><Link className="btn btn-sm" to={`/candidates/${a.candidateId}`}>View</Link></td>
                   </tr>
                 ))}
@@ -965,7 +965,7 @@ export default function ClientDetail() {
                       : (a.requirementCode || a.requirementTitle)}
                     {a.requirementId && selectedPerReq.get(a.requirementId) ? <span style={{ marginLeft: 6 }}>({selectedPerReq.get(a.requirementId)} selected)</span> : null}
                   </td>
-                  <td><span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span></td>
+                  <td><span className={`status ${stepClass(a)}`}>{stepOf(a)}</span></td>
                   {!data.redacted && <td className="cell-muted">{a.offeredCtc != null ? `₹${a.offeredCtc}` : '—'}</td>}
                   <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{joinCellText(a)}</td>
                 </tr>
@@ -1004,7 +1004,7 @@ export default function ClientDetail() {
                   <td className="cell-muted">{r.reason || '—'}</td>
                   <td><StatusChip status={r.caseStatus} tone={r.caseStatus === 'Replacement due' ? 'red' : r.caseStatus === 'Replaced' ? 'green' : 'amber'} /></td>
                   <td>{r.replacementName ? (r.replacementId ? <Link to={`/candidates/${r.replacementId}`}>{r.replacementName}</Link> : r.replacementName) : <span className="cell-muted">Not yet</span>}</td>
-                  <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{r.replacementName ? (dmyDay(r.replacementJoinedOn) || (r.replacementStage ? 'Not joined yet' : '—')) : '—'}</td>
+                  <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{r.replacementName ? (dmyDay(r.replacementJoinedOn) || (r.replacementStage ? 'Not joined yet' : '—')) : '—'}{r.daysToReplace != null && <div className="small-muted">{`${r.daysToReplace} day${r.daysToReplace === 1 ? '' : 's'} after the drop`}</div>}</td>
                 </tr>
               ))}
               {leftCases.length > 0 && !leftLf.rows.length && <tr><td colSpan={8} style={{ padding: 0 }}><ListEmpty lf={leftLf} noun="cases" /></td></tr>}
