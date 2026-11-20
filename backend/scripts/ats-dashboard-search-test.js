@@ -236,6 +236,11 @@ const flat = (body) => (body.groups || []).flatMap((g) => g.rows.map((r) => ({ .
     check('two ticked statuses add up (joined + offers waiting)', twoEv.count === bk('joining:joined').count + bk('offer:released').count, [twoEv.count, bk('joining:joined').count, bk('offer:released').count]);
     const cg = (zcEv.body.groups || []).find((g) => g.id === 'candidates');
     check('the candidates group carries clear counts too (in process / selected / joined / dropped)', !cg || (Array.isArray(cg.breakdown) && cg.breakdown.length === 4), cg && cg.breakdown);
+    // who handled it (founder 2026-11-20): the client and requirement rows name the BDE, the TL(s) and the recruiters
+    const whoC = flat((await S('zenithcore', 'sa')).body).find((r) => r.type === 'client' && r.id === client.id);
+    check('a client row names its BDE, team lead and recruiters', whoC && whoC.team && whoC.team.tl.includes(tl.name) && whoC.team.recruiters.includes(recA.name) && whoC.team.bde.length >= 1 && /BDE: .*TL: .*Recruiters: /.test(whoC.teamLine), whoC && whoC.teamLine);
+    const whoR = flat((await S('zenithcore', 'sa')).body).find((r) => r.type === 'requirement' && r.id === RA.id);
+    check('a requirement row names its BDE, team lead and recruiters', whoR && whoR.team && whoR.team.tl.includes(tl.name) && whoR.team.recruiters.includes(recA.name), whoR && whoR.teamLine);
     const inv = flat((await S(`hsinv-${RUN}`, 'sa')).body).find((r) => r.type === 'invoice');
     check('an invoice is found by its number; it opens the client History at the invoice, the record one click away', inv && inv.to.startsWith(`/clients/${client.id}?tab=history&focus=invoice-`) && inv.recordTo.startsWith('/invoices/'), inv);
     const agr = flat((await S(`agr-hs${RUN}`, 'sa')).body).find((r) => r.type === 'agreement');

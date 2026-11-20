@@ -232,6 +232,40 @@ async function candidateFilters(v, f, limited) {
   return out;
 }
 
+
+// WHO HANDLED IT (founder 2026-11-20: "who is the TL that handled this client, who the recruiters, who the BDE - it must be complete"):
+// the BDE, the team lead(s) and the recruiters of a set of requirements - the ones named on the requirement AND the recruiters who actually worked
+// its candidates (an application this login may see). Names only; one query for the people.
+async function teamOfReqs(user, reqs, extraBde = []) {
+  const ids = reqs.map((r) => r.id);
+  const worked = ids.length ? await prisma.application.groupBy({ by: ['requirementId', 'ownerRecruiterId'], where: { AND: [{ requirementId: { in: ids } }, { ownerRecruiterId: { not: null } }, SC.applicationWhere(user)] } }).catch(() => []) : [];
+  const per = new Map(ids.map((id) => [id, { tl: new Set(), rec: new Set(), bde: new Set() }]));
+  reqs.forEach((r) => {
+    const t = per.get(r.id);
+    if (r.tlId) t.tl.add(r.tlId);
+    if (r.bdeId) t.bde.add(r.bdeId);
+    if (r.recruiterId) t.rec.add(r.recruiterId);
+    String(r.recruiterIds || '').split(',').map((x) => x.trim()).filter(Boolean).forEach((x) => t.rec.add(x));
+  });
+  worked.forEach((w) => { const t = per.get(w.requirementId); if (t) t.rec.add(w.ownerRecruiterId); });
+  const all = new Set(); per.forEach((t) => { [...t.tl, ...t.rec, ...t.bde].forEach((x) => all.add(x)); });
+  const users = all.size ? await prisma.user.findMany({ where: { id: { in: [...all] } }, select: { id: true, name: true } }) : [];
+  const nm = new Map(users.map((u) => [u.id, u.name]));
+  const names = (set) => [...set].map((x) => nm.get(x)).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const out = new Map();
+  per.forEach((t, id) => out.set(id, { tl: names(t.tl), recruiters: names(t.rec).filter((n) => !names(t.tl).includes(n)), bde: [...new Set([...names(t.bde), ...extraBde.filter(Boolean)])] }));
+  return out;
+}
+const mergeTeams = (list) => {
+  const u = (k) => [...new Set(list.flatMap((t) => t[k]))].sort((a, b) => a.localeCompare(b));
+  return { bde: u('bde'), tl: u('tl'), recruiters: u('recruiters') };
+};
+const teamLine = (t) => {
+  if (!t) return '';
+  const part = (word, arr, max) => (arr.length ? `${word}: ${arr.slice(0, max).join(', ')}${arr.length > max ? ` +${arr.length - max} more` : ''}` : `${word}: —`);
+  return [part('BDE', t.bde, 3), part(t.tl.length > 1 ? 'TLs' : 'TL', t.tl, 4), part('Recruiters', t.recruiters, 6)].join(' · ');
+};
+
 // ---- the groups ----------------------------------------------------------------------------------------------------------------------------
 async function peopleGroup(user, v, ctx) {
   const { toks, text, take, full } = ctx;
@@ -322,7 +356,9 @@ async function clientsGroup(user, v, ctx) {
   const count = full ? await prisma.client.count({ where }) : rows.length;
   const shown = rows.slice(0, full ? take : take + 1);
   const ids = shown.map((x) => x.id);
-  const reqs = full && ids.length ? await prisma.requirement.findMany({ where: { AND: [{ clientId: { in: ids } }, SC.requirementWhere(user)] }, select: { clientId: true, status: true } }) : [];
+  const reqs = full && ids.length ? await prisma.requirement.findMany({ where: { AND: [{ clientId: { in: ids } }, SC.requirementWhere(user)] }, select: { id: true, clientId: true, status: true, tlId: true, bdeId: true, recruiterId: true, recruiterIds: true } }) : [];
+  const owners = full && ids.length ? new Map((await prisma.client.findMany({ where: { id: { in: ids } }, select: { id: true, bdeOwner: true } })).map((c) => [c.id, c.bdeOwner])) : new Map();
+  const teams = full && reqs.length ? await teamOfReqs(user, reqs) : new Map();
   return {
     count, fuzzy,
     rows: shown.map((x) => {
@@ -335,6 +371,7 @@ async function clientsGroup(user, v, ctx) {
         via: viaOf(toks, { 'contact person': x.contactName, code: x.clientCode, location: x.location }),
         sub: [x.clientCode, x.location, x.contactName && viaOf(toks, { c: x.contactName }).length ? `contact ${x.contactName}` : null, full ? `${mine.length} requirements` : null].filter(Boolean).join(' · '),
         to: `/clients/${x.id}?tab=history`, recordTo: `/clients/${x.id}`,
+        ...(full ? (() => { const t = mergeTeams([...mine.map((k) => teams.get(k.id)).filter(Boolean), { bde: owners.get(x.id) ? [owners.get(x.id)] : [], tl: [], recruiters: [] }]); return { team: t, teamLine: teamLine(t) }; })() : {}),
       };
     }),
   };
@@ -403,6 +440,7 @@ async function requirementsGroup(user, v, ctx) {
     recs.forEach((x) => per.get(x.requirementId) && per.get(x.requirementId).push(x));
   }
   const nameOf = (id) => links.names.get(id) || '';
+  const rTeams = full && shown.length ? await teamOfReqs(user, shown) : new Map();
   return {
     count, fuzzy: false,
     rows: shown.map((r) => {
@@ -421,6 +459,7 @@ async function requirementsGroup(user, v, ctx) {
         headline: full ? { sourced: n('sourced'), shared: n('shared'), selected: n('selected'), joined: n('joined'), dropped: n('dropped'), inProcess: n('inprocess') } : undefined,
         sub: [H.clientNameOf(r), V.requirementStatusLabel(r.status), `${r.openings} opening${r.openings === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
         to: `/requirements/${r.id}?tab=history`, recordTo: `/requirements/${r.id}`,
+        ...(rTeams.get(r.id) ? { team: rTeams.get(r.id), teamLine: teamLine(rTeams.get(r.id)) } : {}),
       };
     }),
   };

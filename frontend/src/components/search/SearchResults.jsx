@@ -44,6 +44,7 @@ export function ResultRow({
         {r.code && <span className="sr-code">{r.code}</span>}
       </div>
       {r.sub && <div className="sr-sub">{r.sub}</div>}
+      {!compact && r.teamLine && <div className="sr-sub sr-team">{r.teamLine}</div>}
       {!compact && r.via && r.via.length > 0 && <div className="sr-sub">Found in: {r.via.join(', ')}</div>}
       {!compact && r.matchedOldName && <div className="sr-sub">Found by an old name of the client</div>}
       {!compact && (
