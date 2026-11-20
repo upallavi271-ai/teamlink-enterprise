@@ -204,6 +204,7 @@ const PEOPLE_FIELDS = [
 ];
 const PERF_WORDS = { green: 'Reached', orange: 'Close to target', red: 'Low', grey: 'No target' };
 const ACH_WORDS = { none: 'No target', below: 'Under 50% of target', half: '50% to 99% of target', met: 'Target met' };
+const many = (v) => String(v || '').split(',').map((x) => x.replace(/%2C/gi, ',').trim().toLowerCase()).filter(Boolean);
 const hasOpenWork = (r) => !r.former && ['openRequirements', 'activeCandidates', 'needsAction', 'requirements', 'candidates', 'pendingReviews'].some((k) => Number((r.counts || {})[k]) > 0);
 const hasJoinings = (r) => (r.period ? Number(r.period.joined) > 0 : Number((r.counts || {}).joined) > 0);
 // What each person did in the chosen date range (GET /ats/team/period); a team lead's figures are the sum of their recruiters'.
@@ -234,12 +235,13 @@ function overlayPeriod(rows, period) {
 }
 function peoplePred(r, k, v) {
   switch (k) {
-    case 'stl': return lc(r.stl) === lc(v);
-    case 'seat': return r.seat === v;
-    case 'location': return lc(r.location) === lc(v);
-    case 'empStatus': return r.employmentStatus === v;
-    case 'perf': return !!r.period && r.period.band === v;
-    case 'ach': return !!r.period && r.period.achBand === v;
+    // several values at once (a comma list): any of them
+    case 'stl': return many(v).includes(lc(r.stl));
+    case 'seat': return many(v).includes(lc(r.seat));
+    case 'location': return many(v).includes(lc(r.location));
+    case 'empStatus': return many(v).includes(lc(r.employmentStatus));
+    case 'perf': return !!r.period && many(v).includes(lc(r.period.band));
+    case 'ach': return !!r.period && many(v).includes(lc(r.period.achBand));
     case 'open': return v === 'yes' ? hasOpenWork(r) : !hasOpenWork(r);
     case 'hasJoin': return v === 'yes' ? hasJoinings(r) : !hasJoinings(r);
     case 'jFrom': return !!r.joinedCompanyOn && r.joinedCompanyOn >= v;

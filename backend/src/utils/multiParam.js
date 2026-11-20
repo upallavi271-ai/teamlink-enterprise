@@ -20,7 +20,8 @@ function parseMulti(raw) {
   const out = [];
   const seen = new Set();
   parts.forEach((p) => {
-    String(p === undefined || p === null ? '' : p).split(',').forEach((x) => {
+    // a comma followed by a space belongs to ONE value ("Hyderabad, Telangana": an old link, or data written that way); the checkbox dropdowns write %2C anyway
+    String(p === undefined || p === null ? '' : p).split(/,(?!s)/).forEach((x) => {
       const v = x.replace(/%2C/gi, ',').trim();
       if (!v) return;
       const k = v.toLowerCase();

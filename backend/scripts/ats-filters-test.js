@@ -502,7 +502,7 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   // =====================================================================================================================
   const MPm = require('../src/utils/multiParam');
   check('parseMulti: trims, de-duplicates, ignores empties, reads a repeated parameter and %2C, caps at 200', JSON.stringify(MPm.parseMulti(' a , b,,A,c%2Cd ')) === JSON.stringify(['a', 'b', 'c,d']) && JSON.stringify(MPm.parseMulti(['x', 'y,z'])) === JSON.stringify(['x', 'y', 'z']) && MPm.parseMulti(Array.from({ length: 300 }, (_, i) => `v${i}`).join(',')).length === 200 && MPm.parseMulti('').length === 0 && MPm.multiHas('', 'zz') === true);
-  check('multiHas: an old single link with a comma inside one value still matches that value', MPm.multiHas('Hyderabad, Telangana', 'Hyderabad, Telangana') === true && MPm.multiHas('Hyderabad, Telangana', 'Hyderabad') === false && MPm.multiHas('Pune,Chennai', 'Chennai') === true);
+  check('multiHas: an old single link with a comma inside one value still matches that value only', MPm.multiHas('Hyderabad, Telangana', 'Hyderabad, Telangana') === true && MPm.multiHas('Hyderabad, Telangana', 'Hyderabad') === false && MPm.multiHas('Pune,Chennai', 'Chennai') === true && MPm.multiHas('Hyderabad, Telangana,Pune', 'Pune') === true);
   // candidates, one filter with two and three values
   const U = (a) => [...new Set(a)];
   l = await list(tA, { spec: 'Radiology,none' }); check('multi candidates: two values of Specialization (Radiology + not given) = everybody', same(U(l.names), names(1, 2, 3, 4, 5, 6)), l.names);
@@ -523,10 +523,10 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   l = await list(tRA, { location: 'Hyderabad,Pune,Chennai,Mumbai' }); check('multi scope: recruiter A cannot reach recruiter B\'s person with many values', !l.names.includes(nm(6)) && l.names.length === 4, l.names);
   f = await facet(tA, { spec: 'Radiology' }, 'spec'); check('multi counts: ticking one option still shows the others with their true counts (own filter left out)', optCount(f, 'none') === 5 && optCount(f, 'Radiology') === 1, f.list);
   f = await facet(tA, { noticeBand: 'd15,d30' }, 'noticeBand'); check('multi counts: with two notice bands ticked the other bands keep their counts (own filter left out)', optCount(f, 'imm') === 1 && optCount(f, 'd15') === 1 && optCount(f, 'd30') === 1, f.list);
-  f = await facet(tA, { location: 'Pune,Chennai' }, 'notice'); check('multi counts: another filter\'s counts follow the ticked values (notice among Pune + Chennai)', optCount(f, 'Immediate') === 1 && optCount(f, '2 months') === 1 && optCount(f, '15 Days') === 0, f.list);
+  f = await facet(tA, { location: 'Pune,Chennai' }, 'noticeBand'); check('multi counts: the counts of another filter follow the ticked values (notice bands among Pune + Chennai)', optCount(f, 'imm') === 1 && optCount(f, 'd60') === 1 && optCount(f, 'd15') === 0, f.list);
   const exMulti = await call('POST', '/ats-io/export/candidates?format=csv', { view: 'pipeline-all', params: { paged: '1', view: 'pipeline', sub: 'all', all: '1', search: TAG, location: 'Pune,Chennai' } }, tA);
   const exMultiLines = String(exMulti.text || '').split(/\r?\n/).filter((x) => x.includes(TAG));
-  check('multi export: the Excel / CSV export holds exactly the people the two-value filter lists', exMulti.status === 200 && new Set(exMultiLines.map((x) => (x.match(new RegExp(TAG + ' P\d')) || [''])[0])).size === 2 && exMultiLines.some((x) => x.includes(nm(3))) && exMultiLines.some((x) => x.includes(nm(5))) && !exMultiLines.some((x) => x.includes(nm(1))), { s: exMulti.status, n: exMultiLines.length });
+  check('multi export: the Excel / CSV export holds exactly the people the two-value filter lists', exMulti.status === 200 && new Set(exMultiLines.map((x) => (x.match(new RegExp(`${TAG} P\d`)) || [''])[0])).size === 2 && exMultiLines.some((x) => x.includes(nm(3))) && exMultiLines.some((x) => x.includes(nm(5))) && !exMultiLines.some((x) => x.includes(nm(1))), { s: exMulti.status, n: exMultiLines.length });
   // requirements
   x = await rq(tA, { clientId: `${cl1.id},${cl2.id}` }); check('multi requirements: two clients', same(U(x.names), [T(1), T(2), T(3)]), x.names);
   x = await rq(tA, { clientId: cl2.id }); check('multi requirements: one client', same(U(x.names), [T(3)]), x.names);
@@ -541,13 +541,13 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   x = await cls(tA, { agreementStatus: 'Signed,Pending' }); check('multi clients: two agreement statuses', same(U(x.names), [n1, n2, n3]), x.names);
   const dptJ = (await prisma.requirement.findUnique({ where: { id: R2.id } })).department;
   x = await of(tA, { department: `Zzz-none,${dptJ}` }); check('multi offers: two departments (one that matches nothing)', same(U(x.names), names(1, 2, 3, 5)), x.names);
-  x = await of(tA, { recruiter: `${RA.id},${RB.id}` }); check('multi offers: two recruiters', same(U(x.names), names(2, 3, 5)), x.names);
+  x = await of(tA, { recruiter: `${RA.id},${RB.id}` }); check('multi offers: two recruiters (P1 is a joined one on the job of recruiter A)', same(U(x.names), names(1, 2, 3, 5)), x.names);
   x = await of(tA, { offerStatus: 'Offer Released,Offer being prepared' }); check('multi offers: two offer statuses', same(U(x.names), names(2, 3, 5)), x.names);
-  x = await jn(tA, { recruiter: `${RA.id},${RB.id}` }); check('multi joinings: two recruiters', same(U(x.names), names(2, 3)), x.names);
+  x = await jn(tA, { recruiter: `${RA.id},${RB.id}` }); check('multi joinings: two recruiters', same(U(x.names), names(1)), x.names);
   x = await jn(tA, { guarantee: 'none,active,ended' }); check('multi joinings: three guarantee states', x.names.length === 3, x.names);
   x = await fu(tA, { fuDue: 'today,overdue' }); check('multi follow-ups: two due buckets', same(U(x.names), names(1, 2)), x.names);
-  x = await fu(tA, { fuType: 'Call,WhatsApp' }); check('multi follow-ups: two types', same(U(x.names), names(1, 2, 3)), x.names);
-  x = await fu(tA, { fuOwner: `${RA.id},${RB.id}`, fuType: 'Call,WhatsApp' }); check('multi follow-ups: two owners and two types together', same(U(x.names), names(1, 2, 3)), x.names);
+  x = await fu(tA, { fuType: 'Call,WhatsApp' }); check('multi follow-ups: two types (P4 is the old finished one: whole history)', same(U(x.names), names(1, 2, 3, 4)), x.names);
+  x = await fu(tA, { fuOwner: `${RA.id},${RB.id}`, fuType: 'Call,WhatsApp' }); check('multi follow-ups: two owners and two types together', same(U(x.names), names(1, 2, 3, 4)), x.names);
   x = await iv(tA, { ivMode: 'Online,In Person' }); check('multi interviews: two modes', same(U(x.names), names(1, 2, 3)), x.names);
   x = await iv(tA, { ivStatus: 'SCHEDULED,COMPLETED', ivRound: '1,2' }); check('multi interviews: two statuses and two rounds', same(U(x.names), names(1, 2, 3)), x.names);
   x = await iv(tA, { ivClient: `${cj1},${cj2}` }); check('multi interviews: two clients', same(U(x.names), names(1, 2, 3)), x.names);

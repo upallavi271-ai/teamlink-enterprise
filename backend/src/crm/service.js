@@ -249,7 +249,7 @@ async function list(user, kind, q = {}) {
   const text = clip(q.q, 80);
   // WHOLE HISTORY (founder 2026-11-20): a search or any filter drops the default windows (open leads only, closed deals of 30 days, the 1,000-row cut) - crm/listFilters.js
   const FL = require('./listFilters'); // eslint-disable-line global-require
-  const anyF = FL.any(q);
+  const anyF = FL.any(q, kind === 'deal' ? ['stage'] : []); // a deal stage filter looks at every deal of all time
   const capN = FL.cap(q);
   if (kind === 'lead') {
     FL.lead(q, where, params);
