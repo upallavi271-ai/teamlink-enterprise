@@ -218,6 +218,20 @@ export function installLoginText(providers) {
     const send = o.send;
     const fn = ch === 'sms'
       ? async function sendWithLogin(args, ...rest) {
+        // THE APPROVED DLT LOGIN TEMPLATE (login ID + the candidate's own password setup link), through TeamLink's SMS Push; when TeamLink is not ready for it
+        // (template not saved yet) or cannot be reached, the SMS goes as before (embed/login-sms.mjs)
+        try {
+          const L = await import(pathToFileURL(join(import.meta.dirname, 'login-sms.mjs')).href);
+          if (L.isLoginSms(args)) {
+            const at = (p) => import(pathToFileURL(join(ROOT, 'api', 'src', p)).href);
+            const [db, auth, cfgMod] = await Promise.all([at('db.js'), at('auth.js'), at('config.js')]);
+            const done = await L.sendLoginSetupSms(args, {
+              api: teamlinkApi(), secret: pushSecret(),
+              makeLink: (login) => L.makeSetupLink(login, { withUser: db.withUser, newSessionToken: auth.newSessionToken, origin: cfgMod.config.publicOrigin }),
+            });
+            if (done.handled) return withRcsLogin(loginMessage(ch, args), done.result, rcsOpts());
+          }
+        } catch (err) { log('login sms: skipped:', String((err && err.message) || err).slice(0, 120)); }
         const a = loginMessage(ch, args);
         let result;
         try { result = await send.call(this, a, ...rest); } catch (err) { result = { status: 'failed', provider: 'sms', error: String((err && err.message) || err).slice(0, 300) }; }

@@ -137,9 +137,10 @@ async function smsConfig({ ignoreSwitch = false } = {}) {
     key: String(v[F.key] || '').trim(),
     sid: valOf(v, F.sid),
     templates: isPush
-      ? { link: valOf(v, F.pushLinkTpl), otp: valOf(v, F.pushOtpTpl), bulk: valOf(v, F.pushBulkTpl) }
+      ? { link: valOf(v, F.pushLinkTpl), otp: valOf(v, F.pushOtpTpl), bulk: valOf(v, F.pushBulkTpl), login: valOf(v, F.pushLoginTpl) }
       : { link: valOf(v, F.linkTpl), otp: valOf(v, F.otpTpl), bulk: valOf(v, F.bulkTpl) },
     otpText: isPush ? valOf(v, F.pushOtpText) : '',
+    loginText: isPush ? valOf(v, F.pushLoginText) : '',
     dlrSecret: String(v[F.dlrSecret] || '').trim(),
     push: {
       url: valOf(v, F.pushUrl) || `${BASES.SMSGW}/smsapi/httpapi.jsp`,
@@ -460,7 +461,15 @@ function otpText(cfg, code, minutes, fallback) {
   return fallback;
 }
 
+// The candidate login SMS (2026-11-20): the approved DLT text with {login_id} and {url} filled in, word for word. null = not set up (no template id,
+// no text, or the text does not have both places), so nothing is sent and the caller says so.
+function loginText(cfg, loginId, url) {
+  const t = cfg && cfg.loginText;
+  if (!cfg || !cfg.templates || !cfg.templates.login || !t || !/\{login_id\}/i.test(t) || !/\{url\}/i.test(t)) return null;
+  return t.replace(/\{login_id\}/gi, () => String(loginId)).replace(/\{url\}/gi, () => String(url));
+}
+
 // New login details = not proven any more: the next Test SMS proves them again.
 async function forgetProof() { const prisma = require('../db'); await prisma.appSetting.deleteMany({ where: { key: { in: [PUSH_KEY, 'smsgw.dlrSeen'] } } }).catch(() => {}); } // eslint-disable-line global-require
 
-module.exports = { smsConfig, validateSms, forgetProof, sendSms, otpText, testConnection, providerOf, BASES, pushNames, pushLastAccepted, PUSH_DEFAULT_NAMES, PUSH_DEFAULT_ID, parsePushReply, pullDelivery, pushHostOk, pushDlrUrl, PUSH_HOSTS };
+module.exports = { smsConfig, validateSms, forgetProof, sendSms, otpText, loginText, testConnection, providerOf, BASES, pushNames, pushLastAccepted, PUSH_DEFAULT_NAMES, PUSH_DEFAULT_ID, parsePushReply, pullDelivery, pushHostOk, pushDlrUrl, PUSH_HOSTS };

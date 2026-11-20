@@ -71,6 +71,21 @@ router.post('/applications', async (req, res) => {
   return res.status(out.status).json(out.body);
 });
 
+// THE CANDIDATE LOGIN SMS (2026-11-20): the portal hands over the login ID and the candidate's own password-setup link; TeamLink sends the
+// approved DLT login template through the existing SMS Push integration (utils/loginSms.js). Always 200: the portal reads status
+// sent | duplicate | off | failed (a 5xx would be retried and could send twice).
+//   POST /login-sms { to, loginId, url } -> { ok, status, providerRef?, reason? }
+router.post('/login-sms', async (req, res) => {
+  if (!bridge.secretMatches(req.get('x-job-portal-secret'))) return res.status(401).json({ ok: false, error: 'Invalid or missing job portal secret' });
+  const b = req.body || {};
+  const to = String(b.to || '').trim();
+  const loginId = String(b.loginId || '').trim();
+  const url = String(b.url || '').trim();
+  if (!to || !loginId || !/^https:\/\//i.test(url)) return res.status(422).json({ ok: false, status: 'failed', reason: 'to, loginId and an https url are required' });
+  try { return res.json(await require('../utils/loginSms').sendLoginSms({ to, loginId, url })); } // eslint-disable-line global-require
+  catch (err) { return res.json({ ok: false, status: 'failed', reason: String((err && err.message) || err).slice(0, 300) }); }
+});
+
 // THE PORTAL'S "Templates & Campaigns" ALSO SHOWS WHAT WAS MADE IN OMNI-CHANNEL (2026-11-18): the WhatsApp templates and campaigns the signed-in
 // portal recruiter may see in Omni-Channel (utils/portalOmniMirror.js). Server to server: bridge secret + x-portal-user-email. Read-only.
 const mirror = (fn) => async (req, res) => {
