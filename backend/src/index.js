@@ -479,6 +479,8 @@ app.use('/api/accounts', require('./routes/accountsCombined'));
 // list (utils/workers.js). Ahead of the /api/ats routers, which gate on the
 // calendar permission.
 app.use('/api/ats/workers', require('./routes/atsWorkers'));
+// Work allocation, targets, performance and workflow automation (founder ATS audit round 3; utils/atsWork/*).
+app.use('/api/ats/work', require('./routes/atsWork'));
 app.use('/api/ats/handover', require('./routes/handover')); // recruiter handover & ownership (2026-11-10)
 // Department -> Section -> TL -> Recruiter, the dependent filter tree (components/HierarchyFilter.jsx).
 app.use('/api/ats/hierarchy', require('./routes/atsHierarchy'));
@@ -685,6 +687,7 @@ const server = app.listen(PORT, () => {
   // ATS late-work escalation (owner → TL → Manager), every 15 min, IN-APP
   // only — does nothing until an Admin switches it on (utils/atsEscalation.js).
   require('./utils/atsEscalation').startSweep();
+  require('./utils/atsWork/lifecycle').startSweep(); // failed AI / API steps retried hourly (3 tries) - only when an Admin switched it on
   require('./routes/atsExperience').startSweep(); // late complaints / client escalations move up a level; the quarterly client survey when switched on
   // Pending-work digest to the TL (10:30), escalation, BDE client-work digest, end-of-day report (18:45):
   // one tick every 5 minutes, each part sent once a day (utils/pendingWork.js).

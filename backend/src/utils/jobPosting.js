@@ -175,6 +175,11 @@ async function autoPost(requirementId, ctx = {}) {
   try {
     const r = await prisma.requirement.findUnique({ where: { id: requirementId } });
     if (!r) return { ok: false, skipped: 'no such requirement' };
+    // A NEW job waits for a recruiter before it is posted (Admin switch "Require a recruiter before posting", utils/atsWork/allocation.js).
+    if (!r.portalPublished && requirementIsLive(r.status)) {
+      const wait = await require('./atsWork/allocation').postingBlock(r).catch(() => null); // eslint-disable-line global-require
+      if (wait) return { ok: false, skipped: wait, blocked: 'needs-recruiter' };
+    }
     // A job whose ticks name no public site is kept off every public channel.
     const live = requirementIsLive(r.status) && wantsPublic(r);
     // A status move between two live statuses is not a reopen.
@@ -245,6 +250,7 @@ async function autoPost(requirementId, ctx = {}) {
     return { ok: push.ok !== false, change, push };
   } catch (err) {
     console.error(`[job-posting] requirement ${requirementId}: ${err.message}`);
+    require('./atsWork/core').recordFailure({ kind: 'posting', refId: requirementId, label: 'Posting a requirement', error: err.message }); // listed under Failed steps with a Retry button
     return { ok: false, error: err.message };
   }
 }

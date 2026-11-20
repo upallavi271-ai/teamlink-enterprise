@@ -75,6 +75,7 @@
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const V = require('./atsVocab');
+const WD = require('./atsWork/calendar'); // working-day due dates when the Admin switch is on (Extra 762)
 
 const IST_OFFSET_MS = 330 * 60000;
 const DAY_MS = 86400000;
@@ -397,6 +398,7 @@ async function refresh() {
   if (SNAP.loaded && Date.now() - SNAP.checkedAt < STAMP_TTL_MS) return SNAP;
   if (building) return SNAP.loaded ? SNAP : building;
   await AS.loadAlertSettings().catch(() => null);
+  await require('./atsWork/calendar').refresh().catch(() => null); // Admin switch "SLA counts working days only" (Extra 762); a no-op while it is off
   // builtAt = the moment the data is known to be current: nothing that could
   // change an entry happened before it without changing the stamp.
   const t0 = Date.now();
@@ -617,9 +619,9 @@ function nextActionFor(app, ctx = {}) {
           ? (d.interviewAt ? istDay(d.interviewAt) : null)
           : ((ISO_DAY.exec(String(d.joiningDate || '')) || [])[1] || null);
         if (anchorDay) { dueAt = addDays(anchorDay, rule.days); dueSource = rule.anchor === 'interviewAt' ? 'interview-date' : 'joining-date'; } else if (est.ms) {
-          dueAt = addDays(from(est.ms), rule.fallback); dueSource = 'stage-sla';
+          dueAt = WD.dueAfter(from(est.ms), rule.fallback); dueSource = 'stage-sla';
         }
-      } else if (Number.isFinite(rule) && est.ms) { dueAt = addDays(from(est.ms), rule); dueSource = 'stage-sla'; }
+      } else if (Number.isFinite(rule) && est.ms) { dueAt = WD.dueAfter(from(est.ms), rule); dueSource = 'stage-sla'; }
     }
   }
   if (live && ov && ov.dueAt && !(openFu && openFu.dueDate)) { dueAt = ov.dueAt; dueSource = ov.dueSource || 'stage-sla'; }

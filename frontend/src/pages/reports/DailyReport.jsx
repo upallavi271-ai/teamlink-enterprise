@@ -1,3 +1,4 @@
+import { TargetsStrip } from '../../components/ats/AtsWork.jsx'; // today / week / month against the targets (round 3)
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
@@ -265,6 +266,7 @@ export default function DailyReport() {
 
   return (
     <div className="fux-dr">
+      <TargetsStrip />
       <div className="fux-dr-bar">
         {seg}
         {view === 'day' ? (

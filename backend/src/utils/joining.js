@@ -316,7 +316,7 @@ async function createHrmsEmployee({ application, candidate, requirement, userId 
 //                        change list §12 — it used to wait for a separate
 //                        "Create HRMS Employee" click, which stays as a retry)
 // ---------------------------------------------------------------------------
-async function onApplicationJoined({
+async function onApplicationJoinedInner({
   application, existing, userId, feePercent = null, joinInfo = null, actor = null, via = null,
 }) {
   const internal = isInternalHire(application, existing.requirement);
@@ -372,6 +372,14 @@ async function onApplicationJoined({
     }
     return null;
   }
+  // JOINING PROOF BEFORE BILLING (Extra 753, Admin switch "Require joining proof before billing", OFF by default): without the proof file the
+  // invoice waits; uploading the proof raises it (utils/atsWork/people.js uploadProof).
+  const proofWait = await require('./atsWork/people').proofGate(application).catch(() => null); // eslint-disable-line global-require
+  if (proofWait) {
+    await prisma.application.update({ where: { id: application.id }, data: { billingStatus: 'Waiting for joining proof' } }).catch(() => null);
+    await logAudit({ userId, action: 'Invoice held: joining proof missing', entity: 'Application', entityId: application.id, toValue: 'Waiting for joining proof' });
+    return null;
+  }
   const invoice = await raiseJoiningInvoice({
     application, existing, userId, feePercent,
   });
@@ -390,6 +398,22 @@ async function onApplicationJoined({
     await PT.onJoined({ applicationId: application.id, invoice, userId });
   } catch { /* partners are optional */ }
   return invoice;
+}
+
+// The same joining twice does nothing (Audit 619: one small table of event type + key), and a confirmed joining drafts the payout proposals
+// (Audit 616, only when the Admin switch is on; never posts money).
+async function onApplicationJoined(args) {
+  const W = require('./atsWork/core'); // eslint-disable-line global-require
+  const { application, existing } = args;
+  const key = `${application.id}:${application.joiningDate || (existing && existing.joiningDate) || ''}`;
+  if (!(await W.claimEvent('joining', key))) {
+    return prisma.invoice.findFirst({ where: { candidateId: existing.candidateId, requirementId: existing.requirementId } });
+  }
+  try {
+    const invoice = await onApplicationJoinedInner(args);
+    await require('./atsWork/lifecycle').onJoined(application.id, args.actor || { id: args.userId }).catch(() => null); // eslint-disable-line global-require
+    return invoice;
+  } catch (e) { await W.releaseEvent('joining', key); throw e; }
 }
 
 // ---------------------------------------------------------------------------

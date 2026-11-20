@@ -11,6 +11,7 @@ import { PanelPad, EmptyMini, Modal } from '../../components/proto.jsx';
 import ConversationView from '../../components/messaging/ConversationView.jsx';
 import { useContactRule } from '../../components/messaging/useMayMessage.js';
 import AtsDataTools from '../../components/AtsDataTools.jsx';
+import { DelegationCard } from '../../components/ats/AtsWork.jsx'; // approvals handed to someone while away
 import LeaveCoverCard from '../../components/LeaveCoverCard.jsx'; // follow-ups / tasks of people on leave go to their backup or TL
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
@@ -265,6 +266,7 @@ export default function FollowUps({ embedded = false }) {
       </div>
 
       <LeaveCoverCard />
+      <DelegationCard />
 
       {/* §21 */}
       <PanelPad style={{ marginTop: 14 }}>

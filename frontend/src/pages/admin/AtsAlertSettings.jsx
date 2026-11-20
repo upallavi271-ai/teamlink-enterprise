@@ -1,3 +1,4 @@
+import { AtsWorkSettings } from '../../components/ats/AtsWork.jsx'; // work allocation and automation switches, TL escalation card, failed steps
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import StatusChip from '../../components/ui/StatusChip.jsx';
@@ -219,6 +220,8 @@ export default function AtsAlertSettings() {
       <InterviewReminderSettings />
 
       <JoinDropSettings />
+
+      <AtsWorkSettings />
 
       <div className="panel">
         <div className="panel-head"><h3>Reminders to team leads</h3></div>

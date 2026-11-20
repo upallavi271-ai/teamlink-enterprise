@@ -9,6 +9,7 @@
 //     Internal hire      the HRMS employee record
 // (backend: routes/interviewsJoining.js + utils/joining.js onApplicationJoined)
 
+import { JoiningProofBox } from '../../components/ats/AtsWork.jsx'; // the joining proof file before billing (round 3)
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
@@ -392,6 +393,7 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
       )}
     >
       <div className="ivx-fb">
+        <JoiningProofBox applicationId={r.id} />
         <div className="ivx-hint" style={{ marginTop: 0, marginBottom: 12 }}>{`${r.requirement.title} · ${internal ? 'TeamLink (internal)' : r.requirement.client?.name || ''}${r.offeredCtc ? ` · ${money(r.offeredCtc)} a year` : ''}`}</div>
 
         {drop ? (

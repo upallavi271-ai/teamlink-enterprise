@@ -159,6 +159,8 @@ function attentionOf(data, ws, onDrill) {
     if (fb && fb.total) items.push(it('client-fb', fb.total, fb.title, 'Sent to the client, no reply yet', 'amber', 'Chase', fb.drill));
     if (un && un.total) items.push(it('unsigned', un.total, 'Clients with unsigned agreement', 'Open requirements, agreement not signed', 'red', 'Review', un.drill));
   }
+  // CARRIED OVER FROM YESTERDAY (Audit 203): follow-ups not done and profiles still to review since the last working day.
+  if (data.carryOver && data.carryOver.count > 0) items.unshift(it('carry-over', data.carryOver.count, 'Carried over from yesterday', `${data.carryOver.followUps.length} follow-ups and ${data.carryOver.toReview.length} profiles to review`, 'amber', 'Open', null, '/ats/follow-ups'));
   // The follow-ups line ("N candidates not followed up yet") is a problem to act on.
   const notes = [];
   arr(data.extras).filter((x) => x && !x.button).forEach((x) => {

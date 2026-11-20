@@ -35,13 +35,14 @@ const WALK_IN = 'Walk-in';
 const AGENCY = 'Agency / partner';
 const SOCIAL = 'Social media';
 const OWN_SEARCH = "Recruiter's own search";
+const BDE_SOURCE = 'BDE'; // a profile the client manager (BDE) brought (Practical P8.4)
 const IMPORTED = 'Imported sheet (unknown origin)';
 const OTHER = 'Other';
 
 // The one list, in the order every picker and filter shows it.
 const SOURCES = [
   JOB_PORTAL, WEBSITE, NAUKRI, SHINE, INDEED, LINKEDIN, REFERRAL, CAMPUS, WALK_IN,
-  AGENCY, SOCIAL, OWN_SEARCH, IMPORTED, OTHER,
+  AGENCY, SOCIAL, OWN_SEARCH, BDE_SOURCE, IMPORTED, OTHER,
 ];
 // What a person can CHOOSE when adding someone: everything except the
 // "unknown origin" bucket (that is only ever what an old import left behind).
@@ -63,6 +64,8 @@ const DATEISH = /\b(\d{1,2}[-/ ](\d{1,2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct
 // The rules, first match wins. Each is [name, test(lowercase text), canonical].
 // Tested on the lower-cased, space-squashed text.
 const RULES = [
+  // a source that is just "BDE" (the client manager brought the profile), checked before the sheet words below read "bde" as an import
+  ['bde', (k) => /^(sourced\s*)?(by\s*)?bde(\s*(source|sourced|lead|team|desk|referral|reference|profile|profiles))?$|^bde\s*sourc/.test(k), BDE_SOURCE],
   ['naukri', (k) => /naukr?a?i|nakri|naukari/.test(k), NAUKRI],
   ['shine', (k) => /(^|[^a-z])shine(\.com)?([^a-z]|$)/.test(k), SHINE],
   ['indeed', (k) => /indeed/.test(k), INDEED],
@@ -257,6 +260,7 @@ module.exports = {
   AGENCY,
   SOCIAL,
   OWN_SEARCH,
+  BDE_SOURCE,
   IMPORTED,
   OTHER,
   canonicalSource,

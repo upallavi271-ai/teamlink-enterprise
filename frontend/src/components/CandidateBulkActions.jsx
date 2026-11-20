@@ -13,6 +13,7 @@ import {
 import { RejectFields, rejectReady, rejectPayload } from './rejections/rejectionUi.jsx';
 // Bulk interview scheduling: "Message all N candidates" (2026-10-10).
 import SendManyDialog from './messaging/SendMessage.jsx';
+import { BulkPreview } from './ats/AtsWork.jsx'; // "Who will move" before the action (Extra 763)
 
 // ---------------------------------------------------------------------------
 // BULK ACTIONS on the selected candidates (spec §25):
@@ -50,6 +51,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
     reviewOn: inDaysYmd(7), requirementId: '',
   });
   const [busy, setBusy] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -216,7 +218,16 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
     );
   }
 
+  const previewBody = () => ({
+    kind: kind === 'assign' ? 'application-assign' : 'application-stage',
+    stage: { stage: form.stage, interview: 'INTERVIEW_SCHEDULED', hold: 'HOLD', reject: 'REJECTED' }[kind],
+    recruiterId: form.recruiterId,
+    applicationIds: items.filter((x) => x.latestApplicationId).map((x) => x.latestApplicationId),
+    candidateIds: items.filter((x) => !x.latestApplicationId).map((x) => x.id),
+  });
   return (
+    <>
+    {previewing && <BulkPreview body={previewBody()} onCancel={() => setPreviewing(false)} onConfirm={() => { setPreviewing(false); run(); }} />}
     <Modal
       title={`${TITLES[kind]} — ${items.length} candidate${items.length === 1 ? '' : 's'}`}
       onClose={onClose}
@@ -227,7 +238,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
             type="button"
             className={`btn ${kind === 'reject' ? 'btn-danger' : 'btn-primary'}`}
             disabled={!ready || busy}
-            onClick={run}
+            onClick={() => (kind === 'addToJob' ? run() : setPreviewing(true))}
           >
             {busy ? `Working... ${progress}/${items.length}` : `${TITLES[kind]} (${items.length})`}
           </button>
@@ -349,5 +360,6 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
       )}
       {error && <div className="error-text">{error}</div>}
     </Modal>
+    </>
   );
 }

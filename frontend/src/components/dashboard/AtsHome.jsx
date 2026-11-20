@@ -1,3 +1,4 @@
+import { HomeWorkCards } from '../ats/AtsWork.jsx'; // carried over, end of day, AI shortlist approval (round 3)
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import sharedGet from '../../utils/sharedGet';
@@ -401,6 +402,8 @@ export default function AtsHome() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [drill, setDrill] = useState(null);
+  const [carry, setCarry] = useState(null); // "Carried over from yesterday" (utils/atsWork/targets.js carryOver)
+  useEffect(() => { api.get('/ats/work/carry-over').then((r) => setCarry(r.data)).catch(() => setCarry(null)); }, []);
   const [legacy] = useState(() => !!(sp.get('due') || sp.get('queue') || hash === '#pending'));
   // Refresh (v4 header): the same read again, nothing cached in between.
   const [reload, setReload] = useState(0);
@@ -633,6 +636,7 @@ export default function AtsHome() {
           </div>
         </header>
         <NewItems module="ats" />
+        {data && !asUser && <HomeWorkCards />}
         {ofBanner}
         {(f.department || extraChips.length > 0) && (
           <div className="av4-chips">
@@ -645,7 +649,7 @@ export default function AtsHome() {
         {!data && !error && <div className="small-muted">Loading your dashboard…</div>}
         {data && (
           <AtsV4
-            data={data}
+            data={carry ? { ...data, carryOver: carry } : data}
             params={params}
             reload={reload}
             tls={tls}

@@ -566,7 +566,7 @@ async function extractAndParse(buffer, kind) {
         Object.assign(parsed, reviewLists(conf));
         parsed.skillGroups = classifySkills(parsed.skills);
       }
-    } catch { /* free result stands */ }
+    } catch (e) { require('./atsWork/core').recordFailure({ kind: 'resume-ai', refId: null, label: 'Resume AI', error: e && e.message }); } // the free result stands; the failure is listed under Failed steps
   }
   // a nearly empty scan that OCR could not read: the little text is kept and parsed, and the reason is shown
   return { text, parsed, parser, ocr, error: ocr && !ocr.used && ocr.error ? ocr.error : null };

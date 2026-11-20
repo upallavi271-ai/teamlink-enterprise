@@ -26,6 +26,7 @@
 //   logContactClick       follow-ups agent    (kept as a no-op: QuickContact logs
 //                                             its own clicks)
 // ---------------------------------------------------------------------------
+import { OwnershipPanel, TrailButton } from '../ats/AtsWork.jsx'; // who owns the candidate, dispute / claim, the workflow trail (round 3)
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
@@ -60,7 +61,28 @@ export function AddApplicationSlot({ c, user, internal, onAddToJob }) {
     <>
       <AddApplicationCard c={c} onAddToJob={onAddToJob} />
       <MoveApplicationCard c={c} />
+      <OwnershipPanel candidateId={c.id} />
+      <TrailCard c={c} />
     </>
+  );
+}
+
+// --- Workflow trail per application (Audit 620): every event from the requirement request to the invoice, who and when ------------
+function TrailCard({ c }) {
+  const apps = c.applications || [];
+  if (!apps.length) return null;
+  return (
+    <div className="c360t-card">
+      <div className="c360t-label">Workflow trail</div>
+      <div style={{ display: 'grid', gap: 6 }}>
+        {apps.slice(0, 6).map((a) => (
+          <div key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="small-muted">{(a.requirement && (a.requirement.reqCode || a.requirement.title)) || 'Requirement'} · {a.stageLabel || a.stage}</span>
+            <TrailButton applicationId={a.id} label="Open trail" />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

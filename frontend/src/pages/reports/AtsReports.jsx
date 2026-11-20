@@ -1,3 +1,4 @@
+import { WorkTargetsPanel } from '../../components/ats/AtsWork.jsx'; // daily / weekly / monthly targets, score, leaderboard, end of day (round 3)
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // The actual workflow with live counts (the Workflow tab).
 import WorkflowDiagram from '../../components/workflow/WorkflowDiagram.jsx';
@@ -894,6 +895,7 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
           <ReportCharts key={`${tab}-${data.sections.map((x) => x.groupBy || '').join('')}`} tab={tab} data={data} onDrill={openCell} />
 
           {tab === 'rejections' && <SameClientRule />}
+          {tab === 'targets' && <WorkTargetsPanel />}
           {data.notes.map((n) => <div key={n} className={`notice${data.plain ? '' : ' amber'}`} style={{ marginBottom: 12 }}>{plainWords(n)}</div>)}
 
           {data.sections.map((s) => (

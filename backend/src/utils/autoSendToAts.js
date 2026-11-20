@@ -33,7 +33,7 @@ async function event(app, action, comment, toStage) {
 }
 
 // -> { sent: true, ... } | { sent: false, why }
-async function check(applicationId, { portalAppId = null } = {}) {
+async function check(applicationId, { portalAppId = null, approved = false } = {}) {
   const V = require('./atsVocab'); // eslint-disable-line global-require
   const S = require('./preAtsScreening'); // eslint-disable-line global-require
   let app = await prisma.application.findUnique({ where: { id: applicationId }, include: { requirement: { include: { client: true } }, candidate: true } });
@@ -70,6 +70,11 @@ async function check(applicationId, { portalAppId = null } = {}) {
   st = S.screeningOf(app, events);
   if (/possible duplicate/.test(String(st.duplicateResult || ''))) return { sent: false, why: 'the duplicate check found a possible duplicate' };
 
+  // RECRUITER APPROVES THE AI SHORTLIST (Audit 169, Admin switch OFF by default): every condition holds, but the recruiter says yes first.
+  if (!approved) {
+    const whyHeld = `AI interview ${app.aiInterviewScore}% and resume ${app.resumeScore}% (both ${min}% or more)`;
+    if (await require('./atsWork/lifecycle').shortlistHold(app, whyHeld, app.aiInterviewScore, app.resumeScore).catch(() => false)) return { sent: false, pending: true, why: 'waiting for the recruiter to approve the shortlist' }; // eslint-disable-line global-require
+  }
   // SEND: the same columns as the recruiter's Send to ATS (routes/jobPortal.js sendToAts), landing at Approved by recruiter
   const { hiringTypeOf } = require('./joining'); // eslint-disable-line global-require
   const internal = hiringTypeOf(app, app.requirement) === 'TeamLink Internal Hire';

@@ -1,4 +1,5 @@
 import RequirementPositions from '../components/clients/RequirementPositions.jsx'; // several positions inside one requirement (audit 114)
+import { RequirementWorkPanel } from '../components/ats/AtsWork.jsx'; // recruiter suggestions, assign, matching, close pipeline, workflow trail (round 3)
 import { useEffect, useRef, useState } from 'react';
 import JobAutoMessages from '../components/automsg/JobAutoMessages.jsx'; // automatic stage messages: this job's setting
 import { RequirementIndustryCard } from '../components/ats/OfferBgv.jsx'; // industry checklist, BGV needed, gender/age criteria
@@ -235,6 +236,7 @@ export default function RequirementDetail() {
   const { hash } = useLocation();
   const landed = useRef(false);
   const { user } = useAuth();
+  const isClientLogin = !!user && user.role === 'CLIENT';
   // CLIENT DETAIL IS THE CLIENT DESK'S (Super Admin, Admin, Manager, Asst
   // Manager, BDE). Everyone else is sent the client's name only by the API,
   // so the particulars and the link into the client record are not drawn.
@@ -1498,6 +1500,7 @@ export default function RequirementDetail() {
         </Modal>
       )}
 
+      {!isClientLogin && <RequirementWorkPanel requirement={r} canAssign={!!p.assign} onChanged={refreshAfterChange} />}
       {postPanel && <PostingStatusPanel requirementId={r.id} code={r.reqCode} title={r.title} onChanged={load} onClose={() => setPostPanel(false)} />}
 
       {/* EDIT REQUIREMENT — the Create Requirement form in edit mode.

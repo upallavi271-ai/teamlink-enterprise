@@ -1,3 +1,4 @@
+import { PayoutApprovals } from '../components/ats/AtsWork.jsx'; // pending recruiter / referral payout proposals (round 3)
 import {
   useCallback, useEffect, useRef, useState,
 } from 'react';
@@ -112,6 +113,7 @@ export default function AccountsDashboard() {
           {!data && !error && <div className="acd-sec small-muted">Loading the numbers…</div>}
           {data && (
             <div style={{ opacity: loading ? 0.6 : 1, transition: 'opacity .15s' }}>
+              <PayoutApprovals />
               <ProofReminder proof={data.proof} filters={serverFilters} onChanged={() => changed(false)} flash={flash} />
               <Summary s={data.summary} peopleFilter={data.peopleFilter} invoices={flatInvoices(data.clients)} bills={data.office.rows} />
               <OfficeSpends office={data.office} canManage={canOffice} onChanged={() => changed(false)} flash={flash} />

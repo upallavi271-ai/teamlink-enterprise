@@ -359,7 +359,7 @@ module.exports = function reportsPlus(H) {
     }
     return out;
   };
-  async function prepareTargets(ctx) {
+  async function prepareTargets(ctx, user) {
     const P = periodOf(ctx);
     const key = `${P.from}|${P.to}`;
     ctx.targetPrep = ctx.targetPrep || {};
@@ -382,7 +382,11 @@ module.exports = function reportsPlus(H) {
       if (!out.has(k)) out.set(k, {});
       out.get(k)[rule.key] = (out.get(k)[rule.key] || 0) + Number(r.amount);
     });
-    ctx.targetPrep[key] = { targets: out, months };
+    // JOINED = the joinings credited to each person by the ONE function the dashboard card reads (utils/recruiterJoinings.js creditedJoinings,
+    // Practical P7.3), so this report and the card always agree - including a joining credited by name.
+    let credited = null;
+    if (user) { try { credited = await require('./recruiterJoinings').creditedJoinings(user, { from: P.from, to: P.to }); } catch { credited = null; } } // eslint-disable-line global-require
+    ctx.targetPrep[key] = { targets: out, months, credited };
   }
   // "Profiles verified" = the recruiter checked the person and sent them on (Approved by recruiter / TL check) — the
   // dashboard funnel's own "Verified" step (utils/atsHome.js FUNNEL_V3).
@@ -416,7 +420,7 @@ module.exports = function reportsPlus(H) {
         submitted: (x.evs || []).some((e) => CLIENT_CHAIN.includes(e.toStage) && (!e.fromStage || !CLIENT_CHAIN.includes(e.fromStage)) && within(e.createdAt)),
         interviews: !!x.a.interviewAt && within(x.a.interviewAt) && !DEAD_INTERVIEW.includes(x.a.interviewStatus),
         selected: (x.evs || []).some((e) => SELECTED_ON.includes(e.toStage) && (!e.fromStage || !SELECTED_ON.includes(e.fromStage)) && within(e.createdAt)),
-        joined: inP(joinDayOf(x), P),
+        joined: prep.credited ? false : inP(joinDayOf(x), P),
       };
       if (!Object.values(hits).some(Boolean)) return;
       const r = sec.row(x.recruiter.key);
@@ -424,6 +428,16 @@ module.exports = function reportsPlus(H) {
       if (x.tl && x.tl.label) r.cells.tl = r.cells.tl && r.cells.tl !== x.tl.label && !String(r.cells.tl).includes(x.tl.label) ? `${r.cells.tl}, ${x.tl.label}` : x.tl.label;
       METRICS.forEach(([k]) => { if (hits[k]) r.cells[k].add(x.id); });
     });
+    if (prep.credited) {
+      prep.credited.list.forEach((a) => {
+        const c = a.creditedTo || {};
+        const k = c.userId ? `u:${c.userId}` : c.key;
+        if (!k) return;
+        const r = sec.row(k);
+        if (!r.cells.recruiter) r.cells.recruiter = c.name || k;
+        r.cells.joined.add(a.id);
+      });
+    }
     // Everyone with a target is listed, even with nothing done yet.
     prep.targets.forEach((tg, k) => {
       const r = sec.row(k);

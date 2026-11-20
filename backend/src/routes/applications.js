@@ -813,6 +813,13 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     }
   }
 
+  // THE SAME STAGE EVENT TWICE DOES NOTHING (Audit 619): a double click or a retried request carries the same "from" state, so the second one is
+  // answered with the application as it is and no second history row, mail, follow-up or invoice (utils/atsWork/core.js claimEvent).
+  const dedupeKey = `${applicationId}:${existing.stage}>${stage}:${existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0}`;
+  if (!opts.silent && !(await require('../utils/atsWork/core').claimEvent('stage', dedupeKey))) { // eslint-disable-line global-require
+    const current = await prisma.application.findUnique({ where: { id: applicationId } });
+    return { status: 200, body: { ...current, duplicate: true, message: 'This move was already done.' } };
+  }
   const application = await prisma.application.update({
     where: { id: applicationId },
     data: {

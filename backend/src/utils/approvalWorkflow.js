@@ -1056,7 +1056,13 @@ async function act(workflowId, recordId, user, { decision, note }) {
   const { mayAct, override } = await permissionFor(workflowId, user);
   if (!mayAct) return { error: DENY.noPerm };
 
-  const isOwner = current.approverUserId && current.approverUserId === user.id;
+  let isOwner = current.approverUserId && current.approverUserId === user.id;
+  // DELEGATION (Extra 761): somebody who handed their approvals to this login for these days is stood in for. Recorded on the step.
+  let standingInFor = null;
+  if (!isOwner && current.approverUserId) {
+    standingInFor = await require('./atsWork/people').delegatorFor(current.approverUserId, user.id).catch(() => null); // eslint-disable-line global-require
+    if (standingInFor) isOwner = true;
+  }
   // ONLY THE CURRENT OWNER MAY ACT. NO EXCEPTIONS, INCLUDING AN ADMIN.
   //
   // This read `!isOwner && !override`, so anybody holding the configure action
@@ -1104,7 +1110,7 @@ async function act(workflowId, recordId, user, { decision, note }) {
       actedAt: now,
       actedByUserId: user.id,
       actedByName: user.name || user.email,
-      note: note || (override && !isOwner ? `Actioned by ${user.name || user.email} using an administrative override` : null),
+      note: standingInFor ? `${note ? `${note} ` : ''}[On behalf of ${standingInFor.name} — approvals delegated]` : (note || (override && !isOwner ? `Actioned by ${user.name || user.email} using an administrative override` : null)),
     },
   });
 

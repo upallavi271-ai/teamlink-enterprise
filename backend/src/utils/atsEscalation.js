@@ -82,7 +82,7 @@ async function planEscalation({ today = NA.todayIst(), settings = null } = {}) {
     const na = NA.nextActionFor(a, { today });
     if (na.dueStatus !== 'overdue' || !na.dueAt) return;
     late += 1;
-    const daysLate = daysBetween(na.dueAt, today);
+    const daysLate = require('./atsWork/calendar').daysLate(na.dueAt, today); // working days when the Admin switch "SLA counts working days only" is on
     const r = a.requirement || {};
     const item = { applicationId: a.id, candidateId: a.candidateId, candidate: a.candidate ? a.candidate.name : '—', job: r.title || '—', action: na.action, dueAt: na.dueAt, daysLate };
     add(na.ownerUserId, 'owner', item);

@@ -6,6 +6,7 @@ import { PRIORITY_CHOICES, priorityLabel } from './reqFormat.jsx';
 import { TlOptions, RecruiterOptions, RecruiterMulti, leastBusyTl } from './assignPeople.jsx';
 import TlChecklist from './TlChecklist.jsx'; // several team leads as checkboxes (2026-10-14)
 import './jobops.css';
+import { BulkPreview } from '../ats/AtsWork.jsx'; // "Who will move" before the action (Extra 763)
 
 // ---------------------------------------------------------------------------
 // BULK ACTIONS on selected jobs (ATS review #2 §21; change list 2026-10-03 §5
@@ -42,6 +43,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
   const assign = kind !== 'priority';
   const role = kind === 'assign-tl' ? 'TL' : 'RECRUITER';
   const lower = kind === 'assign-tl' ? 'team lead' : 'recruiter';
+  const [previewing, setPreviewing] = useState(false);
   const [bench, setBench] = useState(null); // { departments, jobs, people }
   const [dept, setDept] = useState('');
   const [userId, setUserId] = useState('');
@@ -174,13 +176,15 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
   }
 
   return (
+    <>
+      {previewing && <BulkPreview body={{ kind: kind === 'priority' ? 'requirement-priority' : 'requirement-assign', ids: items.map((x) => x.id), userId: several ? userIds[0] : userId, priority }} onCancel={() => setPreviewing(false)} onConfirm={() => { setPreviewing(false); run(); }} />}
     <Modal
       title={`${TITLES[kind]} — ${one ? (items[0].reqCode || items[0].title) : plural(items.length, 'requirement', 'requirements')}`}
       onClose={onClose}
       footer={(
         <>
           <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="button" className="btn btn-primary" disabled={!ready || busy} onClick={run}>
+          <button type="button" className="btn btn-primary" disabled={!ready || busy} onClick={() => setPreviewing(true)}>
             {busy ? 'Working…' : `${TITLES[kind]}${!one && jobs.length ? ` to ${plural(jobs.length, 'requirement', 'requirements')}` : ''}`}
           </button>
         </>
@@ -273,5 +277,6 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
         {error && <div className="error-text">{error}</div>}
       </div>
     </Modal>
+    </>
   );
 }

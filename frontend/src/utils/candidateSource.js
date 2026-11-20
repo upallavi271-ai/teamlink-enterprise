@@ -12,7 +12,7 @@ export const OTHER_SOURCE = 'Other';
 
 export const SOURCES = [
   'Job Portal', 'Website', 'Naukri', 'Shine', 'Indeed', 'LinkedIn', 'Referral', 'Campus', 'Walk-in',
-  'Agency / partner', 'Social media', "Recruiter's own search", IMPORTED_SOURCE, OTHER_SOURCE,
+  'Agency / partner', 'Social media', "Recruiter's own search", 'BDE', IMPORTED_SOURCE, OTHER_SOURCE,
 ];
 // What a person can CHOOSE when adding someone (the "unknown origin" bucket is only what old imports left).
 export const PICK_SOURCES = SOURCES.filter((s) => s !== IMPORTED_SOURCE);

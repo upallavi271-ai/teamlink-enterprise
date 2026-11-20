@@ -44,6 +44,7 @@ import EmployeeDocuments from '../components/EmployeeDocuments.jsx';
 // Seat wording for the Position picker (free / held by / leaving) and the "after someone leaves" worklist.
 import { seatOptionLabel, seatSummary } from '../components/seatLabel.js';
 import AfterExit from '../components/employees/AfterExit.jsx';
+import { ReassignWork } from '../components/ats/AtsWork.jsx'; // one screen to hand a leaver's ATS work to someone
 import { ExitProfileRow, ExitChip } from './hrms/ExitCenter.jsx';
 import MarkLeftButton from '../components/employees/MarkLeft.jsx';
 import RejoinButton, { RejoinInfo } from '../components/employees/Rejoin.jsx';
@@ -678,6 +679,7 @@ export default function Employees() {
 
       {/* Someone left: what still points at them (clients, jobs, team members). Shows nothing when all is handed over. */}
       <AfterExit canEdit={!!caps.edit} onChanged={load} />
+      <ReassignWork />
 
       {credentials && (
         <div className="card section" style={{ borderColor: credentials.sent ? undefined : 'var(--warn)' }}>

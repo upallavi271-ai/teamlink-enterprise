@@ -106,7 +106,9 @@ router.param('id', async (req, res, next, id) => {
     } catch { /* aliases are a courtesy */ }
   }
   if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
-  if (!matches(requirement, requirementWhere(req.user)) && !(await deskBdeOwnsJob(req.user, requirement))) return res.status(403).json(OUT_OF_SCOPE);
+  // somebody standing in for the BDE TL (Extra 761, approvals delegated) may decide a change to a live requirement
+  const standingIn = req.method === 'POST' && /\/review\/(approve|undo)$/.test(req.path) && await require('../utils/atsWork/people').standsInForBdeTl(req.user).catch(() => false); // eslint-disable-line global-require
+  if (!matches(requirement, requirementWhere(req.user)) && !(await deskBdeOwnsJob(req.user, requirement)) && !standingIn) return res.status(403).json(OUT_OF_SCOPE);
   req.requirement = requirement;
   return next();
 });
@@ -2831,6 +2833,8 @@ router.post('/:id/postings/retry', async (req, res) => {
   if (!requirementIsLive(req.requirement.status)) {
     return res.status(400).json({ error: `A requirement at "${requirementStateWords(req.requirement.status)}" is not posted anywhere — reopen it first.` });
   }
+  const waitForRecruiter = await require('../utils/atsWork/allocation').postingBlock(req.requirement); // eslint-disable-line global-require
+  if (waitForRecruiter) return res.status(409).json({ error: waitForRecruiter, code: 'NEEDS_RECRUITER' });
   const result = await autoPost(req.requirement.id, { actorId: req.user.id, actorName: req.user.name, trigger: 'retry', skipSources: true });
   // Every failed / not-yet-posted source's connector, waited for (utils/jobConnectors.js).
   await require('../utils/jobConnectors').retry(req.requirement.id, { actorId: req.user.id, actorName: req.user.name }); // eslint-disable-line global-require
@@ -3588,7 +3592,8 @@ router.get('/:id/review', async (req, res, next) => {
 router.post('/:id/review/:action(approve|undo)', async (req, res, next) => {
   try {
     const roles = [req.user.role, req.user.atsRole].filter(Boolean);
-    if (!(isBdeTlUser(req.user) || roles.some((x) => ['SUPER_ADMIN', 'ADMIN'].includes(x))) || req.viewAs) return res.status(403).json({ error: 'The BDE TL (or an Admin) approves or undoes changes to a live requirement.' });
+    const standIn = !(isBdeTlUser(req.user) || roles.some((x) => ['SUPER_ADMIN', 'ADMIN'].includes(x))) && await require('../utils/atsWork/people').standsInForBdeTl(req.user).catch(() => false); // approvals delegated to this login (Extra 761) // eslint-disable-line global-require
+    if (!(isBdeTlUser(req.user) || standIn || roles.some((x) => ['SUPER_ADMIN', 'ADMIN'].includes(x))) || req.viewAs) return res.status(403).json({ error: 'The BDE TL (or an Admin) approves or undoes changes to a live requirement.' });
     const RR = require('../utils/requirementReview'); // eslint-disable-line global-require
     const out = req.params.action === 'approve' ? await RR.approve(req.params.id, req.user) : await RR.undo(req.params.id, req.user);
     return out.error ? res.status(409).json(out) : res.json(out);
@@ -3826,7 +3831,10 @@ router.post('/:id/assign', requirePerm('ats', 'requirements', 'Requirement Detai
     if (seat) { data.positionId = seat.id; data.positionCode = seat.code; }
   }
 
+  const waitedForRecruiter = await require('../utils/atsWork/allocation').postingBlock(before).catch(() => null); // eslint-disable-line global-require
   const requirement = await prisma.requirement.update({ where: { id: before.id }, data });
+  // a new job that was waiting for its first recruiter before it could be posted: it is posted now
+  if (waitedForRecruiter && (requirement.recruiterId || csv(requirement.recruiterIds).length)) await pushToPortal(requirement, { user: req.user, trigger: 'retry' });
   // WHOSE CANDIDATES NOW (founder 2026-10-26): a candidate with no recruiter yet, or whose recruiter was taken off this requirement,
   // goes to the requirement's main recruiter now (utils/applicationOwner.js). Candidates of recruiters still on the job stay theirs.
   {
@@ -3888,6 +3896,8 @@ async function openUnsigned(r, actor) {
 // when the request comes in), or, when no TL is named yet, the TLs of its department,
 // who find it in their Jobs list to pick up - and then pick the recruiter.
 async function tellTlJobIsOpen(requirement, client, actorId) {
+  // Admin switch "Suggest and auto-assign recruiters when a requirement opens" (OFF by default): the best recruiters get it and the matching runs once.
+  await require('../utils/atsWork/allocation').onOpened(requirement, actorId ? { id: actorId, name: null } : null).catch(() => null); // eslint-disable-line global-require
   if (requirement.internal) return;
   let ids = RT.tlsOf(requirement);
   const jobDepts = RD.departmentsOf(requirement);
@@ -4083,6 +4093,7 @@ router.post('/:id/status', JC.requireJobManage(), requirePerm('ats', 'requiremen
     userId: req.user.id, action: 'Requirement status changed', entity: 'Requirement',
     entityId: requirement.id, fromValue: existing.status, toValue: to,
   });
+  await require('../utils/atsWork/lifecycle').onStatusChange(requirement, existing.status, to, req.user).catch(() => null); // eslint-disable-line global-require
   await pushToPortal(requirement, { user: req.user, trigger: 'status', prevStatus: existing.status });
   // ON HOLD / CLOSED / REOPENED: its pipeline and follow-ups follow (utils/requirementLifecycle.js, ATS audit Q614/Q615)
   const pipeline = await require('../utils/requirementLifecycle').onStatusChange(requirement, existing.status, to, req.user); // eslint-disable-line global-require
@@ -4110,6 +4121,7 @@ router.post('/:id/toggle-status', JC.requireJobManage(), requirePerm('ats', 'req
     userId: req.user.id, action: 'Requirement status toggled', entity: 'Requirement',
     entityId: requirement.id, fromValue: existing.status, toValue: status,
   });
+  await require('../utils/atsWork/lifecycle').onStatusChange(requirement, existing.status, status, req.user).catch(() => null); // eslint-disable-line global-require
   await pushToPortal(requirement, { user: req.user, trigger: 'status', prevStatus: existing.status });
   const pipeline = await require('../utils/requirementLifecycle').onStatusChange(requirement, existing.status, status, req.user); // eslint-disable-line global-require
   res.json({ ...requirement, pipeline });

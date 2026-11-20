@@ -107,7 +107,7 @@ async function pending(user) {
 }
 
 async function decide(user, id, approve, note, open) {
-  if (!mayApprove(user)) return { status: 403, body: { error: 'Only the BDE TL or an Admin approves this.' } };
+  if (!mayApprove(user) && !(await require('./atsWork/people').standsInForBdeTl(user).catch(() => false))) return { status: 403, body: { error: 'Only the BDE TL or an Admin approves this.' } }; // eslint-disable-line global-require
   const q = await prisma.requirementOpenRequest.findUnique({ where: { id }, include: { requirement: { include: { client: true } } } });
   if (!q) return { status: 404, body: { error: 'This request is no longer on file.' } };
   const r = q.requirement;

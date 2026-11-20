@@ -1,3 +1,4 @@
+import { ReassignWork } from '../../components/ats/AtsWork.jsx'; // hand a leaver's work to someone in one screen (round 3)
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api';
@@ -1323,6 +1324,7 @@ export default function Team() {
 
   return (
     <div className="pw-page">
+      {!selfMode && <ReassignWork />}
       <div className="ak-page-head tv4-head">
         <div>
           <h1>{selfMode ? 'My Workload' : 'Team'}</h1>
