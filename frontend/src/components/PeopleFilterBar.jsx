@@ -1,4 +1,4 @@
-import MultiSelect, { csvToList } from './ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
+import Combo from './Combo.jsx';
 import MoreFilters from './ui/MoreFilters.jsx';
 import FilterChips from './FilterChips.jsx';
 import { STATUS_GROUPS, DEFAULT_EMPLOYEE_STATUS, ALL_EMPLOYEE_STATUSES, employeeStatusMatches } from '../hrStatus';
@@ -78,9 +78,6 @@ const isoDay = (v) => {
 };
 const dmy = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
 
-// One value or several ticked ones (a comma list, the checkbox dropdowns): the row's value is one of them.
-export const oneOf = (picked, value) => !picked || String(picked) === String(value ?? '') || csvToList(picked).includes(String(value ?? ''));
-
 // Free-text match for the optional search box (filters.q) and any page extras.
 export function textMatches(value, q) {
   return !q || has(value, q);
@@ -90,10 +87,10 @@ export function peopleMatches(row, f, getEmployee = employeeOfRow, getStatus = s
   const e = getEmployee(row) || {};
   if (f.code && !has(e.employeeCode, f.code)) return false;
   if (f.name && !has(e.name, f.name)) return false;
-  if (f.department && !oneOf(f.department, e.department)) return false;
-  if (f.role && !oneOf(f.role, e.designation)) return false;
-  if (f.empStatus && !csvToList(f.empStatus).some((s) => employeeStatusMatches(s, e.employmentStatus, e.loginStatus ?? e.user?.status))) return false;
-  if (f.status && !oneOf(f.status, getStatus(row))) return false;
+  if (f.department && e.department !== f.department) return false;
+  if (f.role && e.designation !== f.role) return false;
+  if (f.empStatus && !employeeStatusMatches(f.empStatus, e.employmentStatus, e.loginStatus ?? e.user?.status)) return false;
+  if (f.status && getStatus(row) !== f.status) return false;
   if (f.from || f.to) {
     const d = isoDay(getDate(row));
     if (!d) return false;
@@ -179,10 +176,27 @@ export default function PeopleFilterBar({
           <>
             {search && <input type="search" placeholder={`Search ${String(search).replace(/^[A-Z](?![A-Z])/, (c) => c.toLowerCase())}…`} value={filters.q || ''} onChange={(e) => set('q', e.target.value)} aria-label="Search" style={{ minWidth: 200 }} />}
             {people && <input placeholder="Employee name" value={filters.name || ''} onChange={(e) => set('name', e.target.value)} aria-label="Employee name" />}
-            {/* A department is a plain name, or { value, label } when the page shows a count ("HR (3)"). */}
-            {departments && <MultiSelect label="Department" allLabel="All departments" hideZero={false} value={filters.department || ''} onChange={(v) => set('department', v)} options={departments.map((d) => (typeof d === 'string' ? { value: d, label: d } : { value: d.value, label: d.label }))} />}
-            {statuses && <MultiSelect label="Status" allLabel={statusLabel} hideZero={false} value={filters.status || ''} onChange={(v) => set('status', v)} options={statuses.map((s) => ({ value: s, label: s }))} />}
-            {employeeStatus && <MultiSelect label="Employee status" allLabel={statusAllLabel} hideZero={false} title="Employee status: Active = everybody who has not left (including probation and notice period); Exited and Relieved have left" value={filters.empStatus || ''} onChange={(v) => set('empStatus', v)} options={(statusChoices || [...STATUS_GROUPS, ...FINER_STATUSES]).map((st) => ({ value: st, label: st }))} />}
+            {departments && (
+              <Combo value={filters.department || ''} title="Department" onChange={(e) => set('department', e.target.value)}>
+                <option value="">All departments</option>
+                {/* A plain name, or { value, label } when the page shows a count ("HR (3)"). */}
+                {departments.map((d) => (typeof d === 'string'
+                  ? <option key={d}>{d}</option>
+                  : <option key={d.value} value={d.value}>{d.label}</option>))}
+              </Combo>
+            )}
+            {statuses && (
+              <Combo value={filters.status || ''} title="Status" onChange={(e) => set('status', e.target.value)}>
+                <option value="">{statusLabel}</option>
+                {statuses.map((s) => <option key={s}>{s}</option>)}
+              </Combo>
+            )}
+            {employeeStatus && (
+              <Combo value={filters.empStatus || ''} title="Employee status: Active = everybody who has not left (including probation and notice period); Exited and Relieved have left" onChange={(e) => set('empStatus', e.target.value)}>
+                <option value="">{statusAllLabel}</option>
+                {(statusChoices || [...STATUS_GROUPS, ...FINER_STATUSES]).map((st) => <option key={st}>{st}</option>)}
+              </Combo>
+            )}
             {children}
           </>
         )}
@@ -191,7 +205,12 @@ export default function PeopleFilterBar({
         {hasMore ? (
           <>
             {people && <input placeholder="Employee ID" value={filters.code || ''} onChange={(e) => set('code', e.target.value)} aria-label="Employee ID" />}
-            {roles && <MultiSelect label="Role" allLabel="All roles" hideZero={false} value={filters.role || ''} onChange={(v) => set('role', v)} options={roles.map((r) => ({ value: r, label: r }))} />}
+            {roles && (
+              <Combo value={filters.role || ''} title="Role" onChange={(e) => set('role', e.target.value)}>
+                <option value="">All roles</option>
+                {roles.map((r) => <option key={r}>{r}</option>)}
+              </Combo>
+            )}
             {dates && (
               <span className="lf-dates" title={dates}>
                 <span className="lf-dates-lbl">{dates}</span>

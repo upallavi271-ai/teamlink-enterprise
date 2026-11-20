@@ -7,7 +7,7 @@ import {
 } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin, canManageServices } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
-import PeopleFilterBar, { peopleMatches, textMatches, oneOf } from '../../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { peopleMatches, textMatches } from '../../components/PeopleFilterBar.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import AudiencePicker, { DeliverVia, EMPTY_AUDIENCE, audienceReady } from '../../components/AudiencePicker.jsx';
@@ -155,7 +155,7 @@ export default function Surveys({ view, onOpen, onBack }) {
 
   const shown = surveys.filter((s) => textMatches(`${s.title} ${(s.questions || []).join(' ')}`, sf.q)
     && (!sf.department || !(s.departments || []).length || s.departments.includes(sf.department))
-    && oneOf(sf.status, s.status)
+    && (!sf.status || s.status === sf.status)
     && peopleMatches(s, { from: sf.from, to: sf.to }, undefined, undefined, (r) => r.createdAt))
     .sort((SURVEY_SORTS.find(([k]) => k === sort) || SURVEY_SORTS[0])[2]);
   const page = usePaged(shown);

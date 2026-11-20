@@ -3,7 +3,7 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin, canManageDevelopment, canEditDevelopment } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
-import PeopleFilterBar, { peopleMatches, peopleOptions, statusOptions, textMatches, oneOf } from '../../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { peopleMatches, peopleOptions, statusOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import AudiencePicker, { DeliverVia, audienceReady } from '../../components/AudiencePicker.jsx';
@@ -126,7 +126,7 @@ export default function Projects() {
   const personFilters = { ...pf, status: '', empStatus: seesOthers ? pf.empStatus : '' };
   const sameButStatus = { ...personFilters, empStatus: '' };
   const shown = projects
-    .filter((p) => textMatches(p.name, pf.q) && oneOf(pf.status, p.status)
+    .filter((p) => textMatches(p.name, pf.q) && (!pf.status || p.status === pf.status)
       && peopleMatches(p, { from: pf.from, to: pf.to }, undefined, undefined, (r) => r.createdAt))
     .map((p) => ({
       ...p,

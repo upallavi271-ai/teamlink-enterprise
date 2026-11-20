@@ -175,14 +175,10 @@ async function departmentOptions(req, reach) {
 
 // The narrowing an HRMS record list gets from ?department / ?employeeId / self,
 // expressed on its `employee` relation.
-// several values per filter (founder 2026-11-20: checkboxes everywhere): a comma list, OR inside one filter, AND across
-const MPI = require('../utils/multiParam');
-const inOf = (raw) => { const v = MPI.parseMulti(raw); return v.length ? { in: v } : null; };
-const hrMatchAny = (raw, empStatus, loginStatus) => { const v = MPI.parseMulti(raw); return !v.length || v.some((s) => employeeStatusMatches(s, empStatus, loginStatus)); };
 function employeeFilter(req, reach) {
   const and = [];
   if (reach.self) and.push({ employeeId: reach.self });
-  if (inOf(req.query.department)) and.push({ employee: { department: inOf(req.query.department) } });
+  if (str(req.query.department)) and.push({ employee: { department: str(req.query.department) } });
   if (str(req.query.employeeId)) and.push({ employeeId: str(req.query.employeeId) });
   return and;
 }
@@ -382,8 +378,8 @@ async function leaveWhere(req, reach, period) {
   // The Leave screens' own filter bar, so an export is exactly the rows on
   // screen. Each one only narrows.
   const q = req.query || {};
-  if (inOf(q.type)) and.push({ type: inOf(q.type) });
-  if (inOf(q.status)) and.push({ status: inOf(q.status) });
+  if (str(q.type)) and.push({ type: str(q.type) });
+  if (str(q.status)) and.push({ status: str(q.status) });
   if (str(q.code)) and.push({ employee: { employeeCode: { contains: str(q.code) } } });
   if (str(q.name)) and.push({ employee: { name: { contains: str(q.name) } } });
   // One-sided dates from the filter bar (overlap, like the screen).
@@ -410,9 +406,10 @@ async function leaveRequests(req, reach, period) {
   });
   // The HR status (Active / Notice Period / Exit …) is derived, so it is
   // matched here, on the server, over the full scoped set.
-  const roles = MPI.parseMulti(req.query.role);
-  return list.filter((l) => hrMatchAny(req.query.empStatus, l.employee?.employmentStatus, l.employee?.user?.status)
-    && (!roles.length || roles.includes(l.employee?.designation)));
+  const hr = str(req.query.empStatus);
+  const role = str(req.query.role);
+  return list.filter((l) => (!hr || employeeStatusMatches(hr, l.employee?.employmentStatus, l.employee?.user?.status))
+    && (!role || l.employee?.designation === role));
 }
 
 async function leaveInsights(req, reach, period) {
@@ -485,7 +482,7 @@ async function regularizationExport(req, reach, period) {
   // The Regularization tab's own filter bar — each one only narrows.
   const q = req.query || {};
   if (ISO_DAY.test(str(q.date))) and.push({ date: str(q.date) });
-  if (inOf(q.status)) and.push({ status: inOf(q.status) });
+  if (str(q.status)) and.push({ status: str(q.status) });
   if (str(q.code)) and.push({ employee: { employeeCode: { contains: str(q.code) } } });
   if (str(q.name)) and.push({ employee: { name: { contains: str(q.name) } } });
   const all = await prisma.attendanceRegularization.findMany({
@@ -493,7 +490,8 @@ async function regularizationExport(req, reach, period) {
     include: { employee: { select: { employeeCode: true, name: true, department: true, employmentStatus: true } } },
     orderBy: { date: 'desc' },
   });
-  const list = all.filter((r) => hrMatchAny(q.empStatus, r.employee?.employmentStatus));
+  const hr = str(q.empStatus);
+  const list = hr ? all.filter((r) => employeeStatusMatches(hr, r.employee?.employmentStatus)) : all;
   return {
     headers: ['Employee ID', 'Name', 'Department', 'Date', 'Requested Check-In', 'Requested Check-Out', 'Reason', 'Status', 'Requested On', 'Decided On'],
     rows: list.map((r) => [r.employee?.employeeCode, r.employee?.name, r.employee?.department, r.date, r.requestedCheckIn, r.requestedCheckOut, r.reason, r.status, ymd(r.createdAt), ymd(r.decidedAt)]),

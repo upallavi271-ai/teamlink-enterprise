@@ -420,10 +420,8 @@ function gstBothWays(invoicesInPeriod, expensesInPeriod) {
 
 function applyBillFilters(list, q) {
   let out = list;
-  const cats = listParam(q.category).filter((x) => x !== 'All');
-  const vens = listParam(q.vendor).filter((x) => x !== 'All');
-  if (cats.length) out = out.filter((r) => cats.includes(r.category));
-  if (vens.length) out = out.filter((r) => vens.includes(vendorKeyOf(r)));
+  if (q.category && q.category !== 'All') out = out.filter((r) => r.category === q.category);
+  if (q.vendor && q.vendor !== 'All') out = out.filter((r) => vendorKeyOf(r) === q.vendor);
   if (q.month && q.month !== 'All') out = out.filter((r) => r.month === q.month);
   if (q.status && q.status !== 'All') out = out.filter((r) => r.statusLabel === q.status);
   if (q.mode && q.mode !== 'All') out = out.filter((r) => (r.paymentMode || '') === q.mode);
@@ -809,11 +807,9 @@ router.get('/bills', async (req, res) => {
 //                                            is actually paid to the vendor
 // Paid and Pending are sums of `net`, so Paid + Pending = the Total chip.
 // ===========================================================================
-// several values: "a|b" (the old form) or a comma list from the checkbox dropdowns (founder 2026-11-20; a comma followed by a space stays
-// inside one value, and %2C is a comma inside a value - utils/multiParam.js)
 const listParam = (v) => {
   if (v == null || v === '') return [];
-  const arr = (Array.isArray(v) ? v : [v]).flatMap((x) => String(x).split('|')).flatMap((x) => require('../utils/multiParam').parseMulti(x)); // eslint-disable-line global-require
+  const arr = Array.isArray(v) ? v : String(v).split('|');
   return [...new Set(arr.map((s) => String(s).trim()).filter(Boolean))];
 };
 const vendorLabel = (r) => String(r.vendor || '').trim();

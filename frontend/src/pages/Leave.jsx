@@ -9,7 +9,6 @@ import { ApprovalChainLine } from '../components/ApprovalChain.jsx';
 import LeaveRequestScreen from './leave/LeaveRequestScreen.jsx'; // the ONE leave screen: the leave, the chain, who approved and when, Approve / Reject
 import { isAdmin, isHR as hasHrmsAdmin, can } from '../permissions';
 import Combo from '../components/Combo.jsx';
-import MultiSelect, { csvToList } from '../components/ats/MultiSelect.jsx'; // checkboxes: several departments / statuses / types at once (founder 2026-11-20)
 import EmployeeStatusTag from '../components/EmployeeStatusTag.jsx';
 import { hrStatusOf, employeeStatusMatches, EMPLOYEE_STATUS_CHOICES, ALL_EMPLOYEE_STATUSES, DEFAULT_EMPLOYEE_STATUS } from '../hrStatus';
 import ExportMenu from '../components/ExportMenu.jsx';
@@ -359,14 +358,14 @@ function leaveMatches(r, f, { skipRequestFields = false } = {}) {
   const e = r.employee || r;
   if (f.code && !String(e.employeeCode || '').toLowerCase().includes(f.code.trim().toLowerCase())) return false;
   if (f.name && !String(e.name || '').toLowerCase().includes(f.name.trim().toLowerCase())) return false;
-  if (f.department && !csvToList(f.department).includes(e.department)) return false;
+  if (f.department && e.department !== f.department) return false;
   // The person's status: Active / Exited / Relieved (hrStatus.js groups), or Notice Period / Inactive / Suspended.
   // WHOLE HISTORY (founder 2026-11-20): a typed name or ID looks at everybody - people who have left too - unless a status was picked on purpose
   const searching = !!(f.code || f.name) && f.empStatus === DEFAULT_EMPLOYEE_STATUS;
-  if (f.empStatus && !searching && !csvToList(f.empStatus).some((s) => employeeStatusMatches(s, e.employmentStatus))) return false;
+  if (f.empStatus && !searching && !employeeStatusMatches(f.empStatus, e.employmentStatus)) return false;
   if (skipRequestFields) return true;
-  if (f.type && !csvToList(f.type).includes(r.type)) return false;
-  if (f.status && !csvToList(f.status).includes(r.status)) return false;
+  if (f.type && r.type !== f.type) return false;
+  if (f.status && r.status !== f.status) return false;
   const start = r.fromDate || '';
   const end = r.toDate || r.fromDate || '';
   if (f.from && end && end < f.from) return false;
@@ -382,15 +381,27 @@ function LeaveFilterBar({ filters, setFilters, departments, types, children, req
     <div className="filter-row" style={{ marginTop: 14, marginBottom: 12 }}>
       <input placeholder="Employee ID" value={filters.code} onChange={(e) => set('code', e.target.value)} />
       <input placeholder="Employee name" value={filters.name} onChange={(e) => set('name', e.target.value)} />
-      <MultiSelect label="Department" allLabel="All departments" value={filters.department} onChange={(v) => set('department', v)} options={departments.map((d) => ({ value: d, label: d }))} />
-      <MultiSelect label="Employee status" allLabel={ALL_EMPLOYEE_STATUSES} title="Employee status: Active = everybody who has not left (including probation and notice period)" value={filters.empStatus} onChange={(v) => set('empStatus', v)} options={EMPLOYEE_STATUS_CHOICES.map((s) => ({ value: s, label: s }))} />
+      <Combo value={filters.department} onChange={(e) => set('department', e.target.value)}>
+        <option value="">All departments</option>
+        {departments.map((d) => <option key={d}>{d}</option>)}
+      </Combo>
+      <Combo value={filters.empStatus} title="Employee status: Active = everybody who has not left (including probation and notice period)" onChange={(e) => set('empStatus', e.target.value)}>
+        <option value="">{ALL_EMPLOYEE_STATUSES}</option>
+        {EMPLOYEE_STATUS_CHOICES.map((s) => <option key={s}>{s}</option>)}
+      </Combo>
       {requestFields && (
         <>
-          {/* only the leave types in use: a paused one is not offered (founder 2026-11-14) */}
-          <MultiSelect label="Leave type" allLabel="All leave types" value={filters.type} onChange={(v) => set('type', v)} options={types.filter((t) => t.active !== false).map((t) => ({ value: t.name, label: t.code ? `${t.name} (${t.code})` : t.name }))} />
+          <Combo value={filters.type} onChange={(e) => set('type', e.target.value)}>
+            <option value="">All leave types</option>
+            {/* only the leave types in use: a paused one is not offered (founder 2026-11-14) */}
+            {types.filter((t) => t.active !== false).map((t) => <option key={t.id || t.name} value={t.name}>{t.code ? `${t.name} (${t.code})` : t.name}</option>)}
+          </Combo>
           <input type="date" aria-label="From" title="From" value={filters.from} onChange={(e) => set('from', e.target.value)} />
           <input type="date" aria-label="To" title="To" value={filters.to} onChange={(e) => set('to', e.target.value)} />
-          <MultiSelect label="Status" allLabel="All statuses" value={filters.status} onChange={(v) => set('status', v)} options={LEAVE_STATUSES.map((s) => ({ value: s, label: s }))} />
+          <Combo value={filters.status} onChange={(e) => set('status', e.target.value)}>
+            <option value="">All statuses</option>
+            {LEAVE_STATUSES.map((s) => <option key={s}>{s}</option>)}
+          </Combo>
         </>
       )}
       {on && <button className="btn btn-sm" onClick={() => setFilters(opening)}>Clear</button>}

@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin, canManageServices } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
 import { ApprovalChainModal } from '../../components/ApprovalChain.jsx';
-import PeopleFilterBar, { peopleMatches, textMatches, oneOf } from '../../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { peopleMatches, textMatches } from '../../components/PeopleFilterBar.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
@@ -118,7 +118,7 @@ export default function Documents() {
 
   const shown = documents.filter((d) => textMatches(`${d.title} ${d.category || ''} ${d.target || ''} ${d.uploadedBy || ''}`, df.q)
     && (!df.category || d.category === df.category)
-    && oneOf(df.status, docStatusOf(d))
+    && (!df.status || docStatusOf(d) === df.status)
     && (!df.mandatory || (df.mandatory === 'Mandatory' ? !!d.mandatory : !d.mandatory))
     && (!df.target || d.target === df.target)
     && peopleMatches(d, { from: df.from, to: df.to }, undefined, undefined, docDateOf))

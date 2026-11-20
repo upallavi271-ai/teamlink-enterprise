@@ -49,7 +49,7 @@ import ScrollSync from '../components/accounts/ScrollSync.jsx';
 import {
   NONE, APPLY_TO, ALL_PERIOD, periodOn, STATUS_OPTS, statusLabel, GST_OPTS, GST_HISTORY,
   BLANK_FILTERS, normFilters, normPeriod, passes, facetCounts, resolveClients,
-  DUE_OPTS, TDS_STATUS_OPTS, GST_TYPE_OPTS, rateLabel, picks, pickedOne, fromPicks,
+  DUE_OPTS, TDS_STATUS_OPTS, GST_TYPE_OPTS, rateLabel,
 } from './invoices/invFilters';
 import AppOmniPanel from '../components/omni/AppOmniPanel.jsx'; // Omni-Channel: the shared template library + payment follow-up campaigns of Accounts (inside this screen)
 import AppCampaignModal from '../components/omni/library/AppCampaignModal.jsx';
@@ -394,9 +394,9 @@ export default function Invoices() {
     .map((k) => ({ value: k, count: m.get(k) || 0 })).filter((o) => keep(o.count, picked === o.value));
   const gstRateList = rateList(fc.gstRate, filters.gstRate);
   const tdsRateList = rateList(fc.tdsRate, filters.tdsRate);
-  const gstTypeList = GST_TYPE_OPTS.map((o) => ({ ...o, count: fc.gstType.get(o.value) || 0 })).filter((o) => keep(o.count, pickedOne(filters.gstType, o.value)));
-  const tdsStatusList = TDS_STATUS_OPTS.map((v) => ({ value: v, label: v, count: fc.tdsStatus.get(v) || 0 })).filter((o) => keep(o.count, pickedOne(filters.tdsStatus, o.value)));
-  const dueList = DUE_OPTS.map((o) => ({ ...o, count: fc.due.get(o.value) || 0 })).filter((o) => keep(o.count, pickedOne(filters.due, o.value)));
+  const gstTypeList = GST_TYPE_OPTS.map((o) => ({ ...o, count: fc.gstType.get(o.value) || 0 })).filter((o) => keep(o.count, filters.gstType === o.value));
+  const tdsStatusList = TDS_STATUS_OPTS.map((v) => ({ value: v, count: fc.tdsStatus.get(v) || 0 })).filter((o) => keep(o.count, filters.tdsStatus === o.value));
+  const dueList = DUE_OPTS.map((o) => ({ ...o, count: fc.due.get(o.value) || 0 })).filter((o) => keep(o.count, filters.due === o.value));
 
   // Every filter except the age chips — the chips count what these leave.
   // Department / Section / Employee match on the invoice's attributed seat
@@ -588,13 +588,13 @@ export default function Invoices() {
     filters.recs.length > 0 && { t: 'Recruiter', v: many(filters.recs, recName), fix: () => setOne('recs', []) },
     filters.rec !== ALL && { t: 'Employee', v: (personByKey(hier, filters.rec) || {}).name || filters.rec, fix: () => setF('rec', ALL) },
     filters.gstin !== ALL && { t: 'GST applicable', v: gstWord(filters.gstin), fix: () => setOne('gstin', ALL) },
-    filters.gstType !== ALL && { t: 'GST type', v: picks(filters.gstType).map((x) => (GST_TYPE_OPTS.find((o) => o.value === x) || {}).label || x).join(', '), fix: () => setOne('gstType', ALL) },
+    filters.gstType !== ALL && { t: 'GST type', v: (GST_TYPE_OPTS.find((o) => o.value === filters.gstType) || {}).label || filters.gstType, fix: () => setOne('gstType', ALL) },
     filters.gstRate !== ALL && { t: 'GST rate', v: rateLabel(filters.gstRate, 'No GST'), fix: () => setOne('gstRate', ALL) },
     filters.tds !== ALL && { t: 'TDS applicable', v: filters.tds, fix: () => setOne('tds', ALL) },
     filters.tdsRate !== ALL && { t: 'TDS rate', v: rateLabel(filters.tdsRate, 'No TDS'), fix: () => setOne('tdsRate', ALL) },
-    filters.tdsStatus !== ALL && { t: 'TDS status', v: picks(filters.tdsStatus).join(', '), fix: () => setOne('tdsStatus', ALL) },
-    filters.due !== ALL && { t: 'Due date', v: picks(filters.due).map((x) => (DUE_OPTS.find((o) => o.value === x) || {}).label || x).join(', '), fix: () => setOne('due', ALL) },
-    filters.status !== ALL && { t: 'Status', v: picks(filters.status).map(statusLabel).join(', '), fix: () => setOne('status', ALL) },
+    filters.tdsStatus !== ALL && { t: 'TDS status', v: filters.tdsStatus, fix: () => setOne('tdsStatus', ALL) },
+    filters.due !== ALL && { t: 'Due date', v: (DUE_OPTS.find((o) => o.value === filters.due) || {}).label || filters.due, fix: () => setOne('due', ALL) },
+    filters.status !== ALL && { t: 'Status', v: statusLabel(filters.status), fix: () => setOne('status', ALL) },
     age !== 'All' && { t: 'Age', v: age, fix: () => setAge('All') },
   ].filter(Boolean);
   const resetAll = () => { setFilters(BLANK_FILTERS); setAge('All'); setPeriod(ALL_PERIOD); };
@@ -923,7 +923,10 @@ export default function Invoices() {
             )}
             {showAll && (
               <Field label="GST type" count={gstTypeList.length} htmlFor="invf-gsttype">
-                <MultiPick id="invf-gsttype" value={picks(filters.gstType)} onChange={(v) => setOne('gstType', fromPicks(v))} options={gstTypeList} allLabel="All" noun="GST type" />
+                <Combo id="invf-gsttype" value={filters.gstType} onChange={(e) => setOne('gstType', e.target.value || ALL)}>
+                  <option value="All">All</option>
+                  {gstTypeList.map((o) => <option key={o.value} value={o.value}>{`${o.label} (${o.count})`}</option>)}
+                </Combo>
               </Field>
             )}
             {showAll && (
@@ -952,18 +955,24 @@ export default function Invoices() {
             )}
             {showAll && (
               <Field label="TDS status" count={tdsStatusList.length} htmlFor="invf-tdsst">
-                <MultiPick id="invf-tdsst" value={picks(filters.tdsStatus)} onChange={(v) => setOne('tdsStatus', fromPicks(v))} options={tdsStatusList} allLabel="All" noun="TDS status" />
+                <Combo id="invf-tdsst" value={filters.tdsStatus} onChange={(e) => setOne('tdsStatus', e.target.value || ALL)}>
+                  <option value="All">All</option>
+                  {tdsStatusList.map((o) => <option key={o.value} value={o.value}>{`${o.value} (${o.count})`}</option>)}
+                </Combo>
               </Field>
             )}
             {showAll && (
               <Field label="Due date" count={dueList.length} htmlFor="invf-due">
-                <MultiPick id="invf-due" value={picks(filters.due)} onChange={(v) => setOne('due', fromPicks(v))} options={dueList} allLabel="All" noun="due date" />
+                <Combo id="invf-due" value={filters.due} onChange={(e) => setOne('due', e.target.value || ALL)}>
+                  <option value="All">All</option>
+                  {dueList.map((o) => <option key={o.value} value={o.value}>{`${o.label} (${o.count})`}</option>)}
+                </Combo>
               </Field>
             )}
             <Field label="Status" htmlFor="invf-status">
-              <span title="Settled = paid in full and the TDS certificate is in hand (or there is no TDS)">
-                <MultiPick id="invf-status" value={picks(filters.status)} onChange={(v) => setOne('status', fromPicks(v))} options={STATUS_OPTS.slice(1).map((o) => ({ value: o.value, label: o.label, count: fc.status.get(o.value) || 0 }))} allLabel="All" noun="status" />
-              </span>
+              <Combo id="invf-status" title="Settled = paid in full and the TDS certificate is in hand (or there is no TDS)" value={filters.status} onChange={(e) => setOne('status', e.target.value || ALL)}>
+                {STATUS_OPTS.map((o) => <option key={o.value} value={o.value}>{o.value === ALL ? 'All' : `${o.label} (${fc.status.get(o.value) || 0})`}</option>)}
+              </Combo>
             </Field>
             <Field label="Search anything" className="invf-search" htmlFor="invf-q">
               <input

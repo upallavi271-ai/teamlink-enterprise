@@ -214,19 +214,15 @@ async function exportRows(ctx, { employeeIds, filters }) {
   });
   const f = filters || {};
   const q = lower(f.q);
-  // several values per filter (founder 2026-11-20: checkboxes everywhere): comma lists, OR inside one filter, AND across
-  const MP = require('../utils/multiParam'); // eslint-disable-line global-require
-  const want = (k) => MP.parseMulti(f[k]);
-  const dept = want('dept'); const desig = want('designation'); const role = want('role'); const status = want('status'); const empSt = want('employmentStatus'); const login = want('login');
   const rows = employees.filter((e) => {
     const loginStatus = e.user ? (e.user.status || 'Active') : 'No login';
     if (q && !`${e.name} ${e.employeeCode} ${e.email || ''}`.toLowerCase().includes(q)) return false;
-    if (dept.length && !dept.includes(e.department)) return false;
-    if (desig.length && !desig.includes(e.designation)) return false;
-    if (role.length && !role.includes((e.user && e.user.role) || '')) return false;
-    if (status.length && !status.some((s) => (s === 'On Probation' ? e.employmentStatus === 'On Probation' : s === 'Rejoined' ? !!e.rejoined : hrStatusOf(e.employmentStatus || 'Active', loginStatus) === s))) return false;
-    if (empSt.length && !empSt.includes(e.employmentStatus || 'Active')) return false;
-    if (login.length && !login.includes(loginStatus)) return false;
+    if (f.dept && e.department !== f.dept) return false;
+    if (f.designation && e.designation !== f.designation) return false;
+    if (f.role && ((e.user && e.user.role) || '') !== f.role) return false;
+    if (f.status && hrStatusOf(e.employmentStatus || 'Active', loginStatus) !== f.status) return false;
+    if (f.employmentStatus && (e.employmentStatus || 'Active') !== f.employmentStatus) return false;
+    if (f.login && loginStatus !== f.login) return false;
     return true;
   });
   return rows.map((e) => {
