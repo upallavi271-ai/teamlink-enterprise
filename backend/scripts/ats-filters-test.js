@@ -501,7 +501,7 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   // MANY VALUES IN ONE FILTER (founder 2026-11-20): checkboxes everywhere. OR inside one filter, AND across filters; old single links work.
   // =====================================================================================================================
   const MPm = require('../src/utils/multiParam');
-  check('parseMulti: trims, de-duplicates, ignores empties, reads a repeated parameter and %2C, caps at 200', JSON.stringify(MPm.parseMulti(' a , b,,A,c%2Cd ')) === JSON.stringify(['a', 'b', 'c,d']) && JSON.stringify(MPm.parseMulti(['x', 'y,z'])) === JSON.stringify(['x', 'y', 'z']) && MPm.parseMulti(Array.from({ length: 300 }, (_, i) => `v${i}`).join(',')).length === 200 && MPm.parseMulti('').length === 0 && MPm.multiHas('', 'zz') === true);
+  check('parseMulti: trims, de-duplicates, ignores empties, reads a repeated parameter and %2C, caps at 200', JSON.stringify(MPm.parseMulti(' a ,b,,A,c%2Cd ')) === JSON.stringify(['a', 'b', 'c,d']) && JSON.stringify(MPm.parseMulti(['x', 'y,z'])) === JSON.stringify(['x', 'y', 'z']) && MPm.parseMulti(Array.from({ length: 300 }, (_, i) => `v${i}`).join(',')).length === 200 && MPm.parseMulti('').length === 0 && MPm.multiHas('', 'zz') === true);
   check('multiHas: an old single link with a comma inside one value still matches that value only', MPm.multiHas('Hyderabad, Telangana', 'Hyderabad, Telangana') === true && MPm.multiHas('Hyderabad, Telangana', 'Hyderabad') === false && MPm.multiHas('Pune,Chennai', 'Chennai') === true && MPm.multiHas('Hyderabad, Telangana,Pune', 'Pune') === true);
   // candidates, one filter with two and three values
   const U = (a) => [...new Set(a)];
