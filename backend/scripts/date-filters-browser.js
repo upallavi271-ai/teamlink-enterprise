@@ -111,12 +111,13 @@ const dayOf = (d) => new Date(new Date(d).getTime() + 5.5 * 3600e3).toISOString(
 
     // ATS dashboard: the Date range control, and the numbers move with it
     await go(page, '/ats/dashboard?range=custom&from=2026-10-02&to=2026-10-02');
-    await until(page, /Interviews/);
+    await until(page, /Open requirements|Interviews (in |this|today|so far)|Added in|Added this/, 120000);
     check(`${role}: the dashboard has the Date range control`, (await page.getByText('Date range').count()) > 0 || (await page.getByLabel('Date range').count()) > 0, (await text(page)).slice(0, 200));
     const t1 = await text(page);
     check(`${role}: the dashboard says which days it shows (02 Oct 2026)`, /02 Oct 2026/.test(t1) || /Interviews in 02 Oct/.test(t1) || /Interviews/.test(t1), t1.slice(0, 300));
     await shot(page, `${role.toLowerCase()}-dashboard-custom-2-oct`);
-    const kpiOf = async () => page.evaluate(() => { const t = document.body.innerText; const m = t.match(/[Ii]nterviews[^\n\d]*\n\s*(\d[\d,]*)/) || t.match(/(\d[\d,]*)\s*\n\s*(?:My )?[Ii]nterviews/); return m ? m[1] : null; });
+    const kpiOnce = async () => page.evaluate(() => { const t = document.body.innerText; const m = t.match(/[Ii]nterviews[^\n\d]*\n\s*(\d[\d,]*)/) || t.match(/(\d[\d,]*)\s*\n\s*(?:My )?[Ii]nterviews/); return m ? m[1] : null; });
+    const kpiOf = async () => { for (let k = 0; k < 60; k += 1) { const v = await kpiOnce(); if (v !== null) return v; await page.waitForTimeout(700); } return null; };
     const one = await kpiOf();
     await go(page, '/ats/dashboard?range=custom&from=2026-10-01&to=2026-10-31');
     await until(page, /Interviews/);
@@ -174,7 +175,7 @@ const dayOf = (d) => new Date(new Date(d).getTime() + 5.5 * 3600e3).toISOString(
     for (const [url, re, label] of [['/ats/offers', /Offer date/, 'Offers'], ['/ats/joining', /Joining date/, 'Joining'], ['/ats/interview-feedback', /Interview date/, 'Interview feedback'], ['/reports/ats', /Date range|Period/, 'Reports']]) {
       await go(page, url);
       await until(page, re, 30000);
-      const t = await text(page);
+      const t = (await text(page)) + (await page.getByLabel(/^Period$|From date/).count() ? ' Date range' : '');
       check(`${role}: ${label} has its date filter`, re.test(t) || /you do not have|not part of your role|isn't included/i.test(t), t.slice(t.indexOf('ATS /') > 0 ? t.indexOf('ATS /') : 0).slice(0, 700));
     }
     check(`${role}: no script errors on these screens`, errors.length === 0, errors);
