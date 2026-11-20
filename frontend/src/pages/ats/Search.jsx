@@ -63,6 +63,22 @@ export default function Search() {
   const facets = (data && data.facets) || {};
   const config = useMemo(() => configOf(viewer, owners, facets), [viewer.pay, viewer.limited, owners, data]); // eslint-disable-line react-hooks/exhaustive-deps
   const filterKey = JSON.stringify(xf.values);
+  // the clear counts of Interviews, offers & joinings (?ev=offer:accepted,joining:dropped ...): clicking a number shows only those
+  const evParam = params.get('ev') || '';
+  const evOn = evParam ? evParam.split(',') : [];
+  const toggleEv = (key) => {
+    const next = new URLSearchParams(params);
+    const set = new Set(evOn);
+    if (set.has(key)) set.delete(key); else set.add(key);
+    if (set.size) next.set('ev', [...set].join(',')); else next.delete('ev');
+    setParams(next);
+  };
+  const toggleStatus = (key) => {
+    const cur = String(xf.values.status || '').split(',').filter(Boolean);
+    const set = new Set(cur);
+    if (set.has(key)) set.delete(key); else set.add(key);
+    xf.set({ ...xf.values, status: [...set].join(',') || undefined });
+  };
   const hasFilter = Object.keys(xf.values).length > 0;
 
   useEffect(() => { setQ(urlQ); }, [urlQ]);
@@ -70,19 +86,19 @@ export default function Search() {
     if (urlQ.trim().length < 2 && !hasFilter) { setData(null); setError(''); return undefined; }
     const c = new AbortController();
     setBusy(true); setError(''); setExtra({});
-    api.get('/ats/history/search', { params: { q: urlQ, ...xf.values }, signal: c.signal })
+    api.get('/ats/history/search', { params: { q: urlQ, ...xf.values, ev: evParam || undefined }, signal: c.signal })
       .then((r) => { setData(r.data); setBusy(false); setActive(-1); })
       .catch((e) => {
         if (c.signal.aborted || e.code === 'ERR_CANCELED') return;
         setData(null); setError(e.response?.data?.error || 'Search failed: the server did not answer.'); setBusy(false);
       });
     return () => c.abort();
-  }, [urlQ, filterKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [urlQ, filterKey, evParam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Show more": the next page of one group (nothing is cut silently)
   const showMore = (g) => {
     const loaded = g.rows.length + ((extra[g.id] && extra[g.id].rows.length) || 0);
-    api.get('/ats/history/search', { params: { q: urlQ, ...xf.values, group: g.id, offset: loaded, limit: 24 } })
+    api.get('/ats/history/search', { params: { q: urlQ, ...xf.values, ev: evParam || undefined, group: g.id, offset: loaded, limit: 24 } })
       .then((r) => {
         const got = (r.data.groups || [])[0];
         if (got) setExtra((cur) => ({ ...cur, [g.id]: { rows: [...((cur[g.id] && cur[g.id].rows) || []), ...got.rows], more: got.more } }));
@@ -116,7 +132,7 @@ export default function Search() {
     const el = document.getElementById(`srp-opt-${active}`);
     if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
   }, [active]);
-  const exportParams = { q: urlQ, ...xf.values };
+  const exportParams = { q: urlQ, ...xf.values, ev: evParam || undefined };
   return (
     <div className="srp">
       <div className="page-head">
@@ -160,6 +176,29 @@ export default function Search() {
         ? <div className="small-muted">Nothing in your scope matches{urlQ ? ` “${urlQ}”` : ' these filters'}.</div>
         : (
           <>
+            {shown.filter((g) => g.breakdown && g.breakdown.some((b) => b.count > 0 || b.on)).map((g) => (
+              <div key={`b-${g.id}`} className="srp-break" data-testid={`breakdown-${g.id}`}>
+                <b className="srp-break-t">{g.title}</b>
+                {(g.id === 'events' ? [['interview', 'Interviews'], ['offer', 'Offers'], ['joining', 'Joinings']] : [['', '']]).map(([kind, word]) => {
+                  const items = g.breakdown.filter((b) => (g.id === 'events' ? b.kind === kind : true));
+                  if (!items.some((b) => b.count > 0 || b.on)) return null;
+                  return (
+                    <span key={kind || 'all'} className="srp-break-g">
+                      {word && <span className="srp-break-k">{word}:</span>}
+                      {items.map((b) => {
+                        const on = g.id === 'events' ? evOn.includes(b.key) : String(xf.values.status || '').split(',').includes(b.key);
+                        return (
+                          <button key={b.key} type="button" className={`srp-chip${on ? ' on' : ''}${/dropped|declined/.test(b.key) ? ' bad' : /joined|accepted/.test(b.key) ? ' good' : ''}`} aria-pressed={on} disabled={!b.count && !on} onClick={() => (g.id === 'events' ? toggleEv(b.key) : toggleStatus(b.key))} title={on ? 'Show all again' : `Show only: ${b.label}`}>
+                            <b>{fmtN(b.count)}</b> {b.label}
+                          </button>
+                        );
+                      })}
+                    </span>
+                  );
+                })}
+                {(g.id === 'events' ? evOn.length > 0 : !!xf.values.status) && <button type="button" className="link-btn" onClick={() => (g.id === 'events' ? (() => { const next = new URLSearchParams(params); next.delete('ev'); setParams(next); })() : xf.set({ ...xf.values, status: undefined }))}>Show all</button>}
+              </div>
+            ))}
             <div className="srp-list" role="listbox" data-testid="results-list">
               <GroupRows groups={shown} active={active} idPrefix="srp-opt" onOpen={open} onHover={setActive} />
             </div>

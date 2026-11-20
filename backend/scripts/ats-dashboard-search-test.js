@@ -221,6 +221,21 @@ const flat = (body) => (body.groups || []).flatMap((g) => g.rows.map((r) => ({ .
     check('an offer is found by candidate name and opens its candidate History at the offer', ev2 && ev2.to === `/ats/history/candidate/${C7.id}?focus=offer-${A7.id}`, ev2);
     const ev3 = flat((await S('jorvik zenithcore', 'sa')).body).find((r) => r.type === 'joining' && r.applicationId === A8.id);
     check('a joining is found by candidate + client and opens its candidate History at the joining', ev3 && ev3.to === `/ats/history/candidate/${C8.id}?focus=joining-${A8.id}`, ev3);
+    // the clear counts of Interviews, offers & joinings (founder 2026-11-20: "how many offers, how many joined, how many dropped?")
+    const zcEv = await S('zenithcore', 'sa');
+    const evg = (zcEv.body.groups || []).find((g) => g.id === 'events');
+    const bk = (k) => ((evg && evg.breakdown) || []).find((b) => b.key === k) || { count: -1 };
+    check('the events group carries the clear counts: offers waiting, joined (still working), dropped, interviews', !!evg && Array.isArray(evg.breakdown) && evg.breakdown.length === 8 && bk('joining:joined').count >= 1, evg && evg.breakdown);
+    const onlyJoined = await S('zenithcore', 'sa', '&ev=joining:joined');
+    const jRows = flat(onlyJoined.body).filter((r) => r.group === 'events');
+    check('?ev=joining:joined shows only joinings that are still working', jRows.length >= 1 && jRows.every((r) => r.type === 'joining' && /joined, still working/.test(r.sub)), jRows.map((r) => r.sub));
+    const offerWait = await S('octavian', 'sa', '&ev=offer:released');
+    check('?ev=offer:released finds the offer waiting for an answer, and no joining or interview', flat(offerWait.body).some((r) => r.type === 'offer' && r.applicationId === A7.id) && !flat(offerWait.body).some((r) => r.group === 'events' && r.type !== 'offer'));
+    const two = await S('zenithcore', 'sa', '&ev=joining:joined,offer:released');
+    const twoEv = ((two.body.groups || []).find((g) => g.id === 'events') || { count: 0 });
+    check('two ticked statuses add up (joined + offers waiting)', twoEv.count === bk('joining:joined').count + bk('offer:released').count, [twoEv.count, bk('joining:joined').count, bk('offer:released').count]);
+    const cg = (zcEv.body.groups || []).find((g) => g.id === 'candidates');
+    check('the candidates group carries clear counts too (in process / selected / joined / dropped)', !cg || (Array.isArray(cg.breakdown) && cg.breakdown.length === 4), cg && cg.breakdown);
     const inv = flat((await S(`hsinv-${RUN}`, 'sa')).body).find((r) => r.type === 'invoice');
     check('an invoice is found by its number; it opens the client History at the invoice, the record one click away', inv && inv.to.startsWith(`/clients/${client.id}?tab=history&focus=invoice-`) && inv.recordTo.startsWith('/invoices/'), inv);
     const agr = flat((await S(`agr-hs${RUN}`, 'sa')).body).find((r) => r.type === 'agreement');

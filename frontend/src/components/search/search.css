@@ -67,3 +67,16 @@
 }
 
 .srp-morebtn { margin: 0 6px 6px 0; }
+
+/* the clear counts above the results (Interviews, offers & joinings; Candidates): each number is a filter */
+.srp-break { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 12px; margin: 0 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised, #fff); }
+.srp-break-t { font-size: 13px; margin-right: 4px; }
+.srp-break-g { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-right: 10px; border-right: 1px solid var(--line-soft, #e8ecf4); }
+.srp-break-g:last-of-type { border-right: 0; }
+.srp-break-k { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+.srp-chip { display: inline-flex; align-items: baseline; gap: 4px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper, #fff); font: inherit; font-size: 12.5px; cursor: pointer; color: var(--ink); }
+.srp-chip b { font-size: 14px; }
+.srp-chip.good b { color: var(--green, #1a7f37); }
+.srp-chip.bad b { color: var(--red, #b42318); }
+.srp-chip.on { border-color: var(--blue, #2459d6); background: var(--blue-tint, #eef3ff); box-shadow: inset 0 0 0 1px var(--blue, #2459d6); }
+.srp-chip:disabled { opacity: .45; cursor: default; }

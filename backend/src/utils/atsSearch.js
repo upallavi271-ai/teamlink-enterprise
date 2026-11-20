@@ -165,6 +165,12 @@ const BY = ['name', 'client', 'requirement', 'recruiter', 'tl', 'bde'];
 const MPS = require('./multiParam');
 const listOf = (v) => MPS.parseMulti(v);
 const typeHas = (f, g) => !f.type || listOf(f.type).includes(g);
+// INTERVIEWS, OFFERS & JOININGS, CLEARLY COUNTED (founder 2026-11-20: "many people here, but how many offers, how many joined, how many dropped?")
+const EV_KEYS = ['interview:upcoming', 'interview:done', 'offer:released', 'offer:accepted', 'offer:declined', 'joining:joined', 'joining:dropped', 'joining:scheduled'];
+const EV_LABEL = {
+  'interview:upcoming': 'Interviews coming up', 'interview:done': 'Interviews done', 'offer:released': 'Offers waiting for an answer', 'offer:accepted': 'Offers accepted',
+  'offer:declined': 'Offers declined', 'joining:joined': 'Joined (still working)', 'joining:dropped': 'Dropped / left after joining', 'joining:scheduled': 'Joining scheduled',
+};
 function filtersOf(q) {
   const ok = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
   const txt = (v, n = 60) => String(v || '').trim().slice(0, n) || null;
@@ -172,6 +178,7 @@ function filtersOf(q) {
   return {
     type: (() => { const t = MPS.parseMulti(q.type).filter((x) => GROUP_ORDER.includes(x)); return t.length ? t.join(',') : null; })(),
     from: ok(q.from) ? q.from : null, to: ok(q.to) ? q.to : null, status: txt(MPS.multiCsv(q.status), 300), owner: txt(MPS.multiCsv(q.owner), 800), client: txt(q.client), dept: txt(q.dept), loc: txt(q.loc), src: txt(q.src),
+    ev: (() => { const e = MPS.parseMulti(q.ev).filter((x) => EV_KEYS.includes(x)); return e.length ? e : null; })(),
     by: BY.includes(q.by) ? q.by : null, ctcMin: num(q.ctcMin), ctcMax: num(q.ctcMax), expMin: num(q.expMin), expMax: num(q.expMax), notice: txt(q.notice, 20), skills: txt(q.skills, 80),
   };
 }
@@ -565,17 +572,53 @@ async function eventsGroup(user, v, ctx) {
     candidate: { select: { name: true } }, requirement: { select: { title: true, reqCode: true, client: { select: { name: true } } } },
   };
   const where = (kindWhere, m) => ({ AND: [m, kindWhere, scope, ...appExtra] });
-  const kinds = [
-    ['interview', { interviewAt: { not: null } }, match],
-    ['offer', { OR: [{ offerStatus: { in: ['Offer Released', 'Offer Accepted', 'Offer Declined'] } }, { stage: { in: ['OFFER', 'OFFER_ACCEPTED'] } }] }, matchNoInterviewer],
-    ['joining', { OR: [{ stage: { in: ['JOINED', 'HIRED'] } }, { joiningStatus: { not: null } }] }, matchNoInterviewer],
-  ];
+  const JR = require('./joinedRule'); // eslint-disable-line global-require
+  const droppedIds = [...(await JR.droppedAppIds().catch(() => new Set()))];
+  const JOINED_ST = { stage: { in: ['JOINED', 'HIRED'] } };
+  const isDroppedW = { OR: [{ AND: [JOINED_ST, { joiningStatus: { in: LEFT } }] }, { joiningStatus: 'Dropped' }, ...(droppedIds.length ? [{ id: { in: droppedIds } }] : [])] };
+  const now = new Date();
+  const STATUS_W = {
+    'interview:upcoming': { AND: [{ interviewAt: { gte: now } }, { OR: [{ interviewStatus: null }, { interviewStatus: { not: 'COMPLETED' } }] }] },
+    'interview:done': { OR: [{ interviewStatus: 'COMPLETED' }, { AND: [{ interviewAt: { lt: now } }, { stage: { notIn: ['INTERVIEW_SCHEDULED'] } }] }] },
+    'offer:released': { AND: [{ OR: [{ offerStatus: 'Offer Released' }, { AND: [{ stage: 'OFFER' }, { offerStatus: null }] }] }] },
+    'offer:accepted': { OR: [{ offerStatus: 'Offer Accepted' }, { AND: [{ stage: 'OFFER_ACCEPTED' }, { offerStatus: null }] }] },
+    'offer:declined': { offerStatus: 'Offer Declined' },
+    'joining:joined': { AND: [JOINED_ST, NOT_LEFT, { OR: [{ joiningStatus: null }, { joiningStatus: { not: 'Dropped' } }] }, ...(droppedIds.length ? [{ id: { notIn: droppedIds } }] : [])] },
+    'joining:dropped': isDroppedW,
+    'joining:scheduled': { AND: [{ joiningStatus: 'Joining Scheduled' }, { stage: { notIn: ['JOINED', 'HIRED'] } }] },
+  };
+  const KIND_W = {
+    interview: { interviewAt: { not: null } },
+    offer: { OR: [{ offerStatus: { in: ['Offer Released', 'Offer Accepted', 'Offer Declined'] } }, { stage: { in: ['OFFER', 'OFFER_ACCEPTED'] } }] },
+    joining: { OR: [JOINED_ST, { joiningStatus: { not: null } }] },
+  };
+  const matchOf = (kind) => (kind === 'interview' ? match : matchNoInterviewer);
+  // ?ev= narrows to the ticked statuses (several allowed, OR inside one kind)
+  const evs = f.ev || [];
+  const kinds = ['interview', 'offer', 'joining'].map((kind) => {
+    const mine = evs.filter((e) => e.startsWith(`${kind}:`));
+    if (evs.length && !mine.length) return null;
+    const kw = mine.length ? { AND: [KIND_W[kind], { OR: mine.map((e) => STATUS_W[e]) }] } : KIND_W[kind];
+    return [kind, kw, matchOf(kind)];
+  }).filter(Boolean);
   const withTest = H.testViewer(user);
   const results = await Promise.all(kinds.map(async ([kind, kw, m]) => {
     const rows = await prisma.application.findMany({ where: where(kw, m), select: sel, orderBy: { updatedAt: 'desc' }, take: take + 1 });
     const count = full ? await prisma.application.count({ where: where(kw, m) }) : rows.length;
     return { kind, rows: rows.filter((a) => withTest || !H.TEST_RE.test((a.candidate && a.candidate.name) || '')), count };
   }));
+  // the clear counts: always over the words and filters typed, not over the ticked statuses (so the other numbers stay visible)
+  const breakdown = full ? await Promise.all(EV_KEYS.map(async (key) => {
+    const kind = key.split(':')[0];
+    const n = await prisma.application.count({ where: where({ AND: [KIND_W[kind], STATUS_W[key]] }, matchOf(kind)) });
+    return { key, kind, label: EV_LABEL[key], count: n, on: evs.includes(key) };
+  })) : null;
+  const dropSet = new Set(droppedIds);
+  const joinWord = (a) => {
+    if (dropSet.has(a.id) || LEFT.includes(a.joiningStatus) || a.joiningStatus === 'Dropped') return H.JOINED.includes(a.stage) ? 'dropped (left after joining)' : 'dropped (did not join)';
+    if (H.JOINED.includes(a.stage)) return 'joined, still working';
+    return a.joiningStatus ? String(a.joiningStatus).toLowerCase() : V.stageLabel(a.stage);
+  };
   const rows = [];
   results.forEach(({ kind, rows: list }) => list.forEach((a) => {
     const title = `${a.candidate ? a.candidate.name : '—'} — ${a.requirement ? a.requirement.title : ''}`;
@@ -583,14 +626,14 @@ async function eventsGroup(user, v, ctx) {
     let sub; let at;
     if (kind === 'interview') { at = a.interviewAt; sub = `Interview${a.interviewRound > 1 ? ` round ${a.interviewRound}` : ''} · ${dayOf(a.interviewAt)}${a.interviewStatus ? ` · ${String(a.interviewStatus).toLowerCase()}` : ''}${a.interviewer ? ` · ${a.interviewer}` : ''}`; }
     else if (kind === 'offer') { at = a.offerDate || a.joinedAt; sub = `Offer · ${a.offerStatus || V.stageLabel(a.stage)}${a.offerDate ? ` · ${H.isoDay(a.offerDate) || ''}` : ''}`; }
-    else { at = a.joiningDate; sub = `Joining · ${H.JOINED.includes(a.stage) ? 'joined' : a.joiningStatus || V.stageLabel(a.stage)}${H.isoDay(a.joiningDate) ? ` · ${H.isoDay(a.joiningDate)}` : ''}`; }
+    else { at = a.joiningDate; sub = `Joining · ${joinWord(a)}${H.isoDay(a.joiningDate) ? ` · ${H.isoDay(a.joiningDate)}` : ''}`; }
     rows.push({
       type: kind, id: `${kind}-${a.id}`, applicationId: a.id, candidateId: a.candidateId, name: title, title, code: null, client, sub: `${sub}${client ? ` · ${client}` : ''}`, at: at ? new Date(at).toISOString() : null,
       to: `/ats/history/candidate/${a.candidateId}?focus=${kind}-${a.id}`, recordTo: `/candidates/${a.candidateId}`,
     });
   }));
   rows.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
-  return { rows: rows.slice(0, full ? take * 3 : take + 1), count: results.reduce((n, r) => n + r.count, 0) };
+  return { rows: rows.slice(0, full ? take * 3 : take + 1), count: results.reduce((n, r) => n + r.count, 0), breakdown };
 }
 
 async function moneyGroup(user, v, ctx) {
@@ -740,6 +783,9 @@ async function search(user, textIn, opts = {}) {
     const more = full ? (g.count > offset + Math.min(g.rows.length, cap) && ['candidates', 'requirements'].includes(id)) : g.rows.length > take;
     return {
       id, title: GROUP_TITLES[id], count: full ? g.count : Math.min(g.rows.length, take), more: full ? more : g.rows.length > take, offset: only ? offset : 0, rows: full ? g.rows.slice(0, cap) : g.rows.slice(0, take),
+      breakdown: full ? (id === 'events' ? g.breakdown || null : (id === 'candidates' && g.facets && g.facets.status
+        ? [['active', 'In process'], ['selected', 'Selected'], ['joined', 'Joined (still working)'], ['dropped', 'Dropped / rejected']].map(([key, label]) => ({ key, label, count: g.facets.status[key] || 0, param: 'status' }))
+        : null)) : null,
     };
   }).filter((g) => g.rows.length > 0 || (full && g.count > 0));
   const counts = Object.fromEntries(GROUP_ORDER.map((id) => [id, full ? byId[id].count : byId[id].rows.length]));
