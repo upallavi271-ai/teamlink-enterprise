@@ -13,6 +13,47 @@ const API_VERSION = 'v1';
 
 const NOTES = [
   {
+    version: '1.7.4', date: '2026-11-20', title: 'Schedule a message, and history filters',
+    items: [
+      'Candidate page, new tab "Schedule a message": write any message, choose WhatsApp, SMS or Email and the time (In 1 hour, Today 5 PM, Tomorrow 10 AM or a date). Ready messages and {name} / {requirement} / {client} fill-ins; the list shows Scheduled (edit, cancel), Sent, Failed (with the reason, Send again) and Cancelled, and the automatic interview / joining reminders of the person.',
+      'A message is sent only between 07:00 and 20:00 India time, never to someone who asked to stop; WhatsApp outside the 24-hour window goes through the approved general template. A message you schedule goes even while the automatic reminders are switched off.',
+      'Team and recruiter history: Recruiter, Client, Requirement and Status filters (tick several), Clear all; every number and list follows.',
+    ],
+  },
+  {
+    version: '1.7.3', date: '2026-11-20', title: 'Overall report for team leads and the Super Admin',
+    items: [
+      'Dashboard: an "Overall report" button. A team lead sees their team, one row per recruiter (follow-ups added and done, calls and messages, overdue) and the team overall; View on a recruiter shows the candidates they added and every follow-up with what was written, for Today, Yesterday, This week, This month or any dates.',
+      'The Super Admin sees the team leads first (recruiters and team numbers), a team lead opens that team, a recruiter their own report.',
+      'Super Admin and developer logins no longer see "Carried over from yesterday" and "My end-of-day report".',
+    ],
+  },
+  {
+    version: '1.7.2', date: '2026-11-20', title: 'Change team lead: Education only, never an empty list',
+    items: [
+      'Change team lead is for the Education teams (Team A and Team B) only; other departments do not show the button.',
+      'Its list always has the team leads of both Education teams, including a team lead whose seat end date has passed but who still works.',
+      'A team lead on notice period is no longer shown as "(left)" on the candidate page; only someone relieved or exited is.',
+    ],
+  },
+  {
+    version: '1.7.1', date: '2026-11-20', title: 'Checkbox filters on the dashboard, reports, history and search',
+    items: [
+      'Department, Client, Recruiter / BDE and Team lead on the ATS dashboard, and the pickers on Candidates, Requirements, the Team page, Follow-ups, Offers / Joinings, History, Reports and Search take several values (tick boxes). Numbers, lists and the Excel download follow.',
+      'Date ranges work for team lead and recruiter logins on every list.',
+    ],
+  },
+  {
+    version: '1.7.0', date: '2026-11-20', title: 'One search bar, history in a side panel, follow-up report',
+    items: [
+      'A search bar on every dashboard: type a recruiter, team lead, client, requirement or candidate; the complete history opens in a side panel over the page. A client, requirement, recruiter or team lead search also lists their candidates. Each login finds only what it may see. The old top-bar search box is removed.',
+      'Follow-up report: a team lead reads every recruiter\'s daily, weekly and monthly follow-ups in one place (Follow-ups page and the Overall report); a recruiter only their own.',
+      'Education: "Team A joinings" and "Team B joinings" cards on both team leads\' dashboards.',
+      'Replacements: the drop and the replacement show who replaced whom. A person who left after joining is never counted as Joined, even for a moment.',
+      'Reminders to the candidate before an offline interview or a joining (2 days, 1 day, the morning): the recruiter and team lead set the times; they show on the dashboard. Sending stays off until an Admin switches it on (Administration > Step timing).',
+    ],
+  },
+  {
     version: '1.6.8', date: '2026-11-20', title: 'Month by month: a More months button',
     items: [
       'The Joinings, drops & replacements month-by-month box now keeps every month that has a number (up to 24). It shows the first six; "More months (N)" shows the rest and "Show fewer months" closes them.',
