@@ -526,7 +526,7 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   f = await facet(tA, { location: 'Pune,Chennai' }, 'noticeBand'); check('multi counts: the counts of another filter follow the ticked values (notice bands among Pune + Chennai)', optCount(f, 'imm') === 1 && optCount(f, 'd60') === 1 && optCount(f, 'd15') === 0, f.list);
   const exMulti = await call('POST', '/ats-io/export/candidates?format=csv', { view: 'pipeline-all', params: { paged: '1', view: 'pipeline', sub: 'all', all: '1', search: TAG, location: 'Pune,Chennai' } }, tA);
   const exMultiLines = String(exMulti.text || '').split(/\r?\n/).filter((x) => x.includes(TAG));
-  check('multi export: the Excel / CSV export holds exactly the people the two-value filter lists', exMulti.status === 200 && new Set(exMultiLines.map((x) => (x.match(new RegExp(`${TAG} P\d`)) || [''])[0])).size === 2 && exMultiLines.some((x) => x.includes(nm(3))) && exMultiLines.some((x) => x.includes(nm(5))) && !exMultiLines.some((x) => x.includes(nm(1))), { s: exMulti.status, n: exMultiLines.length });
+  check('multi export: the Excel / CSV export holds exactly the people the two-value filter lists', exMulti.status === 200 && new Set(exMultiLines.map((x) => (x.match(new RegExp(`${TAG} P[0-9]`)) || [''])[0])).size === 2 && exMultiLines.some((x) => x.includes(nm(3))) && exMultiLines.some((x) => x.includes(nm(5))) && !exMultiLines.some((x) => x.includes(nm(1))), { s: exMulti.status, n: exMultiLines.length });
   // requirements
   x = await rq(tA, { clientId: `${cl1.id},${cl2.id}` }); check('multi requirements: two clients', same(U(x.names), [T(1), T(2), T(3)]), x.names);
   x = await rq(tA, { clientId: cl2.id }); check('multi requirements: one client', same(U(x.names), [T(3)]), x.names);
