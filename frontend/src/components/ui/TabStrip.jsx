@@ -20,9 +20,11 @@ import './TabStrip.css';
 // "More" opens a menu with Up / Down / Escape. ARIA: tablist > tab, the caption
 // describes the open tab, the More button is a menu button.
 // ---------------------------------------------------------------------------
+//   note      the caption when the open tab says nothing of its own (what this strip is for)
+//   maxMain   at most this many main tabs: the rest go under More (a tab keyed 'all' stays a main tab)
 export default function TabStrip({
   tabs = [], value, onChange, label = 'Tabs', hideZero = false, extra = null, className = '',
-  moreLabel = 'More', caption = true, small = false,
+  moreLabel = 'More', caption = true, small = false, note = '', maxMain = 0,
 }) {
   const uid = useId().replace(/:/g, '');
   const [open, setOpen] = useState(false);
@@ -32,10 +34,17 @@ export default function TabStrip({
 
   const shown = tabs.filter((t) => !t.hidden
     && (!hideZero || t.key === value || t.count === undefined || t.count === null || Number(t.count) > 0));
-  const main = shown.filter((t) => !t.more);
-  const more = shown.filter((t) => t.more);
+  let main = shown.filter((t) => !t.more);
+  let more = shown.filter((t) => t.more);
+  if (maxMain > 0 && main.length > maxMain) {
+    // too many: the first ones (and All) stay, the rest move under More, in their own order
+    const pinned = main.filter((t) => t.key === 'all');
+    const keep = new Set([...pinned, ...main.filter((t) => t.key !== 'all').slice(0, Math.max(0, maxMain - pinned.length))]);
+    more = [...main.filter((t) => !keep.has(t)), ...more];
+    main = main.filter((t) => keep.has(t));
+  }
   const active = shown.find((t) => t.key === value) || null;
-  const activeInMore = !!(active && active.more);
+  const activeInMore = !!(active && more.includes(active));
   const moreBadge = more.reduce((n, t) => n + (Number(t.badge) > 0 ? Number(t.badge) : 0), 0);
 
   useEffect(() => {
@@ -75,7 +84,9 @@ export default function TabStrip({
   }
   const pick = (k) => { setOpen(false); if (k !== value) onChange(k); };
 
-  const capText = active ? (active.say || active.hint || '') : '';
+  const capText = (active && (active.say || active.hint)) || note || '';
+  // every tab has a tooltip: its own words, else the strip's note
+  const tipOf = (t) => t.hint || t.say || (note ? `${t.label}: ${note}` : undefined);
   return (
     <div className={`tabstrip${small ? ' tabstrip-sm' : ''} ${className}`} ref={wrap}>
       <div className="tabstrip-row">
@@ -91,7 +102,7 @@ export default function TabStrip({
               aria-describedby={value === t.key && caption ? `ts-${uid}-cap` : undefined}
               tabIndex={tabStop === t.key ? 0 : -1}
               className={`tab${value === t.key ? ' active' : ''}${t.tone ? ` tone-${t.tone}` : ''}`}
-              title={t.hint || t.say || undefined}
+              title={tipOf(t)}
               onClick={() => onChange(t.key)}
               onKeyDown={(e) => onTabKey(e, i)}
             >
@@ -125,7 +136,7 @@ export default function TabStrip({
                     data-tab={t.key}
                     aria-current={value === t.key ? 'page' : undefined}
                     className={value === t.key ? 'is-on' : ''}
-                    title={t.hint || t.say || undefined}
+                    title={tipOf(t)}
                     onClick={() => pick(t.key)}
                   >
                     <span>{t.label}</span>

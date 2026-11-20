@@ -4,6 +4,7 @@ import FilterChips from '../FilterChips.jsx';
 import './ListPageHeader.css';
 import Combo from '../Combo.jsx';
 import MultiSelect, { csvToList } from '../ats/MultiSelect.jsx';
+import TabStrip from './TabStrip.jsx';
 
 // a row value matches a filter value: the same text, or one of a ticked comma list (a checkbox dropdown's value)
 export const valueIn = (v, x) => String(x ?? '') === String(v ?? '') || csvToList(v).includes(String(x ?? ''));
@@ -56,31 +57,16 @@ export default function ListPageHeader({
 
 // Status tabs with counts. hideZero: a tab with 0 is not drawn (non-admins —
 // "don't show empty things"), except the one that is selected.
+// 2026-11-20 (founder: "give clear tabs"): drawn by the one TabStrip — at most five tabs on screen (the rest, and any
+// tab marked `more`, under "More"), a tooltip on every tab and one caption line: the open tab's hint, else `note`.
 export function StatusTabs({
-  tabs = [], value, onChange, hideZero = false, label = 'Status', extra, className = '',
+  tabs = [], value, onChange, hideZero = false, label = 'Status', extra, className = '', note = '', maxMain = 5,
 }) {
   const shown = tabs.filter((t) => !hideZero || t.key === value || t.count === undefined || t.count === null || Number(t.count) > 0);
   if (!shown.length) return null;
   return (
     <div className={`lph-tabs ${className}`}>
-      <div className="tabs" role="tablist" aria-label={label}>
-        {shown.map((t) => (
-          <div
-            key={t.key}
-            role="tab"
-            tabIndex={0}
-            aria-selected={value === t.key}
-            className={`tab${value === t.key ? ' active' : ''}`}
-            onClick={() => onChange(t.key)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onChange(t.key); } }}
-            title={t.hint}
-          >
-            {t.label}
-            {/* Never a bare zero: "Today", not "Today 0". */}
-            {t.count !== undefined && t.count !== null && Number(t.count) > 0 && <span className="n">{Number(t.count).toLocaleString('en-IN')}</span>}
-          </div>
-        ))}
-      </div>
+      <TabStrip label={label} tabs={shown} value={value} onChange={onChange} note={note} maxMain={maxMain} />
       {extra}
     </div>
   );

@@ -1239,7 +1239,8 @@ export default function Candidates() {
   MASTER_COLUMNS.forEach((c) => { mshow[c.id] = c.locked || mcols.includes(c.id); });
   const isSimple = simple && main === 'pipeline' && !rejectedTab && quick !== 'client_feedback';
   const shownCols = isSimple
-    ? ['source', 'phone', 'experience', 'salary', 'stage', ...(joinedTab ? ['joining'] : []), 'next'].reduce((acc, id) => (acc.push(SIMPLE_COL[id] || COLUMNS.find((c) => c.id === id)), acc), [COLUMNS[0]])
+    // at most 7: on the Joined list the Joining date takes the Source column's place (Source is in the Full view)
+    ? [...(joinedTab ? [] : ['source']), 'phone', 'experience', 'salary', 'stage', ...(joinedTab ? ['joining'] : []), 'next'].reduce((acc, id) => (acc.push(SIMPLE_COL[id] || COLUMNS.find((c) => c.id === id)), acc), [COLUMNS[0]])
     : visibleCols;
   // The Job cell carries the client name when the Client column is off.
   const cellCtx = {
@@ -2128,8 +2129,8 @@ export default function Candidates() {
                 )}
                 {!onBoard && main === 'pipeline' && quick !== 'client_feedback' && !rejectedTab && (
                   <span className="cpl-layout cpl-tstyle" role="group" aria-label="Table style">
-                    <button type="button" className={simple ? 'is-on' : ''} aria-pressed={simple} title="A few clear columns" onClick={() => setSimple(true)}>Simple view</button>
-                    <button type="button" className={!simple ? 'is-on' : ''} aria-pressed={!simple} title="Every column; choose them under Columns" onClick={() => setSimple(false)}>Full table</button>
+                    <button type="button" className={simple ? 'is-on' : ''} aria-pressed={simple} title="Seven clear columns: name, source, phone, experience, salary, step and next step" onClick={() => setSimple(true)}>Simple view</button>
+                    <button type="button" className={!simple ? 'is-on' : ''} aria-pressed={!simple} title="Every column, as before; choose which under Columns" onClick={() => setSimple(false)}>Full view</button>
                   </span>
                 )}
                 {!onBoard && quick !== 'client_feedback' && !rejectedTab && <ColumnChooser columns={COLUMNS} value={cols} onChange={(v) => { setCols(v); if (simple) setSimple(false); }} defaults={DEFAULT_COLS} />}

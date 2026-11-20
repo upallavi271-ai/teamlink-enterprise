@@ -1169,8 +1169,8 @@ export default function InterviewCalendar() {
         <StatusTabs
           label="Interview kind"
           tabs={[
-            { key: 'recruitment', label: 'Client & team interviews', count: (data.recruitment || []).length },
-            { key: 'ai', label: 'AI interviews', count: data.aiCounts ? data.aiCounts.total : (data.ai || []).length },
+            { key: 'recruitment', label: 'Client & team interviews', count: (data.recruitment || []).length, hint: 'Interviews with the client or our own team: book, move, and record the result.' },
+            { key: 'ai', label: 'AI interviews', count: data.aiCounts ? data.aiCounts.total : (data.ai || []).length, hint: 'Screening interviews the AI holds with a candidate, and their scores.' },
           ]}
           value={tab}
           onChange={setTab}

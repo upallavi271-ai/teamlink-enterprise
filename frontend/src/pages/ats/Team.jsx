@@ -1402,9 +1402,11 @@ export default function Team() {
       )}
       <StatusTabs
         label="Section"
-        tabs={VIEWS.map(([key, label, count, hint]) => ({ key, label, count, hint }))}
+        // at most five on screen (founder 2026-11-20): Pending work, Follow-up history and Departments & teams under More when needed
+        tabs={VIEWS.map(([key, label, count, hint]) => ({ key, label, count, hint, more: VIEWS.length > 5 && ['whohas', 'followlog', 'org'].includes(key) }))}
         value={view === 'list' ? 'people' : view}
         onChange={setView}
+        note="The team's work: people and their load, who works on which requirement, tasks and follow-ups."
         hideZero={!isAdmin}
         // No "Seat History →" link here (2026-10-03): it is already in the menu
         // (Administration → Positions & Seat History).

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import InboxPanel from '../../components/messaging/InboxPanel.jsx';
+import TabStrip from '../../components/ui/TabStrip.jsx';
 import useUnreadReplies from '../../components/messaging/useUnreadReplies.js';
 import WaChats from '../../components/messaging/WaChats.jsx';
 import useWaChatUnread from '../../components/messaging/useWaChatUnread.js';
@@ -150,12 +151,20 @@ export default function FollowUps({ embedded = false }) {
   const contact = useContactRule('candidates');
   const [chat, setChat] = useState(null);
   const subTabs = (
-    <div className="cv-subtabs" role="tablist" aria-label="Follow-ups">
-      <button type="button" role="tab" aria-selected={sub === 'list'} className={`btn btn-sm${sub === 'list' ? ' btn-primary' : ''}`} onClick={() => setSub('list')}>Follow-ups</button>
-      <button type="button" role="tab" aria-selected={sub === 'inbox'} className={`btn btn-sm${sub === 'inbox' ? ' btn-primary' : ''}`} onClick={() => setSub('inbox')}>Inbox{unreadN > 0 && <span className="cv-count-badge">{unreadN}</span>}</button>
-      <button type="button" role="tab" aria-selected={sub === 'chats'} className={`btn btn-sm${sub === 'chats' ? ' btn-primary' : ''}`} onClick={() => setSub('chats')}>WhatsApp chats{waN > 0 && <span className="cv-count-badge">{waN}</span>}</button>
-      <button type="button" role="tab" aria-selected={sub === 'report'} className={`btn btn-sm${sub === 'report' ? ' btn-primary' : ''}`} onClick={() => setSub('report')}>Follow-up report</button>
-    </div>
+    // 2026-11-20 (founder: "give clear tabs"): the one TabStrip, a tooltip on each tab and a line saying what it is for.
+    <TabStrip
+      small
+      className="fu-subtabs"
+      label="Follow-ups"
+      value={sub}
+      onChange={setSub}
+      tabs={[
+        { key: 'list', label: 'Follow-ups', hint: 'Who to contact, why and by when: late, due today and coming up.' },
+        { key: 'inbox', label: 'Inbox', count: unreadN, hint: 'Replies to our calls, mails, WhatsApp and SMS, newest first.' },
+        { key: 'chats', label: 'WhatsApp chats', count: waN, hint: 'WhatsApp conversations: the reply, the answer and the follow-up on one screen.' },
+        { key: 'report', label: 'Follow-up report', hint: 'How many follow-ups were done, late or missed, by day, week or month.' },
+      ]}
+    />
   );
   const [data, setData] = useState(null);
   const [error, setError] = useState('');

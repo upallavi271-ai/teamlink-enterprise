@@ -17,6 +17,7 @@ import { RelationshipStrip, shortDate } from '../components/clients/relationship
 import ClientEditModal from '../components/clients/ClientEditModal.jsx';
 import '../components/clients/clients.css';
 import StatusChip from '../components/ui/StatusChip.jsx';
+import TabStrip from '../components/ui/TabStrip.jsx'; // main tabs + More + the caption line (founder 2026-11-20)
 import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import AgreementPanel from '../components/agreements/AgreementPanel.jsx';
@@ -116,6 +117,15 @@ const TABS = [
   // 2026-11-03: the dated follow-up log - everyone who works the client writes in it (the server decides who may).
   ['followups', 'Follow-ups', []],
 ];
+// What each tab is for: its tooltip and the line under the strip.
+const CLIENT_TAB_SAY = {
+  details: 'Who the client is: contacts, address, portal logins and the agreement.',
+  requirements: 'Every requirement of this client and where each one stands.',
+  performance: 'People sent, interviews, selections, guarantee cases, invoices and payments.',
+  work: 'Onboarding steps, meetings, client feedback and the asks waiting for a decision.',
+  history: 'What happened with this client, date by date.',
+  followups: 'The dated follow-up log: who spoke to the client, about what, and what is next.',
+};
 // Every older link (?tab=overview / contacts / agreement / candidates /
 // invoices / joining / payments …) lands on the tab that now carries it, and
 // the page scrolls to that section (SECTION_OF).
@@ -581,15 +591,21 @@ export default function ClientDetail() {
           a Manager / Admin decides. Drawn for the client desk only; the server decides every button. */}
       {!data.redacted && <ClientBusiness client={c} enabled={!!meta?.actions?.businessActivities} onChanged={load} />}
 
-      <div className="tabs" style={{ marginBottom: 16 }}>
-        {TABS.filter(([key]) => tabShown(key)).map(([key, label]) => (
-          <div key={key} className={`tab${activeTab === key ? ' active' : ''}`} onClick={() => setTab(key)}>
-            {agreementBlind(user) && label === 'Details & Agreement' ? 'Details' : label}
-            {key === 'work'
-              ? (work && work.pending && work.pending.total > 0 ? ` (${work.pending.total} waiting)` : '')
-              : (counts[key] != null && counts[key] > 0 ? ` (${counts[key]})` : '')}
-          </div>
-        ))}
+      {/* 2026-11-20 (founder: "give clear tabs"): five tabs on screen, History under More, a tooltip on each and a line under the strip. */}
+      <div style={{ marginBottom: 16 }}>
+        <TabStrip
+          label="Client tabs"
+          value={activeTab}
+          onChange={setTab}
+          maxMain={5}
+          tabs={TABS.filter(([key]) => tabShown(key)).map(([key, label]) => ({
+            key,
+            label: `${agreementBlind(user) && label === 'Details & Agreement' ? 'Details' : label}${key === 'work' && work && work.pending && work.pending.total > 0 ? ` (${work.pending.total} waiting)` : ''}`,
+            count: key === 'work' ? undefined : counts[key],
+            hint: CLIENT_TAB_SAY[key],
+            more: key === 'history',
+          }))}
+        />
       </div>
 
       {activeTab === 'work' && work && <ClientWork key={c.id} clientId={c.id} initial={work} onGoTab={setTab} />}

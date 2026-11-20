@@ -6,10 +6,17 @@
 //   Candidates & Pipeline   main tabs: Needs my action | Requirement applications |
 //                           People | New from job portal | More (Duplicates,
 //                           Sources, Contact lists)
-//   Candidate page          main tabs: Overview | Resume | Career | Follow-ups & notes |
-//                           Documents | History | More (Conversation, AI Calling)
+//   Candidate page          main tabs: Overview | Resume | Follow-ups & notes | Documents |
+//                           History | More (Career, Conversation, Schedule a message, AI Calling)
 //   Requirement page        main tabs: Overview | Candidates | Team | Interviews |
-//                           Postings | History | More (Client, Agreement, Activity)
+//                           Postings | More (Client, Agreement, History, Activity)
+//   Client page             Details & Agreement | Requirements | Performance | Client work |
+//                           Follow-ups | More (History)
+//   Every StatusTabs strip  at most five on screen, the rest under More (ListPageHeader.jsx)
+//   Module tab bars         Clients & Requirements, Reports & Team (More: Handover, Data quality),
+//                           Interview Calendar (Interviews · Feedback · Offers · Joining)
+//
+// At most FIVE main tabs on any ATS strip (founder 2026-11-20 "give clear tabs").
 //
 // The words stay the words the app already used. Nothing is deleted: a tab that
 // is rarely used sits under "More"; two tabs that showed the same kind of thing
@@ -80,7 +87,8 @@ export const C360_TAB_ALIAS = {
   messages: 'conversation',
   calls: 'aicalling',
 };
-export const C360_MORE = ['conversation', 'scheduled', 'aicalling'];
+// Career is under More so that five tabs are on screen (it is opened less than the follow-ups and documents).
+export const C360_MORE = ['career', 'conversation', 'scheduled', 'aicalling'];
 // Tabs only a TeamLink login sees (a client / candidate login never does).
 export const C360_INTERNAL_ONLY = ['career', 'followups', 'conversation', 'scheduled', 'aicalling'];
 // Tabs that need the right to contact the person (the server decides who:
@@ -98,7 +106,8 @@ export const REQ_TAB_ALIAS = {
   matching: 'candidates',
   interview: 'interviews',
 };
-export const REQ_MORE = ['client', 'agreement', 'activity'];
+// ?tab=history opens the requirement's own History tab (the people history), under More with Activity (every change)
+export const REQ_MORE = ['client', 'agreement', 'history', 'activity'];
 export const reqTabKey = (k, all) => {
   const v = String(k || '').toLowerCase();
   const to = REQ_TAB_ALIAS[v] || v;

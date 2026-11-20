@@ -50,6 +50,16 @@ function stepOf(r) {
 const VIEWS = [
   ['client', "Waiting for the client's letter"], ['share', 'Ready to share'], ['prepare', 'To prepare'], ['approval', 'Waiting for approval'], ['candidate', 'Waiting for candidate'], ['accepted', 'Accepted'], ['all', 'All'],
 ];
+// The tooltip and the line under the strip (founder 2026-11-20: "give clear tabs"); more than five tabs: the rest are under More.
+const OFFER_HINT = {
+  client: 'Selected people whose offer letter the client has not sent yet.',
+  share: 'Offer letters that are ready to send to the candidate.',
+  prepare: 'Offers we still have to prepare.',
+  approval: 'Offers waiting for an approver to say yes.',
+  candidate: 'Offers sent: waiting for the candidate to accept or decline.',
+  accepted: 'Offers the candidate accepted: they move on to Joining.',
+  all: 'Every offer in your area, at any step.',
+};
 const first = (n) => String(n || '').replace(/^ZZTEST\S*\s*/i, '').split(/\s+/)[0] || 'The candidate';
 
 export default function Offers() {
@@ -122,9 +132,10 @@ export default function Offers() {
 
       <StatusTabs
         label="Offer step"
-        tabs={VIEWS.map(([key, label]) => ({ key, label, count: counts[key] || 0 }))}
+        tabs={VIEWS.map(([key, label]) => ({ key, label, count: counts[key] || 0, hint: OFFER_HINT[key] }))}
         value={view}
         onChange={setView}
+        note="Offers by step: who has to act next on each offer."
         hideZero
       />
       {list.toolbar}

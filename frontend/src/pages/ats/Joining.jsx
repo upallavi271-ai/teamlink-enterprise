@@ -19,6 +19,7 @@ import { can, canMoveToStage } from '../../permissions';
 import AtsDataTools from '../../components/AtsDataTools.jsx';
 import Pager from '../../components/Pager.jsx';
 import ListPageHeader, { StatusTabs } from '../../components/ui/ListPageHeader.jsx';
+import TabStrip from '../../components/ui/TabStrip.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import { Modal } from '../../components/proto.jsx';
 import { ReplacementTags } from '../../components/joindrop/ReplacementParts.jsx'; // who replaced whom
@@ -65,6 +66,12 @@ function nextStep(r) {
   return 'Mark joined';
 }
 const VIEWS = [['waiting', 'Waiting to join'], ['joined', 'Joined'], ['dropped', 'Left / did not join'], ['all', 'All']];
+const JOIN_HINT = {
+  waiting: 'Accepted the offer, first day not reached yet.',
+  joined: 'Started the job.',
+  dropped: 'Did not join, or left after joining.',
+  all: 'Everyone on this screen, at any step.',
+};
 
 export default function Joining() {
   const { user } = useAuth();
@@ -124,10 +131,17 @@ export default function Joining() {
       {/* The Interviews · Feedback · Offers · Joining tabs are drawn above the page by
           Shell.jsx (components/InterviewTabs.jsx) — tabs of Interview Calendar. */}
 
-      <div className="jd-filters" role="tablist" aria-label="Joining screens" style={{ margin: '0 0 10px' }}>
-        <button type="button" role="tab" aria-selected={mode === 'work'} className={`btn btn-sm${mode === 'work' ? ' btn-primary' : ''}`} onClick={() => setMode('work')}>Waiting to join and joined</button>
-        <button type="button" role="tab" aria-selected={mode === 'joindrop'} className={`btn btn-sm${mode === 'joindrop' ? ' btn-primary' : ''}`} onClick={() => setMode('joindrop')}>Joined and dropped (dates, replacement period, drops)</button>
-      </div>
+      <TabStrip
+        small
+        className="jd-screens"
+        label="Joining screens"
+        value={mode}
+        onChange={setMode}
+        tabs={[
+          { key: 'work', label: 'Waiting to join and joined', hint: 'The work list: mark someone joined, or that they dropped, and send the papers.' },
+          { key: 'joindrop', label: 'Joined and dropped', hint: 'Every joining with its dates, the replacement period and the drops (a record, to look things up).' },
+        ]}
+      />
       {mode === 'joindrop' && <JoinDropList onOpen={setOpenCand} />}
       {mode !== 'joindrop' && (<>
       {joinedMsg && <div className="ivx-success" role="status">{joinedMsg}</div>}
@@ -135,9 +149,10 @@ export default function Joining() {
 
       <StatusTabs
         label="Joining view"
-        tabs={VIEWS.map(([key, label]) => ({ key, label, count: counts[key] || 0 }))}
+        tabs={VIEWS.map(([key, label]) => ({ key, label, count: counts[key] || 0, hint: JOIN_HINT[key] }))}
         value={view}
         onChange={setView}
+        note="People after the offer: waiting for their first day, joined, or left."
         hideZero
       />
       {list.toolbar}

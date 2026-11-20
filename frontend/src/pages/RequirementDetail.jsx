@@ -196,7 +196,7 @@ const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'ag
 const TAB_LABELS = {
   overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', distribute: 'Postings', history: 'History', activity: 'Activity',
 };
-// What each tab is for: the line under the strip and the tab's tooltip. Main: Overview · Candidates · Team · Interviews · Postings · History; under More: Client · Agreement · Activity.
+// What each tab is for: the line under the strip and the tab's tooltip. Main: Overview · Candidates · Team · Interviews · Postings; under More: Client · Agreement · History · Activity.
 const TAB_SAY = {
   history: 'The people history of this requirement: who was shared, selected, joined or dropped, with the dates.',
   overview: 'The requirement at a glance: status, who works on it, the people nearby and what needs doing next.',

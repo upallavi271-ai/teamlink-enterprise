@@ -80,10 +80,18 @@ const setRow = async (id, fields) => {
     await page.goto(`http://localhost:${WEB}${urlPath}`, { waitUntil: 'commit', timeout: 120000 });
     return { ctx, page };
   };
+  // 2026-11-20 (tabs clean-up): "Schedule a message" sits under the Candidate page's "More" menu (five main tabs on screen).
   const tabOpen = async (page) => {
-    const tab = page.getByRole('tab', { name: /Schedule a message/ });
-    const there = await tab.waitFor({ state: 'visible', timeout: 90000 }).then(() => true).catch(() => false);
-    if (there) { await tab.click(); await page.locator('textarea[aria-label="Message"]').waitFor({ state: 'visible', timeout: 30000 }).catch(() => null); }
+    const strip = page.locator('[role="tablist"][aria-label="Candidate tabs"]').first();
+    await strip.waitFor({ state: 'visible', timeout: 90000 }).catch(() => null);
+    let tab = page.getByRole('tab', { name: /Schedule a message/ });
+    if (!(await tab.count())) {
+      const more = page.locator('.tabstrip-more').first();
+      if (await more.waitFor({ state: 'visible', timeout: 30000 }).then(() => true).catch(() => false)) await more.click();
+      tab = page.getByRole('menuitem', { name: /Schedule a message/ });
+    }
+    const there = await tab.first().waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false);
+    if (there) { await tab.first().click(); await page.locator('textarea[aria-label="Message"]').waitFor({ state: 'visible', timeout: 30000 }).catch(() => null); }
     return there;
   };
   try {

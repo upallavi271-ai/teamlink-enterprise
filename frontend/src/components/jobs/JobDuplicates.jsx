@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import './jobdup.css';
 import Combo from '../Combo.jsx';
+import TabStrip from '../ui/TabStrip.jsx';
 
 // ---------------------------------------------------------------------------
 // DUPLICATE JOBS — a tab inside Clients & Requirements > Jobs (no sidebar entry).  (user, 2026-10-13)
@@ -29,16 +30,21 @@ export function JobDupTabs({ status, active, onPick, postTab }) {
   const dup = !!(status && status.visible);
   if (!dup && !(postTab && postTab.show)) return null;
   const post = !!(postTab && postTab.active);
+  // 2026-11-20 (founder: "give clear tabs"): the one TabStrip, a tooltip on each tab and a line saying what it is for.
+  const value = post ? 'post' : active ? 'dup' : 'list';
   return (
-    <div className="jdup-tabs" role="tablist" aria-label="Requirements views">
-      <button type="button" role="tab" aria-selected={!active && !post} className={!active && !post ? 'is-on' : ''} onClick={() => onPick(false)}>Requirements</button>
-      {dup && (
-        <button type="button" role="tab" aria-selected={!!active} className={active ? 'is-on' : ''} onClick={() => onPick(true)}>
-          Duplicate requirements{status.badge > 0 && <span className="jdup-badge" aria-label={`${status.badge} to look at`}>{status.badge}</span>}
-        </button>
-      )}
-      {postTab && postTab.show && <button type="button" role="tab" aria-selected={post} className={post ? 'is-on' : ''} onClick={() => postTab.onPick(true)}>Posting</button>}
-    </div>
+    <TabStrip
+      small
+      className="jdup-strip"
+      label="Requirements views"
+      value={value}
+      onChange={(k) => { if (k === 'post') postTab.onPick(true); else onPick(k === 'dup'); }}
+      tabs={[
+        { key: 'list', label: 'Requirements', hint: 'Every requirement in your area, with its team and how many people are at each step.' },
+        dup && { key: 'dup', label: 'Duplicate requirements', count: status.badge, hint: 'Requirements that look like the same job twice: keep one, merge the other into it.' },
+        postTab && postTab.show && { key: 'post', label: 'Posting', hint: 'Where each requirement is posted: job portal, job sites and tracked links.' },
+      ].filter(Boolean)}
+    />
   );
 }
 

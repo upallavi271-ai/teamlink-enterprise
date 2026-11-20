@@ -1205,9 +1205,11 @@ export default function Requirements() {
               {/* Status tabs with counts — a 0 tab is hidden for everyone. */}
               <StatusTabs
                 label="Requirements"
-                tabs={views.map((v) => ({ key: v.key, label: plainWords(v.label), count: counts[v.key], hint: plainWords(v.hint) }))}
+                // more than five: Closed and My Requirements wait under More (the work views stay on screen)
+                tabs={views.map((v) => ({ key: v.key, label: plainWords(v.label), count: counts[v.key], hint: plainWords(v.hint), more: views.length > 5 && ['closed', 'mine'].includes(v.key) }))}
                 value={view}
                 onChange={setView}
+                note="Which requirements to list: pick a view; the number is how many are in it."
                 hideZero
                 extra={role === 'recruiter' && (
                   <label className="rr-showclosed">

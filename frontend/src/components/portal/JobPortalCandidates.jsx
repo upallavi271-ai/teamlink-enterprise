@@ -13,6 +13,7 @@ import AiCallDialog from '../aicalling/AiCallDialog.jsx'; // JOB PORTAL AI calli
 import { KavyaGiveDialog } from '../aicalling/KavyaTab.jsx'; // Kavya: the Telugu / Hindi / English AI caller on our own server (2026-11-12)
 import { ListFilterStrip, useListXf } from '../ats/ListFilters.jsx';
 import JobMatchDialog from './JobMatchDialog.jsx'; // JOB PORTAL AI calling: another matching job
+import TabStrip from '../ui/TabStrip.jsx'; // main tabs + More + the caption line (founder 2026-11-20)
 
 // ---------------------------------------------------------------------------
 // JOB PORTAL — the pre-ATS view of Candidates & Pipeline
@@ -50,6 +51,8 @@ const TABS = [
   ['sent', 'Sent to ATS', 'Now on a requirement'],
   ['rejected', 'Rejected', 'Not taken forward'],
 ];
+// The in-between screening steps sit under More (they are passed through, not worked in).
+const PORTAL_MORE = ['resume_reviewed', 'ai_pending', 'rejected'];
 
 // The one next screening move for a row (the server re-checks every step).
 function screeningAction(a) {
@@ -177,13 +180,19 @@ export default function JobPortalCandidates({ onSentToAts }) {
       {error && <div className="notice red">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
-      <div className="tabs" style={{ marginBottom: 10 }}>
-        {/* Empty tabs are hidden and no tab shows a bare 0 (simplicity checklist #7, #8). */}
-        {TABS.filter(([id]) => id === 'all' || id === tab || tabCounts[id] > 0).map(([id, label, hint]) => (
-          <div key={id} title={hint} className={`tab${tab === id ? ' active' : ''}`} onClick={() => setTab(id)}>
-            {tabCounts[id] ? `${label} (${tabCounts[id].toLocaleString()})` : label}
-          </div>
-        ))}
+      {/* Empty tabs are hidden and no tab shows a bare 0 (simplicity checklist #7, #8). At most five on screen, the rest under
+          More (founder 2026-11-20), a tooltip on each and a line under the strip. */}
+      <div style={{ marginBottom: 10 }}>
+        <TabStrip
+          small
+          label="Job portal screening"
+          value={tab}
+          onChange={setTab}
+          maxMain={5}
+          tabs={TABS.filter(([id]) => id === 'all' || id === tab || tabCounts[id] > 0).map(([id, label, hint]) => ({
+            key: id, label, hint, count: tabCounts[id] || undefined, more: PORTAL_MORE.includes(id),
+          }))}
+        />
       </div>
 
       <ListFilterStrip list="portal" xf={xf} user={user} noun="applications" />
