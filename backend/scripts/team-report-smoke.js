@@ -95,6 +95,8 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
           check('TL: the panel lists the candidate they added', t.includes(`Tzperson Quillfeather ${RUN}`) && /Candidates added/.test(t), t.slice(0, 300));
           await panel.locator('td', { hasText: WROTE }).first().waitFor({ state: 'visible', timeout: 20000 }).catch(() => null);
           check('TL: ...and the follow-up with the text that was written', (await panel.innerText()).includes(WROTE));
+          const squeezed = await panel.evaluate((el) => [...el.querySelectorAll('.trd-scroll')].filter((x) => x.scrollHeight > x.clientHeight + 2).length);
+          check('TL: no table inside the recruiter panel is squeezed into its own little scroll box (the panel scrolls as one page)', squeezed === 0, squeezed);
           await page.screenshot({ path: path.join(SHOTS, 'tl-view-panel.png') });
           await page.keyboard.press('Escape');
           check('TL: Escape closes the recruiter panel and the team stays', await page.locator('.trd-panel', { hasText: 'Candidates added' }).count() === 0 && await team.isVisible());
