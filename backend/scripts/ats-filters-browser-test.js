@@ -51,6 +51,9 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
   await ctx.addInitScript((t) => { try { localStorage.setItem('tl_token', t); } catch { /* none */ } }, token);
   const page = await ctx.newPage();
   page.setDefaultTimeout(60000);
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(String(e.message).slice(0, 300)));
+  page.on('console', (m) => { if (m.type() === 'error') pageErrors.push(`console: ${m.text().slice(0, 200)}`); });
   const tick = async (labelStart, n) => {
     const btn = page.locator('.msel-btn', { hasText: new RegExp(`^${labelStart}:`) }).first();
     await btn.waitFor();
@@ -70,6 +73,13 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     return got;
   };
   try {
+    // the Vite dev server optimises its libraries on the first visit ("504 Outdated Optimize Dep"): visit until the page draws
+    for (let i = 0; i < 6; i += 1) {
+      await page.goto(`http://localhost:${WEB_PORT}/candidates?view=pipeline&sub=all`).catch(() => {});
+      await page.waitForTimeout(i === 0 ? 20000 : 10000);
+      const drawn = await page.locator('body').innerText().then((t) => t.trim().length > 40).catch(() => false);
+      if (drawn) break;
+    }
     // ---- Candidates: Current location, two options
     await page.goto(`http://localhost:${WEB_PORT}/candidates?view=pipeline&sub=all`);
     const before = await page.locator('.fbar-count').first().innerText();
@@ -118,7 +128,9 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     const box = await page.locator('.msel-pop').first().boundingBox();
     check('Phone: the checkbox panel is a bottom sheet across the screen', box && box.width >= 360 && box.y + box.height >= 780, box);
   } catch (e) {
-    check(`the browser run finished (${String(e.message).slice(0, 300)})`, false);
+    let seen = '';
+    try { seen = `${page.url()} :: ${(await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 300)}`; await page.screenshot({ path: path.join(os.tmpdir(), 'ats-filters-browser-fail.png') }); } catch { /* none */ }
+    check(`the browser run finished (${String(e.message).slice(0, 200)})`, false, `${seen} ## ${pageErrors.slice(0, 4).join(' | ')}`);
   }
   await browser.close().catch(() => {});
   console.log(`\n${total - failed}/${total} passed`);
