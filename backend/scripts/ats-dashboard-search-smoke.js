@@ -103,7 +103,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
         const titles = await page.locator('[data-testid="results-list"] .sr-gtitle').allTextContents();
         check('results page: People, Clients, Requirements, Candidates come first, in that order', ['People', 'Clients', 'Requirements', 'Candidates'].every((t) => titles.includes(t)) && titles.indexOf('People') < titles.indexOf('Clients') && titles.indexOf('Clients') < titles.indexOf('Requirements') && titles.indexOf('Requirements') < titles.indexOf('Candidates'), titles);
         check('results page: the record lists (interviews, invoices ...) are collapsed below, not drawn', !titles.some((t) => /Interviews|Invoices|Other/.test(t)), titles);
-        const snap = () => page.evaluate(() => { let n = window.scrollY; document.querySelectorAll('*').forEach((el) => { if (el.scrollTop > 0 && !el.closest('.hd-wrap')) n += el.scrollTop; }); return n; });
+        const snap = () => page.evaluate(() => { let n = window.scrollY; document.querySelectorAll('*').forEach((el) => { if (el.scrollTop > 0 && !el.closest('.hxd-wrap')) n += el.scrollTop; }); return n; });
         const row = page.locator('[data-testid="results-list"] .sr-row', { hasText: `Hzperson Quillfeather ${RUN}` }).first();
         await row.locator('a.btn-primary').scrollIntoViewIfNeeded();
         await page.waitForTimeout(300);
@@ -113,11 +113,11 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
         const opened = await drawer.waitFor({ state: 'visible', timeout: 30000 }).then(() => true).catch(() => false);
         check('clicking a History result opens it in a drawer, in place', opened);
         check('the address holds ?q=...&open=candidate:<id>', /[?&]q=hz/.test(page.url()) && decodeURIComponent(page.url()).includes(`open=candidate:${cand.id}`), page.url());
-        const dbox = await page.locator('.hd-panel').boundingBox();
+        const dbox = await page.locator('.hxd-panel').boundingBox();
         check('the drawer is about 80% of the width and full height', dbox && dbox.width > 0.7 * 1280 && dbox.width < 0.9 * 1280 && dbox.height >= 400, dbox);
         check('the results list is still in the page underneath, and the scroll position did not move', (await list.count()) === 1 && Math.abs((await snap()) - before) <= 1, [before, await snap()]);
-        await page.locator('.hd-body', { hasText: 'applications' }).first().waitFor({ state: 'visible', timeout: 60000 }).catch(() => null);
-        const body = await page.locator('.hd-body').innerText();
+        await page.locator('.hxd-body', { hasText: 'applications' }).first().waitFor({ state: 'visible', timeout: 60000 }).catch(() => null);
+        const body = await page.locator('.hxd-body').innerText();
         check('the drawer shows the candidate\'s complete history', /Hzperson Quillfeather/.test(body) && /applications/i.test(body), body.slice(0, 200));
         await page.screenshot({ path: path.join(SHOTS, 'history-drawer-over-results.png') });
         await page.keyboard.press('Escape');
@@ -135,7 +135,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
         const listBack = await page.locator('[data-testid="results-list"]').waitFor({ state: 'attached', timeout: 60000 }).then(() => true).catch(() => false);
         check('Refresh restores the query, the results and the open drawer', restored && listBack && /q=hz/.test(page.url()) && decodeURIComponent(page.url()).includes(`open=candidate:${cand.id}`), page.url());
         await page.keyboard.press('Escape');
-        await page.locator('.hd-wrap').waitFor({ state: 'detached', timeout: 10000 }).catch(() => null);
+        await page.locator('.hxd-wrap').waitFor({ state: 'detached', timeout: 10000 }).catch(() => null);
         const newTab = ctx.waitForEvent('page', { timeout: 15000 }).catch(() => null);
         await row.locator('a.sr-name').click({ modifiers: ['Control'] });
         const tab = await newTab;
@@ -161,9 +161,9 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
       await pctx.addInitScript((t) => { try { localStorage.setItem('tl_token', t); } catch (e) { /* none */ } }, token);
       const mp = await pctx.newPage();
       await mp.goto(`http://localhost:${WEB}/ats/search?q=hz&open=candidate:${cand.id}`, { waitUntil: 'commit', timeout: 120000 });
-      const mdrawer = await mp.locator('.hd-panel').waitFor({ state: 'visible', timeout: 120000 }).then(() => true).catch(() => false);
-      const mbox = mdrawer ? await mp.locator('.hd-panel').boundingBox() : null;
-      check('phone (375 px): the drawer is full screen with a Back arrow', mbox && mbox.width >= 374 && (await mp.locator('.hd-back-arrow').isVisible()), mbox);
+      const mdrawer = await mp.locator('.hxd-panel').waitFor({ state: 'visible', timeout: 120000 }).then(() => true).catch(() => false);
+      const mbox = mdrawer ? await mp.locator('.hxd-panel').boundingBox() : null;
+      check('phone (375 px): the drawer is full screen with a Back arrow', mbox && mbox.width >= 374 && (await mp.locator('.hxd-back-arrow').isVisible()), mbox);
       await pctx.close();
     }
 

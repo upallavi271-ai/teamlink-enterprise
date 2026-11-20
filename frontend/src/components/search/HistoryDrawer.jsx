@@ -66,23 +66,23 @@ export default function HistoryDrawerHost() {
   const hasNav = nav && nav.rows.length > 1 && nav.idx >= 0;
   const heading = (nav && nav.row && (nav.row.title || nav.row.name)) || TITLE[target.kind];
   return createPortal(
-    <div className="hd-wrap" role="presentation">
-      <div className="hd-back" onMouseDown={close} aria-hidden="true" />
-      <aside className="hd-panel" role="dialog" aria-modal="true" aria-label={TITLE[target.kind]} ref={panel} tabIndex={-1}>
-        <div className="hd-bar">
-          <button type="button" className="hd-x hd-back-arrow" onClick={close} aria-label="Back to the results">←</button>
-          <div className="hd-title"><span className="hd-kind">{TITLE[target.kind]}</span><b>{heading}</b></div>
+    <div className="hxd-wrap" role="presentation">
+      <div className="hxd-back" onMouseDown={close} aria-hidden="true" />
+      <aside className="hxd-panel" role="dialog" aria-modal="true" aria-label={TITLE[target.kind]} ref={panel} tabIndex={-1}>
+        <div className="hxd-bar">
+          <button type="button" className="hxd-x hxd-back-arrow" onClick={close} aria-label="Back to the results">←</button>
+          <div className="hxd-title"><span className="hxd-kind">{TITLE[target.kind]}</span><b>{heading}</b></div>
           {hasNav && (
-            <div className="hd-nav">
+            <div className="hxd-nav">
               <button type="button" className="btn btn-sm" onClick={() => go(-1)} disabled={nav.idx <= 0} aria-label="Previous result">‹ Previous</button>
-              <span className="hd-pos">{nav.idx + 1} of {nav.rows.length}</span>
+              <span className="hxd-pos">{nav.idx + 1} of {nav.rows.length}</span>
               <button type="button" className="btn btn-sm" onClick={() => go(1)} disabled={nav.idx >= nav.rows.length - 1} aria-label="Next result">Next ›</button>
             </div>
           )}
           <Link className="btn btn-sm" to={FULL[target.kind](target.id) + (focus ? `${target.kind === 'client' ? '&' : '?'}focus=${encodeURIComponent(focus)}` : '')} onClick={() => { /* a plain navigation: the drawer is left behind with the page */ }}>Open as a full page</Link>
-          <button type="button" className="btn btn-sm btn-primary hd-x" onClick={close} aria-label="Close the history">Close ✕</button>
+          <button type="button" className="btn btn-sm btn-primary hxd-x" onClick={close} aria-label="Close the history">Close ✕</button>
         </div>
-        <div className="hd-body" data-testid="history-drawer-body">
+        <div className="hxd-body" data-testid="history-drawer-body">
           {target.kind === 'recruiter' && <RecruiterHistory key={target.id} personId={target.id} embedded />}
           {target.kind === 'tl' && <TlHistory key={target.id} personId={target.id} embedded />}
           {target.kind === 'candidate' && <CandidateHistory key={target.id} candidateId={target.id} embedded />}
