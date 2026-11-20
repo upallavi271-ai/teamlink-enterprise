@@ -473,7 +473,7 @@ const raw = (sql, ...p) => prisma.$queryRawUnsafe(sql, ...p).then((rows) => rows
     RJ.invalidate();
     const afterDrop = await RJ.monthApplications(month, { fresh: true });
     const rowAfter = afterDrop.apps.find((x) => x.id === j5.a.id);
-    check('R1 recruiter joinings count the joined candidate once, and the same count stands after the drop (no double count, nothing removed)', !!rowBefore && rowBefore.counted === true && !!rowAfter && rowAfter.counted === true && afterDrop.apps.filter((x) => x.id === j5.a.id).length === 1 && before.apps.length === afterDrop.apps.length, [before.apps.length, afterDrop.apps.length]);
+    check('R1 recruiter joinings count the joined candidate once; after the drop (joined rule, switch ats.joinedCountsDropped OFF by default) he is NOT counted as Joined but is still listed once (no double count, nothing removed)', !!rowBefore && rowBefore.counted === true && !!rowAfter && rowAfter.counted === false && afterDrop.apps.filter((x) => x.id === j5.a.id).length === 1 && before.apps.length === afterDrop.apps.length, [before.apps.length, afterDrop.apps.length]);
     check('R1b the dropped one carries a plain note in that screen', rowAfter && /Dropped after joining/.test(rowAfter.note || ''), rowAfter && rowAfter.note);
     const rec1b = await recOf(j1.a.id);
     const emp = await prisma.employee.findFirst({ where: { userId: uRec.id } });
@@ -488,7 +488,7 @@ const raw = (sql, ...p) => prisma.$queryRawUnsafe(sql, ...p).then((rows) => rows
     RJ.invalidate();
     const after = await RJ.monthApplications(String(rec6.joinedOn).slice(0, 7), { fresh: true });
     const row6 = after.apps.find((x) => x.id === j6.a.id);
-    check('R4 the dropped candidate is STILL counted (counted stays true) and carries a plain note', row6 && row6.counted === true && /Dropped after joining/.test(row6.note || '') && row6.drop && row6.drop.afterIncentive === true, row6 && row6.note);
+    check('R4 the dropped candidate is NOT counted as Joined (he is under Dropped) and carries a plain note', row6 && row6.counted === false && /Dropped after joining/.test(row6.note || '') && row6.drop && row6.drop.afterIncentive === true, row6 && row6.note);
     check('R5 the application\'s step and joining day are unchanged by the drop', (await prisma.application.findUnique({ where: { id: j6.a.id } })).stage === 'JOINED');
 
     // ====================================================================== B: backfill
