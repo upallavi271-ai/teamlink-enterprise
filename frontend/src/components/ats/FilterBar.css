@@ -29,3 +29,7 @@
   .fbar-panel-body>*{min-width:0!important;width:100%}
   .fbar .lph-pair input,.fbar .fbar-dates .lph-pair input{flex:1;width:auto}
 }
+
+/* the quick pick of a date range (Today, This week ...) beside its two dates */
+.fbar .fbar-dates .lph-pair{flex-wrap:wrap}
+.fbar .fbar-dates .lph-pair select{flex:0 0 auto;width:auto;max-width:150px}

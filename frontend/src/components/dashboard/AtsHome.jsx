@@ -14,6 +14,7 @@ import FirstTour from './FirstTour.jsx';
 import { taskLine } from './TaskPopup.jsx';
 import { FunnelChart } from '../charts';
 import PageFilterBar, { usePageFilters, filterParams } from '../ui/PageFilterBar.jsx';
+import { PRESETS } from '../../utils/dateRanges.js';
 import { FacetSelect } from '../ui/ListPageHeader.jsx';
 import DashboardExport from './DashboardExport.jsx';
 import { V3_WIDGETS, Cards } from './AtsHomeV3.jsx';
@@ -384,10 +385,7 @@ const EXTRA_FILTERS = [
 ];
 // The Date range choices of THIS dashboard (the server also reads last_month and
 // this_quarter; every number, the lists and the Export follow the one picked).
-const RANGES = [
-  ['', 'Any time'], ['today', 'Today'], ['week', 'This week'], ['month', 'This month'],
-  ['last_month', 'Last month'], ['this_quarter', 'This quarter'], ['30d', 'Last 30 days'], ['custom', 'Custom'],
-];
+const RANGES = PRESETS; // the shared list (utils/dateRanges.js): same words on every screen
 // Old date words → the filter bar's.
 const OLD_RANGE = { this_week: 'week', this_month: 'month' };
 // Links from the old dashboards / bell (?tab= ?due= ?queue= ?list= #pending) land here.

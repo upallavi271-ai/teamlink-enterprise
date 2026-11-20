@@ -36,7 +36,7 @@ class Cell {
 // Accounts desk scope). Everyone else calls it as before.
 async function build(user, q, opts = {}) {
   const s = (v) => (typeof v === 'string' ? v.trim() : '');
-  const range = s(q.range) || 'all';
+  const range = s(q.range) || (s(q.from) || s(q.to) ? 'custom' : 'all'); // a bare From-To is a custom range, not "all"
   const P = range === 'all' ? null : dateRange.resolve({ range, from: s(q.from), to: s(q.to) });
   const and = [opts.rawScope || invoiceWhere(user)];
   if (s(q.clientId)) and.push({ clientId: s(q.clientId) });

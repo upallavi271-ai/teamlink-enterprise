@@ -101,7 +101,10 @@ module.exports = function costPerHire({ Cell, section, addTotal, tileSet }) {
       return true;
     };
     const deptOk = (d) => !f.department || d === f.department;
-    const joined = c.joined.filter((j) => personOk(j) && deptOk(j.department)
+    // A login that is not a cost role (a TL, STL ...) reads only the joinings inside its own scope (the report's scoped rows) - the board
+    // behind it is the whole company's, so the number and the drill list used to differ (2026-11-20)
+    const scopeIds = !showCost && ctx.apps ? new Set(ctx.apps.map((x) => x.id)) : null;
+    const joined = c.joined.filter((j) => (!scopeIds || scopeIds.has(j.appId)) && personOk(j) && deptOk(j.department)
       && (!f.clientId || ((c.appOf.get(j.appId) || {}).requirement || {}).clientId === f.clientId));
     const joinedIds = new Set(joined.map((j) => j.appId));
 

@@ -445,7 +445,7 @@ export function useIntJoinPaged(url, {
 } = {}) {
   const { user } = useAuth();
   // the extra filters of Offers (date, status, CTC, BGV, counter-offer) and Joining (date, guarantee, invoice): components/ats/ListFilters.jsx
-  const xfList = url === '/ats/offers' ? 'offers' : url === '/ats/joining' ? 'joining' : '';
+  const xfList = url === '/ats/offers' ? 'offers' : url === '/ats/joining' ? 'joining' : url === '/ats/feedback' ? 'feedback' : '';
   const xf = useListXf(xfList || 'none', user);
   const clientDesk = can(user, null, 'clients', 'Client List', 'view');
   const [f, setF] = useState(EMPTY_LIST);
@@ -523,7 +523,7 @@ export function useIntJoinPaged(url, {
   const clear = () => { setF(EMPTY_LIST); xf.clear(); };
   const toolbar = (
     <>
-    {xfList && <ListFilterStrip list={xfList} xf={xf} user={user} total={Number(data.total) || 0} noun={xfList === 'offers' ? 'offers' : 'joinings'} allTime={!!data.allTime} />}
+    {xfList && <ListFilterStrip list={xfList} xf={xf} user={user} total={Number(data.total) || 0} noun={xfList === 'offers' ? 'offers' : xfList === 'feedback' ? 'interviews' : 'joinings'} allTime={!!data.allTime} />}
     {!xfList && data.allTime && <div className="small-muted" role="status" style={{ margin: '4px 0' }}>Showing all time</div>}
     <ListToolbar
       search={f.q}

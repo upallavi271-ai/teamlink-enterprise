@@ -56,6 +56,9 @@ export function configFor(list, user) {
       { id: 'ivMode', label: 'Mode', type: 'multi', keys: { value: 'ivMode' }, options: IV_MODE, allLabel: 'Any', plural: 'modes' },
       { id: 'ivInterviewer', label: 'Interviewer', type: 'text', keys: { value: 'ivInterviewer' }, placeholder: 'Name' },
     ];
+    case 'feedback': return [
+      { id: 'fbDate', label: 'Interview date', type: 'daterange', primary: true, keys: { from: 'dFrom', to: 'dTo' } },
+    ];
     case 'offers': return [
       { id: 'offerDate', label: 'Offer date', type: 'daterange', primary: true, keys: { from: 'dFrom', to: 'dTo' } },
       { id: 'offerStatus', label: 'Offer status', type: 'multi', primary: true, keys: { value: 'offerStatus' }, options: OFFER_STATUS, allLabel: 'Any', plural: 'statuses' },
@@ -70,6 +73,7 @@ export function configFor(list, user) {
     ];
     case 'followups': return [
       { id: 'fuDue', label: 'Due', type: 'select', primary: true, keys: { value: 'fuDue' }, options: FU_DUE, allLabel: 'Any time' },
+      { id: 'fuDates', label: 'Due between', type: 'daterange', primary: true, keys: { from: 'fuFrom', to: 'fuTo' } },
       { id: 'fuType', label: 'Type', type: 'multi', primary: true, keys: { value: 'fuType' }, options: FU_TYPE, allLabel: 'Any', plural: 'types' },
       { id: 'fuPriority', label: 'Priority', type: 'multi', primary: true, keys: { value: 'fuPriority' }, options: FU_PRIO, allLabel: 'Any', plural: 'priorities' },
       { id: 'fuCandidate', label: 'Candidate', type: 'text', keys: { value: 'fuCandidate' }, placeholder: 'Name' },

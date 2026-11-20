@@ -54,7 +54,7 @@ class HttpError extends Error {
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const PERIODS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['this_week', 'This week'], ['this_month', 'This month'], ['last_month', 'Last month'], ['custom', 'Custom']];
+const PERIODS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['this_week', 'This week'], ['last_week', 'Last week'], ['this_month', 'This month'], ['last_month', 'Last month'], ['last_30', 'Last 30 days'], ['this_quarter', 'This quarter'], ['this_year', 'This year'], ['custom', 'Custom']];
 const GROUPS = [['total', 'Total'], ['day', 'Day by day'], ['week', 'Week by week'], ['month', 'Month by month']];
 const MAX_DAYS = 400;
 const MAX_BUCKETS = { day: 93, week: 60, month: 36 };
@@ -138,7 +138,8 @@ function parseQuery(q = {}, today = DR.todayIst()) {
   const s = (v) => (typeof v === 'string' ? v.trim() : '');
   const report = REPORT_BY_ID[s(q.report)] ? s(q.report) : 'summary';
   const view = s(q.view) === 'individual' ? 'individual' : 'team';
-  const rangeKey = PERIODS.some(([k]) => k === s(q.range)) ? s(q.range) : 'this_month';
+  const askedRange = dateRange.canonKey(s(q.range));
+  const rangeKey = PERIODS.some(([k]) => k === askedRange) ? askedRange : ((!askedRange && (s(q.from) || s(q.to))) ? 'custom' : 'this_month');
   let P;
   try { P = dateRange.resolve({ range: rangeKey, from: s(q.from), to: s(q.to) }, today); } catch (err) { throw new HttpError(400, err.message); }
   if (P.days > MAX_DAYS) throw new HttpError(400, 'Pick up to 13 months at a time.');

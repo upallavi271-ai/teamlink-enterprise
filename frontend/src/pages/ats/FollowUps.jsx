@@ -242,7 +242,7 @@ export default function FollowUps({ embedded = false }) {
         </div>
         {/* Template · Import · Export: every follow-up in your scope
             (GET /followups) and follow-up updates recorded as the dialog does. */}
-        <AtsDataTools module="followups" kinds={['followups']} onImported={load} />
+        <AtsDataTools module="followups" kinds={['followups']} onImported={load} body={() => ({ params: xf.params })} />
       </div>
 
       {/* Department → Section → TL → Recruiter — draws nothing for a login

@@ -17,6 +17,7 @@ const canSchedule = (user) => can(user, 'ats', 'interviews', 'Schedule Interview
 // ATS LAYOUT v3 (2026-10-03): filters bar → cards → charts → table, all from
 // the shared kit. The calendar is coloured by department (kit palette).
 import PageFilterBar, { usePageFilters } from '../../components/ui/PageFilterBar.jsx';
+import { presetDates } from '../../utils/dateRanges.js';
 import { BarChart, slotVar } from '../../components/charts';
 import './InterviewCalendarV3.css';
 import HierarchyFilter, {
@@ -204,18 +205,13 @@ const PF_FIELDS = CAL_FIELDS.filter((x) => ['department', 'clientId', 'recruiter
 const ymdL = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const mondayL = (d) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
 function calRange(pf) {
-  const t = new Date();
-  const today = new Date(t.getFullYear(), t.getMonth(), t.getDate());
-  switch (pf.range) {
-    case 'today': return { from: ymdL(today), to: ymdL(today) };
-    case 'week': { const m = mondayL(today); const e = new Date(m); e.setDate(e.getDate() + 6); return { from: ymdL(m), to: ymdL(e) }; }
-    case 'month': return { from: ymdL(new Date(today.getFullYear(), today.getMonth(), 1)), to: ymdL(new Date(today.getFullYear(), today.getMonth() + 1, 0)) };
-    case '30d': { const s0 = new Date(today); s0.setDate(s0.getDate() - 29); return { from: ymdL(s0), to: ymdL(today) }; }
-    case 'custom': return { from: pf.from || '', to: pf.to || '' };
-    default: return { from: '', to: '' };
-  }
+  // IST days from the shared presets (utils/dateRanges.js); the calendar reads a WHOLE week / month
+  const d = presetDates(pf.range, pf.from, pf.to);
+  if (pf.range === 'week' && d.from) { const e = new Date(`${d.from}T00:00:00Z`); e.setUTCDate(e.getUTCDate() + 6); return { from: d.from, to: e.toISOString().slice(0, 10) }; }
+  if (pf.range === 'month' && d.from) { const e = new Date(Date.UTC(+d.from.slice(0, 4), +d.from.slice(5, 7), 0)); return { from: d.from, to: e.toISOString().slice(0, 10) }; }
+  return { from: d.from || '', to: d.to || '' };
 }
-const localDay = (iso) => (iso ? ymdL(new Date(iso)) : null);
+const localDay = (iso) => (iso ? new Date(new Date(iso).getTime() + 5.5 * 3600e3).toISOString().slice(0, 10) : null); // the IST day
 const thisWeek = () => { const m = mondayL(new Date()); const e = new Date(m); e.setDate(e.getDate() + 6); return [ymdL(m), ymdL(e)]; };
 const AI_FIELDS = [{ key: 'status', get: (r) => r.status, label: (v) => AI_STATUS_TEXT[v] || v }];
 const PHASE_LABEL = { ...Object.fromEntries([...INTERVIEW_LIFECYCLE, ...INTERVIEW_EXCEPTIONS]), SHORTLISTED: 'Shortlisted' };

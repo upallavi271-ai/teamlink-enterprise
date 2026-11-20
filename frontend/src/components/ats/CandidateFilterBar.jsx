@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useAuth } from '../../context/AuthContext.jsx';
 import FilterBar, { useUrlFilters } from './FilterBar.jsx';
 
 // ---------------------------------------------------------------------------
@@ -69,10 +70,10 @@ export function candidateConfig(f) {
     { id: 'clientId', label: 'Client', type: 'select', keys: { value: 'clientId' }, allLabel: 'All clients' },
     { id: 'requirementId', label: 'Requirement', type: 'select', keys: { value: 'requirementId' }, allLabel: 'All requirements' },
     { id: 'tag', label: 'Tags', type: 'multi', show: f.internal, keys: { value: 'tag' }, allLabel: 'Any tag', plural: 'tags' },
-    { id: 'added', label: 'Added on', type: 'daterange', show: f.internal, keys: { from: 'addedFrom', to: 'addedTo' } },
-    { id: 'updated', label: 'Last updated', type: 'daterange', show: f.internal, keys: { from: 'updatedFrom', to: 'updatedTo' } },
-    { id: 'contacted', label: 'Last contacted', type: 'daterange', show: f.internal, keys: { from: 'contactedFrom', to: 'contactedTo' } },
-    { id: 'shared', label: 'Shared with client', type: 'daterange', show: f.internal, keys: { from: 'sharedFrom', to: 'sharedTo' } },
+    { id: 'added', label: 'Added on', type: 'daterange', primary: true, show: f.dates, keys: { from: 'addedFrom', to: 'addedTo' } },
+    { id: 'updated', label: 'Last updated', type: 'daterange', show: f.dates, keys: { from: 'updatedFrom', to: 'updatedTo' } },
+    { id: 'contacted', label: 'Last contacted', type: 'daterange', show: f.dates, keys: { from: 'contactedFrom', to: 'contactedTo' } },
+    { id: 'shared', label: 'Shared with client', type: 'daterange', show: f.dates, keys: { from: 'sharedFrom', to: 'sharedTo' } },
     { id: 'resume', label: 'Resume', type: 'yesno', show: f.loc, keys: { value: 'resume' }, yesLabel: 'On file', noLabel: 'Not on file' },
     { id: 'score', label: 'Profile completeness', type: 'range', show: f.loc, unit: '%', step: 5, keys: { min: 'scoreMin', max: 'scoreMax', bucket: 'scoreBucket' }, facet: 'scoreBucket' },
     { id: 'dup', label: 'Duplicate', type: 'select', show: f.internal, keys: { value: 'dup' }, allLabel: 'Either' },
@@ -83,8 +84,9 @@ export default function CandidateFilterBar({
   xf, filters, setFilter, facets, loading, total, stageOptions, onClear, canClear, saved, master = false,
 }) {
   // what the server offered tells which groups this login may use
-  const groups = { ctc: facets.ctcCurBucket !== undefined, loc: facets.locCur !== undefined, internal: facets.dup !== undefined, master };
-  const config = useMemo(() => candidateConfig(groups), [groups.ctc, groups.loc, groups.internal, groups.master]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { user } = useAuth() || {};
+  const groups = { ctc: facets.ctcCurBucket !== undefined, loc: facets.locCur !== undefined, internal: facets.dup !== undefined, dates: !!user && !['CLIENT', 'CANDIDATE'].includes(user.role) && !['CLIENT', 'CANDIDATE'].includes(user.atsRole), master }; // the date filters belong to every staff login: they do not wait for the facets to answer
+  const config = useMemo(() => candidateConfig(groups), [groups.ctc, groups.loc, groups.internal, groups.dates, groups.master]); // eslint-disable-line react-hooks/exhaustive-deps
   const values = { ...xf.values };
   PAGE_KEYS.forEach((k) => { if (filters[k]) values[k] = filters[k]; });
   const onChange = (patch) => {

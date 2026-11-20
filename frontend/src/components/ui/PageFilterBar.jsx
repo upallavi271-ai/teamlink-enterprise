@@ -6,6 +6,7 @@ import { FacetSelect, useFacets } from './ListPageHeader.jsx';
 import './ListPageHeader.css';
 import './PageFilterBar.css';
 import Combo from '../Combo.jsx';
+import { PRESETS, presetDates, dateProblem } from '../../utils/dateRanges.js';
 
 // ---------------------------------------------------------------------------
 // THE SAME FILTERS ON EVERY PAGE (ATS layout v3, 2026-10-03):
@@ -36,40 +37,16 @@ import Combo from '../Combo.jsx';
 // URL keys: department, range, from, to, clientId, recruiterId, bdeId.
 // ---------------------------------------------------------------------------
 
-export const DATE_RANGES = [
-  ['', 'Any time'],
-  ['today', 'Today'],
-  ['week', 'This week'],
-  ['month', 'This month'],
-  ['30d', 'Last 30 days'],
-  ['custom', 'Custom'],
-];
+// The presets are the shared list (utils/dateRanges.js): the same words, in the same order, on every screen.
+export const DATE_RANGES = PRESETS;
 const KEYS = ['department', 'range', 'from', 'to', 'clientId', 'recruiterId', 'bdeId'];
 export const EMPTY_FILTERS = Object.freeze({
   department: '', range: '', from: '', to: '', clientId: '', recruiterId: '', bdeId: '',
 });
 
-const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-// The dates a range stands for, in local time. {} for "any time".
+// The dates a range stands for, in IST days. {} for "any time".
 export function rangeDates(range, from, to, now = new Date()) {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  switch (range) {
-    case 'today': return { from: ymd(today), to: ymd(today) };
-    case 'week': {
-      const s = new Date(today);
-      s.setDate(s.getDate() - ((s.getDay() + 6) % 7)); // Monday
-      return { from: ymd(s), to: ymd(today) };
-    }
-    case 'month': return { from: ymd(new Date(today.getFullYear(), today.getMonth(), 1)), to: ymd(today) };
-    case '30d': {
-      const s = new Date(today);
-      s.setDate(s.getDate() - 29);
-      return { from: ymd(s), to: ymd(today) };
-    }
-    case 'custom': return { ...(from ? { from } : {}), ...(to ? { to } : {}) };
-    default: return {};
-  }
+  return presetDates(range, from, to, now);
 }
 
 // Only the filters that are set, ready for an API call's params. The date
@@ -79,6 +56,8 @@ export function filterParams(value) {
   const out = {};
   ['department', 'clientId', 'recruiterId', 'bdeId'].forEach((k) => { if (v[k]) out[k] = v[k]; });
   if (v.range) {
+    // an unfinished or backwards custom range is not sent (the bar says why); the list stays as it was
+    if (v.range === 'custom' && dateProblem(v.from, v.to)) return out;
     out.range = v.range;
     Object.assign(out, rangeDates(v.range, v.from, v.to));
   }
@@ -243,6 +222,7 @@ export default function PageFilterBar({
             <input type="date" aria-label="From date" value={value.from || ''} max={value.to || undefined} onChange={(e) => set({ from: e.target.value })} />
             <input type="date" aria-label="To date" value={value.to || ''} min={value.from || undefined} onChange={(e) => set({ to: e.target.value })} />
           </span>
+          {dateProblem(value.from, value.to) && <span className="small-muted" role="alert" style={{ color: 'var(--danger, #b42318)' }}>{dateProblem(value.from, value.to)}</span>}
         </span>
       )}
       {want.client && (

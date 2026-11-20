@@ -49,6 +49,7 @@ import { deadlineInfo, DEADLINE_LABEL } from '../components/jobs/deadline.js';
 import { useSpecTree, specName, qualName } from '../utils/specMaster'; // spec D
 // ATS layout v3 — filters bar → cards (max 6) → charts (max 3) → table.
 import PageFilterBar, { rangeDates } from '../components/ui/PageFilterBar.jsx';
+import { matchPreset, presetDates } from '../utils/dateRanges.js';
 // Clients & Requirements v4 (2026-10-08) — the reference layout: KPI tiles,
 // stage flow, needs attention, by department, top clients, the list and the
 // "Selected requirement" panel. Same data (GET /requirements/summary + the list).
@@ -219,6 +220,20 @@ function roleOf(user) {
 
 // Filters. `mine`, `sla`, `closing`, `nocand` have no dropdown — they come
 // from saved views and show as chips like any other filter.
+// The Created date range kept per login for this browser tab (sessionStorage), put back when the page is opened again. A preset
+// ("This month") is kept as the word, so tomorrow it still means this month.
+const DATES_KEY = (u) => `tl.reqDates:${(u && u.id) || ''}`;
+function rememberedRange(u) {
+  try {
+    const v = JSON.parse(window.sessionStorage.getItem(DATES_KEY(u)) || 'null');
+    if (!v || !v.range) return { range: '', from: '', to: '' };
+    const d = v.range === 'custom' ? { from: v.from, to: v.to } : presetDates(v.range);
+    return { range: v.range, from: d.from || '', to: d.to || '' };
+  } catch { return { range: '', from: '', to: '' }; }
+}
+function saveRange(u, range, f) {
+  try { window.sessionStorage.setItem(DATES_KEY(u), JSON.stringify({ range, from: f.from || '', to: f.to || '' })); } catch { /* storage off */ }
+}
 const EMPTY_FILTERS = {
   search: '', clientId: '', location: '', bde: '', status: '', priority: '', from: '', to: '', mine: '', sla: '', agreement: '',
   closing: '', nocand: '',
@@ -320,6 +335,7 @@ export default function Requirements() {
   // the address bar is cleaned right after the first render, so keep what it asked for
   const firstUrl = useRef({ isNew: urlNew, client: urlClient, title: urlTitle });
   const urlView = searchParams.get('view');
+  const remembered = useMemo(() => rememberedRange(user), []); // eslint-disable-line react-hooks/exhaustive-deps
   const initial = useMemo(() => ({
     filters: {
       ...EMPTY_FILTERS,
@@ -331,6 +347,7 @@ export default function Requirements() {
       // spec D: ?specialisationId= (Reports → Specialization opens its jobs here).
       qualificationId: searchParams.get('qualificationId') || '',
       specialisationId: searchParams.get('specialisationId') || '',
+      from: remembered.from, to: remembered.to,
     },
     h: role === 'recruiter' ? EMPTY_HIERARCHY : {
       ...EMPTY_HIERARCHY,
@@ -956,10 +973,11 @@ export default function Requirements() {
   // THE FILTER BAR (ATS layout v3) drives the list's own filters: Department
   // (the hierarchy), Client, Recruiter OR Client manager (BDE) and the date
   // range (the Created date filter). Kept in this screen's state like the rest.
-  const [barRange, setBarRange] = useState('');
+  const [barRange, setBarRange] = useState(remembered.range || '');
+  useEffect(() => { saveRange(user, barRange || matchPreset(filters.from || '', filters.to || ''), filters); }, [barRange, filters.from, filters.to]); // eslint-disable-line react-hooks/exhaustive-deps
   const barValue = {
     department: h.department || '',
-    range: barRange || (filters.from || filters.to ? 'custom' : ''),
+    range: barRange || matchPreset(filters.from || '', filters.to || ''),
     from: filters.from || '',
     to: filters.to || '',
     clientId: filters.clientId || '',

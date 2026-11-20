@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import MultiFacetSelect from '../ui/MultiFacetSelect.jsx';
 import { FacetSelect } from '../ui/ListPageHeader.jsx';
 import FilterChips from '../FilterChips.jsx';
+import { PRESETS, presetDates, matchPreset, dateProblem } from '../../utils/dateRanges.js';
 import './FilterBar.css';
 
 // ---------------------------------------------------------------------------
@@ -123,6 +124,34 @@ function StaticMulti({ f, value, onChange }) {
   );
 }
 
+// A date range: the quick picks (Today, Yesterday, This week ... the same list on every screen, IST days) and the two dates.
+// A quick pick fills both dates (so the address bar and the server only ever see From and To); typing a date makes it Custom.
+function DateRangeField({ f, values, onChange }) {
+  const from = values[f.keys.from] || '';
+  const to = values[f.keys.to] || '';
+  const picked = matchPreset(from, to);
+  const problem = dateProblem(from, to);
+  const pick = (k) => {
+    if (!k) return onChange({ [f.keys.from]: '', [f.keys.to]: '' });
+    if (k === 'custom') return onChange({});
+    const d = presetDates(k);
+    return onChange({ [f.keys.from]: d.from || '', [f.keys.to]: d.to || '' });
+  };
+  return (
+    <span className="lph-facet fbar-dates" title={f.title || f.label}>
+      <span className="lph-facet-lbl">{f.label}</span>
+      <span className="lph-pair">
+        <select aria-label={`${f.label}: quick pick`} value={picked} onChange={(e) => pick(e.target.value)}>
+          {PRESETS.filter(([k]) => k !== 'custom' || picked === 'custom').map(([k, l]) => <option key={k} value={k}>{k === '' ? 'Any time' : l}</option>)}
+        </select>
+        <input type="date" aria-label={`${f.label} from`} value={from} max={to || undefined} onChange={(e) => onChange({ [f.keys.from]: e.target.value })} />
+        <input type="date" aria-label={`${f.label} to`} value={to} min={from || undefined} onChange={(e) => onChange({ [f.keys.to]: e.target.value })} />
+      </span>
+      {problem && <span className="small-muted" role="alert" style={{ color: 'var(--danger, #b42318)' }}>{problem}</span>}
+    </span>
+  );
+}
+
 function Control({ f, values, onChange, facets, loading }) {
   const key = f.keys.value;
   const opts = f.options || facets[f.facet || key] || [];
@@ -177,17 +206,7 @@ function Control({ f, values, onChange, facets, loading }) {
       </span>
     );
   }
-  if (f.type === 'daterange') {
-    return (
-      <span className="lph-facet fbar-dates" title={f.title || f.label}>
-        <span className="lph-facet-lbl">{f.label}</span>
-        <span className="lph-pair">
-          <input type="date" aria-label={`${f.label} from`} value={values[f.keys.from] || ''} max={values[f.keys.to] || undefined} onChange={(e) => onChange({ [f.keys.from]: e.target.value })} />
-          <input type="date" aria-label={`${f.label} to`} value={values[f.keys.to] || ''} min={values[f.keys.from] || undefined} onChange={(e) => onChange({ [f.keys.to]: e.target.value })} />
-        </span>
-      </span>
-    );
-  }
+  if (f.type === 'daterange') return <DateRangeField f={f} values={values} onChange={onChange} />;
   if (f.type === 'yesno') {
     return (
       <label className="lph-facet" title={f.title || f.label}>
