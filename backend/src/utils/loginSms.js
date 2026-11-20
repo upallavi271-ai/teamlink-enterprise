@@ -14,6 +14,10 @@ const crypto = require('crypto');
 const prisma = require('../db');
 const gw = require('./smsGateway');
 
+// The default sender goes through the channel layer (channels/index.js), like every other SMS: the message is RECORDED (SMS history, module "Job Portal login") with the
+// provider's acknowledgement id, so the Pull DLR job and the delivery report can say Delivered / Failed later. `proving` is for the one real test of a new template.
+const viaChannels = (o) => require('../channels').send('SMS', { ...o, providerOnly: 'sms.gateway', meta: { module: 'Job Portal login', purpose: 'Candidate login' } }); // eslint-disable-line global-require
+
 const STORE_ID = 'login-sms-sent';
 const WINDOW_MS = 24 * 3600 * 1000;
 const KEEP = 5000;
@@ -36,7 +40,7 @@ function sendLoginSms(args) {
   return run;
 }
 
-async function sendOne({ to, loginId, url, send = gw.sendSms }) {
+async function sendOne({ to, loginId, url, send = viaChannels, proving = false }) {
   const cfg = await gw.smsConfig();
   if (!cfg.configured) return { ok: false, status: 'off', reason: cfg.reason || 'The SMS Gateway is not configured.' };
   if (cfg.provider !== 'SMSGW') return { ok: false, status: 'off', reason: 'The candidate login template is for the SMS Push Platform; it is not the chosen provider.' };
@@ -45,11 +49,11 @@ async function sendOne({ to, loginId, url, send = gw.sendSms }) {
   const key = hashOf(to, loginId);
   const log = await readLog();
   if (log[key] && Date.now() - log[key].at < WINDOW_MS) return { ok: true, status: 'duplicate', providerRef: log[key].ref || null, reason: 'A login SMS went to this number for this login ID in the last 24 hours.' };
-  const out = await send({ to, kind: 'login', text, templateId: cfg.templates.login });
+  const out = await send({ to, kind: 'login', text, templateId: cfg.templates.login, proving });
   if (!out || !out.ok) return { ok: false, status: out && out.notConfigured ? 'off' : 'failed', transient: !!(out && out.transient), reason: String((out && out.error) || 'The SMS was not accepted.').slice(0, 300) };
-  log[key] = { at: Date.now(), ref: out.providerRef || null };
+  log[key] = { at: Date.now(), ref: out.providerRef || null, ack: out.ackId || null };
   await writeLog(log).catch(() => {});
-  return { ok: true, status: 'sent', providerRef: out.providerRef || null, provider: out.provider || 'SMSGW' };
+  return { ok: true, status: 'sent', providerRef: out.providerRef || null, ackId: out.ackId || null, provider: out.provider || 'SMSGW' };
 }
 
 module.exports = { sendLoginSms, sendOne, hashOf };
