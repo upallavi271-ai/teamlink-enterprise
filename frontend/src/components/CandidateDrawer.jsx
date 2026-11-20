@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import api from '../api';
 import { protoDate } from '../atsVocab';
 import { can } from '../permissions';
+import { lastTab } from '../utils/tabMap.js'; // the tab this login used last on a candidate
 import { CandidateActions, CurrentApplication } from './Candidate360.jsx';
 import {
   C360Header, C360Tabs, candidateCode, currentAppOf, clientOf, tabKeyOf,
@@ -51,7 +52,7 @@ export default function CandidateDrawer({
   const [c, setC] = useState(null);
   const [error, setError] = useState('');
   const [flash, setFlash] = useState('');
-  const [tab, setTabRaw] = useState('applications');
+  const [tab, setTabRaw] = useState(() => tabKeyOf(lastTab('c360', user && user.id)));
   const setTab = (k) => setTabRaw(tabKeyOf(k));
   const [selectedAppId, setSelectedAppId] = useState(applicationId);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -63,7 +64,7 @@ export default function CandidateDrawer({
       .catch((err) => setError(err.response?.data?.error || 'Could not open this person. Please try again.'));
   }
   useEffect(() => {
-    setC(null); setFlash(''); setSelectedAppId(applicationId); setTabRaw('applications');
+    setC(null); setFlash(''); setSelectedAppId(applicationId); setTabRaw(tabKeyOf(lastTab('c360', user && user.id)));
     load();
   }, [candidateId, applicationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -231,12 +232,13 @@ export default function CandidateDrawer({
               </div>
             )}
 
-            {tab === 'notes' && internal && (
-              <NotesTab c={c} canAdd={can(user, 'ats', 'candidates', 'Candidate Master', 'edit')} onAdd={addNote} />
-            )}
             {/* ATS-100 B5: certifications + documents with a real file (upload / view / download / delete). */}
             {tab === 'documents' && <RecordDocuments c={c} internal={internal} />}
+            {/* Follow-ups & notes: the dated follow-up log, then the internal notes (one tab since 2026-11-20). */}
             {tab === 'followups' && internal && <FollowUpLog key={c.id} candidateId={c.id} applicationId={app ? app.id : undefined} />}
+            {tab === 'followups' && internal && (
+              <NotesTab c={c} canAdd={can(user, 'ats', 'candidates', 'Candidate Master', 'edit')} onAdd={addNote} />
+            )}
             {/* The Resume card — its own tab, no longer on the left. */}
             {tab === 'resume' && <ResumeTabCard c={c} />}
             {tab === 'career' && internal && <CareerProfile c={c} />}

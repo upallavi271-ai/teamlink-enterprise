@@ -6,6 +6,10 @@ import { RequirementIndustryCard } from '../components/ats/OfferBgv.jsx'; // ind
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { rowClickProps } from '../utils/rowClick.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import TabStrip from '../components/ui/TabStrip.jsx'; // main tabs + More menu + the caption line (founder 2026-11-20)
+import {
+  REQ_MORE, reqTabKey, lastTab, rememberTab,
+} from '../utils/tabMap.js'; // old ?tab= names -> the tab that holds them now; last tab per login
 import { assignKinds } from '../components/jobs/reqActions.js';
 import api from '../api';
 import Modal from '../components/Modal.jsx';
@@ -192,6 +196,17 @@ const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'ag
 const TAB_LABELS = {
   overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', distribute: 'Postings', history: 'History', activity: 'Activity',
 };
+// What each tab is for: the line under the strip and the tab's tooltip. Main: Overview · Candidates · Interviews · Team · Postings; under More: Client · Agreement · Activity.
+const TAB_SAY = {
+  overview: 'The requirement at a glance: status, who works on it, the people nearby and what needs doing next.',
+  candidates: 'People in the pipeline for this requirement, and good matches to add. Move them to the next step here.',
+  interviews: 'Client and recruitment interviews for this requirement: booked, done, waiting for feedback.',
+  recruiter: 'Who works on this requirement: the team lead, recruiters and client manager. Change the team here.',
+  distribute: 'Where this requirement is posted: job portal, job sites and tracked links, and how each posting is doing.',
+  client: 'The client contact for this requirement.',
+  agreement: 'The client agreement that lets this requirement run, and its status.',
+  activity: 'Every change made to this requirement, with who made it and when.',
+};
 // Pipeline filter on the Candidates tab — same buckets as the count tiles.
 const PIPE_FILTERS = [
   ['all', 'All'],
@@ -246,13 +261,15 @@ export default function RequirementDetail() {
   const [requirement, setRequirement] = useState(null);
   const [denied, setDenied] = useState('');
   const [tab, setTabState] = useState(() => {
-    const t = searchParams.get('tab');
-    if (TABS.includes(t)) return t;
+    const t = reqTabKey(searchParams.get('tab'), TABS);
+    if (t) return t;
     if (hash === '#pipeline' || hash === '#matching') return 'candidates';
-    return 'overview';
+    // No tab in the address: the one this login used last (Overview the first time).
+    return reqTabKey(lastTab('req', user && user.id), TABS) || 'overview';
   });
   const setTab = (t) => {
     setTabState(t);
+    rememberTab('req', user && user.id, t);
     const next = new URLSearchParams(searchParams);
     if (t === 'overview') next.delete('tab'); else next.set('tab', t);
     next.delete('action');
@@ -1325,14 +1342,15 @@ export default function RequirementDetail() {
       )}
       {error && <div className="error-text">{error}</div>}
 
-      <div className="tabs reqdet-tabs">
-        {tabs.map((t) => (
-          <div key={t} className={`tab${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
-            {TAB_LABELS[t]}
-            {tabCount[t] ? <span className="n" style={{ marginLeft: 4, opacity: 0.75 }}>{nf(tabCount[t])}</span> : null}
-          </div>
-        ))}
-      </div>
+      <TabStrip
+        className="reqdet-tabs"
+        label="Requirement tabs"
+        value={tabs.includes(tab) ? tab : 'overview'}
+        onChange={setTab}
+        tabs={tabs.map((t) => ({
+          key: t, label: TAB_LABELS[t], say: TAB_SAY[t], hint: TAB_SAY[t], count: tabCount[t], more: REQ_MORE.includes(t),
+        }))}
+      />
 
       {bodies[tabs.includes(tab) ? tab : 'overview']}
 

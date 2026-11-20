@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import api from '../api';
 import { ApplicationExtrasCard } from '../components/ats/OfferBgv.jsx'; // industry checklist, gender/age flag, BGV, counter-offers
 import { useAuth } from '../context/AuthContext.jsx';
+import { lastTab } from '../utils/tabMap.js'; // the tab this login used last on a candidate
 import NextStepBlock from '../components/NextStepBlock.jsx';
 import {
   stageLabel, lifeStatusClass, aiStatusClass, protoDate, interviewStatusLabel,
@@ -173,7 +174,8 @@ export default function CandidateDetail() {
   // Set when the API refuses this record for scope reasons.
   const [denied, setDenied] = useState('');
   const [limited, setLimited] = useState(null);
-  const [tab, setTabRaw] = useState('applications');
+  // Opens on the tab this login used last (Overview the first time).
+  const [tab, setTabRaw] = useState(() => tabKeyOf(lastTab('c360', user && user.id)));
   const setTab = (k) => setTabRaw(tabKeyOf(k));
   const navigate = useNavigate();
   const [refreshKey, setRefreshKey] = useState(0);
@@ -184,7 +186,7 @@ export default function CandidateDetail() {
   // user notes #5 — which application the 360 shows: the latest, until a row
   // of the Applications list is clicked.
   // ?application=<id>: opened from an 'Already on this job' link, so it starts on THAT application.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedAppId, setSelectedAppId] = useState(searchParams.get('application') || null);
   useEffect(() => { setSelectedAppId(null); }, [id]);
   // --- follow-ups. One thread per APPLICATION. -----------------------------
@@ -223,6 +225,8 @@ export default function CandidateDetail() {
   useEffect(() => {
     if (!wantedTab) return undefined;
     setTab(wantedTab);
+    // An old tab name (?tab=notes, ?tab=timeline ...) is rewritten to the tab that holds it now (utils/tabMap.js).
+    if (tabKeyOf(wantedTab) !== String(wantedTab).toLowerCase()) { const sp = new URLSearchParams(searchParams); sp.set('tab', tabKeyOf(wantedTab)); setSearchParams(sp, { replace: true }); }
     const t = setTimeout(() => { const el = document.querySelector('.pfl-tabs-top'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 80);
     return () => clearTimeout(t);
   }, [wantedTab, id, location.key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1114,8 +1118,8 @@ export default function CandidateDetail() {
       {tab === 'career' && internal && <CareerProfile c={c} />}
 
       {/* --- Notes: internal recruiter / TL notes. Never served to a client. --- */}
-      {tab === 'notes' && internal && <div className="section-label">{notes.length ? `Notes (${notes.length})` : 'Notes'}</div>}
-      {tab === 'notes' && internal && (
+      {tab === 'followups' && internal && <div className="section-label">{notes.length ? `Notes (${notes.length})` : 'Notes'}</div>}
+      {tab === 'followups' && internal && (
         <>
           <div className="notice">
             Only TeamLink staff see these notes. Clients never do.

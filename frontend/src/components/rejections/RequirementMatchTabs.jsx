@@ -71,17 +71,17 @@ export default function RequirementMatchTabs({
   const prev = data ? data.previouslyRejected : null;
   const here = data ? data.rejectedHere : null;
   const TABS = [
-    ['matching', 'Good fit', matchN],
-    ['previous', 'Rejected before, good fit', prev ? prev.total : null],
-    ['here', 'Rejected on this requirement', here ? here.total : null],
+    ['matching', 'Good fit', matchN, 'People in the database who match this requirement and are not on it yet. Add them with one click.'],
+    ['previous', 'Rejected before, good fit', prev ? prev.total : null, 'People rejected for another requirement who still fit this one. Adding one records why they were rejected before.'],
+    ['here', 'Rejected on this requirement', here ? here.total : null, 'People rejected on this requirement, with the reason. Kept, never deleted.'],
   ];
 
   return (
     <div className="card section rjx-matchcard">
       <h3 style={{ fontSize: 14, margin: 0 }}>{`Good fit for ${title || 'this requirement'}${clientName ? ` (${clientName})` : ''}`}</h3>
       <div className="rjx-tabs" role="tablist">
-        {TABS.map(([id, label, n]) => (
-          <button key={id} type="button" role="tab" aria-selected={tab === id} className={`rjx-tab${tab === id ? ' is-on' : ''}`} onClick={() => setTab(id)}>
+        {TABS.map(([id, label, n, tip]) => (
+          <button key={id} type="button" role="tab" title={tip} aria-selected={tab === id} className={`rjx-tab${tab === id ? ' is-on' : ''}`} onClick={() => setTab(id)}>
             {label}
             {/* Never a bare zero. */}
             {n != null && n > 0 && <b>{n}</b>}

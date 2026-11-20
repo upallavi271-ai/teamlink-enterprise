@@ -30,9 +30,13 @@ import AppOmniPanel from '../components/omni/AppOmniPanel.jsx'; // the shared te
 // cand7_ (Candidates §7): the Progress board.
 import CandidateBoard from '../components/candidate/CandidateBoard.jsx';
 import {
-  StatusTabs, ListToolbar, ListFooter, FacetSelect, PanelField, useFacets,
+  ListToolbar, ListFooter, FacetSelect, PanelField, useFacets,
 } from '../components/ui/ListPageHeader.jsx';
 import ColumnChooser, { useStoredState } from '../components/ColumnChooser.jsx';
+import TabStrip from '../components/ui/TabStrip.jsx'; // main tabs + More menu + the caption line (founder 2026-11-20)
+import {
+  LIST_VIEW_ALIAS, LIST_MORE, PIPE_SUB_MORE, MASTER_SUB_MORE, defaultListTab, lastTab, rememberTab,
+} from '../utils/tabMap.js'; // old ?view= links -> the tab that holds them now; default + last tab per login
 // Where they came from: the clean source list, the tick-box filter with counts, and the cell helpers.
 import MultiFacetSelect from '../components/ui/MultiFacetSelect.jsx';
 import { PICK_SOURCES, IMPORTED_SOURCE, OTHER_SOURCE, recordedAs, sourceCame, sourceLabel } from '../utils/candidateSource.js';
@@ -193,23 +197,25 @@ function withCurrent(options, value, label) {
 const personLabel = (v) => (String(v || '').startsWith('name:') ? v.slice(5) : String(v || '').startsWith('seat:') ? `Recruiter seat ${v.slice(5)}` : 'Selected person');
 
 const MAIN_VIEWS = [
-  { id: 'pipeline', label: 'Requirement applications', say: 'One row for each person + requirement. A person who applied to 3 requirements shows 3 times.', hint: 'People already working through a requirement' },
+  // The work waiting on this login: the queue the Needs my action chip used to open (quick=my_pending).
+  { id: 'todo', label: 'Needs my action', say: 'Applications waiting on you right now. Do the next step here, and each one leaves this list.', hint: 'Your move now — applications waiting on you' },
+  { id: 'pipeline', label: 'Requirement applications', say: 'People in the pipeline for your requirements, one row for each person + requirement. Move them to the next step here.', hint: 'People already working through a requirement' },
   { id: 'job-portal', label: 'New from job portal', say: 'People who applied on the job portal and are not checked yet. Check them, then send to a requirement.', hint: 'Not checked yet — check, then send to a requirement' },
-  { id: 'master', label: 'People', say: 'One row for each person, however many requirements they applied to.', hint: 'One row per person, with all their applications' },
+  { id: 'master', label: 'People', say: 'Everyone in the database, one row for each person however many requirements they applied to.', hint: 'One row per person, with all their applications' },
   // dup_: the people who look like someone already on file — each is held at the first step until it is sorted out.
   // Where did people come from, and when? Counts per source, by day / week / month (components/candidate/CandidateSources.jsx).
-  { id: 'sources', label: 'Sources', say: 'How many people came from each source, and when they came.', hint: 'How many people came from each source, and when' },
+  { id: 'sources', label: 'Sources', say: 'Where people came from: how many from each source, by day, week or month. Use it to see which source works.', hint: 'How many people came from each source, and when' },
   // Company contact lists (CSV / Excel), the job message to them on WhatsApp, and the replies (components/broadcast/ContactLists.jsx).
-  { id: 'contacts', label: 'Contact lists', say: 'Contact lists from a company: import them, send a requirement on WhatsApp, read the replies.', hint: 'Import a contact list and send a requirement to it on WhatsApp' },
-  { id: 'duplicates', label: 'Duplicates', say: 'People who look like someone already on file. Check them before they move on.', hint: 'Check these before they move on — merge, same person, not a duplicate, or reject' },
+  { id: 'contacts', label: 'Contact lists', say: 'Contact lists from a company: import them, send a requirement on WhatsApp, read the replies. For reaching people who have not applied yet.', hint: 'Import a contact list and send a requirement to it on WhatsApp' },
+  { id: 'duplicates', label: 'Duplicates', say: 'People who look like someone already on file. Each one waits at the first step until you merge it, mark it the same person, or say it is not a duplicate.', hint: 'Check these before they move on — merge, same person, not a duplicate, or reject' },
 ];
 const PIPE_SUBS = [
-  { id: 'all', label: 'All', hint: 'Every application, any status' },
-  { id: 'active', label: 'Active', hint: 'Still in progress' },
-  { id: 'hold', label: 'Hold', hint: 'Applications on hold' },
-  { id: 'selected', label: 'Selected', hint: 'Selected, offer made or offer accepted' },
-  { id: 'joined', label: 'Joined', hint: 'Joined / hired' },
-  { id: 'rejected', label: 'Rejected', hint: 'Rejected applications — kept, never deleted' },
+  { id: 'all', label: 'All', hint: 'Every application, any status', say: 'Every application you can see, whatever its status.' },
+  { id: 'active', label: 'Active', hint: 'Still in progress', say: 'Applications still moving through the steps. Move them to the next step here.' },
+  { id: 'hold', label: 'Hold', hint: 'Applications on hold', say: 'Applications paused for now. Open one to start it again.' },
+  { id: 'selected', label: 'Selected', hint: 'Selected, offer made or offer accepted', say: 'Selected, offer made or offer accepted — waiting to join.' },
+  { id: 'joined', label: 'Joined', hint: 'Joined / hired', say: 'People who joined, with the joining date.' },
+  { id: 'rejected', label: 'Rejected', hint: 'Rejected applications — kept, never deleted', say: 'Rejected applications. Kept, never deleted.' },
 ];
 const MASTER_SUBS = [
   { id: 'all', label: 'All people', hint: 'Every person you can see — one row each, however many requirements' },
@@ -230,8 +236,9 @@ const QUICK = [
   ['today_interviews', 'Interviews today'],
 ];
 // Only the four daily queues stay on screen; the rest live in Filters → "Show only".
-const QUICK_ON_SCREEN = ['my_pending', 'overdue', 'due_today', 'today_interviews'];
-const QUICK_IN_FILTERS = QUICK.filter(([id]) => !QUICK_ON_SCREEN.includes(id));
+// Needs my action is a tab of its own now (Candidates & Pipeline > Needs my action).
+const QUICK_ON_SCREEN = ['overdue', 'due_today', 'today_interviews'];
+const QUICK_IN_FILTERS = QUICK.filter(([id]) => id !== 'my_pending' && !QUICK_ON_SCREEN.includes(id));
 
 // ATS Pipeline columns: Candidate | Requirement | Client | Stage | Owner |
 // Next Action | Due by default; the rest optional under Columns ⚙.
@@ -421,7 +428,11 @@ function fromUrl(sp, portalAllowed, dupAllowed = true) {
   const rawSub = String(sp.get('sub') || sp.get('tab') || '').toLowerCase();
   let main = 'pipeline';
   let sub = '';
+  let quickUrl = sp.get('quick') || '';
+  // ?view=todo (the Needs my action tab) is the pipeline queue quick=my_pending; the old ?view=pipeline&quick=my_pending lands on the same tab.
+  if (LIST_VIEW_ALIAS[rawView] === 'todo') { quickUrl = 'my_pending'; sub = 'all'; }
   if (rawView === 'job-portal' || rawView === 'jobportal') main = portalAllowed ? 'job-portal' : 'pipeline';
+  else if (LIST_VIEW_ALIAS[rawView] === 'todo') main = 'pipeline';
   else if (rawView === 'contacts') { main = 'contacts'; sub = 'all'; } else if (rawView === 'sources') { main = 'sources'; sub = 'all'; } else if (rawView === 'duplicates' || (rawView === 'master' && rawSub === 'duplicates')) { main = dupAllowed ? 'duplicates' : 'master'; sub = 'all'; } else if (rawView === 'master') { main = 'master'; sub = MASTER_SUBS.some((x) => x.id === rawSub) ? rawSub : 'all'; } else if (rawView === 'rejected') { sub = 'all'; status = 'Rejected'; } else if (LEGACY_SUB[rawView]) sub = LEGACY_SUB[rawView];
   else if (rawView === 'pipeline' || !rawView) sub = PIPE_SUBS.some((x) => x.id === rawSub) ? rawSub : '';
   if (stageFilter === 'stage:REJECTED') { stageFilter = ''; status = status || 'Rejected'; }
@@ -433,7 +444,7 @@ function fromUrl(sp, portalAllowed, dupAllowed = true) {
   return {
     main,
     sub,
-    quick: sp.get('quick') || '',
+    quick: quickUrl,
     filters: {
       ...EMPTY_FILTERS, ...readUrlFilters(sp), stage: stageFilter, status, followUp, bde: sp.get('bde') || '', source: sp.get('source') || '',
       cameFrom: sp.get('cameFrom') || '', cameTo: sp.get('cameTo') || '', cameKind: sp.get('cameKind') || '',
@@ -450,6 +461,21 @@ function fromUrl(sp, portalAllowed, dupAllowed = true) {
   };
 }
 
+// The tab a login lands on when the address names none: the last tab it used, else the one that fits its work
+// (Recruiter -> Needs my action · TL / BDE -> the pipeline · Admin / Manager -> People).
+function entryFromUrl(sp, portalAllowed, dupAllowed, user, tier) {
+  const base = fromUrl(sp, portalAllowed, dupAllowed);
+  if ([...sp.keys()].length) return base;
+  const external = ['CLIENT', 'CANDIDATE'].includes(user && user.role);
+  const ok = (t) => (t === 'todo' ? !external : t === 'job-portal' ? portalAllowed : t === 'sources' ? !external : t === 'contacts' ? contactsAllowed(user) : ['pipeline', 'master'].includes(t));
+  const last = lastTab('candidates', user && user.id);
+  let want = ok(last) ? last : defaultListTab(tier);
+  if (!ok(want)) want = 'pipeline';
+  if (want === 'todo') return { ...base, main: 'pipeline', sub: 'all', quick: 'my_pending' };
+  if (want === 'pipeline') return base;
+  return { ...base, main: want, sub: 'all' };
+}
+
 export default function Candidates() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -462,7 +488,7 @@ export default function Candidates() {
   const [verifyOpen, setVerifyOpen] = useState(false); // the verify queue (resume data to check)
   const dupTab = !!(dupStatus && dupStatus.show);
   const dupAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(user?.role) || ['SUPER_ADMIN', 'ADMIN'].includes(user?.atsRole);
-  const initial = useMemo(() => fromUrl(searchParams, portalTab), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => entryFromUrl(searchParams, portalTab, true, user, tier), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [form, setForm] = useState(() => (searchParams.get('add') === '1' && searchParams.get('requirementId')
     ? { ...EMPTY, requirementId: searchParams.get('requirementId') } : EMPTY));
@@ -547,13 +573,28 @@ export default function Candidates() {
   const ownWrite = useRef(false);
   // The recruiter filters (CTC, locations, skills, notice ...): kept in the address bar (components/ats/CandidateFilterBar.jsx).
   const xf = useCandidateXf({ onWrite: () => { ownWrite.current = true; } });
-  function writeUrl(nextMain, nextSub) {
+  function writeUrl(nextMain, nextSub, q = '') {
     const sp = new URLSearchParams(searchParams);
     sp.set('view', nextMain);
     if (nextMain === 'job-portal' || nextMain === 'duplicates' || nextMain === 'sources' || nextMain === 'contacts') sp.delete('sub'); else sp.set('sub', nextSub);
     ['add', 'status', 'stage', 'followUp', 'quick', 'layout'].forEach((k) => sp.delete(k));
+    if (q) sp.set('quick', q); // the Needs my action tab is ?view=pipeline&quick=my_pending
+    if (sp.toString() === searchParams.toString()) return; // nothing to write: do not swallow the next real address change
     ownWrite.current = true;
     setSearchParams(sp, { replace: true });
+  }
+  // The main tab the person is on. Needs my action is the pipeline with the my_pending queue.
+  const external = ['CLIENT', 'CANDIDATE'].includes(user?.role);
+  const tabId = main === 'pipeline' && quick === 'my_pending' && !external ? 'todo' : main;
+  function goTab(t) {
+    rememberTab('candidates', user && user.id, t);
+    if (t === 'todo') {
+      setMain('pipeline'); setPipeSub('all'); setQuick('my_pending'); setSelected(new Map());
+      writeUrl('pipeline', 'all', 'my_pending');
+      return;
+    }
+    if (t === 'pipeline' && tabId === 'todo') { setMain('pipeline'); setPipeSub('active'); setQuick(''); setSelected(new Map()); writeUrl('pipeline', 'active'); return; }
+    goMain(t);
   }
   function goMain(m) {
     setMain(m);
@@ -591,7 +632,7 @@ export default function Candidates() {
   useEffect(() => {
     if (firstQs.current) { firstQs.current = false; return; }
     if (ownWrite.current) { ownWrite.current = false; return; }
-    const next = fromUrl(searchParams, portalTab);
+    const next = entryFromUrl(searchParams, portalTab, true, user, tier);
     setMain(next.main);
     if (next.main === 'pipeline') setPipeSub(next.sub);
     if (next.main === 'master') setMasterSub(next.sub);
@@ -704,6 +745,8 @@ export default function Candidates() {
   // v4: the same request also feeds the KPI tiles, Needs attention and the
   // insights donut (GET /candidates sub=all pageSize=1 → counts).
   const overview = usePipelineOverview(facetParams, { enabled: main === 'pipeline' });
+  // The number on the Needs my action tab: this login's own queue, whatever filters are set (scoped by the server to the login).
+  const tabOv = usePipelineOverview({}, { enabled: !external });
   const stepOn = stripStepOf(filters.stage);
   // A step click shows the people at that step (All tab); again = everyone.
   function pickStep(id) {
@@ -972,9 +1015,11 @@ export default function Candidates() {
   function pickQuick(id) {
     // A queue is about live work wherever it sits: its count is over every
     // sub-tab, so picking one shows All.
-    if (quick === id) { setQuick(''); return; }
+    if (quick === id) { setQuick(''); if (id === 'my_pending') writeUrl('pipeline', pipeSub); return; }
     setQuick(id);
-    if (pipeSub !== 'all') { setPipeSub('all'); writeUrl('pipeline', 'all'); }
+    if (pipeSub !== 'all') setPipeSub('all');
+    if (id === 'my_pending') rememberTab('candidates', user && user.id, 'todo');
+    writeUrl('pipeline', 'all', id === 'my_pending' ? id : '');
   }
   function pickStatus(v) {
     setFilter({ status: v });
@@ -1038,7 +1083,7 @@ export default function Candidates() {
     { key: 'search', label: 'Search', value: filters.search, onRemove: () => setFilter({ search: '' }) },
     { key: 'new', label: 'Show', value: filters.new === '1' ? 'New (added in the last 7 days)' : '', onRemove: () => setFilter({ new: '' }) },
     { key: 'hiring', label: 'Hiring', value: filters.hiring === 'internal' ? 'Internal' : filters.hiring === 'client' ? 'Client' : '', onRemove: () => setFilter({ hiring: '' }) },
-    { key: 'quick', label: 'Show', value: main === 'pipeline' && quick ? (QUICK.find((x) => x[0] === quick) || [])[1] : '', onRemove: () => setQuick('') },
+    { key: 'quick', label: 'Show', value: main === 'pipeline' && quick && tabId !== 'todo' ? (QUICK.find((x) => x[0] === quick) || [])[1] : '', onRemove: () => setQuick('') },
     { key: 'bde', label: 'Client manager', value: filters.bde ? (filters.bde.startsWith('name:') ? filters.bde.slice(5) : 'selected') : '', onRemove: () => setFilter({ bde: '' }) },
     { key: 'client', label: 'Client', value: filters.clientId ? (facetLabel('clientId', filters.clientId) || clientNameFromJobs || 'selected') : '', onRemove: () => setFilter({ clientId: '', requirementId: '' }) },
     { key: 'req', label: 'Requirement', value: filters.requirementId ? ((chosenJobs.get(filters.requirementId) || {}).title || facetLabel('requirementId', filters.requirementId) || 'selected') : '', onRemove: () => setFilter({ requirementId: '' }) },
@@ -1390,25 +1435,22 @@ export default function Candidates() {
         </div>
       </header>
 
-      <div className="cviews cv4-views" role="tablist" aria-label="Candidates views" title={(MAIN_VIEWS.find((v) => v.id === main) || {}).say}>
-        {MAIN_VIEWS.filter((v) => (v.id !== 'job-portal' || portalTab) && (v.id !== 'duplicates' || dupTab || main === 'duplicates') && (v.id !== 'sources' || !['CLIENT', 'CANDIDATE'].includes(user?.role)) && (v.id !== 'contacts' || contactsAllowed(user))).map((v) => {
-          const n = v.id === 'pipeline' ? viewCounts.pipeline : v.id === 'master' ? viewCounts.master : v.id === 'duplicates' ? (dupStatus ? dupStatus.waiting : null) : v.id === 'sources' || v.id === 'contacts' ? null : viewCounts.jobPortal;
-          return (
-            <button
-              key={v.id}
-              type="button"
-              role="tab"
-              aria-selected={main === v.id}
-              title={v.id === 'job-portal' ? `${v.hint}. The number is how many are still waiting to be checked.` : v.hint}
-              className={`cviews-btn${main === v.id ? ' is-on' : ''}${v.id === 'duplicates' && Number(n) > 0 ? ' has-dup' : ''}`}
-              onClick={() => goMain(v.id)}
-            >
-              {v.label}
-              {n != null && Number(n) > 0 && <span className="cviews-n">{Number(n).toLocaleString('en-IN')}</span>}
-            </button>
-          );
-        })}
-      </div>
+      {/* The main tabs: what the person is doing. Rarely used ones sit under More; the line under the strip says what the open tab is for. */}
+      <TabStrip
+        className="cv4-views"
+        label="Candidates views"
+        value={tabId}
+        onChange={goTab}
+        tabs={MAIN_VIEWS.filter((v) => (v.id !== 'todo' || !external) && (v.id !== 'job-portal' || portalTab) && (v.id !== 'duplicates' || dupTab || main === 'duplicates') && (v.id !== 'sources' || !external) && (v.id !== 'contacts' || contactsAllowed(user))).map((v) => ({
+          key: v.id,
+          label: v.label,
+          say: v.say,
+          hint: v.id === 'job-portal' ? `${v.hint}. The number is how many are still waiting to be checked.` : v.hint,
+          count: v.id === 'todo' ? (tabOv && tabOv.quick ? tabOv.quick.my_pending : null) : v.id === 'pipeline' ? viewCounts.pipeline : v.id === 'master' ? viewCounts.master : v.id === 'job-portal' ? viewCounts.jobPortal : null,
+          more: LIST_MORE.includes(v.id),
+          badge: v.id === 'duplicates' ? (dupStatus ? dupStatus.waiting : 0) : 0,
+        }))}
+      />
 
       {main === 'pipeline' && data && data.waiting && (
         <NewPeopleStrip
@@ -1747,13 +1789,15 @@ export default function Candidates() {
 
       {main === 'master' && (
         <>
-          <StatusTabs
-            label="Candidate Master"
+          <TabStrip
+            small
+            label="People: view"
             tabs={MASTER_SUBS.filter((s) => (!s.admin || dupAdmin) && (!s.archive || mayArchive(user))).map((s) => ({
               key: s.id,
               label: s.label,
               count: counts.subs ? counts.subs[s.id] : undefined,
               hint: s.id === 'inactive' ? (defs.inactive || s.hint) : s.hint,
+              more: MASTER_SUB_MORE.includes(s.id),
             }))}
             value={masterSub}
             onChange={goMasterSub}
@@ -1988,10 +2032,12 @@ export default function Candidates() {
               </div>
               <section className="ak-panel cv4-listpanel">
           {cardNote}
-          <StatusTabs
-            label="Requirement applications"
+          {tabId !== 'todo' && (
+          <TabStrip
+            small
+            label="Requirement applications: status"
             tabs={PIPE_SUBS.map((s) => ({
-              key: s.id, label: s.label, hint: s.hint, count: fresh ? Number((counts.subs || {})[s.id] ?? 0) : undefined,
+              key: s.id, label: s.label, hint: s.hint, say: s.say, more: PIPE_SUB_MORE.includes(s.id), count: fresh ? Number((counts.subs || {})[s.id] ?? 0) : undefined,
             }))}
             value={pipeSub}
             onChange={goPipeSub}
@@ -2018,6 +2064,7 @@ export default function Candidates() {
               </div>
             )}
           />
+          )}
           {!['CLIENT', 'CANDIDATE'].includes(user?.role) && (
             <CandidateFilterBar
               xf={xf}

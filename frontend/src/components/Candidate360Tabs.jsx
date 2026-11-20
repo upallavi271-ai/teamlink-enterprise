@@ -1,4 +1,11 @@
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import TabStrip from './ui/TabStrip.jsx'; // main tabs + More menu + the caption line (founder 2026-11-20)
+import { useAuth } from '../context/AuthContext.jsx';
+import { useReachRights } from './reach/reachKit.js';
+import {
+  C360_TAB_ALIAS, C360_MORE, C360_INTERNAL_ONLY, C360_REACH_ONLY, rememberTab,
+} from '../utils/tabMap.js'; // old tab keys -> the tab that holds them now
 import { protoDate, stageLabel } from '../atsVocab';
 import StatusChip from './ui/StatusChip.jsx';
 import {
@@ -45,37 +52,40 @@ export const candidateCode = (id) => `CAN-${String(id || '').slice(-8).toUpperCa
 // Resume card moved here from the left) · Notes · Documents ·
 // Timeline (follow-ups, activity, messages; key 'history'). Overview / Fit
 // fold in, so their old keys land on Applications.
+// 2026-11-20 (founder: "too many tabs, it must be clear what each is for"): six main tabs, the rest under More.
+//   Overview · Resume · Career · Follow-ups & notes · Documents · History | More: Conversation · AI Calling
+// Notes and the follow-up log were two tabs about the same thing (what we said to this person and what
+// is next): one tab now. Old keys land on the new tab (utils/tabMap.js).
 export const C360_TABS = [
   ['applications', 'Overview'], // the whole profile: personal info, work facts, skills, consent and the applications
   ['resume', 'Resume'], // the Resume card (file, Edit resume, versions, facts) — was on the left of the page
   // 2026-11-17 (founder audit): education list, employment history, gaps, career progression, summary, tags, custom fields (internal logins only)
   ['career', 'Career'],
-  ['notes', 'Notes'],
-  // 2026-11-03: the dated follow-up log ("recruiters ki ithey, candidate follow up vundali") - TeamLink's own, internal logins only
-  ['followups', 'Follow-ups'],
+  // Notes + the dated follow-up log (internal logins only). Key stays 'followups'; ?tab=notes lands here.
+  ['followups', 'Follow-ups & notes'],
   ['documents', 'Documents'],
-  ['history', 'Timeline'],
-  ['conversation', 'Conversation'], // omnichannel: Call · Mail · WhatsApp · SMS in one timeline, with a reply box (internal logins only)
+  ['history', 'History'], // steps, interviews, offers, messages and calls, and every change — in date order (?tab=timeline lands here)
+  // Under More: omnichannel Call · Mail · WhatsApp · SMS in one timeline, with a reply box (needs the right to contact the person)
+  ['conversation', 'Conversation'],
   // 2026-11-20 (founder: "schedule ANY kind of message ... on the candidate's profile"): write a message and send it later on WhatsApp / SMS / Email;
-  // every scheduled, sent, failed and cancelled message of this person, plus their automatic interview / joining reminders (internal logins only)
+  // every scheduled, sent, failed and cancelled message of this person, plus their automatic interview / joining reminders (internal logins only; under More)
   ['scheduled', 'Schedule a message'],
-  // 2026-11-04 (founder: "ai calling side bar lo vundakudadhu ... conversation vundhi aahh line lo place cheyyu"): this candidate's AI calls
-  // and the Call button, in its own tab (internal logins only)
+  // 2026-11-04: this candidate's AI calls and the Call button (needs the right to contact the person)
   ['aicalling', 'AI Calling'],
 ];
-export const C360_TAB_ALIAS = {
-  overview: 'applications',
-  fit: 'applications',
-  ai: 'applications',
-  pipeline: 'applications',
-  interviews: 'applications',
-  submissions: 'applications',
-  offers: 'applications',
-  joining: 'applications',
-  activity: 'history',
-  timeline: 'history',
+// What each tab is for: the line under the strip, and the tab's tooltip.
+export const C360_SAY = {
+  applications: 'The whole profile at a glance: who this person is, where each application stands, and the next step.',
+  resume: 'The CV on file: open it, replace it, see its versions and the facts read from it.',
+  career: 'Education, jobs, gaps and career progression, with tags and custom fields.',
+  followups: 'When we last spoke to this person and what is due next, plus the internal notes about them.',
+  documents: 'Documents on file for this person: ID, certificates, offer and joining papers.',
+  history: 'Everything that happened, in date order: steps, interviews, offers, messages, calls and changes.',
+  conversation: 'Call, mail, WhatsApp or SMS this person from one place, and read every reply.',
+  scheduled: 'Write a WhatsApp, SMS or email now and send it later; every scheduled, sent and cancelled message of this person.',
+  aicalling: 'Calls the AI made to this person, and a button to start another.',
 };
-export const tabKeyOf = (k) => C360_TAB_ALIAS[k] || (C360_TABS.some(([x]) => x === k) ? k : 'applications');
+export const tabKeyOf = (k) => { const v = String(k || '').toLowerCase(); return C360_TAB_ALIAS[v] || (C360_TABS.some(([x]) => x === v) ? v : 'applications'); };
 const CLOSED = ['REJECTED', 'JOINED', 'HIRED'];
 const CLIENT_STAGES = ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED', 'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED'];
 export const clientOf = (a) => {
@@ -102,33 +112,39 @@ export function tabCounts(c) {
       .concat(apps.filter((a) => !isInternalApp(a) && CLIENT_STAGES.includes(a.stage)).map((a) => a.id))).size,
     offers: apps.filter((a) => a.offerStatus || ['OFFER', 'OFFER_ACCEPTED'].includes(a.stage) || a.offerDate).length,
     joining: apps.filter((a) => ['OFFER_ACCEPTED', 'JOINED', 'HIRED'].includes(a.stage) || a.joiningStatus || a.joiningDate).length,
-    notes: ((c && c.notes) || []).length,
+    notes: ((c && c.notes) || []).length, // drawn on Follow-ups & notes
     documents: ((c && c.documents) || []).length,
   };
 }
 
 export function C360Tabs({ tab, setTab, c, className = '' }) {
   const n = tabCounts(c);
+  const { user } = useAuth() || {};
+  const reach = useReachRights();
   const internal = !!(c && c.viewer && c.viewer.internal);
-  // Fit and Notes are TeamLink's own; a client / candidate login has none.
-  const tabs = C360_TABS.filter(([key]) => internal || !['fit', 'notes', 'conversation', 'followups', 'aicalling', 'career', 'scheduled'].includes(key));
+  // Same order and names for everyone; a login's irrelevant tabs are hidden: a client / candidate login has
+  // none of TeamLink's own tabs, and Conversation / AI Calling need the right to contact the person
+  // (the server decides: not a BDE, BDE TL or Accounts login).
+  const visible = (key) => (internal || !C360_INTERNAL_ONLY.includes(key))
+    && (!C360_REACH_ONLY.includes(key) || (internal && reach.loaded && reach.one));
+  const tabs = C360_TABS.filter(([key]) => visible(key));
+  // An address that names a tab this login does not get lands on Overview (once the rights are known).
+  useEffect(() => {
+    if (!c) return;
+    if (C360_REACH_ONLY.includes(tab) && internal && !reach.loaded) return;
+    if (!visible(tab)) setTab('applications');
+  }, [tab, c, reach.loaded, reach.one]); // eslint-disable-line react-hooks/exhaustive-deps
+  const count = (key) => (key === 'followups' ? n.notes : key === 'applications' ? 0 : n[key]);
   return (
-    <div className={`tabs c360t-tabs ${className}`} role="tablist">
-      {tabs.map(([key, label]) => (
-        <div
-          key={key}
-          role="tab"
-          aria-selected={tab === key}
-          tabIndex={0}
-          className={`tab${tab === key ? ' active' : ''}`}
-          onClick={() => setTab(key)}
-          onKeyDown={(e) => { if (e.key === 'Enter') setTab(key); }}
-        >
-          {label}
-          {key !== 'applications' && n[key] != null && n[key] > 0 && <span className="c360t-n">{n[key]}</span>}
-        </div>
-      ))}
-    </div>
+    <TabStrip
+      className={`c360t-tabs ${className}`}
+      label="Candidate tabs"
+      value={tab}
+      onChange={(k) => { rememberTab('c360', user && user.id, k); setTab(k); }}
+      tabs={tabs.map(([key, label]) => ({
+        key, label, say: C360_SAY[key], hint: C360_SAY[key], count: count(key), more: C360_MORE.includes(key),
+      }))}
+    />
   );
 }
 
