@@ -352,6 +352,7 @@ function Quality({ q, onShow }) {
       <button type="button" className="csrc-link" aria-expanded={open} onClick={() => setOpen((x) => !x)}>What does “came on” mean?</button>
       {open && (
         <ul className="csrc-means">
+          {k.fromSheet > 0 && <li><b>{n0(k.fromSheet)}</b> — {q.meaning.fromSheet}</li>}
           <li><b>{n0(k.sheet)}</b> — {q.meaning.sheet}</li>
           <li><b>{n0(k.applied)}</b> — {q.meaning.applied}</li>
           <li><b>{n0(k.entered)}</b> — {q.meaning.entered}</li>

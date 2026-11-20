@@ -57,8 +57,9 @@ export function agoText(day, today = istToday()) {
 }
 // What the "Came on" date means, in plain words (hover text).
 export const CAME_KIND_TEXT = {
+  fromSheet: 'From the sheet: the date written next to this person in the sheet that was imported.',
   sheet: 'The date written in the old sheet.',
-  imported: 'The day this profile was loaded into TeamLink with a big import. It is not the day the person really arrived.',
+  imported: 'The day this profile was loaded into TeamLink by an import that carried no date for the person. It is not the day the person really arrived: original date not known.',
   applied: 'The day the person applied on the job portal.',
   entered: 'The day this profile was added to TeamLink.',
 };
@@ -68,7 +69,7 @@ export function sourceCame(row, today = istToday()) {
   const day = row && row.cameOnDay;
   const kind = row && row.cameOnKind;
   if (!day) return { text: src, title: recordedAs(row), imported: false, src, when: '' };
-  const when = kind === 'imported' ? `Imported ${shortDay(day, today)}` : `${shortDay(day, today)} (${agoText(day, today).toLowerCase() === 'today' ? 'today' : agoText(day, today)})`;
+  const when = kind === 'imported' ? `Imported ${shortDay(day, today)} (date not known)` : kind === 'fromSheet' ? `${shortDay(day, today)} (from the sheet)` : `${shortDay(day, today)} (${agoText(day, today).toLowerCase() === 'today' ? 'today' : agoText(day, today)})`;
   const title = [recordedAs(row), `${kind === 'imported' ? 'Imported on' : 'Came on'} ${longDay(day)}. ${CAME_KIND_TEXT[kind] || ''}`].filter(Boolean).join('\n');
   return { text: `${src} · ${when}`, title, imported: kind === 'imported', src, when };
 }

@@ -54,6 +54,8 @@ const { logAudit } = require('../utils/audit');
 const attachments = require('../utils/attachments');
 const { ATS_IMPORT_SHEETS, LISTS } = require('../utils/importSpec');
 const { buildSheetTemplate } = require('../utils/importTemplate');
+const { parseCameDate, oneDateOf } = require('../utils/importDates');
+const DATES = require('../utils/candidateDates');
 const { internals } = require('./dataImport');
 const {
   requirementIsLive, requirementStatusLabel, requirementStatusUser, requirementStateWords, agreementIsActive, agreementStatusLabel, stageLabel,
@@ -402,6 +404,9 @@ const EXPORTS = {
       // Source: the clean list (utils/candidateSource.js); the stored word follows in "Source as recorded".
       ['Source', (c) => c.sourceKey || CSRC.canonicalSource(c.source), NO_PDF],
       ['Source as recorded', (c) => (c.sourceRaw && c.sourceRaw !== (c.sourceKey || '') ? c.sourceRaw : ''), NO_PDF],
+      // WHEN THEY CAME and how far to trust it (utils/cameOn.js: the same date and word the list and the profile show)
+      ['Came on', (c) => (c.cameOnDay ? joinDayShared.dmy(c.cameOnDay) : ''), NO_PDF],
+      ['Came on: how sure', (c) => (c.cameOnKind ? require('../utils/cameOn').KIND_LABEL[c.cameOnKind] || '' : ''), NO_PDF], // eslint-disable-line global-require
       ['Skills', (c) => c.skills || '', NO_PDF],
       ['Requirement', (c) => c.requirementTitle || ''],
       ['Client', (c) => c.clientName || ''],
@@ -1009,6 +1014,11 @@ const ALIASES = {
   'Primary Contact Phone': ['contactphone', 'phone', 'mobile'],
   'Primary Contact Email': ['contactemail', 'email'],
   'Primary Contact Name': ['contactperson', 'contactname', 'hrname'],
+  // THE DATE A PERSON REALLY CAME (founder 2026-11-20): whatever a sheet calls it.
+  'Date Came': ['applieddate', 'applicationdate', 'datereceived', 'receivedon', 'receiveddate', 'dateofapplication', 'sourcedon', 'createdon', 'createddate', 'createdat',
+    'dateadded', 'addedon', 'date', 'cameon', 'datecameon', 'postedon', 'timestamp', 'appliedon', 'dateapplied', 'datesourced', 'sourceddate', 'dateofsourcing',
+    'receivedat', 'dateofreceipt', 'arrivedon', 'registeredon', 'registrationdate', 'dateofregistration', 'cvreceivedon', 'cvreceiveddate', 'cvdate', 'dateofcv', 'enquirydate', 'leaddate', 'dateofcontact'],
+  'Candidate ID': ['id', 'candidateid', 'candidatecode', 'code', 'candidateno', 'profileid', 'tlid'],
 };
 
 function workbookGrids(file) {
@@ -1228,6 +1238,23 @@ const pad2 = (n) => String(n).padStart(2, '0');
 const localDay = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const localTime = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 
+// THE DATE THIS ROW'S PERSON REALLY CAME (founder 2026-11-20). ctx.dates = { mode: 'sheet' | 'one' | 'today', one: { day, at } }:
+//   sheet  the row's own Date Came cell (blank = no date: today, marked "original date not known"; unreadable / future / before 2000 = the row is an error)
+//   one    one date for every row of the sheet (a sheet received on a known day)
+//   today  as before: the day of the import (marked "original date not known")
+// Sets d._createdAt (Date | null) and d._cam = { flag: 'ok' | 'none' | 'bad' | 'future' | 'old', day } for the preview.
+function cameFor(ctx, d) {
+  const mode = (ctx.dates && ctx.dates.mode) || 'sheet';
+  d._createdAt = null;
+  if (mode === 'one' && ctx.dates.one) { d._cam = { flag: 'ok', day: ctx.dates.one.day }; d._createdAt = ctx.dates.one.at; return; }
+  if (mode !== 'sheet') { d._cam = { flag: 'none' }; return; }
+  const r = parseCameDate(d._cameOn);
+  if (r.ok === null) { d._cam = { flag: 'none' }; return; }
+  if (!r.ok) { d._cam = { flag: r.reason }; const e = new Error(r.message); e.column = 'Date Came'; throw e; }
+  d._cam = { flag: 'ok', day: r.day };
+  d._createdAt = r.at;
+}
+
 const RULES = {
   clients: {
     keyOf: (d, ix) => ix.ckey(d.name),
@@ -1382,6 +1409,7 @@ const RULES = {
     },
     async guard(ctx, d, note) {
       const { ix } = ctx;
+      cameFor(ctx, d);
       const hit = [d.email, d.phone, d.externalRef && `ref:${d.externalRef}`].filter(Boolean)
         .map((v) => ix.candidate.get(ix.norm(v))).find(Boolean) || contactMatch(ix, d);
       const existing = hit && !isDry(hit) ? hit : null;
@@ -1427,6 +1455,7 @@ const RULES = {
       let action = 'skipped';
       if (!d._existing || d._update) {
         const { _existing, _update, _interestOnly, ...rest } = d;
+        rest._importedBy = ctx.user && ctx.user.name;
         action = await HANDLERS.candidate({ data: rest, ix: ctx.ix, dry: ctx.dry, row, note });
       }
       // the sheet's Interested / Not Interested (blank on a NEW candidate = not asked: no login until a sheet says Interested)
@@ -1447,7 +1476,7 @@ const RULES = {
       if (d._requirement) {
         const key = d.email || d.phone || `ref:${d.externalRef}`;
         await HANDLERS.application({
-          data: { _candidate: key, _requirement: d._requirement, stage: d._stage || 'NEW', source: d.source || null },
+          data: { _candidate: key, _requirement: d._requirement, stage: d._stage || 'NEW', source: d.source || null, _createdAt: d._createdAt || null },
           ix: ctx.ix, dry: ctx.dry, row, note,
         });
         if (action === 'skipped') action = 'created';
@@ -1460,6 +1489,7 @@ const RULES = {
   applications: {
     keyOf: (d, ix) => `${ix.norm(d._candidate)}|${ix.norm(d._requirement)}`,
     async guard(ctx, d) {
+      cameFor(ctx, d);
       const candidateId = findCandidate(ctx.ix, d._candidate);
       if (!candidateId) throw new Error(`no candidate with email / phone "${d._candidate}" is on file — import them as Candidates first`);
       const requirement = await requirementByCode(ctx, d._requirement);
@@ -1646,7 +1676,7 @@ const RULES = {
   },
 };
 
-async function runImport(req, kindId, prepared, { dry, updateExisting = false }) {
+async function runImport(req, kindId, prepared, { dry, updateExisting = false, dates = null }) {
   const spec = ATS_IMPORT_SHEETS[kindId];
   const rule = RULES[kindId];
   const ix = await buildIndex();
@@ -1657,6 +1687,7 @@ async function runImport(req, kindId, prepared, { dry, updateExisting = false })
     // "Update existing records" ticked: a row matching a record on file
     // updates it (blank cells keep its values) instead of being skipped.
     updateExisting: !!updateExisting,
+    dates: dates || { mode: 'sheet' },
   };
   const { rows, problems } = readSheet(prepared.ws, spec);
   const results = [];
@@ -1671,20 +1702,22 @@ async function runImport(req, kindId, prepared, { dry, updateExisting = false })
     const fileRow = prepared.rowOf(row);
     const notes = [];
     const note = (m) => notes.push(m);
+    // the preview's date column: the day this row's person is dated, or what is wrong with it
+    const camBits = () => (data._cam ? { cameOn: data._cam.day || null, cameOnFlag: data._cam.flag } : {});
     let key = '';
     try {
       key = rule.keyOf(data, ix);
       const allKeys = rule.keysOf ? rule.keysOf(data, ix) : [];
       if (!allKeys.length && key) allKeys.push(key);
       if (allKeys.some((k) => seen.has(k))) {
-        results.push({ row: fileRow, action: 'duplicate', message: 'the same record is on an earlier row of this file — skipped' });
+        results.push({ row: fileRow, action: 'duplicate', message: 'the same record is on an earlier row of this file — skipped', ...camBits() });
         continue;
       }
       allKeys.forEach((k) => seen.add(k));
       // eslint-disable-next-line no-await-in-loop
       const verdict = await rule.guard(ctx, data, note);
       if (verdict && verdict.skip) {
-        results.push({ row: fileRow, action: verdict.duplicate ? 'duplicate' : 'skip', message: verdict.skip });
+        results.push({ row: fileRow, action: verdict.duplicate ? 'duplicate' : 'skip', message: verdict.skip, ...camBits() });
         continue;
       }
       // eslint-disable-next-line no-await-in-loop
@@ -1697,9 +1730,10 @@ async function runImport(req, kindId, prepared, { dry, updateExisting = false })
         row: fileRow,
         action: action === 'created' ? 'create' : action === 'updated' ? 'update' : 'skip',
         message: notes.join(' · '),
+        ...camBits(),
       });
     } catch (e) {
-      results.push({ row: fileRow, action: 'error', message: e.message });
+      results.push({ row: fileRow, action: 'error', message: e.message, ...(e.column ? { column: e.column } : {}), ...camBits() });
     }
   }
   results.sort((a, b) => a.row - b.row);
@@ -1716,6 +1750,15 @@ async function runImport(req, kindId, prepared, { dry, updateExisting = false })
   };
   // A row with errors is counted once however many cells are wrong.
   totals.errorRows = new Set(results.filter((r) => r.action === 'error').map((r) => r.row)).size;
+  // THE DATES (founder 2026-11-20): how many of the rows that are written carry their own date, how many carry none (today, marked "original date not known"),
+  // how many have a date that cannot be used (unreadable, in the future, before 2000).
+  if (['candidates', 'applications'].includes(kindId)) {
+    const written = results.filter((r) => ['create', 'update'].includes(r.action));
+    totals.withDate = written.filter((r) => r.cameOnFlag === 'ok').length;
+    totals.noDate = written.filter((r) => r.cameOnFlag === 'none').length;
+    totals.badDate = results.filter((r) => ['bad', 'future', 'old'].includes(r.cameOnFlag)).length;
+    totals.dateMode = ctx.dates.mode;
+  }
   return { totals, results, ok: totals.error === 0 };
 }
 
@@ -1781,25 +1824,133 @@ async function importRequest(req, kindId, { want = null } = {}) {
     try { mapping = JSON.parse(fields.mapping); } catch { mapping = null; }
   }
   const prepared = prepare(file, ATS_IMPORT_SHEETS[kindId], { mapping, sheet: fields.sheet });
+  // "These people came on:" (the Import dialog): the sheet's date column (default), one date for every row, or today.
+  let dates = { mode: 'sheet' };
+  const askedMode = String(fields.dateMode || '').trim();
+  if (askedMode === 'today') dates = { mode: 'today' };
+  else if (askedMode === 'one') {
+    try { const one = oneDateOf(fields.cameOnDate); dates = { mode: 'one', one: { day: one.day, at: one.at } }; } catch (e) { throw new HttpError(400, { error: e.message }); }
+  }
   return {
-    prepared, filename: file.filename, fields, file, mapping, mode,
+    prepared, filename: file.filename, fields, file, mapping, mode, dates,
     updateExisting: String(fields.updateExisting || '') === 'true',
   };
 }
 
+// ---- FIX CAME-ON DATES FROM A SHEET (founder 2026-11-20) --------------------------------------------------------------------------------------
+// People who were ALREADY imported with the day of the import as their date. The sheet carries a key (candidate ID, email and / or phone) and the
+// day they really came. Check shows, per row, who matched and the date now -> the date after; nothing is written until Apply with confirm.
+// Every person changed is kept in CandidateDateFix (the old date too), so a whole batch can be undone. A person whose date TeamLink recorded itself
+// (typed in, applied on the portal, self-registered) is never touched unless "Overwrite" is ticked. Admin, Super Admin, Manager and TL only
+// (a TL only reaches the people in their own area).
+const FIX_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TL'];
+const mayFixDates = (user) => FIX_ROLES.includes(roleOf(user));
+const FIX_SPEC = {
+  name: 'Came on dates',
+  columns: [
+    { h: 'Candidate ID', f: 'id', t: 'text' },
+    { h: 'Email', f: 'email', t: 'text' },
+    { h: 'Phone', f: 'phone', t: 'text' },
+    { h: 'Date Came', f: '_cameOn', t: 'any' },
+  ],
+};
+async function fixRequest(req) {
+  if (!mayFixDates(req.user)) throw DENIED('Fixing came-on dates (only an Admin, Manager or TL can)');
+  let upload;
+  try {
+    upload = await attachments.parseMultipart(req, { maxBytes: MAX_BYTES });
+  } catch (err) {
+    if (err.code === 'TOO_LARGE') throw new HttpError(413, { error: 'That file is over 15 MB. Split it and fix in two passes.' });
+    throw new HttpError(400, { error: 'Send the file as a form upload.' });
+  }
+  const { file, fields = {} } = upload;
+  if (!file || !file.data || !file.data.length) throw new HttpError(400, { error: 'Attach the sheet with the real dates.' });
+  let mapping = null;
+  if (fields.mapping) { try { mapping = JSON.parse(fields.mapping); } catch { mapping = null; } }
+  const prepared = prepare(file, FIX_SPEC, { mapping, sheet: fields.sheet });
+  const m = Object.fromEntries(prepared.mapping.map((x) => [x.header, x.column]));
+  const missing = [];
+  if (m['Date Came'] === null) missing.push('a date column (for example "Date came" or "Applied date")');
+  if (m['Candidate ID'] === null && m.Email === null && m.Phone === null) missing.push('a Candidate ID, Email or Phone column to tell who is who');
+  const { rows, problems } = readSheet(prepared.ws, FIX_SPEC);
+  const planRows = rows.map(({ row, data }) => ({
+    row: prepared.rowOf(row), id: data.id || '', email: data.email || '', phone: data.phone || '', date: parseCameDate(data._cameOn),
+  }));
+  return { file, fields, prepared, missing, planRows, problems, overwrite: String(fields.overwrite || '') === 'true' };
+}
+const fixView = (p) => ({
+  totals: p.totals,
+  rows: p.rows.slice(0, 2000).map((r) => ({
+    row: r.row, name: r.name || '', key: r.key, status: r.status, message: r.message, oldDay: r.oldDay || null, oldKind: r.oldKind || null, newDay: r.newDay || null,
+    oldLabel: r.oldKind ? require('../utils/cameOn').KIND_LABEL[r.oldKind] || r.oldKind : null, // eslint-disable-line global-require
+  })),
+  truncated: p.rows.length > 2000,
+});
+const fixSheetInfo = (f) => ({
+  sheet: f.prepared.sheet, sheets: f.prepared.sheets, headerRow: f.prepared.headerRow, fileColumns: f.prepared.fileColumns, mapping: f.prepared.mapping, missing: f.missing, filename: f.file.filename,
+});
+router.post('/import/date-fix/check', guarded(async (req, res) => {
+  const f = await fixRequest(req);
+  if (f.missing.length) return res.json({ ...fixSheetInfo(f), totals: null, rows: [], ok: false });
+  const p = await DATES.plan(f.planRows, req.user, { overwrite: f.overwrite });
+  return res.json({ ...fixSheetInfo(f), ...fixView(p), ok: true, overwrite: f.overwrite });
+}));
+router.post('/import/date-fix/apply', guarded(async (req, res) => {
+  const f = await fixRequest(req);
+  if (String(f.fields.confirm || '') !== 'true') throw new HttpError(400, { error: 'Please confirm first. Nothing was changed.' });
+  if (f.missing.length) throw new HttpError(400, { error: `The sheet needs ${f.missing.join(' and ')}. Nothing was changed.` });
+  const done = await DATES.apply(f.planRows, req.user, { overwrite: f.overwrite, fileName: f.file.filename });
+  await logAudit({
+    userId: req.user.id,
+    actorName: req.user.name,
+    action: `Came-on dates fixed from a sheet: ${done.changed} people (batch ${done.batchId})`,
+    entity: 'CandidateDateFix',
+    entityId: done.batchId,
+    toValue: JSON.stringify({ file: f.file.filename, ...done.totals, changed: done.changed, overwrite: f.overwrite, scope: scopeLabel(req.user, 'ats') }),
+  });
+  return res.json({ ok: true, batchId: done.batchId, changed: done.changed, totals: done.totals, message: `${done.changed} ${done.changed === 1 ? 'person' : 'people'} now show the date from the sheet. You can undo this batch from the same screen.` });
+}));
+router.get('/import/date-fix/batches', guarded(async (req, res) => {
+  if (!mayFixDates(req.user)) throw DENIED('Fixing came-on dates');
+  const all = await DATES.batches();
+  // a TL sees and undoes only their own batches; an Admin / Manager sees them all
+  const mine = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(roleOf(req.user)) ? all : all.filter((b) => b.byUserId === req.user.id);
+  return res.json({ batches: mine.map(({ byUserId, ...rest }) => rest) });
+}));
+router.post('/import/date-fix/batches/:id/undo', guarded(async (req, res) => {
+  if (!mayFixDates(req.user)) throw DENIED('Undoing a came-on date fix');
+  const all = await DATES.batches();
+  const b = all.find((x) => x.id === req.params.id);
+  if (!b) throw new HttpError(404, { error: 'That batch was not found.' });
+  if (!['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(roleOf(req.user)) && b.byUserId !== req.user.id) throw DENIED('Undoing a batch somebody else made');
+  let r;
+  try { r = await DATES.undo(req.params.id, req.user); } catch (e) { if (e.status) throw new HttpError(e.status, { error: e.message }); throw e; }
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: `Came-on date fix undone: ${r.restored} people (batch ${req.params.id})`, entity: 'CandidateDateFix', entityId: req.params.id,
+    toValue: JSON.stringify(r),
+  });
+  return res.json({ ok: true, ...r, message: `${r.restored} ${r.restored === 1 ? 'person has' : 'people have'} their old date back.` });
+}));
+
 router.post('/import/:kind/check', guarded(async (req, res) => {
   const kindId = req.params.kind;
-  const { prepared, filename, mode, updateExisting } = await importRequest(req, kindId);
-  const run = await runImport(req, kindId, prepared, { dry: true, updateExisting });
-  return res.json({ ...reportOf(kindId, prepared, run, filename), importMode: mode, updateExisting });
+  const { prepared, filename, mode, updateExisting, dates } = await importRequest(req, kindId);
+  const run = await runImport(req, kindId, prepared, { dry: true, updateExisting, dates });
+  return res.json({
+    ...reportOf(kindId, prepared, run, filename),
+    importMode: mode,
+    updateExisting,
+    dates: { mode: dates.mode, day: dates.one ? dates.one.day : null },
+    dateColumn: ((prepared.mapping || []).find((m) => m.header === 'Date Came') || {}).columnName || null,
+  });
 }));
 
 // The rows with errors as a file (step 3 of the import: "error rows
 // downloadable"). Same upload as /check; writes nothing.
 router.post('/import/:kind/errors', guarded(async (req, res) => {
   const kindId = req.params.kind;
-  const { prepared, updateExisting } = await importRequest(req, kindId);
-  const run = await runImport(req, kindId, prepared, { dry: true, updateExisting });
+  const { prepared, updateExisting, dates } = await importRequest(req, kindId);
+  const run = await runImport(req, kindId, prepared, { dry: true, updateExisting, dates });
   const out = errorRowsFile(prepared, run);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="teamlink-${kindId}-rows-with-errors.xlsx"`);
@@ -1822,10 +1973,12 @@ function inOrder(kind, fn) {
 
 // One committed import: dry run first, then the real run as a BATCH.
 function commitImport(req, kindId, prepared, filename, opts) { return inOrder(kindId, () => commitImportNow(req, kindId, prepared, filename, opts)); }
-async function commitImportNow(req, kindId, prepared, filename, { updateExisting, partial, requestId = null, requestedBy = null }) {
+async function commitImportNow(req, kindId, prepared, filename, {
+  updateExisting, partial, requestId = null, requestedBy = null, dates = null,
+}) {
   // CHECK FIRST, ALWAYS — the same rule as Data Import: a file with errors
   // writes nothing unless the user chose "import the valid rows, skip the rest".
-  const dryRun = await runImport(req, kindId, prepared, { dry: true, updateExisting });
+  const dryRun = await runImport(req, kindId, prepared, { dry: true, updateExisting, dates });
   if (!dryRun.ok && !partial) {
     throw new HttpError(400, {
       error: `${dryRun.totals.errorRows || dryRun.totals.error} row${(dryRun.totals.errorRows || dryRun.totals.error) === 1 ? '' : 's'} need fixing before anything is imported.`,
@@ -1836,12 +1989,12 @@ async function commitImportNow(req, kindId, prepared, filename, { updateExisting
   const { batch } = await batches.runInBatch({
     kind: kindId, label: KINDS[kindId].label, module: MODULE_OF_KIND[kindId], file: filename, user: req.user, requestId,
     get counts() { return run ? run.totals : null; },
-  }, async () => { run = await runImport(req, kindId, prepared, { dry: false, updateExisting }); return run; });
+  }, async () => { run = await runImport(req, kindId, prepared, { dry: false, updateExisting, dates }); return run; });
   const t = run.totals;
   await logAudit({
     userId: req.user.id,
     actorName: req.user.name,
-    action: `ATS import — ${KINDS[kindId].label}: ${t.create} created, ${t.update} updated, ${t.duplicate} duplicate(s), ${t.skip} skipped, ${t.error} error(s)${requestedBy ? ` (request by ${requestedBy})` : ''}`,
+    action: `ATS import — ${KINDS[kindId].label}: ${t.create} created, ${t.update} updated, ${t.duplicate} duplicate(s), ${t.skip} skipped, ${t.error} error(s)${t.withDate !== undefined ? `, ${t.withDate} with their own date` : ''}${requestedBy ? ` (request by ${requestedBy})` : ''}`,
     entity: 'AtsImport',
     entityId: kindId,
     toValue: JSON.stringify({ file: filename, sheet: prepared.sheet, ...t, batchId: batch ? batch.id : null, scope: scopeLabel(req.user, 'ats') }),
@@ -1851,9 +2004,9 @@ async function commitImportNow(req, kindId, prepared, filename, { updateExisting
 
 router.post('/import/:kind/commit', guarded(async (req, res) => {
   const kindId = req.params.kind;
-  const { prepared, filename, fields, updateExisting } = await importRequest(req, kindId, { want: 'direct' });
+  const { prepared, filename, fields, updateExisting, dates } = await importRequest(req, kindId, { want: 'direct' });
   const partial = String(fields.partial || req.query.partial || '') === 'true';
-  const { run, batch } = await commitImport(req, kindId, prepared, filename, { updateExisting, partial });
+  const { run, batch } = await commitImport(req, kindId, prepared, filename, { updateExisting, partial, dates });
   return res.json({ ...reportOf(kindId, prepared, run, filename), committed: true, batch });
 }));
 
@@ -2172,6 +2325,10 @@ async function commitResumes(req, b) {
   const items = Array.isArray(b.items) ? b.items.slice(0, 500) : [];
   if (!items.length) throw new HttpError(400, { error: 'Nothing to import.' });
   const reqCode = String(b.requirementCode || '').trim();
+  // THE DATE THESE CVs CAME (founder 2026-11-20): one date for the whole upload (b.cameOn) or one per file (item.cameOn). None = the upload moment,
+  // marked "original date not known" so it is never shown as the day they came.
+  let uploadCame = null;
+  if (b.cameOn) { try { uploadCame = oneDateOf(b.cameOn); } catch (e) { throw new HttpError(400, { error: e.message }); } }
   const ix = await buildIndex();
   const s = scopeOf(req.user);
   const ctx = { user: req.user, ix, global: s.global, reqCache: new Map(), dry: false };
@@ -2193,6 +2350,12 @@ async function commitResumes(req, b) {
       const buf = ioStore.readBin('resumes', `${it.token}.bin`);
       // eslint-disable-next-line no-await-in-loop
       const parsed = buf ? await parseResume(buf, meta.fileName) : { error: 'file missing' };
+      let came = uploadCame;
+      if (it.cameOn) {
+        const r = parseCameDate(it.cameOn);
+        if (r.ok === false) { results.push({ token: it.token, fileName: meta.fileName, action: 'error', message: `Date came: ${r.message}` }); continue; }
+        if (r.ok) came = r;
+      }
       const f = { ...(parsed.fields || {}) };
       ['name', 'email', 'phone', 'currentSalary', 'expectedSalary'].forEach((k) => { if (typeof it[k] === 'string' && it[k].trim()) f[k] = it[k].trim(); }); // salaries typed on the screen win over what the CV says
       if (f.phone) f.phone = String(f.phone).replace(/[^\d+]/g, '');
@@ -2217,6 +2380,7 @@ async function commitResumes(req, b) {
           experienceYears: typeof f.experienceYears === 'number' ? f.experienceYears : null,
           noticePeriod: f.noticePeriod || null, currentSalary: f.currentSalary || null, expectedSalary: f.expectedSalary || null,
           skills: f.skills || null, source: dupId ? null : (typedSource ? typedSource.slice(0, 80) : srcPick), resumeName: meta.fileName, // a typed source goes through the clean list (unknown = Other, the typed words are kept as the first source)
+          _createdAt: came ? came.at : null, _importedBy: req.user.name, _via: 'resume upload',
         };
         // eslint-disable-next-line no-await-in-loop
         const action = await HANDLERS.candidate({ data, ix, dry: false, row: 0, note });
@@ -2225,7 +2389,7 @@ async function commitResumes(req, b) {
         if (candidateId && action !== 'updated') await require('../utils/candidateAddedBy').record(candidateId, req.user, 'resume upload'); // eslint-disable-line global-require
         if (requirement && candidateId && !(await prisma.application.count({ where: { candidateId, requirementId: requirement.id } }))) {
           // eslint-disable-next-line no-await-in-loop
-          await HANDLERS.application({ data: { _candidate: f.email || f.phone, _requirement: reqCode, stage: 'NEW', source: srcPick === CSRC.JOB_PORTAL ? null : srcPick }, ix, dry: false, row: 0, note });
+          await HANDLERS.application({ data: { _candidate: f.email || f.phone, _requirement: reqCode, stage: 'NEW', source: srcPick === CSRC.JOB_PORTAL ? null : srcPick, _createdAt: came ? came.at : null }, ix, dry: false, row: 0, note });
           note(`added to ${reqCode}`);
         }
         // A PDF resume is kept as the candidate's resume document (as the
@@ -2263,10 +2427,11 @@ async function commitResumes(req, b) {
   const count = (a) => results.filter((r) => r.action === a).length;
   const totals = {
     rows: results.length, create: count('create'), update: count('update'), duplicate: count('duplicate'), error: count('error'), skip: count('skip'),
+    withDate: uploadCame ? count('create') : items.filter((it) => it.cameOn && !it.skip).length,
   };
   await logAudit({
     userId: req.user.id, actorName: req.user.name,
-    action: `ATS import — Resumes: ${totals.create} created, ${totals.update} updated, ${totals.duplicate} duplicate(s), ${totals.error} error(s)`,
+    action: `ATS import — Resumes: ${totals.create} created, ${totals.update} updated, ${totals.duplicate} duplicate(s), ${totals.error} error(s), ${totals.withDate} with their own date`,
     entity: 'AtsImport', entityId: 'resumes',
     toValue: JSON.stringify({ ...totals, batchId: batch ? batch.id : null, requirement: reqCode || null }),
   });
@@ -2337,7 +2502,7 @@ router.get('/access', require('../middleware/auth').requireProduct('ats'), guard
     importModes,
     kinds,
     modules: { ...MODULE_KINDS, candidates: [...(MODULE_KINDS.candidates || []), 'resumes'] },
-    viewer: { role, admin: ['SUPER_ADMIN', 'ADMIN'].includes(role), approver: mayApproveImport(req.user) },
+    viewer: { role, admin: ['SUPER_ADMIN', 'ADMIN'].includes(role), approver: mayApproveImport(req.user), fixDates: mayFixDates(req.user) },
     undoHours: batches.UNDO_WINDOW_MS / 3600000,
     backgroundRows: exportJobs.threshold(),
   });

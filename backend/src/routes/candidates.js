@@ -63,6 +63,7 @@ const { isPreAtsApplication } = require('../utils/atsVocab');
 const CS = require('../utils/candidateSource');
 // WHEN DID THEY COME: one date + one trust word per person (utils/cameOn.js), used by the list, the Sources tab, the exports and the profile.
 const CAME = require('../utils/cameOn');
+const DATES = require('../utils/candidateDates'); // the "From the sheet" / "original date not known" marks (utils/candidateDates.js)
 const clientSearch = require('../utils/clientSearch'); // old client names are searchable (ClientAlias)
 const PD = require('../utils/candidateProfileDepth'); // tags (the ?tag= filter) - profile depth 2026-11-17
 setTimeout(() => { PD.ready().catch(() => {}); }, 3000).unref(); // the tag index, so the first ?tag= facet count is not empty
@@ -749,7 +750,7 @@ function memoPut(map, id, entry) {
 function pagedKeyOf(user, st) {
   const s = scopeOf(user);
   const shared = s.global && s.role !== 'CANDIDATE' && viewerKind(user) === 'internal';
-  return { s, shared, key: (shared ? ['G', st.version, istDay(new Date())] : [user.id, st.version, istDay(new Date()), scopeSig(s), ADDED.version()]).join('|') };
+  return { s, shared, key: (shared ? ['G', st.version, istDay(new Date()), DATES.version()] : [user.id, st.version, istDay(new Date()), scopeSig(s), ADDED.version(), DATES.version()]).join('|') };
 }
 async function pagedRowsFor(user) {
   const st = await getListState();
@@ -794,6 +795,7 @@ async function buildPagedRows(user, st, s, shared = false) {
   const todayIst = istDay(new Date());
   const sections = await sectionMap();
   const bulkDays = bulkDaysFor(st);
+  const dateMarks = await DATES.marksMap();
   // The client's OLD names (ClientAlias) are searchable too: typing "vcare" finds people on jobs of "Prabs VCare Health Clinic".
   // They only feed the search text (hay); no row shows them. A client login never gets them.
   const aliasOf = viewerKind(user) === 'client' ? new Map() : await clientSearch.aliasMap();
@@ -804,7 +806,7 @@ async function buildPagedRows(user, st, s, shared = false) {
   return candidates.map((c) => {
     const row = decorate(c, { user, sharedIds, followUps: st.followUps });
     // Came on: the date + how far to trust it (utils/cameOn.js). TeamLink logins only (a client / the candidate is served none).
-    if (viewerKind(user) === 'internal') { const co = CAME.cameOnOf(c, c.applications, bulkDays); row.cameOn = co.at.toISOString(); row.cameOnDay = co.day; row.cameOnKind = co.kind; }
+    if (viewerKind(user) === 'internal') { const co = CAME.cameOnOf(c, c.applications, bulkDays, dateMarks); row.cameOn = co.at.toISOString(); row.cameOnDay = co.day; row.cameOnKind = co.kind; }
     const apps = row.applications || [];
     const latest = apps.find((a) => a.id === row.latestApplicationId) || null;
     row.pipelineStatus = pipelineStatusOf(row.currentStage);
@@ -1025,7 +1027,7 @@ async function pipelineRowsFor(user) {
   const s = scopeOf(user);
   // The due-date and follow-up rules are settings an admin can change: their versions are part of the key.
   const rulesAt = viewerKind(user) === 'internal' ? ((await FV.loadRules().catch(() => null)) || {}).updatedAt || '' : '';
-  const key = [user.id, st.version, snap.stamp, istDay(new Date()), scopeSig(s), require('../utils/atsAlertSettings').alertSettingsVersion(), rulesAt].join('|'); // eslint-disable-line global-require
+  const key = [user.id, st.version, snap.stamp, istDay(new Date()), scopeSig(s), require('../utils/atsAlertSettings').alertSettingsVersion(), rulesAt, DATES.version()].join('|'); // eslint-disable-line global-require
   const hit = memoGet(APP_ROW_MEMO, user.id, key);
   if (hit) return hit;
   // SPEED (2026-10-03): the page asks for the list, the filter counts and the
@@ -1059,6 +1061,7 @@ async function buildPipelineRows(user, st, s, snap) {
   const today = todayIst();
   const sections = await sectionMap();
   const bulkDays = bulkDaysFor(st);
+  const dateMarks = await DATES.marksMap();
   const aliasOf = kind === 'client' ? new Map() : await clientSearch.aliasMap(); // old client names: search text only
   // C1: latest contact per application + the per-stage due rules (only used
   // once the user has confirmed them) — utils/followupVisibility.js.
@@ -1089,7 +1092,7 @@ async function buildPipelineRows(user, st, s, snap) {
     if (s.global || apps.length) people += 1;
     const xhay = boolHayOf(c, bdeView); // one string per person, shared by their rows
     const inAts = apps.filter((a) => !isPreAtsApplication(a));
-    const co = internalViewer ? CAME.cameOnOf(c, c.applications, bulkDays) : null;
+    const co = internalViewer ? CAME.cameOnOf(c, c.applications, bulkDays, dateMarks) : null;
     preAts += apps.length - inAts.length;
     inAts.forEach((a) => {
       const r = a.requirement || null;
@@ -3124,7 +3127,7 @@ router.get('/:id', async (req, res) => {
   let came = null;
   if (kind === 'internal') {
     const stNow = await getListState();
-    const co = CAME.cameOnOf(candidate, candidate.applications, bulkDaysFor(stNow));
+    const co = CAME.cameOnOf(candidate, candidate.applications, bulkDaysFor(stNow), await DATES.marksMap());
     const made = await prisma.auditLog.findFirst({
       where: { entity: 'Candidate', entityId: candidate.id, OR: [{ action: { startsWith: 'Candidate created' } }, { action: { startsWith: 'Candidate self-registered' } }] },
       orderBy: { createdAt: 'asc' },

@@ -779,6 +779,10 @@ function borrow(from, headers, overrides = {}) {
   });
 }
 
+// THE DATE A PERSON REALLY CAME (founder 2026-11-20). Read by utils/importDates.js (dd/mm/yyyy, 12 Mar 2026, Excel serials, ...); the Import dialog says
+// whether the sheet's date, one date for the whole sheet, or today is used. Not part of the Super Admin master workbook.
+const CAME_COLUMN = c('Date Came', '_cameOn', { t: 'any', help: 'The day this person really came / applied (for example 12-03-2026). Blank = the day of the import is kept, and the person is marked "original date not known".', eg: '12-03-2026' });
+
 const ATS_IMPORT_SHEETS = {
   clients: { ...sheetNamed('Clients'), columns: sheetNamed('Clients').columns.filter((x) => !x.legacy) },
   agreements: {
@@ -807,9 +811,10 @@ const ATS_IMPORT_SHEETS = {
       // INTERESTED OR NOT (founder 2026-11-04): only an Interested candidate is sent their Job Portal login. A later sheet that says
       // Interested for someone already on file changes them to Interested (no second candidate is made) and sends the login then.
       c('Interested', '_interest', { help: 'Interested or Not Interested. Only Interested candidates get their Job Portal login. Blank = not asked yet (no login).', eg: 'Interested' }),
+      CAME_COLUMN,
     ],
   },
-  applications: { ...sheetNamed('Applications'), columns: sheetNamed('Applications').columns.filter((x) => !x.legacy) },
+  applications: { ...sheetNamed('Applications'), columns: [...sheetNamed('Applications').columns.filter((x) => !x.legacy), { ...CAME_COLUMN, help: 'Optional: the day this person applied / was sourced for this requirement. The application is dated that day (not the day of the import).' }] },
   interviews: { ...sheetNamed('Interviews') },
   'interview-feedback': {
     ...sheetNamed('Interviews'),

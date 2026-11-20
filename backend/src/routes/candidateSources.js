@@ -352,7 +352,7 @@ async function build(req) {
   const all = filtered.length;
   const noSource = filtered.filter((r) => (r.sourceKey || CS.IMPORTED) === CS.IMPORTED).length;
   const importedDate = filtered.filter((r) => r.cameOnKind === 'imported').length;
-  const kinds = { sheet: 0, imported: 0, applied: 0, entered: 0 };
+  const kinds = { fromSheet: 0, sheet: 0, imported: 0, applied: 0, entered: 0 };
   filtered.forEach((r) => { if (kinds[r.cameOnKind] !== undefined) kinds[r.cameOnKind] += 1; });
   const quality = {
     people: all,
@@ -364,8 +364,9 @@ async function build(req) {
     realDatePct: pct(all - importedDate, all),
     kinds,
     meaning: {
+      fromSheet: 'The date came from the sheet that was imported (the date in its date column, or the one date chosen for the whole sheet).',
       sheet: 'The date written in the old sheet (kept on the person\'s requirement application).',
-      imported: 'The day the profile was loaded into TeamLink with a big import. It is not the day the person really arrived.',
+      imported: 'The day the profile was loaded into TeamLink by an import that carried no date for the person (or by a big import). It is not the day the person really arrived: original date not known.',
       applied: 'The day the person applied on the job portal or a careers link.',
       entered: 'The day the profile was added to TeamLink.',
     },
@@ -375,7 +376,7 @@ async function build(req) {
 
   // ---- drill-down: the list filters that reproduce a tile exactly ----
   const drill = { ...filters };
-  if (onlyReal) drill.cameKind = 'sheet,applied,entered';
+  if (onlyReal) drill.cameKind = 'fromSheet,sheet,applied,entered';
   const out = {
     ok: true,
     asOf: new Date().toISOString(),

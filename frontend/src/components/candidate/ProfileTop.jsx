@@ -37,7 +37,8 @@ function CameLine({ c }) {
   const kind = c.cameOnKind;
   let text = known ? `Came from ${c.sourceKey}` : 'Source not recorded';
   if (day) {
-    if (kind === 'imported') text += ` · loaded into TeamLink on ${day}`;
+    if (kind === 'imported') text += ` · Imported on ${day} (original date not known)`;
+    else if (kind === 'fromSheet') text += ` · ${day} (from the sheet)`;
     else if (kind === 'sheet') text += ` · ${day} (date from the old sheet)`;
     else if (kind === 'applied') text += ` · applied on ${day}`;
     else text += ` · on ${day}`;

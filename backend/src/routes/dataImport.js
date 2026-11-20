@@ -1237,7 +1237,11 @@ const HANDLERS = {
       await prisma.candidate.update({ where: { id }, data: fields });
       return 'updated';
     }
+    // THE DATE THEY CAME (founder 2026-11-20): a sheet that carries the person's own date sets createdAt to it ("From the sheet"); one that
+    // carries none keeps the day of the import but is MARKED, so it is never shown as the day they came ("original date not known").
+    if (data._createdAt instanceof Date && !Number.isNaN(data._createdAt.getTime())) fields.createdAt = data._createdAt;
     const row = await prisma.candidate.create({ data: fields });
+    await require('../utils/candidateDates').mark(row.id, fields.createdAt ? 'sheet' : 'unknown', { byName: data._importedBy || null, via: data._via || 'import' }); // eslint-disable-line global-require
     if (data.email) ix.candidate.set(ix.norm(data.email), row.id);
     if (data.phone) ix.candidate.set(ix.norm(data.phone), row.id);
     if (data.externalRef) ix.candidate.set(ix.norm(`ref:${data.externalRef}`), row.id);
@@ -1308,9 +1312,21 @@ const HANDLERS = {
     }
     ix.appKeys.add(key);
 
+    // THE DATE THEY CAME (founder 2026-11-20): a dated import creates the application AT that date, so Applied, time to fill, sourced per month and the
+    // funnels read the real day. An application that is already on file keeps its own date.
+    const cameAt = data._createdAt instanceof Date && !Number.isNaN(data._createdAt.getTime()) ? data._createdAt : null;
+    if (cameAt && !existing) fields.createdAt = cameAt; // (updatedAt stays the import moment unless the sheet's Stage Date says otherwise: ageing does not jump back)
     const app = existing
       ? await prisma.application.update({ where: { id: existing.id }, data: fields })
       : await prisma.application.create({ data: fields });
+    if (cameAt && !existing) {
+      // The pipeline's first links, dated the day they really came (the chain the candidate screen and the stage reports read).
+      const first = { applicationId: app.id, candidateId, fromStage: null, toStage: 'NEW', action: 'Added by import (date from the sheet)', actorName: IMPORTED_BY, actorSide: 'Internal', createdAt: cameAt };
+      await prisma.applicationStageEvent.create({ data: first });
+      if (data.stage && data.stage !== 'NEW' && !['REJECTED', 'HOLD'].includes(data.stage)) {
+        await prisma.applicationStageEvent.create({ data: { ...first, fromStage: 'NEW', toStage: data.stage, action: 'Stage as in the imported sheet', createdAt: stageDate || cameAt } });
+      }
+    }
 
     // The history entry. Snapshotted, not joined — a requirement gets
     // retitled and a client renamed, and the record of why somebody was

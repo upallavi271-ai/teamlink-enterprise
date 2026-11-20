@@ -2471,7 +2471,7 @@ function CameOnFilter({ filters, setFilter }) {
         {quick.map(([label, a, b]) => (
           <button key={label} type="button" className={`btn btn-sm${filters.cameFrom === a && filters.cameTo === b ? ' btn-primary' : ''}`} onClick={() => setFilter({ cameFrom: a, cameTo: b })}>{label}</button>
         ))}
-        <button type="button" className={`btn btn-sm${filters.cameKind === 'sheet,applied,entered' ? ' btn-primary' : ''}`} title="Leave out people whose only date is the day they were loaded by an import" onClick={() => setFilter({ cameKind: filters.cameKind === 'sheet,applied,entered' ? '' : 'sheet,applied,entered' })}>Real dates only</button>
+        <button type="button" className={`btn btn-sm${filters.cameKind === 'fromSheet,sheet,applied,entered' ? ' btn-primary' : ''}`} title="Leave out people whose only date is the day they were loaded by an import" onClick={() => setFilter({ cameKind: filters.cameKind === 'fromSheet,sheet,applied,entered' ? '' : 'fromSheet,sheet,applied,entered' })}>Real dates only</button>
       </div>
     </div>
   );

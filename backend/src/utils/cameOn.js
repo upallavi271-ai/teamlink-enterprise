@@ -9,14 +9,19 @@
 //   kind 'sheet'     an old tracker row whose own date was kept on its application
 //                    (the first application is dated BEFORE the profile was loaded):
 //                    the date is that sheet date.
+//   kind 'fromSheet' an import carried the person's OWN date (a date column, or one date for the whole
+//                    sheet, or the repair tool "Fix came-on dates from a sheet"): Candidate.createdAt IS that
+//                    date. Shown as "From the sheet". (utils/candidateDates.js keeps the mark.)
 //   kind 'imported'  the profile entered TeamLink on a BULK-IMPORT day (150+ profiles
-//                    created that day): the date is the day it was loaded, NOT the day
-//                    the person really arrived. Shown as "Imported on <date>".
+//                    created that day), or an import carried NO date for it (marked 'unknown'): the date is the
+//                    day it was loaded, NOT the day the person really arrived.
+//                    Shown as "Imported on <date> (original date not known)".
 //   kind 'applied'   the person applied through the job portal / a careers link: the date
 //                    they applied.
 //   kind 'entered'   everybody else: the day the profile was created in TeamLink.
 //
-// cameOnOf(candidate, applications, bulkDays) -> { at: Date, day: 'YYYY-MM-DD' (IST), kind }
+// cameOnOf(candidate, applications, bulkDays, marks) -> { at: Date, day: 'YYYY-MM-DD' (IST), kind }
+//   marks: Map candidateId -> 'sheet' | 'unknown' (await candidateDates.marksMap()); omitted = no marks.
 // bulkDaysOf(candidates)                      -> Set of IST days
 // ---------------------------------------------------------------------------
 const { istDay } = require('./nextAction');
@@ -39,8 +44,11 @@ function bulkDaysOf(candidates) {
 const PORTAL_WORDS = new Set(['teamlink job portal', 'job portal']);
 const isPortal = (v) => PORTAL_WORDS.has(String(v == null ? '' : v).replace(/\s+/g, ' ').trim().toLowerCase());
 
-function cameOnOf(candidate, applications, bulkDays) {
+function cameOnOf(candidate, applications, bulkDays, marks) {
   const entered = new Date(candidate.createdAt);
+  const mark = marks && candidate.id ? marks.get(candidate.id) : null;
+  // The import carried the person's own date: createdAt IS that date.
+  if (mark === 'sheet') return { at: entered, day: istDay(entered), kind: 'fromSheet' };
   let first = null;
   let portal = null;
   (applications || []).forEach((a) => {
@@ -55,13 +63,16 @@ function cameOnOf(candidate, applications, bulkDays) {
   const day = istDay(entered);
   if (portal) return { at: portal, day: istDay(portal), kind: 'applied' };
   if (bulkDays && bulkDays.has(day)) return { at: entered, day, kind: 'imported' };
+  // An import carried no date for this person: createdAt is the import day, not the day they came.
+  if (mark === 'unknown') return { at: entered, day, kind: 'imported' };
   return { at: entered, day, kind: 'entered' };
 }
 
 // Plain words for each kind (the screens and the exports say the same thing).
 const KIND_LABEL = {
+  fromSheet: 'From the sheet',
   sheet: 'Date from the old sheet',
-  imported: 'Imported on this date (not the real arrival date)',
+  imported: 'Imported on this date (original date not known)',
   applied: 'Date they applied',
   entered: 'Date the profile was added',
 };

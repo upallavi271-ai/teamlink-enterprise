@@ -93,6 +93,11 @@ const dirtyCandidates = new Set();
 
 function markCandidateDirty(id) { if (id) dirtyCandidates.add(String(id)); }
 
+// Dates were corrected under the copy's feet (a candidate's / application's createdAt, with updatedAt left alone, so the stamp does not move):
+// the next read builds a whole new copy. Used only by the came-on date repair (utils/candidateDates.js).
+let forceFull = false;
+function forceRebuild() { forceFull = true; }
+
 async function stampNow() {
   const [a, c, r, f] = await Promise.all([
     prisma.application.aggregate({ _count: { _all: true }, _max: { updatedAt: true } }),
@@ -222,8 +227,10 @@ async function applyDelta(now) {
     let added = false;
     rows.forEach((row) => {
       const existing = state.byId.get(row.id);
-      if (existing) Object.assign(existing, row);
-      else {
+      if (existing) {
+        if (new Date(existing.createdAt).getTime() !== new Date(row.createdAt).getTime()) added = true; // a corrected came-on date moves the person in the order
+        Object.assign(existing, row);
+      } else {
         row.applications = [];
         state.byId.set(row.id, row);
         state.candidates.push(row);
@@ -283,7 +290,7 @@ async function refresh() {
     if (next.day === todayStr() && (!state || next.built >= state.built)) install(next);
   }
   const now = await stampNow();
-  if (!state || state.day !== todayStr()) return fullBuild(now);
+  if (!state || state.day !== todayStr() || forceFull) { forceFull = false; return fullBuild(now); }
   if (Date.now() - state.built > MAX_AGE_MS) rebuildInBackground();
   const was = state.stamp;
   const same = !dirtyCandidates.size && ['apps', 'appsMax', 'cands', 'candsMax', 'reqs', 'reqsMax', 'fus', 'fusMax']
@@ -300,4 +307,4 @@ async function getListState() {
   return inflight;
 }
 
-module.exports = { getListState, markCandidateDirty };
+module.exports = { getListState, markCandidateDirty, forceRebuild };
