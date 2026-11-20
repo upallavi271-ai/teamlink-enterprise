@@ -232,47 +232,64 @@ function dayOk(day, from, to) {
 }
 const bucketOk = (list, key) => !list.length || list.includes(key);
 
-/** true when the row passes every NEW filter that is on. `fx` missing on the row = nothing known = the row cannot pass an active filter. */
-function matches(r, query, ctx) {
-  const x = r.fx;
-  const qy = query || {};
-  // cheap exit: no new filter on
-  if (!ACTIVE_KEYS.some((k) => qy[k] !== undefined && qy[k] !== '')) return true;
-  if (!x) return false;
-  const lo = (k) => numOrNull(qy[k]);
-  if (!rangeOk(x.ctcCur, lo('ctcCurMin'), lo('ctcCurMax'))) return false;
-  if (!rangeOk(x.ctcExp, lo('ctcExpMin'), lo('ctcExpMax'))) return false;
-  if (qy.ctcCurBucket && !bucketOk(csvOf(qy.ctcCurBucket), ctcBucketOf(x.ctcCur))) return false;
-  if (qy.ctcExpBucket && !bucketOk(csvOf(qy.ctcExpBucket), ctcBucketOf(x.ctcExp))) return false;
-  if (!rangeOk(x.exp, lo('expMin'), lo('expMax'))) return false;
-  if (!rangeOk(x.score, lo('scoreMin'), lo('scoreMax'))) return false;
-  if (qy.scoreBucket && !bucketOk(csvOf(qy.scoreBucket), scoreBucketOf(x.score))) return false;
-  if (qy.locCur) { const w = csvOf(qy.locCur).map(lc); if (!x.locCur || !w.includes(lc(x.locCur))) return false; }
-  if (qy.locNative) { const w = csvOf(qy.locNative).map(lc); if (!x.locNative || !w.includes(lc(x.locNative))) return false; }
-  if (qy.locPref) { const w = csvOf(qy.locPref).map(lc); if (!x.locPref.some((l) => w.includes(lc(l)))) return false; }
-  if (qy.jobTitle) { const w = csvOf(qy.jobTitle).map(lc); if (!x.title || !w.includes(lc(x.title))) return false; }
-  if (qy.skillSet) {
+// The filters in GROUPS, each with a bit: a row's failMask says which groups it fails, so the option counts can be worked out in ONE pass
+// (a facet counts the rows that fail nothing but its own group) instead of one pass per facet.
+const T = (bit, keys, test) => ({ bit, keys, test });
+const nn = (v) => numOrNull(v);
+const TESTS = [
+  T(1 << 0, ['ctcCurMin', 'ctcCurMax'], (x, qy) => rangeOk(x.ctcCur, nn(qy.ctcCurMin), nn(qy.ctcCurMax))),
+  T(1 << 1, ['ctcCurBucket'], (x, qy) => bucketOk(csvOf(qy.ctcCurBucket), ctcBucketOf(x.ctcCur))),
+  T(1 << 2, ['ctcExpMin', 'ctcExpMax'], (x, qy) => rangeOk(x.ctcExp, nn(qy.ctcExpMin), nn(qy.ctcExpMax))),
+  T(1 << 3, ['ctcExpBucket'], (x, qy) => bucketOk(csvOf(qy.ctcExpBucket), ctcBucketOf(x.ctcExp))),
+  T(1 << 4, ['expMin', 'expMax'], (x, qy) => rangeOk(x.exp, nn(qy.expMin), nn(qy.expMax))),
+  T(1 << 5, ['scoreMin', 'scoreMax'], (x, qy) => rangeOk(x.score, nn(qy.scoreMin), nn(qy.scoreMax))),
+  T(1 << 6, ['scoreBucket'], (x, qy) => bucketOk(csvOf(qy.scoreBucket), scoreBucketOf(x.score))),
+  T(1 << 7, ['locCur'], (x, qy) => !!x.locCur && csvOf(qy.locCur).map(lc).includes(lc(x.locCur))),
+  T(1 << 8, ['locNative'], (x, qy) => !!x.locNative && csvOf(qy.locNative).map(lc).includes(lc(x.locNative))),
+  T(1 << 9, ['locPref'], (x, qy) => { const w = csvOf(qy.locPref).map(lc); return x.locPref.some((l) => w.includes(lc(l))); }),
+  T(1 << 10, ['jobTitle'], (x, qy) => !!x.title && csvOf(qy.jobTitle).map(lc).includes(lc(x.title))),
+  T(1 << 11, ['skillSet', 'skillMode'], (x, qy) => {
     const w = csvOf(qy.skillSet).map(lc);
-    const have = x.skills;
-    const ok = String(qy.skillMode || '').toLowerCase() === 'all' ? w.every((s) => have.includes(s)) : w.some((s) => have.includes(s));
-    if (!ok) return false;
+    if (!w.length) return true;
+    return String(qy.skillMode || '').toLowerCase() === 'all' ? w.every((s) => x.skills.includes(s)) : w.some((s) => x.skills.includes(s));
+  }),
+  T(1 << 12, ['noticeBand'], (x, qy) => bucketOk(csvOf(qy.noticeBand), x.notice)),
+  T(1 << 13, ['workMode'], (x, qy) => !!x.workMode && csvOf(qy.workMode).map(lc).includes(lc(x.workMode))),
+  T(1 << 14, ['empType'], (x, qy) => !!x.empType && csvOf(qy.empType).map(lc).includes(lc(x.empType))),
+  T(1 << 15, ['addedFrom', 'addedTo', 'updatedFrom', 'updatedTo', 'sharedFrom', 'sharedTo', 'contactedFrom', 'contactedTo'], (x, qy, r, ctx) => {
+    if (!dayOk(x.addedDay, qy.addedFrom, qy.addedTo)) return false;
+    if (!dayOk(x.updatedDay, qy.updatedFrom, qy.updatedTo)) return false;
+    if (qy.contactedFrom || qy.contactedTo) {
+      const day = x.contactedDay !== undefined ? x.contactedDay : (ctx && ctx.fxContact ? ctx.fxContact.get(r.candidateId || r.id) || null : undefined);
+      if (day !== undefined && !dayOk(day, qy.contactedFrom, qy.contactedTo)) return false;
+    }
+    return dayOk(x.sharedDay, qy.sharedFrom, qy.sharedTo);
+  }),
+  T(1 << 16, ['resume'], (x, qy) => (qy.resume === 'yes' ? !!x.resume : qy.resume === 'no' ? !x.resume : true)),
+  T(1 << 17, ['dup'], (x, qy) => (qy.dup === 'yes' ? !!x.dup : qy.dup === 'no' ? !x.dup : true)),
+];
+const isOn = (qy, keys) => keys.some((k) => qy[k] !== undefined && qy[k] !== '');
+/** the bits of the groups the row FAILS among the filters that are on (0 = passes them all). A row with no facts fails every group that is on. */
+function failMask(r, query, ctx) {
+  const qy = query || {};
+  const x = r.fx;
+  let m = 0;
+  for (let i = 0; i < TESTS.length; i += 1) {
+    const t = TESTS[i];
+    if (isOn(qy, t.keys) && (!x || !t.test(x, qy, r, ctx))) m |= t.bit; // eslint-disable-line no-bitwise
   }
-  if (qy.noticeBand && !bucketOk(csvOf(qy.noticeBand), x.notice)) return false;
-  if (qy.workMode) { const w = csvOf(qy.workMode).map(lc); if (!x.workMode || !w.includes(lc(x.workMode))) return false; }
-  if (qy.empType) { const w = csvOf(qy.empType).map(lc); if (!x.empType || !w.includes(lc(x.empType))) return false; }
-  if (!dayOk(x.addedDay, qy.addedFrom, qy.addedTo)) return false;
-  if (!dayOk(x.updatedDay, qy.updatedFrom, qy.updatedTo)) return false;
-  if ((qy.contactedFrom || qy.contactedTo)) {
-    const day = x.contactedDay !== undefined ? x.contactedDay : (ctx && ctx.fxContact ? ctx.fxContact.get(r.candidateId || r.id) || null : undefined);
-    if (day !== undefined && !dayOk(day, qy.contactedFrom, qy.contactedTo)) return false;
-  }
-  if (!dayOk(x.sharedDay, qy.sharedFrom, qy.sharedTo)) return false;
-  if (qy.resume === 'yes' && !x.resume) return false;
-  if (qy.resume === 'no' && x.resume) return false;
-  if (qy.dup === 'yes' && !x.dup) return false;
-  if (qy.dup === 'no' && x.dup) return false;
-  return true;
+  return m;
 }
+/** true when the row passes every NEW filter that is on. */
+function matches(r, query, ctx) {
+  const qy = query || {};
+  if (!ACTIVE_KEYS.some((k) => qy[k] !== undefined && qy[k] !== '')) return true;
+  return failMask(r, qy, ctx) === 0;
+}
+const BIT_OF_FACET = {
+  ctcCurBucket: 1 << 1, ctcExpBucket: 1 << 3, scoreBucket: 1 << 6, locCur: 1 << 7, locNative: 1 << 8, locPref: 1 << 9, jobTitle: 1 << 10, skillSet: 1 << 11,
+  noticeBand: 1 << 12, workMode: 1 << 13, empType: 1 << 14, resume: 1 << 16, dup: 1 << 17,
+};
 const ACTIVE_KEYS = ['ctcCurMin', 'ctcCurMax', 'ctcCurBucket', 'ctcExpMin', 'ctcExpMax', 'ctcExpBucket', 'expMin', 'expMax', 'scoreMin', 'scoreMax', 'scoreBucket',
   'locCur', 'locPref', 'locNative', 'jobTitle', 'skillSet', 'noticeBand', 'workMode', 'empType', 'addedFrom', 'addedTo', 'updatedFrom', 'updatedTo',
   'contactedFrom', 'contactedTo', 'sharedFrom', 'sharedTo', 'resume', 'dup'];
@@ -350,6 +367,6 @@ function scopedTags(personIds) {
 
 module.exports = {
   FORBIDDEN, NEW_KEYS, CTC_KEYS, PRIVATE_KEYS, INTERNAL_KEYS, NOTICE_LABELS, CTC_BUCKETS, SCORE_BUCKETS,
-  rightsOf, guard, queryGuard, loadIndex, attrsOf, fxOf, sharedDayOf, matches, tagMatches, facetDefs, capOptions, scopedTags,
+  rightsOf, guard, queryGuard, loadIndex, attrsOf, fxOf, sharedDayOf, matches, failMask, BIT_OF_FACET, tagMatches, facetDefs, capOptions, scopedTags,
   noticeBandOf, lakhs, ctcBucketOf, cityOf, citiesOf, istDay, csvOf, count,
 };

@@ -214,8 +214,8 @@ async function candidateFacets(user, q0) {
   const match = (r, qq, ctx) => cand.pipelineRowMatches(r, qq, ctx);
   const facets = {};
   const fxDefs = FX.facetDefs(user);
-  for (const f of [...CAND_FACETS, ...fxDefs]) {
-    const qq = without(q, f.omit || (f.key === 'recruiter' ? ['recruiter', 'positionCode'] : [f.key]));
+  for (const f of CAND_FACETS) {
+    const qq = without(q, f.key === 'recruiter' ? ['recruiter', 'positionCode'] : [f.key]);
     // eslint-disable-next-line no-await-in-loop
     const ctx = { ...base, personIds: await personIds(qq) };
     const counts = new Map();
@@ -240,15 +240,38 @@ async function candidateFacets(user, q0) {
       });
       continue; // eslint-disable-line no-continue
     }
-    if (f.omit) {
-      // a recruiter filter (comma list): every ticked value stays listed, even at 0, so it can be seen and unticked
-      let list = finish(counts, (v) => (f.labelOf ? f.labelOf(v) : String(v)), '');
+    facets[f.key] = finish(counts, (v) => labels.get(v) || (f.labelOf ? f.labelOf(v) : String(v)), q[f.key]);
+  }
+  // The recruiter filters' options, ALL in one pass: the rows that pass every other filter are found once, and each row's failMask says which
+  // of the new filters it fails; an option counts the rows that fail nothing but its own filter (utils/candidateFilters.js).
+  if (fxDefs.length) {
+    const qBase = without(q, FX.NEW_KEYS);
+    const ctxB = { ...base, personIds: await personIds(qBase) };
+    const maps = new Map(fxDefs.map((f) => [f.key, new Map()]));
+    const seenBy = new Map(fxDefs.map((f) => [f.key, new Set()]));
+    rows.forEach((r) => {
+      if (!match(r, qBase, ctxB)) return;
+      const m = FX.failMask(r, q, ctxB);
+      fxDefs.forEach((f) => {
+        if ((m & ~FX.BIT_OF_FACET[f.key]) !== 0) return; // eslint-disable-line no-bitwise
+        const got = f.get(r);
+        (Array.isArray(got) ? got : [got]).forEach((v) => {
+          if (v === null || v === undefined || v === '') return;
+          const k = `${v}|${r.candidateId}`;
+          const seen = seenBy.get(f.key);
+          if (seen.has(k)) return;
+          seen.add(k);
+          FX.count(maps.get(f.key), v);
+        });
+      });
+    });
+    fxDefs.forEach((f) => {
+      // every ticked value stays listed, even at 0, so it can be seen and unticked
+      let list = finish(maps.get(f.key), (v) => (f.labelOf ? f.labelOf(v) : String(v)), '');
       list = FX.capOptions(list, f.cap);
       FX.csvOf(q[f.key]).forEach((w) => { if (!list.some((o) => o.value.toLowerCase() === w.toLowerCase())) list.push({ value: w, label: f.labelOf ? f.labelOf(w) : w, count: 0 }); });
       facets[f.key] = list;
-      continue; // eslint-disable-line no-continue
-    }
-    facets[f.key] = finish(counts, (v) => labels.get(v) || (f.labelOf ? f.labelOf(v) : String(v)), q[f.key]);
+    });
   }
   // Tags: counted over the people in THIS login's scope (they were over the whole database), every other filter on.
   if (FX.rightsOf(user).internal) {
@@ -276,9 +299,24 @@ async function candidateFacets(user, q0) {
   return { facets, total };
 }
 
+// The same login asking again for the same filters while nothing changed (a reload, the panel opening) gets the same answer for 30 seconds.
+const FACET_CACHE = new Map();
+async function cachedCandidateFacets(user, q) {
+  let stamp = '';
+  try { stamp = (await require('../routes/candidates').pipelineRowsFor(user)).key || ''; } catch { stamp = ''; } // eslint-disable-line global-require
+  const key = JSON.stringify([user.id, stamp, q]);
+  const hit = FACET_CACHE.get(key);
+  if (stamp && hit && Date.now() - hit.at < 30000) return hit.out;
+  const out = await candidateFacets(user, q);
+  if (stamp) {
+    FACET_CACHE.set(key, { at: Date.now(), out });
+    while (FACET_CACHE.size > 30) FACET_CACHE.delete(FACET_CACHE.keys().next().value);
+  }
+  return out;
+}
 async function facetsRaw(module, user, q) {
   if (module === 'requirements') return requirementFacets(user, q);
-  if (module === 'candidates') return candidateFacets(user, q);
+  if (module === 'candidates') return cachedCandidateFacets(user, q);
   // Reports (section 17): counted over the report's own rows — routes/atsReports.js.
   if (module === 'reports') return require('../routes/atsReports').reportFacets(user, q); // eslint-disable-line global-require
   return null;

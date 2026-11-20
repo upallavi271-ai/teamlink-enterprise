@@ -194,10 +194,13 @@ function ask(query, user) {
     x: extraAsk(q, user),
     sort: str('sort'),
     view: str('view') || 'all',
-    window: str('window') === 'all' ? 'all' : 'open',
+    // WHOLE HISTORY (founder 2026-11-20): a search or any filter looks at every matching record of all time, not only the open work
+    allTime: !!(str('q').trim() || FILTER_KEYS_ANY.some((k) => str(k)) || extraAsk(q, user).on),
+    window: str('window') === 'all' || !!(str('q').trim() || FILTER_KEYS_ANY.some((k) => str(k)) || extraAsk(q, user).on) ? 'all' : 'open',
   };
 }
 
+const FILTER_KEYS_ANY = ['status', 'department', 'client', 'job', 'recruiter', 'hiringType', 'spec', 'qual', 'desig', 'expBand'];
 // THE EXTRA FILTERS (founder 2026-11-18): a date range on the list's own date (dFrom / dTo, IST days), Offers: offerStatus (csv),
 // ctcMin / ctcMax (lakh), bgv (csv of Pending / In progress / Clear / Discrepancy / Not needed), counter=pending; Joining: guarantee (csv
 // of active / ended / none), invoice (csv of none / Pending / Partially Paid / Paid / Overdue). Pay and invoice filters only for logins that see them.
@@ -468,7 +471,7 @@ async function pageOf(req, where, kind, a) {
   return {
     ids: slice.map((it) => it.id),
     meta: {
-      total, page, pageSize: a.pageSize, pages, counts: out.counts, facets: out.facets, olderCount: out.olderCount, window: a.window,
+      total, page, pageSize: a.pageSize, pages, counts: out.counts, facets: out.facets, olderCount: out.olderCount, window: a.window, allTime: !!a.allTime,
     },
   };
 }

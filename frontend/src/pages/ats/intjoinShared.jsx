@@ -523,7 +523,8 @@ export function useIntJoinPaged(url, {
   const clear = () => { setF(EMPTY_LIST); xf.clear(); };
   const toolbar = (
     <>
-    {xfList && <ListFilterStrip list={xfList} xf={xf} user={user} total={Number(data.total) || 0} noun={xfList === 'offers' ? 'offers' : 'joinings'} />}
+    {xfList && <ListFilterStrip list={xfList} xf={xf} user={user} total={Number(data.total) || 0} noun={xfList === 'offers' ? 'offers' : 'joinings'} allTime={!!data.allTime} />}
+    {!xfList && data.allTime && <div className="small-muted" role="status" style={{ margin: '4px 0' }}>Showing all time</div>}
     <ListToolbar
       search={f.q}
       onSearch={(v) => set({ q: v })}

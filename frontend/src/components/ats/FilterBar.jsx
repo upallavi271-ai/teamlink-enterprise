@@ -224,7 +224,7 @@ function activeIn(fields, values) {
 }
 
 export default function FilterBar({
-  config, values, onChange, facets = {}, loading = false, total = null, noun = 'results', onClear, saved = null, extraChips = [], lead = null, className = '', storageKey = '', chipSkip = [], canClear,
+  config, values, onChange, facets = {}, loading = false, total = null, noun = 'results', onClear, saved = null, extraChips = [], lead = null, className = '', storageKey = '', chipSkip = [], canClear, allTime = false,
 }) {
   const fields = useMemo(() => (config || []).filter((f) => f.show !== false), [config]);
   const primary = fields.filter((f) => f.primary);
@@ -253,7 +253,7 @@ export default function FilterBar({
         )}
         {showClear && <button type="button" className="mf-clear" onClick={onClear}>Clear all</button>}
         {saved}
-        {total !== null && total !== undefined && <span className="small-muted fbar-count" role="status">{`${nf(total)} ${noun}`}</span>}
+        {total !== null && total !== undefined && <span className="small-muted fbar-count" role="status">{`${nf(total)} ${noun}`}{allTime ? ' · Showing all time' : ''}</span>}
       </div>
       {open && more.length > 0 && (
         <>

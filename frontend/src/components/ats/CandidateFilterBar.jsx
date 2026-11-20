@@ -117,6 +117,7 @@ export default function CandidateFilterBar({
       saved={saved}
       chipSkip={['source', 'status', 'stage', 'owner', 'clientId', 'requirementId', 'tag']}
       canClear={canClear}
+      allTime={!!canClear}
       storageKey="cand"
       className="fbar-cand"
     />

@@ -444,7 +444,9 @@ export default function InterviewCalendar() {
     reminders && reminders.enabled ? 'Candidate emails are off. Messages are still saved on Communications. In-app notices still go.' : 'Candidate emails are on. Step messages, interview messages and offer letters now go out.',
   );
 
-  const xf = useListXf('interviews', user); // date range, status, round, mode, interviewer (components/ats/ListFilters.jsx)
+  const xf = useListXf('interviews', user);
+  // a filter looks at every interview of all time, not only the upcoming ones
+  useEffect(() => { if (Object.keys(xf.params).length) setViews((prev) => (prev.recruitment === 'all' ? prev : { ...prev, recruitment: 'all' })); }, [xf.key]); // eslint-disable-line react-hooks/exhaustive-deps // date range, status, round, mode, interviewer (components/ats/ListFilters.jsx)
   function serverParams() {
     const params = { ...xf.params };
     const hp = toParams(hier, hierTree.data);

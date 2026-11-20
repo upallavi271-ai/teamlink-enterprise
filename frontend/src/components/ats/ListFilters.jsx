@@ -104,7 +104,7 @@ export function useListXf(list, user, { onWrite } = {}) {
 }
 
 export function ListFilterStrip({
-  list, xf, user, total = null, noun = 'results', saved = null,
+  list, xf, user, total = null, noun = 'results', saved = null, allTime,
 }) {
   const config = useMemo(() => configFor(list, user), [list, user]);
   // the options are fixed words: the counts are the list's own total
@@ -119,6 +119,7 @@ export function ListFilterStrip({
       noun={noun}
       onClear={xf.clear}
       canClear={count > 0}
+      allTime={allTime !== undefined ? allTime : count > 0}
       saved={saved}
       storageKey={`list-${list}`}
       className={`fbar-${list}`}

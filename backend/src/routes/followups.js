@@ -292,7 +292,9 @@ router.get('/', async (req, res, next) => {
     if (req.query.page === undefined && req.query.pageSize === undefined) return res.json(all);
     const inWindow = followUpWindow();
     const inside = all.filter(inWindow);
-    const rowsAll = req.query.older === '1' ? all : inside;
+    // WHOLE HISTORY (founder 2026-11-20): a filter looks at every matching follow-up of all time
+    const allTime = req.query.older === '1' || require('../utils/atsListFilters').FU_KEYS.some((k) => req.query[k]); // eslint-disable-line global-require
+    const rowsAll = allTime ? all : inside;
     const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize) || 50));
     const pages = Math.max(1, Math.ceil(rowsAll.length / pageSize));
     const page = Math.min(pages, Math.max(1, Number(req.query.page) || 1));
@@ -373,9 +375,10 @@ router.get('/dashboard', async (req, res, next) => {
       // how many there are either way.
       // rows=all is windowed (followUpWindow); olderCount = how many ?older=1 adds.
       mine: (() => {
-        const inside = req.query.rows === 'all' && req.query.older !== '1' ? mine.filter(followUpWindow()) : mine;
+        const allTime = req.query.older === '1' || require('../utils/atsListFilters').FU_KEYS.some((k) => req.query[k]); // eslint-disable-line global-require
+        const inside = req.query.rows === 'all' && !allTime ? mine.filter(followUpWindow()) : mine;
         return {
-          ...tally(mine), total: mine.length, olderCount: req.query.rows === 'all' ? mine.length - mine.filter(followUpWindow()).length : 0,
+          ...tally(mine), total: mine.length, olderCount: req.query.rows === 'all' && !allTime ? mine.length - mine.filter(followUpWindow()).length : 0,
           rows: req.query.rows === 'all' ? inside : mine.slice(0, 50),
         };
       })(),

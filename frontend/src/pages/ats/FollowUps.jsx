@@ -161,17 +161,18 @@ export default function FollowUps({ embedded = false }) {
   const [hier, setHier] = useState(EMPTY_HIERARCHY);
   const tree = useHierarchy();
   const hierKey = JSON.stringify(toParams(hier, tree.data));
+  const [lfOn, setLfOn] = useState(false); // a search or filter on the list below: it then reaches every follow-up of all time
   const xf = useListXf('followups', user); // due, type, priority, candidate, requirement (components/ats/ListFilters.jsx)
   const lv = (tree.data && tree.data.viewer && tree.data.viewer.levels) || {};
   const showHier = !!(lv.department || lv.section || lv.tl || lv.recruiter);
 
   const load = useCallback(() => {
-    api.get('/followups/dashboard', { params: { rows: 'all', ...(older ? { older: '1' } : {}), ...JSON.parse(hierKey), ...xf.params } })
+    api.get('/followups/dashboard', { params: { rows: 'all', ...(older || lfOn ? { older: '1' } : {}), ...JSON.parse(hierKey), ...xf.params } })
       .then((r) => { setData(r.data); setError(''); })
       .catch((err) => setError(err.response?.data?.error || (err.response?.status === 403
         ? 'Follow-ups are not part of your role.'
         : 'Could not load follow-ups. Please try again.')));
-  }, [hierKey, older, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hierKey, older, lfOn, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(load, [load]);
 
   const mineLf = useListFilters((data && data.mine && data.mine.rows) || [], [
@@ -184,6 +185,7 @@ export default function FollowUps({ embedded = false }) {
   ], { sorts: MINE_SORTS });
   const minePage = usePaged(mineLf.rows);
 
+  useEffect(() => { setLfOn(mineLf.activeCount > 0); }, [mineLf.activeCount]);
   const teamLf = useListFilters((data && data.team && data.team.owners) || [], [
     { key: 'q', type: 'search', placeholder: 'Search owner…', get: (o) => o.owner },
     { key: 'role', label: 'Role', primary: true, get: (o) => o.ownerRole },
