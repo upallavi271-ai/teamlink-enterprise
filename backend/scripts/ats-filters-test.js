@@ -333,6 +333,28 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   x = await fu(tRB, { fuDue: 'today' }); check('follow-ups scope: recruiter B sees none of recruiter A\'s', x.names.length === 0, x);
   x = await fu(tRA, { fuDue: 'overdue' }); check('follow-ups scope: recruiter A sees their own', same(x.names, names(2)), x);
 
+  // ---- WHOLE HISTORY: a search or a filter drops the default date window (founder 2026-11-20)
+  const plainOffers = await call('GET', `/ats/offers?${qs({ page: '1', pageSize: '100' })}`, null, tA);
+  check('whole history: with no filter the offers list keeps its open window (allTime false)', plainOffers.status === 200 && plainOffers.body.allTime === false && plainOffers.body.window === 'open', plainOffers.body && { w: plainOffers.body.window, a: plainOffers.body.allTime });
+  const searchedOffers = await call('GET', `/ats/offers?${qs({ page: '1', pageSize: '100', q: TAG })}`, null, tA);
+  const soNames = rowsOf(searchedOffers.body).map(candName).filter((n) => typeof n === 'string' && n.startsWith(TAG));
+  check('whole history: a search reaches the joined (closed) offers too and says allTime', searchedOffers.body.allTime === true && searchedOffers.body.window === 'all' && soNames.includes(nm(1)), { a: searchedOffers.body.allTime, w: searchedOffers.body.window, soNames });
+  const filteredJoin = await call('GET', `/ats/joining?${qs({ page: '1', pageSize: '100', dFrom: '2020-01-01' })}`, null, tA);
+  check('whole history: a date filter on Joining is all time', filteredJoin.status === 200 && filteredJoin.body.allTime === true && filteredJoin.body.olderCount === 0, filteredJoin.body && { a: filteredJoin.body.allTime, o: filteredJoin.body.olderCount });
+  // an old, finished follow-up is outside the 30-day window until a filter is on
+  const appOfC4 = await prisma.application.findFirst({ where: { candidateId: c4.id, requirementId: j1.id } });
+  await prisma.applicationFollowUp.create({ data: { applicationId: appOfC4.id, candidateId: c4.id, requirementId: j1.id, ownerUserId: RA.id, ownerName: RA.name, ownerRole: 'Recruiter', dueDate: dayOf(new Date(Date.now() - 100 * 86400000)), completedAt: new Date(Date.now() - 99 * 86400000), contactMode: 'Call', nextAction: 'Done' } });
+  const fuPaged = async (params) => { const r = await call('GET', `/followups?${qs({ page: '1', pageSize: '200', ...params })}`, null, tA); return { status: r.status, names: ((r.body && r.body.rows) || []).map((y) => y.candidateName), body: r.body }; };
+  x = await fuPaged({ fuRequirement: j1.id }); check('whole history: follow-ups with a filter reach the old finished one (P4, 100 days ago)', x.names.includes(nm(4)), { n: x.names.length });
+  x = await fuPaged({}); check('whole history: without a filter the old finished follow-up stays outside the 30-day window', !x.names.includes(nm(4)), { n: x.names.length });
+  // counts shown beside an option equal what picking it lists, with other filters on
+  f = await facet(tA, { locCur: 'Hyderabad' }, 'noticeBand');
+  l = await list(tA, { locCur: 'Hyderabad', noticeBand: 'd30' });
+  check('facet count (people) equals the people the list shows under the same filters (notice 16-30 days among Hyderabad people)', optCount(f, 'd30') === new Set(l.names).size && new Set(l.names).size === 1, { c: optCount(f, 'd30'), l: l.names });
+  f = await facet(tA, { skillSet: 'java', skillMode: 'all', ctcCurMin: '3' }, 'workMode');
+  l = await list(tA, { skillSet: 'java', skillMode: 'all', ctcCurMin: '3', workMode: 'Hybrid' });
+  check('facet count equals the list (work mode Hybrid, java, CTC from 3)', optCount(f, 'Hybrid') === new Set(l.names).size, { c: optCount(f, 'Hybrid'), l: l.names });
+
   // job portal applications and call lists answer their filters
   const jp = await call('GET', `/job-portal/applications?${qs({ jpSource: 'zzz-none' })}`, null, tA);
   check('job portal: a source that matches nothing gives an empty list (200)', jp.status === 200 && rowsOf(jp.body).length === 0, { s: jp.status });
