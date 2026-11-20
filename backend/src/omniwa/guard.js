@@ -71,4 +71,19 @@ function insideHours(cfg, now = Date.now()) {
   return a < b ? n >= a && n < b : n >= a || n < b;
 }
 
-module.exports = { jobClaim, isStop, wantsHuman, wantsCall, isAbusive, promiseProblem, stripLinks, clipReply, insideHours };
+// MARKETING NUMBERS (founder 2026-11-20): our own prices and promises must rest on the promotion and the website. A rupee amount, a percentage off or a guarantee that neither says was invented.
+// (The job-pay words of promiseProblem - "package", "per month" - are ordinary marketing words, so they are not what this checks.)
+const MONEY = /(?:₹|\brs\.?|\binr\b)\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:₹|rupees?|\brs\b|\binr\b|\blakhs?\b|\bk\b)|\b\d{1,3}\s*%\s*(?:off|discount)|\b(?:guarantee[sd]?|guaranteed)\b/gi;
+function marketingProblem(reply, factsText) {
+  const facts = String(factsText || '').toLowerCase().replace(/,/g, '');
+  for (const sentence of String(reply || '').split(/(?<=[.!?\n।])\s*/)) {
+    for (const m of sentence.match(MONEY) || []) {
+      const key = m.toLowerCase().replace(/,/g, '').replace(/\s+/g, ' ').trim();
+      if (!facts.includes(key) && !/guarantee/.test(key)) return `A price or discount that is not in the promotion or the website: "${sentence.trim().slice(0, 120)}"`;
+      if (/guarantee/.test(key) && !/guarantee/.test(facts)) return `A guarantee that is not in the promotion or the website: "${sentence.trim().slice(0, 120)}"`;
+    }
+  }
+  return null;
+}
+
+module.exports = { jobClaim, isStop, wantsHuman, wantsCall, isAbusive, promiseProblem, marketingProblem, stripLinks, clipReply, insideHours };

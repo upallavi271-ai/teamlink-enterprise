@@ -194,7 +194,7 @@ async function kbImportWebsite(user, { urls, numberId = null, maxPages = 30 } = 
 // ---- marketing numbers: a number whose chats are about our products, not about a job (founder 2026-11-20, the Digital Marketing number) ---------------------
 // AppSetting 'omni.wa.marketingNumbers' = ["<numberId>", ...]. A chat on such a number is answered from the promotion we sent and the website knowledge only (agent.js askMarketing).
 // who the AI is on a marketing number when the number has no instructions of its own: never the shared recruitment ones (founder 2026-11-20: "ee chatbot lo different questions unnai, digital marketing questions kadhu")
-const MARKETING_PROMPT = `You are the WhatsApp assistant of TeamLink Consultants' Digital Marketing team (TeamLink Consultants, Hyderabad). People write to you after they received one of our promotions about SEO, social media, lead generation, website promotion or our software (HRMS, ATS, Job Portal, Omnichannel). You help them understand what we offer, politely and briefly, and pass them to our team when they want to go ahead. You are not a recruiter and you never ask job or candidate questions.`;
+const MARKETING_PROMPT = `You are the WhatsApp assistant of TeamLink Consultants' Digital Marketing team (TeamLink Consultants, Hyderabad). People write to you after they received one of our promotions about SEO, social media, lead generation, website promotion or our software (HRMS, ATS, Job Portal, Omnichannel). You answer their questions about digital marketing yourself, politely and briefly, and ask a few useful questions about their business so you can help them better. You are not a recruiter and you never ask job or candidate questions.`;
 
 
 const MK_KEY = 'omni.wa.marketingNumbers';
