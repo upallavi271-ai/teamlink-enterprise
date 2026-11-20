@@ -36,16 +36,41 @@ const REQ_SKIP = new Set(['Application', 'Requirement', 'RequirementPosting', 'P
 // tables of an application, re-pointed from the folded application to the kept one (the three with a unique key are special)
 const APP_CHILD = new Set(['InterviewFeedback', 'OfferVersion', 'PartnerSubmission']);
 
-let SCHEMA = { at: 0, req: [], app: [] };
+// Not every table made at run time has an `id` column (audit 2026-11-20: AppSubStatus and InterviewHourlyReminder key on
+// applicationId / key, so "SELECT id" failed and every merge of a person on both jobs answered 500). Each table is
+// addressed by its own `id` when it has one, else by SQLite's rowid (stable across an UPDATE). A move that would break a
+// table's one-row-per-job / per-application key (the kept side already has its row) leaves that row where it was.
+let SCHEMA = { at: 0, req: [], app: [], key: {} };
 async function schemaTables() {
   if (SCHEMA.req.length && Date.now() - SCHEMA.at < 600000) return SCHEMA;
-  const cols = await D.q("SELECT m.name AS tbl, p.name AS col FROM sqlite_master m, pragma_table_info(m.name) p WHERE m.type = 'table' AND p.name IN ('requirementId', 'applicationId')");
+  const cols = await D.q("SELECT m.name AS tbl, p.name AS col FROM sqlite_master m, pragma_table_info(m.name) p WHERE m.type = 'table' AND p.name IN ('requirementId', 'applicationId', 'id')");
+  const withId = new Set(cols.filter((c) => c.col === 'id').map((c) => c.tbl));
+  const key = {};
+  cols.forEach((c) => { key[c.tbl] = withId.has(c.tbl) ? 'id' : 'rowid'; });
   SCHEMA = {
     at: Date.now(),
     req: cols.filter((c) => c.col === 'requirementId' && !REQ_SKIP.has(c.tbl)).map((c) => c.tbl),
     app: cols.filter((c) => c.col === 'applicationId' && !APP_CHILD.has(c.tbl) && c.tbl !== 'Application').map((c) => c.tbl),
+    key,
   };
   return SCHEMA;
+}
+const keyCol = (sch, tbl) => (sch.key && sch.key[tbl]) || 'id';
+// rowid comes back from a raw query as a BigInt: kept as a plain number so the undo record stays JSON
+const keyVal = (v) => (typeof v === 'bigint' ? Number(v) : v);
+// re-point the rows of `tbl` from one owner to another; returns the keys of the rows that really moved
+async function repoint(tx, sch, tbl, col, from, to) {
+  const k = keyCol(sch, tbl);
+  const ids = (await tx.$queryRawUnsafe(`SELECT ${k} AS k FROM "${tbl}" WHERE "${col}" = ?`, from)).map((r) => keyVal(r.k));
+  if (!ids.length) return [];
+  await tx.$executeRawUnsafe(`UPDATE OR IGNORE "${tbl}" SET "${col}" = ? WHERE "${col}" = ?`, to, from);
+  const moved = [];
+  for (let i = 0; i < ids.length; i += 500) {
+    const part = ids.slice(i, i + 500);
+    // eslint-disable-next-line no-await-in-loop
+    (await tx.$queryRawUnsafe(`SELECT ${k} AS k FROM "${tbl}" WHERE "${col}" = ? AND ${k} IN (${part.map(() => '?').join(',')})`, to, ...part)).forEach((r) => moved.push(keyVal(r.k)));
+  }
+  return moved;
 }
 
 // --- what a job has (the compare card + the blockers) ------------------------------------------
@@ -161,10 +186,8 @@ async function mergeJobs({ keptId, extraId, user, openings, level = null, door =
       const { interviewFeedbacks, ...loserRow } = loserFull;
       const fr = { loserId: loser.id, winnerId: winner.id, row: loserRow, feedbackRows: interviewFeedbacks, feedbackMoved: [], tables: {}, offerRenumbered: [], audit: [], submission: null, noteId: null };
       for (const tbl of sch.app) {
-        const ids = (await tx.$queryRawUnsafe(`SELECT id FROM "${tbl}" WHERE applicationId = ?`, loser.id)).map((r) => r.id);
-        if (!ids.length) continue;
-        await tx.$executeRawUnsafe(`UPDATE "${tbl}" SET applicationId = ? WHERE applicationId = ?`, winner.id, loser.id);
-        fr.tables[tbl] = ids;
+        const ids = await repoint(tx, sch, tbl, 'applicationId', loser.id, winner.id);
+        if (ids.length) fr.tables[tbl] = ids;
       }
       // an interview feedback of the same kind (Internal / Client) the winner already has stays with the dropped application
       const winnerKinds = new Set((await tx.interviewFeedback.findMany({ where: { applicationId: winner.id }, select: { kind: true } })).map((f) => f.kind));
@@ -222,9 +245,8 @@ async function mergeJobs({ keptId, extraId, user, openings, level = null, door =
 
     // everything else that points at the extra job
     for (const tbl of sch.req) {
-      const ids = (await tx.$queryRawUnsafe(`SELECT id FROM "${tbl}" WHERE requirementId = ?`, extraId)).map((r) => r.id);
+      const ids = await repoint(tx, sch, tbl, 'requirementId', extraId, keptId);
       if (!ids.length) continue;
-      await tx.$executeRawUnsafe(`UPDATE "${tbl}" SET requirementId = ? WHERE requirementId = ?`, keptId, extraId);
       moved.tables[tbl] = ids; counts.rows += ids.length;
     }
     // partner shares: one per partner and job
@@ -337,6 +359,7 @@ async function undoMerge(logId, user) {
   if (!rec || !extraBefore) throw new JobMergeError('This merge has no undo information.', 409);
   const actor = user ? user.name : 'System';
   const { keptId, extraId } = log;
+  const sch = await schemaTables();
 
   await prisma.$transaction(async (tx) => {
     const kept = await tx.requirement.findUnique({ where: { id: keptId }, select: { id: true } });
@@ -363,7 +386,7 @@ async function undoMerge(logId, user) {
         else await tx.interviewFeedback.create({ data: reviveDates(fb) }).catch(() => null);
       }
       for (const [tbl, ids] of Object.entries(fr.tables || {})) {
-        if (ids.length) await tx.$executeRawUnsafe(`UPDATE "${tbl}" SET applicationId = ? WHERE id IN (${placeholders(ids.length)})`, fr.loserId, ...ids);
+        if (ids.length) await tx.$executeRawUnsafe(`UPDATE "${tbl}" SET applicationId = ? WHERE ${keyCol(sch, tbl)} IN (${placeholders(ids.length)})`, fr.loserId, ...ids);
       }
       for (const o of fr.offerRenumbered || []) await tx.$executeRawUnsafe('UPDATE OfferVersion SET applicationId = ?, version = ? WHERE id = ?', fr.loserId, o.was, o.id);
       if (fr.submission) await tx.$executeRawUnsafe('UPDATE PartnerSubmission SET applicationId = ? WHERE id = ?', fr.loserId, fr.submission);
@@ -373,7 +396,7 @@ async function undoMerge(logId, user) {
     for (const [tbl, ids] of Object.entries(rec.tables || {})) {
       if (!ids.length) continue;
       if (tbl === 'SourceDocument') await tx.$executeRawUnsafe(`UPDATE SourceDocument SET entityId = ? WHERE id IN (${placeholders(ids.length)})`, extraId, ...ids);
-      else await tx.$executeRawUnsafe(`UPDATE "${tbl}" SET requirementId = ? WHERE id IN (${placeholders(ids.length)})`, extraId, ...ids);
+      else await tx.$executeRawUnsafe(`UPDATE "${tbl}" SET requirementId = ? WHERE ${keyCol(sch, tbl)} IN (${placeholders(ids.length)})`, extraId, ...ids);
     }
     if ((rec.shares || []).length) await tx.$executeRawUnsafe(`UPDATE PartnerJobShare SET requirementId = ? WHERE id IN (${placeholders(rec.shares.length)})`, extraId, ...rec.shares);
     // the kept job's own values
