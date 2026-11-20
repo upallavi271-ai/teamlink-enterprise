@@ -63,17 +63,21 @@ export function localFacets(rows, fields, values, get) {
     const g = get[f.id];
     if (!g || f.options) return;
     const others = list.filter((o) => o.id !== f.id && fieldOn(o, values));
+    // "Hyderabad" and "hyderabad " are one option (the first spelling seen is the label)
     const counts = new Map();
+    const label = new Map();
+    const keyOf = (v) => lc(v).replace(/s+/g, ' ');
     rows.forEach((r) => {
       if (!others.every((o) => passes(r, o, values, get))) return;
       [].concat(g(r)).forEach((v) => {
         if (v === undefined || v === null || v === '') return;
-        counts.set(String(v), (counts.get(String(v)) || 0) + 1);
+        const k = keyOf(v);
+        if (!label.has(k)) label.set(k, String(v).trim());
+        counts.set(k, (counts.get(k) || 0) + 1);
       });
     });
-    const chosen = csvOf(values[f.keys.value]);
-    chosen.forEach((c) => { if (!counts.has(c)) counts.set(c, 0); });
-    out[f.facet || f.keys.value] = [...counts.entries()].map(([value, count]) => ({ value, label: value, count })).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    csvOf(values[f.keys.value]).forEach((c) => { const k = keyOf(c); if (!counts.has(k)) { counts.set(k, 0); label.set(k, c); } });
+    out[f.facet || f.keys.value] = [...counts.entries()].map(([k, count]) => ({ value: label.get(k), label: label.get(k), count })).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   });
   return out;
 }

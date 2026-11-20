@@ -485,16 +485,16 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   const e0 = ((emp.body && emp.body.rows) || [])[0];
   check('employees: the list rows carry location, the joining day (YYYY-MM-DD), type, manager, team lead and team for the filters', emp.status === 200 && e0 && 'location' in e0 && 'employeeType' in e0 && 'reportingManager' in e0 && 'tl' in e0 && 'team' in e0 && (e0.joiningDay === null || /^\d{4}-\d{2}-\d{2}$/.test(e0.joiningDay)), e0 && Object.keys(e0).slice(0, 40));
   // exit approvals: a filter looks at finished exits too; a date range on the exit
-  const exA = async (params) => { const r = await call('GET', `/resignations/exit/approvals?${qs(params)}`, null, tA); return { status: r.status, n: ((r.body && r.body.rows) || []).length, body: r.body }; };
-  const exDef = await exA({});
-  const exAll = await exA({ include: 'all' });
-  const exWide = await exA({ startFrom: '2000-01-01' });
-  const exWideAll = await exA({ startFrom: '2000-01-01', include: 'all' });
-  check('exit approvals: answers, and finished exits are only in the "all" view by default', exDef.status === 200 && exAll.status === 200 && exAll.n >= exDef.n, { d: exDef.n, a: exAll.n });
+  const exitA = async (params) => { const r = await call('GET', `/resignations/exit/approvals?${qs(params)}`, null, tA); return { status: r.status, n: ((r.body && r.body.rows) || []).length, body: r.body }; };
+  const exDef = await exitA({});
+  const exitAllV = await exitA({ include: 'all' });
+  const exWide = await exitA({ startFrom: '2000-01-01' });
+  const exWideAll = await exitA({ startFrom: '2000-01-01', include: 'all' });
+  check('exit approvals: answers, and finished exits are only in the "all" view by default', exDef.status === 200 && exitAllV.status === 200 && exitAllV.n >= exDef.n, { d: exDef.n, a: exitAllV.n });
   check('exit approvals: a date filter looks at all exits, finished ones included (same as the all view)', exWide.n === exWideAll.n && exWide.n >= exDef.n, { w: exWide.n, wa: exWideAll.n, d: exDef.n });
-  const exNone = await exA({ lwdFrom: '2099-01-01' });
+  const exNone = await exitA({ lwdFrom: '2099-01-01' });
   check('exit approvals: last-working-day range with nothing in it is empty', exNone.status === 200 && exNone.n === 0, exNone.n);
-  const exQ = await exA({ q: 'zzzz-nobody' });
+  const exQ = await exitA({ q: 'zzzz-nobody' });
   check('exit approvals: search finds nobody for a made-up name', exQ.status === 200 && exQ.n === 0, exQ.n);
 
   // job portal applications and call lists answer their filters
