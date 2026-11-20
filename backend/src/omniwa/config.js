@@ -159,7 +159,9 @@ async function kbRemove(id) {
 // the entries closest to the question (shared words, longer words count more): those for every number and those of this chat's number
 async function kbSearch(query, limit = 3, numberId = null) {
   await ensure();
-  const words = [...new Set(String(query || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2))];
+  // plain words of the question, without the little ones ("what", "you", "the") that every page contains and that would make a hundred sections score alike
+  const STOP = new Set('the and for you your are was were what who how can could would will with this that these those our have has had not but from about into any all more tell please give does did get got there their them they its it\'s hello'.split(' '));
+  const words = [...new Set(String(query || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2 && !STOP.has(w)))];
   if (!words.length) return [];
   const rows = await S.q('SELECT question, answer FROM "OmniWaKnowledge" WHERE active = 1 AND (numberId IS NULL OR numberId = ?)', numberId || '');
   return rows.map((r) => {
@@ -168,4 +170,40 @@ async function kbSearch(query, limit = 3, numberId = null) {
   }).filter((r) => r.score > 0).sort((x, y) => y.score - x.score).slice(0, limit).map(({ question, answer }) => ({ question, answer }));
 }
 
-module.exports = { questions, saveQuestions, oneFallback, profiles, saveProfile, removeProfile, forNumber, read, save, kbList, kbSave, kbRemove, kbSearch, DEFAULT_PROMPT, DEFAULT_FALLBACK };
+// ---- the company website as knowledge (founder 2026-11-20: "mana products gurinchi adigitheyy website loo chusii answer evvali") -----------------------------
+// One import = the pages of our own site read into this number's knowledge base (webKb.js): the old entries of the SAME site and number are replaced, nothing else is touched.
+async function kbImportWebsite(user, { urls, numberId = null, maxPages = 30 } = {}) {
+  await ensure();
+  const list = (Array.isArray(urls) ? urls : [urls]).map((u) => String(u || '').trim()).filter((u) => /^https?:\/\/[^\s]+$/i.test(u)).slice(0, 5);
+  if (!list.length) return { error: 'Give the website address, like https://tmlink.in', status: 400 };
+  const r = await require('./webKb').crawl(list, { maxPages: Math.min(60, Math.max(1, Number(maxPages) || 30)) }); // eslint-disable-line global-require
+  if (!r.entries.length) return { error: 'No readable text was found at that address.', status: 502 };
+  const tag = `Website import: ${new URL(list[0]).host}`;
+  const nid = numberId ? String(numberId) : null;
+  await S.run('DELETE FROM "OmniWaKnowledge" WHERE updatedByName = ? AND COALESCE(numberId, \'\') = ?', tag, nid || '');
+  const now = Date.now();
+  let saved = 0;
+  for (const e of r.entries.slice(0, 400)) {
+    await S.run('INSERT INTO "OmniWaKnowledge" (id, question, answer, active, numberId, updatedByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?)', S.newId('wak'), S.clip(e.question, 300), S.clip(e.answer, 1500), 1, nid, tag, now, now); // eslint-disable-line no-await-in-loop
+    saved += 1;
+  }
+  return { ok: true, pages: r.pages.length, saved, failed: r.failed.length, by: user ? user.name : null };
+}
+
+// ---- marketing numbers: a number whose chats are about our products, not about a job (founder 2026-11-20, the Digital Marketing number) ---------------------
+// AppSetting 'omni.wa.marketingNumbers' = ["<numberId>", ...]. A chat on such a number is answered from the promotion we sent and the website knowledge only (agent.js askMarketing).
+const MK_KEY = 'omni.wa.marketingNumbers';
+async function marketingNumbers() {
+  const row = await prisma.appSetting.findUnique({ where: { key: MK_KEY } }).catch(() => null);
+  try { const v = row ? JSON.parse(row.value) : []; return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
+}
+async function isMarketingNumber(numberId) { return !!numberId && (await marketingNumbers()).includes(String(numberId)); }
+async function setMarketingNumber(numberId, on) {
+  const now = new Set(await marketingNumbers());
+  if (on) now.add(String(numberId)); else now.delete(String(numberId));
+  const value = JSON.stringify([...now]);
+  await prisma.appSetting.upsert({ where: { key: MK_KEY }, update: { value }, create: { key: MK_KEY, value } });
+  return { ok: true, numbers: [...now] };
+}
+
+module.exports = { questions, saveQuestions, oneFallback, profiles, saveProfile, removeProfile, forNumber, read, save, kbList, kbSave, kbRemove, kbSearch, kbImportWebsite, marketingNumbers, isMarketingNumber, setMarketingNumber, DEFAULT_PROMPT, DEFAULT_FALLBACK };
