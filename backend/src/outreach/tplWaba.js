@@ -352,7 +352,9 @@ async function metaShape(cfg, name, lang) {
     const body = blanks(textOf('BODY'));
     const header = blanks(textOf('HEADER'));
     const named = body.filter((x) => !/^\d+$/.test(x));
-    return { body: body.length, header: header.length, names: named.length === body.length ? body : [] };
+    // the template's own fixed words (body + footer): a template that already says "Reply STOP" must not get a second STOP line in its blank
+    const fixed = `${textOf('BODY').replace(/\{\{[^}]*\}\}/g, ' ')} ${textOf('FOOTER')}`;
+    return { body: body.length, header: header.length, names: named.length === body.length ? body : [], hasStop: /reply\s+stop/i.test(fixed) };
   } catch { return null; }
 }
 

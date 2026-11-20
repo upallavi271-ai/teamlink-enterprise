@@ -241,6 +241,13 @@ async function sendWhatsApp(opts = {}) {
         return { ok: false, invalid: true, transient: false, code: 'TEMPLATE_PARAMS', error: `Meta's template "${content.template.name}" has ${need}, but TeamLink fills ${have}. Open Administration > Message templates > this template and, under "Which detail goes in each {{1}} {{2}}", pick a detail for every blank (use "+ Add a detail").` };
       }
       bodyC.parameters = (bodyC.parameters || []).slice(0, shape.body);
+      // ONE STOP LINE (founder 2026-11-20: the reminder arrived with "Reply STOP to stop these messages" twice): when Meta's template already
+      // carries its own STOP words, the same sentence is taken out of the text that goes into its blank.
+      if (shape.hasStop) {
+        bodyC.parameters.forEach((p) => {
+          if (p && typeof p.text === 'string') p.text = p.text.replace(/\s*Reply STOP to stop these messages\.?/gi, ' ').replace(/ఈ సందేశాలు ఆపడానికి STOP అని రిప్లై ఇవ్వండి\.?/g, ' ').replace(/[ \t]{2,}/g, ' ').trim() || p.text; // eslint-disable-line no-param-reassign
+        });
+      }
       if (shape.names.length === bodyC.parameters.length) bodyC.parameters.forEach((p, i) => { p.parameter_name = shape.names[i]; }); // eslint-disable-line no-param-reassign
       if (!bodyC.parameters.length) content.template.components = content.template.components.filter((c) => c !== bodyC);
     }
