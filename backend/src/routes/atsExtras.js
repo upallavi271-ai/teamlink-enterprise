@@ -122,6 +122,17 @@ router.get('/team/former/:id', async (req, res, next) => {
   }
 });
 
+// GET /team/period - what each listed person did in a date range (utils/teamPeriod.js). Before /team/:userId.
+router.get('/team/period', async (req, res, next) => {
+  try {
+    if (!(await teamGate(req, res))) return undefined;
+    return res.json(await require('../utils/teamPeriod').teamPeriod(req.user, req.query)); // eslint-disable-line global-require
+  } catch (err) {
+    if (err && err.status) return res.status(err.status).json({ error: err.message });
+    return next(err);
+  }
+});
+
 router.get('/team/:userId', async (req, res, next) => {
   try {
     if (!(await teamGate(req, res))) return undefined;

@@ -254,7 +254,7 @@ async function peopleFor(user, opts = {}) {
 }
 const PERSON_SELECT = {
   id: true, name: true, email: true, status: true, atsRole: true, atsDepartment: true, atsScopeClients: true,
-  employee: { select: { id: true, employeeCode: true, designation: true, department: true, tl: true, stl: true, employmentStatus: true, email: true } },
+  employee: { select: { id: true, employeeCode: true, designation: true, department: true, tl: true, stl: true, employmentStatus: true, email: true, location: true, branch: true, dateOfJoining: true } },
 };
 
 // A ZZTEST caller (the automated tests) does see its own fixtures.
@@ -406,6 +406,10 @@ async function buildWorld(user, opts = {}) {
       tl: tl ? tl.name : null,
       tlUserId: tl ? tl.id : null,
       stl: (u.employee && u.employee.stl) || null,
+      // the Team page's filters (2026-11-20): where they work, when they joined the company, their HR status
+      location: (u.employee && (u.employee.location || u.employee.branch)) || null,
+      joinedCompanyOn: u.employee && u.employee.dateOfJoining ? new Date(new Date(u.employee.dateOfJoining).getTime() + 5.5 * 3600e3).toISOString().slice(0, 10) : null,
+      employmentStatus: (u.employee && u.employee.employmentStatus) || null,
       status: (u.status || 'Active') === 'Active' && !LEFT_STATUSES.includes(u.employee && u.employee.employmentStatus) ? 'Active' : 'Left',
       scopeClients: csv(u.atsScopeClients),
     };
@@ -1143,7 +1147,42 @@ async function dropNonBdeOwners(rows) {
 function rememberRows() {}
 function forgetWorld(user) { if (user) WORLD.delete(user.id); else WORLD.clear(); }
 
+// ---------------------------------------------------------------------------
+// WHAT EACH PERSON DID IN A PERIOD (utils/teamPeriod.js): applications first sent to the client inside [from, to] and interviews booked
+// for a day inside it, each credited to the recruiter who had the person at that moment (creditAt, the same credit as the Team page).
+// Only applications inside the caller's scope (applicationWhere) are read. -> { sent: Map(userId -> n), interviews: Map(userId -> n) }
+// ---------------------------------------------------------------------------
+async function periodActivity(user, { from, to }) {
+  const start = new Date(`${from}T00:00:00+05:30`);
+  const end = new Date(`${to}T23:59:59.999+05:30`);
+  const evs = await prisma.applicationStageEvent.findMany({ where: { toStage: { in: SUBMITTED_STAGES }, createdAt: { gte: start, lte: end } }, select: { applicationId: true } });
+  const sentIds = uniq(evs.map((e) => e.applicationId));
+  const apps = await readApplications({
+    AND: [applicationWhere(user), { OR: [...(sentIds.length ? [{ id: { in: sentIds } }] : []), { interviewAt: { gte: start, lte: end } }] }],
+  }, APP_SELECT);
+  const sent = new Map();
+  const interviews = new Map();
+  if (!apps.length) return { sent, interviews };
+  const dir = await loadDirectory();
+  const HO = await require('./handover').handoversFor(apps.map((a) => a.id)); // eslint-disable-line global-require
+  const creditUserOf = (a, when) => { const p = creditAt(a.requirement, a.followUps, a.stageEvents, dir.person, when, HO.get(a.id)); return p ? p.userId : null; };
+  const inside = (t) => { const ms = t ? new Date(t).getTime() : NaN; return Number.isFinite(ms) && ms >= start.getTime() && ms <= end.getTime(); };
+  apps.filter((a) => !isPreAtsApplication(a)).forEach((a) => {
+    const sentAt = stepAt(a.stageEvents, SUBMITTED_STAGES, null);
+    if (sentAt && inside(sentAt)) {
+      const u = creditUserOf(a, sentAt);
+      if (u) sent.set(u, (sent.get(u) || 0) + 1);
+    }
+    if (a.interviewAt && inside(a.interviewAt) && !DEAD_INTERVIEW.includes(a.interviewStatus)) {
+      const u = creditUserOf(a, stepAt(a.stageEvents, INTERVIEW_STAGES, a.interviewAt || a.updatedAt));
+      if (u) interviews.set(u, (interviews.get(u) || 0) + 1);
+    }
+  });
+  return { sent, interviews };
+}
+
 module.exports = {
+  periodActivity,
   TEAM_ROLE_LABELS, METRIC_LABELS, isAdminViewer, teamAccess, teamPeopleWhere,
   // the people of this caller's team (a TL's recruiters, the BDE TL's BDEs ...) - utils/clientFollowLog.js team history
   peopleFor,

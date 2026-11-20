@@ -31,6 +31,8 @@ import {
   PERIODS, periodRange, dmy, todayLocal,
 } from '../../components/team-v4/teamData.js';
 import Combo from '../../components/Combo.jsx';
+import FilterBar from '../../components/ats/FilterBar.jsx';
+import { configFor, useListXf } from '../../components/ats/ListFilters.jsx';
 import { clientAliasText } from '../../components/searchMatch.js'; // old client names find a row (matching only)
 
 // ---------------------------------------------------------------------------
@@ -191,9 +193,56 @@ const PEOPLE_FIELDS = [
   { key: 'tl', get: peopleTl, label: (v, r) => r.tl },
   { key: 'client', get: (r) => (r.clientOptions || []).map((c) => c.id), label: (v, r) => ((r.clientOptions || []).find((c) => c.id === v) || {}).name || v },
   { key: 'status', get: (r) => (isFormer(r) ? 'Former' : 'Active') },
+  // the Team filters of 2026-11-20
+  { key: 'stl', get: (r) => r.stl },
+  { key: 'seat', get: (r) => r.seat },
+  { key: 'location', get: (r) => r.location },
+  { key: 'empStatus', get: (r) => r.employmentStatus },
+  { key: 'perf', get: (r) => (r.period ? r.period.band : null), label: (v) => PERF_WORDS[v] || v },
+  { key: 'ach', get: (r) => (r.period ? r.period.achBand : null), label: (v) => ACH_WORDS[v] || v },
 ];
+const PERF_WORDS = { green: 'Reached', orange: 'Close to target', red: 'Low', grey: 'No target' };
+const ACH_WORDS = { none: 'No target', below: 'Under 50% of target', half: '50% to 99% of target', met: 'Target met' };
+const hasOpenWork = (r) => !r.former && ['openRequirements', 'activeCandidates', 'needsAction', 'requirements', 'candidates', 'pendingReviews'].some((k) => Number((r.counts || {})[k]) > 0);
+const hasJoinings = (r) => (r.period ? Number(r.period.joined) > 0 : Number((r.counts || {}).joined) > 0);
+// What each person did in the chosen date range (GET /ats/team/period); a team lead's figures are the sum of their recruiters'.
+function overlayPeriod(rows, period) {
+  if (!period) return rows;
+  const tone = (n, t) => (!(t > 0) ? (n > 0 ? 'green' : 'grey') : n >= t ? 'green' : (t - n <= 1 || n >= t * 0.75) ? 'orange' : 'red');
+  const ach = (pct) => (pct === null ? 'none' : pct >= 100 ? 'met' : pct >= 50 ? 'half' : 'below');
+  const byTl = new Map();
+  rows.forEach((r) => {
+    const p = period.rows[r.id];
+    if (r.roleGroup === 'RECRUITER' && r.tlUserId && p) {
+      const a = byTl.get(r.tlUserId) || { joined: 0, target: 0, sent: 0, interviews: 0 };
+      a.joined += p.joined; a.target += p.target; a.sent += p.sent; a.interviews += p.interviews;
+      byTl.set(r.tlUserId, a);
+    }
+  });
+  return rows.map((r) => {
+    if (r.former) return r;
+    let p = null;
+    if (r.roleGroup === 'RECRUITER') p = period.rows[r.id] || null;
+    else if (r.roleGroup === 'TL' && byTl.get(r.id)) {
+      const a = byTl.get(r.id);
+      const pct = a.target > 0 ? Math.round((a.joined / a.target) * 100) : null;
+      p = { ...a, pct, band: tone(a.joined, a.target), achBand: ach(pct) };
+    }
+    return p ? { ...r, period: p } : r;
+  });
+}
 function peoplePred(r, k, v) {
   switch (k) {
+    case 'stl': return lc(r.stl) === lc(v);
+    case 'seat': return r.seat === v;
+    case 'location': return lc(r.location) === lc(v);
+    case 'empStatus': return r.employmentStatus === v;
+    case 'perf': return !!r.period && r.period.band === v;
+    case 'ach': return !!r.period && r.period.achBand === v;
+    case 'open': return v === 'yes' ? hasOpenWork(r) : !hasOpenWork(r);
+    case 'hasJoin': return v === 'yes' ? hasJoinings(r) : !hasJoinings(r);
+    case 'jFrom': return !!r.joinedCompanyOn && r.joinedCompanyOn >= v;
+    case 'jTo': return !!r.joinedCompanyOn && r.joinedCompanyOn <= v;
     case 'role': return r.roleGroup === v;
     case 'dept': return deptsOf(r).includes(v);
     case 'section': return sectionsOf(r).includes(v);
@@ -223,7 +272,7 @@ function Stints({ r, dept }) {
 // Joined is everyone who joined.
 const SNAP = [['submitted', 'Sent to client', 'blue'], ['interviews', 'Interviews', 'yellow'], ['joined', 'Joined', 'green']];
 const SNAP_TOP = 8;
-function PerfSnapshot({ list, onOpen }) {
+function PerfSnapshot({ list, onOpen, noLinks = false }) {
   const [all, setAll] = useState(false);
   const people = list.filter((r) => !r.former && r.counts);
   const max = Object.fromEntries(SNAP.map(([k]) => [k, Math.max(1, ...people.map((r) => Number(r.counts[k]) || 0))]));
@@ -260,7 +309,7 @@ function PerfSnapshot({ list, onOpen }) {
                 <ProgressBar value={v} max={max[k]} tone={v ? tone : 'grey'} />
               </>
             );
-            return v
+            return v && !noLinks
               ? <Link key={k} className="pw-snap-cell" to={metricLink(r.id, k)} title={`Open ${r.name}'s ${label.toLowerCase()}`}>{bar}</Link>
               : <span key={k} className="pw-snap-cell">{bar}</span>;
           })}
@@ -276,29 +325,57 @@ function PerfSnapshot({ list, onOpen }) {
 }
 
 function PeopleTab({
-  rows, loading, isLead, initialRole, onOpen, onOpenFormer, formerAllowed, formerLoading, clientsOf, onShown,
+  rows: rowsRaw, loading, isLead, initialRole, onOpen, onOpenFormer, formerAllowed, formerLoading, clientsOf, onShown,
 }) {
+  const { user: me } = useAuth();
+  // Every Team filter lives in the address bar (shareable, kept on Back): search, the pickers below and the new ones.
+  const xf = useListXf('team', me, { extraKeys: ['q', 'dept', 'section', 'tl', 'client', 'status'] });
+  const [period, setPeriod] = useState(null);
+  const pKey = xf.values.range ? `${xf.values.range}|${xf.values.from || ''}|${xf.values.to || ''}` : '';
+  useEffect(() => {
+    if (!pKey || (xf.values.range === 'custom' && !(xf.values.from && xf.values.to))) { setPeriod(null); return undefined; }
+    let live = true;
+    api.get('/ats/team/period', { params: { range: xf.values.range, from: xf.values.from, to: xf.values.to } })
+      .then((r) => { if (live) setPeriod(r.data); })
+      .catch(() => { if (live) setPeriod(null); });
+    return () => { live = false; };
+  }, [pKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rows = useMemo(() => overlayPeriod(rowsRaw, period), [rowsRaw, period]);
   const presentRoles = useMemo(() => ROLE_SWITCH.filter(([id]) => rows.some((r) => r.roleGroup === id)), [rows]);
   const defaultRole = presentRoles[0] ? presentRoles[0][0] : 'RECRUITER';
   const [roleSel, setRoleSel] = useState(initialRole || '');
   const role = presentRoles.some(([id]) => id === roleSel) ? roleSel : defaultRole;
-  const [q, setQ] = useState('');
-  const [dept, setDept] = useState('');
-  const [section, setSection] = useState('');
-  const [tl, setTl] = useState('');
-  const [status, setStatus] = useState('Active');
-  const [client, setClient] = useState('');
+  const q = xf.values.q || '';
+  const setQ = (v) => xf.set({ q: v });
+  const dept = xf.values.dept || '';
+  const setDept = (v) => xf.set({ dept: v });
+  const section = xf.values.section || '';
+  const setSection = (v) => xf.set({ section: v });
+  const tl = xf.values.tl || '';
+  const setTl = (v) => xf.set({ tl: v });
+  const client = xf.values.client || '';
+  const setClient = (v) => xf.set({ client: v });
+  // WHOLE HISTORY: a search also looks at the people who have left (unless Active / Former was picked on purpose)
+  const status = xf.values.status === 'all' ? '' : (xf.values.status || (q.trim() ? '' : 'Active'));
+  const setStatus = (v) => xf.set({ status: v === '' ? 'all' : v });
   const [sort, setSort] = useState({ key: '', dir: 'desc' });
-  useEffect(() => { setSection(''); setTl(''); setClient(''); setSort({ key: '', dir: 'desc' }); }, [role]);
+  const firstRole = useRef(true);
+  useEffect(() => {
+    if (firstRole.current) { firstRole.current = false; return; }
+    xf.set({ section: '', tl: '', client: '' }); setSort({ key: '', dir: 'desc' });
+  }, [role]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inRole = useMemo(() => rows.filter((r) => r.roleGroup === role), [rows, role]);
   // Everyone in scope — current and former (the page merges them) — searched;
   // the panel's options are counted over this.
   const searched = useMemo(() => rows
-    .filter((r) => !q || `${r.name} ${r.employeeCode || ''} ${r.recruiterCode || ''} ${r.seatLabel || ''}`.toLowerCase().includes(lc(q))), [rows, q]);
+    .filter((r) => !q || `${r.name} ${r.employeeCode || ''} ${r.recruiterCode || ''} ${r.seatLabel || ''} ${r.seat || ''} ${r.section || ''} ${r.department || ''}`.toLowerCase().includes(lc(q))), [rows, q]);
   const values = useMemo(() => ({
     role, dept, section, tl, client, status,
-  }), [role, dept, section, tl, client, status]);
+    stl: xf.values.stl || '', seat: xf.values.seat || '', location: xf.values.location || '', empStatus: xf.values.empStatus || '',
+    perf: xf.values.perf || '', ach: xf.values.ach || '', open: xf.values.open || '', hasJoin: xf.values.hasJoin || '',
+    jFrom: xf.values.jFrom || '', jTo: xf.values.jTo || '',
+  }), [role, dept, section, tl, client, status, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   const facets = useLocalFacets(searched, PEOPLE_FIELDS, values, peoplePred);
 
   const list = useMemo(() => {
@@ -327,7 +404,7 @@ function PeopleTab({
     client && { key: 'client', label: 'Client', value: optLabel(facets.client, client, 'Selected'), onRemove: () => setClient('') },
     status !== 'Active' && { key: 'status', label: 'Showing', value: status === 'Former' ? 'Former people' : 'Active + former', onRemove: () => setStatus('Active') },
   ].filter(Boolean);
-  const clearAll = () => { setRoleSel(defaultRole); setDept(''); setSection(''); setTl(''); setClient(''); setStatus('Active'); setQ(''); };
+  const clearAll = () => { setRoleSel(defaultRole); xf.clear(); };
   // The page's export takes exactly the rows shown.
   useEffect(() => { if (onShown) onShown(list.map((r) => r.id), status); }, [list, status, onShown]);
   const statusCount = (v) => ((facets.status || []).find((o) => o.value === v) || {}).count || 0;
@@ -343,8 +420,23 @@ function PeopleTab({
   const showCols = role === 'BDE' ? cols.slice(0, 6) : cols;
   const extraCols = role === 'BDE' ? cols.slice(6) : [];
 
+  const teamFacets = { ...facets, perf: period ? facets.perf : [], ach: period ? facets.ach : [] };
   return (
     <>
+      <FilterBar
+        config={configFor('team', me)}
+        values={xf.values}
+        onChange={xf.set}
+        facets={teamFacets}
+        total={list.length}
+        noun={noun}
+        onClear={clearAll}
+        canClear={Object.keys(xf.values).length > 0}
+        allTime={Object.keys(xf.values).length > 0}
+        storageKey="team-people"
+        className="fbar-team"
+      />
+      {period && <div className="small-muted pw-notice">{`Results for ${period.range.label}: sent to the client, interviews booked, joinings counted by the joinings rule (people who dropped are not counted) and the target for those months.`}</div>}
       {isLead && (
         <ListToolbar
           search={q}
@@ -382,7 +474,7 @@ function PeopleTab({
         ? <div className="small-muted" style={{ padding: 16 }}>Loading...</div>
         : (
           <>
-            {isLead && status !== 'Former' && <PerfSnapshot list={list} onOpen={onOpen} />}
+            {isLead && status !== 'Former' && <PerfSnapshot list={list.map((r) => (r.period ? { ...r, counts: { ...(r.counts || {}), submitted: r.period.sent, interviews: r.period.interviews, joined: r.period.joined, inheritedJoined: 0 } } : r))} onOpen={onOpen} noLinks={!!period} />}
             <div className="pw-tablebar">
               <span className="small-muted">
                 {status === 'Former' ? 'Click a name to see their work history.' : 'Click a name or a number to see the list.'}
@@ -408,6 +500,7 @@ function PeopleTab({
                     {role === 'TL' && <><th>Department</th><th>Section</th></>}
                     {showCols.map(([id, label, title]) => <SortTh key={id} id={id} label={label} title={title} sort={sort} setSort={setSort} num />)}
                     {extraCols.map(([id, label, title]) => <SortTh key={id} id={id} label={label} title={title} sort={sort} setSort={setSort} num />)}
+                    {period && role !== 'BDE' && ['Sent', 'Interviews', 'Joined', 'Target', 'Reached'].map((h) => <th key={h} className="num" title={`${h} in ${period.range.label}`}>{`${h} (period)`}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -468,12 +561,23 @@ function PeopleTab({
                               <NumLink to={metricLink(r.id, id)} value={c[id]} title={`Open ${r.name}'s ${label.toLowerCase()}`} />
                             </td>
                           ))}
+                        {period && role !== 'BDE' && (r.period
+                          ? (
+                            <>
+                              <td className="num">{fmt(r.period.sent)}</td>
+                              <td className="num">{fmt(r.period.interviews)}</td>
+                              <td className="num"><b>{fmt(r.period.joined)}</b></td>
+                              <td className="num">{r.period.target ? fmt(r.period.target) : '—'}</td>
+                              <td className="num" title={PERF_WORDS[r.period.band]}>{r.period.pct === null ? '—' : `${r.period.pct}%`}</td>
+                            </>
+                          )
+                          : <td colSpan={5} className="small-muted">—</td>)}
                       </tr>
                     );
                   })}
                   {list.length === 0 && (
                     <tr>
-                      <td colSpan={1 + (role === 'RECRUITER' ? 3 : role === 'TL' ? 2 : 0) + cols.length} style={{ padding: 0 }}>
+                      <td colSpan={1 + (role === 'RECRUITER' ? 3 : role === 'TL' ? 2 : 0) + cols.length + (period && role !== 'BDE' ? 5 : 0)} style={{ padding: 0 }}>
                         <EmptyState
                           compact
                           icon="👥"

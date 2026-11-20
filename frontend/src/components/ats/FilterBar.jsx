@@ -29,6 +29,8 @@ import './FilterBar.css';
 const csvOf = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
 const dmy = (s) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : s);
 
+export const PERIODS = [['this_month', 'This month'], ['last_month', 'Last month'], ['this_quarter', 'This quarter'], ['this_year', 'This year'], ['custom', 'Custom dates']];
+
 /** every parameter name a config uses (so the bar can clear exactly its own) */
 export function keysOfConfig(config) {
   const out = [];
@@ -155,6 +157,26 @@ function Control({ f, values, onChange, facets, loading }) {
   }
   if (f.type === 'select') return <FacetSelect label={f.label} allLabel={f.allLabel || 'Any'} value={values[key] || ''} onChange={(v) => onChange({ [key]: v })} options={opts} loading={loading} title={f.title || f.label} />;
   if (f.type === 'range') return <Range f={f} values={values} onChange={onChange} facets={facets} loading={loading} />;
+  if (f.type === 'period') {
+    const k = f.keys;
+    return (
+      <span className="lph-facet fbar-period" title={f.title || f.label}>
+        <span className="lph-facet-lbl">{f.label}</span>
+        <span className="lph-pair">
+          <select value={values[k.range] || ''} aria-label={f.label} onChange={(e) => onChange({ [k.range]: e.target.value, ...(e.target.value === 'custom' ? {} : { [k.from]: '', [k.to]: '' }) })}>
+            <option value="">{f.allLabel || 'Now (no period)'}</option>
+            {PERIODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          {values[k.range] === 'custom' && (
+            <>
+              <input type="date" aria-label={`${f.label} from`} value={values[k.from] || ''} max={values[k.to] || undefined} onChange={(e) => onChange({ [k.from]: e.target.value })} />
+              <input type="date" aria-label={`${f.label} to`} value={values[k.to] || ''} min={values[k.from] || undefined} onChange={(e) => onChange({ [k.to]: e.target.value })} />
+            </>
+          )}
+        </span>
+      </span>
+    );
+  }
   if (f.type === 'daterange') {
     return (
       <span className="lph-facet fbar-dates" title={f.title || f.label}>
@@ -201,6 +223,9 @@ export function chipsOf(config, values, facets, onChange, skip = []) {
       if (f.keys.bucket && values[f.keys.bucket]) {
         out.push({ key: `${f.id}-b`, label: `${f.label} band`, value: csvOf(values[f.keys.bucket]).map((v) => label({ ...f, keys: { value: f.keys.bucket }, facet: f.facet || f.keys.bucket }, v)).join(', '), onRemove: () => onChange({ [f.keys.bucket]: '' }) });
       }
+    } else if (f.type === 'period') {
+      const v = values[f.keys.range];
+      if (v) out.push({ key: f.id, label: f.label, value: v === 'custom' ? `${dmy(values[f.keys.from]) || '…'} to ${dmy(values[f.keys.to]) || '…'}` : (PERIODS.find(([x]) => x === v) || [])[1] || v, onRemove: () => onChange({ [f.keys.range]: '', [f.keys.from]: '', [f.keys.to]: '' }) });
     } else if (f.type === 'daterange') {
       const a = values[f.keys.from]; const b = values[f.keys.to];
       if (a || b) out.push({ key: f.id, label: f.label, value: a && b ? `${dmy(a)} to ${dmy(b)}` : a ? `from ${dmy(a)}` : `to ${dmy(b)}`, onRemove: () => onChange({ [f.keys.from]: '', [f.keys.to]: '' }) });

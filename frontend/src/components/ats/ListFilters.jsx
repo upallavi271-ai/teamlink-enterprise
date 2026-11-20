@@ -90,13 +90,25 @@ export function configFor(list, user) {
       { id: 'called', label: 'Called', type: 'yesno', primary: true, keys: { value: 'called' }, yesLabel: 'Called', noLabel: 'Not called yet' },
       { id: 'interest', label: 'Interested in', type: 'text', keys: { value: 'interest' }, placeholder: 'Text' },
     ];
+    case 'team': return [
+      { id: 'period', label: 'Results for', type: 'period', primary: true, keys: { range: 'range', from: 'from', to: 'to' }, title: 'Sent to client, interviews, joinings and target for a date range' },
+      { id: 'location', label: 'Location', type: 'select', primary: true, keys: { value: 'location' }, allLabel: 'All locations' },
+      { id: 'perf', label: 'Performance', type: 'select', primary: true, keys: { value: 'perf' }, allLabel: 'Any' },
+      { id: 'ach', label: 'Target', type: 'select', primary: true, keys: { value: 'ach' }, allLabel: 'Any' },
+      { id: 'stl', label: 'Senior team lead', type: 'select', keys: { value: 'stl' }, allLabel: 'Any' },
+      { id: 'seat', label: 'Seat', type: 'select', keys: { value: 'seat' }, allLabel: 'All seats' },
+      { id: 'empStatus', label: 'HR status', type: 'select', keys: { value: 'empStatus' }, allLabel: 'Any' },
+      { id: 'joinedCo', label: 'Joined the company', type: 'daterange', keys: { from: 'jFrom', to: 'jTo' } },
+      { id: 'open', label: 'Open work', type: 'yesno', keys: { value: 'open' }, yesLabel: 'Has open work', noLabel: 'No open work' },
+      { id: 'hasJoin', label: 'Joinings', type: 'yesno', keys: { value: 'hasJoin' }, yesLabel: 'Has joinings', noLabel: 'No joinings' },
+    ];
     default: return [];
   }
 }
 
 /** the screen's extra filters, kept in the address bar */
-export function useListXf(list, user, { onWrite } = {}) {
-  const keys = useMemo(() => keysOfConfig(configFor(list, user)), [list]); // eslint-disable-line react-hooks/exhaustive-deps
+export function useListXf(list, user, { onWrite, extraKeys = [] } = {}) {
+  const keys = useMemo(() => [...keysOfConfig(configFor(list, user)), ...extraKeys], [list]); // eslint-disable-line react-hooks/exhaustive-deps
   const u = useUrlFilters(keys, { onWrite });
   return {
     values: u.values, set: u.set, clear: u.clear, replace: u.replace, params: u.values, key: u.sig,
