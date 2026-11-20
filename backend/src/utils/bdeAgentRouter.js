@@ -414,7 +414,7 @@ async function invoices(ctx, p, lang, f, t) {
 function agreementTerms(c) {
   const fee = c.feeType === 'FIXED' || c.feeType === 'PER_CANDIDATE' ? `${money(c.feeAmount)} ${c.feeType === 'FIXED' ? 'fixed' : 'per candidate'}` : (c.agreementFeePercent != null ? `${c.agreementFeePercent}% of annual CTC` : 'not set');
   return [
-    `Agreement: ${V.agreementStatusLabel(V.normalizeAgreementStatus(c.agreementStatus))}${c.agreementId ? ` (${c.agreementId})` : ''}${c.agreementStart || c.agreementEnd ? `, ${c.agreementStart ? L.dmy(c.agreementStart) : '?'} to ${c.agreementEnd ? L.dmy(c.agreementEnd) : '?'}` : ''}${c.agreementSentAt && !c.agreementSignedAt ? `, sent ${L.dmy(L.istDay(c.agreementSentAt))}, not signed` : ''}${c.agreementSignedAt ? `, signed ${L.dmy(L.istDay(c.agreementSignedAt))}` : ''}`,
+    `Agreement: ${V.agreementStatusLabel(V.normalizeAgreementStatus(c.agreementStatus))}${c.agreementId ? ` (${c.agreementId})` : ''}${c.agreementStart && c.agreementEnd ? `, ${L.dmy(c.agreementStart.slice(0, 10))} to ${L.dmy(c.agreementEnd.slice(0, 10))}` : c.agreementEnd ? `, ends ${L.dmy(c.agreementEnd.slice(0, 10))}` : c.agreementStart ? `, from ${L.dmy(c.agreementStart.slice(0, 10))}` : ''}${c.agreementSentAt && !c.agreementSignedAt ? `, sent ${L.dmy(L.istDay(c.agreementSentAt))}, not signed` : ''}${c.agreementSignedAt ? `, signed ${L.dmy(L.istDay(c.agreementSignedAt))}` : ''}`,
     `Fee: ${fee}; guarantee ${c.guaranteePeriod || 'not set'}; payment: ${c.paymentDue || c.paymentTerms || 'not set'}`,
   ];
 }
@@ -754,7 +754,7 @@ async function client360(ctx, c, lang) {
   const contact = [c.contactName, c.contactDesignation, c.contactPhone, c.contactEmail].filter(Boolean).join(', ');
   return answer(ctx, {
     intent: 'client', count: live.length, show: 10, record: { kind: 'client', id: c.id, name: c.name },
-    title: `${c.name}${c.clientCode ? ` (${c.clientCode})` : ''}: ${plural(live.length, 'open requirement', 'open requirements')}, ${shared} profiles shared, ${sum(JOINED)} joined`,
+    title: `${c.name}${c.clientCode ? ` (${c.clientCode})` : ''}: ${plural(live.length, 'open requirement', 'open requirements')}, ${plural(shared, 'profile', 'profiles')} shared, ${sum(JOINED)} joined`,
     lines: [
       `Status ${c.status || 'Active'}${c.priority ? `, priority ${c.priority}` : ''}${c.industry ? `, ${c.industry}` : ''}${c.location ? `, ${c.location}` : ''}${c.ownerDepartment ? `, desk ${c.ownerDepartment}` : ''}; BDE ${c.bdeOwner || 'not set'}; health ${h.label}${h.days != null ? ` (last activity ${h.days} days ago)` : ''}`,
       `Contact: ${contact || 'not set'}`,
@@ -766,7 +766,7 @@ async function client360(ctx, c, lang) {
       `Invoices: ${open.length} not paid, ${overdue.length} overdue${ctx.billing ? ` (${money(open.reduce((s, i) => s + outstandingOf(i), 0))} pending)` : ''}`,
       `Complaints open: ${comp.filter((x) => x.status !== 'Resolved').length}${npsN && npsN.responses ? `; NPS ${npsN.nps} from ${npsN.responses} answers` : ''}`,
     ],
-    items: [clientItem(c, 'client page'), { ...clientItem(c, 'complete history'), label: `${c.name} - history`, to: `/clients/${c.id}?tab=history` }, ...live.map((r) => reqItem(r, `${r.openings} opening${r.openings === 1 ? '' : 's'}`))],
+    items: [clientItem(c, 'client page'), ...live.map((r) => reqItem(r, `${r.openings} opening${r.openings === 1 ? '' : 's'}`))],
     facts: ['From the client record, its requirements, the candidates on them in your view, its follow-ups, credit settings, invoices (status only unless you see amounts), complaints and surveys.', scopeFact(ctx)],
   });
 }
@@ -782,13 +782,13 @@ async function requirement360(ctx, r, lang) {
   const total = byStage.reduce((s, g) => s + g._count._all, 0);
   return answer(ctx, {
     intent: 'requirement', count: total, show: 12, record: { kind: 'requirement', id: r.id, name: r.title },
-    title: `${r.title}${r.reqCode ? ` (${r.reqCode})` : ''} for ${(r.client && r.client.name) || '-'}: ${V.requirementStateWords(r.status) === 'open' ? 'open' : V.requirementStateWords(r.status)}, ${r.openings} opening${r.openings === 1 ? '' : 's'}, ${total} profiles in your view`,
+    title: `${r.title}${r.reqCode ? ` (${r.reqCode})` : ''} for ${(r.client && r.client.name) || '-'}: ${V.requirementStateWords(r.status) === 'open' ? 'open' : V.requirementStateWords(r.status)}, ${r.openings} opening${r.openings === 1 ? '' : 's'}, ${plural(total, 'profile', 'profiles')} in your view`,
     lines: [
       `Opened ${L.dmy(L.istDay(r.createdAt))}${r.closingDate ? `, closes ${L.dmy(String(r.closingDate).slice(0, 10))}` : ''}${r.location ? `, ${r.location}` : ''}${r.department ? `, ${r.department}` : ''}${r.tl ? `; TL ${r.tl}` : ''}; priority ${r.priority}`,
       `With BDE ${sum(['WITH_BDE', 'BDE_APPROVED'])}, sent to client ${sum(['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'])}, shortlisted ${sum(['CLIENT_SHORTLISTED'])}, interview ${sum(['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED'])}, selected / offer ${sum(SELECTED_NOW)}, joined ${sum(JOINED)}, rejected ${st.REJECTED || 0}`,
       nextIv.length ? `Next interview: ${nextIv.map((a) => `${a.candidate.name} ${L.dm(L.istDay(a.interviewAt))} ${L.timeOf(a.interviewAt)}`).join('; ')}` : null,
     ],
-    items: [reqItem(r, 'requirement page'), { ...reqItem(r, 'complete history'), label: `${r.title} - history`, to: `/requirements/${r.id}?tab=history` }, ...rows.map((a) => candItem(a, `${stepOf(a)}${a.interviewAt ? ` · interview ${L.dm(L.istDay(a.interviewAt))}` : ''}`))],
+    items: [reqItem(r, 'requirement page'), ...rows.map((a) => candItem(a, `${stepOf(a)}${a.interviewAt ? ` · interview ${L.dm(L.istDay(a.interviewAt))}` : ''}`))],
     facts: ['From the requirement and the candidates on it in your view (from "Check by client manager" onward).', scopeFact(ctx)],
   });
 }

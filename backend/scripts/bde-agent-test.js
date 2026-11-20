@@ -307,7 +307,7 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   // links on every record
   const linkAns = await call('POST', '/bde-agent/ask', { question: 'Tell me about Kovida Heartcare' }, tA);
   const items = (linkAns.body.answers[0] || {}).items || [];
-  check('a client answer links the client page, its history drawer and each open requirement', items.some((i) => i.to === `/clients/${A1.id}`) && items.some((i) => i.to === `/clients/${A1.id}?tab=history`) && items.some((i) => i.to === `/requirements/${RA1.id}`), items);
+  check('a client answer links the client page, its history drawer and each open requirement', items.some((i) => i.to === `/clients/${A1.id}`) && items.some((i) => i.history === `/clients/${A1.id}?tab=history`) && items.some((i) => i.to === `/requirements/${RA1.id}`), items);
   const candLinks = ((await call('POST', '/bde-agent/ask', { question: "Today's interviews" }, tA)).body.answers[0] || {}).items || [];
   check('a candidate links to the candidate history (opens in the drawer), never a recruiter page', candLinks.length && candLinks.every((i) => /^\/ats\/history\/candidate\//.test(i.to)) && !JSON.stringify(candLinks).includes('/ats/history/recruiter'), candLinks);
   check('"How I got this": every answer carries the facts it used', (linkAns.body.facts || []).length >= 2 && /Scope:/.test(linkAns.body.facts.join(' ')), linkAns.body.facts);
