@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import StatusChip from '../ui/StatusChip.jsx';
 import Modal from '../Modal.jsx';
 import DrillExport, { useDrillRight, areaOfList } from '../DrillExport.jsx';
 import { ChartCard, BarChart, DataTable } from '../charts';
+import MultiSelect, { csvToList } from '../ats/MultiSelect.jsx';
+import { DateRangeFilter } from '../ats/FilterBar.jsx';
+import { istDayOf } from '../../utils/dateRanges.js';
 import './dashboard.css';
 
 // ---------------------------------------------------------------------------
@@ -621,6 +624,45 @@ const DRILL_EXPORT = {
 };
 DRILL_EXPORT.workflow = DRILL_EXPORT.app;
 
+// THE LIST'S OWN FILTERS (founder 2026-11-20: "every list must have filters"): a search, checkbox dropdowns over the columns the list
+// carries (client, step / status, department, recruiter, role, method) and a From / To over its date. The rows are already inside the
+// login's scope (the server built them), so the options only ever list values of this login's own rows; the file follows the filters.
+const DRILL_FACETS = [['client', 'Client'], ['stageLabel', 'Step'], ['status', 'Status'], ['department', 'Department'], ['recruiter', 'Recruiter'], ['owner', 'Client manager'], ['role', 'Role'], ['method', 'Method'], ['designation', 'Designation']];
+const DRILL_DATES = [['updatedAt', 'Last updated'], ['invoiceDate', 'Invoice date'], ['joiningDate', 'Joined'], ['date', 'Date'], ['at', 'When']];
+const cellText = (v) => (v === null || v === undefined || v === '' ? '' : String(v));
+function useDrillFilters(all) {
+  const [q, setQ] = useState('');
+  const [picked, setPicked] = useState({});
+  const [days, setDays] = useState({ from: '', to: '' });
+  const keys = useMemo(() => DRILL_FACETS.filter(([k]) => new Set(all.map((r) => cellText(r[k])).filter(Boolean)).size >= 2 || picked[k]), [all, picked]);
+  const dateKey = useMemo(() => (DRILL_DATES.find(([k]) => all.some((r) => r[k])) || [])[0] || null, [all]);
+  const ok = (r, skip) => keys.every(([k]) => k === skip || !picked[k] || csvToList(picked[k]).includes(cellText(r[k]) || '—'));
+  const t = q.trim().toLowerCase();
+  const textOk = (r) => !t || Object.values(r).some((v) => typeof v === 'string' && v.toLowerCase().includes(t));
+  const dayOf = (v) => (!v ? null : /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : istDayOf(v));
+  const dayOk = (r) => { if (!dateKey || (!days.from && !days.to)) return true; const d = dayOf(r[dateKey]); return !!d && (!days.from || d >= days.from) && (!days.to || d <= days.to); };
+  const base = all.filter((r) => textOk(r) && dayOk(r));
+  const rows = base.filter((r) => ok(r, null));
+  const facets = keys.map(([k, label]) => {
+    const m = new Map();
+    base.forEach((r) => { if (!ok(r, k)) return; const v = cellText(r[k]) || '—'; m.set(v, (m.get(v) || 0) + 1); });
+    csvToList(picked[k]).forEach((v) => { if (!m.has(v)) m.set(v, 0); });
+    return { key: k, label, options: [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([value, count]) => ({ value, label: value, count })) };
+  });
+  const on = !!(t || days.from || days.to || Object.values(picked).some(Boolean));
+  const clear = () => { setQ(''); setPicked({}); setDays({ from: '', to: '' }); };
+  const bar = all.length > 1 ? (
+    <div className="rdb-drill-filters" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', padding: '8px 12px' }}>
+      <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this list…" aria-label="Search this list" style={{ minWidth: 180 }} />
+      {facets.map((f) => <MultiSelect key={f.key} label={f.label} value={picked[f.key] || ''} onChange={(v) => setPicked((p) => ({ ...p, [f.key]: v }))} options={f.options} />)}
+      {dateKey && <DateRangeFilter label={(DRILL_DATES.find(([k]) => k === dateKey) || [])[1]} from={days.from} to={days.to} onChange={setDays} />}
+      {on && <button type="button" className="link-btn" onClick={clear}>Clear filters</button>}
+      {on && <span className="small-muted">{fmt(rows.length)} of {fmt(all.length)}</span>}
+    </div>
+  ) : null;
+  return { rows, bar, on, clear, filterRows: (list) => list.filter((r) => textOk(r) && dayOk(r) && ok(r, null)) };
+}
+
 export function DrillPanel({ listUrl, params, setId, onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -631,7 +673,7 @@ export function DrillPanel({ listUrl, params, setId, onClose }) {
     const kind = data.kind === 'workflow' ? 'app' : data.kind;
     const cols = DRILL_EXPORT[kind] || DRILL_EXPORT.app;
     const r = await api.get(listUrl, { params: { ...params, set: setId, limit: 2000 } });
-    const got = r.data.rows || [];
+    const got = fl.on ? fl.filterRows(r.data.rows || []) : (r.data.rows || []); // the file follows the search and filters on the screen
     return {
       headers: cols.map((c) => c[0]),
       rows: got.map((row) => cols.map((c) => c[1](row))),
@@ -646,13 +688,17 @@ export function DrillPanel({ listUrl, params, setId, onClose }) {
       .catch((e) => { if (alive) setError(e.response?.data?.error || 'The list could not be loaded.'); });
     return () => { alive = false; };
   }, [listUrl, setId, JSON.stringify(params)]); // eslint-disable-line react-hooks/exhaustive-deps
-  const rows = (data && data.rows) || [];
+  const allRows = useMemo(() => (data && data.rows) || [], [data]);
+  const fl = useDrillFilters(allRows);
+  const { rows } = fl;
   return (
     <Modal title={data ? data.title : 'Loading…'} note={data ? `${fmt(data.total)} in total${data.total > rows.length ? ` · showing ${fmt(rows.length)}` : ''}` : ''} size="xwide" onClose={onClose} bodyStyle={{ maxHeight: '70vh', overflow: 'auto', padding: 0 }}>
       <div className="rdb-drill">
         {error && <div className="notice red" style={{ margin: 12 }}>{error}</div>}
         {!data && !error && <div className="small-muted" style={{ padding: 16 }}>Loading…</div>}
-        {data && rows.length === 0 && <div className="small-muted" style={{ padding: 16 }}>Nothing in this list right now.</div>}
+        {data && fl.bar}
+        {data && allRows.length === 0 && <div className="small-muted" style={{ padding: 16 }}>Nothing in this list right now.</div>}
+        {data && allRows.length > 0 && rows.length === 0 && <div className="small-muted" style={{ padding: 16 }}>Nothing matches your search or filters. <button type="button" className="link-btn" onClick={fl.clear}>Clear all</button></div>}
         {data && rows.length > 0 && <div style={{ padding: '8px 12px' }}><DrillExport name={data.title} allowed={mayExport} build={buildFile} /></div>}
         {data && rows.length > 0 && (data.kind === 'app' || data.kind === 'workflow') && (
           <table className="rdb-tbl">

@@ -147,5 +147,62 @@ module.exports = async function more(ctx) {
   const tlRecOpts = optsOf((jt.b.facets || {}).rec).filter((o) => o.value !== '__none__');
   check('jobs board scope: every recruiter the TL is offered works on a job the TL sees', jt.status === 200 && tlRecOpts.every((o) => tlRecs.has(o.value)), { opts: tlRecOpts.map((o) => o.value).slice(0, 5), seen: tlRecs.size });
 
+  // =====================================================================================================================
+  // 2. THE CONTROL TOWER DRAWER (Super Admin / Admin): checkbox filters f_<key>, From / To dFrom / dTo, the file follows
+  // =====================================================================================================================
+  const CT = '/dashboard/control-tower/list';
+  const ct = async (set, params = {}, token = tA) => { const r = await call('GET', `${CT}?${qs({ set, pageSize: 100, ...params })}`, null, token); return { status: r.status, b: r.body || {} }; };
+  const fac = (b, key) => ((b.facets || []).find((f) => f.key === key) || {}).options || [];
+  // two- and three-value checks over one facet of one set: the totals add up (single-valued column, OR inside one filter)
+  const sumCheck = async (set, key, params = {}) => {
+    const all = await ct(set, params);
+    const o = fac(all.b, key).filter((x) => x.count > 0);
+    if (all.status !== 200) { check(`control tower ${set}: answers`, false, { s: all.status, e: all.b.error }); return null; }
+    if (o.length < 2) { check(`control tower ${set} multi ${key}: fewer than two values here, skipped`, true); return all; }
+    const two = await ct(set, { ...params, [`f_${key}`]: `${o[0].value},${o[1].value}` });
+    check(`control tower ${set} multi: two ${key} values list the sum of both`, two.b.total === o[0].count + o[1].count, { want: o[0].count + o[1].count, got: two.b.total });
+    check(`control tower ${set} multi: both ticked ${key} values stay offered`, fac(two.b, key).filter((x) => [o[0].value, o[1].value].includes(x.value)).length === 2, null);
+    if (o.length >= 3) {
+      const three = await ct(set, { ...params, [`f_${key}`]: `${o[0].value},${o[1].value},${o[2].value}` });
+      check(`control tower ${set} multi: three ${key} values`, three.b.total === o[0].count + o[1].count + o[2].count, { got: three.b.total });
+    }
+    return all;
+  };
+  const ctEmp = await sumCheck('employees', 'dept', { filter: 'all' });
+  if (ctEmp) {
+    check('control tower employees: no salary, location, gender or birthday filter is offered', !(ctEmp.b.facets || []).some((f) => /salary|ctc|location|city|gender|age|birth|religion|caste|marital/i.test(`${f.key} ${f.label}`)), (ctEmp.b.facets || []).map((f) => f.key));
+    check('control tower employees: the list names its date (Joined on)', ctEmp.b.dateField === 'Joined on', ctEmp.b.dateField);
+  }
+  await sumCheck('requirements', 'dept', { filter: 'all' });
+  const ctReq = await sumCheck('requirements', 'client', { filter: 'all' });
+  if (ctReq) {
+    const st = fac(ctReq.b, 'status').filter((x) => x.count > 0);
+    const de = fac(ctReq.b, 'dept').filter((x) => x.count > 0);
+    if (st.length && de.length) {
+      const both = await ct('requirements', { filter: 'all', f_dept: de[0].value, f_status: st.map((x) => x.value).join(',') });
+      check('control tower requirements: one department AND every status = that department', both.b.total === de[0].count, { want: de[0].count, got: both.b.total });
+    }
+    const fut = await ct('requirements', { filter: 'all', dFrom: '2099-01-01' });
+    check('control tower requirements: posted from 2099 holds nothing', fut.status === 200 && fut.b.total === 0, fut.b.total);
+    const wide = await ct('requirements', { filter: 'all', dFrom: '2000-01-01', dTo: '2099-12-31' });
+    check('control tower requirements: a wide range keeps them all', wide.b.total === ctReq.b.total, { a: wide.b.total, b: ctReq.b.total });
+    const today = ctx.dayOf(new Date());
+    const td = await ct('requirements', { filter: 'all', dFrom: today, dTo: today });
+    const tdRows = (td.b.rows || []).every((r) => ctx.dayOf(new Date(r.c.created)) === today);
+    check('control tower requirements: a one-day range holds only that IST day', td.status === 200 && tdRows, { n: td.b.total });
+    const bad = await call('GET', `${CT}?${qs({ set: 'requirements', dFrom: '2026-12-10', dTo: '2026-12-01' })}`, null, tA);
+    check('control tower: a reversed range is a plain 400', bad.status === 400, bad.status);
+  }
+  await sumCheck('candidates', 'client');
+  await sumCheck('candidates', 'stage');
+  const ctc = await ct('candidates', { q: ctx.TAG });
+  check('control tower candidates: the search finds the seeded people', ctc.status === 200 && ctc.b.total >= 5, { n: ctc.b.total });
+  await sumCheck('audit', 'entity', { dFrom: ctx.dayOf(new Date(Date.now() - 7 * 86400e3)) });
+  for (const [who, tok] of [['recruiter', tRA], ['team lead', tTL]]) {
+    // eslint-disable-next-line no-await-in-loop
+    const x = await ct('employees', { f_dept: 'Sales' }, tok);
+    check(`control tower: a ${who} is refused the company-wide lists (filters or not)`, x.status === 403, x.status);
+  }
+
   return ctx;
 };

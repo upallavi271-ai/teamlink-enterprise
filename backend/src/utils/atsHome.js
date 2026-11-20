@@ -2909,7 +2909,7 @@ async function homeList(user, b, setId, q = {}) {
   const inDays = (r) => {
     if (!dFrom && !dTo) return true;
     const v = dateDef[1](r);
-    const day = v ? (/^d{4}-d{2}-d{2}$/.test(String(v)) ? String(v) : dateRange.istDayOf(v)) : null;
+    const day = v ? (/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : dateRange.istDayOf(v)) : null;
     return !!day && (!dFrom || day >= dFrom) && (!dTo || day <= dTo);
   };
   const searched = (term ? all.filter((r) => search(r).some((v) => v && String(v).toLowerCase().includes(term))) : all).filter(inDays);

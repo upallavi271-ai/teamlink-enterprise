@@ -4,6 +4,8 @@ import api from '../../api';
 import DrillExport, { useDrillRight } from '../DrillExport.jsx';
 import { V3_WIDGETS } from './AtsHomeV3.jsx';
 import HomeDrill from './HomeDrill.jsx';
+import MultiSelect from '../ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
+import { DateRangeFilter } from '../ats/FilterBar.jsx';
 import './controlTower.css';
 
 // JOININGS, DROPS & REPLACEMENTS ON THE CONTROL TOWER (founder 2026-11-11: "joining list, dropped, replacement list dashboard meedha
@@ -37,12 +39,7 @@ function JoinDrops() {
     <>
       {depts.length > 0 && (
         <div className="ct-jd-filter">
-          <label>Department
-            <select value={dept} onChange={(e) => setDept(e.target.value)}>
-              <option value="">All departments</option>
-              {depts.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
-            </select>
-          </label>
+          <MultiSelect label="Department" allLabel="All departments" value={dept} onChange={setDept} options={depts} />
           {dept && <button type="button" className="ct-jd-clear" onClick={() => setDept('')}>Show all departments</button>}
         </div>
       )}
@@ -102,6 +99,11 @@ function cell(c, v) {
 
 function Drawer({ panel, onClose }) {
   const [state, setState] = useState({ q: '', filter: panel.filter || '', sort: '', dir: 'desc', page: 1 });
+  // the list's own checkbox filters (f_<key>=a,b) and its From / To day (dFrom / dTo), all applied on the server
+  const [multi, setMulti] = useState({});
+  const [days, setDays] = useState({ from: '', to: '' });
+  const extra = { ...Object.fromEntries(Object.entries(multi).filter(([, v]) => v).map(([k, v]) => [`f_${k}`, v])), dFrom: days.from || undefined, dTo: days.to || undefined };
+  const extraKey = JSON.stringify(extra);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(true);
@@ -113,11 +115,11 @@ function Drawer({ panel, onClose }) {
   const load = useCallback(() => {
     const mine = (seq.current += 1);
     setBusy(true); setError('');
-    api.get('/dashboard/control-tower/list', { params: { set: panel.set, stage: panel.stage || undefined, month: panel.month || undefined, open: panel.open || undefined, q: qDeb || panel.q || undefined, filter: state.filter || undefined, sort: state.sort || undefined, dir: state.sort ? state.dir : undefined, page: state.page } })
+    api.get('/dashboard/control-tower/list', { params: { set: panel.set, stage: panel.stage || undefined, month: panel.month || undefined, open: panel.open || undefined, q: qDeb || panel.q || undefined, filter: state.filter || undefined, sort: state.sort || undefined, dir: state.sort ? state.dir : undefined, page: state.page, ...extra } })
       .then((r) => { if (mine === seq.current) setData(r.data); })
       .catch((e) => { if (mine === seq.current) setError(e.response?.data?.error || 'These details could not be loaded.'); })
       .finally(() => { if (mine === seq.current) setBusy(false); });
-  }, [panel.set, panel.stage, panel.month, panel.open, panel.q, qDeb, state.filter, state.sort, state.dir, state.page]);
+  }, [panel.set, panel.stage, panel.month, panel.open, panel.q, qDeb, state.filter, state.sort, state.dir, state.page, extraKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setState((s) => ({ ...s, page: 1 })); }, [qDeb]);
   useEffect(() => {
@@ -133,7 +135,7 @@ function Drawer({ panel, onClose }) {
   const mayExport = useDrillRight('admin');
   // The file holds every page of the list for the search / filter picked (not only the page on the screen).
   async function buildFile() {
-    const base = { set: panel.set, stage: panel.stage || undefined, month: panel.month || undefined, open: panel.open || undefined, q: qDeb || panel.q || undefined, filter: state.filter || undefined, sort: state.sort || undefined, dir: state.sort ? state.dir : undefined };
+    const base = { set: panel.set, stage: panel.stage || undefined, month: panel.month || undefined, open: panel.open || undefined, q: qDeb || panel.q || undefined, filter: state.filter || undefined, sort: state.sort || undefined, dir: state.sort ? state.dir : undefined, ...extra };
     const all = [];
     const last = Math.max(1, (data && data.pages) || 1);
     for (let p = 1; p <= last; p += 1) {
@@ -164,6 +166,11 @@ function Drawer({ panel, onClose }) {
               </select>
             </label>
           ))}
+          {data && (data.facets || []).map((f) => (
+            <MultiSelect key={f.key} label={f.label} value={multi[f.key] || ''} onChange={(v) => { setMulti((m) => ({ ...m, [f.key]: v })); setState((s) => ({ ...s, page: 1 })); }} options={f.options} />
+          ))}
+          {data && data.dateField && <DateRangeFilter label={data.dateField} from={days.from} to={days.to} onChange={(d) => { setDays(d); setState((s) => ({ ...s, page: 1 })); }} />}
+          {(Object.values(multi).some(Boolean) || days.from || days.to) && <button type="button" className="link-btn" onClick={() => { setMulti({}); setDays({ from: '', to: '' }); setState((s) => ({ ...s, page: 1 })); }}>Clear filters</button>}
           <span className="ct-d-count">{data ? `${num(data.total)} record${data.total === 1 ? '' : 's'}` : ''}{busy ? ' · loading…' : ''}</span>
           {data && rows.length > 0 && <DrillExport name={data.title || panel.title} allowed={mayExport} disabled={busy} build={buildFile} />}
         </div>
