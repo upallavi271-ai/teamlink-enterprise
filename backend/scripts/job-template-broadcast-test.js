@@ -118,6 +118,9 @@ const ph = (n) => `98765${String(n).padStart(5, '0')}`; // 9876500001 ... valid 
 
   // ================================================================= B. POST TO ALL PLACES
   console.log('\n-- B. post to all selected places');
+  // who receives the responses (2026-11-20): a new job is posted only once they are ticked
+  Z.check('a real post with nobody to receive the responses is refused (409)', (await call('tl', 'POST', `/jobs/${jobA.id}/post-everywhere`, { places: ['career'] })).status === 409);
+  for (const j of [jobA, jobB]) await Z.call('PUT', `/api/requirements/${j.id}/response-recipients`, tok.admin, { userIds: [rec.id] }); // eslint-disable-line no-await-in-loop
   const pe = await call('tl', 'POST', `/jobs/${jobA.id}/post-everywhere`, { places: ['naukri', 'shine', 'linkedin', 'career', 'indeed', 'email'] });
   const st = {}; (pe.body.results || []).forEach((x) => { st[x.place] = x; });
   Z.check('post to all: answers for every ticked place', pe.status === 200 && ['naukri', 'shine', 'linkedin', 'career', 'indeed', 'email'].every((p) => st[p]), pe.body);

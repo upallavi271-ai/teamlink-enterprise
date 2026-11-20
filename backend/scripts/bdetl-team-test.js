@@ -343,6 +343,8 @@ const sum = (c) => Object.values(c || {}).reduce((n, v) => n + (Number(v) || 0),
     check('W4 BDE TL adds a note on any client', note.status === 201, [note.status, note.body]);
     const putJob = await call('PUT', `/api/requirements/${rMed.id}`, T.bdeTl, { title: `ZZTEST BT Job med edited ${RUN}` });
     check('W5 BDE TL edits a client job (PUT /requirements/:id)', putJob.status === 200, [putJob.status, putJob.body]);
+    // a job goes up on a site once somebody receives its responses (2026-11-20): the Admin ticks the job's recruiter first
+    await call('PUT', `/api/requirements/${rEdu.id}/response-recipients`, T.admin, { userIds: [uRecEdu.id] });
     const sites = await call('PUT', `/api/requirements/${rEdu.id}/posting-sites`, T.bdeTl, { sites: ['jobportal'] });
     check('W6 BDE TL saves where a job is posted (Save & Post)', sites.status === 200, [sites.status, sites.body]);
     const request = await call('POST', '/api/requirements/requests', T.bdeTl, { title: `ZZTEST BT Request ${RUN}`, clientId: cEdu.id });

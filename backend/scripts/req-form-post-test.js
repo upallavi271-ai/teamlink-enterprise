@@ -119,6 +119,11 @@ async function main() {
     r = await call(admin, 'POST', `/job-broadcast/jobs/${job.id}/post-everywhere`, { places: ['foundit'], dryRun: true });
     const f = r.j && r.j.results && r.j.results[0];
     ok(r.s === 200 && f && f.state === 'failed' && /login/i.test(`${f.words} ${f.detail}`), `no login: a dry run on Foundit is refused in plain words, never "queued" (${f && f.state}: ${f && f.detail})`);
+    // WHO RECEIVES THE RESPONSES (2026-11-20): a new job is not really posted until they are ticked
+    r = await call(admin, 'POST', `/job-broadcast/jobs/${job.id}/post-everywhere`, { places: ['foundit'] });
+    ok(r.s === 409 && r.j && r.j.code === 'RESPONSE_RECIPIENTS_NEEDED', `a real post with nobody to receive the responses is refused (${r.s})`);
+    r = await call(admin, 'PUT', `/requirements/${job.id}/response-recipients`, { userIds: [rec.u.id] });
+    ok(r.s === 200, `the Admin ticks who receives the responses (${r.s} ${r.j && r.j.error ? r.j.error : ''})`);
     r = await call(admin, 'POST', `/job-broadcast/jobs/${job.id}/post-everywhere`, { places: ['foundit'] });
     const f2 = r.j && r.j.results && r.j.results[0];
     ok(r.s === 200 && f2 && f2.state === 'not_connected', `no login, real post: Foundit becomes a by-hand task (${f2 && f2.state})`);
