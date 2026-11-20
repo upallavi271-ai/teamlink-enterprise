@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * BROWSER SMOKE of the dashboard's 'Report of your team' (founder 2026-11-20): only a TL has the card, a recruiter has none, the Super Admin has the
- * 'Overall report' button. View opens a person's report: the candidates they added and every follow-up with its text. A private sandbox server (copy of the sandbox database) + the Vite dev server in front of it + Edge.
+ * BROWSER SMOKE of the dashboard's 'Report of your team' (founder 2026-11-20): a TL and the Super Admin have the same 'Overall report' button (TL: their team; Admin: team leads first),
+ * a recruiter has none. View opens a person's report: the candidates they added and every follow-up with its text. A private sandbox server (copy of the sandbox database) + the Vite dev server in front of it + Edge.
  *   TEST_SOURCE_DB=<sandbox.db> TEST_PORT=4301 node scripts/team-report-smoke.js     (screenshots: docs/team-report-2026-11-20/)
  */
 const fs = require('fs');
@@ -70,20 +70,23 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     return { ctx, page };
   };
   try {
-    // TL: the card, one row per recruiter, View
+    // TL: the same "Overall report" button as the Super Admin; it opens THEIR team (recruiter rows + View + team overall)
     {
       const { ctx, page } = await open(tl, '/ats/dashboard');
-      const card = page.locator('.trc', { hasText: 'Report of your team' });
-      const up = await card.waitFor({ state: 'visible', timeout: 30000 }).then(() => true).catch(() => false);
-      check('TL: the dashboard has "Report of your team"', up, await page.evaluate(() => document.body.innerText.slice(0, 300)).catch(() => ''));
+      const btn = page.locator('button', { hasText: 'Overall report' });
+      const up = await btn.waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false);
+      check('TL: the dashboard has the "Overall report" button (no always-open card)', up && (await page.locator('.trc').count()) === 0, await page.evaluate(() => document.body.innerText.slice(0, 300)).catch(() => ''));
       if (up) {
-        const row = card.locator('tr', { hasText: rec.name });
-        await row.waitFor({ state: 'visible', timeout: 30000 }).catch(() => null);
-        check('TL: the card has one row for their recruiter, with a View button', await row.locator('button', { hasText: 'View' }).isVisible().catch(() => false));
-        check('TL: Today / Yesterday / This week / This month and two date boxes are there', (await card.locator('button', { hasText: /^(Today|Yesterday|This week|This month)$/ }).count()) === 4 && (await card.locator('input[type=date]').count()) === 2);
-        await page.screenshot({ path: path.join(SHOTS, 'tl-card.png') });
+        await btn.click();
+        const team = page.locator('.trd-panel', { hasText: 'Report of your team' });
+        const row = team.locator('tr', { hasText: rec.name });
+        const rowUp = await row.waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false);
+        check('TL: the button opens their team: one row for their recruiter, with a View button', rowUp && (await row.locator('button', { hasText: 'View' }).isVisible()));
+        check('TL: Today / Yesterday / This week / This month and two date boxes are there', (await team.locator('button', { hasText: /^(Today|Yesterday|This week|This month)$/ }).count()) === 4 && (await team.locator('input[type=date]').count()) === 2);
+        check('TL: the team overall line is not shown for a team of one, but the recruiter\'s numbers are', rowUp);
+        await page.screenshot({ path: path.join(SHOTS, 'tl-team-panel.png') });
         await row.locator('button', { hasText: 'View' }).click();
-        const panel = page.locator('.trd-panel');
+        const panel = page.locator('.trd-panel', { hasText: 'Candidates added' }).last();
         const pv = await panel.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
         check('TL: View opens that recruiter\'s report in a side panel', pv);
         if (pv) {
@@ -94,36 +97,49 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
           check('TL: ...and the follow-up with the text that was written', (await panel.innerText()).includes(WROTE));
           await page.screenshot({ path: path.join(SHOTS, 'tl-view-panel.png') });
           await page.keyboard.press('Escape');
-          check('TL: Escape closes the panel', await panel.waitFor({ state: 'detached', timeout: 5000 }).then(() => true).catch(() => false));
+          check('TL: Escape closes the recruiter panel and the team stays', await page.locator('.trd-panel', { hasText: 'Candidates added' }).count() === 0 && await team.isVisible());
         }
       }
       await ctx.close();
     }
-    // Recruiter: no card at all
+    // Recruiter: nothing at all
     {
       const { ctx, page } = await open(rec, '/ats/dashboard');
       await page.waitForTimeout(4000);
-      check('Recruiter: no team report card and no Overall report button', (await page.locator('.trc').count()) === 0 && (await page.locator('button', { hasText: 'Overall report' }).count()) === 0);
+      check('Recruiter: no team report and no Overall report button', (await page.locator('.trc').count()) === 0 && (await page.locator('button', { hasText: 'Overall report' }).count()) === 0);
       await ctx.close();
     }
-    // Super Admin: only the Overall report button
+    // Super Admin: the button; first page = team leads; a team lead -> that team; a recruiter -> their report
     {
       const { ctx, page } = await open(sa, '/ats/dashboard');
       const btn = page.locator('button', { hasText: 'Overall report' });
       const there = await btn.waitFor({ state: 'visible', timeout: 90000 }).then(() => true).catch(() => false);
-      check('Admin: the dashboard has an Overall report button, and no team card of its own', there && (await page.locator('.trc', { hasText: 'Report of your team' }).count()) === 0);
+      check('Admin: the dashboard has the Overall report button', there);
       if (there) {
         await page.waitForTimeout(3000);
         check('Admin: no "Carried over from yesterday" and no "My end-of-day report" on the dashboard', !(await page.evaluate(() => /Carried over from yesterday|My end-of-day report/.test(document.body.innerText))));
         await btn.click();
         const panel = page.locator('.trd-panel', { hasText: 'Overall report' });
-        const ok = await panel.locator('tr', { hasText: rec.name }).waitFor({ state: 'visible', timeout: 90000 }).then(() => true).catch(() => false);
-        check('Admin: the Overall report lists everybody, with their TL', ok && (await panel.innerText()).includes(tl.name), (await page.evaluate(() => { const w = document.querySelector('.trd-wrap'); return w ? w.innerText.slice(0, 500) : `no panel; body: ${document.body.innerText.slice(0, 200)}`; }).catch(() => 'eval failed')));
-        await page.screenshot({ path: path.join(SHOTS, 'admin-overall.png') });
-        if (ok) {
-          await panel.locator('tr', { hasText: rec.name }).locator('button', { hasText: 'View' }).click();
-          const v = await page.locator('.trd-panel', { hasText: 'Candidates added' }).first().waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
-          check('Admin: View on a person opens that person\'s report', v);
+        const tlRow = panel.locator('tr', { hasText: tl.name });
+        const first = await tlRow.waitFor({ state: 'visible', timeout: 90000 }).then(() => true).catch(() => false);
+        const txt0 = await panel.innerText().catch(() => '');
+        check('Admin: the first page lists TEAM LEADS (a team lead row, with the number of recruiters), not every recruiter', first && /team lead/i.test(txt0) && !(await panel.locator('tr td b', { hasText: rec.name }).count()), txt0.slice(0, 300));
+        await page.screenshot({ path: path.join(SHOTS, 'admin-overall-tls.png') });
+        if (first) {
+          await tlRow.locator('button', { hasText: 'View' }).click();
+          const team = page.locator('.trd-panel', { hasText: `${tl.name}'s team` });
+          const recRow = team.locator('tr', { hasText: rec.name });
+          const second = await recRow.waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false);
+          check('Admin: a team lead opens that team: their recruiters, with a way back', second && (await team.locator('button', { hasText: 'All team leads' }).isVisible()), (await team.innerText().catch(() => '')).slice(0, 300));
+          await page.screenshot({ path: path.join(SHOTS, 'admin-team.png') });
+          if (second) {
+            await recRow.locator('button', { hasText: 'View' }).click();
+            const v = await page.locator('.trd-panel', { hasText: 'Candidates added' }).last().waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
+            check('Admin: a recruiter opens that recruiter\'s own report', v);
+            await page.keyboard.press('Escape');
+            await team.locator('button', { hasText: 'All team leads' }).click();
+            check('Admin: "All team leads" goes back to the team lead list', await panel.locator('tr', { hasText: tl.name }).waitFor({ state: 'visible', timeout: 30000 }).then(() => true).catch(() => false));
+          }
         }
       }
       await ctx.close();

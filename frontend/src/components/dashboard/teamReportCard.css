@@ -31,3 +31,6 @@
 .trd-nums b { font-size: 22px; }
 .trd-nums span { font-size: 12px; color: var(--ink-soft); }
 @media (max-width: 720px) { .trd-panel { width: 100vw; min-width: 0; } }
+
+.trc-titlebar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.trc-titlebar h3 { margin: 0; }

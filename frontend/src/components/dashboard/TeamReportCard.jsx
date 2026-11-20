@@ -124,15 +124,12 @@ function PersonPanel({ person, from, to, onClose }) {
   );
 }
 
-// the table: one row per person + View. Used inside the TL's card and inside the Super Admin's overall panel.
-function ReportTable({ title, onClose }) {
+// the days chosen (Today, Yesterday, This week, This month or two dates), shared by every level of the Overall report
+function useRange() {
   const [opts, setOpts] = useState(null);
   const [range, setRange] = useState({ from: '', to: '' });
   const [preset, setPreset] = useState('today');
-  const [data, setData] = useState(null);
-  const [open, setOpen] = useState(null);
   const [failed, setFailed] = useState(false);
-
   useEffect(() => {
     api.get('/followup-report/options').then((r) => {
       setOpts(r.data);
@@ -140,83 +137,176 @@ function ReportTable({ title, onClose }) {
       setRange({ from: p[2], to: p[3] });
     }).catch(() => setFailed(true));
   }, []);
+  return {
+    opts, range, preset, failed,
+    choose: (key, from, to) => { setPreset(key); setRange({ from, to }); },
+    setFrom: (v) => { setPreset('custom'); setRange((r) => ({ ...r, from: v })); },
+    setTo: (v) => { setPreset('custom'); setRange((r) => ({ ...r, to: v })); },
+  };
+}
+function RangeBar({ r, children }) {
+  return (
+    <div className="trc-bar">
+      {presetsFor(r.opts.today).map(([k, l, f, t]) => <button key={k} type="button" className={`btn btn-sm${r.preset === k ? ' btn-primary' : ''}`} onClick={() => r.choose(k, f, t)}>{l}</button>)}
+      <label className="small-muted">From <input type="date" value={r.range.from} max={r.range.to || undefined} onChange={(e) => r.setFrom(e.target.value)} /></label>
+      <label className="small-muted">To <input type="date" value={r.range.to} min={r.range.from || undefined} onChange={(e) => r.setTo(e.target.value)} /></label>
+      {children}
+    </div>
+  );
+}
+const useSummary = (r, leadId) => {
+  const [data, setData] = useState(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (!opts || !range.from || !range.to || range.to < range.from) return;
-    api.get('/followup-report/summary', { params: { from: range.from, to: range.to, period: 'day', imported: 'include' } })
-      .then((r) => { setData(r.data); setFailed(false); }).catch(() => setFailed(true));
-  }, [opts, range]);
+    if (!r.opts || !r.range.from || !r.range.to || r.range.to < r.range.from) return;
+    api.get('/followup-report/summary', { params: { from: r.range.from, to: r.range.to, period: 'day', imported: 'include', leadId: leadId || undefined } })
+      .then((x) => { setData(x.data); setFailed(false); }).catch(() => setFailed(true));
+  }, [r.opts, r.range.from, r.range.to, leadId]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { data, failed };
+};
+const sum4 = (rows) => [0, 1, 2, 3].map((i) => rows.reduce((n, x) => n + (x.m[i] || 0), 0));
+const Num = ({ v, bad }) => <td className={`trc-num${v ? '' : ' trc-zero'}${bad && v ? ' trc-bad' : ''}`}>{v || '–'}</td>;
 
+// ONE team: one row per recruiter + View, and the team's overall line. Used in the team lead's card and inside the Super Admin's team page.
+function TeamTable({ r, leadId, title, onBack, onClose }) {
+  const { data, failed } = useSummary(r, leadId);
+  const [open, setOpen] = useState(null);
   if (failed && !data) return onClose ? <div className="error-text">The report could not be loaded.</div> : null; // a login with no report simply has no card
-  if (!opts) return onClose ? <div className="small-muted">Loading…</div> : null;
+  if (!r.opts) return onClose ? <div className="small-muted">Loading…</div> : null;
   const idx = data ? SHOWN.map(([k]) => data.fields.indexOf(k)) : [];
-  const shown = (r) => ({ ...r, m: idx.map((i) => (i >= 0 ? r.m[i] : 0)) });
-  const choose = (key, from, to) => { setPreset(key); setRange({ from, to }); };
-  const showLead = !!data && data.table.headers.includes('TL');
-
+  const shown = (x) => ({ ...x, m: idx.map((i) => (i >= 0 ? x.m[i] : 0)) });
   return (
     <>
       <div className="trc-head">
-        <h3>{title}</h3>
-        <div className="trc-bar">
-          {presetsFor(opts.today).map(([k, l, f, t]) => <button key={k} type="button" className={`btn btn-sm${preset === k ? ' btn-primary' : ''}`} onClick={() => choose(k, f, t)}>{l}</button>)}
-          <label className="small-muted">From <input type="date" value={range.from} max={range.to || undefined} onChange={(e) => { setPreset('custom'); setRange((r) => ({ ...r, from: e.target.value })); }} /></label>
-          <label className="small-muted">To <input type="date" value={range.to} min={range.from || undefined} onChange={(e) => { setPreset('custom'); setRange((r) => ({ ...r, to: e.target.value })); }} /></label>
-          {onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}
+        <div className="trc-titlebar">
+          {onBack && <button type="button" className="btn btn-sm" onClick={onBack}>← All team leads</button>}
+          <h3>{title}</h3>
         </div>
+        <RangeBar r={r}>{onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}</RangeBar>
       </div>
       {!data ? <div className="small-muted">Loading…</div> : (
         <div className="trd-scroll">
           <table className="trc-table">
             <thead>
-              <tr><th>Recruiter</th>{showLead && <th>TL</th>}{SHOWN.map(([k, l]) => <th key={k} className="trc-num">{l}</th>)}<th /></tr>
+              <tr><th>Recruiter</th>{SHOWN.map(([k, l]) => <th key={k} className="trc-num">{l}</th>)}<th /></tr>
             </thead>
             <tbody>
               {data.rows.map((raw) => {
-                const r = shown(raw);
+                const x = shown(raw);
                 return (
-                  <tr key={r.id}>
-                    <td><b>{r.name}</b>{r.former ? <span className="trc-tag">left</span> : null}</td>
-                    {showLead && <td>{r.leadName || ''}</td>}
-                    {r.m.map((v, i) => <td key={SHOWN[i][0]} className={`trc-num${v ? '' : ' trc-zero'}${SHOWN[i][0] === 'overdue' && v ? ' trc-bad' : ''}`}>{v || '–'}</td>)}
-                    <td className="trc-act"><button type="button" className="btn btn-sm" onClick={() => setOpen(r)}>View</button></td>
+                  <tr key={x.id}>
+                    <td><b>{x.name}</b>{x.role === 'TL' ? <span className="trc-tag">team lead</span> : null}{x.former ? <span className="trc-tag">left</span> : null}</td>
+                    {x.m.map((v, i) => <Num key={SHOWN[i][0]} v={v} bad={SHOWN[i][0] === 'overdue'} />)}
+                    <td className="trc-act"><button type="button" className="btn btn-sm" onClick={() => setOpen(x)}>View</button></td>
                   </tr>
                 );
               })}
-              {data.rows.length === 0 && <tr><td colSpan={SHOWN.length + 3} className="small-muted">Nobody in this team yet.</td></tr>}
+              {data.rows.length === 0 && <tr><td colSpan={SHOWN.length + 2} className="small-muted">Nobody in this team yet.</td></tr>}
             </tbody>
             {data.rows.length > 1 && (
               <tfoot>
-                <tr><td><b>Total</b></td>{showLead && <td />}{idx.map((i, n) => <td key={SHOWN[n][0]} className="trc-num"><b>{(i >= 0 && data.total.m[i]) || '–'}</b></td>)}<td /></tr>
+                <tr><td><b>Team overall</b></td>{idx.map((i, n) => <td key={SHOWN[n][0]} className="trc-num"><b>{(i >= 0 && data.total.m[i]) || '–'}</b></td>)}<td /></tr>
               </tfoot>
             )}
           </table>
         </div>
       )}
-      {open && <PersonPanel person={open} from={range.from} to={range.to} onClose={() => setOpen(null)} />}
+      {open && <PersonPanel person={open} from={r.range.from} to={r.range.to} onClose={() => setOpen(null)} />}
     </>
   );
 }
 
-// the dashboard piece: a team lead gets the card; a Super Admin gets the one "Overall report" button; nobody else gets anything
-export default function TeamReportCard({ user }) {
-  const [all, setAll] = useState(false);
-  if (!user) return null;
-  if (user.role === 'SUPER_ADMIN') {
-    return (
-      <div className="trc-adminbar">
-        <button type="button" className="btn btn-primary" onClick={() => setAll(true)}>Overall report</button>
-        <span className="small-muted">Every recruiter's work: follow-ups, calls and the candidates they added, day by day.</span>
-        {all && (
-          <div className="trd-wrap" role="presentation">
-            <div className="trd-back" onMouseDown={() => setAll(false)} aria-hidden="true" />
-            <aside className="trd-panel" role="dialog" aria-modal="true" aria-label="Overall report">
-              <div className="trd-body"><ReportTable title="Overall report" onClose={() => setAll(false)} /></div>
-            </aside>
-          </div>
-        )}
+// the Super Admin's first page: ONE ROW PER TEAM LEAD with the team's numbers; View opens that team (its recruiters, the team overall)
+function TlList({ r, onPick, onClose }) {
+  const { data, failed } = useSummary(r, '');
+  const [openOne, setOpenOne] = useState(null);
+  if (failed && !data) return <div className="error-text">The report could not be loaded.</div>;
+  if (!r.opts || !data) return <div className="small-muted">Loading…</div>;
+  const idx = SHOWN.map(([k]) => data.fields.indexOf(k));
+  const mOf = (x) => idx.map((i) => (i >= 0 ? x.m[i] : 0));
+  const tls = data.rows.filter((x) => ['TL', 'STL'].includes(x.role));
+  const teams = tls.map((tl) => {
+    const members = data.rows.filter((x) => x.id !== tl.id && x.leadName === tl.name);
+    return { tl, members, m: sum4([{ m: mOf(tl) }, ...members.map((x) => ({ m: mOf(x) }))]) };
+  }).sort((a, b) => a.tl.name.localeCompare(b.tl.name));
+  const none = data.rows.filter((x) => !['TL', 'STL'].includes(x.role) && !x.leadName);
+  return (
+    <>
+      <div className="trc-head">
+        <h3>Overall report</h3>
+        <RangeBar r={r}>{onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}</RangeBar>
       </div>
-    );
-  }
-  if (user.atsRole !== 'TL') return null;
-  return <div className="card section trc"><ReportTable title="Report of your team" /></div>;
+      <div className="trd-scroll">
+        <table className="trc-table">
+          <thead>
+            <tr><th>Team lead</th><th className="trc-num">Recruiters</th>{SHOWN.map(([k, l]) => <th key={k} className="trc-num">{l}</th>)}<th /></tr>
+          </thead>
+          <tbody>
+            {teams.map(({ tl, members, m }) => (
+              <tr key={tl.id}>
+                <td><b>{tl.name}</b>{tl.former ? <span className="trc-tag">left</span> : null}</td>
+                <td className="trc-num">{members.length || '–'}</td>
+                {m.map((v, i) => <Num key={SHOWN[i][0]} v={v} bad={SHOWN[i][0] === 'overdue'} />)}
+                <td className="trc-act"><button type="button" className="btn btn-sm" onClick={() => onPick(tl)}>View</button></td>
+              </tr>
+            ))}
+            {none.length > 0 && (
+              <tr>
+                <td><b>No team lead</b><div className="small-muted">{none.map((x) => x.name).join(', ')}</div></td>
+                <td className="trc-num">{none.length}</td>
+                {sum4(none.map((x) => ({ m: mOf(x) }))).map((v, i) => <Num key={SHOWN[i][0]} v={v} bad={SHOWN[i][0] === 'overdue'} />)}
+                <td className="trc-act">{none.length === 1 ? <button type="button" className="btn btn-sm" onClick={() => setOpenOne(none[0])}>View</button> : null}</td>
+              </tr>
+            )}
+            {teams.length === 0 && none.length === 0 && <tr><td colSpan={SHOWN.length + 3} className="small-muted">Nobody to show.</td></tr>}
+          </tbody>
+          <tfoot>
+            <tr><td><b>Everyone</b></td><td />{idx.map((i, n) => <td key={SHOWN[n][0]} className="trc-num"><b>{(i >= 0 && data.total.m[i]) || '–'}</b></td>)}<td /></tr>
+          </tfoot>
+        </table>
+      </div>
+      {openOne && <PersonPanel person={{ ...openOne, m: mOf(openOne) }} from={r.range.from} to={r.range.to} onClose={() => setOpenOne(null)} />}
+    </>
+  );
+}
+
+function OverallPanel({ onClose }) {
+  const r = useRange();
+  const [lead, setLead] = useState(null);
+  if (r.failed) return <div className="error-text">The report could not be loaded.</div>;
+  if (!r.opts) return <div className="small-muted">Loading…</div>;
+  return lead
+    ? <TeamTable r={r} leadId={lead.id} title={`${lead.name}'s team`} onBack={() => setLead(null)} onClose={onClose} />
+    : <TlList r={r} onPick={setLead} onClose={onClose} />;
+}
+
+// the team lead's own report page (inside the side panel): their team, recruiter by recruiter, with the team overall
+function TlPanel({ onClose }) {
+  const r = useRange();
+  if (r.failed) return <div className="error-text">The report could not be loaded.</div>;
+  if (!r.opts) return <div className="small-muted">Loading…</div>;
+  return <TeamTable r={r} title="Report of your team" onClose={onClose} />;
+}
+
+// the dashboard piece: the SAME "Overall report" button for a Super Admin (team leads first) and for a team lead (their team); it opens a side
+// panel. Nobody else gets anything.
+export default function TeamReportCard({ user }) {
+  const [open, setOpen] = useState(false);
+  if (!user) return null;
+  const admin = user.role === 'SUPER_ADMIN';
+  if (!admin && user.atsRole !== 'TL') return null;
+  return (
+    <div className="trc-adminbar">
+      <button type="button" className="btn btn-primary" onClick={() => setOpen(true)}>Overall report</button>
+      <span className="small-muted">{admin ? "Every team lead's team: click a team lead for their recruiters, a recruiter for their own work." : "Your team: every recruiter's follow-ups, calls and the candidates they added. Click View on a recruiter."}</span>
+      {open && (
+        <div className="trd-wrap" role="presentation">
+          <div className="trd-back" onMouseDown={() => setOpen(false)} aria-hidden="true" />
+          <aside className="trd-panel" role="dialog" aria-modal="true" aria-label={admin ? 'Overall report' : 'Report of your team'}>
+            <div className="trd-body">{admin ? <OverallPanel onClose={() => setOpen(false)} /> : <TlPanel onClose={() => setOpen(false)} />}</div>
+          </aside>
+        </div>
+      )}
+    </div>
+  );
 }
