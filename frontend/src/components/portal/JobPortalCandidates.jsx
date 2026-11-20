@@ -259,6 +259,8 @@ export default function JobPortalCandidates({ onSentToAts }) {
                 <td className="cell-muted">
                   {a.reqCode ? `${a.reqCode} · ` : ''}{a.job}
                   <div className="small-muted">{[a.hiring === 'Internal' ? 'TeamLink (internal)' : null, a.department].filter(Boolean).join(' · ')}</div>
+                  {/* who received it: one of the job's response recipients when its TL ticked them (2026-11-20) */}
+                  {a.receivedBy && <div className="small-muted" title={a.receivedBy.recipient ? 'One of the recruiters the team lead chose to receive the responses of this job' : 'The recruiter of this job'}>{`Received by ${a.receivedBy.name}`}</div>}
                 </td>
                 <td style={{ textAlign: 'right' }} title={a.screening?.duplicateChecked ? `Duplicate check: ${a.screening.duplicateResult}` : 'Duplicate check not run yet'}>
                   <b>{pct(a.resumeScore)}</b>

@@ -35,6 +35,7 @@ import HistoryTab from '../components/ats/HistoryTab.jsx'; // History tab: share
 import DistributeTab from '../components/jobdist/DistributeTab.jsx'; // job distribution: the "Distribute" tab (Posting Kit, tracked links, Posted tracker)
 import JobPostingCard from '../components/jobpublish/JobPostingCard.jsx'; // job publishing engine: status per site + Post this job
 import PostingsTab from '../components/jobs/reqsplit/PostingsTab.jsx'; // the Postings tab: portal buttons + Post Status + copy-ready details (2026-10-16)
+import { ResponsesGoToCard } from '../components/jobs/ResponseRecipients.jsx'; // who receives the responses (2026-11-20)
 import PostStepDialog from '../components/jobs/reqsplit/PostStepDialog.jsx'; // Post this job: sites, company logins, dry run, results (2026-10-13)
 import PartnerShare from '../components/jobs/PartnerShare.jsx'; // B7: share the job with agencies / freelancers
 import {
@@ -784,7 +785,7 @@ export default function RequirementDetail() {
       )}
 
       <JobPostingCard jobId={r.id} title={r.title} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load} onPost={() => setPostStepOpen(true)} />
-      {postStepOpen && <PostStepDialog job={{ id: r.id, title: r.title, reqCode: r.reqCode, tlId: r.tlId, recruiterId: r.recruiterId, recruiter: r.recruiter, department: r.department }} sources={String(r.postingSources || '').split(',').map((x) => x.trim()).filter(Boolean)} onClose={() => setPostStepOpen(false)} onChanged={load} />}
+      {postStepOpen && <PostStepDialog job={{ id: r.id, title: r.title, reqCode: r.reqCode, tlId: r.tlId, recruiterId: r.recruiterId, recruiter: r.recruiter, department: r.department }} sources={String(r.postingSources || '').split(',').map((x) => x.trim()).filter(Boolean)} canAssign={!!p.assign} onClose={() => setPostStepOpen(false)} onChanged={load} />}
 
       <div className="card section" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div style={{ flex: '1 1 420px' }}>
@@ -969,6 +970,8 @@ export default function RequirementDetail() {
             <div className="small-muted" style={{ marginTop: 8 }}>Only your team lead can change the team.</div>
           )}
         </div>
+        {/* WHO RECEIVES THE RESPONSES (2026-11-20): next to the assigned recruiters, with Change + reason (components/jobs/ResponseRecipients.jsx) */}
+        <ResponsesGoToCard job={r} onChanged={load} />
       </div>
       <div>
         <div className="card section">

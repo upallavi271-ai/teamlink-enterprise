@@ -117,6 +117,7 @@ export default function PostingsTab({ job, canPost, onChanged, children }) {
           job={job}
           sources={String(job.postingSources || '').split(',').map((x) => x.trim()).filter(Boolean)}
           startTargets={dlg.targets}
+          canAssign={!!(job.permissions && job.permissions.assign)}
           onClose={() => { setDlg(null); load(); }}
           onChanged={() => { load(); if (onChanged) onChanged(); }}
         />

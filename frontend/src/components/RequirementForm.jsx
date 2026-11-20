@@ -21,6 +21,7 @@ import JobTemplates from './jobs/JobTemplates.jsx';
 // 2026-10-14: a NORMAL single-column form (the side preview is gone); the text is still prepared in the background for Save & Post
 import ReqSection from './jobs/reqsplit/ReqSection.jsx';
 import PostStep, { placesFromSources } from './jobs/reqsplit/PostStep.jsx';
+import { PostRecipientsStep } from './jobs/ResponseRecipients.jsx'; // who receives the responses, before posting (2026-11-20)
 import { useLiveTemplate, templateFields } from './jobs/reqsplit/liveTemplate.js';
 import './clients/clientForm.css';
 import './clients/addClientModal.css';
@@ -534,8 +535,10 @@ export default function RequirementForm({
     busy.current = true;
     setSaving(kind);
     try {
-      // 'create' saves the job live but posts nothing; 'post' sends only our own sites with the save when the job will be live at once.
-      const sites = kind === 'create' ? [] : (kind === 'post' && expectLive ? ownSites() : null);
+      // 'create' saves the job live but posts nothing; 'post' saves it unposted too when it will be live at once: our own sites go up
+      // right after the TL ticks who receives the responses (founder 2026-11-20: no posting without them).
+      const sites = kind === 'create' ? [] : (kind === 'post' && expectLive ? [] : null);
+      const ownAfter = kind === 'post' && expectLive ? ownSites() : [];
       const res = await api.post('/requirements', { ...payload(kind === 'draft' ? 'DRAFT' : 'OPEN', sites), ...extra }, { headers: { 'Idempotency-Key': onceKey.current } });
       const isLive = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'].includes(res.data?.status);
       const textErr = res.data?.id ? await saveTexts(res.data.id, kind) : '';
@@ -551,7 +554,7 @@ export default function RequirementForm({
       // docfill_: keep the uploaded requirement on the job as its source document.
       const sourceNote = await fill.attach('job', res.data?.id);
       if (sourceNote) posting = [posting, sourceNote].filter(Boolean).join(' ');
-      if (kind === 'post' && isLive && res.data?.id) { setPostStep({ job: res.data, initial: placesFromSources(form.postingSources), info: { created: true } }); return; }
+      if (kind === 'post' && isLive && res.data?.id) { setPostStep({ job: res.data, initial: placesFromSources(form.postingSources), info: { created: true }, ownAfter }); return; }
       onSaved?.(res.data, { created: true, posting, openJob: false });
     } catch (err) {
       if (err.response?.status === 409 && err.response.data?.code === 'DUPLICATE_JOB') { setDup({ ...err.response.data, kind: sending ? 'send' : kind }); return; } // B9.1
@@ -571,7 +574,9 @@ export default function RequirementForm({
     if (found.length) return;
     busy.current = true;
     setSaving(thenPost ? 'post' : 'save');
-    const body = payload(undefined, thenOpen && thenPost && expectLive ? ownSites() : null);
+    // a Draft opened with Save & Post: saved and opened unposted; our own sites go up once the recipients are ticked
+    const body = payload(undefined, thenOpen && thenPost && expectLive ? [] : null);
+    const ownAfter = thenOpen && thenPost && expectLive ? ownSites() : [];
     // Never send a field the user is not allowed to change: the server
     // refuses the whole request when an unchanged-looking assignment value
     // round-trips differently, and a refusal the user cannot act on is worse
@@ -607,7 +612,7 @@ export default function RequirementForm({
       if (textErr) { setError(`The requirement is saved, but its text could not be saved: ${textErr} Open the requirement and use Edit template, then post it.`); return; }
       const changedFields = res.data?.changedFields || [];
       const isLive = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'].includes(job?.status);
-      if (thenPost && isLive) { setPostStep({ job: { ...job, id: requirement.id, title: job.title || form.title, reqCode: job.reqCode || requirement.reqCode }, initial: placesFromSources(form.postingSources), info: { created: false, opened: !!opened, changedFields } }); return; }
+      if (thenPost && isLive) { setPostStep({ job: { ...job, id: requirement.id, title: job.title || form.title, reqCode: job.reqCode || requirement.reqCode }, initial: placesFromSources(form.postingSources), info: { created: false, opened: !!opened, changedFields }, ownAfter }); return; }
       if (thenPost) { onSaved?.(job, { created: false, opened: !!opened, posting: 'Saved. It will be posted once the requirement is live.', changedFields }); return; }
       onSaved?.(job, { created: false, changedFields });
     } catch (err) {
@@ -664,7 +669,43 @@ export default function RequirementForm({
   const clientMark = !editing && fill.state ? (form.clientId ? ' ff-found' : ' ff-missing') : '';
   const clientTag = !editing && fill.state ? (form.clientId ? <span className="ff-tag ok">Found in the file</span> : <span className="ff-tag no">Not found: pick one</span>) : null;
 
+  // Our own sites (Job Portal, Website + Google Jobs) go up once the recipients are saved.
+  async function postOwnAfter(job, names) {
+    const ID = { 'TeamLink Job Portal': 'jobportal', 'TeamLink Website': 'website', 'Google Jobs': 'google' };
+    const ids = [...new Set((names || []).map((n) => ID[n]).filter(Boolean))];
+    if (!ids.length) return '';
+    try {
+      const cur = await api.get(`/requirements/${job.id}/posting-sites`);
+      const ticked = (cur.data.sites || []).filter((x) => x.ticked).map((x) => x.id);
+      await api.put(`/requirements/${job.id}/posting-sites`, { sites: [...new Set([...ticked, ...ids])] });
+      return '';
+    } catch (e) { return e.response?.data?.error || 'Our own sites could not be posted. Post them below.'; }
+  }
+
   // ---- THE POST STEP: after Save & Post the same window shows where to post (sites, logins, results).
+  // First (founder 2026-11-20): who receives the responses - required before anything is posted.
+  if (postStep && !postStep.rcpt) {
+    return (
+      <Modal
+        title={`Post this requirement — ${postStep.job.title}`}
+        size="xwide acw-modal"
+        onClose={() => finishPostStep()}
+        footer={<div className="cf-bar"><span className="cf-bar-note">The requirement is saved. Nothing is posted until you tick who receives the responses.</span></div>}
+      >
+        <div className="acw-wrap" style={{ display: 'block', overflowY: 'auto' }}>
+          <div className="acw-form" style={{ overflow: 'visible' }}>
+            <PostRecipientsStep
+              job={postStep.job}
+              onDone={async (r) => {
+                const note = await postOwnAfter(postStep.job, postStep.ownAfter);
+                setPostStep((st) => ({ ...st, rcpt: r, ownNote: note }));
+              }}
+            />
+          </div>
+        </div>
+      </Modal>
+    );
+  }
   if (postStep) {
     return (
       <Modal
@@ -675,6 +716,8 @@ export default function RequirementForm({
       >
         <div className="acw-wrap" style={{ display: 'block', overflowY: 'auto' }}>
           <div className="acw-form" style={{ overflow: 'visible' }}>
+            <div className="small-muted" style={{ padding: '8px 16px 0' }}>{postStep.rcpt && postStep.rcpt.names ? `Responses go to: ${postStep.rcpt.names}` : ''}</div>
+            {postStep.ownNote && <div className="notice amber" style={{ margin: '8px 16px 0' }}>{postStep.ownNote}</div>}
             <PostStep job={postStep.job} initial={postStep.initial} onDone={(r) => finishPostStep(r)} onAnother={postStep.info && postStep.info.created ? (r) => finishPostStep(r, true) : null} />
           </div>
         </div>
