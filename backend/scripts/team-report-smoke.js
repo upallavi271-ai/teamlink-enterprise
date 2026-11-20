@@ -97,6 +97,22 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
           check('TL: ...and the follow-up with the text that was written', (await panel.innerText()).includes(WROTE));
           const squeezed = await panel.evaluate((el) => [...el.querySelectorAll('.trd-scroll')].filter((x) => x.scrollHeight > x.clientHeight + 2).length);
           check('TL: no table inside the recruiter panel is squeezed into its own little scroll box (the panel scrolls as one page)', squeezed === 0, squeezed);
+          // the numbers are buttons that open their own list; the lists have filters (founder 2026-11-20)
+          await panel.locator('button.trd-tile', { hasText: 'Follow-ups added' }).click();
+          const addedOnly = await panel.locator('h4', { hasText: /^Follow-ups added \(1/ }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
+          check('TL: clicking "Follow-ups added" opens that list (the follow-up with its text), and hides the candidates list', addedOnly && (await panel.innerText()).includes(WROTE) && (await panel.locator('h4', { hasText: 'Candidates added' }).count()) === 0, (await panel.innerText()).slice(0, 400));
+          await panel.locator('button.trd-tile', { hasText: 'Follow-ups done' }).click();
+          const doneEmpty = await panel.locator('h4', { hasText: /^Follow-ups done \(0/ }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
+          check('TL: "Follow-ups done" opens its own list (none done yet)', doneEmpty);
+          await panel.locator('button.trd-tile', { hasText: 'Candidates added' }).click();
+          const candOnly = await panel.locator('h4', { hasText: /^Candidates added \(1/ }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
+          check('TL: "Candidates added" opens only the candidates list', candOnly && (await panel.locator('h4', { hasText: 'Follow-ups' }).count()) === 0);
+          await panel.locator('input[type=search]').fill('nobody-matches-this');
+          check('TL: the search box filters the list', await panel.locator('td', { hasText: 'No candidate matches the filters.' }).isVisible().catch(() => false));
+          await panel.locator('button', { hasText: 'Clear all' }).click();
+          await panel.locator('button', { hasText: 'Show everything' }).click();
+          check('TL: "Show everything" brings both lists back', (await panel.locator('h4', { hasText: 'Candidates added' }).count()) === 1 && (await panel.locator('h4', { hasText: 'Follow-ups and what was written' }).count()) === 1);
+          check('TL: the panel has Status / Answer / Client / Requirement filters', (await panel.locator('.msel').count()) >= 2);
           await page.screenshot({ path: path.join(SHOTS, 'tl-view-panel.png') });
           await page.keyboard.press('Escape');
           check('TL: Escape closes the recruiter panel and the team stays', await page.locator('.trd-panel', { hasText: 'Candidates added' }).count() === 0 && await team.isVisible());

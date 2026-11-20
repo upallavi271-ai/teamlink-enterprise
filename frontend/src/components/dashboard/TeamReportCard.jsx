@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
+import MultiSelect from '../ats/MultiSelect.jsx';
 import './teamReportCard.css';
 
 // "REPORT OF YOUR TEAM" on the ATS dashboard (founder 2026-11-20): only for team leads. One small table, one row per recruiter, four numbers
@@ -30,15 +31,27 @@ const dayOf = (v) => String((v && typeof v === 'object' ? v.day : v) || '').slic
 const SHOWN = [['added', 'Follow-ups added'], ['done', 'Follow-ups done'], ['logged', 'Calls / messages'], ['overdue', 'Overdue']];
 const STATUS_CLASS = { Overdue: 'trc-bad', 'Done late': 'trc-warn', Done: 'trc-ok', 'Due today': 'trc-warn' };
 
-// the side panel: ONE person's report for the chosen days
+// the side panel: ONE person's report for the chosen days. Every number is a button that opens its own list (founder 2026-11-20: "click the
+// cards and they open"), and the lists have filters: search, status, answer, client, requirement.
+const TILE_WORD = { added: 'Follow-ups added', done: 'Follow-ups done', logged: 'Calls / messages', overdue: 'Overdue', cands: 'Candidates added' };
+const FU_STATUSES = ['Done', 'Done late', 'Overdue', 'Due today', 'Upcoming', 'Logged', 'Written', 'Open'];
+const ANSWERS = [['interested', 'Interested'], ['notInterested', 'Not interested'], ['noAnswer', 'No answer']];
 function PersonPanel({ person, from, to, onClose }) {
   const [fu, setFu] = useState(null);
   const [cands, setCands] = useState(undefined); // undefined = loading, null = not allowed to read
   const [err, setErr] = useState('');
+  const [show, setShow] = useState(''); // '' = everything | added | done | logged | overdue | cands
+  const [f, setF] = useState({ q: '', status: '', outcome: '', client: '', requirement: '' });
   useEffect(() => {
     let alive = true;
-    api.get('/followup-report/list', { params: { from, to, personId: person.id, limit: 300 } })
+    setFu(null); setErr('');
+    const metric = ['added', 'done', 'logged', 'overdue'].includes(show) ? show : undefined;
+    api.get('/followup-report/list', { params: { from, to, personId: person.id, limit: 500, metric } })
       .then((r) => { if (alive) setFu(r.data); }).catch((e) => { if (alive) setErr(e.response?.data?.error || 'The follow-ups could not be loaded.'); });
+    return () => { alive = false; };
+  }, [person.id, from, to, show]);
+  useEffect(() => {
+    let alive = true;
     api.get(`/ats/history/recruiter/${person.id}`, { params: { from, to } })
       .then((r) => { if (alive) setCands(r.data); }).catch(() => { if (alive) setCands(null); });
     return () => { alive = false; };
@@ -55,6 +68,23 @@ function PersonPanel({ person, from, to, onClose }) {
     return cands.rows.filter((x) => dayOf(x.added) && dayOf(x.added) >= from && dayOf(x.added) <= to)
       .sort((a, b) => dayOf(b.added).localeCompare(dayOf(a.added)));
   }, [cands, from, to]);
+  const nowWord = (x) => (x.outcome ? String(x.outcome).replace(/^./, (c) => c.toUpperCase()) : (x.stageLabel || x.step || ''));
+
+  // the options of the filters come from what is on the panel (a ticked value never disappears)
+  const csvHas = (csv, v) => !csv || String(csv).split(',').includes(String(v || ''));
+  const fuRows = (fu && fu.rows) || [];
+  const clientOpts = [...new Set([...fuRows.map((r) => r.client), ...added.map((x) => x.client)].filter(Boolean))].sort().map((v) => ({ value: v, label: v }));
+  const reqOpts = [...new Set([...fuRows.map((r) => r.requirement), ...added.map((x) => x.requirement)].filter(Boolean))].sort().map((v) => ({ value: v, label: v }));
+  const words = f.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hit = (t) => words.every((w) => String(t).toLowerCase().includes(w));
+  const fuShown = fuRows.filter((r) => csvHas(f.status, r.status) && csvHas(f.outcome, r.outcomeClass) && csvHas(f.client, r.client) && csvHas(f.requirement, r.requirement)
+    && hit(`${r.what} ${r.candidateName || ''} ${r.requirement || ''} ${r.client || ''} ${r.type || ''}`));
+  const candShown = added.filter((x) => csvHas(f.client, x.client) && csvHas(f.requirement, x.requirement) && hit(`${x.candidate} ${x.requirement || ''} ${x.client || ''} ${nowWord(x)}`));
+  const anyFilter = !!(f.q || f.status || f.outcome || f.client || f.requirement);
+  const pick = (k) => setShow((s) => (s === k ? '' : k));
+  const tiles = [...SHOWN.map(([k], i) => [k, person.m[i] || 0]), ['cands', added.length]];
+  const showCands = show === '' || show === 'cands';
+  const showFu = show !== 'cands';
 
   return (
     <div className="trd-wrap" role="presentation">
@@ -70,53 +100,74 @@ function PersonPanel({ person, from, to, onClose }) {
         </div>
         <div className="trd-body">
           <div className="trd-nums">
-            {SHOWN.map(([k, l], i) => <div key={k} className={k === 'overdue' && person.m[i] ? 'trc-bad' : ''}><b>{person.m[i] || 0}</b><span>{l}</span></div>)}
-            <div><b>{added.length}</b><span>Candidates added</span></div>
+            {tiles.map(([k, v]) => (
+              <button key={k} type="button" className={`trd-tile${show === k ? ' on' : ''}${k === 'overdue' && v ? ' trc-bad' : ''}`} onClick={() => pick(k)} aria-pressed={show === k} title={show === k ? 'Show everything again' : `Open the list: ${TILE_WORD[k]}`}>
+                <b>{v}</b><span>{TILE_WORD[k]}</span>
+              </button>
+            ))}
+          </div>
+          {show && <div className="trd-showing small-muted">{`Showing: ${TILE_WORD[show]}`} <button type="button" className="link-btn" onClick={() => setShow('')}>Show everything</button></div>}
+
+          <div className="trd-filters">
+            <input type="search" value={f.q} placeholder="Search a candidate, requirement, client or what was written…" onChange={(e) => setF({ ...f, q: e.target.value })} aria-label="Search" />
+            {showFu && <MultiSelect label="Status" allLabel="Any status" value={f.status} onChange={(v) => setF({ ...f, status: v })} options={FU_STATUSES.map((s) => ({ value: s, label: s }))} />}
+            {showFu && <MultiSelect label="Answer" allLabel="Any answer" value={f.outcome} onChange={(v) => setF({ ...f, outcome: v })} options={ANSWERS.map(([v, l]) => ({ value: v, label: l }))} />}
+            {clientOpts.length > 0 && <MultiSelect label="Client" allLabel="All clients" value={f.client} onChange={(v) => setF({ ...f, client: v })} options={clientOpts} />}
+            {reqOpts.length > 0 && <MultiSelect label="Requirement" allLabel="All requirements" value={f.requirement} onChange={(v) => setF({ ...f, requirement: v })} options={reqOpts} />}
+            {anyFilter && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setF({ q: '', status: '', outcome: '', client: '', requirement: '' })}>Clear all</button>}
           </div>
 
-          <h4>Candidates added</h4>
-          {cands === undefined ? <div className="small-muted">Loading…</div> : cands === null ? <div className="small-muted">This list is not available to you.</div> : (
-            <div className="trd-scroll">
-              <table className="trc-table">
-                <thead><tr><th>Added on</th><th>Candidate</th><th>Requirement</th><th>Now</th></tr></thead>
-                <tbody>
-                  {added.map((x) => (
-                    <tr key={x.applicationId}>
-                      <td>{fmtDay(dayOf(x.added))}</td>
-                      <td><Link to={`/candidates/${x.candidateId}`} onClick={onClose}>{x.candidate}</Link></td>
-                      <td>{x.requirement}{x.client ? <div className="small-muted">{x.client}</div> : null}</td>
-                      <td>{x.outcome ? String(x.outcome).replace(/^./, (c) => c.toUpperCase()) : (x.stageLabel || x.step || '')}</td>
-                    </tr>
-                  ))}
-                  {added.length === 0 && <tr><td colSpan={4} className="small-muted">No candidate was added in these days.</td></tr>}
-                </tbody>
-              </table>
-            </div>
+          {showCands && (
+            <>
+              <h4>{`Candidates added (${candShown.length}${candShown.length !== added.length ? ` of ${added.length}` : ''})`}</h4>
+              {cands === undefined ? <div className="small-muted">Loading…</div> : cands === null ? <div className="small-muted">This list is not available to you.</div> : (
+                <div className="trd-scroll">
+                  <table className="trc-table">
+                    <thead><tr><th>Added on</th><th>Candidate</th><th>Requirement</th><th>Now</th></tr></thead>
+                    <tbody>
+                      {candShown.map((x) => (
+                        <tr key={x.applicationId}>
+                          <td>{fmtDay(dayOf(x.added))}</td>
+                          <td><Link to={`/candidates/${x.candidateId}`} onClick={onClose}>{x.candidate}</Link></td>
+                          <td>{x.requirement}{x.client ? <div className="small-muted">{x.client}</div> : null}</td>
+                          <td>{nowWord(x)}</td>
+                        </tr>
+                      ))}
+                      {candShown.length === 0 && <tr><td colSpan={4} className="small-muted">{added.length ? 'No candidate matches the filters.' : 'No candidate was added in these days.'}</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
 
-          <h4>Follow-ups and what was written</h4>
-          {err && <div className="error-text">{err}</div>}
-          {!fu && !err ? <div className="small-muted">Loading…</div> : fu && (
-            <div className="trd-scroll">
-              <table className="trc-table">
-                <thead><tr><th>Date</th><th>Candidate / client</th><th>Requirement</th><th>What happened</th><th>Call back on</th><th>Answer</th><th>Status</th></tr></thead>
-                <tbody>
-                  {fu.rows.map((r) => (
-                    <tr key={r.id}>
-                      <td>{fmtDay(r.day)}</td>
-                      <td>{r.link ? <Link to={r.link} onClick={onClose}>{r.candidateName || r.kind}</Link> : r.candidateName}<div className="small-muted">{r.type}</div></td>
-                      <td>{r.requirement || ''}{r.client ? <div className="small-muted">{r.client}</div> : null}</td>
-                      <td className="trc-what">{r.what}</td>
-                      <td>{r.callBackDay ? fmtDay(r.callBackDay) : ''}</td>
-                      <td>{r.outcome || ''}</td>
-                      <td><span className={STATUS_CLASS[r.status] || ''}>{r.status}</span></td>
-                    </tr>
-                  ))}
-                  {fu.rows.length === 0 && <tr><td colSpan={7} className="small-muted">No follow-up in these days.</td></tr>}
-                </tbody>
-              </table>
-              {fu.total > fu.rows.length && <div className="small-muted">{`${fu.rows.length} of ${fu.total} follow-ups shown. Narrow the days to see the rest.`}</div>}
-            </div>
+          {showFu && (
+            <>
+              <h4>{`${show && show !== 'cands' ? TILE_WORD[show] : 'Follow-ups and what was written'} (${fuShown.length}${fuShown.length !== fuRows.length ? ` of ${fuRows.length}` : ''})`}</h4>
+              {err && <div className="error-text">{err}</div>}
+              {!fu && !err ? <div className="small-muted">Loading…</div> : fu && (
+                <div className="trd-scroll">
+                  <table className="trc-table">
+                    <thead><tr><th>Date</th><th>Candidate / client</th><th>Requirement</th><th>What happened</th><th>Call back on</th><th>Answer</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {fuShown.map((r) => (
+                        <tr key={r.id}>
+                          <td>{fmtDay(r.day)}</td>
+                          <td>{r.link ? <Link to={r.link} onClick={onClose}>{r.candidateName || r.kind}</Link> : r.candidateName}<div className="small-muted">{r.type}</div></td>
+                          <td>{r.requirement || ''}{r.client ? <div className="small-muted">{r.client}</div> : null}</td>
+                          <td className="trc-what">{r.what}</td>
+                          <td>{r.callBackDay ? fmtDay(r.callBackDay) : ''}</td>
+                          <td>{r.outcome || ''}</td>
+                          <td><span className={STATUS_CLASS[r.status] || ''}>{r.status}</span></td>
+                        </tr>
+                      ))}
+                      {fuShown.length === 0 && <tr><td colSpan={7} className="small-muted">{fuRows.length ? 'Nothing matches the filters.' : 'Nothing in these days.'}</td></tr>}
+                    </tbody>
+                  </table>
+                  {fu.total > fu.rows.length && <div className="small-muted">{`${fu.rows.length} of ${fu.total} shown. Narrow the days to see the rest.`}</div>}
+                </div>
+              )}
+            </>
           )}
         </div>
       </aside>

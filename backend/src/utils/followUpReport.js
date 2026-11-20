@@ -469,6 +469,7 @@ async function list(scope, q = {}, { all = false } = {}) {
       outcome: it.outcomeText || (it.outcome ? OUTCOME_WORD[it.outcome] : null), outcomeClass: it.outcome,
       status: statusOf(it, now), carried: !!carriedIn && !addedIn && !doneIn && !callIn, link: it.link,
       people: [...new Set(people)],
+      credit: { added: addedIn ? it.addedBy : null, done: doneIn ? it.doneBy : null, logged: loggedIn ? it.loggedBy : null },
     });
   });
 
@@ -476,6 +477,10 @@ async function list(scope, q = {}, { all = false } = {}) {
   const personId = q.personId ? String(q.personId) : '';
   let out = rows;
   if (personId) out = out.filter((x) => x.people.includes(personId));
+  // one number's own list (the cards of the report): the same rule as the count - who gets the credit for adding / closing / logging it
+  const metric = String(q.metric || '');
+  if (['added', 'done', 'logged'].includes(metric)) out = out.filter((x) => x.credit[metric] && (!personId || x.credit[metric] === personId));
+  else if (metric === 'overdue') out = out.filter((x) => x.status === 'Overdue');
   if (q.status) { const want = String(q.status).split(',').map((s) => s.trim()).filter(Boolean); out = out.filter((x) => want.includes(x.status)); }
   if (q.outcome) out = out.filter((x) => x.outcomeClass === String(q.outcome));
   if (q.type) out = out.filter((x) => x.type === String(q.type));
@@ -491,7 +496,7 @@ async function list(scope, q = {}, { all = false } = {}) {
   const limit = Math.min(1000, Math.max(1, Number(q.limit) || 300));
   const offset = Math.max(0, Number(q.offset) || 0);
   const page = all ? out : out.slice(offset, offset + limit);
-  const clean = page.map(({ people, ...x }) => x);
+  const clean = page.map(({ people, credit, ...x }) => x);
   return { status: 200, body: { from: r.from, to: r.to, total, offset: all ? 0 : offset, rows: clean, imported: out.filter((x) => x.imported).length } };
 }
 
