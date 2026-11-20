@@ -339,6 +339,7 @@ const MARKETING_RULES = `Rules you must always follow:
 - Reply in the language the person writes: English, Telugu, Hindi or Tenglish (Telugu in English letters).
 - Keep every message short: two to four lines.
 - YOU do the work: answer whatever the person asks about digital marketing (SEO, social media, ads, lead generation, website promotion, content, Google Business Profile, how it helps their business) yourself, in your own short words. Use "THE PROMOTION WE SENT" and "WEBSITE FACTS" first, and plain general digital-marketing knowledge for the rest.
+- NEVER repeat or rephrase your previous message. When they ask for more detail ("explain in detail", "module by module", "more"), give NEW details that your earlier messages did not say, taken from WEBSITE FACTS, in a short list; if the facts have no more, say so in one line and ask which part they want.
 - Never invent anything about OUR company: no price, offer, discount, guarantee, result, number of clients, client name or date that the promotion or the website does not state. A price question: say the cost depends on their goals and scope, and ask what you need to know (below) instead.
 - Do NOT say "our team will contact you" as a way out of a question. Only when they ask for a person, a call, a meeting or a formal quote, say a team member will follow up, and set "handoff":true.
 - Keep the talk moving with our digital marketing discovery questions, ONE at a time, never one they already answered in this chat: 1) What kind of business do you run, and where? 2) What do you want most: more leads, more sales, more website visitors or a stronger brand? 3) Do you have a website and social pages now? Share the links. 4) Which service are you thinking of: SEO, social media, lead generation or website promotion? 5) What monthly budget range do you have in mind? 6) How soon do you want to start? Never ask job, candidate, salary or resume questions.
@@ -350,7 +351,10 @@ async function askMarketing(conv, cfg, input) {
   const ctx = { links: [], handoff: null, notInterested: false, facts: [] };
   const calls = [];
   const sent = (await T.sentBodies(conv).catch(() => [])).slice(0, 2);
-  const hits = await Cfg.kbSearch(input, 5, conv.numberId).catch(() => []);
+  const history = await memory(conv, cfg.memoryCount);
+  // a follow-up ("explain in detail", "module by module") has no topic words of its own: the topic is what they asked before
+  const before = history.filter((m) => m.role === 'user').slice(-3, -1).map((m) => m.content).join(' ');
+  const hits = await Cfg.kbSearch(`${input} ${before}`, 6, conv.numberId).catch(() => []);
   const pageOf = (h) => (/\(Page: (https?:\/\/[^)\s]+)\)/.exec(String((h && h.answer) || '')) || [])[1] || null;
   const promoText = sent.length ? sent.map((b, i) => `Message ${i + 1}: ${clip(b, 900)}`).join('\n') : 'No promotion text is on record for this person.';
   const facts = hits.length ? hits.map((h) => `- ${h.question}: ${clip(String(h.answer).replace(/\s*\(Page: [^)]*\)\s*$/, ''), 700)}`).join('\n') : 'Nothing on the website matches this question.';
@@ -359,10 +363,18 @@ async function askMarketing(conv, cfg, input) {
   const lead = JSON.parse(conv.collected || '{}').marketingLead;
   const known = lead && Object.keys(lead).length ? `\nWHAT THEY ALREADY TOLD US (do not ask these again): ${JSON.stringify(lead)}` : '';
   const system = `${cfg.ownSystemPrompt || Cfg.MARKETING_PROMPT}\n\n${MARKETING_RULES}\n\n${name}${known}\nTHE PROMOTION WE SENT THIS PERSON (their message is most likely about it):\n${promoText}\n\nWEBSITE FACTS (what OUR company and its services are; the only company facts you may state):\n${facts}\nThe software we sell is used at https://teamlink.teamlinks.in`;
-  const history = await memory(conv, cfg.memoryCount);
   if (!history.length) history.push({ role: 'user', content: clip(input, 1500) });
-  const out = await modelJson(system, history, { model: cfg.model || undefined, timeoutMs: MODEL_TIMEOUT_MS });
-  const reply = typeof out.reply === 'string' ? out.reply.trim() : '';
+  let out = await modelJson(system, history, { model: cfg.model || undefined, timeoutMs: MODEL_TIMEOUT_MS });
+  let reply = typeof out.reply === 'string' ? out.reply.trim() : '';
+  // the same answer twice is the failure people notice most: say it differently once, and if it still repeats, ask which part they want
+  const lastSaid = [...history].reverse().find((m) => m.role === 'assistant');
+  const words = (t) => new Set(String(t || '').toLowerCase().split(/[^p{L}p{N}]+/u).filter((w) => w.length > 2));
+  const repeats = (a, b) => { const x = words(a); const y = words(b); if (!x.size || !y.size) return false; let n = 0; for (const w of x) if (y.has(w)) n++; return n / Math.min(x.size, y.size) > 0.7; };
+  if (reply && lastSaid && repeats(reply, lastSaid.content)) {
+    const again = await modelJson(system, [...history, { role: 'user', content: 'You already said that. Do NOT repeat it. Give NEW details only, as a short list, from the WEBSITE FACTS.' }], { model: cfg.model || undefined, timeoutMs: MODEL_TIMEOUT_MS }).catch(() => null);
+    const r2 = again && typeof again.reply === 'string' ? again.reply.trim() : '';
+    if (r2 && !repeats(r2, lastSaid.content)) { out = again; reply = r2; } else reply = 'That is what I have on this from our website. Which part should I explain more: the features, how it works, or how it can help your business?';
+  }
   if (out.handoff === true) ctx.handoff = 'They asked for a person, a call, a meeting or a formal quote (digital marketing)';
   // what the person has told us (business, goal, budget ...) is kept with the chat, so the team sees it and the AI does not ask it twice
   if (out.lead && typeof out.lead === 'object' && !Array.isArray(out.lead)) {
