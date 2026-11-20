@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import CallButton from '../browsercall/CallButton.jsx'; // manual browser call beside the number
 import { ReplacementTags } from '../joindrop/ReplacementParts.jsx'; // who replaced whom: "Replacement for <name> (dropped on ...)"
 import api from '../../api';
 import { initials } from '../../atsVocab';
@@ -113,7 +114,7 @@ export default function ProfileTop({
           {internal !== false && (() => { const q = completenessOf(c); return <span className={`cpt-flag ${q.score >= 80 ? '' : q.score >= 60 ? 'is-orange' : 'is-red'}`} style={{ fontWeight: 600 }} title={q.missing.length ? `Missing: ${q.missing.join(', ')}` : 'Every key detail is filled'}>{q.score}% complete</span>; })()}
         </div>
         <div className="cpt-facts">
-          {c.phone && <span>{c.phone}</span>}
+          {c.phone && <span>{c.phone}{internal !== false && <CallButton candidateId={c.id} applicationId={app && app.id} name={c.name} compact />}</span>}
           {c.email && <span className="cpt-email">{c.email}</span>}
           {c.location && <span>{c.location}</span>}
           {c.experienceYears != null && <span>{`${c.experienceYears} yrs exp`}</span>}

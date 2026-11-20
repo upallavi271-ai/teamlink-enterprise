@@ -1,5 +1,7 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Shell from './components/Shell.jsx';
+import BrowserCallProvider from './components/browsercall/CallProvider.jsx'; // manual browser calling: one softphone for the whole app
+import CallBar from './components/browsercall/CallBar.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import OmniEntry, { OmniLegacyRedirect } from './components/outreach/OmniEntry.jsx'; // what the sidebar Omni-Channel opens (Green Start, 2026-10-21)
 import AppOmniEmbed from './components/omni/AppOmniEmbed.jsx'; // the Omni-Channel "Templates & campaigns" of one app, bare: the Job Portal's own button shows it (2026-11-19)
@@ -256,7 +258,7 @@ export default function App() {
         path="/"
         element={
           <ProtectedRoute>
-            <Shell />
+            <BrowserCallProvider><Shell /><CallBar /></BrowserCallProvider>
           </ProtectedRoute>
         }
       >

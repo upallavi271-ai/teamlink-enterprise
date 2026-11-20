@@ -1,0 +1,86 @@
+// REAL Asterisk events -> BrowserCall rows. Listens on AMI (read-only user, Events: call,user). Nothing here invents a call: a row is only
+// moved on by an event Asterisk sent. The dialplan [browser-out] sends UserEvent(TLCall, Token, Ext, To) when a browser extension dials.
+//   UserEvent TLCall      -> attach Asterisk Uniqueid/Linkedid to the row of that token (status calling)
+//   DialBegin (Dest chan) -> remember the candidate-side channel
+//   Newstate Ringing      -> ringing
+//   DialEnd ANSWER        -> connected (answerAt)
+//   DialEnd other         -> failed / missed / cancelled
+//   Hangup (caller chan)  -> endAt, duration, talk time, hangup cause + reason, final status
+const crypto = require('crypto');
+const { Ami } = require('../calling/voice/ami');
+const S = require('./schema');
+const { ENV } = require('./config');
+
+const byUid = new Map(); // caller Uniqueid -> call id
+const byDest = new Map(); // callee Uniqueid -> call id
+let ami = null; let timer = null; let sweep = null; let status = { connected: false, lastEventAt: null, error: null };
+
+const FINAL = new Set(['completed', 'failed', 'missed', 'cancelled', 'busy']);
+const DIAL_MAP = { BUSY: ['busy', 'The candidate\'s line is busy'], NOANSWER: ['missed', 'No answer'], CANCEL: ['cancelled', 'Cancelled before it was answered'], CHANUNAVAIL: ['failed', 'The line or SIM is not available'], CONGESTION: ['failed', 'Network congestion / no free GSM channel'], DONTCALL: ['failed', 'Refused'], TORTURE: ['failed', 'Refused'], INVALIDARGS: ['failed', 'Invalid number'] };
+
+async function log(callId, uid, event, e) {
+  try { await S.run('INSERT INTO "BrowserCallEvent" ("id","callId","uniqueId","event","payload","at") VALUES (?,?,?,?,?,?)', crypto.randomUUID(), callId || null, uid || null, event, JSON.stringify(e).slice(0, 4000), S.nowIso()); } catch { /* audit only */ }
+}
+const secs = (a, b) => Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 1000));
+
+async function onEvent(e) {
+  status.lastEventAt = S.nowIso();
+  const name = e.Event;
+  if (name === 'UserEvent' && e.UserEvent === 'TLCall') {
+    const row = await S.one('SELECT * FROM "BrowserCall" WHERE "token"=?', String(e.Token || ''));
+    if (!row) return;
+    byUid.set(e.Uniqueid, row.id);
+    await S.run('UPDATE "BrowserCall" SET "asteriskUniqueId"=?, "asteriskLinkedId"=?, "status"=CASE WHEN "status"=\'initiated\' THEN \'calling\' ELSE "status" END, "updatedAt"=? WHERE "id"=?', e.Uniqueid, e.Linkedid || e.Uniqueid, S.nowIso(), row.id);
+    return log(row.id, e.Uniqueid, name, e);
+  }
+  if (name === 'DialBegin' && byUid.has(e.Uniqueid)) { byDest.set(e.DestUniqueid, byUid.get(e.Uniqueid)); return log(byUid.get(e.Uniqueid), e.Uniqueid, name, e); }
+  if (name === 'Newstate' && byDest.has(e.Uniqueid) && /ring/i.test(e.ChannelStateDesc || '')) {
+    const id = byDest.get(e.Uniqueid);
+    await S.run('UPDATE "BrowserCall" SET "status"=\'ringing\', "updatedAt"=? WHERE "id"=? AND "status" IN (\'initiated\',\'calling\')', S.nowIso(), id);
+    return log(id, e.Uniqueid, name, e);
+  }
+  if (name === 'DialEnd' && byUid.has(e.Uniqueid)) {
+    const id = byUid.get(e.Uniqueid); const st = String(e.DialStatus || '').toUpperCase();
+    if (st === 'ANSWER') await S.run('UPDATE "BrowserCall" SET "status"=\'connected\', "answerAt"=?, "dialStatus"=?, "updatedAt"=? WHERE "id"=? AND "answerAt" IS NULL', S.nowIso(), st, S.nowIso(), id);
+    else { const [s, why] = DIAL_MAP[st] || ['failed', `Dial ended: ${st || 'unknown'}`]; await S.run('UPDATE "BrowserCall" SET "dialStatus"=?, "status"=?, "hangupReason"=COALESCE("hangupReason",?), "updatedAt"=? WHERE "id"=? AND "status" NOT IN (\'completed\')', st, s, why, S.nowIso(), id); }
+    return log(id, e.Uniqueid, name, e);
+  }
+  if (name === 'Hangup' && byUid.has(e.Uniqueid)) {
+    const id = byUid.get(e.Uniqueid); byUid.delete(e.Uniqueid);
+    for (const [k, v] of byDest) if (v === id) byDest.delete(k);
+    const row = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', id);
+    if (!row) return;
+    const end = S.nowIso();
+    const answered = !!row.answerAt;
+    const final = answered ? 'completed' : (FINAL.has(row.status) ? row.status : 'failed');
+    await S.run('UPDATE "BrowserCall" SET "endAt"=?, "durationSec"=?, "talkSec"=?, "hangupCause"=?, "hangupReason"=COALESCE("hangupReason",?), "status"=?, "updatedAt"=? WHERE "id"=?',
+      end, secs(row.startAt, end), answered ? secs(row.answerAt, end) : 0, Number(e.Cause) || null, e['Cause-txt'] || null, final, end, id);
+    return log(id, e.Uniqueid, name, e);
+  }
+  return undefined;
+}
+
+async function connect() {
+  if (!ENV.amiUser || !ENV.amiSecret) { status = { connected: false, lastEventAt: null, error: 'BROWSER_CALL_AMI_USER / BROWSER_CALL_AMI_SECRET are not set' }; return; }
+  try {
+    ami = new Ami({ host: ENV.amiHost, port: ENV.amiPort, user: ENV.amiUser, secret: ENV.amiSecret, events: 'call,user' });
+    ami.on('event', (e) => { onEvent(e).catch((err) => console.error('[browser-call] event:', err.message)); });
+    ami.on('close', () => { status.connected = false; timer = setTimeout(connect, 10000); timer.unref(); });
+    await ami.connect();
+    status = { connected: true, lastEventAt: null, error: null };
+  } catch (err) { status = { connected: false, lastEventAt: null, error: err.message }; timer = setTimeout(connect, 15000); timer.unref(); }
+}
+
+// a call that never reached Asterisk (no TLCall within 90 s) is a real failure, said plainly
+async function sweepStale() {
+  const cut = new Date(Date.now() - 90000).toISOString();
+  await S.run('UPDATE "BrowserCall" SET "status"=\'failed\', "endAt"=?, "durationSec"=0, "talkSec"=0, "hangupReason"=\'The call never reached the phone system (browser could not connect)\', "updatedAt"=? WHERE "status"=\'initiated\' AND "startAt"<?', S.nowIso(), S.nowIso(), cut);
+  // calls that stayed open for 6 h without a Hangup event (AMI was down): close them, do not invent talk time
+  const old = new Date(Date.now() - 6 * 3600000).toISOString();
+  await S.run('UPDATE "BrowserCall" SET "status"=CASE WHEN "answerAt" IS NULL THEN \'failed\' ELSE \'completed\' END, "endAt"=?, "hangupReason"=\'Closed: no end event from the phone system\', "updatedAt"=? WHERE "status" IN (\'calling\',\'ringing\',\'connected\') AND "startAt"<?', S.nowIso(), S.nowIso(), old);
+}
+function start() {
+  S.ensure().then(connect).catch((e) => console.error('[browser-call] start:', e.message));
+  sweep = setInterval(() => sweepStale().catch(() => {}), 30000); sweep.unref();
+}
+module.exports = { start, getStatus: () => status, onEvent, sweepStale };

@@ -27,9 +27,9 @@ function format(fields) {
 }
 
 class Ami extends EventEmitter {
-  constructor({ host = '127.0.0.1', port = 5038, user, secret } = {}) {
+  constructor({ host = '127.0.0.1', port = 5038, user, secret, events = 'call' } = {}) {
     super();
-    Object.assign(this, { host, port: Number(port), user, secret });
+    Object.assign(this, { host, port: Number(port), user, secret, events });
     this.sock = null; this.buf = ''; this.waiting = new Map(); this.seq = 0; this.ready = false;
   }
 
@@ -58,7 +58,7 @@ class Ami extends EventEmitter {
       });
       sock.on('connect', async () => {
         try {
-          const r = await this.action({ Action: 'Login', Username: this.user, Secret: this.secret, Events: 'call' });
+          const r = await this.action({ Action: 'Login', Username: this.user, Secret: this.secret, Events: this.events });
           if (r.Response !== 'Success') throw new Error(`Asterisk manager login refused: ${r.Message || r.Response}`);
           this.ready = true; resolve(this);
         } catch (e) { sock.destroy(); reject(e); }

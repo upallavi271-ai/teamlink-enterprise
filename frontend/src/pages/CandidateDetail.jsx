@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import CallHistory from '../components/browsercall/CallHistory.jsx'; // real browser calls on this candidate
 import CandidateHistory from '../components/ats/CandidateHistory.jsx'; // History tab: the complete history of the person (applications, totals, one timeline)
 import { DupBanner } from '../components/duplicates/DupChip.jsx'; // dup_
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -668,6 +669,7 @@ export default function CandidateDetail() {
       {tab === 'aicalling' && internal && <AiCallingSlot {...slot} refreshKey={refreshKey} />}
       {tab === 'scheduled' && internal && <ScheduleMessageTab key={c.id} candidateId={c.id} applicationId={primary ? primary.id : undefined} />}
       {tab === 'conversation' && internal && <CandidateConversation candidateId={c.id} name={c.name} applicationId={primary ? primary.id : undefined} requirementId={primary ? primary.requirementId : undefined} onChanged={load} />}
+      {tab === 'history' && internal && <CallHistory candidateId={c.id} />}
       {tab === 'history' && internal && <div className="card section"><CandidateHistory key={c.id} candidateId={c.id} embedded /></div>}
       {tab === 'history' && <HistoryTimelineSlot {...slot} refreshKey={refreshKey} withActivity={false} />}
       {tab === 'history' && internal && <div className="section-label">{followUpCount ? `Follow-ups (${followUpCount}) — one per requirement` : 'Follow-ups — one per requirement'}</div>}

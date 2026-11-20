@@ -54,6 +54,7 @@ import ReachBar from '../components/reach/ReachBar.jsx';
 import ReachRowButtons from '../components/reach/ReachRowButtons.jsx';
 // WhatsApp quick chat (free wa.me links): a row icon, a bulk 'Send WhatsApp' + 'Mark opted in', and the Resume bar (components/wa/)
 import WaButton from '../components/wa/WaButton.jsx';
+import CallButton from '../components/browsercall/CallButton.jsx'; // manual browser call (SIM line)
 import WaBulkModal from '../components/wa/WaBulkModal.jsx';
 import SendRcsModal, { useRcsMay } from '../components/rcs/SendRcsModal.jsx';
 import ScheduleBulkModal from '../components/reminders/ScheduleBulkModal.jsx'; // "Schedule a message" for the ticked candidates (2026-11-20)
@@ -2793,7 +2794,7 @@ function Cell({
         </td>
       );
     }
-    case 'phone': return <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>;
+    case 'phone': return <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{c.phone || '—'}{c.phone ? <CallButton candidateId={c.candidateId || c.id} applicationId={c.candidateId ? c.id : undefined} name={c.name} compact /> : null}</td>;
     default: return <td />;
   }
 }

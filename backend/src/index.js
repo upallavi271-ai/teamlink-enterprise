@@ -419,6 +419,7 @@ app.use('/api/rcs', require('./routes/rcs')); // RCS messaging (rcssms.in): temp
 // Automatic stage messages: rules, scheduled list, approvals (routes/autoMessages.js).
 app.use('/api/auto-messages', require('./routes/autoMessages'));
 app.use('/api/conversations', require('./routes/conversations'));
+app.use('/api/browser-calling', require('./routes/browserCalling')); // MANUAL browser calling (SIP.js over WSS to Asterisk), separate from AI calling (browsercall/)
 app.use('/api/omni-wa', require('./routes/omniWa')); // Omni-Channel > WhatsApp: inbox with the AI agent, promotions, AI settings (omniwa/)
 app.use('/api/wa-chats', require('./routes/waChats')); // the recruiter's WhatsApp chat screen: list, chat, send, follow-up, media, Admin test tools (utils/waChats.js)
 app.use('/api/admin/full-delete', require('./routes/testPersonDelete')); // Super Admin: delete a test person completely
@@ -765,6 +766,7 @@ server.requestTimeout = 30 * 60 * 1000;
 try { require('./calling/voicebot').attachWebSocket(server); } catch (err) { console.error('[ai-calling] websocket:', err.message); }
 // SELF-HOSTED AI CALLING (2026-10-28): Vexyl speech, Ollama, the Asterisk AudioSocket bridge - only what backend/.env switches on (calling/local).
 try { require('./calling/local').start(); } catch (err) { console.error('[ai-calling] self-hosted:', err.message); }
+try { require('./browsercall/events').start(); } catch (err) { console.error('[browser-call] start:', err.message); } // real Asterisk call events -> BrowserCall rows
 try { require('./calling/kavya/engine').start(); } catch (err) { console.error('[kavya-engine] start:', err.message); } // Kavya's finished calls -> the AiCall rows (2026-11-12)
 // A STOP (pm2 stop / restart during an update) lets the requests already being handled FINISH before the process ends (founder 2026-10-30:
 // "edit chesi ok click chestunappudu ... server restart avuthuntey vallu edit chesindhii antha pothundhii"). New connections are refused at
