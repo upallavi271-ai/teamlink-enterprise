@@ -21,6 +21,12 @@ const send = (res, out) => { const { status, ...rest } = out; return res.status(
 router.get('/jobs/:id', wrap(async (req, res) => send(res, await Flow.get().state(req.user, req.params.id))));
 router.post('/jobs/:id/:platform/:event', wrap(async (req, res) => {
   if (!EVENTS.includes(req.params.event)) return res.status(404).json({ error: 'Unknown step.' });
+  // Naukri / Shine by hand: a new job is started only once its TL has ticked who receives the responses (utils/responseRecipients.js)
+  if (['start', 'opening'].includes(req.params.event)) {
+    const r = await require('../db').requirement.findUnique({ where: { id: String(req.params.id) } }); // eslint-disable-line global-require
+    const stop = r && access.inScope(req.user, r) ? await require('../utils/responseRecipients').postingRefusal(r) : null; // eslint-disable-line global-require
+    if (stop) return res.status(409).json(stop);
+  }
   return send(res, await Flow.get().act(req.user, req.params.id, req.params.platform, req.params.event, req.body || {}));
 }));
 

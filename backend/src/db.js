@@ -88,7 +88,10 @@ prisma.$use(async (params, next) => {
   if (params.model === 'Application' && params.action === 'create') {
     try { await require('./utils/applicationOwner').before(prisma, params); } catch (err) { console.error('[owner] hook:', err.message); } // eslint-disable-line global-require
   }
-  return next(params);
+  const result = await next(params);
+  // a response routed to one of the job's response recipients: their bell, after the save (utils/responseRecipients.js)
+  if (params.respRouted) { try { require('./utils/responseRecipients').afterRouted(result, params.respRouted); } catch { /* only the bell */ } } // eslint-disable-line global-require
+  return result;
 });
 
 // scorehist_: every change of an application's Fit score (matchScore) is kept with its date, weights version and reason (utils/scoreHistory.js);

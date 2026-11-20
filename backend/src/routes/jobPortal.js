@@ -441,7 +441,12 @@ router.get('/applications', perm(APPLICATIONS, 'view'), wrap(async (req, res) =>
   const importable = await can(req.user, ...APPLICATIONS, 'create');
   const events = await screenEvents(apps.filter(isPreAtsApplication).map((a) => a.id));
   const screenOwner = !(await canMoveToStage(req.user, 'RECRUITER_REVIEW'));
+  // WHO RECEIVED IT (2026-11-20): the recruiter the response went to - one of the job's response recipients when its TL ticked them
+  const AO = require('../utils/applicationOwner'); // eslint-disable-line global-require
+  const RR = require('../utils/responseRecipients'); // eslint-disable-line global-require
+  await AO.warmNames().catch(() => null);
   const rows = apps.map((a) => ({
+      receivedBy: a.ownerRecruiterId ? { id: a.ownerRecruiterId, name: AO.nameOf(a.ownerRecruiterId) || 'A recruiter', recipient: RR.isRecipient(a.requirementId, a.ownerRecruiterId) } : null,
       id: a.id,
       candidateId: a.candidateId,
       candidate: a.candidate.name,

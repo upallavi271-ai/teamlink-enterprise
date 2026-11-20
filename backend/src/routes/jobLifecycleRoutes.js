@@ -309,6 +309,11 @@ module.exports = function registerJobLifecycle(router, deps) {
     if (!wanted) return res.status(400).json({ error: 'Send the list of ticked sites.' });
     const ids = posting.SITES.map((s) => s.id).filter((id) => wanted.includes(id));
     const before = posting.tickedSites(r);
+    // a new job goes up on a site only once its TL has ticked who receives the responses (utils/responseRecipients.js)
+    if (ids.some((id) => !before.includes(id)) && requirementIsLive(r.status)) {
+      const stop = await require('../utils/responseRecipients').postingRefusal(r); // eslint-disable-line global-require
+      if (stop) return res.status(409).json(stop);
+    }
     const value = posting.postingSourcesFor(r, ids);
     const updated = await prisma.requirement.update({ where: { id: r.id }, data: { postingSources: value } });
     const added = ids.filter((id) => !before.includes(id));
@@ -401,6 +406,10 @@ module.exports = function registerJobLifecycle(router, deps) {
     const src = connectors.sourceById(String(req.params.source || ''));
     if (!src) return res.status(404).json({ error: 'Unknown posting site.' });
     if (!requirementIsLive(r.status)) return res.status(400).json({ error: `This requirement is ${requirementStateWords(r.status)}, so it is not posted anywhere. Open it first.` });
+    {
+      const stop = await require('../utils/responseRecipients').postingRefusal(r); // eslint-disable-line global-require
+      if (stop) return res.status(409).json(stop);
+    }
     // Our own sites: publish the job again first (a person may have unpublished it).
     if (src.kind !== 'board') await posting.autoPost(r.id, { actorId: req.user.id, actorName: req.user.name, trigger: 'retry', skipSources: true });
     await connectors.retry(r.id, { actorId: req.user.id, actorName: req.user.name }, src.id);

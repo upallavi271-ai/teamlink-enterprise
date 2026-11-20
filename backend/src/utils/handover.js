@@ -95,7 +95,10 @@ async function recordOnly({ appId, from, to, by = null, kind = 'assigned', reaso
 async function toDefaultOwner(requirement, by = null) {
   const to = requirement.recruiterId || csv(requirement.recruiterIds)[0] || null;
   if (!to) return 0;
-  const onIt = [requirement.recruiterId, ...csv(requirement.recruiterIds)].filter(Boolean);
+  // the job's response recipients keep the responses given to them (utils/responseRecipients.js, 2026-11-20)
+  let rcpt = [];
+  try { rcpt = ((await require('./responseRecipients').get(requirement.id)) || {}).ids || []; } catch { rcpt = []; } // eslint-disable-line global-require
+  const onIt = [...new Set([requirement.recruiterId, ...csv(requirement.recruiterIds), ...rcpt].filter(Boolean))];
   const apps = await prisma.application.findMany({
     where: { requirementId: requirement.id, stage: { notIn: KEEP }, OR: [{ ownerRecruiterId: null }, ...(onIt.length ? [{ ownerRecruiterId: { notIn: onIt } }] : [])] },
     select: { id: true, candidateId: true, ownerRecruiterId: true, stage: true },

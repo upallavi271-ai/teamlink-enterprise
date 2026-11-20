@@ -4278,6 +4278,8 @@ router.post('/:id/generate-jd', require('../utils/postingGuard').requirePosting(
 // Job Pause / Close / Delete, posting sites, bulk-assign Undo (change list
 // 2026-10-03 §5 / §16 / §22) — routes/jobLifecycleRoutes.js.
 require('./jobLifecycleRoutes')(router, { requirementPermissions, holdOnlyRole, pushToPortal, unsignedStop });
+// Who receives the responses of a job (founder 2026-11-20) - routes/responseRecipientsRoutes.js, utils/responseRecipients.js.
+require('./responseRecipientsRoutes')(router, { requirementPermissions, recruiterBench }); // eslint-disable-line global-require
 
 module.exports = router;
 // ATS data I/O (utils/atsFacets.js): the filter options and their counts are

@@ -190,6 +190,8 @@ app.use('/api', require('./utils/viewAs').viewAsGuard);
 app.use('/api', require('./utils/exitFlow').requestScope);
 app.use('/api', require('./utils/reqDepartments').middleware); // extra departments of a job: index refreshed per request burst (2026-10-13)
 app.use('/api', require('./utils/reqTeamLeads').middleware); // extra team leads of a job (reqTls.<jobId>), same pattern (2026-10-14)
+app.use('/api', require('./utils/responseRecipients').middleware); // who receives a job's responses: index for scope.js (2026-11-20)
+require('./utils/responseRecipients').ensure().catch((e) => console.error('[resp-recipients] setup:', e.message)); // tables + "went live" date at start
 
 // ---------------------------------------------------------------------------
 // TeamLink Job Portal — served verbatim as a static asset.

@@ -52,6 +52,11 @@ async function postEverywhere(user, jobId, body = {}, base = '') {
   if (!(await A.mayPostJob(user, r))) return { error: 'Posting requirements is done by your team lead or the client manager.', code: 'POSTING_NOT_YOURS', status: 403 };
   const places = [...new Set((body.places || []).map(String))].filter((p) => PLACES.includes(p));
   if (!places.length) return { error: 'Tick at least one place to post to.', status: 400 };
+  // WHO RECEIVES THE RESPONSES (founder 2026-11-20): a new job is posted only once its TL has ticked the recipients. A check only (dry run) is fine.
+  if (!body.dryRun) {
+    const stop = await require('../utils/responseRecipients').postingRefusal(r); // eslint-disable-line global-require
+    if (stop) return { ...stop, status: 409 };
+  }
   // 1. the text: the version in use (or the newest) is the one everyone gets
   const { version } = await T.ensure(user, r, base);
   const used = await T.useVersion(user, r, version.v);

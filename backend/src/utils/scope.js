@@ -22,6 +22,7 @@
 const { isBdeDepartment } = require('./bdeDesk');
 const RD = require('./reqDepartments'); // extra departments of a job (2026-10-13)
 const RT = require('./reqTeamLeads'); // extra team leads of a job (2026-10-14)
+const RR = require('./responseRecipients'); // the recruiters who receive a job's responses (2026-11-20)
 
 // Roles that see everything, always.
 const GLOBAL_SCOPE_ROLES = ['SUPER_ADMIN', 'ADMIN'];
@@ -176,7 +177,9 @@ function atsDepartmentsOf(user) {
 function seatAssignedArms(s) {
   const p = s.positions;
   if (p.role === 'RECRUITER') {
-    return [{ recruiterId: s.userId }, { recruiterIds: { contains: s.userId } }];
+    // a recruiter who receives a job's responses (not assigned to it) sees that job and the responses given to them
+    const rr = RR.recipientArm(s.userId);
+    return [{ recruiterId: s.userId }, { recruiterIds: { contains: s.userId } }, ...(rr ? [rr] : [])];
   }
   const arms = [p.role === 'STL' ? { stlId: s.userId } : RT.tlArm([s.userId])];
   if (p.role === 'STL') arms.push(RT.tlArm(p.holderUserIds));
@@ -343,8 +346,10 @@ function requirementWhereBase(user, opts = {}) {
       return { clientId: s.clientId || '__none__', internal: false };
     case 'CANDIDATE':
       return { id: '__none__' };
-    case 'RECRUITER':
-      return { OR: [{ recruiterId: s.userId }, { recruiterIds: { contains: s.userId } }] };
+    case 'RECRUITER': {
+      const rr = RR.recipientArm(s.userId); // receives the job's responses (utils/responseRecipients.js)
+      return { OR: [{ recruiterId: s.userId }, { recruiterIds: { contains: s.userId } }, ...(rr ? [rr] : [])] };
+    }
     case 'BDE': {
       // Q3 (user, 2026-10-09): THEIR OWN CLIENTS' jobs: the jobs they are named
       // on, the clients assigned to them / where they are the Owner or second
@@ -432,6 +437,8 @@ function isAssignedTo(user, requirement) {
   const co = csv(requirement.recruiterIds);
   return requirement.recruiterId === s.userId
     || co.includes(s.userId)
+    // a recruiter who receives this job's responses works them (utils/responseRecipients.js, 2026-11-20)
+    || (s.atsRole === 'RECRUITER' && !!requirement.id && RR.isRecipient(requirement.id, s.userId))
     || requirement.tlId === s.userId
     || RT.extrasOf(requirement.id).includes(s.userId)
     || requirement.stlId === s.userId

@@ -49,9 +49,19 @@ const onJob = (requirement, userId) => !!userId && !!requirement
 async function before(prisma, params) {
   if (params.model !== 'Application' || params.action !== 'create') return;
   const data = params.args && params.args.data;
-  if (!data || data.ownerRecruiterId) return;
+  if (!data) return;
   const reqId = data.requirementId || (data.requirement && data.requirement.connect && data.requirement.connect.id);
   if (!reqId) return;
+  // WHO RECEIVES THE RESPONSES (founder 2026-11-20, utils/responseRecipients.js): a response to a job whose TL ticked the
+  // recipients goes to one of them (fewest open new responses, ties by name). No recipients -> the rules below, as before.
+  try {
+    const RR = require('./responseRecipients'); // eslint-disable-line global-require
+    if (RR.isInbound(data)) {
+      const to = await RR.route(prisma, reqId, data);
+      if (to) { data.ownerRecruiterId = to; params.respRouted = { owner: to, requirementId: reqId }; return; }
+    }
+  } catch { /* the rules below */ }
+  if (data.ownerRecruiterId) return;
   const r = await prisma.requirement.findUnique({ where: { id: reqId }, select: { recruiterId: true, recruiterIds: true } });
   let owner = defaultOwnerOf(r);
   try { if (r && (await splitModeOf(prisma, reqId)) === 'even') owner = await evenOwnerOf(prisma, reqId, r); } catch { /* default owner */ }
