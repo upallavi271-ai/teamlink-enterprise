@@ -54,7 +54,8 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   const RA = await mkUser('recA', { atsRole: 'RECRUITER', atsDepartment: j1.department });
   const RB = await mkUser('recB', { atsRole: 'RECRUITER', atsDepartment: j1.department });
   const BDE = await mkUser('bde', { atsRole: 'BDE', atsDepartment: 'BDE' });
-  await prisma.requirement.update({ where: { id: j1.id }, data: { recruiterId: RA.id, bdeId: BDE.id } });
+  const TLU = await mkUser('tl', { role: 'TL', atsRole: 'TL', atsDepartment: j1.department, atsScopeDepartments: j1.department });
+  await prisma.requirement.update({ where: { id: j1.id }, data: { recruiterId: RA.id, bdeId: BDE.id, tlId: TLU.id } });
   await prisma.requirement.update({ where: { id: j2.id }, data: { recruiterId: RB.id } });
 
   const mk = async (n, d, job, owner) => {
@@ -90,7 +91,7 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   }
   await new Promise((r) => { setTimeout(r, 1100); });
   const tok = async (id) => jwt.sign({ ...tokenPayload(await resolveIdentity(id)), tms: Date.now() }, env.JWT_SECRET, { expiresIn: '1h' });
-  const tA = await tok(adminRow.id); const tRA = await tok(RA.id); const tRB = await tok(RB.id); const tBde = await tok(BDE.id);
+  const tA = await tok(adminRow.id); const tRA = await tok(RA.id); const tRB = await tok(RB.id); const tBde = await tok(BDE.id); const tTL = await tok(TLU.id);
 
   // the pipeline list as a login sees it, narrowed to the seeded people by name
   const list = async (token, params, view = 'pipeline') => {
@@ -664,6 +665,11 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   check('job portal: a source that matches nothing gives an empty list (200)', jp.status === 200 && rowsOf(jp.body).length === 0, { s: jp.status });
   const cll = await call('GET', `/call-lists?${qs({ source: 'zzz-nothing' })}`, null, tA);
   check('call lists: source filter answers (nothing matches)', cll.status === 200 && (cll.body.lists || []).length === 0, { s: cll.status, b: cll.body });
+
+  // the lists converted on 2026-11-20 (drill lists, jobs board, control tower, report pages, CRM, HRMS, Accounts): scripts/ats-filters-more.js
+  await require('./ats-filters-more')({
+    check, call, qs, same, tA, tRA, tRB, tTL, tBde, RA, RB, TLU, BDE, adminRow, j1, j2, TAG, nm, names, P, prisma, dayOf, API,
+  });
 
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);

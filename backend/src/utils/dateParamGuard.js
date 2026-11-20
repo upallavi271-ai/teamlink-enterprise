@@ -12,7 +12,7 @@ const PAIRS = [
   ['appliedFrom', 'appliedTo', 'Applied'], ['addedFrom', 'addedTo', 'Added'], ['updatedFrom', 'updatedTo', 'Last updated'],
   ['contactedFrom', 'contactedTo', 'Last contacted'], ['sharedFrom', 'sharedTo', 'Shared with client'], ['cameFrom', 'cameTo', 'Came on'],
   ['joinedFrom', 'joinedTo', 'Joined on'], ['ivFrom', 'ivTo', 'Interview'], ['dFrom', 'dTo', 'Date'], ['fuFrom', 'fuTo', 'Follow-up due'],
-  ['jpFrom', 'jpTo', 'Applied on'], ['cFrom', 'cTo', 'Added on'],
+  ['jpFrom', 'jpTo', 'Applied on'], ['cFrom', 'cTo', 'Added on'], ['d_from', 'd_to', 'List date'],
 ];
 // paths where plain from / to are days (not ids / months)
 const PLAIN_PATHS = [/^\/requirements(\/|$)/, /^\/ats-reports(\/|$)/, /^\/ats-report-pack(\/|$)/, /^\/call-lists(\/|$)/, /^\/ats\/history(\/|$)/,

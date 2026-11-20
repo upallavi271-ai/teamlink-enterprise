@@ -2463,6 +2463,11 @@ async function jobsList(user, b, q) {
   }
   const scoped = rows.length;
   const term = s(q.d_q).toLowerCase();
+  // Opened on From / To (IST days, both ends included; founder 2026-11-20: a date range on every list)
+  const oFrom = dateRange.validIso(s(q.d_from)) ? s(q.d_from) : '';
+  const oTo = dateRange.validIso(s(q.d_to)) ? s(q.d_to) : '';
+  const opened = (r) => { if (!oFrom && !oTo) return true; const day = r.createdAt ? dateRange.istDayOf(r.createdAt) : null; return !!day && (!oFrom || day >= oFrom) && (!oTo || day <= oTo); };
+  if (oFrom || oTo) rows = rows.filter(opened);
   // THE BDE TEAM (client managers and their lead) sees BDE work per client, never the recruiter / team lead.
   const noPeople = b.layout === 'bde';
   const strip = (r) => (noPeople ? { ...r, tl: null, tlId: null, recruiters: [], recruiterIds: [] } : r);
@@ -2474,7 +2479,7 @@ async function jobsList(user, b, q) {
   const page = Math.max(1, Math.min(10000, Number(q.d_page) || 1));
   const board = s(q.d_view) === 'board';
   const out = { id: '__jobs', kind: 'jobs', title, total: scoped, sort, search: term, page, pageSize: size, steps: STEP5 };
-  if (!board && !s(q.d_bucket) && !s(q.d_flag) && !Object.values(JOB_FACETS).some((f) => s(q[f.q]))) {
+  if (!board && !s(q.d_bucket) && !s(q.d_flag) && !Object.values(JOB_FACETS).some((f) => MPH.hasMulti(q[f.q]))) {
     // The classic flat list (unchanged).
     if (term) rows = rows.filter(matchTerm);
     rows = [...rows].sort((x, y) => JOB_SORTS[sort](x, y) || String(x.title).localeCompare(String(y.title)));
@@ -2484,7 +2489,7 @@ async function jobsList(user, b, q) {
   // ---- the board: filters, tiles, sections ----------------------------------------------------
   const { c } = b.kx;
   const facetKeys = Object.keys(JOB_FACETS).filter((key) => !(noPeople && (key === 'tl' || key === 'rec')));
-  const done = (b._jobsDone || []).filter((r) => !tlId || r.tlId === tlId);
+  const done = (b._jobsDone || []).filter((r) => (!tlId || r.tlId === tlId) && opened(r));
   const pool = [...rows, ...done];
   // "Jobs I handle": the viewer's own team lead jobs (a TL), else everything in their area.
   let mineIds = null;
@@ -2498,14 +2503,17 @@ async function jobsList(user, b, q) {
   const ownsIt = (r) => (mineIds ? mineIds.has(r.id) : (r.tlId === user.id || (r.extraTlIds || []).includes(user.id)));
   pool.forEach((r) => { if (r.bucket !== 'done') r.bucket = bucketOf(r, ownsIt(r)); });
   const fv = {};
-  Object.entries(JOB_FACETS).forEach(([key, f]) => { fv[key] = facetKeys.includes(key) ? s(q[f.q]) : ''; });
-  const hit = (r, skip) => Object.entries(JOB_FACETS).every(([key, f]) => key === skip || !fv[key] || f.keys(r).includes(fv[key]));
+  // several values per filter (founder 2026-11-20: checkboxes everywhere): OR inside one filter, AND across filters
+  Object.entries(JOB_FACETS).forEach(([key, f]) => { fv[key] = facetKeys.includes(key) ? MPH.parseMulti(q[f.q]) : []; });
+  const hit = (r, skip) => Object.entries(JOB_FACETS).every(([key, f]) => key === skip || !fv[key].length || f.keys(r).some((v) => fv[key].includes(v)));
   const facets = {};
   Object.entries(JOB_FACETS).filter(([key]) => facetKeys.includes(key)).forEach(([key, f]) => {
     const n = new Map();
     const sample = new Map();
     pool.filter((r) => r.bucket !== 'done' && hit(r, key) && (!term || matchTerm(r))).forEach((r) => f.keys(r).forEach((v) => { n.set(v, (n.get(v) || 0) + 1); if (!sample.has(v)) sample.set(v, r); }));
-    facets[key] = [...n.entries()].map(([value, count]) => ({ value, count, label: f.label(value, sample.get(value)) }))
+    // a ticked value stays in the list even when nothing is behind it now (so it can be seen and unticked)
+    fv[key].forEach((v) => { if (!n.has(v)) { n.set(v, 0); const r0 = pool.find((r) => f.keys(r).includes(v)); if (r0) sample.set(v, r0); } });
+    facets[key] = [...n.entries()].map(([value, count]) => ({ value, count, label: sample.has(value) || value === NONE ? f.label(value, sample.get(value)) : value }))
       .sort((x, y) => (x.value === NONE) - (y.value === NONE) || y.count - x.count || String(x.label).localeCompare(String(y.label)));
   });
   const base = pool.filter((r) => hit(r) && (!term || matchTerm(r)));
@@ -2828,6 +2836,13 @@ const SEARCH_OF = {
   integ: (r) => [r.what, r.detail],
 };
 
+// A FROM / TO DAY on each list (founder 2026-11-20: a date range on every list): d_from / d_to, IST days, both ends included,
+// over the date that list is about (utils/dateParamGuard answers 400 on a bad day before the route runs).
+const DATE_OF = {
+  app: ['Last updated', (r) => r.updatedAt], tjoin: ['Joining date', (r) => r.joiningDate], req: ['Opened', (r) => r.createdAt],
+  event: ['When', (r) => r.at], inv: ['Invoice date', (r) => r.invoiceDate], pay: ['Paid on', (r) => r.date], user: ['Last sign-in', (r) => r.at],
+};
+
 async function setRows(user, b, set) {
   const w = set.world || b.world; // the drops / month lists of a department TL read the company copy
   if (set.kind === 'app') {
@@ -2884,12 +2899,22 @@ async function homeList(user, b, setId, q = {}) {
   const s = (v) => (typeof v === 'string' ? v.trim().slice(0, 200) : '');
   const hidden = DRILL_HIDDEN[layout] || DRILL_NO_BDE;
   const picked = {};
-  DRILL_KEYS.forEach((k) => { if (s(q[k]) && !hidden.includes(k)) picked[k] = s(q[k]); });
+  // several values per filter (a comma list or a repeated parameter; utils/multiParam.js): OR inside one, AND across
+  DRILL_KEYS.forEach((k) => { const vs = MPH.parseMulti(q[k]); if (vs.length && !hidden.includes(k)) picked[k] = vs; });
   const term = s(q.d_q).toLowerCase();
   const search = SEARCH_OF[set.kind] || (() => []);
-  const searched = term ? all.filter((r) => search(r).some((v) => v && String(v).toLowerCase().includes(term))) : all;
+  const dateDef = DATE_OF[set.kind] || null;
+  const dFrom = dateDef && dateRange.validIso(s(q.d_from)) ? s(q.d_from) : '';
+  const dTo = dateDef && dateRange.validIso(s(q.d_to)) ? s(q.d_to) : '';
+  const inDays = (r) => {
+    if (!dFrom && !dTo) return true;
+    const v = dateDef[1](r);
+    const day = v ? (/^d{4}-d{2}-d{2}$/.test(String(v)) ? String(v) : dateRange.istDayOf(v)) : null;
+    return !!day && (!dFrom || day >= dFrom) && (!dTo || day <= dTo);
+  };
+  const searched = (term ? all.filter((r) => search(r).some((v) => v && String(v).toLowerCase().includes(term))) : all).filter(inDays);
   const defs = facetDefs(set.kind).filter(([k]) => !hidden.includes(k));
-  const matches = (r, except) => defs.every(([k, , val]) => k === except || !picked[k] || String(val(r) ?? '') === picked[k]);
+  const matches = (r, except) => defs.every(([k, , val]) => k === except || !picked[k] || picked[k].includes(String(val(r) ?? '')));
   const rows = searched.filter((r) => matches(r, null));
   // Cascading options with counts; none at zero (the picked one stays).
   const facets = {};
@@ -2908,7 +2933,12 @@ async function homeList(user, b, setId, q = {}) {
     else if (k === 'd_due') opts.sort((x, y) => DUE_ORDER.indexOf(x.value) - DUE_ORDER.indexOf(y.value));
     else opts.sort((x, y) => y.count - x.count || String(x.label).localeCompare(String(y.label)));
     opts = opts.filter((o) => !isTest(o.label)).slice(0, 300);
-    if (picked[k] && !opts.some((o) => o.value === picked[k])) opts.push({ value: picked[k], label: picked[k], count: 0 });
+    // every ticked value stays offered, even at 0 (its own label when another row of the set carries it)
+    (picked[k] || []).forEach((pv) => {
+      if (opts.some((o) => o.value === pv)) return;
+      const r0 = all.find((r) => String(val(r) ?? '') === pv);
+      opts.push({ value: pv, label: r0 ? lab(r0) : pv, count: 0 });
+    });
     if (opts.length) facets[k] = { label, options: opts };
   });
   const page = Math.max(1, Math.min(10000, Number(q.d_page) || 1));
@@ -2926,6 +2956,7 @@ async function homeList(user, b, setId, q = {}) {
     total: all.length, filtered: rows.length, page, pageSize: size,
     rows: rows.slice((page - 1) * size, page * size).map(({ clientKey, recKey, tlKey, bdeKey, ...r }) => (bdeTeam ? r : (({ bde, ...rest }) => rest)(r))), // eslint-disable-line no-unused-vars
     facets, picked, search: term, searchable: !!SEARCH_OF[set.kind],
+    dateField: dateDef ? dateDef[0] : null, dateFrom: dFrom || null, dateTo: dTo || null,
     // "Still working: N" and "N left after joining (shown under Dropped)" on a Joined list (utils/joinedRule.js)
     ...(set.left ? { stillWorking: set.stillWorking, left: set.left } : {}),
     _all: rows, _bdeTeam: bdeTeam,

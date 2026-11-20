@@ -121,6 +121,13 @@ function DateRangeField({ f, values, onChange }) {
   );
 }
 
+// The same From / To box with the quick picks, for a screen that keeps its own state (not the address bar):
+//   <DateRangeFilter label="Last updated" from={f} to={t} onChange={({ from, to }) => ...} />
+export function DateRangeFilter({ label, from = '', to = '', onChange, title }) {
+  const f = { label, title, keys: { from: 'from', to: 'to' } };
+  return <DateRangeField f={f} values={{ from, to }} onChange={(p) => onChange({ from: 'from' in p ? p.from : from, to: 'to' in p ? p.to : to })} />;
+}
+
 function Control({
   f, values, onChange, facets, loading, openToken = 0,
 }) {

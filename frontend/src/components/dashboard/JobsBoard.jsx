@@ -5,6 +5,7 @@ import Modal from '../Modal.jsx';
 import { Help } from '../ui/Guide.jsx';
 import DrillExport, { useDrillRight } from '../DrillExport.jsx';
 import { FacetSelect } from '../ui/ListPageHeader.jsx';
+import { DateRangeFilter } from '../ats/FilterBar.jsx';
 import { Avatar } from '../atskit/AtsKit.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { atsRoleOf } from '../../nav';
@@ -412,6 +413,7 @@ export function OpenJobs({ w, params, onDrill, onCand, tlId = null, inner = fals
   // A team lead opens on her own jobs; the "Jobs I handle" tile switches to all of them.
   const [flag, setFlag] = useState(() => (!inner && atsRoleOf(user) === 'TL' ? 'mine' : ''));
   const [fv, setFv] = useState({ dept: '', client: '', tl: '', rec: '' });
+  const [opened, setOpened] = useState({ from: '', to: '' }); // Opened on From / To (d_from / d_to)
   const [density, setDensity] = useState(readDensity);
   const [state, setState] = useState({ loading: true, data: null, error: '' });
   const [reload, setReload] = useState(0);
@@ -422,7 +424,8 @@ export function OpenJobs({ w, params, onDrill, onCand, tlId = null, inner = fals
     ...params, set: '__jobs', d_view: 'board', d_sort: 'attention', d_per: 6,
     d_q: term || undefined, d_tlid: tlId || undefined, d_flag: flag || undefined,
     d_dept: fv.dept || undefined, d_client: fv.client || undefined, d_tl: fv.tl || undefined, d_rec: fv.rec || undefined,
-  }), [JSON.stringify(params), term, tlId, flag, fv.dept, fv.client, fv.tl, fv.rec]); // eslint-disable-line react-hooks/exhaustive-deps
+    d_from: opened.from || undefined, d_to: opened.to || undefined,
+  }), [JSON.stringify(params), term, tlId, flag, fv.dept, fv.client, fv.tl, fv.rec, opened.from, opened.to]); // eslint-disable-line react-hooks/exhaustive-deps
   const bkey = JSON.stringify(baseParams);
   useEffect(() => {
     let live = true;
@@ -434,13 +437,14 @@ export function OpenJobs({ w, params, onDrill, onCand, tlId = null, inner = fals
   }, [bkey, reload]); // eslint-disable-line react-hooks/exhaustive-deps
   const d = state.data;
   const sm = d && d.summary;
-  const anyFilter = !!(flag || term || fv.dept || fv.client || fv.tl || fv.rec);
-  const clearAll = () => { setFlag(''); setQ(''); setTerm(''); setFv({ dept: '', client: '', tl: '', rec: '' }); };
+  const anyFilter = !!(flag || term || fv.dept || fv.client || fv.tl || fv.rec || opened.from || opened.to);
+  const clearAll = () => { setFlag(''); setQ(''); setTerm(''); setFv({ dept: '', client: '', tl: '', rec: '' }); setOpened({ from: '', to: '' }); };
   const setDensityTo = (v) => { setDensity(v); saveDensity(v); };
   const facetUi = (key, field, label, allLabel) => {
     const opts = (d && d.facets && d.facets[key]) || [];
     if (opts.length < 2 && !fv[field]) return null;
-    return <FacetSelect label={label} value={fv[field]} onChange={(v) => setFv({ ...fv, [field]: v })} options={opts} allLabel={allLabel} />;
+    // checkboxes: several departments / clients / team leads / recruiters at once (founder 2026-11-20)
+    return <FacetSelect multi label={label} value={fv[field]} onChange={(v) => setFv((x) => ({ ...x, [field]: v }))} options={opts} allLabel={allLabel} />;
   };
   const mayExport = useDrillRight('ats');
   // The file holds every requirement the board lists for the search / filters picked, group by group (not only the few shown per group).
@@ -480,6 +484,7 @@ export function OpenJobs({ w, params, onDrill, onCand, tlId = null, inner = fals
         {!inner && facetUi('client', 'client', 'Client', 'All clients')}
         {!inner && facetUi('tl', 'tl', 'Team lead', 'All team leads')}
         {!inner && facetUi('rec', 'rec', 'Recruiter', 'All recruiters')}
+        {!inner && <DateRangeFilter label="Opened" from={opened.from} to={opened.to} onChange={setOpened} title="Requirements opened between these days" />}
         {anyFilter && <button type="button" className="link-btn" onClick={clearAll}>Clear filters</button>}
         {d && d.filtered > 0 && <DrillExport name={tlId ? 'Open requirements - team lead' : 'Open requirements'} allowed={mayExport} disabled={state.loading} build={buildFile} />}
         <span className="jb-density" role="group" aria-label="Row size">

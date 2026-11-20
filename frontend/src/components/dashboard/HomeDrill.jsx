@@ -4,7 +4,9 @@ import api from '../../api';
 import Modal from '../Modal.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
 import DropCandidate from '../candidate/DropCandidate.jsx'; // the real drop window: day + reason, saved in the Joining & Drop record
-import { ListToolbar, FacetSelect } from '../ui/ListPageHeader.jsx';
+import { ListToolbar } from '../ui/ListPageHeader.jsx';
+import MultiSelect, { csvToList } from '../ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
+import { DateRangeFilter } from '../ats/FilterBar.jsx';
 import { useAtsIoAccess } from '../AtsDataTools.jsx';
 import { ReplacementTags, WhoReplacedDialog, LinkReplacedButton } from '../joindrop/ReplacementParts.jsx'; // who replaced whom: chips, the "Who is this a replacement for?" window
 import './homeDrill.css';
@@ -282,6 +284,7 @@ export default function HomeDrill({ listUrl, params, setId: setIdProp, onClose }
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState({});
+  const [days, setDays] = useState({ from: '', to: '' }); // the list's own From / To (d_from / d_to)
   const [page, setPage] = useState(1);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -316,13 +319,15 @@ export default function HomeDrill({ listUrl, params, setId: setIdProp, onClose }
   }
 
   // A new number: start clean.
-  useEffect(() => { setSearch(''); setQ(''); setPicked({}); setPage(1); setMsg(null); }, [setId]);
+  useEffect(() => { setSearch(''); setQ(''); setPicked({}); setDays({ from: '', to: '' }); setPage(1); setMsg(null); }, [setId]);
   useEffect(() => {
     const t = setTimeout(() => { setQ(search.trim()); setPage(1); }, 300);
     return () => clearTimeout(t);
   }, [search]);
 
-  const query = { ...params, set: setId, ...(q ? { d_q: q } : {}), ...picked, ...(page > 1 ? { d_page: page } : {}) };
+  const query = {
+    ...params, set: setId, ...(q ? { d_q: q } : {}), ...picked, ...(days.from ? { d_from: days.from } : {}), ...(days.to ? { d_to: days.to } : {}), ...(page > 1 ? { d_page: page } : {}),
+  };
   const key = JSON.stringify(query);
   useEffect(() => {
     let alive = true;
@@ -335,14 +340,20 @@ export default function HomeDrill({ listUrl, params, setId: setIdProp, onClose }
 
   const facets = (data && data.facets) || {};
   const setFacet = (k, v) => { setPicked((p) => { const n = { ...p }; if (v) n[k] = v; else delete n[k]; return n; }); setPage(1); };
-  const labelOf = (k, v) => (((facets[k] || {}).options || []).find((o) => o.value === v) || {}).label || v;
-  const chips = Object.entries(picked).map(([k, v]) => ({ key: k, label: (facets[k] || {}).label || 'Filter', value: labelOf(k, v), onRemove: () => setFacet(k, '') }));
-  const clearAll = () => { setPicked({}); setSearch(''); setQ(''); setPage(1); };
-  const panel = Object.keys(facets).length ? (
+  const labelOne = (k, v) => (((facets[k] || {}).options || []).find((o) => o.value === v) || {}).label || v;
+  const labelOf = (k, csv) => { const l = csvToList(csv).map((v) => labelOne(k, v)); return l.length > 2 ? `${l.slice(0, 2).join(', ')} +${l.length - 2}` : l.join(', '); };
+  const setDay = (d) => { setDays(d); setPage(1); };
+  const chips = [
+    ...Object.entries(picked).map(([k, v]) => ({ key: k, label: (facets[k] || {}).label || 'Filter', value: labelOf(k, v), onRemove: () => setFacet(k, '') })),
+    ...(days.from || days.to ? [{ key: 'd_days', label: (data && data.dateField) || 'Date', value: `${days.from || '…'} to ${days.to || '…'}`, onRemove: () => setDay({ from: '', to: '' }) }] : []),
+  ];
+  const clearAll = () => { setPicked({}); setDays({ from: '', to: '' }); setSearch(''); setQ(''); setPage(1); };
+  const panel = Object.keys(facets).length || (data && data.dateField) ? (
     <>
       {Object.entries(facets).map(([k, f]) => (
-        <FacetSelect key={k} label={f.label} value={picked[k] || ''} onChange={(v) => setFacet(k, v)} options={f.options} allLabel={FACET_ALL[k] || 'All'} />
+        <MultiSelect key={k} label={f.label} value={picked[k] || ''} onChange={(v) => setFacet(k, v)} options={f.options} allLabel={FACET_ALL[k] || 'All'} />
       ))}
+      {data && data.dateField && <DateRangeFilter label={data.dateField} from={days.from} to={days.to} onChange={setDay} />}
     </>
   ) : null;
 
@@ -365,7 +376,7 @@ export default function HomeDrill({ listUrl, params, setId: setIdProp, onClose }
   const filtered = data ? data.filtered : 0;
   const from = data && filtered ? (data.page - 1) * data.pageSize + 1 : 0;
   const to = data ? Math.min(filtered, data.page * data.pageSize) : 0;
-  const narrowed = !!(q || Object.keys(picked).length);
+  const narrowed = !!(q || Object.keys(picked).length || days.from || days.to);
   const note = data ? (narrowed ? `${fmt(filtered)} of ${fmt(data.total)}` : `${fmt(data.total)} in total`) : '';
   const exportBtns = mayExport && data && data.total > 0 ? (
     <span className="hd-export">
