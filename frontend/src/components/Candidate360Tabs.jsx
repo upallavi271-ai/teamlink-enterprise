@@ -343,7 +343,7 @@ export function JoiningTab({ c }) {
                 <tr key={a.id}>
                   <td>{a.requirement?.title || '—'}</td>
                   <td className="cell-muted">{clientOf(a) || '—'}</td>
-                  <td>{a.joiningStatus || stageLabel(a.stage)}</td>
+                  <td>{a.left ? <StatusChip tone="red">Dropped</StatusChip> : (a.joiningStatus || stageLabel(a.stage))}{a.left && a.leftOn && <div className="small-muted">{`on ${protoDate(a.leftOn)}${a.leftReason ? ` · ${a.leftReason}` : ''}`}</div>}</td>
                   <td className="cpl-nowrap">{a.joiningDate ? protoDate(a.joiningDate) : '—'}</td>
                   <td className="cpl-nowrap">{a.joinedAt ? protoDate(a.joinedAt) : '—'}</td>
                   <td className="cell-muted">{a.documentsStatus || '—'}</td>

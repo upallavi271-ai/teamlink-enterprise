@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import StatusChip from '../ui/StatusChip.jsx';
 import { dmy, when, errText } from './JdParts.jsx';
+import { ReplacementTable } from './JoinDropList.jsx';
 import './joindrop.css';
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,7 @@ export default function ClientHistoryView({ endpoint, portal = false }) {
     ...(s.addedOn ? [[dmy(s.addedOn), 'Added to TeamLink']] : []),
     [s.jobsTotal, 'Requirements given'], [s.jobsOpen, 'Open now'], [s.jobsClosed, 'Closed'], [s.candidatesSent, 'Candidates sent'], [s.interviewsDone, 'Interviews done'],
     [s.joined, 'Joined'], [s.dropped, 'Dropped'], [s.replacementRequests, 'Replacements asked'],
+    ...(s.replaced != null ? [[s.replaced, 'Replaced'], [s.replacementsPending, 'Replacement pending'], [s.replacementsExpired, 'Replacement expired']] : []),
     ...(s.logins != null ? [[s.logins, 'Logins'], [s.firstLoginOn ? dmy(s.firstLoginOn) : 'Not recorded', 'First sign-in'], [s.lastLoginOn ? dmy(s.lastLoginOn) : 'Not yet', 'Last sign-in']] : []),
     ...(s.invoicesRaised != null ? [[s.invoicesRaised, 'Invoices raised'], [s.invoicesPaid, 'Invoices paid']] : []),
   ];
@@ -41,6 +43,7 @@ export default function ClientHistoryView({ endpoint, portal = false }) {
   return (
     <div>
       <div className="jd-strip">{tiles.map(([v, k]) => <div className="tile" key={k}><b>{v == null ? 0 : v}</b><span>{k}</span></div>)}</div>
+      {h.replacements && (h.replacements.table || []).length > 0 && <ReplacementTable rp={h.replacements} />}
       {(s.jobsPerMonth || []).length > 0 && <div className="small-muted" style={{ marginBottom: 8 }}><b>Requirements given each month:</b> {s.jobsPerMonth.map((m) => `${m.month} (${m.count})`).join(', ')}</div>}
       <div className="jd-filters" style={{ alignItems: 'center' }}>
         <button type="button" className={`btn btn-sm${!group ? ' btn-primary' : ''}`} onClick={() => setGroup('')}>Everything</button>

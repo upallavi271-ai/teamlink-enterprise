@@ -9,6 +9,7 @@ import JoiningDropPanel from './JoiningDropPanel.jsx';
 import {
   dmy, errText, statusTone, DropDialog,
 } from './JdParts.jsx';
+import { ReplacementTags } from './ReplacementParts.jsx';
 import './joindrop.css';
 
 // ---------------------------------------------------------------------------
@@ -93,6 +94,7 @@ export default function JoinDropList({ onOpen }) {
         <div className="tile"><b>{c.Joined || 0}</b><span>Still working</span></div>
         <div className="tile"><b>{c.Dropped || 0}</b><span>Dropped</span></div>
         <div className="tile"><b>{c.needsDecision || 0}</b><span>Waiting for the client&apos;s answer</span></div>
+        <div className="tile"><b>{c.replaced || 0}</b><span>Replaced (a replacement is linked)</span></div>
         <div className="tile"><b>{c.needsDetails || 0}</b><span>Details not recorded</span></div>
       </div>
       <div className="jd-filters">
@@ -150,7 +152,7 @@ export default function JoinDropList({ onOpen }) {
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
-                <td className="jd-cell-wrap"><button type="button" className="btn-link" onClick={() => onOpen && onOpen({ id: r.applicationId, candidate: { id: r.candidateId, name: r.candidateName } })} style={{ background: 'none', border: 0, color: 'var(--blue, #1d4ed8)', cursor: 'pointer', padding: 0, textAlign: 'left' }}>{r.candidateName}</button></td>
+                <td className="jd-cell-wrap"><button type="button" className="btn-link" onClick={() => onOpen && onOpen({ id: r.applicationId, candidate: { id: r.candidateId, name: r.candidateName } })} style={{ background: 'none', border: 0, color: 'var(--blue, #1d4ed8)', cursor: 'pointer', padding: 0, textAlign: 'left' }}>{r.candidateName}</button><ReplacementTags row={r} onlyFor /></td>
                 <td className="jd-cell-wrap">{r.clientName}<div className="small-muted">{r.jobTitle}</div></td>
                 <td className="jd-cell-wrap">{r.joinedOn ? dmy(r.joinedOn) : <i style={{ color: '#b45309' }}>Not recorded</i>}</td>
                 <td className="jd-cell-wrap">{r.location || <i style={{ color: '#b45309' }}>Not recorded</i>}</td>
@@ -171,6 +173,7 @@ export default function JoinDropList({ onOpen }) {
                   {r.status === 'Dropped' ? (r.replacementDecisionWords || 'Waiting for the client') : '—'}
                   {r.status === 'Dropped' && r.replacementStatus && <div className="small-muted">{r.replacementStatus}</div>}
                   {r.replacementTask && <div className="small-muted">{`Task: ${r.replacementTask.state}`}</div>}
+                  {r.status === 'Dropped' && <ReplacementTags row={r} onlyBy />}
                 </td>
                 <td className="jd-cell-wrap small-muted" style={{ fontSize: 11.5 }}>
                   {r.journey ? (<>
@@ -214,6 +217,44 @@ export default function JoinDropList({ onOpen }) {
   );
 }
 
+// THE REPLACEMENT TABLE: dropped candidate -> replacement candidate, client, requirement, dates, days to replace, and the counts replaced / pending / expired
+export function ReplacementTable({ rp }) {
+  if (!rp) return null;
+  return (
+    <div style={{ margin: '12px 0' }} data-testid="replacement-table">
+      <h4 style={{ margin: '0 0 6px' }}>Replacements</h4>
+      <div className="jd-strip">
+        <div className="tile"><b>{rp.replaced || 0}</b><span>Replaced</span></div>
+        <div className="tile"><b>{rp.pending || 0}</b><span>Pending (due, or added and not joined)</span></div>
+        <div className="tile"><b>{rp.expired || 0}</b><span>Expired (period over, nobody replaced)</span></div>
+        <div className="tile"><b>{rp.declined || 0}</b><span>The client said no</span></div>
+        <div className="tile"><b>{rp.notOwed || 0}</b><span>Not owed (after the period)</span></div>
+      </div>
+      {(rp.table || []).length > 0 ? (
+        <div className="tbl-wrap">
+          <table className="jd-table">
+            <thead><tr><th>Dropped candidate</th><th>Replaced by</th><th>Client</th><th>Requirement</th><th>Dropped on</th><th>Replacement joined on</th><th>Days to replace</th><th>Where it stands</th></tr></thead>
+            <tbody>
+              {rp.table.map((t) => (
+                <tr key={t.id}>
+                  <td className="jd-cell-wrap">{t.droppedCandidate}</td>
+                  <td className="jd-cell-wrap">{t.replacementCandidate || <span className="small-muted">Nobody yet</span>}</td>
+                  <td className="jd-cell-wrap">{t.clientName}</td>
+                  <td className="jd-cell-wrap">{t.jobTitle}</td>
+                  <td className="jd-cell-wrap">{t.droppedOn ? dmy(t.droppedOn) : '—'}</td>
+                  <td className="jd-cell-wrap">{t.replacementJoinedOn ? dmy(t.replacementJoinedOn) : '—'}</td>
+                  <td>{t.daysToReplace != null ? t.daysToReplace : '—'}</td>
+                  <td className="jd-cell-wrap">{t.words}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <div className="small-muted">No dropped candidate has a replacement due or delivered in this view.</div>}
+    </div>
+  );
+}
+
 export function ReportBox({ r, onClose, onCsv, canExport }) {
   const t = r.totals || {};
   return (
@@ -229,6 +270,7 @@ export function ReportBox({ r, onClose, onCsv, canExport }) {
         <div className="tile"><b>{t.replacementsNotNeeded}</b><span>Not needed</span></div>
         <div className="tile"><b>{t.waitingForClient}</b><span>Waiting for the client</span></div>
       </div>
+      <ReplacementTable rp={r.replacements} />
       <div className="tbl-wrap">
         <table className="jd-table">
           <thead><tr><th>{{ client: 'Client', recruiter: 'Recruiter', department: 'Department', month: 'Month' }[r.groupBy] || 'Group'}</th><th>Joined</th><th>Dropped</th><th>Drop rate</th><th>Inside the period</th><th>Asked</th><th>Delivered</th><th>Not needed</th><th>Waiting</th></tr></thead>

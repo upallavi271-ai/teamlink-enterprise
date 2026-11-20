@@ -470,6 +470,17 @@ const STAGE_BADGE_CLASSES = {
 export function stageBadgeClass(code) {
   return STAGE_BADGE_CLASSES[code] || 'new';
 }
+// THE DROPPED STEP (founder 2026-11-20: "when a drop is recorded, the candidate's profile STEP must also show Dropped"). The stage code stays Joined in
+// the database (billing, the guarantee and history read it); the server marks a person who left after joining with left / leftAfterJoining and a
+// stageLabel of "Dropped". These two are the ONE place the screens ask: stepOf(row) -> the word to show, stepClass(row) -> its badge colour.
+export const isLeft = (a) => !!a && (a.left === true || a.leftAfterJoining === true);
+export function stepOf(a, fallback) {
+  if (isLeft(a)) return 'Dropped';
+  return fallback !== undefined ? fallback : stageLabel(a && a.stage);
+}
+export function stepClass(a, code) {
+  return isLeft(a) ? 'rejected' : stageBadgeClass(code !== undefined ? code : a && a.stage);
+}
 // The Status column: Active / On Hold / Rejected / Closed.
 // §30 — Closed is Joined / Hired, i.e. completed: green, not amber.
 export function lifeStatusClass(status) {

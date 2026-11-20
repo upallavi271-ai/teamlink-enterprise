@@ -1093,7 +1093,7 @@ export default function Invoices() {
                         <td>{r.recruiter || '—'}</td>
                         <td>{r.tl || '—'}</td>
                         <td>{r.department || '—'}</td>
-                        <td><span className={`status ${r.joiningStatus === 'Dropped' || r.leftAfterJoining ? 'priority-high' : 'priority-low'}`}>{r.leftAfterJoining ? 'Left after joining' : (r.joiningStatus || 'Joined')}</span></td>
+                        <td><span className={`status ${r.joiningStatus === 'Dropped' || r.leftAfterJoining ? 'priority-high' : 'priority-low'}`}>{r.leftAfterJoining ? 'Dropped' : (r.joiningStatus || 'Joined')}</span></td>
                         <td>{r.rollStatus || '—'}</td>
                         <td style={{ whiteSpace: 'nowrap' }}>{r.joiningDate ? fmtD(r.joiningDate) : 'date not recorded'}</td>
                         <td className="num">{r.offeredCtc != null ? money(r.offeredCtc) : '—'}</td>

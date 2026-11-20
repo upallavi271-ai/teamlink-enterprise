@@ -6,6 +6,7 @@ import StatusChip from '../ui/StatusChip.jsx';
 import DropCandidate from '../candidate/DropCandidate.jsx'; // the real drop window: day + reason, saved in the Joining & Drop record
 import { ListToolbar, FacetSelect } from '../ui/ListPageHeader.jsx';
 import { useAtsIoAccess } from '../AtsDataTools.jsx';
+import { ReplacementTags, WhoReplacedDialog, LinkReplacedButton } from '../joindrop/ReplacementParts.jsx'; // who replaced whom: chips, the "Who is this a replacement for?" window
 import './homeDrill.css';
 
 // ---------------------------------------------------------------------------
@@ -94,7 +95,7 @@ function DropRows({ rows, onClose }) {
       <thead><tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Joined</th><th>Dropped</th><th>Reason</th><th>Replacement</th><th aria-label="Open" /></tr></thead>
       <tbody>{rows.map((r) => (
         <tr key={r.id}>
-          <td><b className="hd-name">{r.candidate}</b>{r.recruiter && <div className="hd-sub">{r.recruiter}</div>}</td>
+          <td><b className="hd-name">{r.candidate}</b>{r.recruiter && <div className="hd-sub">{r.recruiter}</div>}<ReplacementTags row={r} onlyFor /></td>
           <td>{r.requirement}{r.reqCode && <div className="hd-sub">{r.reqCode}</div>}</td>
           <td>{r.client || '—'}</td>
           <td>{r.dropKind === 'nojoin' ? <span className="cell-muted">Did not join</span> : (r.joinedOn ? longDay(r.joinedOn) : <span className="cell-muted">—</span>)}</td>
@@ -104,7 +105,10 @@ function DropRows({ rows, onClose }) {
             {r.dropKind === 'left' && r.inGuarantee === false && <div className="hd-sub">after the replacement period</div>}
           </td>
           <td>{r.dropReason || <span className="cell-muted">—</span>}</td>
-          <td>{r.replacement ? <StatusChip tone={REPL_TONE[r.replTone] || 'amber'}>{r.replacement}</StatusChip> : <span className="cell-muted">—</span>}</td>
+          <td>
+            {r.replacement ? <StatusChip tone={REPL_TONE[r.replTone] || 'amber'}>{r.replacement}</StatusChip> : <span className="cell-muted">—</span>}
+            <ReplacementTags row={{ ...r, left: true }} onlyBy />
+          </td>
           <td><OpenLink to={`/candidates/${r.candidateId}?tab=history`} onClose={onClose} /></td>
         </tr>
       ))}</tbody>
@@ -151,6 +155,7 @@ function RollCell({ r, onRoll, busy }) {
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       {select}
       {unrecorded && <button type="button" className="btn btn-sm" style={{ color: '#b42318', borderColor: '#b42318' }} title="This was marked Dropped without the day and reason, so the counts do not show it yet" onClick={() => onRoll(r.id, 'Dropped')}>Record the drop</button>}
+      <LinkReplacedButton appId={r.id} rollStatus={r.rollStatus} candidateName={r.candidate} refreshKey={r.replacementFor ? r.replacementFor.length : 0} onLinked={() => onRoll(r.id, '__linked__')} />
     </span>
   );
 }
@@ -167,10 +172,10 @@ function Rows({ data, onClose, onRoll, rollBusy }) {
         <thead><tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Step</th><th>{joinList ? 'Joining date' : 'Due'}</th>{joinList && <th>Roll status</th>}<th>Updated</th><th aria-label="Open" /></tr></thead>
         <tbody>{rows.map((r) => (
           <tr key={r.id}>
-            <td><b className="hd-name">{r.candidate}</b>{(r.recruiter || (bdeView && r.bde)) && <div className="hd-sub">{r.recruiter || r.bde}</div>}</td>
+            <td><b className="hd-name">{r.candidate}</b>{(r.recruiter || (bdeView && r.bde)) && <div className="hd-sub">{r.recruiter || r.bde}</div>}<ReplacementTags row={r} onlyFor /></td>
             <td>{r.requirement}{r.reqCode && <div className="hd-sub">{r.reqCode}</div>}</td>
             <td>{r.client || '—'}</td>
-            <td><StatusChip status={r.step} /></td>
+            <td><StatusChip status={r.step} tone={r.left ? 'red' : undefined} />{r.left && r.dropNote && <div className="hd-sub">{r.dropNote}</div>}<ReplacementTags row={r} onlyBy /></td>
             <td>{joinList ? <JoinCell r={r} /> : <DueCell r={r} />}</td>
             {joinList && <td><RollCell r={r} onRoll={onRoll} busy={rollBusy === r.id} /></td>}
             <td className="hd-sub">{shortDate(r.updatedAt)}</td>
@@ -287,7 +292,14 @@ export default function HomeDrill({ listUrl, params, setId: setIdProp, onClose }
 
   // Set On roll / Off roll on a joined candidate straight from the list (founder 2026-11-13).
   const [dropFor, setDropFor] = useState(null);
+  const [replFor, setReplFor] = useState(null); // the "Who is this a replacement for?" window
   async function setRoll(appId, rollStatus) {
+    if (rollStatus === '__linked__') { setTick((t) => t + 1); return; }
+    if (rollStatus === 'Replacement') { // a replacement is somebody's replacement: ask whose first, never save the bare word
+      const row = ((data && data.rows) || []).find((r) => r.id === appId);
+      setReplFor({ id: appId, name: row && row.candidate });
+      return;
+    }
     if (rollStatus === 'Dropped') { // a drop is the day + the reason, saved in the Joining & Drop record: open that window instead of only changing a label
       const row = ((data && data.rows) || []).find((r) => r.id === appId);
       setDropFor({ id: appId, stage: (row && row.stage) || 'JOINED' });
@@ -399,6 +411,14 @@ export default function HomeDrill({ listUrl, params, setId: setIdProp, onClose }
           <div className="hd-empty">Nothing matches your search or filters. <button type="button" className="link-btn" onClick={clearAll}>Clear all</button></div>
         )}
         {data && rows.length > 0 && <div className="hd-wrap"><Rows data={data} onClose={onClose} onRoll={setRoll} rollBusy={rollBusy} /></div>}
+        {replFor && (
+          <WhoReplacedDialog
+            appId={replFor.id}
+            candidateName={replFor.name}
+            onClose={() => setReplFor(null)}
+            onDone={(r) => { setReplFor(null); setMsg({ ok: true, text: (r && r.message) || 'Saved. The replacement is linked.' }); setTick((t) => t + 1); }}
+          />
+        )}
         {dropFor && (
           <DropCandidate
             app={dropFor}

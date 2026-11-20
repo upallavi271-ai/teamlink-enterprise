@@ -5,6 +5,7 @@ import {
   KV, dmy, when, errText, statusTone, JoiningDialog, DropDialog, DecisionDialog, ReasonDialog, LinkDialog, NoticeDialog,
   HistoryList, Journey, ToldTable,
 } from './JdParts.jsx';
+import { ReplacementTags } from './ReplacementParts.jsx';
 import './joindrop.css';
 
 // ---------------------------------------------------------------------------
@@ -35,8 +36,10 @@ export default function JoiningDropPanel({ app, onChanged }) {
   const rec = data.record;
   const rights = data.rights || {};
   if (!rec) {
-    if (!['JOINED', 'HIRED'].includes(app.stage)) return data.journey ? <JourneyOnly data={data} /> : null;
-    return null;
+    // a replacement who has not joined yet has no record of their own: the line still names the dropped person
+    const chips = (data.replacementFor || []).length ? <div className="jd-card"><div className="jd-head"><h4>Replacement</h4></div><ReplacementTags row={{ replacementFor: data.replacementFor }} onlyFor /></div> : null;
+    if (!['JOINED', 'HIRED'].includes(app.stage)) return data.journey || chips ? <>{chips}{data.journey ? <JourneyOnly data={data} /> : null}</> : null;
+    return chips;
   }
   const done = (r, text) => { setDlg(null); setMsg(text || r?.message || 'Saved.'); load(); if (onChanged) onChanged(); };
   const dropped = rec.status === 'Dropped';
@@ -51,6 +54,7 @@ export default function JoiningDropPanel({ app, onChanged }) {
           <h4>Joining &amp; drop <StatusChip status={dropped ? 'Dropped' : 'Joined'} tone={statusTone(rec.status)} /></h4>
           <div className="small-muted">{rec.backfilled ? 'Copied from the existing records' : `Recorded by ${rec.recordedByName || 'TeamLink'}${rec.recordedVia ? ` (${rec.recordedVia})` : ''} on ${when(rec.createdAt)}`}</div>
         </div>
+        {(rec.replacementFor || []).length > 0 && <div className="jd-banner blue" data-testid="replacement-for"><ReplacementTags row={rec} onlyFor /></div>}
         {rec.needsDetails && (
           <div className="jd-banner">Some joining details are not recorded yet ({[rec.missing.includes('joinedOn') ? 'the day they joined' : null, rec.missing.includes('location') ? 'the place' : null].filter(Boolean).join(' and ')}).{rights.correct && ' Press "Add details".'}</div>
         )}
@@ -92,6 +96,12 @@ export default function JoiningDropPanel({ app, onChanged }) {
             <KV k="Inside the replacement period?" v={rec.dropWithinGuarantee === 1 ? 'Yes, inside the period' : (rec.dropWithinGuarantee === 0 ? 'No, after the period' : 'Not known')} />
           </div>
           <h4 style={{ marginTop: 14 }}>Replacement</h4>
+          {rec.replacementWords && (
+            <div className={`jd-banner ${rec.replacementState === 'REPLACED' ? 'green' : (rec.replacementState === 'EXPIRED' ? 'red' : (rec.replacementState === 'DUE' || rec.replacementState === 'ADDED' ? '' : 'blue'))}`} data-testid="replacement-words">
+              <b>{rec.replacementWords}</b>
+              {rec.replacedBy && !rec.replacedBy.hidden && rec.replacedBy.candidateId && <> <a href={`/candidates/${rec.replacedBy.candidateId}`} className="btn-link">Open {rec.replacedBy.candidateName}</a></>}
+            </div>
+          )}
           <div className="jd-grid">
             <KV k="The client's answer" v={rec.replacementDecisionWords || 'Waiting for the client'} nr={!rec.replacementDecisionWords} />
             <KV k="Answered by" v={rec.replacementDecisionWords ? `${rec.replacementDecidedByName || ''}${rec.replacementOnBehalf ? ' (on the client\'s behalf)' : ''} on ${when(rec.replacementDecidedAt)}` : null} />

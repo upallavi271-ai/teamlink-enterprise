@@ -43,3 +43,16 @@
   .jd-hist li, .jd-ms li { grid-template-columns: 1fr; gap: 2px; }
   .jd-ms .elapsed { justify-self: start; }
 }
+
+/* WHO REPLACED WHOM: chips that wrap (a name, its dates and the job are never cut) */
+.jd-chips { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 4px; }
+.jd-chip { display: inline-block; max-width: 100%; border-radius: 10px; padding: 2px 9px; font-size: 11.5px; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; border: 1px solid transparent; }
+.jd-chip-blue { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+.jd-chip-green { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+.jd-chip-amber { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.jd-chip-red { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+.jd-chip-grey { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+.jd-pick { display: flex; gap: 8px; align-items: flex-start; padding: 7px 8px; border: 1px solid #e2e8f0; border-radius: 8px; margin: 5px 0; cursor: pointer; font-size: 13.5px; }
+.jd-pick input { margin-top: 3px; }
+.jd-pick span { overflow-wrap: anywhere; }
+.jd-pick-group { margin-top: 6px; }

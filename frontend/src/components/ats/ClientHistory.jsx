@@ -5,6 +5,8 @@ import ExportMenu from '../ExportMenu.jsx';
 import {
   Day, Definition, DropSummary, Filters, FunnelTiles, JoinedNote, cleanParams, fmtDay, money, num,
 } from './HistoryParts.jsx';
+import { ReplacementTags } from '../joindrop/ReplacementParts.jsx'; // who replaced whom
+import { ReplacementTable } from '../joindrop/JoinDropList.jsx';
 
 // ---------------------------------------------------------------------------
 // CLIENT HISTORY (top of the History tab of the Client page): the same funnel across all the client's requirements, the joinings with their
@@ -59,6 +61,7 @@ export default function ClientHistory({ clientId }) {
       {d.notes.estimatedDates > 0 && <div className="hx-muted">{d.notes.estimatedDates} date{d.notes.estimatedDates === 1 ? ' is' : 's are'} estimated (the exact day was not recorded).</div>}
 
       <DropSummary s={d.dropSummary} />
+      <ReplacementTable rp={d.replacements} />
 
       <div className="hx-sec">
         <h3>Year by year and month by month</h3>
@@ -102,7 +105,7 @@ export default function ClientHistory({ clientId }) {
               <tbody>
                 {d.joinings.map((j) => (
                   <tr key={j.applicationId}>
-                    <td>{j.candidate}</td><td><Link to={`/requirements/${j.requirementId}?tab=history`}>{j.requirement}</Link></td><td>{j.recruiterName || '—'}</td>
+                    <td>{j.candidate}{j.stageLabel === 'Dropped' && <span className="hx-muted"> · Dropped</span>}<ReplacementTags row={{ ...j, left: j.stageLabel === 'Dropped' }} /></td><td><Link to={`/requirements/${j.requirementId}?tab=history`}>{j.requirement}</Link></td><td>{j.recruiterName || '—'}</td>
                     <td><Day v={j.joinDay} est={false} /></td>
                     <td>{j.guarantee}{j.guaranteeEnd ? ` (to ${fmtDay(j.guaranteeEnd)})` : ''}{j.left && j.left.reason ? <div className="hx-muted">left: {j.left.reason}</div> : null}</td>
                   </tr>

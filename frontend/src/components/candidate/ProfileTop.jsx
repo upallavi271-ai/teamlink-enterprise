@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ReplacementTags } from '../joindrop/ReplacementParts.jsx'; // who replaced whom: "Replacement for <name> (dropped on ...)"
 import api from '../../api';
 import { initials } from '../../atsVocab';
 import { productRole } from '../../permissions';
@@ -131,6 +132,7 @@ export default function ProfileTop({
             </span>
           )}
         </div>
+        {app && <ReplacementTags row={app} />}
         {app && !JOINED_STAGES.includes(app.stage) && <JoinedOn c={c} app={app} />}
         {fitB && (
           <div className="cpt-step" style={{ marginTop: 6 }}>

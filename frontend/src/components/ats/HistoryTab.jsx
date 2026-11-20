@@ -6,6 +6,8 @@ import { mayOpenRecruiter, useHistoryAccess } from './HistorySeries.jsx';
 import {
   Day, Definition, DropSummary, Filters, FunnelTiles, JoinedNote, cleanParams, fmtDay, stepLabel,
 } from './HistoryParts.jsx';
+import { ReplacementTags } from '../joindrop/ReplacementParts.jsx'; // who replaced whom
+import { ReplacementTable } from '../joindrop/JoinDropList.jsx';
 
 // ---------------------------------------------------------------------------
 // REQUIREMENT HISTORY (the "History" tab of the Requirement page, and where a search result opens).
@@ -69,6 +71,7 @@ export default function HistoryTab({ requirementId }) {
       <JoinedNote detail={d.joinedDetail} />
       <Definition text={d.definitions.dropped} joinedText={d.definitions.joined} joined={d.definitions.funnel} />
       <DropSummary s={d.dropSummary} />
+      <ReplacementTable rp={d.replacements} />
       {d.notes.estimatedDates > 0 && <div className="hx-muted">{d.notes.estimatedDates} date{d.notes.estimatedDates === 1 ? ' is' : 's are'} marked “est.”: the exact day was not recorded, so the nearest recorded day is shown.</div>}
 
       <div className="hx-sec">
@@ -92,10 +95,10 @@ export default function HistoryTab({ requirementId }) {
               <tbody>
                 {d.rows.map((x) => (
                   <tr key={x.applicationId}>
-                    <td><Link to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</Link></td>
+                    <td><Link to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</Link><ReplacementTags row={x} onlyFor /></td>
                     <td>{x.recruiterName && mayOpenRecruiter(access, x.recruiterId) ? <Link to={`/ats/history/recruiter/${x.recruiterId}`}>{x.recruiterName}</Link> : (x.recruiterName || '—')}</td>
                     <td><Day v={x.shared} /></td>
-                    <td>{x.stageLabel}</td>
+                    <td>{x.stageLabel}{x.stageLabel === 'Dropped' && <ReplacementTags row={{ ...x, left: true }} onlyBy />}</td>
                     <td>{x.interviewDates.length ? x.interviewDates.map(fmtDay).join(', ') : '—'}{x.interviewResult ? <div className="hx-muted">{x.interviewResult}</div> : null}</td>
                     <td><Day v={x.selected} /></td>
                     <td><Day v={x.offer} />{x.offerAccepted ? <div className="hx-muted">accepted <Day v={x.offerAccepted} /></div> : null}</td>

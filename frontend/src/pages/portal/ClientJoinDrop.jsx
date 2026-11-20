@@ -4,6 +4,7 @@ import EmptyState from '../../components/ui/EmptyState.jsx';
 import { Chip, fmtDate } from './portalUi.jsx';
 import { DropDialog, DecisionForm, dmy, when } from '../../components/joindrop/JdParts.jsx';
 import ClientHistoryView from '../../components/joindrop/ClientHistoryView.jsx';
+import { ReplacementTags } from '../../components/joindrop/ReplacementParts.jsx'; // who replaced whom (the client's own people)
 import '../../components/joindrop/joindrop.css';
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,8 @@ export default function ClientJoinDrop({ onChanged }) {
               <div><b style={{ fontSize: 15 }}>{r.candidateName}</b><div className="small-muted">{r.jobTitle}{r.designation && r.designation !== r.jobTitle ? ` · ${r.designation}` : ''}</div></div>
               <Chip label={r.replacementDecision ? r.replacementDecisionWords : 'Waiting for your answer'} tone={r.replacementDecision ? (r.replacementDecision === 'NEEDED' ? 'green' : 'grey') : 'yellow'} />
             </div>
+            {r.replacementWords && <div className={`jd-banner ${r.replacementState === 'REPLACED' ? 'green' : (r.replacementState === 'EXPIRED' ? 'red' : 'blue')}`}><b>{r.replacementWords}</b></div>}
+            <ReplacementTags row={r} onlyFor />
             <div className="jd-grid">
               <div className="jd-kv"><div className="k">Dropped on</div><div className="v">{dmy(r.droppedOn)}</div></div>
               <div className="jd-kv"><div className="k">Last working day</div><div className="v">{r.lastWorkingDay ? dmy(r.lastWorkingDay) : 'Not recorded'}</div></div>
@@ -82,7 +85,7 @@ export default function ClientJoinDrop({ onChanged }) {
               <tbody>
                 {d.joined.map((r) => (
                   <tr key={r.id}>
-                    <td className="jd-cell-wrap"><b>{r.candidateName}</b></td>
+                    <td className="jd-cell-wrap"><b>{r.candidateName}</b><ReplacementTags row={r} onlyFor /></td>
                     <td className="jd-cell-wrap">{r.jobTitle}</td>
                     <td className="jd-cell-wrap">{r.joinedOn ? fmtDate(r.joinedOn) : 'Not recorded'}</td>
                     <td className="jd-cell-wrap">{r.location || 'Not recorded'}</td>

@@ -26,6 +26,7 @@ import DropCandidate, { DROP, dropKind } from './candidate/DropCandidate.jsx'; /
 import AskToBook, { askable, InterviewRequested } from './interviews/AskToBook.jsx'; // only the BDE books: others ask the client manager
 import { ctcAsk, CtcAsk, CtcAskButtons } from './CtcConfirm.jsx';
 import FullDeleteButton, { mayDeleteCompletely } from './FullDeleteButton.jsx'; // Super Admin: a test person, gone from HRMS and ATS
+import { ReplacementTags, WhoReplacedDialog, LinkReplacedButton } from './joindrop/ReplacementParts.jsx'; // "Replacement" is somebody's replacement: the dialog asks whose; a bare one gets a red button
 import './CandidateDrawer.css';
 
 // ---------------------------------------------------------------------------
@@ -1171,6 +1172,7 @@ export function CurrentApplication({
   const [rollVal, setRollVal] = useState((app && app.rollStatus) || '');
   const [rollErr, setRollErr] = useState('');
   const [dropOpen, setDropOpen] = useState(false);
+  const [replOpen, setReplOpen] = useState(false); // the "Who is this a replacement for?" window
   useEffect(() => { setRollVal((app && app.rollStatus) || ''); setRollErr(''); }, [app && app.id, app && app.rollStatus]);
   const mayEdit = !!(user && onChanged && app && app.id && can(user, 'ats', 'recruiterbde', 'Team View', 'assign'));
   if (!app) return <div className="small-muted">Not on any requirement yet. Add them to a requirement to start.</div>;
@@ -1179,6 +1181,7 @@ export function CurrentApplication({
   // with the application through to joining (founder 2026-11-13). Same field and endpoint as the joined list's roll status.
   const canRoll = !!(user && onChanged && app.id && (can(user, 'ats', 'candidates', 'Applications', 'edit') || can(user, 'ats', 'interviews', 'Joining', 'edit')));
   const setRoll = async (v) => {
+    if (v === 'Replacement') { setReplOpen(true); setRollErr(''); return; } // never a bare label: say whose replacement first
     if (v === 'Dropped') { // a drop is the day + the reason in the Joining & Drop record, not just a label
       if (['joined', 'offer'].includes(dropKind(app))) { setDropOpen(true); setRollErr(''); } else setRollErr('To drop a candidate who has not joined yet use Move, then Dropped.');
       return;
@@ -1199,6 +1202,9 @@ export function CurrentApplication({
       {dropOpen && app && (
         <DropCandidate app={app} onClose={() => setDropOpen(false)} onDone={async (said) => { setDropOpen(false); if (onChanged) await onChanged(); setRollVal('Dropped'); if (said) setRollErr(''); }} />
       )}
+      {replOpen && app && (
+        <WhoReplacedDialog appId={app.id} candidateName={app.candidateName} onClose={() => setReplOpen(false)} onDone={async () => { setReplOpen(false); setRollVal('Replacement'); if (onChanged) await onChanged(); }} />
+      )}
       {/* One aligned label / value list; then who is on this. */}
       <div className="c360-facts">
         <div className="cdw-kv"><span>Requirement</span>{linkTo ? linkTo(app) : <b>{app.requirement?.title || '—'}</b>}</div>
@@ -1216,6 +1222,7 @@ export function CurrentApplication({
                 </select>
                 {rollErr && <span className="small-muted" style={{ color: '#b42318' }}>{rollErr}</span>}
                 {app.left && !app.dropRecorded && ['joined', 'offer'].includes(dropKind(app)) && <button type="button" className="btn btn-sm" style={{ color: '#b42318', borderColor: '#b42318' }} onClick={() => setDropOpen(true)}>Record the drop</button>}
+                <LinkReplacedButton appId={app.id} rollStatus={rollVal} refreshKey={(app.replacementFor || []).length} onLinked={() => { if (onChanged) onChanged(); }} />
               </span>
             ) : <b>{app.rollStatus}</b>}
           </div>
@@ -1224,6 +1231,9 @@ export function CurrentApplication({
           <div className="cdw-kv"><span>Interview</span><b>{`${app.interviewStatusLabel || interviewStatusLabel(app.interviewStatus)}${app.interviewAt ? ` · ${dt(app.interviewAt)}` : ''}`}</b></div>
         )}
         {['JOINED', 'HIRED'].includes(app.stage) && <JoiningCtcRow appId={app.id} onChanged={onChanged} />}
+        {((app.replacementFor || []).length > 0 || (app.left && app.replacementWords)) && (
+          <div className="cdw-kv"><span>Replacement</span><ReplacementTags row={app} /></div>
+        )}
       </div>
       {ownership && (
         <>

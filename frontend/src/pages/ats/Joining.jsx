@@ -21,6 +21,7 @@ import Pager from '../../components/Pager.jsx';
 import ListPageHeader, { StatusTabs } from '../../components/ui/ListPageHeader.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import { Modal } from '../../components/proto.jsx';
+import { ReplacementTags } from '../../components/joindrop/ReplacementParts.jsx'; // who replaced whom
 import { ReleaseLetterModal, ShareModal, TrackChip, openLetter } from '../../components/clientTrack/ClientTrack.jsx';
 import '../../components/interviews/Interviews.css';
 import JoinDropList from '../../components/joindrop/JoinDropList.jsx';
@@ -154,7 +155,7 @@ export default function Joining() {
               const late = v === 'waiting' && r.joiningDate && r.joiningDate < todayIso();
               return (
                 <tr key={r.id}>
-                  <td className="row-link"><a href={`/candidates/${r.candidate.id}`} onClick={(e) => { e.preventDefault(); setOpenCand(r); }}>{r.candidate.name}</a></td>
+                  <td className="row-link"><a href={`/candidates/${r.candidate.id}`} onClick={(e) => { e.preventDefault(); setOpenCand(r); }}>{r.candidate.name}</a><ReplacementTags row={r} onlyFor /></td>
                   <td>
                     <div>{r.requirement.title}</div>
                     <div className="small-muted" style={{ fontSize: 12 }}>{internal ? 'TeamLink (internal)' : r.requirement.client?.name || ''}</div>
@@ -183,7 +184,9 @@ export default function Joining() {
                       ? <StatusChip status="Joining date passed" tone="red" />
                       : <StatusChip status={r.daysWaiting ? `Waiting ${r.daysWaiting} day${r.daysWaiting === 1 ? '' : 's'}` : 'Waiting since today'} tone={r.daysWaiting > 14 ? 'red' : 'amber'} />)}
                     {v === 'joined' && <StatusChip status={`Joined ${r.joinedAt ? fmtDate(r.joinedAt) : ''}`.trim()} tone="green" />}
-                    {v === 'dropped' && <StatusChip status={r.leftAfterJoining ? 'Left after joining' : 'Did not join'} tone="red" />}
+                    {v === 'dropped' && <StatusChip status={r.leftAfterJoining ? 'Dropped' : 'Did not join'} tone="red" />}
+                    {v === 'dropped' && r.leftAfterJoining && r.dropNote && <div className="small-muted" style={{ fontSize: 11 }}>{r.dropNote}</div>}
+                    {v === 'dropped' && r.leftAfterJoining && <ReplacementTags row={{ ...r, left: true }} onlyBy />}
                     {/* BGV: a WARNING when the job needs it and it is not Clear (joining is not blocked) */}
                     {r.bgv && (
                       <div style={{ marginTop: 3 }} title={r.bgv.warn ? 'This job needs background verification. Joining is allowed, but check it first.' : ''}>
