@@ -60,8 +60,9 @@ export function OfficeFilterBar({
     <div className="ofb" role="search" aria-label="Filters for the whole page">
       <div className="ofb-grid">
         <div className="ofb-period"><PeriodPicker value={pv} onChange={setPv} /></div>
-        <FacetSelect label="Category" allLabel="All categories" value={f.category} onChange={(v) => set({ category: v })} options={opts(fc.category)} loading={!facets} />
-        <FacetSelect label="Vendor" allLabel="All vendors" value={f.vendor} onChange={(v) => set({ vendor: v })} options={opts(fc.vendor)} loading={!facets} />
+        {/* checkboxes: several categories / vendors / payment modes at once (founder 2026-11-20) */}
+        <FacetSelect multi label="Category" allLabel="All categories" value={f.category} onChange={(v) => set({ category: v })} options={opts(fc.category)} loading={!facets} />
+        <FacetSelect multi label="Vendor" allLabel="All vendors" value={f.vendor} onChange={(v) => set({ vendor: v })} options={opts(fc.vendor)} loading={!facets} />
         <label className="lph-facet ofb-q">
           <span className="lph-facet-lbl">Search</span>
           <input type="search" value={f.q} placeholder="Expense ID, bill no, vendor, category…" onChange={(e) => set({ q: e.target.value })} />
@@ -69,7 +70,7 @@ export function OfficeFilterBar({
         <FacetSelect label="GST on the bill" allLabel="All bills" value={f.gst} onChange={(v) => set({ gst: v })} options={opts(fc.gst)} loading={!facets}
           title="With GST · Without GST · Vendor GSTIN missing (GST on the bill, no valid vendor GSTIN) · Vendor GSTIN available" />
         <FacetSelect label="Status" allLabel="All" value={f.status} onChange={(v) => set({ status: v })} options={opts(fc.status)} loading={!facets} />
-        <FacetSelect label="Payment mode" allLabel="All payment modes" value={f.mode} onChange={(v) => set({ mode: v })} options={opts(fc.mode)} loading={!facets} />
+        <FacetSelect multi label="Payment mode" allLabel="All payment modes" value={f.mode} onChange={(v) => set({ mode: v })} options={opts(fc.mode)} loading={!facets} />
         <FacetSelect label="Source" allLabel="All sources" value={f.source} onChange={(v) => set({ source: v })} options={opts(fc.source)} loading={!facets} />
       </div>
       <FilterChips filters={chips} onClearAll={on ? clearAll : undefined} />

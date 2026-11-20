@@ -16,6 +16,7 @@ import { Link } from 'react-router-dom';
 import EmployeePhoto from '../components/EmployeePhoto.jsx';
 import api from '../api';
 import useClientFilters from '../components/ats/useClientFilters.jsx';
+import MultiSelect, { csvToList } from '../components/ats/MultiSelect.jsx'; // checkboxes: several departments / designations / roles / statuses at once (founder 2026-11-20)
 import { dropDefaultStatus } from '../components/ats/rowFilters.js';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message the employees shown (templates, preview, confirm)
@@ -303,14 +304,13 @@ export default function Employees() {
     if (filters.position && !(e.seats || []).some((t) => t.code === filters.position)) return false;
     const q = filters.q.trim().toLowerCase();
     if (q && !`${e.name} ${e.employeeCode} ${e.email || ''} ${e.phone || ''} ${e.designation || ''} ${e.department || ''}`.toLowerCase().includes(q)) return false;
-    if (filters.dept && e.department !== filters.dept) return false;
-    if (filters.designation && e.designation !== filters.designation) return false;
-    if (filters.role && (e.role || '') !== filters.role
-      && !Object.values(e.productRoles || {}).includes(filters.role)) return false;
+    if (filters.dept && !csvToList(filters.dept).includes(e.department)) return false;
+    if (filters.designation && !csvToList(filters.designation).includes(e.designation)) return false;
+    if (filters.role && !csvToList(filters.role).some((r) => (e.role || '') === r || Object.values(e.productRoles || {}).includes(r))) return false;
     // WHOLE HISTORY (founder 2026-11-20): a search or any filter looks at everybody, people who have left included, unless a status was picked on purpose
     const widened = dropDefaultStatus(filters.status, 'Active', !!q || cf.active);
-    if (!ignoreStatus && !filters.position && filters.status && !widened && !inStatus(e, filters.status)) return false;
-    if (filters.login && e.loginStatus !== filters.login) return false;
+    if (!ignoreStatus && !filters.position && filters.status && !widened && !csvToList(filters.status).some((st) => inStatus(e, st))) return false;
+    if (filters.login && !csvToList(filters.login).includes(e.loginStatus)) return false;
     return true;
   };
   const filtered = useMemo(() => cf.rows.filter((e) => matchesFilters(e)).sort((a, b) => (filters.position
@@ -322,7 +322,7 @@ export default function Employees() {
   const positionOptions = useMemo(() => {
     const count = new Map();
     rows.forEach((e) => (e.seats || []).forEach((t) => {
-      if (filters.dept && t.department && t.department !== filters.dept) return;
+      if (filters.dept && t.department && !csvToList(filters.dept).includes(t.department)) return;
       if (!count.has(t.code)) count.set(t.code, new Set());
       count.get(t.code).add(e.id);
     }));
@@ -368,8 +368,8 @@ export default function Employees() {
   // department is picked, the list opens on today's team, and the ones they
   // took over from must be one click away, not invisible.
   const hiddenHolders = useMemo(() => (filters.status && !filters.position ? rows.filter((e) => e.seatCount > 0
-    && (!filters.dept || e.department === filters.dept)
-    && !inStatus(e, filters.status)) : []), [rows, filters.status, filters.dept, filters.position]);
+    && (!filters.dept || csvToList(filters.dept).includes(e.department))
+    && !csvToList(filters.status).some((st) => inStatus(e, st))) : []), [rows, filters.status, filters.dept, filters.position]);
 
   // The server builds the file and scopes it: a TL downloads their own
   // department, not the company. The browser only saves what comes back, so
@@ -808,32 +808,15 @@ export default function Employees() {
           type="text" placeholder="Search name, ID, email, phone or designation…"
           value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
         />
-        <Combo value={filters.dept} onChange={(e) => setFilters((f) => ({ ...f, dept: e.target.value }))}>
-          <option value="">{`All departments (${rows.filter((e) => e.department).length})`}</option>
-          {rowDepts.map((d) => <option key={d} value={d}>{`${d} (${countOf.department[d] || 0})`}</option>)}
-        </Combo>
-        <Combo value={filters.designation} onChange={(e) => setFilters((f) => ({ ...f, designation: e.target.value }))}>
-          <option value="">{`All designations (${rows.filter((e) => e.designation).length})`}</option>
-          {rowDesignations.map((d) => <option key={d} value={d}>{`${d} (${countOf.designation[d] || 0})`}</option>)}
-        </Combo>
+        <MultiSelect label="Department" allLabel="All departments" hideZero={false} value={filters.dept} onChange={(v) => setFilters((f) => ({ ...f, dept: v }))} options={rowDepts.map((d) => ({ value: d, label: d, count: countOf.department[d] || 0 }))} />
+        <MultiSelect label="Designation" allLabel="All designations" hideZero={false} value={filters.designation} onChange={(v) => setFilters((f) => ({ ...f, designation: v }))} options={rowDesignations.map((d) => ({ value: d, label: d, count: countOf.designation[d] || 0 }))} />
         <Combo value={filters.position} onChange={(e) => setFilters((f) => ({ ...f, position: e.target.value }))}>
           <option value="">{`All positions (${positionOptions.reduce((s, o) => s + (Number(o.n) || 0), 0)})`}</option>
           {positionOptions.map((o) => <option key={o.code} value={o.code}>{`${o.code} · ${o.n} ${o.n === 1 ? 'person' : 'people'}`}</option>)}
         </Combo>
-        <Combo value={filters.role} onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}>
-          <option value="">{`All roles (${rows.filter((e) => e.role).length})`}</option>
-          {rowRoles.map((r) => <option key={r} value={r}>{`${atsRoleLabel(r)} (${countOf.role[r] || 0})`}</option>)}
-        </Combo>
-        <Combo value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-          <option value="">All statuses ({rows.length})</option>
-          {STATUS_CHOICES.map((st) => <option key={st} value={st}>{`${st} (${statusCounts[st] ?? 0})`}</option>)}
-        </Combo>
-        <Combo value={filters.login} onChange={(e) => setFilters((f) => ({ ...f, login: e.target.value }))}>
-          <option value="">Any login state</option>
-          <option>Active</option>
-          <option>Inactive</option>
-          <option>No login</option>
-        </Combo>
+        <MultiSelect label="Role" allLabel="All roles" hideZero={false} value={filters.role} onChange={(v) => setFilters((f) => ({ ...f, role: v }))} options={rowRoles.map((r) => ({ value: r, label: atsRoleLabel(r), count: countOf.role[r] || 0 }))} />
+        <MultiSelect label="Status" allLabel="All statuses" hideZero={false} value={filters.status} onChange={(v) => setFilters((f) => ({ ...f, status: v }))} options={STATUS_CHOICES.map((st) => ({ value: st, label: st, count: statusCounts[st] ?? 0 }))} />
+        <MultiSelect label="Login" allLabel="Any login state" hideZero={false} value={filters.login} onChange={(v) => setFilters((f) => ({ ...f, login: v }))} options={['Active', 'Inactive', 'No login'].map((x) => ({ value: x, label: x }))} />
         {filtersOn && (
           <button className="btn btn-sm" onClick={() => setFilters({ q: '', dept: '', designation: '', role: '', status: '', login: '', position: '' })}>Clear</button>
         )}

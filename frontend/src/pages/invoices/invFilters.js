@@ -121,7 +121,8 @@ export function normFilters(f) {
   delete x.client;
   if (!Array.isArray(x.recs)) x.recs = [];
   if (x.status === 'Received') x.status = 'Paid';
-  if (!STATUS_OPTS.some((o) => o.value === x.status)) x.status = ALL;
+  // one status or several ticked ones (a comma list); anything unknown falls back to All
+  if (typeof x.status !== 'string' || !x.status.split(',').every((s) => STATUS_OPTS.some((o) => o.value === s))) x.status = ALL;
   x.q = typeof x.q === 'string' ? x.q : '';
   ['gstType', 'gstRate', 'tds', 'tdsRate', 'tdsStatus', 'due'].forEach((k) => { if (typeof x[k] !== 'string' || !x[k]) x[k] = ALL; });
   return x;
@@ -192,6 +193,12 @@ export const recLabelOf = (r) => (r.recruiterKey ? (r.recruiter || 'Unknown') : 
 
 // One row through every filter — `skip` leaves one out (for that filter's own
 // option counts: each list is counted over what the OTHER filters leave).
+// SEVERAL VALUES (founder 2026-11-20: checkboxes everywhere): Status, GST type, TDS status and Due date hold one value, 'All', or a comma list
+export const picks = (v) => (!v || v === ALL ? [] : String(v).split(',').filter(Boolean));
+export const pickedOne = (v, x) => picks(v).includes(x);
+export const fromPicks = (list) => (list && list.length ? list.join(',') : ALL);
+const anyOf = (v, test) => { const p = picks(v); return !p.length || p.some(test); };
+
 export function passes(r, F, period, stance, skip) {
   if (skip !== 'period' && !periodMatch(r, period)) return false;
   // CLIENT = the client's ID (names can repeat, be renamed or spelt two ways), never the name text.
@@ -203,19 +210,19 @@ export function passes(r, F, period, stance, skip) {
   // An invoice matches if ANY of its candidates has a picked recruiter (every
   // invoice in this register bills one candidate).
   if (skip !== 'recs' && F.recs.length && !F.recs.includes(recKeyOf(r))) return false;
-  if (skip !== 'status' && !statusMatch(r, F.status)) return false;
+  if (skip !== 'status' && !anyOf(F.status, (w) => statusMatch(r, w))) return false;
   if (skip !== 'gstin' && F.gstin !== ALL) {
     if (F.gstin === 'Yes' && !r.clientPayingGst) return false;
     if (F.gstin === 'No' && r.clientPayingGst) return false;
     const h = GST_HISTORY.find((x) => x.value === F.gstin);
     if (h && (stance || {})[r.client] !== h.kind) return false;
   }
-  if (skip !== 'gstType' && F.gstType !== ALL && r.gstType !== F.gstType) return false;
+  if (skip !== 'gstType' && !anyOf(F.gstType, (w) => r.gstType === w)) return false;
   if (skip !== 'gstRate' && F.gstRate !== ALL && rateKey(r.gstPercent) !== F.gstRate) return false;
   if (skip !== 'tds' && F.tds !== ALL && (F.tds === 'Yes') !== !!r.tdsApplicable) return false;
   if (skip !== 'tdsRate' && F.tdsRate !== ALL && rateKey(r.tdsPercent) !== F.tdsRate) return false;
-  if (skip !== 'tdsStatus' && F.tdsStatus !== ALL && r.tdsStatus !== F.tdsStatus) return false;
-  if (skip !== 'due' && !dueMatch(r, F.due)) return false;
+  if (skip !== 'tdsStatus' && !anyOf(F.tdsStatus, (w) => r.tdsStatus === w)) return false;
+  if (skip !== 'due' && !anyOf(F.due, (w) => dueMatch(r, w))) return false;
   if (skip !== 'q' && !searchMatch(r, F.q)) return false;
   return true;
 }

@@ -8,6 +8,7 @@ import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRo
 import { can, isAdmin, isSuperAdmin, isHR as hasHrmsAdmin, canEditAttendance, canDecideAttendance } from '../permissions';
 import HistoryImport from './attendance/HistoryImport.jsx';
 import Combo from '../components/Combo.jsx';
+import MultiSelect, { csvToList } from '../components/ats/MultiSelect.jsx'; // checkboxes: several departments / methods at once (founder 2026-11-20)
 import { HR_STATUSES, hrStatusOf, employeeStatusMatches, DEFAULT_EMPLOYEE_STATUS } from '../hrStatus';
 import EmployeeStatusTag from '../components/EmployeeStatusTag.jsx';
 import { ApprovalChainModal, ApprovalChainLine } from '../components/ApprovalChain.jsx';
@@ -31,7 +32,7 @@ import ExportMenu from '../components/ExportMenu.jsx';
 import InsightsPanel from '../components/charts/InsightsPanel.jsx';
 import DataIoBar from '../components/dataio/DataIoBar.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
-import PeopleFilterBar from '../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { oneOf } from '../components/PeopleFilterBar.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
 
 // The daily-marking status filter. "On Leave" is stored as Leave; "Not marked"
@@ -194,9 +195,9 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
   const markDepts = [...new Set(markingAll.map((r) => r.department).filter(Boolean))].sort();
   const marking = markingAll.filter((r) => {
     if (mf.q && !`${r.employeeCode || ''} ${r.name || ''}`.toLowerCase().includes(mf.q.trim().toLowerCase())) return false;
-    if (mf.department && r.department !== mf.department) return false;
-    if (mf.empStatus && r.hrStatus !== mf.empStatus) return false;
-    if (mf.status && markStatusOf(r.status) !== mf.status) return false;
+    if (mf.department && !oneOf(mf.department, r.department)) return false;
+    if (mf.empStatus && !oneOf(mf.empStatus, r.hrStatus)) return false;
+    if (mf.status && !oneOf(mf.status, markStatusOf(r.status))) return false;
     if (!matchesKpi(r, kpi)) return false;
     return true;
   });
@@ -640,9 +641,9 @@ function MethodAssignment() {
   const shown = data.employees.filter((e) => {
     const q = f.q.trim().toLowerCase();
     if (q && !`${e.employeeCode} ${e.name}`.toLowerCase().includes(q)) return false;
-    if (f.department && e.department !== f.department) return false;
-    if (f.method === 'none' && current(e).length) return false;
-    if (f.method && f.method !== 'none' && !current(e).includes(f.method)) return false;
+    if (f.department && !csvToList(f.department).includes(e.department)) return false;
+    // several methods: a person stays when they have ANY of the ticked ones ("none" = no method at all)
+    if (f.method && !csvToList(f.method).some((m) => (m === 'none' ? !current(e).length : current(e).includes(m)))) return false;
     return true;
   });
   const toggle = (e, key) => {
@@ -688,15 +689,8 @@ function MethodAssignment() {
         </div>
         <div className="filter-row">
           <input placeholder="Employee ID or name" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} />
-          <Combo value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })}>
-            <option value="">All departments</option>
-            {depts.map((d) => <option key={d}>{d}</option>)}
-          </Combo>
-          <Combo value={f.method} onChange={(e) => setF({ ...f, method: e.target.value })}>
-            <option value="">Any method</option>
-            {data.methods.map((m) => <option key={m.key} value={m.key}>Has {m.label}</option>)}
-            <option value="none">No method assigned</option>
-          </Combo>
+          <MultiSelect label="Department" allLabel="All departments" value={f.department} onChange={(v) => setF((x) => ({ ...x, department: v }))} options={depts.map((d) => ({ value: d, label: d }))} />
+          <MultiSelect label="Method" allLabel="Any method" value={f.method} onChange={(v) => setF((x) => ({ ...x, method: v }))} options={[...data.methods.map((m) => ({ value: m.key, label: `Has ${m.label}` })), { value: 'none', label: 'No method assigned' }]} />
           <span className="small-muted" style={{ alignSelf: 'center' }}>{shown.length} employee(s)</span>
         </div>
         {msg && <div className="notice">{msg}</div>}
@@ -904,11 +898,11 @@ function RegularizationTab({ isHR, canDecide }) {
     const e = r.employee || {};
     if (rf.code && !String(e.employeeCode || '').toLowerCase().includes(rf.code.trim().toLowerCase())) return false;
     if (rf.name && !String(e.name || '').toLowerCase().includes(rf.name.trim().toLowerCase())) return false;
-    if (rf.department && e.department !== rf.department) return false;
+    if (rf.department && !oneOf(rf.department, e.department)) return false;
     // the Employee status filter only exists for the HR view (the bar draws no control for anybody else)
-    if (isHR && rf.empStatus && !employeeStatusMatches(rf.empStatus, e.employmentStatus)) return false;
+    if (isHR && rf.empStatus && !csvToList(rf.empStatus).some((s) => employeeStatusMatches(s, e.employmentStatus))) return false;
     if (rf.date && r.date !== rf.date) return false;
-    if (rf.status && r.status !== rf.status) return false;
+    if (rf.status && !oneOf(rf.status, r.status)) return false;
     return true;
   });
   const regPage = usePaged(shown);
