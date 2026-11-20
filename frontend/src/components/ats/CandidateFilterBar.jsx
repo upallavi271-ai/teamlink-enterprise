@@ -52,9 +52,9 @@ export function candidateConfig(f) {
     { id: 'locCur', label: 'Current location', type: 'multi', primary: true, show: f.loc, keys: { value: 'locCur' }, allLabel: 'Any location', plural: 'locations', title: 'Where the person lives now, with how many people in each place' },
     { id: 'spec', label: 'Specialization', type: 'select', primary: true, keys: { value: 'spec' }, allLabel: 'All specializations' },
     { id: 'ctcCur', label: 'Current CTC', type: 'range', primary: true, show: f.ctc, unit: 'lakh / year', step: 0.5, keys: { min: 'ctcCurMin', max: 'ctcCurMax', bucket: 'ctcCurBucket' }, facet: 'ctcCurBucket' },
-    { id: 'ctcExp', label: 'Expected CTC', type: 'range', primary: true, show: f.ctc, unit: 'lakh / year', step: 0.5, keys: { min: 'ctcExpMin', max: 'ctcExpMax', bucket: 'ctcExpBucket' }, facet: 'ctcExpBucket' },
+    { id: 'ctcExp', label: 'Expected CTC', type: 'range', show: f.ctc, unit: 'lakh / year', step: 0.5, keys: { min: 'ctcExpMin', max: 'ctcExpMax', bucket: 'ctcExpBucket' }, facet: 'ctcExpBucket' },
     { id: 'exp', label: 'Experience', type: 'range', primary: true, unit: 'years', step: 0.5, keys: { min: 'expMin', max: 'expMax' } },
-    { id: 'noticeBand', label: 'Notice period', type: 'multi', primary: true, keys: { value: 'noticeBand' }, allLabel: 'Any notice', plural: 'bands' },
+    { id: 'noticeBand', label: 'Notice period', type: 'multi', keys: { value: 'noticeBand' }, allLabel: 'Any notice', plural: 'bands' },
     { id: 'stage', label: 'Stage', type: 'select', primary: true, show: !f.master, keys: { value: 'stage' }, allLabel: 'All stages', facet: '_stage' },
     // ---- more filters
     { id: 'locPref', label: 'Preferred location', type: 'multi', show: f.loc, keys: { value: 'locPref' }, allLabel: 'Any', plural: 'locations', title: 'Places the person is willing to work in' },
@@ -81,7 +81,7 @@ export function candidateConfig(f) {
 }
 
 export default function CandidateFilterBar({
-  xf, filters, setFilter, facets, loading, total, stageOptions, onClear, canClear, saved, master = false,
+  xf, filters, setFilter, facets, loading, total, stageOptions, onClear, canClear, saved, master = false, moreExtra = null, moreExtraCount = 0,
 }) {
   // what the server offered tells which groups this login may use
   const { user } = useAuth() || {};
@@ -122,6 +122,8 @@ export default function CandidateFilterBar({
       allTime={!!canClear}
       storageKey="cand"
       className="fbar-cand"
+      moreExtra={moreExtra}
+      moreExtraCount={moreExtraCount}
     />
   );
 }

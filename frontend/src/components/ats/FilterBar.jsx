@@ -233,7 +233,7 @@ function activeIn(fields, values) {
 }
 
 export default function FilterBar({
-  config, values, onChange, facets = {}, loading = false, total = null, noun = 'results', onClear, saved = null, extraChips = [], lead = null, className = '', storageKey = '', chipSkip = [], canClear, allTime = false,
+  config, values, onChange, facets = {}, loading = false, total = null, noun = 'results', onClear, saved = null, extraChips = [], lead = null, className = '', storageKey = '', chipSkip = [], canClear, allTime = false, moreExtra = null, moreExtraCount = 0,
 }) {
   const fields = useMemo(() => (config || []).filter((f) => f.show !== false), [config]);
   const primary = fields.filter((f) => f.primary);
@@ -250,14 +250,15 @@ export default function FilterBar({
   const openField = (id) => { if (more.some((m) => m.id === id)) setOpen(true); setOpenFor((o) => ({ id, n: o.n + 1 })); };
   const chips = [...chipsOf(config, values, facets, onChange, chipSkip, openField), ...extraChips];
   const showClear = !!onClear && (canClear !== undefined ? canClear : chips.length > 0);
-  const moreN = activeIn(more, values);
+  const moreN = activeIn(more, values) + Number(moreExtraCount || 0);
+  const hasMore = more.length > 0 || !!moreExtra;
   const nf = (n) => Number(n).toLocaleString('en-IN');
   return (
     <div className={`fbar ${className}`}>
       <div className="fbar-row">
         {lead}
         {primary.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} openToken={openFor.id === f.id ? openFor.n : 0} />)}
-        {more.length > 0 && (
+        {hasMore && (
           <button type="button" className={`mf-toggle fbar-more${open ? ' on' : ''}`} onClick={toggle} aria-expanded={open}>
             More filters{moreN ? ` (${moreN})` : ''} {open ? '▴' : '▾'}
           </button>
@@ -266,7 +267,7 @@ export default function FilterBar({
         {saved}
         {total !== null && total !== undefined && <span className="small-muted fbar-count" role="status">{`${nf(total)} ${noun}`}{allTime ? ' · Showing all time' : ''}</span>}
       </div>
-      {open && more.length > 0 && (
+      {open && hasMore && (
         <>
           <div className="fbar-backdrop" onClick={() => setOpen(false)} aria-hidden="true" />
           <div className="fbar-panel" role="dialog" aria-label="More filters">
@@ -279,6 +280,7 @@ export default function FilterBar({
             </div>
             <div className="fbar-panel-body">
               {more.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} openToken={openFor.id === f.id ? openFor.n : 0} />)}
+              {moreExtra}
             </div>
           </div>
         </>

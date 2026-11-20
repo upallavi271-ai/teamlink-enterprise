@@ -92,7 +92,7 @@ export function ListToolbar({
   search, onSearch, onSearchSubmit, placeholder = 'Search…', searchWidth = 280,
   filterCount = 0, panel, panelFooter, defaultOpen = false,
   sort, sortOptions, onSort, sortExtra,
-  savedViews, right, chips = [], onClearAll, className = '', searchHint = null,
+  savedViews, right, chips = [], onClearAll, className = '', searchHint = null, afterSearch = null,
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const wrap = useRef(null);
@@ -118,6 +118,7 @@ export function ListToolbar({
             aria-label="Search"
           />
         )}
+        {afterSearch}
         {hasPanel && (
           <button
             type="button"

@@ -1,0 +1,59 @@
+/* Candidates & Pipeline, the simple page (founder 2026-11-20). Scoped under .cv4. */
+.cv4 .cv4-head{margin-bottom:6px}
+.cv4 .cv4-head p{margin:0}
+.cv4 .cv4-tools .ac-more{position:relative}
+.cv4 .ac-more-btn{height:34px}
+.cv4 .ac-badge{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;font-size:12px;line-height:18px;font-weight:700;background:var(--red,#b3261e);color:#fff}
+.cv4 .ac-caret{font-size:10px;margin-left:4px}
+.cv4 .ac-panel.open{position:absolute;z-index:60;top:calc(100% + 4px);right:0;min-width:260px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.14);padding:4px;display:flex;flex-direction:column;gap:0}
+.cv4 .ac-panel.open > .btn,.cv4 .ac-panel.open .atsio > .btn,.cv4 .ac-panel.open .savedviews-toggle{display:flex!important;width:100%;height:auto;min-height:34px;justify-content:flex-start;align-items:center;text-align:left;border:0;background:none;box-shadow:none;border-radius:7px;padding:7px 10px;font-size:13px;font-weight:500;color:var(--ink)}
+.cv4 .ac-panel.open > .btn:hover,.cv4 .ac-panel.open .atsio > .btn:hover,.cv4 .ac-panel.open .savedviews-toggle:hover{background:var(--brand-tint,#eef2ff)}
+.cv4 .ac-panel.open .atsio{display:flex!important;flex-direction:column;gap:0;align-items:stretch}
+.cv4 .ac-panel.open .savedviews{width:100%}
+.cv4 .ac-panel.open .savedviews-menu{left:auto;right:100%;top:0;margin-right:6px}
+/* closed: the buttons are hidden, the dialogs they opened are not */
+.cv4 .ac-panel:not(.open){position:absolute;left:0;top:0;width:0;height:0;overflow:visible}
+.cv4 .ac-panel:not(.open) > .btn,.cv4 .ac-panel:not(.open) > .savedviews,.cv4 .ac-panel:not(.open) .atsio > .btn{display:none!important}
+.cv4 .ac-panel:not(.open) .atsio-msg{position:fixed;top:72px;right:24px;z-index:95;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.18);padding:8px 12px}
+.cv4 .ac-panel .ac-n{margin-left:auto;padding:0 7px;border-radius:999px;font-size:12px;line-height:18px;font-weight:700;background:rgba(15,23,42,.08)}
+.cv4 .ac-panel .ac-n.red{background:var(--red,#b3261e);color:#fff}
+
+/* the status strip: All · Active · On hold · Selected · Joined · Rejected, then "Show:" chips */
+.cv4 .cv4-status.tabstrip{margin:0 0 6px}
+.cv4 .cv4-status .tabstrip-extra{margin-left:12px}
+.cv4 .cv4-show-l{font-size:12px;color:var(--ink-soft);font-weight:600}
+
+/* new people chip beside the search */
+.npc{position:relative;display:inline-block}
+.npc-chip{height:32px;padding:0 12px;border-radius:999px;border:1px solid #a7d8b6;background:#ecf8f0;color:#146c3a;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.npc-chip.on,.npc-chip:hover{background:#dff3e6}
+.npc-pop{position:absolute;z-index:60;top:calc(100% + 6px);left:0;width:min(720px,92vw);max-height:60vh;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(15,23,42,.18);padding:6px}
+.npc-pop .nps{margin:0;border:0;box-shadow:none}
+
+/* Insights, closed by default */
+.cv4 .cv4-fold{margin:14px 0 6px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.cv4 .cv4-fold-head{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;padding:11px 14px;font:inherit;font-size:14px;cursor:pointer;text-align:left;flex-wrap:wrap}
+.cv4 .cv4-fold-head:focus-visible{outline:2px solid var(--brand,#2563eb);outline-offset:-2px;border-radius:12px}
+.cv4 .cv4-fold-caret{width:14px}
+.cv4 .cv4-fold-body{padding:4px 12px 14px;display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--line)}
+.cv4 .cv4-fold-body .cv4-kpis{margin-top:10px}
+
+/* the list takes the whole width (the right-hand Filters panel is gone) */
+.cv4 .cv4-layout.cv4-single{display:block}
+
+/* the table fits: no sideways scroll in the simple view */
+.cv4 .cpl-table.is-simple{table-layout:fixed;width:100%}
+
+/* the simple table: tighter cells so it fits at 1280 px without sideways scroll */
+.cv4 .cv4-listpanel .cpl-table.is-simple th,.cv4 .cv4-listpanel .cpl-table.is-simple td{padding-left:6px;padding-right:6px}
+.cv4 .cv4-listpanel .cpl-table.is-simple .cpl-sticky-1{min-width:130px;max-width:none}
+
+@media (max-width:700px){
+  .cv4 .cv4-status .tabstrip-row{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
+  .cv4 .cv4-status .tabstrip-tabs{flex:0 0 auto}
+  .cv4 .cv4-status .tabstrip-extra{flex:0 0 auto;white-space:nowrap}
+  .cv4 .cv4-head h1{font-size:20px}
+  .cv4 .cv4-tools{gap:6px}
+  .npc{display:block;margin-top:6px}
+  .cv4 .ac-panel.open{right:auto;left:0}
+}

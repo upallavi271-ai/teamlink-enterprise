@@ -96,10 +96,13 @@ export default function AtsDataTools({
   // its own header button (keeps a header at 3 small buttons). Ignored when
   // this login cannot export — then the History button stays.
   historyInExport = false,
+  // only: draw just some of the buttons ('import' | 'export' | 'template' | 'history'); the dialogs of the others stay available (the page header shows Import and puts the rest under More).
+  only = null,
   // label / exportLabel kept for older callers; the buttons say what they do.
   label, exportLabel, // eslint-disable-line no-unused-vars
 }) {
   const access = useAtsIoAccess();
+  const want = (k) => !only || only.includes(k);
   const [dialog, setDialog] = useState(null); // 'import' | 'request' | 'resumes' | 'export' | 'history' | 'datefix'
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -159,37 +162,37 @@ export default function AtsDataTools({
   const openImport = (target) => setDialog(mayResumes ? `pick:${target}` : target);
   return (
     <div className="atsio">
-      {directKinds.length > 0 && (
+      {want('import') && directKinds.length > 0 && (
         <button type="button" className="btn btn-sm" onClick={() => openImport('import')} title={mayResumes ? 'Bulk upload (Excel list) or upload resume files' : 'Add many records at once from an Excel file'}>
           <span aria-hidden="true">⬆</span> Import
         </button>
       )}
-      {requestKinds.length > 0 && (
+      {want('import') && requestKinds.length > 0 && (
         <button type="button" className="btn btn-sm" onClick={() => (directKinds.length ? setDialog('request') : openImport('request'))} title="Upload an Excel file — an Admin or Manager approves it before it is added">
           <span aria-hidden="true">⬆</span> Import (needs approval)
         </button>
       )}
-      {mayResumes && !directKinds.length && !requestKinds.length && (
+      {want('import') && mayResumes && !directKinds.length && !requestKinds.length && (
         <button type="button" className="btn btn-sm" onClick={() => setDialog('resumes')} title="Upload resume files (PDF / DOCX)">
           <span aria-hidden="true">⬆</span> Import
         </button>
       )}
-      {!directKinds.length && !requestKinds.length && !mayResumes && (
+      {want('import') && !directKinds.length && !requestKinds.length && !mayResumes && (
         <button type="button" className="btn btn-sm atsio-off" aria-disabled="true" onClick={() => off(whyNoImport)} title={whyNoImport}>
           <span aria-hidden="true">⬆</span> Import
         </button>
       )}
-      {mayExport && (
+      {want('export') && mayExport && (
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setMsg(null); setDialog('export'); }} title="Download this list as Excel, CSV or PDF">
           <span aria-hidden="true">⬇</span> {busy ? 'Exporting…' : 'Export'}
         </button>
       )}
-      {!mayExport && (
+      {want('export') && !mayExport && (
         <button type="button" className="btn btn-sm atsio-off" aria-disabled="true" onClick={() => off(whyNoExport)} title={whyNoExport}>
           <span aria-hidden="true">⬇</span> Export
         </button>
       )}
-      {templateKinds.length > 0 ? (
+      {!want('template') ? null : templateKinds.length > 0 ? (
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => (templateKinds.length === 1 ? downloadTemplate(templateKinds[0]) : setDialog('template'))} title="Download the sample Excel sheet for this screen's import: column names and example rows">
           <span aria-hidden="true">⬇</span> Template
         </button>
@@ -198,7 +201,7 @@ export default function AtsDataTools({
           <span aria-hidden="true">⬇</span> Template
         </button>
       )}
-      {!(historyInExport && mayExport) && (
+      {want('history') && !(historyInExport && mayExport) && (
         <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDialog('history')} title="Past imports and exports — undo an import within 24 hours">
           {approver ? 'Approvals & history' : 'History'}
         </button>

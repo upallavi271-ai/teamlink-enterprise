@@ -33,6 +33,10 @@ import {
   ListToolbar, ListFooter, FacetSelect, PanelField, useFacets,
 } from '../components/ui/ListPageHeader.jsx';
 import ColumnChooser, { useStoredState } from '../components/ColumnChooser.jsx';
+import ActionMore from '../components/candidates-v4/ActionMore.jsx'; // the one More menu of the action bar
+import InsightsFold from '../components/candidates-v4/InsightsFold.jsx'; // every chart and tile, in one section under the table
+import NewPeopleChip from '../components/candidate/NewPeopleChip.jsx'; // new people, not on a requirement yet: one chip beside the search
+import '../components/candidates-v4/candidatesTidy.css';
 import TabStrip from '../components/ui/TabStrip.jsx'; // main tabs + More menu + the caption line (founder 2026-11-20)
 import {
   LIST_VIEW_ALIAS, LIST_MORE, PIPE_SUB_MORE, MASTER_SUB_MORE, defaultListTab, lastTab, rememberTab,
@@ -212,7 +216,7 @@ const MAIN_VIEWS = [
 const PIPE_SUBS = [
   { id: 'all', label: 'All', hint: 'Every application, any status', say: 'Every application you can see, whatever its status.' },
   { id: 'active', label: 'Active', hint: 'Still in progress', say: 'Applications still moving through the steps. Move them to the next step here.' },
-  { id: 'hold', label: 'Hold', hint: 'Applications on hold', say: 'Applications paused for now. Open one to start it again.' },
+  { id: 'hold', label: 'On hold', hint: 'Applications on hold', say: 'Applications paused for now. Open one to start it again.' },
   { id: 'selected', label: 'Selected', hint: 'Selected, offer made or offer accepted', say: 'Selected, offer made or offer accepted — waiting to join.' },
   { id: 'joined', label: 'Joined', hint: 'Joined / hired', say: 'People who joined, with the joining date.' },
   { id: 'rejected', label: 'Rejected', hint: 'Rejected applications — kept, never deleted', say: 'Rejected applications. Kept, never deleted.' },
@@ -237,7 +241,9 @@ const QUICK = [
 ];
 // Only the four daily queues stay on screen; the rest live in Filters → "Show only".
 // Needs my action is a tab of its own now (Candidates & Pipeline > Needs my action).
-const QUICK_ON_SCREEN = ['overdue', 'due_today', 'today_interviews'];
+const QUICK_ON_SCREEN = ['overdue', 'due_today', 'today_interviews', 'client_feedback'];
+// the chip words (the Filters list keeps the long ones)
+const QUICK_CHIP = { client_feedback: 'Interview done, no feedback' };
 const QUICK_IN_FILTERS = QUICK.filter(([id]) => id !== 'my_pending' && !QUICK_ON_SCREEN.includes(id));
 
 // ATS Pipeline columns: Candidate | Requirement | Client | Stage | Owner |
@@ -319,7 +325,7 @@ const toggleCsv = (v, one) => { const l = csvList(v); return (l.includes(one) ? 
 const SIMPLE_COL = { salary: { id: 'salary', label: 'Salary', sort: 'ctc', tip: 'Now = what they earn now. Wants = what they ask for. The chip says how it fits the client budget.' } };
 // Simple view: ONE set of column widths for the header and every row (a fixed grid).
 const SIMPLE_W = {
-  source: 150, phone: 104, experience: 66, salary: 150, stage: 150, joining: 112, next: 132,
+  source: 100, phone: 108, experience: 58, salary: 104, stage: 104, joining: 100, next: 126,
 };
 const FEEDBACK_COLUMNS = ['candidate', 'client', 'requirement', 'ivdate', 'waiting', 'next'];
 // The Rejected tab shows its own set (change list §10): Job (client) · Rejected by · Reason · Date.
@@ -465,8 +471,11 @@ function fromUrl(sp, portalAllowed, dupAllowed = true) {
 // (Recruiter -> Needs my action · TL / BDE -> the pipeline · Admin / Manager -> People).
 function entryFromUrl(sp, portalAllowed, dupAllowed, user, tier) {
   const base = fromUrl(sp, portalAllowed, dupAllowed);
-  if ([...sp.keys()].length) return base;
   const external = ['CLIENT', 'CANDIDATE'].includes(user && user.role);
+  // A link to a tab this login does not get (Contact lists, Sources) lands on the pipeline.
+  if (base.main === 'contacts' && !contactsAllowed(user)) return { ...base, main: 'pipeline', sub: 'active' };
+  if (base.main === 'sources' && external) return { ...base, main: 'pipeline', sub: 'active' };
+  if ([...sp.keys()].length) return base;
   const ok = (t) => (t === 'todo' ? !external : t === 'job-portal' ? portalAllowed : t === 'sources' ? !external : t === 'contacts' ? contactsAllowed(user) : ['pipeline', 'master'].includes(t));
   const last = lastTab('candidates', user && user.id);
   let want = ok(last) ? last : defaultListTab(tier);
@@ -1230,7 +1239,7 @@ export default function Candidates() {
   MASTER_COLUMNS.forEach((c) => { mshow[c.id] = c.locked || mcols.includes(c.id); });
   const isSimple = simple && main === 'pipeline' && !rejectedTab && quick !== 'client_feedback';
   const shownCols = isSimple
-    ? ['source', 'phone', 'experience', 'salary', 'stage', 'joining', 'next'].reduce((acc, id) => (acc.push(SIMPLE_COL[id] || COLUMNS.find((c) => c.id === id)), acc), [COLUMNS[0]])
+    ? ['source', 'phone', 'experience', 'salary', 'stage', ...(joinedTab ? ['joining'] : []), 'next'].reduce((acc, id) => (acc.push(SIMPLE_COL[id] || COLUMNS.find((c) => c.id === id)), acc), [COLUMNS[0]])
     : visibleCols;
   // The Job cell carries the client name when the Client column is off.
   const cellCtx = {
@@ -1383,13 +1392,130 @@ export default function Candidates() {
     />
   );
 
+  // What the Export dialog and the Import dialog read: this view, its filters and the ticked rows.
+  const exportBody = () => ({
+    view: masterView ? 'master' : `pipeline-${pipeSub}`,
+    params: { ...baseParams, all: '1' },
+    ids: selected.size && !masterView ? [...selected.keys()] : null,
+  });
+
+  // ONE filter system (founder 2026-11-20): the filter bar. What the old Filters panel and the right-hand Filters box held that the bar
+  // does not is under its "More filters": Department, Recruiter / BDE, Added date, Came on, Joined between, Designation, Salary fit,
+  // Last contact, Rejected before / by, Hiring type, Team lead, Follow-up, Expected salary, Fit, Show only. A filter that an old link or a
+  // saved filter set (Location, Skill, Experience, Notice, Experience band) is drawn too while it is on, and is always a removable chip.
+  const quickInFilters = QUICK_IN_FILTERS.some(([id]) => id === quick) ? quick : '';
+  const extraCount = [
+    hier.department, hier.recruiter, filters.bde, filters.appliedFrom, filters.appliedTo, filters.cameFrom, filters.cameTo, filters.cameKind,
+    filters.joinedFrom, filters.joinedTo, filters.location, filters.skills, filters.minExp, filters.maxExp, filters.notice, filters.expBand, filters.qualificationId,
+    ...(masterView ? [filters.salaryMissing] : [filters.desig, filters.salaryFit, filters.contact, filters.rejectedBefore, filters.rejSide, filters.rejReason, filters.hiring, hier.tl, filters.followUp, filters.maxSalary, filters.minMatch, quickInFilters]),
+  ].filter(Boolean).length;
+  const extraFilters = (
+    <>
+      <div className="lph-facet wide cpl-panelbar">
+        <PageFilterBar multiDept multiPeople
+          value={pfValue}
+          onChange={setPageFilters}
+          options={pfOptions}
+          show={{ department: true, dateRange: true, client: false, people: show.recruiter || show.bde }}
+        />
+      </div>
+      <HierarchyFilter multi value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
+      <CameOnFilter filters={filters} setFilter={setFilter} />
+      <JoinedOnFilter filters={filters} setFilter={setFilter} />
+      {masterView && counts.salaryMissing != null && (
+        <FacetSelect multi label="Salary" allLabel="All" value={filters.salaryMissing} onChange={(v) => setFilter({ salaryMissing: v })} options={[{ value: '1', label: 'Salary missing', count: counts.salaryMissing }]} title="People whose current or expected salary is not saved" />
+      )}
+      {!masterView && (
+        <>
+          <FacetSelect multi label="Designation" allLabel="All designations" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={withCurrent(facets.desig, filters.desig)} loading={facetsLoading} title="The person's current designation, with how many people each" />
+          <FacetSelect multi
+            label="Salary fit"
+            allLabel="Any"
+            value={filters.salaryFit}
+            onChange={(v) => setFilter({ salaryFit: v })}
+            options={withCurrent(['within', 'slightly', 'above', 'missing', 'nobudget'].map((k) => (facets.salaryFit || []).find((o) => o.value === k)).filter(Boolean), filters.salaryFit)}
+            loading={facetsLoading}
+            title="Is what the person wants inside the client's budget?"
+          />
+          <FacetSelect multi label="Last contact" allLabel="Any time" value={filters.contact} onChange={(v) => setFilter({ contact: v })} options={withCurrent(facets.contact, filters.contact)} loading={facetsLoading} />
+          <FacetSelect multi label="Rejected before" allLabel="Either" value={filters.rejectedBefore} onChange={(v) => setFilter({ rejectedBefore: v })} options={withCurrent(facets.rejectedBefore, filters.rejectedBefore)} loading={facetsLoading} />
+          {(pipeSub === 'rejected' || filters.status === 'Rejected' || filters.rejSide || filters.rejReason) && (
+            <>
+              <FacetSelect multi label="Rejected by" allLabel="Anyone" value={filters.rejSide} onChange={(v) => setFilter({ rejSide: v })} options={withCurrent(facets.rejSide, filters.rejSide)} loading={facetsLoading} />
+              <FacetSelect multi label="Reject reason" allLabel="Any reason" value={filters.rejReason} onChange={(v) => setFilter({ rejReason: v })} options={withCurrent(facets.rejReason, filters.rejReason)} loading={facetsLoading} />
+            </>
+          )}
+          {user?.atsRole !== 'HR' && (
+            <MultiSelect label="Hiring type" value={filters.hiring || ''} onChange={(v) => setFilter({ hiring: v, stage: '' })} allLabel="Client + internal" options={[{ value: 'client', label: 'Client requirements' }, { value: 'internal', label: 'Our own openings (internal)' }]} />
+          )}
+          {show.tl && (
+            <FacetSelect multi label="Team lead" allLabel="All team leads" value={hier.tl} onChange={(v) => setHier({ ...hier, tl: v })} options={withCurrent(facets.tl, hier.tl, personLabel(hier.tl))} loading={facetsLoading} />
+          )}
+          <MultiSelect label="Follow-up" value={filters.followUp} onChange={(v) => setFilter({ followUp: v })} allLabel="All follow-ups" options={[...FOLLOWUP_STATUSES.map((x) => ({ value: x, label: x === 'Overdue' ? 'Late' : x === 'Due Today' ? 'Due today' : x })), { value: 'Not set', label: 'Not set' }]} />
+          <PanelField label="Expected salary up to (₹L)">
+            <input type="number" min="0" step="0.5" placeholder="e.g. 12" value={filters.maxSalary} onChange={(e) => setFilter({ maxSalary: e.target.value })} />
+          </PanelField>
+          <PanelField label="Fit at least (%)">
+            <input type="number" min="0" max="100" step="5" placeholder="e.g. 70" value={filters.minMatch} onChange={(e) => setFilter({ minMatch: e.target.value })} />
+          </PanelField>
+          <PanelField label="Show only">
+            <Combo value={quickInFilters} onChange={(e) => { if (e.target.value) pickQuick(e.target.value); else if (quickInFilters) setQuick(''); }}>
+              <option value="">Everyone</option>
+              {QUICK_IN_FILTERS.map(([id, l]) => {
+                const n = Number((counts.quick || {})[id] ?? 0);
+                return <option key={id} value={id}>{n > 0 ? `${l} (${n.toLocaleString('en-IN')})` : l}</option>;
+              })}
+            </Combo>
+          </PanelField>
+        </>
+      )}
+      {(filters.location || filters.skills || filters.minExp || filters.maxExp || filters.notice || filters.expBand) && (
+        <>
+          <span className="lph-facet wide cpl-panel-sep">Set by a link or a saved filter</span>
+          {filters.location && <FacetSelect multi label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />}
+          {filters.skills && (
+            <PanelField label="Skill">
+              <input type="text" placeholder="e.g. Java, SQL" value={filters.skills} onChange={(e) => setFilter({ skills: e.target.value })} />
+            </PanelField>
+          )}
+          {(filters.minExp || filters.maxExp) && (
+            <span className="lph-facet">
+              <span className="lph-facet-lbl">Experience (years)</span>
+              <span className="lph-pair">
+                <input type="number" min="0" step="0.5" placeholder="Min" aria-label="Minimum experience (years)" value={filters.minExp} onChange={(e) => setFilter({ minExp: e.target.value })} />
+                <input type="number" min="0" step="0.5" placeholder="Max" aria-label="Maximum experience (years)" value={filters.maxExp} onChange={(e) => setFilter({ maxExp: e.target.value })} />
+              </span>
+            </span>
+          )}
+          {filters.notice && <FacetSelect multi label="Notice period" allLabel="Any notice" value={filters.notice} onChange={(v) => setFilter({ notice: v })} options={withCurrent(facets.notice, filters.notice)} loading={facetsLoading} />}
+          {filters.expBand && <FacetSelect multi label="Experience band" allLabel="Any experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={withCurrent(['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean), filters.expBand)} loading={facetsLoading} />}
+        </>
+      )}
+    </>
+  );
+  const filterBar = (
+    <CandidateFilterBar
+      xf={xf}
+      master={main === 'master'}
+      filters={filters}
+      setFilter={setFilter}
+      facets={facets}
+      loading={facetsLoading}
+      total={fresh ? fresh.total : null}
+      stageOptions={(counts.stageOptions || []).filter((o) => o.relevant || o.count > 0).map((o) => ({ value: `st:${o.key}`, label: plainStep(o), count: o.count }))}
+      onClear={clearAll}
+      canClear={filterCount > 0 || Object.keys(xf.values).length > 0 || !!quick}
+      moreExtra={extraFilters}
+      moreExtraCount={extraCount}
+    />
+  );
+
   return (
     <div className={`cpl cv4${main === 'pipeline' ? ' cv4-pipe' : ''}`}>
       <header className="ak-page-head cv4-head">
         <div className="cv4-titles">
           <h1>Candidates &amp; Pipeline</h1>
           <p>
-            Everyone who applied, and which step they&apos;re at.
             <span className="cv4-scope">
               {main === 'duplicates' ? <span className="small-muted">People who look like someone already on file</span> : main === 'sources' ? <span className="small-muted">Where people came from, and when</span> : main === 'contacts' ? <span className="small-muted">Company contact lists and requirement messages</span> : main !== 'job-portal'
                 ? <ScopeLine user={user} count={fresh ? fresh.scopeTotal : (viewCounts.master || 0)} noun={viewNoun} />
@@ -1398,21 +1524,6 @@ export default function Candidates() {
           </p>
         </div>
         <div className="ak-page-tools cv4-tools">
-          {dupTab && Number(dupStatus.waiting) > 0 && main !== 'duplicates' && (
-            <button type="button" className="dupx-badge" onClick={() => goMain('duplicates')} title="People who look like someone already on file. They cannot move on until you check them.">{`${Number(dupStatus.waiting).toLocaleString('en-IN')} duplicate${Number(dupStatus.waiting) === 1 ? '' : 's'} waiting`}</button>
-          )}
-          <VerifyButton key={`vb-${tick}-${verifyOpen}`} onOpen={() => setVerifyOpen(true)} />
-          <AppOmniPanel app="ATS" />
-          {listOn && (
-            <button
-              type="button"
-              className={`btn${filters.new === '1' ? ' btn-primary' : ''}`}
-              title="People added in the last 7 days, newest first. Click again to see everyone."
-              onClick={() => { if (filters.new === '1') setFilter({ new: '' }); else { if (main !== 'master') goMain('master'); setMasterSort({ key: 'created', dir: 'desc' }); setFilter({ new: '1' }); } }}
-            >
-              {`🆕 New${newSum && newSum.people ? ` (${newSum.people})` : ''}`}
-            </button>
-          )}
           {can(user, 'ats', 'candidates', 'Add Candidate', 'create') && (
             <button type="button" className="btn btn-primary cv4-add" onClick={() => { setError(''); setDupe(null); setShowForm(true); }}>+ Add candidate</button>
           )}
@@ -1421,17 +1532,44 @@ export default function Candidates() {
               module="candidates"
               kinds={['candidates', 'applications']}
               onImported={reload}
-              exportLabel={selected.size && !masterView ? `Export ${selected.size} selected` : 'Export'}
-              body={() => ({
-                view: masterView ? 'master' : `pipeline-${pipeSub}`,
-                params: { ...baseParams, all: '1' },
-                ids: selected.size && !masterView ? [...selected.keys()] : null,
-              })}
+              only={['import']}
+              body={exportBody}
             />
           )}
-          {main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'contacts' && (
-            <SavedViews storageKey="cand" label="Saved filters" current={savedState} onApply={applySaved} presets={SAVED_PRESETS} />
-          )}
+          {/* Everything else is one line in this menu. The buttons of the template library and the export window keep their dialogs mounted. */}
+          <ActionMore badge={dupTab && main !== 'duplicates' ? Number(dupStatus.waiting) || 0 : 0}>
+            {dupTab && (
+              <button type="button" className="btn" onClick={() => goMain('duplicates')} title="People who look like someone already on file. They cannot move on until you check them.">
+                Duplicates
+                {Number(dupStatus.waiting) > 0 && <span className="ac-n red">{`${Number(dupStatus.waiting).toLocaleString('en-IN')} waiting`}</span>}
+              </button>
+            )}
+            {listOn && (
+              <button
+                type="button"
+                className="btn"
+                title="People added in the last 7 days, newest first. Click again to see everyone."
+                onClick={() => { if (filters.new === '1') setFilter({ new: '' }); else { if (main !== 'master') goMain('master'); setMasterSort({ key: 'created', dir: 'desc' }); setFilter({ new: '1' }); } }}
+              >
+                {filters.new === '1' ? 'New people: showing, click for everyone' : 'New people (last 7 days)'}
+                {newSum && newSum.people ? <span className="ac-n">{Number(newSum.people).toLocaleString('en-IN')}</span> : null}
+              </button>
+            )}
+            <VerifyButton key={`vb-${tick}-${verifyOpen}`} onOpen={() => setVerifyOpen(true)} />
+            <AppOmniPanel app="ATS" />
+            {listOn && (
+              <AtsDataTools
+                module="candidates"
+                kinds={['candidates', 'applications']}
+                onImported={reload}
+                only={['export', 'template', 'history']}
+                body={exportBody}
+              />
+            )}
+            {main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'contacts' && (
+              <SavedViews storageKey="cand" label="Saved filters" current={savedState} onApply={applySaved} presets={SAVED_PRESETS} />
+            )}
+          </ActionMore>
         </div>
       </header>
 
@@ -1452,13 +1590,6 @@ export default function Candidates() {
         }))}
       />
 
-      {main === 'pipeline' && data && data.waiting && (
-        <NewPeopleStrip
-          waiting={data.waiting}
-          searching={!!String(filters.search || search || '').trim()}
-          onShowAll={() => { goMain('master'); setMasterSort({ key: 'created', dir: 'desc' }); setFilter({ new: '1' }); }}
-        />
-      )}
       {main === 'master' && cardNote}
       {stepPopup && (
         <StepPopup
@@ -1791,6 +1922,7 @@ export default function Candidates() {
         <>
           <TabStrip
             small
+            caption={false}
             label="People: view"
             tabs={MASTER_SUBS.filter((s) => (!s.admin || dupAdmin) && (!s.archive || mayArchive(user))).map((s) => ({
               key: s.id,
@@ -1801,7 +1933,6 @@ export default function Candidates() {
             }))}
             value={masterSub}
             onChange={goMasterSub}
-            hideZero={!dupAdmin}
             extra={masterSub === 'inactive' && (
               <label className="cpl-sort" title={defs.inactive || ''}>
                 No activity for
@@ -1813,39 +1944,12 @@ export default function Candidates() {
           />
           {masterSub !== 'duplicates' && (
             <>
+              {!external && filterBar}
               <ListToolbar
                 search={filters.search}
                 onSearch={(v) => setFilter({ search: v })}
                 searchHint={<BooleanHint text={filters.search} mode={data?.searchMode} error={data?.searchError} />}
                 placeholder="Search name, phone, email, requirement…"
-                filterCount={filterCount}
-                panel={(
-                  <>
-                    <div className="cpl-panelbar">
-                      <PageFilterBar
-                    multiClient
-                    multiDept
-                    multiPeople
-                    value={pfValue}
-                    onChange={setPageFilters}
-                    options={pfOptions}
-                    show={{ department: true, dateRange: true, client: true, people: show.recruiter || show.bde }}
-                  />
-                    </div>
-                    <HierarchyFilter multi value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
-                    <PanelField label="Location">
-                      <Combo value={filters.location} onChange={(e) => setFilter({ location: e.target.value })} title="Location">
-                        <option value="">All locations</option>
-                        {LOCS.map((l) => <option key={l}>{l}</option>)}
-                      </Combo>
-                    </PanelField>
-                    {show.source && (
-                      <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={(facets.source || []).map((o) => ({ ...o, label: sourceLabel(o.value) }))} loading={facetsLoading} title="Where the person came from" />
-                    )}
-                    <CameOnFilter filters={filters} setFilter={setFilter} />
-                    <JoinedOnFilter filters={filters} setFilter={setFilter} />
-                  </>
-                )}
                 sort={masterSort.key}
                 sortOptions={MASTER_SORTS}
                 onSort={(k) => setMasterSort({ key: k, dir: k === 'joining' ? 'desc' : masterSort.dir })}
@@ -1952,100 +2056,26 @@ export default function Candidates() {
 
       {main === 'pipeline' && (
         <>
-          <KpiRow className="cv4-kpis">
-            {kpiTiles.map(({ key, ...k }) => <KpiTile key={key} {...k} loading={!ov} />)}
-          </KpiRow>
-          <div className="cv4-layout">
+          <div className="cv4-layout cv4-single">
             <div className="cv4-main">
-              {stripHidden ? (
-                <div className="cv4-strip-off">
-                  <button type="button" className="link-btn" onClick={() => hideStrip(false)}>Show the candidate pipeline</button>
-                </div>
-              ) : (
-                <Panel
-                  className="cv4-strip"
-                  icon="trend"
-                  title="Candidate pipeline"
-                  sub={ov ? `Active: ${nIn(subN('active'))} (the first six steps) · every application moves left to right — click a number to see exactly those applications` : 'Every application moves left to right — click a number to see those applications'}
-                  extra={<button type="button" className="ak-panel-link cv4-hide" title="Hide (you can show it again)" onClick={() => hideStrip(true)}>Hide ×</button>}
-                >
-                  <StageStrip
-                    compact
-                    steps={STRIP_STEPS.map((s) => {
-                      const imp = s.id === 'interview' && tl ? Number(tl.importedAtInterview || 0) : 0;
-                      return {
-                        key: s.id, label: s.label, icon: s.icon, tone: s.tone, value: ov ? st[s.id] : null, loading: !ov, active: stepOn === s.id,
-                        onClick: () => pickStep(stepOn === s.id ? '' : s.id),
-                        sub: imp > 0 ? `${nIn(imp)} came from imported sheets` : null,
-                        title: imp > 0 ? `${s.hint}. ${nIn(imp)} of these applications were imported from spreadsheets straight at this step: they have no "Sent to client" or "Client shortlisted" step in TeamLink.` : s.hint,
-                      };
-                    })}
-                  />
-                  <div className="cv4-outcomes">
-                    <span className="cv4-outcomes-h">Not moving:</span>
-                    <StageStrip
-                      compact
-                      steps={[
-                        { key: 'hold', label: 'On hold', icon: 'pause', tone: 'amber', value: ov ? subN('hold') : null, loading: !ov, active: pipeSub === 'hold' && plainList, onClick: () => goTile('hold'), title: 'Paused on purpose. Not counted in Active.' },
-                        { key: 'rejected', label: 'Rejected', icon: 'x', tone: 'red', value: ov ? subN('rejected') : null, loading: !ov, active: pipeSub === 'rejected' && plainList, onClick: () => goTile('rejected'), title: 'Closed, never deleted. Not counted in Active.' },
-                      ]}
-                    />
-                  </div>
-                  {tl && (
-                    <p className="cv4-eq" role="note">
-                      <b>{`Active ${nIn(tl.active)}`}</b>
-                      {` + Joined ${nIn(tl.joined)} + On hold ${nIn(tl.hold)} + Rejected ${nIn(tl.rejected)} = `}
-                      <b>{`All applications ${nIn(tl.applications)}`}</b>
-                      {` (${nIn(tl.people)} people — one person can have several applications)`}
-                      {tallyFilters > 0 && <span className="cv4-eq-note">{' · Your filters are on, so only the matching applications are counted.'}</span>}
-                    </p>
-                  )}
-                </Panel>
-              )}
-              <div className="cv4-row3">
-                <Panel
-                  className="cv4-attn"
-                  icon="alert"
-                  iconTone="red"
-                  title="Needs attention"
-                  action={attnItems.length > 3 || attnAll ? { label: attnAll ? 'Show less' : 'View all', onClick: () => setAttnAll((x) => !x) } : null}
-                >
-                  <AttentionList items={attnItems} />
-                </Panel>
-                <Panel
-                  className="cv4-topreq"
-                  icon="briefcase"
-                  title="Top requirements"
-                  sub="Needing attention — click to filter"
-                  flush
-                  action={reqAttention.total > 0 && can(user, 'ats', 'requirements', 'Requirement List', 'view') ? { label: `View all ${reqAttention.total.toLocaleString('en-IN')}`, to: '/requirements' } : null}
-                >
-                  <TopRequirements
-                    rows={reqAttention.top}
-                    activeId={filters.requirementId}
-                    onPick={(r) => setFilter({ requirementId: filters.requirementId === r.id ? '' : r.id })}
-                  />
-                </Panel>
-                <Panel className="cv4-quick" icon="bolt" title="Quick actions">
-                  <QuickActions items={quickItems} />
-                </Panel>
-              </div>
               <section className="ak-panel cv4-listpanel">
           {cardNote}
           {tabId !== 'todo' && (
           <TabStrip
             small
+            caption={false}
+            className="cv4-status"
             label="Requirement applications: status"
             tabs={PIPE_SUBS.map((s) => ({
-              key: s.id, label: s.label, hint: s.hint, say: s.say, more: PIPE_SUB_MORE.includes(s.id), count: fresh ? Number((counts.subs || {})[s.id] ?? 0) : undefined,
+              key: s.id, label: s.label, hint: s.hint, say: s.say, count: fresh ? Number((counts.subs || {})[s.id] ?? 0) : undefined,
             }))}
             value={pipeSub}
             onChange={goPipeSub}
-            hideZero={!dupAdmin}
             extra={(
-              <div className="cpl-quick" role="group" aria-label="Today's work">
+              <div className="cpl-quick" role="group" aria-label="Show">
+                <span className="cv4-show-l">Show:</span>
                 {QUICK_ON_SCREEN.map((id) => {
-                  const label = (QUICK.find((x) => x[0] === id) || [])[1];
+                  const label = QUICK_CHIP[id] || (QUICK.find((x) => x[0] === id) || [])[1];
                   const n = Number((counts.quick || {})[id] ?? 0);
                   return (
                     <button
@@ -2065,147 +2095,13 @@ export default function Candidates() {
             )}
           />
           )}
-          {!['CLIENT', 'CANDIDATE'].includes(user?.role) && (
-            <CandidateFilterBar
-              xf={xf}
-              master={main === 'master'}
-              filters={filters}
-              setFilter={setFilter}
-              facets={facets}
-              loading={facetsLoading}
-              total={fresh ? fresh.total : null}
-              stageOptions={(counts.stageOptions || []).filter((o) => o.relevant || o.count > 0).map((o) => ({ value: `st:${o.key}`, label: plainStep(o), count: o.count }))}
-              onClear={clearAll}
-              canClear={filterCount > 0 || Object.keys(xf.values).length > 0 || !!quick}
-            />
-          )}
+          {!external && filterBar}
           <ListToolbar
             search={filters.search}
             onSearch={(v) => setFilter({ search: v })}
             searchHint={<BooleanHint text={filters.search} mode={data?.searchMode} error={data?.searchError} />}
             placeholder="Search name, phone, email or requirement…"
-            filterCount={filterCount}
-            panel={(
-              <>
-                <div className="cpl-panelbar">
-                  <PageFilterBar
-                    value={pfValue}
-                    onChange={setPageFilters}
-                    options={pfOptions}
-                    show={{ department: true, dateRange: true, client: true, people: show.recruiter || show.bde }}
-                  />
-                </div>
-            <label className="lph-facet">
-              <span className="lph-facet-lbl">Skill</span>
-              <input type="text" placeholder="e.g. Java, SQL" value={filters.skills} onChange={(e) => setFilter({ skills: e.target.value })} />
-            </label>
-            <span className="lph-facet">
-              <span className="lph-facet-lbl">Experience (years)</span>
-              <span className="lph-pair">
-                <input type="number" min="0" step="0.5" placeholder="Min" aria-label="Minimum experience (years)" value={filters.minExp} onChange={(e) => setFilter({ minExp: e.target.value })} />
-                <input type="number" min="0" step="0.5" placeholder="Max" aria-label="Maximum experience (years)" value={filters.maxExp} onChange={(e) => setFilter({ maxExp: e.target.value })} />
-              </span>
-            </span>
-            <FacetSelect multi label="Specialization" allLabel="All specializations" value={filters.spec} onChange={(v) => setFilter({ spec: v })} options={withCurrent(facets.spec, filters.spec)} loading={facetsLoading} title="Radiology, Cardiology, CSE ... with how many people each. Picking one narrows the Client list to the clients they are with." />
-            <FacetSelect multi label="Qualification" allLabel="All qualifications" value={filters.qual} onChange={(v) => setFilter({ qual: v })} options={withCurrent(facets.qual, filters.qual)} loading={facetsLoading} title="MBBS, B.Sc Nursing, M.Tech ... with how many people each" />
-            <FacetSelect multi label="Designation" allLabel="All designations" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={withCurrent(facets.desig, filters.desig)} loading={facetsLoading} title="The person's current designation, with how many people each" />
-            <FacetSelect multi label="Experience" allLabel="Any experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={withCurrent(['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean), filters.expBand)} loading={facetsLoading} />
-            <FacetSelect multi label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
-            <FacetSelect multi label="Tag" allLabel="Any tag" value={filters.tag} onChange={(v) => setFilter({ tag: v })} options={withCurrent(tagOptions, filters.tag)} title="A tag added on the person's Career tab (count = people with it)" />
-            {main === 'pipeline' && (
-              <FacetSelect multi
-                label="Salary fit"
-                allLabel="Any"
-                value={filters.salaryFit}
-                onChange={(v) => setFilter({ salaryFit: v })}
-                options={withCurrent(['within', 'slightly', 'above', 'missing', 'nobudget'].map((k) => (facets.salaryFit || []).find((o) => o.value === k)).filter(Boolean), filters.salaryFit)}
-                loading={facetsLoading}
-                title="Is what the person wants inside the client's budget?"
-              />
-            )}
-            {main === 'master' && counts.salaryMissing != null && (
-              <FacetSelect multi label="Salary" allLabel="All" value={filters.salaryMissing} onChange={(v) => setFilter({ salaryMissing: v })} options={[{ value: '1', label: 'Salary missing', count: counts.salaryMissing }]} title="People whose current or expected salary is not saved" />
-            )}
-            <FacetSelect multi
-              label="Status"
-              allLabel="All statuses"
-              value={filters.status}
-              onChange={(v) => pickStatus(v)}
-              options={withCurrent((facets.status || []).map((o) => ({ ...o, label: o.value === 'Hold' ? 'On hold' : o.label })), filters.status)}
-              loading={facetsLoading}
-            />
-                <PanelField label="Show only">
-                  <Combo value={QUICK_IN_FILTERS.some(([id]) => id === quick) ? quick : ''} onChange={(e) => { if (e.target.value) pickQuick(e.target.value); else if (QUICK_IN_FILTERS.some(([id]) => id === quick)) setQuick(''); }}>
-                    <option value="">Everyone</option>
-                    {QUICK_IN_FILTERS.map(([id, l]) => {
-                      const n = Number((counts.quick || {})[id] ?? 0);
-                      return <option key={id} value={id}>{n > 0 ? `${l} (${n.toLocaleString('en-IN')})` : l}</option>;
-                    })}
-                  </Combo>
-                </PanelField>
-                <HierarchyFilter multi value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
-                {show.source && (
-                  <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={(facets.source || []).map((o) => ({ ...o, label: sourceLabel(o.value) }))} loading={facetsLoading} title="Where the person came from" />
-                )}
-                <CameOnFilter filters={filters} setFilter={setFilter} />
-                <JoinedOnFilter filters={filters} setFilter={setFilter} />
-                <FacetSelect multi
-                  label="Step"
-                  allLabel="All steps"
-                  value={filters.stage}
-                  onChange={(v) => setFilter({ stage: v })}
-                  options={withCurrent(
-                    [...(counts.stageOptions || []).filter((o) => o.relevant), ...(counts.stageOptions || []).filter((o) => !o.relevant)]
-                      .map((o) => ({ value: `st:${o.key}`, label: plainStep(o), count: o.count })),
-                    filters.stage,
-                    stageChipLabel,
-                  )}
-                  title="Where the person is now"
-                />
-                <FacetSelect multi label="Owner" allLabel="Anyone" value={filters.owner} onChange={(v) => setFilter({ owner: v })} options={withCurrent(facets.owner, filters.owner)} loading={facetsLoading} title="Whose move it is now" />
-                <FacetSelect multi label="Last contact" allLabel="Any time" value={filters.contact} onChange={(v) => setFilter({ contact: v })} options={withCurrent(facets.contact, filters.contact)} loading={facetsLoading} />
-                <FacetSelect multi label="Rejected before" allLabel="Either" value={filters.rejectedBefore} onChange={(v) => setFilter({ rejectedBefore: v })} options={withCurrent(facets.rejectedBefore, filters.rejectedBefore)} loading={facetsLoading} />
-                {(pipeSub === 'rejected' || filters.status === 'Rejected' || filters.rejSide || filters.rejReason) && (
-                  <>
-                    <FacetSelect multi label="Rejected by" allLabel="Anyone" value={filters.rejSide} onChange={(v) => setFilter({ rejSide: v })} options={withCurrent(facets.rejSide, filters.rejSide)} loading={facetsLoading} />
-                    <FacetSelect multi label="Reject reason" allLabel="Any reason" value={filters.rejReason} onChange={(v) => setFilter({ rejReason: v })} options={withCurrent(facets.rejReason, filters.rejReason)} loading={facetsLoading} />
-                  </>
-                )}
-                <span className="lph-facet wide cpl-panel-sep">More filters</span>
-                {user?.atsRole !== 'HR' && (
-                  <MultiSelect label="Hiring type" value={filters.hiring || ''} onChange={(v) => setFilter({ hiring: v, stage: '' })} allLabel="Client + internal" options={[{ value: 'client', label: 'Client requirements' }, { value: 'internal', label: 'Our own openings (internal)' }]} />
-                )}
-                {/* Saved views: in the page header (Saved filters ▾). */}
-                <FacetSelect multi
-                  label="Requirement"
-                  allLabel="All requirements"
-                  value={filters.requirementId}
-                  onChange={(v) => setFilter({ requirementId: v })}
-                  options={withCurrent(facets.requirementId, filters.requirementId, (chips.find((ch) => ch.key === 'req') || {}).value)}
-                  loading={facetsLoading}
-                />
-                {show.tl && (
-                  <FacetSelect multi
-                    label="Team lead"
-                    allLabel="All team leads"
-                    value={hier.tl}
-                    onChange={(v) => setHier({ ...hier, tl: v })}
-                    options={withCurrent(facets.tl, hier.tl, personLabel(hier.tl))}
-                    loading={facetsLoading}
-                  />
-                )}
-                <MultiSelect label="Follow-up" value={filters.followUp} onChange={(v) => setFilter({ followUp: v })} allLabel="All follow-ups" options={[...FOLLOWUP_STATUSES.map((x) => ({ value: x, label: x === 'Overdue' ? 'Late' : x === 'Due Today' ? 'Due today' : x })), { value: 'Not set', label: 'Not set' }]} />
-                <FacetSelect multi label="Notice period" allLabel="Any notice" value={filters.notice} onChange={(v) => setFilter({ notice: v })} options={withCurrent(facets.notice, filters.notice)} loading={facetsLoading} />
-                <PanelField label="Expected salary up to (₹L)">
-                  <input type="number" min="0" step="0.5" placeholder="e.g. 12" value={filters.maxSalary} onChange={(e) => setFilter({ maxSalary: e.target.value })} />
-                </PanelField>
-                <PanelField label="Fit at least (%)">
-                  <input type="number" min="0" max="100" step="5" placeholder="e.g. 70" value={filters.minMatch} onChange={(e) => setFilter({ minMatch: e.target.value })} />
-                </PanelField>
-                {/* v3: Skills · Experience · Location · Status are on screen; Department ·
-                    Date · Client · Recruiter / BDE are in the bar on top. */}
-              </>
-            )}
+            afterSearch={data && data.waiting ? <NewPeopleChip waiting={data.waiting} searching={!!String(filters.search || search || '').trim()} onShowAll={() => { goMain('master'); setMasterSort({ key: 'created', dir: 'desc' }); setFilter({ new: '1' }); }} /> : null}
             sort={sort.key}
             sortOptions={SORT_OPTIONS}
             onSort={(k) => setSort({ key: k, dir: sort.dir })}
@@ -2236,7 +2132,7 @@ export default function Candidates() {
                     <button type="button" className={!simple ? 'is-on' : ''} aria-pressed={!simple} title="Every column; choose them under Columns" onClick={() => setSimple(false)}>Full table</button>
                   </span>
                 )}
-                {!onBoard && quick !== 'client_feedback' && !rejectedTab && !isSimple && <ColumnChooser columns={COLUMNS} value={cols} onChange={setCols} defaults={DEFAULT_COLS} />}
+                {!onBoard && quick !== 'client_feedback' && !rejectedTab && <ColumnChooser columns={COLUMNS} value={cols} onChange={(v) => { setCols(v); if (simple) setSimple(false); }} defaults={DEFAULT_COLS} />}
               </>
             )}
             chips={chips}
@@ -2314,7 +2210,7 @@ export default function Candidates() {
                 <colgroup>
                   <col style={{ width: 36 }} />
                   {shownCols.map((col) => <col key={col.id} style={{ width: SIMPLE_W[col.id] }} />)}
-                  {reach.one && <col style={{ width: 96 }} />}
+                  {reach.one && <col style={{ width: 150 }} />}
                 </colgroup>
               )}
               <thead>
@@ -2393,46 +2289,85 @@ export default function Candidates() {
           )}
               </section>
             </div>
-            <aside className="cv4-aside">
-              <Panel
-                className="cv4-filters"
-                icon="list"
-                title="Filters"
-                action={filterCount ? { label: 'Reset', onClick: clearAll } : null}
-              >
-                <div className="cv4-rail">
-                  {stepFacet}
-                  <FacetSelect label="Department" allLabel="All departments" value={hier.department} onChange={(v) => setPageFilters({ ...pfValue, department: v })} options={pfOptions.department} loading={facetsLoading} />
-                  {show.source && (
-                    <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={(facets.source || []).map((o) => ({ ...o, label: sourceLabel(o.value) }))} loading={facetsLoading} title="Where the person came from" />
-                  )}
-                  <CameOnFilter filters={filters} setFilter={setFilter} />
-                  <JoinedOnFilter filters={filters} setFilter={setFilter} />
-                  <FacetSelect label="Client" allLabel="All clients" value={filters.clientId} onChange={(v) => setPageFilters({ ...pfValue, clientId: v })} options={pfOptions.clientId} loading={facetsLoading} />
-                  <FacetSelect multi
-                    label="Requirement / role"
-                    allLabel="All requirements"
-                    value={filters.requirementId}
-                    onChange={(v) => setFilter({ requirementId: v })}
-                    options={withCurrent(facets.requirementId, filters.requirementId, (chips.find((ch) => ch.key === 'req') || {}).value)}
-                    loading={facetsLoading}
+          </div>
+          {/* Every tile, chart and shortcut: one section under the table, closed until opened (remembered per person). */}
+          <InsightsFold uid={uid}>
+          <KpiRow className="cv4-kpis">
+            {kpiTiles.map(({ key, ...k }) => <KpiTile key={key} {...k} loading={!ov} />)}
+          </KpiRow>
+              {stripHidden ? (
+                <div className="cv4-strip-off">
+                  <button type="button" className="link-btn" onClick={() => hideStrip(false)}>Show the candidate pipeline</button>
+                </div>
+              ) : (
+                <Panel
+                  className="cv4-strip"
+                  icon="trend"
+                  title="Candidate pipeline"
+                  sub={ov ? `Active: ${nIn(subN('active'))} (the first six steps) · every application moves left to right — click a number to see exactly those applications` : 'Every application moves left to right — click a number to see those applications'}
+                  extra={<button type="button" className="ak-panel-link cv4-hide" title="Hide (you can show it again)" onClick={() => hideStrip(true)}>Hide ×</button>}
+                >
+                  <StageStrip
+                    compact
+                    steps={STRIP_STEPS.map((s) => {
+                      const imp = s.id === 'interview' && tl ? Number(tl.importedAtInterview || 0) : 0;
+                      return {
+                        key: s.id, label: s.label, icon: s.icon, tone: s.tone, value: ov ? st[s.id] : null, loading: !ov, active: stepOn === s.id,
+                        onClick: () => pickStep(stepOn === s.id ? '' : s.id),
+                        sub: imp > 0 ? `${nIn(imp)} came from imported sheets` : null,
+                        title: imp > 0 ? `${s.hint}. ${nIn(imp)} of these applications were imported from spreadsheets straight at this step: they have no "Sent to client" or "Client shortlisted" step in TeamLink.` : s.hint,
+                      };
+                    })}
                   />
-                  <PanelField label="Date added">
-                    <span className="lph-pair cv4-dates">
-                      <input type="date" aria-label="Added from" value={filters.appliedFrom || ''} onChange={(e) => setPageFilters({ ...pfValue, range: 'custom', from: e.target.value, to: filters.appliedTo || '' })} />
-                      <input type="date" aria-label="Added to" value={filters.appliedTo || ''} onChange={(e) => setPageFilters({ ...pfValue, range: 'custom', from: filters.appliedFrom || '', to: e.target.value })} />
-                    </span>
-                  </PanelField>
-                  <FacetSelect multi label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
-                  <PanelField label="Skills">
-                    <input type="text" placeholder="e.g. Java, SQL" value={filters.skills} onChange={(e) => setFilter({ skills: e.target.value })} />
-                  </PanelField>
-                </div>
-                <div className="cv4-rail-foot">
-                  <button type="button" className="btn btn-sm" onClick={clearAll} disabled={!filterCount}>Clear filters</button>
-                  <span className="small-muted">More under Filters ▾ above the list</span>
-                </div>
-              </Panel>
+                  <div className="cv4-outcomes">
+                    <span className="cv4-outcomes-h">Not moving:</span>
+                    <StageStrip
+                      compact
+                      steps={[
+                        { key: 'hold', label: 'On hold', icon: 'pause', tone: 'amber', value: ov ? subN('hold') : null, loading: !ov, active: pipeSub === 'hold' && plainList, onClick: () => goTile('hold'), title: 'Paused on purpose. Not counted in Active.' },
+                        { key: 'rejected', label: 'Rejected', icon: 'x', tone: 'red', value: ov ? subN('rejected') : null, loading: !ov, active: pipeSub === 'rejected' && plainList, onClick: () => goTile('rejected'), title: 'Closed, never deleted. Not counted in Active.' },
+                      ]}
+                    />
+                  </div>
+                  {tl && (
+                    <p className="cv4-eq" role="note">
+                      <b>{`Active ${nIn(tl.active)}`}</b>
+                      {` + Joined ${nIn(tl.joined)} + On hold ${nIn(tl.hold)} + Rejected ${nIn(tl.rejected)} = `}
+                      <b>{`All applications ${nIn(tl.applications)}`}</b>
+                      {` (${nIn(tl.people)} people — one person can have several applications)`}
+                      {tallyFilters > 0 && <span className="cv4-eq-note">{' · Your filters are on, so only the matching applications are counted.'}</span>}
+                    </p>
+                  )}
+                </Panel>
+              )}
+              <div className="cv4-row3">
+                <Panel
+                  className="cv4-attn"
+                  icon="alert"
+                  iconTone="red"
+                  title="Needs attention"
+                  action={attnItems.length > 3 || attnAll ? { label: attnAll ? 'Show less' : 'View all', onClick: () => setAttnAll((x) => !x) } : null}
+                >
+                  <AttentionList items={attnItems} />
+                </Panel>
+                <Panel
+                  className="cv4-topreq"
+                  icon="briefcase"
+                  title="Top requirements"
+                  sub="Needing attention — click to filter"
+                  flush
+                  action={reqAttention.total > 0 && can(user, 'ats', 'requirements', 'Requirement List', 'view') ? { label: `View all ${reqAttention.total.toLocaleString('en-IN')}`, to: '/requirements' } : null}
+                >
+                  <TopRequirements
+                    rows={reqAttention.top}
+                    activeId={filters.requirementId}
+                    onPick={(r) => setFilter({ requirementId: filters.requirementId === r.id ? '' : r.id })}
+                  />
+                </Panel>
+                <Panel className="cv4-quick" icon="bolt" title="Quick actions">
+                  <QuickActions items={quickItems} />
+                </Panel>
+              </div>
               <Panel className="cv4-insights" icon="chart" title="Candidate insights" sub="Applications by step">
                 {ov ? <StageDonut slices={DONUT} centerLabel="Applications" active={donutOn} /> : <div className="ak-empty">Loading…</div>}
                 {cards && (cards.people != null || cards.available != null) && (
@@ -2449,8 +2384,6 @@ export default function Candidates() {
                   </ul>
                 )}
               </Panel>
-            </aside>
-          </div>
           <div className="cv4-bottom">
             <Panel icon="trend" title="Hiring funnel" sub="Applications at each step">
               <BarList
@@ -2474,6 +2407,7 @@ export default function Candidates() {
               </Panel>
             )}
           </div>
+          </InsightsFold>
         </>
       )}
       <div className="cv4-tips">

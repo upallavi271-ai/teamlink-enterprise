@@ -8,8 +8,8 @@
 //                           Sources, Contact lists)
 //   Candidate page          main tabs: Overview | Resume | Career | Follow-ups & notes |
 //                           Documents | History | More (Conversation, AI Calling)
-//   Requirement page        main tabs: Overview | Candidates | Interviews | Team |
-//                           Postings | More (Client, Agreement, Activity)
+//   Requirement page        main tabs: Overview | Candidates | Team | Interviews |
+//                           Postings | History | More (Client, Agreement, Activity)
 //
 // The words stay the words the app already used. Nothing is deleted: a tab that
 // is rarely used sits under "More"; two tabs that showed the same kind of thing
@@ -45,9 +45,9 @@ export const LIST_VIEW_ALIAS = {
   contacts: 'contacts',
 };
 // Sub-tabs of the pipeline list; the first four are drawn, the rest sit under More.
-export const PIPE_SUB_MORE = ['hold', 'rejected'];
+export const PIPE_SUB_MORE = []; // the status strip shows all six (All, Active, On hold, Selected, Joined, Rejected)
 // Sub-tabs of the People list; "All people" is drawn, the rest sit under More.
-export const MASTER_SUB_MORE = ['inactive', 'archived'];
+export const MASTER_SUB_MORE = [];
 
 // The tab a login lands on when the address names none (the work it does):
 //   Recruiter -> the work they must do now · TL -> their team's pipeline ·
@@ -96,7 +96,6 @@ export const REQ_TAB_ALIAS = {
   distribute: 'distribute',
   pipeline: 'candidates',
   matching: 'candidates',
-  history: 'activity',
   interview: 'interviews',
 };
 export const REQ_MORE = ['client', 'agreement', 'activity'];

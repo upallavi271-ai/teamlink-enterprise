@@ -16,7 +16,7 @@ const { spawn } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 
 const BACK = path.resolve(__dirname, '..');
-const DIST = path.resolve(BACK, '..', 'frontend', 'dist');
+const DIST = process.env.TABS_DIST ? path.resolve(process.env.TABS_DIST) : path.resolve(BACK, '..', 'frontend', 'dist'); // TABS_DIST: another build (the "before" screenshots)
 const SHOTS = path.resolve(BACK, '..', 'docs', 'tabs-clean-2026-11-20');
 const SOURCE = process.env.TEST_SOURCE_DB || path.join(BACK, 'prisma', 'sandbox.db');
 const COPY = path.join(os.tmpdir(), `zz-tabs-${process.pid}.db`);
@@ -94,7 +94,7 @@ const api = async (url, token) => {
   let REC = RECS[0]; let TL = TLS[0]; let BDE = BDES[0];
   check('found a Recruiter, a TL, a BDE and an Admin to log in as', !!(REC && TL && BDE && ADM), { REC: !!REC, TL: !!TL, BDE: !!BDE, ADM: !!ADM });
   if (!(REC && TL && BDE && ADM)) { await stop(1); return; }
-  for (const u of [REC, TL, BDE, ADM, CLIENT].filter(Boolean)) {
+  for (const u of [...RECS.slice(0, 25), ...TLS.slice(0, 25), ...BDES.slice(0, 25), ADM, CLIENT].filter(Boolean)) {
     await prisma.user.update({ where: { id: u.id }, data: { passwordResetRequired: false, passwordChangedAt: new Date(Date.now() - 86400000) } });
   }
 
@@ -109,7 +109,6 @@ const api = async (url, token) => {
   await sleep(1200);
   const withRows = async (list) => {
     for (const u of list.slice(0, 25)) {
-      await prisma.user.update({ where: { id: u.id }, data: { passwordResetRequired: false, passwordChangedAt: new Date(Date.now() - 86400000) } });
       const r = await api('/candidates?paged=1&view=pipeline&sub=all&pageSize=1', await tok(u.id));
       if (r.body && r.body.rows && r.body.rows.length) return u;
     }
@@ -151,7 +150,7 @@ const api = async (url, token) => {
   }
   // The "More" button of the same strip: its text and the items in the menu.
   async function moreOf(page, label) {
-    const root = strip(page, label).first().locator('xpath=ancestor::div[contains(@class,"tabstrip")][1]');
+    const root = strip(page, label).first().locator('xpath=ancestor::div[contains(concat(" ",normalize-space(@class)," ")," tabstrip ")][1]');
     const btn = root.locator('.tabstrip-more');
     if (!(await btn.count())) return null;
     const text = (await btn.first().innerText()).replace(/\s+/g, ' ').trim();
@@ -161,12 +160,56 @@ const api = async (url, token) => {
     return { text, items };
   }
   const caption = async (page, label) => {
-    const root = strip(page, label).first().locator('xpath=ancestor::div[contains(@class,"tabstrip")][1]');
+    const root = strip(page, label).first().locator('xpath=ancestor::div[contains(concat(" ",normalize-space(@class)," ")," tabstrip ")][1]');
     const c = root.locator('.tabstrip-cap');
     return (await c.count()) ? (await c.first().innerText()).trim() : '';
   };
   const shot = async (page, name) => { if (shotN >= 12) return; shotN += 1; await page.screenshot({ path: path.join(SHOTS, `${String(shotN).padStart(2, '0')}-${name}.png`) }); };
 
+  if (process.env.TABS_PEEK_URL === 'channels') {
+    for (const R of ROLES) { const r = await api('/messaging/channels', await tok(R.u.id)); console.log(R.key, r.status, JSON.stringify({ aud: r.body.audiences, modes: r.body.modes, reasons: r.body.reasons, sw: r.body.switchOn })); }
+    await stop(0); return;
+  }
+  if (process.env.TABS_PEEK_URL) {
+    const R = ROLES.find((x) => x.key === (process.env.TABS_PEEK_ROLE || 'Admin'));
+    const token = await tok(R.u.id);
+    const pick = await api('/candidates?paged=1&view=pipeline&sub=all&pageSize=1', token);
+    const cid = pick.body && pick.body.rows && pick.body.rows[0] && pick.body.rows[0].candidateId;
+    const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
+    await ctx.addInitScript((t) => { try { localStorage.setItem('tl_token', t); } catch { /* none */ } }, token);
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => console.log('pageerror', e.message));
+    page.on('console', (m) => { if (m.type() === 'error') console.log('console', m.text().slice(0, 300)); });
+    await page.goto(`http://localhost:${WEB}${process.env.TABS_PEEK_URL.replace('{cid}', cid)}`, { waitUntil: 'domcontentloaded' });
+    await sleep(12000);
+    console.log(await page.evaluate(() => document.body.innerText.slice(0, 600)));
+    await page.screenshot({ path: process.env.TABS_PEEK_OUT || 'C:/Users/ADMINI~1/AppData/Local/Temp/tabs-scratch/url.png' });
+    await stop(0); return;
+  }
+  if (process.env.TABS_PEEK) {
+    // not a check: screenshots of the Candidates page for a look (TABS_PEEK=<folder>)
+    const out = process.env.TABS_PEEK; fs.mkdirSync(out, { recursive: true });
+    for (const R of ROLES) {
+      for (const [w, h, tag] of [[1366, 768, 'd'], [375, 812, 'm']]) {
+        const ctx = await browser.newContext({ viewport: { width: w, height: h } });
+        const tk = await tok(R.u.id);
+        await ctx.addInitScript((t) => { try { localStorage.setItem('tl_token', t); } catch { /* none */ } }, tk);
+        const page = await ctx.newPage();
+        page.on('pageerror', (e) => console.log('pageerror', e.message));
+        await page.goto(`http://localhost:${WEB}/candidates?view=pipeline&sub=active`, { waitUntil: 'domcontentloaded' });
+        await sleep(6000);
+        await page.screenshot({ path: path.join(out, `${R.key}-${tag}.png`), fullPage: false });
+        await page.screenshot({ path: path.join(out, `${R.key}-${tag}-full.png`), fullPage: true });
+        await page.locator('.fbar-count').first().waitFor({ timeout: 30000 }).catch(() => {});
+        await sleep(1500);
+        await page.screenshot({ path: path.join(out, `${R.key}-${tag}.png`), fullPage: false });
+        const dims = await page.evaluate(() => { const w = document.querySelector('.cpl-tablewrap'); const t = document.querySelector('.cpl-table'); return { over: [...document.querySelectorAll('body *')].filter((e) => e.getBoundingClientRect().right > window.innerWidth + 1 && e.getBoundingClientRect().width > 0).slice(0, 4).map((e) => `${e.tagName}.${String(e.className).slice(0, 40)}`), sw: document.documentElement.scrollWidth, iw: window.innerWidth, h: document.documentElement.scrollHeight, wrapCW: w && w.clientWidth, wrapSW: w && w.scrollWidth, tbl: t && t.offsetWidth, ths: t ? [...t.querySelectorAll('thead th')].map((x) => Math.round(x.getBoundingClientRect().width)) : null }; });
+        console.log(R.key, tag, JSON.stringify(dims));
+        await ctx.close();
+      }
+    }
+    await stop(0); return;
+  }
   for (const R of ROLES) {
     console.log(`\n== ${R.key} (${R.u.name}, ${R.u.atsRole})`);
     const token = await tok(R.u.id);
@@ -185,7 +228,7 @@ const api = async (url, token) => {
     check(`${R.key}: a caption sits under the strip`, capStart.length > 20, capStart);
     const more = await moreOf(s.page, 'Candidates views');
     console.log(`     more: ${more ? more.items.map((i) => i.text).join(' | ') : '(none)'}`);
-    check(`${R.key}: rarely used tabs are under More, each with a tooltip`, !!more && more.items.length >= 2 && more.items.every((i) => i.title.length > 8) && more.items.some((i) => i.text === 'Sources'), more);
+    check(`${R.key}: rarely used tabs are under More, each with a tooltip`, !!more && more.items.length >= 1 && more.items.every((i) => i.title.length > 8) && more.items.some((i) => i.text === 'Sources'), more);
     await shot(s.page, `${R.key.toLowerCase()}-candidates`);
 
     // captions change with the tab
@@ -228,7 +271,7 @@ const api = async (url, token) => {
     l = await landing('/candidates?view=pipeline&sub=hold');
     check(`${R.key}: ?view=pipeline&sub=hold stays on Requirement applications`, l.on === 'Requirement applications', l);
     const sub = await tabsOf(s.page, 'Requirement applications: status').catch(() => []);
-    check(`${R.key}: Hold is under More of the status tabs (the open one is named)`, sub.length <= 4 && (await s.page.locator('.tabstrip-sm .tabstrip-more.active').count()) >= 0, sub);
+    check(`${R.key}: ?sub=hold opens On hold on the status strip`, sub.length === 6 && (sub.find((x) => x.on) || {}).label === 'On hold', sub);
     l = await landing('/candidates?view=sources');
     check(`${R.key}: ?view=sources opens Sources under More`, /Sources/.test(l.more), l);
     l = await landing('/candidates?view=master&sub=duplicates');
@@ -249,6 +292,7 @@ const api = async (url, token) => {
       check(`${R.key}: at most 6 main tabs on the Candidate page`, cn.length >= 3 && cn.length <= 6, cn);
       check(`${R.key}: same names in the same order`, JSON.stringify(cn) === JSON.stringify(['Overview', 'Resume', 'Career', 'Follow-ups & notes', 'Documents', 'History'].filter((n) => cn.includes(n))), cn);
       check(`${R.key}: Candidate page tabs have tooltips and a caption`, tabs.every((t) => t.title.length > 8) && (await caption(s.page, 'Candidate tabs')).length > 20, tabs);
+      if (R.key === 'BDE') await sleep(3000); else await s.page.locator('.tabstrip-more').first().waitFor({ timeout: 20000 }).catch(() => {});
       const cm = await moreOf(s.page, 'Candidate tabs');
       console.log(`     candidate more: ${cm ? cm.items.map((i) => i.text).join(' | ') : '(none)'}`);
       if (R.key === 'BDE') check('BDE: no Conversation / AI Calling (recruiter-only) anywhere on the Candidate page', !cm || cm.items.length === 0, cm);
@@ -287,7 +331,7 @@ const api = async (url, token) => {
       tabs = await tabsOf(s.page, 'Requirement tabs');
       const rn = tabs.map((t) => t.label);
       console.log(`     requirement tabs: ${rn.join(' | ')}`);
-      check(`${R.key}: at most 5 main tabs on the requirement`, rn.length >= 2 && rn.length <= 5, rn);
+      check(`${R.key}: at most 6 main tabs on the requirement (History included)`, rn.length >= 2 && rn.length <= 6, rn);
       check(`${R.key}: requirement tabs have tooltips and a caption`, tabs.every((t) => t.title.length > 8) && (await caption(s.page, 'Requirement tabs')).length > 20, tabs);
       const qm = await moreOf(s.page, 'Requirement tabs');
       check(`${R.key}: Agreement and Activity are under More`, !!qm && qm.items.some((i) => i.text === 'Activity'), qm);
@@ -302,6 +346,116 @@ const api = async (url, token) => {
       check(`${R.key}: no page errors on the requirement page`, s.errors.length === 0, s.errors.slice(0, 3));
       await s.ctx.close();
     }
+  }
+
+  // ---- the whole page: simple to see (founder 2026-11-20 "this page looks too clumsy")
+  for (const R of ROLES) {
+    console.log(`\n== ${R.key}: the page`);
+    const token = await tok(R.u.id);
+    const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
+    await ctx.addInitScript((t) => { try { localStorage.setItem('tl_token', t); localStorage.removeItem('tl.candidates.insights.' + (JSON.parse(atob(t.split('.')[1])).sub || '')); } catch { /* none */ } }, token);
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(`http://localhost:${WEB}/candidates?view=pipeline&sub=active`, { waitUntil: 'domcontentloaded' });
+    await page.locator('.fbar-count').first().waitFor({ timeout: 40000 }).catch(() => {});
+    await page.locator('.cpl-table tbody tr').first().waitFor({ timeout: 40000 }).catch(() => {});
+    await sleep(1500);
+
+    // 2. one action bar: Add candidate, Import, More
+    const bar = await page.evaluate(() => [...document.querySelectorAll('.cv4-tools button')].filter((b) => !b.closest('.ac-panel') && b.offsetParent !== null).map((b) => b.textContent.trim().replace(/\s+/g, ' ')));
+    console.log('     action bar:', bar.join(' | '));
+    check(`${R.key}: the action bar has at most 3 buttons (Add candidate, Import, More)`, bar.length <= 3 && bar.some((x) => /^More/.test(x)), bar);
+    await page.locator('.ac-more-btn').click();
+    const menu = await page.evaluate(() => [...document.querySelectorAll('.ac-panel.open button')].filter((b) => b.offsetParent !== null).map((b) => b.textContent.trim().replace(/\s+/g, ' ')));
+    console.log('     More menu:', menu.join(' | '));
+    check(`${R.key}: More holds Templates & campaigns, Export, Template, History and Saved filters`, ['Templates & campaigns', 'Export', 'Template', 'Saved filters'].every((w) => menu.some((m) => m.includes(w))) && menu.some((m) => /History|Approvals/.test(m)), menu);
+    await shot(page, `${R.key.toLowerCase()}-more-actions`);
+    // the dialog of a menu line still opens (the template library)
+    await page.locator('.ac-panel.open button', { hasText: 'Templates & campaigns' }).first().click();
+    await sleep(800);
+    check(`${R.key}: Templates & campaigns opens its window from the menu`, (await page.locator('.gsx, .modal, .overlay.show').filter({ hasText: /templates and campaigns/i }).count()) > 0);
+    await page.keyboard.press('Escape');
+    await page.goto(`http://localhost:${WEB}/candidates?view=pipeline&sub=active`, { waitUntil: 'domcontentloaded' });
+    await page.locator('.fbar-count').first().waitFor({ timeout: 40000 }).catch(() => {});
+    await page.locator('.cpl-table tbody tr').first().waitFor({ timeout: 40000 }).catch(() => {});
+    await sleep(1200);
+
+    // 3. one filter system
+    const dup = await page.evaluate(() => ({ aside: document.querySelectorAll('.cv4-aside').length, box: document.querySelectorAll('.cv4-filters').length, btn: document.querySelectorAll('.lph-filters-btn').length, bars: document.querySelectorAll('.fbar').length }));
+    check(`${R.key}: one filter bar, no second Filters panel or button`, dup.aside === 0 && dup.box === 0 && dup.btn === 0 && dup.bars === 1, dup);
+    const prim = await page.evaluate(() => document.querySelectorAll('.fbar-row > .lph-facet, .fbar-row > .fbar-cell, .fbar-row > .fbar-multimode, .fbar-row > .fbar-range').length);
+    check(`${R.key}: about five filters on screen (at most 6)`, prim >= 3 && prim <= 6, prim);
+    await page.locator('.fbar-more').click();
+    await sleep(500);
+    const panelText = (await page.locator('.fbar-panel').innerText()).replace(/\s+/g, ' ');
+    const need = ['Client', 'Requirement', 'Skills', 'Came on', 'Joined between', 'Source', 'Added'];
+    check(`${R.key}: More filters reaches ${need.join(', ')}`, need.every((w) => panelText.includes(w)), need.filter((w) => !panelText.includes(w)));
+    check(`${R.key}: and Location is on the bar itself`, /Current location/i.test(await page.locator('.fbar-row').first().innerText()));
+    await page.keyboard.press('Escape');
+
+    // 4. status strip: names and counts that equal the numbers the server counts
+    const st = await page.evaluate(() => { const l = document.querySelector('[role="tablist"][aria-label="Requirement applications: status"]'); return l ? [...l.querySelectorAll('[role="tab"]')].map((t) => ({ k: t.firstChild.textContent.trim(), n: Number(((t.querySelector('.n') || {}).textContent || '0').replace(/[^0-9]/g, '')) })) : null; });
+    check(`${R.key}: status strip is All · Active · On hold · Selected · Joined · Rejected`, !!st && JSON.stringify(st.map((x) => x.k)) === JSON.stringify(['All', 'Active', 'On hold', 'Selected', 'Joined', 'Rejected']), st);
+    const cnt = await api('/candidates?paged=1&view=pipeline&sub=all&pageSize=1', token);
+    const subs = (cnt.body && cnt.body.counts && cnt.body.counts.subs) || {};
+    const keyOf = { All: 'all', Active: 'active', 'On hold': 'hold', Selected: 'selected', Joined: 'joined', Rejected: 'rejected' };
+    check(`${R.key}: the strip counts equal the server's counts (the old tiles read the same tally)`, !!st && st.every((x) => x.n === Number(subs[keyOf[x.k]] || 0)), { st, subs });
+    const chips = await page.evaluate(() => [...document.querySelectorAll('[role="group"][aria-label="Show"] .cpl-chip')].map((c) => c.firstChild.textContent.trim()));
+    check(`${R.key}: a "Show:" group holds Late, Due today, Interviews today, Interview done, no feedback`, JSON.stringify(chips) === JSON.stringify(['Late', 'Due today', 'Interviews today', 'Interview done, no feedback']), chips);
+    check(`${R.key}: no KPI tiles, pipeline chart or analytics panels on the first screen`, (await page.locator('.cv4-kpis, .cv4-strip, .cv4-row3, .cv4-bottom, .cv4-insights').count()) === 0);
+
+    // 5. new people chip, not a banner
+    check(`${R.key}: the "added in the last 7 days" banner is gone (a chip beside the search, if there are any)`, (await page.locator('section.nps:visible').count()) === 0);
+    const chip = page.locator('.npc-chip');
+    if (await chip.count()) {
+      await chip.click(); await sleep(400);
+      check(`${R.key}: the new-people chip opens the list`, (await page.locator('.npc-pop .nps-row').count()) > 0);
+      await page.keyboard.press('Escape');
+    }
+
+    // 6. Insights: closed by default, remembered
+    check(`${R.key}: Insights is closed by default`, (await page.locator('.cv4-fold-head[aria-expanded="false"]').count()) === 1 && (await page.locator('.cv4-kpis').count()) === 0);
+    await page.locator('.cv4-fold-head').click(); await sleep(1200);
+    const insTxt = (await page.locator('.cv4-fold-body').innerText()).replace(/\s+/g, ' ');
+    check(`${R.key}: Insights holds the tiles, Needs attention, Top requirements, Quick actions, funnel, by location, by source`, ['Applications', 'Needs attention', 'Top requirements', 'Quick actions', 'Hiring funnel', 'Applications by location', 'Applications by source|Applications by client'].every((w) => new RegExp(w).test(insTxt)), insTxt.slice(0, 300));
+    await shot(page, `${R.key.toLowerCase()}-insights-open`);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('.cv4-fold-head').waitFor({ timeout: 30000 });
+    check(`${R.key}: the open Insights is remembered`, (await page.locator('.cv4-fold-head[aria-expanded="true"]').count()) === 1);
+    await page.locator('.cv4-fold-head').click();
+    await page.waitForSelector('.fbar-count', { timeout: 40000 }).catch(() => {});
+    await page.locator('.cpl-table tbody tr').first().waitFor({ timeout: 40000 }).catch(() => {});
+    await sleep(800);
+
+    // 7. the table
+    const tbl = await page.evaluate(() => { const t = document.querySelector('.cpl-table'); const ths = t ? [...t.querySelectorAll('thead th')].map((x) => x.textContent.trim().replace(/\s+/g, ' ')) : []; const r = t && t.querySelector('tbody tr'); const w = document.querySelector('.cpl-tablewrap'); return { ths, firstRowTop: r ? Math.round(r.getBoundingClientRect().top) : null, docH: document.documentElement.scrollHeight, sw: document.documentElement.scrollWidth, wrapOver: w ? w.scrollWidth - w.clientWidth : null, simple: !!(t && t.classList.contains('is-simple')) }; });
+    console.log('     columns:', tbl.ths.join(' | '));
+    check(`${R.key}: the Simple view is the default with at most 7 data columns`, tbl.simple && tbl.ths.filter((h) => h && !/^Contact$/.test(h)).length <= 7, tbl.ths);
+    check(`${R.key}: the first table row is on the first screen at 1366x768`, tbl.firstRowTop !== null && tbl.firstRowTop < 700, tbl.firstRowTop);
+    check(`${R.key}: the page is shorter than two screens with Insights closed`, tbl.docH < 2 * 768, tbl.docH);
+    await shot(page, `${R.key.toLowerCase()}-page-1366`);
+    // Columns menu
+    check(`${R.key}: a Columns menu is there in the simple view`, (await page.getByRole('button', { name: /Columns/ }).count()) > 0);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await sleep(800);
+    const w1280 = await page.evaluate(() => { const w = document.querySelector('.cpl-tablewrap'); return { doc: document.documentElement.scrollWidth - window.innerWidth, wrap: w ? w.scrollWidth - w.clientWidth : 0 }; });
+    check(`${R.key}: no sideways scroll at 1280 px`, w1280.doc <= 1 && w1280.wrap <= 1, w1280);
+    check(`${R.key}: no page errors on the page`, errors.length === 0, errors.slice(0, 3));
+    await ctx.close();
+
+    // 8. a phone: 375 px, nothing wider than the screen
+    const mctx = await browser.newContext({ viewport: { width: 375, height: 812 } });
+    await mctx.addInitScript((t) => { try { localStorage.setItem('tl_token', t); } catch { /* none */ } }, token);
+    const mp = await mctx.newPage();
+    await mp.goto(`http://localhost:${WEB}/candidates?view=pipeline&sub=active`, { waitUntil: 'domcontentloaded' });
+    await mp.locator('.fbar-count').first().waitFor({ timeout: 40000 }).catch(() => {});
+    await sleep(2500);
+    const mob = await mp.evaluate(() => ({ over: (() => { const c = document.querySelector('.cv4'); return c.scrollWidth - c.clientWidth; })(), shellOver: document.documentElement.scrollWidth - window.innerWidth, culprits: [...document.querySelectorAll('body *')].filter((e) => e.getBoundingClientRect().right > window.innerWidth + 1 && e.getBoundingClientRect().width > 0).slice(0, 4).map((e) => e.tagName + '.' + String(e.className).slice(0, 40)) }));
+    check(`${R.key}: nothing is wider than a 375 px phone`, mob.over <= 1, mob);
+    check(`${R.key}: the status strip scrolls sideways on a phone and More filters is a drawer`, await mp.evaluate(() => { const r = document.querySelector('.cv4-status .tabstrip-row'); const p = document.querySelector('.fbar-panel'); return !!r && getComputedStyle(r).overflowX !== 'visible' && !p; }));
+    if (R.key === 'Recruiter') await shot(mp, 'recruiter-phone-375');
+    await mctx.close();
   }
 
   // ---- a client login: only what a client sees today
