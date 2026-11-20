@@ -44,3 +44,8 @@ The questions below are the ones they ask all day. "Scope" is the login's own sc
    is returned. Never a 500, never a blank.
 3. Answers come in the language of the question (English, Telugu script, Telugu in English letters), numbers first, short.
 4. Per-login cache 60 s, dropped early when the data stamp (applications, stage events, requirements, clients, invoices) changes.
+5. Every question's TIME WINDOW is read (`utils/bdeAgentLang.js periodOf`): till now / so far / total / ever = all time; today, yesterday,
+   this / last / next week, month, year; month names and years in English, Telugu script and Telugu in English letters ("janavari",
+   "ee samvatsaram", "gatha nela"); "from X to Y", "X nundi Y varaku", "between X and Y", "since X", "before X", "till X"; dd/mm/yyyy and
+   ISO dates. The window used is the first words of every answer ("Jan 2026 - Nov 2026: 76 joinings ..."). A list question shows the
+   whole list (up to 100 one-line rows); beyond that it gives the count and a link to the same list on its screen.
