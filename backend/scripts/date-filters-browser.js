@@ -152,6 +152,7 @@ const dayOf = (d) => new Date(new Date(d).getTime() + 5.5 * 3600e3).toISOString(
 
     // Interview calendar: Interview date
     await go(page, '/ats/calendar?ivFrom=2026-10-02&ivTo=2026-10-02');
+    await until(page, /Dfui Person/, 25000);
     const t4 = await text(page);
     check(`${role}: the Interview calendar has the Interview date filter with quick picks`, /Interview date/.test(t4), t4.slice(0, 200));
     check(`${role}: the calendar shows the two people on 2 Oct and not the one on 20 Oct`, t4.includes('Dfui Person 1') && t4.includes('Dfui Person 2') && !t4.includes('Dfui Person 3'), t4.slice(0, 300));
@@ -174,7 +175,7 @@ const dayOf = (d) => new Date(new Date(d).getTime() + 5.5 * 3600e3).toISOString(
       await go(page, url);
       await until(page, re, 30000);
       const t = await text(page);
-      check(`${role}: ${label} has its date filter`, re.test(t) || /you do not have|not part of your role|isn't included/i.test(t), t.slice(0, 160));
+      check(`${role}: ${label} has its date filter`, re.test(t) || /you do not have|not part of your role|isn't included/i.test(t), t.slice(t.indexOf('ATS /') > 0 ? t.indexOf('ATS /') : 0).slice(0, 700));
     }
     check(`${role}: no script errors on these screens`, errors.length === 0, errors);
     await ctx.close();
