@@ -248,7 +248,7 @@ async function loadItems(ids, from, to) {
     const due = YMD.test(String(t.dueDate || '')) ? t.dueDate : null;
     const what = t.completedAt
       ? [t.outcome, t.completedNote || t.notes].filter(Boolean).join(': ') || t.purpose || t.nextAction || 'Follow-up done'
-      : `${t.purpose || t.nextAction || 'Follow-up'}${due ? ` (due ${dmy(due)})` : ''}`;
+      : `${[t.purpose || t.nextAction || 'Follow-up', t.notes && t.notes !== (t.purpose || t.nextAction) ? t.notes : null].filter(Boolean).join(': ')}${due ? ` (due ${dmy(due)})` : ''}`; // an open one shows what was written in it too
     items.push({
       key: `t${t.id}`, type: 'Task', kind: 'Candidate', source: system ? 'system' : imported ? 'import' : 'manual',
       addedBy: system ? null : addedBy, addedDay: system ? null : istDay(t.createdAt), createdDay: istDay(t.createdAt),

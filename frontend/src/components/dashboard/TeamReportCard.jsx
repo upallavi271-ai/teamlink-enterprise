@@ -25,6 +25,8 @@ const presetsFor = (today) => {
     ['thismonth', 'This month', monthStart(today), today],
   ];
 };
+// the history says each date as { day, est }
+const dayOf = (v) => String((v && typeof v === 'object' ? v.day : v) || '').slice(0, 10);
 const SHOWN = [['added', 'Follow-ups added'], ['done', 'Follow-ups done'], ['logged', 'Calls / messages'], ['overdue', 'Overdue']];
 const STATUS_CLASS = { Overdue: 'trc-bad', 'Done late': 'trc-warn', Done: 'trc-ok', 'Due today': 'trc-warn' };
 
@@ -50,8 +52,8 @@ function PersonPanel({ person, from, to, onClose }) {
   // the people this recruiter ADDED in these days (the history rows say the day each was added)
   const added = useMemo(() => {
     if (!cands || !cands.rows) return [];
-    return cands.rows.filter((x) => x.added && String(x.added).slice(0, 10) >= from && String(x.added).slice(0, 10) <= to)
-      .sort((a, b) => String(b.added).localeCompare(String(a.added)));
+    return cands.rows.filter((x) => dayOf(x.added) && dayOf(x.added) >= from && dayOf(x.added) <= to)
+      .sort((a, b) => dayOf(b.added).localeCompare(dayOf(a.added)));
   }, [cands, from, to]);
 
   return (
@@ -80,7 +82,7 @@ function PersonPanel({ person, from, to, onClose }) {
                 <tbody>
                   {added.map((x) => (
                     <tr key={x.applicationId}>
-                      <td>{fmtDay(x.added)}</td>
+                      <td>{fmtDay(dayOf(x.added))}</td>
                       <td><Link to={`/candidates/${x.candidateId}`} onClick={onClose}>{x.candidate}</Link></td>
                       <td>{x.requirement}{x.client ? <div className="small-muted">{x.client}</div> : null}</td>
                       <td>{x.outcome ? String(x.outcome).replace(/^./, (c) => c.toUpperCase()) : (x.stageLabel || x.step || '')}</td>

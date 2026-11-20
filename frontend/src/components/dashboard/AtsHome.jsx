@@ -650,7 +650,7 @@ export default function AtsHome() {
         {error && <div className="notice red">{error}</div>}
         {!data && !error && <div className="small-muted">Loading your dashboard…</div>}
         {data && !asUser && <RemindersGoingOutCard key={reload} />}
-        {data && !asUser && <TeamReportCard user={user} />}
+        {!asUser && <TeamReportCard user={user} />}
         {data && (
           <AtsV4
             data={carry ? { ...data, carryOver: carry } : data}

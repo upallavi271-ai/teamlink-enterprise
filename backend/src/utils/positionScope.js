@@ -204,9 +204,13 @@ async function leadsOfPosition({ positionId, positionCode }) {
       else {
         // the TL seat is empty now (its holder left): who held it last, so a page can still say whose team this is
         // eslint-disable-next-line no-await-in-loop
-        const last = await prisma.positionAssignment.findFirst({ where: { positionId: p.id }, orderBy: [{ toDate: 'desc' }, { fromDate: 'desc' }], select: { employee: { select: { name: true } } } });
+        const last = await prisma.positionAssignment.findFirst({ where: { positionId: p.id }, orderBy: [{ toDate: 'desc' }, { fromDate: 'desc' }], select: { employee: { select: { name: true, userId: true, employmentStatus: true } } } });
         out.tlSeatCode = p.code || null;
-        out.tlFormerName = last && last.employee ? last.employee.name : null;
+        // Founder 2026-11-20: "(left)" only for somebody who really left. A last holder who is still working (Notice Period, Active ...) is still
+        // the team lead - the seat's end date may only be their notice end - so the page names them plainly and they still get the notices.
+        if (last && last.employee && last.employee.userId && !require('./leftLogin').LEFT.includes(last.employee.employmentStatus)) { // eslint-disable-line global-require
+          out.tlUserId = last.employee.userId; out.tlName = last.employee.name || null;
+        } else out.tlFormerName = last && last.employee ? last.employee.name : null;
       }
     }
     if (p.kind === 'STL' && !out.stlUserId) {
