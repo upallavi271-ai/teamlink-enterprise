@@ -1,0 +1,135 @@
+import { useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import api from '../../api';
+import ExportMenu from '../ExportMenu.jsx';
+import HistorySeries from './HistorySeries.jsx';
+import {
+  Day, Definition, DropSummary, Filters, FunnelTiles, cleanParams, fmtDay, num,
+} from './HistoryParts.jsx';
+
+// ---------------------------------------------------------------------------
+// RECRUITER HISTORY (the page a search result for a recruiter opens): who they are, the requirements they handled with their own numbers, the
+// funnel with dates, day / week / month wise work, a candidate table with every date, the handovers and the targets.
+// GET /api/ats/history/recruiter/:id (utils/atsHistoryPeople.js). The server only answers a login that may open this person.
+// ---------------------------------------------------------------------------
+const NS = { cursor: 'default' };
+
+export default function RecruiterHistory() {
+  const { id } = useParams();
+  const [f, setF] = useState({ from: '', to: '', period: '' });
+  const [grain, setGrain] = useState('month');
+  const [status, setStatus] = useState('');
+  const [step, setStep] = useState('');
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState('');
+  const params = { ...cleanParams(f), grain, ...(status ? { status } : {}), ...(step ? { step } : {}) };
+  const key = JSON.stringify(params);
+  useEffect(() => {
+    let live = true;
+    setErr('');
+    api.get(`/ats/history/recruiter/${id}`, { params })
+      .then((r) => { if (live) setD(r.data); })
+      .catch((e) => { if (live) setErr(e.response?.data?.error || 'The history could not be loaded.'); });
+    return () => { live = false; };
+  }, [id, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (err && !d) return <div><Link className="small-muted" to="/ats/search">← Search</Link><div className="notice red" style={{ marginTop: 8 }}><span>{err}</span></div></div>;
+  if (!d) return <div className="small-muted">Loading the history…</div>;
+  const p = d.person;
+  const head = (k, v) => v !== null && v !== undefined && v !== '' && <div><span className="k">{k}</span>{v}</div>;
+  return (
+    <div className="hx-tab">
+      <Link className="small-muted" to="/ats/search">← Search</Link>
+      <div className="page-head" style={{ marginTop: 8 }}>
+        <div><h1 style={{ fontSize: 20 }}>{p.name}</h1><div className="page-sub">Recruiter history: everything this recruiter has done, from the first profile</div></div>
+        {d.canExport && <ExportMenu url={`/ats/history/recruiter/${id}/export`} params={params} formats={['xlsx', 'csv']} label="Download Excel" />}
+      </div>
+      <div className="card section">
+        <div className="hx-head">
+          {head('Department', p.department)}{head('Section / team', p.section)}{head('Seat', p.seat)}{head('Team lead', p.teamLead)}
+          {head('Status', p.statusWord)}{head('With TeamLink since', `${fmtDay(p.since.day)}${p.since.est ? ' (estimated)' : ''}`)}{head('Designation', p.designation)}
+        </div>
+        <Filters f={f} setF={setF} recruiters={[]} />
+        <FunnelTiles tiles={d.funnel} active={step} onPick={(k) => { setStep(k); setStatus(''); }} />
+        <Definition text={d.definitions.dropped} joinedText={d.definitions.joined} joined={d.definitions.funnel} />
+        <DropSummary s={d.dropSummary} />
+        <HistorySeries series={d.series} grain={grain} setGrain={setGrain} targets={d.targets} />
+      </div>
+
+      <div className="card section hx-sec">
+        <h3>Requirements handled ({d.requirements.length})</h3>
+        {d.requirements.length === 0 ? <div className="small-muted">None yet.</div> : (
+          <div className="hx-scroll">
+            <table className="hx-table" style={{ minWidth: 860 }}>
+              <thead>
+                <tr>
+                  <th style={NS}>Requirement</th><th style={NS}>Client</th><th style={NS}>Status</th><th style={NS}>Openings</th><th style={NS}>Sourced</th><th style={NS}>Sent</th>
+                  <th style={NS}>Interviews</th><th style={NS}>Selected</th><th style={NS}>Joined</th><th style={NS}>Dropped</th><th style={NS} />
+                </tr>
+              </thead>
+              <tbody>
+                {d.requirements.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.reqCode ? `${r.reqCode} · ` : ''}{r.title}</td>
+                    <td>{r.clientId ? <Link to={`/clients/${r.clientId}?tab=history`}>{r.client}</Link> : r.client}</td>
+                    <td>{r.statusLabel}</td><td>{r.openings}</td>
+                    <td>{r.numbers.sourced}</td><td>{r.numbers.shared}</td><td>{r.numbers.interviewScheduled}</td><td>{r.numbers.selected}</td><td><b>{r.numbers.joined}</b></td><td>{r.numbers.dropped}</td>
+                    <td><Link className="btn btn-sm" to={`/requirements/${r.id}?tab=history`}>History</Link></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card section hx-sec">
+        <div className="hx-bar">
+          <h3 style={{ margin: 0 }}>Candidates ({d.total})</h3><span style={{ flex: 1 }} />
+          <label className="hx-muted">Show{' '}
+            <select value={status} onChange={(e) => { setStatus(e.target.value); setStep(''); }}>
+              {[['', 'Everyone'], ['joined', 'Joined (still working)'], ['dropped', 'Dropped'], ['inprocess', 'In process'], ['left', 'Left after joining']].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </label>
+        </div>
+        <div className="hx-scroll">
+          <table className="hx-table" style={{ minWidth: 1000 }}>
+            <thead>
+              <tr>
+                <th style={NS}>Candidate</th><th style={NS}>Requirement</th><th style={NS}>Added</th><th style={NS}>Sent to client</th><th style={NS}>Interview</th>
+                <th style={NS}>Selected</th><th style={NS}>Offer</th><th style={NS}>Joined</th><th style={NS}>Dropped</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.rows.map((x) => (
+                <tr key={x.applicationId}>
+                  <td><Link to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</Link></td>
+                  <td>{x.requirement}<div className="hx-muted">{x.client}</div></td>
+                  <td><Day v={x.added} /></td><td><Day v={x.sent} /></td>
+                  <td>{x.interviewDates.length ? x.interviewDates.map(fmtDay).join(', ') : '—'}</td><td><Day v={x.selected} /></td><td><Day v={x.offer} /></td>
+                  <td>{x.joinDay && x.outcome === 'joined' ? <Day v={x.joinDay} est={false} /> : x.joinDay ? <span className="hx-muted">{fmtDay(x.joinDay)} (left)</span> : '—'}</td>
+                  <td className="hx-why">{x.drop ? <><Day v={x.drop.day} est={x.drop.estimated} /><div><b>{x.drop.typeLabel}</b></div>{x.drop.reason && <div className="hx-muted">{x.drop.reason}</div>}</> : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card section hx-sec">
+        <h3>Handovers</h3>
+        <div className="hx-muted" style={{ marginBottom: 6 }}>Given to others: {num(d.handovers.given.length)}. Taken over from others: {num(d.handovers.taken.length)}.</div>
+        {[['Given', d.handovers.given], ['Taken', d.handovers.taken]].map(([t, list]) => list.length > 0 && (
+          <div key={t}>
+            <h4 style={{ margin: '6px 0 2px' }}>{t}</h4>
+            <ul className="hx-time">
+              {list.map((h, i) => (
+                // eslint-disable-next-line react/no-array-index-key
+                <li key={i}><span className="d">{fmtDay(h.day)}</span><span className="t">{h.candidate}{h.requirement ? ` (${h.requirement})` : ''}: {h.from || '—'} to {h.to}{h.reason ? ` — ${h.reason}` : ''}</span></li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

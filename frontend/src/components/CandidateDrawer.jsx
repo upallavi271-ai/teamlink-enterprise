@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import CandidateHistory from './ats/CandidateHistory.jsx'; // History tab: the complete history of the person
 import { Link } from 'react-router-dom';
 import api from '../api';
 import { protoDate } from '../atsVocab';
@@ -205,6 +206,7 @@ export default function CandidateDrawer({
             {tab === 'aicalling' && internal && <AiCallingSlot {...slot} refreshKey={refreshKey} />}
             {tab === 'conversation' && internal && <ConversationView audience="candidates" personId={c.id} name={c.name} applicationId={app ? app.id : undefined} requirementId={app ? app.requirementId : undefined} onChanged={changed} />}
 
+            {tab === 'history' && internal && <CandidateHistory key={c.id} candidateId={c.id} embedded />}
             {tab === 'history' && (
               <div className="c360t-grid">
                 <div>

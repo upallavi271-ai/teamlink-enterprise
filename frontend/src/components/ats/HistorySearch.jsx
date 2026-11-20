@@ -29,13 +29,25 @@ export default function HistorySearch({ initial = '' }) {
   }, [q]);
   return (
     <div className="card section hx-sr-box">
-      <h3 style={{ marginTop: 0 }}>Requirement or client history</h3>
-      <div className="small-muted" style={{ marginBottom: 6 }}>Type a requirement title or ID, or a client name (an old name works too). See how many profiles were shared, selected, joined and dropped, with dates.</div>
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Requirement title, requirement ID or client name" aria-label="Find a requirement or client history" />
+      <h3 style={{ marginTop: 0 }}>History of a person, client or requirement</h3>
+      <div className="small-muted" style={{ marginBottom: 6 }}>Type a recruiter, team lead, candidate (name, phone, email or ID), client (an old name works too) or requirement. See the complete history: profiles, sent to client, selected, joined, dropped, with dates.</div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, phone, email, candidate ID, client or requirement" aria-label="Find a requirement or client history" />
       {busy && <div className="small-muted" style={{ marginTop: 6 }}>Searching…</div>}
       {err && <div className="notice red" style={{ marginTop: 6 }}>{err}</div>}
       {res && !busy && (
         <div style={{ marginTop: 10 }}>
+          {(res.people || []).length > 0 && (
+            <>
+              <h4 style={{ margin: '4px 0' }}>People ({res.people.length})</h4>
+              {res.people.map((p) => (
+                <div className="hx-sr" key={p.id}>
+                  <Link className="main" to={`/ats/history/${p.kind === 'tl' ? 'tl' : 'recruiter'}/${p.id}`}>{p.name}</Link>
+                  <span className="hx-muted">{[p.role, p.department, p.section, p.seat, p.kind === 'recruiter' && p.teamLead ? `TL ${p.teamLead}` : null, p.active ? null : p.statusWord].filter(Boolean).join(' · ')}</span>
+                  <Link className="btn btn-sm" to={`/ats/history/${p.kind === 'tl' ? 'tl' : 'recruiter'}/${p.id}`}>{p.kind === 'tl' ? 'Open team history' : 'Open history'}</Link>
+                </div>
+              ))}
+            </>
+          )}
           {res.clientsAllowed && res.clients.length > 0 && (
             <>
               <h4 style={{ margin: '4px 0' }}>Clients ({num(res.clientTotal)})</h4>
@@ -65,7 +77,20 @@ export default function HistorySearch({ initial = '' }) {
               ))}
             </>
           )}
-          {res.requirements.length === 0 && (!res.clientsAllowed || res.clients.length === 0) && <div className="small-muted">Nothing matches that.</div>}
+          {(res.candidates || []).length > 0 && (
+            <>
+              <h4 style={{ margin: '8px 0 4px' }}>Candidates ({num(res.candidateTotal)})</h4>
+              {res.candidates.map((c) => (
+                <div className="hx-sr" key={c.id}>
+                  <Link className="main" to={`/ats/history/candidate/${c.id}`}>{c.name}</Link>
+                  <span className="hx-muted">{[c.code, c.phone, c.email].filter(Boolean).join(' · ')}</span>
+                  <span className="nums"><span><b>{c.applications}</b> applications</span><span><b>{c.selected}</b> selected now</span><span><b>{c.joined}</b> joined</span><span><b>{c.rejected}</b> rejected</span></span>
+                  <Link className="btn btn-sm" to={`/ats/history/candidate/${c.id}`}>Open history</Link>
+                </div>
+              ))}
+            </>
+          )}
+          {res.requirements.length === 0 && (res.people || []).length === 0 && (res.candidates || []).length === 0 && (!res.clientsAllowed || res.clients.length === 0) && <div className="small-muted">Nothing matches that.</div>}
         </div>
       )}
     </div>

@@ -33,6 +33,9 @@ import Offers from './pages/ats/Offers.jsx';
 import Joining from './pages/ats/Joining.jsx';
 import AtsWorkflow from './pages/ats/AtsWorkflow.jsx';
 import Search from './pages/ats/Search.jsx';
+import RecruiterHistory from './components/ats/RecruiterHistory.jsx'; // ATS History pages: recruiter, team lead, candidate
+import TlHistory from './components/ats/TlHistory.jsx';
+import CandidateHistoryPage from './components/ats/CandidateHistory.jsx';
 import AccountsDashboard from './pages/AccountsDashboard.jsx';
 
 import Employees from './pages/Employees.jsx';
@@ -346,6 +349,9 @@ export default function App() {
         {/* The actual workflow with live counts per box (ATS Dashboard "See workflow"). */}
         <Route path="ats/workflow" element={<AtsWorkflow />} />
         <Route path="ats/search" element={<Search />} />
+        <Route path="ats/history/recruiter/:id" element={<RecruiterHistory />} />
+        <Route path="ats/history/tl/:id" element={<TlHistory />} />
+        <Route path="ats/history/candidate/:id" element={<CandidateHistoryPage />} />
         <Route path="ats/dashboard" element={<AtsDashboard />} />
         {/* An ATS-side address for the reports, kept working: it lands on
             Reports -> ATS Reports with its ?tab= intact. */}

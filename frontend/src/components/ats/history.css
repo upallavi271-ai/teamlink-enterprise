@@ -56,3 +56,16 @@
   .hx-tiles { grid-template-columns: repeat(2, 1fr); }
   .hx-time li { grid-template-columns: 80px 1fr; }
 }
+.hx-bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; overflow-x: auto; padding: 4px 2px 0; border-bottom: 1px solid var(--line); max-width: 100%; }
+.hx-barcol { position: relative; flex: 0 0 18px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+.hx-barfill { display: block; width: 100%; background: var(--navy); border-radius: 3px 3px 0 0; min-height: 1px; }
+.hx-barn { font-size: 9px; color: var(--ink-soft); }
+.hx-names { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.hx-big { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 6px 0 14px; }
+.hx-bigbox { border: 1px solid var(--line); border-radius: 12px; background: var(--paper-raised); padding: 14px 16px; }
+.hx-bigbox b { display: block; font-family: 'Newsreader', serif; font-size: 40px; line-height: 1; }
+.hx-bigbox span { font-size: 13px; color: var(--ink-soft); }
+.hx-tabs2 { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.hx-who { font-weight: 600; }
+.hx-cand-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 8px 0 12px; }
+@media (max-width: 480px) { .hx-bigbox b { font-size: 32px; } }

@@ -11,6 +11,9 @@ import {
 // dates and guarantee, why people dropped, the agreement, one row per requirement (each opens its own History), and - only for the logins that
 // already see invoice amounts - billing. GET /api/ats/history/client/:id (utils/atsHistory.js).
 // ---------------------------------------------------------------------------
+const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthWord = (k) => `${MN[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}`;
+
 export default function ClientHistory({ clientId }) {
   const [f, setF] = useState({ from: '', to: '', period: '', recruiter: '' });
   const [d, setD] = useState(null);
@@ -38,6 +41,10 @@ export default function ClientHistory({ clientId }) {
         <span style={{ flex: 1 }} />
         {d.canExport && <ExportMenu url={`/ats/history/client/${clientId}/export`} params={params} formats={['xlsx', 'csv']} label="Download Excel" />}
       </div>
+      <div className="hx-big">
+        <div className="hx-bigbox"><b>{num(d.big.requirementsGiven)}</b><span>requirements given so far</span></div>
+        <div className="hx-bigbox"><b>{num(d.big.joinings)}</b><span>joinings so far (still working){d.big.leftAfterJoining ? `, ${d.big.leftAfterJoining} more left after joining` : ''}</span></div>
+      </div>
       <Filters f={f} setF={setF} recruiters={d.recruiters} />
       <FunnelTiles tiles={d.funnel} />
       <JoinedNote detail={d.joinedDetail} />
@@ -52,6 +59,19 @@ export default function ClientHistory({ clientId }) {
       {d.notes.estimatedDates > 0 && <div className="hx-muted">{d.notes.estimatedDates} date{d.notes.estimatedDates === 1 ? ' is' : 's are'} estimated (the exact day was not recorded).</div>}
 
       <DropSummary s={d.dropSummary} />
+
+      <div className="hx-sec">
+        <h3>Year by year and month by month</h3>
+        <div className="hx-scroll">
+          <table className="hx-table" style={{ minWidth: 560 }}>
+            <thead><tr><th style={{ cursor: 'default' }}>Period</th><th style={{ cursor: 'default' }}>Requirements given</th><th style={{ cursor: 'default' }}>Openings</th><th style={{ cursor: 'default' }}>Sent to client</th><th style={{ cursor: 'default' }}>Joined</th><th style={{ cursor: 'default' }}>Dropped</th></tr></thead>
+            <tbody>
+              {d.breakdown.years.map((y) => <tr key={y.key}><td><b>{y.key}</b></td><td><b>{y.requirements}</b></td><td><b>{y.openings}</b></td><td><b>{y.shared}</b></td><td><b>{y.joined}</b></td><td><b>{y.dropped}</b></td></tr>)}
+              {d.breakdown.months.map((m) => <tr key={m.key}><td>{monthWord(m.key)}</td><td>{m.requirements}</td><td>{m.openings}</td><td>{m.shared}</td><td>{m.joined}</td><td>{m.dropped}</td></tr>)}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <div className="hx-sec">
         <h3>Requirement by requirement</h3>

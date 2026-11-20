@@ -16,6 +16,7 @@
 const express = require('express');
 const { requireAuth, requireProduct, can } = require('../middleware/auth');
 const H = require('../utils/atsHistory');
+const P = require('../utils/atsHistoryPeople');
 const OWN = require('../utils/ownOnly');
 const { sendBook, formatOf } = require('../utils/exportKit');
 const { scopeLabel } = require('../utils/scope');
@@ -36,7 +37,7 @@ async function exportRefusal(user) {
 
 router.get('/search', wrap(async (req, res) => {
   const desk = !!(await clientDeskOf(req.user));
-  res.json(await H.search(req.user, req.query.q, { clientDesk: desk }));
+  res.json(await P.searchAll(req.user, req.query.q, { clientDesk: desk }));
 }));
 
 router.get('/requirement/:id', wrap(async (req, res) => {
@@ -123,6 +124,59 @@ router.get('/client/:id/export', wrap(async (req, res) => {
   return sendBook(req, res, {
     format, name: `history-${out.client.name}`, entity: 'AtsReport', what: `Client history - ${out.client.name}`, scope: scopeLabel(req.user, 'ats'), period: p.from || p.to ? { from: p.from || 'start', to: p.to || 'today' } : null, sheets,
   });
+}));
+
+// what this login may open (the screens link a name only when it may open it)
+router.get('/access', wrap(async (req, res) => res.json(await P.accessInfo(req.user))));
+
+// ---- people and candidates (utils/atsHistoryPeople.js). A name outside the login's scope is answered as "not found", never with a reason.
+const NOT_FOUND = (what) => ({ error: `That ${what} was not found, or it is outside your access.` });
+const sendPeopleFile = async (req, res, name, what, d, sheets) => {
+  const refusal = await exportRefusal(req.user);
+  if (refusal) return res.status(403).json({ error: refusal });
+  const format = formatOf({ format: req.query.format === 'pdf' ? 'xlsx' : req.query.format });
+  if (!format) return res.status(400).json({ error: 'Choose Excel or CSV.' });
+  const p = d && d.period ? d.period : {};
+  return sendBook(req, res, { format, name, entity: 'AtsReport', what, scope: scopeLabel(req.user, 'ats'), period: p.from || p.to ? { from: p.from || 'start', to: p.to || 'today' } : null, sheets: sheets(d) });
+};
+router.get('/recruiter/:id', wrap(async (req, res) => {
+  const out = await P.recruiterHistory(req.user, req.params.id, req.query || {});
+  if (!out) return res.status(404).json(NOT_FOUND('recruiter'));
+  out.canExport = !(await exportRefusal(req.user));
+  return res.json(out);
+}));
+router.get('/recruiter/:id/export', wrap(async (req, res) => {
+  const refusal = await exportRefusal(req.user);
+  if (refusal) return res.status(403).json({ error: refusal });
+  const d = await P.recruiterHistory(req.user, req.params.id, req.query || {});
+  if (!d) return res.status(404).json(NOT_FOUND('recruiter'));
+  return sendPeopleFile(req, res, `history-${d.person.name}`, `Recruiter history - ${d.person.name}`, d, P.recruiterSheets);
+}));
+router.get('/tl/:id', wrap(async (req, res) => {
+  const out = await P.tlHistory(req.user, req.params.id, req.query || {});
+  if (!out) return res.status(404).json(NOT_FOUND('team lead'));
+  out.canExport = !(await exportRefusal(req.user));
+  return res.json(out);
+}));
+router.get('/tl/:id/export', wrap(async (req, res) => {
+  const refusal = await exportRefusal(req.user);
+  if (refusal) return res.status(403).json({ error: refusal });
+  const d = await P.tlHistory(req.user, req.params.id, req.query || {});
+  if (!d) return res.status(404).json(NOT_FOUND('team lead'));
+  return sendPeopleFile(req, res, `history-team-${d.person.name}`, `Team history - ${d.person.name}`, d, P.tlSheets);
+}));
+router.get('/candidate/:id', wrap(async (req, res) => {
+  const out = await P.candidateHistory(req.user, req.params.id);
+  if (!out) return res.status(404).json(NOT_FOUND('candidate'));
+  out.canExport = !(await exportRefusal(req.user));
+  return res.json(out);
+}));
+router.get('/candidate/:id/export', wrap(async (req, res) => {
+  const refusal = await exportRefusal(req.user);
+  if (refusal) return res.status(403).json({ error: refusal });
+  const d = await P.candidateHistory(req.user, req.params.id);
+  if (!d) return res.status(404).json(NOT_FOUND('candidate'));
+  return sendPeopleFile(req, res, `history-${d.candidate.name}`, `Candidate history - ${d.candidate.name}`, d, P.candidateSheets);
 }));
 
 module.exports = router;

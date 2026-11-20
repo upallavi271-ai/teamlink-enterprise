@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
+import { mayOpenRecruiter, useHistoryAccess } from './HistorySeries.jsx';
 import {
   Day, Definition, DropSummary, Filters, FunnelTiles, JoinedNote, cleanParams, fmtDay, stepLabel,
 } from './HistoryParts.jsx';
@@ -19,6 +20,7 @@ const COLS = [
 const STATUS_WORD = { joined: 'Joined', dropped: 'Dropped', inprocess: 'In process', selected: 'Selected' };
 
 export default function HistoryTab({ requirementId }) {
+  const access = useHistoryAccess();
   const [f, setF] = useState({ from: '', to: '', period: '', recruiter: '' });
   const [status, setStatus] = useState('');
   const [step, setStep] = useState('');
@@ -90,8 +92,8 @@ export default function HistoryTab({ requirementId }) {
               <tbody>
                 {d.rows.map((x) => (
                   <tr key={x.applicationId}>
-                    <td><Link to={`/candidates/${x.candidateId}`}>{x.candidate}</Link></td>
-                    <td>{x.recruiterName || '—'}</td>
+                    <td><Link to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</Link></td>
+                    <td>{x.recruiterName && mayOpenRecruiter(access, x.recruiterId) ? <Link to={`/ats/history/recruiter/${x.recruiterId}`}>{x.recruiterName}</Link> : (x.recruiterName || '—')}</td>
                     <td><Day v={x.shared} /></td>
                     <td>{x.stageLabel}</td>
                     <td>{x.interviewDates.length ? x.interviewDates.map(fmtDay).join(', ') : '—'}{x.interviewResult ? <div className="hx-muted">{x.interviewResult}</div> : null}</td>

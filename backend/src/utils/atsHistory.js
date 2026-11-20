@@ -224,9 +224,9 @@ function stepsOf(app, evs) {
 }
 
 // ---- the joinings: the ONE rule ---------------------------------------------------------------------------------------------------------
-async function creditedMap(user, reqIds) {
+async function creditedMap(user, reqIds, { fresh = true, candidateId = null } = {}) {
   const joined = await prisma.application.findMany({
-    where: { requirementId: { in: reqIds }, stage: { in: JOINED } },
+    where: { requirementId: { in: reqIds }, stage: { in: JOINED }, ...(candidateId ? { candidateId } : {}) },
     select: { id: true, joiningDate: true, joinedAt: true, updatedAt: true },
   });
   if (!joined.length) return { map: new Map(), undated: 0, level: RJ.viewerLevel(user), clamped: false };
@@ -236,7 +236,7 @@ async function creditedMap(user, reqIds) {
   const lv = RJ.viewerLevel(user);
   const recruiter = SC.atsScopeOf(user).atsRole === 'RECRUITER';
   const eff = lv === 'self' && !recruiter ? 'all' : lv;
-  const cj = await RJ.creditedJoinings(user, { from: addDays(from, -1), to: addDays(to, 1), level: eff, fresh: true });
+  const cj = await RJ.creditedJoinings(user, { from: addDays(from, -1), to: addDays(to, 1), level: eff, fresh });
   const set = new Set(reqIds);
   const map = new Map();
   cj.list.filter((a) => set.has(a.requirementId)).forEach((a) => map.set(a.id, a));
@@ -276,12 +276,12 @@ async function joiningRecords(appIds) {
 }
 
 // -> { recs[], credit, reqs: Map }  (one record per candidate per requirement)
-async function loadRecords(user, reqRows) {
+async function loadRecords(user, reqRows, { fresh = true, candidateId = null } = {}) {
   await ensureIndexes();
   const reqIds = reqRows.map((r) => r.id);
   const reqById = new Map(reqRows.map((r) => [r.id, r]));
-  const credit = await creditedMap(user, reqIds);
-  const scoped = await prisma.application.findMany({ where: { AND: [{ requirementId: { in: reqIds } }, SC.applicationWhere(user)] }, select: APP_SELECT });
+  const credit = await creditedMap(user, reqIds, { fresh, candidateId });
+  const scoped = await prisma.application.findMany({ where: { AND: [{ requirementId: { in: reqIds } }, ...(candidateId ? [{ candidateId }] : []), SC.applicationWhere(user)] }, select: APP_SELECT });
   const have = new Set(scoped.map((a) => a.id));
   const extraIds = [...credit.map.keys()].filter((id) => !have.has(id) && !credit.intersect);
   const extra = extraIds.length ? await prisma.application.findMany({ where: { id: { in: extraIds } }, select: APP_SELECT }) : [];
@@ -620,6 +620,24 @@ async function clientHistory(user, id, q = {}) {
       offers: count('offerReleased'), joined: count('joined'), dropped: count('dropped'), inProcess: count('inprocess'),
     };
   }).filter((r) => !(period.from || period.to) || r.sourced || r.shared || r.joined || r.dropped || inRange(r.createdDay, period));
+  // year and month tables: requirements given, and what happened in each month (sent, joined, dropped)
+  const bucket = new Map();
+  const slot = (k) => { if (!bucket.has(k)) bucket.set(k, { key: k, requirements: 0, openings: 0, shared: 0, joined: 0, dropped: 0 }); return bucket.get(k); };
+  reqs.forEach((r) => { const d = istDay(r.createdAt); if (d && (!(period.from || period.to) || inRange(d, period))) { const b = slot(d.slice(0, 7)); b.requirements += 1; b.openings += r.openings || 0; } });
+  recs.forEach((r) => {
+    if (r.steps.shared && (!(period.from || period.to) || inRange(r.steps.shared.day, period))) slot(r.steps.shared.day.slice(0, 7)).shared += 1;
+    if (r.steps.joined && (!(period.from || period.to) || inRange(r.steps.joined.day, period))) slot(r.steps.joined.day.slice(0, 7)).joined += 1;
+    if (r.outcome === 'dropped' && r.drop && r.drop.day && (!(period.from || period.to) || inRange(r.drop.day, period))) slot(r.drop.day.slice(0, 7)).dropped += 1;
+  });
+  const months = [...bucket.values()].sort((x, y) => y.key.localeCompare(x.key));
+  const yearMap = new Map();
+  months.forEach((m) => {
+    const y = m.key.slice(0, 4);
+    const t = yearMap.get(y) || { key: y, requirements: 0, openings: 0, shared: 0, joined: 0, dropped: 0 };
+    ['requirements', 'openings', 'shared', 'joined', 'dropped'].forEach((k) => { t[k] += m[k]; });
+    yearMap.set(y, t);
+  });
+  const breakdown = { months, years: [...yearMap.values()].sort((x, y) => y.key.localeCompare(x.key)) };
   const opened = reqs.filter((r) => !(period.from || period.to) || inRange(istDay(r.createdAt), period)).length;
   const closedN = reqs.filter((r) => r.status === 'CLOSED' && (!(period.from || period.to) || inRange(closed.get(r.id).day, period))).length;
   // days to fill: from the requirement being opened to the day its last opening was filled
@@ -674,6 +692,8 @@ async function clientHistory(user, id, q = {}) {
   }
   return {
     client: { id: c.id, name: c.name, code: c.clientCode || null }, definitions: DEFINITIONS, period, funnel: f.tiles, dropSummary: f.dropSummary, joinedDetail: f.joinedDetail, inprocessDetail: f.inprocessDetail,
+    breakdown,
+    big: { requirementsGiven: reqs.length, joinings: (f.tiles.find((t) => t.key === 'joined') || {}).count || 0, leftAfterJoining: (f.tiles.find((t) => t.key === 'left') || {}).count || 0 },
     requirements: { opened, closed: closedN, total: reqs.length, open: reqs.filter((r) => !['CLOSED', 'DRAFT'].includes(r.status)).length },
     averages: { daysToFill: avg(fill), daysShareToJoin: avg(shareToJoin), filledRequirements: fill.length },
     joinings, requirementRows: reqRows, recruiters, agreements, billing,
@@ -745,4 +765,5 @@ function funnelSheet(tiles) {
 module.exports = {
   DEFINITIONS, DROP_TYPES, STEPS, dropOf, ensureIndexes, requirementHistory, clientHistory, search, tableRows, rowOut, applyFilters, funnelOf, loadRecords, periodOf, mayBilling, external,
   exportRow, ROW_HEADERS, funnelSheet, requirementFor, clientFor, REQ_SELECT, STATUS_OF,
+  APP_SELECT, stepsOf, istDay, isoDay, todayIst, daysBetween, addDays, avg, testViewer, clientNameOf, inRange, TEST_RE, JOINED, STEP_KEYS,
 };
