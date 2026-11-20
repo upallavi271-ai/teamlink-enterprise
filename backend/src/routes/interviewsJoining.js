@@ -1072,13 +1072,25 @@ router.post('/joining/:id/schedule', requirePerm('ats', 'interviews', 'Joining',
     userId: req.user.id, action: internal ? 'Joining scheduled' : 'Client joining scheduled', entity: 'Application', entityId: app.id,
     fromValue: app.joiningStatus || 'Not Scheduled', toValue: `Joining Scheduled — ${joiningDate}`,
   });
+  // SCHEDULED REMINDERS to the candidate (utils/scheduledReminders.js): the plan chosen in the joining window (or the default one), with the reporting time / place / contacts.
+  let reminders = null;
+  try {
+    const SR = require('../utils/scheduledReminders'); // eslint-disable-line global-require
+    const rb = req.body.reminders && typeof req.body.reminders === 'object' ? req.body.reminders : null;
+    const explicit = rb && Array.isArray(rb.steps);
+    const details = req.body.details && typeof req.body.details === 'object' ? req.body.details : undefined;
+    await SR.sync(app.id, {
+      actor: req.user, event: 'booked', kind: 'joining', ...(explicit ? { steps: rb.steps.filter((s) => s && s.checked !== false && s.sendAt) } : {}), ...(details ? { details } : {}),
+    });
+    reminders = await SR.summaryOf(app.id, 'joining');
+  } catch { reminders = null; }
   const fresh = await prisma.application.findUnique({ where: { id: app.id }, include: FULL_INCLUDE });
   // BGV / joining checklist: a WARNING with the answer, never a block (utils/atsOfferBgv.js).
   const warnings = await require('../utils/atsOfferBgv').joiningWarnings(app); // eslint-disable-line global-require
   // The joining date is now set: the offer letter goes to a TeamLink internal hire by email, once (utils/offerLetterMail.js).
   // It never fails the save - the answer rides along so the screen can say what happened.
   const offerLetter = await require('../utils/offerLetterMail').maybeSendAuto(app.id, { trigger: `Joining date set to ${joiningDate}`, actor: req.user }); // eslint-disable-line global-require
-  res.json({ ...shapeRow(fresh), warnings, offerLetter });
+  res.json({ ...shapeRow(fresh), warnings, offerLetter, reminders });
 });
 
 router.post('/joining/:id/joined', requirePerm('ats', 'interviews', 'Joining', 'edit'), async (req, res) => {
@@ -1670,6 +1682,19 @@ router.post('/interviews/:id/book', mayBookHere, async (req, res) => {
   await prisma.interviewEvent.create({
     data: { applicationId: app.id, status: 'SCHEDULED', toSlot: interviewAt.toISOString(), by: req.user.name, reason: nextRound || round > 1 ? `Round ${round} booked` : 'Interview booked' },
   });
+  // SCHEDULED REMINDERS to the candidate (utils/scheduledReminders.js): the plan chosen in the booking window (or the default one when the caller sent none), with the
+  // venue / contact details for an offline interview. Never blocks the booking.
+  let reminders = null;
+  try {
+    const SR = require('../utils/scheduledReminders'); // eslint-disable-line global-require
+    const rb = b.reminders && typeof b.reminders === 'object' ? b.reminders : null;
+    const explicit = rb && Array.isArray(rb.steps);
+    const details = b.details && typeof b.details === 'object' ? { ...b.details, address: b.details.address || location } : (location ? { address: location } : undefined);
+    await SR.sync(app.id, {
+      actor: req.user, event: 'booked', kind: 'interview', ...(explicit ? { steps: rb.steps.filter((s) => s && s.checked !== false && s.sendAt) } : {}), ...(details ? { details } : {}),
+    });
+    reminders = await SR.summaryOf(app.id, 'interview');
+  } catch { reminders = null; }
   if (panelEntries) await PANEL.setPanel(app.id, round, panelEntries);
   // Round type, link provider and slot of this round (utils/interviewRounds.js). Never blocks the booking.
   await require('../utils/interviewRounds').noteBooking(app.id, round, { // eslint-disable-line global-require
@@ -1720,6 +1745,7 @@ router.post('/interviews/:id/book', mayBookHere, async (req, res) => {
     linkWarning,
     whatsapp,
     clashes: clash && clash.clashes ? clash.clashes : [],
+    reminders,
     message: parts.join(' '),
   });
 });

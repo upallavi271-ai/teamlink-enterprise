@@ -201,8 +201,12 @@ async function run(ctx) {
     const booked = t - (bookedAt.get(a.id) || t - 365 * DAY);
     const online = !String(a.interviewMode || '').toLowerCase().includes('person') && !/tele|phone/i.test(String(a.interviewMode || ''));
     // --- the candidate
+    // SCHEDULED REMINDERS (utils/scheduledReminders.js): when the new plan covers this interview, its messages replace the day / hour messages below
+    // eslint-disable-next-line no-await-in-loop
+    const planCovers = await require('./scheduledReminders').coversInterview(a.id, slot); // eslint-disable-line global-require
     if ((candOn && armed) || force) {
-      const kinds = candidateDue({ leftMs: left, bookedAgoMs: booked, online, hasLink: !!a.interviewMeetingLink, plan });
+      // the plan's messages replace the day / hour ones; the 15-minute "join now" message of an online interview is not in the plan and still goes
+      const kinds = candidateDue({ leftMs: left, bookedAgoMs: booked, online, hasLink: !!a.interviewMeetingLink, plan }).filter((k) => !planCovers || k === 'now');
       for (const k of kinds) {
         if (k === 'day' && quietNow && !force) continue; // eslint-disable-line no-continue
         const status = { day: 'REMINDER_C_DAY', hour: 'REMINDER_C_HOUR', now: 'REMINDER_C_NOW' }[k];

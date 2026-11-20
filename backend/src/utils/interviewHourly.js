@@ -85,7 +85,10 @@ async function run({
     const soon = leftWords(left);
 
     // --- the candidate: a mail
-    if (h.candidate && candOn && mailNow) {
+    // SCHEDULED REMINDERS (utils/scheduledReminders.js): when the new plan covers this interview, its messages replace these mails (no double messages)
+    // eslint-disable-next-line no-await-in-loop
+    const planCovers = await require('./scheduledReminders').coversInterview(a.id, slot); // eslint-disable-line global-require
+    if (h.candidate && candOn && mailNow && !planCovers) {
       const key = `cand|${a.id}|${slot}|${n}`;
       if (dryRun) {
         summary.items.push({ applicationId: a.id, kind: 'HOURLY_CANDIDATE', hour: n });

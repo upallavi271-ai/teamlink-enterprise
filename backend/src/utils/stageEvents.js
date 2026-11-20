@@ -90,6 +90,12 @@ async function recordWorkflowMove({
   const client = requirement.client;
   const app = application || existing;
 
+  // SCHEDULED REMINDERS (utils/scheduledReminders.js): a candidate who is rejected / moves on / joins stops getting reminders for the old step.
+  // Not awaited, never throws; the reminder job re-checks the application again before it sends.
+  if (['REJECTED', 'JOINED', 'HIRED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED'].includes(toStage)) {
+    setTimeout(() => { try { require('./scheduledReminders').sync(existing.id, { actor: user, event: 'stage' }).catch(() => {}); } catch { /* optional */ } }, 400); // eslint-disable-line global-require
+  }
+
   // skipEvent: the caller already wrote the history row in the same
   // transaction as the stage change (stageEventData below), so a crash can't
   // leave the stage without its history (e2e gap 16).

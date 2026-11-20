@@ -493,6 +493,7 @@ app.use('/api/ats/team-tools', require('./routes/atsTeamTools'));
 app.use('/api/ats/history', require('./routes/atsHistory'));
 // Pipeline & checks (founder ATS audit 2026-11-17): stage names, sub-statuses, the share checklist, fee slabs (routes/atsFlowConfig.js).
 // Ahead of the calendar-gated /api/ats routers: GET /api/ats/stage-labels is read by every login.
+app.use('/api/ats', require('./utils/scheduledReminders').autoSyncMiddleware); // keeps the reminder plan in line with a booking / move / cancel / joining change
 app.use('/api/ats', require('./routes/atsFlowConfig'));
 app.use('/api/ats', atsExtrasRoutes);
 // Interviews & Joining (Interview Feedback, Offers, Joining, Internal Hiring)
@@ -513,6 +514,7 @@ app.use('/api/ats', require('./routes/interviewRounds')); // multi-round intervi
 app.use('/api/ats', require('./routes/interviewPrep'));
 // "Ask the client manager to book" - only the BDE books an interview (routes/interviewRequest.js).
 app.use('/api/ats', require('./routes/interviewRequest'));
+app.use('/api/ats/reminders', require('./routes/reminders')); // scheduled messages to the candidate before an interview / joining (utils/scheduledReminders.js)
 // The selection confirmation mail: written by itself at Selected, sent by the TL (routes/selectionMails.js).
 app.use('/api/ats', require('./routes/selectionMails'));
 // The AI Assistant (answers) and AI Agent (proposes, acts only on Confirm).
@@ -698,6 +700,8 @@ const server = app.listen(PORT, () => {
   // guarantee ending), every 15 min — OFF until an Admin switches it on
   // (utils/interviewNotices.js).
   require('./utils/interviewNotices').startSweep();
+  // Scheduled messages to the candidate (interview + joining plans), every 5 minutes - OFF until an Admin switches it on (utils/scheduledReminders.js).
+  require('./utils/scheduledReminders').startSweep();
   // A recruiter who left: their candidates go to the recruiter on the job following them up now, every hour (utils/leaverHandover.js).
   require('./utils/leaverHandover').startSweep();
   // ON LEAVE TODAY: their due follow-ups / tasks go to their backup or TL, and come back after the leave (utils/leaveCover.js), hourly

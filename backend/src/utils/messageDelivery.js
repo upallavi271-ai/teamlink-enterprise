@@ -121,6 +121,9 @@ async function applyStatusInner(info, status) {
   // 1c. a message sent from a CRM record (crm/contact.js): the report goes on its timeline line
   matched += await require('../crm/contact').applyDeliveryStatus(String(info.providerRef), status, info.error, at).catch(() => 0); // eslint-disable-line global-require
 
+  // 1d. a scheduled interview / joining reminder (utils/scheduledReminders.js): its Sent / Delivered / Read / Failed chip
+  matched += await require('./scheduledReminders').applyDeliveryStatus(String(info.providerRef), status, info.error, at).catch(() => 0); // eslint-disable-line global-require
+
   // 1b. the job broadcast campaign's recipient row (broadcast/replies.js)
   matched += await require('../broadcast/replies').statusReport({ providerRef: String(info.providerRef), status, error: info.error }).catch(() => 0); // eslint-disable-line global-require
 
