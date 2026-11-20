@@ -23,6 +23,15 @@ import '../../components/reminders/reminders.css';
 // Who: recruiter own candidates, TL / STL the team, Manager / Admin everyone, the BDE side the numbers only (backend: routes/messageSchedules.js).
 // ---------------------------------------------------------------------------
 const TABS = [['all', 'All'], ['upcoming', 'Upcoming'], ['active', 'Active'], ['completed', 'Completed'], ['paused', 'Paused'], ['failed', 'Failed'], ['cancelled', 'Cancelled']];
+const SCHED_TAB_HINT = {
+  all: 'Every message schedule you may see.',
+  upcoming: 'Schedules whose first message has not gone yet.',
+  active: 'Recurring schedules that are sending now.',
+  completed: 'Schedules that sent every message they were meant to.',
+  paused: 'Schedules someone paused; they can be resumed.',
+  failed: 'Schedules whose last message could not be sent.',
+  cancelled: 'Schedules that were stopped for good.',
+};
 const RANGES = [['', 'Any date'], ['next_7', 'Next 7 days'], ['next_30', 'Next 30 days'], ...PRESETS.filter(([k]) => k && k !== 'custom'), ['custom', 'Custom']];
 const addDay = (s, n) => new Date(Date.parse(`${s}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 function rangeDates(range, from, to) {
@@ -104,7 +113,8 @@ export default function ScheduledMessages() {
         <Card label="Active" value={c.active} tone="green" onClick={() => setTab('active')} active={tab === 'active'} />
         <Card label="Paused" value={c.paused} tone="amber" onClick={() => setTab('paused')} active={tab === 'paused'} />
       </div>
-      <StatusTabs label="Schedule status" tabs={TABS.map(([key, label]) => ({ key, label, count: key === 'all' ? c.total : c[key] }))} value={tab} onChange={setTab} />
+      {/* at most five on screen (the founder's tab rule, 2026-11-20): Paused, Failed and Cancelled under More; a tooltip and a line under the strip */}
+      <StatusTabs label="Schedule status" tabs={TABS.map(([key, label]) => ({ key, label, count: key === 'all' ? c.total : c[key], hint: SCHED_TAB_HINT[key], more: ['paused', 'failed', 'cancelled'].includes(key) }))} value={tab} onChange={setTab} note="Message schedules by status: waiting, sending, finished or stopped." />
       {countOnly ? (
         <div className="notice" style={{ marginTop: 8 }}>{d.note}</div>
       ) : (
