@@ -50,7 +50,7 @@ export default function RecruiterHistory({ personId, embedded = false }) {
           {head('Department', p.department)}{head('Section / team', p.section)}{head('Seat', p.seat)}{head('Team lead', p.teamLead)}
           {head('Status', p.statusWord)}{head('With TeamLink since', `${fmtDay(p.since.day)}${p.since.est ? ' (estimated)' : ''}`)}{head('Designation', p.designation)}
         </div>
-        <Filters f={f} setF={setF} recruiters={[]} />
+        <Filters f={f} setF={setF} recruiters={[]} clients={(d.options && d.options.clients) || []} requirements={(d.options && d.options.requirements) || []} statuses />
         <FunnelTiles tiles={d.funnel} active={step} onPick={(k) => { setStep(k); setStatus(''); }} />
         <Definition text={d.definitions.dropped} joinedText={d.definitions.joined} joined={d.definitions.funnel} />
         <DropSummary s={d.dropSummary} />

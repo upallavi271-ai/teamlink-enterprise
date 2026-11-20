@@ -92,7 +92,8 @@ export function DropSummary({ s }) {
 }
 
 // from / to / this month-quarter-year / recruiter
-export function Filters({ f, setF, recruiters = [] }) {
+const STATUS_OPTIONS = [{ value: 'inprocess', label: 'In process' }, { value: 'selected', label: 'Selected' }, { value: 'joined', label: 'Joined (still working)' }, { value: 'dropped', label: 'Dropped' }, { value: 'left', label: 'Left after joining' }];
+export function Filters({ f, setF, recruiters = [], clients = [], requirements = [], statuses = false }) {
   const set = (k, v) => setF({ ...f, [k]: v });
   return (
     <div className="hx-filters">
@@ -108,7 +109,16 @@ export function Filters({ f, setF, recruiters = [] }) {
       {recruiters.length > 0 && (
         <MultiSelect label="Recruiter" allLabel="Everyone" value={f.recruiter || ''} onChange={(csv) => set('recruiter', csv)} options={recruiters.map((r) => ({ value: r.id, label: r.name }))} />
       )}
-      {(f.from || f.to || f.period || f.recruiter) && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setF({ ...f, from: '', to: '', period: '', recruiter: '' })}>Clear</button>}
+      {clients.length > 0 && (
+        <MultiSelect label="Client" allLabel="All clients" value={f.client || ''} onChange={(csv) => set('client', csv)} options={clients.map((c) => ({ value: c.id, label: c.name }))} />
+      )}
+      {requirements.length > 0 && (
+        <MultiSelect label="Requirement" allLabel="All requirements" value={f.requirement || ''} onChange={(csv) => set('requirement', csv)} options={requirements.map((r) => ({ value: r.id, label: r.name }))} />
+      )}
+      {statuses && (
+        <MultiSelect label="Status" allLabel="Any status" value={f.status || ''} onChange={(csv) => set('status', csv)} options={STATUS_OPTIONS} />
+      )}
+      {(f.from || f.to || f.period || f.recruiter || f.client || f.requirement || f.status) && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setF({ ...f, from: '', to: '', period: '', recruiter: '', client: '', requirement: '', status: '' })}>Clear all</button>}
     </div>
   );
 }

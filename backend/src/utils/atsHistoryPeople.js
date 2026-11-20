@@ -191,6 +191,39 @@ async function targetsFor(employeeIds, recs, rng) {
   return rows.reverse();
 }
 
+
+// ---- the filters of the recruiter and TL history (founder 2026-11-20: "filters everywhere"): client, requirement, status - several values each.
+// The options are read from the person's / team's records BEFORE filtering, so a ticked value never disappears from its own list.
+const MPH = require('./multiParam');
+function narrow(recs, reqById, q = {}) {
+  let out = recs;
+  if (q.client) out = out.filter((r) => MPH.multiHas(q.client, (reqById.get(r.requirementId) || {}).clientId || ''));
+  if (q.requirement) out = out.filter((r) => MPH.multiHas(q.requirement, r.requirementId));
+  const sts = MPH.parseMulti(q.status).filter((x) => H.STATUS_OF[x]);
+  if (sts.length) out = out.filter((r) => sts.some((x) => H.STATUS_OF[x](r)));
+  return out;
+}
+function keepReq(q, reqs) {
+  return (row) => {
+    const rq = reqs.find((x) => x.id === row.id) || {};
+    return (!q.requirement || MPH.multiHas(q.requirement, row.id)) && (!q.client || MPH.multiHas(q.client, rq.clientId || ''));
+  };
+}
+function filterOptions(recs, reqById, people = []) {
+  const clients = new Map(); const reqs = new Map();
+  recs.forEach((r) => {
+    const rq = reqById.get(r.requirementId) || {};
+    if (rq.clientId && !clients.has(rq.clientId)) clients.set(rq.clientId, H.clientNameOf(rq));
+    if (r.requirementId && !reqs.has(r.requirementId)) reqs.set(r.requirementId, rq.title ? (rq.reqCode ? `${rq.reqCode} · ${rq.title}` : rq.title) : 'Requirement');
+  });
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+  return {
+    clients: [...clients].map(([id, name]) => ({ id, name })).sort(byName),
+    requirements: [...reqs].map(([id, name]) => ({ id, name })).sort(byName),
+    recruiters: people.filter(Boolean).map((h) => ({ id: h.id, name: h.name })).sort(byName),
+  };
+}
+
 // ---- rows -------------------------------------------------------------------------------------------------------------------------------------
 function personRow(rec, reqById) {
   const r = reqById.get(rec.requirementId) || {};
@@ -243,16 +276,17 @@ async function recruiterHistory(viewerUser, uid, q = {}) {
   const reqs = await requirementsOfRecruiters(viewerUser, [uid]);
   const { recs: all, reqById } = reqs.length ? await H.loadRecords(viewerUser, reqs, { fresh: false }) : { recs: [], reqById: new Map() };
   const mineAll = all.filter((r) => r.recruiterId === uid);
-  const { recs, period } = H.applyFilters(mineAll, { from: q.from, to: q.to, period: q.period });
+  const options = filterOptions(mineAll, reqById);
+  const { recs, period } = H.applyFilters(narrow(mineAll, reqById, q), { from: q.from, to: q.to, period: q.period });
   const f = H.funnelOf(recs, period);
   const rng = rangeOf(q);
   const series = seriesOf(mineAll, await activityExtras([uid], rng), rng);
-  const reqRows = requirementRows(recs, reqs, period).filter((r) => r.numbers.sourced > 0 || (reqs.find((x) => x.id === r.id) || {}).recruiterId === uid);
+  const reqRows = requirementRows(recs, reqs, period).filter((r) => r.numbers.sourced > 0 || (reqs.find((x) => x.id === r.id) || {}).recruiterId === uid).filter(keepReq(q, reqs));
   const rows = H.tableRows(recs, q).map((r) => personRow(r, reqById));
   const targets = await targetsFor([person.employeeId], mineAll, rng);
   return {
     person, definitions: H.DEFINITIONS, period, range: rng, funnel: f.tiles, dropSummary: f.dropSummary, joinedDetail: f.joinedDetail,
-    requirements: reqRows, series, targets, rows, total: rows.length, handovers: await handoversOf(person.name),
+    requirements: reqRows, series, targets, rows, total: rows.length, handovers: await handoversOf(person.name), options,
     notes: { estimatedDates: f.tiles.reduce((n, t) => n + t.estimated, 0) }, viewer: { kind: v.kind },
   };
 }
@@ -272,11 +306,12 @@ async function tlHistory(viewerUser, tlId, q = {}) {
   const { recs: all, reqById } = reqs.length ? await H.loadRecords(viewerUser, reqs, { fresh: false }) : { recs: [], reqById: new Map() };
   const mem = new Set(memberIds);
   const teamAll = all.filter((r) => mem.has(r.recruiterId) || (reqById.get(r.requirementId) || {}).tlId === tlId);
-  const { recs, period } = H.applyFilters(teamAll, { from: q.from, to: q.to, period: q.period });
+  const options = filterOptions(teamAll, reqById, heads);
+  const { recs, period } = H.applyFilters(narrow(teamAll, reqById, q), { from: q.from, to: q.to, period: q.period, recruiter: q.recruiter });
   const f = H.funnelOf(recs, period);
   const rng = rangeOf(q);
   const series = seriesOf(teamAll, await activityExtras([...memberIds, tlId], rng), rng);
-  const memberRows = heads.filter(Boolean).map((h) => ({ id: h.id, name: h.name, active: h.active, statusWord: h.statusWord, seat: h.seat, department: h.department, totals: totalsOf(recs.filter((r) => r.recruiterId === h.id), period) }));
+  const memberRows = heads.filter(Boolean).filter((h) => !q.recruiter || MPH.multiHas(q.recruiter, h.id)).map((h) => ({ id: h.id, name: h.name, active: h.active, statusWord: h.statusWord, seat: h.seat, department: h.department, totals: totalsOf(recs.filter((r) => r.recruiterId === h.id), period) }));
   const others = recs.filter((r) => !mem.has(r.recruiterId));
   const compare = [...memberRows.sort((a, b) => b.totals.joined - a.totals.joined || a.name.localeCompare(b.name))];
   if (others.length) compare.push({ id: null, name: 'Others on the team\'s requirements (not a team member / not recorded)', active: null, totals: totalsOf(others, period), other: true });
@@ -291,9 +326,10 @@ async function tlHistory(viewerUser, tlId, q = {}) {
   return {
     person, team: { section: person.section, department: person.department, members: memberRows.length, memberNames: memberRows.map((m) => m.name) },
     definitions: H.DEFINITIONS, period, range: rng, funnel: f.tiles, dropSummary: f.dropSummary, joinedDetail: f.joinedDetail,
-    members: compare, total, requirements: requirementRows(recs, reqs, period).filter((r) => r.numbers.sourced > 0 || reqs.find((x) => x.id === r.id).tlId === tlId), clients, series, targets,
+    members: compare, total, requirements: requirementRows(recs, reqs, period).filter((r) => r.numbers.sourced > 0 || reqs.find((x) => x.id === r.id).tlId === tlId).filter(keepReq(q, reqs)), clients, series, targets,
     joinedList: listOf((r) => r.outcome === 'joined'), droppedList: listOf((r) => r.outcome === 'dropped'),
     handovers: { given: hand.reduce((n, h) => n + h.given.length, 0), taken: hand.reduce((n, h) => n + h.taken.length, 0) },
+    options,
     notes: { estimatedDates: f.tiles.reduce((n, t) => n + t.estimated, 0) }, viewer: { kind: v.kind },
   };
 }

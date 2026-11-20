@@ -68,7 +68,7 @@ export default function TlHistory({ personId, embedded = false }) {
           {head('Department', p.department)}{head('Section / team', p.section)}{head('Team lead', p.name)}{head('Status', p.statusWord)}{head('Members', d.team.members)}
           {head('Handovers', `${d.handovers.given} given, ${d.handovers.taken} taken`)}
         </div>
-        <Filters f={f} setF={setF} recruiters={[]} />
+        <Filters f={f} setF={setF} recruiters={(d.options && d.options.recruiters) || []} clients={(d.options && d.options.clients) || []} requirements={(d.options && d.options.requirements) || []} statuses />
         <FunnelTiles tiles={d.funnel} />
         <Definition text={d.definitions.dropped} joinedText={d.definitions.joined} joined={d.definitions.funnel} />
         <DropSummary s={d.dropSummary} />

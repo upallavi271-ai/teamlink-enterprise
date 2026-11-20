@@ -334,6 +334,20 @@ const COLS = ['added', 'sent', 'interviews', 'selected', 'offers', 'dropped'];
     check('team day-wise numbers match the plan on every day', tDay.status === 200 && badT.length === 0, badT.slice(0, 2));
     const tMonth = await C('GET', `/ats/history/tl/${tl.id}?${q({ grain: 'month', from: day(-60), to: day(0) })}`, 'sa');
     check('team month-wise totals equal the day-wise totals', tMonth.status === 200 && COLS.every((f) => tMonth.body.series.total[f] === tDay.body.series.total[f]), [tMonth.body.series.total, tDay.body.series.total]);
+    // filters on the team page (founder 2026-11-20: "filters everywhere"): recruiter, client, requirement, status - several values each
+    check('team page: the filter options list the members, the client and the two requirements', TLp.body.options && TLp.body.options.recruiters.length === 2 && TLp.body.options.clients.length === 1 && TLp.body.options.requirements.length === 2, TLp.body.options);
+    const fRec = await C('GET', `/ats/history/tl/${tl.id}?${q({ recruiter: recA.id })}`, 'sa');
+    check('team page, Recruiter = A: the tiles are recruiter A\'s and only A is listed', fRec.status === 200 && tile(fRec.body, 'sourced') === ta('sourced') && fRec.body.members.filter((m) => m.id).map((m) => m.id).join() === recA.id, fRec.body.members && fRec.body.members.map((m) => m.name));
+    const fBoth = await C('GET', `/ats/history/tl/${tl.id}?${q({ recruiter: `${recA.id},${recB.id}` })}`, 'sa');
+    check('team page, Recruiter = A and B: the same as no filter', tile(fBoth.body, 'sourced') === tile(TLp.body, 'sourced'));
+    const fReq = await C('GET', `/ats/history/tl/${tl.id}?${q({ requirement: R.RA.id })}`, 'sa');
+    check('team page, Requirement = RA: only RA is handled', fReq.status === 200 && fReq.body.requirements.length === 1 && fReq.body.requirements[0].id === R.RA.id, fReq.body.requirements && fReq.body.requirements.map((r) => r.title));
+    const fSt = await C('GET', `/ats/history/tl/${tl.id}?${q({ status: 'dropped' })}`, 'sa');
+    check('team page, Status = Dropped: nobody joined is counted, the dropped list is the same', fSt.status === 200 && tile(fSt.body, 'joined') === 0 && fSt.body.droppedList.length === TLp.body.droppedList.length);
+    const fCl = await C('GET', `/ats/history/tl/${tl.id}?${q({ client: 'no-such-client' })}`, 'sa');
+    check('team page, an unknown client: nothing, the options are still there', fCl.status === 200 && tile(fCl.body, 'sourced') === 0 && fCl.body.options.clients.length === 1);
+    const rSt = await C('GET', `/ats/history/recruiter/${recA.id}?${q({ status: 'joined,dropped' })}`, 'sa');
+    check('recruiter page, Status = Joined + Dropped: no one in process is listed; client and requirement options are there', rSt.status === 200 && rSt.body.rows.every((x) => ['joined', 'dropped'].includes(x.outcome)) && rSt.body.options.clients.length >= 1 && rSt.body.options.requirements.length >= 1, rSt.body.rows && rSt.body.rows.map((x) => x.outcome));
     const TL2 = await C('GET', `/ats/history/tl/${tl2.id}`, 'sa');
     check('the other team (TL two) has recruiter C only: sourced 2, sent 1', TL2.status === 200 && TL2.body.team.members === 1 && tile(TL2.body, 'sourced') === 2 && tile(TL2.body, 'shared') === 1, TL2.body.funnel && TL2.body.funnel.map((t) => [t.key, t.count]));
 
