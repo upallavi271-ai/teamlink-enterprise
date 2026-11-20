@@ -13,6 +13,90 @@ const API_VERSION = 'v1';
 
 const NOTES = [
   {
+    version: '1.6.8', date: '2026-11-20', title: 'Month by month: a More months button',
+    items: [
+      'The Joinings, drops & replacements month-by-month box now keeps every month that has a number (up to 24). It shows the first six; "More months (N)" shows the rest and "Show fewer months" closes them.',
+    ],
+  },
+  {
+    version: '1.6.7', date: '2026-11-20', title: 'Imported candidates keep the date they really came',
+    items: [
+      'Import: "These people came on" - the date column of the sheet (found by name, or chosen in "Which column is which"), one date for every row, or today. Many date formats are read (12/03/2026, 12-Mar-26, Excel dates...). Future dates and dates before 2000 are refused with a reason.',
+      'The date sets the added date, the first application and its first step, so lists, Sources and reports show the real month.',
+      'People imported without a date show "Imported on <date> (original date not known)" instead of looking as if they came that day.',
+      'Fix came-on dates from a sheet (Import, for Admin / Manager / TL): upload candidate ID, e-mail or phone with the real date, check the preview, apply. A batch can be undone.',
+    ],
+  },
+  {
+    version: '1.6.6', date: '2026-11-20', title: 'Resume reading and candidate data checks',
+    items: [
+      'One reader for single and bulk uploads: current and expected CTC, notice period, each job and degree, languages, address, native place, marital status, father name, RTF files, skills grouped.',
+      'Every read value shows Sure / Likely / Not sure. Doubtful values (age, experience, salary, dates, two different salaries, name mismatch) go to a Verify list for the team lead; the person is still saved and marked "Needs verification".',
+      'Changing a salary or experience that is already on a profile asks for a reason. Stale profile data is listed. Fit score changes keep a history. JD match compares the whole job description with the resume.',
+      'ID documents (Aadhaar, PAN, passport) open only for allowed roles; every open is logged.',
+      'A person who comes back is shown with their earlier applications and joinings; an Admin or team lead can confirm "reapply".',
+    ],
+  },
+  {
+    version: '1.6.5', date: '2026-11-20', title: 'Filters, search and date ranges',
+    items: [
+      'Candidates, Pipeline and People: current and expected CTC, experience, notice period, location, specialization, skills (any / all), education, tags, source, owner, client, requirement, and date ranges (added, updated, last contacted, shared with client). Chips, Clear all, and the filters stay in the address.',
+      'Requirements, Clients, Interviews, Offers, Joinings, Follow-ups, Job Portal and Call lists have their own filters and a search box. When a filter or search is on, the list searches all time and says "Showing all time".',
+      'Team page: search by name, code, seat or section; filters for department, section, team lead, status, location, performance and target; a date range ("Results for") changes the numbers to that period.',
+      'The Excel download follows the filters. People without salary or contact rights get no salary or location filters.',
+    ],
+  },
+  {
+    version: '1.6.4', date: '2026-11-20', title: 'Complete history: requirement, client, recruiter, TL and candidate',
+    items: [
+      'One search box (ATS Search) finds recruiters, team leads, clients, requirements and candidates as you type and opens their complete history.',
+      'Requirement and Client history: how many profiles were shared, shortlisted, interviewed, selected, offered, joined and dropped, with dates; every candidate with their dates, the drop reason and who dropped them; a timeline; Excel.',
+      'Recruiter and TL history: department, requirements handled, the funnel, and a day / week / month table (profiles added, sent, interviews, selected, offers, joined, dropped, follow-ups); a TL page adds every member and the team total.',
+      'Candidate history: all applications, how many were selected, rejected, offered, joined or dropped (with reasons), and one timeline of everything. It is also the History tab on the candidate page.',
+    ],
+  },
+  {
+    version: '1.6.3', date: '2026-11-20', title: 'Change team lead',
+    items: [
+      'Candidate page, "Who is on this": a Change team lead button beside Change recruiter. Choose the new team lead and a recruiter in that team, give the reason, save.',
+      'The old and the new team lead (and the STL above each) get a notice; the change is in the history and the audit log. The earlier recruiter keeps no credit, as with Change recruiter.',
+    ],
+  },
+  {
+    version: '1.6.2', date: '2026-11-20', title: 'The candidate page says Dropped after a drop',
+    items: [
+      'After a drop the candidate page shows Dropped (with the day and the reason) in the Current step, Step, Current stage and Next step - not Joined - and no longer sends people to Raise Invoice / Track Guarantee.',
+      'The Record the drop button shows only when no drop is recorded yet.',
+    ],
+  },
+  {
+    version: '1.6.1', date: '2026-11-19', title: 'Joined and Dropped: one rule everywhere',
+    items: [
+      'A person who left after joining leaves every Joined list and number (dashboard card and list, month table, My results, Daily report, Results vs target, the HRMS figure, client history) and shows only under Dropped. Withdrawing a drop brings them back.',
+      'The Joined card says "Still working: N" and "N left after joining". An Admin switch (Joinings and drops) can count them as Joined again; it is off.',
+      'Choosing Dropped in the Status / Roll status dropdown now opens the drop window (day and reason); the dropdown can no longer say Dropped without a recorded drop.',
+      'The drop window starts with an empty day ("The day they actually left") and no default reason. A filter "Same day and same reason (check)" lists drops that may have been saved with defaults, for correction.',
+    ],
+  },
+  {
+    version: '1.6.0', date: '2026-11-19', title: 'Interviews, offers, clients and billing',
+    items: [
+      'Interviews have rounds (technical, HR, management), each with its own feedback and a suggested decision; notes, files and links per round; an average rating per interviewer; one combined calendar of interviews, joinings, follow-ups and tasks.',
+      'Offers: several offer templates and a salary breakup that always adds up to the CTC. Counter-offers and background checks are recorded.',
+      'Clients: unlimited contacts with roles (HR, HOD, Dean, Principal...), several positions in one requirement, credit days and credit limit, optional client approval of a requirement, agreement renewals.',
+      'Billing: fixed and slab fees, overdue reminders to the BDE, payment approval (optional), client profitability, freelancer report, Tally and Zoho receipts. Everything that notifies people ships switched off (Administration > Pipeline & checks > Clients, billing and renewals).',
+    ],
+  },
+  {
+    version: '1.5.6', date: '2026-11-18', title: 'Stages, requirements, resumes and fairness',
+    items: [
+      'Admin can rename any stage and add sub-stages (Company Setup > Pipeline). A requirement request can be rejected with a reason and sent again. A checklist (resume, CTC, notice period, consent, contact verified) is needed before a profile goes to the client.',
+      'Candidates: Career tab (several degrees and jobs, gaps, career growth, standard titles, tags, custom fields); AND / OR / NOT search; compare candidates; shared filters; interview clash warning; follow-ups handed to the team lead on leave.',
+      'Scanned and photo resumes are read (English, Telugu, Hindi). One Joined number on the card, the list, the reports and the HRMS figure.',
+      'Surveys, NPS, complaints, client health and retention reports (automatic sending is off until switched on); an AI fairness test; a dashboard you can rearrange (Customise).',
+    ],
+  },
+  {
     version: '1.5.5', date: '2026-11-18', title: 'Dropped candidates no longer show as Joined',
     items: [
       'A candidate who joined and then dropped (Joining & Drop) now shows as Dropped in Candidates & Pipeline, the People list, the Progress board and the candidate page, and is counted under Rejected, not Joined. The joining record, guarantee and invoice keep reading the Joined step as before.',
