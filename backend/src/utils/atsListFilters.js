@@ -138,6 +138,7 @@ function followUpFilter(q, rows) {
   if (!FU_KEYS.some((k) => q[k])) return rows;
   const today = istDay(new Date());
   const week = istDay(Date.now() + 7 * DAY);
+  const dues = csv(q.fuDue);
   const types = csv(q.fuType).map((x) => x.toLowerCase());
   const prios = csv(q.fuPriority).map((x) => x.toLowerCase());
   const owners = csv(q.fuOwner);
@@ -145,10 +146,8 @@ function followUpFilter(q, rows) {
   const req = String(q.fuRequirement || '').trim().toLowerCase();
   return rows.filter((f) => {
     const due = f.dueDate ? String(f.dueDate).slice(0, 10) : '';
-    if (q.fuDue === 'today' && due !== today) return false;
-    if (q.fuDue === 'overdue' && !(f.status === 'Overdue' || (due && due < today && f.status !== 'Completed'))) return false;
-    if (q.fuDue === 'week' && !(due && due >= today && due <= week)) return false;
-    if (q.fuDue === 'none' && due) return false;
+    // several due buckets at once: any of them
+    if (dues.length && !dues.some((d) => (d === 'today' ? due === today : d === 'overdue' ? (f.status === 'Overdue' || (due && due < today && f.status !== 'Completed')) : d === 'week' ? !!(due && due >= today && due <= week) : d === 'none' ? !due : false))) return false;
     // a due-date range (IST days, both ends included): a follow-up without a due date is in no range
     if ((q.fuFrom && DAY_RE.test(String(q.fuFrom))) || (q.fuTo && DAY_RE.test(String(q.fuTo)))) {
       if (!due || (q.fuFrom && DAY_RE.test(String(q.fuFrom)) && due < String(q.fuFrom)) || (q.fuTo && DAY_RE.test(String(q.fuTo)) && due > String(q.fuTo))) return false;

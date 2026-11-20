@@ -1008,18 +1008,18 @@ export default function Requirements() {
           or for a role without the Department filter, or while one is set). */}
       {/* Specialization is always shown, with its counts (founder 2026-11-17: "specialization meedha click cheyyagane radiology 7, cardiology 8 ...; aa
           specialization click chesthe aa clients names dropdown lo raavali"): picking one narrows the Client list to the clients with such requirements. */}
-      {role !== 'accounts' && <FacetSelect label="Specialization" allLabel="All specializations" value={filters.specialisationId} options={fo('specialisationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ specialisationId: v })} />}
-      {role !== 'accounts' && <FacetSelect label="Qualification" allLabel="All qualifications" value={filters.qualificationId} options={fo('qualificationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ qualificationId: v })} />}
-      {role !== 'accounts' && <FacetSelect label="Designation" allLabel="All designations" value={filters.title} options={fo('title')} loading={facetsLoading} onChange={(v) => setDraftFilter({ title: v })} />}
-      {canFilter.hiring && <FacetSelect label="Client / Internal" allLabel="Client and internal" value={filters.type} options={fo('type')} onChange={(v) => setDraftFilter({ type: v })} />}
+      {role !== 'accounts' && <FacetSelect multi label="Specialization" allLabel="All specializations" value={filters.specialisationId} options={fo('specialisationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ specialisationId: v })} />}
+      {role !== 'accounts' && <FacetSelect multi label="Qualification" allLabel="All qualifications" value={filters.qualificationId} options={fo('qualificationId')} loading={facetsLoading} onChange={(v) => setDraftFilter({ qualificationId: v })} />}
+      {role !== 'accounts' && <FacetSelect multi label="Designation" allLabel="All designations" value={filters.title} options={fo('title')} loading={facetsLoading} onChange={(v) => setDraftFilter({ title: v })} />}
+      {canFilter.hiring && <FacetSelect multi label="Client / Internal" allLabel="Client and internal" value={filters.type} options={fo('type')} onChange={(v) => setDraftFilter({ type: v })} />}
     </>
   );
   // v4 — the filters that sit on the one filter card (after the page filter bar).
   const topFilters = (
     <>
-      {role !== 'accounts' && <FacetSelect label="Status" allLabel="All status" value={filters.status} options={fo('status')} onChange={(v) => setDraftFilter({ status: v })} />}
-      <FacetSelect label="Priority" allLabel="All priority" value={filters.priority} options={priorityOptions} onChange={(v) => setDraftFilter({ priority: v })} />
-      {role !== 'accounts' && <FacetSelect label="Location" allLabel="All locations" value={filters.location} options={fo('location')} onChange={(v) => setDraftFilter({ location: v })} />}
+      {role !== 'accounts' && <FacetSelect multi label="Status" allLabel="All status" value={filters.status} options={fo('status')} onChange={(v) => setDraftFilter({ status: v })} />}
+      <FacetSelect multi label="Priority" allLabel="All priority" value={filters.priority} options={priorityOptions} onChange={(v) => setDraftFilter({ priority: v })} />
+      {role !== 'accounts' && <FacetSelect multi label="Location" allLabel="All locations" value={filters.location} options={fo('location')} onChange={(v) => setDraftFilter({ location: v })} />}
       {canFilter.agreement && (
         <PanelField label="Agreement">
           <Combo value={filters.agreement} onChange={(e) => setDraftFilter({ agreement: e.target.value })}>

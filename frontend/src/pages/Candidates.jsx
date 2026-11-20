@@ -1319,7 +1319,7 @@ export default function Candidates() {
     </div>
   );
   const stepFacet = (
-    <FacetSelect
+    <FacetSelect multi
       label="Step"
       allLabel="All steps"
       value={filters.stage}
@@ -1774,6 +1774,7 @@ export default function Candidates() {
                   <>
                     <div className="cpl-panelbar">
                       <PageFilterBar
+                    multiClient
                     value={pfValue}
                     onChange={setPageFilters}
                     options={pfOptions}
@@ -2051,14 +2052,14 @@ export default function Candidates() {
                 <input type="number" min="0" step="0.5" placeholder="Max" aria-label="Maximum experience (years)" value={filters.maxExp} onChange={(e) => setFilter({ maxExp: e.target.value })} />
               </span>
             </span>
-            <FacetSelect label="Specialization" allLabel="All specializations" value={filters.spec} onChange={(v) => setFilter({ spec: v })} options={withCurrent(facets.spec, filters.spec)} loading={facetsLoading} title="Radiology, Cardiology, CSE ... with how many people each. Picking one narrows the Client list to the clients they are with." />
-            <FacetSelect label="Qualification" allLabel="All qualifications" value={filters.qual} onChange={(v) => setFilter({ qual: v })} options={withCurrent(facets.qual, filters.qual)} loading={facetsLoading} title="MBBS, B.Sc Nursing, M.Tech ... with how many people each" />
-            <FacetSelect label="Designation" allLabel="All designations" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={withCurrent(facets.desig, filters.desig)} loading={facetsLoading} title="The person's current designation, with how many people each" />
-            <FacetSelect label="Experience" allLabel="Any experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={withCurrent(['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean), filters.expBand)} loading={facetsLoading} />
-            <FacetSelect label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
-            <FacetSelect label="Tag" allLabel="Any tag" value={filters.tag} onChange={(v) => setFilter({ tag: v })} options={withCurrent(tagOptions, filters.tag)} title="A tag added on the person's Career tab (count = people with it)" />
+            <FacetSelect multi label="Specialization" allLabel="All specializations" value={filters.spec} onChange={(v) => setFilter({ spec: v })} options={withCurrent(facets.spec, filters.spec)} loading={facetsLoading} title="Radiology, Cardiology, CSE ... with how many people each. Picking one narrows the Client list to the clients they are with." />
+            <FacetSelect multi label="Qualification" allLabel="All qualifications" value={filters.qual} onChange={(v) => setFilter({ qual: v })} options={withCurrent(facets.qual, filters.qual)} loading={facetsLoading} title="MBBS, B.Sc Nursing, M.Tech ... with how many people each" />
+            <FacetSelect multi label="Designation" allLabel="All designations" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={withCurrent(facets.desig, filters.desig)} loading={facetsLoading} title="The person's current designation, with how many people each" />
+            <FacetSelect multi label="Experience" allLabel="Any experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={withCurrent(['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean), filters.expBand)} loading={facetsLoading} />
+            <FacetSelect multi label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
+            <FacetSelect multi label="Tag" allLabel="Any tag" value={filters.tag} onChange={(v) => setFilter({ tag: v })} options={withCurrent(tagOptions, filters.tag)} title="A tag added on the person's Career tab (count = people with it)" />
             {main === 'pipeline' && (
-              <FacetSelect
+              <FacetSelect multi
                 label="Salary fit"
                 allLabel="Any"
                 value={filters.salaryFit}
@@ -2069,9 +2070,9 @@ export default function Candidates() {
               />
             )}
             {main === 'master' && counts.salaryMissing != null && (
-              <FacetSelect label="Salary" allLabel="All" value={filters.salaryMissing} onChange={(v) => setFilter({ salaryMissing: v })} options={[{ value: '1', label: 'Salary missing', count: counts.salaryMissing }]} title="People whose current or expected salary is not saved" />
+              <FacetSelect multi label="Salary" allLabel="All" value={filters.salaryMissing} onChange={(v) => setFilter({ salaryMissing: v })} options={[{ value: '1', label: 'Salary missing', count: counts.salaryMissing }]} title="People whose current or expected salary is not saved" />
             )}
-            <FacetSelect
+            <FacetSelect multi
               label="Status"
               allLabel="All statuses"
               value={filters.status}
@@ -2094,7 +2095,7 @@ export default function Candidates() {
                 )}
                 <CameOnFilter filters={filters} setFilter={setFilter} />
                 <JoinedOnFilter filters={filters} setFilter={setFilter} />
-                <FacetSelect
+                <FacetSelect multi
                   label="Step"
                   allLabel="All steps"
                   value={filters.stage}
@@ -2107,13 +2108,13 @@ export default function Candidates() {
                   )}
                   title="Where the person is now"
                 />
-                <FacetSelect label="Owner" allLabel="Anyone" value={filters.owner} onChange={(v) => setFilter({ owner: v })} options={withCurrent(facets.owner, filters.owner)} loading={facetsLoading} title="Whose move it is now" />
-                <FacetSelect label="Last contact" allLabel="Any time" value={filters.contact} onChange={(v) => setFilter({ contact: v })} options={withCurrent(facets.contact, filters.contact)} loading={facetsLoading} />
-                <FacetSelect label="Rejected before" allLabel="Either" value={filters.rejectedBefore} onChange={(v) => setFilter({ rejectedBefore: v })} options={withCurrent(facets.rejectedBefore, filters.rejectedBefore)} loading={facetsLoading} />
+                <FacetSelect multi label="Owner" allLabel="Anyone" value={filters.owner} onChange={(v) => setFilter({ owner: v })} options={withCurrent(facets.owner, filters.owner)} loading={facetsLoading} title="Whose move it is now" />
+                <FacetSelect multi label="Last contact" allLabel="Any time" value={filters.contact} onChange={(v) => setFilter({ contact: v })} options={withCurrent(facets.contact, filters.contact)} loading={facetsLoading} />
+                <FacetSelect multi label="Rejected before" allLabel="Either" value={filters.rejectedBefore} onChange={(v) => setFilter({ rejectedBefore: v })} options={withCurrent(facets.rejectedBefore, filters.rejectedBefore)} loading={facetsLoading} />
                 {(pipeSub === 'rejected' || filters.status === 'Rejected' || filters.rejSide || filters.rejReason) && (
                   <>
-                    <FacetSelect label="Rejected by" allLabel="Anyone" value={filters.rejSide} onChange={(v) => setFilter({ rejSide: v })} options={withCurrent(facets.rejSide, filters.rejSide)} loading={facetsLoading} />
-                    <FacetSelect label="Reject reason" allLabel="Any reason" value={filters.rejReason} onChange={(v) => setFilter({ rejReason: v })} options={withCurrent(facets.rejReason, filters.rejReason)} loading={facetsLoading} />
+                    <FacetSelect multi label="Rejected by" allLabel="Anyone" value={filters.rejSide} onChange={(v) => setFilter({ rejSide: v })} options={withCurrent(facets.rejSide, filters.rejSide)} loading={facetsLoading} />
+                    <FacetSelect multi label="Reject reason" allLabel="Any reason" value={filters.rejReason} onChange={(v) => setFilter({ rejReason: v })} options={withCurrent(facets.rejReason, filters.rejReason)} loading={facetsLoading} />
                   </>
                 )}
                 <span className="lph-facet wide cpl-panel-sep">More filters</span>
@@ -2127,7 +2128,7 @@ export default function Candidates() {
                   </PanelField>
                 )}
                 {/* Saved views: in the page header (Saved filters ▾). */}
-                <FacetSelect
+                <FacetSelect multi
                   label="Requirement"
                   allLabel="All requirements"
                   value={filters.requirementId}
@@ -2153,7 +2154,7 @@ export default function Candidates() {
                     <option value="Not set">Not set</option>
                   </Combo>
                 </PanelField>
-                <FacetSelect label="Notice period" allLabel="Any notice" value={filters.notice} onChange={(v) => setFilter({ notice: v })} options={withCurrent(facets.notice, filters.notice)} loading={facetsLoading} />
+                <FacetSelect multi label="Notice period" allLabel="Any notice" value={filters.notice} onChange={(v) => setFilter({ notice: v })} options={withCurrent(facets.notice, filters.notice)} loading={facetsLoading} />
                 <PanelField label="Expected salary up to (₹L)">
                   <input type="number" min="0" step="0.5" placeholder="e.g. 12" value={filters.maxSalary} onChange={(e) => setFilter({ maxSalary: e.target.value })} />
                 </PanelField>
@@ -2365,7 +2366,7 @@ export default function Candidates() {
                   <CameOnFilter filters={filters} setFilter={setFilter} />
                   <JoinedOnFilter filters={filters} setFilter={setFilter} />
                   <FacetSelect label="Client" allLabel="All clients" value={filters.clientId} onChange={(v) => setPageFilters({ ...pfValue, clientId: v })} options={pfOptions.clientId} loading={facetsLoading} />
-                  <FacetSelect
+                  <FacetSelect multi
                     label="Requirement / role"
                     allLabel="All requirements"
                     value={filters.requirementId}
@@ -2379,7 +2380,7 @@ export default function Candidates() {
                       <input type="date" aria-label="Added to" value={filters.appliedTo || ''} onChange={(e) => setPageFilters({ ...pfValue, range: 'custom', from: filters.appliedFrom || '', to: e.target.value })} />
                     </span>
                   </PanelField>
-                  <FacetSelect label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
+                  <FacetSelect multi label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
                   <PanelField label="Skills">
                     <input type="text" placeholder="e.g. Java, SQL" value={filters.skills} onChange={(e) => setFilter({ skills: e.target.value })} />
                   </PanelField>

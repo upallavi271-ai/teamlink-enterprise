@@ -413,12 +413,12 @@ export function useIntJoinList(allRows, {
       onClearAll={() => setF(EMPTY_LIST)}
       panel={(
         <>
-          {status && <FacetSelect label={status.label} value={f.status} onChange={(v) => set({ status: v })} options={facets.status} allLabel="Any" />}
-          <FacetSelect label="Department" value={f.department} onChange={(v) => set({ department: v })} options={facets.department} allLabel="All departments" />
-          {clientDesk && <FacetSelect label="Client" value={f.client} onChange={(v) => set({ client: v })} options={facets.client} allLabel="All clients" />}
-          <FacetSelect label="Requirement" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All requirements" />
-          <FacetSelect label="Recruiter" value={f.recruiter} onChange={(v) => set({ recruiter: v })} options={facets.recruiter} allLabel="All recruiters" />
-          <FacetSelect label="Hiring" value={f.hiringType} onChange={(v) => set({ hiringType: v })} options={facets.hiringType} allLabel="Both kinds" />
+          {status && <FacetSelect multi label={status.label} value={f.status} onChange={(v) => set({ status: v })} options={facets.status} allLabel="Any" />}
+          <FacetSelect multi label="Department" value={f.department} onChange={(v) => set({ department: v })} options={facets.department} allLabel="All departments" />
+          {clientDesk && <FacetSelect multi label="Client" value={f.client} onChange={(v) => set({ client: v })} options={facets.client} allLabel="All clients" />}
+          <FacetSelect multi label="Requirement" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All requirements" />
+          <FacetSelect multi label="Recruiter" value={f.recruiter} onChange={(v) => set({ recruiter: v })} options={facets.recruiter} allLabel="All recruiters" />
+          <FacetSelect multi label="Hiring" value={f.hiringType} onChange={(v) => set({ hiringType: v })} options={facets.hiringType} allLabel="Both kinds" />
         </>
       )}
     />
@@ -510,7 +510,7 @@ export function useIntJoinPaged(url, {
   }
 
   const facets = data.facets || {};
-  const label = (key, v) => ((facets[key] || []).find((o) => String(o.value) === String(v)) || {}).label || v;
+  const label = (key, v) => { const names = String(v).split(',').filter(Boolean).map((x) => ((facets[key] || []).find((o) => String(o.value) === x) || {}).label || x); return names.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2}`; };
   const fields = [
     ...(status ? [{ key: 'status' }] : []),
     { key: 'department' }, ...(clientDesk ? [{ key: 'client' }] : []), { key: 'job' }, { key: 'recruiter' }, { key: 'hiringType' },
@@ -538,17 +538,17 @@ export function useIntJoinPaged(url, {
       onClearAll={clear}
       panel={(
         <>
-          {status && <FacetSelect label={status.label} value={f.status} onChange={(v) => set({ status: v })} options={facets.status} allLabel="Any" />}
-          <FacetSelect label="Department" value={f.department} onChange={(v) => set({ department: v })} options={facets.department} allLabel="All departments" />
-          {clientDesk && <FacetSelect label="Client" value={f.client} onChange={(v) => set({ client: v })} options={facets.client} allLabel="All clients" />}
-          <FacetSelect label="Requirement" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All requirements" />
-          <FacetSelect label="Recruiter" value={f.recruiter} onChange={(v) => set({ recruiter: v })} options={facets.recruiter} allLabel="All recruiters" />
-          <FacetSelect label="Hiring" value={f.hiringType} onChange={(v) => set({ hiringType: v })} options={facets.hiringType} allLabel="Both kinds" />
+          {status && <FacetSelect multi label={status.label} value={f.status} onChange={(v) => set({ status: v })} options={facets.status} allLabel="Any" />}
+          <FacetSelect multi label="Department" value={f.department} onChange={(v) => set({ department: v })} options={facets.department} allLabel="All departments" />
+          {clientDesk && <FacetSelect multi label="Client" value={f.client} onChange={(v) => set({ client: v })} options={facets.client} allLabel="All clients" />}
+          <FacetSelect multi label="Requirement" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All requirements" />
+          <FacetSelect multi label="Recruiter" value={f.recruiter} onChange={(v) => set({ recruiter: v })} options={facets.recruiter} allLabel="All recruiters" />
+          <FacetSelect multi label="Hiring" value={f.hiringType} onChange={(v) => set({ hiringType: v })} options={facets.hiringType} allLabel="Both kinds" />
           {/* the four person filters (founder 2026-11-17), with counts; picking one narrows the Client list too */}
-          <FacetSelect label="Specialization" value={f.spec} onChange={(v) => set({ spec: v })} options={facets.spec} allLabel="All specializations" />
-          <FacetSelect label="Qualification" value={f.qual} onChange={(v) => set({ qual: v })} options={facets.qual} allLabel="All qualifications" />
-          <FacetSelect label="Designation" value={f.desig} onChange={(v) => set({ desig: v })} options={facets.desig} allLabel="All designations" />
-          <FacetSelect label="Experience" value={f.expBand} onChange={(v) => set({ expBand: v })} options={['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean)} allLabel="Any experience" />
+          <FacetSelect multi label="Specialization" value={f.spec} onChange={(v) => set({ spec: v })} options={facets.spec} allLabel="All specializations" />
+          <FacetSelect multi label="Qualification" value={f.qual} onChange={(v) => set({ qual: v })} options={facets.qual} allLabel="All qualifications" />
+          <FacetSelect multi label="Designation" value={f.desig} onChange={(v) => set({ desig: v })} options={facets.desig} allLabel="All designations" />
+          <FacetSelect multi label="Experience" value={f.expBand} onChange={(v) => set({ expBand: v })} options={['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean)} allLabel="Any experience" />
         </>
       )}
     />

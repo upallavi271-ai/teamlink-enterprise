@@ -25,7 +25,9 @@ export default function FilterChips({ filters = [], onClearAll, label = 'Filters
           <span className="filter-chips-chip">
             <span className="filter-chips-k">{f.label}</span>
             <span className="filter-chips-eq"> = </span>
-            <b className="filter-chips-v">{String(f.value)}</b>
+            {f.onOpen
+              ? <button type="button" className="filter-chips-v filter-chips-open" onClick={f.onOpen} title={`Change ${f.label}`}>{String(f.value)}</button>
+              : <b className="filter-chips-v">{String(f.value)}</b>}
             {f.onRemove && (
               <button type="button" className="filter-chips-x" onClick={f.onRemove} aria-label={`Remove ${f.label} filter`} title={`Remove ${f.label}`}>
                 ×

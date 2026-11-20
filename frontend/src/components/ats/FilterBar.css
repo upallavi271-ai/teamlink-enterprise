@@ -33,3 +33,6 @@
 /* the quick pick of a date range (Today, This week ...) beside its two dates */
 .fbar .fbar-dates .lph-pair{flex-wrap:wrap}
 .fbar .fbar-dates .lph-pair select{flex:0 0 auto;width:auto;max-width:150px}
+.filter-chips-open{font:inherit;font-weight:700;background:none;border:0;padding:0;cursor:pointer;color:inherit;text-decoration:underline dotted}
+.fbar .msel{min-width:160px}
+.fbar-panel-body .msel,.fbar-row .fbar-cell{min-width:170px}

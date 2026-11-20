@@ -158,7 +158,7 @@ export function usePageFilters(defaults, opts) {
 // set (so Clear shows); onClear = what Clear does when it must also reset them.
 export default function PageFilterBar({
   value: valueProp, onChange: onChangeProp, show, options, facetModule = 'requirements', facetParams, className = '',
-  ranges, children, extraSet = false, onClear,
+  ranges, children, extraSet = false, onClear, multiClient = false,
 }) {
   const { user } = useAuth() || {};
   const [urlValue, setUrlValue] = usePageFilters(undefined, { remember: !valueProp });
@@ -226,7 +226,7 @@ export default function PageFilterBar({
         </span>
       )}
       {want.client && (
-        <FacetSelect label="Client" value={value.clientId} onChange={(v) => set({ clientId: v })} options={clientOpts} allLabel="All clients" loading={loading} />
+        <FacetSelect multi={multiClient} label="Client" value={value.clientId} onChange={(v) => set({ clientId: v })} options={clientOpts} allLabel="All clients" loading={loading} />
       )}
       {want.people && (peopleList.length > 0 || personValue) && (
         <label className="lph-facet">

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import MultiFacetSelect from '../ui/MultiFacetSelect.jsx';
-import { FacetSelect } from '../ui/ListPageHeader.jsx';
+import MultiSelect from './MultiSelect.jsx';
 import FilterChips from '../FilterChips.jsx';
 import { PRESETS, presetDates, matchPreset, dateProblem } from '../../utils/dateRanges.js';
 import './FilterBar.css';
@@ -79,7 +78,7 @@ function Range({ f, values, onChange, facets, loading }) {
         </span>
       </span>
       {f.keys.bucket && (
-        <MultiFacetSelect
+        <MultiSelect
           label={`${f.label} bands`}
           allLabel="Any"
           plural="bands"
@@ -91,36 +90,6 @@ function Range({ f, values, onChange, facets, loading }) {
         />
       )}
     </>
-  );
-}
-
-// A list of fixed words (no counts): tick several, or pick one.
-function StaticMulti({ f, value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const chosen = csvOf(value);
-  const toggle = (v) => onChange((chosen.includes(v) ? chosen.filter((x) => x !== v) : [...chosen, v]).join(','));
-  const summary = !chosen.length ? (f.allLabel || 'Any') : chosen.length <= 2 ? chosen.map((v) => (f.options.find((o) => o.value === v) || {}).label || v).join(', ') : `${chosen.length} ${f.plural || 'selected'}`;
-  return (
-    <div className="lph-facet mfs" title={f.title || f.label}>
-      <span className="lph-facet-lbl">{f.label}</span>
-      <button type="button" className={`mfs-btn${chosen.length ? ' is-set' : ''}`} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <span className="mfs-sum">{summary}</span><span aria-hidden="true">{open ? '▴' : '▾'}</span>
-      </button>
-      {open && (
-        <div className="mfs-pop" role="listbox" aria-multiselectable="true" aria-label={f.label}>
-          {f.options.map((o) => (
-            <label key={o.value} className={`mfs-item${chosen.includes(o.value) ? ' is-on' : ''}`}>
-              <input type="checkbox" checked={chosen.includes(o.value)} onChange={() => toggle(o.value)} />
-              <span className="mfs-name">{o.label}</span>
-            </label>
-          ))}
-          <div className="mfs-foot">
-            <button type="button" className="link-btn" disabled={!chosen.length} onClick={() => onChange('')}>Clear</button>
-            <button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>Done</button>
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -152,26 +121,15 @@ function DateRangeField({ f, values, onChange }) {
   );
 }
 
-function Control({ f, values, onChange, facets, loading }) {
+function Control({
+  f, values, onChange, facets, loading, openToken = 0,
+}) {
   const key = f.keys.value;
   const opts = f.options || facets[f.facet || key] || [];
-  const fixed = !!f.options && f.options.every((o) => o.count === undefined);
-  if (fixed && f.type === 'multi') return <StaticMulti f={f} value={values[key]} onChange={(v) => onChange({ [key]: v })} />;
-  if (fixed && f.type === 'select') {
-    return (
-      <label className="lph-facet" title={f.title || f.label}>
-        <span className="lph-facet-lbl">{f.label}</span>
-        <select value={values[key] || ''} onChange={(e) => onChange({ [key]: e.target.value })}>
-          <option value="">{f.allLabel || 'Any'}</option>
-          {f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      </label>
-    );
-  }
-  if (f.type === 'multi' || f.type === 'multimode') {
+  if (f.type === 'multi' || f.type === 'select' || f.type === 'multimode') {
     return (
       <span className={f.type === 'multimode' ? 'fbar-multimode' : 'fbar-cell'}>
-        <MultiFacetSelect label={f.label} allLabel={f.allLabel || 'Any'} plural={f.plural || ''} value={values[key] || ''} onChange={(v) => onChange({ [key]: v })} options={opts} loading={loading} title={f.title || f.label} />
+        <MultiSelect openToken={openToken} label={f.label} allLabel={f.allLabel || 'Any'} plural={f.plural || ''} value={values[key] || ''} onChange={(v) => onChange({ [key]: v })} options={opts} loading={loading} title={f.title || f.label} />
         {f.type === 'multimode' && csvOf(values[key]).length > 1 && (
           <span className="fbar-mode" role="group" aria-label={`${f.label}: match any or all`}>
             {['any', 'all'].map((m) => (
@@ -184,7 +142,6 @@ function Control({ f, values, onChange, facets, loading }) {
       </span>
     );
   }
-  if (f.type === 'select') return <FacetSelect label={f.label} allLabel={f.allLabel || 'Any'} value={values[key] || ''} onChange={(v) => onChange({ [key]: v })} options={opts} loading={loading} title={f.title || f.label} />;
   if (f.type === 'range') return <Range f={f} values={values} onChange={onChange} facets={facets} loading={loading} />;
   if (f.type === 'period') {
     const k = f.keys;
@@ -228,7 +185,8 @@ function Control({ f, values, onChange, facets, loading }) {
 }
 
 /** the chips of a config for the values now set */
-export function chipsOf(config, values, facets, onChange, skip = []) {
+const namesText = (names) => (names.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2}`);
+export function chipsOf(config, values, facets, onChange, skip = [], onOpenField = null) {
   const out = [];
   const label = (f, v) => {
     const o = (f.options || facets[f.facet || f.keys.value] || []).find((x) => String(x.value).toLowerCase() === String(v).toLowerCase());
@@ -254,9 +212,9 @@ export function chipsOf(config, values, facets, onChange, skip = []) {
     } else {
       const v = values[f.keys.value];
       if (!v) return;
-      const shown = f.type === 'text' ? v : csvOf(v).map((x) => label(f, x)).join(', ');
+      const shown = f.type === 'text' ? v : namesText(csvOf(v).map((x) => label(f, x)));
       const mode = f.type === 'multimode' && csvOf(v).length > 1 && values[f.keys.mode] === 'all' ? ' (all)' : '';
-      out.push({ key: f.id, label: f.label, value: `${shown}${mode}`, onRemove: () => onChange({ [f.keys.value]: '', ...(f.keys.mode ? { [f.keys.mode]: '' } : {}) }) });
+      out.push({ key: f.id, label: f.label, value: `${shown}${mode}`, onOpen: f.type !== 'text' && onOpenField ? () => onOpenField(f.id) : undefined, onRemove: () => onChange({ [f.keys.value]: '', ...(f.keys.mode ? { [f.keys.mode]: '' } : {}) }) });
     }
   });
   return out;
@@ -281,7 +239,9 @@ export default function FilterBar({
     document.addEventListener('keydown', esc);
     return () => document.removeEventListener('keydown', esc);
   }, [open]);
-  const chips = [...chipsOf(config, values, facets, onChange, chipSkip), ...extraChips];
+  const [openFor, setOpenFor] = useState({ id: '', n: 0 });
+  const openField = (id) => { if (more.some((m) => m.id === id)) setOpen(true); setOpenFor((o) => ({ id, n: o.n + 1 })); };
+  const chips = [...chipsOf(config, values, facets, onChange, chipSkip, openField), ...extraChips];
   const showClear = !!onClear && (canClear !== undefined ? canClear : chips.length > 0);
   const moreN = activeIn(more, values);
   const nf = (n) => Number(n).toLocaleString('en-IN');
@@ -289,7 +249,7 @@ export default function FilterBar({
     <div className={`fbar ${className}`}>
       <div className="fbar-row">
         {lead}
-        {primary.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} />)}
+        {primary.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} openToken={openFor.id === f.id ? openFor.n : 0} />)}
         {more.length > 0 && (
           <button type="button" className={`mf-toggle fbar-more${open ? ' on' : ''}`} onClick={toggle} aria-expanded={open}>
             More filters{moreN ? ` (${moreN})` : ''} {open ? '▴' : '▾'}
@@ -311,7 +271,7 @@ export default function FilterBar({
               </span>
             </div>
             <div className="fbar-panel-body">
-              {more.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} />)}
+              {more.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} openToken={openFor.id === f.id ? openFor.n : 0} />)}
             </div>
           </div>
         </>

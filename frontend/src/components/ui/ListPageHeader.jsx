@@ -3,6 +3,7 @@ import api from '../../api';
 import FilterChips from '../FilterChips.jsx';
 import './ListPageHeader.css';
 import Combo from '../Combo.jsx';
+import MultiSelect from '../ats/MultiSelect.jsx';
 
 // ---------------------------------------------------------------------------
 // THE SAME LAYOUT IN EVERY MODULE (user's spec 2026-10-03 §B):
@@ -172,8 +173,10 @@ export function ListFooter({
 // "All specializations (1,234)" (2026-11-18): the first option carries the OVERALL count - the counts of every option added up (or `total`
 // when the page passes the server's own total) - so every department / specialization / designation / qualification list shows it.
 export function FacetSelect({
-  label, value, onChange, options, allLabel, loading = false, style, title, total,
+  label, value, onChange, options, allLabel, loading = false, style, title, total, multi = false,
 }) {
+  // several values at once (founder 2026-11-20): a list whose server takes a comma list of values passes `multi`
+  if (multi) return <MultiSelect label={label} value={value} onChange={onChange} options={options} allLabel={allLabel} loading={loading} title={title} />;
   const list = (options || []).filter((o) => Number(o.count) > 0 || String(o.value) === String(value || ''));
   if (!list.length && !value) return loading ? <span className="lph-facet lph-facet-loading">{label}…</span> : null;
   const counted = list.some((o) => o.count !== undefined && o.count !== null);
