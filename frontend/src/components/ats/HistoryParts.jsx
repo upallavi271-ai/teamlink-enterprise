@@ -1,4 +1,5 @@
 import { stageLabel } from '../../atsVocab';
+import { PRESETS, presetDates, matchPreset, dateProblem } from '../../utils/dateRanges.js';
 import './history.css';
 
 // ---------------------------------------------------------------------------
@@ -92,14 +93,17 @@ export function DropSummary({ s }) {
 // from / to / this month-quarter-year / recruiter
 export function Filters({ f, setF, recruiters = [] }) {
   const set = (k, v) => setF({ ...f, [k]: v });
-  const period = (p) => setF({ ...f, period: p, from: '', to: '' });
   return (
     <div className="hx-filters">
       <label>From <input type="date" value={f.from || ''} onChange={(e) => setF({ ...f, from: e.target.value, period: '' })} /></label>
       <label>To <input type="date" value={f.to || ''} onChange={(e) => setF({ ...f, to: e.target.value, period: '' })} /></label>
-      {[['month', 'This month'], ['quarter', 'This quarter'], ['year', 'This year']].map(([k, l]) => (
-        <button key={k} type="button" className={`btn btn-sm${f.period === k ? ' btn-primary' : ''}`} onClick={() => period(f.period === k ? '' : k)}>{l}</button>
-      ))}
+      {/* the same quick picks as every date filter (utils/dateRanges.js): they fill From and To */}
+      <label>Period
+        <select aria-label="Period quick pick" value={f.period ? '' : matchPreset(f.from || '', f.to || '')} onChange={(e) => { const k = e.target.value; if (k === 'custom') return; const d = presetDates(k); setF({ ...f, period: '', from: d.from || '', to: d.to || '' }); }}>
+          {PRESETS.filter(([k]) => k !== 'custom' || (f.from || f.to)).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </label>
+      {dateProblem(f.from, f.to) && <span className="hx-muted" role="alert">{dateProblem(f.from, f.to)}</span>}
       {recruiters.length > 0 && (
         <label>Recruiter
           <select value={f.recruiter || ''} onChange={(e) => set('recruiter', e.target.value)}>
