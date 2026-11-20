@@ -96,6 +96,11 @@ export function configFor(list, user) {
       { id: 'interest', label: 'Interested in', type: 'text', keys: { value: 'interest' }, placeholder: 'Text' },
     ];
     // ---- HRMS lists (2026-11-20)
+    case 'exitrecords': return [
+      { id: 'q', label: 'Search exits', type: 'text', primary: true, keys: { value: 'q' }, placeholder: 'Name, ID or reason' },
+      { id: 'lwd', label: 'Last working day', type: 'daterange', primary: true, keys: { from: 'lwdFrom', to: 'lwdTo' } },
+      { id: 'started', label: 'Exit started on', type: 'daterange', primary: true, keys: { from: 'startFrom', to: 'startTo' } },
+    ];
     case 'employees': return [
       { id: 'location', label: 'Location', type: 'multi', primary: true, keys: { value: 'location' }, allLabel: 'All locations', plural: 'locations' },
       { id: 'joined', label: 'Joined the company', type: 'daterange', primary: true, keys: { from: 'jFrom', to: 'jTo' } },

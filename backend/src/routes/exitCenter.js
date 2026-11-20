@@ -84,15 +84,18 @@ async function loadExit(id) {
 }
 
 // ---- THE LIST: Exit approvals tab -------------------------------------------
+// WHOLE HISTORY (founder 2026-11-20): a search or any filter looks at every exit, finished ones included, and is not cut at 2,000
+const EXIT_FILTER_KEYS = ['q', 'department', 'stage', 'wait', 'mine', 'lwdFrom', 'lwdTo', 'startFrom', 'startTo'];
+const exitFilterOn = (q) => EXIT_FILTER_KEYS.some((k) => q && q[k]);
 async function listRows(req) {
   const user = req.user;
   const scoped = employeeRecordWhere(user);
   const mine = await workflow.recordIdsForParticipant(WF, user.id);
   const where = { type: 'RESIGNATION' };
   // open exits only - and not of people who have already left (their exit is done, whatever the record still says)
-  if (req.query.include !== 'all') { where.status = { in: OPEN }; where.employee = { employmentStatus: { notIn: exitFlow.FINAL_STATUSES } }; }
+  if (req.query.include !== 'all' && !exitFilterOn(req.query)) { where.status = { in: OPEN }; where.employee = { employmentStatus: { notIn: exitFlow.FINAL_STATUSES } }; }
   if (Object.keys(scoped).length) where.OR = mine.length ? [scoped, { id: { in: mine } }] : [scoped];
-  const records = await prisma.employeeRecord.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' }, take: 2000 });
+  const records = await prisma.employeeRecord.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' }, take: exitFilterOn(req.query) ? 20000 : 2000 });
   if (!records.length) return [];
   const ids = records.map((r) => r.id);
   const [details, steps] = await Promise.all([
@@ -140,6 +143,10 @@ function facetsOf(rows, q) {
     department: (r) => !q.department || r.department === q.department,
     wait: (r) => !q.wait || r.waitBucket === q.wait,
     mine: (r) => !q.mine || r.mine,
+    lwdFrom: (r) => !q.lwdFrom || (r.lastWorkingDate && String(r.lastWorkingDate).slice(0, 10) >= q.lwdFrom),
+    lwdTo: (r) => !q.lwdTo || (r.lastWorkingDate && String(r.lastWorkingDate).slice(0, 10) <= q.lwdTo),
+    startFrom: (r) => !q.startFrom || (r.initiatedAt && new Date(r.initiatedAt).toISOString().slice(0, 10) >= q.startFrom),
+    startTo: (r) => !q.startTo || (r.initiatedAt && new Date(r.initiatedAt).toISOString().slice(0, 10) <= q.startTo),
     q: (r) => !q.q || `${r.employee ? r.employee.name : ''} ${r.employee ? r.employee.employeeCode : ''} ${r.reason}`.toLowerCase().includes(String(q.q).toLowerCase()),
   };
   const except = (skip) => rows.filter((r) => Object.entries(FILTERS).every(([k, fn]) => k === skip || fn(r)));

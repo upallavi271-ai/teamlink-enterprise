@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
+import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { Modal, EmptyMini, SectionLabel } from '../../components/proto.jsx';
 import Combo from '../../components/Combo.jsx';
@@ -430,6 +431,7 @@ export function ExitRecordModal({ id, onClose, onChanged, autoEdit = false }) {
 export default function ExitApprovals({ openId, onOpen, isDesk }) {
   const { user } = useAuth();
   const [q, setQ] = useState({ stage: '', department: '', wait: '', mine: '', include: '' });
+  const xf = useListXf('exitrecords'); // search, last working day, exit started on (components/ats/ListFilters.jsx)
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -437,10 +439,10 @@ export default function ExitApprovals({ openId, onOpen, isDesk }) {
   const [changes, setChanges] = useState(false);
 
   function load() {
-    const params = Object.fromEntries(Object.entries(q).filter(([, v]) => v));
+    const params = { ...Object.fromEntries(Object.entries(q).filter(([, v]) => v)), ...xf.params };
     api.get('/resignations/exit/approvals', { params }).then((r) => { setData(r.data); setError(''); }).catch((e) => setError(err(e, 'Could not load the exit approvals')));
   }
-  useEffect(load, [q.stage, q.department, q.wait, q.mine, q.include]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [q.stage, q.department, q.wait, q.mine, q.include, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k, val) => setQ((c) => ({ ...c, [k]: val }));
 
   async function quickApprove(r) {
@@ -449,7 +451,7 @@ export default function ExitApprovals({ openId, onOpen, isDesk }) {
   }
   const c = data ? data.counts : null;
   const rows = data ? data.rows : [];
-  const exportParams = Object.fromEntries(Object.entries(q).filter(([, v]) => v));
+  const exportParams = { ...Object.fromEntries(Object.entries(q).filter(([, v]) => v)), ...xf.params };
   return (
     <div className="exc">
       <div className="exc-bar">
@@ -466,6 +468,7 @@ export default function ExitApprovals({ openId, onOpen, isDesk }) {
           <div className="exc-tile">{c.total ? <><b>{c.total}</b><span>{q.include === 'all' ? 'exits in all (with finished ones)' : 'exits in progress'}</span></> : <span>No exit is in progress</span>}</div>
         </div>
       )}
+      <ListFilterStrip list="exitrecords" xf={xf} total={rows.length} noun="exits" />
       <div className="exc-filters">
         <Combo value={q.stage} title="Status" onChange={(e) => set('stage', e.target.value)}>
           <option value="">All statuses</option>

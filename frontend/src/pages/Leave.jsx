@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../api';
+import useClientFilters from '../components/ats/useClientFilters.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
 import { Panel, PanelPad, PanelHead, AssignRow, EmptyMini, ScopeNote, TwoCol, Status, Modal } from '../components/proto.jsx';
@@ -359,7 +360,9 @@ function leaveMatches(r, f, { skipRequestFields = false } = {}) {
   if (f.name && !String(e.name || '').toLowerCase().includes(f.name.trim().toLowerCase())) return false;
   if (f.department && e.department !== f.department) return false;
   // The person's status: Active / Exited / Relieved (hrStatus.js groups), or Notice Period / Inactive / Suspended.
-  if (f.empStatus && !employeeStatusMatches(f.empStatus, e.employmentStatus)) return false;
+  // WHOLE HISTORY (founder 2026-11-20): a typed name or ID looks at everybody - people who have left too - unless a status was picked on purpose
+  const searching = !!(f.code || f.name) && f.empStatus === DEFAULT_EMPLOYEE_STATUS;
+  if (f.empStatus && !searching && !employeeStatusMatches(f.empStatus, e.employmentStatus)) return false;
   if (skipRequestFields) return true;
   if (f.type && r.type !== f.type) return false;
   if (f.status && r.status !== f.status) return false;
@@ -513,7 +516,8 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
   }
   async function toggleReason(reason) { await api.put(`/leave/reasons/${reason.id}`, { active: !reason.active }); onReload(); }
 
-  const scoped = requests.filter((r) => leaveMatches(r, filters));
+  const lvf = useClientFilters('leaverequests', requests.filter((r) => leaveMatches(r, filters)), { days: (r) => r.days, applied: (r) => r.createdAt, location: (r) => r.employee?.location }, null, { noun: 'requests', storageKey: 'lv-dash' });
+  const scoped = lvf.rows;
   // Only genuinely pending requests are "pending" here (not people who left, repeats or very old ones).
   const pending = scoped.filter((r) => r.status === 'Pending' && (!r.pendingState || r.pendingState === 'genuine'));
   const departments = [...new Set(requests.map((r) => r.employee?.department).filter(Boolean))].sort();
@@ -535,6 +539,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
           <ExportMenu url="/insights/leave/export" params={leaveExportParams(filters)} note="The requests matching these filters" />
         </span>
       </LeaveFilterBar>
+      {lvf.bar}
 
       {error && <div className="error-text">{error}</div>}
 
@@ -729,7 +734,8 @@ function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
     api.get('/leave').then((res) => setRequests(res.data)).catch((e) => setError(e.response?.data?.error || 'Could not load leave requests'));
     api.get('/leave/types').then((res) => setTypes(res.data)).catch(() => setTypes([]));
   }, [reloadKey]);
-  const scoped = requests.filter((r) => leaveMatches(r, filters));
+  const lvf = useClientFilters('leaverequests', requests.filter((r) => leaveMatches(r, filters)), { days: (r) => r.days, applied: (r) => r.createdAt, location: (r) => r.employee?.location }, null, { noun: 'requests', storageKey: 'lv-requests' });
+  const scoped = lvf.rows;
   const departments = [...new Set(requests.map((r) => r.employee?.department).filter(Boolean))].sort();
   async function confirmCancel(r) {
     setError('');
@@ -752,6 +758,7 @@ function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
           <DataIoBar ioKey="leave-history" exportUrl="/insights/leave/export" params={leaveExportParams(filters)} onImported={onReload} />
         </span>
       </LeaveFilterBar>
+      {lvf.bar}
       {error && <div className="error-text">{error}</div>}
       <Panel>
         <PanelHead title="Leave requests" />

@@ -122,9 +122,14 @@ export function useListFilters(rows, fieldsIn, opts = {}) {
     return { ...f, options };
   }), [fields, list]);
 
+  // WHOLE HISTORY (founder 2026-11-20): a list that opens on a default (Active employees first) looks at everybody as soon as something is typed
+  // in the search box - the default is only applied while nothing is searched, or when it was moved on purpose.
+  const searchOn = resolved.some((f) => f.type === 'search' && !EMPTY(values[f.key]));
+  const widened = (f) => searchOn && !EMPTY(opening[f.key]) && String(values[f.key]) === String(opening[f.key]);
+  const allTime = searchOn && Object.keys(opening).some((k) => !EMPTY(opening[k]) && String(values[k]) === String(opening[k]));
   const filtered = useMemo(() => {
     if (opts.server) return list;
-    const active = resolved.filter((f) => (f.type === 'daterange'
+    const active = resolved.filter((f) => !widened(f) && (f.type === 'daterange'
       ? (values[`${f.key}From`] || values[`${f.key}To`]) : !EMPTY(values[f.key])));
     if (!active.length) return list;
     return list.filter((r) => active.every((f) => {
@@ -189,7 +194,7 @@ export function useListFilters(rows, fieldsIn, opts = {}) {
   return {
     values, setValue, setValues, clear, showAll, changed, fields: resolved, sig: `${JSON.stringify(values)}|${sort}`,
     rows: sorted, filtered: sorted, total: list.length,
-    activeCount, moreActive, chips, params, paramsKey: JSON.stringify(params),
+    activeCount, moreActive, chips, params, paramsKey: JSON.stringify(params), allTime,
     sorts, sort, setSort,
   };
 }
@@ -281,6 +286,7 @@ export default function ListFilterBar({ lf, storageKey, extra, noun, className =
                 {lf.activeCount ? `${lf.rows.length.toLocaleString('en-IN')} of ${lf.total.toLocaleString('en-IN')} ${noun}` : `${lf.total.toLocaleString('en-IN')} ${noun}`}
               </span>
             )}
+            {lf.allTime && <span className="small-muted lf-count">Showing all time</span>}
             {extra}
           </>
         )}

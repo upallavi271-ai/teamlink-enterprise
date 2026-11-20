@@ -451,6 +451,52 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   x = await crm('leads', tRA, {}); check('CRM scope: a recruiter (not in the CRM team) is refused the CRM lists', [401, 403].includes(x.status), x.status);
   x = await crm('deals', tBde, { valueMin: '1' }); check('CRM scope: a BDE is never in the CRM (refused)', [401, 403].includes(x.status), x.status);
 
+  // =====================================================================================================================
+  // HRMS (phase 2): the row filters (pure functions the Employees, Payroll and Leave screens use), whole history, exit approvals
+  // =====================================================================================================================
+  const RF = await import(`file:///${path.resolve(BACK, '..', 'frontend', 'src', 'components', 'ats', 'rowFilters.js').replace(/\\/g, '/')}`);
+  const cfg = [
+    { id: 'location', type: 'multi', keys: { value: 'location' } },
+    { id: 'joined', type: 'daterange', keys: { from: 'jFrom', to: 'jTo' } },
+    { id: 'ctc', type: 'range', keys: { min: 'ctcMin', max: 'ctcMax' } },
+    { id: 'open', type: 'yesno', keys: { value: 'open' } },
+    { id: 'q', type: 'text', keys: { value: 'q' } },
+  ];
+  const people = [
+    { n: 'A', loc: 'Hyderabad', day: '2024-01-10', ctc: 30000, open: true },
+    { n: 'B', loc: 'hyderabad', day: '2025-06-30', ctc: 50000, open: false },
+    { n: 'C', loc: 'Pune', day: '2025-07-01', ctc: 70000, open: true },
+    { n: 'D', loc: null, day: null, ctc: null, open: false },
+  ];
+  const getp = { location: (r) => r.loc, joined: (r) => r.day, ctc: (r) => r.ctc, open: (r) => r.open, q: (r) => r.n };
+  const pick = (values) => RF.filterRows(people, cfg, values, getp).map((r) => r.n).join('');
+  check('row filters: a place (case does not matter, several allowed)', pick({ location: 'HYDERABAD' }) === 'AB' && pick({ location: 'Pune,hyderabad' }) === 'ABC');
+  check('row filters: a date range includes both ends and leaves out rows with no date', pick({ jFrom: '2025-06-30', jTo: '2025-07-01' }) === 'BC' && pick({ jFrom: '2020-01-01' }) === 'ABC');
+  check('row filters: an amount range includes both ends and leaves out rows with no amount', pick({ ctcMin: '30000', ctcMax: '50000' }) === 'AB' && pick({ ctcMin: '50001' }) === 'C' && pick({ ctcMax: '10' }) === '');
+  check('row filters: yes / no and text', pick({ open: 'yes' }) === 'AC' && pick({ open: 'no' }) === 'BD' && pick({ q: 'c' }) === 'C');
+  check('row filters: combinations', pick({ location: 'Hyderabad', ctcMin: '40000' }) === 'B' && pick({ open: 'yes', jTo: '2024-12-31' }) === 'A');
+  const fac = RF.localFacets(people, cfg, { ctcMin: '40000' }, getp).location || [];
+  check('row filters: option counts follow the other filters (Hyderabad 1, Pune 1 when CTC is 40,000 or more)', fac.find((o) => o.value.toLowerCase() === 'hyderabad').count === 1 && fac.find((o) => o.value === 'Pune').count === 1, fac);
+  const fac2 = RF.localFacets(people, cfg, { location: 'Pune' }, getp).location || [];
+  check('row filters: a chosen option keeps its own counts (the location filter leaves itself out)', fac2.find((o) => o.value === 'Pune').count === 1 && fac2.find((o) => o.value.toLowerCase() === 'hyderabad').count === 2, fac2);
+  check('whole history: the default status is dropped while searching and kept when moved on purpose', RF.dropDefaultStatus('Active', 'Active', true) === true && RF.dropDefaultStatus('Exited', 'Active', true) === false && RF.dropDefaultStatus('Active', 'Active', false) === false);
+  // the employee rows carry what the filters read
+  const emp = await call('GET', '/employees/management', null, tA);
+  const e0 = ((emp.body && emp.body.rows) || [])[0];
+  check('employees: the list rows carry location, the joining day (YYYY-MM-DD), type, manager, team lead and team for the filters', emp.status === 200 && e0 && 'location' in e0 && 'employeeType' in e0 && 'reportingManager' in e0 && 'tl' in e0 && 'team' in e0 && (e0.joiningDay === null || /^\d{4}-\d{2}-\d{2}$/.test(e0.joiningDay)), e0 && Object.keys(e0).slice(0, 40));
+  // exit approvals: a filter looks at finished exits too; a date range on the exit
+  const exA = async (params) => { const r = await call('GET', `/resignations/exit/approvals?${qs(params)}`, null, tA); return { status: r.status, n: ((r.body && r.body.rows) || []).length, body: r.body }; };
+  const exDef = await exA({});
+  const exAll = await exA({ include: 'all' });
+  const exWide = await exA({ startFrom: '2000-01-01' });
+  const exWideAll = await exA({ startFrom: '2000-01-01', include: 'all' });
+  check('exit approvals: answers, and finished exits are only in the "all" view by default', exDef.status === 200 && exAll.status === 200 && exAll.n >= exDef.n, { d: exDef.n, a: exAll.n });
+  check('exit approvals: a date filter looks at all exits, finished ones included (same as the all view)', exWide.n === exWideAll.n && exWide.n >= exDef.n, { w: exWide.n, wa: exWideAll.n, d: exDef.n });
+  const exNone = await exA({ lwdFrom: '2099-01-01' });
+  check('exit approvals: last-working-day range with nothing in it is empty', exNone.status === 200 && exNone.n === 0, exNone.n);
+  const exQ = await exA({ q: 'zzzz-nobody' });
+  check('exit approvals: search finds nobody for a made-up name', exQ.status === 200 && exQ.n === 0, exQ.n);
+
   // job portal applications and call lists answer their filters
   const jp = await call('GET', `/job-portal/applications?${qs({ jpSource: 'zzz-none' })}`, null, tA);
   check('job portal: a source that matches nothing gives an empty list (200)', jp.status === 200 && rowsOf(jp.body).length === 0, { s: jp.status });
