@@ -48,6 +48,7 @@ import ReachRowButtons from '../components/reach/ReachRowButtons.jsx';
 import WaButton from '../components/wa/WaButton.jsx';
 import WaBulkModal from '../components/wa/WaBulkModal.jsx';
 import SendRcsModal, { useRcsMay } from '../components/rcs/SendRcsModal.jsx';
+import ScheduleBulkModal from '../components/reminders/ScheduleBulkModal.jsx'; // "Schedule a message" for the ticked candidates (2026-11-20)
 import WaResume from '../components/wa/WaResume.jsx';
 import { WaOptInModal } from '../components/wa/WaOptIn.jsx';
 import { useWaConfig, waMayUse } from '../components/wa/waKit.js';
@@ -529,6 +530,7 @@ export default function Candidates() {
   // RCS (rcssms.in): 'Send RCS' on the ticked candidates, for the people an Admin allowed (Integrations > RCS > Settings)
   const rcsMay = useRcsMay();
   const [rcsSend, setRcsSend] = useState(null); // { ids }
+  const [schedMsg, setSchedMsg] = useState(null); // { candidates: [{ id, name, applicationId }] } - Schedule a message for the ticked rows
   const [waBulk, setWaBulk] = useState(null); // { ids } = WhatsApp list to start; { sessionId } not used here (WaResume owns that)
   const [waOpt, setWaOpt] = useState(null); // { ids } = Mark opted in
   const waCfg = useWaConfig();
@@ -880,6 +882,7 @@ export default function Candidates() {
     hold: canMoveToStage(user, 'HOLD'),
     reject: canMoveToStage(user, 'REJECTED'),
     addToJob: can(user, 'ats', 'candidates', 'Applications', 'create'),
+    schedMsg: ['SUPER_ADMIN', 'ADMIN'].includes(user?.role) || ['SUPER_ADMIN', 'ADMIN', 'TL', 'STL', 'RECRUITER', 'MANAGER'].includes(user?.atsRole),
   };
   async function exportSelected() {
     setBulkMsg(null);
@@ -1437,6 +1440,7 @@ export default function Candidates() {
         />
       )}
       {rcsSend && <SendRcsModal audience="candidates" ids={rcsSend.ids} onClose={() => setRcsSend(null)} />}
+      {schedMsg && <ScheduleBulkModal candidates={schedMsg.candidates} onClose={() => setSchedMsg(null)} onDone={() => {}} />}
       {waBulk && <WaBulkModal entityType="candidate" ids={waBulk.ids} onClose={() => { setWaBulk(null); setWaTick((n) => n + 1); }} onDone={() => setWaTick((n) => n + 1)} />}
       {waOpt && <WaOptInModal entityType="candidate" ids={waOpt.ids} onClose={() => setWaOpt(null)} />}
       {drawer && (
@@ -2242,6 +2246,8 @@ export default function Candidates() {
               ].filter(Boolean)}
               also={[
                 rcsMay && { key: 'rcs', icon: '💬', label: 'Send RCS', onClick: () => setRcsSend({ ids: selectedCandidateIds }) },
+                // one schedule per candidate (one-time or recurring); the BDE side sees only the numbers, so it is not offered there
+                may.schedMsg && { key: 'schedmsg', icon: '🕒', label: 'Schedule a message', onClick: () => setSchedMsg({ candidates: selectedItems.map((x) => ({ id: x.id, name: x.name, applicationId: x.latestApplicationId || x.rowId || null })) }) },
                 may.interview && { key: 'interview', icon: '📅', label: 'Schedule interview', onClick: () => setBulkKind('interview') },
                 may.hold && { key: 'hold', icon: '⏸', label: 'Put on hold', onClick: () => setBulkKind('hold') },
                 may.reject && { key: 'reject', icon: '✖', label: 'Reject', danger: true, onClick: () => setBulkKind('reject') },

@@ -28,6 +28,7 @@ import { FollowUpsRoute } from './pages/ats/FollowUps.jsx';
 import DataQuality from './pages/ats/DataQuality.jsx'; // profile completeness, duplicates, stale profiles (2026-11-17)
 import CallLists from './pages/ats/CallLists.jsx'; // a sheet of contacts split among recruiters, who call it from VICIdial (2026-11-17)
 import InterviewCalendar from './pages/ats/InterviewCalendar.jsx';
+import ScheduledMessages from './pages/ats/ScheduledMessages.jsx'; // Communication -> Scheduled Messages (2026-11-20)
 import InterviewFeedback from './pages/ats/InterviewFeedback.jsx';
 import Offers from './pages/ats/Offers.jsx';
 import Joining from './pages/ats/Joining.jsx';
@@ -337,6 +338,7 @@ export default function App() {
         <Route path="ats/call-lists" element={<CallLists />} />
         <Route path="ats/data-quality" element={<DataQuality />} />
         <Route path="ats/calendar" element={<InterviewCalendar />} />
+        <Route path="ats/scheduled-messages" element={<ScheduledMessages />} />
         {/* Interviews & Joining: Interview Calendar (above) - Interview Feedback
             - Offers - Joining - Internal Hiring */}
         <Route path="ats/interview-feedback" element={<InterviewFeedback />} />

@@ -44,6 +44,7 @@ import FollowUpLog from '../components/clients/FollowUpLog.jsx';
 import JoiningDropPanel from '../components/joindrop/JoiningDropPanel.jsx'; // Joining & Drop: the joining card, the drop, the history and the journey
 import ScheduleMessageTab from '../components/reminders/ScheduleMessageTab.jsx'; // the "Schedule a message" tab: any message, sent later (2026-11-20)
 import ScheduledMessagesPanel from '../components/reminders/ScheduledMessagesPanel.jsx'; // the scheduled messages to the candidate before an interview / joining (2026-11-20)
+import ScheduledHistory from '../components/reminders/ScheduledHistory.jsx'; // every message of every schedule of this person (2026-11-20)
 import {
   FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot, AddApplicationSlot, AiCallingSlot,
 } from '../components/candidate/ProfileSlots.jsx';
@@ -1098,6 +1099,7 @@ export default function CandidateDetail() {
               </div>
             </div>
           )}
+          {internal && <ScheduledHistory key={c.id} candidateId={c.id} />}
         </>
       )}
 

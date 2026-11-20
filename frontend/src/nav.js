@@ -228,6 +228,9 @@ export const ATS_ITEMS = [
   moduleLeaf('clients-req', '💼', '/clients', 'Clients & Requirements', CLIENTS_REQ_TABS),
   { ...leaf('👥', '/candidates', 'Candidates & Pipeline', [['candidates', 'Candidate List', 'view']]), id: 'candidates' },
   { ...leaf('📅', '/ats/calendar', 'Interview Calendar', [['interviews', 'Calendar View', 'view']]), id: 'calendar' },
+  // COMMUNICATION -> SCHEDULED MESSAGES (founder 2026-11-20 named this page): every message schedule to candidates, one-time / recurring /
+  // automatic, with its tracking. The server decides what each login sees (the BDE side only the numbers; client / candidate logins nothing).
+  { ...leaf('🕒', '/ats/scheduled-messages', 'Scheduled Messages', [['candidates', 'Candidate List', 'view']]), id: 'scheduled-messages' },
   // AI CALLING is not a sidebar entry (founder 2026-11-04: "ai calling side bar lo vundakudadhu"): it is a tab on the candidate
   // profile (Candidate360Tabs.jsx), and that tab links to /ats/ai-calling for the company-wide lists (the route stays).
   moduleLeaf('reports-team', '🎯', '/reports/ats', 'Reports & Team', REPORTS_TEAM_TABS),

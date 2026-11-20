@@ -41,3 +41,35 @@
 .sm-words { white-space: pre-wrap; font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
 .rem-hist { white-space: pre-line; }
 @media (max-width: 640px) { .sm-by { margin-left: 0; } .sm-way { max-width: none; } }
+
+/* Advanced scheduling (recurring messages, the live summary, more recipients) */
+.sm-adv { border-left: 3px solid var(--line, #e2e8f0); padding-left: 10px; margin-top: 4px; }
+.sm-day { display: inline-flex; gap: 3px; align-items: center; font-size: 12.5px; border: 1px solid var(--line, #e2e8f0); border-radius: 6px; padding: 2px 6px; }
+.sm-ends { display: grid; gap: 4px; }
+.sm-end { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.sm-summary { margin-top: 8px; }
+.sm-sum-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; }
+.sm-sum-line { display: grid; gap: 1px; }
+.sm-sum-line .small-muted { font-size: 11px; }
+.sm-times { margin: 4px 0 0 18px; padding: 0; font-size: 12px; columns: 2; }
+.sm-recip { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; background: var(--soft, #f1f5f9); border-radius: 999px; padding: 2px 8px; }
+.sm-found { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+
+/* Communication -> Scheduled Messages page */
+.smp-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin: 8px 0; }
+.smp-card { display: grid; gap: 2px; text-align: left; border: 1px solid var(--line, #e2e8f0); border-radius: 10px; padding: 8px 12px; background: var(--card, #fff); cursor: pointer; font: inherit; }
+.smp-card b { font-size: 22px; }
+.smp-card.on { border-color: var(--brand, #2563eb); box-shadow: 0 0 0 1px var(--brand, #2563eb) inset; }
+.smp-green { color: var(--green, #15803d); } .smp-blue { color: var(--blue, #1d4ed8); } .smp-red { color: var(--red, #b91c1c); } .smp-amber { color: var(--amber, #b45309); }
+.smp-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.smp-table th, .smp-table td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line, #e2e8f0); vertical-align: top; }
+.smp-table th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted, #64748b); border-top: 0; white-space: nowrap; }
+.smp-row { cursor: pointer; }
+.smp-row:hover, .smp-row.open { background: var(--soft, #f8fafc); }
+.smp-detail td { background: var(--soft, #f8fafc); }
+.smp-range { display: grid; gap: 4px; font-size: 12px; }
+.smp-table-wrap { overflow-x: auto; }
+@media (max-width: 640px) { .sm-times { columns: 1; } .smp-card b { font-size: 18px; } }
+.smp-time { white-space: nowrap; }
+.sm-adv .rem-actions input[type="date"], .sm-adv .rem-actions input[type="time"], .sm-adv .rem-actions select, .sm-adv .sm-end input[type="date"] { width: auto !important; max-width: 220px; flex: 0 0 auto; }
+.sm-adv .rem-actions input[type="number"], .sm-adv .sm-end input[type="number"] { flex: 0 0 auto; }

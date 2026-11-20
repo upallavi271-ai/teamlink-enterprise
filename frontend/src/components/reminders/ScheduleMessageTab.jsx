@@ -4,6 +4,10 @@ import StatusChip from '../ui/StatusChip.jsx';
 import {
   istDate, istTime, fromIst, addDays, when, STATUS_WORD, STATUS_TONE,
 } from './remUtil.js';
+import AdvancedScheduler, {
+  defaultRecurring, specPayload, useSchedulePreview, ScheduleSummary,
+} from './AdvancedScheduler.jsx';
+import ScheduleList from './ScheduleList.jsx';
 import './reminders.css';
 
 // ---------------------------------------------------------------------------
@@ -61,6 +65,15 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
   const [note, setNote] = useState('');
   const [warn, setWarn] = useState('');
   const [busy, setBusy] = useState(false);
+  // ADVANCED SCHEDULING (2026-11-20): one-time or recurring, more recipients, the live summary
+  const [howOften, setHowOften] = useState('one'); // one | rec
+  const [rec, setRec] = useState(() => defaultRecurring());
+  const [others, setOthers] = useState([]); // more candidates: [{ id, name }]
+  const [find, setFind] = useState('');
+  const [found, setFound] = useState([]);
+  const [editSched, setEditSched] = useState(null); // a repeating schedule being changed
+  const [result, setResult] = useState(null); // { created, skipped, refused } of a many-candidates schedule
+  const idem = useRef(`${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const area = useRef(null);
   const formRef = useRef(null);
 
@@ -100,7 +113,20 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
   }, [d, body, channel]);
   const previewSubject = useMemo(() => (d && d.context ? fillWords(subject || 'A message from TeamLink', d.context) : ''), [d, subject]);
 
-  const resetForm = () => { setEditing(null); setBody(''); setSubject(''); setErr(''); setSuggest(null); choose('tomorrow'); };
+  const resetForm = () => {
+    setEditing(null); setEditSched(null); setBody(''); setSubject(''); setErr(''); setSuggest(null); choose('tomorrow');
+    setOthers([]); setFind(''); setFound([]); idem.current = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  };
+  // the window of the company (07:00-20:00) as the default of a new recurring schedule
+  useEffect(() => { if (d && d.advanced && !editSched) setRec((r) => ({ ...r, windowStart: d.advanced.window.start, windowEnd: d.advanced.window.end })); }, [d && d.advanced]); // eslint-disable-line react-hooks/exhaustive-deps
+  // more recipients: the candidate search of the app (only candidates this login may see are offered; the server checks again)
+  useEffect(() => {
+    if (!find.trim()) { setFound([]); return undefined; }
+    const t = setTimeout(() => { api.get('/candidates/picker', { params: { q: find.trim() } }).then((r) => setFound((r.data.rows || []).filter((c) => c.id !== candidateId && !others.some((o) => o.id === c.id)).slice(0, 8))).catch(() => setFound([])); }, 250);
+    return () => clearTimeout(t);
+  }, [find]); // eslint-disable-line react-hooks/exhaustive-deps
+  const advancedPayload = howOften === 'rec' ? specPayload(rec) : (sendAtIso ? { kind: 'one-time', startAt: sendAtIso } : null);
+  const preview2 = useSchedulePreview(advancedPayload, !!d && d.access === 'full' && !editing);
   const insert = (text) => {
     const el = area.current;
     if (!el) { setBody((b) => `${b}${text}`); return; }
@@ -117,9 +143,35 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
   const toForm = () => { try { formRef.current && formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* none */ } };
 
   const submit = async () => {
-    setErr(''); setSuggest(null); setNote(''); setWarn('');
+    setErr(''); setSuggest(null); setNote(''); setWarn(''); setResult(null);
     if (!body.trim()) { setErr('Write the message first.'); return; }
-    if (!sendAtIso) { setErr('Pick the date and time when the message should go.'); return; }
+    if (howOften === 'one' && !sendAtIso) { setErr('Pick the date and time when the message should go.'); return; }
+    // a recurring message, a repeating schedule being changed, or more than one candidate: the schedule engine (/api/ats/scheduled-messages)
+    if (howOften === 'rec' || editSched || others.length) {
+      setBusy(true);
+      try {
+        const words = { channel, body, ...(channel === 'Email' ? { subject } : {}) };
+        if (editSched) {
+          const r = await api.patch(`/ats/scheduled-messages/${editSched.id}`, { ...words, ...specPayload(rec) });
+          setNote(`Changes saved: ${r.data.schedule.frequencyLabel}. The messages already sent stay as they are.`);
+        } else {
+          const ids = [candidateId, ...others.map((o) => o.id)];
+          const r = await api.post('/ats/scheduled-messages', {
+            ...words, candidateIds: ids, ...(applicationId ? { applicationIds: { [candidateId]: applicationId } } : {}), idempotencyKey: idem.current,
+            ...(howOften === 'rec' ? specPayload(rec) : { kind: 'one-time', startAt: sendAtIso }),
+          });
+          const s = r.data.summary;
+          setNote(`Scheduled: ${s.label}${s.first ? `, first ${when(s.first)}` : ''}${ids.length > 1 ? ` - ${r.data.message}` : ''}.`);
+          if (ids.length > 1) setResult(r.data);
+        }
+        resetForm(); reload();
+      } catch (e) {
+        const b = e.response?.data || {};
+        setErr(b.error || 'Could not schedule the message. Please try again.');
+        if (b.created || b.refused || b.skipped) setResult(b);
+      } finally { setBusy(false); }
+      return;
+    }
     setBusy(true);
     try {
       const payload = { channel, sendAt: sendAtIso, body, ...(channel === 'Email' ? { subject } : {}), ...(applicationId ? { applicationId } : {}) };
@@ -132,7 +184,19 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
       setSuggest(e.response?.data?.suggestion || null);
     } finally { setBusy(false); }
   };
+  // a repeating schedule: its words and its timing come back into the form
+  const editSchedule = (s) => {
+    setEditing(null); setEditSched(s); setHowOften('rec'); setChannel(s.channel); setBody(s.body || ''); setSubject(s.subject || ''); setErr(''); setNote(''); setResult(null);
+    const start = s.nextAt || s.startAt;
+    setRec({
+      kind: 'recurring', frequency: s.frequency || 'daily', weekdays: s.weekdays && s.weekdays.length ? s.weekdays : [1], monthDay: s.monthDay || 1, intervalValue: s.intervalValue || 2, intervalUnit: s.intervalUnit || 'days',
+      startDate: istDate(start), startTime: istTime(start), endMode: s.endMode || 'count', totalCount: s.totalCount || 5, endDate: s.endDate || addDays(istDate(start), 6),
+      timezone: s.timezone || 'Asia/Kolkata', windowStart: s.windowStart || '07:00', windowEnd: s.windowEnd || '20:00',
+    });
+    toForm();
+  };
   const edit = (m) => {
+    setEditSched(null); setHowOften('one');
     setEditing(m); setChannel(m.channel); setBody(m.body || ''); setSubject(m.subject || ''); setDate(istDate(m.sendAt)); setTime(istTime(m.sendAt)); setPick('custom'); setErr(''); setSuggest(null); setNote('');
     toForm();
   };
@@ -179,7 +243,7 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
   return (
     <div className="sm-wrap">
       <div className="card section" ref={formRef}>
-        <div className="rem-head"><b>{editing ? 'Change a scheduled message' : 'Schedule a message'}</b><span className="small-muted">{`to ${d.candidate.name}: any message, sent later on WhatsApp, SMS or Email`}</span></div>
+        <div className="rem-head"><b>{editing || editSched ? 'Change a scheduled message' : 'Schedule a message'}</b><span className="small-muted">{`to ${d.candidate.name}: any message, sent later on WhatsApp, SMS or Email`}</span></div>
         {d.blocked && <div className="rem-bad" style={{ margin: '6px 0' }}>{d.blocked}</div>}
         {!d.blocked && offered === 0 && <div className="rem-warn" style={{ margin: '6px 0' }}>No way is available for this candidate right now. See the reasons below each way.</div>}
 
@@ -194,6 +258,15 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
         </div>
 
         <div className="sm-label">When should it go?</div>
+        {!editing && (
+          <div className="rem-quick" role="group" aria-label="One-time or recurring" style={{ marginBottom: 6 }}>
+            <button type="button" className={`btn btn-sm${howOften === 'one' ? ' btn-primary' : ''}`} aria-pressed={howOften === 'one'} disabled={!!editSched} onClick={() => setHowOften('one')}>One-time message (send once)</button>
+            <button type="button" className={`btn btn-sm${howOften === 'rec' ? ' btn-primary' : ''}`} aria-pressed={howOften === 'rec'} onClick={() => setHowOften('rec')}>Recurring message (send multiple times)</button>
+          </div>
+        )}
+        {howOften === 'rec' && <AdvancedScheduler value={rec} onChange={setRec} timezones={(d.advanced && d.advanced.timezones) || []} hours={d.advanced ? d.advanced.window : undefined} />}
+        {howOften === 'one' && (
+        <>
         <div className="rem-quick">
           {quickBtn('in1h', 'In 1 hour')}
           {quickBtn('today5', 'Today 5 PM', todayPast ? { disabled: true, title: 'It is already past 5 PM today' } : {})}
@@ -210,6 +283,25 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
           {sendAtIso ? `It goes ${when(sendAtIst(date, time))} (India time).` : 'Pick a date and time.'}
           {` Messages go between ${String(d.hours.earliest).padStart(2, '0')}:00 and ${String(d.hours.latest).padStart(2, '0')}:00, at least ${d.minAheadMinutes} minutes from now.`}
         </div>
+        </>
+        )}
+
+        {!editing && !editSched && (
+          <>
+            <div className="sm-label">Recipient candidates</div>
+            <div className="rem-quick" aria-label="Recipients">
+              <span className="sm-recip">{d.candidate.name}</span>
+              {others.map((o) => <span key={o.id} className="sm-recip">{o.name}<button type="button" className="link-btn" aria-label={`Remove ${o.name}`} onClick={() => setOthers(others.filter((x) => x.id !== o.id))}>×</button></span>)}
+            </div>
+            <input type="search" className="sm-subject" style={{ marginTop: 4 }} aria-label="Add more candidates" placeholder="Add more candidates: type a name or mobile" value={find} onChange={(e) => setFind(e.target.value)} />
+            {found.length > 0 && (
+              <div className="sm-found">
+                {found.map((c) => <button type="button" key={c.id} className="btn btn-sm btn-ghost" onClick={() => { setOthers([...others, { id: c.id, name: c.name }]); setFind(''); setFound([]); }}>{`+ ${c.name}`}</button>)}
+              </div>
+            )}
+            {others.length > 0 && <div className="small-muted" style={{ fontSize: 11.5 }}>Each candidate gets a schedule of their own (their own progress and stop rules). A candidate outside your area, or one who asked not to be contacted, is left out with the reason.</div>}
+          </>
+        )}
 
         {channel === 'Email' && (
           <>
@@ -239,14 +331,20 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
           </div>
         )}
         {channel === 'WhatsApp' && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 4 }}>WhatsApp: if the candidate has not written to us in the last 24 hours, the message goes through the company's approved general template.</div>}
+        {!editing && <ScheduleSummary summary={preview2.summary} error={preview2.error} busy={preview2.busy} />}
 
         {err && <div className="rem-bad" role="alert" style={{ marginTop: 6 }}>{err}</div>}
         {suggest && <div style={{ marginTop: 4 }}><button type="button" className="btn btn-sm" onClick={() => { setPick('custom'); setDate(istDate(suggest.sendAt)); setTime(istTime(suggest.sendAt)); setErr(''); setSuggest(null); }}>{`Use ${suggest.words}`}</button></div>}
         {note && <div className="rem-warn" style={{ marginTop: 6, color: 'var(--green, #15803d)' }} role="status">{note}</div>}
         {warn && <div className="rem-warn" style={{ marginTop: 4 }}>{warn}</div>}
+        {result && (result.skipped?.length > 0 || result.refused?.length > 0) && (
+          <div className="rem-warn" style={{ marginTop: 4 }} data-testid="sm-left-out">
+            {[...(result.skipped || []), ...(result.refused || [])].map((x) => <div key={x.candidateId}>{`${x.name || 'A candidate'}: ${x.reason}`}</div>)}
+          </div>
+        )}
         <div className="rem-actions" style={{ marginTop: 8 }}>
-          <button type="button" className="btn btn-primary" disabled={busy || over || !!d.blocked || offered === 0} onClick={submit}>{busy ? 'Saving...' : (editing ? 'Save changes' : 'Schedule message')}</button>
-          {editing && <button type="button" className="btn btn-ghost" onClick={resetForm}>Stop editing</button>}
+          <button type="button" className="btn btn-primary" disabled={busy || over || !!d.blocked || offered === 0} onClick={submit}>{busy ? 'Saving...' : (editing || editSched ? 'Save changes' : 'Schedule message')}</button>
+          {(editing || editSched) && <button type="button" className="btn btn-ghost" onClick={resetForm}>Stop editing</button>}
         </div>
         <div className="small-muted" style={{ fontSize: 11.5, marginTop: 6 }}>{d.note}</div>
       </div>
@@ -261,6 +359,13 @@ export default function ScheduleMessageTab({ candidateId, applicationId = null }
           </div>
         ))}
       </div>
+
+      {d.schedules && d.schedules.length > 0 && (
+        <div className="card section" data-testid="sm-schedules">
+          <div className="rem-head"><b>Repeating and automatic schedules</b><span className="small-muted">Each line is one schedule: open it to see every message (scheduled, sent, delivered, failed).</span></div>
+          <ScheduleList rows={d.schedules} onChanged={reload} onEdit={editSchedule} compact />
+        </div>
+      )}
 
       {d.automatic.length > 0 && (
         <div className="card section" data-testid="sm-auto">
