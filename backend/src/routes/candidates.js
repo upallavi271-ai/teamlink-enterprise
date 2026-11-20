@@ -2422,11 +2422,13 @@ async function loadInScope(req, res) {
     if (apps.length) {
       const W = require('../utils/workers'); // eslint-disable-line global-require
       const ids = apps.map((a) => a.id);
-      const [evRows, fuRows, dir, HO] = await Promise.all([
+      const [evRows, fuRows, dir, HO, tlRows] = await Promise.all([
         prisma.applicationStageEvent.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, fromStage: true, toStage: true, actorUserId: true, actorName: true, actorRole: true, createdAt: true }, orderBy: { createdAt: 'asc' } }),
         prisma.applicationFollowUp.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, ownerUserId: true, ownerName: true, ownerRole: true, createdAt: true, completedAt: true }, orderBy: { createdAt: 'asc' } }),
         W.loadDirectory(),
         require('../utils/handover').handoversFor(ids), // eslint-disable-line global-require
+        // "Team lead changed from A to B (why)" (utils/teamLeadChange.js) reads in the same history
+        prisma.auditLog.findMany({ where: { entity: 'Application', entityId: { in: ids }, action: 'Candidate team lead changed' }, select: { entityId: true, fromValue: true, toValue: true, reason: true, createdAt: true }, orderBy: { createdAt: 'asc' } }).catch(() => []),
       ]);
       const by = (rows) => { const m = new Map(); rows.forEach((r) => { if (!m.has(r.applicationId)) m.set(r.applicationId, []); m.get(r.applicationId).push(r); }); return m; };
       const evBy = by(evRows);
@@ -2459,6 +2461,7 @@ async function loadInScope(req, res) {
           timeline.push({ at: ev.createdAt, text: `Candidate ${w}${who ? ` by ${who}` : ''}` });
         });
         h.forEach((x) => timeline.push({ at: new Date(x.at), text: `Candidate handed over${x.from ? ` from ${x.from}` : ''} to ${x.to}${x.kind === 'the recruiter left' ? ' (the recruiter left)' : x.kind === 'taken off the requirement' ? ' (taken off the requirement)' : ''}${x.reason && x.kind === 'handed over by hand' ? ` - ${x.reason}` : ''}` }));
+        tlRows.filter((x) => x.entityId === a.id).forEach((x) => timeline.push({ at: new Date(x.createdAt), text: `Team lead changed from ${x.fromValue || '-'} to ${x.toValue}${x.reason ? ` - ${x.reason}` : ''}` }));
         timeline.sort((x, y) => new Date(x.at) - new Date(y.at));
         a.ownership = {
           followUpCredit: followUpBy || a.ownerRecruiterName || null,
@@ -2994,6 +2997,7 @@ router.get('/:id', async (req, res) => {
       // A merge row carries a whole JSON snapshot; the screen needs a line.
       fromValue: r.fromValue && r.fromValue.length > 400 ? `${r.fromValue.slice(0, 1)}…` : r.fromValue,
       toValue: r.toValue && r.toValue.length > 400 ? `${r.toValue.slice(0, 1)}…` : r.toValue,
+      reason: r.reason || null,
     }));
   }
 
@@ -3054,8 +3058,8 @@ router.get('/:id', async (req, res) => {
         when: a.when,
         who: a.who && a.who !== '—' ? a.who : null,
         role: null,
-        what: a.action,
-        why: a.entity === 'Candidate' && a.toValue && !String(a.toValue).startsWith('{') ? String(a.toValue).slice(0, 200) : null,
+        what: a.action === 'Candidate team lead changed' ? `Team lead changed from ${a.fromValue || '-'} to ${a.toValue}` : a.action,
+        why: a.action === 'Candidate team lead changed' ? a.reason || null : a.entity === 'Candidate' && a.toValue && !String(a.toValue).startsWith('{') ? String(a.toValue).slice(0, 200) : null,
         requirement: a.entity === 'Application' ? reqOfApp.get(a.entityId) || null : null,
         kind: 'audit',
         derived: false,

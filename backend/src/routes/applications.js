@@ -1121,6 +1121,28 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
 // ---------------------------------------------------------------------------
 const BULK_ROW_LIMIT = 100;
 
+// GET /applications/:id/team-lead-options - "Change team lead" on Who is on this (utils/teamLeadChange.js): the team leads of the job's
+// department(s) this candidate may move to, each with their recruiters. Same permission and reach as the assign action.
+router.get('/:id/team-lead-options', async (req, res, next) => {
+  try {
+    // eslint-disable-next-line global-require
+    const { can: canDo } = require('../utils/permissions');
+    const s = scopeOf(req.user);
+    if ([s.role, s.atsRole].some((r) => ['CLIENT', 'CANDIDATE'].includes(r)) || !(await canDo(req.user, 'ats', 'recruiterbde', 'Team View', 'assign'))) {
+      return res.status(403).json({ error: "Changing the team lead isn't included in your role's permissions" });
+    }
+    const app = await prisma.application.findUnique({ where: { id: req.params.id }, include: { requirement: true } });
+    if (!app) return res.status(404).json({ error: 'Application not found' });
+    if (!applicationInScope(req.user, app)) return res.status(403).json({ error: 'Outside your access' });
+    const TLC = require('../utils/teamLeadChange'); // eslint-disable-line global-require
+    const cur = await TLC.currentLeads(app);
+    return res.json({
+      now: { tlUserId: cur.leads.tlUserId, tlName: cur.leads.tlName, recruiterId: cur.owner.userId, recruiterName: cur.owner.name, seatCode: cur.owner.seatCode },
+      options: await TLC.optionsFor(req.user, app, s),
+    });
+  } catch (err) { return next(err); }
+});
+
 router.post('/bulk', async (req, res, next) => {
   try {
     // eslint-disable-next-line global-require
@@ -1178,6 +1200,21 @@ router.post('/bulk', async (req, res, next) => {
         }
       }
       targetSeat = await stampFor(target, 'owner');
+    }
+    // CHANGE TEAM LEAD (utils/teamLeadChange.js): the same correction, plus the new team lead named. The team lead follows the recruiter's
+    // seat, so the recruiter chosen must sit under that team lead; the reason is required; one candidate at a time.
+    const tlChange = action === 'assign' && b.correct === true && b.teamLeadChange && typeof b.teamLeadChange === 'object' ? b.teamLeadChange : null;
+    let newTl = null;
+    if (tlChange) {
+      if (appIds.length + candIds.length !== 1) return res.status(400).json({ error: 'Change the team lead of one candidate at a time.' });
+      if (String(b.comment || '').trim().length < 3) return res.status(400).json({ error: 'Say in a few words why the team lead is changed.' });
+      const leadOfTarget = targetSeat.ownerPositionId || targetSeat.ownerPositionCode
+        ? await require('../utils/positionScope').leadsOfPosition({ positionId: targetSeat.ownerPositionId, positionCode: targetSeat.ownerPositionId ? undefined : targetSeat.ownerPositionCode }).catch(() => null) // eslint-disable-line global-require
+        : null;
+      if (!leadOfTarget || !leadOfTarget.tlUserId || leadOfTarget.tlUserId !== String(tlChange.toTlUserId || '')) {
+        return res.status(400).json({ error: `${target.name} does not sit in that team lead's team, so the candidate cannot move there with them. Choose a recruiter of the new team lead.` });
+      }
+      newTl = { id: leadOfTarget.tlUserId, name: leadOfTarget.tlName };
     }
 
     // RESOLVE THE ROWS. A candidate id means their current application —
@@ -1259,6 +1296,15 @@ router.post('/bulk', async (req, res, next) => {
           continue;
         }
       }
+      let oldLeads = null;
+      if (tlChange) {
+        // eslint-disable-next-line no-await-in-loop, global-require
+        oldLeads = (await require('../utils/teamLeadChange').currentLeads(app)).leads;
+        if (oldLeads.tlUserId && oldLeads.tlUserId === newTl.id) {
+          results.push({ ...base, ok: false, error: `This candidate is already in ${newTl.name}'s team.` });
+          continue;
+        }
+      }
       // eslint-disable-next-line no-await-in-loop
       const open = await prisma.applicationFollowUp.findFirst({
         where: { applicationId: app.id, completedAt: null }, orderBy: { createdAt: 'desc' },
@@ -1332,11 +1378,18 @@ router.post('/bulk', async (req, res, next) => {
           onRequirement = true;
         }
       }
+      let tlNote = null;
+      if (tlChange) {
+        // eslint-disable-next-line no-await-in-loop, global-require
+        tlNote = await require('../utils/teamLeadChange').recordAndNotify({
+          app, by: user, reason: String(b.comment).trim(), oldLeads, newTl, newRecruiter: { id: target.id, name: target.name, seatId: targetSeat.ownerPositionId, seatCode: targetSeat.ownerPositionCode },
+        }).catch((e) => { console.error('[team-lead-change] notice failed:', e.message); return null; }); // eslint-disable-line no-console
+      }
       results.push({
         ...base,
         ok: true,
-        note: onRequirement || targetSeat.ownerPositionCode ? null
-          : `${target.name} holds no seat and is not on this requirement, so it will not appear in their list until the requirement is assigned to them.`,
+        note: tlNote || (onRequirement || targetSeat.ownerPositionCode ? null
+          : `${target.name} holds no seat and is not on this requirement, so it will not appear in their list until the requirement is assigned to them.`),
       });
     }
 

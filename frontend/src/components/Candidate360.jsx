@@ -1019,6 +1019,91 @@ function EditOwner({ app, ownership, onClose, onDone }) {
   );
 }
 
+// CHANGE THE TEAM LEAD (founder 2026-11-20: "there must be a Change team lead button ... the reason must be asked ... that update must go to the respective TLs").
+// The team lead follows the recruiter's seat, so: pick the new team lead, pick a recruiter of THAT team, say why. Saved through the same
+// correction as Change recruiter (POST /applications/bulk, correct: true, teamLeadChange); both team leads get a bell.
+function ChangeTeamLead({ app, ownership, onClose, onDone }) {
+  const [data, setData] = useState(null);
+  const [tl, setTl] = useState('');
+  const [rec, setRec] = useState('');
+  const [why, setWhy] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    api.get(`/applications/${app.id}/team-lead-options`)
+      .then((r) => setData(r.data || { options: [] }))
+      .catch((e) => { setData({ options: [] }); setErr((e.response && e.response.data && e.response.data.error) || 'Could not load the team leads.'); });
+  }, [app.id]);
+  const options = (data && data.options) || [];
+  const chosen = options.find((o) => o.tlUserId === tl) || null;
+  const pickTl = (id) => {
+    setTl(id); setErr('');
+    const o = options.find((x) => x.tlUserId === id);
+    setRec(o && o.recruiters.length === 1 ? o.recruiters[0].id : '');
+  };
+  const noRecruiter = !!chosen && chosen.recruiters.length === 0;
+  const ready = !!chosen && !!rec && why.trim().length >= 3 && !noRecruiter;
+  async function save() {
+    if (!chosen) { setErr('Choose the new team lead.'); return; }
+    if (!rec) { setErr('Choose a recruiter of that team.'); return; }
+    if (why.trim().length < 3) { setErr('Say in a few words why it is changed.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await api.post('/applications/bulk', { action: 'assign', correct: true, applicationIds: [app.id], recruiterId: rec, comment: why.trim(), teamLeadChange: { toTlUserId: chosen.tlUserId } });
+      const row = (r.data && r.data.results && r.data.results[0]) || null;
+      if (row && !row.ok) { setErr(row.error || 'Not changed.'); setBusy(false); return; }
+      onDone();
+    } catch (e) {
+      setErr((e.response && e.response.data && e.response.data.error) || 'Could not change it. Try again.');
+      setBusy(false);
+    }
+  }
+  const recName = chosen && chosen.recruiters.find((x) => x.id === rec);
+  return (
+    <Modal
+      title="Change the team lead"
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={save} disabled={busy || !ready}>{busy ? 'Saving…' : 'Save'}</button>
+        </>
+      )}
+    >
+      <div className="small-muted" style={{ marginBottom: 10 }}>
+        {`Now: Team lead ${ownership && ownership.tl ? ownership.tl : '—'}${ownership && ownership.section ? ` (${ownership.section})` : ''} · recruiter ${ownership && ownership.recruiter ? ownership.recruiter : '—'}${ownership && ownership.positionCode ? ` (${ownership.positionCode})` : ''}`}
+      </div>
+      <label className="field">
+        <span>The new team lead</span>
+        <Combo value={tl} onChange={(e) => pickTl(e.target.value)}>
+          <option value="">{data === null ? 'Loading…' : 'Choose…'}</option>
+          {options.map((o) => <option key={o.tlUserId} value={o.tlUserId}>{`${o.tlName}${o.section ? ` - ${o.section}` : (o.seatCode ? ` - ${o.seatCode}` : '')}`}</option>)}
+        </Combo>
+      </label>
+      {noRecruiter && <div className="notice red" style={{ marginBottom: 8 }}>{`${chosen.tlName} has no recruiter in this department yet, so the candidate cannot be moved to this team. Add a recruiter seat under them first.`}</div>}
+      {!!chosen && !noRecruiter && (
+        <label className="field">
+          <span>Recruiter in that team</span>
+          <Combo value={rec} onChange={(e) => setRec(e.target.value)}>
+            <option value="">Choose…</option>
+            {chosen.recruiters.map((p) => <option key={p.id} value={p.id}>{`${p.name} · ${p.seatCode}`}</option>)}
+          </Combo>
+        </label>
+      )}
+      <label className="field">
+        <span>Why (kept on the history)</span>
+        <input type="text" value={why} maxLength={300} onChange={(e) => setWhy(e.target.value)} placeholder="e.g. Sourced for Sirisha's team, wrongly shown under Anitha" />
+      </label>
+      <div className="small-muted">
+        {chosen && recName
+          ? `The candidate moves to ${recName.name} in ${chosen.tlName}'s team. The earlier recruiter keeps no credit for this profile (same as Change recruiter). Both team leads are told.`
+          : 'The candidate moves to a recruiter of the new team lead\'s team. The earlier recruiter keeps no credit for this profile (same as Change recruiter). Both team leads are told.'}
+      </div>
+      {err && <div className="notice red" style={{ marginTop: 8 }}>{err}</div>}
+    </Modal>
+  );
+}
+
 const ROLL_OPTS = ['Dropped', 'Full time', 'Part time', 'On Roll', 'Replacement'];
 
 // THE JOINING CTC (founder 2026-11-17: "vellu join ayyaru, vellaki CTC ekkada enter chestharu? ... aa respective BDE or BDE TL CTC pettukovali"): the yearly CTC of a
@@ -1075,6 +1160,7 @@ export function CurrentApplication({
   app, ownership, clientName, linkTo, user = null, onChanged = null,
 }) {
   const [editing, setEditing] = useState(false);
+  const [editingTl, setEditingTl] = useState(false);
   const [note, setNote] = useState('');
   const [rollBusy, setRollBusy] = useState(false);
   // What the dropdown shows now. We move it the moment they pick, so a save that
@@ -1143,10 +1229,19 @@ export function CurrentApplication({
           <div className="c360-sub">
             Who is on this
             {mayEdit && <button type="button" className="btn btn-sm" style={{ marginLeft: 10, textTransform: 'none', letterSpacing: 0 }} title="The recruiter on this candidate is wrong: give it to the right one" onClick={() => { setNote(''); setEditing(true); }}>✎ Change recruiter</button>}
+            {mayEdit && ownership.positionCode && <button type="button" className="btn btn-sm" style={{ marginLeft: 6, textTransform: 'none', letterSpacing: 0 }} title="Put this candidate under another team lead: pick the team lead, a recruiter of that team and the reason" onClick={() => { setNote(''); setEditingTl(true); }}>✎ Change team lead</button>}
           </div>
           <OwnershipGrid o={ownership} compact />
           {note && <div className="small-muted" style={{ marginTop: 6 }}>{note}</div>}
         </>
+      )}
+      {editingTl && (
+        <ChangeTeamLead
+          app={app}
+          ownership={ownership}
+          onClose={() => setEditingTl(false)}
+          onDone={() => { setEditingTl(false); setNote('Team lead changed.'); onChanged(); }}
+        />
       )}
       {editing && (
         <EditOwner
