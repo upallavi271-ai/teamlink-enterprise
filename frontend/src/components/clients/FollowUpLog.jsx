@@ -34,6 +34,9 @@ export default function FollowUpLog({ clientId, requirementId, candidateId, appl
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState('');
   const [who, setWho] = useState('');
+  // FROM - TO (founder 2026-11-20): the list can be cut to some days
+  const [fromD, setFromD] = useState('');
+  const [toD, setToD] = useState('');
   const [q, setQ] = useState('');
   const [days, setDays] = useState(PAGE);
   const params = candidateId ? { candidateId } : requirementId ? { requirementId } : { clientId };
@@ -74,6 +77,9 @@ export default function FollowUpLog({ clientId, requirementId, candidateId, appl
 
   // THE SEARCH (founder 2026-11-05: "yedhaina oka keyword or anything type chesethey ... ahh count kanipincheyla pettu"): every word typed must
   // be on the line. perTab = the matches in each sub tab, so a word that is under another sub tab is not "0"; people = different candidates found.
+  // WHO (founder 2026-11-20): on a candidate the server says whose lines this login may read - a recruiter: Me; a TL: Everyone (team) and each
+  // recruiter by name; a Manager / Admin: everyone who wrote (whoPeople is null then).
+  const teamWho = !!(data && data.whoMode === 'team' && Array.isArray(data.whoPeople));
   const { groups, perTab, people } = useMemo(() => {
     if (!data) return { groups: [], perTab: {}, people: 0 };
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -82,7 +88,8 @@ export default function FollowUpLog({ clientId, requirementId, candidateId, appl
       return words.every((w) => text.includes(w));
     };
     const all = data.entries.filter((e) => (!reqFilter || e.requirementId === reqFilter)
-      && (!who || e.byName === who || (who === '__sheet' && e.source === 'sheet'))
+      && (!who || (teamWho ? e.byId === who : e.byName === who) || (who === '__sheet' && e.source === 'sheet'))
+      && (!fromD || (e.onDate && e.onDate >= fromD)) && (!toD || (e.onDate && e.onDate <= toD))
       && said(e));
     const counts = {};
     all.forEach((e) => { counts[e.tab] = (counts[e.tab] || 0) + 1; });
@@ -94,7 +101,7 @@ export default function FollowUpLog({ clientId, requirementId, candidateId, appl
       if (last && last.day === e.onDate) last.rows.push(e); else out.push({ day: e.onDate, rows: [e] });
     });
     return { groups: out, perTab: counts, people: names.size };
-  }, [data, who, q, subTab, reqFilter]);
+  }, [data, who, q, subTab, reqFilter, fromD, toD]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!data) return <div className="card section">{error ? <div className="error-text">{error}</div> : <div className="small-muted">Loading the follow-ups…</div>}</div>;
   const sheetRows = data.entries.filter((e) => e.source === 'sheet').length;
@@ -176,12 +183,22 @@ export default function FollowUpLog({ clientId, requirementId, candidateId, appl
               {data.requirements.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
             </Combo>
           )}
-          <select value={who} onChange={(e) => { setWho(e.target.value); setDays(PAGE); }} aria-label="Who">
-            <option value="">Everyone</option>
-            {data.people.map((p) => <option key={p} value={p}>{p}</option>)}
-            {sheetRows > 0 && <option value="__sheet">Only the lines from the sheet</option>}
-          </select>
-          <input type="search" value={q} placeholder="Search the follow-ups…" onChange={(e) => { setQ(e.target.value); setDays(PAGE); }} />
+          {data.whoMode === 'mine' ? (
+            <select value="" disabled aria-label="Who" title="You see your own follow-ups on this candidate">
+              <option value="">Me</option>
+            </select>
+          ) : (
+            <select value={who} onChange={(e) => { setWho(e.target.value); setDays(PAGE); }} aria-label="Who">
+              <option value="">{teamWho ? 'Everyone (team)' : 'Everyone'}</option>
+              {teamWho
+                ? data.whoPeople.map((p) => <option key={p.id} value={p.id}>{`${p.name}${p.role ? ` (${p.role})` : ''}`}</option>)
+                : data.people.map((p) => <option key={p} value={p}>{p}</option>)}
+              {sheetRows > 0 && <option value="__sheet">Only the lines from the sheet</option>}
+            </select>
+          )}
+          <label className="small-muted">From <input type="date" value={fromD} max={toD || undefined} onChange={(e) => { setFromD(e.target.value); setDays(PAGE); }} aria-label="From date" /></label>
+          <label className="small-muted">To <input type="date" value={toD} min={fromD || undefined} onChange={(e) => { setToD(e.target.value); setDays(PAGE); }} aria-label="To date" /></label>
+          <input type="search" value={q} placeholder="Search what happened, a name, requirement or client…" onChange={(e) => { setQ(e.target.value); setDays(PAGE); }} />
           {searching ? (
             <span className="flog-found" role="status">
               {people > 0 ? `${people.toLocaleString('en-IN')} ${people === 1 ? 'person' : 'people'} found · ` : ''}

@@ -75,6 +75,10 @@ export default function TeamFollowUpHistory() {
         </div>
       </div>
 
+      <div className="small-muted">
+        Counts for each recruiter by day, week and month (added, done, calls logged, call-backs kept, overdue): <Link to="/ats/team?view=followups&sub=report"><b>open the Follow-up report</b></Link>.
+      </div>
+
       {/* THE REPORT IN BULK (founder 2026-11-04: "followup report ni bulk lo export cheyyali"): the days, person and search
           chosen above; this tab only, or both tabs in one file (GET /client-followlog/team/export, up to a year). */}
       {data && (

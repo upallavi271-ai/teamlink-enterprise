@@ -12,6 +12,7 @@ import ConversationView from '../../components/messaging/ConversationView.jsx';
 import { useContactRule } from '../../components/messaging/useMayMessage.js';
 import AtsDataTools from '../../components/AtsDataTools.jsx';
 import { DelegationCard } from '../../components/ats/AtsWork.jsx'; // approvals handed to someone while away
+import FollowUpReport from '../../components/followups/FollowUpReport.jsx'; // the team follow-up report (2026-11-20)
 import LeaveCoverCard from '../../components/LeaveCoverCard.jsx'; // follow-ups / tasks of people on leave go to their backup or TL
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
@@ -140,8 +141,8 @@ export default function FollowUps({ embedded = false }) {
   // Follow-ups | Inbox: the Inbox is the same screen, next to the lists (omnichannel: replies to every Call / Mail / WhatsApp / SMS).
   const [sp, setSp] = useSearchParams();
   // Follow-ups | Inbox | WhatsApp chats (the recruiter's chat screen: replies, the answer and the follow-up on ONE screen)
-  const sub = ['inbox', 'chats'].includes(sp.get('sub')) ? sp.get('sub') : 'list';
-  const setSub = (v) => { const n = new URLSearchParams(sp); if (v === 'inbox' || v === 'chats') n.set('sub', v); else n.delete('sub'); if (v !== 'chats') n.delete('chat'); setSp(n, { replace: true }); };
+  const sub = ['inbox', 'chats', 'report'].includes(sp.get('sub')) ? sp.get('sub') : 'list';
+  const setSub = (v) => { const n = new URLSearchParams(sp); if (v === 'inbox' || v === 'chats' || v === 'report') n.set('sub', v); else n.delete('sub'); if (v !== 'chats') n.delete('chat'); setSp(n, { replace: true }); };
   const [unreadN, refreshUnread, setUnreadN] = useUnreadReplies(true);
   const [waN, , setWaN] = useWaChatUnread(true);
   // Contacting is its own right (Role Catalog > Contact): a role without it still sees the list, with the reason in plain words.
@@ -152,6 +153,7 @@ export default function FollowUps({ embedded = false }) {
       <button type="button" role="tab" aria-selected={sub === 'list'} className={`btn btn-sm${sub === 'list' ? ' btn-primary' : ''}`} onClick={() => setSub('list')}>Follow-ups</button>
       <button type="button" role="tab" aria-selected={sub === 'inbox'} className={`btn btn-sm${sub === 'inbox' ? ' btn-primary' : ''}`} onClick={() => setSub('inbox')}>Inbox{unreadN > 0 && <span className="cv-count-badge">{unreadN}</span>}</button>
       <button type="button" role="tab" aria-selected={sub === 'chats'} className={`btn btn-sm${sub === 'chats' ? ' btn-primary' : ''}`} onClick={() => setSub('chats')}>WhatsApp chats{waN > 0 && <span className="cv-count-badge">{waN}</span>}</button>
+      <button type="button" role="tab" aria-selected={sub === 'report'} className={`btn btn-sm${sub === 'report' ? ' btn-primary' : ''}`} onClick={() => setSub('report')}>Follow-up report</button>
     </div>
   );
   const [data, setData] = useState(null);
@@ -198,6 +200,14 @@ export default function FollowUps({ embedded = false }) {
   });
   const teamPage = usePaged(teamLf.rows);
 
+  if (sub === 'report') {
+    return (
+      <div>
+        {subTabs}
+        <FollowUpReport />
+      </div>
+    );
+  }
   if (sub === 'chats') {
     return (
       <div>

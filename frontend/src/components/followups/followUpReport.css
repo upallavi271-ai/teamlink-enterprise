@@ -1,0 +1,38 @@
+/* The Follow-up report (FollowUpReport.jsx). Scoped: .fur-* (the tab buttons reuse .flog-tab from the follow-up log) */
+.fur { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.fur-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.fur-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fur-bar select { width: auto; max-width: 220px; min-width: 0; }
+.fur-bar input[type="date"] { width: 150px; }
+.fur-seg, .fur-presets { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.fur-seg { padding-right: 8px; border-right: 1px solid var(--line); }
+.fur-tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.fur-wrap { overflow-x: auto; max-width: 100%; }
+.fur-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fur-table th, .fur-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line-soft, var(--line)); vertical-align: top; }
+.fur-table th { font-size: 12px; color: var(--ink-soft); white-space: normal; vertical-align: bottom; background: var(--paper, #fff); }
+.fur-table .fur-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fur-table tfoot td { border-top: 2px solid var(--line); border-bottom: 0; background: var(--paper, #fff); }
+.fur-sort { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: inherit; cursor: pointer; text-align: inherit; }
+.fur-sort:hover { color: var(--navy); }
+.fur-click { cursor: pointer; }
+.fur-click:hover td, .fur-table tr.on td { background: var(--blue-tint, #eef3ff); }
+.fur-zero { color: var(--ink-faint); }
+.fur-bad { color: var(--red); font-weight: 700; }
+.fur-warn { color: var(--amber); font-weight: 700; }
+.fur-ok { color: var(--green); font-weight: 700; }
+.fur-tag { margin-left: 6px; background: var(--amber-tint); color: var(--ink-soft); border-radius: 4px; padding: 0 6px; font-size: 11px; }
+.fur-note { padding: 6px 2px; }
+.fur-trend { display: inline-flex; align-items: flex-end; gap: 1px; height: 22px; min-width: 40px; }
+.fur-trend i { display: block; width: 4px; background: var(--brand, #1f5bd8); border-radius: 1px 1px 0 0; }
+.fur-trend i.z { background: var(--line); }
+.fur-cell { min-width: 38px; }
+.fur-matrix th.fur-num { min-width: 52px; }
+.fur-drill { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; background: var(--paper, #fff); display: flex; flex-direction: column; gap: 8px; }
+.fur-drill-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.fur-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fur-filters input[type="search"] { flex: 1 1 260px; min-width: 0; width: auto; }
+.fur-filters select { width: auto; max-width: 220px; }
+.fur-what { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 220px; max-width: 420px; }
+.fur-status { white-space: nowrap; }
+@media (max-width: 700px) { .fur-bar input[type="date"] { width: 130px; } }
