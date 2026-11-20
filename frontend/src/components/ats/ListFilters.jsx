@@ -95,6 +95,29 @@ export function configFor(list, user) {
       { id: 'called', label: 'Called', type: 'yesno', primary: true, keys: { value: 'called' }, yesLabel: 'Called', noLabel: 'Not called yet' },
       { id: 'interest', label: 'Interested in', type: 'text', keys: { value: 'interest' }, placeholder: 'Text' },
     ];
+    // ---- HRMS lists (2026-11-20)
+    case 'employees': return [
+      { id: 'location', label: 'Location', type: 'multi', primary: true, keys: { value: 'location' }, allLabel: 'All locations', plural: 'locations' },
+      { id: 'joined', label: 'Joined the company', type: 'daterange', primary: true, keys: { from: 'jFrom', to: 'jTo' } },
+      { id: 'empType', label: 'Employee type', type: 'multi', primary: true, keys: { value: 'empType' }, allLabel: 'Any', plural: 'types' },
+      { id: 'manager', label: 'Reporting manager', type: 'multi', keys: { value: 'manager' }, allLabel: 'Any', plural: 'managers' },
+      { id: 'tl', label: 'Team lead', type: 'multi', keys: { value: 'tl' }, allLabel: 'Any', plural: 'team leads' },
+      { id: 'team', label: 'Team', type: 'multi', keys: { value: 'team' }, allLabel: 'Any', plural: 'teams' },
+    ];
+    case 'paystructures': return [
+      { id: 'ctc', label: 'CTC per month', type: 'range', primary: true, unit: 'rupees', step: 1000, keys: { min: 'ctcMin', max: 'ctcMax' } },
+      { id: 'net', label: 'Net per month', type: 'range', primary: true, unit: 'rupees', step: 1000, keys: { min: 'netMin', max: 'netMax' } },
+      { id: 'location', label: 'Location', type: 'multi', keys: { value: 'location' }, allLabel: 'All locations', plural: 'locations' },
+    ];
+    case 'payruns': return [
+      { id: 'month', label: 'Month', type: 'daterange', primary: true, keys: { from: 'mFrom', to: 'mTo' }, title: 'The first and last month (pick any day in it)' },
+      { id: 'net', label: 'Net paid', type: 'range', primary: true, unit: 'rupees', step: 10000, keys: { min: 'netMin', max: 'netMax' } },
+    ];
+    case 'leaverequests': return [
+      { id: 'days', label: 'Days of leave', type: 'range', primary: true, step: 0.5, keys: { min: 'daysMin', max: 'daysMax' } },
+      { id: 'applied', label: 'Applied on', type: 'daterange', primary: true, keys: { from: 'aFrom', to: 'aTo' } },
+      { id: 'location', label: 'Location', type: 'multi', keys: { value: 'location' }, allLabel: 'All locations', plural: 'locations' },
+    ];
     // ---- CRM lists (2026-11-20): the search boxes and filters the pages already have stay; these add dates, amounts and places
     case 'crmleads': return [
       { id: 'cDate', label: 'Added on', type: 'daterange', primary: true, keys: { from: 'cFrom', to: 'cTo' } },

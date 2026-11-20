@@ -15,6 +15,8 @@ const seatMonth = (iso) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString
 import { Link } from 'react-router-dom';
 import EmployeePhoto from '../components/EmployeePhoto.jsx';
 import api from '../api';
+import useClientFilters from '../components/ats/useClientFilters.jsx';
+import { dropDefaultStatus } from '../components/ats/rowFilters.js';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message the employees shown (templates, preview, confirm)
 import useMayMessage from '../components/messaging/useMayMessage.js'; // the server says who may message many employees at once
@@ -290,25 +292,31 @@ export default function Employees() {
   // A POSITION (MED-1, EDU-6 …) lists EVERYONE who held it — the person in
   // it today and every earlier holder — whatever the status filter says, in
   // the order they sat in it.
+  // location, joining date, type, manager, team lead, team: the shared bar over the whole list (components/ats/useClientFilters.jsx)
+  const cf = useClientFilters('employees', rows, {
+    location: (e) => e.location, joined: (e) => e.joiningDay, empType: (e) => e.employeeType, manager: (e) => e.reportingManager, tl: (e) => e.tl, team: (e) => e.team,
+  }, me, { noun: 'employees' });
   const tenureIn = (e, code) => [...(e.seats || [])].reverse().find((t) => t.code === code) || null;
   // `ignoreStatus`: the TL-wise view counts every status (its columns ARE the
   // status split), under all the other filters.
   const matchesFilters = (e, ignoreStatus = false) => {
     if (filters.position && !(e.seats || []).some((t) => t.code === filters.position)) return false;
     const q = filters.q.trim().toLowerCase();
-    if (q && !`${e.name} ${e.employeeCode} ${e.email || ''}`.toLowerCase().includes(q)) return false;
+    if (q && !`${e.name} ${e.employeeCode} ${e.email || ''} ${e.phone || ''} ${e.designation || ''} ${e.department || ''}`.toLowerCase().includes(q)) return false;
     if (filters.dept && e.department !== filters.dept) return false;
     if (filters.designation && e.designation !== filters.designation) return false;
     if (filters.role && (e.role || '') !== filters.role
       && !Object.values(e.productRoles || {}).includes(filters.role)) return false;
-    if (!ignoreStatus && !filters.position && filters.status && !inStatus(e, filters.status)) return false;
+    // WHOLE HISTORY (founder 2026-11-20): a search or any filter looks at everybody, people who have left included, unless a status was picked on purpose
+    const widened = dropDefaultStatus(filters.status, 'Active', !!q || cf.active);
+    if (!ignoreStatus && !filters.position && filters.status && !widened && !inStatus(e, filters.status)) return false;
     if (filters.login && e.loginStatus !== filters.login) return false;
     return true;
   };
-  const filtered = useMemo(() => rows.filter((e) => matchesFilters(e)).sort((a, b) => (filters.position
+  const filtered = useMemo(() => cf.rows.filter((e) => matchesFilters(e)).sort((a, b) => (filters.position
     ? (tenureIn(a, filters.position)?.from || '').localeCompare(tenureIn(b, filters.position)?.from || '')
-    : 0)), [rows, filters]); // eslint-disable-line react-hooks/exhaustive-deps
-  const tlWiseIds = useMemo(() => rows.filter((e) => matchesFilters(e, true)).map((e) => e.id), [rows, filters]); // eslint-disable-line react-hooks/exhaustive-deps
+    : 0)), [cf.rows, filters]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tlWiseIds = useMemo(() => cf.rows.filter((e) => matchesFilters(e, true)).map((e) => e.id), [cf.rows, filters]); // eslint-disable-line react-hooks/exhaustive-deps
   // The Positions dropdown: every seat anyone has held, in the chosen
   // department, with how many people have sat in it.
   const positionOptions = useMemo(() => {
@@ -794,9 +802,10 @@ export default function Employees() {
       {/* FILTERS — search, department, designation, role, employment status and
           login status. They narrow what the server already scoped; they never
           widen it. */}
+      {view !== 'idcards' && cf.bar}
       <div className="filter-row" style={view === 'idcards' ? { display: 'none' } : undefined}>
         <input
-          type="text" placeholder="Search name, ID or email…"
+          type="text" placeholder="Search name, ID, email, phone or designation…"
           value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
         />
         <Combo value={filters.dept} onChange={(e) => setFilters((f) => ({ ...f, dept: e.target.value }))}>

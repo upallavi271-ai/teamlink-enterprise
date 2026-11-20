@@ -21,6 +21,7 @@ import { STATUS_LABEL as RUN_STATUS } from '../components/payroll/payrollUi';
 import CompliancePanel from '../components/payroll/CompliancePanel.jsx';
 import { ReconciliationPanel } from './accounts/JournalLedger.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
+import useClientFilters from '../components/ats/useClientFilters.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import EmployeeStatusTag from '../components/EmployeeStatusTag.jsx';
 import { employeeStatusField } from '../hrStatus';
@@ -362,7 +363,13 @@ function SalaryStructuresTable({ canEdit, defaultBonus }) {
   useEffect(load, []);
 
   const lf = useListFilters(rows, STRUCTURE_FIELDS, { sorts: STRUCTURE_SORTS, opening: { empStatus: 'Active' } });
-  const filtered = lf.rows;
+  // CTC and net per month, location: the shared bar over the rows (components/ats/useClientFilters.jsx)
+  const cf = useClientFilters('paystructures', lf.rows, {
+    ctc: (r) => (r.breakup ? r.breakup.ctcCheck : (r.structure ? r.structure.stipend : null)),
+    net: (r) => (r.breakup ? r.breakup.net : (r.structure ? r.structure.stipend : null)),
+    location: (r) => r.location,
+  }, null, { noun: 'employees' });
+  const filtered = cf.rows;
   const page = usePaged(filtered);
 
   return (
@@ -375,6 +382,7 @@ function SalaryStructuresTable({ canEdit, defaultBonus }) {
       </PanelHead>
       <div style={{ padding: '12px 18px' }}>
         <ListFilterBar lf={lf} storageKey="payroll-structures" noun="employees" />
+        {cf.bar}
         <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 6 }}>
           All figures are monthly. Set a CTC and every component fills itself from the Standard Package rules; nothing changes for an employee until you save their row.
         </div>
@@ -776,7 +784,8 @@ function ProcessTab({ canRun, canSeeRuns }) {
   }
 
   const runsLf = useListFilters(runs, RUN_FIELDS);
-  const runsPage = usePaged(runsLf.rows);
+  const runsCf = useClientFilters('payruns', runsLf.rows, { month: (r) => `${String(r.month || '').slice(0, 7)}-01`, net: (r) => r.totalNet }, null, { noun: 'runs' });
+  const runsPage = usePaged(runsCf.rows);
 
   if (!canRun && !canSeeRuns) return <div className="small-muted">Payroll processing isn't included in your role's permissions.</div>;
 
@@ -797,8 +806,8 @@ function ProcessTab({ canRun, canSeeRuns }) {
       {canRun && (
       <Panel style={{ marginTop: 16 }}>
         <PanelHead title="Payroll history" />
-        {runs.length > 0 && <div style={{ padding: '12px 18px 0' }}><ListFilterBar lf={runsLf} storageKey="payroll-history" noun="runs" /></div>}
-        {runs.length === 0 ? <EmptyMini>No payroll has been processed yet.</EmptyMini> : runsLf.rows.length === 0 ? <ListEmpty lf={runsLf} noun="runs" /> : (
+        {runs.length > 0 && <div style={{ padding: '12px 18px 0' }}><ListFilterBar lf={runsLf} storageKey="payroll-history" noun="runs" />{runsCf.bar}</div>}
+        {runs.length === 0 ? <EmptyMini>No payroll has been processed yet.</EmptyMini> : runsCf.rows.length === 0 ? <ListEmpty lf={runsLf} noun="runs" /> : (
           <div className="tbl-wrap">
             <table>
               <thead><tr><th>Month</th><th>Employees</th><th>Total Gross</th><th>Total Net</th><th>Status</th><th>Accounts</th><th>Processed On</th></tr></thead>

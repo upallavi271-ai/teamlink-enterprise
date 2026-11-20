@@ -287,6 +287,9 @@ function shapeEmployeeMgmtRow(e) {
     tl: e.tl,
     location: e.location,
     joiningDate: fmtDate(e.dateOfJoining),
+    // the filters (2026-11-20): the joining day as YYYY-MM-DD, and the employee type
+    joiningDay: e.dateOfJoining ? new Date(new Date(e.dateOfJoining).getTime() + 5.5 * 3600e3).toISOString().slice(0, 10) : null,
+    employeeType: e.employeeType || null,
     employmentStatus: e.employmentStatus || 'Active',
     userId: u ? u.id : null,
     // ROLE — the login's own role code, derived from the designation when the
