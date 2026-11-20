@@ -381,7 +381,8 @@ const setRow = async (id, fields, enabled = true) => {
   // ---------------------------------------------------------------- 8. ATS triggers + stop rules
   console.log('8. The ATS triggers (all OFF by default) and the stop rules');
   const tg = await call('GET', '/ats/scheduled-messages/triggers', null, T.R);
-  check('the triggers are listed and ALL are OFF by default', tg.status === 200 && tg.body.definitions.length === 10 && Object.values(tg.body.triggers).every((t) => t.enabled === false) && tg.body.canEdit === false, tg.body.triggers);
+  const ON6 = ['response_followup', 'interview_confirmation', 'interview_followup', 'client_feedback', 'document_request', 'selection'];
+  check('the triggers are listed; six are ON by default (founder 2026-11-20), application received / initial follow-up / interview and joining reminders OFF', tg.status === 200 && tg.body.definitions.length === 10 && Object.entries(tg.body.triggers).every(([k, t]) => t.enabled === ON6.includes(k)) && tg.body.canEdit === false, tg.body.triggers);
   check('only an Admin may change them', (await call('PUT', '/ats/scheduled-messages/triggers', { triggers: { application_followup: { enabled: true } } }, T.R)).status === 403);
   check('an unknown placeholder in a trigger message is refused', (await call('PUT', '/ats/scheduled-messages/triggers', { triggers: { selection: { body: 'Hi {nam}' } } }, T.A)).status === 400);
   // OFF: nothing is made
@@ -389,7 +390,7 @@ const setRow = async (id, fields, enabled = true) => {
   const addOff = await call('POST', '/applications', { candidateId: COFF.id, requirementId: REQ.id, overrideReason: 'Test candidate for the scheduler' }, T.A);
   check('while the triggers are OFF, adding a candidate to a requirement makes no automatic message', addOff.status < 300 && Number((await q('SELECT COUNT(*) AS n FROM "MessageSchedule" WHERE "candidateId" = ?', COFF.id))[0].n) === 0, addOff.body);
   const on = await call('PUT', '/ats/scheduled-messages/triggers', { triggers: { application_received: { enabled: true }, application_followup: { enabled: true, delay: { value: 1, unit: 'days' }, every: { value: 2, unit: 'days' }, count: 3 }, interview_confirmation: { enabled: true }, interview_reminder: { enabled: true }, joining_reminder: { enabled: true }, document_request: { enabled: true }, client_feedback: { enabled: true } } }, T.A);
-  check('the Admin switches some on (saved and audited)', on.status === 200 && on.body.triggers.application_followup.enabled === true && on.body.triggers.selection.enabled === false && (await prisma.auditLog.count({ where: { action: 'Automatic candidate messages changed' } })) >= 1, on.body);
+  check('the Admin switches some on (saved and audited)', on.status === 200 && on.body.triggers.application_followup.enabled === true && on.body.triggers.selection.enabled === true && (await prisma.auditLog.count({ where: { action: 'Automatic candidate messages changed' } })) >= 1, on.body);
   // response stop rule
   const CRP = await mkCand('reply');
   const addR = await call('POST', '/applications', { candidateId: CRP.id, requirementId: REQ.id, overrideReason: 'Test candidate for the scheduler' }, T.A);

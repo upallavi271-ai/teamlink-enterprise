@@ -1166,9 +1166,39 @@ async function failBell(row, app, reason) {
 }
 
 // One pass. opts: { now, force (send even when the switch is off: tests only through run, never from a route), onlyIds }
+
+// PLANS FOR WHAT WAS BOOKED BEFORE (founder 2026-11-20: "my scheduled messages must go properly"): a plan is made when an interview is booked or a
+// joining date is set - so the interviews and joinings booked before the reminders existed (or while a route did not call sync) had none. Every
+// 30 minutes the worker looks for live upcoming interviews / scheduled joinings that have no reminder row of that kind and plans them. sync() is
+// idempotent, so running it twice plans nothing twice.
+let lastBackfill = 0;
+async function backfillPlans(now = new Date()) {
+  if (Date.now() - lastBackfill < 30 * MIN) return 0;
+  lastBackfill = Date.now();
+  const today = new Date(now.getTime() + 330 * MIN).toISOString().slice(0, 10);
+  const apps = await prisma.application.findMany({
+    where: { OR: [{ AND: [{ interviewAt: { gte: now } }, { stage: { not: 'REJECTED' } }] }, { AND: [{ joiningStatus: 'Joining Scheduled' }, { joiningDate: { gte: today } }] }] },
+    select: { id: true, interviewAt: true, joiningStatus: true }, take: 2000,
+  }).catch(() => []);
+  let planned = 0;
+  for (const a of apps) {
+    // eslint-disable-next-line no-await-in-loop
+    const have = await prisma.$queryRawUnsafe('SELECT "kind" FROM "ScheduledReminder" WHERE "applicationId" = ? AND "kind" IN (\'interview\', \'joining\')', a.id).catch(() => []);
+    const kinds = new Set(have.map((r) => r.kind));
+    const need = (a.interviewAt && !kinds.has('interview')) || (a.joiningStatus === 'Joining Scheduled' && !kinds.has('joining'));
+    if (!need) continue; // eslint-disable-line no-continue
+    // eslint-disable-next-line no-await-in-loop
+    await sync(a.id, { now, event: 'backfill' }).catch(() => null);
+    planned += 1;
+  }
+  if (planned) console.log(`[scheduled-reminders] planned reminders for ${planned} interview(s) / joining(s) booked earlier`); // eslint-disable-line no-console
+  return planned;
+}
+
 async function run(opts = {}) {
   await ensure();
   const now = opts.now || new Date();
+  if (!opts.now) await backfillPlans(now).catch((e) => console.error('[scheduled-reminders] backfill', e.message)); // eslint-disable-line no-console
   const t = now.getTime();
   const settings = await loadSettings();
   const summary = { at: now.toISOString(), enabled: settings.enabled, considered: 0, sent: 0, failed: 0, skipped: 0, retried: 0, deferred: 0, cancelled: 0, items: [] };
@@ -1542,6 +1572,7 @@ function startSweep() {
 }
 
 module.exports = {
+  backfillPlans,
   SETTINGS_KEY, TEMPLATES_KEY, KINDS, CHANNELS, LANGS, TOKENS, TEMPLATE_KEYS, DEFAULTS, DEFAULT_STEPS, MAX_STEPS, MAX_TRIES, QUICK,
   loadSettings, saveSettings, loadTemplates, saveTemplates, computePlan, labelFor, buildMessage, channelsFor, languageOf, modeOf, eventOf,
   sync, panel, listForCandidate, suggest, previewOne, patchRow, addRow, cancelAll, saveDetails, sendNow, sendTest, run, digestBells, applyDeliveryStatus, upcoming, forInterview,

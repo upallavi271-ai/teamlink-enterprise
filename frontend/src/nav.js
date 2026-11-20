@@ -192,6 +192,9 @@ export const REPORTS_TEAM_TABS = [
   leaf('🔁', '/ats/handover', 'Handover', [['recruiterbde', 'Team View', 'assign']]),
   // CALL LISTS (founder 2026-11-17): a sheet of contacts split among recruiters, who call their own block from VICIdial (pages/ats/CallLists.jsx). The server decides what each login sees.
   { ...leaf('📞', '/ats/call-lists', 'Call lists', null, 'ats'), when: (u) => !!u && !u.clientId && !u.candidateId },
+  // SCHEDULED MESSAGES (founder 2026-11-20): every message schedule to candidates (one-time, recurring, automatic) with its tracking. A tab here,
+  // never a sidebar item ("no extra sidebar in ATS"). The server decides what each login sees (BDE: numbers only; client / candidate: nothing).
+  leaf('🕒', '/ats/scheduled-messages', 'Scheduled messages', [['candidates', 'Candidate List', 'view']]),
   // DATA QUALITY (2026-11-17, audit AR1): profile completeness, duplicates, stale profiles (pages/ats/DataQuality.jsx). TL and above.
   { ...leaf('🧹', '/ats/data-quality', 'Data quality', null, 'ats'), when: (u) => !!u && [u.role, u.atsRole, u.hrmsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'].includes(r)) },
   // AI Calling is a tab on the candidate profile now (founder 2026-11-04), not a tab here or a sidebar entry.
@@ -228,9 +231,6 @@ export const ATS_ITEMS = [
   moduleLeaf('clients-req', '💼', '/clients', 'Clients & Requirements', CLIENTS_REQ_TABS),
   { ...leaf('👥', '/candidates', 'Candidates & Pipeline', [['candidates', 'Candidate List', 'view']]), id: 'candidates' },
   { ...leaf('📅', '/ats/calendar', 'Interview Calendar', [['interviews', 'Calendar View', 'view']]), id: 'calendar' },
-  // COMMUNICATION -> SCHEDULED MESSAGES (founder 2026-11-20 named this page): every message schedule to candidates, one-time / recurring /
-  // automatic, with its tracking. The server decides what each login sees (the BDE side only the numbers; client / candidate logins nothing).
-  { ...leaf('🕒', '/ats/scheduled-messages', 'Scheduled Messages', [['candidates', 'Candidate List', 'view']]), id: 'scheduled-messages' },
   // AI CALLING is not a sidebar entry (founder 2026-11-04: "ai calling side bar lo vundakudadhu"): it is a tab on the candidate
   // profile (Candidate360Tabs.jsx), and that tab links to /ats/ai-calling for the company-wide lists (the route stays).
   moduleLeaf('reports-team', '🎯', '/reports/ats', 'Reports & Team', REPORTS_TEAM_TABS),

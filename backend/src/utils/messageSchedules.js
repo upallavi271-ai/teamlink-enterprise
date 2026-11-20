@@ -960,7 +960,8 @@ async function syncFromRow(rowId, user) {
   } catch (e) { console.error('[messageSchedules] syncFromRow:', e.message); } // eslint-disable-line no-console
 }
 
-// ------------------------------------------------------------------ ATS TRIGGERS (Candidate Follow-up Scheduler) - ALL OFF by default
+// ------------------------------------------------------------------ ATS TRIGGERS (Candidate Follow-up Scheduler) - six ON by default (defaultOn), the rest OFF;
+// an Admin's saved choice always wins (founder 2026-11-20)
 const TRIGGER_KEY = 'message-triggers';
 // mode: after (once, a delay after the event) | repeat (a delay, then every X, at most N, until the condition ends) | before (offsets before the interview / joining)
 const TRIGGERS = [
@@ -968,19 +969,19 @@ const TRIGGERS = [
     body: 'Hi {name}, thank you for your interest in {requirement}. {recruiter} from {company} is looking at your profile and will be in touch soon.' },
   { key: 'application_followup', label: 'Initial follow-up', event: 'After the candidate is added, until the candidate replies', mode: 'repeat', delay: { value: 1, unit: 'days' }, every: { value: 2, unit: 'days' }, count: 2, noResponse: true, group: 'application',
     body: 'Hi {name}, {recruiter} from {company} here about {requirement}. Please reply to this message or call me back when you are free.' },
-  { key: 'response_followup', label: 'Candidate response follow-up', event: 'When the client shortlists the candidate: until the candidate replies with their availability', mode: 'repeat', delay: { value: 2, unit: 'hours' }, every: { value: 1, unit: 'days' }, count: 3, noResponse: true, group: 'application', stage: 'CLIENT_SHORTLISTED',
+  { key: 'response_followup', defaultOn: true, label: 'Candidate response follow-up', event: 'When the client shortlists the candidate: until the candidate replies with their availability', mode: 'repeat', delay: { value: 2, unit: 'hours' }, every: { value: 1, unit: 'days' }, count: 3, noResponse: true, group: 'application', stage: 'CLIENT_SHORTLISTED',
     body: 'Hi {name}, good news: you are shortlisted for {requirement}. Please reply with the days and times you are free for the interview. - {recruiter}, {company}' },
-  { key: 'interview_confirmation', label: 'Interview confirmation', event: 'When an interview is booked or moved', mode: 'after', delay: { value: 0, unit: 'minutes' }, group: 'interview',
+  { key: 'interview_confirmation', defaultOn: true, label: 'Interview confirmation', event: 'When an interview is booked or moved', mode: 'after', delay: { value: 0, unit: 'minutes' }, group: 'interview',
     body: 'Hi {name}, your interview for {requirement} is booked for {interview_date} at {interview_time}. Please reply YES to confirm. - {recruiter}, {company}' },
   { key: 'interview_reminder', label: 'Interview reminder', event: 'Before the interview', mode: 'before', offsets: [{ value: 1, unit: 'days' }, { value: 1, unit: 'hours' }], group: 'interview',
     body: 'Hi {name}, a reminder: your interview for {requirement} is on {interview_date} at {interview_time}. All the best! - {recruiter}, {company}' },
-  { key: 'interview_followup', label: 'Interview completed follow-up', event: 'After the interview is done', mode: 'after', delay: { value: 1, unit: 'days' }, noResponse: true, group: 'feedback', stage: 'INTERVIEW_COMPLETED',
+  { key: 'interview_followup', defaultOn: true, label: 'Interview completed follow-up', event: 'After the interview is done', mode: 'after', delay: { value: 1, unit: 'days' }, noResponse: true, group: 'feedback', stage: 'INTERVIEW_COMPLETED',
     body: 'Hi {name}, thank you for attending the interview for {requirement}. How did it go? Please reply and tell me. - {recruiter}, {company}' },
-  { key: 'client_feedback', label: 'Client feedback pending', event: 'After the interview is done, while the client\'s feedback is awaited', mode: 'repeat', delay: { value: 2, unit: 'days' }, every: { value: 2, unit: 'days' }, count: 3, group: 'feedback', stage: 'INTERVIEW_COMPLETED',
+  { key: 'client_feedback', defaultOn: true, label: 'Client feedback pending', event: 'After the interview is done, while the client\'s feedback is awaited', mode: 'repeat', delay: { value: 2, unit: 'days' }, every: { value: 2, unit: 'days' }, count: 3, group: 'feedback', stage: 'INTERVIEW_COMPLETED',
     body: 'Hi {name}, we are still waiting for the feedback on your interview for {requirement}. I will tell you as soon as we hear back. - {recruiter}, {company}' },
-  { key: 'document_request', label: 'Document request', event: 'After the offer is accepted, until the documents are received', mode: 'repeat', delay: { value: 1, unit: 'days' }, every: { value: 2, unit: 'days' }, count: 5, group: 'documents', stage: 'OFFER_ACCEPTED',
+  { key: 'document_request', defaultOn: true, label: 'Document request', event: 'After the offer is accepted, until the documents are received', mode: 'repeat', delay: { value: 1, unit: 'days' }, every: { value: 2, unit: 'days' }, count: 5, group: 'documents', stage: 'OFFER_ACCEPTED',
     body: 'Hi {name}, for {requirement} please send your documents: ID proof, education and experience certificates and the last salary slips. - {recruiter}, {company}' },
-  { key: 'selection', label: 'Selection message', event: 'When the candidate is selected', mode: 'after', delay: { value: 0, unit: 'minutes' }, group: 'selection', stage: 'SELECTED',
+  { key: 'selection', defaultOn: true, label: 'Selection message', event: 'When the candidate is selected', mode: 'after', delay: { value: 0, unit: 'minutes' }, group: 'selection', stage: 'SELECTED',
     body: 'Hi {name}, congratulations! You are selected for {requirement}. {recruiter} will call you about the next steps. - {company}' },
   { key: 'joining_reminder', label: 'Joining reminder', event: 'Before the joining date', mode: 'before', offsets: [{ value: 2, unit: 'days' }, { value: 1, unit: 'days' }], group: 'joining',
     body: 'Hi {name}, a reminder: you join {requirement} on {joining_date}. Please bring your ID proof and documents. - {recruiter}, {company}' },
@@ -994,7 +995,7 @@ function cleanTrigger(def, v = {}) {
   const o = v && typeof v === 'object' ? v : {};
   const unitOk = (u, list, d) => (list.includes(u) ? u : d);
   const out = {
-    key: def.key, enabled: o.enabled === true, channel: CHANNELS.includes(o.channel) ? o.channel : 'WhatsApp',
+    key: def.key, enabled: o.enabled === undefined ? !!def.defaultOn : o.enabled === true, channel: CHANNELS.includes(o.channel) ? o.channel : 'WhatsApp',
     subject: txt(o.subject, 150) || `${def.label}: {requirement}`, body: String(o.body == null ? def.body : o.body).replace(/\r/g, '').trim().slice(0, 1000) || def.body,
   };
   if (def.mode !== 'before') out.delay = { value: Math.max(0, Math.min(720, intOr(o.delay && o.delay.value, def.delay.value))), unit: unitOk(o.delay && o.delay.unit, DELAY_UNITS, def.delay.unit) };
