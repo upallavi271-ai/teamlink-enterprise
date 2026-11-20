@@ -42,6 +42,7 @@ import ProfileLeft, { ResumeTabCard } from '../components/candidate/ProfileLeft.
 import { RecordDocuments } from '../components/candidate/CandidateRecord.jsx'; // ATS-100 B5
 import FollowUpLog from '../components/clients/FollowUpLog.jsx';
 import JoiningDropPanel from '../components/joindrop/JoiningDropPanel.jsx'; // Joining & Drop: the joining card, the drop, the history and the journey
+import ScheduledMessagesPanel from '../components/reminders/ScheduledMessagesPanel.jsx'; // the scheduled messages to the candidate before an interview / joining (2026-11-20)
 import {
   FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot, AddApplicationSlot, AiCallingSlot,
 } from '../components/candidate/ProfileSlots.jsx';
@@ -920,6 +921,7 @@ export default function CandidateDetail() {
       {tab === 'applications' && <OffersTab c={c} />}
       {tab === 'applications' && <JoiningTab c={c} />}
       {tab === 'applications' && internal && primary && <JoiningDropPanel app={primary} onChanged={load} />}
+      {tab === 'applications' && internal && primary && viewer.kind !== 'candidate' && <ScheduledMessagesPanel key={primary.id} applicationId={primary.id} />}
       {tab === 'history' && <div className="section-label">Activity history</div>}
       {tab === 'history' && (
         <>

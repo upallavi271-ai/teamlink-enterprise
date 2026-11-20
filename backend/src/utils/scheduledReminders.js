@@ -646,9 +646,18 @@ async function applyPlan({ app, kind, eventAt, steps, details, actor, source = '
   const wanted = [];
   let created = 0;
   let changed = 0;
+  const lo = settings.earliestHour * 60;
+  const hi = settings.latestHour * 60;
+  const nowMs = Date.now();
   for (const s of (steps || []).slice(0, MAX_STEPS + 1)) {
-    const sendAt = new Date(s.sendAt);
+    let sendAt = new Date(s.sendAt);
     if (Number.isNaN(sendAt.getTime())) continue; // eslint-disable-line no-continue
+    // the chosen time must still be ahead of us and before the event; outside the sending hours it is held to the nearest hour (07:00 / 20:00)
+    if (s.stepKey !== 'NOW') {
+      if (sendAt.getTime() <= nowMs || sendAt.getTime() >= new Date(eventAt).getTime() - 10 * MIN) continue; // eslint-disable-line no-continue
+      const m = istMinutes(sendAt);
+      if (m < lo || m > hi) { const c = Math.min(hi, Math.max(lo, m)); sendAt = atIst(istDay(sendAt), `${String(Math.floor(c / 60)).padStart(2, '0')}:${String(c % 60).padStart(2, '0')}`); }
+    }
     const channel = CHANNELS.includes(s.channel) ? s.channel : defaultChannel(chs);
     const language = LANGS.includes(s.language) ? s.language : lang;
     const stepKey = s.stepKey && (s.stepKey === 'NOW' || stepOfKey(s.stepKey) || /^X\d+$/.test(s.stepKey)) ? s.stepKey : `X${sendAt.getTime()}`;
@@ -1377,7 +1386,7 @@ async function upcoming(user, { now = new Date() } = {}) {
   const ok = new Map();
   for (let i = 0; i < appIds.length; i += 300) {
     // eslint-disable-next-line no-await-in-loop
-    (await prisma.application.findMany({ where: { AND: [applicationWhere(user), { id: { in: appIds.slice(i, i + 300) } }] }, select: { id: true, candidate: { select: { name: true } }, requirement: { select: { title: true } } } })).forEach((a) => ok.set(a.id, a));
+    (await prisma.application.findMany({ where: { AND: [applicationWhere(user), { id: { in: appIds.slice(i, i + 300) } }] }, select: { id: true, candidateId: true, candidate: { select: { name: true } }, requirement: { select: { title: true } } } })).forEach((a) => ok.set(a.id, a));
   }
   const mine = rows.filter((r) => ok.has(r.applicationId));
   const tomorrow = addDays(today, 1);
@@ -1392,7 +1401,7 @@ async function upcoming(user, { now = new Date() } = {}) {
     out.rows = mine.slice(0, 300).map((r) => {
       const a = ok.get(r.applicationId);
       return {
-        id: r.id, applicationId: r.applicationId, candidate: a.candidate && a.candidate.name, role: a.requirement && a.requirement.title, kind: r.kind, eventAt: r.eventAt, sendAt: r.sendAt, day: bucket(r),
+        id: r.id, applicationId: r.applicationId, candidateId: a.candidateId, candidate: a.candidate && a.candidate.name, role: a.requirement && a.requirement.title, kind: r.kind, eventAt: r.eventAt, sendAt: r.sendAt, day: bucket(r),
         channel: r.channel, status: r.status === 'sending' ? 'planned' : r.status, reason: r.reason, label: labelFor(r.stepKey, r.sendAt, r.eventAt), deliveryStatus: r.deliveryStatus,
       };
     });

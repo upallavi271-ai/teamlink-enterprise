@@ -79,6 +79,7 @@ import {
 } from '../../components/atskit/AtsKit.jsx';
 import WeekGrid from '../../components/interviews-v4/WeekGrid.jsx';
 import MiniMonth from '../../components/interviews-v4/MiniMonth.jsx';
+import ScheduledMessagesPanel from '../../components/reminders/ScheduledMessagesPanel.jsx'; // the reminders of this interview (2026-11-20)
 import DetailsCard from '../../components/interviews-v4/DetailsCard.jsx';
 import {
   viewRange, stepAnchor, startOfDay, groupByDay, statusTone, fmtDay, DAY_MS,
@@ -1652,6 +1653,7 @@ function DetailPanel({
       {row.canSetLink && !!link && <div style={{ marginBottom: 6 }}><StartInterviewButton row={{ ...row, start: { show: true, can: true, needsLink: true, online: true, label: 'Change the Meet link' } }} onChanged={() => { setMailKey((k) => k + 1); if (onChanged) onChanged({}); }} /></div>}
       <div style={{ marginBottom: 10 }}><InterviewMailStatus applicationId={row.id} reloadKey={mailKey} /></div>
       <InterviewPrepSection applicationId={row.id} />
+      <ScheduledMessagesPanel applicationId={row.id} only="interview" compact />
       <div className="ivx-actions">
         {(canAct || can(user, 'ats', 'interviews', 'Interview Feedback', 'create')) && <Actions row={row} advance={advance} setDialog={setDialog} onNextRound={onNextRound} canFeedback={can(user, 'ats', 'interviews', 'Interview Feedback', 'create')} canBook={canAct} onStarted={() => { setMailKey((k) => k + 1); if (onChanged) onChanged({}); }} />}
         <button type="button" className="btn btn-sm btn-ghost" onClick={() => onOpen(row)}>Open candidate</button>

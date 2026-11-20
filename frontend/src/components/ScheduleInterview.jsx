@@ -9,6 +9,9 @@ import { linkCheck } from './interviews/MeetStart.jsx';
 import MeetingProviderField, { providerCheck } from './interviews/MeetingProviderField.jsx'; // Google Meet / Zoom / Teams / Other (audit 235)
 // 2026-10-10: the "Booked - now tell them" window: Call / WhatsApp / SMS / Mail to the candidate, and the team.
 import { InterviewTellWithPrep as InterviewTell } from './interviews/InterviewPrep.jsx'; // the booking window + the preparation-questions line
+// 2026-11-20: "Reminders to the candidate" - scheduled messages 2 days / 1 day / 2 hours before, decided here by the recruiter / TL; the venue details they need.
+import RemindersPlanEditor from './reminders/RemindersPlanEditor.jsx';
+import ReminderDetailsFields from './reminders/ReminderDetailsFields.jsx';
 
 // ---------------------------------------------------------------------------
 // BOOK AN INTERVIEW — "like booking a cab" (change list §11, 2026-10-03).
@@ -60,6 +63,8 @@ export default function ScheduleInterview({
   const [list, setList] = useState(null);
   const [form, setForm] = useState({ date: '', time: '', mode: 'Online', meetingLink: '', location: '', interviewer: '', provider: 'Google Meet', roundType: '' });
   const [panel, setPanel] = useState([]);
+  const [venue, setVenue] = useState({}); // venue name, map link, contact person / phone, what to carry (optional, "needed for offline reminders")
+  const [rem, setRem] = useState({ steps: [], ready: false }); // the reminder plan chosen below
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [listErr, setListErr] = useState('');
@@ -108,6 +113,8 @@ export default function ScheduleInterview({
         linkProvider: form.mode === 'Online' && form.meetingLink.trim() ? form.provider : undefined,
         roundType: form.roundType || undefined,
         location: form.mode === 'In Person' ? form.location.trim() : '',
+        details: { ...venue, address: form.mode === 'In Person' ? form.location.trim() : '' },
+        ...(rem.ready ? { reminders: { steps: rem.steps } } : {}),
         panel: panel.map((p) => (p.userId ? { userId: p.userId } : { name: p.name, email: p.email || null })),
       });
       setDone(r.data);
@@ -210,9 +217,28 @@ export default function ScheduleInterview({
             {form.mode === 'Online' ? (
               <MeetingProviderField provider={form.provider} onProvider={(p) => set({ provider: p })} value={form.meetingLink} onChange={(v) => set({ meetingLink: v })} />
             ) : (
-              <input aria-label="Address" placeholder="Address, e.g. Apollo Hospital, 2nd floor HR" value={form.location} onChange={(e) => set({ location: e.target.value })} />
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div className="rem-grid" style={{ gridTemplateColumns: '1fr' }}>
+                  <label>
+                    <span>Full address<span className="rem-need"> · needed for offline reminders</span></span>
+                    <input aria-label="Address" placeholder="Address, e.g. 12 MG Road, Hyderabad 500001" value={form.location} onChange={(e) => set({ location: e.target.value })} />
+                  </label>
+                </div>
+                <ReminderDetailsFields kind="interview" value={venue} onChange={setVenue} hideAddress />
+              </div>
             )}
           </div>
+        </div>
+
+        <div className="ivx-sec">
+          <RemindersPlanEditor
+            applicationId={chosen ? chosen.id : null}
+            kind="interview"
+            eventAt={form.date && form.time ? new Date(`${form.date}T${form.time}:00+05:30`).toISOString() : null}
+            mode={form.mode}
+            details={{ ...venue, address: form.mode === 'In Person' ? form.location.trim() : '' }}
+            onChange={setRem}
+          />
         </div>
 
         <div className="ivx-sec">

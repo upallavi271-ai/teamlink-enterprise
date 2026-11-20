@@ -24,6 +24,7 @@ import PendingOnTeam from './PendingOnTeam.jsx';
 import MissedItemsBox from '../MissedItemsBox.jsx';
 import { BdeWorkspace } from '../clients/ClientBusiness.jsx';
 import DashboardOfPicker from './DashboardOfPicker.jsx'; // Super Admin: see another login's dashboard (2026-11-10)
+import RemindersGoingOutCard from '../reminders/RemindersGoingOutCard.jsx'; // "Reminders going out": the scheduled messages to candidates, today and tomorrow (2026-11-20)
 import './atsHome.css';
 import Combo from '../Combo.jsx';
 
@@ -647,6 +648,7 @@ export default function AtsHome() {
         )}
         {error && <div className="notice red">{error}</div>}
         {!data && !error && <div className="small-muted">Loading your dashboard…</div>}
+        {data && !asUser && <RemindersGoingOutCard key={reload} />}
         {data && (
           <AtsV4
             data={carry ? { ...data, carryOver: carry } : data}

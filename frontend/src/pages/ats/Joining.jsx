@@ -28,6 +28,11 @@ import MonthlySalary, { salaryStart, yearlyOf } from '../../components/MonthlySa
 import { ctcAsk, CtcAsk, CtcAskButtons } from '../../components/CtcConfirm.jsx';
 import { DropDialog, errText } from '../../components/joindrop/JdParts.jsx';
 import OfferLetterModal, { offerLetterNote } from '../../components/offerletter/OfferLetterModal.jsx'; // the offer letter mailed with the joining date
+// 2026-11-20: scheduled messages to the candidate before the joining (2 days / 1 day / the morning), decided here by the recruiter / TL
+import RemindersPlanEditor from '../../components/reminders/RemindersPlanEditor.jsx';
+import ReminderDetailsFields from '../../components/reminders/ReminderDetailsFields.jsx';
+import ScheduledMessagesPanel from '../../components/reminders/ScheduledMessagesPanel.jsx';
+import { fromIst } from '../../components/reminders/remUtil.js';
 import {
   fmtDate, money, Banner, IntJoinEmpty, EMPTY_INTJOIN_FILTERS, useIntJoinPaged, ShowOlder, PAGE_SIZES_IJ,
 } from './intjoinShared.jsx';
@@ -362,6 +367,17 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
   // the salary per month -> the yearly CTC saved with Joined (components/MonthlySalary.jsx, founder 2026-11-11)
   const [sal, setSal] = useState(salaryStart(r.offeredCtc));
   const [ask, setAsk] = useState(null);
+  // the reminders: the details they need (reporting time, place, contacts) and the plan; a joining that already has a plan is managed in the panel below
+  const [jd, setJd] = useState({});
+  const [rem, setRem] = useState({ steps: [], ready: false });
+  const [hasPlan, setHasPlan] = useState(null);
+  useEffect(() => {
+    api.get(`/ats/reminders/application/${r.id}`).then((x) => {
+      const k = x.data.kinds.joining;
+      setHasPlan(!!(k && k.live && k.counts.total > 0));
+      if (k && k.info) setJd(k.info);
+    }).catch(() => setHasPlan(false));
+  }, [r.id]);
   async function joined(confirmCtc = false) {
     if (!place.trim()) { setPlaceErr('Type the place (city or branch) where they joined.'); return; }
     const yearly = yearlyOf(sal);
@@ -420,9 +436,16 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
               <b>{c.date ? '✓ ' : '2 · '}Joining date</b>
               <div className="ivx-actions">
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-                <button type="button" className="btn btn-sm" disabled={busy || !date || (internal && !c.docs) || (c.date && date === r.joiningDate)} onClick={() => step(async () => { const res = await api.post(`/ats/joining/${r.id}/schedule`, { joiningDate: date }); res.data.message = `Saved. Joining on ${fmtDate(date)}.${offerLetterNote(res.data.offerLetter)}`; return res; })}>Save date</button>
+                <button type="button" className="btn btn-sm" disabled={busy || !date || (internal && !c.docs) || (c.date && date === r.joiningDate && hasPlan !== false)} onClick={() => step(async () => { const res = await api.post(`/ats/joining/${r.id}/schedule`, { joiningDate: date, details: jd, ...(hasPlan === false && rem.ready ? { reminders: { steps: rem.steps } } : {}) }); const n = res.data.reminders && res.data.reminders.count; res.data.message = `Saved. Joining on ${fmtDate(date)}.${n ? ` ${n} reminder message${n === 1 ? '' : 's'} planned for the candidate.` : ''}${offerLetterNote(res.data.offerLetter)}`; return res; })}>{hasPlan === false ? 'Save date and reminders' : 'Save date'}</button>
               </div>
               {internal && !c.docs && <div className="ivx-hint">For an internal hire, check the documents first.</div>}
+              {hasPlan === false && (
+                <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                  <ReminderDetailsFields kind="joining" value={jd} onChange={setJd} />
+                  <RemindersPlanEditor applicationId={r.id} kind="joining" eventAt={date ? fromIst(date, jd.reportingTime || '09:30') : null} mode="joining" details={jd} onChange={setRem} />
+                </div>
+              )}
+              {hasPlan === true && <ScheduledMessagesPanel applicationId={r.id} only="joining" compact />}
             </div>
 
             <div className="ivx-sec">

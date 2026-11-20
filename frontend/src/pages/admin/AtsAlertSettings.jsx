@@ -5,6 +5,7 @@ import StatusChip from '../../components/ui/StatusChip.jsx';
 import PendingWorkSettings from '../../components/team/PendingWorkSettings.jsx'; // "Reminders to team leads" card (2026-10-10)
 import JoinDropSettings from './JoinDropSettings.jsx'; // who is told when someone joins / drops / the client answers (2026-10-17)
 import InterviewReminderSettings from './InterviewReminderSettings.jsx'; // who is reminded of an interview, when and how (2026-10-10)
+import RemindersSettings from '../../components/reminders/RemindersSettings.jsx'; // scheduled messages to the candidate before an interview / joining (2026-11-20)
 
 // ---------------------------------------------------------------------------
 // Administration → STEP TIMING — every per-step day in ONE table (spec
@@ -218,6 +219,8 @@ export default function AtsAlertSettings() {
       )}
 
       <InterviewReminderSettings />
+
+      <RemindersSettings />
 
       <JoinDropSettings />
 
