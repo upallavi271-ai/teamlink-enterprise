@@ -53,6 +53,7 @@ import { WaOptInModal } from '../components/wa/WaOptIn.jsx';
 import { useWaConfig, waMayUse } from '../components/wa/waKit.js';
 import { useReachRights } from '../components/reach/reachKit.js';
 import SavedViews from '../components/SavedViews.jsx';
+import MultiSelect from '../components/ats/MultiSelect.jsx';
 import CandidateFilterBar, {
   useCandidateXf, readUrlFilters, writeUrlFilters, URL_FILTER_KEYS,
 } from '../components/ats/CandidateFilterBar.jsx';
@@ -2119,13 +2120,7 @@ export default function Candidates() {
                 )}
                 <span className="lph-facet wide cpl-panel-sep">More filters</span>
                 {user?.atsRole !== 'HR' && (
-                  <PanelField label="Hiring type">
-                    <Combo value={filters.hiring || ''} onChange={(e) => setFilter({ hiring: e.target.value, stage: '' })}>
-                      <option value="">Client + internal</option>
-                      <option value="client">Client requirements</option>
-                      <option value="internal">Our own openings (internal)</option>
-                    </Combo>
-                  </PanelField>
+                  <MultiSelect label="Hiring type" value={filters.hiring || ''} onChange={(v) => setFilter({ hiring: v, stage: '' })} allLabel="Client + internal" options={[{ value: 'client', label: 'Client requirements' }, { value: 'internal', label: 'Our own openings (internal)' }]} />
                 )}
                 {/* Saved views: in the page header (Saved filters ▾). */}
                 <FacetSelect multi
@@ -2146,14 +2141,7 @@ export default function Candidates() {
                     loading={facetsLoading}
                   />
                 )}
-                <PanelField label="Follow-up">
-                  <Combo value={filters.followUp} onChange={(e) => setFilter({ followUp: e.target.value })}>
-                    <option value="">All follow-ups</option>
-                    <option value="Due Today,Overdue">Due now (today + late)</option>
-                    {FOLLOWUP_STATUSES.map((x) => <option key={x} value={x}>{x === 'Overdue' ? 'Late' : x === 'Due Today' ? 'Due today' : x}</option>)}
-                    <option value="Not set">Not set</option>
-                  </Combo>
-                </PanelField>
+                <MultiSelect label="Follow-up" value={filters.followUp} onChange={(v) => setFilter({ followUp: v })} allLabel="All follow-ups" options={[...FOLLOWUP_STATUSES.map((x) => ({ value: x, label: x === 'Overdue' ? 'Late' : x === 'Due Today' ? 'Due today' : x })), { value: 'Not set', label: 'Not set' }]} />
                 <FacetSelect multi label="Notice period" allLabel="Any notice" value={filters.notice} onChange={(v) => setFilter({ notice: v })} options={withCurrent(facets.notice, filters.notice)} loading={facetsLoading} />
                 <PanelField label="Expected salary up to (₹L)">
                   <input type="number" min="0" step="0.5" placeholder="e.g. 12" value={filters.maxSalary} onChange={(e) => setFilter({ maxSalary: e.target.value })} />
