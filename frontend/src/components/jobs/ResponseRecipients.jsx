@@ -37,7 +37,7 @@ export function RecipientsChecklist({ groups, value, onChange, assignedIds = [],
         {quickPick && <button type="button" className="btn btn-sm" disabled={disabled || !assignedHere.length} onClick={() => onChange([...new Set(assignedHere)])} title={assignedHere.length ? 'Tick exactly the recruiters assigned to this job' : 'No recruiter is assigned to this job yet'}>
           All assigned recruiters
         </button>}
-        {value.length > 0 && <button type="button" className="btn btn-sm btn-ghost" disabled={disabled} onClick={() => onChange([])}>Clear</button>}
+        {quickPick && value.length > 0 && <button type="button" className="btn btn-sm btn-ghost" disabled={disabled} onClick={() => onChange([])}>Clear</button>}
         <span className="small-muted">{`${value.length} ticked`}</span>
       </div>
       <div style={{ maxHeight: 240, overflow: 'auto', border: '1px solid var(--line)', borderRadius: 8, padding: 8 }}>
@@ -134,9 +134,9 @@ export function PostRecipientsStep({ job, canAssign = false, onDone, nextLabel =
       )}
       <h4 style={{ margin: '0 0 2px' }}>Who receives the responses</h4>
       <div className="small-muted" style={{ marginBottom: 6 }}>
-        The people who apply by themselves - on the Job Portal, our careers page, Naukri, Indeed, LinkedIn and the other job boards, or a WhatsApp / AI apply link - go to these recruiters, one by one in turn. Needed before posting.
+        The people who apply by themselves (on the Job Portal, our careers page, Naukri, Indeed, LinkedIn and the other job boards, or a WhatsApp / AI apply link) go to these recruiters, one by one in turn. Needed before posting.
       </div>
-      <RecipientsChecklist groups={groups} value={ticks} onChange={setTicks} assignedIds={canAssign && assigned ? assigned : (data.assignedIds || [])} />
+      <RecipientsChecklist groups={groups} value={ticks} onChange={(v) => { setTicks(v); setErr(''); }} assignedIds={canAssign && assigned ? assigned : (data.assignedIds || [])} />
       {changedList && (
         <label className="field" style={{ marginTop: 8 }}>
           <span>Why the change</span>
