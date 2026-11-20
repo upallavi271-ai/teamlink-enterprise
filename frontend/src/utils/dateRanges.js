@@ -70,3 +70,11 @@ export function dateProblem(from, to) {
   if (from && to && from > to) return 'From must be on or before To';
   return '';
 }
+
+/** The IST day of a date / timestamp / text. A plain YYYY-MM-DD is already a day and stays; a moment is cut at IST midnight. */
+export function istDayOf(v) {
+  if (!v) return '';
+  if (typeof v === 'string' && ISO.test(v.trim())) return v.trim();
+  const t = v instanceof Date ? v.getTime() : new Date(v).getTime();
+  return Number.isFinite(t) ? fmt(new Date(t + IST_MS)) : '';
+}

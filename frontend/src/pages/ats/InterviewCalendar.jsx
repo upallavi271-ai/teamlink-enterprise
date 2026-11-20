@@ -17,7 +17,7 @@ const canSchedule = (user) => can(user, 'ats', 'interviews', 'Schedule Interview
 // ATS LAYOUT v3 (2026-10-03): filters bar → cards → charts → table, all from
 // the shared kit. The calendar is coloured by department (kit palette).
 import PageFilterBar, { usePageFilters } from '../../components/ui/PageFilterBar.jsx';
-import { presetDates } from '../../utils/dateRanges.js';
+import { presetDates, istToday, istDayOf } from '../../utils/dateRanges.js';
 import { BarChart, slotVar } from '../../components/charts';
 import './InterviewCalendarV3.css';
 import HierarchyFilter, {
@@ -216,8 +216,8 @@ const thisWeek = () => { const m = mondayL(new Date()); const e = new Date(m); e
 const AI_FIELDS = [{ key: 'status', get: (r) => r.status, label: (v) => AI_STATUS_TEXT[v] || v }];
 const PHASE_LABEL = { ...Object.fromEntries([...INTERVIEW_LIFECYCLE, ...INTERVIEW_EXCEPTIONS]), SHORTLISTED: 'Shortlisted' };
 const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN'];
-const todayIso = () => new Date().toISOString().slice(0, 10);
-const dayOf = (iso) => (iso ? new Date(iso).toISOString().slice(0, 10) : null);
+const todayIso = () => istToday(); // the IST day (was the UTC day: after midnight IST "today" was still yesterday)
+const dayOf = (iso) => (iso ? istDayOf(iso) : null);
 
 // A live slot whose date has passed is not "upcoming" any more — it is owed
 // an update, so it is shown under Pending Feedback and marked Overdue.

@@ -291,7 +291,7 @@ function personKeyOf(v) {
 
 function parseFilters(q = {}) {
   const s = (v) => (typeof v === 'string' ? v.trim() : '');
-  const range = s(q.range) || 'all';
+  const range = s(q.range) || (s(q.from) || s(q.to) ? 'custom' : 'all'); // a bare From-To is a custom range, not "all"
   let period = null;
   if (range !== 'all') {
     try {

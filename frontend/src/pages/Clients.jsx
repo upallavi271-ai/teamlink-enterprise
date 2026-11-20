@@ -48,6 +48,7 @@ const deptOfClient = (c, mine) => (c.ownerDepartment === 'Medical' && mine && mi
 import '../components/clients/ccr.css';
 import { rowClickProps } from '../utils/rowClick.js';
 import PageFilterBar, { usePageFilters, rangeDates } from '../components/ui/PageFilterBar.jsx';
+import { istDayOf } from '../utils/dateRanges.js';
 import { Help } from '../components/ui/Guide.jsx';
 import useClientLabel from '../components/clients/useClientLabel.js'; // "Name - Location" for same-name clients (2026-10-22)
 import { matchesText } from '../components/searchMatch.js';
@@ -321,7 +322,7 @@ export default function Clients() {
     const q = filters.search.trim().toLowerCase();
     const inRange = (c) => {
       if (!pfDates.from && !pfDates.to) return true;
-      const d = String(c.activeDate || c.createdAt || '').slice(0, 10);
+      const d = istDayOf(c.activeDate || c.createdAt); // the IST day, not the UTC day
       return !!d && (!pfDates.from || d >= pfDates.from) && (!pfDates.to || d <= pfDates.to);
     };
     return clients.filter((c) => inRange(c)

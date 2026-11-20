@@ -447,6 +447,7 @@ export function useIntJoinPaged(url, {
   // the extra filters of Offers (date, status, CTC, BGV, counter-offer) and Joining (date, guarantee, invoice): components/ats/ListFilters.jsx
   const xfList = url === '/ats/offers' ? 'offers' : url === '/ats/joining' ? 'joining' : url === '/ats/feedback' ? 'feedback' : '';
   const xf = useListXf(xfList || 'none', user);
+  const xfCount = Object.keys(xf.params).length; // (was only defined in the other hook: Offers, Joining and Interview feedback crashed on open)
   const clientDesk = can(user, null, 'clients', 'Client List', 'view');
   const [f, setF] = useState(EMPTY_LIST);
   const [qSent, setQSent] = useState('');

@@ -44,7 +44,7 @@ const todayStr = () => new Date(Date.now() + IST_MS).toISOString().slice(0, 10);
 const toDate = (s) => new Date(`${s}T00:00:00.000Z`);
 const fmt = (d) => d.toISOString().slice(0, 10);
 const addDays = (s, n) => fmt(new Date(toDate(s).getTime() + n * DAY_MS));
-const validIso = (s) => ISO.test(String(s || '')) && fmt(toDate(s)) === s;
+const validIso = (s) => { if (!ISO.test(String(s || ''))) return false; const d = toDate(s); return !Number.isNaN(d.getTime()) && fmt(d) === s; }; // (month 13 / day 40 are not dates)
 
 // "24 Sep 2026", or "01 Sep – 24 Sep 2026" (the year once when both share it).
 function labelOf(from, to) {

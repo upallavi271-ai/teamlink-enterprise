@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { istDayOf } from '../../utils/dateRanges.js';
 import Combo from '../Combo.jsx';
 import MoreFilters from './MoreFilters.jsx';
 import FilterChips from '../FilterChips.jsx';
@@ -69,14 +70,7 @@ import './ListFilters.css';
 // ---------------------------------------------------------------------------
 
 const EMPTY = (v) => v === '' || v === null || v === undefined;
-const iso = (v) => {
-  if (!v) return '';
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10);
-  const s = String(v);
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
-};
+const iso = (v) => istDayOf(v); // the IST day of a moment (utils/dateRanges.js), not the UTC day
 const dmy = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '');
 const norm = (o) => (o && typeof o === 'object' ? { value: String(o.value), label: String(o.label ?? o.value) } : { value: String(o), label: String(o) });
 

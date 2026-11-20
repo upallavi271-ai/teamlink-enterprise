@@ -2143,6 +2143,9 @@ async function bdeHome(c, b, k) {
     tile('submitted', 'Sent to client', submitted.length, 'now', { drill: 'submitted', zero: 'Nobody sent yet' }),
     tile('client-feedback', 'Client has not replied', clientDecision.length, 'now', { drill: 'client-feedback', zero: 'Every client has replied' }),
     T.selected('Selected'),
+    // the picked days (2026-11-20: every tile here was "now", so a BDE's date filter changed nothing in the number row)
+    T.interviews(`Interviews ${c.word}`),
+    T.joined(`Joined ${c.word}`),
   ];
   const liveJobClientIds = new Set(openJobs.filter((r) => !r.internal).map((r) => r.clientId));
   const unsigned = myClients.filter((x) => liveJobClientIds.has(x.id) && !V.agreementIsSigned(x.agreementStatus));
