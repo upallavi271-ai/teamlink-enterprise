@@ -47,7 +47,7 @@ fs.writeFileSync(FAKE, JSON.stringify([
   { s: 58.3, e: 63.5, t: 'Every module, every tab, one login.' },
 ]));
 
-const PORT = 4078;
+const PORT = Number(process.env.TEST_PORT) || 4078;
 const API = `http://localhost:${PORT}/api`;
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'prodvid-test', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}`, CRM_DEMO_DIR: VID, FFMPEG_BIN: FF, CRM_STT_FAKE_JSON: FAKE, PUBLIC_BASE_URL: `http://localhost:${PORT}` };
 delete env.TEST_ALLOW_AI;

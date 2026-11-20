@@ -20,7 +20,7 @@ const src = new DatabaseSync(SOURCE, { readOnly: true });
 src.exec(`VACUUM INTO '${COPY.replace(/'/g, "''")}'`);
 src.close();
 
-const PORT = 4058;
+const PORT = Number(process.env.TEST_PORT) || 4058;
 const API = `http://localhost:${PORT}/api`;
 const SECRET = 'crm-share-test';
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: SECRET, APP_BASE_URL: `http://localhost:${PORT}`, DATABASE_URL: `file:${COPY.split(path.sep).join('/')}` };

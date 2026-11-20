@@ -22,7 +22,7 @@ src.close();
 fs.mkdirSync(VID, { recursive: true });
 fs.writeFileSync(path.join(VID, 'HRMS.mp4'), Buffer.alloc(4096, 1));
 fs.writeFileSync(path.join(VID, 'ATS.mp4'), Buffer.alloc(2048, 2));
-const PORT = 4077;
+const PORT = Number(process.env.TEST_PORT) || 4077;
 const BASE = `http://localhost:${PORT}`;
 const API = `${BASE}/api`;
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'prodsales-test', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}`, CRM_DEMO_DIR: VID, PUBLIC_BASE_URL: BASE };

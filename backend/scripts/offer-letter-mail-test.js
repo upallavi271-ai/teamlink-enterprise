@@ -28,7 +28,7 @@ const src = new DatabaseSync(SOURCE, { readOnly: true });
 src.exec(`VACUUM INTO '${COPY.replace(/'/g, "''")}'`);
 src.close();
 
-const PORT = 4098;
+const PORT = Number(process.env.TEST_PORT) || 4098;
 const API = `http://localhost:${PORT}/api`;
 const env = {
   ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'offer-letter-mail-test', UPLOAD_DIR: UPLOADS,

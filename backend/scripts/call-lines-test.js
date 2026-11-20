@@ -44,7 +44,7 @@ const fakeAmi = net.createServer((sock) => {
 });
 fakeAmi.listen(AMI_PORT, '127.0.0.1');
 
-const PORT = 4061;
+const PORT = Number(process.env.TEST_PORT) || 4061;
 const API = `http://localhost:${PORT}/api`;
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'call-lines-test', INTEGRATION_SECRET_KEY: 'zz-call-lines-test-key', AI_VOICE_AMI_HOST: '127.0.0.1', AI_VOICE_AMI_PORT: String(AMI_PORT), AI_VOICE_AMI_USER: 'teamlink', AI_VOICE_AMI_SECRET: 'zz-ami-secret', AI_VOICE_SIP_TRUNK: 'teamlink-gw', AI_VOICE_PHONE_MODE: 'Test', AI_VOICE_TEST_NUMBERS: '9100654424', AI_VOICE_DIAL_FORMAT: '10', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}` };
 Object.assign(process.env, env);

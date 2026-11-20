@@ -17,7 +17,7 @@ const COPY = path.join(os.tmpdir(), `zz-shots-${process.pid}.db`);
 const src = new DatabaseSync(SOURCE, { readOnly: true });
 src.exec(`VACUUM INTO '${COPY.replace(/'/g, "''")}'`);
 src.close();
-const PORT = 4087;
+const PORT = Number(process.env.TEST_PORT) || 4087;
 const API = `http://localhost:${PORT}/api`;
 const UPLOADS = path.join(os.tmpdir(), `zz-shots-up-${process.pid}`);
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'shots-test', UPLOAD_DIR: UPLOADS, DATABASE_URL: `file:${COPY.split(path.sep).join('/')}` };

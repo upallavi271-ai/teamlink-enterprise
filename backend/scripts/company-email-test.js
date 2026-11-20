@@ -24,7 +24,7 @@ dbx.close();
 
 const MAILS = path.join(os.tmpdir(), `zz-company-email-mails-${process.pid}.jsonl`);
 const mailsTo = (to) => (fs.existsSync(MAILS) ? fs.readFileSync(MAILS, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []).filter((m) => String(m.to).toLowerCase().includes(to));
-const PORT = 4034;
+const PORT = Number(process.env.TEST_PORT) || 4034;
 const API = `http://localhost:${PORT}/api`;
 const env = {
   ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'company-email-test', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}`,

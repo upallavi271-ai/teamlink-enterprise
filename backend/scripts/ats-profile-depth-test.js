@@ -18,7 +18,7 @@ const COPY = path.join(os.tmpdir(), `zz-profdepth-${process.pid}.db`);
 const src = new DatabaseSync(SOURCE, { readOnly: true });
 src.exec(`VACUUM INTO '${COPY.replace(/'/g, "''")}'`);
 src.close();
-const PORT = 4081;
+const PORT = Number(process.env.TEST_PORT) || 4081;
 const API = `http://localhost:${PORT}/api`;
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'profdepth-test', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}` };
 delete env.TEST_ALLOW_AI; // the summary must fall back to the rule-based one

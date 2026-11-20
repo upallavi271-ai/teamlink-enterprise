@@ -15,7 +15,7 @@ const COPY = path.join(os.tmpdir(), `zz-dv-${process.pid}.db`).split(path.sep).j
 const src = new DatabaseSync(SOURCE, { readOnly: true });
 src.exec(`VACUUM INTO '${COPY}'`);
 src.close();
-const PORT = 4093;
+const PORT = Number(process.env.TEST_PORT) || 4093;
 const SECRET = 'zz-dv-secret';
 const env = { ...process.env, PORT: String(PORT), TEAMLINK_SANDBOX: '1', TEST_MODE: '1', DATABASE_URL: `file:${COPY}`, JWT_SECRET: SECRET };
 Object.assign(process.env, env);

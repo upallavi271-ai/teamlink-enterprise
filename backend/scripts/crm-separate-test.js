@@ -23,7 +23,7 @@ dbx.exec('DELETE FROM "AppSetting" WHERE "key" = \'crm.settings\'');
 dbx.close();
 
 const MAILS = path.join(os.tmpdir(), `zz-crm-separate-mails-${process.pid}.jsonl`);
-const PORT = 4071;
+const PORT = Number(process.env.TEST_PORT) || 4071;
 const API = `http://localhost:${PORT}/api`;
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'crm-separate-test', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}`, TEST_MAIL_CAPTURE: MAILS, AI_VOICE_GATEWAY: '0', FRONTEND_URL: 'http://localhost:5173' };
 Object.assign(process.env, env);

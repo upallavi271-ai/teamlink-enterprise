@@ -26,7 +26,7 @@ dbx.exec("DELETE FROM \"Integration\" WHERE \"id\" IN ('email', 'whatsapp', 'wha
 dbx.close();
 
 const MAILS = path.join(os.tmpdir(), `zz-crm-contact-mails-${process.pid}.jsonl`);
-const PORT = 4059;
+const PORT = Number(process.env.TEST_PORT) || 4059;
 const API = `http://localhost:${PORT}/api`;
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'crm-contact-test', INTEGRATION_SECRET_KEY: 'zz-crm-contact-test-integration-key', TL_COMM_SEND_LIMIT: '500', TEST_MAIL_CAPTURE: MAILS, APP_BASE_URL: `http://localhost:${PORT}`, DATABASE_URL: `file:${COPY.split(path.sep).join('/')}` };
 Object.assign(process.env, env);

@@ -22,7 +22,7 @@ const dbx = new DatabaseSync(COPY);
 dbx.exec('DELETE FROM "AppSetting" WHERE "key" = \'crm.settings\'');
 dbx.close();
 
-const PORT = 4055;
+const PORT = Number(process.env.TEST_PORT) || 4055;
 const API = `http://localhost:${PORT}/api`;
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'crm-roles-test', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}` };
 Object.assign(process.env, env);

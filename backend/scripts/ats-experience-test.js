@@ -19,7 +19,7 @@ const COPY = path.join(os.tmpdir(), `zz-atsexp-${process.pid}.db`);
 const src = new DatabaseSync(SOURCE, { readOnly: true });
 src.exec(`VACUUM INTO '${COPY.replace(/'/g, "''")}'`);
 src.close();
-const PORT = 4084;
+const PORT = Number(process.env.TEST_PORT) || 4084;
 const ROOT = `http://localhost:${PORT}`;
 const API = `${ROOT}/api`;
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'atsexp-test', APP_BASE_URL: ROOT, DATABASE_URL: `file:${COPY.split(path.sep).join('/')}` };
