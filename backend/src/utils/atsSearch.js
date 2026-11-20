@@ -363,7 +363,8 @@ async function requirementsGroup(user, v, ctx) {
   if (links.rec.length) linkArms.push({ recruiterId: { in: links.rec } }, ...links.rec.map((u) => ({ recruiterIds: { contains: u } })));
   if (links.tl.length) linkArms.push({ tlId: { in: links.tl } });
   if (links.bde.length) linkArms.push({ bdeId: { in: links.bde } });
-  if (links.directIds.length) linkArms.push({ applications: { some: { candidateId: { in: links.directIds.slice(0, 200) } } } });
+  // only through an application this login may see (a BDE never learns that a candidate still at recruiter review applied to their job)
+  if (links.directIds.length) linkArms.push({ applications: { some: { AND: [{ candidateId: { in: links.directIds.slice(0, 200) } }, SC.applicationWhere(user)] } } });
   const arms = [...(own.size ? [{ id: { in: [...own] } }] : []), ...linkArms];
   if (!browse && !arms.length) {
     const fz = await fuzzyIds('Requirement', ['title'], toks.map((x) => x.t), 40);

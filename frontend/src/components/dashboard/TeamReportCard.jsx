@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
+import ExportMenu from '../ExportMenu.jsx';
 import MultiSelect from '../ats/MultiSelect.jsx';
 import './teamReportCard.css';
 
@@ -95,6 +96,7 @@ function PersonPanel({ person, from, to, onClose }) {
             <b>{person.name}</b>
             <span className="small-muted">{[person.role, person.leadName ? `TL ${person.leadName}` : '', `${fmtDay(from)}${from === to ? '' : ` to ${fmtDay(to)}`}`].filter(Boolean).join(' · ')}</span>
           </div>
+          <ExportMenu url="/followup-report/export" formats={['xlsx', 'csv']} label="Export" params={{ from, to, period: 'day', personId: person.id, metric: ['added', 'done', 'logged', 'overdue'].includes(show) ? show : undefined }} note="The table, the day-by-day table and every follow-up with what was written" />
           <Link className="btn btn-sm" to={`/ats/history/recruiter/${person.id}`} onClick={onClose}>Complete history</Link>
           <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
         </div>
@@ -233,7 +235,10 @@ function TeamTable({ r, leadId, title, onBack, onClose }) {
           {onBack && <button type="button" className="btn btn-sm" onClick={onBack}>← All team leads</button>}
           <h3>{title}</h3>
         </div>
-        <RangeBar r={r}>{onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}</RangeBar>
+        <RangeBar r={r}>
+          <ExportMenu url="/followup-report/export" formats={['xlsx', 'csv']} label="Export" params={{ from: r.range.from, to: r.range.to, period: 'day', leadId: leadId || undefined }} note="The table, the day-by-day table and every follow-up with what was written" />
+          {onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}
+        </RangeBar>
       </div>
       {!data ? <div className="small-muted">Loading…</div> : (
         <div className="trd-scroll">
@@ -285,7 +290,10 @@ function TlList({ r, onPick, onClose }) {
     <>
       <div className="trc-head">
         <h3>Overall report</h3>
-        <RangeBar r={r}>{onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}</RangeBar>
+        <RangeBar r={r}>
+          <ExportMenu url="/followup-report/export" formats={['xlsx', 'csv']} label="Export" params={{ from: r.range.from, to: r.range.to, period: 'day' }} note="The table, the day-by-day table and every follow-up with what was written" />
+          {onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}
+        </RangeBar>
       </div>
       <div className="trd-scroll">
         <table className="trc-table">
