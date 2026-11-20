@@ -1,4 +1,5 @@
 const express = require('express');
+const DR = require('../utils/dateRange'); // ONE date reader: IST days, whole To day, 400 on a bad range
 const prisma = require('../db');
 const RT = require('../utils/reqTeamLeads');
 const { requireAuth, requirePerm } = require('../middleware/auth');
@@ -97,12 +98,7 @@ router.get('/ats', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (r
   if (Object.keys(reqWhere).length) where.AND = [...(where.AND || []), { requirement: { is: reqWhere } }];
   if (q.stage) where.stage = q.stage;
   // (Source is filtered below, on the clean list: the stored words are free text.)
-  if (q.from || q.to) {
-    where.createdAt = {};
-    if (q.from) where.createdAt.gte = new Date(q.from);
-    // `to` is inclusive of that whole day, which is what a person means by it.
-    if (q.to) where.createdAt.lte = new Date(`${q.to}T23:59:59.999Z`);
-  }
+  { const w = DR.windowIn(DR.dayWindow(q.from, q.to)); if (w) where.createdAt = w; } // IST days, the whole To day, a bad range is a 400
 
   const sourceWanted = q.source ? CSRC.parseSourceFilter(q.source) : null;
   let applications = await prisma.application.findMany({
@@ -249,11 +245,7 @@ router.get('/interviews', requirePerm(null, 'reports', 'ATS Reports', 'view'), a
   if (q.department) reqWhere.department = q.department;
   if (q.clientId) reqWhere.clientId = q.clientId;
   if (Object.keys(reqWhere).length) where.AND = [...(where.AND || []), { requirement: { is: reqWhere } }];
-  if (q.from || q.to) {
-    where.interviewAt = {};
-    if (q.from) where.interviewAt.gte = new Date(q.from);
-    if (q.to) where.interviewAt.lte = new Date(`${q.to}T23:59:59.999Z`);
-  }
+  { const w = DR.windowIn(DR.dayWindow(q.from, q.to)); if (w) where.interviewAt = w; }
 
   const rows = await prisma.application.findMany({
     where,
@@ -318,11 +310,7 @@ router.get('/followups', requirePerm(null, 'reports', 'ATS Reports', 'view'), as
   }
 
   const where = { applicationId: { in: [...byApp.keys()] } };
-  if (q.from || q.to) {
-    where.createdAt = {};
-    if (q.from) where.createdAt.gte = new Date(q.from);
-    if (q.to) where.createdAt.lte = new Date(`${q.to}T23:59:59.999Z`);
-  }
+  { const w = DR.windowIn(DR.dayWindow(q.from, q.to)); if (w) where.createdAt = w; }
   const followUps = await prisma.applicationFollowUp.findMany({ where });
 
   const today = new Date().toISOString().slice(0, 10);

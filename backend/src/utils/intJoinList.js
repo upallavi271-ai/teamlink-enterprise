@@ -125,12 +125,13 @@ const SPECS = {
   joining: {
     views: ['waiting', 'joined', 'dropped'],
     viewOf: (it) => joiningViewId(it.app),
-    dateOf: (it) => (waitingToJoin(it.app) ? it.app.offerAcceptedAt : (it.app.joinedAt || it.app.joiningDate)),
+    // the typed joining date first (the one rule of every report, utils/reportsPlus.js joinDayOf), then the stamp
+    dateOf: (it) => (waitingToJoin(it.app) ? it.app.offerAcceptedAt : (it.app.joiningDate || it.app.joinedAt)),
     open(it, cutoff) {
       const v = joiningViewId(it.app);
       if (v === 'waiting' || v === 'all') return true;
       if (it.app.joiningStatus === 'Replacement Due') return true;
-      if (v === 'joined') { const t = ts(it.app.joinedAt || it.app.joiningDate); return t !== null && t >= cutoff; }
+      if (v === 'joined') { const t = ts(it.app.joiningDate || it.app.joinedAt); return t !== null && t >= cutoff; }
       const t = ts(it.app.updatedAt); // did not join
       return t !== null && t >= cutoff;
     },

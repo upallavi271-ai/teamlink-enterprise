@@ -770,8 +770,10 @@ async function listWhere(req) {
   // ?dstatus= — the status chain people see (Draft · Agreement Approved ·
   // Assigned · Open · On Hold · Filled · Closed), utils/requirementDisplayStatus.js.
   if (q.dstatus && reqDisplay.normKey(q.dstatus)) and.push(reqDisplay.DISPLAY_WHERE[reqDisplay.normKey(q.dstatus)]);
-  if (q.from) and.push({ createdAt: { gte: new Date(`${q.from}T00:00:00.000Z`) } });
-  if (q.to) and.push({ createdAt: { lte: new Date(`${q.to}T23:59:59.999Z`) } });
+  { // the Created date range: IST days, the whole To day, a bad / reversed range is a 400 (utils/dateRange.js dayWindow)
+    const w = require('../utils/dateRange').windowIn(require('../utils/dateRange').dayWindow(q.from, q.to, 'Created')); // eslint-disable-line global-require
+    if (w) and.push({ createdAt: w });
+  }
   // SEARCH EVERYTHING on the row (user 2026-10-03): job title, REQ ID,
   // client, department, TL / recruiter / BDE names (and skills) — inside the
   // scoped where above, so it never reaches further than the list.

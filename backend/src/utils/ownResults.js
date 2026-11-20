@@ -31,10 +31,14 @@ const ORDER = ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INT
 const rank = (s) => ORDER.indexOf(s);
 
 function parseRange(q = {}) {
-  const ok = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
-  const from = ok(q.from) ? new Date(`${q.from}T00:00:00`) : null;
-  const to = ok(q.to) ? new Date(`${q.to}T23:59:59.999`) : null;
-  return { from, to, label: from || to ? `${ok(q.from) ? q.from : '…'} to ${ok(q.to) ? q.to : '…'}` : 'All time' };
+  // ONE reader of the date words (utils/dateRange.js): presets (this_month, week, 30d ...), a custom From-To, IST days, the whole
+  // To day; a bad range is a 400 (was: read in the server's own time zone, a bad date silently meant "All time").
+  const DR = require('./dateRange'); // eslint-disable-line global-require
+  if (!q.range && !q.from && !q.to) return { from: null, to: null, label: 'All time' };
+  if (q.range === 'all') return { from: null, to: null, label: 'All time' };
+  const p = DR.resolve({ range: q.range, from: q.from, to: q.to });
+  const w = DR.dayWindow(p.from, p.to);
+  return { from: w.gte, to: new Date(w.lt.getTime() - 1), label: `${p.from} to ${p.to}`, period: p };
 }
 const inRange = (d, r) => (!r.from || d >= r.from) && (!r.to || d <= r.to);
 
@@ -82,9 +86,8 @@ async function myResults(user, query) {
   // as the dashboard's joinings card and its list, by joining day (not by when the step was moved).
   let joinedLabel = 'Joined';
   try {
-    const ok = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
     const RJ = require('./recruiterJoinings'); // eslint-disable-line global-require
-    const cj = await RJ.creditedJoinings(user, { from: ok(query.from) ? query.from : null, to: ok(query.to) ? query.to : null, fresh: true });
+    const cj = await RJ.creditedJoinings(user, { from: range.period ? range.period.from : null, to: range.period ? range.period.to : null, fresh: true });
     m.joined = cj.count;
     if (cj.clamped) joinedLabel = `Joined (from ${cj.from})`;
   } catch (err) { console.error('[ownResults] credited joinings failed:', err.message); } // eslint-disable-line no-console

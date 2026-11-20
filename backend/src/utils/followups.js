@@ -67,7 +67,7 @@ const FOLLOWUP_TEMPLATES = {
 // Escalation thresholds, in days past the due date. Recruiter -> TL -> Super
 // Admin, exactly as the user drew it.
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10); // the IST day (was the UTC day: Due Today / Overdue flipped at 05:30 IST)
 
 function dayDiff(fromIso, toIso) {
   const a = Date.parse(`${fromIso}T00:00:00.000Z`);

@@ -564,9 +564,9 @@ function filterOptions(c, base) {
 // in process, late…) are always now — and they say so in their own words.
 const PERIODS = ['today', 'this_week', 'this_month'];
 // The v3 filter bar's Date range also offers these (and a custom From → To).
-const MORE_PERIODS = ['yesterday', 'last_7', 'last_month', 'this_quarter', 'this_year'];
-const PERIOD_WORD = { today: 'today', this_week: 'this week', this_month: 'this month', yesterday: 'yesterday', last_7: 'in the last 7 days', last_30: 'in the last 30 days', last_month: 'last month', this_quarter: 'this quarter', this_year: 'this year', all: 'so far' };
-const PREV_WORD = { today: 'yesterday', this_week: 'last week', this_month: 'last month', yesterday: 'the day before', last_7: 'the 7 days before', last_30: 'the 30 days before', last_month: 'the month before', this_quarter: 'last quarter', this_year: 'last year', all: '' };
+const MORE_PERIODS = ['yesterday', 'last_7', 'last_week', 'last_month', 'this_quarter', 'this_year'];
+const PERIOD_WORD = { today: 'today', this_week: 'this week', this_month: 'this month', yesterday: 'yesterday', last_7: 'in the last 7 days', last_week: 'last week', last_30: 'in the last 30 days', last_month: 'last month', this_quarter: 'this quarter', this_year: 'this year', all: 'so far' };
+const PREV_WORD = { today: 'yesterday', this_week: 'last week', this_month: 'last month', yesterday: 'the day before', last_7: 'the 7 days before', last_week: 'the week before', last_30: 'the 30 days before', last_month: 'the month before', this_quarter: 'last quarter', this_year: 'last year', all: '' };
 function previousPeriod(p) {
   if (p.key === 'last_month') {
     const [y, m] = p.from.split('-').map(Number);
@@ -601,16 +601,15 @@ async function context(user, req) {
   const today = NA.todayIst();
   const filterLayout = isBdeTl(user) ? 'bdetl' : layout;
   const f = readFilters(filterLayout, q);
-  // The v3 filter bar's ranges: week / month / 30d / custom / all ("Any time").
-  const RANGE_ALIAS = { week: 'this_week', month: 'this_month' };
-  const qRange = RANGE_ALIAS[q.range] || q.range;
-  const utcToday = new Date().toISOString().slice(0, 10);
-  const custom = (qRange === 'custom' || !qRange) && q.from && q.to;
-  const key = PERIODS.includes(qRange) || MORE_PERIODS.includes(qRange) || ['last_30', '30d', 'all'].includes(qRange) ? (qRange === '30d' ? 'last_30' : qRange) : custom ? 'custom' : 'this_month';
+  // The v3 filter bar's ranges: week / month / 30d / custom / all ("Any time"). ONE alias table: utils/dateRange.js.
+  const qRange = dateRange.canonKey(q.range);
+  const known = PERIODS.includes(qRange) || MORE_PERIODS.includes(qRange) || ['last_30', 'all', 'custom'].includes(qRange);
+  if (qRange && !known) throw new (dateRange.RangeError400)(`Unknown date range "${String(q.range).slice(0, 40)}"`);
+  const custom = qRange === 'custom' || (!qRange && (q.from || q.to));
+  const key = custom ? 'custom' : (qRange || 'this_month');
   let period;
-  if (key === 'last_30') period = { from: addDays(utcToday, -29), to: utcToday };
-  else if (key === 'all') period = { from: '2000-01-01', to: utcToday };
-  else period = dateRange.resolve(key === 'custom' ? { range: 'custom', from: String(q.from), to: String(q.to) } : { range: key });
+  if (key === 'all') period = { from: '2000-01-01', to: today };
+  else period = dateRange.resolve(key === 'custom' ? { range: 'custom', from: String(q.from || ''), to: String(q.to || '') } : { range: key }, today);
   period.key = key;
   const noPrev = key === 'all';
   const prev = noPrev ? { from: '1900-01-01', to: '1900-01-01', key: 'prev' } : previousPeriod(period);
@@ -1897,18 +1896,18 @@ async function leadHome(c, b, k) {
   // recruiters under this lead (and their own), the same rows as their Recruiter joinings screen and their team reports.
   if (L === 'tl' || L === 'stl') {
     try {
-      const month = c.today.slice(0, 7);
       // A department split into 2+ teams (Education Team A / Team B): one joinings card per team, in every lead's login of it (utils/teamJoinCards.js).
       const teamCards = await require('./teamJoinCards').cardsFor(c); // eslint-disable-line global-require
       if (teamCards) addTeamJoinCards(b, c, teamCards);
-      const team = teamCards ? null : await require('./recruiterJoinings').creditedJoinings(c.user, { month, level: 'team' }); // eslint-disable-line global-require
+      // the picked days (was: the current month whatever was picked)
+      const team = teamCards ? null : await require('./recruiterJoinings').creditedJoinings(c.user, { ...creditRange(c), level: 'team' }); // eslint-disable-line global-require
       if (team) addSet(b, 'my-joins', {
-        kind: 'app', title: "My team's joinings this month", ids: team.appIds,
+        kind: 'app', title: `My team's joinings ${c.word}`, ids: team.appIds,
         ...(team.leftCount ? { stillWorking: team.appIds.length, left: { n: team.leftCount, drill: 'my-joins-left', text: `${fmtN(team.leftCount)} left after joining (shown under Dropped)` } } : {}),
       });
-      if (team && team.leftCount) addSet(b, 'my-joins-left', { kind: 'app', title: "My team: left after joining (joined this month)", ids: team.leftAppIds, extra: leftExtraOfIds(team.leftAppIds) });
-      if (team) b.top.push(tile('my-joins', "My team's joinings this month", team.appIds.length, 'range', {
-        drill: 'my-joins', zero: 'No joinings yet this month',
+      if (team && team.leftCount) addSet(b, 'my-joins-left', { kind: 'app', title: `My team: left after joining (joined ${c.word})`, ids: team.leftAppIds, extra: leftExtraOfIds(team.leftAppIds) });
+      if (team) b.top.push(tile('my-joins', `My team's joinings ${c.word}`, team.appIds.length, 'range', {
+        drill: 'my-joins', zero: `No joinings ${c.word}`,
         ...(team.leftCount ? { stillWorking: team.appIds.length, left: { n: team.leftCount, drill: 'my-joins-left', text: `${fmtN(team.leftCount)} left after joining (shown under Dropped)` } } : {}),
       }));
     } catch (err) { console.error('[atsHome] team joinings failed:', err.message); } // eslint-disable-line no-console
@@ -1981,6 +1980,19 @@ async function leadHome(c, b, k) {
 }
 
 // ---- Recruiter — "what do I do today?" (a to-do checklist, not charts) --------------------
+// The picked period as creditedJoinings takes it ("Any time" = no dates, the function's own 36 months). One place, so the
+// recruiter's card, the TL's team card and the lists they open follow the same days (2026-11-20: they were fixed to "this month").
+const creditRange = (c) => (c.period.key === 'all' ? {} : { from: c.period.from, to: c.period.to });
+// A joining target is a MONTH's target: shown only while the picked days are exactly one calendar month.
+function wholeMonthOf(p) {
+  if (!p || p.key === 'all') return null;
+  const m = p.from.slice(0, 7);
+  const last = new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).toISOString().slice(0, 10);
+  if (p.from !== `${m}-01`) return null;
+  const today = NA.todayIst();
+  return p.to === last || (p.to === today && today.slice(0, 7) === m) ? m : null;
+}
+
 async function recruiterHome(c, b, k) {
   const { live, sel, openJobs } = k;
   const me = { id: c.user.id, atsRole: c.s.atsRole };
@@ -2020,27 +2032,39 @@ async function recruiterHome(c, b, k) {
       inProcess: (perJob.get(r.id) || []).length, drill: addSet(b, `job-${r.id}`, { kind: 'app', title: `${r.title} — people in process`, ids: ids(perJob.get(r.id) || []) }),
     })),
   };
-  // My joins this month vs target.
-  const month = c.today.slice(0, 7);
-  let myJoinIds = ids(sel.filter((x) => joinedSince(x, `${month}-01`, c.today)));
+  // My joinings in the picked period (this month by default) vs the month's target.
+  const month = wholeMonthOf(c.period) || c.today.slice(0, 7);
+  let myJoinIds = [];
   let myLeft = null;
   const tg = await targetFor(c.user, month);
   // JOININGS CREDITED TO THIS LOGIN (utils/recruiterJoinings.js creditedJoinings, the ONE function): the card, the list it
   // opens and My results / the reports read the same rows, so they always agree - a joining credited by name, or on a job
   // outside this recruiter's seat, included. Its target (4 unless Super Admin set another) when no Monthly Target is set.
   try {
-    const own = await require('./recruiterJoinings').creditedJoinings(c.user, { month, level: 'self' }); // eslint-disable-line global-require
+    const own = await require('./recruiterJoinings').creditedJoinings(c.user, { ...creditRange(c), level: 'self' }); // eslint-disable-line global-require
     myJoinIds = own.appIds;
-    if (own.leftCount) { myLeft = { n: own.leftCount, drill: 'my-joins-left', text: `${fmtN(own.leftCount)} left after joining (shown under Dropped)` }; addSet(b, 'my-joins-left', { kind: 'app', title: 'Left after joining (joined this month)', ids: own.leftAppIds, extra: leftExtraOfIds(own.leftAppIds) }); }
+    if (own.leftCount) { myLeft = { n: own.leftCount, drill: 'my-joins-left', text: `${fmtN(own.leftCount)} left after joining (shown under Dropped)` }; addSet(b, 'my-joins-left', { kind: 'app', title: `Left after joining (joined ${c.word})`, ids: own.leftAppIds, extra: leftExtraOfIds(own.leftAppIds) }); }
     if (tg.joinings == null && own.target != null) tg.joinings = own.target;
   } catch (err) { console.error('[atsHome] my joinings failed:', err.message); } // eslint-disable-line no-console
-  addSet(b, 'my-joins', { kind: 'app', title: 'My joinings this month', ids: myJoinIds, ...(myLeft ? { stillWorking: myJoinIds.length, left: myLeft } : {}) });
-  const target = { id: 'target', type: 'target', size: 'half', title: 'My joinings this month', value: myJoinIds.length, target: tg.joinings, drill: 'my-joins', zero: 'No joinings yet this month', noTarget: 'No target set yet', ...(myLeft ? { stillWorking: myJoinIds.length, left: myLeft } : {}) };
-  b.top = [];
+  addSet(b, 'my-joins', { kind: 'app', title: `My joinings ${c.word}`, ids: myJoinIds, ...(myLeft ? { stillWorking: myJoinIds.length, left: myLeft } : {}) });
+  const onlyMonth = !!wholeMonthOf(c.period);
+  const target = { id: 'target', type: 'target', size: 'half', title: `My joinings ${c.word}`, value: myJoinIds.length, target: onlyMonth ? tg.joinings : null, drill: 'my-joins', zero: `No joinings ${c.word}`, noTarget: onlyMonth ? 'No target set yet' : 'The target is for a whole month', ...(myLeft ? { stillWorking: myJoinIds.length, left: myLeft } : {}) };
+  // THE RANGE'S OWN NUMBERS (2026-11-20: a recruiter's date filter used to change nothing on this page): what happened in the
+  // picked days, over this login's own people. Every number opens its list.
+  const addedMine = sel.filter((x) => !x.pre && inPeriod(msOf(x.a.createdAt), c.period));
+  addSet(b, 'added-range', { kind: 'app', title: `People I added ${c.word}`, ids: ids(addedMine) });
+  const sentMine = sel.filter((x) => k.submittedIn(x, c.period));
+  addSet(b, 'sent-range', { kind: 'app', title: `Sent to the client ${c.word}`, ids: ids(sentMine) });
+  b.top = [
+    tile('added-range', `Added ${c.word}`, addedMine.length, 'range', { drill: 'added-range', zero: `Nobody added ${c.word}` }),
+    tile('sent-range', `Sent to client ${c.word}`, sentMine.length, 'range', { drill: 'sent-range', zero: `Nothing sent ${c.word}` }),
+    k.T.interviews(`My interviews ${c.word}`),
+    tile('my-joins', `My joinings ${c.word}`, myJoinIds.length, 'range', { drill: 'my-joins', zero: `No joinings ${c.word}`, ...(myLeft ? { stillWorking: myJoinIds.length, left: myLeft } : {}) }),
+  ];
   // MY MISSED ITEMS (user, 2026-10-12): what I missed - follow-ups, tasks and to-dos, late steps, feedback not recorded, calls not made - with an Open button each.
   // The box asks for its own rows (GET /pending-work/my-missed, utils/missedItems.js), so the reminders have a place to land.
   const missedBox = { id: 'missed', type: 'missed', size: 'full', title: 'My missed items' };
-  b.widgets = [missedBox, tasks, iv, fb, jobsW, target];
+  b.widgets = [kpis(b.top), missedBox, tasks, iv, fb, jobsW, target];
   b.extras.push({ id: 'daily-report', label: 'My daily report', button: true, to: '/reports/my-results' });
 }
 
@@ -2233,6 +2257,8 @@ async function hrHome(c, b, k) {
     tile('iv-internal', 'Interviews today', ivInt.length, 'now', { drill: 'iv-internal', zero: 'No interviews today' }),
     tile('offers', 'Offers pending', offers.length, 'now', { drill: 'offers', zero: 'No offers pending' }),
     tile('joining', 'Waiting to join', joining.length, 'now', { drill: 'joining', zero: 'Nobody waiting to join' }),
+    k.T.interviews(`Interviews ${c.word}`),
+    k.T.joined(`Joined ${c.word}`),
   ];
   const att = { id: 'attention', type: 'lines', size: 'half', title: 'Needs attention', ...topLines([
     line('offers', 'Offers pending', offers.length, { button: 'Open', drill: 'offers', tone: 'blue' }),
@@ -2882,7 +2908,8 @@ async function homeList(user, b, setId, q = {}) {
 }
 
 // The same list as a file (Excel / CSV), exactly the filtered rows.
-const DAYF = (v) => { if (!v) return ''; const d = new Date(v); return Number.isNaN(d.getTime()) ? String(v) : d.toISOString().slice(0, 10); };
+// the IST day of a moment (a plain YYYY-MM-DD stays as it is): an interview at 02:00 IST on the 21st exports as the 21st
+const DAYF = (v) => { if (!v) return ''; if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) return String(v); const d = new Date(v); return Number.isNaN(d.getTime()) ? String(v) : dateRange.istDayOf(d); };
 const EXPORT_COLUMNS = {
   app: [['Candidate', (r) => r.candidate], ['Requirement', (r) => r.requirement], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''],
     ['Recruiter', (r) => r.recruiter || ''], ['Team lead', (r) => r.tl || ''], ['Step', (r) => r.step], ['Due', (r) => (r.note ? r.note : `${DUE_WORDS[r.dueKey || 'no_due']}${r.due ? ` · ${r.due}` : ''}`)],

@@ -21,7 +21,7 @@ const LIVE = ['SCHEDULED', 'CONFIRMED', 'STARTED', 'RESCHEDULED', 'COMPLETED', '
 router.get('/all-calendar', async (req, res, next) => {
   try {
     if ([req.user.role, req.user.atsRole].some((r) => ['CLIENT', 'CANDIDATE'].includes(r))) return res.status(403).json({ error: "This action isn't included in your role's permissions" });
-    const from = isDay(req.query.from) ? String(req.query.from) : new Date().toISOString().slice(0, 10);
+    const from = isDay(req.query.from) ? String(req.query.from) : require('../utils/dateRange').todayIst();
     const to = isDay(req.query.to) ? String(req.query.to) : from;
     if (to < from || (new Date(to) - new Date(from)) / 86400000 > 62) return res.status(400).json({ error: 'Pick up to two months at a time.' });
     const mine = req.query.who !== 'team';
@@ -34,6 +34,7 @@ router.get('/all-calendar', async (req, res, next) => {
     const ivs = await prisma.application.findMany({
       where: { AND: [scope, mineApp, { interviewAt: { gte: new Date(`${from}T00:00:00+05:30`), lte: new Date(`${to}T23:59:59+05:30`) }, interviewStatus: { in: LIVE } }] },
       select: { id: true, interviewAt: true, interviewRound: true, interviewMode: true, interviewStatus: true, candidate: cand, requirement: { select: { title: true, client: { select: { name: true } } } } },
+      orderBy: { interviewAt: 'asc' }, // (a window of 800 is the FIRST 800 of the days, not an arbitrary 800)
       take: 800,
     });
     ivs.forEach((a) => {

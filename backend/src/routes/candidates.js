@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
+const istDayOfDate = (v) => require('../utils/dateRange').istDayOf(v) || ''; // an IST day, not the UTC day (2026-11-20)
 const prisma = require('../db');
 const joinDayShared = require('../utils/joinDayShared');
 const JL = require('../utils/joinDayList'); // the joining day in the lists (feeds joinDayShared from the rows already loaded)
@@ -989,8 +990,8 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (q.hiring === 'client' && !any((a) => a.requirement && !a.requirement.internal)) return false;
   if (q.clientId && !any((a) => a.requirement && a.requirement.clientId === q.clientId)) return false;
   if (q.requirementId && !any((a) => a.requirementId === q.requirementId)) return false;
-  if (q.appliedFrom && !any((a) => String(new Date(a.createdAt).toISOString()).slice(0, 10) >= q.appliedFrom)) return false;
-  if (q.appliedTo && !any((a) => String(new Date(a.createdAt).toISOString()).slice(0, 10) <= q.appliedTo)) return false;
+  if (q.appliedFrom && !any((a) => istDayOfDate(a.createdAt) >= q.appliedFrom)) return false;
+  if (q.appliedTo && !any((a) => istDayOfDate(a.createdAt) <= q.appliedTo)) return false;
   if (ctx.personIds && !r.appIds.some((id) => ctx.personIds.has(id))) return false;
   // ATS layout v3: People → "Available for matching" (the Candidates card).
   if (q.available === '1' && !availableForMatching(r)) return false;
@@ -1261,7 +1262,7 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (q.hiring === 'client' && r.internal) return false;
   if (q.clientId && r.clientId !== q.clientId) return false;
   if (q.requirementId && r.requirementId !== q.requirementId) return false;
-  const day = r.appliedDate ? new Date(r.appliedDate).toISOString().slice(0, 10) : '';
+  const day = r.appliedDate ? (istDayOfDate(r.appliedDate) || '') : '';
   if (q.appliedFrom && !(day && day >= q.appliedFrom)) return false;
   if (q.appliedTo && !(day && day <= q.appliedTo)) return false;
   // Spec 2026-10-03 §B: Skills · Experience · Notice period · Salary · Match ≥ %.

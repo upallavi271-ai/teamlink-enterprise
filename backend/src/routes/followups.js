@@ -153,7 +153,7 @@ async function buildList(req) {
 const LIST_CACHE = new Map();
 const LIST_MAX_AGE_MS = 60 * 1000;
 // Query keys that only narrow / page / order the finished rows.
-const LIST_UNCACHED_KEYS = ['mine', 'status', 'page', 'pageSize', 'older', 'rows', 'fuDue', 'fuType', 'fuPriority', 'fuOwner', 'fuCandidate', 'fuRequirement'];
+const LIST_UNCACHED_KEYS = ['mine', 'status', 'page', 'pageSize', 'older', 'rows', 'fuDue', 'fuFrom', 'fuTo', 'fuType', 'fuPriority', 'fuOwner', 'fuCandidate', 'fuRequirement'];
 
 async function buildRows(req) {
   const where = { ...applicationWhere(req.user) };

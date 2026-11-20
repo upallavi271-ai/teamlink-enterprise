@@ -8,7 +8,7 @@
 //   Clients        priority (csv)  agreementStatus (csv)  industry (csv)  reqMin reqMax  hasJoinings=yes|no  createdFrom createdTo
 //   Interviews     ivFrom ivTo  ivStatus ivRound ivMode (csv)  ivInterviewer  ivClient  ivRecruiter
 //   Follow-ups     fuDue=today|overdue|week|none  fuType (csv, how it was done)  fuPriority (csv)  fuOwner (csv user ids)
-//                  fuCandidate  fuRequirement
+//                  fuFrom fuTo (a due-date range, IST days, both ends included)  fuCandidate  fuRequirement
 //   Job Portal     jpSource (csv)  jpFrom jpTo  jpStatus (csv)  jpRecruiter  jpLocation
 //   Call lists     source (name / file)  from to (the list's day)  owner  -- in calllist/service.js
 // ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ function calendarTerms(q) {
 }
 
 // ---- Follow-ups --------------------------------------------------------------------------------------------------------
-const FU_KEYS = ['fuDue', 'fuType', 'fuPriority', 'fuOwner', 'fuCandidate', 'fuRequirement'];
+const FU_KEYS = ['fuDue', 'fuFrom', 'fuTo', 'fuType', 'fuPriority', 'fuOwner', 'fuCandidate', 'fuRequirement'];
 function followUpFilter(q, rows) {
   if (!FU_KEYS.some((k) => q[k])) return rows;
   const today = istDay(new Date());
@@ -149,6 +149,10 @@ function followUpFilter(q, rows) {
     if (q.fuDue === 'overdue' && !(f.status === 'Overdue' || (due && due < today && f.status !== 'Completed'))) return false;
     if (q.fuDue === 'week' && !(due && due >= today && due <= week)) return false;
     if (q.fuDue === 'none' && due) return false;
+    // a due-date range (IST days, both ends included): a follow-up without a due date is in no range
+    if ((q.fuFrom && DAY_RE.test(String(q.fuFrom))) || (q.fuTo && DAY_RE.test(String(q.fuTo)))) {
+      if (!due || (q.fuFrom && DAY_RE.test(String(q.fuFrom)) && due < String(q.fuFrom)) || (q.fuTo && DAY_RE.test(String(q.fuTo)) && due > String(q.fuTo))) return false;
+    }
     if (types.length && !types.includes(String(f.contactMode || 'not set').toLowerCase())) return false;
     if (prios.length && !prios.includes(String(f.requirementPriority || '').toLowerCase())) return false;
     if (owners.length && !owners.includes(f.ownerUserId)) return false;

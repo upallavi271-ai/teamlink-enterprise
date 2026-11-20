@@ -180,6 +180,7 @@ app.get('/api/health', (req, res) => res.json(process.env.COMPANY_KEY ? { ok: tr
 // only GET, plus a short allow-list of POSTs that just read. Ahead of every
 // router, so no route can forget it.
 app.use('/api', require('./utils/clientDepth').portalMiddleware); // counts what a client login does in the portal (utils/clientDepth.js)
+app.use('/api', require('./utils/dateParamGuard')); // a bad / reversed From-To of any list: 400 with words, never ignored (2026-11-20)
 app.use('/api', require('./utils/viewAs').viewAsGuard);
 // EXIT GUARD scope (utils/exitFlow.js): marks a web request, so a leaving status (Relieved / Exited / Terminated) can only be
 // written with an approved exit behind it. Scripts and workers run outside a request and are not affected.
@@ -591,6 +592,8 @@ app.use((err, req, res, next) => {
   console.error(err);
   res.locals.errorMessage = (err && err.message) || String(err); // grouped in the Errors log (utils/apiErrors.js)
   if (res.headersSent) return next(err);
+  // A bad date range (from after to, not a date, unknown preset): the reason, as a 400 (utils/dateRange.js)
+  if (err && err.name === 'DateRangeError') return res.status(400).json({ error: err.message });
   // An exit that cannot be finished yet / a refused exit-date change: the reason, in plain words (utils/exitFlow.js, utils/exitDate.js).
   if (err && err.exitBlocked) return res.status(err.status || 403).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
   // A broken link to another record (Prisma P2003) is the caller's data, not a crash.
