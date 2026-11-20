@@ -40,7 +40,24 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
   const admin = (await prisma.user.findMany({ where: { status: 'Active', role: 'SUPER_ADMIN' }, take: 5 })).find((u) => !/zztest|example\.test/i.test(`${u.name}${u.email}`));
   await prisma.user.update({ where: { id: admin.id }, data: { passwordResetRequired: false, passwordChangedAt: new Date(Date.now() - 86400000) } });
   procs.push(spawn(process.execPath, ['src/index.js'], { cwd: BACK, env, stdio: process.env.TEST_DEBUG ? 'inherit' : 'ignore' }));
-  procs.push(spawn(process.execPath, [path.join(FRONT, 'node_modules', 'vite', 'bin', 'vite.js'), '--port', String(WEB_PORT), '--strictPort'], { cwd: FRONT, env: { ...process.env, API_PROXY: `http://localhost:${API_PORT}` }, stdio: process.env.TEST_DEBUG ? 'inherit' : 'ignore' }));
+  const http = require('http');
+  const DIST = path.join(FRONT, 'dist');
+  const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
+  const web = http.createServer((req, res) => {
+    if (req.url.startsWith('/api')) {
+      const up = http.request({ host: 'localhost', port: API_PORT, path: req.url, method: req.method, headers: req.headers }, (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
+      up.on('error', () => { res.writeHead(502); res.end(); });
+      req.pipe(up);
+      return;
+    }
+    const clean = decodeURIComponent(req.url.split('?')[0]);
+    let file = path.join(DIST, clean);
+    if (!file.startsWith(DIST) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+    fs.createReadStream(file).pipe(res);
+  });
+  web.listen(WEB_PORT);
+  procs.push({ kill: () => web.close() });
   check('the sandbox backend answers', await waitFor(`http://localhost:${API_PORT}/api/health`));
   check('the web app answers', await waitFor(`http://localhost:${WEB_PORT}/`));
   const token = jwt.sign({ ...tokenPayload(await resolveIdentity(admin.id)), tms: Date.now() }, env.JWT_SECRET, { expiresIn: '1h' });
@@ -73,13 +90,6 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     return got;
   };
   try {
-    // the Vite dev server optimises its libraries on the first visit ("504 Outdated Optimize Dep"): visit until the page draws
-    for (let i = 0; i < 6; i += 1) {
-      await page.goto(`http://localhost:${WEB_PORT}/candidates?view=pipeline&sub=all`).catch(() => {});
-      await page.waitForTimeout(i === 0 ? 20000 : 10000);
-      const drawn = await page.locator('body').innerText().then((t) => t.trim().length > 40).catch(() => false);
-      if (drawn) break;
-    }
     // ---- Candidates: Current location, two options
     await page.goto(`http://localhost:${WEB_PORT}/candidates?view=pipeline&sub=all`);
     const before = await page.locator('.fbar-count').first().innerText();
