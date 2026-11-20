@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import Combo from './Combo.jsx';
+import MultiSelect from './ats/MultiSelect.jsx';
 import './HierarchyFilter.css';
 
 // ---------------------------------------------------------------------------
@@ -120,32 +121,38 @@ export function findSection(data, id) {
 }
 
 // What each level offers for the current value.
+// SEVERAL VALUES PER LEVEL (founder 2026-11-20: checkboxes everywhere). Each level (department, section, TL, recruiter) holds ONE value or a comma list;
+// one value is just a list of one, so every old link and saved view still works. A comma inside a name is written %2C; a comma followed by a space
+// stays inside one name ("Smith, John"). The servers take the lists (utils/multiParam.js, utils/workers.js attributedApplications).
+export const hierList = (x) => String(x || '').split(/,(?!\s)/).map((s) => s.replace(/%2C/gi, ',').trim()).filter(Boolean);
+export const hierCsv = (list) => list.map((v) => String(v).replace(/,/g, '%2C')).join(',');
+const namesText = (names) => (names.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2}`);
+
 export function hierarchyOptions(data, value = EMPTY_HIERARCHY) {
   const all = (data || EMPTY_DATA).departments || [];
   const v = { ...EMPTY_HIERARCHY, ...value };
-  const depts = v.department ? all.filter((d) => d.id === v.department) : all;
-  const section = findSection(data, v.section);
+  const deptIds = hierList(v.department);
+  const secIds = hierList(v.section);
+  const tlVals = hierList(v.tl);
+  const depts = deptIds.length ? all.filter((d) => deptIds.includes(d.id)) : all;
+  const picked = secIds.map((id) => findSection(data, id)).filter(Boolean);
   const sections = depts.flatMap((d) => (d.sections || []).map((s) => ({ ...s, departmentLabel: d.label })));
-  const inScope = section ? [section] : sections;
+  const inScope = picked.length ? picked : sections;
 
-  // TLs: the chosen section's, or the department's (sections + unplaced).
+  // TLs: the leads of the sections in scope, plus the department's own unplaced ones
   let tls = inScope.flatMap((s) => s.tls || []);
-  if (!section) tls = tls.concat(depts.flatMap((d) => (d.unplaced && d.unplaced.tls) || []));
-  if (!section && !v.department) tls = tls.concat(((data || EMPTY_DATA).noDepartment || {}).tls || []);
+  if (!picked.length) tls = tls.concat(depts.flatMap((d) => (d.unplaced && d.unplaced.tls) || []));
+  if (!picked.length && !deptIds.length) tls = tls.concat(((data || EMPTY_DATA).noDepartment || {}).tls || []);
   tls = currentFirst(dedupe(tls));
 
-  // Recruiters: under the chosen TL's section(s), else the section, else the
-  // department (+ people who never sat in a seat), else everyone.
+  // Recruiters: those of the sections in scope; with TLs picked, only the sections those TLs lead
   let recSections = inScope;
-  if (v.tl) {
-    const led = inScope.filter((s) => (s.tls || []).some((t) => t.value === v.tl));
-    recSections = led;
-  }
+  if (tlVals.length) recSections = inScope.filter((s) => (s.tls || []).some((t) => tlVals.includes(t.value)));
   let people = recSections.flatMap((s) => s.recruiters || []);
   let loose = [];
-  if (!section && !v.tl) {
+  if (!picked.length && !tlVals.length) {
     loose = depts.flatMap((d) => (d.unplaced && d.unplaced.recruiters) || []);
-    if (!v.department) loose = loose.concat(((data || EMPTY_DATA).noDepartment || {}).recruiters || []);
+    if (!deptIds.length) loose = loose.concat(((data || EMPTY_DATA).noDepartment || {}).recruiters || []);
   }
   people = currentFirst(dedupe(people));
   const placed = new Set(people.map((p) => p.value));
@@ -153,77 +160,80 @@ export function hierarchyOptions(data, value = EMPTY_HIERARCHY) {
   const seats = [...new Set(recSections.flatMap((s) => (s.seats || []).filter((c) => !(s.tlSeats || []).includes(c))))]
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
-  return { departments: all, sections, section, tls, people, loose, seats };
+  return {
+    departments: all, sections, section: picked[0] || null, tls, people, loose, seats,
+  };
 }
 
-// Keep a value consistent with the tree: drop what the new parent excludes.
+// Make a (possibly stale) selection consistent: every picked value that is no longer on offer is dropped.
 export function narrowHierarchy(data, next) {
   const v = { ...EMPTY_HIERARCHY, ...next };
   if (!data || !(data.departments || []).length) return v;
-  const sec = findSection(data, v.section);
-  if (v.section && !sec) v.section = '';
-  if (sec && v.department && sec.department !== v.department) v.section = '';
+  const deptIds = hierList(v.department);
+  v.section = hierCsv(hierList(v.section).filter((id) => { const s = findSection(data, id); return s && (!deptIds.length || deptIds.includes(s.department)); }));
   const o = hierarchyOptions(data, v);
-  if (v.tl && !o.tls.some((t) => t.value === v.tl)) v.tl = '';
+  v.tl = hierCsv(hierList(v.tl).filter((t) => o.tls.some((x) => x.value === t)));
   const o2 = v.tl ? hierarchyOptions(data, v) : o;
-  if (v.recruiter) {
-    const ok = v.recruiter.startsWith('seat:')
-      ? o2.seats.includes(v.recruiter.slice(5))
-      : o2.people.some((p) => p.value === v.recruiter) || o2.loose.some((p) => p.value === v.recruiter);
-    if (!ok) v.recruiter = '';
-  }
+  v.recruiter = hierCsv(hierList(v.recruiter).filter((r) => (r.startsWith('seat:')
+    ? o2.seats.includes(r.slice(5))
+    : o2.people.some((p) => p.value === r) || o2.loose.some((p) => p.value === r))));
   return v;
 }
 
-// Query parameters for the ATS list endpoints (see USAGE).
+// The hierarchy as the list routes' parameters (comma lists where several are picked).
 export function toParams(value, data = lastData) {
   const v = { ...EMPTY_HIERARCHY, ...value };
   const p = {};
   if (v.department) p.department = v.department;
   if (v.tl) p.tl = v.tl;
-  if (v.recruiter && v.recruiter.startsWith('seat:')) p.positionCode = v.recruiter.slice(5);
-  else if (v.recruiter) p.recruiter = v.recruiter;
+  const recs = hierList(v.recruiter);
+  const seatCodes = recs.filter((r) => r.startsWith('seat:')).map((r) => r.slice(5));
+  const people = recs.filter((r) => !r.startsWith('seat:'));
+  if (seatCodes.length) p.positionCode = seatCodes.join(',');
+  if (people.length) p.recruiter = hierCsv(people);
   if (v.section && !v.tl && !v.recruiter) {
-    const sec = findSection(data, v.section);
-    if (sec && sec.seats && sec.seats.length) p.positionCode = sec.seats.join(',');
-    if (!p.department && sec) p.department = sec.department;
+    const secs = hierList(v.section).map((id) => findSection(data, id)).filter(Boolean);
+    const codes = [...new Set(secs.flatMap((s) => s.seats || []))];
+    if (codes.length) p.positionCode = codes.join(',');
+    if (!p.department && secs.length) p.department = hierCsv([...new Set(secs.map((s) => s.department))]);
   }
   return p;
 }
 
-// The same, in GET /api/requirements' older parameter names.
+// The same, for the Requirements list's own parameter names (an id goes by id; a name that has no login goes by name, one at a time).
 export function toRequirementParams(value, data = lastData) {
   const a = toParams(value, data);
   const p = {};
   if (a.department) p.department = a.department;
   if (a.positionCode) p.positionCode = a.positionCode;
-  const split = (x) => (x.startsWith('id:') ? { id: x.slice(3) } : { name: x.startsWith('name:') ? x.slice(5) : x });
-  if (a.tl) { const s = split(a.tl); if (s.id) p.tlId = s.id; else p.tlName = s.name; }
-  if (a.recruiter) { const s = split(a.recruiter); if (s.id) p.recruiterId = s.id; else p.workedByName = s.name; }
+  const split = (list) => {
+    const ids = list.filter((x) => x.startsWith('id:')).map((x) => x.slice(3));
+    const names = list.filter((x) => !x.startsWith('id:')).map((x) => (x.startsWith('name:') ? x.slice(5) : x));
+    return { ids, names };
+  };
+  if (a.tl) { const s = split(hierList(a.tl)); if (s.ids.length) p.tlId = s.ids.join(','); else if (s.names.length === 1) p.tlName = s.names[0]; }
+  if (a.recruiter) { const s = split(hierList(a.recruiter)); if (s.ids.length) p.recruiterId = s.ids.join(','); else if (s.names.length === 1) p.workedByName = s.names[0]; }
   return p;
 }
 
-// Human labels for chips / scope lines.
+// The words for the chips and the picked values.
 export function hierarchyLabels(value, data = lastData) {
   const v = { ...EMPTY_HIERARCHY, ...value };
-  const d = ((data || EMPTY_DATA).departments || []).find((x) => x.id === v.department);
-  const sec = findSection(data, v.section);
+  const depts = ((data || EMPTY_DATA).departments || []);
   const o = hierarchyOptions(data, { ...v, recruiter: '' });
   const person = (list, val) => (list.find((x) => x.value === val) || {}).name
     || (val.startsWith('name:') ? val.slice(5) : val.startsWith('id:') ? 'Selected person' : val);
+  const everyone = [...o.people, ...o.loose, ...hierarchyOptions(data, EMPTY_HIERARCHY).people, ...hierarchyOptions(data, EMPTY_HIERARCHY).loose];
   const out = {};
-  if (v.department) out.department = d ? d.label : v.department;
-  if (v.section) out.section = sec ? sec.label : v.section.split('|').pop();
-  if (v.tl) out.tl = person(o.tls, v.tl);
+  if (v.department) out.department = namesText(hierList(v.department).map((id) => (depts.find((x) => x.id === id) || {}).label || id));
+  if (v.section) out.section = namesText(hierList(v.section).map((id) => { const s = findSection(data, id); return s ? s.label : id.split('|').pop(); }));
+  if (v.tl) out.tl = namesText(hierList(v.tl).map((t) => person(o.tls, t)));
   if (v.recruiter) {
-    out.recruiter = v.recruiter.startsWith('seat:')
-      ? `Recruiter Code ${v.recruiter.slice(5)}`
-      : person([...o.people, ...o.loose, ...hierarchyOptions(data, EMPTY_HIERARCHY).people, ...hierarchyOptions(data, EMPTY_HIERARCHY).loose], v.recruiter);
+    out.recruiter = namesText(hierList(v.recruiter).map((r) => (r.startsWith('seat:') ? `Recruiter Code ${r.slice(5)}` : person(everyone, r))));
   }
   return out;
 }
 
-// Chips for <FilterChips>: removing a level also clears the levels under it.
 export function hierarchyChips(value, data, onChange) {
   const v = { ...EMPTY_HIERARCHY, ...value };
   const l = hierarchyLabels(v, data || lastData);
@@ -232,10 +242,11 @@ export function hierarchyChips(value, data, onChange) {
   if (v.section) chips.push({ key: 'section', label: 'Section', value: l.section, onRemove: () => onChange({ ...v, section: '', tl: '', recruiter: '' }) });
   if (v.tl) chips.push({ key: 'tl', label: 'TL', value: l.tl, onRemove: () => onChange({ ...v, tl: '', recruiter: '' }) });
   if (v.recruiter) {
+    const onlySeats = hierList(v.recruiter).every((r) => r.startsWith('seat:'));
     chips.push({
       key: 'recruiter',
-      label: v.recruiter.startsWith('seat:') ? 'Recruiter Code' : 'Recruiter',
-      value: v.recruiter.startsWith('seat:') ? v.recruiter.slice(5) : l.recruiter,
+      label: onlySeats ? 'Recruiter Code' : 'Recruiter',
+      value: onlySeats ? hierList(v.recruiter).map((r) => r.slice(5)).join(', ') : l.recruiter,
       onRemove: () => onChange({ ...v, recruiter: '' }),
     });
   }
@@ -244,7 +255,7 @@ export function hierarchyChips(value, data, onChange) {
 
 // --- The component ------------------------------------------------------------
 export default function HierarchyFilter({
-  value = EMPTY_HIERARCHY, onChange, show = {}, style, data: given,
+  value = EMPTY_HIERARCHY, onChange, show = {}, style, data: given, multi = false,
 }) {
   const fetched = useHierarchy();
   const data = given || fetched.data;
@@ -270,6 +281,35 @@ export default function HierarchyFilter({
   const manyDepts = new Set(sectionChoices.map((s) => s.department)).size > 1;
   const recCurrent = o.people.filter((p) => p.current);
   const recFormer = o.people.filter((p) => !p.current);
+  // several at once: a checkbox dropdown per level (the servers take comma lists)
+  if (multi) {
+    const recOptions = [
+      ...recCurrent.map((p) => ({ value: p.value, label: p.label, group: 'Recruiter' })),
+      ...recFormer.map((p) => ({ value: p.value, label: p.label, group: 'Former' })),
+      ...o.seats.map((c) => ({ value: `seat:${c}`, label: `Recruiter Code ${c}`, group: 'everyone who sat in it' })),
+      ...o.loose.map((p) => ({ value: p.value, label: p.label, group: 'Other names in the records' })),
+    ];
+    return (
+      <span className="hier-filter">
+        {showDept && <MultiSelect label="Department" allLabel="All departments" value={v.department} onChange={(csv) => emit({ department: csv })} options={o.departments.map((d) => ({ value: d.id, label: d.label }))} />}
+        {showSection && (
+          <MultiSelect
+            label="Section"
+            allLabel="All sections"
+            value={v.section}
+            onChange={(csv) => {
+              const secs = hierList(csv).map((id) => findSection(data, id)).filter(Boolean);
+              const depts = [...new Set([...hierList(v.department), ...secs.map((s) => s.department)])];
+              emit({ section: csv, ...(secs.length ? { department: hierCsv(depts) } : {}) });
+            }}
+            options={sectionChoices.map((s) => ({ value: s.id, label: manyDepts ? `${s.departmentLabel} · ${s.label}` : s.label }))}
+          />
+        )}
+        {showTl && <MultiSelect label="TL" allLabel="All TLs" value={v.tl} onChange={(csv) => emit({ tl: csv })} options={o.tls.map((t) => ({ value: t.value, label: t.label }))} />}
+        {showRec && <MultiSelect label="Recruiter" allLabel="All recruiters" value={v.recruiter} onChange={(csv) => emit({ recruiter: csv })} options={recOptions} />}
+      </span>
+    );
+  }
 
   return (
     <span className="hier-filter">

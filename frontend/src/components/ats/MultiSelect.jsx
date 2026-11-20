@@ -126,7 +126,7 @@ export default function MultiSelect({
               return (
                 <label key={o.value} className={`msel-item${on ? ' is-on' : ''}${i === Math.min(act, shown.length - 1) ? ' is-act' : ''}`} role="option" aria-selected={on}>
                   <input type="checkbox" checked={on} onChange={() => toggle(o.value)} onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') onKey(e); }} />
-                  <span className="msel-name">{o.label}</span>
+                  <span className="msel-name">{o.label}{o.group ? <span className="msel-grp">{` · ${o.group}`}</span> : null}</span>
                   <span className="msel-n">{o.count !== undefined && o.count !== null ? nf(o.count) : ''}</span>
                 </label>
               );

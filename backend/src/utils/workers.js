@@ -481,7 +481,8 @@ const ATTR_SELECT = {
 //   recruiter= tl= bde= (id:… / name:…)  positionCode=
 //   recruiterId= workedByName= tlId= tlName= bdeId= bdeName= (Requirements')
 function personQuery(q = {}) {
-  const s = (v) => (typeof v === 'string' ? v.trim() : '');
+  // several people at once (a comma list or a repeated parameter): kept as one comma list here, split by utils/multiParam.js where it is used
+  const s = (v) => (typeof v === 'string' ? v.trim() : (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).join(',') : ''));
   const pick = (value, idKey, nameKey2) => s(value) || (s(q[idKey]) ? `id:${s(q[idKey])}` : '') || (s(q[nameKey2]) ? `name:${s(q[nameKey2])}` : '');
   return {
     RECRUITER: pick(q.recruiter, 'recruiterId', 'workedByName'),
@@ -500,19 +501,22 @@ async function attributedApplications(user, q, { scope, dir } = {}) {
   const roles = ROLES.filter((r) => want[r]);
   if (!roles.length && !want.positionCode) return null;
   const d = dir || await loadDirectory();
+  // MANY PEOPLE PER FILTER (founder 2026-11-20): Recruiter / TL / BDE take several id: / name: values; the attribution rule is applied per value and the
+  // values are OR-ed (the roles stay AND-ed). A comma followed by a space stays inside one name; %2C is a comma inside a value.
+  const MPW = require('./multiParam'); // eslint-disable-line global-require
   const people = {};
   for (const role of roles) {
     // eslint-disable-next-line no-await-in-loop
-    people[role] = await resolvePersonValue(want[role], d);
+    people[role] = (await Promise.all(MPW.parseMulti(want[role]).map((v) => resolvePersonValue(v, d)))).filter(Boolean);
   }
   const and = [scope || applicationWhere(user)];
-  roles.forEach((role) => and.push(attributionWhere(role, people[role])));
+  roles.forEach((role) => and.push(people[role].length ? { OR: people[role].map((p) => attributionWhere(role, p)) } : attributionWhere(role, null)));
   if (want.positionCode) and.push(seatWhere(want.positionCode));
   const rows = await prisma.application.findMany({ where: { AND: and }, select: ATTR_SELECT });
   const field = { RECRUITER: 'recruiter', TL: 'tl', BDE: 'bde' };
   const apps = rows.filter((a) => {
     const at = attribute(a.requirement, a.followUps, a.stageEvents, d.person);
-    if (!roles.every((role) => at[field[role]] && people[role] && at[field[role]].key === people[role].key)) return false;
+    if (!roles.every((role) => at[field[role]] && people[role].some((p) => at[field[role]].key === p.key))) return false;
     if (want.positionCode && !seatCodes(want.positionCode).includes(at.seat)) return false;
     return true;
   }).map((a) => ({ id: a.id, candidateId: a.candidateId, requirementId: a.requirementId, stage: a.stage }));
