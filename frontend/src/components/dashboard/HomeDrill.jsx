@@ -180,6 +180,23 @@ function Rows({ data, onClose, onRoll, rollBusy }) {
       </table>
     );
   }
+  // A team's joinings (one card per team, utils/teamJoinCards.js): only candidate, requirement, client, recruiter, joining date; no link to a profile.
+  if (k === 'tjoin') {
+    return (
+      <table className="hd-tbl" data-testid="team-joins-list">
+        <thead><tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Recruiter</th><th>Joining date</th></tr></thead>
+        <tbody>{rows.map((r) => (
+          <tr key={r.id}>
+            <td><b className="hd-name">{r.candidate}</b></td>
+            <td>{r.requirement}{r.reqCode && <div className="hd-sub">{r.reqCode}</div>}</td>
+            <td>{r.client || '—'}</td>
+            <td>{r.recruiter || <span className="cell-muted">—</span>}</td>
+            <td>{r.joiningDate ? longDay(r.joiningDate) : <span className="cell-muted">—</span>}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    );
+  }
   if (k === 'req') {
     const bdeView = rows.some((r) => 'bde' in r);
     return (
@@ -357,7 +374,7 @@ export default function HomeDrill({ listUrl, params, setId: setIdProp, onClose }
             <ListToolbar
               search={data.searchable ? search : undefined}
               onSearch={data.searchable ? setSearch : undefined}
-              placeholder={data.kind === 'app' ? 'Search name, requirement, client…' : 'Search…'}
+              placeholder={data.kind === 'app' || data.kind === 'tjoin' ? 'Search name, requirement, client…' : 'Search…'}
               searchWidth={220}
               filterCount={chips.length}
               panel={panel}

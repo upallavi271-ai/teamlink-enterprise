@@ -7,6 +7,7 @@ import {
 import { LineChart, DonutChart } from '../../charts';
 import { can, canRaiseRequirement, canStartJob } from '../../../permissions';
 import './atsV4.css';
+import { TeamJoinTile } from './TeamJoinTile.jsx'; // one joinings card per team (2026-11-20)
 import {
   arrange, moveOnto, moveBy, cardKey, LayoutBox, LayoutBar,
 } from './CardLayout.jsx'; // my dashboard layout (2026-11-17)
@@ -577,7 +578,9 @@ export default function AtsV4({
   const workspace = take((w) => w.type === 'workspace'); // BDE: My Business Workspace (2026-10-10), first on the page
   const missed = take((w) => w.type === 'missed'); // a recruiter's "My missed items" (2026-10-12), above the rest
   const kpi = take((w) => w.type === 'kpis');
-  const tiles = buildTiles(data, ws);
+  const allTiles = buildTiles(data, ws);
+  const tiles = allTiles.filter((t) => !t.teamJoin);
+  const teamTiles = allTiles.filter((t) => t.teamJoin); // "Team A joinings", "Team B joinings": their own cards under the numbers
   const lines = take((w) => w.type === 'lines');
   // Drops & replacements (utils/atsHome.js dropsWidget, 2026-11-10): its own row under Needs attention, never folded away
   const drops = take((w) => w.id === 'drops');
@@ -668,6 +671,12 @@ export default function AtsV4({
           )}
         </>
       ) : null)],
+    },
+    {
+      id: 'team-joins',
+      label: 'Team joinings',
+      row: 'av4-row av4-row-tj',
+      cards: teamTiles.map((t) => card(`teamjoin:${t.id}`, t.label, <TeamJoinTile t={t} onDrill={onDrill} prevWord={prevWord} />)),
     },
     {
       id: 'row2',

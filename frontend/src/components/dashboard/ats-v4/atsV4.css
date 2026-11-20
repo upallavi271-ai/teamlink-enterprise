@@ -246,3 +246,12 @@
 .av4-lay-tools{display:flex;gap:4px;flex:0 0 auto}
 .av4-lay-tools .btn{padding:1px 8px;min-height:0}
 .av4-lay-drop{flex:0 0 auto}
+
+/* ---- one joinings card per team (TeamJoinTile.jsx): the viewer's own team first, "your team" on it ---------------- */
+.av4 .av4-row-tj{margin-bottom:14px}
+.av4 .av4-row-tj > *{flex:0 1 310px;min-width:220px}
+.av4 .av4-row-tj .ak-kpi{width:100%;height:100%}
+.av4 .av4-tj.is-mine{border-color:var(--navy)}
+.av4 .av4-tj-mine{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:999px;background:var(--brand-tint);color:var(--navy);font-size:10.5px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;vertical-align:middle}
+.av4 .av4-tj-left{color:var(--ink-soft,inherit)}
+@media (max-width:640px){.av4 .av4-row-tj > *{flex:1 1 100%;min-width:0}}

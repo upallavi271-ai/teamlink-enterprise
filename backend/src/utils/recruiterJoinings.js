@@ -160,7 +160,7 @@ const APP_SELECT = {
   candidate: { select: { name: true } },
   requirement: {
     select: {
-      id: true, reqCode: true, title: true, internal: true, department: true,
+      id: true, reqCode: true, title: true, internal: true, department: true, clientId: true,
       recruiterId: true, tlId: true, tl: true, bdeId: true, positionCode: true,
       client: { select: { name: true, guaranteePeriod: true } },
     },
@@ -263,6 +263,9 @@ async function monthApplications(month, { fresh = false, withTest = false } = {}
       job: req.title || '—',
       jobCode: req.reqCode || null,
       client,
+      clientId: req.clientId || null, // the dashboard team joinings cards follow the page client / department filters
+      reqDepartment: req.department || null,
+      internal: !!req.internal,
       joiningDate: day,
       recordedOnly, // true: `joiningDate` is the day the "Did Not Join" was recorded, not a joining date
       stage: a.stage,
@@ -843,7 +846,7 @@ async function creditedJoinings(user, {
     mine.forEach((r) => r.joiningList.forEach((a) => {
       if (seen.has(a.id) || !a.joiningDate || a.joiningDate < f || a.joiningDate > t) return;
       seen.add(a.id);
-      list.push({ ...a, creditedTo: { key: r.key, userId: r.userId || null, employeeId: r.employeeId || null, name: r.name } });
+      list.push({ ...a, creditedTo: { key: r.key, userId: r.userId || null, employeeId: r.employeeId || null, name: r.name, department: r.department || null, team: r.team || null, seat: r.seat || null } });
     }));
   });
   list.sort((a, b) => String(a.joiningDate).localeCompare(String(b.joiningDate)) || String(a.candidate).localeCompare(String(b.candidate)));
@@ -854,7 +857,7 @@ async function creditedJoinings(user, {
     rowsForViewer(user, b.rows, lv).filter((r) => r.kind !== 'BDE').forEach((r) => r.notCountedList.forEach((a) => {
       if (!a.leftAfterJoining || leftSeen.has(a.id) || seen.has(a.id) || !a.joiningDate || a.joiningDate < f || a.joiningDate > t) return;
       leftSeen.add(a.id);
-      left.push(a);
+      left.push({ ...a, creditedTo: { key: r.key, userId: r.userId || null, employeeId: r.employeeId || null, name: r.name, department: r.department || null, team: r.team || null, seat: r.seat || null } });
     }));
   });
   return {

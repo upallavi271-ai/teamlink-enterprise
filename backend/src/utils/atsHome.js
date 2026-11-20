@@ -1861,6 +1861,22 @@ async function v3Home(c, b, k) {
   b.v3 = true;
 }
 
+// ONE JOININGS CARD PER TEAM (utils/teamJoinCards.js): the tile, and the two lists behind it (kind 'tjoin': safe columns only).
+function addTeamJoinCards(b, c, cards) {
+  cards.forEach((t) => {
+    const id = `team-joins-${String(t.label).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`; // the same id in every lead's login (Team A is team-joins-team-a)
+    const leftId = `${id}-left`;
+    const left = t.leftCount ? { n: t.leftCount, drill: leftId, text: `${fmtN(t.leftCount)} left after joining` } : null;
+    addSet(b, id, { kind: 'tjoin', title: `${t.label} joinings ${c.word}`, rows: t.rows, ...(left ? { stillWorking: t.count, left } : {}) });
+    if (left) addSet(b, leftId, { kind: 'tjoin', title: `${t.label}: left after joining (joined ${c.word})`, rows: t.leftRows });
+    b.top.push(tile(id, `${t.label} joinings`, t.count, 'range', {
+      drill: id, teamJoin: true, mine: t.mine, teamName: t.label, delta: delta(c, t.count, t.prevCount), zero: `No joinings ${c.word}`,
+      help: `People who joined ${c.word} on ${t.label} seats${t.mine ? ' (your team)' : ''}. Only people still working are counted.`,
+      ...(left ? { stillWorking: t.count, left } : {}),
+    }));
+  });
+}
+
 // ---- Leads: Manager / Asst Manager / STL / TL — "is my team on target?" ------------------
 async function leadHome(c, b, k) {
   const { live, T, rows } = k;
@@ -1882,13 +1898,16 @@ async function leadHome(c, b, k) {
   if (L === 'tl' || L === 'stl') {
     try {
       const month = c.today.slice(0, 7);
-      const team = await require('./recruiterJoinings').creditedJoinings(c.user, { month, level: 'team' }); // eslint-disable-line global-require
-      addSet(b, 'my-joins', {
+      // A department split into 2+ teams (Education Team A / Team B): one joinings card per team, in every lead's login of it (utils/teamJoinCards.js).
+      const teamCards = await require('./teamJoinCards').cardsFor(c); // eslint-disable-line global-require
+      if (teamCards) addTeamJoinCards(b, c, teamCards);
+      const team = teamCards ? null : await require('./recruiterJoinings').creditedJoinings(c.user, { month, level: 'team' }); // eslint-disable-line global-require
+      if (team) addSet(b, 'my-joins', {
         kind: 'app', title: "My team's joinings this month", ids: team.appIds,
         ...(team.leftCount ? { stillWorking: team.appIds.length, left: { n: team.leftCount, drill: 'my-joins-left', text: `${fmtN(team.leftCount)} left after joining (shown under Dropped)` } } : {}),
       });
-      if (team.leftCount) addSet(b, 'my-joins-left', { kind: 'app', title: "My team: left after joining (joined this month)", ids: team.leftAppIds, extra: leftExtraOfIds(team.leftAppIds) });
-      b.top.push(tile('my-joins', "My team's joinings this month", team.appIds.length, 'range', {
+      if (team && team.leftCount) addSet(b, 'my-joins-left', { kind: 'app', title: "My team: left after joining (joined this month)", ids: team.leftAppIds, extra: leftExtraOfIds(team.leftAppIds) });
+      if (team) b.top.push(tile('my-joins', "My team's joinings this month", team.appIds.length, 'range', {
         drill: 'my-joins', zero: 'No joinings yet this month',
         ...(team.leftCount ? { stillWorking: team.appIds.length, left: { n: team.leftCount, drill: 'my-joins-left', text: `${fmtN(team.leftCount)} left after joining (shown under Dropped)` } } : {}),
       }));
@@ -2761,6 +2780,7 @@ function facetDefs(kind) {
 }
 const SEARCH_OF = {
   app: (r) => [r.candidate, r.requirement, r.reqCode, r.client, r.recruiter, r.tl, r.bde],
+  tjoin: (r) => [r.candidate, r.requirement, r.reqCode, r.client, r.recruiter],
   req: (r) => [r.title, r.reqCode, r.client, r.recruiter, r.department, r.bde],
   client: (r) => [r.name, r.owner, r.agreement],
   inv: (r) => [r.invoiceNumber, r.client, r.status],
@@ -2867,6 +2887,7 @@ const EXPORT_COLUMNS = {
   app: [['Candidate', (r) => r.candidate], ['Requirement', (r) => r.requirement], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''],
     ['Recruiter', (r) => r.recruiter || ''], ['Team lead', (r) => r.tl || ''], ['Step', (r) => r.step], ['Due', (r) => (r.note ? r.note : `${DUE_WORDS[r.dueKey || 'no_due']}${r.due ? ` · ${r.due}` : ''}`)],
     ['Interview', (r) => DAYF(r.interviewAt)], ['Joining date', (r) => DAYF(r.joiningDate)], ['Roll status', (r) => r.rollStatus || ''], ['Updated', (r) => DAYF(r.updatedAt)]],
+  tjoin: [['Candidate', (r) => r.candidate], ['Requirement', (r) => r.requirement], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Recruiter', (r) => r.recruiter || ''], ['Joining date', (r) => DAYF(r.joiningDate)]],
   req: [['Requirement', (r) => r.title], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''], ['Recruiter', (r) => r.recruiter || 'No recruiter'], ['Status', (r) => r.status], ['Openings', (r) => r.openings ?? ''], ['Created', (r) => DAYF(r.createdAt)]],
   client: [['Client', (r) => r.name], ['Agreement', (r) => r.agreement || ''], ['Client manager (BDE)', (r) => r.owner || ''], ['Open requirements', (r) => r.openJobs ?? '']],
   inv: [['Invoice', (r) => r.invoiceNumber || ''], ['Client', (r) => r.client], ['Invoice date', (r) => DAYF(r.invoiceDate)], ['Due', (r) => DAYF(r.dueDate)], ['Status', (r) => r.status], ['Amount (before GST)', (r) => r.amount], ['Unpaid', (r) => r.outstanding]],
