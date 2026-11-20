@@ -263,6 +263,8 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   x = await cls(tA, { reqMax: '1' }); check('clients: requirement count up to 1 (a client with none counts as 0)', same(x.names, [n2, n3]), x);
   x = await cls(tA, { hasJoinings: 'yes' }); check('clients: has joinings', same(x.names, [n1]), x);
   x = await cls(tA, { hasJoinings: 'no' }); check('clients: no joinings', same(x.names, [n2, n3]), x);
+  x = await cls(tA, { createdFrom: dayOf(new Date()), createdTo: dayOf(new Date()) }); check('clients: client added on a date range (today holds the three seeded)', same(x.names, [n1, n2, n3]), x);
+  x = await cls(tA, { createdTo: '2020-01-01' }); check('clients: added before 2020 holds none of them', x.names.length === 0, x);
   const rcAll = await cls(tRA, {}); const rcAg = await cls(tRA, { agreementStatus: 'Pending', priority: 'Low', industry: 'zzz' });
   check('clients: a recruiter\'s agreement / priority / industry parameters are ignored (they cannot see those fields)', rcAll.n === rcAg.n && [200, 403].includes(rcAll.status), { a: rcAll.n, b: rcAg.n });
 

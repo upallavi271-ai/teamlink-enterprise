@@ -47,6 +47,7 @@ export function configFor(list, user) {
       { id: 'reqCount', label: 'Requirements', type: 'range', primary: true, keys: { min: 'reqMin', max: 'reqMax' }, title: 'How many requirements the client has' },
       { id: 'hasJoinings', label: 'Joinings', type: 'yesno', primary: true, keys: { value: 'hasJoinings' }, yesLabel: 'Has joinings', noLabel: 'No joinings yet' },
       { id: 'industry', label: 'Industry', type: 'text', keys: { value: 'industry' }, placeholder: 'e.g. Healthcare' },
+      { id: 'clientSince', label: 'Client added on', type: 'daterange', primary: true, keys: { from: 'createdFrom', to: 'createdTo' } },
     ];
     case 'interviews': return [
       { id: 'ivDate', label: 'Interview date', type: 'daterange', primary: true, keys: { from: 'ivFrom', to: 'ivTo' } },

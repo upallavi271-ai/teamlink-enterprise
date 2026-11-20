@@ -5,7 +5,7 @@
 //
 //   Requirements   daysOpenMin daysOpenMax  openLeftMin openLeftMax  ctcMin ctcMax (lakh, overlaps the job's band)
 //                  industry (csv, client industry)  posted=yes|no  workMode (csv)
-//   Clients        priority (csv)  agreementStatus (csv)  industry (csv)  reqMin reqMax  hasJoinings=yes|no
+//   Clients        priority (csv)  agreementStatus (csv)  industry (csv)  reqMin reqMax  hasJoinings=yes|no  createdFrom createdTo
 //   Interviews     ivFrom ivTo  ivStatus ivRound ivMode (csv)  ivInterviewer  ivClient  ivRecruiter
 //   Follow-ups     fuDue=today|overdue|week|none  fuType (csv, how it was done)  fuPriority (csv)  fuOwner (csv user ids)
 //                  fuCandidate  fuRequirement
@@ -91,6 +91,9 @@ async function clientTerms(q, user) {
   if (mayOverview && q.priority) and.push({ priority: { in: csv(q.priority) } });
   if (mayOverview && q.industry) and.push({ OR: csv(q.industry).map((i) => ({ industry: { contains: i } })) });
   if (!blind && q.agreementStatus) and.push({ agreementStatus: { in: csv(q.agreementStatus) } });
+  // the day the client was added (IST days, both ends included)
+  if (q.createdFrom && DAY_RE.test(String(q.createdFrom))) and.push({ createdAt: { gte: istStart(q.createdFrom) } });
+  if (q.createdTo && DAY_RE.test(String(q.createdTo))) and.push({ createdAt: { lte: istEnd(q.createdTo) } });
   const rMin = num(q.reqMin); const rMax = num(q.reqMax);
   if (rMin !== null || rMax !== null) {
     // eslint-disable-next-line global-require
