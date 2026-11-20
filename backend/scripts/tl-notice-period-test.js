@@ -25,7 +25,7 @@ const check = (name, ok, extra) => { total += 1; if (ok) console.log(`  ok  ${na
 const RUN = Date.now().toString(36);
 
 (async () => {
-  const mkUser = (tag) => prisma.user.create({ data: { name: `Np ${tag} ${RUN}`, email: `np.${tag}.${RUN}@np-test.in`, username: `np.${tag}.${RUN}@np-test.in`, passwordHash: 'x', status: 'Active', hrmsRole: 'NONE', role: 'TL', atsRole: 'TL' } });
+  const mkUser = (tag) => prisma.user.create({ data: { name: `Np ${tag} ${RUN}`, email: `np.${tag}.${RUN}@np-test.in`, username: `np.${tag}.${RUN}@np-test.in`, passwordHash: 'x', status: 'Active', hrmsRole: 'NONE', role: 'TL', atsRole: 'TL', atsAccess: true, atsDepartment: 'Education' } });
   const mkEmp = (u, status) => prisma.employee.create({ data: { employeeCode: `NP-${u.id.slice(-6)}-${RUN}`.slice(0, 40), name: u.name, userId: u.id, designation: 'TL', employmentStatus: status, department: 'Education', email: u.email } });
   const seatsFor = async (status, tag) => {
     const u = await mkUser(tag); const e = await mkEmp(u, status);
@@ -54,6 +54,12 @@ const RUN = Date.now().toString(36);
   check('the candidate page\'s team lead (teamLeadOfApplication) names the notice-period TL plainly', t.tlName === a.u.name && !/left/.test(t.tlName) && t.source === 'seat', t);
   const t2 = await TL_CHANGE.teamLeadOfApplication(ap, { positionCode: c.recSeat.code });
   check('...and a relieved TL still reads "(left)"', /\(left\)$/.test(t2.tlName || '') && t2.source === 'seat-former', t2);
+  // the Change team lead dialog's list (founder 2026-11-20: Sirisha, TL of Team B, saw an EMPTY list on Uma's candidate)
+  const O = await TL_CHANGE.optionsFor(null, ap, { eduTeam: { otherUserIds: [a.u.id, c.u.id, d.u.id] } }, { leads: { tlUserId: null } });
+  const names = O.map((x) => x.tlUserId);
+  check('the options list a team lead whose seat end date has passed but who still works (Notice Period)', names.includes(a.u.id), O.map((x) => x.tlName));
+  check('...even when they are in the OTHER Education team (that is what the dialog is for)', names.includes(a.u.id) && names.includes(b.u.id));
+  check('...but not a relieved / exited team lead', !names.includes(c.u.id) && !names.includes(d.u.id));
   console.log(`\n${total - failed}/${total} passed`);
   await prisma.$disconnect();
   for (const s of ['', '-wal', '-shm']) { try { fs.unlinkSync(COPY + s); } catch { /* none */ } }

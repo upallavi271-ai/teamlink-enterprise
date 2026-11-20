@@ -140,6 +140,21 @@ async function optionsFor(user, app, scope, curIn = null) {
   ]);
   const holder = new Map();
   assigns.forEach((a) => { if (a.employee && a.employee.userId && !LEFT_EMPLOYMENT.includes(a.employee.employmentStatus)) holder.set(a.positionId, a.employee.userId); });
+  // A team lead seat whose assignment has an end date but whose last holder still works (Notice Period, Active ...) is still theirs - the same
+  // rule as utils/positionScope.js leadsOfPosition (founder 2026-11-20: Sirisha was missing from her own list).
+  const tlSeatIds = seats.filter((p) => p.kind === 'TL' && !holder.has(p.id)).map((p) => p.id);
+  if (tlSeatIds.length) {
+    const ended = await prisma.positionAssignment.findMany({
+      where: { positionId: { in: tlSeatIds }, toDate: { not: null } }, orderBy: [{ toDate: 'desc' }, { fromDate: 'desc' }],
+      select: { positionId: true, employee: { select: { userId: true, employmentStatus: true } } },
+    });
+    const seen = new Set();
+    ended.forEach((a) => {
+      if (seen.has(a.positionId)) return;
+      seen.add(a.positionId); // the LAST holder only
+      if (a.employee && a.employee.userId && !LEFT_EMPLOYMENT.includes(a.employee.employmentStatus)) holder.set(a.positionId, a.employee.userId);
+    });
+  }
   const users = await prisma.user.findMany({
     where: { id: { in: [...new Set(holder.values())] }, status: 'Active', atsAccess: true, atsRole: { in: ['TL', 'RECRUITER'] }, NOT: NOT_TEST },
     select: { id: true, name: true, atsRole: true, atsDepartment: true, atsScopeDepartments: true },
@@ -151,7 +166,9 @@ async function optionsFor(user, app, scope, curIn = null) {
   seats.forEach((p) => { if (p.team && p.department) { if (!teamsOf.has(p.department)) teamsOf.set(p.department, new Set()); teamsOf.get(p.department).add(p.team); } });
   const sectionOf = (p) => (p.team && p.department && teamsOf.get(p.department) && teamsOf.get(p.department).size > 1 ? p.team : null);
 
-  const other = scope && scope.eduTeam ? (scope.eduTeam.otherUserIds || []) : [];
+  // Education Team A / Team B: Change team lead is exactly how a candidate is moved between the two teams, so the other team is offered here
+  // (Change recruiter keeps its own rule and never offers the other team).
+  const other = [];
   const recruitersOf = new Map();
   seats.filter((p) => p.kind === 'RECRUITER' && p.reportsToId).forEach((p) => {
     const u = uById.get(holder.get(p.id));

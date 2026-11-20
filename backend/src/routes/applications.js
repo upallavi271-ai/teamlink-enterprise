@@ -1203,7 +1203,8 @@ router.post('/bulk', async (req, res, next) => {
           return res.status(403).json({ error: `${target.name} is outside your team, so work cannot be assigned to them.` });
         }
         // Education Team A / Team B (utils/eduTeams.js, 2026-11-11): never to the other team
-        if (s.eduTeam && (s.eduTeam.otherUserIds || []).includes(target.id)) {
+        const isTlChange = b.correct === true && b.teamLeadChange && typeof b.teamLeadChange === 'object'; // Change team lead is how the two teams are corrected
+        if (!isTlChange && s.eduTeam && (s.eduTeam.otherUserIds || []).includes(target.id)) {
           return res.status(403).json({ error: `${target.name} is in the other Education team, so work cannot be assigned to them.` });
         }
       }
