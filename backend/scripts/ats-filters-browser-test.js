@@ -98,18 +98,20 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     await page.locator('.fbar .filter-chips-chip', { hasText: 'Current location' }).first().waitFor();
     const chip = await page.locator('.fbar .filter-chips-chip', { hasText: 'Current location' }).first().innerText();
     check('Candidates: the chip names both ticked locations', names.every((n) => chip.includes(n)), { chip, names });
-    const after = await page.locator('.fbar-count').first().innerText();
-    const uiN = Number(String(after).replace(/\D/g, ''));
-    check('Candidates: the row count changed after ticking two locations', after !== before && uiN > 0, { before, after });
     const apiRes = await api(`/candidates?${new URLSearchParams({ paged: '1', view: 'pipeline', sub: 'all', locCur: names.join(',') })}`);
+    // the list reloads after the ticks: wait (up to 20 s on a busy machine) for the count on screen to settle on the server's
+    const countIs = async (want) => { let n = NaN; for (let k = 0; k < 40; k += 1) { n = Number(String(await page.locator('.fbar-count').first().innerText()).replace(/\D/g, '')); if (n === want) break; await page.waitForTimeout(500); } return n; };
+    const uiN = await countIs(apiRes.total);
+    const after = await page.locator('.fbar-count').first().innerText();
+    check('Candidates: the row count changed after ticking two locations', after !== before && uiN > 0, { before, after });
     check('Candidates: the count on screen equals the API\'s total for the two values', apiRes.total === uiN, { api: apiRes.total, ui: uiN });
     check('Candidates: the URL keeps both values', decodeURIComponent(page.url()).includes(`locCur=${names.join(',')}`), page.url());
     // clearing one option by unticking
     await page.locator('.msel-btn', { hasText: /^Current location:/ }).first().click();
     await page.locator('.msel-pop .msel-item input[type=checkbox]').first().uncheck();
     await page.waitForTimeout(1200);
-    const one = Number(String(await page.locator('.fbar-count').first().innerText()).replace(/\D/g, ''));
     const apiOne = await api(`/candidates?${new URLSearchParams({ paged: '1', view: 'pipeline', sub: 'all', locCur: names[1] })}`);
+    const one = await countIs(apiOne.total);
     check('Candidates: unticking one option leaves the other one\'s rows', apiOne.total === one, { api: apiOne.total, ui: one });
     await page.keyboard.press('Escape');
 
