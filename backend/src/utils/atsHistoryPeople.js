@@ -375,8 +375,8 @@ async function candidateHistory(viewerUser, candidateId) {
     hos.forEach((h) => push(istDay(h.createdAt), h.createdAt, 'handover', `Handed over from ${h.fromValue || '—'} to ${h.toValue}${h.reason ? ` (${h.reason})` : ''}${h.actorName ? ` by ${h.actorName}` : ''}`, { applicationId: h.entityId }));
     const merges = await prisma.candidateMergeLog.findMany({ where: { OR: [{ masterId: candidateId }, { donorIds: { contains: candidateId } }] }, select: { kind: true, status: true, summary: true, performedByName: true, createdAt: true } }).catch(() => []);
     merges.forEach((m) => push(istDay(m.createdAt), m.createdAt, 'merge', `Duplicate ${m.kind === 'SAME_PERSON_OTHER_JOB' ? 'linked' : 'merged'}${m.status === 'UNDONE' ? ' (undone later)' : ''}${m.summary ? `: ${String(m.summary).slice(0, 160)}` : ''}${m.performedByName ? ` (${m.performedByName})` : ''}`));
-    const docs = await prisma.candidateDocument.findMany({ where: { candidateId, deletedAt: null }, select: { docType: true, name: true, uploadedByName: true, createdAt: true } });
-    docs.forEach((d) => push(istDay(d.createdAt), d.createdAt, 'document', `Document added: ${d.docType} - ${d.name}${d.uploadedByName ? ` (${d.uploadedByName})` : ''}`));
+    const docs = await prisma.candidateDocument.findMany({ where: { candidateId, deletedAt: null }, select: { id: true, docType: true, name: true, uploadedByName: true, createdAt: true } });
+    docs.forEach((d) => push(istDay(d.createdAt), d.createdAt, 'document', `Document added: ${d.docType} - ${d.name}${d.uploadedByName ? ` (${d.uploadedByName})` : ''}`, { refId: d.id }));
     if (cand.consentStatus) push(istDay(cand.consentAt || cand.createdAt), cand.consentAt || cand.createdAt, 'consent', `Consent ${String(cand.consentStatus).replace(/_/g, ' ').toLowerCase()}${cand.consentSource ? ` (via ${cand.consentSource})` : ''}${cand.consentAt ? '' : ' (date not recorded)'}`);
     if (cand.consentWithdrawnAt) push(istDay(cand.consentWithdrawnAt), cand.consentWithdrawnAt, 'consent', 'Consent withdrawn');
   }
@@ -393,65 +393,7 @@ async function candidateHistory(viewerUser, candidateId) {
   };
 }
 
-// ---- search --------------------------------------------------------------------------------------------------------------------------------
-async function findPeople(user, v, text) {
-  if (!(v.all || v.kind === 'tl' || v.kind === 'recruiter')) return [];
-  const like = { contains: text };
-  const ids = new Set();
-  (await prisma.user.findMany({ where: { atsRole: { in: ['RECRUITER', 'TL', 'STL'] }, OR: [{ name: like }] }, select: { id: true }, take: 40 })).forEach((u) => ids.add(u.id));
-  const seatHolders = await prisma.positionAssignment.findMany({ where: { toDate: null, position: { OR: [{ code: like }, { name: like }, { team: like }] } }, select: { employee: { select: { userId: true } } }, take: 40 }).catch(() => []);
-  seatHolders.forEach((a) => { if (a.employee && a.employee.userId) ids.add(a.employee.userId); });
-  (await prisma.employee.findMany({ where: { userId: { not: null }, OR: [{ team: like }, { department: like }, { employeeCode: like }] }, select: { userId: true }, take: 60 }).catch(() => [])).forEach((e) => ids.add(e.userId));
-  const users = ids.size ? await prisma.user.findMany({ where: { id: { in: [...ids] }, atsRole: { in: ['RECRUITER', 'TL', 'STL'] } }, select: { id: true, name: true, atsRole: true } }) : [];
-  const allowed = users.filter((u) => (['TL', 'STL'].includes(u.atsRole) ? mayTl(v, u.id) : mayRecruiter(v, u.id)));
-  const out = [];
-  for (const u of allowed.slice(0, 12)) { // eslint-disable-line no-restricted-syntax
-    // eslint-disable-next-line no-await-in-loop
-    const h = await headerOf(u.id);
-    if (h) out.push({ id: h.id, name: h.name, role: h.role, department: h.department, section: h.section, seat: h.seat, teamLead: h.teamLead, active: h.active, statusWord: h.statusWord, kind: h.role === 'Recruiter' ? 'recruiter' : 'tl' });
-  }
-  return out;
-}
-
-async function findCandidates(user, v, text) {
-  if (['external', 'none', 'accounts'].includes(v.kind)) return { rows: [], total: 0 };
-  const digits = text.replace(/\D/g, '');
-  const bare = text.replace(/^(id|can|cand)[-\s#:]*/i, '');
-  const idLike = /^[a-z0-9]{6,}$/i.test(bare) ? bare.toLowerCase() : '';
-  const match = {
-    OR: [
-      { name: { contains: text } },
-      ...(idLike ? [{ id: idLike }, ...(idLike.length <= 10 ? [{ id: { endsWith: idLike } }] : [])] : []),
-      ...(v.contact ? [{ email: { contains: text } }, { phone: { contains: text } }, ...(digits.length >= 4 && digits !== text ? [{ phone: { contains: digits.slice(-10) } }] : [])] : []),
-    ],
-  };
-  const where = { AND: [SC.candidateWhere(user), match] };
-  const rows = await prisma.candidate.findMany({ where, select: { id: true, name: true, phone: true, email: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 12 });
-  const total = await prisma.candidate.count({ where });
-  const ids = rows.map((r) => r.id);
-  const apps = ids.length ? await prisma.application.findMany({ where: { AND: [{ candidateId: { in: ids } }, SC.applicationWhere(user)] }, select: { candidateId: true, stage: true } }) : [];
-  const withTest = H.testViewer(user);
-  return {
-    total,
-    rows: rows.filter((r) => withTest || !H.TEST_RE.test(r.name)).map((r) => {
-      const mine = apps.filter((a) => a.candidateId === r.id);
-      return {
-        id: r.id, name: r.name, code: codeOf(r.id), ...(v.contact ? { phone: r.phone || null, email: r.email || null } : {}),
-        applications: mine.length, rejected: mine.filter((a) => a.stage === 'REJECTED').length, joined: mine.filter((a) => H.JOINED.includes(a.stage)).length,
-        selected: mine.filter((a) => ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'].includes(a.stage)).length,
-      };
-    }),
-  };
-}
-
-async function searchAll(user, text, { clientDesk = false } = {}) {
-  const base = await H.search(user, text, { clientDesk });
-  const t = String(text || '').trim().slice(0, 100);
-  if (t.length < 2) return { ...base, people: [], candidates: [], candidateTotal: 0 };
-  const v = await viewerOf(user);
-  const [people, cands] = await Promise.all([findPeople(user, v, t), findCandidates(user, v, t)]);
-  return { ...base, people, candidates: cands.rows, candidateTotal: cands.total, viewer: { kind: v.kind, contact: v.contact } };
-}
+// (the search itself is utils/atsSearch.js: ONE engine for the top bar, the dashboard bar and the results page)
 
 async function accessInfo(user) {
   const v = await viewerOf(user);
@@ -506,6 +448,6 @@ function candidateSheets(d) {
 }
 
 module.exports = {
-  viewerOf, teamOf, headerOf, mayRecruiter, mayTl, rangeOf, seriesOf, bucketOf, keysBetween, recruiterHistory, tlHistory, candidateHistory, searchAll, accessInfo,
+  viewerOf, teamOf, headerOf, mayRecruiter, mayTl, rangeOf, seriesOf, bucketOf, keysBetween, recruiterHistory, tlHistory, candidateHistory, accessInfo,
   recruiterSheets, tlSheets, candidateSheets, GRAINS,
 };

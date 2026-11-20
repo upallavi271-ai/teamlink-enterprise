@@ -17,9 +17,13 @@ const express = require('express');
 const { requireAuth, requireProduct, can } = require('../middleware/auth');
 const H = require('../utils/atsHistory');
 const P = require('../utils/atsHistoryPeople');
+const S = require('../utils/atsSearch');
 const OWN = require('../utils/ownOnly');
 const { sendBook, formatOf } = require('../utils/exportKit');
 const { scopeLabel } = require('../utils/scope');
+
+// the narrow search table is built shortly after start (in slices), so the first search a person types is not the one that pays for it
+setTimeout(() => { require('../utils/candidateSearchIndex').ensure().catch(() => {}); }, 8000).unref(); // eslint-disable-line global-require
 
 const router = express.Router();
 router.use(requireAuth);
@@ -36,8 +40,29 @@ async function exportRefusal(user) {
 }
 
 router.get('/search', wrap(async (req, res) => {
-  const desk = !!(await clientDeskOf(req.user));
-  res.json(await P.searchAll(req.user, req.query.q, { clientDesk: desk }));
+  // the ONE search (utils/atsSearch.js). ?mode=type is the typeahead (5 rows a group, no counts); without it the full results page, with counts, the facets
+  // for the filter bar and (?group=candidates&offset=12) a further page of one group. The filters are the page's own parameter names.
+  const out = await S.search(req.user, req.query.q, req.query);
+  out.canExport = !(await exportRefusal(req.user));
+  res.json(out);
+}));
+
+// the filtered results as Excel / CSV: what the page lists, every group, with the ATS Reports export right; written to the audit log like every report download
+router.get('/search/export', wrap(async (req, res) => {
+  const refusal = await exportRefusal(req.user);
+  if (refusal) return res.status(403).json({ error: refusal });
+  const format = formatOf({ format: req.query.format === 'pdf' ? 'xlsx' : req.query.format });
+  if (!format) return res.status(400).json({ error: 'Choose Excel or CSV.' });
+  const out = await S.search(req.user, req.query.q, { ...req.query, mode: 'full', exportAll: true, group: undefined, offset: 0 });
+  const sheets = out.groups.map((g) => ({
+    name: g.title,
+    headers: ['Name', 'Code', 'Details', 'Found because', 'Open (address)'],
+    rows: g.rows.map((r) => [r.title || r.name, r.code || '', r.sub || '', (r.via || []).join('; '), r.to || '']),
+  }));
+  if (!sheets.length) sheets.push({ name: 'Results', headers: ['Name', 'Code', 'Details', 'Found because', 'Open (address)'], rows: [] });
+  return sendBook(req, res, {
+    format, name: `search-${String(req.query.q || 'filtered').slice(0, 30)}`, entity: 'AtsReport', what: `Search results - ${String(req.query.q || 'filtered').slice(0, 60)}`, scope: scopeLabel(req.user, 'ats'), period: null, sheets,
+  });
 }));
 
 router.get('/requirement/:id', wrap(async (req, res) => {

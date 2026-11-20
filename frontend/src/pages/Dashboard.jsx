@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import DashSearchBar from '../components/search/DashSearchBar.jsx'; // the big search bar: the complete history of whatever is searched
 import { Navigate, useNavigate } from 'react-router-dom';
 import api from '../api';
 import sharedGet from '../utils/sharedGet';
@@ -356,6 +357,7 @@ function ProductDashboard({ user }) {
   return (
     <>
       <PageHead user={user} extra={scoped ? ` · ${departments.join(', ')}` : ''} range={range} setRange={setRange} />
+      {(hasAts || hasAccounts) && <DashSearchBar />}
       <NotificationsPanel />
       <NewItems />
       {/* Agreement steps (2026-10-13): only when something waits for this login */}

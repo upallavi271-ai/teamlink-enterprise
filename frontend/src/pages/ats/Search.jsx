@@ -1,197 +1,186 @@
-import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
-import FilterChips from '../../components/FilterChips.jsx';
-import './Search.css';
-import Combo from '../../components/Combo.jsx';
-import HistorySearch from '../../components/ats/HistorySearch.jsx'; // requirement / client history, as you type
+import FilterBar, { useUrlFilters, keysOfConfig } from '../../components/ats/FilterBar.jsx';
+import ExportMenu from '../../components/ExportMenu.jsx';
+import { GroupRows, fmtN } from '../../components/search/SearchResults.jsx';
+import { useHistoryOpener } from '../../components/search/historyOpen.jsx';
+import { personOptions, useAtsWorkers } from '../../components/PeopleFilter.jsx';
+import '../../components/search/search.css';
 
 // ---------------------------------------------------------------------------
-// GLOBAL SEARCH (spec §24) — one simple box. Searches candidate name, phone
-// and email, requirement ID and title, client, and employee name; results are
-// grouped "Candidates (3) · Requirements (2) · Clients (1) · Employees (1)".
-//
-// Everything is scoped on the server (GET /api/ats/search): a recruiter finds
-// their own candidates and requirements; Clients appear only for the client
-// desk (SA / Admin / Manager / Asst Manager / BDE) — everyone else sees a
-// client's NAME on the requirements it matches, never the client record.
-// The top bar's search box lands here with ?q=.
+// THE FULL RESULTS PAGE of the one search (Enter in either search box), and a browse-by-filter screen.
+//   - The History groups (People, Clients, Requirements, Candidates) come FIRST, directly under the box; the older record lists (interviews, offers and
+//     joinings, invoices and agreements, other) come below, collapsed, with their counts. Every count is the true one, "Show more" fetches the next page.
+//   - A client / requirement / recruiter / TL / BDE search also lists THEIR candidates (each row says why it matched, with the step).
+//   - The shared FILTER BAR (components/ats/FilterBar.jsx): Type, dates, status, owner, matched by, client, department, location, source, and (for a login
+//     that may read pay) CTC, notice; experience, skills. Chips, Clear all, counts per option, all in the address with ?q= and ?open=; a filter alone (no words)
+//     lists the matching records. Excel of the filtered results (the ATS Reports export right, written to the export log).
+//   - A click opens the complete history in the side drawer OVER this page (components/search/HistoryDrawer.jsx); Up / Down move, Enter opens.
+// GET /api/ats/history/search. Only what this login may see is ever sent.
 // ---------------------------------------------------------------------------
+const HISTORY_GROUPS = ['people', 'clients', 'requirements', 'candidates'];
+const TYPE_OPTIONS = [['people', 'People'], ['clients', 'Clients'], ['requirements', 'Requirements'], ['candidates', 'Candidates'], ['events', 'Interviews, offers & joinings'], ['money', 'Invoices & agreements']].map(([value, label]) => ({ value, label }));
+const STATUS_OPTIONS = [['joined', 'Joined (still working)'], ['selected', 'Selected'], ['dropped', 'Dropped (rejected or left)'], ['active', 'In process']].map(([value, label]) => ({ value, label }));
+const BY_OPTIONS = [['name', 'Name / number'], ['client', 'Client'], ['requirement', 'Requirement'], ['recruiter', 'Recruiter'], ['tl', 'TL'], ['bde', 'BDE']].map(([value, label]) => ({ value, label }));
 
-const EMPTY = {
-  candidates: [], requirements: [], clients: [], employees: [],
-  counts: { candidates: 0, requirements: 0, clients: 0, employees: 0 },
-  clientsAllowed: false, employeesAllowed: false,
-};
-const fmt = (n) => Number(n || 0).toLocaleString('en-IN');
-
-function Group({ id, title, count, shown, children, empty, show = true }) {
-  if (!show) return null;
-  return (
-    <div className="card section srch-group" id={`srch-${id}`}>
-      <h3>
-        {title} <span className="srch-n">({fmt(count)})</span>
-        {count > shown && <span className="small-muted srch-more"> — first {fmt(shown)} shown; add more words to narrow it</span>}
-      </h3>
-      {count === 0 ? <div className="small-muted">{empty}</div> : children}
-    </div>
-  );
-}
+const configOf = (viewer, owners, facets = {}) => [
+  { id: 'type', label: 'Type', type: 'select', primary: true, keys: { value: 'type' }, allLabel: 'All types', options: facets.type || TYPE_OPTIONS },
+  { id: 'added', label: 'Added / created', type: 'daterange', primary: true, keys: { from: 'from', to: 'to' } },
+  { id: 'status', label: 'Status / step', type: 'select', primary: true, keys: { value: 'status' }, allLabel: 'Any step', options: facets.status || STATUS_OPTIONS },
+  { id: 'owner', label: 'Owner (recruiter, TL, BDE)', type: 'select', primary: true, show: owners.length > 0, keys: { value: 'owner' }, allLabel: 'Anyone', options: owners },
+  { id: 'by', label: 'Matched by', type: 'select', primary: true, keys: { value: 'by' }, allLabel: 'Anything', options: facets.by || BY_OPTIONS },
+  { id: 'client', label: 'Client', type: 'text', keys: { value: 'client' }, placeholder: 'client name' },
+  { id: 'dept', label: 'Department', type: 'text', keys: { value: 'dept' }, placeholder: 'e.g. IT' },
+  { id: 'loc', label: 'Location', type: 'text', show: !viewer.limited, keys: { value: 'loc' }, placeholder: 'city' },
+  { id: 'src', label: 'Source', type: 'text', keys: { value: 'src' }, placeholder: 'e.g. Naukri' },
+  { id: 'exp', label: 'Experience', type: 'range', unit: 'years', step: 0.5, keys: { min: 'expMin', max: 'expMax' } },
+  { id: 'skills', label: 'Skills', type: 'text', keys: { value: 'skills' }, placeholder: 'e.g. Java, SQL' },
+  { id: 'ctc', label: 'Expected CTC', type: 'range', show: !!viewer.pay, unit: 'lakh / year', step: 0.5, keys: { min: 'ctcMin', max: 'ctcMax' } },
+  { id: 'notice', label: 'Notice period', type: 'text', show: !!viewer.pay, keys: { value: 'notice' }, placeholder: 'e.g. 30' },
+];
+const ALL_KEYS = keysOfConfig(configOf({ pay: true }, [{ value: 'x', label: 'x' }], {}));
 
 export default function Search() {
   const [params, setParams] = useSearchParams();
   const urlQ = params.get('q') || '';
   const [q, setQ] = useState(urlQ);
-  const [results, setResults] = useState(null);
+  const xf = useUrlFilters(ALL_KEYS);
+  const [tab, setTab] = useState('all');
+  const [more, setMore] = useState({});
+  const [extra, setExtra] = useState({});
+  const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  // Type filter (list standard): All types / Candidates / Requirements /
-  // Clients / Employees — only the groups this login may see are offered.
-  const [type, setType] = useState('');
+  const [active, setActive] = useState(-1);
+  const workers = useAtsWorkers();
+  const openHistory = useHistoryOpener();
+  const owners = useMemo(() => {
+    const one = (role, word) => personOptions(workers, role).filter((o) => o.person && o.person.userId).map((o) => ({ value: o.person.userId, label: `${o.label} (${word})` }));
+    return [...one('RECRUITER', 'recruiter'), ...one('TL', 'TL'), ...one('BDE', 'BDE')];
+  }, [workers]);
+  const viewer = (data && data.viewer) || {};
+  const facets = (data && data.facets) || {};
+  const config = useMemo(() => configOf(viewer, owners, facets), [viewer.pay, viewer.limited, owners, data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const filterKey = JSON.stringify(xf.values);
+  const hasFilter = Object.keys(xf.values).length > 0;
 
-  // The URL is the search: the top bar's box, a bookmark and Back all work.
+  useEffect(() => { setQ(urlQ); }, [urlQ]);
   useEffect(() => {
-    setQ(urlQ);
-    if (!urlQ.trim()) { setResults(null); setError(''); return undefined; }
-    let live = true;
-    setBusy(true);
-    setError('');
-    api.get('/ats/search', { params: { q: urlQ } })
-      .then((res) => { if (live) setResults({ ...EMPTY, ...res.data }); })
-      .catch((e) => { if (live) { setResults(null); setError(e.response?.data?.error || 'Search failed — the server did not answer.'); } })
-      .finally(() => { if (live) setBusy(false); });
-    return () => { live = false; };
-  }, [urlQ]);
+    if (urlQ.trim().length < 2 && !hasFilter) { setData(null); setError(''); return undefined; }
+    const c = new AbortController();
+    setBusy(true); setError(''); setExtra({});
+    api.get('/ats/history/search', { params: { q: urlQ, ...xf.values }, signal: c.signal })
+      .then((r) => { setData(r.data); setBusy(false); setActive(-1); })
+      .catch((e) => {
+        if (c.signal.aborted || e.code === 'ERR_CANCELED') return;
+        setData(null); setError(e.response?.data?.error || 'Search failed: the server did not answer.'); setBusy(false);
+      });
+    return () => c.abort();
+  }, [urlQ, filterKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function search(e) {
-    e?.preventDefault();
+  // "Show more": the next page of one group (nothing is cut silently)
+  const showMore = (g) => {
+    const loaded = g.rows.length + ((extra[g.id] && extra[g.id].rows.length) || 0);
+    api.get('/ats/history/search', { params: { q: urlQ, ...xf.values, group: g.id, offset: loaded, limit: 24 } })
+      .then((r) => {
+        const got = (r.data.groups || [])[0];
+        if (got) setExtra((cur) => ({ ...cur, [g.id]: { rows: [...((cur[g.id] && cur[g.id].rows) || []), ...got.rows], more: got.more } }));
+      })
+      .catch(() => {});
+  };
+
+  const groups = ((data && data.groups) || []).map((g) => (extra[g.id] ? { ...g, rows: [...g.rows, ...extra[g.id].rows], more: extra[g.id].more } : g));
+  const first = groups.filter((g) => HISTORY_GROUPS.includes(g.id));
+  const rest = groups.filter((g) => !HISTORY_GROUPS.includes(g.id));
+  const shown = tab === 'all' ? [...first, ...rest.filter((g) => more[g.id])] : groups.filter((g) => g.id === tab);
+  const flat = shown.flatMap((g) => g.rows.map((r) => ({ r, g })));
+  const total = groups.reduce((n, g) => n + g.count, 0);
+  const submit = (e) => {
+    e.preventDefault();
     const t = q.trim();
     if (!t) return;
-    setParams({ q: t });
-  }
-  function clear() {
-    setQ('');
-    setType('');
-    setResults(null);
-    setError('');
-    setParams({});
-  }
-
-  const r = results || EMPTY;
-  const groups = [
-    ['candidates', 'Candidates', true],
-    ['requirements', 'Requirements', true],
-    ['clients', 'Clients', r.clientsAllowed],
-    ['employees', 'Employees', r.employeesAllowed],
-  ].filter(([, , on]) => on);
-
+    const next = new URLSearchParams(params);
+    next.set('q', t); next.delete('open'); next.delete('focus');
+    setParams(next);
+  };
+  const open = (row, g) => openHistory(row, { list: g ? g.rows : [row] }) || window.location.assign(row.to);
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => (flat.length ? Math.min(flat.length - 1, i + 1) : -1)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => (flat.length ? Math.max(0, i - 1) : -1)); } else if (e.key === 'Enter' && active >= 0 && flat[active]) {
+      e.preventDefault();
+      open(flat[active].r, flat[active].g);
+    }
+  };
+  useEffect(() => {
+    if (active < 0) return;
+    const el = document.getElementById(`srp-opt-${active}`);
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+  }, [active]);
+  const exportParams = { q: urlQ, ...xf.values };
   return (
-    <div className="srch-page">
+    <div className="srp">
       <div className="page-head">
         <div>
-          <h1>Search TeamLink</h1>
-          <div className="page-sub">Candidate name, phone or Candidate ID · requirement ID or requirement title · client name, GSTIN or client code · employee name or Employee ID — only what your role may see</div>
+          <h1>Search</h1>
+          <div className="page-sub">Candidates, recruiters, TLs, clients, requirements, interviews, offers, joinings, invoices, agreements, follow-ups, documents. Every result opens its complete history, right here beside the results. Use the filters on their own to browse.</div>
         </div>
+        {data && data.canExport && total > 0 && <ExportMenu url="/ats/history/search/export" params={exportParams} formats={['xlsx', 'csv']} label="Download Excel" />}
       </div>
-      <HistorySearch initial={urlQ} />
-      <form className="filter-row" onSubmit={search}>
+      <form className="filter-row" onSubmit={submit}>
         <input
           style={{ flex: 1 }}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search TeamLink"
+          onKeyDown={onKey}
+          placeholder="Search anything: candidate, recruiter, TL, client, requirement, phone, invoice…"
           aria-label="Search"
           autoFocus
         />
-        {results && (
-          <Combo value={type} onChange={(e) => setType(e.target.value)} title="Type" aria-label="Type" style={{ width: 'auto' }}>
-            <option value="">All types</option>
-            {groups.map(([id, label]) => <option key={id} value={id}>{`${label} (${fmt(r.counts[id])})`}</option>)}
-          </Combo>
-        )}
         <button className="btn btn-sm btn-primary" type="submit" disabled={!q.trim() || busy}>{busy ? 'Searching…' : 'Search'}</button>
-        <button className="btn btn-sm" type="button" disabled={!q && !results} onClick={clear}>Clear</button>
       </form>
-
+      <FilterBar
+        config={config}
+        values={xf.values}
+        onChange={xf.set}
+        facets={facets}
+        loading={busy}
+        total={data ? total : null}
+        noun="results"
+        onClear={xf.clear}
+        storageKey="ats-search"
+      />
+      {data && (
+        <div className="srp-tabs">
+          <button type="button" className={`btn btn-sm${tab === 'all' ? ' btn-primary' : ''}`} onClick={() => setTab('all')}>All ({fmtN(total)})</button>
+          {groups.map((g) => <button key={g.id} type="button" className={`btn btn-sm${tab === g.id ? ' btn-primary' : ''}`} onClick={() => setTab(g.id)}>{g.title} ({fmtN(g.count)})</button>)}
+        </div>
+      )}
       {error && <div className="notice red">{error}</div>}
-      {results && type && (
-        <FilterChips
-          filters={[{ key: 'type', label: 'Type', value: (groups.find(([id]) => id === type) || [])[1] || type, onRemove: () => setType('') }]}
-          onClearAll={() => setType('')}
-        />
-      )}
-
-      {results && (
-        <>
-          <div className="srch-summary" aria-label="Results by group">
-            {groups.map(([id, label], i) => (
-              <span key={id}>
-                {i > 0 && <span className="srch-dot"> · </span>}
-                <a href={`#srch-${id}`} className={r.counts[id] ? '' : 'srch-zero'}
-                  onClick={(e) => { e.preventDefault(); const el = document.getElementById(`srch-${id}`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
-                >
-                  {label} ({fmt(r.counts[id])})
-                </a>
-              </span>
+      {data && (groups.length === 0
+        ? <div className="small-muted">Nothing in your scope matches{urlQ ? ` “${urlQ}”` : ' these filters'}.</div>
+        : (
+          <>
+            <div className="srp-list" role="listbox" data-testid="results-list">
+              <GroupRows groups={shown} active={active} idPrefix="srp-opt" onOpen={open} onHover={setActive} />
+            </div>
+            {shown.filter((g) => g.more).map((g) => (
+              <button key={g.id} type="button" className="btn btn-sm srp-morebtn" style={{ marginTop: 8 }} onClick={() => showMore(g)}>
+                Show more {g.title.toLowerCase()} ({fmtN(Math.max(0, g.count - g.rows.length))} left)
+              </button>
             ))}
-          </div>
-
-          <Group show={!type || type === 'candidates'} id="candidates" title="Candidates" count={r.counts.candidates} shown={r.candidates.length} empty="No candidates match.">
-            {r.candidates.map((c) => (
-              <div className="srch-row" key={c.id}>
-                <span className="srch-type">CANDIDATE</span>
-                <Link to={`/candidates/${c.id}`} className="srch-main">{c.name}</Link>
-                {c.code && <span className="srch-code">{c.code}</span>}
-                <span className="small-muted">
-                  {[c.phone, c.email, c.requirement && `${c.requirement}${c.stageLabel ? ` · ${c.stageLabel}` : ''}`].filter(Boolean).join(' · ')}
-                </span>
+            {tab === 'all' && rest.length > 0 && (
+              <div className="srp-more">
+                <div className="small-muted" style={{ margin: '12px 0 6px' }}>Other records</div>
+                {rest.map((g) => (
+                  <button key={g.id} type="button" className="btn btn-sm srp-morebtn" aria-expanded={!!more[g.id]} onClick={() => setMore({ ...more, [g.id]: !more[g.id] })}>
+                    {more[g.id] ? '▾' : '▸'} {g.title} ({fmtN(g.count)})
+                  </button>
+                ))}
               </div>
-            ))}
-          </Group>
-
-          <Group show={!type || type === 'requirements'} id="requirements" title="Requirements" count={r.counts.requirements} shown={r.requirements.length} empty="No requirements match.">
-            {r.requirements.map((x) => (
-              <div className="srch-row" key={x.id}>
-                <span className="srch-type">REQUIREMENT</span>
-                <Link to={`/requirements/${x.id}`} className="srch-main">{x.title}</Link>
-                {x.reqCode && <span className="srch-code">{x.reqCode}</span>}
-                <span className="small-muted">
-                  {[x.client && x.client.name, x.department, x.status].filter(Boolean).join(' · ')}
-                </span>
-              </div>
-            ))}
-          </Group>
-
-          {r.clientsAllowed && (
-            <Group show={!type || type === 'clients'} id="clients" title="Clients" count={r.counts.clients} shown={r.clients.length} empty="No clients match.">
-              {r.clients.map((c) => (
-                <div className="srch-row" key={c.id}>
-                  <span className="srch-type">CLIENT</span>
-                  <Link to={`/clients/${c.id}`} className="srch-main">{c.name}</Link>
-                  {c.code && <span className="srch-code">{c.code}</span>}
-                  <span className="small-muted">{[c.gst && `GSTIN ${c.gst}`, c.location].filter(Boolean).join(' · ')}</span>
-                </div>
-              ))}
-            </Group>
-          )}
-
-          {r.employeesAllowed && (
-            <Group show={!type || type === 'employees'} id="employees" title="Employees" count={r.counts.employees} shown={r.employees.length} empty="No employees match.">
-              {r.employees.map((u) => (
-                <div className="srch-row" key={u.id}>
-                  <span className="srch-type">EMPLOYEE</span>
-                  <Link to={u.to || `/employees/${u.id}`} className="srch-main">{u.name}</Link>
-                  {u.code && <span className="srch-code">{u.code}</span>}
-                  <span className="small-muted">{[u.roleLabel, u.department].filter(Boolean).join(' · ')}</span>
-                </div>
-              ))}
-            </Group>
-          )}
-        </>
-      )}
-      {!results && !busy && !error && (
-        <div className="small-muted srch-hint">Type a name, phone number, email, candidate ID, requirement code (e.g. MED-2658), requirement title, client name, GSTIN or client code and press Enter.</div>
-      )}
+            )}
+          </>
+        ))}
+      {!data && !busy && !error && <div className="small-muted">Type at least two letters or digits: a name, phone number (any format), email, ID, client, requirement code, invoice number… A small spelling slip is forgiven. Or pick a filter to browse.</div>}
     </div>
   );
 }

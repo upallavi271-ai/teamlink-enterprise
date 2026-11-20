@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import DashSearchBar from '../search/DashSearchBar.jsx'; // the big search bar: the complete history of whatever is searched
 import api from '../../api';
 import DrillExport, { useDrillRight } from '../DrillExport.jsx';
 import { V3_WIDGETS } from './AtsHomeV3.jsx';
@@ -310,6 +311,7 @@ export default function ControlTower() {
   };
   return (
     <section className="ct" aria-label="360 degree Control Tower">
+      <DashSearchBar />
       <header className="ct-head">
         <div>
           <h1>360° Control Tower</h1>

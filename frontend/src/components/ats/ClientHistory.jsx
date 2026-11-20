@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
 import {
@@ -17,6 +18,8 @@ const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'
 const monthWord = (k) => `${MN[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}`;
 
 export default function ClientHistory({ clientId }) {
+  const [sp] = useSearchParams();
+  const focus = sp.get('focus') || ''; // from a search result: invoice-<id> or agreement
   const [f, setF] = useState({ from: '', to: '', period: '', recruiter: '' });
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
@@ -32,6 +35,14 @@ export default function ClientHistory({ clientId }) {
     return () => { live = false; };
   }, [clientId, key]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!d || !focus) return undefined;
+    const t = setTimeout(() => {
+      const el = document.querySelector(`[data-hx="${focus}"]`);
+      if (el) { el.classList.add('hx-focus'); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    }, 150);
+    return () => clearTimeout(t);
+  }, [d, focus]);
   if (denied) return null; // not the client desk: the older date-by-date history below is all this login gets
   if (err && !d) return <div className="notice red"><span>{err}</span></div>;
   if (!d) return <div className="small-muted">Loading the history…</div>;
@@ -85,7 +96,7 @@ export default function ClientHistory({ clientId }) {
               <tbody>
                 {d.requirementRows.map((x) => (
                   <tr key={x.id}>
-                    <td><Link to={`/requirements/${x.id}?tab=history`}>{x.reqCode ? `${x.reqCode} · ` : ''}{x.title}</Link></td>
+                    <td><HLink to={`/requirements/${x.id}?tab=history`}>{x.reqCode ? `${x.reqCode} · ` : ''}{x.title}</HLink></td>
                     <td>{x.statusLabel}</td><td>{x.openings}</td><td><Day v={x.createdDay} est={false} /></td><td>{x.daysOpen === null ? '—' : x.daysOpen}</td>
                     <td>{x.sourced}</td><td>{x.shared}</td><td>{x.shortlisted}</td><td>{x.interviews}</td><td>{x.selected}</td><td>{x.offers}</td><td><b>{x.joined}</b></td><td>{x.dropped}</td><td>{x.inProcess}</td>
                   </tr>
@@ -94,6 +105,28 @@ export default function ClientHistory({ clientId }) {
             </table>
           </div>
         )}
+      </div>
+
+      <div className="hx-sec" data-testid="client-candidates">
+        <h3>Candidates ({d.candidateTotal})</h3>
+        {d.candidates.length === 0 ? <div className="small-muted">No candidates yet.</div> : (
+          <div className="hx-scroll">
+            <table className="hx-table" style={{ minWidth: 860 }}>
+              <thead><tr><th style={{ cursor: 'default' }}>Candidate</th><th style={{ cursor: 'default' }}>Requirement</th><th style={{ cursor: 'default' }}>Recruiter</th><th style={{ cursor: 'default' }}>Sent to client</th><th style={{ cursor: 'default' }}>Selected</th><th style={{ cursor: 'default' }}>Joined</th><th style={{ cursor: 'default' }}>Step / outcome</th></tr></thead>
+              <tbody>
+                {d.candidates.map((x) => (
+                  <tr key={x.applicationId}>
+                    <td><HLink to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</HLink></td>
+                    <td>{x.requirement}</td><td>{x.recruiterName || '—'}</td>
+                    <td><Day v={x.shared} /></td><td><Day v={x.selected} /></td><td>{x.joinDay && x.outcome === 'joined' ? <Day v={x.joinDay} est={false} /> : '—'}</td>
+                    <td>{x.outcome === 'dropped' ? <><b>Dropped</b>{x.drop ? <div className="hx-muted">{x.drop.typeLabel}{x.drop.reason ? `: ${x.drop.reason}` : ''}</div> : null}</> : x.stageLabel}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {d.candidateTotal > d.candidates.length && <div className="hx-muted" style={{ marginTop: 6 }}>Showing {d.candidates.length} of {d.candidateTotal}. Download the Excel for all of them.</div>}
       </div>
 
       <div className="hx-sec">
@@ -105,7 +138,7 @@ export default function ClientHistory({ clientId }) {
               <tbody>
                 {d.joinings.map((j) => (
                   <tr key={j.applicationId}>
-                    <td>{j.candidate}{j.stageLabel === 'Dropped' && <span className="hx-muted"> · Dropped</span>}<ReplacementTags row={{ ...j, left: j.stageLabel === 'Dropped' }} /></td><td><Link to={`/requirements/${j.requirementId}?tab=history`}>{j.requirement}</Link></td><td>{j.recruiterName || '—'}</td>
+                    <td>{j.candidate}{j.stageLabel === 'Dropped' && <span className="hx-muted"> · Dropped</span>}<ReplacementTags row={{ ...j, left: j.stageLabel === 'Dropped' }} /></td><td><HLink to={`/requirements/${j.requirementId}?tab=history`}>{j.requirement}</HLink></td><td>{j.recruiterName || '—'}</td>
                     <td><Day v={j.joinDay} est={false} /></td>
                     <td>{j.guarantee}{j.guaranteeEnd ? ` (to ${fmtDay(j.guaranteeEnd)})` : ''}{j.left && j.left.reason ? <div className="hx-muted">left: {j.left.reason}</div> : null}</td>
                   </tr>
@@ -117,7 +150,7 @@ export default function ClientHistory({ clientId }) {
       </div>
 
       {d.agreements && (
-        <div className="hx-sec">
+        <div className="hx-sec" data-hx="agreement">
           <h3>Agreement</h3>
           <div className="hx-avg">
             <span>Status: <b>{d.agreements.status}</b></span>
@@ -145,7 +178,7 @@ export default function ClientHistory({ clientId }) {
               <thead><tr><th>Candidate</th><th>Invoice</th><th>Date</th><th>Amount</th><th>Status</th><th>Paid on</th></tr></thead>
               <tbody>
                 {d.billing.perJoining.map((b) => (
-                  <tr key={b.applicationId}><td>{b.candidate}</td><td>{b.invoiceNumber || '—'}</td><td><Day v={b.invoiceDay} est={false} /></td><td>{b.amount === null ? '—' : money(b.amount)}</td><td>{b.status}</td><td><Day v={b.paidDay} est={false} /></td></tr>
+                  <tr key={b.applicationId} data-hx={b.invoiceId ? `invoice-${b.invoiceId}` : undefined}><td>{b.candidate}</td><td>{b.invoiceNumber || '—'}</td><td><Day v={b.invoiceDay} est={false} /></td><td>{b.amount === null ? '—' : money(b.amount)}</td><td>{b.status}</td><td><Day v={b.paidDay} est={false} /></td></tr>
                 ))}
               </tbody>
             </table>

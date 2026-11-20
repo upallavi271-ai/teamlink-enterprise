@@ -1,5 +1,6 @@
 import { HomeWorkCards } from '../ats/AtsWork.jsx'; // carried over, end of day, AI shortlist approval (round 3)
 import { Fragment, useEffect, useState } from 'react';
+import DashSearchBar from '../search/DashSearchBar.jsx'; // the big search bar: the complete history of whatever is searched
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import sharedGet from '../../utils/sharedGet';
 import api from '../../api';
@@ -605,6 +606,7 @@ export default function AtsHome() {
   if (!data || !data.v3) {
     return (
       <div className="atsd ahome av4-page">
+        <DashSearchBar />
         <header className="av4-head">
           <div className="av4-head-l">
             <h1>
@@ -669,6 +671,7 @@ export default function AtsHome() {
   // ---- The opt-in ?v3=1 page keeps its own layout. ----
   return (
     <div className={`atsd ahome${data && data.v3 ? ' is-v3' : ''}`}>
+      <DashSearchBar />
       <div className="page-head">
         <div>
           <h1>{data ? data.title : 'Dashboard'}{deptName ? <span className="ah-h1-dept"> · {deptName}</span> : null}</h1>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
@@ -95,8 +96,8 @@ export default function HistoryTab({ requirementId }) {
               <tbody>
                 {d.rows.map((x) => (
                   <tr key={x.applicationId}>
-                    <td><Link to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</Link><ReplacementTags row={x} onlyFor /></td>
-                    <td>{x.recruiterName && mayOpenRecruiter(access, x.recruiterId) ? <Link to={`/ats/history/recruiter/${x.recruiterId}`}>{x.recruiterName}</Link> : (x.recruiterName || '—')}</td>
+                    <td><HLink to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</HLink><ReplacementTags row={x} onlyFor /></td>
+                    <td>{x.recruiterName && mayOpenRecruiter(access, x.recruiterId) ? <HLink to={`/ats/history/recruiter/${x.recruiterId}`}>{x.recruiterName}</HLink> : (x.recruiterName || '—')}</td>
                     <td><Day v={x.shared} /></td>
                     <td>{x.stageLabel}{x.stageLabel === 'Dropped' && <ReplacementTags row={{ ...x, left: true }} onlyBy />}</td>
                     <td>{x.interviewDates.length ? x.interviewDates.map(fmtDay).join(', ') : '—'}{x.interviewResult ? <div className="hx-muted">{x.interviewResult}</div> : null}</td>

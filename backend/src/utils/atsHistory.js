@@ -666,6 +666,8 @@ async function clientHistory(user, id, q = {}) {
       stageLabel: x.stageLabel,
     }, tgc.get(x.applicationId));
   }).sort((a, b) => String(a.joinDay || '9999').localeCompare(String(b.joinDay || '9999')));
+  // every candidate of this client (one row per application), one click from the client's History
+  const candidateRows = tableRows(recs, {}).slice(0, 500).map((x) => ({ ...rowOut(x), requirement: reqTitle.get(x.requirementId) || '' }));
   const recruiters = [...new Map(all.filter((x) => x.recruiterId).map((x) => [x.recruiterId, x.recruiterName || x.recruiterId])).entries()].map(([rid, name]) => ({ id: rid, name })).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   // agreements (hidden for the logins that never see them)
   let agreements = null;
@@ -694,7 +696,7 @@ async function clientHistory(user, id, q = {}) {
         const x = recs.find((r) => r.applicationId === j.applicationId);
         const inv = x ? byCand.get(`${x.candidateId}|${x.requirementId}`) : null;
         return {
-          applicationId: j.applicationId, candidate: j.candidate, invoiceNumber: inv ? inv.invoiceNumber : null, invoiceDay: inv ? inv.invoiceDate : null, amount: inv ? Math.round(inv.amount || 0) : null,
+          applicationId: j.applicationId, candidate: j.candidate, invoiceId: inv ? inv.id : null, invoiceNumber: inv ? inv.invoiceNumber : null, invoiceDay: inv ? inv.invoiceDate : null, amount: inv ? Math.round(inv.amount || 0) : null,
           status: inv ? inv.status : 'Not raised', paidDay: inv ? inv.paidDate : null,
         };
       }),
@@ -706,54 +708,9 @@ async function clientHistory(user, id, q = {}) {
     big: { requirementsGiven: reqs.length, joinings: (f.tiles.find((t) => t.key === 'joined') || {}).count || 0, leftAfterJoining: (f.tiles.find((t) => t.key === 'left') || {}).count || 0 },
     requirements: { opened, closed: closedN, total: reqs.length, open: reqs.filter((r) => !['CLOSED', 'DRAFT'].includes(r.status)).length },
     averages: { daysToFill: avg(fill), daysShareToJoin: avg(shareToJoin), filledRequirements: fill.length },
-    joinings, requirementRows: reqRows, recruiters, agreements, billing, replacements: replacementsC,
+    joinings, candidates: candidateRows, candidateTotal: recs.length, requirementRows: reqRows, recruiters, agreements, billing, replacements: replacementsC,
     notes: { estimatedDates: f.tiles.reduce((n, t) => n + t.estimated, 0) },
   };
-}
-
-// ---- search ----------------------------------------------------------------------------------------------------------------------------
-async function search(user, textIn, { clientDesk = false } = {}) {
-  const clientSearch = require('./clientSearch'); // eslint-disable-line global-require
-  const text = String(textIn || '').trim().slice(0, 100);
-  if (text.length < 2) return { q: text, clients: [], requirements: [], clientsAllowed: clientDesk };
-  const reqWhere = {
-    AND: [SC.requirementWhere(user), {
-      OR: [{ title: { contains: text } }, { reqCode: { contains: text } }, { id: text }, await clientSearch.clientRelationTerm(text)],
-    }],
-  };
-  const reqs = await prisma.requirement.findMany({ where: reqWhere, select: REQ_SELECT, orderBy: { createdAt: 'desc' }, take: 12 });
-  const reqTotal = await prisma.requirement.count({ where: reqWhere });
-  let clients = [];
-  let clientTotal = 0;
-  if (clientDesk) {
-    const cw = { AND: [SC.clientWhere(user), { OR: [...(await clientSearch.clientTermWhere(text, { legalName: true, clientCode: true })).OR] }] };
-    const rows = await prisma.client.findMany({ where: cw, select: { id: true, name: true, clientCode: true, location: true }, orderBy: { name: 'asc' }, take: 8 });
-    clientTotal = await prisma.client.count({ where: cw });
-    const ids = rows.map((x) => x.id);
-    const counts = ids.length ? await prisma.requirement.findMany({ where: { AND: [{ clientId: { in: ids } }, SC.requirementWhere(user)] }, select: { clientId: true, status: true } }) : [];
-    clients = rows.map((x) => {
-      const mine = counts.filter((k) => k.clientId === x.id);
-      return {
-        id: x.id, name: x.name, code: x.clientCode || null, location: x.location || null, requirements: mine.length, open: mine.filter((k) => !['CLOSED', 'DRAFT'].includes(k.status)).length,
-        matchedOldName: !String(x.name).toLowerCase().includes(text.toLowerCase()),
-      };
-    });
-  }
-  let requirements = [];
-  if (reqs.length) {
-    const { recs } = await loadRecords(user, reqs);
-    const per = new Map(reqs.map((r) => [r.id, []]));
-    recs.forEach((x) => per.get(x.requirementId) && per.get(x.requirementId).push(x));
-    requirements = reqs.map((r) => {
-      const f = funnelOf(per.get(r.id) || [], { from: null, to: null });
-      const n = (k) => (f.tiles.find((t) => t.key === k) || {}).count || 0;
-      return {
-        id: r.id, reqCode: r.reqCode, title: r.title, status: r.status, statusLabel: V.requirementStatusLabel(r.status), openings: r.openings, client: clientNameOf(r), clientId: r.clientId,
-        headline: { sourced: n('sourced'), shared: n('shared'), selected: n('selected'), joined: n('joined'), dropped: n('dropped'), inProcess: n('inprocess') },
-      };
-    });
-  }
-  return { q: text, clients, clientTotal, requirements, requirementTotal: reqTotal, clientsAllowed: clientDesk };
 }
 
 // ---- Excel / CSV -----------------------------------------------------------------------------------------------------------------------------
@@ -774,7 +731,7 @@ function funnelSheet(tiles) {
 }
 
 module.exports = {
-  DEFINITIONS, DROP_TYPES, STEPS, dropOf, ensureIndexes, requirementHistory, clientHistory, search, tableRows, rowOut, applyFilters, funnelOf, loadRecords, periodOf, mayBilling, external,
+  DEFINITIONS, DROP_TYPES, STEPS, dropOf, ensureIndexes, requirementHistory, clientHistory, tableRows, rowOut, applyFilters, funnelOf, loadRecords, periodOf, mayBilling, external,
   exportRow, ROW_HEADERS, funnelSheet, requirementFor, clientFor, REQ_SELECT, STATUS_OF,
   APP_SELECT, stepsOf, istDay, isoDay, todayIst, daysBetween, addDays, avg, testViewer, clientNameOf, inRange, TEST_RE, JOINED, STEP_KEYS,
 };

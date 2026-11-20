@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
 import { Day, fmtDay, num } from './HistoryParts.jsx';
@@ -16,8 +17,14 @@ const KIND = {
   sourced: 'Added', stage: 'Step', interview: 'Interview', feedback: 'Feedback', offer: 'Offer', joined: 'Joined', dropped: 'Dropped', message: 'Message', call: 'Call', followup: 'Follow-up', note: 'Note', handover: 'Handover', merge: 'Duplicate', document: 'Document', consent: 'Consent',
 };
 
+// A search result for an interview / offer / joining / follow-up / document opens this page scrolled to that event, highlighted (?focus=interview-<application>).
+const FOCUS_OF = { interview: 'interview', feedback: 'interview', offer: 'offer', joined: 'joining', followup: 'followup', call: 'followup' };
+const anchorOf = (e) => (e.kind === 'document' ? (e.refId ? `document-${e.refId}` : '') : (FOCUS_OF[e.kind] && e.applicationId ? `${FOCUS_OF[e.kind]}-${e.applicationId}` : ''));
+
 export default function CandidateHistory({ candidateId, embedded = false }) {
   const params = useParams();
+  const [sp] = useSearchParams();
+  const focus = sp.get('focus') || '';
   const id = candidateId || params.id;
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
@@ -31,6 +38,15 @@ export default function CandidateHistory({ candidateId, embedded = false }) {
       .catch((e) => { if (live) setErr(e.response?.data?.error || 'The history could not be loaded.'); });
     return () => { live = false; };
   }, [id]);
+  useEffect(() => {
+    if (!d || !focus) return undefined;
+    const t = setTimeout(() => {
+      const hits = [...document.querySelectorAll('[data-hx]')].filter((el) => el.getAttribute('data-hx').split(' ').includes(focus));
+      hits.forEach((el) => el.classList.add('hx-focus'));
+      if (hits[0]) hits[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 150);
+    return () => clearTimeout(t);
+  }, [d, focus]);
   if (err && !d) return embedded ? <div className="small-muted">{err}</div> : <div><Link className="small-muted" to="/ats/search">← Search</Link><div className="notice red" style={{ marginTop: 8 }}><span>{err}</span></div></div>;
   if (!d) return <div className="small-muted">Loading the history…</div>;
   const c = d.candidate; const t = d.totals;
@@ -81,8 +97,8 @@ export default function CandidateHistory({ candidateId, embedded = false }) {
             </thead>
             <tbody>
               {d.applications.map((x) => (
-                <tr key={x.applicationId}>
-                  <td><Link to={`/requirements/${x.requirementId}?tab=history`}>{x.requirement}</Link><div className="hx-muted">{x.client}</div></td>
+                <tr key={x.applicationId} data-hx={['interview', 'offer', 'joining', 'followup'].map((k) => `${k}-${x.applicationId}`).join(' ')}>
+                  <td><HLink to={`/requirements/${x.requirementId}?tab=history`}>{x.requirement}</HLink><div className="hx-muted">{x.client}</div></td>
                   <td>{x.recruiterName || '—'}<div className="hx-muted">{x.tl || ''}</div></td>
                   <td><Day v={x.added} /></td><td><Day v={x.sent} /></td>
                   <td>{x.interviews.length ? x.interviews.map(fmtDay).join(', ') : '—'}{x.interviewResult ? <div className="hx-muted">{x.interviewResult}</div> : null}</td>
@@ -110,7 +126,7 @@ export default function CandidateHistory({ candidateId, embedded = false }) {
         <ul className="hx-time">
           {tl.map((e, i) => (
             // eslint-disable-next-line react/no-array-index-key
-            <li key={i}><span className="d">{fmtDay(e.day)}{e.est && <sup className="hx-est">est.</sup>}</span><span className="t"><span className="hx-badge inprocess" style={{ marginRight: 6 }}>{KIND[e.kind] || e.kind}</span>{e.text}</span></li>
+            <li key={i} data-hx={anchorOf(e) || undefined}><span className="d">{fmtDay(e.day)}{e.est && <sup className="hx-est">est.</sup>}</span><span className="t"><span className="hx-badge inprocess" style={{ marginRight: 6 }}>{KIND[e.kind] || e.kind}</span>{e.text}</span></li>
           ))}
         </ul>
       </div>

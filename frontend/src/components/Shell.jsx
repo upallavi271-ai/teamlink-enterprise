@@ -29,6 +29,7 @@ import InterviewPopup from './InterviewPopup.jsx'; // every-hour interview remin
 import HealthDot from './dashboard/HealthDot.jsx';
 import TodayTasks from './dashboard/TodayTasks.jsx';
 import GlobalSearch from './GlobalSearch.jsx';
+import HistoryDrawerHost from './search/HistoryDrawer.jsx'; // the side drawer a History opens in, over whatever page is open
 import { loadClientAliases, forgetClientAliases } from './clientAliases.js';
 import { loadStageLabels, forgetStageLabels } from '../utils/stageLabels'; // Admin-renamed stage names + sub-statuses (Company Setup -> Pipeline & checks)
 import { hasAtsWork } from '../utils/useAtsAlerts';
@@ -474,6 +475,7 @@ export default function Shell() {
           <InterviewTabs pathname={pathname} />
           <ModuleTabs pathname={pathname} />
           <AiCallOfferHost />
+          {hasAtsWork(user) && <HistoryDrawerHost />}
           {mayRenderSection(user, pathname) ? <Outlet /> : (
             <div className="card">
               <h1>Not available</h1>

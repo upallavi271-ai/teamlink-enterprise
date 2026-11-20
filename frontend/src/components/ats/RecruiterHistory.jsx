@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
 import { Link, useParams } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
@@ -14,8 +15,9 @@ import {
 // ---------------------------------------------------------------------------
 const NS = { cursor: 'default' };
 
-export default function RecruiterHistory() {
-  const { id } = useParams();
+export default function RecruiterHistory({ personId, embedded = false }) {
+  const routeParams = useParams();
+  const id = personId || routeParams.id;
   const [f, setF] = useState({ from: '', to: '', period: '' });
   const [grain, setGrain] = useState('month');
   const [status, setStatus] = useState('');
@@ -32,13 +34,13 @@ export default function RecruiterHistory() {
       .catch((e) => { if (live) setErr(e.response?.data?.error || 'The history could not be loaded.'); });
     return () => { live = false; };
   }, [id, key]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (err && !d) return <div><Link className="small-muted" to="/ats/search">← Search</Link><div className="notice red" style={{ marginTop: 8 }}><span>{err}</span></div></div>;
+  if (err && !d) return <div>{!embedded && <Link className="small-muted" to="/ats/search">← Search</Link>}<div className="notice red" style={{ marginTop: 8 }}><span>{err}</span></div></div>;
   if (!d) return <div className="small-muted">Loading the history…</div>;
   const p = d.person;
   const head = (k, v) => v !== null && v !== undefined && v !== '' && <div><span className="k">{k}</span>{v}</div>;
   return (
     <div className="hx-tab">
-      <Link className="small-muted" to="/ats/search">← Search</Link>
+      {!embedded && <Link className="small-muted" to="/ats/search">← Search</Link>}
       <div className="page-head" style={{ marginTop: 8 }}>
         <div><h1 style={{ fontSize: 20 }}>{p.name}</h1><div className="page-sub">Recruiter history: everything this recruiter has done, from the first profile</div></div>
         {d.canExport && <ExportMenu url={`/ats/history/recruiter/${id}/export`} params={params} formats={['xlsx', 'csv']} label="Download Excel" />}
@@ -70,10 +72,10 @@ export default function RecruiterHistory() {
                 {d.requirements.map((r) => (
                   <tr key={r.id}>
                     <td>{r.reqCode ? `${r.reqCode} · ` : ''}{r.title}</td>
-                    <td>{r.clientId ? <Link to={`/clients/${r.clientId}?tab=history`}>{r.client}</Link> : r.client}</td>
+                    <td>{r.clientId ? <HLink to={`/clients/${r.clientId}?tab=history`}>{r.client}</HLink> : r.client}</td>
                     <td>{r.statusLabel}</td><td>{r.openings}</td>
                     <td>{r.numbers.sourced}</td><td>{r.numbers.shared}</td><td>{r.numbers.interviewScheduled}</td><td>{r.numbers.selected}</td><td><b>{r.numbers.joined}</b></td><td>{r.numbers.dropped}</td>
-                    <td><Link className="btn btn-sm" to={`/requirements/${r.id}?tab=history`}>History</Link></td>
+                    <td><HLink className="btn btn-sm" to={`/requirements/${r.id}?tab=history`}>History</HLink></td>
                   </tr>
                 ))}
               </tbody>
@@ -102,7 +104,7 @@ export default function RecruiterHistory() {
             <tbody>
               {d.rows.map((x) => (
                 <tr key={x.applicationId}>
-                  <td><Link to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</Link></td>
+                  <td><HLink to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</HLink></td>
                   <td>{x.requirement}<div className="hx-muted">{x.client}</div></td>
                   <td><Day v={x.added} /></td><td><Day v={x.sent} /></td>
                   <td>{x.interviewDates.length ? x.interviewDates.map(fmtDay).join(', ') : '—'}</td><td><Day v={x.selected} /></td><td><Day v={x.offer} /></td>
