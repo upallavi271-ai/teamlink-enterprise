@@ -270,6 +270,7 @@ app.use('/api/clients', clientRoutes);
 app.use('/api/agreement-flow', require('./routes/agreementFlow'));
 app.use('/api/client-merge', require('./routes/clientMerge')); // Duplicate clients (SA/Admin)
 app.use('/api/client-followlog', require('./routes/clientFollowLog')); // the dated follow-up log of a client: comments by everyone + Excel import (2026-11-03)
+app.use('/api/followup-report', require('./routes/followUpReport')); // the team follow-up report: a TL reads all recruiters' follow-ups, a recruiter only their own (2026-11-20)
 // JOB PORTAL MIRROR. After any successful write to one requirement (edit,
 // status change, close, reopen …) a requirement that has ever been published
 // is pushed to the Job Portal, so a closed requirement leaves the board at

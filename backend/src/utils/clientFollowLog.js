@@ -523,7 +523,7 @@ async function namesOf(ids) {
 async function otherCandidateLines(where, take = 2000) {
   const [quick, done] = await Promise.all([
     prisma.candidateMessage.findMany({ where: { ...where.msg, template: 'QUICK_LOG' }, select: { id: true, candidateId: true, applicationId: true, channel: true, body: true, templateLabel: true, senderUserId: true, senderName: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take }),
-    prisma.applicationFollowUp.findMany({ where: { ...where.fu, completedAt: { not: null, ...(where.fuAt || {}) } }, select: { id: true, candidateId: true, applicationId: true, purpose: true, nextAction: true, completedNote: true, completedAt: true, completedById: true, ownerName: true, ownerRole: true }, orderBy: { completedAt: 'desc' }, take }),
+    prisma.applicationFollowUp.findMany({ where: { ...where.fu, completedAt: { not: null, ...(where.fuAt || {}) } }, select: { id: true, candidateId: true, applicationId: true, purpose: true, nextAction: true, completedNote: true, completedAt: true, completedById: true, ownerUserId: true, ownerName: true, ownerRole: true }, orderBy: { completedAt: 'desc' }, take }),
   ]);
   const names = await namesOf(done.map((f) => f.completedById));
   return [
@@ -535,12 +535,12 @@ async function otherCandidateLines(where, take = 2000) {
     ...done.map((f) => ({
       id: `f${f.id}`, candidateId: f.candidateId, applicationId: f.applicationId, onDate: istDay(f.completedAt), createdAt: new Date(f.completedAt).toISOString(),
       note: `${f.purpose || f.nextAction || 'Follow-up'} - done${f.completedNote ? `: ${f.completedNote}` : ''}`,
-      byId: f.completedById, byName: names[f.completedById] || f.ownerName || null, byRole: f.completedById ? null : (f.ownerRole || null), source: 'task', topic: 'Follow-up task',
+      byId: f.completedById, creditId: f.completedById || f.ownerUserId || null, byName: names[f.completedById] || f.ownerName || null, byRole: f.completedById ? null : (f.ownerRole || null), source: 'task', topic: 'Follow-up task',
     })),
   ];
 }
 const publicCand = (e, labels) => ({
-  id: e.id, onDate: e.onDate, note: e.note, topic: e.topic || null, byName: e.byName || null, byRole: e.byRole || null, createdAt: e.createdAt,
+  id: e.id, byId: e.byId || e.creditId || null, onDate: e.onDate, note: e.note, topic: e.topic || null, byName: e.byName || null, byRole: e.byRole || null, createdAt: e.createdAt,
   source: e.source || 'manual', applicationId: e.applicationId || null, requirementLabel: e.applicationId ? (labels[e.applicationId] || null) : null,
 });
 
@@ -550,14 +550,21 @@ async function candidateList(user, { candidateId }) {
   const rows = await prisma.appSetting.findMany({ where: { key: { startsWith: `${CPREFIX}${cand.id}.` } } });
   const own = rows.map(parse).filter(Boolean);
   const other = await otherCandidateLines({ msg: { candidateId: cand.id }, fu: { candidateId: cand.id } });
-  const all = [...own, ...other].sort(newestFirst);
+  // WHOSE LINES (founder 2026-11-20): a recruiter reads only their own lines on the candidate, a TL / STL their team's, a Manager and
+  // Admin everyone's - decided by the one scope function of the Follow-up report (utils/followUpScope.js candidateListScope).
+  const scope = await require('./followUpScope').candidateListScope(user); // eslint-disable-line global-require
+  const seen = scope.ids ? [...own, ...other].filter((e) => scope.ids.has(e.byId || e.creditId)) : [...own, ...other];
+  const all = seen.sort(newestFirst);
   const labels = await appLabels(all.map((e) => e.applicationId));
+  const roleById = scope.people ? Object.fromEntries(scope.people.map((p) => [p.id, p.role])) : {};
   return {
     status: 200,
     body: {
       candidate: cand, client: { id: null, name: cand.name }, requirement: null,
-      entries: await withCallBacks(all.map((e) => publicCand(e, labels))),
+      entries: (await withCallBacks(all.map((e) => publicCand(e, labels)))).map((e) => ({ ...e, byRole: e.byRole || roleById[e.byId] || null })),
       people: [...new Set(all.map((e) => e.byName).filter(Boolean))].sort(),
+      // the "Who" list: Me (a recruiter) · Everyone (team) and each recruiter by name (a TL) · everyone who wrote (Manager, Admin)
+      whoMode: scope.mode, whoPeople: scope.people,
       lastOn: all.length ? all[0].onDate : null, canAdd: mayWrite(user), today: istToday(),
     },
   };
