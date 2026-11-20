@@ -108,6 +108,10 @@ const Z = (s) => new Date(s); // an instant, written in UTC ("...Z")
   await quick(r1a, X.q3, Z('2026-10-07T06:00:00Z'), 'Not interested');
   await quick(r1a, X.q4, Z('2026-10-11T18:29:00Z'), 'Interested'); // 23:59 IST on Oct 11: inside
   await quick(r1a, X.q5, Z('2026-10-11T18:30:00Z'), 'Interested'); // 00:00 IST on Oct 12: outside
+  // an open follow-up on a Rejected application is not carried over (the same exclusion as the recruiter's own carry-over list)
+  const closedP = await person('closedapp', reqA, r1a);
+  await task(r1a, closedP, { createdAt: Z('2026-09-28T07:00:00Z'), dueDate: '2026-10-03' });
+  await prisma.application.update({ where: { id: closedP.a.id }, data: { stage: 'REJECTED' } });
   const cmId = await comment(r1a, X.cm, '2026-10-07', 'Spoke to the candidate, call back on 9th');
   const FUR = require('../src/utils/followUpReminders');
   await FUR.daysOfEntries(['x']); // makes the reminder table
@@ -208,7 +212,7 @@ const Z = (s) => new Date(s); // an instant, written in UTC ("...Z")
   check('week table: two weeks, Oct 5-11 and Oct 12-18; the 00:00 IST Oct 12 log is in week 2', wk.body.buckets.length === 2 && wr.buckets[0][0] === 8 && wr.buckets[1][2] === 1 && wr.buckets[0][2] === 4, wr && wr.buckets);
   const mo = await call('GET', '/followup-report/summary?from=2026-09-28&to=2026-10-11&period=month&columns=month', null, T.tl1);
   const mr = rowOf(mo, r1a);
-  check('month table: Sep (28-30) and Oct (1-11); the Sep 28 task is added in September', mo.body.buckets.length === 2 && mo.body.buckets[0].label === 'Sep 2026' && mr.buckets[0][0] === 1 && mr.buckets[1][0] === 8, mr && mr.buckets);
+  check('month table: Sep (28-30) and Oct (1-11); the Sep 28 task is added in September', mo.body.buckets.length === 2 && mo.body.buckets[0].label === 'Sep 2026' && mr.buckets[0][0] === 2 && mr.buckets[1][0] === 8, mr && mr.buckets);
   const dflt = await call('GET', '/followup-report/summary?period=month', null, T.tl1);
   check('a month with no dates opens on this month', dflt.status === 200 && dflt.body.from.endsWith('-01') && dflt.body.to >= dflt.body.from, [dflt.body.from, dflt.body.to]);
   const pdet = await call('GET', `/followup-report/person?${WEEK}&period=day&personId=${r1a.u.id}`, null, T.tl1);

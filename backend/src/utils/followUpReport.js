@@ -24,6 +24,9 @@
 //                          before today and was not done by that day (still open, or done later)
 //   carried over           owed by the person, due BEFORE the first day and still not done at the start of it
 //   interested / not interested / no answer   the recorded outcome of a logged call or closed task
+// CARRIED OVER agrees with utils/atsWork/targets.js carryOver() (the recruiter's "Carried over from yesterday" list): open, owned, due before the day
+// and - the same two exclusions - not on a requirement that is paused, nor on an application that is Rejected / Joined / Hired. That list is a live
+// "now" list for one person; this one answers the same question as at the first day of any chosen period, for the whole team.
 // "Owed by" = the person who closed it, else its owner now, else who created it (a handover moves the open ones to the new owner).
 // One follow-up is one row of the list and counts once in each column; the Totals row adds the people up, except "candidates
 // contacted", which is unique across the team.
@@ -150,7 +153,7 @@ async function readTasks(ids, from, to) {
       select: {
         id: true, candidateId: true, applicationId: true, ownerUserId: true, ownerName: true, createdById: true, createdByName: true, createdAt: true,
         completedAt: true, completedById: true, completedNote: true, dueDate: true, outcome: true, purpose: true, nextAction: true, notes: true, autoCreated: true,
-        application: { select: { candidate: { select: { id: true, name: true } }, requirement: { select: { title: true, reqCode: true, internal: true, client: { select: { name: true } } } } } },
+        application: { select: { stage: true, requirementId: true, candidate: { select: { id: true, name: true } }, requirement: { select: { title: true, reqCode: true, internal: true, client: { select: { name: true } } } } } },
       },
     });
     out.push(...rows);
@@ -233,6 +236,8 @@ async function loadItems(ids, from, to) {
     requirementIds: [...new Set(comments.map((e) => e.requirementId).filter(Boolean))],
   });
   const items = [];
+  let paused = new Set();
+  try { paused = new Set((await prisma.$queryRawUnsafe('SELECT "requirementId" FROM "AtsRequirementPause" WHERE "resumedAt" IS NULL')).map((r) => r.requirementId)); } catch { /* no pause table yet: nothing is paused */ }
 
   tasks.forEach((t) => {
     const imported = isImportedTask(t);
@@ -250,6 +255,7 @@ async function loadItems(ids, from, to) {
       doneBy, doneDay: t.completedAt ? istDay(t.completedAt) : null,
       owedBy: doneBy || t.ownerUserId || t.createdById || null,
       callBackDay: due, promisedBy: !system && !imported && due ? addedBy : null,
+      noCarry: !t.completedAt && !!t.application && (['REJECTED', 'JOINED', 'HIRED'].includes(t.application.stage) || paused.has(t.application.requirementId)),
       outcome: outcomeClass(t.outcome), outcomeText: t.outcome || null, imported,
       candidateId: t.candidateId, candidateName: t.application && t.application.candidate ? t.application.candidate.name : null,
       requirement: req ? [req.reqCode, req.title].filter(Boolean).join(' · ') : null,
@@ -344,7 +350,7 @@ function count(items, { from, to, buckets, credit, now = today() }) {
 
   // carried over: due before the start, not done at the start. Per column of the table and for the whole range (from its first day).
   items.forEach((it) => {
-    if (!it.callBackDay || it.type === 'Logged contact' || !it.owedBy) return;
+    if (!it.callBackDay || it.type === 'Logged contact' || !it.owedBy || it.noCarry) return;
     if (it.createdDay && it.createdDay > from) { /* created inside: handled by its own day */ }
     const open = (d0) => it.callBackDay < d0 && (!it.doneDay || it.doneDay >= d0) && (!it.createdDay || it.createdDay < d0);
     if (open(from)) carried(it.owedBy, from, (p) => p.total);
@@ -448,7 +454,7 @@ async function list(scope, q = {}, { all = false } = {}) {
     const doneIn = it.doneBy && it.type === 'Task' && credit(it.doneBy, it.doneDay) && inRange(it.doneDay);
     const loggedIn = it.loggedBy && credit(it.loggedBy, it.loggedDay) && inRange(it.loggedDay);
     const callIn = it.callBackDay && credit(it.owedBy, it.callBackDay) && inRange(it.callBackDay);
-    const carriedIn = it.callBackDay && it.type !== 'Logged contact' && credit(it.owedBy, r.from) && it.callBackDay < r.from && (!it.doneDay || it.doneDay >= r.from) && (!it.createdDay || it.createdDay < r.from);
+    const carriedIn = it.callBackDay && it.type !== 'Logged contact' && !it.noCarry && credit(it.owedBy, r.from) && it.callBackDay < r.from && (!it.doneDay || it.doneDay >= r.from) && (!it.createdDay || it.createdDay < r.from);
     if (!(addedIn || doneIn || loggedIn || callIn || carriedIn)) return;
     // the person this row is for: who did it (closed / logged / wrote), else who owes it
     const doer = loggedIn ? it.loggedBy : doneIn ? it.doneBy : addedIn ? it.addedBy : it.owedBy;
