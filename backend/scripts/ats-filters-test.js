@@ -377,6 +377,80 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   const meRow = ((tv.body && tv.body.rows) || []).find((p) => p.id === RA.id);
   check('team rows carry location, joined-the-company date and HR status for the filters', !!meRow && 'location' in meRow && 'joinedCompanyOn' in meRow && 'employmentStatus' in meRow && 'seat' in meRow, meRow && Object.keys(meRow));
 
+  // =====================================================================================================================
+  // CRM LISTS (phase 2): dates, amounts, places; whole history when a filter is on; export with filters; CRM team only
+  // =====================================================================================================================
+  await call('GET', '/crm/me', null, tA); // the CRM tables are made on first use
+  const iso = (d) => new Date(d).toISOString();
+  const nowI = iso(Date.now());
+  const crmIns = async (table, o) => {
+    const cols = Object.keys(o);
+    await prisma.$executeRawUnsafe(`INSERT INTO "${table}" (${cols.map((c) => `"${c}"`).join(',')}) VALUES (${cols.map(() => '?').join(',')})`, ...cols.map((c) => o[c]));
+  };
+  const own = { ownerId: adminRow.id, ownerName: adminRow.name, createdById: adminRow.id, updatedAt: nowI };
+  const crmOk = (await call('GET', '/crm/leads', null, tA)).status === 200;
+  check('CRM: the Admin opens the CRM leads', crmOk);
+  const CN = (s) => `${TAG} ${s}`;
+  try {
+    await crmIns('CrmLead', { id: `fl1${P}`, company: CN('L1'), city: 'Hyderabad', industry: 'Hospital', status: 'New', createdAt: nowI, ...own });
+    await crmIns('CrmLead', { id: `fl2${P}`, company: CN('L2'), city: 'Pune', industry: 'School', status: 'New', ...own, createdAt: iso('2026-01-10T10:00:00+05:30') });
+    await crmIns('CrmLead', { id: `fl3${P}`, company: CN('L3'), city: 'Hyderabad', industry: 'Hospital', status: 'Converted', createdAt: nowI, ...own });
+    await crmIns('CrmAccount', { id: `fa1${P}`, name: CN('A1'), city: 'Hyderabad', industry: 'Hospital', source: 'Website', kind: 'Prospect', createdAt: nowI, ...own });
+    await crmIns('CrmAccount', { id: `fa2${P}`, name: CN('A2'), city: 'Pune', industry: 'School', source: 'Referral', kind: 'Prospect', ...own, createdAt: iso('2026-01-10T10:00:00+05:30') });
+    await crmIns('CrmContact', { id: `fc1${P}`, name: CN('C1'), role: 'HR', createdAt: nowI, ...own });
+    await crmIns('CrmContact', { id: `fc2${P}`, name: CN('C2'), role: 'Finance', createdAt: nowI, ...own });
+    await crmIns('CrmDeal', { id: `fd1${P}`, title: CN('D1'), stage: 'Proposal sent', value: 500000, expectedClose: '2026-12-15', createdAt: nowI, ...own });
+    await crmIns('CrmDeal', { id: `fd2${P}`, title: CN('D2'), stage: 'Prospecting', value: 50000, expectedClose: '2027-01-10', createdAt: nowI, ...own });
+    await crmIns('CrmDeal', { id: `fd3${P}`, title: CN('D3'), stage: 'Won', value: 900000, wonAt: iso(ago(100)), createdAt: iso(ago(120)), ...own, updatedAt: iso(ago(100)) });
+    await crmIns('CrmInvoice', { id: `fi1${P}`, code: CN('I1'), title: 'x', status: 'Sent', issueDate: '2026-10-01', dueDate: '2026-10-15', amount: 100000, total: 100000, createdAt: nowI, ...own });
+    await crmIns('CrmInvoice', { id: `fi2${P}`, code: CN('I2'), title: 'y', status: 'Sent', issueDate: '2026-11-01', dueDate: '2026-11-15', amount: 5000, total: 5000, createdAt: nowI, ...own });
+    await crmIns('CrmTask', { id: `ft1${P}`, title: CN('call'), dueDate: dayOf(new Date()), status: 'Open', createdAt: nowI, ...own });
+    await crmIns('CrmTask', { id: `ft2${P}`, title: CN('old done'), dueDate: dayOf(ago(100)), status: 'Done', doneAt: iso(ago(100)), createdAt: iso(ago(101)), ...own });
+    await crmIns('CrmCampaign', { id: `fm1${P}`, name: CN('Camp'), channel: 'email', body: 'hi', audienceJson: '{}', status: 'Sent', createdAt: nowI, updatedAt: nowI });
+  } catch (e) { check(`CRM: the sample rows could be added (${String(e.message).slice(0, 160)})`, false); }
+  const crm = async (path, token, params) => { const r = await call('GET', `/crm/${path}?${qs(params || {})}`, null, token); return { status: r.status, body: r.body }; };
+  const namesOfRows = (rows, key) => (rows || []).map((y) => y[key]).filter((n) => typeof n === 'string' && n.startsWith(TAG));
+  // leads
+  x = await crm('leads', tA, {}); check('CRM leads: by default the open lead is listed and the converted one is not', namesOfRows(x.body.rows, 'company').includes(CN('L1')) && !namesOfRows(x.body.rows, 'company').includes(CN('L3')), namesOfRows(x.body.rows, 'company'));
+  x = await crm('leads', tA, { city: 'Hyderabad' }); check('CRM leads: city filter reaches the converted lead too (whole history)', same(namesOfRows(x.body.rows, 'company'), [CN('L1'), CN('L3')]), namesOfRows(x.body.rows, 'company'));
+  x = await crm('leads', tA, { industry: 'School' }); check('CRM leads: industry', same(namesOfRows(x.body.rows, 'company'), [CN('L2')]), namesOfRows(x.body.rows, 'company'));
+  x = await crm('leads', tA, { cFrom: '2026-01-01', cTo: '2026-01-31' }); check('CRM leads: added-on date range', same(namesOfRows(x.body.rows, 'company'), [CN('L2')]), namesOfRows(x.body.rows, 'company'));
+  x = await crm('leads', tA, { cFrom: dayOf(new Date()) }); check('CRM leads: added from today', same(namesOfRows(x.body.rows, 'company'), [CN('L1'), CN('L3')]), namesOfRows(x.body.rows, 'company'));
+  x = await crm('leads', tA, { page: '1', pageSize: '50', city: 'Pune' }); check('CRM leads: the paged list takes the same filters and says the total', x.status === 200 && x.body.total === 1, x.body && { t: x.body.total });
+  // accounts and contacts
+  x = await crm('accounts', tA, { city: 'Hyderabad' }); check('CRM accounts: city', same(namesOfRows(x.body.rows, 'name'), [CN('A1')]), namesOfRows(x.body.rows, 'name'));
+  x = await crm('accounts', tA, { source: 'Referral' }); check('CRM accounts: source', same(namesOfRows(x.body.rows, 'name'), [CN('A2')]), namesOfRows(x.body.rows, 'name'));
+  x = await crm('accounts', tA, { industry: 'School', cTo: '2026-02-01' }); check('CRM accounts: industry + added-on', same(namesOfRows(x.body.rows, 'name'), [CN('A2')]), namesOfRows(x.body.rows, 'name'));
+  x = await crm('contacts', tA, { role: 'HR' }); check('CRM contacts: role', same(namesOfRows(x.body.rows, 'name'), [CN('C1')]), namesOfRows(x.body.rows, 'name'));
+  // deals
+  x = await crm('deals', tA, {}); check('CRM deals: by default a deal won 100 days ago is outside the 30-day window', !namesOfRows(x.body.rows, 'title').includes(CN('D3')) && namesOfRows(x.body.rows, 'title').includes(CN('D1')), namesOfRows(x.body.rows, 'title'));
+  x = await crm('deals', tA, { valueMin: '100000' }); check('CRM deals: value from 1 lakh reaches the old won deal (whole history)', same(namesOfRows(x.body.rows, 'title'), [CN('D1'), CN('D3')]), namesOfRows(x.body.rows, 'title'));
+  x = await crm('deals', tA, { valueMax: '100000' }); check('CRM deals: value up to 1 lakh', same(namesOfRows(x.body.rows, 'title'), [CN('D2')]), namesOfRows(x.body.rows, 'title'));
+  x = await crm('deals', tA, { valueMin: '500000', valueMax: '500000' }); check('CRM deals: value boundaries are included', same(namesOfRows(x.body.rows, 'title'), [CN('D1')]), namesOfRows(x.body.rows, 'title'));
+  x = await crm('deals', tA, { stage: 'Prospecting,Proposal sent' }); check('CRM deals: stage (two)', same(namesOfRows(x.body.rows, 'title'), [CN('D1'), CN('D2')]), namesOfRows(x.body.rows, 'title'));
+  x = await crm('deals', tA, { closeFrom: '2026-12-01', closeTo: '2026-12-31' }); check('CRM deals: expected-close range', same(namesOfRows(x.body.rows, 'title'), [CN('D1')]), namesOfRows(x.body.rows, 'title'));
+  // invoices
+  x = await crm('invoices', tA, { amtMin: '50000' }); check('CRM invoices: total from 50,000', same(namesOfRows(x.body.invoices, 'code'), [CN('I1')]), namesOfRows(x.body.invoices, 'code'));
+  x = await crm('invoices', tA, { issueFrom: '2026-10-20' }); check('CRM invoices: issued-on range', same(namesOfRows(x.body.invoices, 'code'), [CN('I2')]), namesOfRows(x.body.invoices, 'code'));
+  x = await crm('invoices', tA, { dueTo: '2026-10-31' }); check('CRM invoices: due-on range', same(namesOfRows(x.body.invoices, 'code'), [CN('I1')]), namesOfRows(x.body.invoices, 'code'));
+  x = await crm('invoices', tA, { q: TAG, amtMax: '5000' }); check('CRM invoices: server search + amount ceiling (boundary included)', same(namesOfRows(x.body.invoices, 'code'), [CN('I2')]), namesOfRows(x.body.invoices, 'code'));
+  // follow-ups
+  x = await crm('tasks', tA, { when: 'done' }); check('CRM follow-ups: the done list is the last 30 days by default (the old one is not in it)', !(x.body.tasks || []).some((t) => t.id === `ft2${P}`), (x.body.tasks || []).length);
+  x = await crm('tasks', tA, { when: 'done', q: TAG }); check('CRM follow-ups: a search reaches the old done follow-up (whole history)', (x.body.tasks || []).some((t) => t.id === `ft2${P}`), (x.body.tasks || []).map((t) => t.title).slice(0, 4));
+  x = await crm('tasks', tA, { when: 'open', q: TAG }); check('CRM follow-ups: search finds the open one', same(namesOfRows(x.body.tasks, 'title'), [CN('call')]), namesOfRows(x.body.tasks, 'title'));
+  // campaigns
+  x = await crm('campaigns', tA, { q: TAG, status: 'Sent' }); check('CRM campaigns: search + status', same(namesOfRows(x.body.rows, 'name'), [CN('Camp')]), namesOfRows(x.body.rows, 'name'));
+  x = await crm('campaigns', tA, { q: TAG, channel: 'whatsapp' }); check('CRM campaigns: channel that does not match gives none', namesOfRows(x.body.rows, 'name').length === 0, namesOfRows(x.body.rows, 'name'));
+  // export honours the filters; a non-CRM login is refused
+  const exAll = await call('GET', '/crm/export/leads', null, tA);
+  const exCity = await call('GET', `/crm/export/leads?${qs({ city: 'Pune' })}`, null, tA);
+  check('CRM export: unfiltered holds both open leads', exAll.status === 200 && exAll.text.includes(CN('L1')) && exAll.text.includes(CN('L2')), exAll.status);
+  check('CRM export: filtered by city holds only that city\'s leads', exCity.status === 200 && exCity.text.includes(CN('L2')) && !exCity.text.includes(CN('L1')), exCity.status);
+  const exDeals = await call('GET', `/crm/export/deals?${qs({ valueMin: '800000' })}`, null, tA);
+  check('CRM export: deals filtered by value (the old won deal is in, the others out)', exDeals.status === 200 && exDeals.text.includes(CN('D3')) && !exDeals.text.includes(CN('D1')), exDeals.status);
+  x = await crm('leads', tRA, {}); check('CRM scope: a recruiter (not in the CRM team) is refused the CRM lists', [401, 403].includes(x.status), x.status);
+  x = await crm('deals', tBde, { valueMin: '1' }); check('CRM scope: a BDE is never in the CRM (refused)', [401, 403].includes(x.status), x.status);
+
   // job portal applications and call lists answer their filters
   const jp = await call('GET', `/job-portal/applications?${qs({ jpSource: 'zzz-none' })}`, null, tA);
   check('job portal: a source that matches nothing gives an empty list (200)', jp.status === 200 && rowsOf(jp.body).length === 0, { s: jp.status });
