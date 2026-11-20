@@ -126,7 +126,8 @@ async function forNumber(cfg, numberId) {
   if (!numberId) return safe;
   const p = (await S.q('SELECT enabled, systemPrompt, fallbackMessage FROM "OmniWaAiProfile" WHERE numberId = ?', String(numberId)))[0];
   if (!p) return safe;
-  return { ...safe, numberOff: !p.enabled, systemPrompt: p.systemPrompt || cfg.systemPrompt, fallbackMessage: p.fallbackMessage ? oneFallback(p.fallbackMessage) : safe.fallbackMessage };
+  // ownSystemPrompt = only what this number itself has (a marketing number must never fall back to the shared RECRUITMENT instructions)
+  return { ...safe, numberOff: !p.enabled, systemPrompt: p.systemPrompt || cfg.systemPrompt, ownSystemPrompt: p.systemPrompt || null, fallbackMessage: p.fallbackMessage ? oneFallback(p.fallbackMessage) : safe.fallbackMessage };
 }
 
 // ---- knowledge base ------------------------------------------------------------------------------------------------------------------------------
@@ -192,6 +193,10 @@ async function kbImportWebsite(user, { urls, numberId = null, maxPages = 30 } = 
 
 // ---- marketing numbers: a number whose chats are about our products, not about a job (founder 2026-11-20, the Digital Marketing number) ---------------------
 // AppSetting 'omni.wa.marketingNumbers' = ["<numberId>", ...]. A chat on such a number is answered from the promotion we sent and the website knowledge only (agent.js askMarketing).
+// who the AI is on a marketing number when the number has no instructions of its own: never the shared recruitment ones (founder 2026-11-20: "ee chatbot lo different questions unnai, digital marketing questions kadhu")
+const MARKETING_PROMPT = `You are the WhatsApp assistant of TeamLink Consultants' Digital Marketing team (TeamLink Consultants, Hyderabad). People write to you after they received one of our promotions about SEO, social media, lead generation, website promotion or our software (HRMS, ATS, Job Portal, Omnichannel). You help them understand what we offer, politely and briefly, and pass them to our team when they want to go ahead. You are not a recruiter and you never ask job or candidate questions.`;
+
+
 const MK_KEY = 'omni.wa.marketingNumbers';
 async function marketingNumbers() {
   const row = await prisma.appSetting.findUnique({ where: { key: MK_KEY } }).catch(() => null);
@@ -206,4 +211,4 @@ async function setMarketingNumber(numberId, on) {
   return { ok: true, numbers: [...now] };
 }
 
-module.exports = { questions, saveQuestions, oneFallback, profiles, saveProfile, removeProfile, forNumber, read, save, kbList, kbSave, kbRemove, kbSearch, kbImportWebsite, marketingNumbers, isMarketingNumber, setMarketingNumber, DEFAULT_PROMPT, DEFAULT_FALLBACK };
+module.exports = { questions, saveQuestions, oneFallback, profiles, saveProfile, removeProfile, forNumber, read, save, kbList, kbSave, kbRemove, kbSearch, kbImportWebsite, marketingNumbers, isMarketingNumber, setMarketingNumber, MARKETING_PROMPT, DEFAULT_PROMPT, DEFAULT_FALLBACK };

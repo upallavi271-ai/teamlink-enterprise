@@ -14,6 +14,10 @@ const Cfg = require('../src/omniwa/config');
   }
   const urls = rest.filter((u) => /^https?:\/\//i.test(u));
   console.log('marketing mode on:', JSON.stringify(await Cfg.setMarketingNumber(numberId, true)));
+  // the number's OWN instructions (what Bot Builder shows under "Own instructions"): the marketing ones, unless somebody already wrote their own
+  const have = (await Cfg.profiles()).find((x) => x.numberId === numberId);
+  if (!have || !have.systemPrompt) console.log('own instructions:', JSON.stringify(await Cfg.saveProfile({ name: 'omni-marketing-setup' }, numberId, { enabled: have ? have.enabled : true, systemPrompt: Cfg.MARKETING_PROMPT, fallbackMessage: have ? have.fallbackMessage : '' })));
+  else console.log('own instructions: kept (already written)');
   if (urls.length) {
     const r = await Cfg.kbImportWebsite({ name: 'omni-marketing-setup' }, { urls, numberId, maxPages: 40 });
     console.log('website import:', JSON.stringify(r));

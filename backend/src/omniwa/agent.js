@@ -339,7 +339,7 @@ async function askMarketing(conv, cfg, input) {
   const facts = hits.length ? hits.map((h) => `- ${h.question}: ${clip(String(h.answer).replace(/\s*\(Page: [^)]*\)\s*$/, ''), 700)}`).join('\n') : 'Nothing on the website matches this question.';
   ctx.facts.push(promoText, facts);
   const name = conv.name ? `You are talking TO ${conv.name}, a customer or lead. That is not you; you are the assistant of the company.` : '';
-  const system = `${cfg.systemPrompt}\n\n${MARKETING_RULES}\n\n${name}\nTHE PROMOTION WE SENT THIS PERSON (their message is most likely about it):\n${promoText}\n\nWEBSITE FACTS (the only facts you may state about our products and services):\n${facts}\nThe software we sell is used at https://teamlink.teamlinks.in`;
+  const system = `${cfg.ownSystemPrompt || Cfg.MARKETING_PROMPT}\n\n${MARKETING_RULES}\n\n${name}\nTHE PROMOTION WE SENT THIS PERSON (their message is most likely about it):\n${promoText}\n\nWEBSITE FACTS (the only facts you may state about our products and services):\n${facts}\nThe software we sell is used at https://teamlink.teamlinks.in`;
   const history = await memory(conv, cfg.memoryCount);
   if (!history.length) history.push({ role: 'user', content: clip(input, 1500) });
   const out = await ai.chatJson(system, history, { model: cfg.model || undefined, timeoutMs: MODEL_TIMEOUT_MS });
