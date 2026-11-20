@@ -255,6 +255,12 @@ function ensure() {
       await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "ScheduledReminder_due" ON "ScheduledReminder" ("status","sendAt")');
       await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "ScheduledReminder_app" ON "ScheduledReminder" ("applicationId","kind")');
       await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "ScheduledReminder_ref" ON "ScheduledReminder" ("providerRef")');
+      // the person's own scheduled messages (kind 'custom', utils/scheduledMessages.js): the words and, for an email, the subject
+      for (const col of ['subject', 'body']) {
+        // eslint-disable-next-line no-await-in-loop
+        await prisma.$executeRawUnsafe(`ALTER TABLE "ScheduledReminder" ADD COLUMN "${col}" TEXT`).catch((e) => { if (!/duplicate column/i.test(String(e && e.message))) throw e; });
+      }
+      await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "ScheduledReminder_cand" ON "ScheduledReminder" ("candidateId","kind")');
       await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ReminderEventInfo" (
         "applicationId" TEXT NOT NULL, "kind" TEXT NOT NULL, "venueName" TEXT, "address" TEXT, "mapLink" TEXT, "contactName" TEXT, "contactPhone" TEXT,
         "reportingTime" TEXT, "hrContact" TEXT, "carry" TEXT, "planSaved" INTEGER NOT NULL DEFAULT 0, "updatedAt" TEXT, "updatedByName" TEXT,
@@ -1079,7 +1085,7 @@ async function saveDetails(user, applicationId, kind, details) {
 
 // ------------------------------------------------------------------ sending
 function creditActor(row) { return row.createdById || null; }
-async function whatsappSend(row, to, text) {
+async function whatsappSend(row, to, text, purpose = 'Interview and joining reminder') {
   const core = require('./messagingCore'); // eslint-disable-line global-require
   const delivery = require('./messageDelivery'); // eslint-disable-line global-require
   const m = core.normalizeMobile(to);
@@ -1097,7 +1103,7 @@ async function whatsappSend(row, to, text) {
   }
   return require('./messaging').send('WhatsApp', { // eslint-disable-line global-require
     to: m.e164, text, kind: open ? 'session' : 'bulk', ...(open ? {} : { vars: [text] }), automatic: true, actorUserId: creditActor(row) || undefined,
-    meta: { audience: 'candidates', personId: row.candidateId, senderUserId: creditActor(row) || undefined, purpose: 'Interview and joining reminder', template: row.templateKey, module: 'ATS' },
+    meta: { audience: 'candidates', personId: row.candidateId, senderUserId: creditActor(row) || undefined, purpose, template: row.templateKey, module: 'ATS' },
   });
 }
 async function deliver(row, app, settings, tpls) {
@@ -1167,13 +1173,20 @@ async function run(opts = {}) {
   const settings = await loadSettings();
   const summary = { at: now.toISOString(), enabled: settings.enabled, considered: 0, sent: 0, failed: 0, skipped: 0, retried: 0, deferred: 0, cancelled: 0, items: [] };
   // a pass that died half way: 'sending' for over 10 minutes was never confirmed, it is not sent a second time
-  await x('UPDATE "ScheduledReminder" SET "status" = \'failed\', "reason" = ?, "updatedAt" = ? WHERE "status" = \'sending\' AND "updatedAt" < ?',
+  await x('UPDATE "ScheduledReminder" SET "status" = \'failed\', "reason" = ?, "updatedAt" = ? WHERE "status" = \'sending\' AND "kind" = \'custom\' AND "updatedAt" < ?',
+    'The server stopped while this was sending. It was not sent again by itself: use Send again to schedule it once more.', nowIso(), new Date(Date.now() - 10 * MIN).toISOString()).catch(() => {});
+  await x('UPDATE "ScheduledReminder" SET "status" = \'failed\', "reason" = ?, "updatedAt" = ? WHERE "status" = \'sending\' AND "kind" <> \'custom\' AND "updatedAt" < ?',
     'The server stopped while this was sending. It was not sent again by itself: press Send now to try again.', nowIso(), new Date(Date.now() - 10 * MIN).toISOString()).catch(() => {});
-  if (!settings.enabled && opts.force !== true) return { ...summary, off: true };
+  // THE ONE SWITCH covers the AUTOMATIC interview / joining reminders only. A person's own scheduled message (kind 'custom', utils/scheduledMessages.js)
+  // is a deliberate human action: it goes when due even while the switch is OFF (quiet hours, STOP / do-not-contact, credits, retries still apply).
+  const autoOff = !settings.enabled && opts.force !== true;
+  if (autoOff) summary.off = true;
   const tpls = await loadTemplates();
-  const planned = await q('SELECT * FROM "ScheduledReminder" WHERE "status" = \'planned\' ORDER BY "sendAt" LIMIT 1000');
+  const allPlanned = await q('SELECT * FROM "ScheduledReminder" WHERE "status" = \'planned\' ORDER BY "sendAt" LIMIT 1000');
+  const planned = autoOff ? allPlanned.filter((r) => r.kind === 'custom') : allPlanned;
   if (!planned.length) return summary;
-  const appIds = [...new Set(planned.map((r) => r.applicationId))];
+  const SM = require('./scheduledMessages'); // eslint-disable-line global-require
+  const appIds = [...new Set(planned.filter((r) => r.kind !== 'custom').map((r) => r.applicationId))];
   const apps = new Map();
   for (let i = 0; i < appIds.length; i += 200) {
     // eslint-disable-next-line no-await-in-loop
@@ -1182,6 +1195,18 @@ async function run(opts = {}) {
   const infos = new Map();
   const sentFor = new Map(); // app -> rows sent this pass (for the digest)
   for (const r of planned) {
+    if (r.kind === 'custom') {
+      if (opts.onlyIds) continue; // eslint-disable-line no-continue
+      // eslint-disable-next-line no-await-in-loop
+      const o = await SM.runRow(r, { now, settings });
+      if (o.kind === 'none') continue; // eslint-disable-line no-continue
+      if (o.kind === 'deferred') { summary.deferred += 1; continue; } // eslint-disable-line no-continue
+      summary.considered += 1;
+      summary[o.kind] = (summary[o.kind] || 0) + 1;
+      summary.items.push({ id: r.id, status: o.status, reason: o.reason || null, custom: true });
+      if (o.sent) { const l = sentFor.get(`c:${r.candidateId}`) || []; l.push(r.id); sentFor.set(`c:${r.candidateId}`, l); }
+      continue; // eslint-disable-line no-continue
+    }
     if (opts.onlyIds && !opts.onlyIds.includes(r.applicationId)) continue; // eslint-disable-line no-continue
     const app = apps.get(r.applicationId);
     const infoKey = `${r.applicationId}|${r.kind}`;
@@ -1270,12 +1295,15 @@ async function digestBells(now = new Date()) {
   if (!rows.length) return 0;
   const by = new Map();
   rows.forEach((r) => String(r.notifyIds || '').split(',').filter(Boolean).forEach((u) => { const l = by.get(u) || []; l.push(r); by.set(u, l); }));
-  const appIds = [...new Set(rows.map((r) => r.applicationId))];
+  const appIds = [...new Set(rows.filter((r) => r.kind !== 'custom').map((r) => r.applicationId))];
   const apps = new Map((await prisma.application.findMany({ where: { id: { in: appIds } }, select: { id: true, candidate: { select: { name: true } } } })).map((a) => [a.id, a]));
+  const candIds = [...new Set(rows.filter((r) => r.kind === 'custom').map((r) => r.candidateId).filter(Boolean))];
+  const cands = new Map((candIds.length ? await prisma.candidate.findMany({ where: { id: { in: candIds } }, select: { id: true, name: true } }) : []).map((c) => [c.id, c.name]));
+  const nameOf = (r) => (r.kind === 'custom' ? cands.get(r.candidateId) : apps.get(r.applicationId) && apps.get(r.applicationId).candidate && apps.get(r.applicationId).candidate.name) || 'Candidate';
   let n = 0;
   for (const [uid, list] of by) {
     const key = `reminders|digest|${uid}|${day}`;
-    const lines = list.map((r) => `${timeWords(r.sentAt)} ${(apps.get(r.applicationId) && apps.get(r.applicationId).candidate && apps.get(r.applicationId).candidate.name) || 'Candidate'} - ${r.kind} (${r.channel})`);
+    const lines = list.map((r) => `${timeWords(r.sentAt)} ${nameOf(r)} - ${r.kind === 'custom' ? 'your message' : r.kind} (${r.channel})`);
     const title = `Reminders sent today: ${list.length}`;
     const message = lines.slice(0, 12).join('\n') + (lines.length > 12 ? `\n+${lines.length - 12} more` : '');
     // eslint-disable-next-line no-await-in-loop
@@ -1360,9 +1388,11 @@ async function applyDeliveryStatus(providerRef, status, error, at) {
       await x('UPDATE "ScheduledReminder" SET "deliveryStatus" = ?, "status" = ?, "reason" = ?, "updatedAt" = ?, "history" = ? WHERE "id" = ?', word, st, reason, nowIso(), addHistory(r, 'Provider', `${word} ${stamp(at || new Date())}`), r.id);
       if (word === 'Failed') {
         // eslint-disable-next-line no-await-in-loop
-        const app = await loadApp(r.applicationId);
+        const app = r.kind === 'custom' ? null : await loadApp(r.applicationId);
         // eslint-disable-next-line no-await-in-loop
-        if (app) await failBell(r, app, reason);
+        if (r.kind === 'custom') await require('./scheduledMessages').failBell(r, reason); // eslint-disable-line global-require
+        // eslint-disable-next-line no-await-in-loop
+        else if (app) await failBell(r, app, reason);
       }
       n += 1;
     }
@@ -1381,24 +1411,43 @@ async function upcoming(user, { now = new Date() } = {}) {
   const from = atIst(today, '00:00').toISOString();
   const to = new Date(atIst(today, '00:00').getTime() + 2 * DAY).toISOString();
   const rows = await q('SELECT * FROM "ScheduledReminder" WHERE "sendAt" >= ? AND "sendAt" < ? AND "status" <> \'cancelled\' ORDER BY "sendAt"', from, to);
-  const appIds = [...new Set(rows.map((r) => r.applicationId))];
-  const { applicationWhere } = require('./scope'); // eslint-disable-line global-require
+  const appIds = [...new Set(rows.filter((r) => r.kind !== 'custom').map((r) => r.applicationId))];
+  const { applicationWhere, candidateWhere } = require('./scope'); // eslint-disable-line global-require
   const ok = new Map();
   for (let i = 0; i < appIds.length; i += 300) {
     // eslint-disable-next-line no-await-in-loop
     (await prisma.application.findMany({ where: { AND: [applicationWhere(user), { id: { in: appIds.slice(i, i + 300) } }] }, select: { id: true, candidateId: true, candidate: { select: { name: true } }, requirement: { select: { title: true } } } })).forEach((a) => ok.set(a.id, a));
   }
-  const mine = rows.filter((r) => ok.has(r.applicationId));
+  // the person's own scheduled messages (kind 'custom') are scoped by the CANDIDATE (utils/scheduledMessages.js)
+  const candIds = [...new Set(rows.filter((r) => r.kind === 'custom').map((r) => r.candidateId).filter(Boolean))];
+  const okCand = new Map();
+  for (let i = 0; i < candIds.length; i += 300) {
+    // eslint-disable-next-line no-await-in-loop
+    (await prisma.candidate.findMany({ where: { AND: [candidateWhere(user), { id: { in: candIds.slice(i, i + 300) } }] }, select: { id: true, name: true } })).forEach((c) => okCand.set(c.id, c));
+  }
+  const mine = rows.filter((r) => (r.kind === 'custom' ? okCand.has(r.candidateId) : ok.has(r.applicationId)));
   const tomorrow = addDays(today, 1);
   const bucket = (r) => (istDay(r.sendAt) === today ? 'today' : istDay(r.sendAt) === tomorrow ? 'tomorrow' : null);
   const count = (day) => {
     const l = mine.filter((r) => bucket(r) === day);
-    return { total: l.length, failed: l.filter((r) => r.status === 'failed').length, sent: l.filter((r) => ['sent', 'delivered'].includes(r.status)).length, planned: l.filter((r) => ['planned', 'sending'].includes(r.status)).length };
+    return {
+      total: l.length, failed: l.filter((r) => r.status === 'failed').length, sent: l.filter((r) => ['sent', 'delivered'].includes(r.status)).length, planned: l.filter((r) => ['planned', 'sending'].includes(r.status)).length,
+      // "your own messages" (written by a person) apart from the automatic interview / joining reminders
+      own: l.filter((r) => r.kind === 'custom').length, ownFailed: l.filter((r) => r.kind === 'custom' && r.status === 'failed').length,
+      automatic: l.filter((r) => r.kind !== 'custom').length, automaticFailed: l.filter((r) => r.kind !== 'custom' && r.status === 'failed').length,
+    };
   };
   const settings = await loadSettings();
   const out = { status: 200, today: count('today'), tomorrow: count('tomorrow'), switchOn: settings.enabled, countOnly: bde, scope: admin || (P.stageRoleOf(user) === 'MANAGER') ? 'all' : (['TL', 'STL'].includes(P.stageRoleOf(user)) ? 'team' : 'own') };
   if (!bde) {
     out.rows = mine.slice(0, 300).map((r) => {
+      if (r.kind === 'custom') {
+        const c = okCand.get(r.candidateId);
+        return {
+          id: r.id, applicationId: r.applicationId || null, candidateId: r.candidateId, candidate: c && c.name, role: null, kind: 'custom', own: true, eventAt: null, sendAt: r.sendAt, day: bucket(r),
+          channel: r.channel, status: r.status === 'sending' ? 'planned' : r.status, reason: r.reason, label: 'Your own message', deliveryStatus: r.deliveryStatus,
+        };
+      }
       const a = ok.get(r.applicationId);
       return {
         id: r.id, applicationId: r.applicationId, candidateId: a.candidateId, candidate: a.candidate && a.candidate.name, role: a.requirement && a.requirement.title, kind: r.kind, eventAt: r.eventAt, sendAt: r.sendAt, day: bucket(r),
@@ -1475,4 +1524,9 @@ module.exports = {
   loadSettings, saveSettings, loadTemplates, saveTemplates, computePlan, labelFor, buildMessage, channelsFor, languageOf, modeOf, eventOf,
   sync, panel, listForCandidate, suggest, previewOne, patchRow, addRow, cancelAll, saveDetails, sendNow, sendTest, run, digestBells, applyDeliveryStatus, upcoming, forInterview,
   coversInterview, startSweep, autoSyncMiddleware, summaryOf, rowsOf, infoOf, saveInfo, ensure, accessOf, cleanInfo, stepKeyOf, istDay,
+  // for utils/scheduledMessages.js (the person's own scheduled messages share this table and this worker)
+  internals: {
+    q, x, nowIso, newId, istMinutes, istDay, atIst, addHistory, stamp, bell, whatsappSend, smsProven, setStatus, isAdminLogin, bdeSide, isTestPerson, sandboxOn, txt,
+    MAX_TRIES, BACKOFF_MIN, STALE_MS, MIN, HOUR, DAY, WHY, labelFor, timeWords, dateWords,
+  },
 };

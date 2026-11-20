@@ -77,6 +77,13 @@ router.put('/application/:id/details', wrap(async (req, res) => reply(res, await
 router.patch('/rows/:rid', wrap(async (req, res) => reply(res, await SR.patchRow(req.user, req.params.rid, req.body))));
 router.post('/rows/:rid/send-now', wrap(async (req, res) => reply(res, await SR.sendNow(req.user, req.params.rid))));
 
+// ---- schedule ANY message to one candidate (the candidate profile's "Schedule a message" tab; utils/scheduledMessages.js)
+const SM = require('../utils/scheduledMessages');
+router.get('/messages/candidate/:cid', wrap(async (req, res) => reply(res, await SM.list(req.user, req.params.cid, { applicationId: req.query.applicationId || null }))));
+router.post('/messages/candidate/:cid', wrap(async (req, res) => reply(res, await SM.create(req.user, req.params.cid, req.body))));
+router.patch('/messages/:id', wrap(async (req, res) => reply(res, await SM.edit(req.user, req.params.id, req.body))));
+router.delete('/messages/:id', wrap(async (req, res) => reply(res, await SM.cancel(req.user, req.params.id, (req.body && req.body.reason) || req.query.reason))));
+
 // ---- the dashboard card
 router.get('/upcoming', wrap(async (req, res) => reply(res, await SR.upcoming(req.user))));
 
