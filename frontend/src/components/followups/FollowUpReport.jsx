@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
+import FollowUpImportButton from './FollowUpImport.jsx';
 import '../clients/followUpLog.css';
 import './followUpReport.css';
 
@@ -80,6 +81,7 @@ export default function FollowUpReport({ home = false }) {
   const [lf, setLf] = useState({ q: '', personId: '', status: '', outcome: '' });
   const [list, setList] = useState(null);
   const [limit, setLimit] = useState(200);
+  const [reload, setReload] = useState(0); // an import or an undo loads the report again
 
   useEffect(() => {
     api.get('/followup-report/options').then((r) => {
@@ -98,7 +100,7 @@ export default function FollowUpReport({ home = false }) {
       .then((r) => { setData(r.data); setError(''); })
       .catch((e) => { setData(null); setError(e.response?.data?.error || 'The report could not be loaded.'); })
       .finally(() => setLoading(false));
-  }, [opts, base]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [opts, base, reload]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the drill-down of one person, and the list (the whole team's, or the filters')
   useEffect(() => {
@@ -161,7 +163,10 @@ export default function FollowUpReport({ home = false }) {
               : `${data.label}: one row for each person, with the totals. Click a row to see that person day by day and every follow-up they did.`}
           </div>
         </div>
-        <ExportMenu url="/followup-report/export" formats={['xlsx', 'csv']} label="Download Excel" params={exportParams} note="The table, the day-by-day table and every follow-up of these filters" />
+        <div className="fur-io">
+          <FollowUpImportButton onDone={() => setReload((v) => v + 1)} />
+          <ExportMenu url="/followup-report/export" formats={['xlsx', 'csv']} label="Download Excel" params={exportParams} note="The table, the day-by-day table and every follow-up of these filters" />
+        </div>
       </div>
 
       <div className="fur-bar">

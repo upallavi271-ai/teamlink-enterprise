@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
 import MultiSelect from '../ats/MultiSelect.jsx';
+import FollowUpImportButton from '../followups/FollowUpImport.jsx';
 import './teamReportCard.css';
 
 // "REPORT OF YOUR TEAM" on the ATS dashboard (founder 2026-11-20): only for team leads. One small table, one row per recruiter, four numbers
@@ -183,6 +184,7 @@ function useRange() {
   const [range, setRange] = useState({ from: '', to: '' });
   const [preset, setPreset] = useState('today');
   const [failed, setFailed] = useState(false);
+  const [version, setVersion] = useState(0); // an import or an undo loads the numbers again
   useEffect(() => {
     api.get('/followup-report/options').then((r) => {
       setOpts(r.data);
@@ -191,7 +193,8 @@ function useRange() {
     }).catch(() => setFailed(true));
   }, []);
   return {
-    opts, range, preset, failed,
+    opts, range, preset, failed, version,
+    refresh: () => setVersion((v) => v + 1),
     choose: (key, from, to) => { setPreset(key); setRange({ from, to }); },
     setFrom: (v) => { setPreset('custom'); setRange((r) => ({ ...r, from: v })); },
     setTo: (v) => { setPreset('custom'); setRange((r) => ({ ...r, to: v })); },
@@ -214,7 +217,7 @@ const useSummary = (r, leadId) => {
     if (!r.opts || !r.range.from || !r.range.to || r.range.to < r.range.from) return;
     api.get('/followup-report/summary', { params: { from: r.range.from, to: r.range.to, period: 'day', imported: 'include', leadId: leadId || undefined } })
       .then((x) => { setData(x.data); setFailed(false); }).catch(() => setFailed(true));
-  }, [r.opts, r.range.from, r.range.to, leadId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [r.opts, r.range.from, r.range.to, leadId, r.version]); // eslint-disable-line react-hooks/exhaustive-deps
   return { data, failed };
 };
 const sum4 = (rows) => [0, 1, 2, 3].map((i) => rows.reduce((n, x) => n + (x.m[i] || 0), 0));
@@ -236,6 +239,7 @@ function TeamTable({ r, leadId, title, onBack, onClose }) {
           <h3>{title}</h3>
         </div>
         <RangeBar r={r}>
+          <FollowUpImportButton onDone={r.refresh} />
           <ExportMenu url="/followup-report/export" formats={['xlsx', 'csv']} label="Export" params={{ from: r.range.from, to: r.range.to, period: 'day', leadId: leadId || undefined }} note="The table, the day-by-day table and every follow-up with what was written" />
           {onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}
         </RangeBar>
@@ -291,6 +295,7 @@ function TlList({ r, onPick, onClose }) {
       <div className="trc-head">
         <h3>Overall report</h3>
         <RangeBar r={r}>
+          <FollowUpImportButton onDone={r.refresh} />
           <ExportMenu url="/followup-report/export" formats={['xlsx', 'csv']} label="Export" params={{ from: r.range.from, to: r.range.to, period: 'day' }} note="The table, the day-by-day table and every follow-up with what was written" />
           {onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}
         </RangeBar>

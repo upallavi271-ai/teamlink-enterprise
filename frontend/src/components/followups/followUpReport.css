@@ -36,3 +36,6 @@
 .fur-what { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 220px; max-width: 420px; }
 .fur-status { white-space: nowrap; }
 @media (max-width: 700px) { .fur-bar input[type="date"] { width: 130px; } }
+
+/* Import beside Download Excel (FollowUpImport.jsx) */
+.fur-io { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }

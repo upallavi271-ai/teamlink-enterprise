@@ -2,6 +2,8 @@
 /**
  * BROWSER SMOKE of the dashboard's 'Report of your team' (founder 2026-11-20): a TL and the Super Admin have the same 'Overall report' button (TL: their team; Admin: team leads first),
  * a recruiter has none. View opens a person's report: the candidates they added and every follow-up with its text. A private sandbox server (copy of the sandbox database) + the Vite dev server in front of it + Edge.
+ * IMPORT (founder 2026-11-20 "give import & export options"): the Import button opens the import window, a small sheet previews and is imported,
+ * the row shows in the recruiter's report, and Undo removes it.
  *   TEST_SOURCE_DB=<sandbox.db> TEST_PORT=4301 node scripts/team-report-smoke.js     (screenshots: docs/team-report-2026-11-20/)
  */
 const fs = require('fs');
@@ -23,6 +25,7 @@ const WEB = PORT + 1;
 const env = { ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'trs-smoke', DATABASE_URL: `file:${COPY.split(path.sep).join('/')}` };
 Object.assign(process.env, env);
 const jwt = require('jsonwebtoken');
+const XLSX = require('xlsx');
 const prisma = require('../src/db');
 const { resolveIdentity, tokenPayload } = require('../src/utils/identity');
 
@@ -116,6 +119,51 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
           await page.screenshot({ path: path.join(SHOTS, 'tl-view-panel.png') });
           await page.keyboard.press('Escape');
           check('TL: Escape closes the recruiter panel and the team stays', await page.locator('.trd-panel', { hasText: 'Candidates added' }).count() === 0 && await team.isVisible());
+
+          // IMPORT: a sheet of one follow-up for the recruiter, today; preview -> Import -> it shows in the recruiter's report -> Undo removes it
+          page.on('dialog', (d) => d.accept().catch(() => {}));
+          const IMPORTED = `Imported from the old sheet: spoke about the notice period ${RUN}`;
+          const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+          const sheet = path.join(os.tmpdir(), `zz-trs-import-${RUN}.xlsx`);
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+            ['Date', 'Recruiter', 'Candidate', 'Requirement', 'What happened', 'Call back on', 'Answer', 'Done'],
+            [`${istToday.slice(8, 10)}-${istToday.slice(5, 7)}-${istToday.slice(0, 4)}`, rec.email, cand.phone, '', IMPORTED, '', 'Interested', 'Yes'],
+          ]), 'Follow-ups');
+          XLSX.writeFile(wb, sheet);
+          await team.locator('button', { hasText: /^Import$/ }).click();
+          const modal = page.locator('.fui-modal');
+          const mUp = await modal.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
+          check('Import: the Import button beside the days opens the import window (template, choose file, recent imports)', mUp && (await modal.locator('button', { hasText: 'Download template' }).isVisible()) && (await modal.locator('h4', { hasText: 'Recent imports' }).isVisible()));
+          if (mUp) {
+            await modal.locator('input[type=file]').setInputFiles(sheet);
+            const ready = await modal.locator('.fui-count.ready', { hasText: 'Ready 1' }).waitFor({ state: 'visible', timeout: 30000 }).then(() => true).catch(() => false);
+            check('Import: the small sheet previews as 1 Ready, with the recruiter and the candidate found', ready && (await modal.locator('td', { hasText: rec.name }).count()) >= 1 && (await modal.locator('td', { hasText: `Tzperson Quillfeather ${RUN}` }).count()) >= 1, (await modal.innerText().catch(() => '')).slice(0, 500));
+            await page.screenshot({ path: path.join(SHOTS, 'import-preview.png') });
+            await modal.locator('button', { hasText: 'Import 1 follow-up' }).click();
+            const done = await modal.locator('.fui-result', { hasText: '1 follow-up imported' }).waitFor({ state: 'visible', timeout: 30000 }).then(() => true).catch(() => false);
+            check('Import: Apply imports it and offers "Undo this import"', done && (await modal.locator('button', { hasText: 'Undo this import' }).isVisible()));
+            await page.screenshot({ path: path.join(SHOTS, 'import-done.png') });
+            await modal.locator('.modal-foot button', { hasText: 'Close' }).click();
+            await row.locator('button', { hasText: 'View' }).click();
+            const p2 = page.locator('.trd-panel', { hasText: 'Candidates added' }).last();
+            const seen = await p2.locator('td', { hasText: IMPORTED }).first().waitFor({ state: 'visible', timeout: 30000 }).then(() => true).catch(() => false);
+            check('Import: the imported follow-up shows in the recruiter report, on today, with what happened', seen);
+            await page.keyboard.press('Escape');
+            await team.locator('button', { hasText: /^Import$/ }).click();
+            const undoBtn = modal.locator('.fui-recent button', { hasText: /^Undo$/ }).first();
+            await undoBtn.waitFor({ state: 'visible', timeout: 20000 }).catch(() => null);
+            await undoBtn.click();
+            const undone = await modal.locator('.fui-recent', { hasText: '1 imported follow-up removed' }).waitFor({ state: 'visible', timeout: 30000 }).then(() => true).catch(() => false);
+            check('Import: Undo in the recent imports removes it', undone && (await prisma.applicationFollowUp.count({ where: { notes: IMPORTED } })) === 0);
+            await modal.locator('.modal-foot button', { hasText: 'Close' }).click();
+            await row.locator('button', { hasText: 'View' }).click();
+            const p3 = page.locator('.trd-panel', { hasText: 'Candidates added' }).last();
+            await p3.locator('td', { hasText: WROTE }).first().waitFor({ state: 'visible', timeout: 30000 }).catch(() => null);
+            check('Import: after Undo the recruiter report no longer has it', (await p3.innerText()).includes(WROTE) && !(await p3.innerText()).includes(IMPORTED));
+            await page.keyboard.press('Escape');
+          }
+          try { fs.unlinkSync(sheet); } catch { /* none */ }
         }
       }
       await ctx.close();
@@ -143,6 +191,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
         const txt0 = await panel.innerText().catch(() => '');
         check('Admin: the first page lists TEAM LEADS (a team lead row, with the number of recruiters), not every recruiter', first && /team lead/i.test(txt0) && !(await panel.locator('tr td b', { hasText: rec.name }).count()), txt0.slice(0, 300));
         await page.screenshot({ path: path.join(SHOTS, 'admin-overall-tls.png') });
+        check('Admin: the team-lead list has the Import button', await panel.locator('button', { hasText: /^Import$/ }).isVisible().catch(() => false));
         if (first) {
           await tlRow.locator('button', { hasText: 'View' }).click();
           const team = page.locator('.trd-panel', { hasText: `${tl.name}'s team` });
@@ -150,6 +199,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
           const second = await recRow.waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false);
           check('Admin: a team lead opens that team: their recruiters, with a way back', second && (await team.locator('button', { hasText: 'All team leads' }).isVisible()), (await team.innerText().catch(() => '')).slice(0, 300));
           await page.screenshot({ path: path.join(SHOTS, 'admin-team.png') });
+          check('Admin: a team panel has the Import button too', await team.locator('button', { hasText: /^Import$/ }).isVisible().catch(() => false));
           if (second) {
             await recRow.locator('button', { hasText: 'View' }).click();
             const v = await page.locator('.trd-panel', { hasText: 'Candidates added' }).last().waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
