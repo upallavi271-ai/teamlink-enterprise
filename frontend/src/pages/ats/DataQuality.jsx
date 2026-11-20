@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocalListFilters } from '../../components/ui/LocalListFilters.jsx';
 import api from '../../api';
 
 // DATA QUALITY (backend utils/dataQuality.js): how complete the candidate database is, what is missing most, duplicates and how
@@ -12,6 +13,11 @@ export default function DataQuality() {
   const [busy, setBusy] = useState(false);
   const load = (fresh) => { setBusy(true); api.get('/ats/data-quality', { params: fresh ? { fresh: 1 } : {} }).then((r) => setD(r.data)).catch((e) => setErr(e.response?.data?.error || 'Could not load.')).finally(() => setBusy(false)); };
   useEffect(() => { load(false); }, []);
+  // the profiles to fix: a search by name and a Problem checkbox list (founder 2026-11-20: filters on every list)
+  const fx = useLocalListFilters((d && d.invalid && d.invalid.toFix) || [], {
+    search: (c) => [c.name, ...(c.issues || [])], placeholder: 'Search a name…',
+    fields: [{ key: 'issue', label: 'Problem', get: (c) => c.issues || [] }], minValues: 1,
+  });
   const Tile = ({ label, value, sub }) => (
     <div className="card" style={{ padding: '12px 14px', minWidth: 170, flex: '1 1 170px' }}>
       <div className="small-muted">{label}</div>
@@ -77,8 +83,9 @@ export default function DataQuality() {
                 {d.invalid.toFix.length > 0 && (
                   <details>
                     <summary style={{ cursor: 'pointer' }}>{`Profiles to fix first (${d.invalid.toFix.length}${d.invalid.profiles > d.invalid.toFix.length ? ` of ${num(d.invalid.profiles)}` : ''})`}</summary>
+                    {d.invalid.toFix.length > 1 && fx.bar}
                     <div style={{ maxHeight: 280, overflow: 'auto', marginTop: 6 }}>
-                      {d.invalid.toFix.map((c) => <div key={c.id} style={{ fontSize: 13, padding: '3px 0', borderBottom: '1px solid var(--line-soft, #eee)' }}><b>{c.name}</b> <span className="small-muted">{c.issues.join(' · ')}</span></div>)}
+                      {fx.rows.map((c) => <div key={c.id} style={{ fontSize: 13, padding: '3px 0', borderBottom: '1px solid var(--line-soft, #eee)' }}><b>{c.name}</b> <span className="small-muted">{c.issues.join(' · ')}</span></div>)}
                     </div>
                   </details>
                 )}

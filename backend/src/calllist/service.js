@@ -201,7 +201,16 @@ async function rows(user, listId, q = {}) {
   if (!l) return fail(404, 'This call list is not there.');
   const mgr = isManager(user);
   const where = ['"listId" = ?']; const params = [l.id];
-  if (!mgr) { where.push('"recruiterId" = ?'); params.push(user.id); } else if (q.recruiter === 'none') where.push('"recruiterId" IS NULL'); else if (q.recruiter) { where.push('"recruiterId" = ?'); params.push(clip(q.recruiter, 60)); }
+  // several recruiters / call results at once (founder 2026-11-20: checkboxes everywhere); a recruiter is always held to their own rows
+  const MP = require('../utils/multiParam'); // eslint-disable-line global-require
+  const recs = MP.parseMulti(q.recruiter).map((v) => clip(v, 60));
+  if (!mgr) { where.push('"recruiterId" = ?'); params.push(user.id); } else if (recs.length) {
+    const ids = recs.filter((v) => v !== 'none');
+    const or = [...(ids.length ? [`"recruiterId" IN (${ids.map(() => '?').join(',')})`] : []), ...(recs.includes('none') ? ['"recruiterId" IS NULL'] : [])];
+    where.push(`(${or.join(' OR ')})`); params.push(...ids);
+  }
+  const outs = MP.parseMulti(q.outcome).map((v) => clip(v, 40));
+  if (outs.length) { where.push(`"status" IN (${outs.map(() => '?').join(',')})`); params.push(...outs); }
   if (q.status === 'pending') where.push(`"status" IN (${PENDING.map(() => '?').join(',')})`) && params.push(...PENDING);
   else if (q.status === 'done') where.push(`"status" NOT IN (${PENDING.map(() => '?').join(',')})`) && params.push(...PENDING);
   else if (q.status) { where.push('"status" = ?'); params.push(clip(q.status, 40)); }

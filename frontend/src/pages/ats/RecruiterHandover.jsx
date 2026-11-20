@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import Combo from '../../components/Combo.jsx';
+import { useLocalListFilters } from '../../components/ui/LocalListFilters.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 
 // ---------------------------------------------------------------------------
@@ -19,7 +20,6 @@ export default function RecruiterHandover() {
   const [to, setTo] = useState('');
   const [list, setList] = useState(null);
   const [picked, setPicked] = useState(new Set());
-  const [q, setQ] = useState('');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -30,8 +30,12 @@ export default function RecruiterHandover() {
   // P10.9: the history as a file (the server writes the same lines as the table).
   const exportHist = async () => {
     try {
-      const r = await api.get('/ats/handover/history/export.csv', { responseType: 'blob' });
-      const url = URL.createObjectURL(r.data); const el = document.createElement('a');
+      // with a search or a filter on, the file holds the rows on the screen (the same columns as the server's file)
+      const cell = (v) => { let s = v == null ? '' : String(v); if (/^[=+\-@]/.test(s)) s = `'${s}`; return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+      const blob = hf.on
+        ? new Blob([[['Date', 'From', 'To', 'Candidates', 'How', 'Done by', 'Why'], ...hf.rows.map((h) => [day(h.at), h.from || '', h.to, h.count, h.how, h.by, h.reason || ''])].map((l) => l.map(cell).join(',')).join('\n')], { type: 'text/csv' })
+        : (await api.get('/ats/handover/history/export.csv', { responseType: 'blob' })).data;
+      const url = URL.createObjectURL(blob); const el = document.createElement('a');
       el.href = url; el.download = `recruiter-handover-history-${new Date().toISOString().slice(0, 10)}.csv`; document.body.appendChild(el); el.click(); el.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e) { setErr('The history could not be downloaded.'); }
@@ -49,11 +53,21 @@ export default function RecruiterHandover() {
 
   const fromRec = (recs || []).find((r) => r.id === from);
   const toRec = (recs || []).find((r) => r.id === to);
-  const shown = useMemo(() => {
-    const rows = (list && list.rows) || [];
-    const n = q.trim().toLowerCase();
-    return n ? rows.filter((r) => [r.candidate, r.reqCode, r.requirement, r.client, r.step].some((v) => String(v || '').toLowerCase().includes(n))) : rows;
-  }, [list, q]);
+  // the candidates' own filters (founder 2026-11-20): a search, Client / Requirement / Step checkboxes and a Last change From / To
+  const cf = useLocalListFilters(useMemo(() => (list && list.rows) || [], [list]), {
+    search: (r) => [r.candidate, r.reqCode, r.requirement, r.client, r.step],
+    placeholder: 'Search name, requirement, client…',
+    fields: [{ key: 'client', label: 'Client', get: (r) => r.client }, { key: 'req', label: 'Requirement', get: (r) => r.requirement }, { key: 'step', label: 'Step', get: (r) => r.step }],
+    date: { label: 'Last change', get: (r) => r.updatedAt },
+  });
+  const shown = cf.rows;
+  // the history's own filters: a search, From / To / How checkboxes and a Date From / To; the CSV follows them
+  const hf = useLocalListFilters(hist || [], {
+    search: (h) => [h.from, h.to, h.by, h.reason, h.how],
+    placeholder: 'Search the history…',
+    fields: [{ key: 'from', label: 'From', get: (h) => h.from }, { key: 'to', label: 'To', get: (h) => h.to }, { key: 'how', label: 'How', get: (h) => h.how }],
+    date: { label: 'Date', get: (h) => h.at },
+  });
   const allShownPicked = shown.length > 0 && shown.every((r) => picked.has(r.id));
   const toggleAll = () => setPicked((cur) => { const next = new Set(cur); shown.forEach((r) => (allShownPicked ? next.delete(r.id) : next.add(r.id))); return next; });
   const toggle = (id) => setPicked((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; });
@@ -119,8 +133,8 @@ export default function RecruiterHandover() {
         <section className="panel">
           <div className="panel-head">
             <h3>{fromRec ? `${fromRec.name}'s candidates` : 'Candidates'}{list ? ` (${list.rows.length})` : ''}</h3>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, requirement, client" style={{ maxWidth: 260 }} aria-label="Search the candidates" />
           </div>
+          {list && list.rows.length > 1 && <div style={{ padding: '0 18px' }}>{cf.bar}</div>}
           {list && list.joinedStay > 0 && <div className="small-muted" style={{ padding: '8px 18px 0' }}>{`${list.joinedStay} Joined candidate${list.joinedStay === 1 ? '' : 's'} stay with ${fromRec ? fromRec.name : 'them'}: those placements are their work.`}</div>}
           {!list ? <div className="empty-mini">Loading…</div> : !list.rows.length ? <div className="empty-mini">Nothing to hand over.</div> : (
             <div className="tbl-wrap" style={{ border: 0, borderRadius: 0 }}>
@@ -150,11 +164,12 @@ export default function RecruiterHandover() {
           <h3>Handover history</h3>
           <button type="button" className="btn btn-sm" disabled={!hist || !hist.length} onClick={exportHist}>Download (CSV)</button>
         </div>
+        {hist && hist.length > 1 && <div style={{ padding: '0 18px' }}>{hf.bar}</div>}
         {!hist ? <div className="empty-mini">Loading…</div> : !hist.length ? <div className="empty-mini">No handovers yet.</div> : (
           <div className="tbl-wrap" style={{ border: 0, borderRadius: 0 }}>
             <table>
               <thead><tr><th>Date</th><th>From</th><th>To</th><th>Candidates</th><th>How</th><th>Done by</th><th>Why</th></tr></thead>
-              <tbody>{hist.map((h) => (
+              <tbody>{hf.rows.map((h) => (
                 <tr key={`${h.day}|${h.from}|${h.to}|${h.how}|${h.by}`}>
                   <td>{day(h.at)}</td><td>{h.from || '—'}</td><td>{h.to}</td><td>{h.count}</td>
                   <td><StatusChip tone={HOW_TONE[h.how] || 'grey'}>{h.how}</StatusChip></td>

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several recruiters / call results at once (founder 2026-11-20)
+import { useLocalListFilters } from '../../components/ui/LocalListFilters.jsx';
 import api from '../../api';
 import { Modal } from '../../components/proto.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
@@ -148,6 +150,7 @@ function ListView({ id, onBack, onChanged }) {
   const [filter, setFilter] = useState('pending');
   const [q, setQ] = useState('');
   const [recFilter, setRecFilter] = useState('');
+  const [outcome, setOutcome] = useState(''); // call results, a comma list
   const xf = useListXf('callrows', user); // location, added date, called, interest (components/ats/ListFilters.jsx)
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
@@ -156,9 +159,9 @@ function ListView({ id, onBack, onChanged }) {
   const iHave = !!(det && det.progress.some((p) => p.recruiterId === (user && user.id)));
   const loadDet = () => api.get(`/call-lists/${id}`).then((r) => setDet(r.data)).catch((e) => setErr(errOf(e, 'This list could not be opened.')));
   const loadNext = () => api.get(`/call-lists/${id}/next`).then((r) => setNxt(r.data)).catch(() => setNxt({ row: null, left: 0 }));
-  const loadRows = () => api.get(`/call-lists/${id}/rows`, { params: { status: filter === 'all' ? undefined : filter, q: q || undefined, recruiter: recFilter || undefined, size: 100, ...xf.params } }).then((r) => setRows(r.data)).catch(() => setRows({ rows: [], total: 0 }));
+  const loadRows = () => api.get(`/call-lists/${id}/rows`, { params: { status: filter === 'all' ? undefined : filter, q: q || undefined, recruiter: recFilter || undefined, outcome: outcome || undefined, size: 100, ...xf.params } }).then((r) => setRows(r.data)).catch(() => setRows({ rows: [], total: 0 }));
   useEffect(() => { loadDet(); loadNext(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { const t = setTimeout(loadRows, 250); return () => clearTimeout(t); }, [id, filter, q, recFilter, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const t = setTimeout(loadRows, 250); return () => clearTimeout(t); }, [id, filter, q, recFilter, outcome, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (det && det.canManage) api.get('/call-lists/recruiters').then((r) => setRecs(r.data.recruiters)).catch(() => {}); }, [det && det.canManage]); // eslint-disable-line react-hooks/exhaustive-deps
   const refresh = () => { setPicked(null); loadDet(); loadNext(); loadRows(); onChanged(); };
   async function doMove() {
@@ -222,7 +225,10 @@ function ListView({ id, onBack, onChanged }) {
           <h3 style={{ margin: 0, marginRight: 8 }}>{det.canManage ? 'Contacts' : 'My contacts'}</h3>
           {[['pending', 'To call'], ['done', 'Finished'], ['all', 'All']].map(([k, label]) => <button key={k} type="button" className={`msg-chip${filter === k ? ' on' : ''}`} onClick={() => setFilter(k)}>{label}</button>)}
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, number, place…" aria-label="Search contacts" style={{ marginLeft: 'auto', minWidth: 200 }} />
-          {recFilter && <button type="button" className="btn btn-sm" onClick={() => setRecFilter('')}>✕ one recruiter only</button>}
+          <MultiSelect label="Call result" allLabel="Any result" hideZero={false} value={outcome} onChange={setOutcome} options={['New', ...((det && det.outcomes) || [])].map((o) => ({ value: o, label: o }))} />
+          {det.canManage && det.progress.some((p) => p.recruiterId) && (
+            <MultiSelect label="Recruiter" allLabel="All recruiters" value={recFilter} onChange={setRecFilter} options={[...det.progress.filter((p) => p.recruiterId).map((p) => ({ value: p.recruiterId, label: p.recruiterName || 'Recruiter', count: p.assigned ?? p.total ?? 1 })), ...det.progress.filter((p) => !p.recruiterId).map((p) => ({ value: 'none', label: 'Not given to anyone', count: p.assigned }))]} />
+          )}
         </div>
         <table>
           <thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Role · place</th><th>Status</th>{det.canManage && <th>Recruiter</th>}<th>Note</th><th /></tr></thead>
@@ -254,6 +260,12 @@ export default function CallLists() {
   const xf = useListXf('calllists'); // source, made-on date (components/ats/ListFilters.jsx)
   const load = () => api.get('/call-lists', { params: xf.params }).then((r) => setData(r.data)).catch((e) => setErr(errOf(e, 'The call lists could not be loaded.')));
   useEffect(() => { load(); }, [xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  // a search over the lists on the screen and a Made by checkbox list (the server's own filters stay above)
+  const lf = useLocalListFilters((data && data.lists) || [], {
+    search: (l) => [l.name, l.fileName, l.createdByName],
+    placeholder: 'Search the call lists…',
+    fields: [{ key: 'by', label: 'Made by', get: (l) => l.createdByName }],
+  });
   if (open) return <ListView id={open} onBack={() => setOpen(null)} onChanged={load} />;
   return (
     <div>
@@ -265,13 +277,14 @@ export default function CallLists() {
         {data && data.canManage && <button type="button" className="btn btn-primary" onClick={() => setUpload(true)}>⬆ Upload a call sheet</button>}
       </div>
       <ListFilterStrip list="calllists" xf={xf} noun="call lists" />
+      {data && data.lists.length > 1 && lf.bar}
       {err && <div className="notice red">{err}</div>}
       {made && <div className="notice green">{made}</div>}
       <section className="panel">
         <table>
           <thead><tr><th>List</th><th>{data && data.canManage ? 'Contacts' : 'Mine'}</th><th>Called</th><th>Left</th><th>Interested</th>{data && data.canManage && <th>Recruiters</th>}<th>Uploaded</th><th /></tr></thead>
           <tbody>
-            {(data ? data.lists : []).map((l) => (
+            {(data ? lf.rows : []).map((l) => (
               <tr key={l.id}>
                 <td><b>{l.name}</b><div className="small-muted">{l.fileName || ''}</div></td><td>{data.canManage ? l.total : l.assigned}</td><td>{l.called} <span className="small-muted">({pct(l.called, l.assigned)}%)</span></td><td>{l.remaining}</td><td>{l.interested}</td>
                 {data.canManage && <td>{l.recruiters}</td>}

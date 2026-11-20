@@ -24,7 +24,7 @@ import HierarchyFilter, {
   EMPTY_HIERARCHY, toParams, hierarchyChips, useHierarchy,
 } from '../../components/HierarchyFilter.jsx';
 import {
-  StatusTabs, ListToolbar, ListFooter, FacetSelect, PanelField, useLocalFacets,
+  StatusTabs, ListToolbar, ListFooter, FacetSelect, PanelField, useLocalFacets, valueIn,
 } from '../../components/ui/ListPageHeader.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
@@ -182,18 +182,19 @@ const CAL_FIELDS = [
   { key: 'desig', get: (r) => (r.person ? r.person.desig : null), label: (v) => (v === 'none' ? 'Not given' : v) },
   { key: 'expBand', get: (r) => (r.person ? r.person.expBand : null), label: (v) => (v === 'none' ? 'Not given' : `${v} years`) },
 ];
+// v is one value or a ticked comma list (the checkbox dropdowns, founder 2026-11-20): a row stays when it has any of them
 function calPred(r, k, v) {
   switch (k) {
-    case 'type': return r.type === v;
-    case 'status': return r.status === v;
-    case 'department': return r.requirement.department === v;
-    case 'clientId': return r.requirement.client?.id === v;
-    case 'recruiterId': return r.requirement.recruiter?.id === v;
-    case 'bdeId': return r.requirement.bde?.id === v;
-    case 'requirement': return r.requirement.title === v;
-    case 'candidate': return r.candidate.name === v;
-    case 'hiringType': return r.hiringType === v;
-    case 'spec': case 'qual': case 'desig': case 'expBand': return !!r.person && r.person[k] === v;
+    case 'type': return valueIn(v, r.type);
+    case 'status': return valueIn(v, r.status);
+    case 'department': return valueIn(v, r.requirement.department);
+    case 'clientId': return valueIn(v, r.requirement.client?.id);
+    case 'recruiterId': return valueIn(v, r.requirement.recruiter?.id);
+    case 'bdeId': return valueIn(v, r.requirement.bde?.id);
+    case 'requirement': return valueIn(v, r.requirement.title);
+    case 'candidate': return valueIn(v, r.candidate.name);
+    case 'hiringType': return valueIn(v, r.hiringType);
+    case 'spec': case 'qual': case 'desig': case 'expBand': return !!r.person && valueIn(v, r.person[k]);
     default: return true;
   }
 }
@@ -532,11 +533,11 @@ export default function InterviewCalendar() {
   const shortlisted = useMemo(() => {
     const q = filters.q.trim().toLowerCase();
     return (data.shortlisted || []).filter((r) => {
-      if (pf.clientId && r.requirement.client?.id !== pf.clientId) return false;
-      if (deptFilter && r.requirement.department !== deptFilter) return false;
-      if (filters.requirement && r.requirement.title !== filters.requirement) return false;
-      if (filters.candidate && r.candidate.name !== filters.candidate) return false;
-      if (filters.hiringType && r.hiringType !== filters.hiringType) return false;
+      if (pf.clientId && !valueIn(pf.clientId, r.requirement.client?.id)) return false;
+      if (deptFilter && !valueIn(deptFilter, r.requirement.department)) return false;
+      if (filters.requirement && !valueIn(filters.requirement, r.requirement.title)) return false;
+      if (filters.candidate && !valueIn(filters.candidate, r.candidate.name)) return false;
+      if (filters.hiringType && !valueIn(filters.hiringType, r.hiringType)) return false;
       if (q && !`${r.candidate.name} ${r.requirement.title}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -729,7 +730,7 @@ export default function InterviewCalendar() {
     drill && { key: 'drill', label: 'From the chart', value: drill.label, onRemove: () => setDrill(null) },
     ...hierarchyChips({ ...hier, department: '' }, hierTree.data, setHier),
     { key: 'phase', label: 'Step', value: filters.phase ? (PHASE_LABEL[filters.phase] || filters.phase) : '', onRemove: () => setPhase('') },
-    { key: 'status', label: 'Status', value: filters.status ? interviewStatusLabel(filters.status) : '', onRemove: () => setFilter({ status: '' }) },
+    { key: 'status', label: 'Status', value: filters.status ? filters.status.split(',').map((s) => interviewStatusLabel(s)).join(', ') : '', onRemove: () => setFilter({ status: '' }) },
     { key: 'type', label: 'Type', value: filters.type, onRemove: () => setFilter({ type: '' }) },
     { key: 'req', label: 'Requirement', value: filters.requirement, onRemove: () => setFilter({ requirement: '' }) },
     { key: 'cand', label: 'Candidate', value: filters.candidate, onRemove: () => setFilter({ candidate: '' }) },
@@ -998,9 +999,9 @@ export default function InterviewCalendar() {
           options={pfOptions}
           show={{ department: true, dateRange: false, client: true, people: false }}
         />
-        <FacetSelect label="Requirement" value={filters.requirement} onChange={(v) => setFilter({ requirement: v })} options={barFacets.requirement} allLabel="All requirements" />
-        <FacetSelect label="Interview type" value={filters.type} onChange={pickType} options={barTypeOptions} allLabel="All types" />
-        <FacetSelect label="Status" value={filters.status} onChange={(v) => setFilter({ status: v })} options={barFacets.status} allLabel="All statuses" />
+        <FacetSelect multi label="Requirement" value={filters.requirement} onChange={(v) => setFilter({ requirement: v })} options={barFacets.requirement} allLabel="All requirements" />
+        <FacetSelect multi label="Interview type" value={filters.type} onChange={pickType} options={barTypeOptions} allLabel="All types" />
+        <FacetSelect multi label="Status" value={filters.status} onChange={(v) => setFilter({ status: v })} options={barFacets.status} allLabel="All statuses" />
         <PageFilterBar
           className="iv4-pfb iv4-pfb-b"
           value={pf}
@@ -1213,12 +1214,12 @@ export default function InterviewCalendar() {
                     </PanelField>
                     {/* Department, client, job, type, status, dates, recruiter / BDE and search are on the bar above. */}
                     <HierarchyFilter value={{ ...hier, department: pf.department }} onChange={(v) => { setHier({ ...v, department: '' }); if (v.tl) setMine(false); }} show={{ department: false, recruiter: false }} />
-                    <FacetSelect label="Candidate" value={filters.candidate} onChange={(v) => setFilter({ candidate: v })} options={facets.candidate} allLabel="All candidates" />
-                    <FacetSelect label="Hiring type" value={filters.hiringType} onChange={(v) => setFilter({ hiringType: v })} options={facets.hiringType} allLabel="All hiring types" />
-                    <FacetSelect label="Specialization" value={filters.spec} onChange={(v) => setFilter({ spec: v })} options={facets.spec} allLabel="All specializations" />
-                    <FacetSelect label="Qualification" value={filters.qual} onChange={(v) => setFilter({ qual: v })} options={facets.qual} allLabel="All qualifications" />
-                    <FacetSelect label="Designation" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={facets.desig} allLabel="All designations" />
-                    <FacetSelect label="Experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean)} allLabel="Any experience" />
+                    <FacetSelect multi label="Candidate" value={filters.candidate} onChange={(v) => setFilter({ candidate: v })} options={facets.candidate} allLabel="All candidates" />
+                    <FacetSelect multi label="Hiring type" value={filters.hiringType} onChange={(v) => setFilter({ hiringType: v })} options={facets.hiringType} allLabel="All hiring types" />
+                    <FacetSelect multi label="Specialization" value={filters.spec} onChange={(v) => setFilter({ spec: v })} options={facets.spec} allLabel="All specializations" />
+                    <FacetSelect multi label="Qualification" value={filters.qual} onChange={(v) => setFilter({ qual: v })} options={facets.qual} allLabel="All qualifications" />
+                    <FacetSelect multi label="Designation" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={facets.desig} allLabel="All designations" />
+                    <FacetSelect multi label="Experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean)} allLabel="Any experience" />
                   </>
                 )}
               />

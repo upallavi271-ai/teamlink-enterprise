@@ -317,5 +317,32 @@ module.exports = async function more(ctx) {
   const frec = await get('/followup-report/summary', { ...fuBase, leadId: `${RA.id},${RB.id}` }, tRA);
   check('follow-up report scope: a recruiter ticking another person is refused', frec.status === 403, frec.status);
 
+  // =====================================================================================================================
+  // 4. CALL LISTS: the contacts take several recruiters and several call results; a recruiter stays on their own rows
+  // =====================================================================================================================
+  await require('../src/calllist/service').ensure();
+  const { prisma } = ctx;
+  const LID = `fxcl${ctx.P}`;
+  const nowS = new Date().toISOString();
+  await prisma.$executeRawUnsafe('INSERT INTO "CallList" ("id","name","fileName","total","createdById","createdByName","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,?)', LID, `${ctx.TAG} calls`, 'fx.csv', 6, adminRow.id, adminRow.name, nowS, nowS);
+  const seed = [[RA, 'New'], [RA, 'Interested'], [RA, 'Busy'], [RB, 'Interested'], [RB, 'Not interested'], [null, 'New']];
+  for (let i = 0; i < seed.length; i += 1) {
+    const [who, st] = seed[i];
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.$executeRawUnsafe('INSERT INTO "CallListRow" ("id","listId","seq","name","phone","e164","recruiterId","recruiterName","status","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,?,?,?,?)', `${LID}r${i}`, LID, i, `${ctx.TAG} C${i}`, `98765${String(ctx.P).slice(-4)}${i}`, `+9198765${i}`, who ? who.id : null, who ? who.name : null, st, nowS, nowS);
+  }
+  const cr = async (params, token = tA) => { const r = await call('GET', `/call-lists/${LID}/rows?${qs({ size: 100, ...params })}`, null, token); return { status: r.status, n: r.body ? r.body.total : null, rows: (r.body && r.body.rows) || [] }; };
+  let c = await cr({});
+  check('call lists: the seeded list holds six contacts', c.status === 200 && c.n === 6, c);
+  c = await cr({ recruiter: RA.id }); check('call lists: one recruiter', c.n === 3, c.n);
+  c = await cr({ recruiter: `${RA.id},${RB.id}` }); check('call lists multi: two recruiters', c.n === 5, c.n);
+  c = await cr({ recruiter: `${RA.id},${RB.id},none` }); check('call lists multi: two recruiters and "not given to anyone"', c.n === 6, c.n);
+  c = await cr({ outcome: 'Interested' }); check('call lists: one call result', c.n === 2, c.n);
+  c = await cr({ outcome: 'Interested,Busy' }); check('call lists multi: two call results', c.n === 3, c.n);
+  c = await cr({ outcome: 'Interested,Busy,Not interested' }); check('call lists multi: three call results', c.n === 4, c.n);
+  c = await cr({ outcome: 'Interested,Busy', recruiter: RB.id }); check('call lists multi: two results AND one recruiter (AND across filters)', c.n === 1, c.n);
+  c = await cr({ recruiter: `${RB.id}`, outcome: 'Interested,New,Busy' }, tRA);
+  check('call lists scope: recruiter A asking for B\'s rows still sees only their own', c.status === 200 && c.rows.every((r) => r.recruiterId === RA.id) && c.n === 3, { s: c.status, n: c.n });
+
   return ctx;
 };
