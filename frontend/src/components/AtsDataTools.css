@@ -67,3 +67,13 @@
 /* a button this role may not use: still there, greyed, and it says why when pressed (founder, 2026-10-23: never hidden) */
 .atsio .atsio-off{opacity:.55;cursor:not-allowed}
 .atsio .atsio-off:hover{opacity:.7}
+
+/* these people came on: (the date the import dates people by) */
+.atsio-came{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:0 0 10px;display:flex;flex-direction:column;gap:6px;background:var(--card,#fff)}
+.atsio-came .atsio-q{font-weight:600;font-size:13.5px;margin:0 0 2px}
+.atsio-came .atsio-check{flex-wrap:wrap;align-items:center}
+.atsio-came .atsio-link{align-self:flex-start;margin-top:2px}
+.atsio-fix .atsio-st{font-size:12px;font-weight:600}
+.atsio-fix .atsio-st.fix{color:var(--teal)}
+.atsio-fix .atsio-st.protected,.atsio-fix .atsio-st.ambiguous{color:#b45309}
+.atsio-fix .atsio-st.notfound,.atsio-fix .atsio-st.bad{color:var(--red)}

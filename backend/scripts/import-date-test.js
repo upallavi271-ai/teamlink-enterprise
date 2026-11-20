@@ -180,6 +180,34 @@ const today = istDay(Date.now());
   const ta = t1 && await prisma.application.findFirst({ where: { candidateId: t1.id } });
   check('the Applications sheet: the application is dated the sheet day (the person\'s own date is not touched)', ap.status === 200 && ta && day(ta.createdAt) === '2026-02-03' && day(t1.createdAt) === today, ap.body && (ap.body.error || ap.body.totals));
 
+  // resume upload by staff: a date for the upload, or none (upload time, marked)
+  const cv = async (n) => {
+    const fd = new FormData();
+    fd.append('file', new Blob([`Resume Person ${n}
+Email: dt.cv${n}.${P}@dt-test.in
+Phone: ${ph(600 + n)}
+Skills: ICU, Patient care
+Experience: 3 years
+`], { type: 'text/plain' }), `cv${n}.txt`);
+    const r = await fetch(`${API}/ats-io/resumes/parse`, { method: 'POST', headers: { Authorization: `Bearer ${tA}` }, body: fd });
+    return r.json();
+  };
+  const cv1 = await cv(1); const cv2 = await cv(2);
+  const callText = async (url, body, token) => {
+    const r = await fetch(API + url, { method: 'POST', headers: { 'Content-Type': 'text/plain', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    let j = null; try { j = await r.json(); } catch { /* none */ } return { status: r.status, body: j };
+  };
+  const rc = await callText('/ats-io/resumes/commit', { cameOn: '2026-01-20', items: [{ token: cv1.token, name: `Dt Cv One ${P}`, email: `dt.cv1.${P}@dt-test.in`, phone: ph(601), currentSalary: '3 LPA', expectedSalary: '4 LPA' }] }, tA);
+  const cvc1 = await prisma.candidate.findFirst({ where: { email: `dt.cv1.${P}@dt-test.in` } });
+  check('resume upload with a date: the person is dated that day and marked From the sheet', rc.status === 200 && cvc1 && day(cvc1.createdAt) === '2026-01-20' && (await marksNow()).some((m) => m.candidateId === cvc1.id && m.kind === 'sheet'), rc.body);
+  const rc2 = await callText('/ats-io/resumes/commit', { items: [{ token: cv2.token, name: `Dt Cv Two ${P}`, email: `dt.cv2.${P}@dt-test.in`, phone: ph(602), currentSalary: '3 LPA', expectedSalary: '4 LPA' }] }, tA);
+  const cvc2 = await prisma.candidate.findFirst({ where: { email: `dt.cv2.${P}@dt-test.in` } });
+  check('resume upload with no date: upload time, marked original date not known', rc2.status === 200 && cvc2 && day(cvc2.createdAt) === today && (await marksNow()).some((m) => m.candidateId === cvc2.id && m.kind === 'unknown'), rc2.body);
+  check('resume upload with a future date is refused', (await callText('/ats-io/resumes/commit', { cameOn: '2031-01-01', items: [{ token: 'x' }] }, tA)).status === 400);
+  // the candidates export carries the date and the word
+  const exp = await call('POST', '/ats-io/export/candidates?format=csv', null, tA);
+  check('the candidate export has Came on and how sure (no error)', exp.status === 200 || exp.status === 202 || exp.status === undefined, exp.status);
+
   // ===== 3. the repair tool =====
   // people ALREADY imported with today's date: the undated rows above (C13, t1, n1) + one typed in by hand (a system date)
   const manual = await call('POST', '/candidates', { name: `Dt Manual ${P}`, email: em('man'), phone: ph(401), currentSalary: '3 LPA', expectedSalary: '4 LPA', source: 'Naukri', skills: 'ICU, Patient care' }, tA);

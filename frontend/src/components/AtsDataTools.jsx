@@ -33,6 +33,7 @@ import AtsImportDialog from './AtsImportDialog.jsx';
 import { Modal } from './proto.jsx';
 import AtsIoHistory from './AtsIoHistory.jsx';
 import ResumeUploadDialog from './ResumeUploadDialog.jsx';
+import DateFixDialog from './DateFixDialog.jsx';
 import './AtsDataTools.css';
 
 // One /access call per login per page load.
@@ -99,7 +100,7 @@ export default function AtsDataTools({
   label, exportLabel, // eslint-disable-line no-unused-vars
 }) {
   const access = useAtsIoAccess();
-  const [dialog, setDialog] = useState(null); // 'import' | 'request' | 'resumes' | 'export' | 'history'
+  const [dialog, setDialog] = useState(null); // 'import' | 'request' | 'resumes' | 'export' | 'history' | 'datefix'
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [scope, setScope] = useState('view');
@@ -116,6 +117,8 @@ export default function AtsDataTools({
   const mayResumes = allKinds.includes('resumes') && modes.resumes === 'direct';
   const labels = Object.fromEntries(Object.entries(access.kinds || {}).map(([k, v]) => [k, v.label]));
   const approver = !!(access.viewer && access.viewer.approver);
+  // "Fix came-on dates from a sheet" (Admin / Manager / TL): inside Import on the Candidates screen
+  const mayFixDates = module === 'candidates' && !!(access.viewer && access.viewer.fixDates);
   const templateKinds = allKinds.filter((k) => k !== 'resumes');
   const kindWords = allKinds.filter((k) => k !== 'resumes').map((k) => (labels[k] || k).toLowerCase()).join(' / ');
   const whyNoImport = !allKinds.length
@@ -260,8 +263,10 @@ export default function AtsDataTools({
           undoHours={access.undoHours || 24}
           onClose={() => setDialog(null)}
           onDone={() => { if (onImported) onImported(); }}
+          onFixDates={mayFixDates ? () => setDialog('datefix') : null}
         />
       )}
+      {dialog === 'datefix' && <DateFixDialog onClose={() => setDialog(null)} onDone={() => { if (onImported) onImported(); }} />}
       {dialog && dialog.startsWith('pick:') && (
         <Modal title="Import" onClose={() => setDialog(null)} footer={<button className="btn" onClick={() => setDialog(null)}>Cancel</button>}>
           <div className="atsio-exp">
@@ -275,6 +280,12 @@ export default function AtsDataTools({
                 <b>Upload resume — resume files</b>
                 <span>PDF or Word resumes — we read the details for you.</span>
               </button>
+              {mayFixDates && (
+                <button type="button" className="atsio-choice" onClick={() => setDialog('datefix')}>
+                  <b>Fix came-on dates from a sheet</b>
+                  <span>For people already imported with today's date: a sheet with who they are and the day they really came.</span>
+                </button>
+              )}
             </div>
           </div>
         </Modal>

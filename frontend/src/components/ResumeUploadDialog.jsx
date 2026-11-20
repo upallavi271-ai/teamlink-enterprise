@@ -42,6 +42,7 @@ export default function ResumeUploadDialog({ onClose, onDone }) {
   const [progress, setProgress] = useState(null);
   const [update, setUpdate] = useState(false);
   const [reqCode, setReqCode] = useState('');
+  const [cameOn, setCameOn] = useState(''); // the day these resumes came (optional); blank = today, marked "original date not known"
   const [source, setSource] = useState(''); // where these resumes came from (the clean source list); blank = Other
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -99,6 +100,7 @@ export default function ResumeUploadDialog({ onClose, onDone }) {
       const payload = {
         requirementCode: reqCode.trim() || undefined,
         source: source || undefined,
+        cameOn: cameOn || undefined,
         updateExisting: update,
         items: items.filter((it) => it.token && !madeAlone(it)).map((it) => ({
           token: it.token, skip: statusOf(it) !== 'valid', name: val(it, 'name'), email: val(it, 'email'), phone: val(it, 'phone'), currentSalary: val(it, 'currentSalary'), expectedSalary: val(it, 'expectedSalary'),
@@ -175,6 +177,9 @@ export default function ResumeUploadDialog({ onClose, onDone }) {
               <option value="">Not sure (Other)</option>
               {PICK_SOURCES.filter((s) => s !== 'Other').map((s) => <option key={s} value={s}>{s}</option>)}
             </Combo>
+          </label>
+          <label className="field" style={{ margin: 0, minWidth: 180 }}><span>These resumes came on (optional)</span>
+            <input type="date" value={cameOn} max={new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)} onChange={(e) => setCameOn(e.target.value)} title="Blank = today. People are then marked: Imported on today's date (original date not known)." />
           </label>
         </div>
         <label className="atsio-check" style={{ marginBottom: 8 }}>

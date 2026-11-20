@@ -20,6 +20,13 @@ import { useState } from 'react';
 import api from '../api';
 import { Modal } from './proto.jsx';
 import Combo from './Combo.jsx';
+import { longDay } from '../utils/candidateSource.js';
+
+// The kinds whose rows carry the day the person really came (routes/atsIo.js cameFor).
+const DATED_KINDS = ['candidates', 'applications'];
+const DATE_FLAG = {
+  bad: 'Date not readable', future: 'Date is in the future', old: 'Date is before 2000', none: 'No date: today, marked "original date not known"',
+};
 
 function saveBlob(res, fallback) {
   const cd = res.headers?.['content-disposition'] || '';
@@ -48,7 +55,7 @@ const DUP_RULE = {
 };
 
 export default function AtsImportDialog({
-  kinds, labels = {}, info = {}, onClose, onDone, mode = 'direct', undoHours = 24,
+  kinds, labels = {}, info = {}, onClose, onDone, mode = 'direct', undoHours = 24, onFixDates = null,
 }) {
   const [kind, setKind] = useState(kinds[0]);
   const [file, setFile] = useState(null);
@@ -61,9 +68,17 @@ export default function AtsImportDialog({
   const [filter, setFilter] = useState('');
   const [undo, setUndo] = useState(null);
   const [gotTemplate, setGotTemplate] = useState(false);
+  // "These people came on:" sheet | one | today (a sheet that has a date column starts on "sheet")
+  const [dateMode, setDateMode] = useState('sheet');
+  const [oneDate, setOneDate] = useState('');
 
   function form(f, extra = {}) {
     const fd = new FormData();
+    const dm = extra.dateMode || dateMode;
+    if (DATED_KINDS.includes(extra.kind || kind) && dm !== 'sheet') {
+      fd.append('dateMode', dm);
+      if (dm === 'one') fd.append('cameOnDate', extra.oneDate !== undefined ? extra.oneDate : oneDate);
+    }
     if (extra.mapping) fd.append('mapping', JSON.stringify(extra.mapping));
     if (extra.sheet) fd.append('sheet', extra.sheet);
     if (extra.partial) fd.append('partial', 'true');
@@ -76,7 +91,7 @@ export default function AtsImportDialog({
     if (!f) return;
     setErr(''); setBusy(true);
     try {
-      const res = await api.post(`/ats-io/import/${k}/check`, form(f, { update, ...extra }));
+      const res = await api.post(`/ats-io/import/${k}/check`, form(f, { update, kind: k, ...extra }));
       setReport(res.data);
     } catch (e) {
       setReport(null);
@@ -90,6 +105,12 @@ export default function AtsImportDialog({
     const next = currentMapping();
     next[header] = value === '' ? -1 : Number(value);
     check(file, { mapping: next, sheet: report?.sheet });
+  }
+
+  // The choice of date: one tap, and the preview is worked out again with it.
+  function chooseDates(mode, day = oneDate) {
+    setDateMode(mode);
+    if (file && (mode !== 'one' || day)) check(file, { mapping: currentMapping(), sheet: report?.sheet, dateMode: mode, oneDate: day });
   }
 
   function toggleUpdate(v) {
@@ -164,6 +185,7 @@ export default function AtsImportDialog({
             <span>
               <b>{labels[kind] || kind}</b> from <b>{result.filename}</b>: {t.create} created, {t.update} updated
               {t.duplicate ? `, ${t.duplicate} duplicate(s) skipped` : ''}{t.error ? `, ${t.errorRows || t.error} row(s) not imported` : ''}.
+              {t.withDate !== undefined ? ` ${t.withDate} with their own date${t.noDate ? `, ${t.noDate} without (dated today, marked "original date not known")` : ''}.` : ''}
             </span>
           </div>
           {result.batch ? (
@@ -179,7 +201,7 @@ export default function AtsImportDialog({
   }
 
   const t = report?.totals;
-  const writable = report && t.valid > 0 && (report.ok || partial);
+  const writable = report && t.valid > 0 && (report.ok || partial) && !(dateMode === 'one' && DATED_KINDS.includes(kind) && !oneDate);
   const rows = (report?.results || []).filter((r) => !filter || r.action === filter);
   const errorRows = t ? (t.errorRows ?? t.error) : 0;
 
@@ -224,6 +246,30 @@ export default function AtsImportDialog({
           {info[kind]?.note || ''} Nothing is saved until you confirm.
           {mode === 'request' && ' Your role sends imports for approval: an Admin or Manager approves before anything is written.'}
         </div>
+        {DATED_KINDS.includes(kind) && (
+          <div className="atsio-came" role="radiogroup" aria-label="These people came on">
+            <div className="atsio-q">These people came on:</div>
+            <label className="atsio-check">
+              <input type="radio" name="came-mode" checked={dateMode === 'sheet'} disabled={busy} onChange={() => chooseDates('sheet')} />
+              <span>
+                <b>The date column of the sheet</b>
+                {report ? (report.dateColumn ? ` — using the column "${report.dateColumn}"` : ' — no date column found in this file (pick one under "Which column is which"); people without a date get today, marked "original date not known"') : ' — for example "Applied date", "Date received", "Came on"'}
+              </span>
+            </label>
+            <label className="atsio-check">
+              <input type="radio" name="came-mode" checked={dateMode === 'one'} disabled={busy} onChange={() => { setDateMode('one'); if (oneDate && file) chooseDates('one', oneDate); }} />
+              <span><b>One date for all rows</b> — for a whole sheet received on a known day</span>
+              {dateMode === 'one' && (
+                <input type="date" value={oneDate} max={new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)} disabled={busy} style={{ marginLeft: 8 }} aria-label="The day these people came" onChange={(e) => { setOneDate(e.target.value); chooseDates('one', e.target.value); }} />
+              )}
+            </label>
+            <label className="atsio-check">
+              <input type="radio" name="came-mode" checked={dateMode === 'today'} disabled={busy} onChange={() => chooseDates('today')} />
+              <span><b>Today</b> — the day of the import (they are marked "original date not known")</span>
+            </label>
+            {onFixDates && <button type="button" className="atsio-link" onClick={onFixDates}>Already imported with today's date? Fix came-on dates from a sheet</button>}
+          </div>
+        )}
         <label className="atsio-check" style={{ marginBottom: 8 }}>
           <input type="checkbox" checked={update} disabled={busy} onChange={(e) => toggleUpdate(e.target.checked)} />
           {`Update existing records that match (${DUP_RULE[kind] || 'same record'}) — blank cells keep what is there`}
@@ -253,6 +299,14 @@ export default function AtsImportDialog({
             {report.missingRequired.length > 0 && (
               <div className="notice red" style={{ margin: '8px 0' }}>
                 <span>Required column(s) not found: <b>{report.missingRequired.join(', ')}</b> — pick them below.</span>
+              </div>
+            )}
+            {DATED_KINDS.includes(kind) && t.withDate !== undefined && (
+              <div className="small-muted" style={{ margin: '4px 0' }} aria-label="Dates in this file">
+                <b>{t.withDate}</b> {t.withDate === 1 ? 'row has' : 'rows have'} a date
+                {dateMode === 'one' ? ` (${longDay(report.dates?.day)} for all)` : ''}
+                {t.noDate > 0 ? <> · <b>{t.noDate}</b> {t.noDate === 1 ? 'has' : 'have'} none (today, marked "original date not known")</> : null}
+                {t.badDate > 0 ? <> · <b style={{ color: 'var(--red)' }}>{t.badDate}</b> {t.badDate === 1 ? 'has' : 'have'} a date that cannot be used</> : null}
               </div>
             )}
             <div className="atsio-totals">
@@ -291,17 +345,22 @@ export default function AtsImportDialog({
 
             <div className="tbl-wrap atsio-res">
               <table>
-                <thead><tr><th style={{ width: 60 }}>Row</th><th style={{ width: 90 }}>Result</th><th>Detail</th></tr></thead>
+                <thead><tr><th style={{ width: 60 }}>Row</th><th style={{ width: 90 }}>Result</th>{DATED_KINDS.includes(kind) && <th style={{ width: 130 }}>Came on</th>}<th>Detail</th></tr></thead>
                 <tbody>
                   {rows.map((r, i) => (
                     <tr key={`${r.row}-${i}`}>
                       <td className="cell-muted">{r.row}</td>
                       <td><span className={`atsio-act ${r.action}`}>{ACTION[r.action] || r.action}</span></td>
+                      {DATED_KINDS.includes(kind) && (
+                        <td title={r.cameOnFlag ? DATE_FLAG[r.cameOnFlag] || '' : ''} style={['bad', 'future', 'old'].includes(r.cameOnFlag) ? { color: 'var(--red)', fontWeight: 600 } : undefined}>
+                          {r.cameOn ? longDay(r.cameOn) : ['bad', 'future', 'old'].includes(r.cameOnFlag) ? DATE_FLAG[r.cameOnFlag] : (r.cameOnFlag === 'none' ? <span className="small-muted">none · today</span> : '')}
+                        </td>
+                      )}
                       <td>{r.column ? <b>{r.column}: </b> : null}{r.message || (r.action === 'create' ? 'New record' : r.action === 'update' ? 'Will be updated' : '')}</td>
                     </tr>
                   ))}
                   {rows.length === 0 && (
-                    <tr><td colSpan="3" className="small-muted" style={{ padding: 12 }}>{t.rows ? 'No rows in this group.' : 'No data rows found under the headings.'}</td></tr>
+                    <tr><td colSpan="4" className="small-muted" style={{ padding: 12 }}>{t.rows ? 'No rows in this group.' : 'No data rows found under the headings.'}</td></tr>
                   )}
                 </tbody>
               </table>
