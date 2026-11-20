@@ -202,7 +202,9 @@ const q = (sql, ...a) => prisma.$queryRawUnsafe(sql, ...a);
       await page.screenshot({ path: path.join(SHOTS, '8b-row-messages.png'), fullPage: true });
       check('a row opens its messages: scheduled, sent, delivered, status, provider id, reason, tries', /Scheduled/.test(await occ.innerText()) && /Delivered/i.test(await occ.innerText()) && /Provider id/i.test(await occ.innerText()) && /Tries/i.test(await occ.innerText()) && (await occ.locator('tbody tr').count()) === 5);
       // the tabs
-      await page.getByRole('tab', { name: /Cancelled/ }).click();
+      // 2026-11-20 (tabs clean-up): five status tabs on screen; Paused, Failed and Cancelled are under "More"
+      if (await page.getByRole('tab', { name: /Cancelled/ }).count()) await page.getByRole('tab', { name: /Cancelled/ }).click();
+      else { await page.locator('[role="tablist"][aria-label="Schedule status"]').locator('xpath=ancestor::div[contains(@class,"tabstrip")][1]').locator('.tabstrip-more').click(); await page.getByRole('menuitem', { name: /Cancelled/ }).click(); }
       await page.waitForTimeout(900);
       check('the Cancelled tab lists only the cancelled one', (await table.locator('[data-testid="smp-row"]').count()) === 1 && /Sytwo/.test(await table.innerText()));
       await page.screenshot({ path: path.join(SHOTS, '9-cancelled-tab.png'), fullPage: true });
