@@ -6,7 +6,7 @@
 // (utils/positionScope.js leadsOfPosition: recruiter seat -> reports-to TL seat -> its holder). So "putting a candidate under another
 // team lead" means moving it to a recruiter whose seat sits under that team lead. This file:
 //   optionsFor(user, app)   the team leads (and their recruiters) of the job's department(s) the candidate may move to
-//   currentLeads(app)       who leads the candidate today (the recruiter's seat), for the "before" side and the notices
+//   teamLeadOfApplication(app)  the ONE answer to who leads the candidate today (the recruiter's seat), used by the page, dialog, options, notices
 //   recordAndNotify(...)    the audit line and the bells to the old team lead, the new one and the STL above each
 // The move itself is the ordinary Change recruiter (routes/applications.js POST /bulk, action assign, correct true).
 // ---------------------------------------------------------------------------
@@ -31,20 +31,98 @@ async function currentOwnerOf(app) {
   const userId = (last && last.ownerName ? last.ownerUserId : null) || app.ownerRecruiterId || (app.requirement && app.requirement.recruiterId) || null;
   const user = userId ? await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true } }).catch(() => null) : null;
   const seat = userId ? await currentPositionOf(userId) : null;
-  return { userId, name: user ? user.name : null, seatCode: (seat && seat.code) || (last && last.ownerPositionCode) || null, seatId: (seat && seat.id) || null };
+  // the seat the profile shows next to the recruiter (candidates.js shownSeat): the one they held on the application day, else now
+  const AO = require('./applicationOwner'); // eslint-disable-line global-require
+  await AO.warmSeats().catch(() => null);
+  const shown = userId ? AO.seatOf(userId, app.createdAt) : null;
+  return {
+    userId,
+    name: user ? user.name : null,
+    seatCode: shown || (seat && seat.code) || (last && last.ownerPositionCode) || (app.requirement && app.requirement.positionCode) || null,
+    seatId: (seat && seat.id) || null,
+  };
 }
 
-async function currentLeads(app) {
+// THE ONE ANSWER TO "WHO IS THIS CANDIDATE'S TEAM LEAD" (founder 2026-11-20: a recruiter of Sirisha's team added a candidate and the page
+// said Usha, the requirement's stored TL). The TL follows the recruiter's SEAT (recruiter seat -> TL seat -> its holder, and the STL above);
+// only a recruiter with no seat falls back to the follow-up's / requirement's TL. The candidate page, the "Now" line of the dialog, the
+// options, the notices, the stamp on a new follow-up and the repair all read this one result.
+//   { tlUserId, tlName, stlUserId, stlName, seatCode, source: 'seat' | 'seat-former' | 'requirement' | 'none', owner }
+// 'seat-former': the TL seat is empty now; tlName is the last holder, marked "(left)", tlUserId is null (nobody to tell).
+async function teamLeadOfApplication(app, { positionCode = null } = {}) {
   const owner = await currentOwnerOf(app);
-  const leads = owner.seatId || owner.seatCode
-    ? await leadsOfPosition({ positionId: owner.seatId || undefined, positionCode: owner.seatId ? undefined : owner.seatCode }).catch(() => null)
-    : null;
-  return { owner, leads: leads || { tlUserId: null, tlName: null, stlUserId: null, stlName: null } };
+  const seatCode = positionCode || owner.seatCode || null;
+  const leads = seatCode ? await leadsOfPosition({ positionCode: seatCode }).catch(() => null) : null;
+  const base = { seatCode, owner, stlUserId: null, stlName: null };
+  if (leads && leads.tlUserId) return { ...base, tlUserId: leads.tlUserId, tlName: leads.tlName, stlUserId: leads.stlUserId, stlName: leads.stlName, source: 'seat' };
+  if (leads && leads.tlFormerName) return { ...base, tlUserId: null, tlName: `${leads.tlFormerName} (left)`, stlUserId: leads.stlUserId, stlName: leads.stlName, source: 'seat-former' };
+  // no seat: what the follow-up / the requirement names
+  const fu = await prisma.applicationFollowUp.findFirst({ where: { applicationId: app.id }, orderBy: { createdAt: 'desc' }, select: { tlUserId: true, tlName: true, stlUserId: true, stlName: true } });
+  const r = app.requirement || {};
+  const tlUserId = (fu && fu.tlUserId) || r.tlId || null;
+  const tlName = (fu && fu.tlName) || r.tl || null;
+  if (!tlUserId && !tlName) return { ...base, tlUserId: null, tlName: null, source: 'none' };
+  return { ...base, tlUserId, tlName, stlUserId: (fu && fu.stlUserId) || r.stlId || null, stlName: (fu && fu.stlName) || r.stl || null, source: 'requirement' };
+}
+// kept for the callers that read `.leads` / `.owner`
+async function currentLeads(app, opts) {
+  const t = await teamLeadOfApplication(app, opts);
+  return { owner: t.owner, leads: { tlUserId: t.tlUserId, tlName: t.tlName, stlUserId: t.stlUserId, stlName: t.stlName }, source: t.source, seatCode: t.seatCode };
 }
 
-async function optionsFor(user, app, scope) {
+// SEAT -> LEADS INDEX (for stamping a new follow-up and for the lists, which print a TL per row): every recruiter seat's leads, from
+// leadsOfPosition itself, refreshed at most every 60 seconds (or at once with force). peekByUser / peekByCode read it synchronously.
+const IDX = { at: 0, byUser: new Map(), byCode: new Map(), loading: null };
+async function ensureIndex(force = false) {
+  if (!force && Date.now() - IDX.at < 60000) return;
+  if (IDX.loading) { await IDX.loading; return; }
+  IDX.loading = (async () => {
+    const seats = await prisma.position.findMany({ where: { kind: 'RECRUITER', active: true }, select: { id: true, code: true } });
+    const held = await prisma.positionAssignment.findMany({ where: { toDate: null, positionId: { in: seats.map((x) => x.id) } }, select: { positionId: true, employee: { select: { userId: true } } } });
+    const holderOf = new Map(held.filter((h) => h.employee && h.employee.userId).map((h) => [h.positionId, h.employee.userId]));
+    const byUser = new Map(); const byCode = new Map();
+    for (let i = 0; i < seats.length; i += 25) {
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all(seats.slice(i, i + 25).map(async (seat) => {
+        const l = await leadsOfPosition({ positionId: seat.id }).catch(() => null);
+        if (!l || !l.tlUserId) return;
+        const entry = { code: seat.code, tlUserId: l.tlUserId, tlName: l.tlName, stlUserId: l.stlUserId, stlName: l.stlName };
+        byCode.set(String(seat.code).toUpperCase(), entry);
+        if (holderOf.get(seat.id)) byUser.set(holderOf.get(seat.id), entry);
+      }));
+    }
+    IDX.byUser = byUser; IDX.byCode = byCode; IDX.at = Date.now();
+  })();
+  try { await IDX.loading; } finally { IDX.loading = null; }
+}
+const peekByUser = (userId) => (userId ? IDX.byUser.get(userId) || null : null);
+const peekByCode = (code) => (code ? IDX.byCode.get(String(code).toUpperCase()) || null : null);
+
+// ONE-OFF, IDEMPOTENT REPAIR: open follow-ups whose stamped team lead differs from their recruiter's seat team lead are re-stamped.
+// dryRun counts only. since: only rows created after this date (start-up: the last 30 days).
+async function repairStamps({ dryRun = true, sinceDays = 30 } = {}) {
+  await ensureIndex(true);
+  const since = new Date(Date.now() - sinceDays * 86400000);
+  const rows = await prisma.applicationFollowUp.findMany({
+    where: { completedAt: null, createdAt: { gte: since }, ownerUserId: { not: null } },
+    select: { id: true, ownerUserId: true, tlUserId: true, tlName: true, stlUserId: true },
+  });
+  const todo = rows.filter((r) => { const e = peekByUser(r.ownerUserId); return e && (e.tlUserId !== r.tlUserId || (e.stlUserId || null) !== (r.stlUserId || null)); });
+  if (dryRun || !todo.length) return { checked: rows.length, wrong: todo.length, fixed: 0 };
+  let fixed = 0;
+  for (const r of todo) {
+    const e = peekByUser(r.ownerUserId);
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.applicationFollowUp.update({ where: { id: r.id }, data: { tlUserId: e.tlUserId, tlName: e.tlName, stlUserId: e.stlUserId || null, stlName: e.stlName || null } });
+    fixed += 1;
+  }
+  await logAudit({ userId: null, actorName: 'TeamLink', action: 'Follow-up team lead re-stamped from the recruiter seat', entity: 'System', entityId: 'followups', fromValue: String(todo.length), toValue: String(fixed), reason: `open follow-ups of the last ${sinceDays} days whose team lead differed from their recruiter's seat` });
+  return { checked: rows.length, wrong: todo.length, fixed };
+}
+
+async function optionsFor(user, app, scope, curIn = null) {
   const jobDepts = RD.departmentsOf(app.requirement || {}).map(lc);
-  const cur = await currentLeads(app);
+  const cur = curIn || await currentLeads(app);
   const [seats, assigns] = await Promise.all([
     prisma.position.findMany({ where: { active: true, kind: { in: ['TL', 'RECRUITER'] } }, select: { id: true, code: true, name: true, department: true, team: true, kind: true, reportsToId: true } }),
     prisma.positionAssignment.findMany({
@@ -76,9 +154,9 @@ async function optionsFor(user, app, scope) {
   const out = [];
   seats.filter((p) => p.kind === 'TL').forEach((p) => {
     const u = uById.get(holder.get(p.id));
-    if (!u || u.atsRole !== 'TL' || u.id === cur.leads.tlUserId || !inJob(u, p) || other.includes(u.id)) return;
+    if (!u || u.atsRole !== 'TL' || !inJob(u, p) || (other.includes(u.id) && u.id !== cur.leads.tlUserId)) return;
     out.push({
-      tlUserId: u.id, tlName: u.name, section: sectionOf(p), seatCode: p.code,
+      tlUserId: u.id, tlName: u.name, section: sectionOf(p), seatCode: p.code, current: u.id === cur.leads.tlUserId,
       recruiters: (recruitersOf.get(p.id) || []).sort((a, b) => a.name.localeCompare(b.name)),
     });
   });
@@ -138,4 +216,4 @@ async function recordAndNotify({ app, by, reason, oldLeads, newTl, newRecruiter,
   return note;
 }
 
-module.exports = { ACTION, optionsFor, currentLeads, currentOwnerOf, recordAndNotify };
+module.exports = { ACTION, optionsFor, currentLeads, teamLeadOfApplication, currentOwnerOf, recordAndNotify, ensureIndex, peekByUser, peekByCode, repairStamps };

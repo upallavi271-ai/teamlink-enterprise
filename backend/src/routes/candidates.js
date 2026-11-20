@@ -361,7 +361,8 @@ function decorate(candidate, { user, sharedIds = null, followUps = null, withApp
     // the seat of the recruiter shown above (their own HRMS seat on the application day); the stored seat only when unknown
     positionCode: shownSeat(kind === 'internal' && followUps ? followUps.get(latest.id) : null, latest, requirement),
     bdeName: requirement && requirement.bde ? requirement.bde.name : null,
-    tlName: (kind === 'internal' && followUps && followUps.get(latest.id)?.tlName)
+    tlName: (kind === 'internal' && seatTlName(shownSeat(followUps ? followUps.get(latest.id) : null, latest, requirement)))
+      || (kind === 'internal' && followUps && followUps.get(latest.id)?.tlName)
       || (requirement ? requirement.tl || null : null),
     appliedDate: latest.createdAt,
     owner: applicationOwner(latest, requirement),
@@ -705,6 +706,8 @@ async function sectionMap() {
   SECTION_CACHE = { at: Date.now(), map };
   return map;
 }
+// the team lead of a recruiter seat (utils/teamLeadChange.js index; null when not warmed or the seat has no TL)
+const seatTlName = (code) => { const e = require('../utils/teamLeadChange').peekByCode(code); return e ? e.tlName : null; }; // eslint-disable-line global-require
 const sectionOfCode = (map, code) => (code ? map.get(String(code).toUpperCase()) || null : null);
 
 // The rows this login may see, decorated, plus the few facts the paged list
@@ -794,6 +797,7 @@ async function buildPagedRows(user, st, s, shared = false) {
   const me = user.id;
   const todayIst = istDay(new Date());
   const sections = await sectionMap();
+  await require('../utils/teamLeadChange').ensureIndex().catch(() => null); // the team lead of each recruiter seat, for the TL column // eslint-disable-line global-require
   const bulkDays = bulkDaysFor(st);
   const dateMarks = await DATES.marksMap();
   // The client's OLD names (ClientAlias) are searchable too: typing "vcare" finds people on jobs of "Prabs VCare Health Clinic".
@@ -1060,6 +1064,7 @@ async function buildPipelineRows(user, st, s, snap) {
   const fitViewer = internalViewer ? SALARY.viewerFor(require('../utils/clientRedact').privacyFlagsFor(user)) : null; // eslint-disable-line global-require
   const today = todayIst();
   const sections = await sectionMap();
+  await require('../utils/teamLeadChange').ensureIndex().catch(() => null); // the team lead of each recruiter seat, for the TL column // eslint-disable-line global-require
   const bulkDays = bulkDaysFor(st);
   const dateMarks = await DATES.marksMap();
   const aliasOf = kind === 'client' ? new Map() : await clientSearch.aliasMap(); // old client names: search text only
@@ -1164,7 +1169,7 @@ async function buildPipelineRows(user, st, s, snap) {
         recruiterName: (internalViewer && fu && fu.ownerName) || (a.ownerRecruiterId && snap.activeUsers.get(a.ownerRecruiterId)) || (r && r.recruiter ? r.recruiter.name : null),
         positionCode,
         section: sectionOfCode(sections, positionCode),
-        tlName: (internalViewer && fu && fu.tlName) || (r ? r.tl || null : null),
+        tlName: (internalViewer && seatTlName(positionCode)) || (internalViewer && fu && fu.tlName) || (r ? r.tl || null : null),
         bdeName: r && r.bde ? r.bde.name : null,
         interviewAt: a.interviewAt || null,
         interviewStatus: a.interviewStatus || null,
@@ -3052,13 +3057,16 @@ router.get('/:id', async (req, res) => {
   // OWNERSHIP of the current application: Department · Section · TL ·
   // Recruiter · BDE (+ the seat). Client users are not served our staffing.
   const sections = await sectionMap();
+  await require('../utils/teamLeadChange').ensureIndex().catch(() => null); // the team lead of each recruiter seat, for the TL column // eslint-disable-line global-require
   // The Team lead follows the recruiter's CURRENT seat, the same way Section does - not the requirement's stale stamp (founder
   // 2026-11-13: EDU-9 is in Team B under Sirisha, but the panel showed the requirement's old Team-A TL). Fall back to the stored TL
   // when the recruiter has no seat in the org chart.
   let ownershipTl = decorated.tlName || null;
-  if (latest && kind === 'internal' && decorated.positionCode) {
-    const leads = await require('../utils/positionScope').leadsOfPosition({ positionCode: decorated.positionCode }).catch(() => null); // eslint-disable-line global-require
-    if (leads && leads.tlName) ownershipTl = leads.tlName;
+  if (latest && kind === 'internal') {
+    // ONE function for the team lead of an application (utils/teamLeadChange.js): the recruiter's seat first, the requirement's TL only
+    // when the recruiter has no seat. The "Change team lead" dialog reads the same one.
+    const lead = await require('../utils/teamLeadChange').teamLeadOfApplication(latest, { positionCode: decorated.positionCode }).catch(() => null); // eslint-disable-line global-require
+    if (lead && lead.tlName) ownershipTl = lead.tlName;
   }
   const ownership = latest && kind === 'internal' ? {
     department: decorated.requirementDepartment || null,

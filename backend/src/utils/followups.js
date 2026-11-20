@@ -144,19 +144,22 @@ function ownerOf(application, requirement, names = null) {
 function chainSnapshot(application, requirement, names = null) {
   const owner = ownerOf(application, requirement, names);
   const r = requirement || {};
+  // THE TEAM LEAD FOLLOWS THE RECRUITER'S SEAT (founder 2026-11-20): a recruiter who holds a seat stamps their seat's TL and STL, not the
+  // requirement's stored ones (utils/teamLeadChange.js teamLeadOfApplication). No seat -> the requirement's, as before.
+  const seatLead = owner.role === 'Recruiter' && owner.id ? require('./teamLeadChange').peekByUser(owner.id) : null; // eslint-disable-line global-require
   return {
     ownerUserId: owner.id,
     ownerName: owner.name,
     ownerRole: owner.role,
-    tlUserId: r.tlId || null,
-    tlName: (names && r.tlId && names.get(r.tlId)) || r.tlName || r.tl || null,
+    tlUserId: seatLead ? seatLead.tlUserId : (r.tlId || null),
+    tlName: seatLead ? seatLead.tlName : ((names && r.tlId && names.get(r.tlId)) || r.tlName || r.tl || null),
     bdeUserId: bdeOfRequirement(r).id,
     bdeName: bdeOfRequirement(r).name,
     // Rung 2 of the escalation ladder needs a name on the row, the same way
     // the TL does. stlId is a plain scalar on Requirement, so the name comes
     // from the `names` map resolved alongside the TL's.
-    stlUserId: r.stlId || null,
-    stlName: (names && r.stlId && names.get(r.stlId)) || r.stlName || r.stl || null,
+    stlUserId: seatLead && seatLead.stlUserId ? seatLead.stlUserId : (r.stlId || null),
+    stlName: seatLead && seatLead.stlUserId ? seatLead.stlName : ((names && r.stlId && names.get(r.stlId)) || r.stlName || r.stl || null),
   };
 }
 
@@ -166,6 +169,7 @@ function chainSnapshot(application, requirement, names = null) {
 // list; `names` is a Map(userId -> name).
 async function resolveNames(requirements) {
   await require('./applicationOwner').warmNames().catch(() => null); // the candidates' own recruiters by name (ownerOf) // eslint-disable-line global-require
+  await require('./teamLeadChange').ensureIndex().catch(() => null); // each recruiter seat's team lead, for chainSnapshot // eslint-disable-line global-require
   // The BDE of a client job named only on the CLIENT (Owner / second BDE), looked up once per job.
   for (const r of (requirements || [])) {
     if (r && !r.bdeId && !r.internal && (r.clientId || r.client) && !Object.prototype.hasOwnProperty.call(r, '_clientBdeId')) {

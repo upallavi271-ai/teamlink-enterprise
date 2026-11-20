@@ -636,6 +636,18 @@ const server = app.listen(PORT, () => {
   // Timesheet daily tracking: 18:00 "not finished today - what happened?", 19:00 to whoever gave it - utils/taskDayUpdate.js (2026-11-10)
   require('./utils/taskDayUpdate').start();
   // Requests waiting since before 2026-11-02 whose own TL was skipped as "below the requester's level" go back to that TL (once, at start).
+  // follow-ups of the last 30 days stamped with the requirement's team lead instead of their recruiter's seat TL (utils/teamLeadChange.js):
+  // counted first (dry run, logged), then re-stamped and audit-logged; safe to run again. Not on a test server.
+  if (!process.env.TEST_MODE) {
+    setTimeout(async () => {
+      try {
+        const TLC = require('./utils/teamLeadChange');
+        const dry = await TLC.repairStamps({ dryRun: true, sinceDays: 30 });
+        console.log(`[team-lead-stamps] dry run: ${dry.wrong} of ${dry.checked} open follow-up(s) would be re-stamped`);
+        if (dry.wrong) { const done = await TLC.repairStamps({ dryRun: false, sinceDays: 30 }); console.log(`[team-lead-stamps] re-stamped ${done.fixed}`); }
+      } catch (e) { console.error('[team-lead-stamps]', e.message); }
+    }, 25 * 1000).unref();
+  }
   setTimeout(() => require('./utils/approvalWorkflow').reopenOwnLeads().then((r) => { if (r.moved) console.log(`[approvals] ${r.moved} request(s) sent back to the requester's own TL`); }).catch((e) => console.error('[approvals] reopen own TL:', e.message)), 20 * 1000).unref();
   // AI phone calls through our own SIP line with free voices (calling/voice/sipCall.js): off unless AI_VOICE_GATEWAY=1.
   require('./calling/voice/sipCall').start().catch((e) => console.error('[ai-phone] start failed:', e.message));

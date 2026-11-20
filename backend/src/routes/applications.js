@@ -1142,10 +1142,10 @@ router.get('/:id/team-lead-options', async (req, res, next) => {
     if (!app) return res.status(404).json({ error: 'Application not found' });
     if (!applicationInScope(req.user, app)) return res.status(403).json({ error: 'Outside your access' });
     const TLC = require('../utils/teamLeadChange'); // eslint-disable-line global-require
-    const cur = await TLC.currentLeads(app);
+    const cur = await TLC.currentLeads(app, { positionCode: req.query.positionCode ? String(req.query.positionCode) : null });
     return res.json({
-      now: { tlUserId: cur.leads.tlUserId, tlName: cur.leads.tlName, recruiterId: cur.owner.userId, recruiterName: cur.owner.name, seatCode: cur.owner.seatCode },
-      options: await TLC.optionsFor(req.user, app, s),
+      now: { tlUserId: cur.leads.tlUserId, tlName: cur.leads.tlName, source: cur.source, recruiterId: cur.owner.userId, recruiterName: cur.owner.name, seatCode: cur.seatCode },
+      options: await TLC.optionsFor(req.user, app, s, cur),
     });
   } catch (err) { return next(err); }
 });
@@ -1329,7 +1329,8 @@ router.post('/bulk', async (req, res, next) => {
       }
       // eslint-disable-next-line no-await-in-loop
       const names = await resolveNames([app.requirement]);
-      const snap = chainSnapshot(app, app.requirement, names);
+      // the team lead is stamped from the NEW recruiter's seat (not the old owner's, not the requirement's)
+      const snap = chainSnapshot({ ...app, ownerRecruiterId: target.atsRole === 'RECRUITER' ? target.id : app.ownerRecruiterId }, app.requirement, names);
       // eslint-disable-next-line no-await-in-loop
       await prisma.applicationFollowUp.create({
         data: {

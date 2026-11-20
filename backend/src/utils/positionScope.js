@@ -174,7 +174,7 @@ async function resolvePositionScope({ userId, employeeId, atsRole }) {
 // nulls, and the caller falls back to what the requirement names.
 // ---------------------------------------------------------------------------
 async function leadsOfPosition({ positionId, positionCode }) {
-  const out = { tlUserId: null, tlName: null, stlUserId: null, stlName: null };
+  const out = { tlUserId: null, tlName: null, stlUserId: null, stlName: null, tlSeatCode: null, tlFormerName: null };
   if (!positionId && !positionCode) return out;
   const seat = await prisma.position.findFirst({
     where: positionId ? { id: positionId } : { code: positionCode },
@@ -195,12 +195,19 @@ async function leadsOfPosition({ positionId, positionCode }) {
   while (cursor && guard < 6) {
     guard += 1;
     // eslint-disable-next-line no-await-in-loop
-    const p = await prisma.position.findUnique({ where: { id: cursor }, select: { id: true, kind: true, reportsToId: true } });
+    const p = await prisma.position.findUnique({ where: { id: cursor }, select: { id: true, code: true, kind: true, reportsToId: true } });
     if (!p) break;
     if (p.kind === 'TL' && !out.tlUserId) {
       // eslint-disable-next-line no-await-in-loop
       const h = await holderOf(p.id);
       if (h) { out.tlUserId = h.userId || null; out.tlName = h.name || null; }
+      else {
+        // the TL seat is empty now (its holder left): who held it last, so a page can still say whose team this is
+        // eslint-disable-next-line no-await-in-loop
+        const last = await prisma.positionAssignment.findFirst({ where: { positionId: p.id }, orderBy: [{ toDate: 'desc' }, { fromDate: 'desc' }], select: { employee: { select: { name: true } } } });
+        out.tlSeatCode = p.code || null;
+        out.tlFormerName = last && last.employee ? last.employee.name : null;
+      }
     }
     if (p.kind === 'STL' && !out.stlUserId) {
       // eslint-disable-next-line no-await-in-loop

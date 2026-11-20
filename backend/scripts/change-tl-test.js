@@ -104,7 +104,7 @@ const old = new Date(Date.now() - 3600e3);
     const two = list.find((x) => x.tlUserId === tl2.u.id);
     const three = list.find((x) => x.tlUserId === tl3.u.id);
     check(`options as ${who}: TL2 is offered with their recruiter and seat`, o.status === 200 && !!two && two.recruiters.length === 1 && two.recruiters[0].id === r2.u.id && two.recruiters[0].seatCode === sR2.code && two.section === 'Team B', o.body);
-    check(`options as ${who}: the current team lead (TL1) is not offered`, !list.some((x) => x.tlUserId === tl1.u.id));
+    check(`options as ${who}: the current team lead (TL1) is listed but marked current, the others are not`, list.some((x) => x.tlUserId === tl1.u.id && x.current === true) && list.filter((x) => x.current).length === 1);
     check(`options as ${who}: "now" names TL1 and the recruiter`, o.body && o.body.now && o.body.now.tlUserId === tl1.u.id && o.body.now.recruiterId === r1.u.id, o.body && o.body.now);
     check(`options as ${who}: a team lead with no recruiter is listed with none`, !!three && three.recruiters.length === 0, three);
   }
@@ -162,7 +162,7 @@ const old = new Date(Date.now() - 3600e3);
   const again = await assign(tA, app.id, r2.u.id, body({ comment: 'same team again' }));
   check('moving to the team lead it is already with is refused', again.body.results && again.body.results[0] && !again.body.results[0].ok && /already in/i.test(again.body.results[0].error), again.body);
   const o2 = await call('GET', `/applications/${app.id}/team-lead-options`, null, tA);
-  check('after the move, TL1 is offered and TL2 is not', (o2.body.options || []).some((x) => x.tlUserId === tl1.u.id) && !(o2.body.options || []).some((x) => x.tlUserId === tl2.u.id), o2.body);
+  check('after the move, TL2 is the current one and TL1 is selectable', (o2.body.options || []).some((x) => x.tlUserId === tl2.u.id && x.current) && (o2.body.options || []).some((x) => x.tlUserId === tl1.u.id && !x.current), o2.body);
   const t1 = new Date(Date.now() - 500);
   const back = await assign(tA, app.id, r1.u.id, { teamLeadChange: { toTlUserId: tl1.u.id }, comment: 'moved back by the Admin' });
   check('an Admin moves it back to TL1 with R1', back.status === 200 && back.body.results[0].ok && (await ownerNow(app.id)) === r1.u.id, back.body);
@@ -189,6 +189,53 @@ const old = new Date(Date.now() - 3600e3);
   check('Change recruiter (no teamLeadChange) still works unchanged', plain.status === 200 && plain.body.results[0].ok && (await ownerNow(aPlain.id)) === r2.u.id, plain.body);
   check('...and writes no team-lead audit row', (await prisma.auditLog.count({ where: { action: 'Candidate team lead changed' } })) === nTl);
   check('...and a plain correction needs no reason on the server, as before', (await assign(tA, aPlain.id, r1.u.id, {})).status === 200);
+
+
+  // ---- FOUNDER BUG 2026-11-20: the requirement names TL_A, but the recruiter's seat sits under TL_B
+  const reqB = await prisma.requirement.create({ data: { title: `Ctl jobB ${P}`, clientId: client.id, department: DEPT, status: 'RECRUITER_ASSIGNED', tlId: tl1.u.id, tl: tl1.u.name, recruiterId: r2.u.id, recruiterIds: `${r2.u.id},${rx.u.id}`, positionCode: sR1.code } });
+  const tR2 = await tok(r2.u.id);
+  const candB = await prisma.candidate.create({ data: { name: `Ctl Person added ${P}`, phone: `6${String(P).padStart(9, '5').slice(-9)}`, email: `ctl.person.added.${P}@ctl-test.in` } });
+  const addB = await call('POST', '/applications', { candidateId: candB.id, requirementId: reqB.id }, tR2);
+  const appB = addB.body && addB.body.id;
+  check("setup: a recruiter of TL2's team adds a candidate to a job whose stored TL is TL1", addB.status === 201 && !!appB, addB.body);
+  const dB = await call('GET', `/candidates/${candB.id}`, null, tA);
+  check("the page says TL2 (the recruiter's seat), not the requirement's TL1", dB.body.ownership && dB.body.ownership.tl === tl2.u.name && dB.body.ownership.section === 'Team B', dB.body.ownership);
+  const oB = await call('GET', `/applications/${appB}/team-lead-options`, null, tA);
+  check('the dialog "Now" says TL2 too', oB.body.now && oB.body.now.tlUserId === tl2.u.id && oB.body.now.tlName === tl2.u.name && oB.body.now.source === 'seat', oB.body && oB.body.now);
+  const optB = oB.body.options || [];
+  check('TL1 is selectable and TL2 is the current, unselectable one', optB.some((x) => x.tlUserId === tl1.u.id && !x.current && x.recruiters.length === 1) && optB.some((x) => x.tlUserId === tl2.u.id && x.current === true), optB.map((x) => [x.tlName, x.current]));
+  const FU = require('../src/utils/followups');
+  const reqFull = await prisma.requirement.findUnique({ where: { id: reqB.id }, include: { client: true, recruiter: true, bde: true } });
+  const namesB = await FU.resolveNames([reqFull]);
+  const snapB = FU.chainSnapshot({ ownerRecruiterId: r2.u.id, stage: 'NEW' }, reqFull, namesB);
+  check("a new follow-up of that recruiter is stamped with TL2 and the STL, not the requirement's TL1", snapB.tlUserId === tl2.u.id && snapB.tlName === tl2.u.name && snapB.stlUserId === stl.u.id, snapB);
+  const snapRx = FU.chainSnapshot({ ownerRecruiterId: rx.u.id, stage: 'NEW' }, reqFull, namesB);
+  check("a recruiter with no seat is stamped with the requirement's TL1", snapRx.tlUserId === tl1.u.id, snapRx);
+  const tB0 = new Date(Date.now() - 200);
+  const toA = await assign(tA, appB, r1.u.id, { teamLeadChange: { toTlUserId: tl1.u.id }, comment: 'Team A should have it' });
+  check('change to TL1 works', toA.status === 200 && toA.body.results[0].ok && (await ownerNow(appB)) === r1.u.id, toA.body);
+  const fuB = await prisma.applicationFollowUp.findFirst({ where: { applicationId: appB, completedAt: null }, orderBy: { createdAt: 'desc' } });
+  check("the follow-up made by the change is stamped with TL1 (the new recruiter's seat)", fuB && fuB.tlUserId === tl1.u.id && fuB.ownerUserId === r1.u.id, fuB && { tl: fuB.tlUserId });
+  const [bb1, bb2] = await Promise.all([bells(tl1.u.id, tB0), bells(tl2.u.id, tB0)]);
+  check("TL2 (the real old team lead, not the requirement's TL1) is told it moved out, TL1 is told it joined", bb2.length === 1 && bb2[0].title === 'Candidate moved out of your team' && bb1.length === 1 && bb1[0].title === 'Candidate joined your team', { bb1: bb1.map((x) => x.title), bb2: bb2.map((x) => x.title) });
+  // a recruiter without a seat: the page falls back to the requirement's TL
+  const candN = await prisma.candidate.create({ data: { name: `Ctl Person noseat ${P}`, phone: `5${String(P).padStart(9, '6').slice(-9)}`, email: `ctl.person.noseat.${P}@ctl-test.in` } });
+  const appN = await prisma.application.create({ data: { candidateId: candN.id, requirementId: reqB.id, stage: 'SOURCED', ownerRecruiterId: rx.u.id } });
+  const dN = await call('GET', `/candidates/${candN.id}`, null, tA);
+  check("a recruiter with no seat: the page shows the requirement's TL1", dN.body.ownership && dN.body.ownership.tl === tl1.u.name, dN.body.ownership);
+  const oN = await call('GET', `/applications/${appN.id}/team-lead-options`, null, tA);
+  check('...and the dialog agrees (Now = TL1, from the requirement)', oN.body.now && oN.body.now.tlUserId === tl1.u.id && oN.body.now.source === 'requirement', oN.body.now);
+  // the repair
+  const TLC = require('../src/utils/teamLeadChange');
+  await prisma.applicationFollowUp.updateMany({ where: { applicationId: appB, completedAt: null }, data: { completedAt: new Date() } });
+  const wrong = await prisma.applicationFollowUp.create({ data: { applicationId: appB, candidateId: candB.id, requirementId: reqB.id, ownerUserId: r2.u.id, ownerName: r2.u.name, ownerRole: 'Recruiter', tlUserId: tl1.u.id, tlName: tl1.u.name, nextAction: 'x', dueDate: '2026-12-31', notes: 'wrongly stamped' } });
+  const dry = await TLC.repairStamps({ dryRun: true });
+  check('the repair dry run counts the wrongly stamped open follow-up and changes nothing', dry.wrong >= 1 && (await prisma.applicationFollowUp.findUnique({ where: { id: wrong.id } })).tlUserId === tl1.u.id, dry);
+  const done = await TLC.repairStamps({ dryRun: false });
+  const fixedRow = await prisma.applicationFollowUp.findUnique({ where: { id: wrong.id } });
+  check('the repair re-stamps it with TL2 and the STL and writes an audit row', done.fixed >= 1 && fixedRow.tlUserId === tl2.u.id && fixedRow.stlUserId === stl.u.id && !!(await prisma.auditLog.findFirst({ where: { action: { startsWith: 'Follow-up team lead re-stamped' } } })), { done, tl: fixedRow.tlUserId });
+  const again2 = await TLC.repairStamps({ dryRun: true });
+  check('running it again finds nothing to change (idempotent)', again2.wrong === 0, again2);
 
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);
