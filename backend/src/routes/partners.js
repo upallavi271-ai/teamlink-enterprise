@@ -420,13 +420,18 @@ async function reportRows(user, q) {
   pays.forEach((p) => { if (p.submissionId) payBySub.set(p.submissionId, R((payBySub.get(p.submissionId) || 0) + p.fee)); });
   const dept = (s) => (rm.get(s.requirementId) || {}).department || '—';
   const client = (s) => ((rm.get(s.requirementId) || {}).client || {}).name || '—';
-  const pass = (s, skip) => (skip === 'department' || !str(q.department) || dept(s) === str(q.department))
-    && (skip === 'partnerId' || !str(q.partnerId) || s.partnerId === str(q.partnerId))
-    && (skip === 'clientId' || !str(q.clientId) || (rm.get(s.requirementId) || {}).clientId === str(q.clientId))
-    && (skip === 'type' || !str(q.type) || s.partner.type === str(q.type));
+  // several values per filter (founder 2026-11-20: checkboxes everywhere): comma lists, OR inside one filter, AND across
+  const MPm = require('../utils/multiParam'); // eslint-disable-line global-require
+  const want = { department: MPm.parseMulti(q.department), partnerId: MPm.parseMulti(q.partnerId), clientId: MPm.parseMulti(q.clientId), type: MPm.parseMulti(q.type) };
+  const ok = (key, v) => !want[key].length || want[key].includes(v);
+  const pass = (s, skip) => (skip === 'department' || ok('department', dept(s)))
+    && (skip === 'partnerId' || ok('partnerId', s.partnerId))
+    && (skip === 'clientId' || ok('clientId', (rm.get(s.requirementId) || {}).clientId))
+    && (skip === 'type' || ok('type', s.partner.type));
   const facet = (key, labelOf, skip) => {
     const m = new Map();
     subs.filter((s) => pass(s, skip)).forEach((s) => { const k = key(s); if (!k || k === '—') return; const o = m.get(k) || { value: k, label: labelOf(s), count: 0 }; o.count += 1; m.set(k, o); });
+    want[skip].forEach((v) => { if (!m.has(v)) m.set(v, { value: v, label: v, count: 0 }); }); // a ticked value stays offered, even at 0
     return [...m.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   };
   const list = subs.filter((s) => pass(s));

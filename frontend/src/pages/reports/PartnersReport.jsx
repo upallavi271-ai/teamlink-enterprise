@@ -54,10 +54,10 @@ export default function PartnersReport({ canExport }) {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
         <label className="lph-facet"><span className="lph-facet-lbl">From</span><input type="date" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></label>
         <label className="lph-facet"><span className="lph-facet-lbl">To</span><input type="date" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></label>
-        <FacetSelect label="Department" value={f.department} allLabel="All departments" options={fac.department} onChange={(v) => setF({ ...f, department: v })} />
-        <FacetSelect label="Partner" value={f.partnerId} allLabel="All partners" options={fac.partnerId} onChange={(v) => setF({ ...f, partnerId: v })} />
-        <FacetSelect label="Client" value={f.clientId} allLabel="All clients" options={fac.clientId} onChange={(v) => setF({ ...f, clientId: v })} />
-        <FacetSelect label="Type" value={f.type} allLabel="Agency + freelancer" options={fac.type} onChange={(v) => setF({ ...f, type: v })} />
+        <FacetSelect multi label="Department" value={f.department} allLabel="All departments" options={fac.department} onChange={(v) => setF({ ...f, department: v })} />
+        <FacetSelect multi label="Partner" value={f.partnerId} allLabel="All partners" options={fac.partnerId} onChange={(v) => setF({ ...f, partnerId: v })} />
+        <FacetSelect multi label="Client" value={f.clientId} allLabel="All clients" options={fac.clientId} onChange={(v) => setF({ ...f, clientId: v })} />
+        <FacetSelect multi label="Type" value={f.type} allLabel="Agency + freelancer" options={fac.type} onChange={(v) => setF({ ...f, type: v })} />
         {Object.values(f).some(Boolean) && <button type="button" className="btn btn-sm" onClick={() => setF(BLANK)}>Clear</button>}
         <span style={{ flex: 1 }} />
         {canExport && <button type="button" className="btn btn-sm" disabled={!rows.length} onClick={exportXlsx}>Excel</button>}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import EmptyState from '../../components/ui/EmptyState.jsx';
 import './TeamReports.css';
-import Combo from '../../components/Combo.jsx';
+import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several departments / teams / people at once (founder 2026-11-20)
 
 // ---------------------------------------------------------------------------
 // TEAM & PERSON REPORTS (ATS Reports -> "Team & person" tab; also the "Team-wise
@@ -208,13 +208,9 @@ export default function TeamReports({ fixedReport = '', embedded = false }) {
       {canFilter && filterDefs.length > 0 && (
         <div className="tpr-filters">
           {filterDefs.map(([k, label, all, list2]) => (
-            <label key={k} className="tpr-filter">
-              <span>{label}</span>
-              <Combo value={filters[k]} onChange={(e) => setF({ [k]: e.target.value })}>
-                <option value="">{all}</option>
-                {list2.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.count})</option>)}
-              </Combo>
-            </label>
+            <span key={k} className="tpr-filter">
+              <MultiSelect label={label} allLabel={all} value={filters[k]} onChange={(v) => setF({ [k]: v })} options={list2} />
+            </span>
           ))}
           {Object.values(filters).some(Boolean) && <button type="button" className="btn btn-sm" onClick={() => setFilters({ department: '', team: '', person: '', people: '' })}>Clear filters</button>}
         </div>

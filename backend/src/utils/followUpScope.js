@@ -17,6 +17,7 @@
 // the refusal and never the other team's name.
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
+const MP = require('./multiParam');
 const S = require('./scope');
 const { isBdeDepartment } = require('./bdeDesk');
 
@@ -116,8 +117,10 @@ async function leadTeams(ids, viewer) {
  */
 async function resolve(user, q = {}) {
   const kind = viewerKind(user);
+  // several team leads / departments / teams at once (founder 2026-11-20: checkboxes everywhere); a comma list each
+  const leadIds = MP.parseMulti(q.leadId);
   if (SELF_ONLY_VIEWERS.includes(kind) || kind === 'recruiter') {
-    if (q.leadId && String(q.leadId) !== user.id) return { ok: false, status: 403, error: 'You can see only your own follow-ups.' };
+    if (leadIds.some((id) => id !== user.id)) return { ok: false, status: 403, error: 'You can see only your own follow-ups.' };
     if (q.personId && String(q.personId) !== user.id) return { ok: false, status: 403, error: 'You can see only your own follow-ups.' };
     const me = (await usersById([user.id]))[0] || { id: user.id, name: user.name, atsRole: user.atsRole, status: 'Active' };
     const self = shapePerson(me, { leadName: null, former: false, windows: null, self: true });
@@ -158,13 +161,15 @@ async function resolve(user, q = {}) {
     } else teams = await leadTeams(null, user);
   }
 
-  // the TL picker
-  const leadId = q.leadId ? String(q.leadId) : '';
-  if (leadId) {
-    if (kind === 'tl' && leadId !== user.id) return { ok: false, status: 403, error: 'That team is not yours.' };
-    if (kind === 'stl' && leadId !== user.id && !teams.some((t) => t.lead.id === leadId)) return { ok: false, status: 403, error: 'That team is not under you.' };
-    if (['admin', 'mgmt'].includes(kind) && !teams.some((t) => t.lead.id === leadId)) return { ok: false, status: 404, error: 'That team lead was not found.' };
+  // the TL picker (one or several team leads)
+  const leadId = leadIds.join(',');
+  for (const lid of leadIds) {
+    if (kind === 'tl' && lid !== user.id) return { ok: false, status: 403, error: 'That team is not yours.' };
+    if (kind === 'stl' && lid !== user.id && !teams.some((t) => t.lead.id === lid)) return { ok: false, status: 403, error: 'That team is not under you.' };
+    if (['admin', 'mgmt'].includes(kind) && !teams.some((t) => t.lead.id === lid)) return { ok: false, status: 404, error: 'That team lead was not found.' };
   }
+  const otherLeads = leadIds.includes(user.id) ? [] : leadIds;
+  const leadLabel = otherLeads.map((lid) => `${(teams.find((t) => t.lead.id === lid) || { lead: { name: 'Team' } }).lead.name}'s team`).join(', ');
 
   // which ids are in the picture
   let ids;
@@ -174,11 +179,13 @@ async function resolve(user, q = {}) {
   if (kind === 'tl') {
     ids = ownIds;
     leadByUser = new Map(ids.filter((id) => id !== user.id).map((id) => [id, user.name]));
-  } else if (leadId && leadId !== user.id) {
-    const t = teams.find((x) => x.lead.id === leadId);
-    ids = t.ids || [t.lead.id];
-    seats = t.seatIds;
-    leadByUser = new Map(ids.filter((id) => id !== t.lead.id).map((id) => [id, t.lead.name]));
+  } else if (otherLeads.length) {
+    // the teams of the ticked team leads, together
+    const picked = otherLeads.map((lid) => teams.find((x) => x.lead.id === lid)).filter(Boolean);
+    ids = uniq(picked.flatMap((t) => t.ids || [t.lead.id]));
+    seats = uniq(picked.flatMap((t) => t.seatIds || []));
+    leadByUser = new Map();
+    picked.forEach((t) => (t.ids || []).forEach((id) => { if (id !== t.lead.id && !leadByUser.has(id)) leadByUser.set(id, t.lead.name); }));
   } else if (ownIds) {
     ids = ownIds;
   } else {
@@ -201,8 +208,10 @@ async function resolve(user, q = {}) {
   const departments = uniq(members.map((m) => m.department)).sort();
   const teamNames = uniq(members.map((m) => m.team)).sort();
   let shown = members;
-  if (q.department) shown = shown.filter((m) => String(m.department || '').toLowerCase() === String(q.department).toLowerCase());
-  if (q.team) shown = shown.filter((m) => String(m.team || '').toLowerCase() === String(q.team).toLowerCase());
+  const deps = MP.parseMulti(q.department).map((v) => v.toLowerCase());
+  const tms = MP.parseMulti(q.team).map((v) => v.toLowerCase());
+  if (deps.length) shown = shown.filter((m) => deps.includes(String(m.department || '').toLowerCase()));
+  if (tms.length) shown = shown.filter((m) => tms.includes(String(m.team || '').toLowerCase()));
   if (q.personId) {
     shown = shown.filter((m) => m.id === String(q.personId));
     if (!shown.length) return { ok: false, status: 403, error: 'That person is not in the team you are looking at.' };
@@ -219,7 +228,7 @@ async function resolve(user, q = {}) {
     teams: ['admin', 'mgmt', 'stl'].includes(kind) ? teamNames : [],
     leadId,
     personId: q.personId ? String(q.personId) : '',
-    label: kind === 'tl' ? 'My team' : leadId ? `${(teams.find((t) => t.lead.id === leadId) || { lead: { name: 'Team' } }).lead.name}'s team` : (kind === 'stl' ? 'My TLs\' teams' : 'Everyone'),
+    label: kind === 'tl' ? 'My team' : otherLeads.length ? leadLabel : leadId ? `${(teams.find((t) => t.lead.id === leadId) || { lead: { name: 'Team' } }).lead.name}'s team` : (kind === 'stl' ? 'My TLs\' teams' : 'Everyone'),
   };
 }
 

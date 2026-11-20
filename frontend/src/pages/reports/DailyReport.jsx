@@ -282,10 +282,10 @@ export default function DailyReport() {
         )}
         {!selfOnly && (
           <>
-            <FacetSelect label="Department" value={f.department} allLabel="All departments" options={o.departments} onChange={(v) => setF({ department: v, team: '', person: '' })} />
-            <FacetSelect label="Team" value={f.team} allLabel="All teams" options={o.teams} onChange={(v) => setF((x) => ({ ...x, team: v, person: '' }))} />
-            <FacetSelect label="Recruiter" value={f.person} allLabel="Everyone" options={o.people} onChange={(v) => setF((x) => ({ ...x, person: v }))} />
-            <FacetSelect label="Active / Former" value={f.people} allLabel="Active + former" options={o.status} onChange={(v) => setF((x) => ({ ...x, people: v, person: '' }))} />
+            <FacetSelect multi label="Department" value={f.department} allLabel="All departments" options={o.departments} onChange={(v) => setF({ department: v, team: '', person: '' })} />
+            <FacetSelect multi label="Team" value={f.team} allLabel="All teams" options={o.teams} onChange={(v) => setF((x) => ({ ...x, team: v, person: '' }))} />
+            <FacetSelect multi label="Recruiter" value={f.person} allLabel="Everyone" options={o.people} onChange={(v) => setF((x) => ({ ...x, person: v }))} />
+            <FacetSelect multi label="Active / Former" value={f.people} allLabel="Active + former" options={o.status} onChange={(v) => setF((x) => ({ ...x, people: v, person: '' }))} />
             {(f.department || f.team || f.person || f.people) && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setF({ department: '', team: '', person: '', people: '' })}>Clear</button>}
           </>
         )}

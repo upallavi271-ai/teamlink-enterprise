@@ -7,7 +7,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
-import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
+import { FacetSelect, useLocalFacets, valueIn } from '../../components/ui/ListPageHeader.jsx';
+import { DateRangeFilter } from '../../components/ats/FilterBar.jsx';
+import { istDayOf } from '../../utils/dateRanges.js';
 import { saveBlob } from '../office/officeUtil';
 import { clientAliasText } from '../../components/searchMatch.js'; // old client names find a row (matching only)
 import { money } from '../invoices/invFormat';
@@ -37,6 +39,7 @@ export default function PlacementMargin({ canExport }) {
   const [error, setError] = useState('');
   const [f, setF] = useState(BLANK);
   const [q, setQ] = useState('');
+  const [days, setDays] = useState({ from: '', to: '' }); // invoice date From / To
   const [group, setGroup] = useState('');
   const [sort, setSort] = useState({ k: 'invoiceDate', dir: -1 });
   const [said, setSaid] = useState('');
@@ -50,9 +53,11 @@ export default function PlacementMargin({ canExport }) {
   const all = data?.rows || [];
   const facets = useLocalFacets(all, FIELDS, f);
   const needle = q.trim().toLowerCase();
-  const rows = useMemo(() => all.filter((r) => (!f.department || r.department === f.department) && (!f.client || r.client === f.client)
-    && (!f.recruiter || (r.recruiter || 'No recruiter') === f.recruiter) && (!f.month || r.month === f.month)
-    && (!needle || [r.invoiceNumber, r.client, clientAliasText(r.client), r.candidate, r.recruiter, r.role].filter(Boolean).join(' ').toLowerCase().includes(needle))), [all, f, needle]);
+  // several values per filter (checkboxes, founder 2026-11-20): a row stays when it has any ticked value; the filters are AND-ed
+  const dayOk = (r) => { if (!days.from && !days.to) return true; const d = r.invoiceDate ? (String(r.invoiceDate).length === 10 ? String(r.invoiceDate) : istDayOf(r.invoiceDate)) : null; return !!d && (!days.from || d >= days.from) && (!days.to || d <= days.to); };
+  const rows = useMemo(() => all.filter((r) => (!f.department || valueIn(f.department, r.department)) && (!f.client || valueIn(f.client, r.client))
+    && (!f.recruiter || valueIn(f.recruiter, r.recruiter || 'No recruiter')) && (!f.month || valueIn(f.month, r.month)) && dayOk(r)
+    && (!needle || [r.invoiceNumber, r.client, clientAliasText(r.client), r.candidate, r.recruiter, r.role].filter(Boolean).join(' ').toLowerCase().includes(needle))), [all, f, needle, days.from, days.to]); // eslint-disable-line react-hooks/exhaustive-deps
   const tot = sumUp(rows);
 
   const keyOf = (r) => (group === 'client' ? r.client : group === 'recruiter' ? (r.recruiter || 'No recruiter') : (r.monthLabel || r.month || '—'));
@@ -84,7 +89,7 @@ export default function PlacementMargin({ canExport }) {
       const res = await api.post('/invoices/margin/export.xlsx', {
         ids: rows.map((r) => r.id),
         groupBy: group || null,
-        filters: [f.department && `Department: ${f.department}`, f.client && `Client: ${f.client}`, f.recruiter && `Recruiter: ${f.recruiter}`, f.month && `Month: ${f.month}`, needle && `Search: ${q.trim()}`].filter(Boolean).join(' · '),
+        filters: [f.department && `Department: ${f.department}`, f.client && `Client: ${f.client}`, f.recruiter && `Recruiter: ${f.recruiter}`, f.month && `Month: ${f.month}`, (days.from || days.to) && `Invoice date: ${days.from || '…'} to ${days.to || '…'}`, needle && `Search: ${q.trim()}`].filter(Boolean).join(' · '),
       }, { responseType: 'blob' });
       saveBlob(res, 'placement-margin.xlsx');
       setSaid(`Downloaded ${rows.length} placement(s).`);
@@ -92,7 +97,7 @@ export default function PlacementMargin({ canExport }) {
   };
 
   if (!data) return error ? <div className="notice red"><span>{error}</span></div> : <div className="small-muted">Loading margin…</div>;
-  const on = Object.values(f).some(Boolean) || !!needle;
+  const on = Object.values(f).some(Boolean) || !!needle || !!days.from || !!days.to;
   const notDecided = rows.filter((r) => !r.incentiveDecided).length;
 
   return (
@@ -100,12 +105,13 @@ export default function PlacementMargin({ canExport }) {
       <div className="small-muted">{data.rule}</div>
       {said && <div className="notice" role="status" style={{ margin: 0 }}><span>{said}</span></div>}
       <div className="cn-bar">
-        <FacetSelect label="Department" value={f.department} allLabel="All departments" options={facets.department} onChange={(v) => setF({ ...f, department: v })} />
-        <FacetSelect label="Client" value={f.client} allLabel="All clients" options={facets.client} onChange={(v) => setF({ ...f, client: v })} />
-        <FacetSelect label="Recruiter" value={f.recruiter} allLabel="All recruiters" options={facets.recruiter} onChange={(v) => setF({ ...f, recruiter: v })} />
-        <FacetSelect label="Month" value={f.month} allLabel="All months" options={(facets.month || []).slice().sort((a, b) => String(b.value).localeCompare(String(a.value)))} onChange={(v) => setF({ ...f, month: v })} />
+        <FacetSelect multi label="Department" value={f.department} allLabel="All departments" options={facets.department} onChange={(v) => setF({ ...f, department: v })} />
+        <FacetSelect multi label="Client" value={f.client} allLabel="All clients" options={facets.client} onChange={(v) => setF({ ...f, client: v })} />
+        <FacetSelect multi label="Recruiter" value={f.recruiter} allLabel="All recruiters" options={facets.recruiter} onChange={(v) => setF({ ...f, recruiter: v })} />
+        <FacetSelect multi label="Month" value={f.month} allLabel="All months" options={(facets.month || []).slice().sort((a, b) => String(b.value).localeCompare(String(a.value)))} onChange={(v) => setF({ ...f, month: v })} />
+        <DateRangeFilter label="Invoice date" from={days.from} to={days.to} onChange={setDays} />
         <input type="search" value={q} placeholder="Search invoice no, client, candidate…" onChange={(e) => setQ(e.target.value)} />
-        {on && <button type="button" className="btn btn-sm" onClick={() => { setF(BLANK); setQ(''); }}>Clear</button>}
+        {on && <button type="button" className="btn btn-sm" onClick={() => { setF(BLANK); setQ(''); setDays({ from: '', to: '' }); }}>Clear</button>}
         <span className="grow" />
         {canExport && <button type="button" className="btn btn-sm" disabled={!rows.length} onClick={doExport}>Excel</button>}
       </div>

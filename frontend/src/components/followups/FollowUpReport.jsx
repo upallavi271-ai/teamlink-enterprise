@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
 import FollowUpImportButton from './FollowUpImport.jsx';
+import MultiSelect from '../ats/MultiSelect.jsx'; // checkboxes: several team leads / departments / teams at once (founder 2026-11-20)
 import '../clients/followUpLog.css';
 import './followUpReport.css';
 
@@ -179,22 +180,13 @@ export default function FollowUpReport({ home = false }) {
         <label className="small-muted">From <input type="date" value={range.from} max={range.to || undefined} onChange={(e) => { setPreset('custom'); setRange((r) => ({ ...r, from: e.target.value })); }} /></label>
         <label className="small-muted">To <input type="date" value={range.to} min={range.from || undefined} onChange={(e) => { setPreset('custom'); setRange((r) => ({ ...r, to: e.target.value })); }} /></label>
         {!mine && data.leads && (
-          <select value={pick.leadId} onChange={(e) => { setPick({ ...pick, leadId: e.target.value }); setPersonId(''); }} aria-label="Team lead">
-            <option value="">All team leads</option>
-            {data.leads.map((l) => <option key={l.id} value={l.id}>{`${l.name} (${l.count})`}</option>)}
-          </select>
+          <MultiSelect label="Team lead" allLabel="All team leads" hideZero={false} value={pick.leadId} onChange={(v) => { setPick((p) => ({ ...p, leadId: v })); setPersonId(''); }} options={data.leads.map((l) => ({ value: l.id, label: `${l.name} (${l.count})` }))} />
         )}
         {!mine && data.departments && data.departments.length > 1 && (
-          <select value={pick.department} onChange={(e) => { setPick({ ...pick, department: e.target.value }); setPersonId(''); }} aria-label="Department">
-            <option value="">All departments</option>
-            {data.departments.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
+          <MultiSelect label="Department" allLabel="All departments" hideZero={false} value={pick.department} onChange={(v) => { setPick((p) => ({ ...p, department: v })); setPersonId(''); }} options={data.departments.map((d) => ({ value: d, label: d }))} />
         )}
         {!mine && data.teams && data.teams.length > 1 && (
-          <select value={pick.team} onChange={(e) => { setPick({ ...pick, team: e.target.value }); setPersonId(''); }} aria-label="Team">
-            <option value="">All teams</option>
-            {data.teams.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
+          <MultiSelect label="Team" allLabel="All teams" hideZero={false} value={pick.team} onChange={(v) => { setPick((p) => ({ ...p, team: v })); setPersonId(''); }} options={data.teams.map((d) => ({ value: d, label: d }))} />
         )}
         <select value={columns || data.columns} onChange={(e) => setColumns(e.target.value)} aria-label="Columns of the table" title="The columns of the day-by-day table">
           <option value="day">Columns: days</option>

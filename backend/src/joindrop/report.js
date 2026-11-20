@@ -12,6 +12,7 @@
 // Only records the login may open are counted (access.visible), so a number is never a peek at another desk.
 // ---------------------------------------------------------------------------
 const S = require('./schema');
+const MP = require('../utils/multiParam');
 const V = require('./vocab');
 const A = require('./access');
 const JR = require('./journey');
@@ -67,11 +68,17 @@ function applyFilters(rows, q, { skip = [] } = {}) {
     out = out.filter((r) => `${r.candidateName} ${r.jobTitle} ${r.clientName} ${r.location} ${r.recruiterName} ${r.dropReason}`.toLowerCase().includes(n));
   }
   out = f('range', (x) => x.filter((r) => (q.from || q.to ? inRange(r.joinedOn, q.from, q.to) : true)))(out);
-  if (q.department && !skip.includes('department')) out = out.filter((r) => lc(r.department) === lc(q.department));
-  if (q.clientId && !skip.includes('clientId')) out = out.filter((r) => r.clientId === q.clientId);
-  if (q.recruiter && !skip.includes('recruiter')) out = out.filter((r) => r.recruiterUserId === q.recruiter || lc(r.recruiterName) === lc(q.recruiter));
-  if (q.status === 'Joined' || q.status === 'Dropped') out = out.filter((r) => r.status === q.status);
-  if (q.reason) out = out.filter((r) => lc(r.dropReason) === lc(q.reason));
+  // several values per filter (founder 2026-11-20: checkboxes everywhere): department / client / recruiter / status / reason take comma lists
+  const dep = MP.parseMulti(q.department).map(lc);
+  const cli = MP.parseMulti(q.clientId);
+  const rec = MP.parseMulti(q.recruiter);
+  const st = MP.parseMulti(q.status).filter((s) => s === 'Joined' || s === 'Dropped');
+  const why = MP.parseMulti(q.reason).map(lc);
+  if (dep.length && !skip.includes('department')) out = out.filter((r) => dep.includes(lc(r.department)));
+  if (cli.length && !skip.includes('clientId')) out = out.filter((r) => cli.includes(r.clientId));
+  if (rec.length && !skip.includes('recruiter')) out = out.filter((r) => rec.some((x) => r.recruiterUserId === x || lc(r.recruiterName) === lc(x)));
+  if (st.length) out = out.filter((r) => st.includes(r.status));
+  if (why.length && !skip.includes('reason')) out = out.filter((r) => why.includes(lc(r.dropReason)));
   if (q.within === 'yes') out = out.filter((r) => r.status === 'Dropped' && r.dropWithinGuarantee === 1);
   if (q.within === 'no') out = out.filter((r) => r.status === 'Dropped' && r.dropWithinGuarantee === 0);
   if (q.within === 'running') out = out.filter((r) => r.status === 'Joined' && r.guaranteeEndsOn && V.todayIst() <= r.guaranteeEndsOn);
@@ -106,6 +113,11 @@ async function list(user, q = {}) {
   const recCounts = new Map();
   narrowed.forEach((r) => { const k = r.recruiterUserId || r.recruiterName; if (k) recCounts.set(k, { value: k, label: r.recruiterName || k, count: ((recCounts.get(k) || {}).count || 0) + 1 }); });
   const reasons = [...countBy(applyFilters(all, { ...q, reason: '' }), 'dropReason').entries()].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, count }));
+  // a ticked value stays offered even when nothing is behind it now (so it can be seen and unticked)
+  MP.parseMulti(q.department).forEach((v) => { if (!deptOpts.some((o) => lc(o.value) === lc(v))) deptOpts.push({ value: v, count: 0 }); });
+  MP.parseMulti(q.reason).forEach((v) => { if (!reasons.some((o) => lc(o.value) === lc(v))) reasons.push({ value: v, count: 0 }); });
+  MP.parseMulti(q.clientId).forEach((v) => { if (!clientCounts.has(v)) clientCounts.set(v, { value: v, label: (all.find((r) => r.clientId === v) || {}).clientName || v, count: 0 }); });
+  MP.parseMulti(q.recruiter).forEach((v) => { if (!recCounts.has(v)) recCounts.set(v, { value: v, label: (all.find((r) => r.recruiterUserId === v) || {}).recruiterName || v, count: 0 }); });
   const counts = {
     all: base.length, Joined: base.filter((r) => r.status === 'Joined').length, Dropped: base.filter((r) => r.status === 'Dropped').length,
     needsDecision: base.filter((r) => r.status === 'Dropped' && !r.replacementDecision).length,
@@ -163,7 +175,7 @@ async function report(user, q = {}) {
   // WHO REPLACED WHOM: the Replacement table (dropped person -> replacement, dates, days to replace) and the counts replaced / pending / expired
   const links = await RP.enrich(user, rt, rows.filter((r) => r.status === 'Dropped'));
   const replacements = { ...RP.tally(rows, links), table: RP.table(rows, links, { client: rt.kind === 'client' }) };
-  const dropsInPeriod = all.filter((r) => r.status === 'Dropped' && (q.from || q.to ? inRange(r.droppedOn, q.from, q.to) : true) && (!q.department || lc(r.department) === lc(q.department)) && (!q.clientId || r.clientId === q.clientId)).length;
+  const dropsInPeriod = all.filter((r) => r.status === 'Dropped' && (q.from || q.to ? inRange(r.droppedOn, q.from, q.to) : true) && MP.multiHas(MP.parseMulti(q.department).map(lc).join(',') || undefined, lc(r.department)) && MP.multiHas(q.clientId || undefined, r.clientId)).length;
   return {
     period: { from: q.from || null, to: q.to || null },
     groupBy: groupKey,

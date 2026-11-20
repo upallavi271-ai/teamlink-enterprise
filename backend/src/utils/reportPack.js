@@ -144,11 +144,13 @@ function parseQuery(q = {}, today = DR.todayIst()) {
   try { P = dateRange.resolve({ range: rangeKey, from: s(q.from), to: s(q.to) }, today); } catch (err) { throw new HttpError(400, err.message); }
   if (P.days > MAX_DAYS) throw new HttpError(400, 'Pick up to 13 months at a time.');
   const group = GROUPS.some(([k]) => k === s(q.group)) ? s(q.group) : 'total';
+  // several values per filter (founder 2026-11-20: checkboxes everywhere): comma lists, OR inside one filter, AND across
+  const MP = require('./multiParam'); // eslint-disable-line global-require
   const f = {
-    department: s(q.department),
-    team: s(q.team),
-    person: s(q.person).replace(/^id:/, 'u:').replace(/^name:/, 'n:'),
-    people: ['active', 'former'].includes(s(q.people)) ? s(q.people) : '',
+    department: MP.parseMulti(q.department),
+    team: MP.parseMulti(q.team),
+    person: MP.parseMulti(q.person).map((v) => v.replace(/^id:/, 'u:').replace(/^name:/, 'n:')),
+    people: MP.parseMulti(q.people).filter((v) => ['active', 'former'].includes(v)),
   };
   return { report, view, P, group, f };
 }
@@ -284,10 +286,10 @@ function makeInfo(td, world) {
 // FILTERS (cascading, with counts)
 // ---------------------------------------------------------------------------
 function passes(info, f, omit = null) {
-  if (omit !== 'department' && f.department && info.dept !== f.department) return false;
-  if (omit !== 'team' && f.team && info.teamKey !== f.team) return false;
-  if (omit !== 'person' && f.person && info.key !== f.person) return false;
-  if (omit !== 'people' && f.people && (info.former ? 'former' : 'active') !== f.people) return false;
+  if (omit !== 'department' && f.department.length && !f.department.includes(info.dept)) return false;
+  if (omit !== 'team' && f.team.length && !f.team.includes(info.teamKey)) return false;
+  if (omit !== 'person' && f.person.length && !f.person.includes(info.key)) return false;
+  if (omit !== 'people' && f.people.length && !f.people.includes(info.former ? 'former' : 'active')) return false;
   return true;
 }
 // facts: [{ info }]. Each option is counted over the facts every OTHER filter lets through; an
@@ -307,7 +309,7 @@ function facetsOf(facts, f) {
   };
   const finish = (m, chosen, labelOfChosen) => {
     const list = [...m.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-    if (chosen && !list.some((o) => o.value === chosen)) list.unshift({ value: chosen, label: labelOfChosen(chosen), count: 0 });
+    (chosen || []).forEach((c) => { if (!list.some((o) => o.value === c)) list.unshift({ value: c, label: labelOfChosen(c), count: 0 }); }); // a ticked value stays, even at 0
     return list;
   };
   return {
@@ -658,10 +660,10 @@ async function cashTable(run, rep, { view, group, f, P }) {
 function describeFilters(t, f, facets) {
   const parts = [];
   const lab = (list, v) => ((list || []).find((o) => o.value === v) || {}).label || v;
-  if (f.department) parts.push(`Department: ${f.department}`);
-  if (f.team) parts.push(`Team: ${lab(facets.teams, f.team)}`);
-  if (f.person) parts.push(`Person: ${lab(facets.people, f.person)}`);
-  if (f.people) parts.push(f.people === 'former' ? 'Only people who have left' : 'Only people still working here');
+  if (f.department.length) parts.push(`Department: ${f.department.join(', ')}`);
+  if (f.team.length) parts.push(`Team: ${f.team.map((v) => lab(facets.teams, v)).join(', ')}`);
+  if (f.person.length) parts.push(`Person: ${f.person.map((v) => lab(facets.people, v)).join(', ')}`);
+  if (f.people.length === 1) parts.push(f.people[0] === 'former' ? 'Only people who have left' : 'Only people still working here');
   return parts.length ? parts.join(' - ') : 'No filters (everything in your area)';
 }
 
@@ -694,7 +696,7 @@ async function buildTable(run, query) {
   // A recruiter / HR login has one line: themselves. The Team view has nothing to roll up.
   if (access.selfOnly) view = 'individual';
   // People filters are the lead's; a login that sees only itself or only clients ignores them.
-  const ff = access.selfOnly || access.bde ? { department: '', team: '', person: '', people: '' } : f;
+  const ff = access.selfOnly || access.bde ? { department: [], team: [], person: [], people: [] } : f;
   const args = { view, group, f: ff, P };
   let base;
   if (rep.family === 'activity') base = await activityTable(run, rep, args);

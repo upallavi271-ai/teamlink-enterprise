@@ -220,6 +220,9 @@ const useSummary = (r, leadId) => {
   }, [r.opts, r.range.from, r.range.to, leadId, r.version]); // eslint-disable-line react-hooks/exhaustive-deps
   return { data, failed };
 };
+// the names search of the Overall report (founder 2026-11-20: a search on every list): a recruiter / team lead by any part of the name
+const hasName = (q) => (x) => !q.trim() || String((x && x.name) || '').toLowerCase().includes(q.trim().toLowerCase());
+const NameSearch = ({ q, setQ, what }) => <input type="search" className="trc-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${what}…`} aria-label={`Search ${what}`} style={{ minWidth: 160 }} />;
 const sum4 = (rows) => [0, 1, 2, 3].map((i) => rows.reduce((n, x) => n + (x.m[i] || 0), 0));
 const Num = ({ v, bad }) => <td className={`trc-num${v ? '' : ' trc-zero'}${bad && v ? ' trc-bad' : ''}`}>{v || '–'}</td>;
 
@@ -227,6 +230,7 @@ const Num = ({ v, bad }) => <td className={`trc-num${v ? '' : ' trc-zero'}${bad 
 function TeamTable({ r, leadId, title, onBack, onClose }) {
   const { data, failed } = useSummary(r, leadId);
   const [open, setOpen] = useState(null);
+  const [q, setQ] = useState('');
   if (failed && !data) return onClose ? <div className="error-text">The report could not be loaded.</div> : null; // a login with no report simply has no card
   if (!r.opts) return onClose ? <div className="small-muted">Loading…</div> : null;
   const idx = data ? SHOWN.map(([k]) => data.fields.indexOf(k)) : [];
@@ -240,6 +244,7 @@ function TeamTable({ r, leadId, title, onBack, onClose }) {
         </div>
         <RangeBar r={r}>
           <FollowUpImportButton onDone={r.refresh} />
+          <NameSearch q={q} setQ={setQ} what="recruiters" />
           <ExportMenu url="/followup-report/export" formats={['xlsx', 'csv']} label="Export" params={{ from: r.range.from, to: r.range.to, period: 'day', leadId: leadId || undefined }} note="The table, the day-by-day table and every follow-up with what was written" />
           {onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}
         </RangeBar>
@@ -251,7 +256,7 @@ function TeamTable({ r, leadId, title, onBack, onClose }) {
               <tr><th>Recruiter</th>{SHOWN.map(([k, l]) => <th key={k} className="trc-num">{l}</th>)}<th /></tr>
             </thead>
             <tbody>
-              {data.rows.map((raw) => {
+              {data.rows.filter(hasName(q)).map((raw) => {
                 const x = shown(raw);
                 return (
                   <tr key={x.id}>
@@ -262,6 +267,7 @@ function TeamTable({ r, leadId, title, onBack, onClose }) {
                 );
               })}
               {data.rows.length === 0 && <tr><td colSpan={SHOWN.length + 2} className="small-muted">Nobody in this team yet.</td></tr>}
+              {data.rows.length > 0 && !data.rows.some(hasName(q)) && <tr><td colSpan={SHOWN.length + 2} className="small-muted">Nobody here by that name. <button type="button" className="link-btn" onClick={() => setQ('')}>Clear the search</button></td></tr>}
             </tbody>
             {data.rows.length > 1 && (
               <tfoot>
@@ -280,6 +286,7 @@ function TeamTable({ r, leadId, title, onBack, onClose }) {
 function TlList({ r, onPick, onClose }) {
   const { data, failed } = useSummary(r, '');
   const [openOne, setOpenOne] = useState(null);
+  const [q, setQ] = useState('');
   if (failed && !data) return <div className="error-text">The report could not be loaded.</div>;
   if (!r.opts || !data) return <div className="small-muted">Loading…</div>;
   const idx = SHOWN.map(([k]) => data.fields.indexOf(k));
@@ -288,14 +295,16 @@ function TlList({ r, onPick, onClose }) {
   const teams = tls.map((tl) => {
     const members = data.rows.filter((x) => x.id !== tl.id && x.leadName === tl.name);
     return { tl, members, m: sum4([{ m: mOf(tl) }, ...members.map((x) => ({ m: mOf(x) }))]) };
-  }).sort((a, b) => a.tl.name.localeCompare(b.tl.name));
-  const none = data.rows.filter((x) => !['TL', 'STL'].includes(x.role) && !x.leadName);
+  }).sort((a, b) => a.tl.name.localeCompare(b.tl.name))
+    .filter((tm) => hasName(q)(tm.tl) || tm.members.some(hasName(q))); // a team stays when its lead or one of its recruiters matches
+  const none = data.rows.filter((x) => !['TL', 'STL'].includes(x.role) && !x.leadName).filter(hasName(q));
   return (
     <>
       <div className="trc-head">
         <h3>Overall report</h3>
         <RangeBar r={r}>
           <FollowUpImportButton onDone={r.refresh} />
+          <NameSearch q={q} setQ={setQ} what="team leads or recruiters" />
           <ExportMenu url="/followup-report/export" formats={['xlsx', 'csv']} label="Export" params={{ from: r.range.from, to: r.range.to, period: 'day' }} note="The table, the day-by-day table and every follow-up with what was written" />
           {onClose && <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>}
         </RangeBar>

@@ -3,7 +3,10 @@ import api from '../../api';
 import FilterChips from '../FilterChips.jsx';
 import './ListPageHeader.css';
 import Combo from '../Combo.jsx';
-import MultiSelect from '../ats/MultiSelect.jsx';
+import MultiSelect, { csvToList } from '../ats/MultiSelect.jsx';
+
+// a row value matches a filter value: the same text, or one of a ticked comma list (a checkbox dropdown's value)
+export const valueIn = (v, x) => String(x ?? '') === String(v ?? '') || csvToList(v).includes(String(x ?? ''));
 
 // ---------------------------------------------------------------------------
 // THE SAME LAYOUT IN EVERY MODULE (user's spec 2026-10-03 §B):
@@ -234,7 +237,7 @@ export function useLocalFacets(rows, fields, values, match) {
     const has = (f, r, v) => {
       if (match) { const m = match(r, f.key, v); if (m !== undefined) return m; }
       const got = f.get(r);
-      return (Array.isArray(got) ? got : [got]).some((x) => String(x ?? '') === String(v));
+      return (Array.isArray(got) ? got : [got]).some((x) => valueIn(v, x)); // one value or several ticked ones
     };
     const active = fields.filter((f) => values[f.key] !== '' && values[f.key] !== undefined && values[f.key] !== null);
     const out = {};
@@ -251,6 +254,7 @@ export function useLocalFacets(rows, fields, values, match) {
           if (f.label && !labels.has(String(v))) labels.set(String(v), f.label(v, r));
         });
       });
+      csvToList(values[f.key]).forEach((v) => { if (!counts.has(v)) counts.set(v, 0); }); // a ticked value stays offered, even at 0
       out[f.key] = [...counts.entries()]
         .map(([value, count]) => ({ value, label: labels.get(value) || value, count }))
         .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));

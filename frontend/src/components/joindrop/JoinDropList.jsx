@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Combo from '../Combo.jsx';
+import MultiSelect from '../ats/MultiSelect.jsx';
 import Pager from '../Pager.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
 import { Modal } from '../proto.jsx';
@@ -101,18 +102,11 @@ export default function JoinDropList({ onOpen }) {
         <label className="wide"><span>Search</span><input type="text" value={f.q} placeholder="Name, requirement, client, place" onChange={(e) => set('q', e.target.value)} /></label>
         <label><span>Joined from</span><input type="date" value={f.from} onChange={(e) => set('from', e.target.value)} /></label>
         <label><span>Joined to</span><input type="date" value={f.to} onChange={(e) => set('to', e.target.value)} /></label>
-        <label><span>Department</span>
-          <Combo value={f.department} onChange={(e) => set('department', e.target.value)}><option value="">{`All departments (${(fac.departments || []).reduce((s, d) => s + (Number(d.count) || 0), 0)})`}</option>{(fac.departments || []).map((d) => <option key={d.value} value={d.value}>{`${d.value} (${d.count})`}</option>)}</Combo>
-        </label>
-        <label><span>Client</span>
-          <Combo value={f.clientId} onChange={(e) => set('clientId', e.target.value)}><option value="">{`All clients (${(fac.clients || []).reduce((s, d) => s + (Number(d.count) || 0), 0)})`}</option>{(fac.clients || []).map((d) => <option key={d.value} value={d.value}>{`${d.label} (${d.count})`}</option>)}</Combo>
-        </label>
-        <label><span>Recruiter</span>
-          <Combo value={f.recruiter} onChange={(e) => set('recruiter', e.target.value)}><option value="">{`All recruiters (${(fac.recruiters || []).reduce((s, d) => s + (Number(d.count) || 0), 0)})`}</option>{(fac.recruiters || []).map((d) => <option key={d.value} value={d.value}>{`${d.label} (${d.count})`}</option>)}</Combo>
-        </label>
-        <label><span>Reason for the drop</span>
-          <Combo value={f.reason} onChange={(e) => set('reason', e.target.value)}><option value="">Any reason</option>{(fac.reasons || []).map((d) => <option key={d.value} value={d.value}>{`${d.value} (${d.count})`}</option>)}</Combo>
-        </label>
+        {/* checkboxes: several departments / clients / recruiters / reasons at once (founder 2026-11-20) */}
+        <div className="jd-msel"><MultiSelect label="Department" allLabel="All departments" value={f.department} onChange={(v) => set('department', v)} options={(fac.departments || []).map((d) => ({ value: d.value, label: d.value, count: d.count }))} /></div>
+        <div className="jd-msel"><MultiSelect label="Client" allLabel="All clients" value={f.clientId} onChange={(v) => set('clientId', v)} options={fac.clients || []} /></div>
+        <div className="jd-msel"><MultiSelect label="Recruiter" allLabel="All recruiters" value={f.recruiter} onChange={(v) => set('recruiter', v)} options={fac.recruiters || []} /></div>
+        <div className="jd-msel"><MultiSelect label="Reason for the drop" allLabel="Any reason" value={f.reason} onChange={(v) => set('reason', v)} options={(fac.reasons || []).map((d) => ({ value: d.value, label: d.value, count: d.count }))} /></div>
         <label><span>Replacement period</span>
           <Combo value={f.within} onChange={(e) => set('within', e.target.value)}><option value="">Any</option><option value="running">Running now (still working)</option><option value="yes">Dropped inside the period</option><option value="no">Dropped after the period</option></Combo>
         </label>

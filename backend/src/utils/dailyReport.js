@@ -444,22 +444,27 @@ async function pendingNow(user) {
 // of work items, and an option with nothing behind it is not offered (the
 // chosen value always stays, so it can be seen and removed).
 // ---------------------------------------------------------------------------
+// SEVERAL VALUES PER FILTER (founder 2026-11-20: checkboxes everywhere): department / team / person / people each take a comma list
+// (utils/multiParam.js); a person stays when they match ANY value of a filter, the filters are AND-ed.
+const MP = require('./multiParam');
+const personKey = (v) => String(v || '').trim().replace(/^id:/, 'u:').replace(/^name:/, 'n:');
 function normQ(q) {
   return {
-    department: String(q.department || '').trim(),
-    team: String(q.team || '').trim(),
-    person: String(q.person || q.recruiter || '').trim().replace(/^id:/, 'u:').replace(/^name:/, 'n:'),
-    // people=active | former — the Active / Former filter ('' = everyone).
-    people: ['active', 'former'].includes(String(q.people || '').trim()) ? String(q.people).trim() : '',
+    department: MP.parseMulti(q.department),
+    team: MP.parseMulti(q.team),
+    person: MP.parseMulti(q.person || q.recruiter).map(personKey),
+    // people=active | former — the Active / Former filter (none = everyone).
+    people: MP.parseMulti(q.people).filter((v) => ['active', 'former'].includes(v)),
   };
 }
+const personIs = (world, k, p) => k === p || (p.startsWith('n:') && k === `n:${W.nameKey(p.slice(2))}`);
 function personMatches(world, k, f, omit = null) {
-  if (omit !== 'department' && f.department && world.personDept.get(k) !== f.department) return false;
-  if (omit !== 'team' && f.team && !(k === f.team || world.personTl.get(k) === f.team)) return false;
-  if (omit !== 'person' && f.person && !(k === f.person || (f.person.startsWith('n:') && k === `n:${W.nameKey(f.person.slice(2))}`))) return false;
-  if (omit !== 'people' && f.people) {
+  if (omit !== 'department' && f.department.length && !f.department.includes(world.personDept.get(k))) return false;
+  if (omit !== 'team' && f.team.length && !f.team.some((tk) => k === tk || world.personTl.get(k) === tk)) return false;
+  if (omit !== 'person' && f.person.length && !f.person.some((p) => personIs(world, k, p))) return false;
+  if (omit !== 'people' && f.people.length) {
     const gone = !!(world.people.get(k) || {}).former;
-    if (f.people === 'former' ? !gone : gone) return false;
+    if (!f.people.includes(gone ? 'former' : 'active')) return false;
   }
   return true;
 }
@@ -492,7 +497,8 @@ function options(world, user, acc, q = {}, workByPerson = new Map()) {
   const finish = (m, labelOf, chosen) => {
     const list = [...m.entries()].filter(([, n]) => n > 0).map(([v, n]) => ({ value: v, label: labelOf(v), count: n }));
     list.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-    if (chosen && !list.some((o) => o.value === chosen)) list.unshift({ value: chosen, label: labelOf(chosen), count: 0 });
+    // every ticked value stays offered, even with nothing behind it now
+    (chosen || []).forEach((c) => { if (!list.some((o) => o.value === c)) list.unshift({ value: c, label: labelOf(c), count: 0 }); });
     return list;
   };
   return {
@@ -544,9 +550,11 @@ function monthBounds(month) {
 function describeScope(user, acc, q, world) {
   if (acc.selfOnly) return 'Your own work';
   const parts = [];
-  if (q.person || q.recruiter) parts.push((world.people.get(String(q.person || q.recruiter).replace(/^id:/, 'u:')) || {}).label || 'One person');
-  if (q.team) parts.push(`${((world.people.get(q.team) || {}).label) || 'A'}'s team`);
-  if (q.department) parts.push(q.department);
+  const f = normQ(q);
+  const few = (list) => (list.length > 3 ? `${list.slice(0, 3).join(', ')} +${list.length - 3}` : list.join(', '));
+  if (f.person.length) parts.push(few(f.person.map((k) => (world.people.get(k) || {}).label || 'One person')));
+  if (f.team.length) parts.push(few(f.team.map((k) => `${((world.people.get(k) || {}).label) || 'A'}'s team`)));
+  if (f.department.length) parts.push(few(f.department));
   return parts.length ? parts.join(' · ') : `Your area — ${scopeLabel(user, 'ats')}`;
 }
 
@@ -747,7 +755,8 @@ async function pendingWork(user, q = {}) {
   // the quiet ones as well (current logins only).
   world.people.forEach((p, k) => { if (p.userId) row(k); });
   let list = [...rows.values()];
-  if (q.department) list = list.filter((r) => r.department === q.department);
+  const depts = MP.parseMulti(q.department);
+  if (depts.length) list = list.filter((r) => depts.includes(r.department));
   list.sort((a, b) => (b.late - a.late) || (b.followUpsLate - a.followUpsLate) || (b.pending - a.pending) || a.name.localeCompare(b.name));
   return {
     status: 200,

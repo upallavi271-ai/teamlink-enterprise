@@ -8,7 +8,7 @@ const optsOf = (facet) => ((facet && (facet.options || facet)) || []).filter((o)
 
 module.exports = async function more(ctx) {
   const {
-    check, call, qs, tA, tRA, tTL, RA, RB,
+    check, call, qs, tA, tRA, tTL, RA, RB, TLU, adminRow,
   } = ctx;
 
   // =====================================================================================================================
@@ -203,6 +203,119 @@ module.exports = async function more(ctx) {
     const x = await ct('employees', { f_dept: 'Sales' }, tok);
     check(`control tower: a ${who} is refused the company-wide lists (filters or not)`, x.status === 403, x.status);
   }
+
+  // =====================================================================================================================
+  // 3. THE REPORT PAGES: daily report, team & person report pack, joining & drop, partners, follow-up report
+  // =====================================================================================================================
+  const get = async (url, params, token = tA) => { const r = await call('GET', `${url}?${qs(params)}`, null, token); return { status: r.status, b: r.body || {}, text: r.text }; };
+  const pos = (list) => (list || []).filter((o) => Number(o.count) > 0);
+  // "OR inside one filter": the result with two (three) values equals the results of each added up
+  const additive = async (name, url, base, key, opts, total) => {
+    const o = pos(opts);
+    if (o.length < 2) { check(`${name} multi ${key}: fewer than two values here, skipped`, true); return; }
+    const one = await Promise.all(o.slice(0, 3).map((x) => get(url, { ...base, [key]: x.value })));
+    const two = await get(url, { ...base, [key]: `${o[0].value},${o[1].value}` });
+    check(`${name} multi: two ${key} values = the two added up`, two.status === 200 && total(two.b) === total(one[0].b) + total(one[1].b), { s: two.status, a: total(one[0].b), b: total(one[1].b), ab: total(two.b) });
+    if (o.length >= 3) {
+      const three = await get(url, { ...base, [key]: `${o[0].value},${o[1].value},${o[2].value}` });
+      check(`${name} multi: three ${key} values = the three added up`, total(three.b) === total(one[0].b) + total(one[1].b) + total(one[2].b), { abc: total(three.b) });
+    }
+  };
+  const month = ctx.dayOf(new Date()).slice(0, 7);
+  // the daily report (month view): work items per department / person
+  const dTot = (b) => Object.values(b.totals || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+  const dm = await get('/ats-daily/month', { month });
+  check('daily report: the month answers with its options', dm.status === 200 && !!dm.b.options, { s: dm.status, e: dm.b.error });
+  if (dm.status === 200) {
+    await additive('daily report', '/ats-daily/month', { month }, 'department', dm.b.options.departments, dTot);
+    await additive('daily report', '/ats-daily/month', { month }, 'person', dm.b.options.people, dTot);
+    const dp = pos(dm.b.options.people);
+    if (dp.length >= 2) {
+      const two = await get('/ats-daily/month', { month, person: `${dp[0].value},${dp[1].value}` });
+      check('daily report multi: both ticked people stay in the Recruiter list', pos(two.b.options.people).filter((x) => [dp[0].value, dp[1].value].includes(x.value)).length === 2, null);
+      const zero = await get('/ats-daily/month', { month, person: `${dp[0].value},u:no-such-person` });
+      check('daily report multi: a ticked person with no work stays offered at 0', (zero.b.options.people || []).some((x) => x.value === 'u:no-such-person' && x.count === 0), null);
+    }
+  }
+  const dr = await get('/ats-daily/month', { month, department: 'Zzz,Yyy' }, tRA);
+  check('daily report scope: a recruiter is held to their own work whatever the filter says', dr.status !== 200 || dr.b.selfOnly === true, { s: dr.status, self: dr.b.selfOnly });
+  // the team & person report pack
+  const rpBase = { report: 'summary', view: 'individual', range: 'this_year' };
+  const rpRows = (b) => (b.rows || []).filter((r) => r.key && !String(r.key).startsWith('team:')).length;
+  const rp0 = await get('/ats-report-pack/report', rpBase);
+  check('report pack: the summary answers with its filters', rp0.status === 200 && !!rp0.b.options, { s: rp0.status, e: rp0.b.error });
+  if (rp0.status === 200) {
+    await additive('report pack', '/ats-report-pack/report', rpBase, 'department', rp0.b.options.departments, rpRows);
+    await additive('report pack', '/ats-report-pack/report', rpBase, 'person', rp0.b.options.people, rpRows);
+    const pp = pos(rp0.b.options.people);
+    if (pp.length >= 2) {
+      const ex = await get('/ats-report-pack/export', { ...rpBase, person: `${pp[0].value},${pp[1].value}`, format: 'csv' });
+      check('report pack export: the file with two people answers and names both', ex.status === 200 && [pp[0], pp[1]].every((p) => String(ex.text).includes(String(p.label).replace(/ - Former$/, ''))), { s: ex.status, head: String(ex.text).slice(0, 160) });
+    }
+  }
+  // joining & drop
+  const jd0 = await get('/join-drop/list', { pageSize: 5 });
+  check('joining & drop: the list answers with its filters', jd0.status === 200 && !!jd0.b.facets, { s: jd0.status, e: jd0.b.error });
+  if (jd0.status === 200) {
+    await additive('joining & drop', '/join-drop/list', { pageSize: 5 }, 'department', jd0.b.facets.departments, (b) => b.total);
+    await additive('joining & drop', '/join-drop/list', { pageSize: 5 }, 'clientId', jd0.b.facets.clients, (b) => b.total);
+    await additive('joining & drop', '/join-drop/list', { pageSize: 5 }, 'recruiter', jd0.b.facets.recruiters, (b) => b.total);
+    const st = await get('/join-drop/list', { pageSize: 5, status: 'Joined,Dropped' });
+    check('joining & drop multi: Joined and Dropped together = everything', st.b.total === jd0.b.total, { a: st.b.total, all: jd0.b.total });
+    const jc = pos(jd0.b.facets.clients);
+    if (jc.length >= 2) {
+      const two = await get('/join-drop/list', { pageSize: 5, clientId: `${jc[0].value},${jc[1].value}` });
+      const ex = await call('GET', `/join-drop/export?${qs({ clientId: `${jc[0].value},${jc[1].value}` })}`, null, tA);
+      const lines = String(ex.text || '').replace(/^﻿/, '').trim().split(/\r?\n/).filter((l) => l.trim());
+      check('joining & drop export: the file holds the two clients\' rows (header + rows)', ex.status === 200 && lines.length - 1 === two.b.total, { s: ex.status, lines: lines.length - 1, want: two.b.total });
+    }
+  }
+  const jdr = await get('/join-drop/list', { pageSize: 50, recruiter: `${RB.id},${RA.id}` }, tRA);
+  check('joining & drop scope: recruiter A asking for B and A sees no row of B', jdr.status !== 200 || (jdr.b.rows || []).every((r) => !r.recruiterUserId || r.recruiterUserId !== RB.id), { s: jdr.status });
+  // partners
+  const pr0 = await get('/partners/report', {});
+  if (pr0.status === 200) {
+    await additive('partners', '/partners/report', {}, 'department', pr0.b.facets.department, (b) => (b.totals || {}).submitted || 0);
+    await additive('partners', '/partners/report', {}, 'partnerId', pr0.b.facets.partnerId, (b) => (b.totals || {}).submitted || 0);
+  } else check('partners report: answers for the Super Admin', false, { s: pr0.status, e: pr0.b.error });
+  // the follow-up report
+  const today = ctx.dayOf(new Date());
+  const fuBase = { from: `${today.slice(0, 8)}01`, to: today, period: 'day', imported: 'include' };
+  const fr0 = await get('/followup-report/summary', fuBase);
+  check('follow-up report: the summary answers for the Super Admin', fr0.status === 200, { s: fr0.status, e: fr0.b.error });
+  if (fr0.status === 200) {
+    const ids = (b) => new Set((b.rows || []).map((r) => r.id));
+    const deps = fr0.b.departments || [];
+    if (deps.length >= 2) {
+      const a = await get('/followup-report/summary', { ...fuBase, department: deps[0] });
+      const b2 = await get('/followup-report/summary', { ...fuBase, department: deps[1] });
+      const ab = await get('/followup-report/summary', { ...fuBase, department: `${deps[0]},${deps[1]}` });
+      check('follow-up report multi: two departments list the people of both', ab.status === 200 && ids(ab.b).size === new Set([...ids(a.b), ...ids(b2.b)]).size, { a: ids(a.b).size, b: ids(b2.b).size, ab: ids(ab.b).size });
+      if (deps.length >= 3) {
+        const c = await get('/followup-report/summary', { ...fuBase, department: deps[2] });
+        const abc = await get('/followup-report/summary', { ...fuBase, department: deps.slice(0, 3).join(',') });
+        check('follow-up report multi: three departments', ids(abc.b).size === new Set([...ids(a.b), ...ids(b2.b), ...ids(c.b)]).size, { abc: ids(abc.b).size });
+      }
+    } else check('follow-up report multi: two departments (one here, skipped)', true);
+    const leads = (fr0.b.leads || []).filter((l) => l.count > 0);
+    if (leads.length >= 2) {
+      const a = await get('/followup-report/summary', { ...fuBase, leadId: leads[0].id });
+      const b2 = await get('/followup-report/summary', { ...fuBase, leadId: leads[1].id });
+      const ab = await get('/followup-report/summary', { ...fuBase, leadId: `${leads[0].id},${leads[1].id}` });
+      const want = new Set([...ids(a.b), ...ids(b2.b)]);
+      check('follow-up report multi: two team leads list both teams', ab.status === 200 && [...want].every((id) => ids(ab.b).has(id)), { a: ids(a.b).size, b: ids(b2.b).size, ab: ids(ab.b).size, s: ab.status });
+      const ex = await call('GET', `/followup-report/export?${qs({ ...fuBase, leadId: `${leads[0].id},${leads[1].id}`, format: 'csv' })}`, null, tA);
+      check('follow-up report export: the file with two team leads answers', [200, 404].includes(ex.status), ex.status);
+    } else check('follow-up report multi: two team leads (fewer here, skipped)', true);
+    const bad = await get('/followup-report/summary', { ...fuBase, leadId: `${TLU.id},zz-not-a-lead` });
+    check('follow-up report: an unknown team lead among the ticked ones is refused, not ignored', bad.status === 404, bad.status);
+  }
+  const ftl = await get('/followup-report/summary', { ...fuBase, leadId: `${TLU.id},${adminRow.id}` }, tTL);
+  check('follow-up report scope: a TL ticking another lead\'s team is refused', ftl.status === 403, ftl.status);
+  const ftl2 = await get('/followup-report/summary', { ...fuBase, leadId: TLU.id }, tTL);
+  check('follow-up report scope: a TL may pick their own team', ftl2.status === 200, { s: ftl2.status, e: ftl2.b.error });
+  const frec = await get('/followup-report/summary', { ...fuBase, leadId: `${RA.id},${RB.id}` }, tRA);
+  check('follow-up report scope: a recruiter ticking another person is refused', frec.status === 403, frec.status);
 
   return ctx;
 };
