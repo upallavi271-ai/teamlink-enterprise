@@ -203,6 +203,21 @@ async function unblock(e164, user, reason) {
   return { ok: true };
 }
 
+// ---- the model: the FAST free one first (founder 2026-11-20: "client or candidate reply echinaa 10 sec lopala AI reply evvali") ----------------------------------------
+// The local model on this CPU takes a minute or more for one reply. utils/fastAi.js (Groq / Gemini / OpenRouter, the "Fast AI" card of Administration > Integrations, already used by the CRM
+// agents) answers in a second or two, so a chat goes there first; on a missing key, a limit, an error, a reply that is not one JSON object, or more than 9 seconds, the local model answers
+// as before. WA_AI_FAST=0 in backend/.env keeps everything on the local model (the chat texts then never leave this server).
+async function modelJson(system, history, opts = {}) {
+  if (String(process.env.WA_AI_FAST || '1') !== '0') {
+    try {
+      const r = await require('../utils/fastAi').chat(system, history, { json: true, maxTokens: 500, timeoutMs: 8000, deadlineMs: 9000, fallbackToApp: false }); // eslint-disable-line global-require
+      const parsed = ai.parseJsonLoose(r.text);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch { /* the local model answers */ }
+  }
+  return ai.chatJson(system, history, opts);
+}
+
 // ---- memory ----------------------------------------------------------------------------------------------------------------------------------------
 async function memory(conv, n) {
   if (conv.candidateId) {
@@ -346,7 +361,7 @@ async function askMarketing(conv, cfg, input) {
   const system = `${cfg.ownSystemPrompt || Cfg.MARKETING_PROMPT}\n\n${MARKETING_RULES}\n\n${name}${known}\nTHE PROMOTION WE SENT THIS PERSON (their message is most likely about it):\n${promoText}\n\nWEBSITE FACTS (what OUR company and its services are; the only company facts you may state):\n${facts}\nThe software we sell is used at https://teamlink.teamlinks.in`;
   const history = await memory(conv, cfg.memoryCount);
   if (!history.length) history.push({ role: 'user', content: clip(input, 1500) });
-  const out = await ai.chatJson(system, history, { model: cfg.model || undefined, timeoutMs: MODEL_TIMEOUT_MS });
+  const out = await modelJson(system, history, { model: cfg.model || undefined, timeoutMs: MODEL_TIMEOUT_MS });
   const reply = typeof out.reply === 'string' ? out.reply.trim() : '';
   if (out.handoff === true) ctx.handoff = 'They asked for a person, a call, a meeting or a formal quote (digital marketing)';
   // what the person has told us (business, goal, budget ...) is kept with the chat, so the team sees it and the AI does not ask it twice
@@ -538,7 +553,7 @@ async function askModel(conv, cfg, input) {
   if (!history.length) history.push({ role: 'user', content: clip(input, 1500) });
   for (let step = 0; step < MAX_STEPS; step += 1) {
     if (step === MAX_STEPS - 1) history.push({ role: 'user', content: 'Do not use a tool now. Answer with {"reply":"your short message"}.' });
-    const out = await ai.chatJson(system, history, { model: cfg.model || undefined, timeoutMs: MODEL_TIMEOUT_MS }); // eslint-disable-line no-await-in-loop
+    const out = await modelJson(system, history, { model: cfg.model || undefined, timeoutMs: MODEL_TIMEOUT_MS }); // eslint-disable-line no-await-in-loop
     const reply = typeof out.reply === 'string' ? out.reply.trim() : '';
     if (reply) return { ctx, calls, reply, again: await again() }; // a small model may send both: the words win, the tool is not run on a guess
     if (out.tool && calls.some((c) => c.tool === out.tool)) {
