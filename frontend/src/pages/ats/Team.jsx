@@ -204,7 +204,9 @@ const PEOPLE_FIELDS = [
 ];
 const PERF_WORDS = { green: 'Reached', orange: 'Close to target', red: 'Low', grey: 'No target' };
 const ACH_WORDS = { none: 'No target', below: 'Under 50% of target', half: '50% to 99% of target', met: 'Target met' };
-const many = (v) => String(v || '').split(',').map((x) => x.replace(/%2C/gi, ',').trim().toLowerCase()).filter(Boolean);
+const many = (v) => String(v || '').split(/,(?!\s)/).map((x) => x.replace(/%2C/gi, ',').trim().toLowerCase()).filter(Boolean);
+const splitItems = (v) => String(v || '').split(/,(?!\s)/).map((x) => x.replace(/%2C/gi, ',').trim()).filter(Boolean);
+const eachOf = (pred) => (r, k, v) => { const list = splitItems(v); return list.length > 1 ? list.some((x) => pred(r, k, x)) : pred(r, k, list.length ? list[0] : v); };
 const hasOpenWork = (r) => !r.former && ['openRequirements', 'activeCandidates', 'needsAction', 'requirements', 'candidates', 'pendingReviews'].some((k) => Number((r.counts || {})[k]) > 0);
 const hasJoinings = (r) => (r.period ? Number(r.period.joined) > 0 : Number((r.counts || {}).joined) > 0);
 // What each person did in the chosen date range (GET /ats/team/period); a team lead's figures are the sum of their recruiters'.
@@ -233,7 +235,8 @@ function overlayPeriod(rows, period) {
     return p ? { ...r, period: p } : r;
   });
 }
-function peoplePred(r, k, v) {
+const peoplePred = eachOf((r, k, v) => peoplePredOne(r, k, v));
+function peoplePredOne(r, k, v) {
   switch (k) {
     // several values at once (a comma list): any of them
     case 'stl': return many(v).includes(lc(r.stl));
@@ -460,10 +463,10 @@ function PeopleTab({
                   </Combo>
                 </PanelField>
               )}
-              <FacetSelect label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
-              {role !== 'BDE' && <FacetSelect label="Section" value={section} onChange={setSection} options={facets.section} allLabel="All sections" />}
-              {role === 'RECRUITER' && <FacetSelect label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />}
-              {role === 'BDE' && <FacetSelect label="Client" value={client} onChange={setClient} options={facets.client} allLabel="All clients" />}
+              <FacetSelect multi label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
+              {role !== 'BDE' && <FacetSelect multi label="Section" value={section} onChange={setSection} options={facets.section} allLabel="All sections" />}
+              {role === 'RECRUITER' && <FacetSelect multi label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />}
+              {role === 'BDE' && <FacetSelect multi label="Client" value={client} onChange={setClient} options={facets.client} allLabel="All clients" />}
             </>
           )}
         />
@@ -625,7 +628,8 @@ const ASSIGN_FIELDS = [
   { key: 'type', get: (r) => r.type },
   { key: 'assign', get: (r) => r.assignment },
 ];
-function assignPred(r, k, v) {
+const assignPred = eachOf((r, k, v) => assignPredOne(r, k, v));
+function assignPredOne(r, k, v) {
   switch (k) {
     case 'status': return v === 'live' ? r.status !== 'CLOSED' : r.status === v;
     case 'dept': return r.department === v;
@@ -712,15 +716,15 @@ function AssignmentsTab({ rows, error, initial }) {
         onClearAll={clearAll}
         panel={(
           <>
-            <FacetSelect label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
-            <FacetSelect label="Section" value={section} onChange={setSection} options={facets.section} allLabel="All sections" />
-            {!noStaff && <FacetSelect label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />}
-            {!noStaff && <FacetSelect label="Recruiter" value={recruiter} onChange={setRecruiter} options={facets.recruiter} allLabel="All recruiters" />}
-            <FacetSelect label="Client manager (BDE)" value={bde} onChange={setBde} options={facets.bde} allLabel="All client managers" />
-            <FacetSelect label="Client" value={client} onChange={setClient} options={facets.client} allLabel="All clients" />
-            <FacetSelect label="Type" value={type} onChange={setType} options={facets.type} allLabel="Client + Internal" />
-            <FacetSelect label="Status" value={status} onChange={setStatus} options={facets.status} allLabel="All statuses" />
-            <FacetSelect label="Assignment" value={assign} onChange={setAssign} options={facets.assign} allLabel="Any assignment" />
+            <FacetSelect multi label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
+            <FacetSelect multi label="Section" value={section} onChange={setSection} options={facets.section} allLabel="All sections" />
+            {!noStaff && <FacetSelect multi label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />}
+            {!noStaff && <FacetSelect multi label="Recruiter" value={recruiter} onChange={setRecruiter} options={facets.recruiter} allLabel="All recruiters" />}
+            <FacetSelect multi label="Client manager (BDE)" value={bde} onChange={setBde} options={facets.bde} allLabel="All client managers" />
+            <FacetSelect multi label="Client" value={client} onChange={setClient} options={facets.client} allLabel="All clients" />
+            <FacetSelect multi label="Type" value={type} onChange={setType} options={facets.type} allLabel="Client + Internal" />
+            <FacetSelect multi label="Status" value={status} onChange={setStatus} options={facets.status} allLabel="All statuses" />
+            <FacetSelect multi label="Assignment" value={assign} onChange={setAssign} options={facets.assign} allLabel="Any assignment" />
           </>
         )}
       />
@@ -895,7 +899,8 @@ const PENDING_FIELDS = [
   { key: 'action', get: (r) => r.action },
   { key: 'due', get: (r) => r.dueStatus, label: (v) => DUE_LABEL[v] || v },
 ];
-function pendingPred(r, k, v) {
+const pendingPred = eachOf((r, k, v) => pendingPredOne(r, k, v));
+function pendingPredOne(r, k, v) {
   switch (k) {
     case 'dept': return r.department === v;
     case 'section': return r.section === v;
@@ -978,12 +983,12 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
         onClearAll={clearAll}
         panel={(
           <>
-            <FacetSelect label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
-            <FacetSelect label="Section" value={section} onChange={setSection} options={facets.section} allLabel="All sections" />
-            <FacetSelect label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />
-            <FacetSelect label="Owner" value={owner} onChange={setOwner} options={ownerOptions} allLabel="Any owner" />
-            <FacetSelect label="Next step" value={action} onChange={setAction} options={facets.action} allLabel="All next steps" />
-            <FacetSelect label="Due" value={due} onChange={setDue} options={facets.due} allLabel="Any" />
+            <FacetSelect multi label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
+            <FacetSelect multi label="Section" value={section} onChange={setSection} options={facets.section} allLabel="All sections" />
+            <FacetSelect multi label="Team lead" value={tl} onChange={setTl} options={facets.tl} allLabel="All team leads" />
+            <FacetSelect multi label="Owner" value={owner} onChange={setOwner} options={ownerOptions} allLabel="Any owner" />
+            <FacetSelect multi label="Next step" value={action} onChange={setAction} options={facets.action} allLabel="All next steps" />
+            <FacetSelect multi label="Due" value={due} onChange={setDue} options={facets.due} allLabel="Any" />
           </>
         )}
       />

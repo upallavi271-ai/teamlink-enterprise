@@ -557,6 +557,23 @@ const dayOf = (d) => new Date(d.getTime() + 5.5 * 3600e3).toISOString().slice(0,
   x = await crm('accounts', tA, { source: 'Website,Referral' }); check('multi CRM accounts: two sources', same(namesOfRows(x.body.rows, 'name'), [CN('A1'), CN('A2')]), namesOfRows(x.body.rows, 'name'));
   x = await crm('contacts', tA, { role: 'HR,Finance' }); check('multi CRM contacts: two roles', same(namesOfRows(x.body.rows, 'name'), [CN('C1'), CN('C2')]), namesOfRows(x.body.rows, 'name'));
 
+  // =====================================================================================================================
+  // SEVERAL PEOPLE IN ONE FILTER (founder 2026-11-20): Recruiter / TL / BDE take several id: / name: values; the attribution rule per value, OR-ed
+  // =====================================================================================================================
+  const V = (a) => [...new Set(a)];
+  l = await list(tA, { recruiter: `id:${RA.id}` }); check('people multi: one recruiter by id (attribution)', V(l.names).includes(nm(1)) && !V(l.names).includes(nm(6)), V(l.names));
+  l = await list(tA, { recruiter: `id:${RB.id}` }); check('people multi: the other recruiter', V(l.names).includes(nm(6)) && !V(l.names).includes(nm(1)), V(l.names));
+  l = await list(tA, { recruiter: `id:${RA.id},id:${RB.id}` }); check('people multi: two recruiters together hold both people', V(l.names).includes(nm(1)) && V(l.names).includes(nm(6)), V(l.names));
+  l = await list(tA, { recruiter: `id:${RA.id},id:${RB.id}`, notice: '15 Days,45 Days' }); check('people multi: two recruiters AND two notice periods', same(V(l.names), names(1, 6)), V(l.names));
+  l = await list(tA, { recruiter: `name:${RA.name},id:${RB.id}` }); check('people multi: a name and an id can be mixed', V(l.names).includes(nm(1)) && V(l.names).includes(nm(6)), V(l.names));
+  l = await list(tA, { recruiter: `id:${RA.id},id:no-such-person` }); check('people multi: an unknown person adds nothing and breaks nothing', V(l.names).includes(nm(1)) && !V(l.names).includes(nm(6)), V(l.names));
+  l = await list(tRA, { recruiter: `id:${RA.id},id:${RB.id}` }); check('people multi scope: recruiter A asking for both still sees only their own people', V(l.names).includes(nm(1)) && !V(l.names).includes(nm(6)), V(l.names));
+  l = await list(tA, { recruiter: `id:${RA.id},id:${RB.id}` }, 'master'); check('people multi: the People list takes two recruiters too', V(l.names).includes(nm(1)) && V(l.names).includes(nm(6)), V(l.names));
+  x = await rq(tA, { recruiterId: `${RA.id},${RB.id}` }); check('people multi: requirements by two recruiters', same(V(x.names), [T(1), T(2)]), x.names);
+  x = await rq(tA, { recruiterId: RB.id }); check('people multi: requirements by one recruiter who has none of these', V(x.names).length === 0, x.names);
+  x = await fu(tA, { recruiter: `id:${RA.id},id:${RB.id}`, fuDue: 'today,overdue' }); check('people multi: follow-ups of two recruiters and two due buckets', same(V(x.names), names(1, 2)), x.names);
+  x = await iv(tA, { recruiter: `id:${RA.id},id:${RB.id}` }); check('people multi: interviews of two recruiters', same(V(x.names), names(1, 2, 3)), x.names);
+
   // job portal applications and call lists answer their filters
   const jp = await call('GET', `/job-portal/applications?${qs({ jpSource: 'zzz-none' })}`, null, tA);
   check('job portal: a source that matches nothing gives an empty list (200)', jp.status === 200 && rowsOf(jp.body).length === 0, { s: jp.status });

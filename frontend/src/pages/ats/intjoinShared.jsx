@@ -280,7 +280,7 @@ export function IntJoinFilters({
               style={{ minWidth: 220 }}
               aria-label="Search"
             />
-            <HierarchyFilter value={h} onChange={setHier} show={{ tl: false }} />
+            <HierarchyFilter multi value={h} onChange={setHier} show={{ tl: false }} />
             {statuses && statuses.length > 0 && (
               <Combo value={filters.status} title={statusLabel} onChange={(e) => setFilter({ status: e.target.value })}>
                 <option value="">{statusAll}</option>
@@ -307,7 +307,7 @@ export function IntJoinFilters({
           </>
         )}
       >
-        <HierarchyFilter value={h} onChange={setHier} show={{ department: false, section: false, recruiter: false }} />
+        <HierarchyFilter multi value={h} onChange={setHier} show={{ department: false, section: false, recruiter: false }} />
         {!noClient && clientDesk && sel('client', 'All clients', opts.clients, 'Client')}
         {sel('requirement', 'All requirements', opts.requirements, 'Requirement')}
         {sel('candidate', 'All candidates', opts.candidates, 'Candidate')}

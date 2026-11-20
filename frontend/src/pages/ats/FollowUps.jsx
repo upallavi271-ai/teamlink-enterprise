@@ -249,7 +249,7 @@ export default function FollowUps({ embedded = false }) {
           that only sees its own follow-ups. Narrows every panel below. */}
       {showHier && (
         <div className="filter-row">
-          <HierarchyFilter value={hier} onChange={setHier} />
+          <HierarchyFilter multi value={hier} onChange={setHier} />
         </div>
       )}
       <ListFilterStrip list="followups" xf={xf} user={user} noun="follow-ups" />
