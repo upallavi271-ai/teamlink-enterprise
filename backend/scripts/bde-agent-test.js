@@ -220,7 +220,7 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
 
   // ------------------------------------------------------------------ who may use it
   check('a recruiter is refused (403)', (await call('POST', '/bde-agent/ask', { question: 'my clients' }, tR)).status === 403);
-  check('a plain Admin login is refused (403: BDE, BDE TL, Super Admin and Developer only)', (await call('POST', '/bde-agent/ask', { question: 'my clients' }, tAD)).status === 403);
+  check('a plain Admin login may use the BDE Agent (founder 2026-11-20)', (await call('POST', '/bde-agent/ask', { question: 'my clients' }, tAD)).status === 200);
   const ov = await call('GET', '/bde-agent/overview', null, tA);
   check('overview: BDE A has 3 clients, 3 open requirements and role chips', ov.status === 200 && ov.body.clients === 3 && ov.body.openRequirements === 3 && ov.body.chips.includes('My target this month') && ov.body.chips.includes("Today's interviews"), ov.body);
   const ovS = await call('GET', '/bde-agent/overview', null, tS);
