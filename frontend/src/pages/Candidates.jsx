@@ -1776,13 +1776,15 @@ export default function Candidates() {
                     <div className="cpl-panelbar">
                       <PageFilterBar
                     multiClient
+                    multiDept
+                    multiPeople
                     value={pfValue}
                     onChange={setPageFilters}
                     options={pfOptions}
                     show={{ department: true, dateRange: true, client: true, people: show.recruiter || show.bde }}
                   />
                     </div>
-                    <HierarchyFilter value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
+                    <HierarchyFilter multi value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
                     <PanelField label="Location">
                       <Combo value={filters.location} onChange={(e) => setFilter({ location: e.target.value })} title="Location">
                         <option value="">All locations</option>
@@ -2090,7 +2092,7 @@ export default function Candidates() {
                     })}
                   </Combo>
                 </PanelField>
-                <HierarchyFilter value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
+                <HierarchyFilter multi value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
                 {show.source && (
                   <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={(facets.source || []).map((o) => ({ ...o, label: sourceLabel(o.value) }))} loading={facetsLoading} title="Where the person came from" />
                 )}
@@ -2132,7 +2134,7 @@ export default function Candidates() {
                   loading={facetsLoading}
                 />
                 {show.tl && (
-                  <FacetSelect
+                  <FacetSelect multi
                     label="Team lead"
                     allLabel="All team leads"
                     value={hier.tl}

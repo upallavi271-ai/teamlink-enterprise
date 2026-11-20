@@ -6,6 +6,7 @@ import { FacetSelect, useFacets } from './ListPageHeader.jsx';
 import './ListPageHeader.css';
 import './PageFilterBar.css';
 import Combo from '../Combo.jsx';
+import MultiSelect, { csvToList, listToCsv } from '../ats/MultiSelect.jsx';
 import { PRESETS, presetDates, dateProblem } from '../../utils/dateRanges.js';
 
 // ---------------------------------------------------------------------------
@@ -158,7 +159,7 @@ export function usePageFilters(defaults, opts) {
 // set (so Clear shows); onClear = what Clear does when it must also reset them.
 export default function PageFilterBar({
   value: valueProp, onChange: onChangeProp, show, options, facetModule = 'requirements', facetParams, className = '',
-  ranges, children, extraSet = false, onClear, multiClient = false,
+  ranges, children, extraSet = false, onClear, multiClient = false, multiDept = false, multiPeople = false,
 }) {
   const { user } = useAuth() || {};
   const [urlValue, setUrlValue] = usePageFilters(undefined, { remember: !valueProp });
@@ -205,7 +206,7 @@ export default function PageFilterBar({
   return (
     <div className={`pfb ${className}`} role="search" aria-label="Filters for this page">
       {want.department && (
-        <FacetSelect label="Department" value={value.department} onChange={(v) => set({ department: v })} options={deptOpts} allLabel="All departments" loading={loading} />
+        <FacetSelect multi={multiDept} label="Department" value={value.department} onChange={(v) => set({ department: v })} options={deptOpts} allLabel="All departments" loading={loading} />
       )}
       {want.dateRange && (
         <label className="lph-facet pfb-range">
@@ -228,7 +229,23 @@ export default function PageFilterBar({
       {want.client && (
         <FacetSelect multi={multiClient} label="Client" value={value.clientId} onChange={(v) => set({ clientId: v })} options={clientOpts} allLabel="All clients" loading={loading} />
       )}
-      {want.people && (peopleList.length > 0 || personValue) && (
+      {want.people && multiPeople && (peopleOpts.length > 0 || personValue) && (() => {
+        // several recruiters / client managers at once: the value is a comma list of rec:<person> / bde:<person>
+        const ticked = [...csvToList(value.recruiterId).map((x) => `rec:${x}`), ...csvToList(value.bdeId).map((x) => `bde:${x}`)];
+        return (
+          <MultiSelect
+            label="Recruiter / BDE"
+            allLabel="Everyone"
+            value={listToCsv(ticked)}
+            options={peopleOpts.map((o) => ({ value: o.value, label: o.label, count: o.count, group: o.group === 'Recruiters' ? 'Recruiter' : 'Client manager' }))}
+            onChange={(csv) => {
+              const items = csvToList(csv);
+              set({ recruiterId: listToCsv(items.filter((x) => x.startsWith('rec:')).map((x) => x.slice(4))), bdeId: listToCsv(items.filter((x) => x.startsWith('bde:')).map((x) => x.slice(4))) });
+            }}
+          />
+        );
+      })()}
+      {want.people && !multiPeople && (peopleList.length > 0 || personValue) && (
         <label className="lph-facet">
           <span className="lph-facet-lbl">Recruiter / BDE</span>
           <Combo value={personValue} onChange={(e) => setPerson(e.target.value)}>

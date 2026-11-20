@@ -18,7 +18,7 @@ import { splitPersonValue, useAtsWorkers } from '../components/PeopleFilter.jsx'
 import AtsDataTools, { useAtsIoAccess } from '../components/AtsDataTools.jsx';
 import ExportMenu from '../components/ExportMenu.jsx';
 import HierarchyFilter, {
-  EMPTY_HIERARCHY, toRequirementParams, hierarchyChips, useHierarchy,
+  EMPTY_HIERARCHY, toRequirementParams, hierarchyChips, useHierarchy, hierList, hierCsv,
 } from '../components/HierarchyFilter.jsx';
 import SavedViews from '../components/SavedViews.jsx';
 import StatusChip from '../components/ui/StatusChip.jsx';
@@ -450,7 +450,10 @@ export default function Requirements() {
   const params = useMemo(() => {
     const p = { ...(canFilter.hierarchy ? toRequirementParams(h, tree.data) : {}) };
     Object.entries(filters).forEach(([k, v]) => { if (v && k !== 'bde') p[k] = v; });
-    if (filters.bde) { const b = splitPersonValue(filters.bde); if (b.id) p.bdeId = b.id; else if (b.name) p.bdeName = b.name; }
+    if (filters.bde) {
+      const ids = hierList(filters.bde).filter((x) => x.startsWith('id:')).map((x) => x.slice(3));
+      if (ids.length) p.bdeId = hierCsv(ids); else { const b = splitPersonValue(filters.bde); if (b.name) p.bdeName = b.name; }
+    }
     if (postWaitOn) p.postWait = '1';
     if (postedOn) p.postedOn = postedOn;
     Object.assign(p, xf.params);
@@ -965,7 +968,9 @@ export default function Requirements() {
   const facetParams = useMemo(() => ({ ...params, rview: view || undefined, ...(showClosed ? { showClosed: '1' } : {}) }), [paramKey, view, showClosed]); // eslint-disable-line react-hooks/exhaustive-deps
   const { facets, loading: facetsLoading } = useFacets('requirements', facetParams);
   const fo = (k) => facets[k] || [];
-  const idOf = (v) => (v && v.startsWith('id:') ? v.slice(3) : '');
+  // ids picked (one or several) <-> the hierarchy's id:<person> values
+  const idOf = (v) => hierCsv(hierList(v).filter((x) => x.startsWith('id:')).map((x) => x.slice(3)));
+  const toIds = (ids) => hierCsv(hierList(ids).map((id) => `id:${id}`));
   const priorityOptions = [
     ...fo('priority').map((o) => ({ ...o, label: priorityLabel(o.value) || o.label })),
     ...(String(filters.priority || '').includes(',') ? [{ value: filters.priority, label: priorityFilterLabel(filters.priority), count: null }] : []),
@@ -990,10 +995,10 @@ export default function Requirements() {
     setBarRange(range);
     const deptChanged = (v.department || '') !== (h.department || '');
     const nextH = deptChanged
-      ? { ...EMPTY_HIERARCHY, department: v.department || '', recruiter: v.recruiterId ? `id:${v.recruiterId}` : '' }
-      : { ...h, recruiter: v.recruiterId ? `id:${v.recruiterId}` : '' };
+      ? { ...EMPTY_HIERARCHY, department: v.department || '', recruiter: toIds(v.recruiterId) }
+      : { ...h, recruiter: toIds(v.recruiterId) };
     removeFilter({
-      clientId: v.clientId || '', bde: v.bdeId ? `id:${v.bdeId}` : '', from: d.from || '', to: d.to || '',
+      clientId: v.clientId || '', bde: toIds(v.bdeId), from: d.from || '', to: d.to || '',
     }, nextH);
   };
   const panel = (
@@ -1002,7 +1007,7 @@ export default function Requirements() {
           Location, Agreement and Search are on the filter card above (v4). */}
       <FacetSelect label="Deadline" allLabel="Any deadline" value={filters.deadline} options={fo('deadline')} onChange={(v) => setDraftFilter({ deadline: v })} />
       {canFilter.hierarchy && (
-        <HierarchyFilter value={draft.h} onChange={setDraftH} data={tree.data} show={{ department: false, section: true, tl: false, recruiter: false }} />
+        <HierarchyFilter multi value={draft.h} onChange={setDraftH} data={tree.data} show={{ department: false, section: true, tl: false, recruiter: false }} />
       )}
       {/* spec D: cascade from Department (shown once a department is picked,
           or for a role without the Department filter, or while one is set). */}
@@ -1137,6 +1142,9 @@ export default function Requirements() {
         }}
       >
         <PageFilterBar
+          multiDept
+          multiClient
+          multiPeople
           value={barValue}
           onChange={setBar}
           facetParams={facetParams}
@@ -1146,8 +1154,8 @@ export default function Requirements() {
         >
           {/* Team lead sits with the others (cascading, with counts). */}
           {canFilter.hierarchy && (
-            <FacetSelect label="Team lead" allLabel="All team leads" value={idOf(h.tl)} options={fo('tlId')} loading={facetsLoading}
-              onChange={(v) => setDraftH({ ...h, tl: v ? `id:${v}` : '' })} />
+            <FacetSelect multi label="Team lead" allLabel="All team leads" value={idOf(h.tl)} options={fo('tlId')} loading={facetsLoading}
+              onChange={(v) => setDraftH({ ...h, tl: toIds(v) })} />
           )}
         </PageFilterBar>
         {topFilters}
