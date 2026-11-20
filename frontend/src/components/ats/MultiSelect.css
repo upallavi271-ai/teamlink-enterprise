@@ -1,0 +1,30 @@
+/* MultiSelect (components/ats/MultiSelect.jsx): the one checkbox dropdown of every filter. */
+.msel{position:relative;display:inline-block;min-width:150px}
+.msel-btn{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-width:0;text-align:left;font:inherit;font-size:13px;padding:6px 10px;border:1px solid var(--line,#d6dbe6);border-radius:8px;background:var(--surface,#fff);color:var(--ink,#1c2540);cursor:pointer}
+.msel-btn:hover,.msel-btn:focus-visible{border-color:var(--blue,#2459d6)}
+.msel.is-set .msel-btn{border-color:var(--blue,#2459d6);background:var(--blue-tint,#eef3ff);font-weight:600}
+.msel-sum{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msel-pop{position:absolute;z-index:60;top:calc(100% + 4px);left:0;min-width:260px;max-width:min(360px,92vw);display:flex;flex-direction:column;background:var(--surface,#fff);border:1px solid var(--line,#d6dbe6);border-radius:10px;box-shadow:0 8px 24px rgba(20,32,70,.18);padding:6px}
+.msel-pop.is-flip{left:auto;right:0}
+.msel-sheet-head{display:none}
+.msel-search{width:100%;box-sizing:border-box;font:inherit;font-size:13px;padding:6px 10px;margin:0 0 4px;border:1px solid var(--line,#d6dbe6);border-radius:8px}
+.msel-tools{display:flex;align-items:center;gap:12px;padding:2px 8px 6px;font-size:12px}
+.msel-tools .small-muted{margin-left:auto}
+.msel-hint{font-size:12px;color:var(--ink-soft,#5b6577);padding:4px 8px}
+.msel-list{max-height:300px;overflow:auto}
+.msel-item{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;cursor:pointer;font-size:13px;line-height:1.25}
+.msel-item:hover,.msel-item.is-act{background:var(--blue-tint,#eef3ff)}
+.msel-item.is-on{font-weight:600}
+.msel .msel-item input[type=checkbox]{width:16px;height:16px;min-width:16px;flex:none;margin:0;padding:0}
+.msel-name{flex:1;min-width:0}
+.msel-n{flex:none;color:var(--ink-soft,#5b6577);font-variant-numeric:tabular-nums;font-size:12px}
+.msel-foot{display:flex;justify-content:flex-end;padding:6px 6px 2px;border-top:1px solid var(--line-soft,#e8ecf4);margin-top:4px}
+/* a phone: a sheet from the bottom */
+@media (max-width:720px){
+  .msel{display:block;width:100%}
+  .msel-pop{position:fixed;left:0;right:0;top:auto;bottom:0;max-width:none;width:100%;max-height:75vh;border-radius:14px 14px 0 0;z-index:95;padding:10px 12px 14px;box-shadow:0 -10px 30px rgba(20,32,70,.28)}
+  .msel-sheet-head{display:flex;justify-content:space-between;align-items:center;padding:2px 2px 8px}
+  .msel-list{max-height:48vh}
+  .msel-item{padding:11px 8px}
+  .msel-foot{display:none}
+}
