@@ -414,6 +414,51 @@ const setRow = async (id, fields, enabled = true) => {
   const stS = (await call('GET', '/ats/reminders/settings', null, toks.R)).body;
   check('every login can read how the channels stand (SMS shown, not offered when not ready)', Array.isArray(stS.channels) && stS.channels.length === 3, stS.channels);
 
+  // ---------------------------------------------------------------- 14. the plan chosen in the window, per department, and the old messages standing down
+  console.log('14. A plan chosen in the booking window; per-department schedule; the older messages stand down');
+  const dayP = addDays(istDay(new Date()), 6);
+  const CP = await mkCand('plan', { languagesKnown: 'English' });
+  const AP = await mkApp(CP, REQ);
+  const stepIso = (day, h) => atIst(day, h).toISOString();
+  const bkP = await call('POST', `/ats/interviews/${AP.id}/book`, {
+    date: dayP, time: '12:00', mode: 'In Person', location: 'Plan Street', panel: [{ userId: REC.id }], details: { venueName: 'Plan Hall' },
+    reminders: { steps: [
+      { stepKey: 'X1', sendAt: stepIso(addDays(dayP, -1), '15:00'), channel: 'Email', language: 'te', checked: true },
+      { stepKey: 'X2', sendAt: stepIso(addDays(dayP, -2), '10:00'), channel: 'WhatsApp', language: 'en', checked: false },
+      { stepKey: 'X3', sendAt: new Date(Date.now() - 3 * HOUR).toISOString(), channel: 'WhatsApp', language: 'en', checked: true },
+      { stepKey: 'X4', sendAt: stepIso(addDays(dayP, -3), '23:30'), channel: 'WhatsApp', language: 'en', checked: true },
+    ] },
+  }, toks.B);
+  const pr = live(await rowsOf(AP.id, 'interview'));
+  check('the plan chosen in the window is what is saved: an unticked step is left out, a past time dropped, 23:30 held to 20:00, the way and language kept', bkP.status === 200 && pr.length === 2 && pr.some((r) => r.channel === 'Email' && r.language === 'te' && ymdhm(r.sendAt) === `${addDays(dayP, -1)} 15:00`) && pr.some((r) => r.channel === 'WhatsApp' && ymdhm(r.sendAt) === `${addDays(dayP, -3)} 20:00`), pr.map((r) => [r.channel, r.language, ymdhm(r.sendAt)]));
+  check('the Email step carries the words in Telugu', (await call('GET', `/ats/reminders/application/${AP.id}`, null, toks.T)).body.kinds.interview.rows.some((r) => r.channel === 'Email' && /[\u0C00-\u0C7F]/.test(r.text)));
+  check('while the new plan covers the interview the older day / hour messages stand down', (await SR.coversInterview(AP.id, pr[0].eventAt)) === true && (await SR.coversInterview(A1.id, new Date().toISOString())) === false);
+  const CZ = await mkCand('zero');
+  const AZ = await mkApp(CZ, REQ);
+  const dayZ = addDays(istDay(new Date()), 6);
+  await call('POST', `/ats/interviews/${AZ.id}/book`, { date: dayZ, time: '12:00', mode: 'In Person', location: 'Zero Street', panel: [{ userId: REC.id }], reminders: { steps: [] } }, toks.B);
+  check('the recruiter may choose NO reminders (0 messages): nothing is planned', live(await rowsOf(AZ.id, 'interview')).length === 0);
+  await call('POST', `/ats/interviews/${AZ.id}/reschedule`, { interviewAt: atIst(addDays(dayZ, 1), '14:00').toISOString(), reason: 'Panel busy' }, toks.A);
+  check('...and a reschedule does not bring the default plan back', live(await rowsOf(AZ.id, 'interview')).length === 0);
+  const depSave = await call('PUT', '/ats/reminders/settings', { schedule: { departments: { Medical: { interview: [{ days: 1, at: '09:00' }] } } } }, toks.A);
+  const CD2 = await mkCand('dept');
+  const AD3 = await mkApp(CD2, REQ);
+  await call('POST', `/ats/interviews/${AD3.id}/book`, { date: dayZ, time: '12:00', mode: 'Online', meetingLink: 'https://meet.google.com/abc-defg-hij', panel: [{ userId: REC.id }] }, toks.B);
+  const dr = live(await rowsOf(AD3.id, 'interview'));
+  check('an Admin schedule for the department wins: Medical gets its own 1 message (1 day before 09:00)', depSave.status === 200 && dr.length === 1 && ymdhm(dr[0].sendAt) === `${addDays(dayZ, -1)} 09:00` && dr[0].templateKey === 'interview_online', dr.map((r) => [r.stepKey, ymdhm(r.sendAt), r.templateKey]));
+  const onlineText = (await call('GET', `/ats/reminders/application/${AD3.id}`, null, toks.R)).body.kinds.interview.rows[0].text;
+  check('an online interview message carries the meeting link', /Join here: https:\/\/meet\.google\.com\/abc-defg-hij/.test(onlineText), onlineText);
+  await call('PUT', '/ats/reminders/settings', { schedule: { departments: {} } }, toks.A);
+  const CT = await mkCand('today');
+  const AT = await mkApp(CT, REQ);
+  const dayT2 = addDays(istDay(new Date()), 3);
+  await call('POST', `/ats/interviews/${AT.id}/book`, { date: dayT2, time: '16:00', mode: 'In Person', location: 'Today Street', panel: [{ userId: REC.id }], reminders: { steps: [{ stepKey: 'D1@17:00', sendAt: stepIso(addDays(dayT2, -1), '17:00'), channel: 'WhatsApp', language: 'en', checked: true }] } }, toks.B);
+  const nowH = new Date(Date.now() + 330 * MIN).getUTCHours();
+  if (nowH >= 8 && nowH <= 14) {
+    await call('POST', `/ats/interviews/${AT.id}/reschedule`, { interviewAt: new Date(Date.now() + 4 * HOUR).toISOString(), reason: 'Moved to today' }, toks.A);
+    check('moved to later today: the unsent step no longer fits and is cancelled, the details go at once', live(await rowsOf(AT.id, 'interview')).some((r) => r.stepKey === 'NOW' && r.status === 'planned') && (await rowsOf(AT.id, 'interview')).some((r) => r.stepKey === 'D1@17:00' && r.status === 'cancelled'), (await rowsOf(AT.id, 'interview')).map((r) => [r.stepKey, r.status]));
+  }
+
   messaging.send = realSend;
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);
