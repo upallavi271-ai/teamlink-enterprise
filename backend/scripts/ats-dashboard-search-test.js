@@ -189,6 +189,9 @@ const flat = (body) => (body.groups || []).flatMap((g) => g.rows.map((r) => ({ .
     check('a recruiter is found by a typo in the name', (await pe(`hx reaca ${RUN}`)).people.some((p) => p.id === recA.id), null);
     check('people are found by section / team name', (await pe(TEAM.toLowerCase())).people.some((p) => p.id === tl.id), null);
     check('a BDE is found by name for the Admin', (await pe(`hx bde ${RUN}`)).groups.some((g) => g.id === 'people' && g.rows.some((r) => r.id === bde.id && r.kind === 'bde')), null);
+    // (changed 2026-11-20: a BDE result opened /clients?search=<name>; it now opens the BDE history)
+    const pb = flat((await S(`hx bde ${RUN}`, 'sa')).body).find((r) => r.id === bde.id);
+    check('a BDE result opens the BDE History page', pb && pb.to === `/ats/history/bde/${bde.id}`, pb);
     const pp = flat((await S('hx reca', 'sa')).body).find((r) => r.id === recA.id);
     check('a recruiter result opens the recruiter History page', pp && pp.to === `/ats/history/recruiter/${recA.id}`, pp);
     const pt = flat((await S(`hx tl ${RUN}`, 'sa')).body).find((r) => r.id === tl.id);

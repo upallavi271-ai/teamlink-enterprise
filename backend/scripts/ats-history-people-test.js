@@ -451,6 +451,95 @@ const COLS = ['added', 'sent', 'interviews', 'selected', 'offers', 'dropped'];
     check('no login, no people history (401)', (await call('GET', `/ats/history/recruiter/${recA.id}`, null, null)).status === 401);
     const acc = await C('GET', '/ats/history/access', 'tl');
     check('the access answer tells the screens whom a name may link to', acc.body.kind === 'tl' && acc.body.peopleIds.includes(recA.id) && !acc.body.peopleIds.includes(recC.id), acc.body);
+
+    // ---------------------------------------------------------------- 8. BDE page (founder 2026-11-20: "when I search a BDE's name, their history does not come")
+    // the BDE owns the client (Owner BDE) and is the named BDE on RA, RB and RC: the BDE page covers all 11 applications of the plan
+    await prisma.client.update({ where: { id: client.id }, data: { agreementSignedAt: noon(day(-50)) } });
+    const clientX = await prisma.client.create({ data: { name: `Hxpeople Medline ${RUN}`, industry: 'Healthcare', ownerDepartment: 'Medical', bdeOwner: bdeX.name, agreementStatus: 'ACTIVE' } });
+    await prisma.invoice.createMany({
+      data: [
+        { clientId: client.id, candidateId: P0.a1.id, requirementId: R.RA.id, amount: 50000, gst: 9000, status: 'Paid', receivedAmount: 59000, invoiceDate: day(-25), dueDate: day(-19), paidDate: day(-20), invoiceNumber: `HXB-1-${RUN}` },
+        { clientId: client.id, candidateId: P0.m.id, requirementId: R.RB.id, amount: 40000, gst: 7200, status: 'Pending', invoiceDate: day(-9), dueDate: day(-3), invoiceNumber: `HXB-2-${RUN}` },
+        { clientId: clientX.id, amount: 99999, gst: 0, status: 'Pending', invoiceDate: day(-9), dueDate: day(5), invoiceNumber: `HXB-3-${RUN}` },
+      ],
+    });
+    const fu = await C('POST', '/client-followlog', 'bde', { clientId: client.id, note: 'Called the HR head about two more roles', onDate: day(-5) });
+    check('setup: the BDE logs a client follow-up through the real endpoint', ok2(fu), err(fu));
+    await prisma.auditLog.create({ data: { userId: bde.id, actorName: bde.name, action: 'Client note', entity: 'Client', entityId: client.id, reason: '[Meeting] Met the client at their office', createdAt: noon(day(-3)) } });
+    await prisma.auditLog.create({ data: { userId: bdeX.id, actorName: bdeX.name, action: 'Client note', entity: 'Client', entityId: clientX.id, reason: '[Meeting] Another desk', createdAt: noon(day(-3)) } });
+
+    const allPlan = Object.entries(PLAN).map(([k, p]) => ({ k, ...p }));
+    const BD = await C('GET', `/ats/history/bde/${bde.id}`, 'sa');
+    check('the Admin opens a BDE page', BD.status === 200 && Array.isArray(BD.body.funnel), err(BD));
+    const bp = BD.body.person;
+    check('BDE header: name, code, role BDE, department, status, their BDE TL', bp.name === bde.name && bp.role === 'BDE' && bp.employeeCode === `HX-bde-${RUN}`.slice(0, 40) && bp.department === 'BDE' && bp.statusWord === 'Active' && bp.teamLead === bdeTl.name, bp);
+    const bt = (k) => tile(BD.body, k);
+    const teamJoined = tile(TLp.body, 'joined') + tile(TL2.body, 'joined');
+    const nPlan = (key) => allPlan.filter((p) => p[key] !== undefined).length;
+    check('BDE funnel: requirements raised 3, shared 8, shortlisted 6, interviews 6, selected 4, offers 4 (the plan)', bt('requirements') === 3 && bt('shared') === nPlan('shared') && bt('shortlisted') === nPlan('int') && bt('interviewScheduled') === nPlan('int') && bt('selected') === nPlan('sel') && bt('offerReleased') === nPlan('off'), BD.body.funnel.map((t) => [t.key, t.count]));
+    check('BDE funnel: joined (still working) = both teams together; dropped 5 (a2 left, a3, m, b2, b3), left after joining 1, replacements tile present', bt('joined') === teamJoined && bt('dropped') === 5 && bt('left') === 1 && BD.body.funnel.some((t) => t.key === 'replacements'), BD.body.funnel.map((t) => [t.key, t.count]));
+    check('BDE: the client is listed as owned, with agreement, 3 requirements, 3 open, joinings = the joined tile; not the other desk\'s client', BD.body.clients.length === 1 && BD.body.clients[0].id === client.id && BD.body.clients[0].owner === 'Owner BDE' && BD.body.clients[0].agreementStatus === 'ACTIVE' && BD.body.clients[0].signedDay === day(-50) && BD.body.clients[0].requirements === 3 && BD.body.clients[0].open === 3 && BD.body.clients[0].joined === bt('joined'), BD.body.clients);
+    const bReq = (id) => BD.body.requirements.find((r) => r.id === id);
+    check('BDE: requirements handled RA, RB, RC with their own numbers (RA sent 4, RB sent 3, RC sent 1)', BD.body.requirements.length === 3 && bReq(R.RA.id).numbers.shared === 4 && bReq(R.RB.id).numbers.shared === 3 && bReq(R.RC.id).numbers.shared === 1, BD.body.requirements.map((r) => [r.title, r.numbers.shared]));
+    check('BDE: joined list = the joined tile, dropped list 5 (a2 who left is in Dropped, not Joined)', BD.body.joinedList.length === bt('joined') && BD.body.droppedList.length === 5 && BD.body.droppedList.some((r) => r.applicationId === apps.a2) && !BD.body.joinedList.some((r) => r.applicationId === apps.a2), [BD.body.joinedList.length, BD.body.droppedList.length]);
+    check('BDE: the follow-up and the meeting they logged (2), not the other BDE\'s', BD.body.followupTotal === 2 && BD.body.followups.some((t) => t.kind === 'Follow-up' && t.day === day(-5)) && BD.body.followups.some((t) => t.kind === 'Meeting' && t.day === day(-3)) && !JSON.stringify(BD.body.followups).includes('Another desk'), BD.body.followups);
+    // (the joinings raise their own invoices too: the expected count is every live invoice of the client)
+    const invN = await prisma.invoice.count({ where: { clientId: client.id, status: { not: 'Cancelled' } } });
+    const invRow = (n) => BD.body.billing && BD.body.billing.rows.find((i) => i.invoiceNumber === n);
+    check('BDE invoices for the Admin: every invoice of their client (the paid one Paid, the past-due one Overdue); the other desk\'s invoice is not there', !!BD.body.billing && BD.body.billing.raised === invN && invN >= 2 && invRow(`HXB-1-${RUN}`).status === 'Paid' && invRow(`HXB-2-${RUN}`).status === 'Overdue' && BD.body.billing.paid === BD.body.billing.rows.filter((i) => i.status === 'Paid').length && !invRow(`HXB-3-${RUN}`), BD.body.billing && { raised: BD.body.billing.raised, invN });
+    // day-wise: requirements raised, profiles shared, interviews; follow-ups; totals
+    const bDay = await C('GET', `/ats/history/bde/${bde.id}?${q({ grain: 'day', from: day(-45), to: day(0) })}`, 'sa');
+    const reqDays = [-45, -30, -20];
+    const badB = [];
+    for (let off = -45; off <= 0; off += 1) {
+      const r = bDay.body.series.rows.find((x) => x.key === day(off));
+      const e = { requirements: reqDays.filter((x) => x === off).length, sent: expect(allPlan, off, off).sent, interviews: expect(allPlan, off, off).interviews, followups: [-5, -3].filter((x) => x === off).length };
+      if (!r || Object.keys(e).some((k) => r[k] !== e[k])) badB.push([off, r, e]);
+    }
+    check('BDE day-wise table: every day matches the plan (requirements raised, profiles shared, interviews, follow-ups / meetings)', bDay.status === 200 && bDay.body.series.rows.length === 46 && badB.length === 0, badB.slice(0, 2));
+    check('BDE day-wise totals: joinings = the joined tile, shared = the shared tile', bDay.body.series.total.joined === bt('joined') && bDay.body.series.total.sent === bt('shared') && bDay.body.series.total.requirements === 3, bDay.body.series.total);
+    const bMonth = await C('GET', `/ats/history/bde/${bde.id}?${q({ grain: 'month', from: day(-60), to: day(0) })}`, 'sa');
+    check('BDE month-wise: the new client signed (1) and the same totals as day-wise', bMonth.status === 200 && bMonth.body.series.total.signed === 1 && ['requirements', 'sent', 'interviews', 'joined', 'followups'].every((k) => bMonth.body.series.total[k] === bDay.body.series.total[k]), [bMonth.body.series.total, bDay.body.series.total]);
+    // filters
+    check('BDE filter options: the client and the three requirements', BD.body.options.clients.length === 1 && BD.body.options.requirements.length === 3, BD.body.options);
+    const bfReq = await C('GET', `/ats/history/bde/${bde.id}?${q({ requirement: R.RA.id })}`, 'sa');
+    check('BDE, Requirement = RA: 1 requirement raised, shared 4, only RA listed', bfReq.status === 200 && tile(bfReq.body, 'requirements') === 1 && tile(bfReq.body, 'shared') === 4 && bfReq.body.requirements.length === 1 && bfReq.body.requirements[0].id === R.RA.id, bfReq.body.funnel && bfReq.body.funnel.map((t) => [t.key, t.count]));
+    const bfReq2 = await C('GET', `/ats/history/bde/${bde.id}?${q({ requirement: `${R.RA.id},${R.RB.id}` })}`, 'sa');
+    check('BDE, Requirement = RA and RB: shared 7', tile(bfReq2.body, 'shared') === 7 && tile(bfReq2.body, 'requirements') === 2);
+    const bfSt = await C('GET', `/ats/history/bde/${bde.id}?${q({ status: 'dropped' })}`, 'sa');
+    check('BDE, Status = Dropped: joined 0, the dropped list is the same', bfSt.status === 200 && tile(bfSt.body, 'joined') === 0 && bfSt.body.droppedList.length === 5 && bfSt.body.joinedList.length === 0);
+    const bfCl = await C('GET', `/ats/history/bde/${bde.id}?${q({ client: 'no-such-client' })}`, 'sa');
+    check('BDE, an unknown client: nothing, the options are still there', bfCl.status === 200 && tile(bfCl.body, 'requirements') === 0 && tile(bfCl.body, 'shared') === 0 && bfCl.body.clients.length === 0 && bfCl.body.followupTotal === 0 && bfCl.body.options.clients.length === 1);
+    const bfDt = await C('GET', `/ats/history/bde/${bde.id}?${q({ from: day(-41), to: day(-36) })}`, 'sa');
+    check('BDE, dates -41 to -36: no requirement raised, shared 3 (a1, a2, m), no follow-ups', bfDt.status === 200 && tile(bfDt.body, 'requirements') === 0 && tile(bfDt.body, 'shared') === 3 && bfDt.body.followupTotal === 0, bfDt.body.funnel && bfDt.body.funnel.map((t) => [t.key, t.count]));
+    // Excel
+    const xb = await dl(`bde/${bde.id}/export`, 'sa');
+    const wbB = XLSX.read(xb.buf, { type: 'buffer' });
+    check('BDE Excel: Summary, Funnel, Periods, Clients, Requirements, Joined, Dropped, Follow-ups, Invoices', xb.status === 200 && ['Summary', 'Funnel', 'Periods', 'Clients', 'Requirements', 'Joined', 'Dropped', 'Follow-ups', 'Invoices'].every((n) => wbB.SheetNames.includes(n)) && XLSX.utils.sheet_to_json(wbB.Sheets.Requirements, { header: 1 }).length === 4, [xb.status, wbB.SheetNames]);
+    // scope, both ways
+    const bSelf = await C('GET', `/ats/history/bde/${bde.id}`, 'bde');
+    check('the BDE opens their own page (same numbers as the Admin; no invoices)', bSelf.status === 200 && tile(bSelf.body, 'requirements') === 3 && bSelf.body.billing === null && bSelf.body.clients.length === 1, err(bSelf));
+    check('...but not the other desk\'s BDE (404)', (await C('GET', `/ats/history/bde/${bdeX.id}`, 'bde')).status === 404);
+    check('the other BDE opens their own page: their client, none of the first BDE\'s', await (async () => { const r = await C('GET', `/ats/history/bde/${bdeX.id}`, 'bdeX'); return r.status === 200 && r.body.clients.length === 1 && r.body.clients[0].id === clientX.id && tile(r.body, 'requirements') === 0 && r.body.followupTotal === 1; })());
+    const bTlB = await C('GET', `/ats/history/bde/${bde.id}`, 'bdeTl');
+    check('the BDE TL opens their BDE\'s page', bTlB.status === 200 && tile(bTlB.body, 'requirements') === 3, err(bTlB));
+    const bTlSelf = await C('GET', `/ats/history/bde/${bdeTl.id}`, 'bdeTl');
+    check('the BDE TL opens their own page: role BDE TL, their BDEs listed', bTlSelf.status === 200 && bTlSelf.body.person.role === 'BDE TL' && bTlSelf.body.person.bdes.some((b) => b.id === bde.id) && !bTlSelf.body.person.bdes.some((b) => b.id === bdeX.id), bTlSelf.body && bTlSelf.body.person);
+    check('...but not a BDE outside their team (404)', (await C('GET', `/ats/history/bde/${bdeX.id}`, 'bdeTl')).status === 404);
+    check('a recruiter and a department TL get 404 for the BDE page (and for the export)', (await C('GET', `/ats/history/bde/${bde.id}`, 'recA')).status === 404 && (await C('GET', `/ats/history/bde/${bde.id}`, 'tl')).status === 404 && [403, 404].includes((await dl(`bde/${bde.id}/export`, 'tl')).status));
+    check('the Admin opens the other desk\'s BDE too', (await C('GET', `/ats/history/bde/${bdeX.id}`, 'sa')).status === 200);
+    check('a department TL is not a BDE page (404 for a TL id)', (await C('GET', `/ats/history/bde/${tl.id}`, 'sa')).status === 404);
+    // search
+    const sBde = await s(`hx bde ${RUN}`, 'sa');
+    const rowBde = (body, uid) => (body.people || []).find((p) => p.id === uid);
+    check('searching the BDE name returns a person row that opens /ats/history/bde/<id>', sBde.status === 200 && !!rowBde(sBde.body, bde.id) && rowBde(sBde.body, bde.id).kind === 'bde' && rowBde(sBde.body, bde.id).to === `/ats/history/bde/${bde.id}`, sBde.body.people);
+    const sSelf = await s(`hx bde ${RUN}`, 'bde');
+    check('a BDE finds themself (and not the other desk\'s BDE)', !!rowBde(sSelf.body, bde.id) && rowBde(sSelf.body, bde.id).to === `/ats/history/bde/${bde.id}` && !rowBde(sSelf.body, bdeX.id), sSelf.body.people);
+    check('...searching the other BDE by name: no person row', !rowBde((await s(`hx bdex ${RUN}`, 'bde')).body, bdeX.id));
+    check('the BDE TL finds their BDE; the BDE TL\'s own row opens the BDE page', !!rowBde((await s(`hx bde ${RUN}`, 'bdeTl')).body, bde.id) && (rowBde((await s(`hx bdetl ${RUN}`, 'sa')).body, bdeTl.id) || {}).to === `/ats/history/bde/${bdeTl.id}`);
+    check('a recruiter and a department TL searching the BDE name get no BDE row', !rowBde((await s(`hx bde ${RUN}`, 'recA')).body, bde.id) && !rowBde((await s(`hx bde ${RUN}`, 'tl')).body, bde.id));
+    const accB = await C('GET', '/ats/history/access', 'bdeTl');
+    check('the access answer lists the BDE TL\'s BDEs', accB.status === 200 && accB.body.bdeIds.includes(bde.id) && accB.body.bdeIds.includes(bdeTl.id) && !accB.body.bdeIds.includes(bdeX.id), accB.body);
   } catch (e) { failed += 1; total += 1; console.log('FAIL  crashed', e && e.stack ? e.stack.slice(0, 900) : e); }
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);

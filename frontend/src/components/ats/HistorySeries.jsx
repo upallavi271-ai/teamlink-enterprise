@@ -6,12 +6,15 @@ import { num } from './HistoryParts.jsx';
 // The trend part of the people pages: a Day / Week / Month switch, the table, bars for one chosen number, and (recruiters / teams) the monthly
 // target against what was achieved. The numbers come from the server (utils/atsHistoryPeople.js seriesOf / targetsFor); nothing is added up here.
 // ---------------------------------------------------------------------------
-const COLS = [
+const DEFAULT_COLS = [
   ['added', 'Profiles added'], ['sent', 'Sent to client'], ['interviews', 'Interviews'], ['selected', 'Selected'], ['offers', 'Offers'],
   ['joined', 'Joined (still working)'], ['dropped', 'Dropped'], ['followups', 'Follow-ups done'], ['calls', 'Calls made'],
 ];
 
-export default function HistorySeries({ series, grain, setGrain, targets }) {
+export default function HistorySeries({
+  series, grain, setGrain, targets, cols = DEFAULT_COLS,
+}) {
+  const COLS = cols; // the BDE page has its own columns
   const [metric, setMetric] = useState('sent');
   const [all, setAll] = useState(false);
   const rows = series.rows;
@@ -77,7 +80,8 @@ export function useHistoryAccess() {
     api.get('/ats/history/access').then((r) => { accessCache = r.data; if (live) setA(r.data); }).catch(() => {});
     return () => { live = false; };
   }, []);
-  return a || { kind: 'none', peopleAll: false, peopleIds: [], tlIds: [], contact: false, billing: false };
+  return a || { kind: 'none', peopleAll: false, peopleIds: [], tlIds: [], bdeIds: [], contact: false, billing: false };
 }
 export const mayOpenRecruiter = (a, id) => !!id && (a.peopleAll || (a.peopleIds || []).includes(id));
 export const mayOpenTl = (a, id) => !!id && (a.peopleAll || (a.tlIds || []).includes(id));
+export const mayOpenBde = (a, id) => !!id && (a.peopleAll || (a.bdeIds || []).includes(id));

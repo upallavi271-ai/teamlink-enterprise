@@ -271,7 +271,8 @@ async function peopleGroup(user, v, ctx) {
   const { toks, text, take, full } = ctx;
   const rows = [];
   if (!toks.length) return { rows, count: 0 }; // a filter alone lists records, not people
-  if (v.all || ['tl', 'recruiter'].includes(v.kind)) {
+  // a BDE finds themself, the BDE TL their BDEs (the logins that may open the BDE history, atsHistoryPeople.js mayBde)
+  if (v.all || ['tl', 'recruiter'].includes(v.kind) || (v.bdeIds && v.bdeIds.size)) {
     const ids = new Set();
     const roles = ['RECRUITER', 'TL', 'STL', 'BDE'];
     (await prisma.user.findMany({ where: { atsRole: { in: roles }, ...allWordsX(toks, [has('name')]) }, select: { id: true }, take: 60 })).forEach((u) => ids.add(u.id));
@@ -285,22 +286,26 @@ async function peopleGroup(user, v, ctx) {
       const fz = await fuzzyIds('User', ['name'], toks.map((x) => x.t), 40);
       fz.forEach((id) => ids.add(id));
     }
-    const users = ids.size ? await prisma.user.findMany({ where: { id: { in: [...ids] }, atsRole: { in: roles } }, select: { id: true, name: true, atsRole: true } }) : [];
-    const allowed = users.filter((u) => (['TL', 'STL'].includes(u.atsRole) ? P.mayTl(v, u.id) : u.atsRole === 'BDE' ? v.all : P.mayRecruiter(v, u.id)));
+    const users = ids.size ? await prisma.user.findMany({ where: { id: { in: [...ids] }, atsRole: { in: roles } }, select: { id: true, name: true, atsRole: true, atsDepartment: true, atsScopeDepartments: true } }) : [];
+    // a TL of the BDE department is a BDE TL: their page is the BDE history
+    const tlNoDept = users.filter((u) => u.atsRole === 'TL' && !u.atsDepartment && !u.atsScopeDepartments).map((u) => u.id);
+    const empDept = new Map(tlNoDept.length ? (await prisma.employee.findMany({ where: { userId: { in: tlNoDept } }, select: { userId: true, department: true } }).catch(() => [])).map((e) => [e.userId, e.department]) : []);
+    const bdeLike = (u) => u.atsRole === 'BDE' || P.bdeTlRow(u, empDept.get(u.id));
+    const allowed = users.filter((u) => (bdeLike(u) ? P.mayBde(v, u.id) : ['TL', 'STL'].includes(u.atsRole) ? P.mayTl(v, u.id) : P.mayRecruiter(v, u.id)));
     allowed.forEach((u) => {
       ctx.links.names.set(u.id, u.name);
-      if (u.atsRole === 'RECRUITER') ctx.links.rec.push(u.id); else if (u.atsRole === 'BDE') ctx.links.bde.push(u.id); else ctx.links.tl.push(u.id);
+      if (u.atsRole === 'RECRUITER') ctx.links.rec.push(u.id); else if (u.atsRole === 'BDE') ctx.links.bde.push(u.id); else { ctx.links.tl.push(u.id); if (bdeLike(u)) ctx.links.bde.push(u.id); }
     });
     for (const u of rank(allowed, toks, (x) => x.name).slice(0, full ? take : take + 1)) { // eslint-disable-line no-restricted-syntax
       // eslint-disable-next-line no-await-in-loop
       const h = await P.headerOf(u.id);
       if (!h) continue; // eslint-disable-line no-continue
-      const kind = u.atsRole === 'RECRUITER' ? 'recruiter' : u.atsRole === 'BDE' ? 'bde' : 'tl';
-      const roleWord = u.atsRole === 'RECRUITER' ? 'Recruiter' : u.atsRole === 'BDE' ? 'BDE' : u.atsRole === 'STL' ? 'Senior team lead' : 'Team lead';
+      const kind = u.atsRole === 'RECRUITER' ? 'recruiter' : bdeLike(u) ? 'bde' : 'tl';
+      const roleWord = u.atsRole === 'RECRUITER' ? 'Recruiter' : u.atsRole === 'BDE' ? 'BDE' : bdeLike(u) ? 'BDE TL' : u.atsRole === 'STL' ? 'Senior team lead' : 'Team lead';
       rows.push({
         type: 'person', id: h.id, name: h.name, title: h.name, code: h.employeeCode || h.seat || null, kind, role: roleWord, department: h.department, section: h.section, seat: h.seat, teamLead: h.teamLead, active: h.active, statusWord: h.statusWord,
-        sub: [roleWord, h.department, h.section, h.seat, kind === 'recruiter' && h.teamLead ? `TL ${h.teamLead}` : null, h.active ? null : h.statusWord].filter(Boolean).join(' · '),
-        to: kind === 'bde' ? `/clients?search=${encodeURIComponent(h.name)}` : `/ats/history/${kind === 'tl' ? 'tl' : 'recruiter'}/${h.id}`,
+        sub: [roleWord, h.department, h.section, h.seat, (kind === 'recruiter' || u.atsRole === 'BDE') && h.teamLead ? `TL ${h.teamLead}` : null, h.active ? null : h.statusWord].filter(Boolean).join(' · '),
+        to: `/ats/history/${kind}/${h.id}`, // recruiter | tl | bde: each one's complete history (the BDE one since 2026-11-20, before: the Clients list)
         recordTo: h.employeeId ? `/employees/${h.employeeId}` : null,
       });
     }

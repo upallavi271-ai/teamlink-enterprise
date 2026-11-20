@@ -5,17 +5,17 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 // OPEN A HISTORY IN PLACE (founder 2026-11-20: "when I click History it opens a new page, I have to come back, search again and scroll down again").
 // A history opens in the side drawer (HistoryDrawer.jsx) OVER the page the person is on: the address gets ?open=recruiter:<id> (and &focus=...),
 // the page underneath stays exactly as it was. Back closes the drawer. Ctrl / middle click still opens the full page in a new tab.
-//   parseTarget(to)        a history address -> { kind, id, focus } | null   (kind: recruiter | tl | candidate | client | requirement)
+//   parseTarget(to)        a history address -> { kind, id, focus } | null   (kind: recruiter | tl | bde | candidate | client | requirement)
 //   useHistoryOpener()     (rowOrAddress, { list, replace }) -> true when it was opened in the drawer
 //   <HLink to="...">       a Link that opens the drawer for a history address (when the drawer is on the page), else navigates
 // ---------------------------------------------------------------------------
-export const KINDS = ['recruiter', 'tl', 'candidate', 'client', 'requirement'];
+export const KINDS = ['recruiter', 'tl', 'bde', 'candidate', 'client', 'requirement'];
 
 export function parseTarget(to) {
   const s = String(to || '');
   const [path, query = ''] = s.split('?');
   const q = new URLSearchParams(query);
-  let m = /^\/ats\/history\/(recruiter|tl|candidate)\/([^/]+)$/.exec(path);
+  let m = /^\/ats\/history\/(recruiter|tl|bde|candidate)\/([^/]+)$/.exec(path);
   if (m) return { kind: m[1], id: m[2], focus: q.get('focus') || '' };
   m = /^\/clients\/([^/]+)$/.exec(path);
   if (m && q.get('tab') === 'history') return { kind: 'client', id: m[1], focus: q.get('focus') || '' };

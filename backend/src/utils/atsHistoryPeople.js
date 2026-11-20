@@ -16,7 +16,8 @@
 //   TL / STL                        their own team's people and their own page; their requirements, clients and candidates (applicationWhere)
 //   Recruiter                       only their OWN recruiter page and the candidates in their scope
 //   BDE / BDE TL                    Clients and Requirements of their desk; NO recruiter or TL productivity pages; a candidate only in the limited
-//                                   view (no phone, e-mail, pay, documents, notes, calls)
+//                                   view (no phone, e-mail, pay, documents, notes, calls). The BDE page (bdeHistory): a BDE their own, the BDE TL
+//                                   their own and their BDEs'; Super Admin / Admin / Manager every BDE; a recruiter / department TL none.
 //   Client / Candidate logins       nothing
 // A name outside the login's scope is simply not found (never an error that leaks it).
 // ---------------------------------------------------------------------------
@@ -47,7 +48,7 @@ async function teamOf(tlId) {
 
 async function viewerOf(user) {
   const out = {
-    kind: 'none', all: false, ids: new Set(), tlIds: new Set(), contact: false, bdeTeam: false, billing: false,
+    kind: 'none', all: false, ids: new Set(), tlIds: new Set(), bdeIds: new Set(), contact: false, bdeTeam: false, billing: false,
   };
   if (H.external(user)) return { ...out, kind: 'external' };
   const role = SC.atsViewRole(user);
@@ -60,7 +61,16 @@ async function viewerOf(user) {
   } catch { out.contact = false; }
   out.billing = await H.mayBilling(user);
   if (role === 'admin' || role === 'mgmt') return { ...out, kind: 'all', all: true };
-  if (bdeTeam || role === 'bde') return { ...out, kind: 'bde' };
+  if (bdeTeam || role === 'bde') {
+    // the BDE history (founder 2026-11-20): a BDE opens their own page; the BDE TL their own and their BDEs' pages
+    const bdeIds = new Set([user.id]);
+    if (SC.isBdeTl(user)) {
+      const t = await teamOf(user.id);
+      const us = t && t.ids.length ? await prisma.user.findMany({ where: { id: { in: t.ids }, atsRole: 'BDE' }, select: { id: true } }) : [];
+      us.forEach((u) => bdeIds.add(u.id));
+    }
+    return { ...out, kind: 'bde', bdeIds };
+  }
   if (role === 'tl' || role === 'stl') {
     const t = await teamOf(user.id);
     const ids = new Set([user.id, ...(t ? t.ids : [])]);
@@ -74,6 +84,14 @@ async function viewerOf(user) {
 }
 const mayRecruiter = (v, id) => v.all || v.ids.has(id);
 const mayTl = (v, id) => v.all || v.tlIds.has(id);
+const mayBde = (v, id) => v.all || (!!v.bdeIds && v.bdeIds.has(id));
+// a TL of the BDE department (scope.js isBdeTl) read from a plain User row (+ its employee department when the user has none)
+const csvList = (s) => String(s || '').split(',').map((x) => x.trim()).filter(Boolean);
+function bdeTlRow(u, empDept) {
+  if (!u || u.atsRole !== 'TL') return false;
+  const depts = csvList(u.atsScopeDepartments).length ? csvList(u.atsScopeDepartments) : [u.atsDepartment || empDept].filter(Boolean);
+  return require('./bdeDesk').isBdeDepartment(depts); // eslint-disable-line global-require
+}
 
 // ---- people --------------------------------------------------------------------------------------------------------------------------------
 async function headerOf(uid) {
@@ -137,13 +155,13 @@ function keysBetween(from, to, grain) {
 }
 const SERIES_FIELDS = ['added', 'sent', 'interviews', 'selected', 'offers', 'joined', 'dropped', 'followups', 'calls'];
 
-// events: [{ day, field }]
-function seriesOf(recs, extras, rng) {
-  const rows = new Map(keysBetween(rng.from, rng.to, rng.grain).map((k) => [k, { key: k, label: labelOf(k, rng.grain), ...Object.fromEntries(SERIES_FIELDS.map((f) => [f, 0])) }]));
+// events: [{ day, field }]. fields: the columns (the BDE page has its own; a field not in the list is not counted)
+function seriesOf(recs, extras, rng, fields = SERIES_FIELDS) {
+  const rows = new Map(keysBetween(rng.from, rng.to, rng.grain).map((k) => [k, { key: k, label: labelOf(k, rng.grain), ...Object.fromEntries(fields.map((f) => [f, 0])) }]));
   const bump = (day, field) => {
     if (!day || day < rng.from || day > rng.to) return;
     const row = rows.get(bucketOf(day, rng.grain));
-    if (row) row[field] += 1;
+    if (row && field in row) row[field] += 1;
   };
   recs.forEach((r) => {
     bump(r.steps.sourced && r.steps.sourced.day, 'added');
@@ -156,7 +174,7 @@ function seriesOf(recs, extras, rng) {
   });
   (extras || []).forEach((e) => bump(e.day, e.field));
   const list = [...rows.values()];
-  const total = Object.fromEntries(SERIES_FIELDS.map((f) => [f, list.reduce((n, r) => n + r[f], 0)]));
+  const total = Object.fromEntries(fields.map((f) => [f, list.reduce((n, r) => n + r[f], 0)]));
   return { rows: list.reverse(), total, grain: rng.grain, from: rng.from, to: rng.to }; // newest first
 }
 
@@ -334,6 +352,178 @@ async function tlHistory(viewerUser, tlId, q = {}) {
   };
 }
 
+// ---- BDE page (founder 2026-11-20: "when I search a BDE's name, their history does not come") ------------------------------------------
+// A BDE (or the BDE TL): the clients they own (Owner BDE on the client, or named BDE on a requirement), the requirements they handled (bdeId)
+// with the same funnel, a day / week / month table, the joined and dropped lists, the client follow-ups and meetings they logged and, for a
+// login that already sees invoice amounts, the invoices of their clients. Opens for Super Admin / Admin / Manager, the BDE TL (their BDEs)
+// and the BDE themself; anybody else gets "not found".
+const BDE_SERIES_FIELDS = ['requirements', 'sent', 'interviews', 'joined', 'followups', 'signed'];
+const BDE_TILE_KEYS = ['shared', 'shortlisted', 'interviewScheduled', 'selected', 'offerReleased', 'joined', 'dropped', 'left'];
+const CLIENT_SEL = { id: true, name: true, clientCode: true, bdeOwner: true, ownerDepartment: true, agreementStatus: true, agreementSignedAt: true, agreementActivatedAt: true, createdAt: true, status: true };
+const ownsByName = (owner, name) => {
+  const n = String(name || '').trim().toLowerCase();
+  return !!n && String(owner || '').split(/\s*(?:,|;|\/|&|\band\b)\s*/i).map((x) => x.trim().toLowerCase()).includes(n);
+};
+const signedDayOf = (c) => istDay(c.agreementSignedAt || c.agreementActivatedAt);
+
+async function bdeRoleOf(uid) {
+  const u = await prisma.user.findUnique({ where: { id: uid }, select: { id: true, atsRole: true, atsDepartment: true, atsScopeDepartments: true } });
+  if (!u) return null;
+  if (u.atsRole === 'BDE') return 'BDE';
+  if (u.atsRole !== 'TL') return null;
+  const emp = await prisma.employee.findUnique({ where: { userId: uid }, select: { department: true } }).catch(() => null);
+  return bdeTlRow(u, emp && emp.department) ? 'BDE TL' : null;
+}
+
+// the follow-up lines (utils/clientFollowLog.js, appSetting 'clientlog.<clientId>.<id>') and the meeting / call notes on a client (an AuditLog
+// 'Client note' whose text starts "[Meeting]" / "[Call]") written by this person
+async function clientTouchesOf(uid) {
+  const out = [];
+  const lines = await prisma.appSetting.findMany({ where: { key: { startsWith: 'clientlog.' }, value: { contains: `"byId":"${uid}"` } }, select: { value: true } }).catch(() => []);
+  lines.forEach((row) => {
+    let e = null; try { e = JSON.parse(row.value); } catch { e = null; }
+    if (!e || e.byId !== uid || !e.clientId || !DAY_RE.test(String(e.onDate || ''))) return;
+    out.push({ id: `line-${e.id}`, day: e.onDate, at: e.createdAt || null, kind: 'Follow-up', clientId: e.clientId, requirementId: e.requirementId || null, text: String(e.note || '').slice(0, 300) });
+  });
+  const notes = await prisma.auditLog.findMany({ where: { userId: uid, entity: 'Client', action: 'Client note', OR: [{ reason: { startsWith: '[Meeting]' } }, { reason: { startsWith: '[Call]' } }] }, select: { id: true, entityId: true, reason: true, createdAt: true }, take: 2000 }).catch(() => []);
+  notes.forEach((n) => {
+    const m = /^\[(Meeting|Call)\]\s*/.exec(n.reason || '');
+    out.push({ id: `note-${n.id}`, day: istDay(n.createdAt), at: n.createdAt.toISOString(), kind: m && m[1] === 'Call' ? 'Call' : 'Meeting', clientId: n.entityId, requirementId: null, text: String(n.reason || '').replace(/^\[(Meeting|Call)\]\s*/, '').slice(0, 300) });
+  });
+  return out;
+}
+
+async function invoicesOf(viewerUser, clientIds, period) {
+  if (!clientIds.length || !(await H.mayBilling(viewerUser))) return null;
+  const invs = await prisma.invoice.findMany({
+    where: { AND: [{ clientId: { in: clientIds } }, SC.invoiceWhere(viewerUser), ...(period.from || period.to ? [{ invoiceDate: { ...(period.from ? { gte: period.from } : {}), ...(period.to ? { lte: period.to } : {}) } }] : [])] },
+    select: { id: true, invoiceNumber: true, clientId: true, client: { select: { name: true } }, candidate: { select: { id: true, name: true } }, amount: true, gst: true, status: true, invoiceDate: true, dueDate: true, receivedAmount: true, paidDate: true },
+    orderBy: { invoiceDate: 'desc' },
+  });
+  const today = todayIst();
+  const live = invs.filter((i) => i.status !== 'Cancelled');
+  const paidOf = (i) => i.status === 'Paid' || (i.receivedAmount || 0) >= (i.amount || 0) + (i.gst || 0);
+  const overdueOf = (i) => !paidOf(i) && (i.status === 'Overdue' || (DAY_RE.test(String(i.dueDate || '').slice(0, 10)) && String(i.dueDate).slice(0, 10) < today));
+  const rows = live.map((i) => ({
+    id: i.id, invoiceNumber: i.invoiceNumber || null, clientId: i.clientId, client: i.client ? i.client.name : '', candidateId: i.candidate ? i.candidate.id : null, candidate: i.candidate ? i.candidate.name : null,
+    invoiceDay: i.invoiceDate || null, dueDay: i.dueDate || null, amount: Math.round((i.amount || 0) + (i.gst || 0)), received: Math.round(i.receivedAmount || 0), paidDay: i.paidDate || null,
+    status: paidOf(i) ? 'Paid' : overdueOf(i) ? 'Overdue' : i.status,
+  }));
+  const sum = (xs, f) => Math.round(xs.reduce((n, x) => n + (x[f] || 0), 0));
+  return {
+    raised: rows.length, paid: rows.filter((r) => r.status === 'Paid').length, overdue: rows.filter((r) => r.status === 'Overdue').length,
+    amount: sum(rows, 'amount'), received: sum(rows, 'received'), overdueAmount: sum(rows.filter((r) => r.status === 'Overdue'), 'amount') - sum(rows.filter((r) => r.status === 'Overdue'), 'received'),
+    rows,
+  };
+}
+
+async function bdeHistory(viewerUser, uid, q = {}) {
+  const v = await viewerOf(viewerUser);
+  if (!mayBde(v, uid)) return null;
+  const roleWord = await bdeRoleOf(uid);
+  if (!roleWord) return null;
+  const head = await headerOf(uid);
+  if (!head) return null;
+  const person = { ...head, role: roleWord };
+  if (roleWord === 'BDE TL') {
+    const t = await teamOf(uid);
+    const us = t && t.ids.length ? await prisma.user.findMany({ where: { id: { in: t.ids }, atsRole: 'BDE' }, select: { id: true, name: true }, orderBy: { name: 'asc' } }) : [];
+    person.bdes = us;
+  }
+  await H.ensureIndexes();
+  // requirements they handled (named BDE) and the clients they own (Owner BDE by name, or named BDE on a requirement) - inside the viewer's scope
+  const mineReqs = await prisma.requirement.findMany({ where: { AND: [{ bdeId: uid }, SC.requirementWhere(viewerUser)] }, select: H.REQ_SELECT, orderBy: { createdAt: 'desc' } });
+  const ownerHits = (await prisma.client.findMany({ where: { AND: [{ bdeOwner: { contains: person.name } }, SC.clientWhere(viewerUser)] }, select: CLIENT_SEL })).filter((c) => ownsByName(c.bdeOwner, person.name));
+  const ownerIds = new Set(ownerHits.map((c) => c.id));
+  const viaReq = [...new Set(mineReqs.map((r) => r.clientId).filter((id) => id && !ownerIds.has(id)))];
+  const reqClients = viaReq.length ? await prisma.client.findMany({ where: { AND: [{ id: { in: viaReq } }, SC.clientWhere(viewerUser)] }, select: CLIENT_SEL }) : [];
+  const clientsAll = [...ownerHits, ...reqClients];
+  // the owned clients' other requirements (another BDE named on them) count on the client row, not in this person's funnel
+  const mineIds = new Set(mineReqs.map((r) => r.id));
+  const ownedReqs = ownerIds.size ? (await prisma.requirement.findMany({ where: { AND: [{ clientId: { in: [...ownerIds] } }, SC.requirementWhere(viewerUser)] }, select: H.REQ_SELECT })).filter((r) => !mineIds.has(r.id)) : [];
+  const allReqs = [...mineReqs, ...ownedReqs];
+  const { recs: allRecs, reqById } = allReqs.length ? await H.loadRecords(viewerUser, allReqs, { fresh: false }) : { recs: [], reqById: new Map() };
+  allReqs.forEach((r) => { if (!reqById.has(r.id)) reqById.set(r.id, r); });
+  const mineAll = allRecs.filter((r) => mineIds.has(r.requirementId));
+
+  // filters: client, requirement, status (several each) and the dates. The options are read before filtering.
+  const reqName = (r) => (r.reqCode ? `${r.reqCode} · ${r.title}` : r.title);
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+  const options = {
+    clients: clientsAll.map((c) => ({ id: c.id, name: c.name })).sort(byName),
+    requirements: mineReqs.map((r) => ({ id: r.id, name: reqName(r) })).sort(byName),
+    recruiters: [],
+  };
+  const clientOk = (id) => !q.client || MPH.multiHas(q.client, id || '');
+  const reqOk = (r) => clientOk(r.clientId) && (!q.requirement || MPH.multiHas(q.requirement, r.id));
+  const { recs, period } = H.applyFilters(narrow(mineAll, reqById, q), { from: q.from, to: q.to, period: q.period });
+  const dated = !!(period.from || period.to);
+  const f = H.funnelOf(recs, period);
+  const reqsShown = mineReqs.filter(reqOk);
+  const raised = reqsShown.filter((r) => !dated || H.inRange(istDay(r.createdAt), period));
+  const raisedDays = raised.map((r) => istDay(r.createdAt)).sort();
+
+  // replacements on their requirements (joindrop/replacement.js, the same rule as the requirement and client pages)
+  const RPm = require('../joindrop/replacement'); // eslint-disable-line global-require
+  const rp = recs.length ? await RPm.sectionFor(viewerUser, recs.map((r) => r.applicationId)).catch(() => null) : null;
+  const tilesByKey = new Map(f.tiles.map((t) => [t.key, t]));
+  const tiles = [{ key: 'requirements', stage: null, label: 'Requirements raised', plainLabel: 'Requirements raised', count: raised.length, pct: null, prevKey: null, first: raisedDays[0] || null, last: raisedDays[raisedDays.length - 1] || null, estimated: 0 }];
+  BDE_TILE_KEYS.forEach((k) => {
+    const t = tilesByKey.get(k);
+    if (!t) return;
+    const prev = tiles[tiles.length - 1];
+    tiles.push({ ...t, pct: k === 'left' ? t.pct : k === 'dropped' || k === 'shared' || !prev || !prev.count ? null : Math.round((t.count / prev.count) * 100), prevKey: k === 'left' ? t.prevKey : prev ? prev.key : null });
+  });
+  tiles.push({ key: 'replacements', stage: null, sub: true, label: 'Replacements given', plainLabel: 'Replacements given', count: rp ? rp.replaced : 0, pct: null, prevKey: null, first: null, last: null, estimated: 0 });
+  tiles.forEach((t, i) => { t.no = i + 1; });
+
+  // the client rows: agreement (not for the logins that never see agreements), open requirements, joinings (still working)
+  let blind = false;
+  try { blind = require('./agreementPrivacy').blindTo(viewerUser); } catch { blind = false; } // eslint-disable-line global-require
+  const allNarrow = H.applyFilters(narrow(allRecs, reqById, { status: q.status }), { from: q.from, to: q.to, period: q.period }).recs;
+  const clients = clientsAll.filter((c) => clientOk(c.id)).map((c) => {
+    const rqs = allReqs.filter((r) => r.clientId === c.id);
+    const crecs = allNarrow.filter((r) => (reqById.get(r.requirementId) || {}).clientId === c.id);
+    const t = totalsOf(crecs, period);
+    return {
+      id: c.id, name: c.name, code: c.clientCode || null, owner: ownerIds.has(c.id) ? 'Owner BDE' : 'BDE on a requirement', status: c.status || null,
+      agreementStatus: blind ? undefined : c.agreementStatus, signedDay: blind ? undefined : signedDayOf(c),
+      requirements: rqs.length, open: rqs.filter((r) => !['CLOSED', 'DRAFT'].includes(r.status)).length, shared: t.shared, joined: t.joined, dropped: t.dropped,
+    };
+  }).sort((a, b) => b.joined - a.joined || byName(a, b));
+  const shownClientIds = clients.map((c) => c.id);
+
+  // the requirements they handled, each with its own numbers
+  const requirements = requirementRows(recs, reqsShown, period).filter((r) => !dated || r.numbers.sourced > 0 || H.inRange(r.createdDay, period));
+
+  // follow-ups and meetings they logged, on clients this login may see
+  const touchesAll = await clientTouchesOf(uid);
+  const touchClientIds = [...new Set(touchesAll.map((t) => t.clientId))];
+  const seeClients = touchClientIds.length ? await prisma.client.findMany({ where: { AND: [{ id: { in: touchClientIds } }, SC.clientWhere(viewerUser)] }, select: { id: true, name: true } }) : [];
+  const seeName = new Map(seeClients.map((c) => [c.id, c.name]));
+  const touches = touchesAll.filter((t) => seeName.has(t.clientId) && clientOk(t.clientId)).map((t) => ({ ...t, client: seeName.get(t.clientId) }));
+  const touchesShown = touches.filter((t) => !dated || H.inRange(t.day, period)).sort((a, b) => String(b.day).localeCompare(String(a.day)) || String(b.at || '').localeCompare(String(a.at || '')));
+
+  // day / week / month
+  const rng = rangeOf(q);
+  const extras = [
+    ...reqsShown.map((r) => ({ day: istDay(r.createdAt), field: 'requirements' })),
+    ...touches.map((t) => ({ day: t.day, field: 'followups' })),
+    ...clientsAll.filter((c) => clientOk(c.id) && ownerIds.has(c.id) && signedDayOf(c)).map((c) => ({ day: signedDayOf(c), field: 'signed' })),
+  ];
+  const series = seriesOf(narrow(mineAll, reqById, q), extras, rng, BDE_SERIES_FIELDS);
+
+  const listOf = (pred) => recs.filter(pred).map((r) => personRow(r, reqById));
+  const billing = await invoicesOf(viewerUser, shownClientIds, period);
+  return {
+    person, definitions: H.DEFINITIONS, period, range: rng, funnel: tiles, total: totalsOf(recs, period), dropSummary: f.dropSummary, joinedDetail: f.joinedDetail,
+    clients, requirements, series, joinedList: listOf((r) => r.outcome === 'joined'), droppedList: listOf((r) => r.outcome === 'dropped'),
+    replacements: rp ? { dropped: rp.dropped, replaced: rp.replaced, pending: rp.pending, table: rp.table || [] } : { dropped: 0, replaced: 0, pending: 0, table: [] },
+    followups: touchesShown.slice(0, 500), followupTotal: touchesShown.length, billing, options,
+    notes: { estimatedDates: f.tiles.reduce((n, t) => n + t.estimated, 0) }, viewer: { kind: v.kind },
+  };
+}
+
 // ---- candidate page ---------------------------------------------------------------------------------------------------------------------
 const codeOf = (id) => String(id || '').slice(-8).toUpperCase();
 
@@ -433,7 +623,7 @@ async function candidateHistory(viewerUser, candidateId) {
 
 async function accessInfo(user) {
   const v = await viewerOf(user);
-  return { kind: v.kind, peopleAll: v.all, peopleIds: v.all ? [] : [...v.ids], tlIds: v.all ? [] : [...v.tlIds], contact: v.contact, billing: v.billing, limited: v.bdeTeam || v.kind === 'bde' };
+  return { kind: v.kind, peopleAll: v.all, peopleIds: v.all ? [] : [...v.ids], tlIds: v.all ? [] : [...v.tlIds], bdeIds: v.all ? [] : [...v.bdeIds], contact: v.contact, billing: v.billing, limited: v.bdeTeam || v.kind === 'bde' };
 }
 
 // ---- Excel -----------------------------------------------------------------------------------------------------------------------------------
@@ -469,6 +659,21 @@ function tlSheets(d) {
     { name: 'Dropped', headers: CAND_HEAD, rows: candRows(d.droppedList) },
   ];
 }
+const BDE_SERIES_HEAD = ['Period', 'Requirements raised', 'Profiles shared', 'Interviews', 'Joinings', 'Client follow-ups / meetings', 'New clients signed'];
+function bdeSheets(d) {
+  const sheets = [
+    { name: 'Summary', headers: ['Item', 'Value'], rows: [['BDE', d.person.name], ['Role', d.person.role], ['Employee code', d.person.employeeCode || ''], ['Department', d.person.department || ''], ['BDE TL', d.person.teamLead || ''], ['Status', d.person.statusWord], ['Clients', d.clients.length], ['Requirements handled', d.requirements.length], ['Dropped means', d.definitions.dropped]] },
+    H.funnelSheet(d.funnel),
+    { name: 'Periods', headers: BDE_SERIES_HEAD, rows: [...d.series.rows.map((r) => [r.label, ...BDE_SERIES_FIELDS.map((f) => r[f])]), ['Total', ...BDE_SERIES_FIELDS.map((f) => d.series.total[f])]] },
+    { name: 'Clients', headers: ['Client', 'Code', 'Owner', 'Agreement', 'Signed on', 'Requirements', 'Open', 'Sent to client', 'Joined (still working)', 'Dropped'], rows: d.clients.map((c) => [c.name, c.code || '', c.owner, c.agreementStatus || '', c.signedDay || '', c.requirements, c.open, c.shared, c.joined, c.dropped]) },
+    { name: 'Requirements', headers: ['Requirement', 'Client', 'Status', 'Openings', 'Raised on', 'Sent to client', 'Shortlisted', 'Interviews', 'Selected', 'Offers', 'Joined', 'Dropped'], rows: d.requirements.map((r) => [r.reqCode ? `${r.reqCode} · ${r.title}` : r.title, r.client, r.statusLabel, r.openings, r.createdDay || '', r.numbers.shared, r.numbers.shortlisted, r.numbers.interviewScheduled, r.numbers.selected, r.numbers.offerReleased, r.numbers.joined, r.numbers.dropped]) },
+    { name: 'Joined', headers: CAND_HEAD, rows: candRows(d.joinedList) },
+    { name: 'Dropped', headers: CAND_HEAD, rows: candRows(d.droppedList) },
+    { name: 'Follow-ups', headers: ['Date', 'Kind', 'Client', 'What'], rows: d.followups.map((t) => [t.day, t.kind, t.client, t.text]) },
+  ];
+  if (d.billing) sheets.push({ name: 'Invoices', headers: ['Invoice', 'Client', 'Candidate', 'Invoice date', 'Due date', 'Amount', 'Received', 'Status', 'Paid on'], rows: d.billing.rows.map((i) => [i.invoiceNumber || '', i.client, i.candidate || '', i.invoiceDay || '', i.dueDay || '', i.amount, i.received, i.status, i.paidDay || '']) });
+  return sheets;
+}
 function candidateSheets(d) {
   return [
     { name: 'Summary', headers: ['Item', 'Value'], rows: [['Candidate', d.candidate.name], ['Candidate ID', d.candidate.code], ['Source', d.candidate.source || ''], ['Came on', d.candidate.cameOn || ''], ...(d.candidate.phone !== undefined ? [['Phone', d.candidate.phone || ''], ['Email', d.candidate.email || '']] : []),
@@ -484,6 +689,6 @@ function candidateSheets(d) {
 }
 
 module.exports = {
-  viewerOf, teamOf, headerOf, mayRecruiter, mayTl, rangeOf, seriesOf, bucketOf, keysBetween, recruiterHistory, tlHistory, candidateHistory, accessInfo,
-  recruiterSheets, tlSheets, candidateSheets, GRAINS,
+  viewerOf, teamOf, headerOf, mayRecruiter, mayTl, mayBde, bdeTlRow, rangeOf, seriesOf, bucketOf, keysBetween, recruiterHistory, tlHistory, bdeHistory, candidateHistory, accessInfo,
+  recruiterSheets, tlSheets, bdeSheets, candidateSheets, GRAINS,
 };

@@ -47,6 +47,10 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
   const req = await prisma.requirement.create({ data: { title: `Hzcloud Engineer ${RUN}`, clientId: client.id, department: 'IT', status: 'RECRUITER_ASSIGNED', tlId: tl.id, tl: tl.name, recruiterId: rec.id, reqCode: `HZ-${RUN}`.toUpperCase() } });
   const cand = await prisma.candidate.create({ data: { name: `Hzperson Quillfeather ${RUN}`, phone: `8${String(Date.now()).slice(-9)}`, email: `hz.${RUN}@hz-test.in`, skills: 'Kubernetes' } });
   await prisma.application.create({ data: { candidateId: cand.id, requirementId: req.id, ownerRecruiterId: rec.id, stage: 'SHARED_WITH_CLIENT' } });
+  // a BDE with a client and a requirement: their name opens the BDE history (2026-11-20)
+  const bde = await mk('bdeperson', { role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: 'BDE', atsScopeDepartments: 'BDE,IT' }, { department: 'BDE' });
+  await prisma.client.update({ where: { id: client.id }, data: { bdeOwner: bde.name } });
+  await prisma.requirement.update({ where: { id: req.id }, data: { bdeId: bde.id } });
 
   const be = spawn(process.execPath, ['src/index.js'], { cwd: BACK, env, stdio: process.env.TEST_DEBUG ? 'inherit' : 'ignore' });
   procs.push(be);
@@ -165,6 +169,29 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
       const mbox = mdrawer ? await mp.locator('.hxd-panel').boundingBox() : null;
       check('phone (375 px): the drawer is full screen with a Back arrow', mbox && mbox.width >= 374 && (await mp.locator('.hxd-back-arrow').isVisible()), mbox);
       await pctx.close();
+    }
+
+    // ---- a BDE's name opens the BDE history in the drawer (founder 2026-11-20: "when I search a BDE's name, their history does not come")
+    {
+      const token = jwt.sign({ ...tokenPayload(await resolveIdentity(sa.id)), tms: Date.now() }, env.JWT_SECRET, { expiresIn: '1h' });
+      const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+      await ctx.addInitScript((t) => { try { localStorage.setItem('tl_token', t); localStorage.setItem('tl_recent_searches', '[]'); } catch (e) { /* none */ } }, token);
+      const page = await ctx.newPage();
+      await page.goto(`http://localhost:${WEB}/`, { waitUntil: 'commit', timeout: 120000 });
+      const bar = page.locator('[data-testid="dash-search-bar"] input');
+      if (await bar.waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false)) {
+        await bar.click();
+        await bar.type(`hz bdeperson ${RUN}`, { delay: 20 });
+        const row = page.locator('.sr-panel .sr-row', { hasText: bde.name }).first();
+        const shown = await row.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
+        if (shown) await row.click();
+        const body = page.locator('[data-testid="history-drawer-body"] [data-testid="bde-history"]');
+        const up = shown && await body.waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false);
+        const text = up ? await body.innerText() : '';
+        check('searching a BDE name and clicking it opens the BDE history in the drawer (their client and requirement)', up && decodeURIComponent(page.url()).includes(`open=bde:${bde.id}`) && text.includes(bde.name) && /Hzorbit Systems/.test(text) && /Hzcloud Engineer/.test(text), { shown, url: page.url(), text: text.slice(0, 300) });
+        if (up) await page.screenshot({ path: path.join(SHOTS, 'bde-history-drawer.png') });
+      } else check('searching a BDE name and clicking it opens the BDE history in the drawer', false, 'no bar');
+      await ctx.close();
     }
 
     // a phone-width page has no sideways scroll with the bar on it

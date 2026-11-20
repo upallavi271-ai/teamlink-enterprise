@@ -36,6 +36,7 @@ import AtsWorkflow from './pages/ats/AtsWorkflow.jsx';
 import Search from './pages/ats/Search.jsx';
 import RecruiterHistory from './components/ats/RecruiterHistory.jsx'; // ATS History pages: recruiter, team lead, candidate
 import TlHistory from './components/ats/TlHistory.jsx';
+import BdeHistory from './components/ats/BdeHistory.jsx';
 import CandidateHistoryPage from './components/ats/CandidateHistory.jsx';
 import AccountsDashboard from './pages/AccountsDashboard.jsx';
 
@@ -353,6 +354,7 @@ export default function App() {
         <Route path="ats/search" element={<Search />} />
         <Route path="ats/history/recruiter/:id" element={<RecruiterHistory />} />
         <Route path="ats/history/tl/:id" element={<TlHistory />} />
+        <Route path="ats/history/bde/:id" element={<BdeHistory />} />
         <Route path="ats/history/candidate/:id" element={<CandidateHistoryPage />} />
         <Route path="ats/dashboard" element={<AtsDashboard />} />
         {/* An ATS-side address for the reports, kept working: it lands on

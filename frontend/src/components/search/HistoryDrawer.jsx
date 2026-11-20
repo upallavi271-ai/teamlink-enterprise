@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import RecruiterHistory from '../ats/RecruiterHistory.jsx';
 import TlHistory from '../ats/TlHistory.jsx';
+import BdeHistory from '../ats/BdeHistory.jsx';
 import ClientHistory from '../ats/ClientHistory.jsx';
 import HistoryTab from '../ats/HistoryTab.jsx';
 import CandidateHistory from '../ats/CandidateHistory.jsx';
@@ -20,9 +21,9 @@ import './search.css';
 // One host, mounted once in the page frame (Shell.jsx), serves the Search page, the dashboard bar, the top-bar typeahead and every name link
 // (<HLink>). The History components are the ones the full pages use, so there is one set of screens.
 // ---------------------------------------------------------------------------
-const TITLE = { recruiter: 'Recruiter history', tl: 'Team history', candidate: 'Candidate history', client: 'Client history', requirement: 'Requirement history' };
+const TITLE = { recruiter: 'Recruiter history', tl: 'Team history', bde: 'BDE history', candidate: 'Candidate history', client: 'Client history', requirement: 'Requirement history' };
 const FULL = {
-  recruiter: (id) => `/ats/history/recruiter/${id}`, tl: (id) => `/ats/history/tl/${id}`, candidate: (id) => `/ats/history/candidate/${id}`,
+  recruiter: (id) => `/ats/history/recruiter/${id}`, tl: (id) => `/ats/history/tl/${id}`, bde: (id) => `/ats/history/bde/${id}`, candidate: (id) => `/ats/history/candidate/${id}`,
   client: (id) => `/clients/${id}?tab=history`, requirement: (id) => `/requirements/${id}?tab=history`,
 };
 
@@ -85,6 +86,7 @@ export default function HistoryDrawerHost() {
         <div className="hxd-body" data-testid="history-drawer-body">
           {target.kind === 'recruiter' && <RecruiterHistory key={target.id} personId={target.id} embedded />}
           {target.kind === 'tl' && <TlHistory key={target.id} personId={target.id} embedded />}
+          {target.kind === 'bde' && <BdeHistory key={target.id} personId={target.id} embedded />}
           {target.kind === 'candidate' && <CandidateHistory key={target.id} candidateId={target.id} embedded />}
           {target.kind === 'client' && <ClientHistory key={target.id} clientId={target.id} />}
           {target.kind === 'requirement' && <HistoryTab key={target.id} requirementId={target.id} />}

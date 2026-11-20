@@ -202,6 +202,19 @@ router.get('/tl/:id/export', wrap(async (req, res) => {
   if (!d) return res.status(404).json(NOT_FOUND('team lead'));
   return sendPeopleFile(req, res, `history-team-${d.person.name}`, `Team history - ${d.person.name}`, d, P.tlSheets);
 }));
+router.get('/bde/:id', wrap(async (req, res) => {
+  const out = await P.bdeHistory(req.user, req.params.id, req.query || {});
+  if (!out) return res.status(404).json(NOT_FOUND('BDE'));
+  out.canExport = !(await exportRefusal(req.user));
+  return res.json(out);
+}));
+router.get('/bde/:id/export', wrap(async (req, res) => {
+  const refusal = await exportRefusal(req.user);
+  if (refusal) return res.status(403).json({ error: refusal });
+  const d = await P.bdeHistory(req.user, req.params.id, req.query || {});
+  if (!d) return res.status(404).json(NOT_FOUND('BDE'));
+  return sendPeopleFile(req, res, `history-bde-${d.person.name}`, `BDE history - ${d.person.name}`, d, P.bdeSheets);
+}));
 router.get('/candidate/:id', wrap(async (req, res) => {
   const out = await P.candidateHistory(req.user, req.params.id);
   if (!out) return res.status(404).json(NOT_FOUND('candidate'));
