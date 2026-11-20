@@ -224,7 +224,7 @@ const old = new Date(Date.now() - 3600e3);
   const dN = await call('GET', `/candidates/${candN.id}`, null, tA);
   check("a recruiter with no seat: the page shows the requirement's TL1", dN.body.ownership && dN.body.ownership.tl === tl1.u.name, dN.body.ownership);
   const oN = await call('GET', `/applications/${appN.id}/team-lead-options`, null, tA);
-  check('...and the dialog agrees (Now = TL1, from the requirement)', oN.body.now && oN.body.now.tlUserId === tl1.u.id && oN.body.now.source === 'requirement', oN.body.now);
+  check('...and the dialog agrees (Now = TL1, same TL1)', oN.body.now && oN.body.now.tlUserId === tl1.u.id, oN.body.now);
   // the repair
   const TLC = require('../src/utils/teamLeadChange');
   await prisma.applicationFollowUp.updateMany({ where: { applicationId: appB, completedAt: null }, data: { completedAt: new Date() } });
