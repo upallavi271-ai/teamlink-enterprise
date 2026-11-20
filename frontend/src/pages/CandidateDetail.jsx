@@ -466,12 +466,12 @@ export default function CandidateDetail() {
       {internal && primary && !['REJECTED', 'HOLD'].includes(c.currentStage) && (
         <NextStepBlock
           stageLabel={primary.stageLabel || c.currentStageLabel}
-          owner={primary.nextActionOwnerName || 'No one named'}
+          owner={primary.left ? '—' : (primary.nextActionOwnerName || 'No one named')}
           ownerRole={primary.nextActionOwnerRole}
-          nextAction={primary.followUp?.nextAction || primary.nextAction}
-          due={primary.followUp?.dueDate}
-          dueTime={primary.followUp?.dueTime}
-          status={primary.followUp?.status}
+          nextAction={primary.left ? primary.nextAction : (primary.followUp?.nextAction || primary.nextAction)}
+          due={primary.left ? null : primary.followUp?.dueDate}
+          dueTime={primary.left ? null : primary.followUp?.dueTime}
+          status={primary.left ? null : primary.followUp?.status}
           candidateId={c.id}
           candidateName={c.name}
           phone={c.phone}

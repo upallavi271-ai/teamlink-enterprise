@@ -135,7 +135,7 @@ export function C360Header({
 }) {
   if (!c) return null;
   const picked = app && c.latestApplicationId && app.id !== c.latestApplicationId;
-  const live = app && !CLOSED.includes(app.stage);
+  const live = app && !CLOSED.includes(app.stage) && !app.left; // a person who left after joining is not 'live': the strip shows the Dropped line instead
   const fu = app && app.followUp && !app.followUp.completedAt ? app.followUp : null;
   // One named owner with an active login (utils/nextAction.js), or none.
   const owner = (fu && fu.ownerName) || app?.nextActionOwnerName || null;

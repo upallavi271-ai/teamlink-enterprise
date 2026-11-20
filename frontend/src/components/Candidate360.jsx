@@ -1204,7 +1204,7 @@ export function CurrentApplication({
         <div className="cdw-kv"><span>Client</span><b>{clientName || '—'}</b></div>
         <div className="cdw-kv"><span>Applied</span><b>{dt(app.createdAt)}</b></div>
         <div className="cdw-kv"><span>At this step since</span><b>{dt(app.stageSince)}</b></div>
-        <div className="cdw-kv"><span>Whose move</span><b>{(fu && !fu.completedAt && fu.ownerName) || app.owner || '—'}</b></div>
+        <div className="cdw-kv"><span>Whose move</span><b>{app.left ? '—' : ((fu && !fu.completedAt && fu.ownerName) || app.owner || '—')}</b></div>
         {(canRoll || app.rollStatus) && (
           <div className="cdw-kv"><span>Status</span>
             {canRoll ? (
@@ -1214,7 +1214,7 @@ export function CurrentApplication({
                   {ROLL_OPTS.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
                 {rollErr && <span className="small-muted" style={{ color: '#b42318' }}>{rollErr}</span>}
-                {(app.rollStatus === 'Dropped' || rollVal === 'Dropped') && ['joined', 'offer'].includes(dropKind(app)) && <button type="button" className="btn btn-sm" style={{ color: '#b42318', borderColor: '#b42318' }} onClick={() => setDropOpen(true)}>Record the drop</button>}
+                {app.left && !app.dropRecorded && ['joined', 'offer'].includes(dropKind(app)) && <button type="button" className="btn btn-sm" style={{ color: '#b42318', borderColor: '#b42318' }} onClick={() => setDropOpen(true)}>Record the drop</button>}
               </span>
             ) : <b>{app.rollStatus}</b>}
           </div>

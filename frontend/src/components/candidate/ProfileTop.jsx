@@ -124,6 +124,11 @@ export default function ProfileTop({
           {stage ? <StatusChip status={app.stageGroupLabel || stage}>{stage}</StatusChip> : <span className="small-muted">Not in any requirement yet</span>}
           {app && app.requirement && <span className="small-muted">{` · ${app.requirement.title || ''}`}</span>}
           {app && JOINED_STAGES.includes(app.stage) && <JoinedOn c={c} app={app} />}
+          {app && app.left && (
+            <span className="small-muted" style={{ color: '#b42318' }}>
+              {` · Dropped${app.leftOn ? ` on ${new Date(`${String(app.leftOn).slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}` : ' (day not recorded yet)'}${app.leftReason ? ` · ${app.leftReason}` : ''}`}
+            </span>
+          )}
         </div>
         {app && !JOINED_STAGES.includes(app.stage) && <JoinedOn c={c} app={app} />}
         {fitB && (

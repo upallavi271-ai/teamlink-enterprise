@@ -2943,6 +2943,30 @@ router.get('/:id', async (req, res) => {
     ...(kind === 'internal' ? { salaryFit: SALARY.fitFor(candidate, a.requirement, detailFitViewer) } : {}),
   }));
 
+  // A person who JOINED and then LEFT (a drop in Joining & Drop): this page says Dropped, not Joined, and does not send people to "Raise Invoice /
+  // Track Guarantee" (founder 2026-11-20: "dropped ani pettina tharvatha kuda status joined ani vasthundhi"). The stage itself stays Joined on
+  // purpose (billing, guarantee and history read it): only what the page SAYS changes, the way the lists already do (atsVocab.leftAfterJoining).
+  {
+    const JR = require('../utils/joinedRule'); // eslint-disable-line global-require
+    await JR.refresh().catch(() => null);
+    applications.forEach((row) => {
+      if (!leftAfterJoining(row)) return;
+      const info = JR.dropInfo(row.id);
+      Object.assign(row, {
+        left: true,
+        dropRecorded: !!info,
+        leftOn: info ? info.droppedOn || null : null,
+        leftReason: info ? info.reason || null : null,
+        leftWithin: info ? !!info.within : null,
+        stageLabel: 'Dropped', stageGroupLabel: 'Dropped', stageDetailLabel: 'Dropped',
+        owner: null, waitingOn: null, waitingOnParty: false, followUpNeed: null,
+        nextActionOwnerName: null, nextActionOwnerRole: null,
+        nextAction: !info ? 'Record the drop: the day and the reason' : (info.within ? 'Replacement may be due (see Joining & Drop)' : 'Closed: left after the replacement period'),
+        dueDate: null, dueStatus: null, overdue: false, lifeStatus: 'Closed',
+      });
+    });
+  }
+
   // "Interview requested by <recruiter>" on the application (internal logins; no contact data is involved).
   if (kind === 'internal') await require('../utils/interviewRequest').attachTo(applications); // eslint-disable-line global-require
   // the sub-status chip next to the stage (Company Setup -> Pipeline & checks, utils/atsFlowConfig.js) - TeamLink logins only
