@@ -408,3 +408,14 @@ Totals: 321 files with a table; 193 without a search box; 109 without any filter
 | pages/reports/PartnersReport.jsx | **no** | yes | yes | - | no |
 | pages/reports/PlacementMargin.jsx | yes | yes | yes | - | no |
 | pages/reports/TeamReports.jsx | **no** | yes | yes | yes | no |
+
+## Recruiter and TL screens (2026-11-20)
+| Screen | Before | Now |
+|---|---|---|
+| Team > People (recruiters, TLs, BDEs) | search (name, code, seat label), role, department, section, team lead, client, Active / Former / All | search also reads seat code, section and department; all pickers kept in the address bar; new: results for a date range (this month, last month, quarter, year, custom) with Sent, Interviews, Joined, Target and Reached columns, performance word, target-achieved band, senior team lead, seat, location, HR status, joined-the-company date range, has open work, has joinings; chips and Clear all; a search looks at former people too (all history) |
+| Team > Overview | dashboard lists (top performers, workload by team lead) | unchanged; View all opens the People list with the filters |
+| Recruiter joinings board (HRMS) | month picker, name or seat search, filters, export with filters | unchanged (a month board by design) |
+| Recruiter handover | search and filters | unchanged |
+| Clients | search, status, work status, industry, location, BDE, agreement | + priority, requirement count, has joinings, client-added date range |
+| Candidates, Requirements, Interviews, Offers, Joinings | search + date | have both: Candidates (added / updated / contacted / shared ranges), Requirements (created from / to), Interviews (interview date), Offers (offer date), Joinings (joining date) |
+The period numbers follow the joinings rule (utils/recruiterJoinings.js: counted joinings only, so a person who dropped is not counted) and the credit rule (utils/workers.js creditAt). A team lead's figures are the sum of their recruiters'. A recruiter sees only their own row; a TL their team; Manager and Admin everyone.
