@@ -374,10 +374,7 @@ export default function Shell() {
             <span className="hb-label">Menu</span>
           </button>
           <div className="topbar-title">{sectionLabel(section, user)}</div>
-          {/* Review #3 §13 — "Search TeamLink": typed, grouped, scoped results
-              (./GlobalSearch.jsx). The search API is part of ATS, so a login
-              with no ATS work (plain Employee, Accounts) gets no box. */}
-          {hasAtsWork(user) && <GlobalSearch />}
+          {/* The top bar no longer carries a search box (founder 2026-11-20): the ATS dashboard has its own search bar. */}
           <div className="topbar-right">
             {/* No workspace switcher: the sidebar already reaches every
                 product, so the chip simply shows this login's role in the
