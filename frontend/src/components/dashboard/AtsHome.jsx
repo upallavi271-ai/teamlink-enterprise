@@ -11,6 +11,7 @@ import useAtsAlerts from '../../utils/useAtsAlerts';
 import StatusChip from '../ui/StatusChip.jsx';
 import { fmt, rupees } from './RoleBoard.jsx';
 import HomeDrill from './HomeDrill.jsx';
+import FollowUpReport from '../followups/FollowUpReport.jsx'; // the team's daily report, on the dashboard itself (founder 2026-11-20)
 import FirstTour from './FirstTour.jsx';
 import { taskLine } from './TaskPopup.jsx';
 import { FunnelChart } from '../charts';
@@ -649,6 +650,7 @@ export default function AtsHome() {
         {error && <div className="notice red">{error}</div>}
         {!data && !error && <div className="small-muted">Loading your dashboard…</div>}
         {data && !asUser && <RemindersGoingOutCard key={reload} />}
+        {data && !asUser && <FollowUpReport home />}
         {data && (
           <AtsV4
             data={carry ? { ...data, carryOver: carry } : data}

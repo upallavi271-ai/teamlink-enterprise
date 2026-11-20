@@ -61,11 +61,11 @@ function Trend({ values }) {
   );
 }
 
-export default function FollowUpReport() {
+export default function FollowUpReport({ home = false }) {
   const [opts, setOpts] = useState(null);
-  const [period, setPeriod] = useState('week');
+  const [period, setPeriod] = useState(home ? 'day' : 'week');
   const [range, setRange] = useState({ from: '', to: '' });
-  const [preset, setPreset] = useState('thisweek');
+  const [preset, setPreset] = useState(home ? 'today' : 'thisweek');
   const [pick, setPick] = useState({ leadId: '', department: '', team: '' });
   const [imported, setImported] = useState('include');
   const [columns, setColumns] = useState(''); // '' = the usual for the period; day | week | month
@@ -84,7 +84,7 @@ export default function FollowUpReport() {
   useEffect(() => {
     api.get('/followup-report/options').then((r) => {
       setOpts(r.data);
-      const p = presetsFor(r.data.today).find((x) => x[0] === 'thisweek');
+      const p = presetsFor(r.data.today).find((x) => x[0] === (home ? 'today' : 'thisweek'));
       setRange({ from: p[2], to: p[3] });
     }).catch((e) => setError(e.response?.data?.error || 'The follow-up report could not be opened.'));
   }, []);
@@ -143,8 +143,8 @@ export default function FollowUpReport() {
   }, [data, mSort]);
   const mMax = useMemo(() => Math.max(1, ...(data ? data.rows.flatMap((r) => r.trend) : [1])), [data]);
 
-  if (error && !data) return <div className="card section"><div className="error-text">{error}</div></div>;
-  if (!opts || !data) return <div className="card section small-muted">Loading the follow-up report…</div>;
+  if (error && !data) return home ? null : <div className="card section"><div className="error-text">{error}</div></div>;
+  if (!opts || !data) return home ? null : <div className="card section small-muted">Loading the follow-up report…</div>;
 
   const exportParams = { ...listParams, limit: undefined, personId: view === 'list' ? (lf.personId || undefined) : (personId || undefined) };
   const t = data.total;
@@ -155,7 +155,7 @@ export default function FollowUpReport() {
     <div className="card section fur">
       <div className="fur-head">
         <div>
-          <h3 style={{ margin: 0 }}>{mine ? 'My follow-up report' : 'Follow-up report'}</h3>
+          <h3 style={{ margin: 0 }}>{mine ? (home ? 'My daily report' : 'My follow-up report') : (home ? 'Daily report of your team' : 'Follow-up report')}</h3>
           <div className="small-muted">
             {mine ? 'Your own follow-ups, calls and call-backs, day by day. Nobody else\'s numbers are shown here.'
               : `${data.label}: one row for each person, with the totals. Click a row to see that person day by day and every follow-up they did.`}
