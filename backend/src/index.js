@@ -166,6 +166,8 @@ app.use('/api/outreach/gs/marketing/brand/logo', express.json({ limit: '600kb' }
 app.use('/api/outreach/gs/marketing/projects', express.json({ limit: '700kb' })); // a client's logo travels with the project (a picture of up to 300 KB)
 app.use('/api/public/mk-project', express.json({ limit: '700kb' })); // the client's request form can carry their logo
 app.use(express.json());
+// WHO LEFT AFTER JOINING (utils/joinedRule.js): a fresh set is loaded before ANY route runs, so no Joined list or number is ever built from an empty set
+app.use('/api', require('./utils/joinedRule').middleware());
 // WHO LOOKED AT WHAT (utils/readLog.js): a candidate / employee record or document opened is written after the answer (200 only).
 app.use(require('./utils/readLog').middleware());
 // FAILED REQUESTS (utils/apiErrors.js): every 500+ answer recorded and grouped; 5 of the same in 10 minutes -> a bell to Super Admins.

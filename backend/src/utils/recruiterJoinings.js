@@ -189,6 +189,7 @@ function invalidate() { CACHE.clear(); LITE.clear(); }
 // withTest: test people (zztest / example.test) are kept - only for a viewer who is a test login (the automated tests), the
 // reports' own rule (utils/dailyReport.js isTestPerson, utils/atsHome.js testViewer). Everyone else never sees them.
 async function monthApplications(month, { fresh = false, withTest = false } = {}) {
+  await require('./joinedRule').refresh().catch(() => null); // a fresh dropped-people set before anything is counted // eslint-disable-line global-require
   const ck = withTest ? `${month}|test` : month;
   const hit = CACHE.get(ck);
   if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.value;

@@ -277,6 +277,7 @@ async function joiningRecords(appIds) {
 
 // -> { recs[], credit, reqs: Map }  (one record per candidate per requirement)
 async function loadRecords(user, reqRows, { fresh = true, candidateId = null } = {}) {
+  await require('./joinedRule').refresh().catch(() => null); // who left after joining: read synchronously below (V.leftAfterJoining) // eslint-disable-line global-require
   await ensureIndexes();
   const reqIds = reqRows.map((r) => r.id);
   const reqById = new Map(reqRows.map((r) => [r.id, r]));

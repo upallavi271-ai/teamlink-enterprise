@@ -30,13 +30,19 @@
 const prisma = require('../db');
 
 const KEY = 'ats.joinedCountsDropped';
-const TTL_MS = 20000;
+// How long a load is trusted (a test shortens it with JOINED_RULE_TTL_MS). Nothing reads the sync helpers without a fresh load first: see refresh() and the
+// express middleware in index.js (freshness is GUARANTEED, not hoped for: the first request after a start waits for the first load).
+const TTL_MS = Math.max(0, Number(process.env.JOINED_RULE_TTL_MS)) || 20000;
 
 let state = {
   at: 0, exclude: true, ids: new Set(), info: new Map(),
 };
 let version = 0;
 let loading = null;
+let loadingVersion = -1; // the invalidate() count the in-flight load started at
+let seq = 0; // each load has a number; an older load never overwrites a newer answer
+let applied = 0;
+let loaded = false; // the first successful load has finished
 
 async function readSwitch() {
   try {
@@ -50,6 +56,7 @@ async function readSwitch() {
 async function readDropped() {
   const ids = new Set();
   const info = new Map();
+  let ok = false;
   try {
     const S = require('../joindrop/schema'); // eslint-disable-line global-require
     if (await S.ensure()) {
@@ -62,24 +69,46 @@ async function readDropped() {
           within: r.dropWithinGuarantee === 1 ? true : (r.dropWithinGuarantee === 0 ? false : null),
         });
       });
+      ok = true;
     }
   } catch (err) { console.error('[joinedRule] dropped list failed:', err.message); } // eslint-disable-line no-console
-  return { ids, info };
+  return { ids, info, ok };
 }
 
+// ONE in-flight load is shared by every concurrent caller. A load that started before the latest invalidate() is not shared (it would hand out the old
+// answer): a new one starts. A load that FAILED is never trusted (the old answer stays, the next caller tries again), so an empty set is never cached
+// by mistake.
 async function refresh({ fresh = false } = {}) {
   if (!fresh && state.at && Date.now() - state.at < TTL_MS) return state;
-  if (loading) return loading;
+  if (loading && loadingVersion === version) return loading;
   const startedAt = version;
-  loading = (async () => {
+  const mine = seq + 1;
+  seq = mine;
+  const job = (async () => {
     const [sw, d] = await Promise.all([readSwitch(), readDropped()]);
-    // an invalidate() that happened while we were reading makes this answer old: use it for this caller, but do not keep it
-    state = {
-      at: startedAt === version ? Date.now() : 0, exclude: !sw, ids: d.ids, info: d.info,
+    const next = {
+      // an invalidate() that happened while we were reading makes this answer old: use it for this caller, but do not keep it
+      at: d.ok && startedAt === version ? Date.now() : 0, exclude: !sw, ids: d.ids, info: d.info,
     };
-    return state;
-  })().finally(() => { loading = null; });
-  return loading;
+    if (!d.ok) return state; // keep what we knew; the next caller retries
+    if (mine > applied) { applied = mine; state = next; loaded = true; }
+    return mine === applied ? state : next;
+  })().finally(() => { if (loading === job) loading = null; });
+  loading = job;
+  loadingVersion = startedAt;
+  return job;
+}
+const isLoaded = () => loaded;
+
+// EXPRESS MIDDLEWARE (mounted early on /api in index.js): every request waits for a FRESH dropped-people set before any route runs, so the sync helpers
+// below (excluded / droppedNow / dropInfo / notInWhere) are never read empty - not on the very first request after a start, not after the TTL ran out, not
+// when ten requests arrive together (they share one load). It costs one small query at most every TTL_MS. It never fails a request: when the load errors
+// the request goes on with what is known (and the next request tries again).
+function middleware() {
+  return (req, res, next) => {
+    if (req.path === '/health') { next(); return; }
+    refresh().then(() => next(), () => next());
+  };
 }
 
 const droppedAppIds = async (opts) => (await refresh(opts)).ids;
@@ -125,5 +154,5 @@ async function setSwitch(on, user) {
 }
 
 module.exports = {
-  KEY, droppedAppIds, isDropped, excludeDropped, excludedIds, refresh, excluded, droppedNow, notInWhere, dropInfo, stateKey, invalidate, getSwitch, setSwitch,
+  KEY, isLoaded, middleware, droppedAppIds, isDropped, excludeDropped, excludedIds, refresh, excluded, droppedNow, notInWhere, dropInfo, stateKey, invalidate, getSwitch, setSwitch,
 };
