@@ -816,7 +816,7 @@ async function buildPagedRows(user, st, s, shared = false) {
   const bdeView = isBdeViewer(user);
   const fxIdx = await FX.loadIndex();
   await JRULE.refresh().catch(() => null); // who left after joining (the Dropped step) - read synchronously below
-  const linkIdx = await RP.linkIndex(user).catch(() => new Map()); // who replaced whom
+  const linkIdx = await RP.linkIndex(user).catch((e) => { console.error('[candidates] replacement chips:', e.message); return new Map(); }); // who replaced whom
   return candidates.map((c) => {
     const row = decorate(c, { user, sharedIds, followUps: st.followUps });
     // Came on: the date + how far to trust it (utils/cameOn.js). TeamLink logins only (a client / the candidate is served none).
@@ -1106,7 +1106,7 @@ async function buildPipelineRows(user, st, s, snap) {
   const bdeView = isBdeViewer(user);
   const fxIdx = await FX.loadIndex();
   await JRULE.refresh().catch(() => null);
-  const linkIdx = await RP.linkIndex(user).catch(() => new Map()); // who replaced whom
+  const linkIdx = await RP.linkIndex(user).catch((e) => { console.error('[candidates] replacement chips:', e.message); return new Map(); }); // who replaced whom
   candidates.forEach((c) => {
     const apps = s.global ? (c.applications || []) : visibleApplications(user, c.applications, sharedIds);
     if (s.global || apps.length) people += 1;
@@ -1820,7 +1820,17 @@ router.get('/', async (req, res) => {
   const followUps = await currentFollowUpsByApplication(
     candidates.flatMap((c) => visibleApplications(req.user, c.applications, sharedIds).map((a) => a.id)),
   );
+  await JRULE.refresh().catch(() => null); // who left after joining (the Dropped step)
   let rows = candidates.map((c) => decorate(c, { user: req.user, sharedIds, followUps }));
+  {
+    // the Dropped step and who replaced whom, the same fields the paged list carries (this plain list feeds the exports)
+    const linkIdx = await RP.linkIndex(req.user).catch(() => new Map());
+    rows.forEach((r) => {
+      const latest = (r.applications || []).find((a) => a.id === r.latestApplicationId);
+      if (latest && leftAfterJoining(latest)) { r.left = true; r.currentStageLabel = 'Dropped'; r.stageDetailLabel = 'Dropped'; r.stageGroupLabel = 'Dropped'; }
+      if (r.latestApplicationId) RP.put(r, linkIdx.get(r.latestApplicationId));
+    });
+  }
   // Hold and Rejected are VIEWS over this same list, not separate modules —
   // so the server offers them as a query parameter on the one endpoint.
   if (req.query.view && req.query.view !== 'all') {
@@ -1872,6 +1882,8 @@ const LIST_FIELDS = [
   'rejection',
   // B7: { name, until } when a partner owns this person.
   'partner',
+  // joined, then left (the step says Dropped) and who replaced whom (the chips)
+  'left', 'leftOn', 'leftReason', 'replacedBy', 'replacementFor', 'replacementWords', 'replacementState',
 ];
 
 function slimForList(row) {
