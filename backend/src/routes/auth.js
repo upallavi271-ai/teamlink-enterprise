@@ -65,6 +65,8 @@ async function sessionPayload(identity) {
     crmRole: await require('../crm/service').crmRoleFor(identity).catch(() => null), // eslint-disable-line global-require
     // THE BDE AGENT (2026-11-18): BDE, BDE TL, Super Admin and Developer logins see the floating BDE Agent (utils/bdeAgent.js decides; the API checks again)
     bdeAgent: require('../utils/bdeAgent').isBdeAgentUser(identity), // eslint-disable-line global-require
+    // THE CREDENTIALS VAULT (2026-11-21): may this login open Company Setup > Credentials vault (null = no). The API checks again.
+    credentialsVault: await require('../utils/credentialVault').menuRightsFor(identity).then((r) => (r ? { open: true, own: !!r.own } : null)).catch(() => null), // eslint-disable-line global-require
     // the browser signs out after this many minutes with no mouse / keyboard (utils/sessions.js; 0 = off)
     security: { idleMinutes: await require('../utils/sessions').idleMinutes().catch(() => 0) }, // eslint-disable-line global-require
     // WHAT THIS LOGIN MAY FILTER BY, computed by utils/scope.js — the same

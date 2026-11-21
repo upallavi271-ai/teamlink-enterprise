@@ -808,6 +808,10 @@ const DEFAULT_RULES = [
   // JOB PUBLISHING (2026-10-13): the company's logins for the job portals (Naukri, Foundit, Shine), their on / off
   // switches, the kill switch and the field mappings. Super Admin / Admin only by default (src/jobPublish/credentials.js).
   { module: 'administration', features: ['Job Portal Credentials'], actions: ROLE_FEATURE_ACTIONS, roles: SET.ADMIN },
+  // CREDENTIALS VAULT (founder 2026-11-21): the company's logins (Naukri, Hostinger, Gmail ...). Super Admin only by default - no rule here
+  // grants it to anybody else; the Super Admin ticks it per role (view = list, approve = Show / Copy, configure = import, export) or per
+  // person on the vault's Access tab. utils/credentialVault.js rightsFor() is the one reader.
+  { module: 'administration', features: ['Credentials Vault'], actions: ROLE_FEATURE_ACTIONS, roles: SET.SUPER },
   // requireRole(...SUPER_ADMIN_ONLY) — create/delete departments and teams.
   { module: 'administration', features: ['Departments & Teams'], actions: ROLE_FEATURE_ACTIONS, roles: SET.SUPER },
   { module: 'administration', features: ['Departments & Teams'], actions: ['view'], roles: SET.ADMIN },

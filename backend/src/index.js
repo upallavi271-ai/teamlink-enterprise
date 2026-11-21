@@ -94,7 +94,7 @@ require('./utils/webSecurity').configureApp(app);
 // entry's actor) and res.json() would otherwise serialise its bcrypt hash and
 // set-password token hash along with the name. Stripped here, once, for every
 // JSON response — no screen reads them.
-const NEVER_SERIALISED = new Set(['passwordHash', 'setPasswordTokenHash', 'agreementOtpHash', 'verifyOtpHash', 'codeHash']);
+const NEVER_SERIALISED = new Set(['passwordHash', 'setPasswordTokenHash', 'agreementOtpHash', 'verifyOtpHash', 'codeHash', 'passwordEnc', 'extraEnc']); // + the credentials vault's ciphertext (utils/credentialVault.js)
 app.set('json replacer', (key, value) => (NEVER_SERIALISED.has(key) ? undefined : value));
 // VENDOR PORTAL ISOLATION (utils/vendorAuth.js): a vendor session may reach
 // /api/vendor-portal/* and NOTHING else — every other path answers 403.
@@ -451,6 +451,8 @@ app.use('/api/ats/mkt', require('./routes/mktB')); // market wave B (2026-11-21)
 app.use('/api/ats/data-quality', require('./routes/dataQuality')); // profile completeness, duplicates, stale profiles (utils/dataQuality.js)
 app.use('/api/privacy', require('./routes/privacy')); // DPDP: a candidate's data export, legal hold, erasure, consent review (utils/candidatePrivacy.js)
 app.use('/api/crm-public', require('./routes/crmPublic')); // the campaign email unsubscribe link (no login)
+// CREDENTIALS VAULT (founder 2026-11-21): every company login in one place, encrypted; Super Admin only unless granted (utils/credentialVault.js).
+app.use('/api/credentials-vault', require('./routes/credentialVault'));
 app.use('/api/admin', adminRoutes);
 app.use('/api/reports', reportRoutes);
 // ATS -> Reports: the ten recruitment reports, their drill-down and exports.

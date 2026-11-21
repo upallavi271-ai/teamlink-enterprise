@@ -266,6 +266,15 @@ function featureInfoOf(moduleId) {
       },
     };
   }
+  // The credentials vault (2026-11-21): what each box means, because the actions are not the usual ones.
+  if (moduleId === 'administration') {
+    return {
+      'Credentials Vault': {
+        hint: 'The company logins vault (Company Setup > Credentials vault). VIEW = the list with passwords hidden; APPROVE = Show / Copy a password (after the person types their own TeamLink password again); CREATE / EDIT / DELETE / ASSIGN = manage logins; CONFIGURE = import from Excel; EXPORT = export (with passwords also needs APPROVE). Off for everyone but the Super Admin until ticked here.',
+        api: true,
+      },
+    };
+  }
   const m = SPLIT_MODULES.find((x) => x.id === moduleId);
   if (!m) return null;
   const out = {};
@@ -337,7 +346,7 @@ const ROLE_ACCESS_MODULES = [
   // 'My Results' — a recruiter's own numbers (submitted, interviews, selected,
   // joined); 'Client Reports' — a client's own company numbers on the portal.
   { id: 'reports', label: 'Reports', features: ['ATS Reports', 'Job Portal Reports', 'Accounts Reports', 'HRMS Reports', 'My Results', 'Client Reports', 'My Clients Report', 'My Requirements Report', 'My Follow-ups Report', 'Export Assigned Data'] },
-  { id: 'administration', label: 'Administration', features: ['Company Setup', 'Users', 'Role Catalog', 'Integrations', 'Organization Structure', 'Departments & Teams', 'Notifications', 'Audit Logs', 'Vendor Logins', 'Vendor Audit', 'Vendor Bills Review', 'Job Portal Credentials'] },
+  { id: 'administration', label: 'Administration', features: ['Company Setup', 'Users', 'Role Catalog', 'Integrations', 'Organization Structure', 'Departments & Teams', 'Notifications', 'Audit Logs', 'Vendor Logins', 'Vendor Audit', 'Vendor Bills Review', 'Job Portal Credentials', 'Credentials Vault'] },
 ];
 
 // ---------------------------------------------------------------------------
