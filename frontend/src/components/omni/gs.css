@@ -508,12 +508,13 @@
 .gsx .toggle.on span{margin-left:16px}
 .gsx .modal-bg{position:fixed;inset:0;background:rgba(10,25,18,.42);backdrop-filter:blur(5px);display:none;align-items:center;justify-content:center;padding:18px;z-index:60}
 .gsx .modal-bg.show{display:flex}
-.gsx .modal{width:min(720px,100%);background:#fff;border-radius:20px;box-shadow:0 30px 70px rgba(9,31,20,.22);overflow:hidden}
+.gsx .modal{width:min(720px,100%);background:#fff;border-radius:20px;box-shadow:0 30px 70px rgba(9,31,20,.22);overflow:hidden;display:flex;flex-direction:column;max-height:calc(100vh - 36px);max-height:calc(100dvh - 36px)}
+.gsx .modal-head,.gsx .modal-foot{flex:none}
 .gsx .modal-head{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;justify-content:space-between}
 .gsx .modal-head b{font-size:14px}
 .gsx .modal-head p{font-size:9px;color:#89948d;margin:5px 0 0}
 .gsx .close{width:31px;height:31px;border:1px solid var(--line);background:#fff;border-radius:9px}
-.gsx .modal-body{padding:18px 20px;max-height:65vh;overflow:auto}
+.gsx .modal-body{padding:18px 20px;flex:1 1 auto;min-height:0;overflow:auto}
 .gsx .modal-foot{padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
 .gsx .wizard-steps{display:flex;gap:7px;margin-bottom:17px}
 .gsx .wizard-step{flex:1;height:34px;border-radius:9px;background:#f2f5f3;color:#87918b;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900}

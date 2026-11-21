@@ -101,7 +101,8 @@ export function GsModal({ title, sub, width, onClose, foot, children, bodyStyle 
     <div className="modal-bg show" onMouseDown={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
       <div className="modal" role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : undefined} style={width ? { width: `min(${width}px,100%)` } : undefined}>
         <div className="modal-head"><div><b>{title}</b>{sub && <p>{sub}</p>}</div><button type="button" className="close" aria-label="Close" onClick={onClose}>×</button></div>
-        <div className="modal-body" style={{ maxHeight: '72vh', overflow: 'auto', ...(bodyStyle || {}) }}>{children}</div>
+        {/* the dialog is a column that never grows past the window (gs.css .modal): the head and the buttons stay in view, only this body scrolls */}
+        <div className="modal-body" style={{ overflow: 'auto', ...(bodyStyle || {}) }}>{children}</div>
         {foot && <div className="modal-foot">{foot}</div>}
       </div>
     </div>
