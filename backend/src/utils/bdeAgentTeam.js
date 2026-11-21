@@ -24,6 +24,7 @@ const R = () => require('./bdeAgentRouter'); // eslint-disable-line global-requi
 const H = () => R()._h;
 const say = L.say;
 const TEST_RE = /zztest|example\.test/i;
+const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 // ---- who ---------------------------------------------------------------------------------------------------------------------------
 const canSeeTeam = (ctx) => ctx.role === 'admin' || ctx.role === 'bdetl';
@@ -271,7 +272,7 @@ async function personReport(ctx, p, lang, who, note) {
   return h.answer(ctx, {
     intent: 'person', count: stats.interviews + stats.followups + stats.joinings, total: items.length, stats, record: { kind: 'person', id: ctx.user.id, name },
     title: say(lang, {
-      en: `${when}: ${name} - ${stats.interviews} interviews, ${stats.followups} client follow-ups, ${stats.shared} profiles shared, ${stats.joinings} joinings`,
+      en: `${when}: ${name} - ${pl(stats.interviews, 'interview', 'interviews')}, ${pl(stats.followups, 'client follow-up', 'client follow-ups')}, ${pl(stats.shared, 'profile shared', 'profiles shared')}, ${pl(stats.joinings, 'joining', 'joinings')}`,
       tl: `${when}: ${name} - ${stats.interviews} interviews, ${stats.followups} client follow-ups, ${stats.shared} profiles share, ${stats.joinings} joinings`,
       te: `${when}: ${name} - ${stats.interviews} ఇంటర్వ్యూలు, ${stats.followups} ఫాలో-అప్‌లు, ${stats.shared} ప్రొఫైల్‌లు, ${stats.joinings} జాయినింగ్‌లు`,
     }),

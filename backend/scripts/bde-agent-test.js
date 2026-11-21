@@ -390,7 +390,7 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
 
     // ---- round 3: people, the team, departments, history, keywords (founder 2026-11-21) --------------------------------------------
     // BDE: own work only
-    ['A', 'my report today', { intent: 'person', stats: { followups: 2, meetings: 1, candFollowups: 1, calls: 1, reqsRaised: 3, reqsClosed: 1, shared: 0, interviews: 1, feedbackIn: 0, selections: 0, offers: 0, joinings: 0, drops: 0, newClients: 2, signed: 0, replacementsDue: 1, invOverdue: 1, lateFollowups: 1 }, text: new RegExp(`^Today \\(${L.dm(T)}\\): ${A.name} - 1 interviews, 2 client follow-ups`) }],
+    ['A', 'my report today', { intent: 'person', stats: { followups: 2, meetings: 1, candFollowups: 1, calls: 1, reqsRaised: 3, reqsClosed: 1, shared: 0, interviews: 1, feedbackIn: 0, selections: 0, offers: 0, joinings: 0, drops: 0, newClients: 2, signed: 0, replacementsDue: 1, invOverdue: 1, lateFollowups: 1 }, text: new RegExp(`^Today \\(${L.dm(T)}\\): ${A.name} - 1 interview, 2 client follow-ups`) }],
     ['A', 'My work today', { intent: 'person', stats: { followups: 2, interviews: 1 } }],
     ['A', 'naa report ee roju', { intent: 'person', lang: 'tl', stats: { followups: 2, interviews: 1 } }],
     ['A', 'my report this week', { intent: 'person', stats: { shared: wk.shared, interviews: exp.ivWeek, selections: wk.selections, offers: wk.offers, joinings: wk.joinings, drops: wk.drops, followups: wk.followupsA } }],

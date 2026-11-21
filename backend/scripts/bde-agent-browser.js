@@ -131,14 +131,16 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
         await pill.click();
         const panel = tl.page.locator('[data-testid="bde-agent-panel"]');
         const chip = panel.locator('.bde-agent-chip', { hasText: 'All BDEs today' });
-        check('BDE TL: the "All BDEs today" chip is there', await chip.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false));
+        const chipUp = await chip.waitFor({ state: 'visible', timeout: 90000 }).then(() => true).catch(() => false);
+        if (!chipUp) await tl.page.screenshot({ path: path.join(SHOTS, 'debug-tl-chips.png') });
+        check('BDE TL: the "All BDEs today" chip is there', chipUp, chipUp ? undefined : await panel.innerText().catch(() => ''));
         await chip.click();
         const team = panel.locator('.bde-agent-msg.ai .bde-agent-title', { hasText: 'all BDEs' }).last();
         check('BDE TL: the team report comes back with the window first ("Today (..): all BDEs ...") and a row for the BDE', await team.waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false) && (await panel.locator('.bde-agent-msg.ai').last().innerText()).includes(bde.name));
         const input = panel.locator('input[aria-label="Question for the BDE Agent"]');
         await input.fill('Anitha');
         await input.press('Enter');
-        check('BDE TL: typing a BDE\'s first name gives that person\'s report for today', await panel.locator('.bde-agent-msg.ai .bde-agent-title', { hasText: `${bde.name} - 1 interviews` }).last().waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false));
+        check('BDE TL: typing a BDE\'s first name gives that person\'s report for today', await panel.locator('.bde-agent-msg.ai .bde-agent-title', { hasText: `${bde.name} - 1 interview,` }).last().waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false));
         await tl.page.screenshot({ path: path.join(SHOTS, '6-tl-team-and-person.png') });
       } else check('BDE TL: the BDE Agent button is in the top bar', false);
       await tl.ctx.close();

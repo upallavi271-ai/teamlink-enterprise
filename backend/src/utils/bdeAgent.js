@@ -189,11 +189,13 @@ async function overview(user) {
   const LIVE = require('./atsVocab').REQUIREMENT_LIVE_STATUSES; // eslint-disable-line global-require
   const st = await fastAi.status().catch(() => ({ ready: false }));
   const unsigned = ctx.clients.filter((c) => !require('./atsVocab').agreementIsSigned(c.agreementStatus)).length; // eslint-disable-line global-require
+  const team = ['admin', 'bdetl'].includes(ctx.role);
   const chips = [
+    ...(team ? ['All BDEs today', 'All BDEs interviews this week', 'Team joinings month wise', 'Department report'] : []),
+    ...(ctx.role === 'bde' ? ['My work today', 'My month'] : []),
     "What is pending today?", "Today's interviews", 'Pending client feedback', 'Profiles shared this week', 'Follow-ups due', 'Joinings this month', 'Joinings till now',
     'Replacements due', 'Overdue invoices', 'Agreements expiring in 30 days', 'Agreements not signed',
-    ...(ctx.role === 'bde' ? ['My work today', 'My month', 'My target this month'] : ['Clients with no activity']),
-    ...(['admin', 'bdetl'].includes(ctx.role) ? ['All BDEs today', 'All BDEs interviews this week', 'Team joinings month wise', 'Department report'] : []),
+    ...(ctx.role === 'bde' ? ['My target this month'] : ['Clients with no activity']),
     ...(ctx.billing ? ['Pending invoice amount'] : []),
     'How do I raise a requirement?',
   ];
