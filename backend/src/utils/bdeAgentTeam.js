@@ -59,6 +59,21 @@ async function matchBde(ctx, residual) {
   const ties = scored.filter((x) => x.s === scored[0].s).map((x) => x.u);
   return { user: scored[0].u, ties: ties.length > 1 ? ties : null };
 }
+// a BDE was named; candidates in the viewer's scope may carry the same name: "Also candidates named sailaja: 5" (+ a Search link), never a question back
+async function sameNameCandidates(ctx, words) {
+  if (!words) return null;
+  const AS = require('./atsSearch'); // eslint-disable-line global-require
+  const r = await H().safe(() => AS.search(ctx.user, words, { limit: 100, type: 'candidates' }), null);
+  const g = r && (r.groups || []).find((x) => x.id === 'candidates');
+  if (!g || !g.rows.length) return null;
+  // only the ones whose NAME carries the words (the search also matches e-mails, skills ...)
+  const toks = words.split(/\s+/).filter(Boolean);
+  const named = g.rows.filter((x) => { const ws = String(x.name || '').toLowerCase().split(/[^\p{L}\p{N}]+/u); return toks.every((t) => ws.some((w) => w.startsWith(t))); }).length;
+  if (!named) return null;
+  const n = g.count > g.rows.length && named === g.rows.length ? `${named}+` : String(named);
+  const to = `/ats/search?q=${encodeURIComponent(words)}&type=candidates`;
+  return { line: `Also candidates named "${words}": ${n} (open them in Search)`, item: { kind: 'search', id: `cand-${words}`, label: `Candidates named "${words}" (${n})`, sub: 'search', to }, count: named };
+}
 async function ctxOfBde(ctx, u) {
   const { resolveIdentity } = require('./identity'); // eslint-disable-line global-require
   const id = await resolveIdentity(u.id);
@@ -89,6 +104,10 @@ function deptOf(ctx, norm, raw) {
       const deps = vals.filter(fits);
       if (deps.length) return { departments: deps, name: deps[0], word: m[0] };
     }
+  }
+  if (/\bbde (department|dept|desk|team)\b/.test(norm)) {
+    const deps = vals.filter((d) => /^bde$/i.test(d));
+    if (deps.length) return { departments: deps, name: deps[0], word: 'bde' };
   }
   if (/\bIT\b/.test(String(raw || '')) || /\bit (department|dept|desk|team|requirements?|joinings?|clients?|report)\b/.test(norm)) {
     const deps = vals.filter((d) => /^it$/i.test(d));
@@ -469,5 +488,5 @@ async function keywordSearch(ctx, text, lang) {
 }
 
 module.exports = {
-  canSeeTeam, bdeList, matchBde, ctxOfBde, deptOf, dayData, workOf, personReport, teamReport, deptReport, history, pendingReport, keywordSearch, grainOf, TOPIC_METRIC, HISTORY_METRICS, METRICS,
+  canSeeTeam, bdeList, matchBde, ctxOfBde, sameNameCandidates, deptOf, dayData, workOf, personReport, teamReport, deptReport, history, pendingReport, keywordSearch, grainOf, TOPIC_METRIC, HISTORY_METRICS, METRICS,
 };

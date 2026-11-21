@@ -216,6 +216,16 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   ] });
   B_PEOPLE.push(P.d4.name);
 
+  // ------------------------------------------------------------------ BDE D, whose first name is also three candidates' first name (founder 2026-11-21: "sailaja report"
+  // answered "5 records match" with candidates); an Education client with a joining LAST month and nothing this month ("education department joinings" = 0)
+  const D = await mk('d', `Zoravati Bq${RUN}`, { role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: 'BDE' });
+  const D1 = await cl('Orbita Public School', D, { agreementStatus: 'ACTIVE', ownerDepartment: 'Education' });
+  const RD1 = await req(D1, 'PGT Mathematics', D, { openings: 2 });
+  P.e1 = await person('Keshav Murthy', RD1, 'JOINED', [['SHARED_WITH_CLIENT', -70], ['JOINED', -40]], { joiningDate: day(-40), joinedAt: at(-40), joiningStatus: 'Joined' });
+  P.e2 = await person('Pranitha Goud', RD1, 'INTERVIEW_SCHEDULED', [['SHARED_WITH_CLIENT', -6]], { interviewAt: at(0, '16:00'), interviewStatus: 'SCHEDULED' });
+  await fuT(D1, `t5${RUN.toLowerCase()}`, D, { kind: 'followup', title: 'Called the principal', dueDate: day(2) });
+  for (const nm of ['Zoravati Kumari', 'Zoravati Rao', 'Zoravati Devi']) await person(nm, RB1, 'WITH_BDE', []); // eslint-disable-line no-await-in-loop
+
   // ------------------------------------------------------------------ the server
   const stampOf = async () => JSON.stringify(await Promise.all([
     prisma.application.aggregate({ _count: { _all: true }, _max: { updatedAt: true } }), prisma.client.aggregate({ _count: { _all: true } }), prisma.requirement.aggregate({ _count: { _all: true }, _max: { updatedAt: true } }),
@@ -233,7 +243,7 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   await new Promise((r) => { setTimeout(r, 6000); }); // the server's own start-up jobs (index.js: the drop roll-status heal after 4 s) finish first
   const before = await stampOf();
   const tok = async (u) => jwt.sign({ ...tokenPayload(await resolveIdentity(u.id)), tms: Date.now() }, env.JWT_SECRET, { expiresIn: '1h' });
-  const tA = await tok(A); const tB = await tok(B); const tC = await tok(C); const tT = await tok(TL);
+  const tA = await tok(A); const tB = await tok(B); const tC = await tok(C); const tD = await tok(D); const tT = await tok(TL);
   const BDE_LOGINS = (await prisma.user.findMany({ where: { atsRole: 'BDE', status: 'Active' }, select: { name: true, email: true } })).filter((u) => u.name && !/zztest|example\.test/i.test(`${u.name} ${u.email || ''}`)).length; const tS = await tok(SA); const tAD = await tok(AD); const tR = await tok(RC);
 
   // ------------------------------------------------------------------ who may use it
@@ -264,6 +274,7 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     shared: evApps(AK, ['SHARED_WITH_CLIENT'], inWeek), selections: evApps(AK, ['SELECTED'], inWeek), offers: evApps(AK, ['OFFER', 'OFFER_ACCEPTED'], inWeek),
     joinings: [day(-6), day(-15)].filter(inWeek).length, drops: inWeek(day(-2)) ? 1 : 0, followupsA: 2 + (inWeek(day(-3)) ? 3 : 0),
   };
+  const SAILAJA = ((await prisma.user.findFirst({ where: { atsRole: 'BDE', status: 'Active', name: { startsWith: 'Sailaja' } }, select: { name: true } })) || {}).name || null; // the founder's own example, when the sandbox has her
   const J = (from, to) => CJ.filter((x) => x.day >= from && x.day <= to).length; // BDE C's joinings in a window (all of them, left or not)
   const last3 = (() => { const d = new Date(`${T}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() - 3); return L.addDays(d.toISOString().slice(0, 10), 1); })();
   // ------------------------------------------------------------------ THE QUESTION BANK
@@ -463,12 +474,41 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     ['A', 'Kondapalli', { intent: 'candidate', text: /Sravani Kondapalli/ }],
     ['A', `Zentrix${RUN}1`, { intent: 'not_found', count: 0 }],
     ['A', `${B.name.split(' ')[0]} report`, { hasNot: [B.name, 'Vishrant', 'Chaitanya'] }],
+
+    // ---- a BDE's name before candidates of the same name; department names with "department" / "dept" (founder 2026-11-21) -----------------
+    ...(SAILAJA ? [['SA', 'sailaja report', { intent: 'person', text: new RegExp(`: ${SAILAJA} - `) }], ['TL', 'sailaja ee roju', { intent: 'person', text: new RegExp(`: ${SAILAJA} - `) }]] : []),
+    ['TL', 'zoravati report', { intent: 'person', stats: { interviews: 1, followups: 1 }, text: /Also candidates named "zoravati": 3/, has: ['Candidates named "zoravati" (3)'] }],
+    ['TL', 'Zoravati report', { intent: 'person', text: new RegExp(`^Today \\(${L.dm(T)}\\): ${D.name} - 1 interview, 1 client follow-up`) }],
+    ['TL', 'zoravati ee roju', { intent: 'person', lang: 'tl', stats: { interviews: 1, followups: 1 } }],
+    ['TL', 'zoravati work', { intent: 'person', stats: { interviews: 1 } }],
+    ['TL', 'zoravati today', { intent: 'person', stats: { interviews: 1 } }],
+    ['TL', 'zorvati report', { intent: 'person', stats: { interviews: 1 } }],
+    ['TL', 'Zoravati interviews today', { intent: 'interviews', count: 1, has: ['Pranitha Goud'], text: new RegExp(D.name) }],
+    ['TL', 'zoravati joinings', { intent: 'joinings', count: inMonth(day(-40)) ? 1 : 0, text: /Till now: 1 joining \(1 still working, 0 left after joining\)/ }],
+    ['TL', 'zoravati clients', { intent: 'clients', count: 1, has: ['Orbita Public School'] }],
+    ['SA', 'zoravati report', { intent: 'person', stats: { interviews: 1 }, text: /Also candidates named "zoravati": 3/ }],
+    ['TL', 'all BDEs today', { intent: 'team', rows: { [D.name]: { interviews: 1, followups: 1 } } }],
+    ['A', 'zoravati report', { intent: 'not_found', hasNot: [D.name, 'Zoravati Kumari'] }],
+    ['B', 'zoravati report', { intent: 'choose', count: 3, hasNot: [D.name] }],
+    ['D', 'education department joinings', { intent: 'joinings', count: inMonth(day(-40)) ? 1 : 0, text: new RegExp(`^This month \\(${L.monthLabel(T)}\\): ${inMonth(day(-40)) ? 1 : 0} joining[\\s\\S]*Till now: 1 joining`), hasNot: ['Marketing'] }],
+    ['D', 'education dept joinings', { intent: 'joinings', count: inMonth(day(-40)) ? 1 : 0, text: /Till now: 1 joining/ }],
+    ['D', 'edu joinings till now', { intent: 'joinings', count: 1, has: ['Keshav Murthy'] }],
+    ['D', 'education dept interviews this week', { intent: 'interviews', count: 1, has: ['Pranitha Goud'] }],
+    ['D', 'education department report', { intent: 'department', stats: { clients: 1, requirements: 1, open: 1 } }],
+    ['D', 'my report today', { intent: 'person', stats: { interviews: 1, followups: 1 } }],
+    ['A', 'medical dept joinings', { intent: 'joinings', count: exp.joinMonth, text: /Till now: 2 joinings \(1 still working, 1 left after joining\)/ }],
+    ['A', 'Medical department joinings till now', { intent: 'joinings', count: 2 }],
+    ['A', 'manufacturing department requirements', { intent: 'requirements_all', count: 1, has: ['QC Chemist'] }],
+    ['A', 'education department joinings', { intent: 'joinings', count: 0, text: /Till now: 0 joinings/ }],
+    ['C', 'medical dept joinings this year', { intent: 'joinings', count: J(`${T.slice(0, 4)}-01-01`, `${T.slice(0, 4)}-12-31`) }],
+    ['TL', 'Education department report', { intent: 'department', text: new RegExp(`BDEs handling [^\\n]*${D.name}`) }],
+    ['TL', 'education department joinings', { intent: 'joinings', text: /Till now: \d+ joining/ }],
     ['A', `agreements expiring in ${['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'][Number(day(20).slice(5, 7)) - 1]}`, { intent: 'agreements', count: 1, has: ['Kovida Heartcare Hospital'] }],
 
   ];
-  const tokOf = { A: tA, B: tB, C: tC, TL: tT, SA: tS };
+  const tokOf = { A: tA, B: tB, C: tC, D: tD, TL: tT, SA: tS };
   const lat = [];
-  const answersBy = { A: [], B: [], C: [], TL: [], SA: [] };
+  const answersBy = { A: [], B: [], C: [], D: [], TL: [], SA: [] };
   let right = 0;
   for (const [who, q, e] of BANK) {
     // eslint-disable-next-line no-await-in-loop

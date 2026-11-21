@@ -368,6 +368,13 @@ async function joinings(ctx, p, lang, f, t = '') {
   const working = joinedAll.filter((a) => !left(a));
   const leftN = joinedAll.length - working.length;
   const onlyWorking = /\bstill working\b|\bworking\b|\bactive\b/.test(t);
+  let tillNow = null;
+  if (!p.named && !p.all) {
+    const ever = await prisma.application.findMany({ where: appWhere(ctx, { stage: { in: JOINED } }, filterArm(f)), select: { id: true, joiningStatus: true, rollStatus: true, joiningDate: true, joinedAt: true } });
+    const goneEver = await droppedAppIds(ever.map((a) => a.id));
+    const leftEver = ever.filter((a) => goneEver.has(a.id) || LEFT_STATUS.includes(a.joiningStatus) || a.rollStatus === 'Dropped').length;
+    tillNow = say(lang, { en: `Till now: ${plural(ever.length, 'joining', 'joinings')} (${ever.length - leftEver} still working, ${leftEver} left after joining)`, tl: `Ippati varaku: ${ever.length} joinings (${ever.length - leftEver} inka work chestunnaru, ${leftEver} vellipoyaru)`, te: `ఇప్పటి వరకు: ${ever.length} జాయినింగ్‌లు` });
+  }
   const list = onlyWorking ? working : joinedAll;
   const when = p.label(lang);
   const future = p.from > ctx.today;
@@ -385,7 +392,7 @@ async function joinings(ctx, p, lang, f, t = '') {
     title: onlyWorking
       ? say(lang, { en: `${when}: ${plural(n, 'joining', 'joinings')} still working${forName(f)} (${leftN} more joined and left)`, tl: `${when}: ${n} joinings inka work chestunnaru${forName(f)} (${leftN} join ayyi vellipoyaru)`, te: `${when}: ${n} మంది ఇంకా పని చేస్తున్నారు${forName(f)} (${leftN} మానేశారు)` })
       : say(lang, { en: `${when}: ${plural(n, 'joining', 'joinings')}${forName(f)} (${working.length} still working, ${leftN} left after joining)`, tl: `${when}: ${n} joinings${forName(f)} (${working.length} inka work chestunnaru, ${leftN} join ayyi vellipoyaru)`, te: `${when}: ${n} జాయినింగ్‌లు${forName(f)} (${working.length} ఇంకా పని చేస్తున్నారు, ${leftN} చేరి మానేశారు)` }),
-    lines: [monthLine(list.map(dayOf), p, ctx), dueRows.length ? `Still due to join in this window (joining date set, not joined yet): ${dueRows.length}` : null],
+    lines: [tillNow, monthLine(list.map(dayOf), p, ctx), dueRows.length ? `Still due to join in this window (joining date set, not joined yet): ${dueRows.length}` : null],
     items: [...list.map((a) => candItem(a, `${jobOf(a)} · joined ${L.dmy(dayOf(a))}${left(a) ? ' · left after joining' : ''}`, `joining-${a.id}`)), ...(onlyWorking ? [] : dueRows.map((a) => candItem(a, `${jobOf(a)} · due to join ${L.dmy(String(a.joiningDate).slice(0, 10))} · ${V.stageLabel(a.stage)}`)))],
     facts: [`Joined = step Joined / Hired with the joining day (the joining date, else the day it was marked joined) between ${L.dmy(p.from)} and ${L.dmy(p.to)}${f && f.name ? `, for ${f.name}` : ''}. "Left after joining" = the Joining & Drop record says Dropped (or the joining / roll status does).`, 'Due to join = Selected / Offer / Offer accepted with a joining date in the window, from today on.', scopeFact(ctx)],
   });
@@ -1268,7 +1275,10 @@ async function routeTeam(ctx, question, norm, lang, topics, T) {
     if (who) {
       const c = await T.ctxOfBde(ctx, who.user);
       const a = await runWith(c, who.user.name, null);
-      return { kind: 'code', answers: [a || await T.personReport(c, L.periodOf(norm, 'today', ctx.today), lang, who.user.name)], person: who.user.id };
+      const ans = a || await T.personReport(c, L.periodOf(norm, 'today', ctx.today), lang, who.user.name);
+      const also = await T.sameNameCandidates(ctx, residualOf(norm));
+      if (also) { ans.lines = [also.line, ...(ans.lines || [])]; ans.items = [also.item, ...(ans.items || [])]; }
+      return { kind: 'code', answers: [ans], person: who.user.id };
     }
     // 2. the team: one row per BDE, a ranking, or the team's month-wise history
     if (teamy) {
