@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { t as tr } from '../../i18n.jsx'; // Telugu / Hindi when chosen (market wave 13.06)
 import api from '../../api';
 import FilterChips from '../FilterChips.jsx';
 import './ListPageHeader.css';
@@ -42,7 +43,7 @@ export default function ListPageHeader({
   return (
     <div className={`page-head lph-head ${className}`}>
       <div className="lph-titles">
-        <h1>{title}</h1>
+        <h1>{typeof title === 'string' ? tr(title) : title}</h1>
         {question && <div className="lph-question">{question}</div>}
         {sub && <div className="page-sub lph-sub">{sub}</div>}
       </div>

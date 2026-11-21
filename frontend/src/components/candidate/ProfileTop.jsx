@@ -13,6 +13,7 @@ import FitBreakdown, { useFitBreakdown } from '../match/FitBreakdown.jsx'; // Fi
 import { ContactButtons } from './ProfileSlots.jsx';
 import { recordedAs, IMPORTED_SOURCE, longDay, CAME_KIND_TEXT } from '../../utils/candidateSource.js';
 import PrivacyTools, { mayPrivacy } from './PrivacyTools.jsx';
+import CandidateIds from '../atsPlus/CandidateIds.jsx'; // Aadhaar last 4, PAN / bank masked, the consent log (market wave IN-07 / IN-08 / 15.09)
 import './ProfileTop.css';
 
 // ---------------------------------------------------------------------------
@@ -200,6 +201,7 @@ export function ProfileTools({
       {canArchive && archived && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => doArchive(false)}>Bring back</button>}
       {canDelete && <button type="button" className="btn btn-sm btn-ghost cpt-del" onClick={() => { setReason(''); setConfirmName(''); setDlg('delete'); }}>Delete (wrong entry)</button>}
       <PrivacyTools c={c} user={user} onChanged={onChanged} />
+      <CandidateIds c={c} user={user} />
       {msg && <span className={msg.ok ? 'cpt-ok' : 'error-text'}>{msg.text}</span>}
 
       {dlg === 'archive' && (

@@ -101,6 +101,7 @@ import UpdateProfile from './pages/UpdateProfile.jsx'; // market wave B 03.17: t
 import AiGovernance from './components/mktb/AiGovernance.jsx'; // market wave B: Administration > ATS settings > AI governance & automation
 import JoiningLink from './pages/JoiningLink.jsx'; // client hiring: the candidate's joining-letter link (public)
 import { SelfBookPage, TakeTestPage, CareersSitePage, SiteJobPage } from './pages/MktPublic.jsx'; // market wave 2026-11-21: self-booking, tests, the careers site (public)
+import { PreboardingPage, StatusPage, TrustPage, SlaPage, PrivacyNoticePage } from './pages/public/PublicPages.jsx'; // market wave public pages (no login)
 import InterviewPrepPage from './pages/InterviewPrepPage.jsx'; // the candidate's How-to-prepare page (public, signed link)
 import PublicForm from './components/omni/crm/PublicForm.jsx'; // Omni-Channel Web Forms: the public capture form (no login)
 import ClientReviewPage from './components/omni/marketing/ClientReviewPage.jsx'; // AI Marketing: the client's approval page (private link, no login)
@@ -233,6 +234,11 @@ export default function App() {
       <Route path="/agreement/:token/stamp" element={<AgreementStamp />} />
       <Route path="/agreement/:token" element={<AgreementSigning />} />
       <Route path="/offer/:token" element={<OfferSigning />} />
+      <Route path="/preboarding/:token" element={<PreboardingPage />} />
+      <Route path="/status" element={<StatusPage />} />
+      <Route path="/trust" element={<TrustPage />} />
+      <Route path="/sla" element={<SlaPage />} />
+      <Route path="/privacy-notice" element={<PrivacyNoticePage />} />
       <Route path="/talk/:token" element={<TalkLink />} />
       <Route path="/joining/:token" element={<JoiningLink />} />
       <Route path="/update-profile/:token" element={<UpdateProfile />} />

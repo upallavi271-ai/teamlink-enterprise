@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { t as tr } from '../../i18n.jsx'; // Telugu / Hindi when chosen (market wave 13.06)
 import './TabStrip.css';
 
 // ---------------------------------------------------------------------------
@@ -107,7 +108,7 @@ export default function TabStrip({
               onClick={() => onChange(t.key)}
               onKeyDown={(e) => onTabKey(e, i)}
             >
-              {t.label}
+              {typeof t.label === 'string' ? tr(t.label) : t.label}
               {t.count !== undefined && t.count !== null && Number(t.count) > 0 && <span className="n">{nf(t.count)}</span>}
             </button>
           ))}
@@ -140,7 +141,7 @@ export default function TabStrip({
                     title={tipOf(t)}
                     onClick={() => pick(t.key)}
                   >
-                    <span>{t.label}</span>
+                    <span>{typeof t.label === 'string' ? tr(t.label) : t.label}</span>
                     {t.count !== undefined && t.count !== null && Number(t.count) > 0 && <span className="n">{nf(t.count)}</span>}
                     {Number(t.badge) > 0 && <span className="n has-badge">{nf(t.badge)}</span>}
                     {(t.say || t.hint) && <small>{t.say || t.hint}</small>}

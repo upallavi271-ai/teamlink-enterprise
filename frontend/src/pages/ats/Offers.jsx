@@ -10,6 +10,7 @@
 // TeamLink's own. Nothing here raises an invoice or creates an employee —
 // that happens at Joining.
 
+import { OfferClauseFields, BulkOffersButton } from '../../components/atsPlus/OffersPlus.jsx'; // clause library fields on an offer + bulk offers (market wave 11.06 / 11.07)
 import { OfferExtras, OfferTemplatesAdmin } from '../../components/ats/OfferExtras.jsx'; // several templates + salary breakup (audit 252 / 253)
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -261,6 +262,12 @@ export default function Offers() {
         noun="offers"
         openText="Showing offers that are still going on. People who already joined are hidden."
       />
+      {canEdit && (
+        <div className="ivx-admin">
+          <span>Campus or bulk hiring: prepare many offers at once (each one is checked like a single offer, then waits for approval).</span>
+          <BulkOffersButton onDone={load} />
+        </div>
+      )}
       {isAdmin && (
         <div className="ivx-admin">
           <span>Every offer letter is made from one template.</span>
@@ -482,6 +489,7 @@ function LetterModal({ row, approve, onClose, onApprove, onSendBack }) {
               : 'This is how the letter will read. The candidate answers on the offer link (or their TeamLink page).'}
           </div>
           {!letter.sent && <OfferExtras row={row} onChanged={loadLetter} />}
+          {!letter.sent && <OfferClauseFields row={row} onChanged={loadLetter} />}
           {!approve && <OfferVersions row={row} />}
         </>
       )}

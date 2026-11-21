@@ -20,6 +20,7 @@ import AtsDataTools from '../../components/AtsDataTools.jsx';
 import Pager from '../../components/Pager.jsx';
 import ListPageHeader, { StatusTabs } from '../../components/ui/ListPageHeader.jsx';
 import TabStrip from '../../components/ui/TabStrip.jsx';
+import { OnboardingList, ComplianceList, OnboardingPack } from '../../components/atsPlus/OnboardingPlus.jsx'; // pre-boarding link, joining checklist, tasks, expiring documents (market wave 11.09-11.18)
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import { Modal } from '../../components/proto.jsx';
 import { ReplacementTags } from '../../components/joindrop/ReplacementParts.jsx'; // who replaced whom
@@ -77,6 +78,7 @@ export default function Joining() {
   const { user } = useAuth();
   // "Joined and dropped" (Joining & Drop, 2026-10-17): every joining with its dates, place, replacement period and drops. A bell link opens it.
   const [sp] = useSearchParams();
+  const [onbFor, setOnbFor] = useState(null); // the onboarding pack open for one person (components/atsPlus/OnboardingPlus.jsx)
   const [mode, setMode] = useState(sp.get('view') === 'joindrop' || sp.get('record') ? 'joindrop' : 'work');
   const [dialog, setDialog] = useState(null);
   const [joinedMsg, setJoinedMsg] = useState('');
@@ -140,10 +142,15 @@ export default function Joining() {
         tabs={[
           { key: 'work', label: 'Waiting to join and joined', hint: 'The work list: mark someone joined, or that they dropped, and send the papers.' },
           { key: 'joindrop', label: 'Joined and dropped', hint: 'Every joining with its dates, the replacement period and the drops (a record, to look things up).' },
+          { key: 'onboarding', label: 'Onboarding', hint: 'The joining checklist, the pre-boarding link for the candidate, and the tasks for HR, the recruiter and the client.' },
+          { key: 'compliance', label: 'Expiring documents', hint: 'Licences, certificates and other joining documents that expired or expire soon.' },
         ]}
       />
       {mode === 'joindrop' && <JoinDropList onOpen={setOpenCand} />}
-      {mode !== 'joindrop' && (<>
+      {mode === 'onboarding' && <OnboardingList />}
+      {mode === 'compliance' && <ComplianceList />}
+      {onbFor && <OnboardingPack applicationId={onbFor} onClose={() => setOnbFor(null)} />}
+      {!['joindrop', 'onboarding', 'compliance'].includes(mode) && (<>
       {joinedMsg && <div className="ivx-success" role="status">{joinedMsg}</div>}
       <Banner error={error} notice={notice && notice.trim() ? notice : ''} />
 
@@ -219,6 +226,7 @@ export default function Joining() {
                   <td>
                     <div className="ivx-actions">
                       {!canAct && <span className="small-muted">—</span>}
+                      {canAct && v === 'waiting' && <button type="button" className="btn btn-sm" title="Joining checklist and the pre-boarding link" onClick={() => setOnbFor(r.id)}>Onboarding</button>}
                       {canAct && v === 'waiting' && r.clientTrack && !r.clientTrack.joining?.releasedAt && (r.clientTrack.mayRelease
                         ? <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'clientRelease', id: r.id })}>Record the client&apos;s joining letter</button>
                         : <span className="small-muted">Waiting for the client&apos;s joining letter.</span>)}

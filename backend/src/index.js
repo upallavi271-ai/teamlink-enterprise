@@ -516,6 +516,9 @@ app.use('/api/ats/team-tools', require('./routes/atsTeamTools'));
 // ATS PLUS - the market-wave features (founder 2026-11-21): recruiter insights, branches, business development, offers & onboarding,
 // forms, currency, retention, seats, integrations, privacy (DPDP / Aadhaar / PAN), status, SSO settings (routes/atsPlus.js, utils/atsPlus/*).
 app.use('/api/ats-plus', require('./routes/atsPlus'));
+// ATS plus PUBLIC pages (no login, each rate-limited): the candidate's pre-boarding page (a link token), the identity check (OTP),
+// the status / trust / SLA pages, the open REST API (an API key) and its OpenAPI docs, single sign-on (routes/atsPlusPublic.js).
+app.use(require('./routes/atsPlusPublic'));
 // ATS History: one search + the complete history of a requirement and of a client (routes/atsHistory.js). Ahead of the calendar-gated /api/ats routers.
 app.use('/api/ats/history', require('./routes/atsHistory'));
 // Communication -> Scheduled Messages: one-time / recurring schedules to one or many candidates, the ATS triggers, tracking of every message (routes/messageSchedules.js).

@@ -631,7 +631,8 @@ router.get('/offers/:id/letter', requirePerm('ats', 'interviews', 'Offers', 'vie
   const OTm = require('../utils/offerTemplates'); // eslint-disable-line global-require
   const picked = await OTm.pick(app, t.text); // several templates: the offer's own, the client's, the industry's, the default (audit 252)
   const block = await OTm.breakupText(app); // the salary breakup, when one was saved (audit 253)
-  res.json({ text: OTm.injectBreakup(fillLetter(picked.text, app, req.user, { breakup: block }), block, picked.text), sent: false, template: { id: picked.templateId, name: picked.templateName, why: picked.why }, hasBreakup: !!block });
+  const withClauses = await require('../utils/atsPlus/offers').appendClauses(app, OTm.injectBreakup(fillLetter(picked.text, app, req.user, { breakup: block }), block, picked.text)); // the clause library (market wave 11.06)
+  res.json({ text: withClauses.text, clauses: withClauses.used, sent: false, template: { id: picked.templateId, name: picked.templateName, why: picked.why }, hasBreakup: !!block });
 });
 
 router.post('/offers/:id/prepare', requirePerm('ats', 'interviews', 'Offers', 'edit'), async (req, res) => {
@@ -772,7 +773,7 @@ async function approveAndSend(req, res) {
     const OTm = require('../utils/offerTemplates'); // eslint-disable-line global-require
     const picked = await OTm.pick(sentApp, t.text);
     const block = await OTm.breakupText(sentApp);
-    const text = OTm.injectBreakup(fillLetter(picked.text, sentApp, req.user, { replyBy, breakup: block }), block, picked.text);
+    const text = (await require('../utils/atsPlus/offers').appendClauses(sentApp, OTm.injectBreakup(fillLetter(picked.text, sentApp, req.user, { replyBy, breakup: block }), block, picked.text))).text; // + the matching clauses (market wave 11.06)
     const made = await OL.createVersion(sentApp, { letterText: text, actor: req.user }).catch((e) => { console.error('[offers] version:', e.message); return null; }); // eslint-disable-line no-console
     offerLinkInfo = made ? { version: made.version.version, expiresAt: made.version.expiresAt, url: made.token ? OL.linkUrl(req, made.token) : null } : null;
     const body = offerLinkInfo && offerLinkInfo.url ? `${text}\n\nRead and sign your offer here: ${offerLinkInfo.url}` : text;

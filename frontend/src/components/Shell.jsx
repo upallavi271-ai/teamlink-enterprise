@@ -40,6 +40,8 @@ import { canOpenJobPortalStaff } from '../pages/JobPortalLaunch.jsx';
 import { useOmniEntry } from './outreach/useOmniChildren.js';
 import OmniTopChips from './omni/OmniTopChips.jsx';
 import './ShellPhone.css';
+import api from '../api';
+import { t, useLang, LanguagePicker, syncFromServer } from '../i18n.jsx'; // English / Telugu / Hindi (market wave 13.06)
 import AiCallOfferHost from './aicalling/AiCallOfferHost.jsx'; // "Tell them with the AI assistant?" after a Shortlisted move / an interview booking
 import './MobileNav.css';
 
@@ -81,6 +83,8 @@ function initials(name) {
 
 export default function Shell() {
   const { user, logout } = useAuth();
+  useLang(); // the whole frame re-draws in the chosen language
+  useEffect(() => { if (user && user.id) syncFromServer(api); }, [user && user.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
   // The TeamLink Job Portal is its own application; its URL is JOB_PORTAL_URL
@@ -240,7 +244,7 @@ export default function Shell() {
                         {...press(() => navTo(item.to), 'link')}
                         aria-current={phoneCurrentTo === item.to ? 'page' : undefined}
                       >
-                        <Ico char={item.icon} />{item.label}
+                        <Ico char={item.icon} />{t(item.label)}
                       </div>
                     ))}
                   </div>
@@ -267,7 +271,7 @@ export default function Shell() {
                 {items.map((item) => (item.children ? (
                   <div className={'sb-sub-group' + (isSubOpen(item.id) ? ' open' : '')} key={item.id}>
                     <div className="sb-sub-head" {...press(() => toggleSub(item.id))} aria-expanded={isSubOpen(item.id)}>
-                      <span className="sb-group-label"><Ico char={item.icon} />{item.label}</span>
+                      <span className="sb-group-label"><Ico char={item.icon} />{t(item.label)}</span>
                       <span className="chev" aria-hidden="true">▸</span>
                     </div>
                     <div className="sb-leaf-list">
@@ -278,7 +282,7 @@ export default function Shell() {
                           {...press(() => navTo(c.to), 'link')}
                           aria-current={isActive(c.to) ? 'page' : undefined}
                         >
-                          <Ico char={c.icon} />{c.label}{c.badge ? <span className="count" style={{ marginLeft: 'auto', background: '#1d9b5a', color: '#fff', borderRadius: 999, fontSize: 10, padding: '1px 7px' }}>{c.badge}</span> : null}
+                          <Ico char={c.icon} />{t(c.label)}{c.badge ? <span className="count" style={{ marginLeft: 'auto', background: '#1d9b5a', color: '#fff', borderRadius: 999, fontSize: 10, padding: '1px 7px' }}>{c.badge}</span> : null}
                         </div>
                       ))}
                     </div>
@@ -290,7 +294,7 @@ export default function Shell() {
                     {...press(() => navTo(item.to), 'link')}
                     aria-current={isActive(item.to) ? 'page' : undefined}
                   >
-                    <Ico char={item.icon} />{item.label}{item.badge ? <span className="count" style={{ marginLeft: 'auto', background: '#1d9b5a', color: '#fff', borderRadius: 999, fontSize: 10, padding: '1px 7px' }}>{item.badge}</span> : null}
+                    <Ico char={item.icon} />{t(item.label)}{item.badge ? <span className="count" style={{ marginLeft: 'auto', background: '#1d9b5a', color: '#fff', borderRadius: 999, fontSize: 10, padding: '1px 7px' }}>{item.badge}</span> : null}
                   </div>
                 )))}
               </div>
@@ -354,7 +358,8 @@ export default function Shell() {
             <b>{user?.name}</b>
             <span>{workRoleLabel(user, ['hrms', 'ats', 'accounts'].includes(section) ? section : undefined)}</span>
           </div>
-          <button type="button" className="btn btn-sm" onClick={logout}>Sign out</button>
+          <LanguagePicker compact />
+          <button type="button" className="btn btn-sm" onClick={logout}>{t('Sign out')}</button>
         </div>
       </aside>
       <div className={'sidebar-overlay' + (open ? ' show' : '')} onClick={closeSidebar} aria-hidden="true" />
