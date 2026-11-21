@@ -520,6 +520,49 @@ async function saveVideo(u, buf, mime, q = {}) {
   return { item: view(u, await row(id), set) };
 }
 
+// ---- BANNERS (2026-11-21, marketing/banner.js): a designed banner (headline, sub-line, offer badge, button, logo, contact strip, optionally over a picture) saved like any picture -----------------------
+// Free (no AI service). b: { size, layout, headline, sub, cta, badge, footer, photoItemId (an approved / own picture to put in it), title, projectId, department }. From here it is an ordinary item:
+// draft -> approval (team or client) -> approved: stored, public link, picked in a campaign (Green Start Communication > Campaigns), sent, and counted (marketing/mediaUse.js).
+async function bannerMeta() { const B = require('./banner'); return { sizes: Object.entries(B.SIZES).map(([k, v]) => ({ key: k, label: v.label, w: v.w, h: v.h })), layouts: Object.entries(B.LAYOUTS).map(([k, v]) => ({ key: k, label: v })) }; } // eslint-disable-line global-require
+async function createBanner(u, b = {}) {
+  await ensure();
+  if (!mayWrite(u)) return { error: 'Your login can look at banners but not make them.', status: 403 };
+  const B = require('./banner'); // eslint-disable-line global-require
+  const headline = S.clip(b.headline, 90);
+  if (headline.length < 3) return { error: 'Write the banner headline (a few words).', status: 400 };
+  const size = B.SIZES[b.size] ? b.size : '16:9';
+  const layout = B.LAYOUTS[b.layout] ? b.layout : '';
+  const brand = await Cfg.getBrand();
+  const look = await projectLook(b.projectId);
+  const logoRow = look ? (look.logoData ? { dataUrl: look.logoData } : null) : await Cfg.getLogo();
+  const dec = (d) => { const m = /^data:image\/(?:png|jpeg|webp);base64,(.+)$/.exec(String(d || '')); return m ? Buffer.from(m[1], 'base64') : null; };
+  let photo = null;
+  if (b.photoItemId) {
+    const got = await getRow(u, String(b.photoItemId));
+    if (!got) return { error: 'The picture for the banner was not found.', status: 404 };
+    if (isVideo(got.r)) return { error: 'A banner can use a picture, not a video.', status: 400 };
+    const f = rawFile(got.r);
+    if (!f) return { error: 'The picture file is not on the server any more.', status: 404 };
+    photo = fs.readFileSync(f.path);
+  }
+  const colors = (look && look.colors && look.colors.primary ? { primary: look.colors.primary, secondary: look.colors.secondary || undefined, accent: brand.colors.accent } : brand.colors) || {};
+  let made;
+  try {
+    made = await B.makeBanner({ size, layout: layout || (photo ? 'overlay' : 'bold'), headline, sub: b.sub, cta: b.cta !== undefined ? b.cta : brand.cta, badge: b.badge, footer: b.footer !== undefined ? b.footer : [brand.website, brand.contact].filter(Boolean).join('   |   '), colors, logo: logoRow ? dec(logoRow.dataUrl) : null, photo, brandName: look ? look.clientName : brand.brandName });
+  } catch (e) { return { error: 'The banner could not be designed: ' + e.message, status: 500 }; }
+  const dept = S.clip(b.department, 60) || (A.departmentsOf(u).length === 1 ? A.departmentsOf(u)[0] : S.clip(u.department, 60));
+  fs.mkdirSync(dir(), { recursive: true });
+  const id = S.newId('ban'); const file = id + '.png'; const ts = Date.now();
+  fs.writeFileSync(path.join(dir(), file), made.buf);
+  const title = S.clip(b.title, 80) || ('Banner: ' + headline);
+  await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?)`,
+    id, title, S.clip([headline, b.sub, b.cta, b.badge].filter(Boolean).join(' | '), 600), headline, 'banner', size, 'banner-designer', logoRow ? 1 : 0, file, 'image/png', made.buf.length, 0, dept || null, u.id, S.clip(u.name, 80), ts, ts);
+  await tagProject([id], b.projectId);
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: banner made', entity: TABLE, entityId: id, toValue: title + '; ' + size + '; ' + (layout || 'auto') });
+  const set = await Cfg.getSettings();
+  return { item: view(u, await row(id), set) };
+}
+
 // ---- a person's own picture (phone, Canva, the Gemini app ...) uploaded into AI Images: from then on it is approved and used like an AI picture ---------
 // Checked by its first bytes (PNG / JPEG / WebP), turned upright, made at most 2048 px and saved WITHOUT its metadata (no GPS place, no camera
 // details). It is not an AI request, so it never counts against the AI picture limits. q: { title, department }.
@@ -677,6 +720,6 @@ async function decide(u, id, approve, note) {
 }
 
 module.exports = {
-  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
+  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, createBanner, bannerMeta, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
   approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng, holdForClient, backToDraft, clientDecision, publicPathOf: publicPath, publicJpegPath, isVideoRow: isVideo,
 };

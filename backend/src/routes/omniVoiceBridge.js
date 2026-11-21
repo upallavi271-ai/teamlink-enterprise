@@ -16,6 +16,17 @@ router.use((req, res, next) => {
   return next();
 });
 
+// AI Marketing media for Green Start's campaign screen (marketing/mediaUse.js): the APPROVED pictures, banners and videos with public links, and what a campaign carried
+router.get('/mk-media', async (req, res) => {
+  try {
+    const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '');
+    return res.set('Cache-Control', 'no-store').json({ ok: true, items: await require('../marketing/mediaUse').approvedMedia(base) }); // eslint-disable-line global-require
+  } catch (err) { console.error('[omni-mk-media]', err && err.message); return res.json({ ok: false, error: 'TeamLink could not read the AI Marketing media just now.', items: [] }); } // eslint-disable-line no-console
+});
+router.post('/mk-media/used', async (req, res) => {
+  try { return res.json(await require('../marketing/mediaUse').recordUse(req.body || {})); } catch (err) { console.error('[omni-mk-media]', err && err.message); return res.json({ ok: false, error: 'not recorded' }); } // eslint-disable-line global-require, no-console
+});
+
 router.get('/line', (req, res) => {
   const r = require('../calling/voice/sipCall').readiness(); // eslint-disable-line global-require
   res.json({ ok: true, ready: r.ready, mode: r.mode, problems: r.problems });

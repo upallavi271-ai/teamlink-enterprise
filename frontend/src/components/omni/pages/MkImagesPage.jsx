@@ -6,13 +6,14 @@ import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, ConfirmModal
 import { MkStatus, MkImg, downloadMkImg, ClientChip } from '../marketing/mk.jsx';
 import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import AutoStudioPanel from '../marketing/AutoStudioPanel.jsx';
+import BannerPanel from '../marketing/BannerPanel.jsx';
 import '../marketing/marketing.css';
 
 // AI MARKETING > AI IMAGES: ONE place to make pictures, "✦ Create from your content" (AutoStudioPanel: type an idea, TeamLink makes the post pictures by itself, free).
 // The second, separate "1 · Describe the picture" form (Google Gemini only, which needs billing and so never made a picture here) was removed on the founder's
 // request (16 Nov 2026: "keep one, the best, free"). An AI-made picture is still available inside the one box (More options > Pictures) when a picture AI is connected.
 // Every picture is saved here; it is used (calendar, posts) only after approval, and only approved pictures get a public link. Server: marketing/images.js.
-const STYLE_WORDS = { photo: 'Photo', illustration: 'Illustration', graphic: 'Social graphic', poster: 'Minimal poster', '3d': '3D', upload: 'Uploaded' };
+const STYLE_WORDS = { photo: 'Photo', illustration: 'Illustration', graphic: 'Social graphic', poster: 'Minimal poster', '3d': '3D', upload: 'Uploaded', banner: 'Banner' };
 const UPLOAD_MAX = 10 * 1024 * 1024;
 
 export default function MkImagesPage() {
@@ -70,7 +71,7 @@ export default function MkImagesPage() {
   const copyLink = async (it) => { const url = `${window.location.origin}${it.publicPath}`; try { await navigator.clipboard.writeText(url); toast('Public link copied'); } catch { window.prompt('Copy the public link:', url); } };
   const download = async (it) => { try { await downloadMkImg(it.id, it.title); } catch (e) { toast(errOf(e, 'It could not be downloaded.')); } };
 
-  const shown = tab ? list.filter((i) => i.status === tab) : list;
+  const shown = tab === 'banner' ? list.filter((i) => i.style === 'banner') : (tab ? list.filter((i) => i.status === tab) : list);
   const cnt = (s) => list.filter((i) => i.status === s).length;
   const ratio = (a) => { const [w, h] = String(a || '1:1').split(':').map(Number); return `${w} / ${h}`; };
 
@@ -85,6 +86,7 @@ export default function MkImagesPage() {
         ) : null}
       </PageHead>
       {meta.canWrite ? <AutoStudioPanel kind="post" projectId={projectId} onMade={load} toast={toast} /> : null}
+      {meta.canWrite ? <BannerPanel projectId={projectId} pictures={list} onMade={load} toast={toast} /> : null}
       {proj ? (
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', background: '#eef6ff', border: '1px solid #c9defa', borderRadius: 10, padding: '9px 12px', margin: '0 0 12px', fontSize: 12, color: '#1d4fa8' }}>
           <span><b>Making pictures for {proj.clientName}</b>{proj.occasion ? ` · ${proj.occasion}` : ''}. {proj.hasLogo ? 'Their logo and colours are used.' : 'No logo is saved for this client yet: add one in the project.'} Then go back to the project and pick them as options.</span>
@@ -107,7 +109,7 @@ export default function MkImagesPage() {
       ) : <Banner tone="info">You can look at the pictures of your department and approve them in Approvals. Only Marketing and Admins make pictures.</Banner>}
 
       <Panel title="Your pictures" sub="Newest first" style={{ marginTop: 14 }} right={<span className="pill live">{list.length}</span>}>
-        <Tabs value={tab} onChange={setTab} tabs={[['', 'All', list.length], ['draft', 'Saved', cnt('draft')], ['waiting', 'Waiting', cnt('waiting')], ['changes', 'Changes needed', cnt('changes')], ['approved', 'Approved', cnt('approved')]]} />
+        <Tabs value={tab} onChange={setTab} tabs={[['', 'All', list.length], ['banner', 'Banners', list.filter((i) => i.style === 'banner').length], ['draft', 'Saved', cnt('draft')], ['waiting', 'Waiting', cnt('waiting')], ['changes', 'Changes needed', cnt('changes')], ['approved', 'Approved', cnt('approved')]]} />
         {shown.length === 0 ? <Empty title="No pictures here yet">{list.length ? 'Nothing with that status.' : 'Type your idea in the box above and press Create the post.'}</Empty> : (
           <div className="mki-grid">
             {shown.map((it) => (
@@ -115,7 +117,7 @@ export default function MkImagesPage() {
                 <div style={{ aspectRatio: ratio(it.aspect), overflow: 'hidden', borderRadius: 10, cursor: 'zoom-in' }}><MkImg id={it.id} alt={it.title} style={{ height: '100%' }} onClick={() => setView(it)} /></div>
                 <b style={{ fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 8 }} title={it.title}>{it.title}</b>
                 <div style={{ margin: '3px 0', display: 'flex', gap: 4, flexWrap: 'wrap' }}><MkStatus status={it.status} /><ClientChip cr={it.clientReview} /></div>
-                <small style={{ color: 'var(--muted)', fontSize: 9.5 }}>{STYLE_WORDS[it.style] || it.style} · {it.aspect}{it.withLogo ? ' · logo' : ''}{it.demo ? ' · sample' : ''} · {fmtDateTime(it.createdAt)}{!it.mine ? ` · ${it.createdByName}` : ''}</small>
+                <small style={{ color: 'var(--muted)', fontSize: 9.5 }}>{STYLE_WORDS[it.style] || it.style} · {it.aspect}{it.withLogo ? ' · logo' : ''}{it.uses && it.uses.campaigns ? ` · in ${it.uses.campaigns} campaign${it.uses.campaigns === 1 ? '' : 's'}, sent to ${it.uses.recipients} people` : ''}{it.demo ? ' · sample' : ''} · {fmtDateTime(it.createdAt)}{!it.mine ? ` · ${it.createdByName}` : ''}</small>
                 {it.status === 'changes' && it.note ? <div className="mk-note">Sent back by {it.decidedByName}: {it.note}</div> : null}
                 <div className="mk-acts" style={{ marginTop: 6, flexWrap: 'wrap' }}>
                   <TinyBtn onClick={() => download(it)}>⬇ Download</TinyBtn>

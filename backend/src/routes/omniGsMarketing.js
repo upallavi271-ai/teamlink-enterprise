@@ -136,12 +136,16 @@ router.get('/images/meta', wrap(async (req, res) => res.json(await Img.meta(req.
 router.get('/images', wrap(async (req, res) => {
   const out = await Img.list(req.user, { status: String(req.query.status || ''), kind: ['image', 'video'].includes(req.query.kind) ? req.query.kind : '' });
   out.items = await CR.attach('image', out.items);
+  const used = await require('../marketing/mediaUse').countsFor(out.items.map((x) => x.id)).catch(() => ({})); // how many campaigns carried each item and to how many people
+  out.items = out.items.map((x) => ({ ...x, uses: used[x.id] || { campaigns: 0, recipients: 0 } }));
   res.json(out);
 }));
 // a person's own picture (PNG / JPEG / WebP, up to 10 MB) as raw bytes; the name comes in the address
 router.post('/images/upload', mustWrite, express.raw({ type: ['image/png', 'image/jpeg', 'image/webp'], limit: '11mb' }), wrap(async (req, res) => send(res, await Img.saveUpload(req.user, req.body, req.headers['content-type'], req.query || {}))));
 // AI Video: the slideshow made in the browser arrives as raw MP4 / WebM bytes (up to 40 MB); the details come in the address
 router.post('/images/video', mustWrite, express.raw({ type: ['video/mp4', 'video/webm'], limit: '41mb' }), wrap(async (req, res) => send(res, await Img.saveVideo(req.user, req.body, req.headers['content-type'], req.query || {}))));
+router.get('/banners/meta', mustWrite, wrap(async (req, res) => res.json(await Img.bannerMeta())));
+router.post('/banners', mustWrite, wrap(async (req, res) => send(res, await Img.createBanner(req.user, req.body || {}))));
 router.post('/images', mustWrite, wrap(async (req, res) => send(res, await Img.create(req.user, req.body || {}))));
 // the background job of one "Make pictures" press (marketing/images.js create): the screen asks every few seconds until it is done
 router.get('/images/jobs/:id', mustWrite, wrap(async (req, res) => send(res, Img.getJob(req.user, req.params.id))));
