@@ -657,6 +657,9 @@ const server = app.listen(PORT, () => {
   require('./utils/atsFlowConfig').refreshLabels().catch(() => null);
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
   require('./utils/atsFlowConfig').startLabelRefresh();
+  // ATS plus (market wave 2026-11-21): BD outreach mails (OFF until switched on), webhook / Slack / Teams deliveries, the status page's health samples,
+  // the data retention sweep (OFF until switched on) - utils/atsPlus/boot.js. Nothing here runs in the sandbox.
+  require('./utils/atsPlus/boot').start();
   // Overdue payment reminders to the owner BDE (and, if switched on, the client) + agreement renewal reminders: every 6 hours, once per invoice per 3 days, both OFF until an Admin switches them on (utils/billingDepth.js).
   require('./utils/billingDepth').startSweep();
   // Morning / afternoon / evening reminders + "complete this course" (bell, email, popup) - utils/dayNudges.js (2026-11-04)

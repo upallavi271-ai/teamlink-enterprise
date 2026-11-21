@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
+import { atsRoleOf } from '../../nav';
 import './clientsrole.css';
 
 // ---------------------------------------------------------------------------
@@ -16,6 +17,12 @@ import './clientsrole.css';
 // or an Accounts login reaching /accounts/agreements without ATS) gets no
 // strip at all.
 // ---------------------------------------------------------------------------
+function mayBd(user) {
+  if (!user) return false;
+  if (['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER'].includes(user.role) || ['MANAGER', 'ASSISTANT_MANAGER'].includes(user.atsRole)) return true;
+  return atsRoleOf(user) === 'BDE' || !!(user.workflow && user.workflow.bdeTl);
+}
+
 export default function ClientsTabs({ active }) {
   const { user } = useAuth();
   const { pathname } = useLocation();
@@ -24,9 +31,12 @@ export default function ClientsTabs({ active }) {
     { key: 'clients', label: 'Clients', to: '/clients', hint: 'All your clients' },
     can(user, 'ats', 'clients', 'Agreement Lifecycle', 'view')
       && { key: 'agreements', label: 'Agreements', to: '/agreements', hint: "Each client's agreement" },
+    // Business development (market wave 2026-11-21): target companies -> meeting -> proposal -> agreement, for BDEs (not the CRM).
+    // The server decides (utils/atsPlus/bd.js): BDE, BDE TL, Admin; Manager / Assistant Manager read only.
+    mayBd(user) && { key: 'bd', label: 'Business development', to: '/clients/bd', hint: 'Target companies before they are clients' },
   ].filter(Boolean);
   if (tabs.length < 2) return null;
-  const current = active || (pathname.includes('agreements') ? 'agreements' : 'clients');
+  const current = active || (pathname.includes('agreements') ? 'agreements' : pathname.startsWith('/clients/bd') ? 'bd' : 'clients');
   return (
     <div className="clrole-switch">
       <div className="tabs" style={{ marginBottom: 0 }} role="tablist" aria-label="Clients module">

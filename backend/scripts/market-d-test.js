@@ -163,6 +163,70 @@ const section = (id, title) => { if (want(id)) console.log(`\n== ${id} ${title}`
     check('the branch filter gives the clients, jobs and people of the branch', sc.body.clientIds.includes(client.id) && sc.body.requirementIds.includes(req.id) && sc.body.userIds.includes(REC.id), sc.body);
   }
 
+
+  // ================================================================ 06 business development (ATS Clients)
+  let prospect = null;
+  if (section('06.05', 'Account prospecting')) {
+    check('a recruiter has no BD list', (await call('GET', '/ats-plus/bd/prospects', null, tR)).status === 403);
+    check('a prospect that is already a client is refused', (await call('POST', '/ats-plus/bd/prospects', { name: client.name }, tB)).status === 409);
+    const c = await call('POST', '/ats-plus/bd/prospects', { name: `Zephyr Motors ${RUN}`, industry: 'Automobile', city: 'Pune', contacts: [{ name: 'Asha HR', email: `asha.${RUN}@zephyr-test.in` }], value: 250000 }, tB);
+    prospect = c.body;
+    check('the BDE adds a target company with a contact; they own it', c.status === 201 && prospect.ownerId === BDE.id && prospect.status === 'PROSPECT', c.body);
+    check('the same company again is a duplicate', (await call('POST', '/ats-plus/bd/prospects', { name: `zephyr motors pvt ltd ${RUN}` }, tB)).status === 409);
+    const n = await call('POST', `/ats-plus/bd/prospects/${prospect.id}/notes`, { text: 'Met at the expo, they are opening a new plant in Chakan.' }, tB);
+    check('a note is kept', n.status === 200 && n.body.notes.length === 1);
+    check('a manager sees prospects but cannot add one', (await call('GET', '/ats-plus/bd/prospects', null, tM)).status === 200 && (await call('POST', '/ats-plus/bd/prospects', { name: `Mgr Co ${RUN}` }, tM)).status === 403);
+  }
+  if (section('06.06', 'Hiring signals / opportunity scoring')) {
+    const before = (await call('GET', `/ats-plus/bd/prospects/${prospect.id}`, null, tB)).body.score;
+    await call('POST', `/ats-plus/bd/prospects/${prospect.id}/postings`, { title: 'Plant Manager', department: 'Production', openings: 4, source: 'Naukri', postedAt: new Date().toISOString().slice(0, 10) }, tB);
+    const after = await call('POST', `/ats-plus/bd/prospects/${prospect.id}/postings`, { title: 'Quality Engineer', department: 'Quality', openings: 6, source: 'LinkedIn' }, tB);
+    check('job postings raise the score and say why', after.status === 200 && after.body.score > before && after.body.reasons.some((r) => /job posting/.test(r)) && after.body.reasons.some((r) => /expansion/.test(r)), after.body);
+    const cs = await call('GET', '/ats-plus/bd/signals/clients', null, tA);
+    check('existing clients are scored on their own requirement trend', cs.status === 200 && cs.body.rows.some((r) => r.clientId === client.id), cs.body.rows && cs.body.rows.slice(0, 2));
+  }
+  if (section('06.02', 'Business development pipeline')) {
+    const m = await call('POST', `/ats-plus/bd/prospects/${prospect.id}/stage`, { stage: 'MEETING', note: 'Call on Monday' }, tB);
+    check('the BDE moves the prospect to Meeting', m.status === 200 && m.body.status === 'MEETING' && m.body.history.length === 2, m.body);
+    check('Lost needs a reason', (await call('POST', `/ats-plus/bd/prospects/${prospect.id}/stage`, { stage: 'LOST' }, tB)).status === 400);
+    check('Won needs the real client', (await call('POST', `/ats-plus/bd/prospects/${prospect.id}/stage`, { stage: 'WON' }, tB)).status === 400);
+    const w = await call('POST', `/ats-plus/bd/prospects/${prospect.id}/stage`, { stage: 'WON', clientId: client.id }, tB);
+    const list = await call('GET', '/ats-plus/bd/prospects', null, tB);
+    check('Won links the client; the board counts each stage with its value', w.status === 200 && w.body.clientId === client.id && list.body.board.find((x) => x.key === 'WON').count >= 1, list.body.board);
+    const other = await prisma.user.create({ data: { name: `Mkd bde2 ${RUN}`, email: `mkd.bde2.${RUN}@mkd-test.in`, passwordHash: 'x', status: 'Active', role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: 'BDE', atsAccess: true, passwordChangedAt: new Date(Date.now() - 3600e3) } });
+    const tO = await tok(other.id);
+    check('another BDE does not see this BDE prospect', (await call('GET', `/ats-plus/bd/prospects/${prospect.id}`, null, tO)).status === 404);
+  }
+  if (section('06.15', 'AI client summary / pitch')) {
+    const s = await call('GET', `/ats-plus/bd/clients/${client.id}/summary`, null, tB);
+    check('a client summary and a pitch, written from the record (the AI is off in the sandbox)', s.status === 200 && s.body.summary.includes(client.name) && s.body.pitch && s.body.facts.requirements >= 1 && s.body.by === 'code', s.body);
+    const pp = await call('GET', `/ats-plus/bd/prospects/${prospect.id}/pitch`, null, tB);
+    check('a pitch for a prospect names what they are hiring for', pp.status === 200 && /Plant Manager|Quality Engineer/.test(pp.body.pitch), pp.body);
+    check('no candidate phone or email goes into the facts', !JSON.stringify(s.body.facts).includes(cands[0].phone) && !JSON.stringify(s.body.facts).includes('@mkd-test.in'));
+  }
+  if (section('06.04', 'BD outreach campaigns (OFF by default)')) {
+    const p2 = (await call('POST', '/ats-plus/bd/prospects', { name: `Nimbus Foods ${RUN}`, contacts: [{ name: 'Ravi', email: `ravi.${RUN}@nimbus-test.in` }] }, tB)).body;
+    const c = await call('POST', '/ats-plus/bd/campaigns', { name: 'Intro sequence', steps: [{ day: 0, subject: 'Hiring at {{company}}?', body: 'Hi {{name}}, ...' }, { day: 3, subject: 'Following up', body: 'Hi again' }], startOnStage: 'MEETING' }, tB);
+    check('a 2-mail campaign is made (Draft)', c.status === 201 && c.body.status === 'DRAFT' && c.body.steps.length === 2, c.body);
+    await call('POST', `/ats-plus/bd/campaigns/${c.body.id}/enrol`, { prospectIds: [p2.id] }, tB);
+    await call('POST', `/ats-plus/bd/campaigns/${c.body.id}/status`, { status: 'ACTIVE' }, tB);
+    const dry = await call('POST', '/ats-plus/bd/campaigns/run', { dryRun: true }, tB);
+    check('the dry run shows the first mail is due, filled in for the company', dry.status === 200 && dry.body.enabled === false && dry.body.due.some((d) => d.subject === `Hiring at Nimbus Foods ${RUN}?`), dry.body);
+    const off = await call('POST', '/ats-plus/bd/campaigns/run', {}, tA);
+    check('while the switch is OFF nothing is sent', off.status === 200 && off.body.sent === 0);
+    check('only an Admin switches outreach on', (await call('PUT', '/ats-plus/bd/outreach-settings', { enabled: true }, tB)).status === 403);
+    await call('PUT', '/ats-plus/bd/outreach-settings', { enabled: true }, tA);
+    const on = await call('POST', '/ats-plus/bd/campaigns/run', {}, tA);
+    const sends = (await call('GET', '/ats-plus/bd/campaigns', null, tB)).body.recent;
+    check('switched on in the sandbox: the step is marked done but the mail is NOT sent', on.body.sent === 1 && sends.some((x) => /SANDBOX/.test(x.status)), { on: on.body, sends });
+    const again = await call('POST', '/ats-plus/bd/campaigns/run', {}, tA);
+    check('the same step is not repeated; day 3 is not due yet', again.body.sent === 0);
+    await call('PUT', '/ats-plus/bd/outreach-settings', { enabled: false }, tA);
+    const p3 = (await call('POST', '/ats-plus/bd/prospects', { name: `Orion Pharma ${RUN}`, contacts: [{ email: `o.${RUN}@orion-test.in` }] }, tB)).body;
+    await call('POST', `/ats-plus/bd/prospects/${p3.id}/stage`, { stage: 'MEETING' }, tB);
+    const list = (await call('GET', '/ats-plus/bd/campaigns', null, tB)).body.rows.find((x) => x.id === c.body.id);
+    check('a prospect reaching Meeting joins the campaign that starts on Meeting', list.enrolledCount === 2, list);
+  }
   // @@SECTIONS@@
 
   console.log(`\n${total - failed}/${total} passed`);

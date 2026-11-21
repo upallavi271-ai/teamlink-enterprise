@@ -1,3 +1,4 @@
+import { ClientAiSummary } from '../components/atsPlus/BusinessDev.jsx'; // AI client summary / pitch (market wave 2026-11-21)
 import { ClientContacts, ClientCredit, PortalUsage } from '../components/clients/ClientDepth.jsx'; // unlimited contacts with roles, credit terms, portal usage (audit 133 / 134 / 142 / 711)
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -186,6 +187,8 @@ function Empty({ cols, children }) {
 // 12 Oct 2026 - the joining date everywhere (user, 2026-10-17). A joined person shows the day they joined; someone not joined yet shows the planned day.
 const dmyDay = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${Number(m[3])} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m[2]) - 1]} ${m[1]}` : null; };
 const joinCellText = (a) => (['JOINED', 'HIRED'].includes(a.stage) ? (dmyDay(a.joinedDay || a.joiningDate) || 'Not recorded') : (dmyDay(a.joiningDate) ? `${dmyDay(a.joiningDate)} (planned)` : 'Not recorded'));
+
+const mayAiSummary = (u) => !!u && (['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER'].includes(u.role) || u.atsRole === 'BDE' || !!(u.workflow && u.workflow.bdeTl));
 
 export default function ClientDetail() {
   const { id } = useParams();
@@ -590,6 +593,8 @@ export default function ClientDetail() {
       {/* BDE business workspace (2026-10-10): onboarding steps, follow-ups / meetings / client feedback, and the asks
           a Manager / Admin decides. Drawn for the client desk only; the server decides every button. */}
       {!data.redacted && <ClientBusiness client={c} enabled={!!meta?.actions?.businessActivities} onChanged={load} />}
+      {/* AI summary & pitch (market wave 06.15, utils/atsPlus/bd.js): for the BD team (BDE, BDE TL, Admin, Manager); the server refuses anyone else. */}
+      {!data.redacted && mayAiSummary(user) && <ClientAiSummary clientId={c.id} />}
 
       {/* 2026-11-20 (founder: "give clear tabs"): five tabs on screen, History under More, a tooltip on each and a line under the strip. */}
       <div style={{ marginBottom: 16 }}>

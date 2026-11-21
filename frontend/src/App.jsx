@@ -84,7 +84,8 @@ import AtsAlertSettings from './pages/admin/AtsAlertSettings.jsx'; // Admin → 
 import DataCleanup from './pages/admin/DataCleanup.jsx'; // Admin → Company Setup → Data cleanup (dashboards)
 import CandidateFields from './pages/admin/CandidateFields.jsx'; // Admin → Company Setup → Candidate fields (custom fields on the profile)
 import PipelineSettings from './pages/admin/PipelineSettings.jsx';
-import AtsPlusSettings from './pages/admin/AtsPlusSettings.jsx'; // Admin → Company Setup → ATS settings (market wave 2026-11-21: branches, forms, onboarding, integrations, privacy) // Admin → Company Setup → Pipeline & checks (stage names, sub-statuses, share checklist)
+import AtsPlusSettings from './pages/admin/AtsPlusSettings.jsx';
+import BusinessDev from './components/atsPlus/BusinessDev.jsx'; // ATS -> Clients -> Business development (market wave 2026-11-21; not the CRM) // Admin → Company Setup → ATS settings (market wave 2026-11-21: branches, forms, onboarding, integrations, privacy) // Admin → Company Setup → Pipeline & checks (stage names, sub-statuses, share checklist)
 import Profile from './pages/admin/Profile.jsx';
 
 // THE JOB PORTAL (2026-10-05): the customer's own portal, embedded at /jobs
@@ -325,6 +326,7 @@ export default function App() {
             is another agent's screen — see components/ClientModuleTabs.jsx. */}
         <Route path="clients" element={<Clients />} />
         <Route path="clients/duplicates" element={<ClientDuplicates />} />
+        <Route path="clients/bd" element={<BusinessDev />} />
         {/* Client portal logins: quarterly review + Admin queue (spec B1/B2) */}
         <Route path="clients/portal-logins" element={<ClientLoginsReview />} />
         <Route path="clients/:id" element={<ClientDetail />} />
