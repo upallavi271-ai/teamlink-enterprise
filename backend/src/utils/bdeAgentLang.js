@@ -26,6 +26,7 @@ const TE_MAP = [
   [/డ్రాప్\S*|మానేసి\S*/g, ' drops '], [/ఫీడ్‌?బ్యాక్\S*|స్పందన/g, ' feedback '], [/ఫాలో\s*అప్\S*/g, ' follow ups '], [/టార్గెట్\S*|లక్ష్య\S*/g, ' target '],
   [/రిక్వైర్‌?మెంట్\S*|ఉద్యోగ\S*|ఖాళీ\S*/g, ' requirements '], [/ప్రొఫైల్\S*/g, ' profiles '], [/షేర్\S*|పంపిన\S*|పంపారు/g, ' shared '],
   [/ఈ\s*రోజు|ఈరోజు|నేడు|ఇవాళ/g, ' today '], [/రేపు/g, ' tomorrow '], [/నిన్న/g, ' yesterday '], [/ఈ\s*వారం/g, ' this week '], [/ఈ\s*నెల/g, ' this month '],
+  [/నెల\s*వారీ\S*/g, ' month wise '], [/రోజు\s*వారీ\S*/g, ' day wise '], [/అందరు|అందరి/g, ' andaru '], [/రిపోర్ట్\S*|నివేదిక/g, ' report '], [/విభాగ\S*/g, ' department '],
   [/గత\s*నెల/g, ' last month '], [/ఈ\s*సంవత్సరం/g, ' this year '], [/గత\s*సంవత్సరం/g, ' last year '], [/ఇప్పటి\s*వరకు|ఇప్పటివరకు|ఇంతవరకు/g, ' till now '],
   [/మొత్తం/g, ' total '], [/నుండి|నుంచి/g, ' nundi '], [/వరకు/g, ' varaku '], [/జాబితా|లిస్ట్/g, ' list '],
   [/జనవరి/g, ' january '], [/ఫిబ్రవరి/g, ' february '], [/మార్చి/g, ' march '], [/ఏప్రిల్/g, ' april '], [/మే\s+(?=\d)/g, ' may '], [/జూన్/g, ' june '], [/జూలై|జులై/g, ' july '],
@@ -197,7 +198,7 @@ function periodOf(text, def = 'month', today = todayIst(), opts = {}) {
     else if (/\bthis week\b|\bweek\b|\bweekly\b/.test(t)) key = 'week';
     else if (/\blast month\b|\bprevious month\b/.test(t)) key = 'lastmonth';
     else if (/\bnext month\b/.test(t)) key = 'nextmonth';
-    else if (/\bthis month\b|\bmonth\b/.test(t) && !/\bmonth (by|wise)\b|\bmonthly\b|\bper month\b|\bevery month\b/.test(t)) key = 'month';
+    else if (/\bthis month\b|\bmonth\b/.test(t) && !(/\bmonth[\s-]?(by|wise)\b|\bmonthly\b|\bper month\b|\bevery month\b/.test(t) && !/\bthis month\b/.test(t))) key = 'month';
     else if (/\blast year\b|\bprevious year\b/.test(t)) key = 'lastyear';
     else if (/\bthis year\b|\bcurrent year\b/.test(t)) key = 'year';
     else if (ahead) { key = 'days'; n = Math.min(Number(ahead[1]), 365); }

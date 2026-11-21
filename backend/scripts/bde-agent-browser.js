@@ -42,6 +42,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
 (async () => {
   const T = L.todayIst();
   const bde = await prisma.user.create({ data: { name: `Anitha Bw${RUN}`, email: `bw.a.${RUN.toLowerCase()}@bw-test.in`, username: `bw.a.${RUN.toLowerCase()}@bw-test.in`, passwordHash: 'x', status: 'Active', hrmsRole: 'NONE', atsAccess: true, role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: 'BDE', passwordChangedAt: new Date(Date.now() - 3600e3) } });
+  const bdeTl = await prisma.user.create({ data: { name: `Tarun Bw${RUN}`, email: `bw.tl.${RUN.toLowerCase()}@bw-test.in`, username: `bw.tl.${RUN.toLowerCase()}@bw-test.in`, passwordHash: 'x', status: 'Active', hrmsRole: 'NONE', atsAccess: true, role: 'TL', atsRole: 'TL', atsDepartment: 'BDE', atsScopeDepartments: 'BDE', passwordChangedAt: new Date(Date.now() - 3600e3) } });
   const client = await prisma.client.create({ data: { name: 'Kovida Heartcare Hospital', bdeOwner: bde.name, ownerDepartment: 'Medical', status: 'Active', agreementStatus: 'ACTIVE', agreementEnd: L.addDays(T, 20), clientCode: `BW${RUN}` } });
   const req = await prisma.requirement.create({ data: { title: 'Staff Nurse ICU', clientId: client.id, bdeId: bde.id, status: 'OPEN', openings: 3, department: 'Medical', reqCode: `BW${RUN}-1` } });
   const cand = await prisma.candidate.create({ data: { name: 'Lakshmi Prasanna', phone: `98${String(Date.now()).slice(-8)}`, email: `lp.${RUN.toLowerCase()}@bw-cand-test.in` } });
@@ -59,9 +60,10 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   fs.mkdirSync(SHOTS, { recursive: true });
   const token = jwt.sign({ ...tokenPayload(await resolveIdentity(bde.id)), tms: Date.now() }, env.JWT_SECRET, { expiresIn: '1h' });
-  const openAs = async (viewport) => {
+  const tlToken = jwt.sign({ ...tokenPayload(await resolveIdentity(bdeTl.id)), tms: Date.now() }, env.JWT_SECRET, { expiresIn: '1h' });
+  const openAs = async (viewport, tok = token) => {
     const ctx = await browser.newContext({ viewport });
-    await ctx.addInitScript((t) => { try { localStorage.setItem('tl_token', t); } catch (e) { /* none */ } }, token);
+    await ctx.addInitScript((t) => { try { localStorage.setItem('tl_token', t); } catch (e) { /* none */ } }, tok);
     const page = await ctx.newPage();
     await page.goto(`http://localhost:${WEB}/ats/dashboard`, { waitUntil: 'commit', timeout: 120000 });
     return { ctx, page };
@@ -121,6 +123,26 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
       check('the last questions and answers are kept after a reload', await page.locator('[data-testid="bde-agent-panel"] .bde-agent-msg.me', { hasText: 'Tell me about kovida heartcare' }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false));
     }
     await ctx.close();
+    // the BDE TL: the team report from a chip, then one person's report by typing a name
+    {
+      const tl = await openAs({ width: 1280, height: 900 }, tlToken);
+      const pill = tl.page.locator('[data-testid="bde-agent-pill"]');
+      if (await pill.waitFor({ state: 'visible', timeout: 90000 }).then(() => true).catch(() => false)) {
+        await pill.click();
+        const panel = tl.page.locator('[data-testid="bde-agent-panel"]');
+        const chip = panel.locator('.bde-agent-chip', { hasText: 'All BDEs today' });
+        check('BDE TL: the "All BDEs today" chip is there', await chip.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false));
+        await chip.click();
+        const team = panel.locator('.bde-agent-msg.ai .bde-agent-title', { hasText: 'all BDEs' }).last();
+        check('BDE TL: the team report comes back with the window first ("Today (..): all BDEs ...") and a row for the BDE', await team.waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false) && (await panel.locator('.bde-agent-msg.ai').last().innerText()).includes(bde.name));
+        const input = panel.locator('input[aria-label="Question for the BDE Agent"]');
+        await input.fill('Anitha');
+        await input.press('Enter');
+        check('BDE TL: typing a BDE\'s first name gives that person\'s report for today', await panel.locator('.bde-agent-msg.ai .bde-agent-title', { hasText: `${bde.name} - 1 interviews` }).last().waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false));
+        await tl.page.screenshot({ path: path.join(SHOTS, '6-tl-team-and-person.png') });
+      } else check('BDE TL: the BDE Agent button is in the top bar', false);
+      await tl.ctx.close();
+    }
     // phone width
     const ph = await openAs({ width: 390, height: 820 });
     const pp = ph.page.locator('[data-testid="bde-agent-pill"]');

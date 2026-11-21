@@ -192,7 +192,8 @@ async function overview(user) {
   const chips = [
     "What is pending today?", "Today's interviews", 'Pending client feedback', 'Profiles shared this week', 'Follow-ups due', 'Joinings this month', 'Joinings till now',
     'Replacements due', 'Overdue invoices', 'Agreements expiring in 30 days', 'Agreements not signed',
-    ...(ctx.role === 'bde' ? ['My target this month'] : ['Clients with no activity']),
+    ...(ctx.role === 'bde' ? ['My work today', 'My month', 'My target this month'] : ['Clients with no activity']),
+    ...(['admin', 'bdetl'].includes(ctx.role) ? ['All BDEs today', 'All BDEs interviews this week', 'Team joinings month wise', 'Department report'] : []),
     ...(ctx.billing ? ['Pending invoice amount'] : []),
     'How do I raise a requirement?',
   ];

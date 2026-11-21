@@ -49,3 +49,16 @@ The questions below are the ones they ask all day. "Scope" is the login's own sc
    "ee samvatsaram", "gatha nela"); "from X to Y", "X nundi Y varaku", "between X and Y", "since X", "before X", "till X"; dd/mm/yyyy and
    ISO dates. The window used is the first words of every answer ("Jan 2026 - Nov 2026: 76 joinings ..."). A list question shows the
    whole list (up to 100 one-line rows); beyond that it gives the count and a link to the same list on its screen.
+6. People, team, department, history and keywords (2026-11-21, `utils/bdeAgentTeam.js`):
+   - A BDE TL / Admin / Super Admin types a BDE's name (first name, part, one wrong letter): that BDE's work in the asked window (today by
+     default) - follow-ups / meetings / calls logged, requirements raised / closed, profiles shared, interviews, client answers, selections,
+     offers, joinings (left after joining), drops, replacements, invoices, new clients, agreements signed, what is pending now - with a
+     day-wise table (month-wise beyond two months). Numbers are read through THAT BDE's own scope, so they equal the BDE's own "my report".
+   - "all BDEs report", "all BDEs interviews this week", "who did most joinings": one row per BDE login + the team total (each record once).
+   - "<department> report", "Education joinings this month", "Medical requirements", "department report": department-wise numbers, lists and
+     the BDEs handling the department's clients.
+   - "month wise joinings 2026", "day wise drops last 30 days", "replacements month wise": the full table, zeros included.
+   - "who handles <client>": the BDE, TL(s) and recruiters of a client / requirement.
+   - Any other small keyword (a city, part of a name, a REQ code, an invoice number): the scoped search engine's matches.
+   - A BDE gets only their own work for every one of these; team / other-person questions return their own report with a note, and other
+     BDEs' names are never matched for them.

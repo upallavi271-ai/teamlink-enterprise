@@ -199,6 +199,23 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     CINV.push({ invDay, paidDay: paid ? L.addDays(invDay, 20) : null });
   }
 
+
+  // ------------------------------------------------------------------ TODAY'S WORK for the person / team reports (founder 2026-11-21)
+  // BDE A today: 2 client follow-ups + 1 meeting logged, 1 candidate call; BDE B today: 1 client follow-up and a client answer (shortlisted)
+  const fuT = (client, id, who, data) => prisma.appSetting.create({ data: { key: `clientfu.${client.id}.${id}`, value: JSON.stringify({ id, clientId: client.id, status: 'Open', ownerId: who.id, ownerName: who.name, createdById: who.id, createdByName: who.name, createdAt: new Date().toISOString(), ...data }) } });
+  await fuT(A1, `t1${RUN.toLowerCase()}`, A, { kind: 'followup', title: 'Called Dr Meera about the ICU shortlist', dueDate: day(3) });
+  await fuT(A2, `t2${RUN.toLowerCase()}`, A, { kind: 'followup', title: 'Sent the agreement again', dueDate: day(2) });
+  await fuT(A1, `t3${RUN.toLowerCase()}`, A, { kind: 'meeting', title: 'Meeting with the ICU head', dueDate: day(4) });
+  await fuT(B1, `t4${RUN.toLowerCase()}`, B, { kind: 'followup', title: 'Plant visit fixed', dueDate: day(1) });
+  await prisma.applicationFollowUp.create({ data: { applicationId: P.c1.a.id, candidateId: P.c1.c.id, requirementId: RA1.id, ownerUserId: A.id, ownerName: A.name, ownerRole: 'BDE', contactMode: 'Call', purpose: 'Client decision', nextAction: 'Ask Dr Meera for the decision', dueDate: day(2), createdById: A.id, createdByName: A.name } });
+  await prisma.client.update({ where: { id: A1.id }, data: { location: `Hanamkonda${RUN}` } });
+  P.d4 = await person('Ruchitha Bandaru', RB2, 'CLIENT_SHORTLISTED', []);
+  await prisma.applicationStageEvent.createMany({ data: [
+    { applicationId: P.d4.a.id, candidateId: P.d4.c.id, fromStage: 'WITH_BDE', toStage: 'SHARED_WITH_CLIENT', action: 'Sent to client', createdAt: at(-2, '09:30'), requirementId: RB2.id, clientId: B2.id },
+    { applicationId: P.d4.a.id, candidateId: P.d4.c.id, fromStage: 'SHARED_WITH_CLIENT', toStage: 'CLIENT_SHORTLISTED', action: 'Client shortlisted', createdAt: at(0, '00:30'), requirementId: RB2.id, clientId: B2.id },
+  ] });
+  B_PEOPLE.push(P.d4.name);
+
   // ------------------------------------------------------------------ the server
   const stampOf = async () => JSON.stringify(await Promise.all([
     prisma.application.aggregate({ _count: { _all: true }, _max: { updatedAt: true } }), prisma.client.aggregate({ _count: { _all: true } }), prisma.requirement.aggregate({ _count: { _all: true }, _max: { updatedAt: true } }),
@@ -216,7 +233,8 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   await new Promise((r) => { setTimeout(r, 6000); }); // the server's own start-up jobs (index.js: the drop roll-status heal after 4 s) finish first
   const before = await stampOf();
   const tok = async (u) => jwt.sign({ ...tokenPayload(await resolveIdentity(u.id)), tms: Date.now() }, env.JWT_SECRET, { expiresIn: '1h' });
-  const tA = await tok(A); const tB = await tok(B); const tC = await tok(C); const tT = await tok(TL); const tS = await tok(SA); const tAD = await tok(AD); const tR = await tok(RC);
+  const tA = await tok(A); const tB = await tok(B); const tC = await tok(C); const tT = await tok(TL);
+  const BDE_LOGINS = (await prisma.user.findMany({ where: { atsRole: 'BDE', status: 'Active' }, select: { name: true, email: true } })).filter((u) => u.name && !/zztest|example\.test/i.test(`${u.name} ${u.email || ''}`)).length; const tS = await tok(SA); const tAD = await tok(AD); const tR = await tok(RC);
 
   // ------------------------------------------------------------------ who may use it
   check('a recruiter is refused (403)', (await call('POST', '/bde-agent/ask', { question: 'my clients' }, tR)).status === 403);
@@ -240,6 +258,12 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   const allClients = (await prisma.client.findMany({ select: { name: true, agreementEnd: true, agreementStatus: true } })).filter((c) => notTest(c.name));
   const expTlExpiring = allClients.filter((c) => /^\d{4}-\d{2}-\d{2}/.test(String(c.agreementEnd || '')) && !['CANCELLED', 'REJECTED'].includes(c.agreementStatus) && c.agreementEnd.slice(0, 10) >= T && c.agreementEnd.slice(0, 10) <= day(30)).length;
 
+  const monthsTo = (m0) => { const out = []; for (let m = m0; m <= T.slice(0, 7); m = L.addDays(L.lastOfMonth(`${m}-01`), 1).slice(0, 7)) out.push(m); return out; };
+  const evApps = (keys, stages, test) => keys.filter((k) => P[k].events.some(([st, off]) => stages.includes(st) && test(day(off)))).length;
+  const wk = {
+    shared: evApps(AK, ['SHARED_WITH_CLIENT'], inWeek), selections: evApps(AK, ['SELECTED'], inWeek), offers: evApps(AK, ['OFFER', 'OFFER_ACCEPTED'], inWeek),
+    joinings: [day(-6), day(-15)].filter(inWeek).length, drops: inWeek(day(-2)) ? 1 : 0, followupsA: 2 + (inWeek(day(-3)) ? 3 : 0),
+  };
   const J = (from, to) => CJ.filter((x) => x.day >= from && x.day <= to).length; // BDE C's joinings in a window (all of them, left or not)
   const last3 = (() => { const d = new Date(`${T}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() - 3); return L.addDays(d.toISOString().slice(0, 10), 1); })();
   // ------------------------------------------------------------------ THE QUESTION BANK
@@ -363,6 +387,82 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     ['C', 'clients added in march 2026', { intent: 'clients', count: 1, has: ['Sitara Eye Care'] }],
     ['C', 'how many clients', { intent: 'clients', count: 2, text: /^Now \(/ }],
     ['C', 'Tell me about VCare', { intent: 'client', text: /Requirements: 25 in all \(Open 1 · Paused \/ on hold 1 · Request, not live yet 1 · Closed 22\)/ }],
+
+    // ---- round 3: people, the team, departments, history, keywords (founder 2026-11-21) --------------------------------------------
+    // BDE: own work only
+    ['A', 'my report today', { intent: 'person', stats: { followups: 2, meetings: 1, candFollowups: 1, calls: 1, reqsRaised: 3, reqsClosed: 1, shared: 0, interviews: 1, feedbackIn: 0, selections: 0, offers: 0, joinings: 0, drops: 0, newClients: 2, signed: 0, replacementsDue: 1, invOverdue: 1, lateFollowups: 1 }, text: new RegExp(`^Today \\(${L.dm(T)}\\): ${A.name} - 1 interviews, 2 client follow-ups`) }],
+    ['A', 'My work today', { intent: 'person', stats: { followups: 2, interviews: 1 } }],
+    ['A', 'naa report ee roju', { intent: 'person', lang: 'tl', stats: { followups: 2, interviews: 1 } }],
+    ['A', 'my report this week', { intent: 'person', stats: { shared: wk.shared, interviews: exp.ivWeek, selections: wk.selections, offers: wk.offers, joinings: wk.joinings, drops: wk.drops, followups: wk.followupsA } }],
+    ['A', 'my interviews this week', { intent: 'interviews', count: exp.ivWeek }],
+    ['A', 'my joinings month wise', { intent: 'history_joinings', count: 2 }],
+    ['A', 'my clients', { intent: 'clients', count: 3 }],
+    ['A', 'my pending', { intent: 'pending', stats: { lateFollowups: 1 } }],
+    ['A', 'all BDEs report', { intent: 'person', text: /only your own work/, hasNot: [B.name, C.name] }],
+    ['A', 'who did most interviews this week', { intent: 'person', hasNot: [B.name, C.name] }],
+    ['A', `${B.name} interviews today`, { intent: 'interviews', count: 1, has: ['Lakshmi Prasanna'], hasNot: ['Chaitanya Varma'] }],
+    ['B', 'my report today', { intent: 'person', stats: { followups: 1, interviews: 1, feedbackIn: 1, shared: 0 } }],
+    ['B', 'team report this month', { intent: 'person', hasNot: [A.name, C.name] }],
+    ['C', 'my month', { intent: 'person', stats: { reqsRaised: VREQ.filter((x) => inMonth(x.created)).length, reqsClosed: 22, joinings: J(`${T.slice(0, 7)}-01`, L.lastOfMonth(T)), newClients: 0 } }],
+    // BDE TL: one person
+    ['TL', A.name.split(' ')[0], { intent: 'person', stats: { followups: 2, meetings: 1, interviews: 1, newClients: 2, reqsRaised: 3 }, text: new RegExp(`^Today \\(${L.dm(T)}\\): ${A.name} - `) }],
+    ['TL', `${A.name.split(' ')[0]} today`, { intent: 'person', stats: { followups: 2, interviews: 1 } }],
+    ['TL', 'anita report', { intent: 'person', stats: { followups: 2, interviews: 1 }, text: new RegExp(A.name) }],
+    ['TL', `${A.name.split(' ')[0]} this week`, { intent: 'person', stats: { shared: wk.shared, interviews: exp.ivWeek, selections: wk.selections, offers: wk.offers, joinings: wk.joinings, drops: wk.drops, followups: wk.followupsA } }],
+    ['TL', `${B.name.split(' ')[0]} yesterday`, { intent: 'person', stats: { shared: 1, interviews: 0, followups: 0 } }],
+    ['TL', `ninna ${B.name.split(' ')[0]} report`, { intent: 'person', lang: 'tl', stats: { shared: 1 } }],
+    ['TL', `${C.name} joinings till now`, { intent: 'joinings', count: 130, text: new RegExp(`^All time \\(till ${L.dmy(T)}\\): ${C.name} - 130 joinings`) }],
+    ['TL', `clients of ${B.name.split(' ')[0]}`, { intent: 'clients', count: 2, has: ['Vishrant Steel Works', 'Amrutha Diagnostics'], text: new RegExp(B.name) }],
+    ['TL', `${A.name.split(' ')[0]} pending`, { intent: 'pending', stats: { lateFollowups: 1 } }],
+    ['TL', `${A.name.split(' ')[0]} interviews today`, { intent: 'interviews', count: 1, has: ['Lakshmi Prasanna'] }],
+    ['TL', `${C.name.split(' ')[0]} ee nela report`, { intent: 'person', stats: { reqsClosed: 22 } }],
+    ['TL', `${A.name.split(' ')[0]} joinings month wise`, { intent: 'history_joinings', count: 2 }],
+    ['SA', A.name.split(' ')[0], { intent: 'person', stats: { followups: 2, interviews: 1 } }],
+    // BDE TL: the team
+    ['TL', 'all BDEs today', { intent: 'team', rows: { [A.name]: { followups: 2, interviews: 1, shared: 0, joinings: 0 }, [B.name]: { followups: 1, interviews: 1 }, [C.name]: { followups: 0, interviews: 0, joinings: 0 } }, nrows: BDE_LOGINS }],
+    ['TL', 'all BDEs interviews this week', { intent: 'team_metric', rows: { [A.name]: { interviews: exp.ivWeek }, [B.name]: { interviews: 1 }, [C.name]: { interviews: 0 } }, nrows: BDE_LOGINS }],
+    ['TL', 'all BDEs joinings till now', { intent: 'team_metric', rows: { [A.name]: { joinings: 2 }, [B.name]: { joinings: 1 }, [C.name]: { joinings: 130 } } }],
+    ['TL', 'all BDEs drops this month', { intent: 'team_metric', rows: { [A.name]: { drops: exp.dropMonth }, [B.name]: { drops: 0 }, [C.name]: { drops: 0 } } }],
+    ['TL', 'BDE wise follow-ups today', { intent: 'team_metric', rows: { [A.name]: { followups: 2 }, [B.name]: { followups: 1 } } }],
+    ['TL', 'team report this month', { intent: 'team', text: new RegExp(`^This month \\(${L.monthLabel(T)}\\): all BDEs`) }],
+    ['TL', 'andaru BDEs report ee roju', { intent: 'team', lang: 'tl', rows: { [A.name]: { interviews: 1 } } }],
+    ['TL', 'who did most joinings till now', { intent: 'team_metric', topRow: 'joinings' }],
+    ['TL', 'all BDEs offers this week', { intent: 'team_metric', rows: { [A.name]: { offers: wk.offers } } }],
+    ['SA', 'all BDEs report', { intent: 'team', rows: { [A.name]: { interviews: 1 } } }],
+    ['TL', 'team joinings month wise', { intent: 'history_joinings' }],
+    // departments
+    ['A', 'Education report', { intent: 'department', stats: { clients: 1, requirements: 1, open: 1 } }],
+    ['A', 'Medical requirements', { intent: 'requirements_all', count: 2, has: ['Staff Nurse ICU', 'Physiotherapist'] }],
+    ['A', 'edu requirements', { intent: 'requirements_all', count: 1, has: ['Lecturer Mechanical'] }],
+    ['A', 'Manufacturing clients', { intent: 'clients', count: 1, has: ['Tarangi Pharma Labs'] }],
+    ['A', 'Medical joinings this month', { intent: 'joinings', count: exp.joinMonth }],
+    ['A', 'Education interviews this week', { intent: 'interviews', count: [day(1), day(-2)].filter(inWeek).length }],
+    ['A', 'department report', { intent: 'department', count: 3 }],
+    ['A', 'department wise report', { intent: 'department', count: 3 }],
+    ['TL', 'Education report', { intent: 'department', text: new RegExp(`BDEs handling [^\\n]*${A.name}`) }],
+    ['TL', 'Manufacturing joinings this month', { intent: 'joinings' }],
+    // clients and requirements: who handles them
+    ['TL', 'who handles Kovida Heartcare', { intent: 'client', text: new RegExp(`Handled by: BDE ${A.name}`) }],
+    ['TL', `status of BQ${RUN}-1`, { intent: 'requirement', text: new RegExp(`Handled by: BDE ${A.name}`) }],
+    ['A', 'who handles Nelora', { intent: 'client', text: new RegExp(`Handled by: BDE ${A.name}`) }],
+    ['TL', 'Vishrant Steel Works', { intent: 'client', text: new RegExp(`Handled by: BDE ${B.name}`) }],
+    // history: month-wise / day-wise
+    ['C', `month wise joinings ${T.slice(0, 4)}`, { intent: 'history_joinings', count: J(`${T.slice(0, 4)}-01-01`, `${T.slice(0, 4)}-12-31`), table: monthsTo(`${T.slice(0, 4)}-01`).map((m) => J(`${m}-01`, L.lastOfMonth(`${m}-01`))) }],
+    ['C', 'nela vaari joinings', { intent: 'history_joinings', count: 130, tableLen: monthsTo('2025-06').length }],
+    ['C', 'drops month wise', { intent: 'history_drops', count: 6 }],
+    ['C', `day wise joinings october ${T.slice(0, 4)}`, { intent: 'history_joinings', count: J(`${T.slice(0, 4)}-10-01`, `${T.slice(0, 4)}-10-31`), tableLen: 31 }],
+    ['A', 'day wise drops last 30 days', { intent: 'history_drops', count: 1, tableLen: 30 }],
+    ['A', 'replacements month wise this year', { intent: 'history_replacements', count: 1, text: /0 given, 1 due/ }],
+    ['A', 'joinings roju vaari ee vaaram', { intent: 'history_joinings', count: wk.joinings, tableLen: L.daysBetween(L.mondayOf(T), T) + 1, lang: 'tl' }],
+    ['A', 'interviews day wise this week', { intent: 'history_interviews', count: exp.ivWeek }],
+    ['C', 'monthly offers 2025', { intent: 'history_offers', count: CJ.filter((x) => x.offer.startsWith('2025')).length }],
+    ['C', 'vcare joinings month wise', { intent: 'history_joinings', count: 130 }],
+    // any small keyword: the scoped search
+    ['SA', `BQ${RUN}-04`, { intent: 'search', has: [`Invoice BQ${RUN}-04`] }],
+    ['A', `Hanamkonda${RUN}`, { intent: 'client', has: ['Kovida Heartcare Hospital'] }],
+    ['A', 'Kondapalli', { intent: 'candidate', text: /Sravani Kondapalli/ }],
+    ['A', `Zentrix${RUN}1`, { intent: 'not_found', count: 0 }],
+    ['A', `${B.name.split(' ')[0]} report`, { hasNot: [B.name, 'Vishrant', 'Chaitanya'] }],
     ['A', `agreements expiring in ${['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'][Number(day(20).slice(5, 7)) - 1]}`, { intent: 'agreements', count: 1, has: ['Kovida Heartcare Hospital'] }],
 
   ];
@@ -389,6 +489,12 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     if (e.lang && b.lang !== e.lang) why.push(`lang ${b.lang}`);
     if (e.items !== undefined && (a0.items || []).length !== e.items) why.push(`items ${(a0.items || []).length} (expected ${e.items})`);
     if (e.more !== undefined && a0.more !== e.more) why.push(`more ${a0.more} (expected ${e.more})`);
+    Object.entries(e.stats || {}).forEach(([k, v]) => { if (!a0.stats || a0.stats[k] !== v) why.push(`stats.${k} ${a0.stats ? a0.stats[k] : '-'} (expected ${v})`); });
+    Object.entries(e.rows || {}).forEach(([nm, vals]) => { const row = ((a0.stats && a0.stats.rows) || []).find((x) => x.name === nm); Object.entries(vals).forEach(([k, v]) => { if (!row || row[k] !== v) why.push(`row ${nm}.${k} ${row ? row[k] : '-'} (expected ${v})`); }); });
+    if (e.nrows !== undefined && ((a0.stats && a0.stats.rows) || []).length !== e.nrows) why.push(`rows ${((a0.stats && a0.stats.rows) || []).length} (expected ${e.nrows})`);
+    if (e.topRow) { const rows = (a0.stats && a0.stats.rows) || []; const top = rows.reduce((m, x) => (x[e.topRow] > (m ? m[e.topRow] : -1) ? x : m), null); if (!top || !String(a0.title).includes(top.name)) why.push(`top row ${top && top.name}`); }
+    if (e.table && JSON.stringify(((a0.stats && a0.stats.table) || []).map((x) => x.n)) !== JSON.stringify(e.table)) why.push(`table ${JSON.stringify(((a0.stats && a0.stats.table) || []).map((x) => x.n))} (expected ${JSON.stringify(e.table)})`);
+    if (e.tableLen !== undefined && ((a0.stats && a0.stats.table) || []).length !== e.tableLen) why.push(`table rows ${((a0.stats && a0.stats.table) || []).length} (expected ${e.tableLen})`);
     if (!why.length) right += 1;
     check(`[${who}] "${q}" -> ${e.intent}${e.count !== undefined ? ` ${e.count}` : ''} (${r.ms} ms)`, !why.length, why);
   }
@@ -397,6 +503,9 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
   console.log(`\n  QUESTION BANK: ${right}/${BANK.length} right; latency median ${pct(50)} ms, 95th percentile ${pct(95)} ms, slowest ${ms[ms.length - 1]} ms ("${lat.sort((a, b) => b.ms - a.ms)[0].q}")\n`);
   check(`the question bank is 100% right (${right}/${BANK.length})`, right === BANK.length);
   check(`router answers come back under 1.5 s (95th percentile ${pct(95)} ms)`, pct(95) < 1500);
+  const aAll = answersBy.A.join('\n');
+  check('scope: no answer to BDE A ever names BDE B or BDE C (team / other-person questions give A only their own work)', !aAll.includes(B.name) && !aAll.includes(C.name));
+  check('scope: no answer to BDE B names BDE A or BDE C', !answersBy.B.join('\n').includes(A.name) && !answersBy.B.join('\n').includes(C.name));
 
   // the founder's questions, as answered now (printed for the report)
   for (const q of ['how many joinings completed till now', 'january 2026 to november 2026 joinings list', 'vcare requiremnts list', 'how many requiremnts are there from vcare', 'joinings till now']) {

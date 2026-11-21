@@ -19,7 +19,7 @@ const hits = new Map();
 function limit(req, res, next) {
   const now = Date.now();
   const list = (hits.get(req.user.id) || []).filter((t) => now - t < 60000);
-  if (list.length >= 90) return res.status(429).json({ error: 'Too many questions in a minute. Wait a moment and ask again.' });
+  if (list.length >= 150) return res.status(429).json({ error: 'Too many questions in a minute. Wait a moment and ask again.' });
   list.push(now);
   hits.set(req.user.id, list);
   return next();

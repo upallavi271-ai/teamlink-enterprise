@@ -114,7 +114,27 @@ const APP_SELECT = {
   offerStatus: true, offerDate: true, joiningDate: true, joiningStatus: true, rollStatus: true, joinedAt: true, updatedAt: true,
   candidate: { select: { name: true } }, requirement: { select: { id: true, title: true, reqCode: true, clientId: true, client: { select: { name: true } } } },
 };
-const filterArm = (f) => (f && f.clientId ? { requirement: { clientId: f.clientId } } : f && f.requirementId ? { requirementId: f.requirementId } : null);
+const filterArm = (f) => {
+  if (!f) return null;
+  if (f.clientId) return { requirement: { clientId: f.clientId } };
+  if (f.requirementId) return { requirementId: f.requirementId };
+  if (f.departments) return { requirement: { department: { in: f.departments } } };
+  return null;
+};
+// the login's clients / requirements, cut to one client or one department ("Education joinings", "Medical requirements")
+const inDept = (f, d) => !!d && f.departments.some((x) => String(x).toLowerCase() === String(d).toLowerCase());
+function clientsOf(ctx, f) {
+  if (f && f.clientId) return ctx.clients.filter((c) => c.id === f.clientId);
+  if (f && f.departments) { const viaJob = new Set(ctx.reqs.filter((r) => inDept(f, r.department)).map((r) => r.clientId)); return ctx.clients.filter((c) => inDept(f, c.ownerDepartment) || viaJob.has(c.id)); }
+  return ctx.clients;
+}
+const clientIdsOf = (ctx, f) => clientsOf(ctx, f).map((c) => c.id);
+function reqsOf(ctx, f) {
+  if (f && f.clientId) return ctx.reqs.filter((r) => r.clientId === f.clientId);
+  if (f && f.requirementId) return ctx.reqs.filter((r) => r.id === f.requirementId);
+  if (f && f.departments) return ctx.reqs.filter((r) => inDept(f, r.department));
+  return ctx.reqs;
+}
 
 // ---- links ---------------------------------------------------------------------------------------------------------------------------
 const clientItem = (c, sub) => ({ kind: 'client', id: c.id, label: c.name, sub: sub || '', to: `/clients/${c.id}`, history: `/clients/${c.id}?tab=history` });
@@ -132,7 +152,7 @@ function answer(ctx, a) {
   return {
     intent: a.intent, count: a.count === undefined ? null : a.count, title: a.title, lines: (a.lines || []).filter(Boolean), items: items.slice(0, a.show || SHOW),
     more: Math.max(0, (a.total === undefined ? items.length : a.total) - Math.min(items.length, a.show || SHOW)), facts: (a.facts || []).filter(Boolean),
-    open: a.open || null, record: a.record || null,
+    open: a.open || null, record: a.record || null, ...(a.stats ? { stats: a.stats } : {}),
   };
 }
 const scopeFact = (ctx) => {
@@ -397,6 +417,10 @@ async function drops(ctx, p, lang, f) {
     facts: [`Counted: Joining & Drop records marked Dropped with a drop day between ${L.dmy(p.from)} and ${L.dmy(p.to)}${f && f.name ? `, for ${f.name}` : ''}.`, scopeFact(ctx)],
   });
 }
+async function replacementsDueOf(ctx, f) {
+  const RP = require('../joindrop/replacement'); // eslint-disable-line global-require
+  return (await joiningRecords(ctx, f)).filter((r) => !r.replacementApplicationId && RP.describe(r, null, { today: ctx.today }).state === 'DUE');
+}
 async function replacements(ctx, p, lang, f) {
   const RP = require('../joindrop/replacement'); // eslint-disable-line global-require
   const recs = (await joiningRecords(ctx, f)).filter((r) => !r.replacementApplicationId).map((r) => ({ r, d: RP.describe(r, null, { today: ctx.today }) })).filter((x) => x.d.state === 'DUE');
@@ -417,7 +441,7 @@ async function replacements(ctx, p, lang, f) {
 // invoices: number, status, due date for everybody here; AMOUNTS only for the logins that already see them
 const outstandingOf = (i) => Math.max(0, Number(i.amount || 0) + Number(i.gst || 0) - Number(i.tds || 0) - Number(i.receivedAmount || 0) - Number(i.creditedAmount || 0) - Number(i.adjustedAmount || 0) + Number(i.debitedAmount || 0));
 async function invoiceRows(ctx, f) {
-  const ids = f && f.clientId ? [f.clientId] : [...ctx.clientIds];
+  const ids = f && f.departments ? clientIdsOf(ctx, f) : f && f.clientId ? [f.clientId] : [...ctx.clientIds];
   if (!ids.length) return [];
   const sel = { id: true, invoiceNumber: true, clientId: true, status: true, invoiceDate: true, dueDate: true, paidDate: true, candidateId: true };
   if (ctx.billing) Object.assign(sel, { amount: true, gst: true, tds: true, receivedAmount: true, creditedAmount: true, adjustedAmount: true, debitedAmount: true });
@@ -509,8 +533,8 @@ async function agreements(ctx, p, lang, f, t) {
   if (unsigned) {
     const liveJobClients = new Set(ctx.reqs.filter((r) => LIVE.includes(r.status)).map((r) => r.clientId));
     const live = (c) => !/archiv|pause|inactive/i.test(String(c.status || ''));
-    const list = ctx.clients.filter((c) => live(c) && liveJobClients.has(c.id) && !V.agreementIsSigned(c.agreementStatus));
-    const allUnsigned = ctx.clients.filter((c) => !V.agreementIsSigned(c.agreementStatus)).length;
+    const list = clientsOf(ctx, f).filter((c) => live(c) && liveJobClients.has(c.id) && !V.agreementIsSigned(c.agreementStatus));
+    const allUnsigned = clientsOf(ctx, f).filter((c) => !V.agreementIsSigned(c.agreementStatus)).length;
     const notSent = list.filter((c) => V.normalizeAgreementStatus(c.agreementStatus) === 'DRAFT').length;
     return answer(ctx, {
       intent: 'agreements', count: list.length, total: list.length,
@@ -522,7 +546,7 @@ async function agreements(ctx, p, lang, f, t) {
   }
   const from = p.named && p.from > ctx.today ? p.from : ctx.today;
   const to = p.named ? p.to : L.addDays(ctx.today, 30);
-  const withEnd = ctx.clients.filter((c) => /^\d{4}-\d{2}-\d{2}/.test(String(c.agreementEnd || '')) && valid(c));
+  const withEnd = clientsOf(ctx, f).filter((c) => /^\d{4}-\d{2}-\d{2}/.test(String(c.agreementEnd || '')) && valid(c));
   const soon = withEnd.filter((c) => c.agreementEnd.slice(0, 10) >= from && c.agreementEnd.slice(0, 10) <= to).sort((a, b) => a.agreementEnd.localeCompare(b.agreementEnd));
   const expired = withEnd.filter((c) => c.agreementEnd.slice(0, 10) < ctx.today);
   const daysN = L.daysBetween(ctx.today, to);
@@ -540,7 +564,7 @@ async function clientItems(ctx, ids) {
   return safe(() => require('./clientBusiness').itemsOfClients(ids, { kinds: ['followup', 'meeting'] }), []); // eslint-disable-line global-require
 }
 async function followups(ctx, p, lang, f) {
-  const ids = f && f.clientId ? [f.clientId] : [...ctx.clientIds];
+  const ids = clientIdsOf(ctx, f);
   const upto = p.named && p.key !== 'today' ? p.to : ctx.today;
   const items = (await clientItems(ctx, ids)).filter((x) => x.status === 'Open' && x.dueDate && x.dueDate <= upto).sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
   const late = items.filter((x) => x.dueDate < ctx.today).length;
@@ -606,7 +630,7 @@ async function target(ctx, p, lang) {
 }
 
 async function clientsList(ctx, p, lang, f, t) {
-  let list = ctx.clients;
+  let list = clientsOf(ctx, f && f.departments ? f : null);
   const active = /\bactive\b/.test(t) && !/inactive/.test(t);
   if (active) list = list.filter((c) => /^active$/i.test(String(c.status || 'Active')));
   if (/\binactive\b|\bsuspend/.test(t)) list = list.filter((c) => /inactive|suspend/i.test(String(c.status || '')));
@@ -656,7 +680,7 @@ const reqGroupWord = (k) => (REQ_GROUPS.find(([g]) => g === k) || [k, 'Other'])[
 // REQUIREMENTS: "open requirements" = the live ones; "closed" / "paused" / "requests" = those; anything else ("requirements list", "how many
 // requirements from vcare", "all requirements") = EVERY requirement with the split by status, newest first. A window = created in it.
 async function requirements(ctx, p, lang, f, t) {
-  let scoped = f && f.clientId ? ctx.reqs.filter((r) => r.clientId === f.clientId) : ctx.reqs;
+  let scoped = reqsOf(ctx, f && (f.clientId || f.departments) ? f : null);
   const windowed = p && p.named && !p.all;
   if (windowed) scoped = scoped.filter((r) => { const d = L.istDay(r.createdAt); return d >= p.from && d <= p.to; });
   const fName = forName(f);
@@ -762,7 +786,7 @@ async function surveyRows(ctx, ids) {
   }, []);
 }
 async function complaints(ctx, p, lang, f) {
-  const ids = f && f.clientId ? [f.clientId] : [...ctx.clientIds];
+  const ids = clientIdsOf(ctx, f);
   const rows = (await complaintRows(ctx, ids)).filter((r) => r.status !== 'Resolved');
   const late = rows.filter((r) => r.dueAt && Date.parse(r.dueAt) < Date.now()).length;
   return answer(ctx, {
@@ -774,7 +798,7 @@ async function complaints(ctx, p, lang, f) {
   });
 }
 async function nps(ctx, p, lang, f) {
-  const ids = f && f.clientId ? [f.clientId] : [...ctx.clientIds];
+  const ids = clientIdsOf(ctx, f);
   const rows = await surveyRows(ctx, ids);
   const E = require('./atsExperience'); // eslint-disable-line global-require
   const n = E.npsOf(rows);
@@ -841,8 +865,21 @@ async function agenda(ctx, p, lang) {
 }
 
 // ---- one record (360) ------------------------------------------------------------------------------------------------------------
+async function teamOf(ctx, reqs) {
+  const ids = reqs.map((r) => r.id);
+  if (!ids.length) return { recruiters: [], bdes: [] };
+  const full = await prisma.requirement.findMany({ where: { id: { in: ids } }, select: { recruiterId: true, recruiterIds: true, bdeId: true } });
+  const worked = await prisma.application.groupBy({ by: ['ownerRecruiterId'], where: appWhere(ctx, { requirementId: { in: ids } }, { ownerRecruiterId: { not: null } }) }).catch(() => []);
+  const rec = new Set(); const bde = new Set();
+  full.forEach((r) => { if (r.recruiterId) rec.add(r.recruiterId); String(r.recruiterIds || '').split(',').map((x) => x.trim()).filter(Boolean).forEach((x) => rec.add(x)); if (r.bdeId) bde.add(r.bdeId); });
+  worked.forEach((w) => rec.add(w.ownerRecruiterId));
+  const users = await prisma.user.findMany({ where: { id: { in: [...rec, ...bde] } }, select: { id: true, name: true } });
+  const nm = new Map(users.map((u) => [u.id, u.name]));
+  return { recruiters: [...rec].map((x) => nm.get(x)).filter(Boolean).sort(), bdes: [...bde].map((x) => nm.get(x)).filter(Boolean).sort() };
+}
 async function client360(ctx, c, lang) {
   const reqs = ctx.reqs.filter((r) => r.clientId === c.id);
+  const team = await teamOf(ctx, reqs).catch(() => null);
   const live = reqs.filter((r) => LIVE.includes(r.status));
   const appW = appWhere(ctx, { requirement: { clientId: c.id } });
   const [byStage, upcoming, cr, inv, comp, surv, items, pend] = await Promise.all([
@@ -867,6 +904,7 @@ async function client360(ctx, c, lang) {
     title: `${c.name}${c.clientCode ? ` (${c.clientCode})` : ''}: ${plural(live.length, 'open requirement', 'open requirements')}, ${plural(shared, 'profile', 'profiles')} shared, ${sum(JOINED)} joined`,
     lines: [
       `Status ${c.status || 'Active'}${c.priority ? `, priority ${c.priority}` : ''}${c.industry ? `, ${c.industry}` : ''}${c.location ? `, ${c.location}` : ''}${c.ownerDepartment ? `, desk ${c.ownerDepartment}` : ''}; BDE ${c.bdeOwner || 'not set'}; health ${h.label}${h.days != null ? ` (last activity ${h.days} days ago)` : ''}`,
+      `Handled by: BDE ${[c.bdeOwner, c.secondaryBde].filter(Boolean).join(', ') || 'not set'}; TL ${[...new Set(reqs.map((r) => r.tl).filter(Boolean))].join(', ') || 'not set'}${team && team.recruiters.length ? `; recruiters ${team.recruiters.slice(0, 8).join(', ')}${team.recruiters.length > 8 ? ` +${team.recruiters.length - 8} more` : ''}` : ''}`,
       `Contact: ${contact || 'not set'}`,
       `Last contact: ${lastDone ? `${lastDone.kind === 'meeting' ? 'meeting' : 'follow-up'} "${lastDone.title || '-'}" on ${L.dm(String(lastDone.doneAt || lastDone.createdAt).slice(0, 10))}` : 'no follow-up logged'}${nextOpen ? `; next: "${nextOpen.title || '-'}" due ${L.dm(nextOpen.dueDate)}` : ''}`,
       ...agreementTerms(c),
@@ -882,6 +920,7 @@ async function client360(ctx, c, lang) {
   });
 }
 async function requirement360(ctx, r, lang) {
+  const rteam = await teamOf(ctx, [r]).catch(() => null);
   const appW = appWhere(ctx, { requirementId: r.id });
   const [byStage, rows, nextIv] = await Promise.all([
     prisma.application.groupBy({ by: ['stage'], where: appW, _count: { _all: true } }),
@@ -895,6 +934,7 @@ async function requirement360(ctx, r, lang) {
     intent: 'requirement', count: total, record: { kind: 'requirement', id: r.id, name: r.title },
     title: `${r.title}${r.reqCode ? ` (${r.reqCode})` : ''} for ${(r.client && r.client.name) || '-'}: ${V.requirementStateWords(r.status) === 'open' ? 'open' : V.requirementStateWords(r.status)}, ${r.openings} opening${r.openings === 1 ? '' : 's'}, ${plural(total, 'profile', 'profiles')} in your view`,
     lines: [
+      `Handled by: BDE ${(rteam && rteam.bdes.join(', ')) || (ctx.clientById.get(r.clientId) || {}).bdeOwner || 'not set'}; TL ${r.tl || 'not set'}${rteam && rteam.recruiters.length ? `; recruiters ${rteam.recruiters.slice(0, 8).join(', ')}` : ''}`,
       `Opened ${L.dmy(L.istDay(r.createdAt))}${r.closingDate ? `, closes ${L.dmy(String(r.closingDate).slice(0, 10))}` : ''}${r.location ? `, ${r.location}` : ''}${r.department ? `, ${r.department}` : ''}${r.tl ? `; TL ${r.tl}` : ''}; priority ${r.priority}`,
       `With BDE ${sum(['WITH_BDE', 'BDE_APPROVED'])}, sent to client ${sum(['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'])}, shortlisted ${sum(['CLIENT_SHORTLISTED'])}, interview ${sum(['INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED'])}, selected / offer ${sum(SELECTED_NOW)}, joined ${sum(JOINED)}, rejected ${st.REJECTED || 0}`,
       nextIv.length ? `Next interview: ${nextIv.map((a) => `${a.candidate.name} ${L.dm(L.istDay(a.interviewAt))} ${L.timeOf(a.interviewAt)}`).join('; ')}` : null,
@@ -979,7 +1019,10 @@ person people name named whom someone anyone cheppandi chepu chupinchandi telusu
 january february march april may june july august september october november december jan feb mar apr jun jul aug sep sept oct nov dec
 till until upto since before after between nundi nunchi varaku daaka onwards onward date dates completed complete done finished finish total totally overall ever alltime
 time far list lists motham mottham year years samvatsaram wise breakdown month-wise still working left range period whole entire
-are there have been got happened came made raised released per each`.split(/\s+/));
+are there have been got happened came made raised released per each
+handles handle handled handling owner owns own report reports work worked activity activities performance summary did doing bde bdes team all every each
+department departments dept desk wise monthly daily roju vaari vari nela which most least top ranking leaderboard best highest lowest maximum minimum more less
+naa nenu chesina chesaru chesindi pani panulu`.split(/\s+/));
 
 function residualOf(norm) {
   return norm.split(' ').filter((w) => w && !STOP.has(w) && !/^[\d/.-]+$/.test(w) && !/^\d{1,2}(st|nd|rd|th)$/.test(w) && w.length >= 2).join(' ').trim();
@@ -1012,7 +1055,7 @@ function scoreName(tokens, name, code) {
   const words = String(name || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const c = String(code || '').toLowerCase();
   let s = 0; let hit = 0;
-  tokens.forEach((t) => { const ws = Math.max(wordScore(t, words), c && (c === t || (t.length >= 4 && c.includes(t))) ? t.length + 3 : 0); if (ws) { s += ws; hit += 1; } });
+  tokens.forEach((t) => { const ws = Math.max(wordScore(t, words), c && c === t ? t.length + 3 : 0); if (ws) { s += ws; hit += 1; } });
   return { s, hit };
 }
 function memoryMatch(ctx, residual) {
@@ -1050,8 +1093,11 @@ async function engineMatch(ctx, residual) {
     // only what the words name THEMSELVES: a requirement listed because a searched candidate applied to it, or a client listed by its contact
     // person, is not an answer (that candidate may be outside this login's view)
     const cd = (r.candidates || []).filter((x) => nameFits(q, x.name));
-    const cl = (r.clients || []).filter((x) => !(x.via || []).includes('contact person') || nameFits(q, x.name)).map((x) => ctx.clientById.get(x.id)).filter(Boolean);
-    const rq = (r.requirements || []).filter((x) => (x.matchedBy || []).some((m) => m === 'requirement' || m === 'client')).map((x) => ctx.reqById.get(x.id)).filter(Boolean);
+    // a shorter try (some of the words left out) must name the record itself: its name, or its code in full
+    const part = q !== residual;
+    const fits = (x, nm) => nameFits(q, nm) || String(x.code || '').toLowerCase() === q;
+    const cl = (r.clients || []).filter((x) => (!(x.via || []).includes('contact person') || nameFits(q, x.name)) && (!part || fits(x, x.name))).map((x) => ctx.clientById.get(x.id)).filter(Boolean);
+    const rq = (r.requirements || []).filter((x) => (x.matchedBy || []).some((m) => m === 'requirement' || m === 'client') && (!part || fits(x, x.title))).map((x) => ctx.reqById.get(x.id)).filter(Boolean);
     if (cd.length) return { kind: 'candidate', x: cd[0], ties: cd.length > 1 ? cd.slice(0, 5) : null };
     if (cl.length) return { kind: 'client', x: cl[0], ties: cl.length > 1 && q.split(' ').length === 1 ? cl.slice(0, 5) : null };
     if (rq.length) return { kind: 'requirement', x: rq[0], ties: null };
@@ -1113,6 +1159,11 @@ async function routeUncached(ctx, question, norm, lang) {
     const record = await resolve(ctx, residualOf(norm), { candidates: false });
     return { kind: 'advice', answers: [], topics, record };
   }
+
+  // ---- people, the team, departments, month-wise / day-wise history (founder 2026-11-21) ----------------------------------------
+  const T = require('./bdeAgentTeam'); // eslint-disable-line global-require
+  const team = await routeTeam(ctx, question, norm, lang, topics, T);
+  if (team) return team;
   if (AGENDA.test(norm) && !topics.some((t) => ['interviews', 'invoices', 'agreements', 'joinings', 'replacements', 'drops'].includes(t))) {
     return { kind: 'code', answers: [await agenda(ctx, L.periodOf(norm, 'today', ctx.today), lang)] };
   }
@@ -1135,6 +1186,12 @@ async function routeUncached(ctx, question, norm, lang) {
     const a = await candidate360(ctx, rec.x.id, lang);
     if (a) return { kind: 'code', answers: [a], record: rec };
   }
+  const grain = T.grainOf(norm);
+  const hm = grain ? historyMetric(listTopics.length ? listTopics : topics, norm, T) : null;
+  if (hm) {
+    const hf = f && rec.kind === 'requirement' ? { requirementId: rec.x.id, name: rec.x.title } : f;
+    return { kind: 'code', answers: [await T.history(ctx, hm, historyWindow(norm, grain, ctx), grain, lang, hf)], record: rec };
+  }
   if (listTopics.length) {
     // "interviews today and overdue invoices": up to two answers
     const firstAt = (k) => { const m = norm.match(TOPICS.find(([x]) => x === k)[1]); return m ? m.index : 999; };
@@ -1152,11 +1209,101 @@ async function routeUncached(ctx, question, norm, lang) {
   // a NAME that matched nothing (the words of "Tell me about X", a capitalised name, Telugu, or one or two bare words): say so plainly;
   // anything else open-ended goes to the model
   const named = ABOUT.test(norm) || L.TELUGU.test(question) || residual.split(' ').length <= 2 || /\s[A-Z][a-z]/.test(String(question).trim());
+  // any small keyword (a city, a skill, a REQ code, an invoice number, part of a name): the one scoped search engine
+  if (residual && residual.replace(/\s/g, '').length >= 2 && residual.split(' ').length <= 4) {
+    const k = await T.keywordSearch(ctx, residual, lang);
+    if (k) return { kind: 'code', answers: [k] };
+  }
   if (residual && residual.replace(/\s/g, '').length >= 3 && named) {
     return { kind: 'code', answers: [notFound(ctx, residual, lang)], notFound: true };
   }
   return { kind: 'model', answers: [], topics, record: rec };
 }
+
+
+// ---- people, the team, departments and history --------------------------------------------------------------------------------------
+const TEAM_WORDS = /\b(all|every|each)\s+(the\s+)?bdes?\b|\bbdes\b|\bteam\b|\bbde[\s-]?wise\b|\bper bde\b|\bwhich bde\b|\bwho (did|has|made|got|had|gave|shared|booked|logged|closed)\b|\bleaderboard\b|\branking\b|\btop bdes?\b|\bandaru\b|\banni bdes?\b/;
+const SELF_WORDS = /\b(my|naa|na|mana)\s+(report|work|day|week|month|performance|activity|summary|history|pani|panulu)\b|\bwhat (did|have) i (do|done)\b|\bnenu (emi|em) chesanu\b|\bmy (today|todays)\b/;
+const PENDING_WORDS = /\bmy pending\b|\bpending (items|work|list|panulu|anni)\b|\bwhat is late\b|\bwhats late\b|\blate (items|work)\b|\boverdue (work|items)\b|\bpending( work)? of\b/;
+const REPORT_WORDS = /\breport\b|\bwork\b|\bactivity\b|\bperformance\b|\bsummary\b|\bwhat did\b|\bdone\b|\bpani\b|\bchesaru\b|\bchesindi\b|\bhistory\b|\btoday\b|\byesterday\b/;
+const DEPT_ALL = /\bdepartments\b|\bdepartment[\s-]?wise\b|\bdept[\s-]?wise\b|\bdesk[\s-]?wise\b|^department report$|^dept report$|\ball departments\b|\bdepartment report\b/;
+function historyMetric(topics, norm, T) {
+  for (const t of topics) { // eslint-disable-line no-restricted-syntax
+    if (t === 'invoices') return /\bpaid\b|\breceived\b/.test(norm) ? 'invPaid' : 'invRaised';
+    const m = T.TOPIC_METRIC[t];
+    if (m && T.HISTORY_METRICS.includes(m)) return m;
+  }
+  return null;
+}
+function historyWindow(norm, grain, ctx) {
+  const p = L.periodOf(norm, 'all', ctx.today);
+  if (p.named || grain !== 'day') return p;
+  return L.periodOf('last 30 days', 'all', ctx.today);
+}
+const withWho = (a, name) => { const i = String(a.title || '').indexOf(': '); return i < 0 ? { ...a, title: `${name} - ${a.title}` } : { ...a, title: `${a.title.slice(0, i + 2)}${name} - ${a.title.slice(i + 2)}` }; };
+async function routeTeam(ctx, question, norm, lang, topics, T) {
+  const grain = T.grainOf(norm);
+  const teamy = TEAM_WORDS.test(norm);
+  const rank = /\b(most|maximum|highest|top|best|ekkuva)\b/.test(norm) ? 'most' : /\b(least|fewest|lowest|minimum|takkuva)\b/.test(norm) ? 'least' : null;
+  const metricOf = () => { if (topics.includes('invoices')) return /\bpaid\b/.test(norm) ? 'invPaid' : 'invRaised'; const t = topics.find((x) => T.TOPIC_METRIC[x]); return t ? T.TOPIC_METRIC[t] : null; };
+  const listTopics = topics.filter((t) => t !== 'clients' || /\bclients? of\b|\bclients\b/.test(norm));
+  const runWith = async (c, name, f) => {
+    if (PENDING_WORDS.test(norm) || (name && /\bpending\b/.test(norm) && !listTopics.length)) return T.pendingReport(c, lang, name);
+    const hm = grain ? historyMetric(listTopics, norm, T) : null;
+    if (hm) return T.history(c, hm, historyWindow(norm, grain, ctx), grain, lang, f, name);
+    if (listTopics.length) {
+      const t = listTopics[0];
+      const [fn, def] = RUN[t];
+      const a = await fn(c, L.periodOf(norm, def, ctx.today, { future: t === 'agreements' }), lang, t === 'clients' ? (f && f.departments ? f : null) : f, norm);
+      return name ? withWho(a, name) : a;
+    }
+    return null;
+  };
+  // 1. a BDE TL / Admin / Super Admin names a BDE: that person's work (their own scope)
+  if (T.canSeeTeam(ctx)) {
+    const who = await T.matchBde(ctx, residualOf(norm));
+    if (who && who.ties) {
+      return { kind: 'code', answers: [answer(ctx, { intent: 'choose', count: who.ties.length, title: say(lang, { en: `${who.ties.length} BDEs match. Which one do you mean?`, tl: `${who.ties.length} BDEs match ayyaru. Evaru?`, te: `${who.ties.length} BDEలు సరిపోలారు. ఎవరు?` }), lines: ['Ask again with the full name.'], items: who.ties.map((u) => ({ kind: 'person', id: u.id, label: u.name, sub: 'BDE', to: `/clients?search=${encodeURIComponent(u.name)}` })), facts: [scopeFact(ctx)] })] };
+    }
+    if (who) {
+      const c = await T.ctxOfBde(ctx, who.user);
+      const a = await runWith(c, who.user.name, null);
+      return { kind: 'code', answers: [a || await T.personReport(c, L.periodOf(norm, 'today', ctx.today), lang, who.user.name)], person: who.user.id };
+    }
+    // 2. the team: one row per BDE, a ranking, or the team's month-wise history
+    if (teamy) {
+      const metric = metricOf();
+      const hm = grain ? historyMetric(listTopics, norm, T) : null;
+      if (hm) return { kind: 'code', answers: [await T.history(ctx, hm, historyWindow(norm, grain, ctx), grain, lang, null, 'the team')] };
+      return { kind: 'code', answers: [await T.teamReport(ctx, L.periodOf(norm, 'today', ctx.today), lang, metric, { rank })] };
+    }
+  } else if (teamy || SELF_WORDS.test(norm) || (PENDING_WORDS.test(norm))) {
+    // a BDE: only their own work, whatever is asked for the team or another person
+    const note = teamy ? say(lang, { en: 'A BDE login shows only your own work; here it is.', tl: 'BDE login lo mee pani matrame kanipistundi; idi mee report.', te: 'BDE లాగిన్‌లో మీ పని మాత్రమే కనిపిస్తుంది.' }) : null;
+    if (!teamy) { const a = await runWith(ctx, null, null); if (a) return { kind: 'code', answers: [a] }; }
+    const own = await T.personReport(ctx, L.periodOf(norm, 'today', ctx.today), lang, ctx.user.name, note);
+    return { kind: 'code', answers: [own] };
+  }
+  if (T.canSeeTeam(ctx) && SELF_WORDS.test(norm)) return { kind: 'code', answers: [await T.teamReport(ctx, L.periodOf(norm, 'today', ctx.today), lang, metricOf(), { rank })] };
+  if (PENDING_WORDS.test(norm)) return { kind: 'code', answers: [await T.pendingReport(ctx, lang, null)] };
+  // 3. a department
+  const dep = T.deptOf(ctx, norm, question);
+  if (dep) {
+    const rest = residualOf(norm.replace(dep.word, ' '));
+    const other = rest ? memoryMatchQuick(ctx, rest) : null;
+    if (!other) {
+      const f = { departments: dep.departments, name: dep.name };
+      const a = await runWith(ctx, null, f);
+      if (a) return { kind: 'code', answers: [a] };
+      return { kind: 'code', answers: [await T.deptReport(ctx, dep, L.periodOf(norm, 'month', ctx.today), lang)] };
+    }
+  } else if (DEPT_ALL.test(norm)) {
+    return { kind: 'code', answers: [await T.deptReport(ctx, null, L.periodOf(norm, 'month', ctx.today), lang)] };
+  }
+  return null;
+}
+// a client / requirement the words name, from the login's own lists only (no search engine): keeps "Kovida medical" a client question
+function memoryMatchQuick(ctx, rest) { const m = memoryMatch(ctx, rest); return m && m.hit === m.tokens ? m : null; }
 
 function choose(ctx, rec, lang) {
   const items = rec.ties.map((x) => (rec.kind === 'client' ? clientItem(x, x.location || '') : rec.kind === 'requirement' ? reqItem(x, (x.client && x.client.name) || '') : { kind: 'candidate', id: x.id, label: x.name, sub: x.step || '', to: `/ats/history/candidate/${x.id}`, record: `/candidates/${x.id}` }));
@@ -1211,4 +1358,10 @@ async function summaryFacts(ctx, lang) {
 
 module.exports = {
   route, contextOf, invalidate, summaryFacts, resolve, residualOf, topicsOf, RUN, PROCESS, client360, requirement360, candidate360, healthOf,
+  // shared with utils/bdeAgentTeam.js
+  _h: {
+    appWhere, APP_SELECT, filterArm, clientIdsOf, clientsOf, reqsOf, clientItems, clientItem, reqItem, candItem, jobOf, stepOf, reqGroupOf, reqGroupWord, REQ_GROUPS,
+    distinctEventApps, appsById, JOINED, LIVE, LEFT_STATUS, dayArm, droppedAppIds, joiningRecords, invoiceRows, invoiceItem, answer, pendingOf, replacementsDueOf,
+    money, scopeFact, nowLabel, qs, safe,
+  },
 };
