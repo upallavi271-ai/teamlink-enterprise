@@ -687,6 +687,11 @@ export function teamlinkFrontRouter({ root, express }) {
       emailOf: async (session) => ((await withUser(SYSTEM, (c) => c.query('select email from users where id = $1', [session.userId]))).rows[0] || {}).email,
     };
   };
+  // the import wizards' job list: every department near the top, the department in each label (embed/import-jobs.mjs)
+  r.get('/api/candidates/import/jobs', wrap(async (req, res, next) => {
+    const M = await import(pathToFileURL(join(import.meta.dirname, 'import-jobs.mjs')).href);
+    return M.importJobsMiddleware()(req, res, next);
+  }));
   // the Talent Pool / Find Candidates list says who imported each candidate (embed/import-stats.mjs)
   r.get('/api/candidates', wrap(async (req, res, next) => {
     const M = await import(pathToFileURL(join(import.meta.dirname, 'import-stats.mjs')).href);
