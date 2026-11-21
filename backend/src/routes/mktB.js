@@ -128,7 +128,7 @@ router.put('/clients/:id/pipeline', admin, wrap(async (req, res) => {
 router.get('/jobs/:id/overview', wrap(async (req, res) => {
   const r = await jobOf(req, res); if (!r) return undefined;
   const [sc, watch, rule, rules, proc] = await Promise.all([J.screening(r.id), J.watchState(r.id), J.ruleFor(r), P.autoRules(r.id), r.clientId ? J.clientPipeline(r.clientId) : null]);
-  return res.json({ requirement: { id: r.id, title: r.title, skills: r.skills, goodToHaveSkills: r.goodToHaveSkills, clientName: r.client && r.client.name, internal: r.internal }, screening: sc, watch, postingRule: rule, autoRules: rules, autoRejectOn: await S.setting('autoReject.on'), clientProcess: proc && { rounds: proc.rounds, notes: proc.notes, configured: proc.configured }, may: { edit: roleOf(req.user) !== 'mgmt', lead: isLead(req.user) } });
+  return res.json({ requirement: { id: r.id, title: r.title, skills: r.skills, goodToHaveSkills: r.goodToHaveSkills, clientName: r.client && r.client.name, internal: r.internal }, screening: sc, watch, postingRule: rule, autoRules: rules, autoRejectOn: await S.setting('autoReject.on'), clientProcess: proc && { rounds: proc.rounds, notes: proc.notes, configured: proc.configured }, may: { edit: roleOf(req.user) !== 'mgmt', lead: isLead(req.user), bde: isBde(req.user) } });
 }));
 router.put('/jobs/:id/screening', act, wrap(async (req, res) => {
   const r = await jobOf(req, res); if (!r) return undefined;
@@ -231,7 +231,7 @@ router.get('/candidates/:id/overview', wrap(async (req, res) => {
   const [pools, fraud, reviews, links, risk] = await Promise.all([C.poolsOfCandidate(c.id, req.user), C.fraudFlags(req.user, { status: 'Open', candidateId: c.id }), C.reviewsOf(c.id), isBde(req.user) ? [] : C.linksOf(c.id), joined ? A.attrition(req.user, { candidateId: c.id }) : null]);
   return res.json({
     candidate: c,
-    applications: apps.map((a) => ({ id: a.id, stage: a.stage, title: a.requirement.title, client: a.requirement.client && a.requirement.client.name, pitches: pitches.filter((p) => p.applicationId === a.id).slice(0, 3), screening: answers.get(a.id) || null })),
+    applications: apps.map((a) => ({ id: a.id, stage: a.stage, requirementId: a.requirement.id, title: a.requirement.title, client: a.requirement.client && a.requirement.client.name, pitches: pitches.filter((p) => p.applicationId === a.id).slice(0, 3), screening: answers.get(a.id) || null })),
     pools, fraud, reviews, links, risk: risk ? risk.rows[0] || null : null,
     may: { edit: roleOf(req.user) !== 'mgmt', bde: isBde(req.user), lead: isLead(req.user) },
   });

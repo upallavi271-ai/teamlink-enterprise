@@ -94,6 +94,8 @@ import AgreementSigning from './pages/AgreementSigning.jsx';
 import AgreementStamp from './pages/AgreementStamp.jsx';
 import OfferSigning from './pages/OfferSigning.jsx'; // B3: the candidate's offer link (public)
 import TalkLink from './pages/TalkLink.jsx'; // 2026-10-28: the candidate's free AI link (public)
+import UpdateProfile from './pages/UpdateProfile.jsx'; // market wave B 03.17: the candidate's own profile-update link (public)
+import AiGovernance from './components/mktb/AiGovernance.jsx'; // market wave B: Administration > ATS settings > AI governance & automation
 import JoiningLink from './pages/JoiningLink.jsx'; // client hiring: the candidate's joining-letter link (public)
 import InterviewPrepPage from './pages/InterviewPrepPage.jsx'; // the candidate's How-to-prepare page (public, signed link)
 import PublicForm from './components/omni/crm/PublicForm.jsx'; // Omni-Channel Web Forms: the public capture form (no login)
@@ -229,6 +231,7 @@ export default function App() {
       <Route path="/offer/:token" element={<OfferSigning />} />
       <Route path="/talk/:token" element={<TalkLink />} />
       <Route path="/joining/:token" element={<JoiningLink />} />
+      <Route path="/update-profile/:token" element={<UpdateProfile />} />
       <Route path="/prep/:token" element={<InterviewPrepPage />} />
       <Route path="/forms-public/:token" element={<PublicForm />} />
       {/* AI Marketing client approval: the client opens a private link, no login (marketing/clientReview.js) */}
@@ -412,6 +415,7 @@ export default function App() {
         <Route path="admin/data-cleanup" element={<DataCleanup />} />
         <Route path="admin/candidate-fields" element={<CandidateFields />} />
         <Route path="admin/pipeline" element={<PipelineSettings />} />
+        <Route path="admin/ai-governance" element={<AiGovernance />} />
         <Route path="admin/vendor-logins" element={<VendorLogins />} />
         <Route path="admin/partners" element={<Partners />} />
         <Route path="admin/message-templates" element={<MessageTemplates />} />

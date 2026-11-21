@@ -279,6 +279,10 @@ export default function PipelineSettings() {
   if (!data) return <div className="small-muted">Loading…</div>;
   return (
     <div>
+      <div className="notice" style={{ marginBottom: 12 }}>
+        <span>Client-specific pipelines, posting rules, auto-reject rules and workflow automations are in </span>
+        <a href="/admin/ai-governance?tab=clients">AI governance &amp; automation</a>.
+      </div>
       <StageNames data={data} onSaved={saved} />
       <SubStatuses data={data} onSaved={saved} />
       <IndustryPipelines />

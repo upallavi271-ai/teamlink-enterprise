@@ -27,7 +27,7 @@
 // The tab a person sees is worked out from the address (?view=&sub=&quick=).
 export const LIST_TABS = ['todo', 'pipeline', 'master', 'job-portal', 'duplicates', 'sources', 'contacts'];
 // Tabs under "More" on the list screen.
-export const LIST_MORE = ['duplicates', 'sources', 'contacts'];
+export const LIST_MORE = ['duplicates', 'sources', 'contacts', 'tools'];
 // Old ?view= values (and spellings) -> the list screen's tab. Sub-tabs that used
 // to be a view of their own (?view=hold, ?view=rejected ...) are pipeline lists.
 export const LIST_VIEW_ALIAS = {
@@ -88,9 +88,9 @@ export const C360_TAB_ALIAS = {
   calls: 'aicalling',
 };
 // Career is under More so that five tabs are on screen (it is opened less than the follow-ups and documents).
-export const C360_MORE = ['career', 'conversation', 'scheduled', 'aicalling'];
+export const C360_MORE = ['career', 'conversation', 'scheduled', 'aicalling', 'tools'];
 // Tabs only a TeamLink login sees (a client / candidate login never does).
-export const C360_INTERNAL_ONLY = ['career', 'followups', 'conversation', 'scheduled', 'aicalling'];
+export const C360_INTERNAL_ONLY = ['career', 'followups', 'conversation', 'scheduled', 'aicalling', 'tools'];
 // Tabs that need the right to contact the person (the server decides who:
 // not a BDE, BDE TL or Accounts login).
 export const C360_REACH_ONLY = ['conversation', 'aicalling'];
@@ -107,7 +107,7 @@ export const REQ_TAB_ALIAS = {
   interview: 'interviews',
 };
 // ?tab=history opens the requirement's own History tab (the people history), under More with Activity (every change)
-export const REQ_MORE = ['client', 'agreement', 'history', 'activity'];
+export const REQ_MORE = ['client', 'agreement', 'history', 'activity', 'tools'];
 export const reqTabKey = (k, all) => {
   const v = String(k || '').toLowerCase();
   const to = REQ_TAB_ALIAS[v] || v;

@@ -73,6 +73,7 @@ import { RequirementMatchesPanel } from '../components/resume/MatchSplit.jsx'; /
 import SimilarCandidatesPanel from '../components/match/SimilarCandidates.jsx';
 import { OverrideBadge, FitWithVersion } from '../components/match/OverridePrompt.jsx';
 import AddCandidateCard from '../components/applications/AddCandidateCard.jsx';
+import RequirementTools from '../components/mktb/RequirementTools.jsx'; // market wave B: screening questions, skills from JD, always-on search, rediscovery, rules, agents
 import { ReplacementTags } from '../components/joindrop/ReplacementParts.jsx'; // who replaced whom
 import {
   ALL_STAGE_CODES, stageLabel, stageBadgeClass, stepOf, stepClass,
@@ -193,12 +194,13 @@ export const JOB_PORTAL = 'TeamLink Job Portal';
 //   → Candidates Available → On Hold / Closed
 const FLOW = ['DRAFT', 'AGREEMENT_CHECK', 'OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
 const PARKED = ['ON_HOLD', 'CLOSED'];
-const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', 'distribute', 'history', 'activity'];
+const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', 'distribute', 'history', 'activity', 'tools'];
 const TAB_LABELS = {
-  overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', distribute: 'Postings', history: 'History', activity: 'Activity',
+  tools: 'Hiring tools', overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', distribute: 'Postings', history: 'History', activity: 'Activity',
 };
 // What each tab is for: the line under the strip and the tab's tooltip. Main: Overview · Candidates · Team · Interviews · Postings; under More: Client · Agreement · History · Activity.
 const TAB_SAY = {
+  tools: 'Screening questions, skills from the description, the always-on search, past candidates to rediscover, posting and auto-reject rules, and agents for this job.',
   history: 'The people history of this requirement: who was shared, selected, joined or dropped, with the dates.',
   overview: 'The requirement at a glance: status, who works on it, the people nearby and what needs doing next.',
   candidates: 'People in the pipeline for this requirement, and good matches to add. Move them to the next step here.',
@@ -1192,9 +1194,11 @@ export default function RequirementDetail() {
   // Role spec §7 — a section this role may not see is not a tab at all (and
   // the API did not send its data).
   const tabs = TABS.filter((t) => (t !== 'client' || r.internal || !r.sections || !!r.sections.clientContact)
-    && (t !== 'agreement' || showAgreementTab));
+    && (t !== 'agreement' || showAgreementTab)
+    && (t !== 'tools' || (!isClientLogin && user?.role !== 'CANDIDATE')));
   const bodies = {
     overview, candidates: candidatesTab, recruiter: recruiterTab, client: clientTab, interviews: interviewsTab, agreement: agreementTab, distribute: <PostingsTab job={r} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load}><DistributeTab job={r} onChanged={load} /></PostingsTab>, history: <div className="card section"><HistoryTab key={r.id} requirementId={r.id} /></div>, activity: activityTab,
+    tools: <RequirementTools key={r.id} job={r} onChanged={load} />,
   };
   const tabCount = { candidates: applications.length, interviews: interviewRows.length };
 

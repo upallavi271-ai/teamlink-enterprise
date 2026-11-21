@@ -297,6 +297,8 @@ export default function RequirementForm({
   canFullEdit = false,
   // ?new=1&clientId= (Clients → + New Requirement) pre-selects the client.
   initialClientId = '',
+  // market wave B 02.13: a draft from the intake assistant (components/mktb/IntakeAssistant.jsx) fills a NEW form; the person checks and saves
+  initialValues = null,
   onClose,
   onSaved,
 }) {
@@ -349,6 +351,7 @@ export default function RequirementForm({
       postingSources: [...OWN_SITES],
       // HR adds TeamLink's OWN openings only (2026-10-13): client jobs are created by the client manager (BDE) team.
       ...(atsRole === 'HR' ? { type: 'Internal Requirement' } : {}),
+      ...(initialValues || {}),
     }));
   const [problems, setProblems] = useState([]);
   const [missingFields, setMissingFields] = useState([]); // form keys that still need an answer (shown red, no asterisks)

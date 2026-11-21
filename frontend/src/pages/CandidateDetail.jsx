@@ -50,6 +50,8 @@ import ScheduledHistory from '../components/reminders/ScheduledHistory.jsx'; // 
 import {
   FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot, AddApplicationSlot, AiCallingSlot,
 } from '../components/candidate/ProfileSlots.jsx';
+import CandidateTools from '../components/mktb/CandidateTools.jsx'; // market wave B: Hiring tools tab
+import DocExpiry from '../components/mktb/DocExpiry.jsx'; // market wave B: document expiry dates
 
 // The candidate record, in nine tabs:
 //   Overview · Application · AI Match · Pipeline History · Interviews ·
@@ -1113,6 +1115,8 @@ export default function CandidateDetail() {
               (upload / view / download, audited; delete with a reason). Old
               name-only rows are listed too. --- */}
       {tab === 'documents' && <RecordDocuments c={c} internal={internal} />}
+      {tab === 'documents' && internal && <DocExpiry key={`dx-${c.id}`} candidateId={c.id} />}
+      {tab === 'tools' && internal && <CandidateTools key={`mt-${c.id}`} candidateId={c.id} onChanged={load} />}
       {/* the dated follow-up log (2026-11-03): what each recruiter / TL did with this candidate, day by day */}
       {tab === 'followups' && internal && <FollowUpLog key={c.id} candidateId={c.id} applicationId={primary ? primary.id : undefined} />}
       {/* The Resume card (file, Edit resume, versions, facts) — its own tab, no longer on the left. */}

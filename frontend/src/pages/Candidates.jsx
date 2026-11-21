@@ -37,6 +37,7 @@ import ActionMore from '../components/candidates-v4/ActionMore.jsx'; // the one 
 import InsightsFold from '../components/candidates-v4/InsightsFold.jsx'; // every chart and tile, in one section under the table
 import NewPeopleChip from '../components/candidate/NewPeopleChip.jsx'; // new people, not on a requirement yet: one chip beside the search
 import '../components/candidates-v4/candidatesTidy.css';
+import HiringTools from '../components/mktb/HiringTools.jsx'; // market wave B: Hiring tools view
 import TabStrip from '../components/ui/TabStrip.jsx'; // main tabs + More menu + the caption line (founder 2026-11-20)
 import {
   LIST_VIEW_ALIAS, LIST_MORE, PIPE_SUB_MORE, MASTER_SUB_MORE, defaultListTab, lastTab, rememberTab,
@@ -212,6 +213,8 @@ const MAIN_VIEWS = [
   { id: 'sources', label: 'Sources', say: 'Where people came from: how many from each source, by day, week or month. Use it to see which source works.', hint: 'How many people came from each source, and when' },
   // Company contact lists (CSV / Excel), the job message to them on WhatsApp, and the replies (components/broadcast/ContactLists.jsx).
   { id: 'contacts', label: 'Contact lists', say: 'Contact lists from a company: import them, send a requirement on WhatsApp, read the replies. For reaching people who have not applied yet.', hint: 'Import a contact list and send a requirement to it on WhatsApp' },
+  // market wave B (2026-11-21): smart search, saved searches, talent pools, the review queue, agents, bulk review, placements, risk (components/mktb/HiringTools.jsx)
+  { id: 'tools', label: 'Hiring tools', say: 'Search in plain words, saved searches, talent pools, the review queue of automatic decisions and checks, agents, bulk review, placements and risk after joining.', hint: 'Smart search, talent pools, review queue, agents' },
   { id: 'duplicates', label: 'Duplicates', say: 'People who look like someone already on file. Each one waits at the first step until you merge it, mark it the same person, or say it is not a duplicate.', hint: 'Check these before they move on — merge, same person, not a duplicate, or reject' },
 ];
 const PIPE_SUBS = [
@@ -445,7 +448,7 @@ function fromUrl(sp, portalAllowed, dupAllowed = true) {
   if (LIST_VIEW_ALIAS[rawView] === 'todo') { quickUrl = 'my_pending'; sub = 'all'; }
   if (rawView === 'job-portal' || rawView === 'jobportal') main = portalAllowed ? 'job-portal' : 'pipeline';
   else if (LIST_VIEW_ALIAS[rawView] === 'todo') main = 'pipeline';
-  else if (rawView === 'contacts') { main = 'contacts'; sub = 'all'; } else if (rawView === 'sources') { main = 'sources'; sub = 'all'; } else if (rawView === 'duplicates' || (rawView === 'master' && rawSub === 'duplicates')) { main = dupAllowed ? 'duplicates' : 'master'; sub = 'all'; } else if (rawView === 'master') { main = 'master'; sub = MASTER_SUBS.some((x) => x.id === rawSub) ? rawSub : 'all'; } else if (rawView === 'rejected') { sub = 'all'; status = 'Rejected'; } else if (LEGACY_SUB[rawView]) sub = LEGACY_SUB[rawView];
+  else if (rawView === 'contacts') { main = 'contacts'; sub = 'all'; } else if (rawView === 'sources') { main = 'sources'; sub = 'all'; } else if (rawView === 'tools') { main = 'tools'; sub = 'all'; } else if (rawView === 'duplicates' || (rawView === 'master' && rawSub === 'duplicates')) { main = dupAllowed ? 'duplicates' : 'master'; sub = 'all'; } else if (rawView === 'master') { main = 'master'; sub = MASTER_SUBS.some((x) => x.id === rawSub) ? rawSub : 'all'; } else if (rawView === 'rejected') { sub = 'all'; status = 'Rejected'; } else if (LEGACY_SUB[rawView]) sub = LEGACY_SUB[rawView];
   else if (rawView === 'pipeline' || !rawView) sub = PIPE_SUBS.some((x) => x.id === rawSub) ? rawSub : '';
   if (stageFilter === 'stage:REJECTED') { stageFilter = ''; status = status || 'Rejected'; }
   if (stageFilter === 'stage:HOLD') { stageFilter = ''; sub = sub || 'hold'; }
@@ -480,9 +483,9 @@ function entryFromUrl(sp, portalAllowed, dupAllowed, user, tier) {
   const external = ['CLIENT', 'CANDIDATE'].includes(user && user.role);
   // A link to a tab this login does not get (Contact lists, Sources) lands on the pipeline.
   if (base.main === 'contacts' && !contactsAllowed(user)) return { ...base, main: 'pipeline', sub: 'active' };
-  if (base.main === 'sources' && external) return { ...base, main: 'pipeline', sub: 'active' };
+  if ((base.main === 'sources' || base.main === 'tools') && external) return { ...base, main: 'pipeline', sub: 'active' };
   if ([...sp.keys()].length) return base;
-  const ok = (t) => (t === 'todo' ? !external : t === 'job-portal' ? portalAllowed : t === 'sources' ? !external : t === 'contacts' ? contactsAllowed(user) : ['pipeline', 'master'].includes(t));
+  const ok = (t) => (t === 'todo' ? !external : t === 'job-portal' ? portalAllowed : (t === 'sources' || t === 'tools') ? !external : t === 'contacts' ? contactsAllowed(user) : ['pipeline', 'master'].includes(t));
   const last = lastTab('candidates', user && user.id);
   let want = ok(last) ? last : defaultListTab(tier);
   if (!ok(want)) want = 'pipeline';
@@ -591,7 +594,7 @@ export default function Candidates() {
   function writeUrl(nextMain, nextSub, q = '') {
     const sp = new URLSearchParams(searchParams);
     sp.set('view', nextMain);
-    if (nextMain === 'job-portal' || nextMain === 'duplicates' || nextMain === 'sources' || nextMain === 'contacts') sp.delete('sub'); else sp.set('sub', nextSub);
+    if (nextMain === 'job-portal' || nextMain === 'duplicates' || nextMain === 'sources' || nextMain === 'tools' || nextMain === 'contacts') sp.delete('sub'); else sp.set('sub', nextSub);
     ['add', 'status', 'stage', 'followUp', 'quick', 'layout'].forEach((k) => sp.delete(k));
     if (q) sp.set('quick', q); // the Needs my action tab is ?view=pipeline&quick=my_pending
     if (sp.toString() === searchParams.toString()) return; // nothing to write: do not swallow the next real address change
@@ -752,7 +755,7 @@ export default function Candidates() {
     const { sort: _s, dir: _d, ...rest } = baseParams; // eslint-disable-line no-unused-vars
     return rest;
   }, [baseParams]);
-  const { facets, loading: facetsLoading } = useFacets('candidates', facetParams, { enabled: main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'contacts' });
+  const { facets, loading: facetsLoading } = useFacets('candidates', facetParams, { enabled: main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'tools' && main !== 'contacts' });
   const facetLabel = (key, value) => ((facets[key] || []).find((o) => String(o.value) === String(value)) || {}).label;
   // The Tag filter's options: every tag with how many people carry it (GET /candidates/profile-tags; TeamLink logins only).
   const [tagOptions, setTagOptions] = useState([]);
@@ -835,7 +838,7 @@ export default function Candidates() {
   }, [facetParams]);
   const cardKey = JSON.stringify(cardParams);
   useEffect(() => {
-    if (main === 'job-portal' || main === 'duplicates' || main === 'sources' || main === 'contacts' || ['CLIENT', 'CANDIDATE'].includes(user?.role)) return undefined;
+    if (main === 'job-portal' || main === 'duplicates' || main === 'sources' || main === 'tools' || main === 'contacts' || ['CLIENT', 'CANDIDATE'].includes(user?.role)) return undefined;
     let live = true;
     // The fast counts first; "available for matching" needs the people rows (the slow build) and
     // is asked for on its own, so nothing else waits for it.
@@ -1378,7 +1381,7 @@ export default function Candidates() {
     { key: 'rejected', label: 'Rejected', value: subN('rejected') || 0, tab: 'rejected' },
   ].map((d) => ({ ...d, onClick: () => (d.tab ? goTile(d.tab) : pickStageFilter(d.filter)) }));
   const donutOn = (DONUT.find((d) => (d.tab ? pipeSub === d.tab && plainList : d.filter && stageOn(d.filter))) || {}).key || '';
-  const cardNote = cardOn && main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'contacts' && (
+  const cardNote = cardOn && main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'tools' && main !== 'contacts' && (
     <div className="small-muted cviews-def">
       {{
         unverified: 'Showing: unverified — new people nobody has checked yet.',
@@ -1531,7 +1534,7 @@ export default function Candidates() {
           <h1>Candidates &amp; Pipeline</h1>
           <p>
             <span className="cv4-scope">
-              {main === 'duplicates' ? <span className="small-muted">People who look like someone already on file</span> : main === 'sources' ? <span className="small-muted">Where people came from, and when</span> : main === 'contacts' ? <span className="small-muted">Company contact lists and requirement messages</span> : main !== 'job-portal'
+              {main === 'duplicates' ? <span className="small-muted">People who look like someone already on file</span> : main === 'sources' ? <span className="small-muted">Where people came from, and when</span> : main === 'tools' ? <span className="small-muted">Search, pools, reviews and agents</span> : main === 'contacts' ? <span className="small-muted">Company contact lists and requirement messages</span> : main !== 'job-portal'
                 ? <ScopeLine user={user} count={fresh ? fresh.scopeTotal : (viewCounts.master || 0)} noun={viewNoun} />
                 : <span className="small-muted">New from the job portal — not checked yet</span>}
             </span>
@@ -1580,7 +1583,7 @@ export default function Candidates() {
                 body={exportBody}
               />
             )}
-            {main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'contacts' && (
+            {main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'tools' && main !== 'contacts' && (
               <SavedViews storageKey="cand" label="Saved filters" current={savedState} onApply={applySaved} presets={SAVED_PRESETS} />
             )}
           </ActionMore>
@@ -1593,7 +1596,7 @@ export default function Candidates() {
         label="Candidates views"
         value={tabId}
         onChange={goTab}
-        tabs={MAIN_VIEWS.filter((v) => (v.id !== 'todo' || !external) && (v.id !== 'job-portal' || portalTab) && (v.id !== 'duplicates' || dupTab || main === 'duplicates') && (v.id !== 'sources' || !external) && (v.id !== 'contacts' || contactsAllowed(user))).map((v) => ({
+        tabs={MAIN_VIEWS.filter((v) => (v.id !== 'todo' || !external) && (v.id !== 'job-portal' || portalTab) && (v.id !== 'duplicates' || dupTab || main === 'duplicates') && (v.id !== 'sources' || !external) && (v.id !== 'tools' || !external) && (v.id !== 'contacts' || contactsAllowed(user))).map((v) => ({
           key: v.id,
           label: v.label,
           say: v.say,
@@ -1929,6 +1932,7 @@ export default function Candidates() {
       {main === 'job-portal' && portalTab && <JobPortalCandidates onSentToAts={reload} />}
       {main === 'duplicates' && <DupWorklist onCountChange={() => loadDupStatus()} />}
       {main === 'sources' && <CandidateSources user={user} />}
+      {main === 'tools' && !external && <HiringTools />}
       {main === 'contacts' && <ContactLists user={user} />}
       {verifyOpen && <VerifyPanel onClose={() => setVerifyOpen(false)} />}
 

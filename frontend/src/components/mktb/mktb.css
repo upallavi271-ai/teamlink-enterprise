@@ -1,0 +1,40 @@
+/* Market wave B hiring tools: matches the app's cards / buttons, works at phone width. */
+.mkb-card { padding: 14px 16px; margin-bottom: 14px; }
+.mkb-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.mkb-card-head h3 { margin: 0; font-size: 15px; }
+.mkb-note { margin: 4px 0 10px; }
+.mkb-flash { margin: 8px 0; padding: 8px 10px; border-radius: 6px; font-size: 13px; }
+.mkb-flash.good { background: #e8f6ee; color: #11643a; }
+.mkb-flash.bad { background: #fdecec; color: #9b1c1c; }
+.mkb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.mkb-chip { background: #eef3fb; color: #1f3a5f; border-radius: 999px; padding: 3px 10px; font-size: 12px; }
+.mkb-chip.new { background: #fff4d6; color: #7a4b00; }
+.mkb-chip.bad { background: #fdecec; color: #9b1c1c; }
+.mkb-chip.good { background: #e8f6ee; color: #11643a; }
+.mkb-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.mkb-row > input, .mkb-row > select, .mkb-row > textarea { max-width: 100%; }
+.mkb-grow { flex: 1 1 220px; min-width: 0; }
+.mkb-link { background: none; border: 0; color: #2557a7; cursor: pointer; padding: 0; font-size: 12px; text-decoration: underline; }
+.mkb-flag { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+.mkb-flag input { flex: 1 1 160px; min-width: 0; }
+.mkb-empty { padding: 8px 0; }
+.mkb-list { list-style: none; margin: 0; padding: 0; }
+.mkb-list li { padding: 8px 0; border-bottom: 1px solid #edf0f4; display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.mkb-list li:last-child { border-bottom: 0; }
+.mkb-pre { white-space: pre-wrap; background: #f7f9fc; border-radius: 6px; padding: 8px 10px; font-size: 13px; margin: 6px 0; }
+.mkb-q { border: 1px solid #e3e8ef; border-radius: 8px; padding: 8px; margin: 6px 0; display: grid; grid-template-columns: 1fr; gap: 6px; }
+.mkb-table { width: 100%; overflow-x: auto; }
+.mkb-table table { min-width: 520px; }
+.mkb-score { font-weight: 700; }
+.mkb-score.High, .mkb-score.bad { color: #b42318; }
+.mkb-score.Medium { color: #b54708; }
+.mkb-score.Low, .mkb-score.good { color: #067647; }
+.mkb-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.mkb-public { max-width: 560px; margin: 24px auto; padding: 0 16px; }
+.mkb-public label { display: block; margin: 10px 0 4px; font-weight: 600; font-size: 14px; }
+.mkb-public input { width: 100%; box-sizing: border-box; padding: 8px; }
+@media (max-width: 640px) {
+  .mkb-card { padding: 12px; }
+  .mkb-row { align-items: stretch; }
+  .mkb-row > .btn { flex: 1 1 auto; }
+}

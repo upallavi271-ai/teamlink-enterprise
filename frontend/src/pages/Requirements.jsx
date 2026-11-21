@@ -70,6 +70,7 @@ import {
 } from '../components/ui/Guide.jsx';
 import Combo from '../components/Combo.jsx';
 import { rowClickProps } from '../utils/rowClick.js';
+import IntakeAssistant from '../components/mktb/IntakeAssistant.jsx'; // market wave B 02.13: a call note / e-mail -> a requirement draft
 
 const JOB_TIPS = [
   'Each row is one requirement: a client (or our company) wants people for it.',
@@ -408,6 +409,8 @@ export default function Requirements() {
   const [formClients, setFormClients] = useState(null); // full records for the form
   const [team, setTeam] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [intakeOpen, setIntakeOpen] = useState(false); // market wave B: the intake assistant
+  const [intakeDraft, setIntakeDraft] = useState(null); // its draft, handed to the Add requirement form
   // Save & Post: the live per-site posting status, right here (spec §15).
   const [postPanel, setPostPanel] = useState(null);
   const [formClientId, setFormClientId] = useState('');
@@ -1108,6 +1111,7 @@ export default function Requirements() {
             {canRaiseRequirement(user)
               ? <button type="button" className="btn btn-primary" onClick={() => openForm()} title={isHrUser ? "TeamLink's own opening (internal hiring)" : undefined}>{isHrUser ? '+ New internal opening' : '+ Add Requirement'}</button>
               : mayRequestJob ? <button type="button" className="btn btn-primary" onClick={() => setShowRequest(true)}>+ Request requirement</button> : null}
+            {canRaiseRequirement(user) && !isHrUser && <button type="button" className="btn" title="Paste a call note or the client's e-mail: a requirement draft for the Add requirement form" onClick={() => setIntakeOpen(true)}>Draft from a note</button>}
             {mayAskJob && <button type="button" className="btn btn-sm" title="Requirements are created by the client manager (BDE) team. Tell them which requirement you need." onClick={() => setShowAsk(true)}>Ask the client manager to add a requirement</button>}
             <SavedViews storageKey="req" current={savedState} onApply={applySaved} presets={presets} label="Saved filters" />
           </>
@@ -1454,7 +1458,8 @@ export default function Requirements() {
           clients={formClients || clients}
           team={team}
           initialClientId={formClientId}
-          onClose={() => setShowForm(false)}
+          initialValues={intakeDraft}
+          onClose={() => { setShowForm(false); setIntakeDraft(null); }}
           onSaved={(saved, info) => {
             const lines = [
               `Saved. ${saved?.reqCode ? `Requirement ${saved.reqCode}` : 'The requirement'} is ${requirementStatusLabel(saved?.status)}.`,
@@ -1472,6 +1477,7 @@ export default function Requirements() {
           }}
         />
       )}
+      {intakeOpen && <IntakeAssistant onClose={() => setIntakeOpen(false)} onUse={(d) => { setIntakeOpen(false); setIntakeDraft(d); openForm(d.clientId || ''); }} />}
       {showRequest && (
         <RequestJobModal
           endpoint="/requirements/requests"

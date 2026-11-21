@@ -206,6 +206,8 @@ export const ATS_SETTINGS_LINKS = [
   { ...leaf('📋', '/admin/master-lists', 'Master lists', [['administration', 'Company Setup', 'view']]), hint: 'Departments, rejection reasons, sources and the other pick lists', counts: true },
   { ...leaf('⏰', '/admin/step-timing', 'Step timing', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role), hint: 'How long each step may take before it shows as Late, and the alerts', counts: true },
   { ...leaf('🎯', '/admin/fit', 'Fit settings', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role), hint: 'How the Fit % is worked out', counts: true },
+  // market wave B (2026-11-21): AI call log, masking pledge, switches, compliance audit, workflows, client pipelines, posting rules, MCP
+  { ...leaf('🛡️', '/admin/ai-governance', 'AI governance & automation', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role), hint: 'Every AI call, masking, switches, audits, workflows, client pipelines, posting rules', counts: false },
   { ...leaf('🔐', '/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]), hint: 'Roles: Admin, Dept Head, BDE, Recruiter — who may do what', counts: true },
   { ...leaf('🔔', '/admin/notifications', 'Notifications', null), hint: 'Your own notifications', counts: false },
 ];

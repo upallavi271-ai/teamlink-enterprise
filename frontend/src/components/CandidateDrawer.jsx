@@ -26,6 +26,8 @@ import { ApplicationExtrasCard } from './ats/OfferBgv.jsx'; // industry checklis
 import {
   FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot, AddApplicationSlot, AiCallingSlot,
 } from './candidate/ProfileSlots.jsx';
+import CandidateTools from './mktb/CandidateTools.jsx'; // market wave B: Hiring tools tab
+import DocExpiry from './mktb/DocExpiry.jsx'; // market wave B: document expiry dates
 
 // ---------------------------------------------------------------------------
 // CANDIDATE PROFILE — the BIG centred window (user, 2026-09-29) that opens from
@@ -234,6 +236,8 @@ export default function CandidateDrawer({
 
             {/* ATS-100 B5: certifications + documents with a real file (upload / view / download / delete). */}
             {tab === 'documents' && <RecordDocuments c={c} internal={internal} />}
+            {tab === 'documents' && internal && <DocExpiry key={`dx-${c.id}`} candidateId={c.id} />}
+            {tab === 'tools' && internal && <CandidateTools key={`mt-${c.id}`} candidateId={c.id} onChanged={changed} />}
             {/* Follow-ups & notes: the dated follow-up log, then the internal notes (one tab since 2026-11-20). */}
             {tab === 'followups' && internal && <FollowUpLog key={c.id} candidateId={c.id} applicationId={app ? app.id : undefined} />}
             {tab === 'followups' && internal && (
