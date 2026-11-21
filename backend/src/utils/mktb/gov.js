@@ -128,10 +128,10 @@ async function wrap(channel, fn, system, history, opts = {}) {
     const out = await callStore.run({ on: true }, () => fn(sys, hist, { ...opts, meta }));
     const provider = out && typeof out === 'object' && out.provider ? out.provider : (meta.provider || null);
     const model = out && typeof out === 'object' && out.model ? out.model : (meta.model || null);
-    log({ ...base, provider, model, outChars: textLen(out), ms: Date.now() - t0, outcome: 'ok' });
+    await log({ ...base, provider, model, outChars: textLen(out), ms: Date.now() - t0, outcome: 'ok' });
     return m.unmask(out);
   } catch (e) {
-    log({ ...base, ms: Date.now() - t0, outcome: e && (e.code === 'sandbox' || e.status === 403) ? 'refused' : 'failed', error: e && e.message });
+    await log({ ...base, ms: Date.now() - t0, outcome: e && (e.code === 'sandbox' || e.status === 403) ? 'refused' : 'failed', error: e && e.message });
     throw e;
   }
 }

@@ -86,7 +86,8 @@ const sql = (q, ...a) => prisma.$queryRawUnsafe(q, ...a);
   section('02.12 skills from the JD (+ 09.16 the AI call is logged)');
   const sk = await call('POST', `${M}/jobs/${job.id}/extract-skills`, { useAi: true }, tR);
   check('must-have and good-to-have skills are read from the JD', sk.status === 200 && sk.body.mandatory.includes('java') && sk.body.goodToHave.includes('docker'), sk.body);
-  const logs = await sql('SELECT * FROM "AiCallLog" WHERE "userId" = ? ORDER BY "at" DESC', REC.id);
+  let logs = [];
+  for (let i = 0; i < 20 && !logs.length; i += 1) { logs = await sql('SELECT * FROM "AiCallLog" WHERE "userId" = ? ORDER BY "at" DESC', REC.id); if (!logs.length) await new Promise((r) => { setTimeout(r, 250); }); } // eslint-disable-line no-await-in-loop
   check('09.16 the AI call is logged: who, purpose, outcome, size (never the text)', logs.length >= 1 && logs[0].purpose === 'Skills from JD' && logs[0].userName === REC.name && ['failed', 'refused', 'ok'].includes(logs[0].outcome) && Number(logs[0].inChars) > 0 && !('text' in logs[0]), logs[0]);
   const calls = await call('GET', `${M}/gov/calls`, null, tA);
   check('Admin reads the AI call log; a recruiter cannot', calls.status === 200 && calls.body.rows.length >= 1 && (await call('GET', `${M}/gov/calls`, null, tR)).status === 403);
