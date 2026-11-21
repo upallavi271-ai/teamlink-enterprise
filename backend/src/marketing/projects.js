@@ -39,6 +39,8 @@ async function ensure() {
     // automatic posting (2026-11-14): on/off, the client's accounts [{accountId, platform, name}], when, its state, what happened per account, the https site address Meta fetches the media from
     for (const col of ['"autoPost" INTEGER NOT NULL DEFAULT 0', '"autoTargets" TEXT', '"autoAt" DATETIME', '"autoState" TEXT', '"autoResult" TEXT', '"autoBase" TEXT']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
     for (const col of ['"showcase" INTEGER NOT NULL DEFAULT 0', '"showcaseTitle" TEXT', '"showcaseClient" INTEGER NOT NULL DEFAULT 0']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
+    // 2026-11-21: the client's last answer (approved / rejected, with the reason) so the project shows a clear stage, whichever way the answer came (page, WhatsApp button, email)
+    for (const col of ['"clientAnswer" TEXT', '"clientAnswerNote" TEXT', '"clientAnswerAt" DATETIME']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
     await AI.ensure(); okAt = Date.now(); return true;
   } catch (e) { console.error('[omni-mk] projects schema:', e.message); return false; } // eslint-disable-line no-console
 }
@@ -73,7 +75,7 @@ function visible(u, r) {
 }
 // The newest columns are added with ALTER TABLE on first use. Right after that, the database layer can still hand back "SELECT *" rows with the OLD column list
 // (found 2026-11-14: a fresh test database returned 46 of 51 fields, so automatic posting looked switched off). So when they are missing they are read by name.
-const NEWEST = 'autoPost, autoTargets, autoAt, autoState, autoResult, autoBase, showcase, showcaseTitle, showcaseClient';
+const NEWEST = 'autoPost, autoTargets, autoAt, autoState, autoResult, autoBase, showcase, showcaseTitle, showcaseClient, clientAnswer, clientAnswerNote, clientAnswerAt';
 const row = async (id) => {
   const r = (await S.q(`SELECT * FROM "${T}" WHERE id = ?`, String(id || '')))[0] || null;
   if (!r || 'autoPost' in r) return r;
@@ -84,7 +86,32 @@ const optionRows = async (projectId) => S.q(`SELECT * FROM "${TO}" WHERE project
 async function event(projectId, kind, byName, text) {
   await S.run(`INSERT INTO "${TE}" (id, projectId, at, kind, byName, text) VALUES (?,?,?,?,?,?)`, S.newId('pe'), projectId, Date.now(), kind, S.clip(byName, 80) || null, S.clip(text, 800) || null);
 }
-const short = (r) => ({
+// ---- the stage of a request, in the founder's words (2026-11-21): new, accepted, being made, sent to the client, approved, rejected, posted (+ declined, waiting for the client's form),
+// and how many pictures and videos were made for it. `counts` = { images, videos } (raw clips are not counted: they are not a finished creative).
+const STAGES = {
+  waiting: "Waiting for the client's request", new: 'New request', accepted: 'Accepted', making: 'Being made', sent: 'Sent to the client', approved: 'Approved by the client',
+  rejected: 'Rejected by the client', posted: 'Posted', declined: 'Declined',
+};
+function stageOf(r, counts) {
+  const made = (counts ? S.num(counts.images) + S.num(counts.videos) : 0);
+  if (r.status === 'invited') return 'waiting';
+  if (r.status === 'request') return 'new';
+  if (r.status === 'working') return r.clientAnswer === 'rejected' ? 'rejected' : (made > 0 ? 'making' : 'accepted');
+  if (r.status === 'awaiting_client') return 'sent';
+  return r.status; // approved | posted | declined
+}
+async function countsFor(ids) { // -> Map projectId -> { images, videos }
+  const out = new Map(); (ids || []).forEach((id) => out.set(id, { images: 0, videos: 0 }));
+  if (!ids || !ids.length) return out;
+  try {
+    const rows = await S.q(`SELECT projectId, CASE WHEN mime LIKE 'video/%' THEN 'video' ELSE 'image' END AS k, COUNT(*) AS n FROM "OmniMkImage" WHERE projectId IS NOT NULL AND deletedAt IS NULL AND (style IS NULL OR style <> 'clip') GROUP BY projectId, k`);
+    rows.forEach((x) => { const c = out.get(x.projectId); if (c) c[x.k === 'video' ? 'videos' : 'images'] = S.num(x.n); });
+  } catch { /* the pictures table is not made yet: no counts */ }
+  return out;
+}
+const short = (r, counts) => ({
+  stage: stageOf(r, counts), stageLabel: STAGES[stageOf(r, counts)] || r.status, counts: { images: counts ? S.num(counts.images) : 0, videos: counts ? S.num(counts.videos) : 0 },
+  clientAnswer: r.clientAnswer || '', clientAnswerNote: r.clientAnswerNote || '', clientAnswerAt: S.iso(r.clientAnswerAt),
   id: r.id, title: r.title, clientName: r.clientName, contactName: r.contactName || '', contactEmail: r.contactEmail || '', contactPhone: r.contactPhone || '', source: r.source || 'other',
   occasion: r.occasion || '', brief: r.brief || '', deliverable: r.deliverable || 'video', platforms: parse(r.platforms, []), handles: r.handles || '', caption: r.caption || '', dueDate: r.dueDate || '',
   status: r.status, hasLogo: !!r.logoData, colors: parse(r.colors, null), department: r.department || '', ownerName: r.ownerName || '', createdByName: r.createdByName || '',
@@ -96,6 +123,8 @@ const short = (r) => ({
   autoPost: S.num(r.autoPost) === 1, autoTargets: parse(r.autoTargets, []), autoAt: S.iso(r.autoAt), autoState: r.autoState || '', autoResult: parse(r.autoResult, []),
   link: `/client-project/${tokenOf(r.id)}`,
 });
+
+const shortRow = async (id) => { const r = await row(id); return r ? short(r, (await countsFor([r.id])).get(r.id)) : null; };
 
 // ---- cleaning ----------------------------------------------------------------------------------------------------------------------------------
 function cleanFields(b, cur = {}) {
@@ -144,7 +173,7 @@ async function create(u, b = {}) {
   await event(id, 'request', u.name, `Request logged (${(SOURCES.find((s) => s.key === v.source) || {}).label || 'Other'}): ${v.occasion}`);
   if (accept) await event(id, 'accepted', u.name, 'Accepted: the team starts work');
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client project started', entity: T, entityId: id, toValue: `${v.clientName}: ${v.occasion}; ${v.source}${accept ? '; accepted' : ''}` });
-  return { project: short(await row(id)) };
+  return { project: (await shortRow(id)) };
 }
 // a private REQUEST LINK: the client writes the brief and adds the logo themselves (this is the "request in our portal" without a login)
 async function invite(u, b = {}) {
@@ -160,7 +189,7 @@ async function invite(u, b = {}) {
     id, `${clientName}: new request`, S.clip(b.clientId, 40) || null, clientName, S.clip(b.contactName, 120) || null, email || null, S.clip(b.contactPhone, 30) || null, dept || null, u.id, S.clip(u.name, 80), u.id, S.clip(u.name, 80), now, now);
   await event(id, 'invited', u.name, `Request link made for ${clientName}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client request link made', entity: T, entityId: id, toValue: clientName });
-  return { project: short(await row(id)) };
+  return { project: (await shortRow(id)) };
 }
 async function list(u, { status = '', q = '' } = {}) {
   await ensure();
@@ -169,7 +198,8 @@ async function list(u, { status = '', q = '' } = {}) {
   const needle = String(q || '').trim().toLowerCase();
   const counts = { all: 0 }; rows.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; counts.all += 1; });
   const shown = rows.filter((r) => (!status || r.status === status) && (!needle || `${r.title} ${r.clientName} ${r.occasion}`.toLowerCase().includes(needle)));
-  return { projects: shown.map(short), counts, canWrite: true };
+  const cmap = await countsFor(shown.map((r) => r.id));
+  return { projects: shown.map((r) => short(r, cmap.get(r.id))), counts, canWrite: true };
 }
 async function getVisible(u, id) {
   await ensure();
@@ -196,7 +226,7 @@ async function get(u, id) {
   const events = (await S.q(`SELECT * FROM "${TE}" WHERE projectId = ? ORDER BY at ASC`, r.id)).map((e) => ({ id: e.id, at: S.iso(e.at), kind: e.kind, byName: e.byName || '', text: e.text || '' }));
   const made = (await S.q('SELECT id, title, mime, aspect, status, style FROM "OmniMkImage" WHERE projectId = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT 60', r.id).catch(() => [])).map((x) => ({ id: x.id, title: x.title, kind: /^video\//.test(x.mime || '') ? 'video' : 'image', aspect: x.aspect || '1:1', status: x.status, style: x.style || '' }));
   const cur = S.num(r.round);
-  return { project: short(r), logo: r.logoData || null, options: withItem.map((o) => ({ ...o, stage: o.round === cur + 1 ? 'staged' : o.round === cur ? 'presented' : 'earlier' })), events, made };
+  return { project: short(r, (await countsFor([r.id])).get(r.id)), logo: r.logoData || null, options: withItem.map((o) => ({ ...o, stage: o.round === cur + 1 ? 'staged' : o.round === cur ? 'presented' : 'earlier' })), events, made };
 }
 async function update(u, id, b = {}) {
   const g = await getVisible(u, id); if (g.error) return g;
@@ -209,7 +239,7 @@ async function update(u, id, b = {}) {
   await S.run(`UPDATE "${T}" SET clientName = ?, contactName = ?, contactEmail = ?, contactPhone = ?, source = ?, occasion = ?, brief = ?, deliverable = ?, platforms = ?, handles = ?, caption = ?, dueDate = ?, logoData = ?, colors = ?, title = ?, updatedAt = ? WHERE id = ?`,
     v.clientName, v.contactName || null, v.contactEmail || null, v.contactPhone || null, v.source, v.occasion || null, v.brief || null, v.deliverable, JSON.stringify(v.platforms), v.handles || null, v.caption || null, v.dueDate || null, v.logoData, v.colors ? JSON.stringify(v.colors) : null,
     b.title !== undefined ? (S.clip(b.title, 120) || r.title) : r.title, Date.now(), r.id);
-  return { project: short(await row(r.id)) };
+  return { project: (await shortRow(r.id)) };
 }
 
 // ---- telling the CLIENT (2026-11-14) -----------------------------------------------------------------------------------------------------------------------
@@ -319,7 +349,7 @@ async function tell(u, id, b = {}, base = '') {
   const any = told.sent.some((x) => x.ok);
   if (!any && told.sent.every((x) => x.local)) return { error: told.sent.map((x) => x.error).join(' '), status: 400 }; // nothing was tried: the client has no such number / address on file
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client told', entity: T, entityId: r.id, toValue: `${r.clientName}: ${kind}; ${told.sent.map((x) => `${x.way} ${x.ok ? 'sent' : 'failed'}`).join(', ')}` });
-  return { ok: any ? told.note : '', error: any ? undefined : told.note, sent: told.sent, project: short(await row(r.id)), ...(any ? {} : { status: 502 }) };
+  return { ok: any ? told.note : '', error: any ? undefined : told.note, sent: told.sent, project: (await shortRow(r.id)), ...(any ? {} : { status: 502 }) };
 }
 // what the Admin switch and the buttons need: is each way connected, and is telling by itself on
 async function notifyStatus() {
@@ -353,7 +383,7 @@ async function accept(u, id, base = '') {
   await event(r.id, 'accepted', u.name, 'Accepted: the team starts work');
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client project accepted', entity: T, entityId: r.id, toValue: `${r.clientName}: ${r.occasion}` });
   const told = await tellClient(await row(r.id), 'accepted', { base });
-  return { ok: `Accepted. You own this project now.${told.note ? ` ${told.note}` : ''}`, told: told.sent, project: short(await row(r.id)) };
+  return { ok: `Accepted. You own this project now.${told.note ? ` ${told.note}` : ''}`, told: told.sent, project: (await shortRow(r.id)) };
 }
 async function decline(u, id, note, base = '') {
   const g = await getVisible(u, id); if (g.error) return g;
@@ -366,7 +396,7 @@ async function decline(u, id, note, base = '') {
   await event(r.id, 'declined', u.name, why);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client project declined', entity: T, entityId: r.id, toValue: `${r.clientName}: ${why}` });
   const told = await tellClient(await row(r.id), 'declined', { base });
-  return { ok: `Declined. The client sees the reason on their page.${told.note ? ` ${told.note}` : ''}`, told: told.sent, project: short(await row(r.id)) };
+  return { ok: `Declined. The client sees the reason on their page.${told.note ? ` ${told.note}` : ''}`, told: told.sent, project: (await shortRow(r.id)) };
 }
 
 // ---- options: pick what to show the client, then present it ----------------------------------------------------------------------------------------
@@ -427,11 +457,11 @@ async function send(u, id, b = {}, base = '') {
     if (['draft', 'changes'].includes(it.status)) await Img.holdForClient(u, it); // eslint-disable-line no-await-in-loop
   }
   const message = S.clip(b.message, 500);
-  await S.run(`UPDATE "${T}" SET status = 'awaiting_client', round = ?, linkExpiresAt = ?, clientMessage = ?, caption = ?, updatedAt = ? WHERE id = ?`, round, now + days * DAY, message || null, b.caption !== undefined ? (S.clip(b.caption, 3000) || null) : r.caption, now, r.id);
+  await S.run(`UPDATE "${T}" SET status = 'awaiting_client', clientAnswer = NULL, clientAnswerNote = NULL, clientAnswerAt = NULL, round = ?, linkExpiresAt = ?, clientMessage = ?, caption = ?, updatedAt = ? WHERE id = ?`, round, now + days * DAY, message || null, b.caption !== undefined ? (S.clip(b.caption, 3000) || null) : r.caption, now, r.id);
   await event(r.id, 'options_sent', u.name, `${opts.length} option${opts.length === 1 ? '' : 's'} sent to the client (round ${round})${message ? `: ${message}` : ''}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: project options sent to the client', entity: T, entityId: r.id, toValue: `${r.clientName}: ${opts.length} option(s); link valid ${days} day(s)` });
   const told = await tellClient(await row(r.id), 'options', { base, actor: u, numberId: b && b.numberId });
-  return { ok: told.sent.some((x) => x.ok) ? `The options are with the client. ${told.note}` : `The options are with the client. ${told.note || 'Share the private link.'}${told.note ? ' Share the private link yourself.' : ''}`, told: told.sent, project: short(await row(r.id)) };
+  return { ok: told.sent.some((x) => x.ok) ? `The options are with the client. ${told.note}` : `The options are with the client. ${told.note || 'Share the private link.'}${told.note ? ' Share the private link yourself.' : ''}`, told: told.sent, project: (await shortRow(r.id)) };
 }
 async function cancelPresentation(u, id) {
   const g = await getVisible(u, id); if (g.error) return g;
@@ -441,7 +471,7 @@ async function cancelPresentation(u, id) {
   await S.run(`UPDATE "${T}" SET status = 'working', round = ?, linkExpiresAt = NULL, updatedAt = ? WHERE id = ?`, Math.max(0, S.num(r.round) - 1), Date.now(), r.id); // the same options are staged again
   await event(r.id, 'cancelled', u.name, 'The link was cancelled; the options are back with the team');
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: project options taken back', entity: T, entityId: r.id, toValue: r.clientName });
-  return { ok: 'The link no longer shows the options. They are back with you.', project: short(await row(r.id)) };
+  return { ok: 'The link no longer shows the options. They are back with you.', project: (await shortRow(r.id)) };
 }
 async function extend(u, id, days) {
   const g = await getVisible(u, id); if (g.error) return g;
@@ -450,7 +480,7 @@ async function extend(u, id, days) {
   const d = Math.max(1, Math.min(30, Number(days) || 14));
   await S.run(`UPDATE "${T}" SET linkExpiresAt = ?, updatedAt = ? WHERE id = ?`, Date.now() + d * DAY, Date.now(), r.id);
   await event(r.id, 'extended', u.name, `The link works for ${d} more day${d === 1 ? '' : 's'}`);
-  return { ok: `The link works for ${d} more day${d === 1 ? '' : 's'}.`, project: short(await row(r.id)) };
+  return { ok: `The link works for ${d} more day${d === 1 ? '' : 's'}.`, project: (await shortRow(r.id)) };
 }
 
 // ---- after the client approved: schedule, post -------------------------------------------------------------------------------------------------------
@@ -462,7 +492,7 @@ async function scheduled(u, id, b = {}) {
   if (!DATE.test(date)) return { error: 'Pick the day it will be posted.', status: 400 };
   await S.run(`UPDATE "${T}" SET scheduledFor = ?, updatedAt = ? WHERE id = ?`, date, Date.now(), r.id);
   await event(r.id, 'scheduled', u.name, `Planned in the Content Calendar for ${date}`);
-  return { project: short(await row(r.id)) };
+  return { project: (await shortRow(r.id)) };
 }
 async function posted(u, id, b = {}) {
   const g = await getVisible(u, id); if (g.error) return g;
@@ -475,7 +505,7 @@ async function posted(u, id, b = {}) {
   await event(r.id, 'posted', u.name, `Posted on the client's page${url ? `: ${url}` : ''}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client project posted', entity: T, entityId: r.id, toValue: `${r.clientName}: ${r.occasion}${url ? `; ${url}` : ''}` });
   const told = await tellClient(await row(r.id), 'posted', { urls: url ? [url] : [] });
-  return { ok: `Marked as posted. The client sees it on their page.${told.note ? ` ${told.note}` : ''}`, told: told.sent, project: short(await row(r.id)) };
+  return { ok: `Marked as posted. The client sees it on their page.${told.note ? ` ${told.note}` : ''}`, told: told.sent, project: (await shortRow(r.id)) };
 }
 
 // items the client is deciding on right now (marketing/clientReview.js adds them to the "only the client can approve" set)
@@ -519,7 +549,7 @@ async function setAutopost(u, id, b = {}, base = '') {
   if (b.enabled !== true) {
     await S.run(`UPDATE "${T}" SET autoPost = 0, autoState = NULL, updatedAt = ? WHERE id = ?`, Date.now(), r.id);
     await event(r.id, 'autopost_off', u.name, 'Automatic posting switched off for this project');
-    return { ok: 'Automatic posting is off for this project.', project: short(await row(r.id)) };
+    return { ok: 'Automatic posting is off for this project.', project: (await shortRow(r.id)) };
   }
   const set = await Cfg.getSettings();
   if (!set.autoPostAllowed) return { error: 'An Admin has to allow automatic posting first (AI Marketing > AI usage).', status: 409, code: 'auto_off' };
@@ -545,7 +575,7 @@ async function setAutopost(u, id, b = {}, base = '') {
   await S.run(`UPDATE "${T}" SET autoPost = 1, autoTargets = ?, autoAt = ?, autoState = ?, autoBase = ?, autoResult = NULL, updatedAt = ? WHERE id = ?`, JSON.stringify(targets), at, state, site, Date.now(), r.id);
   await event(r.id, 'autopost_on', u.name, `Will be posted automatically on ${targets.map((t) => `${t.name} (${t.platform === 'instagram' ? 'Instagram' : 'Facebook'})`).join(', ')}${at ? ` at ${new Date(at + 19800000).toISOString().slice(0, 16).replace('T', ' ')} IST` : ' as soon as the client approves'}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: automatic posting set for a client project', entity: T, entityId: r.id, toValue: `${r.clientName}: ${targets.map((t) => t.name).join(', ')}${at ? `; ${new Date(at).toISOString()}` : ''}` });
-  return { ok: 'Done. It will be posted automatically after the client approves.', project: short(await row(r.id)) };
+  return { ok: 'Done. It will be posted automatically after the client approves.', project: (await shortRow(r.id)) };
 }
 // the post itself. force = a person pressed "Post now" (also for a project not set to post by itself, and after the client's suggestions were read)
 async function autoRun(id, { by = null, force = false } = {}) {
@@ -599,7 +629,7 @@ async function postNow(u, id, b = {}, base = '') {
   if (!baseOk(r.autoBase) && baseOk(base)) await S.run(`UPDATE "${T}" SET autoBase = ? WHERE id = ?`, base, r.id);
   await event(r.id, 'post_now', u.name, 'Post now pressed');
   const out = await autoRun(r.id, { by: u, force: true });
-  return out.error ? out : { ...out, project: short(await row(r.id)) };
+  return out.error ? out : { ...out, project: (await shortRow(r.id)) };
 }
 // THE "SEND" BUTTONS: post the approved picture / video on ONE platform now (Facebook, Instagram or X), on the accounts the person picked. A person presses it, after the client
 // approved: that click is the decision (with a confirmation: it goes public on the client's account). The project becomes Posted once every platform the client asked for
@@ -646,7 +676,7 @@ async function postTo(u, id, b = {}, base = '') {
       await tellClient(await row(r.id), 'posted', { urls: all.filter((x) => x.ok && x.url).map((x) => x.url), base: site });
     }
     await logAudit({ userId: u.id, actorName: u.name, action: results.every((x) => x.ok) ? 'Omni-Channel AI Marketing: client project posted by a click' : 'Omni-Channel AI Marketing: posting by a click failed', entity: T, entityId: r.id, toValue: `${r.clientName}: ${results.map((x) => `${x.name} ${x.ok ? 'ok' : 'failed'}`).join(', ')}` });
-    return { ok: results.every((x) => x.ok) ? (finished ? 'Posted. The project is finished.' : 'Posted.') : 'It could not be posted. See why below, then try again.', results, posted: finished, project: short(await row(r.id)) };
+    return { ok: results.every((x) => x.ok) ? (finished ? 'Posted. The project is finished.' : 'Posted.') : 'It could not be posted. See why below, then try again.', results, posted: finished, project: (await shortRow(r.id)) };
   } finally { running.delete(r.id); }
 }
 async function autoSweep() {
@@ -687,7 +717,7 @@ async function setShowcase(u, id, b = {}) {
   await S.run(`UPDATE "${T}" SET showcase = ?, showcaseTitle = ?, showcaseClient = ?, updatedAt = ? WHERE id = ?`, show ? 1 : 0, title, show && b.showName === true ? 1 : 0, Date.now(), r.id);
   await event(r.id, 'showcase', u.name, show ? `Shown in our portfolio${b.showName === true ? ' with the client\'s name' : ' without the client\'s name'}` : 'Taken out of our portfolio');
   await logAudit({ userId: u.id, actorName: u.name, action: show ? 'Omni-Channel AI Marketing: client project shown in the portfolio' : 'Omni-Channel AI Marketing: client project taken out of the portfolio', entity: T, entityId: r.id, toValue: `${r.clientName}: ${title}${show ? (b.showName === true ? '; name shown' : '; anonymous') : ''}` });
-  return { ok: show ? 'It is in our portfolio now.' : 'It is out of our portfolio.', project: short(await row(r.id)) };
+  return { ok: show ? 'It is in our portfolio now.' : 'It is out of our portfolio.', project: (await shortRow(r.id)) };
 }
 async function trackRecord() {
   await ensure();
@@ -825,7 +855,7 @@ async function publicChoose(token, b = {}, ip = '') {
     if (o.id === chosen.id) await Img.clientDecision(o.itemId, true, name, r.clientName, comment); // eslint-disable-line no-await-in-loop
     else await Img.backToDraft(o.itemId); // eslint-disable-line no-await-in-loop
   }
-  await S.run(`UPDATE "${T}" SET status = 'approved', chosenOptionId = ?, decidedAt = ?, decidedByName = ?, decisionNote = ?, updatedAt = ? WHERE id = ? AND status = 'awaiting_client'`, chosen.id, now, name, comment || null, now, r.id);
+  await S.run(`UPDATE "${T}" SET status = 'approved', chosenOptionId = ?, decidedAt = ?, decidedByName = ?, decisionNote = ?, clientAnswer = 'approved', clientAnswerNote = ?, clientAnswerAt = ?, updatedAt = ? WHERE id = ? AND status = 'awaiting_client'`, chosen.id, now, name, comment || null, comment || null, now, now, r.id);
   await event(r.id, 'client_chose', `${name} (client: ${r.clientName})`, `Chose ${chosen.label}${comment ? `. Suggestions: ${comment}` : ''}`);
   // automatic posting: with suggestions the team reads them first ("Post now"); without, it goes out now or at the time set (the sweep posts a later time)
   let autoNote = '';
@@ -849,7 +879,7 @@ async function publicChanges(token, b = {}, ip = '') {
   if (comment.length < 5) return { error: 'Please tell us what you would like changed (a few words).', status: 400 };
   await releaseItems(r);
   const now = Date.now();
-  await S.run(`UPDATE "${T}" SET status = 'working', linkExpiresAt = NULL, updatedAt = ? WHERE id = ? AND status = 'awaiting_client'`, now, r.id);
+  await S.run(`UPDATE "${T}" SET status = 'working', linkExpiresAt = NULL, clientAnswer = 'rejected', clientAnswerNote = ?, clientAnswerAt = ?, updatedAt = ? WHERE id = ? AND status = 'awaiting_client'`, comment, now, now, r.id);
   await event(r.id, 'client_changes', `${name} (client: ${r.clientName})`, comment);
   await tellTeam(r, `Client suggested changes: "${S.clip(r.title, 60)}"`, `${name} (${S.clip(r.clientName, 60)}): ${S.clip(comment, 240)}. Open Omni-Channel > AI Marketing > Client projects.`);
   await logAudit({ userId: r.createdById, actorName: `${name} (client: ${r.clientName})`, action: 'Omni-Channel AI Marketing: client asked for changes on a project', entity: T, entityId: r.id, toValue: `${r.title}: ${S.clip(comment, 200)}; ${S.clip(ip, 60)}` });

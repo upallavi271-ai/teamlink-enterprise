@@ -21,6 +21,11 @@ const SEND = [['facebook', 'Facebook', 'f', '#1877f2'], ['instagram', 'Instagram
 const digits = (s) => String(s || '').replace(/\D/g, '');
 const origin = () => window.location.origin;
 const statusPill = (s) => { const [tone, words] = STATUS[s] || ['draft', s]; return <Pill tone={tone} dot>{words}</Pill>; };
+// the stage of a request in plain words (server: stageOf in marketing/projects.js) and how many pictures and videos were made for it
+const STAGE_TONE = { waiting: 'draft', new: 'warn', accepted: 'live', making: 'live', sent: 'warn', approved: 'live', rejected: 'red', posted: 'live', declined: 'red' };
+const stagePill = (p) => <Pill tone={STAGE_TONE[p.stage] || 'draft'} dot>{p.stageLabel || (STATUS[p.status] || [0, p.status])[1]}</Pill>;
+const madeWords = (c) => { const i = (c && c.images) || 0; const v = (c && c.videos) || 0; return `${i} picture${i === 1 ? '' : 's'} · ${v} video${v === 1 ? '' : 's'} made`; };
+const MadeCounts = ({ p }) => <Tag title="Pictures and videos made for this request so far (raw clips not counted)">{madeWords(p.counts)}</Tag>;
 const readLogo = (file) => new Promise((resolve, reject) => {
   if (!file) { resolve(''); return; }
   if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { reject(new Error('Use a PNG, JPG or WebP logo.')); return; }
@@ -260,11 +265,12 @@ function Detail({ id, meta, onBack, onChanged }) {
     <div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
         <Btn small onClick={onBack}>← All projects</Btn>
-        <h2 style={{ margin: 0, fontSize: 17 }}>{p.title}</h2>{statusPill(p.status)}
+        <h2 style={{ margin: 0, fontSize: 17 }}>{p.title}</h2>{stagePill(p)} <MadeCounts p={p} />
         {p.status === 'awaiting_client' && p.linkExpired ? <Pill tone="red">Link expired</Pill> : null}
       </div>
       {err ? <Banner tone="error">{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => setErr('')}>Close</button></Banner> : null}
 
+      {p.stage === 'rejected' ? <Banner tone="error"><b>The client rejected it{p.clientAnswerAt ? ` on ${fmtDateTime(p.clientAnswerAt)}` : ''}.</b> {p.clientAnswerNote ? `Reason: ${p.clientAnswerNote}` : 'No reason was given.'} Make it again and send the new options.</Banner> : null}
       {p.status === 'declined' ? <Banner tone="warn">Declined: {p.declinedNote}</Banner> : (
         <ol className="mk-steps" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 18, margin: '0 0 12px' }}>
           {STEPS.map(([k, label], i) => <li key={k} style={{ opacity: stepIdx >= i ? 1 : 0.45 }}><span className={`dot${stepIdx >= i ? ' done' : ''}`}>{stepIdx >= i ? '✓' : ''}</span>{label}</li>)}
@@ -505,8 +511,9 @@ export default function MkProjectsPage() {
         ) : data.projects.map((p) => (
           <div className="mk-row" key={p.id}>
             <div>
-              <b>{p.title}</b> {statusPill(p.status)}{p.status === 'awaiting_client' && p.linkExpired ? <> <Pill tone="red">Link expired</Pill></> : null} <Tag>{label(meta.sources, p.source) || 'Other'}</Tag>
+              <b>{p.title}</b> {stagePill(p)} <MadeCounts p={p} />{p.status === 'awaiting_client' && p.linkExpired ? <> <Pill tone="red">Link expired</Pill></> : null} <Tag>{label(meta.sources, p.source) || 'Other'}</Tag>
               <small>{p.clientName}{p.contactName ? ` · ${p.contactName}` : ''} · {label(meta.deliverables, p.deliverable)}{p.platforms.length ? ` · ${p.platforms.map((k) => label(meta.platforms, k) || k).join(', ')}` : ''}{p.dueDate ? ` · needed by ${fmtDate(p.dueDate)}` : ''}{p.ownerName ? ` · owner ${p.ownerName}` : ''}</small>
+              {p.stage === 'rejected' ? <small style={{ color: '#b91c1c' }}>Rejected{p.clientAnswerAt ? ` ${fmtDateTime(p.clientAnswerAt)}` : ''}{p.clientAnswerNote ? `: ${p.clientAnswerNote}` : ''}</small> : null}
               {p.status === 'approved' ? <small style={{ color: '#087844' }}>Approved by {p.decidedByName} · ready to post</small> : null}
               {p.status === 'awaiting_client' ? <small>{p.views ? `Opened ${p.views}×` : 'Not opened yet'} · link works until {fmtDateTime(p.linkExpiresAt)}</small> : null}
             </div>
