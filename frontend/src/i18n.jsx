@@ -21,7 +21,7 @@ const TE = {
   Requirements: 'అవసరాలు', 'Interview Calendar': 'ఇంటర్వ్యూ క్యాలెండర్', Interviews: 'ఇంటర్వ్యూలు', Offers: 'ఆఫర్లు', Joining: 'చేరిక', Feedback: 'అభిప్రాయం',
   'Reports & Team': 'రిపోర్టులు & టీమ్', Reports: 'రిపోర్టులు', Team: 'టీమ్', Administration: 'పరిపాలన', Settings: 'సెట్టింగులు', 'ATS settings': 'ATS సెట్టింగులు',
   'Follow-ups': 'ఫాలో-అప్‌లు', 'Job Portal': 'జాబ్ పోర్టల్', Search: 'వెతుకు', Agreements: 'ఒప్పందాలు', 'Business development': 'వ్యాపార అభివృద్ధి',
-  'ATS Reports': 'ATS రిపోర్టులు', 'Recruiter insights': 'రిక్రూటర్ విశ్లేషణ', 'My reports': 'నా రిపోర్టులు', Home: 'హోమ్', Profile: 'ప్రొఫైల్',
+  'ATS Reports': 'ATS రిపోర్టులు', 'My Work': 'నా పని', 'My Requirements': 'నా అవసరాలు', 'My Candidates': 'నా అభ్యర్థులు', 'My Interviews': 'నా ఇంటర్వ్యూలు', 'My Reports': 'నా రిపోర్టులు', ATS: 'ATS', 'Omni-Channel': 'ఓమ్ని-ఛానెల్', 'My Team': 'నా టీమ్', 'ATS Dashboard': 'ATS డాష్‌బోర్డ్', 'Recruiter insights': 'రిక్రూటర్ విశ్లేషణ', 'My reports': 'నా రిపోర్టులు', Home: 'హోమ్', Profile: 'ప్రొఫైల్',
   // common words / buttons
   Save: 'సేవ్ చేయి', Cancel: 'రద్దు', Close: 'మూసివేయి', Add: 'జోడించు', Edit: 'మార్చు', Delete: 'తొలగించు', Open: 'తెరువు', Upload: 'అప్‌లోడ్', Done: 'పూర్తయింది',
   Yes: 'అవును', No: 'కాదు', Language: 'భాష', 'Sign out': 'సైన్ అవుట్', Loading: 'లోడ్ అవుతోంది', 'Loading…': 'లోడ్ అవుతోంది…', Status: 'స్థితి', Name: 'పేరు', Phone: 'ఫోన్', Email: 'ఈమెయిల్',
@@ -38,7 +38,7 @@ const HI = {
   Requirements: 'आवश्यकताएँ', 'Interview Calendar': 'इंटरव्यू कैलेंडर', Interviews: 'इंटरव्यू', Offers: 'ऑफ़र', Joining: 'जॉइनिंग', Feedback: 'फ़ीडबैक',
   'Reports & Team': 'रिपोर्ट और टीम', Reports: 'रिपोर्ट', Team: 'टीम', Administration: 'प्रशासन', Settings: 'सेटिंग्स', 'ATS settings': 'ATS सेटिंग्स',
   'Follow-ups': 'फ़ॉलो-अप', 'Job Portal': 'जॉब पोर्टल', Search: 'खोजें', Agreements: 'अनुबंध', 'Business development': 'व्यवसाय विकास',
-  'ATS Reports': 'ATS रिपोर्ट', 'Recruiter insights': 'रिक्रूटर विश्लेषण', 'My reports': 'मेरी रिपोर्ट', Home: 'होम', Profile: 'प्रोफ़ाइल',
+  'ATS Reports': 'ATS रिपोर्ट', 'My Work': 'मेरा काम', 'My Requirements': 'मेरी आवश्यकताएँ', 'My Candidates': 'मेरे उम्मीदवार', 'My Interviews': 'मेरे इंटरव्यू', 'My Reports': 'मेरी रिपोर्ट', ATS: 'ATS', 'Omni-Channel': 'ओम्नी-चैनल', 'My Team': 'मेरी टीम', 'ATS Dashboard': 'ATS डैशबोर्ड', 'Recruiter insights': 'रिक्रूटर विश्लेषण', 'My reports': 'मेरी रिपोर्ट', Home: 'होम', Profile: 'प्रोफ़ाइल',
   Save: 'सहेजें', Cancel: 'रद्द करें', Close: 'बंद करें', Add: 'जोड़ें', Edit: 'बदलें', Delete: 'हटाएँ', Open: 'खोलें', Upload: 'अपलोड', Done: 'पूरा',
   Yes: 'हाँ', No: 'नहीं', Language: 'भाषा', 'Sign out': 'साइन आउट', Loading: 'लोड हो रहा है', 'Loading…': 'लोड हो रहा है…', Status: 'स्थिति', Name: 'नाम', Phone: 'फ़ोन', Email: 'ईमेल',
   'To do': 'करना है', 'Waiting for review': 'जाँच की प्रतीक्षा', Verified: 'सत्यापित', 'Sent back': 'वापस भेजा', 'Not needed': 'ज़रूरी नहीं',
@@ -53,7 +53,9 @@ const DICT = { te: TE, hi: HI };
 let current = (() => { try { const v = localStorage.getItem(KEY); return DICT[v] ? v : 'en'; } catch { return 'en'; } })();
 const listeners = new Set();
 export function getLang() { return current; }
+let chosenHere = false; // a choice made in this page wins over the login's saved one arriving later
 export function setLang(lang, { save = true } = {}) {
+  if (save) chosenHere = true;
   const next = DICT[lang] ? lang : 'en';
   current = next;
   try { localStorage.setItem(KEY, next); } catch { /* storage blocked */ }
@@ -77,7 +79,7 @@ export function useLang() {
 }
 // read the language saved on the login once after sign-in
 export function syncFromServer(api) {
-  return api.get('/ats-plus/i18n/me').then((r) => { if (r.data && r.data.lang && r.data.lang !== current) setLang(r.data.lang, { save: false }); }).catch(() => null);
+  return api.get('/ats-plus/i18n/me').then((r) => { if (!chosenHere && r.data && r.data.saved && r.data.lang !== current) setLang(r.data.lang, { save: false }); }).catch(() => null);
 }
 export function LanguagePicker({ compact = false }) {
   const [lang, set] = useLang();

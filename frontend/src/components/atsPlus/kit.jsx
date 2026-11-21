@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { cloneElement, isValidElement, useCallback, useEffect, useState } from 'react';
 import api from '../../api';
 
 // ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ export function Field({ label, children, hint }) {
   return (
     <div className="field" style={{ marginBottom: 8 }}>
       <label>{label}</label>
-      {children}
+      {isValidElement(children) && !children.props['aria-label'] ? cloneElement(children, { 'aria-label': label }) : children}
       {hint && <div className="small-muted" style={{ fontSize: 12 }}>{hint}</div>}
     </div>
   );

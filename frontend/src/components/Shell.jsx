@@ -234,7 +234,7 @@ export default function Shell() {
               {phoneGroups.map(([gid, glabel, gitems, gicon]) => (
                 <div className="sb-group open" key={gid}>
                   <div className="sb-group-head" style={{ cursor: 'default' }}>
-                    <span className="sb-group-label"><Ico char={gicon} />{glabel}</span>
+                    <span className="sb-group-label"><Ico char={gicon} />{t(glabel)}</span>
                   </div>
                   <div className="sb-sub">
                     {gitems.map((item) => (
@@ -258,13 +258,13 @@ export default function Shell() {
             {...press(() => navTo('/'), 'link')}
             aria-current={section === 'dashboard' ? 'page' : undefined}
           >
-            <Ico char={SECTION_ICON.dashboard} />Dashboard
+            <Ico char={SECTION_ICON.dashboard} />{t('Dashboard')}
           </div>
           )}
           {(phoneShort ? [] : groups).map(([s, label, items, icon]) => (
             <div className={'sb-group' + (isGroupOpen(s) ? ' open' : '')} key={s}>
               <div className="sb-group-head" {...press(() => toggleGroup(s, items))} aria-expanded={isGroupOpen(s)}>
-                <span className="sb-group-label"><Ico char={icon} />{label}</span>
+                <span className="sb-group-label"><Ico char={icon} />{t(label)}</span>
                 <span className="chev" aria-hidden="true">▸</span>
               </div>
               <div className="sb-sub">
@@ -410,7 +410,8 @@ export default function Shell() {
             {/* Admin health dot: system problems only (dashboard review #2). */}
             {hasAtsWork(user) && <HealthDot />}
             <div className="avatar">{initials(user?.name)}</div>
-            <button className="btn btn-ghost btn-sm tb-signout" onClick={logout}>Sign Out</button>
+            <span className="tb-lang"><LanguagePicker compact /></span>
+            <button className="btn btn-ghost btn-sm tb-signout" onClick={logout}>{t('Sign out')}</button>
           </div>
         </div>
 
@@ -423,15 +424,15 @@ export default function Shell() {
               {current && current.parent && (
                 <>
                   <span className="bc-sep">/</span>
-                  <span className="bc-current">{current.parent.label}</span>
+                  <span className="bc-current">{t(current.parent.label)}</span>
                 </>
               )}
               {current && (
                 <>
                   <span className="bc-sep">/</span>
                   {pathname === currentPath
-                    ? <span className="bc-current">{current.label}</span>
-                    : <Link className="bc-link" to={current.to}>{current.label}</Link>}
+                    ? <span className="bc-current">{t(current.label)}</span>
+                    : <Link className="bc-link" to={current.to}>{t(current.label)}</Link>}
                 </>
               )}
               {current && pathname !== currentPath && moduleTabLabel(pathname) !== current.label && (

@@ -9,8 +9,8 @@ const S = require('./store');
 const LANGS = ['en', 'te', 'hi'];
 const router = express.Router();
 router.get('/i18n/me', S.wrap(async (req, res) => {
-  const v = await S.settings.get(`lang:${req.user.id}`, { lang: 'en' });
-  res.json({ lang: LANGS.includes(v.lang) ? v.lang : 'en', languages: LANGS });
+  const raw = await S.settings.raw(`lang:${req.user.id}`);
+  res.json({ lang: raw && LANGS.includes(raw.lang) ? raw.lang : 'en', saved: !!raw, languages: LANGS });
 }));
 router.put('/i18n/me', S.wrap(async (req, res) => {
   if (req.viewAs) return res.status(403).json({ error: 'View As is read-only.' });
