@@ -3,6 +3,7 @@ const S = require('./schema');
 const env = process.env;
 const ENV = {
   pjsipFile: env.BROWSER_CALL_PJSIP_FILE || '/etc/asterisk/pjsip_browser_users.conf',
+  mainConf: env.BROWSER_CALL_PJSIP_MAIN || '/etc/asterisk/pjsip.conf',
   reloadCmd: env.BROWSER_CALL_RELOAD_CMD || 'asterisk',
   amiHost: env.BROWSER_CALL_AMI_HOST || '127.0.0.1',
   amiPort: Number(env.BROWSER_CALL_AMI_PORT || 5038),

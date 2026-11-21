@@ -18,12 +18,16 @@ function render(rows) {
   }
   return `${out.join('\n')}\n`;
 }
+const run = (cmd, args) => new Promise((resolve, reject) => execFile(cmd, args, { timeout: 5000 }, (e) => (e ? reject(e) : resolve())));
 const reload = () => new Promise((resolve, reject) => execFile(ENV.reloadCmd, ['-rx', 'module reload res_pjsip.so'], { timeout: 15000 }, (e, so) => (e ? reject(e) : resolve(so))));
 async function writeAll() {
   const rows = await S.all('SELECT * FROM "BrowserCallExtension" ORDER BY "extension"');
   const tmp = `${ENV.pjsipFile}.tmp`;
-  fs.writeFileSync(tmp, render(rows), { mode: 0o600 });
+  fs.writeFileSync(tmp, render(rows), { mode: 0o640 });
+  await run('chgrp', ['asterisk', tmp]).catch(() => {}); // Asterisk runs as user "asterisk": it must be able to read the file (root 0600 = "does not exist" to it)
   fs.renameSync(tmp, ENV.pjsipFile);
+  // Asterisk skips a reload when the MAIN pjsip.conf looks unchanged, so touch it first (an include changing is not noticed)
+  try { const now = new Date(); fs.utimesSync(ENV.mainConf, now, now); } catch { /* not on a PBX box */ }
   await reload();
 }
 

@@ -15,12 +15,22 @@ export default function BrowserCallProvider({ children }) {
   const [state, setState] = useState({ phase: 'idle' }); // idle | starting | calling | ringing | connected | failed | ended
   const [seconds, setSeconds] = useState(0);
   const ua = useRef(null); const reg = useRef(null); const sess = useRef(null); const audioEl = useRef(null); const poll = useRef(null); const tick = useRef(null);
-  const creds = useRef(null);
+  const creds = useRef(null); const tone = useRef(null);
+  const stopTone = () => { try { if (tone.current) { tone.current.osc.stop(); tone.current.ctx.close(); } } catch { /* done */ } tone.current = null; };
+  const startTone = () => {
+    if (tone.current) return;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)(); const gain = ctx.createGain(); gain.gain.value = 0;
+      const osc = ctx.createOscillator(); osc.frequency.value = 425; osc.connect(gain); gain.connect(ctx.destination); osc.start();
+      const beat = () => { const t = ctx.currentTime; gain.gain.setValueAtTime(0.12, t); gain.gain.setValueAtTime(0, t + 0.4); gain.gain.setValueAtTime(0.12, t + 0.6); gain.gain.setValueAtTime(0, t + 1.0); };
+      beat(); const iv = setInterval(beat, 4000); osc.onended = () => clearInterval(iv); tone.current = { ctx, osc };
+    } catch { /* no audio context */ }
+  };
 
   useEffect(() => { api.get('/browser-calling/status').then((r) => setInfo(r.data)).catch(() => setInfo({ canCall: false })); }, []);
   useEffect(() => () => { try { if (ua.current) ua.current.stop(); } catch { /* closing */ } clearInterval(poll.current); clearInterval(tick.current); }, []);
 
-  const stopTimers = () => { clearInterval(poll.current); clearInterval(tick.current); };
+  const stopTimers = () => { clearInterval(poll.current); clearInterval(tick.current); stopTone(); };
   const finish = useCallback((phase, extra = {}) => {
     stopTimers();
     setState((s) => ({ ...s, phase, muted: false, held: false, ...extra }));
@@ -72,11 +82,12 @@ export default function BrowserCallProvider({ children }) {
     const inviter = new Inviter(ua.current, target, { extraHeaders: [`X-TL-Call: ${placed.token}`], sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } } });
     sess.current = inviter;
     setSeconds(0);
+    startTone();
     setState({ phase: 'calling', name: placed.candidate.name, candidateId, callId: placed.callId, number: placed.number });
     let answeredAt = null;
     inviter.stateChange.addListener((s) => {
       if (s === SessionState.Established) {
-        answeredAt = Date.now(); attachAudio(inviter);
+        stopTone(); answeredAt = Date.now(); attachAudio(inviter);
         setState((x) => ({ ...x, phase: 'connected' }));
         clearInterval(tick.current); tick.current = setInterval(() => setSeconds(Math.round((Date.now() - answeredAt) / 1000)), 500);
       } else if (s === SessionState.Terminated) {
