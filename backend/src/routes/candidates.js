@@ -440,6 +440,18 @@ async function scopedCandidates(user, onlyIds = null) {
   };
 }
 
+// scopedCandidates() over the list's working set (utils/candidateListCache.js) instead of a fresh read: the same people, the same
+// order (newest first) and the same visibility rule (audit 2026-11-20, the plain list).
+async function scopedFromState(user, st, onlyIds = null) {
+  let all = st.candidates;
+  if (onlyIds) { const want = new Set(onlyIds); all = all.filter((c) => want.has(c.id)); }
+  const sharedIds = await clientSharedApplicationIds(user, all);
+  const s = scopeOf(user);
+  if (s.global) return { candidates: all, sharedIds };
+  if (s.role === 'CANDIDATE') return { candidates: all.filter((c) => c.id === s.candidateId), sharedIds };
+  return { candidates: all.filter((c) => visibleApplications(user, c.applications, sharedIds).length > 0), sharedIds };
+}
+
 // WHY WAS THIS CANDIDATE REJECTED, AND BY WHOM.
 //
 // The list said "Rejected" and nothing else, which is the one word that
@@ -1822,21 +1834,43 @@ router.get('/', async (req, res) => {
   // ?positionCode= a seat. Attribution is utils/workers.js's — the same rule
   // ATS Reports counts with — so a former recruiter's candidates are found by
   // the name their work is recorded under.
+  // SPEED (audit 2026-11-20: 14,000 people took 9-20 s): the people come from the list's working set (utils/candidateListCache.js,
+  // the same always-current copy the paged list reads) instead of a fresh read of every candidate, application and job, and
+  // ?limit= (with ?offset=) pages the answer: only the page is decorated when no view / step / follow-up filter needs every row.
+  // Without ?limit= the whole scoped list is answered as before (the exports read it). X-Total-Count says how many there are.
   const att = hasPersonQuery(req.query) ? await attributedApplications(req.user, req.query) : null;
-  const scoped = await scopedCandidates(req.user, att ? [...new Set(att.apps.map((a) => a.candidateId))] : null);
+  const st = await getListState();
+  const scoped = await scopedFromState(req.user, st, att ? [...new Set(att.apps.map((a) => a.candidateId))] : null);
   const { sharedIds } = scoped;
   let { candidates } = scoped;
   if (att) {
     candidates = candidates.filter((c) => visibleApplications(req.user, c.applications, sharedIds)
       .some((a) => att.ids.has(a.id)));
   }
-  // followup_: one query for every visible application's current follow-up,
-  // so the Follow-up column is real data rather than an em dash.
-  const followUps = await currentFollowUpsByApplication(
-    candidates.flatMap((c) => visibleApplications(req.user, c.applications, sharedIds).map((a) => a.id)),
-  );
+  const lim = parseInt(req.query.limit, 10);
+  const limit = Number.isFinite(lim) && lim > 0 ? Math.min(lim, 5000) : null;
+  const off = parseInt(req.query.offset, 10);
+  const offset = limit && Number.isFinite(off) && off > 0 ? off : 0;
+  const view = req.query.view && req.query.view !== 'all' ? req.query.view : null;
+  const wantedFollowUp = req.query.followUp ? String(req.query.followUp).split(',').map((x) => x.trim()).filter(Boolean) : null;
+  const rowFilter = !!(view || req.query.stageGroup || wantedFollowUp);
+  // no filter on the decorated rows: the page is cut first (same order: newest first)
+  const total0 = candidates.length;
+  if (limit && !rowFilter) candidates = candidates.slice(offset, offset + limit);
+  // followup_: every visible application's current follow-up (the working set holds them), so the Follow-up column is real data.
+  const followUps = st.followUps;
   await JRULE.refresh().catch(() => null); // who left after joining (the Dropped step)
   let rows = candidates.map((c) => decorate(c, { user: req.user, sharedIds, followUps }));
+  // Hold and Rejected are VIEWS over this same list, not separate modules —
+  // so the server offers them as a query parameter on the one endpoint.
+  if (view) rows = rows.filter((r) => matchesView(view, r.currentStage));
+  if (req.query.stageGroup) rows = rows.filter((r) => r.stageGroup === req.query.stageGroup);
+  // followup_: the dashboard's "Follow-ups Due" and "Overdue Follow-ups" rows
+  // link here. "Not set" is a real value — an application nobody has committed
+  // a follow-up on yet is exactly the thing a lead wants to find.
+  if (wantedFollowUp) rows = rows.filter((r) => wantedFollowUp.includes(r.followUp ? r.followUp.status : 'Not set'));
+  const total = rowFilter ? rows.length : total0;
+  if (limit && rowFilter) rows = rows.slice(offset, offset + limit);
   {
     // the Dropped step and who replaced whom, the same fields the paged list carries (this plain list feeds the exports)
     const linkIdx = await RP.linkIndex(req.user).catch(() => new Map());
@@ -1846,22 +1880,8 @@ router.get('/', async (req, res) => {
       if (r.latestApplicationId) RP.put(r, linkIdx.get(r.latestApplicationId));
     });
   }
-  // Hold and Rejected are VIEWS over this same list, not separate modules —
-  // so the server offers them as a query parameter on the one endpoint.
-  if (req.query.view && req.query.view !== 'all') {
-    rows = rows.filter((r) => matchesView(req.query.view, r.currentStage));
-  }
-  if (req.query.stageGroup) {
-    rows = rows.filter((r) => r.stageGroup === req.query.stageGroup);
-  }
-  // followup_: the dashboard's "Follow-ups Due" and "Overdue Follow-ups" rows
-  // link here. "Not set" is a real value — an application nobody has committed
-  // a follow-up on yet is exactly the thing a lead wants to find.
-  if (req.query.followUp) {
-    const wanted = String(req.query.followUp).split(',').map((x) => x.trim()).filter(Boolean);
-    rows = rows.filter((r) => wanted.includes(r.followUp ? r.followUp.status : 'Not set'));
-  }
   if (isInternalViewer(req.user)) await attachRejections(rows);
+  res.set('X-Total-Count', String(total));
   return res.json(rows.map(slimForList));
 });
 
