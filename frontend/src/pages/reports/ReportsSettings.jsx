@@ -40,6 +40,7 @@ const GROUPS = [
       card('🎯', '/admin/fit', 'Fit settings', 'How the Fit % between a person and a requirement is worked out.', null, isAdmin),
       card('🧩', '/admin/step-timing', 'Add-on switches', 'Self-booking, tests, sequences, email tracking, SMS campaigns, job alerts, mailbox reading - all off until you switch them on.', null, isAdmin),
       card('🌐', '/admin/integrations?tab=jobportals&sub=site', 'Careers site', 'The agency's own careers site, job alerts, and job-board applications coming in.', null, isAdmin),
+      card('🛠️', '/admin/ats-settings', 'ATS settings', 'Branches, seats, currencies, languages, custom forms, onboarding, integrations, privacy (DPDP).', null, isAdmin),
       card('🧾', '/admin/candidate-fields', 'Candidate fields', 'Extra fields on every candidate profile: text, number, date or a pick list, required or not.', null, isAdmin),
     ],
   },

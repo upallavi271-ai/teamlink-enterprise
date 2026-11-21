@@ -35,7 +35,7 @@ export const REPORT_GROUPS = [
     id: 'people',
     title: 'Team & people',
     cards: [
-      { id: 'team', icon: '👥', title: 'Recruiter & BDE performance', answers: 'Who sends people, gets interviews and joinings - and who is reaching target?', views: [['recruiters', 'Performance'], ['targets', 'Against target'], ['costperhire', 'Cost per hire']] },
+      { id: 'team', icon: '👥', title: 'Recruiter & BDE performance', answers: 'Who sends people, gets interviews and joinings - and who is reaching target?', views: [['recruiters', 'Performance'], ['targets', 'Against target'], ['coaching', 'Ratios & coaching'], ['costperhire', 'Cost per hire']] },
       { id: 'teamwise', icon: '📥', title: 'Team & person numbers', answers: 'Every number for each team and each person, by day, week or month - and download it.', views: [['teamwise', 'Team & person']] },
     ],
   },
@@ -100,7 +100,8 @@ const OWN_SWITCH = {
   mybusiness: 'myBusiness', jobportal: 'jobPortal', revenue: 'revenue', 'recruiter-revenue': 'recruiterRevenue', experience: 'experience', clienthealth: 'clientHealth',
   // the insight tabs (routes/atsInsights.js): the catalog's flags
   ttfjob: 'insights', openings: 'insights', readiness: 'insights', forecast: 'insights', bottlenecks: 'insights', builder: 'insights', askchart: 'insights',
-  schedules: 'insights', backdoor: 'insightsBackdoor', qoh: 'insights', compliance: 'compliance', bifeed: 'biFeed',
+  schedules: 'insights', coaching: 'insights', // Recruiter insights: ratios, coaching, recorded calls, AI activity (components/atsPlus/RecruiterInsights.jsx)
+  backdoor: 'insightsBackdoor', qoh: 'insights', compliance: 'compliance', bifeed: 'biFeed',
 };
 export function mayOpen(cat, id) {
   if (!cat) return false;

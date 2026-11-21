@@ -83,7 +83,8 @@ import FitSettings from './components/resume/FitSettings.jsx'; // fit_: Admin �
 import AtsAlertSettings from './pages/admin/AtsAlertSettings.jsx'; // Admin → Step timing (dashboards)
 import DataCleanup from './pages/admin/DataCleanup.jsx'; // Admin → Company Setup → Data cleanup (dashboards)
 import CandidateFields from './pages/admin/CandidateFields.jsx'; // Admin → Company Setup → Candidate fields (custom fields on the profile)
-import PipelineSettings from './pages/admin/PipelineSettings.jsx'; // Admin → Company Setup → Pipeline & checks (stage names, sub-statuses, share checklist)
+import PipelineSettings from './pages/admin/PipelineSettings.jsx';
+import AtsPlusSettings from './pages/admin/AtsPlusSettings.jsx'; // Admin → Company Setup → ATS settings (market wave 2026-11-21: branches, forms, onboarding, integrations, privacy) // Admin → Company Setup → Pipeline & checks (stage names, sub-statuses, share checklist)
 import Profile from './pages/admin/Profile.jsx';
 
 // THE JOB PORTAL (2026-10-05): the customer's own portal, embedded at /jobs
@@ -423,6 +424,7 @@ export default function App() {
         <Route path="admin/candidate-fields" element={<CandidateFields />} />
         <Route path="admin/pipeline" element={<PipelineSettings />} />
         <Route path="admin/ai-governance" element={<AiGovernance />} />
+        <Route path="admin/ats-settings" element={<AtsPlusSettings />} />
         <Route path="admin/vendor-logins" element={<VendorLogins />} />
         <Route path="admin/credentials" element={<CredentialsVault />} />
         <Route path="admin/partners" element={<Partners />} />

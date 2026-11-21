@@ -1,3 +1,4 @@
+import RecruiterInsights from '../../components/atsPlus/RecruiterInsights.jsx'; // ratios, coaching, call recordings, AI activity (market wave 2026-11-21)
 import { WorkTargetsPanel } from '../../components/ats/AtsWork.jsx'; // daily / weekly / monthly targets, score, leaderboard, end of day (round 3)
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // The actual workflow with live counts (the Workflow tab).
@@ -133,6 +134,8 @@ export const ATS_REPORT_TABS = [
   // ATS-100 B9.3: campaign costs + partner payouts + incentives ÷ joinings (utils/costPerHire.js).
   ['costperhire', 'Cost per hire'],
   ['targets', 'Results vs target'],
+  // Market wave 2026-11-21: ratios, coaching against the team, recorded calls + transcripts, the AI activity log (components/atsPlus/RecruiterInsights.jsx).
+  ['coaching', 'Recruiter insights'],
   ['revenue', 'Client revenue'], // Super Admin / Admin / Accounts only (server-enforced)
   // ATS-100 B9.7: invoices net of credit notes per recruiter / month / client (same gate as Client revenue).
   ['recruiter-revenue', 'Recruiter revenue'],
@@ -494,7 +497,7 @@ const CLEARS = {
   tl: ['recruiter'],
   clientId: ['requirementId'],
 };
-const NO_FILTER_TABS = ['workflow', 'daily', 'jobportal', 'partners', 'teamwise', 'mybusiness', 'came', 'joindrop', 'experience', 'clienthealth', ...INSIGHT_TAB_IDS];
+const NO_FILTER_TABS = ['coaching', 'workflow', 'daily', 'jobportal', 'partners', 'teamwise', 'mybusiness', 'came', 'joindrop', 'experience', 'clienthealth', ...INSIGHT_TAB_IDS];
 // v3 colours on the cards: green good / yellow pending / red late or rejected.
 const BAD_WORDS = /late|overdue|reject|pending|waiting|not add up|no joining|still to come|drop|no-show|did not/i;
 function tileTone(label) {
@@ -791,7 +794,7 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
       {NO_FILTER_TABS.includes(tab) ? (
         <>
           {viewSwitch && <div style={{ marginBottom: 10 }}>{viewSwitch}</div>}
-          {INSIGHT_TAB_IDS.includes(tab) ? <InsightReports tab={tab} canExport={canExport} /> : tab === 'workflow' ? <WorkflowDiagram /> : tab === 'jobportal' ? <JobPortalReports embedded /> : tab === 'partners' ? <PartnersReport canExport={canExport} /> : tab === 'teamwise' ? <TeamReports /> : tab === 'came' ? <CandidateSources embedded user={user} /> : tab === 'joindrop' ? <JoinDropReport /> : tab === 'experience' ? <CandidateExperienceReport /> : tab === 'clienthealth' ? <ClientHealthReport /> : tab === 'mybusiness' ? <MyBusinessReports /> : <DailyReport />}
+          {tab === 'coaching' ? <RecruiterInsights /> : INSIGHT_TAB_IDS.includes(tab) ? <InsightReports tab={tab} canExport={canExport} /> : tab === 'workflow' ? <WorkflowDiagram /> : tab === 'jobportal' ? <JobPortalReports embedded /> : tab === 'partners' ? <PartnersReport canExport={canExport} /> : tab === 'teamwise' ? <TeamReports /> : tab === 'came' ? <CandidateSources embedded user={user} /> : tab === 'joindrop' ? <JoinDropReport /> : tab === 'experience' ? <CandidateExperienceReport /> : tab === 'clienthealth' ? <ClientHealthReport /> : tab === 'mybusiness' ? <MyBusinessReports /> : <DailyReport />}
         </>
       ) : (<>
       {/* The same filters as every page (ATS layout v3): Department · Date
