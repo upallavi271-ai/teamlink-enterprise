@@ -179,7 +179,8 @@ async function search(filters, user, { limit = 50 } = {}) {
   if (filters.education) and.push({ education: { contains: filters.education.replace(/\./g, '') } });
   const skills = (filters.skills || []).slice(0, 8);
   if (skills.length) and.push({ OR: skills.flatMap((s) => [{ skills: { contains: s } }, { technicalSkills: { contains: s } }, { currentDesignation: { contains: s } }]) });
-  if (filters.title) and.push({ OR: [{ currentDesignation: { contains: filters.title } }, { skills: { contains: filters.title } }] });
+  // the role word filters only when no skill was named; with skills it only ranks ("java developers" = java people, developers first)
+  if (filters.title && !skills.length) and.push({ OR: [{ currentDesignation: { contains: filters.title } }, { skills: { contains: filters.title } }] });
   const rows = await prisma.candidate.findMany({
     where: { AND: and },
     select: { id: true, name: true, location: true, experienceYears: true, skills: true, technicalSkills: true, currentDesignation: true, currentCompany: true, noticePeriod: true, expectedSalary: true, createdAt: true },
@@ -192,7 +193,7 @@ async function search(filters, user, { limit = 50 } = {}) {
     return true;
   }).map((c) => {
     const hay = lower(`${c.skills} ${c.technicalSkills} ${c.currentDesignation}`);
-    const hits = skills.filter((s) => hay.includes(lower(s))).length;
+    const hits = skills.filter((s) => hay.includes(lower(s))).length + (filters.title && lower(c.currentDesignation).includes(lower(filters.title)) ? 0.5 : 0);
     return { id: c.id, name: c.name, location: c.location, experienceYears: c.experienceYears, designation: c.currentDesignation, company: c.currentCompany, noticePeriod: c.noticePeriod, skills: csv(c.skills).slice(0, 8), hits };
   }).sort((a, b) => b.hits - a.hits || (b.experienceYears || 0) - (a.experienceYears || 0));
   return { total: out.length, rows: out.slice(0, limit), capped: rows.length >= 3000 };

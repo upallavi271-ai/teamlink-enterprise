@@ -365,7 +365,7 @@ export default function RequirementForm({
   const [dup, setDup] = useState(null); // B9.1: the server's 409 DUPLICATE_JOB answer (+ which save)
   // docfill_: the two-choice entry (Add only) and the green / orange marks on
   // the fields a file filled. Edit opens the form straight away.
-  const fill = useFillFromFile('job', { enabled: !editing });
+  const fill = useFillFromFile('job', { enabled: !editing && !initialValues }); // a draft from the intake assistant opens the form itself
   const ff = (name) => fill.cls(name);
   const ft = (name) => fill.tag(name);
   // ONE CLICK = ONE JOB (spec §25): a ref blocks a second click before the
