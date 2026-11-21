@@ -347,7 +347,10 @@ async function bulkPreview(user, body) {
       else if (kind === 'requirement-assign' && body.userId && (r.recruiterId === body.userId || r.tlId === body.userId)) out.skipped.push({ id, name, reason: 'Already assigned to them' });
       else {
         // FROM = who holds that job today in the SAME role (founder 2026-11-21: assigning recruiters showed the job's team lead "Usha" as From)
-        const fromIds = body.role === 'TL' ? [r.tlId].filter(Boolean) : [r.recruiterId, ...String(r.recruiterIds || '').split(',').map((x) => x.trim())].filter(Boolean);
+        // FROM = the team lead who hands the job to the recruiters (founder 2026-11-21: "the respective TL - the TL assigns to the recruiters"):
+        // the team lead doing it when a TL / STL assigns; otherwise the job's team lead. Assigning a TEAM LEAD shows the job's current team lead.
+        const lead = ['TL', 'STL'].includes(String(user.atsRole || '').toUpperCase()) ? user.id : r.tlId;
+        const fromIds = [body.role === 'TL' ? r.tlId : lead].filter(Boolean);
         out.willMove.push({ id, name, from: fromIds.length ? [...new Set(fromIds)].join(',') : 'unassigned', to: 'the chosen person' });
       }
     });
