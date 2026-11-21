@@ -143,6 +143,8 @@ app.use(require('./routes/omniWaFromOmni'));
 // CORS: open only for the public paths third parties use; everything else = CORS_ORIGINS / this site / localhost in dev.
 // A lead from the company's website (a form on another site, with the API key): its own open CORS, so it comes before the app's (routes/crmWebsite.js).
 app.use('/api/crm/leads/public', require('./routes/crmWebsite'));
+// Market wave C (2026-11-21): the LinkedIn sourcing browser extension's door - its own open CORS, the per-person key is the login (routes/mktPublic.js).
+app.use('/api/public/mkt/ext', require('./routes/mktPublic').ext);
 app.use(require('./utils/webSecurity').corsMiddleware());
 // Employee Monitoring: an agent batch of activity can be larger than the site-wide 100 kB JSON limit.
 app.use('/api/monitoring/activity', express.json({ limit: '1mb' }));
@@ -166,6 +168,8 @@ app.use('/api/outreach/gs/marketing/brand/logo', express.json({ limit: '600kb' }
 app.use('/api/outreach/gs/marketing/projects', express.json({ limit: '700kb' })); // a client's logo travels with the project (a picture of up to 300 KB)
 app.use('/api/public/mk-project', express.json({ limit: '700kb' })); // the client's request form can carry their logo
 app.use('/api/followup-report/import', express.json({ limit: '2mb' })); // the follow-up import's choices: one per row of a sheet of up to 5,000 rows
+// Market wave C: a job board's signed application webhook needs the raw body for its HMAC (routes/mktPublic.js).
+app.use('/api/public/mkt/boards', express.raw({ type: () => true, limit: '2mb' }));
 app.use(express.json());
 app.use('/api', require('./utils/mktb/gov').requestContext); // market wave B: an AI call knows who asked and from where (the AI governance log)
 // WHO LEFT AFTER JOINING (utils/joinedRule.js): a fresh set is loaded before ANY route runs, so no Joined list or number is ever built from an empty set
@@ -393,6 +397,8 @@ app.use('/api/portal-mailboxes', require('./routes/portalMailboxes'));
 app.use('/api/candidate-logins', require('./routes/candidateLogins'));
 // The Job Portal's other Integrations settings (job sites, Email/SMS/WhatsApp, AI screening) — routes/portalAdmin.js.
 app.use('/api/portal-admin', require('./routes/portalAdmin'));
+// Market wave C (2026-11-21): self-booking, tests, email tracking, calendar feed, careers site, SEO job page, quick apply, job alerts, board webhooks (routes/mktPublic.js).
+app.use('/api/public/mkt', require('./routes/mktPublic'));
 app.use('/api/public', publicRoutes);
 app.use('/api/performance', performanceRoutes);
 // HRMS → Performance & Development → Recruiter joinings + the Super Admin popup (routes/recruiterJoinings.js).
@@ -511,6 +517,10 @@ app.use('/api/ats/history', require('./routes/atsHistory'));
 app.use('/api/ats/scheduled-messages', require('./routes/messageSchedules'));
 // Pipeline & checks (founder ATS audit 2026-11-17): stage names, sub-statuses, the share checklist, fee slabs (routes/atsFlowConfig.js).
 // Ahead of the calendar-gated /api/ats routers: GET /api/ats/stage-labels is read by every login.
+// Market wave C (2026-11-21): interview kits, scorecards, briefing, recordings, AI notes / summary, slots, self-booking, calendar; tests;
+// email check, AI drafts, tracking, sequences, call notes, mailbox; careers site, alerts, boards, extension key, SMS campaigns (routes/mktInterviews.js, routes/mktComms.js).
+app.use('/api/ats/mkt', require('./routes/mktInterviews'));
+app.use('/api/ats/mkt', require('./routes/mktComms'));
 app.use('/api/ats', require('./utils/scheduledReminders').autoSyncMiddleware); // keeps the reminder plan in line with a booking / move / cancel / joining change
 app.use('/api/ats', require('./utils/messageSchedules').eventMiddleware); // the stop rules / ATS triggers of the scheduled messages after a booking / move / cancel / documents / joining
 app.use('/api/ats', require('./routes/atsFlowConfig'));
@@ -657,6 +667,9 @@ const server = app.listen(PORT, () => {
   // Timesheet daily tracking: 18:00 "not finished today - what happened?", 19:00 to whoever gave it - utils/taskDayUpdate.js (2026-11-10)
   require('./utils/taskDayUpdate').start();
   require('./utils/mktb/agents').start(); // market wave B timers: each one does nothing until its Admin switch is ON; never in the sandbox
+  // Market wave C (2026-11-21): connected mailboxes read every 5 minutes and job-alert emails every 6 hours - each only while its Admin switch is on; never in the sandbox.
+  require('./utils/mkt/comms').startInboxSync();
+  require('./utils/mkt/portal').startAlerts();
   // Requests waiting since before 2026-11-02 whose own TL was skipped as "below the requester's level" go back to that TL (once, at start).
   // follow-ups of the last 30 days stamped with the requirement's team lead instead of their recruiter's seat TL (utils/teamLeadChange.js):
   // counted first (dry run, logged), then re-stamped and audit-logged; safe to run again. Not on a test server.

@@ -32,6 +32,8 @@ async function crawlerPage(req, id, to) {
   const pub = require('./public'); // eslint-disable-line global-require
   const job = await prisma.requirement.findUnique({ where: { id } });
   if (!job || job.internal || !require('./careersPublic').isListed(job)) return null; // eslint-disable-line global-require
+  // market wave (2026-11-21): the full SEO page - meta description, Open Graph, canonical, hreflang, English / Telugu / Hindi (utils/mkt/portal.js)
+  try { return await require('../utils/mkt/portal').seoJobPage(req, job, { lang: String(req.query.lang || 'en'), applyUrl: to }); } catch { /* the small page below */ } // eslint-disable-line global-require
   const ld = JSON.stringify(await pub.jobPostingLdSafe(job, pub.publicBase(req))).split('<').join(String.fromCharCode(92) + 'u003c');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escHtml(job.title)} - TeamLink Jobs</title><meta name="viewport" content="width=device-width, initial-scale=1"><script type="application/ld+json">${ld}</script></head><body><h1>${escHtml(job.title)}</h1><p>${escHtml(job.location || '')}</p><p><a href="${escHtml(to)}">Apply for this job</a></p></body></html>`;
 }

@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>TeamLink extension settings</title>
+<style>
+  body { font-family: system-ui, Arial, sans-serif; max-width: 520px; margin: 24px auto; padding: 0 16px; color: #111; }
+  input { width: 100%; box-sizing: border-box; padding: 8px; margin: 4px 0 12px; border: 1px solid #d1d5db; border-radius: 6px; }
+  button { background: #1f6feb; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+  .muted { color: #6b7280; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>TeamLink extension</h1>
+  <p class="muted">1. Your TeamLink address, for example https://teamlink.example.com<br>
+  2. Your own key: in TeamLink open any candidate &gt; More &gt; Outreach tools &gt; Browser extension &gt; Make my key.</p>
+  <label>TeamLink address<input id="base" type="url" placeholder="https://..."></label>
+  <label>Your key<input id="key" type="password" placeholder="tlx_..."></label>
+  <button id="save">Save</button> <span id="msg" class="muted"></span>
+  <script src="options.js"></script>
+</body>
+</html>

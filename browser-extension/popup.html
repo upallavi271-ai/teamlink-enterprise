@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: system-ui, Arial, sans-serif; width: 300px; margin: 12px; color: #111; font-size: 13px; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  .muted { color: #6b7280; }
+  .box { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin: 8px 0; }
+  input { width: 100%; box-sizing: border-box; margin: 2px 0 6px; padding: 6px; border: 1px solid #d1d5db; border-radius: 6px; }
+  button { background: #1f6feb; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; font-weight: 600; cursor: pointer; width: 100%; }
+  button[disabled] { background: #9ca3af; cursor: default; }
+  a { color: #1d4ed8; }
+  .err { color: #b91c1c; }
+  .ok { color: #047857; }
+</style>
+</head>
+<body>
+  <h1>Add to TeamLink</h1>
+  <div id="who" class="muted">Checking your key...</div>
+  <div id="profile" class="box muted">Open a LinkedIn profile (linkedin.com/in/...).</div>
+  <input type="email" id="email" placeholder="Email (if you have it)">
+  <input type="tel" id="phone" placeholder="Phone (if you have it)">
+  <button id="add" disabled>Add as candidate</button>
+  <div id="msg" style="margin-top: 8px"></div>
+  <p class="muted" style="margin-top: 10px">Only what is on the profile page is sent, when you press the button. <a href="options.html" target="_blank">Settings</a></p>
+  <script src="popup.js"></script>
+</body>
+</html>

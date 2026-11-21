@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "TeamLink - add LinkedIn profiles",
+  "version": "1.0.0",
+  "description": "Adds the LinkedIn profile you are looking at to TeamLink ATS as a candidate, with your own TeamLink key.",
+  "permissions": ["storage", "activeTab"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*"],
+  "host_permissions": ["https://www.linkedin.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["https://www.linkedin.com/in/*"], "js": ["content.js"], "run_at": "document_idle" }],
+  "action": { "default_title": "Add to TeamLink", "default_popup": "popup.html" },
+  "options_page": "options.html"
+}

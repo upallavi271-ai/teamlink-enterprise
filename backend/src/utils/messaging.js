@@ -53,7 +53,17 @@ async function sendInner(channel, opts = {}) {
       if (!core.validEmail(to)) return shape({ ok: false, invalid: true, error: `"${to}" is not a valid email address` });
       if (mailer.isReservedTestAddress(to)) return shape({ ok: false, reserved: true, error: `${to} is a reserved test domain — never transmitted` });
       await core.acquire('Email');
+      // OPEN / CLICK TRACKING of candidate emails (market wave 2026-11-21, utils/mkt/comms.js): only when the Admin switch is on;
+      // an HTML copy with a 1-pixel image and links through TeamLink, the plain text unchanged. Never blocks the send.
+      let trackedHtml = null; let trackToken = null;
+      if (!opts.html && opts.meta && opts.meta.audience === 'candidates' && opts.meta.personId) {
+        try {
+          const MC = require('./mkt/comms'); // eslint-disable-line global-require
+          if (await MC.trackingOn()) { const w = await MC.wrapEmail({ to, subject: opts.subject, text: opts.text, candidateId: opts.meta.personId }); trackedHtml = w.html; trackToken = w.token; }
+        } catch { trackedHtml = null; }
+      }
       const r = await mailer.sendMail({
+        ...(trackedHtml ? { html: trackedHtml } : {}),
         to,
         subject: opts.subject || '(no subject)',
         text: opts.text || '',
@@ -67,6 +77,7 @@ async function sendInner(channel, opts = {}) {
         // files to attach (e.g. the agreement PDF to eSign in DigiLocker, 2026-10-31): [{ filename, content: Buffer, contentType }]
         ...(Array.isArray(opts.attachments) && opts.attachments.length ? { attachments: opts.attachments } : {}),
       });
+      if (trackToken && !(r && r.ok)) await require('./mkt/comms').dropTrack(trackToken).catch(() => {}); // eslint-disable-line global-require
       return shape(r);
     }
     // SMS / WhatsApp: the adapter layer picks the provider (channels/index.js): cloud / QR-link / Android phone / paid gateway.

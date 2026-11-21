@@ -199,9 +199,10 @@ async function store(p, who, ownAddress) {
   });
 }
 
-async function pollOnce({ transport, messages } = {}) {
+// cfg / ckKey / lastKey: a person's OWN mailbox (market wave 2026-11-21, utils/mkt/comms.js) instead of the shared inbox
+async function pollOnce({ transport, messages, cfg: given = null, ckKey = CKPT, lastKey = LAST } = {}) {
   const out = { read: 0, matched: 0, stored: 0, ignored: 0, errors: [] };
-  const cfg = await config();
+  const cfg = given || await config();
   let raws = [];
   let maxUid = null;
   try {
@@ -209,7 +210,7 @@ async function pollOnce({ transport, messages } = {}) {
       raws = messages.map((m, i) => ({ uid: m.uid || i + 1, raw: typeof m === 'string' ? m : m.raw }));
     } else {
       if (!cfg.configured) return { ...out, notConfigured: true, error: cfg.reason };
-      const ck = await getSetting(CKPT);
+      const ck = await getSetting(ckKey);
       const t = transport || realTransport();
       const got = await t.fetchNew(cfg, { sinceUid: ck && ck.address === cfg.address ? ck.uid : null, sinceDate: new Date(Date.now() - 3 * 86400000), limit: MAX_PER_POLL });
       raws = got.messages || [];
@@ -217,7 +218,7 @@ async function pollOnce({ transport, messages } = {}) {
     }
   } catch (err) {
     out.errors.push(String(err && err.message).slice(0, 200));
-    await putSetting(LAST, { at: new Date().toISOString(), ...out });
+    await putSetting(lastKey, { at: new Date().toISOString(), ...out });
     return out;
   }
   for (const m of raws) {
@@ -252,8 +253,8 @@ async function pollOnce({ transport, messages } = {}) {
       if (R && ev && ev.id) await R.finish(ev, { type: who.type, id: who.id, name: who.name }, { channel: 'Email', text: p.text, at: p.date }); // eslint-disable-line no-await-in-loop
     } catch (err) { out.errors.push(String(err && err.message).slice(0, 200)); }
   }
-  if (maxUid != null) await putSetting(CKPT, { address: cfg.address, uid: maxUid });
-  await putSetting(LAST, { at: new Date().toISOString(), read: out.read, matched: out.matched, stored: out.stored, ignored: out.ignored, errors: out.errors.length });
+  if (maxUid != null) await putSetting(ckKey, { address: cfg.address, uid: maxUid });
+  await putSetting(lastKey, { at: new Date().toISOString(), read: out.read, matched: out.matched, stored: out.stored, ignored: out.ignored, errors: out.errors.length });
   return out;
 }
 

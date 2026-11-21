@@ -1212,10 +1212,25 @@ async function stopWhere(where, status, reason, actor = null) {
   return n;
 }
 
+// stop the given schedules (a sequence that ended: utils/mkt/comms.js) -> how many stopped
+async function stopIds(ids, status, reason) {
+  await ensure();
+  let n = 0;
+  for (const id of ids || []) {
+    // eslint-disable-next-line no-await-in-loop
+    const s = await getSched(id);
+    // eslint-disable-next-line no-await-in-loop
+    if (s && await withLock(s.id, () => stopOne(s, status, reason, 'System', null))) n += 1;
+  }
+  return n;
+}
+
 // THE CANDIDATE REPLIED (utils/conversations.recordIn): the no-response follow-ups of that candidate stop
 async function onCandidateReply(candidateId, channel) {
   try {
     if (!candidateId) return 0;
+    // the multi-step candidate sequences (market wave 2026-11-21, utils/mkt/comms.js) stop on a reply too
+    await require('./mkt/comms').onCandidateReply(candidateId, channel).catch(() => 0); // eslint-disable-line global-require
     return await stopWhere({ candidateId, triggers: NO_RESPONSE }, 'completed', `The candidate replied${channel ? ` on ${channel}` : ''}.`);
   } catch (e) { console.error('[messageSchedules] reply:', e.message); return 0; } // eslint-disable-line no-console
 }
@@ -1336,6 +1351,7 @@ async function preview(user, b = {}, { now = new Date() } = {}) {
 }
 
 module.exports = {
+  stopIds,
   CHANNELS, TIMEZONES, TRIGGERS, TRIGGER_KEY, STATUSES, OCC_STATUSES, MAX_OCCURRENCES, MAX_PLANNED_CANDIDATE, WINDOW_DAYS, WINDOW_MAX, EXPORT_HEADERS, NO_RESPONSE,
   ensure, migrateExisting, adoptRow, timesOf, planTimes, summaryOf, cleanSpec, validateSpec, frequencyLabel,
   create, getOne, pause, resume, cancel, edit, listAll, exportRows, forCandidate, options, preview,

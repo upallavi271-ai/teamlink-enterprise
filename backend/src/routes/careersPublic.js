@@ -251,9 +251,13 @@ async function sitemapXml(req) {
   const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : null);
   const urls = [
     { loc: `${base}/careers`, lastmod: day(jobs[0] && postedAt(jobs[0])), changefreq: 'hourly', priority: '1.0' },
-    ...jobs.map((j) => ({ loc: `${base}${careersPath(j)}`, lastmod: day(postedAt(j)), changefreq: 'daily', priority: '0.8' })),
+    ...jobs.map((j) => ({ loc: `${base}${careersPath(j)}`, lastmod: day(postedAt(j)), changefreq: 'daily', priority: '0.8', langs: true })),
   ];
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url>\n    <loc>${xmlEsc(u.loc)}</loc>${u.lastmod ? `\n    <lastmod>${u.lastmod}</lastmod>` : ''}\n    <changefreq>${u.changefreq}</changefreq>\n    <priority>${u.priority}</priority>\n  </url>`).join('\n')}\n</urlset>\n`;
+  // market wave (2026-11-21): the agency careers site (10.18) and each job's Telugu / Hindi page (10.02, hreflang)
+  if (await require('../utils/mkt/core').settings().then((st) => st.site.published).catch(() => false)) urls.splice(1, 0, { loc: `${base}/site`, lastmod: day(jobs[0] && postedAt(jobs[0])), changefreq: 'daily', priority: '0.9' }); // eslint-disable-line global-require
+  const alt = (u) => (u.langs ? ['en-IN', 'te-IN', 'hi-IN'].map((h, i) => `
+    <xhtml:link rel="alternate" hreflang="${h}" href="${xmlEsc(i ? `${u.loc}?lang=${h.slice(0, 2)}` : u.loc)}"/>`).join('') : '');
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${urls.map((u) => `  <url>\n    <loc>${xmlEsc(u.loc)}</loc>${alt(u)}${u.lastmod ? `\n    <lastmod>${u.lastmod}</lastmod>` : ''}\n    <changefreq>${u.changefreq}</changefreq>\n    <priority>${u.priority}</priority>\n  </url>`).join('\n')}\n</urlset>\n`;
   sitemapCache = { at: Date.now(), base, xml };
   return xml;
 }
@@ -269,7 +273,7 @@ function robotsHandler(req, res) {
   res.set('Content-Type', 'text/plain; charset=utf-8');
   res.set('Cache-Control', 'public, max-age=600');
   // Public: the careers pages. Everything signed-in is not for crawlers.
-  res.send(`User-agent: *\nAllow: /careers\nAllow: /jobs\nDisallow: /api/\nDisallow: /admin\nDisallow: /login\nSitemap: ${base}/sitemap.xml\n`);
+  res.send(`User-agent: *\nAllow: /careers\nAllow: /jobs\nAllow: /site\nAllow: /api/public/mkt/job/\nDisallow: /api/\nDisallow: /admin\nDisallow: /login\nSitemap: ${base}/sitemap.xml\n`);
 }
 router.get('/sitemap.xml', sitemapHandler);
 router.get('/robots.txt', robotsHandler);
@@ -313,6 +317,8 @@ router.get('/jobs/:id', readLimit, async (req, res) => {
     similar,
     // market wave B 02.10: the job's screening questions (never the knockout answers); the form sends the answers as `screening` (JSON)
     screeningQuestions: await require('../utils/mktb/jobs').publicQuestions(r.id).catch(() => []), // eslint-disable-line global-require
+    // market wave: the job's own apply-form questions and whether "Apply with LinkedIn" is open (utils/mkt/portal.js)
+    form: await require('../utils/mkt/portal').formOf(r.id).catch(() => ({ fields: [], linkedinApply: true })), // eslint-disable-line global-require
   });
 });
 
@@ -407,18 +413,32 @@ router.post('/jobs/:id/apply', async (req, res) => {
   const v = validate(fields);
   if (v.error) return res.status(400).json({ error: v.error, ...(v.errors ? { code: 'SALARY_REQUIRED', errors: v.errors } : {}) });
   const data = v.value;
-  if (!parsed.file) return res.status(400).json({ error: 'Please attach your resume (PDF or Word file).' });
-  try {
-    store.validateResumeFile(parsed.file);
-  } catch (err) {
-    return res.status(err.code === 'TOO_LARGE' ? 413 : 400).json({ error: store.RESUME_MESSAGE[err.code] || 'Only PDF and Word resumes can be sent.' });
+  // MARKET WAVE (2026-11-21, utils/mkt/portal.js): "Apply with LinkedIn" - the public profile link instead of a resume (when the job allows it)
+  const MP = require('../utils/mkt/portal'); // eslint-disable-line global-require
+  const linkedinUrl = MP.cleanLinkedin(fields.linkedinUrl);
+  if (String(fields.linkedinUrl || '').trim() && !linkedinUrl) return res.status(400).json({ error: 'Paste your LinkedIn profile link, like https://www.linkedin.com/in/your-name' });
+  if (!parsed.file && !linkedinUrl) return res.status(400).json({ error: 'Please attach your resume (PDF or Word file), or apply with your LinkedIn profile link.' });
+  if (parsed.file) {
+    try {
+      store.validateResumeFile(parsed.file);
+    } catch (err) {
+      return res.status(err.code === 'TOO_LARGE' ? 413 : 400).json({ error: store.RESUME_MESSAGE[err.code] || 'Only PDF and Word resumes can be sent.' });
+    }
   }
+  // a throw-away email address is refused (08.11 email validation; no network call here)
+  const ev = await require('../utils/mkt/comms').validateEmail(data.email, { mx: false }); // eslint-disable-line global-require
+  if (ev.disposable) return res.status(400).json({ error: 'Please use your own email address (not a throw-away one): we send interview details there.' });
   if (!allow(`apply-email|${emailKey(data.email)}`, LIMITS.applyEmail.n, LIMITS.applyEmail.ms)) {
     return res.status(429).json({ error: 'Too many applications with this email in the last hour. Please try again later.' });
   }
 
   const job = await findByIdOrSlug(pick(req.params.id, 160));
   if (!isListed(job)) return res.status(404).json({ error: 'This job is not open any more.' });
+  // the job's own extra questions (10.03 application form builder) and whether it takes a LinkedIn link instead of a resume
+  const form = await MP.formOf(job.id);
+  if (!parsed.file && !form.linkedinApply) return res.status(400).json({ error: 'This job needs your resume (PDF or Word file).' });
+  const ans = MP.checkAnswers(form.fields, fields);
+  if (ans.error) return res.status(400).json({ error: ans.error, code: 'FORM_ANSWER' });
   // A paused / archived client takes no new applications (spec 2026-10-03 §A).
   // eslint-disable-next-line global-require
   if (!job.internal && await require('../utils/clientLifecycle').newWorkRefusalFor(job.clientId)) {
@@ -503,12 +523,18 @@ router.post('/jobs/:id/apply', async (req, res) => {
   await require('../utils/atsExperience').applySubmitted({ session: fields.applySession, jobId: job.id, applicationId: application.id, source: src || fields.utm_source || null }).catch(() => {}); // eslint-disable-line global-require
   // The resume, as an ORIGINAL version (Resume tab, Fit %, extraction).
   let resumeSaved = false;
-  try {
-    await store.saveOriginalResume({ candidateId: candidate.id, file: parsed.file, note: `Job Portal application · ${job.title}` });
-    resumeSaved = true;
-  } catch (err) {
-    console.error(`[careers] resume not stored for application ${application.id}: ${err.message}`);
+  if (parsed.file) {
+    try {
+      await store.saveOriginalResume({ candidateId: candidate.id, file: parsed.file, note: `Job Portal application · ${job.title}` });
+      resumeSaved = true;
+    } catch (err) {
+      console.error(`[careers] resume not stored for application ${application.id}: ${err.message}`);
+    }
   }
+  try {
+    await MP.saveAnswers(application.id, job.id, ans.answers, ans.knockedOut);
+    if (linkedinUrl) await MP.linkCandidate(candidate.id, 'linkedin', linkedinUrl, 'Apply with LinkedIn');
+  } catch (err) { console.error(`[careers] form answers not stored for application ${application.id}: ${err.message}`); }
   // b5_/b6_ (ATS-100): the tick on this form IS the consent (form version +
   // IP kept as proof), and the link's utm_* / ?ref=<code> are stored on the
   // application. Never fails the application.
@@ -560,3 +586,5 @@ module.exports = router;
 // "Is this requirement on /careers right now?" — published + live + "Job Portal"
 // ticked. Shared with the Save & Post screen (one rule, read from the DB row).
 module.exports.isListed = isListed;
+module.exports.listedJobs = listedJobs;
+module.exports.cardOf = cardOf;

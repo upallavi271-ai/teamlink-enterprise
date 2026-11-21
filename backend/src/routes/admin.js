@@ -2625,6 +2625,17 @@ router.post('/integrations/:id/connect',requirePerm(null, 'administration', 'Int
     if (!r.ok) return res.status(r.status).json({ ...shapeIntegration(channel, row2), error: `Facebook is NOT connected: ${r.words}` });
     return res.json(shapeIntegration(channel, row2));
   }
+  // the shared candidate-reply inbox (market wave 2026-11-21): connecting it logs in to the mailbox for real first (utils/imapInbox.js)
+  if (channel.id === 'email-inbox') {
+    const IMAP = require('../utils/imapInbox'); // eslint-disable-line global-require
+    const v = values || {};
+    const cfg = { host: String(v['IMAP host'] || '').trim(), port: Number(v.Port) || 993, address: String(v['Mailbox address'] || '').trim(), password: require('../utils/secrets').decryptSecret(v['Password / app key']) || '' }; // eslint-disable-line global-require
+    if (!cfg.host || !cfg.address || !cfg.password) return res.status(400).json({ error: 'Fill in the IMAP host, mailbox address and password first (Configure).' });
+    try { await IMAP.realTransport().fetchNew(cfg, { sinceUid: null, sinceDate: new Date(), limit: 1 }); } catch (e) {
+      await recordEvent(channel.id, { action: 'Connect failed', by: req.user.name, result: String(e.message).slice(0, 200) });
+      return res.status(422).json({ error: `The inbox is NOT connected: ${String(e.message).slice(0, 200)}` });
+    }
+  }
   if (channel.id === 'sms') {
     const problems = await require('../utils/smsGateway').validateSms(); // eslint-disable-line global-require
     if (problems.length) return res.status(422).json({ error: `SMS cannot be switched on yet: ${problems.join(' ')}`, problems });

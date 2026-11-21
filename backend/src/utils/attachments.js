@@ -64,7 +64,17 @@ const VIDEO_TYPES = {
 };
 
 // A stored name this module produced, and nothing else.
-const STORED_NAME = /^[a-f0-9]{32}\.(png|jpg|webp|pdf|docx|doc|xlsx|xls|csv|mp4|webm)$/;
+// Audio (market wave 2026-11-21: interview recordings, voice feedback, call recordings) - opt-in like video.
+const AUDIO_TYPES = {
+  'audio/webm': 'webm',
+  'audio/ogg': 'ogg',
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+};
+const STORED_NAME = /^[a-f0-9]{32}\.(png|jpg|webp|pdf|docx|doc|xlsx|xls|csv|mp4|webm|ogg|mp3|wav|m4a)$/;
 
 function uploadDir() {
   const dir = process.env.UPLOAD_DIR
@@ -99,7 +109,18 @@ function sniffAgrees(mime, buf) {
     case 'video/mp4':
       return buf.length >= 12 && buf.slice(4, 8).toString('latin1') === 'ftyp';
     case 'video/webm':
+    case 'audio/webm':
       return buf.slice(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+    case 'audio/ogg':
+      return buf.slice(0, 4).toString('latin1') === 'OggS';
+    case 'audio/mpeg':
+      return buf.slice(0, 3).toString('latin1') === 'ID3' || (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0);
+    case 'audio/wav':
+    case 'audio/x-wav':
+      return buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WAVE';
+    case 'audio/mp4':
+    case 'audio/x-m4a':
+      return buf.length >= 12 && buf.slice(4, 8).toString('latin1') === 'ftyp';
     default:
       return false;
   }
@@ -205,14 +226,14 @@ async function parseMultipart(req, { maxBytes = MAX_BYTES } = {}) {
 // Throws an Error whose `.code` names the reason, so the route can phrase it.
 // `maxBytes` lets a caller with a larger stated limit (the bank panel's bill,
 // 8 MB) raise the cap for its own upload; everything else keeps MAX_BYTES.
-function store(file, { maxBytes = MAX_BYTES, allowWord = false, allowSheet = false, allowVideo = false } = {}) {
+function store(file, { maxBytes = MAX_BYTES, allowWord = false, allowSheet = false, allowVideo = false, allowAudio = false } = {}) {
   if (!file || !file.data || !file.data.length) {
     throw Object.assign(new Error('NO_FILE'), { code: 'NO_FILE' });
   }
   if (file.data.length > maxBytes) {
     throw Object.assign(new Error('TOO_LARGE'), { code: 'TOO_LARGE' });
   }
-  const ext = ALLOWED[file.contentType] || (allowWord ? WORD_TYPES[file.contentType] : undefined) || (allowSheet ? SHEET_TYPES[file.contentType] : undefined) || (allowVideo ? VIDEO_TYPES[file.contentType] : undefined);
+  const ext = ALLOWED[file.contentType] || (allowWord ? WORD_TYPES[file.contentType] : undefined) || (allowSheet ? SHEET_TYPES[file.contentType] : undefined) || (allowVideo ? VIDEO_TYPES[file.contentType] : undefined) || (allowAudio ? AUDIO_TYPES[file.contentType] : undefined);
   if (!ext) throw Object.assign(new Error('BAD_TYPE'), { code: 'BAD_TYPE' });
   if (!sniffAgrees(file.contentType, file.data)) {
     throw Object.assign(new Error('CONTENT_MISMATCH'), { code: 'CONTENT_MISMATCH' });
@@ -254,6 +275,6 @@ const MESSAGE = {
 };
 
 module.exports = {
-  MAX_BYTES, ALLOWED, WORD_TYPES, SHEET_TYPES, VIDEO_TYPES, MESSAGE,
+  MAX_BYTES, ALLOWED, WORD_TYPES, SHEET_TYPES, VIDEO_TYPES, AUDIO_TYPES, MESSAGE,
   uploadDir, parseMultipart, store, resolveStored, remove, safeDisplayName,
 };
