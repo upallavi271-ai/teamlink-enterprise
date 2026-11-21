@@ -109,6 +109,11 @@ async function handleWhatsApp(body, ctx) {
         // eslint-disable-next-line no-await-in-loop
         await delivery.applyInbound({ channel: 'WhatsApp', from: m.from, text: text || '', id: m.id, at: m.timestamp ? new Date(Number(m.timestamp) * 1000) : new Date(), name: names[m.from], ...(media ? { media } : {}), ...(numberId ? { numberId } : {}) });
         replies += 1;
+        // AI Marketing (2026-11-21): the client's Approve / Reject tap, the reason that follows it, or the reply that releases a held video (after the inbound is stored, so the 24 hours are open)
+        try {
+          const buttonId = m.type === 'interactive' ? (m.interactive && m.interactive.button_reply && m.interactive.button_reply.id) : (m.type === 'button' ? (m.button && m.button.payload) : '');
+          if (buttonId || (m.type === 'text' && text)) await require('../marketing/approvalSend').onInbound({ from: m.from, text: m.type === 'text' ? text : '', buttonId, numberId }); // eslint-disable-line global-require, no-await-in-loop
+        } catch (e) { console.error('[webhook] ai marketing answer:', e && e.message); } // eslint-disable-line no-console
       }
     }
   }

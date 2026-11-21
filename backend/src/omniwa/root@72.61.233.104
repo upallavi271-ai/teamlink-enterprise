@@ -1,0 +1,34 @@
+import sqlite3, time, re
+c=sqlite3.connect("/opt/teamlink-enterprise/backend/prisma/dev.db")
+sp,fb=c.execute("select systemPrompt,fallbackMessage from OmniWaAiProfile where numberId='wan_mw1uzejm492263c472'").fetchone()
+DEPT={
+ "wan_mwer2lwre71439d1a8":("Manufacturing","Manufacturing","""Understand Manufacturing recruitment-related roles, including:
+
+- Machine Operators and Production Operators
+- Production Supervisors and Line Leaders
+- Quality Control and Quality Assurance staff
+- Maintenance Technicians, Electricians and Fitters
+- Store Keepers and Warehouse Executives
+- Helpers, Packers and Loaders
+- Drivers and Logistics staff
+- Other manufacturing and plant positions."""),
+ "wan_mwg1zz1hcbdd229c2a":("BDE","BDE (Business Development)","""Understand BDE (Business Development) recruitment-related roles, including:
+
+- Business Development Executives and Managers
+- Sales Executives and Inside Sales
+- Lead Generation and Client Acquisition staff
+- Account and Relationship Managers
+- Field Sales and Territory Executives
+- Other business development and sales positions."""),
+}
+old_roles=re.search(r"Understand Non-IT recruitment-related roles, including:\n\n(?:- .*\n)+- Other non-IT positions\.",sp).group(0)
+for num,(short,long,roles) in DEPT.items():
+    if c.execute("select count(*) from OmniWaAiProfile where numberId=?",(num,)).fetchone()[0]: print("skip",num); continue
+    s=sp.replace(old_roles,roles).replace("Non-IT Department","%s Department"%short).replace("Non-IT Recruitment","%s Recruitment"%long).replace("Non-IT campaign","%s campaign"%short).replace("Non-IT campaigns","%s campaigns"%short).replace("Non-IT WhatsApp","%s WhatsApp"%short).replace("Non-IT recruitment-related","%s recruitment-related"%short).replace("Non-IT instructions","%s instructions"%short).replace("Non-IT, ","%s, "%short).replace("Education, Medical, Manufacturing, BDE or other","Education, Medical or other")
+    s=s.replace("Never use %s instructions for Education, Medical or other departments."%short,"Never use %s instructions for other departments."%short)
+    f=fb.replace("Non-IT Department","%s Department"%short).replace("Non-IT Recruitment","%s Recruitment"%long)
+    assert "Non-IT" not in s.replace("non-IT",""), (num,[m for m in re.findall(r".{20}Non-IT.{20}",s)])
+    c.execute("insert or ignore into OmniWaAiProfile(numberId,enabled,systemPrompt,fallbackMessage,updatedByName,updatedAt) values(?,?,?,?,?,?)",(num,1,s,f,"Kavya setup",int(time.time()*1000)))
+    print("added",num,short)
+c.commit()
+print(c.execute("select numberId,enabled,length(systemPrompt) from OmniWaAiProfile").fetchall())

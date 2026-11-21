@@ -12,6 +12,25 @@ const core = require('../utils/messagingCore');
 // how WhatsApp shows a file: a JPEG / PNG as a picture, an MP4 / 3GP as a video, anything else as a document
 const modeOf = (mime) => { const x = String(mime || 'application/pdf').toLowerCase(); return /^image\/(jpeg|png)$/.test(x) ? 'image' : (/^video\/(mp4|3gpp)$/.test(x) ? 'video' : 'document'); };
 
+// ---- picture / video WITH reply buttons (AI Marketing: the client approves or rejects, 2026-11-21) -------------------------------------------------------------
+// m.buttons = [{ id, title }] (max 3, title up to 20 characters). Inside the 24 hours it is ONE interactive message: the video / picture on top, the words, the buttons under it.
+// Outside the 24 hours Meta takes only an approved TEMPLATE: m.mediaTemplate = { name, language } is a template with a picture / video header, the words as {{1}} and quick-reply buttons
+// (the button ids travel as payloads). With neither, nothing is sent and the answer says why (the caller then holds the file until the person writes).
+const btnTitle = (t) => String(t || '').split(/\s+/).join(' ').trim().slice(0, 20);
+function interactiveBody(m, mediaId, mode, e164) {
+  const buttons = (m.buttons || []).slice(0, 3).map((b) => ({ type: 'reply', reply: { id: String(b.id).slice(0, 256), title: btnTitle(b.title) } }));
+  return { messaging_product: 'whatsapp', recipient_type: 'individual', to: e164, type: 'interactive', interactive: { type: 'button', header: { type: mode, [mode]: { id: mediaId } }, body: { text: String(m.text || ' ').slice(0, 1024) }, action: { buttons } } };
+}
+function templateBody(m, mediaId, mode, e164) {
+  const t = m.mediaTemplate;
+  const components = [{ type: 'header', parameters: [{ type: mode, [mode]: { id: mediaId } }] }];
+  const vars = Array.isArray(m.vars) ? m.vars : [m.text || ''];
+  const flat = (x) => String(x == null ? '' : x).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 1000) || '-';
+  if (vars.length) components.push({ type: 'body', parameters: vars.map((x) => ({ type: 'text', text: flat(x) })) });
+  (m.buttons || []).slice(0, 3).forEach((b, i) => components.push({ type: 'button', sub_type: 'quick_reply', index: String(i), parameters: [{ type: 'payload', payload: String(b.id).slice(0, 256) }] }));
+  return { messaging_product: 'whatsapp', recipient_type: 'individual', to: e164, type: 'template', template: { name: t.name, language: { code: t.language || 'en' }, components } };
+}
+
 async function sendWithMedia(m) {
   // WHICH NUMBER (utils/waNumbers.js); with no numbers added yet this is the old single connection
   const r = await wa.route({ ...m, numberId: m.numberId, to: m.to });
@@ -26,13 +45,19 @@ async function sendWithMedia(m) {
     return { ok: false, invalid: true, transient: false, error: 'They replied STOP on WhatsApp, so nothing more is sent to them there.' };
   }
   const open = number ? await require('../utils/waNumbers').windowOpenFor(number, m.to) : await require('../utils/messageDelivery').windowOpen(m.to); // eslint-disable-line global-require
-  if (!open) { // the 24 hours belong to ONE number: the one the person wrote to
+  const withButtons = Array.isArray(m.buttons) && m.buttons.length > 0;
+  const viaTemplate = withButtons && !open && !!(m.mediaTemplate && m.mediaTemplate.name);
+  if (!open && withButtons && !viaTemplate) return { ok: false, code: 'WINDOW_CLOSED', transient: false, error: 'WhatsApp allows a video or picture with buttons only in the 24 hours after the person wrote to you, or through an approved template with a video header (AI usage > WhatsApp templates > the approval template).' };
+  if (!open && !viaTemplate) { // the 24 hours belong to ONE number: the one the person wrote to
     return { ok: false, transient: false, error: 'A file can be sent on the official WhatsApp only in the 24 hours after the person wrote to you. Send the approved template first, or use the QR-linked number.' };
   }
   const file = m.media[0];
   // a JPEG / PNG goes as a PICTURE and an MP4 / 3GP as a VIDEO (the person sees it in the chat); anything else as a document
   const mode = modeOf(file.mime);
-  if (wa.simulated(cfg)) return { ok: true, provider: 'SANDBOX', providerRef: `sandbox-wa-${Date.now().toString(36)}`, sandbox: true, mode, ...through };
+  if (wa.simulated(cfg)) { // nothing leaves the machine; what WOULD have gone is returned so a test can read it
+    const sample = withButtons ? (viaTemplate ? templateBody(m, 'SANDBOX_MEDIA', mode, mobile.e164) : interactiveBody(m, 'SANDBOX_MEDIA', mode, mobile.e164)) : null;
+    return { ok: true, provider: 'SANDBOX', providerRef: `sandbox-wa-${Date.now().toString(36)}`, sandbox: true, mode, buttons: withButtons, viaTemplate, payload: sample, fileName: file.name, ...through };
+  }
   let buf;
   try { buf = fs.readFileSync(file.path); } catch { return { ok: false, transient: false, error: 'The file could not be read.' }; }
   const form = new FormData();
@@ -44,12 +69,12 @@ async function sendWithMedia(m) {
   if (!up.ok || !up.json || !up.json.id) return { ok: false, provider: 'WHATSAPP', transient: core.isTransientHttp(up.status), error: core.tidy(`WhatsApp file upload failed: ${(up.json && up.json.error && up.json.error.message) || up.networkError || up.status}`) };
   const res = await core.httpJson(`${cfg.base}/${wa.VERSION}/${encodeURIComponent(cfg.phoneId)}/messages`, {
     method: 'POST', headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: mobile.e164, type: mode, ...(mode === 'document' ? { document: { id: up.json.id, filename: file.name || 'file', caption: String(m.text || '').slice(0, 1000) || undefined } } : { [mode]: { id: up.json.id, caption: String(m.text || '').slice(0, 1000) || undefined } }) }),
+    body: JSON.stringify(withButtons ? (viaTemplate ? templateBody(m, up.json.id, mode, mobile.e164) : interactiveBody(m, up.json.id, mode, mobile.e164)) : { messaging_product: 'whatsapp', recipient_type: 'individual', to: mobile.e164, type: mode, ...(mode === 'document' ? { document: { id: up.json.id, filename: file.name || 'file', caption: String(m.text || '').slice(0, 1000) || undefined } } : { [mode]: { id: up.json.id, caption: String(m.text || '').slice(0, 1000) || undefined } }) }),
   });
   if (res.ok && res.json && Array.isArray(res.json.messages) && res.json.messages[0]) {
     if (number) await require('../utils/waNumbers').noteMessage({ numberId: number.id, to: mobile.e164, providerRef: res.json.messages[0].id || null, dir: 'OUT' }); // eslint-disable-line global-require
     if (number) await require('../utils/waNumbers').noteSendOk(number.id); // eslint-disable-line global-require
-    return { ok: true, provider: 'WHATSAPP', providerRef: res.json.messages[0].id || null, mode, ...through };
+    return { ok: true, provider: 'WHATSAPP', providerRef: res.json.messages[0].id || null, mode, buttons: withButtons, viaTemplate, ...through };
   }
   const e = (res.json && res.json.error) || {};
   return { ok: false, provider: 'WHATSAPP', transient: core.isTransientHttp(res.status), error: core.tidy(`WhatsApp HTTP ${res.status}: ${e.message || res.networkError || res.text}`) };

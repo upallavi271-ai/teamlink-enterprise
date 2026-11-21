@@ -22,6 +22,9 @@ export default function CompanyEmailCard({ employeeId, onChanged }) {
   const [to, setTo] = useState('');
   const [sentMsg, setSentMsg] = useState('');
   const [sendError, setSendError] = useState('');
+  const [pe, setPe] = useState('');
+  const [peMsg, setPeMsg] = useState('');
+  const [peError, setPeError] = useState('');
 
   function load() {
     return api.get(`/employees/${employeeId}/company-email`).then((r) => {
@@ -47,6 +50,18 @@ export default function CompanyEmailCard({ employeeId, onChanged }) {
       if (onChanged) await onChanged();
     } catch (e) {
       setError(e.response?.data?.error || 'That did not save. Please try again.');
+    } finally { setBusy(false); }
+  }
+
+  async function savePersonalOnly() {
+    setBusy(true); setPeError(''); setPeMsg('');
+    try {
+      const r = await api.post(`/employees/${employeeId}/personal-email`, { personalEmail: pe });
+      setPeMsg(r.data.message || 'Saved.');
+      setPe('');
+      await load();
+    } catch (e) {
+      setPeError(e.response?.data?.error || 'That did not save. Please try again.');
     } finally { setBusy(false); }
   }
 
@@ -122,6 +137,18 @@ export default function CompanyEmailCard({ employeeId, onChanged }) {
           <div><button type="button" className="btn btn-sm btn-primary" disabled={busy || !pw || (!to.trim() && !s.phoneMasked)} onClick={sendCredentials}>{busy ? 'Sending…' : 'Send credentials'}</button></div>
           {sendError && <div className="error-text">{sendError}</div>}
           {sentMsg && <div className="notice green">{sentMsg}</div>}
+        </div>
+      )}
+      {noPersonal && !(showForm && (s.companyEmail || (s.companyEmail === null && !s.workingEmail))) && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label className="field">
+            <span>Personal email (for password recovery)</span>
+            <input type="email" value={pe} onChange={(e) => { setPe(e.target.value); setPeError(''); setPeMsg(''); }} placeholder="their own email, e.g. name@gmail.com" aria-label="Personal email for password recovery" />
+          </label>
+          <div className="small-muted">If they forget their password they can type this address on the Forgot password page and the reset link comes here. Their login stays as it is.</div>
+          <div><button type="button" className="btn btn-sm" disabled={busy || !pe.trim()} onClick={savePersonalOnly}>{busy ? 'Saving…' : 'Save personal email'}</button></div>
+          {peError && <div className="error-text">{peError}</div>}
+          {peMsg && <div className="notice green">{peMsg}</div>}
         </div>
       )}
       {error && <div className="error-text" style={{ marginTop: 6 }}>{error}</div>}

@@ -57,6 +57,7 @@ async function sendInner(channel, opts = {}) {
         to,
         subject: opts.subject || '(no subject)',
         text: opts.text || '',
+        ...(opts.html ? { html: opts.html } : {}), // a styled body (AI Marketing: the Approve / Reject buttons in the approval email)
         senderEmail: opts.senderEmail,
         senderName: opts.senderName,
         useEmployeeFrom: !!opts.senderEmail,

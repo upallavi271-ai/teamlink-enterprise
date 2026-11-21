@@ -82,10 +82,24 @@ export default function ClientProjectPage({ token: tokenProp = '', embedded = fa
       const res = await api.post(`${base}/request`, body); setDone(res.data.ok || 'Thank you.'); load(); if (onChanged) onChanged();
     } catch (e) { setErr(errOf(e, 'It could not be sent. Please try again.')); } finally { setBusy(false); }
   };
+  // the Approve / Reject buttons of the email open this page on that option (?o=<option>&do=approve|reject)
+  useEffect(() => {
+    if (!d || !d.options || embedded) return;
+    const q = new URLSearchParams(window.location.search); const o = q.get('o'); const act = q.get('do');
+    if (o && d.options.some((x) => x.id === o)) { setPick(o); if (act === 'reject') setMode('reject'); }
+  }, [d]); // eslint-disable-line react-hooks/exhaustive-deps
   const answer = async (kind) => {
     setErr('');
     if (name.trim().length < 2) { setErr('Please write your name first.'); return; }
     if (kind === 'choose' && !pick) { setErr('Please tap the option you like first.'); return; }
+    if (kind === 'reject') {
+      const only = d && d.options && d.options.length === 1 ? d.options[0].id : '';
+      if (!pick && !only) { setErr('Please tap the option you want to reject first, or use “None of these”.'); return; }
+      if (comment.trim().length < 5) { setMode('reject'); setErr('Please tell us why, in a few words, so we can fix it.'); return; }
+      setBusy(true);
+      try { const res = await api.post(`${base}/reject`, { name: name.trim(), comment: comment.trim(), optionId: pick || only }); setDone(res.data.ok || 'Thank you.'); load(); if (onChanged) onChanged(); } catch (e) { setErr(errOf(e, 'It could not be sent. Please try again.')); } finally { setBusy(false); }
+      return;
+    }
     if (kind === 'changes' && comment.trim().length < 5) { setMode('changes'); setErr('Please tell us what you would like changed (a few words).'); return; }
     setBusy(true);
     try { const res = await api.post(`${base}/${kind}`, { name: name.trim(), comment: comment.trim(), optionId: pick }); setDone(res.data.ok || 'Thank you.'); load(); if (onChanged) onChanged(); } catch (e) { setErr(errOf(e, 'It could not be sent. Please try again.')); } finally { setBusy(false); }
@@ -172,11 +186,12 @@ export default function ClientProjectPage({ token: tokenProp = '', embedded = fa
                 {r.caption ? <div style={{ ...box('#f4f6f5', '#1c2a24'), marginTop: 14, fontSize: 14 }}><b>The words we will post with it:</b><div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{r.caption}</div></div> : null}
                 <label htmlFor="cp-name" style={label}>Your name</label>
                 <input id="cp-name" style={input} value={name} maxLength={80} autoComplete="name" onChange={(e) => setName(e.target.value)} placeholder="So we know who answered" />
-                <label htmlFor="cp-comment" style={label}>{mode === 'changes' ? 'What would you like changed?' : 'Your suggestions (optional)'}</label>
-                <textarea id="cp-comment" style={{ ...input, minHeight: 90 }} value={comment} maxLength={800} onChange={(e) => setComment(e.target.value)} placeholder={mode === 'changes' ? 'For example: please use our new logo and a blue background' : 'Anything you would like us to adjust, for example: make the logo bigger.'} />
+                <label htmlFor="cp-comment" style={label}>{mode === 'changes' || mode === 'reject' ? 'Why are you rejecting it? What would you like changed?' : 'Your suggestions (optional)'}</label>
+                <textarea id="cp-comment" style={{ ...input, minHeight: 90 }} value={comment} maxLength={800} onChange={(e) => setComment(e.target.value)} placeholder={mode === 'changes' || mode === 'reject' ? 'For example: please use our new logo and a blue background' : 'Anything you would like us to adjust, for example: make the logo bigger.'} />
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
-                  <button type="button" disabled={busy} style={btn('#15803d')} onClick={() => answer('choose')}>{busy ? 'Sending…' : pick ? '✔ Choose this one' : '✔ Choose the one I tapped'}</button>
-                  <button type="button" disabled={busy} style={btn('#fff', '#8a4b08')} onClick={() => (mode === 'changes' ? answer('changes') : (setMode('changes'), setErr('')))}><span style={{ border: '2px solid #d98a2b', borderRadius: 10, padding: '10px 16px', display: 'block' }}>↩ None of these: ask for changes</span></button>
+                  <button type="button" disabled={busy} style={btn('#15803d')} onClick={() => answer('choose')}>{busy ? 'Sending…' : pick ? '✔ Approve this one' : '✔ Approve the one I tapped'}</button>
+                  <button type="button" disabled={busy} style={btn('#fff', '#b91c1c')} onClick={() => (mode === 'reject' ? answer('reject') : (setMode('reject'), setErr(pick || options.length === 1 ? 'Write why, then press Reject again.' : 'Tap the option you want to reject, write why, then press Reject.')))}><span style={{ border: '2px solid #dc2626', borderRadius: 10, padding: '10px 16px', display: 'block' }}>✖ Reject{mode === 'reject' ? ' (send)' : ''}</span></button>
+                  <button type="button" disabled={busy} style={btn('#fff', '#8a4b08')} onClick={() => (mode === 'changes' ? answer('changes') : (setMode('changes'), setErr('')))}><span style={{ border: '2px solid #d98a2b', borderRadius: 10, padding: '10px 16px', display: 'block' }}>↩ None of these: ask for something new</span></button>
                 </div>
                 <p style={{ fontSize: 12, color: '#6b7a73', margin: '12px 0 0' }}>This link is private. You can answer once; it works until {when(r.expiresAt)}. We post only the one you choose.</p>
               </div>

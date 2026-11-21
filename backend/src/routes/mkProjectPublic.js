@@ -24,5 +24,6 @@ router.get('/:token/option/:optionId', lim, wrap(async (req, res, next) => {
 router.post('/:token/request', limPost, wrap(async (req, res) => send(res, await P.publicSubmitRequest(req.params.token, req.body || {}))));
 router.post('/:token/choose', limPost, wrap(async (req, res) => send(res, await P.publicChoose(req.params.token, req.body || {}, ip(req)))));
 router.post('/:token/changes', limPost, wrap(async (req, res) => send(res, await P.publicChanges(req.params.token, req.body || {}, ip(req)))));
+router.post('/:token/reject', limPost, wrap(async (req, res) => send(res, await P.publicReject(req.params.token, req.body || {}, ip(req))))); // one option, with the reason (the Reject button on the page and in the email)
 
 module.exports = router;

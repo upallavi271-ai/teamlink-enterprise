@@ -41,6 +41,7 @@ async function ensure() {
     for (const col of ['"showcase" INTEGER NOT NULL DEFAULT 0', '"showcaseTitle" TEXT', '"showcaseClient" INTEGER NOT NULL DEFAULT 0']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
     // 2026-11-21: the client's last answer (approved / rejected, with the reason) so the project shows a clear stage, whichever way the answer came (page, WhatsApp button, email)
     for (const col of ['"clientAnswer" TEXT', '"clientAnswerNote" TEXT', '"clientAnswerAt" DATETIME']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
+    for (const col of ['"answer" TEXT', '"answerNote" TEXT', '"answerAt" DATETIME']) { try { await S.run(`ALTER TABLE "${TO}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop -- 2026-11-21: the client's answer per option (approved / rejected, with the reason)
     await AI.ensure(); okAt = Date.now(); return true;
   } catch (e) { console.error('[omni-mk] projects schema:', e.message); return false; } // eslint-disable-line no-console
 }
@@ -344,7 +345,7 @@ async function tell(u, id, b = {}, base = '') {
   if (kind === 'options' && r.status !== 'awaiting_client') return { error: 'The options are not with the client.', status: 409 };
   const ways = (Array.isArray(b.ways) ? b.ways : []).map(String).filter((w, i, a) => ['whatsapp', 'email'].includes(w) && a.indexOf(w) === i);
   if (!ways.length) return { error: 'Pick WhatsApp or Email.', status: 400 };
-  const told = await tellClient(r, kind, { by: u, base, ways, numberId: b.numberId });
+  const told = kind === 'options' ? await sendApproval(r, { by: u, base, ways, numberId: b.numberId }) : await tellClient(r, kind, { by: u, base, ways, numberId: b.numberId });
   if (!told.sent.length) return { error: told.note || 'Nothing could be sent: add the client\'s number or email in Edit.', status: 400 };
   const any = told.sent.some((x) => x.ok);
   if (!any && told.sent.every((x) => x.local)) return { error: told.sent.map((x) => x.error).join(' '), status: 400 }; // nothing was tried: the client has no such number / address on file
@@ -460,7 +461,7 @@ async function send(u, id, b = {}, base = '') {
   await S.run(`UPDATE "${T}" SET status = 'awaiting_client', clientAnswer = NULL, clientAnswerNote = NULL, clientAnswerAt = NULL, round = ?, linkExpiresAt = ?, clientMessage = ?, caption = ?, updatedAt = ? WHERE id = ?`, round, now + days * DAY, message || null, b.caption !== undefined ? (S.clip(b.caption, 3000) || null) : r.caption, now, r.id);
   await event(r.id, 'options_sent', u.name, `${opts.length} option${opts.length === 1 ? '' : 's'} sent to the client (round ${round})${message ? `: ${message}` : ''}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: project options sent to the client', entity: T, entityId: r.id, toValue: `${r.clientName}: ${opts.length} option(s); link valid ${days} day(s)` });
-  const told = await tellClient(await row(r.id), 'options', { base, actor: u, numberId: b && b.numberId });
+  const told = await sendApproval(await row(r.id), { by: u, base, numberId: b && b.numberId, ways: Array.isArray(b && b.ways) && b.ways.length ? b.ways : null });
   return { ok: told.sent.some((x) => x.ok) ? `The options are with the client. ${told.note}` : `The options are with the client. ${told.note || 'Share the private link.'}${told.note ? ' Share the private link yourself.' : ''}`, told: told.sent, project: (await shortRow(r.id)) };
 }
 async function cancelPresentation(u, id) {
@@ -507,6 +508,107 @@ async function posted(u, id, b = {}) {
   const told = await tellClient(await row(r.id), 'posted', { urls: url ? [url] : [] });
   return { ok: `Marked as posted. The client sees it on their page.${told.note ? ` ${told.note}` : ''}`, told: told.sent, project: (await shortRow(r.id)) };
 }
+
+// ---- SENDING THE OPTIONS TO THE CLIENT AS REAL MEDIA WITH APPROVE / REJECT (2026-11-21, marketing/approvalSend.js) ------------------------------------------------------
+// The client gets the video / picture itself (WhatsApp media message with Approve and Reject buttons; email with the file attached and the two buttons), never a message that is only a link.
+async function roundItems(r) {
+  const Img = require('./images'); // eslint-disable-line global-require
+  const opts = (await optionRows(r.id)).filter((o) => S.num(o.round) === S.num(r.round));
+  const items = [];
+  for (const o of opts) { // eslint-disable-line no-restricted-syntax
+    const it = await Img.rawRow(o.itemId); // eslint-disable-line no-await-in-loop
+    if (it && !it.deletedAt) items.push({ optionId: o.id, label: o.label, item: it, answered: o.answer || '' });
+  }
+  return items;
+}
+async function sendApproval(r, opts = {}) {
+  const out = { sent: [], note: '' };
+  try {
+    const AS = require('./approvalSend'); // eslint-disable-line global-require
+    const set = await Cfg.getSettings();
+    const cn = set.clientNotify || { auto: true, whatsapp: true, email: true };
+    const by = opts.by || null;
+    const want = (Array.isArray(opts.ways) && opts.ways.length ? opts.ways : ['whatsapp', 'email']).filter((w) => ['whatsapp', 'email'].includes(w));
+    const ways = want.filter((w) => (opts.ways ? true : cn[w] !== false));
+    if (!by && cn.auto !== true) return { ...out, note: 'Telling the client by itself is switched off.' };
+    const items = (await roundItems(r)).filter((x) => !x.answered);
+    if (!items.length) return { ...out, note: 'There is nothing to send.' };
+    const Sender = require('./sender'); // eslint-disable-line global-require
+    const pk = await Sender.pick(by, opts.numberId);
+    const got = await AS.sendProject(r, items, { by, base: opts.base, ways, pk, set });
+    const who = by ? by.name : 'TeamLink';
+    const labelOf = (x) => (x.label && items.length > 1 ? ' (' + x.label + ')' : '');
+    for (const x of got.sent) { // eslint-disable-line no-restricted-syntax
+      const how = x.mode === 'held' ? 'a short note (no link): the video goes the moment the client replies' : (x.mode === 'template' ? 'as an approved template with the video and the Approve / Reject buttons' : (x.mode === 'attached' ? 'attached, with Approve / Reject buttons' : 'the video / picture itself with Approve / Reject buttons'));
+      await event(r.id, x.ok ? 'told' : 'told_failed', who, x.ok ? 'Sent to the client by ' + x.way + labelOf(x) + ': ' + how + ' (' + (x.to || '') + ')' : 'The client could not be sent it by ' + x.way + labelOf(x) + (x.to ? ' (' + x.to + ')' : '') + ': ' + (x.error || '')); // eslint-disable-line no-await-in-loop
+    }
+    if (got.sent.some((x) => x.way === 'WhatsApp' && x.ok)) {
+      try { await require('./remind').schedule({ kind: 'project', refId: r.id, phone: r.contactPhone, name: firstWord(r.contactName), clientName: r.clientName, by: by || null, numberId: pk.numberId || null }); } catch { /* the reminder is a courtesy */ } // eslint-disable-line global-require
+    }
+    const bad = got.sent.filter((x) => !x.ok); const good = got.sent.filter((x) => x.ok);
+    if (!by && bad.length) await tellTeam(r, 'The client was not sent the video: "' + S.clip(r.title, 60) + '"', bad.map((x) => x.way + ': ' + x.error).join(' ').slice(0, 300));
+    out.sent = got.sent.map((x) => ({ way: x.way, ok: x.ok, to: x.to || '', error: x.error || '', local: !!x.local, mode: x.mode || '', from: x.from || '' }));
+    out.note = good.length ? 'The client was sent ' + (good.some((x) => x.mode === 'held') && !good.some((x) => x.mode !== 'held') ? 'a note; the video goes when they reply' : 'the video / picture itself with Approve and Reject buttons') + ' by ' + [...new Set(good.map((x) => x.way))].join(' and ') + '.' : (bad.length ? 'The client could not be sent it: ' + bad.map((x) => x.way + ': ' + x.error).join(' ') : '');
+  } catch (e) { console.error('[omni-mk] send approval:', e.message); out.note = 'The client could not be sent it: ' + e.message; } // eslint-disable-line no-console
+  return out;
+}
+// a held delivery: the client replied on WhatsApp, so the files go now with their buttons
+async function deliverHeld(projectId, fromPhone, numberId) {
+  const r = await row(projectId);
+  if (!r || r.status !== 'awaiting_client') return { note: 'nothing to deliver: the project is not waiting for the client' };
+  const AS = require('./approvalSend'); // eslint-disable-line global-require
+  const items = (await roundItems(r)).filter((x) => !x.answered);
+  const got = await AS.sendProject(r, items, { by: null, base: '', ways: ['whatsapp'], pk: { numberId: numberId || null }, set: null });
+  for (const x of got.sent) await event(r.id, x.ok ? 'told' : 'told_failed', 'TeamLink', x.ok ? 'The client replied, so the video / picture went to them on WhatsApp with Approve / Reject buttons' : 'The held video could not be sent: ' + x.error); // eslint-disable-line no-await-in-loop
+  return { note: got.sent.every((x) => x.ok) ? 'delivered' : 'delivery failed: ' + got.sent.filter((x) => !x.ok).map((x) => x.error).join(' ') };
+}
+
+// ---- the client's answer, from any way (the page, a WhatsApp button, an email button) ---------------------------------------------------------------------------
+const clientApprove = (token, b = {}) => publicChoose(token, { ...b, name: b.name }, b.via || '');
+// Reject ONE option (b.optionId) with a reason (b.comment, may come a moment later from WhatsApp). The project is Rejected when no option is left to choose from.
+async function clientReject(token, b = {}) {
+  const r = await load(token);
+  if (!r) return GONE;
+  if (r.status !== 'awaiting_client') return { error: ['approved', 'posted'].includes(r.status) ? 'You already chose one. Thank you.' : GONE.error, status: 409 };
+  if (S.num(r.linkExpiresAt) < Date.now()) return { error: 'This link has expired. Please ask the sender for a new one.', status: 410 };
+  const name = clientName(b);
+  if (name.length < 2) return { error: 'Please write your name.', status: 400 };
+  const comment = S.clip(b.comment, 800);
+  if (b.needReason === true && comment.length < 5) return { error: 'Please tell us what you would like changed (a few words).', status: 400 };
+  const opts = (await optionRows(r.id)).filter((o) => S.num(o.round) === S.num(r.round));
+  const opt = opts.find((o) => o.id === String(b.optionId || ''));
+  if (!opt) return { error: 'Pick one of the options.', status: 400 };
+  const now = Date.now();
+  await S.run(`UPDATE "${TO}" SET answer = 'rejected', answerNote = ?, answerAt = ? WHERE id = ?`, comment || null, now, opt.id);
+  const left = opts.filter((o) => o.id !== opt.id && o.answer !== 'rejected');
+  const via = b.via ? ' (' + b.via + ')' : '';
+  if (left.length) {
+    await event(r.id, 'client_rejected_option', name + ' (client: ' + r.clientName + ')', 'Rejected ' + opt.label + via + (comment ? ': ' + comment : ''));
+    await tellTeam(r, 'Client rejected ' + opt.label + ': "' + S.clip(r.title, 60) + '"', name + ' rejected ' + opt.label + (comment ? ': ' + S.clip(comment, 200) : '') + '. ' + left.length + ' option(s) are still with them.');
+    return { ok: 'Thank you. We have noted it.' };
+  }
+  await releaseItems(r);
+  const all = (await optionRows(r.id)).filter((o) => S.num(o.round) === S.num(r.round));
+  const note = all.map((o) => (o.id === opt.id ? comment : (o.answerNote || ''))).filter(Boolean).join(' | ');
+  await S.run(`UPDATE "${T}" SET status = 'working', linkExpiresAt = NULL, clientAnswer = 'rejected', clientAnswerNote = ?, clientAnswerAt = ?, updatedAt = ? WHERE id = ? AND status = 'awaiting_client'`, note || null, now, now, r.id);
+  await event(r.id, 'client_changes', name + ' (client: ' + r.clientName + ')', 'Rejected' + via + (note ? ': ' + note : ' (no reason yet)'));
+  await tellTeam(r, 'Client rejected "' + S.clip(r.title, 60) + '"', name + ' (' + S.clip(r.clientName, 60) + ') rejected it' + (note ? ': ' + S.clip(note, 240) : ' (the reason may follow)') + '. Open Omni-Channel > AI Marketing > Client projects.');
+  await logAudit({ userId: r.createdById, actorName: name + ' (client: ' + r.clientName + ')', action: 'Omni-Channel AI Marketing: client rejected a project', entity: T, entityId: r.id, toValue: r.title + (note ? ': ' + S.clip(note, 200) : '') + '; ' + S.clip(b.via || '', 60) });
+  return { ok: 'Thank you. We will make the changes and show you again.' };
+}
+// the words that follow a WhatsApp Reject tap
+async function clientRejectReason(projectId, optionId, text) {
+  const r = await row(projectId);
+  const why = S.clip(text, 800);
+  if (!r || !why) return { error: 'nothing to update' };
+  if (optionId) await S.run(`UPDATE "${TO}" SET answerNote = ? WHERE id = ? AND projectId = ?`, why, optionId, r.id);
+  if (r.clientAnswer === 'rejected') await S.run(`UPDATE "${T}" SET clientAnswerNote = ?, updatedAt = ? WHERE id = ?`, why, Date.now(), r.id);
+  await event(r.id, 'client_changes', 'Client: ' + r.clientName, 'Reason for the rejection: ' + why);
+  await tellTeam(r, 'Why the client rejected: "' + S.clip(r.title, 60) + '"', S.clip(why, 280));
+  return { ok: true };
+}
+// the page / email Reject button: one option with a reason
+const publicReject = (token, b = {}) => clientReject(token, { ...b, needReason: true, via: b.via || 'client page' });
 
 // items the client is deciding on right now (marketing/clientReview.js adds them to the "only the client can approve" set)
 async function heldIds() {
@@ -794,7 +896,7 @@ async function publicView(token) {
   if (!['awaiting_client', 'approved', 'posted'].includes(r.status)) opts = [];
   for (const o of opts) { // eslint-disable-line no-restricted-syntax
     const it = await Img.rawRow(o.itemId); // eslint-disable-line no-await-in-loop
-    if (it && !it.deletedAt) out.options.push({ id: o.id, label: o.label, type: /^video\//.test(it.mime || '') ? 'video' : 'image', aspect: it.aspect || '1:1', chosen: r.chosenOptionId === o.id });
+    if (it && !it.deletedAt) out.options.push({ id: o.id, label: o.label, type: /^video\//.test(it.mime || '') ? 'video' : 'image', aspect: it.aspect || '1:1', chosen: r.chosenOptionId === o.id, answer: o.answer || '' });
   }
   return out;
 }
@@ -938,7 +1040,7 @@ async function portalStart(u) {
 module.exports = {
   portalList, portalStart,
   ensure, SOURCES, DELIVERABLES, PLATFORM_KEYS, PLATFORM_LABEL, create, invite, list, get, update, accept, decline, setOptions, send, cancelPresentation, extend, scheduled, posted, heldIds,
-  publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, tokenOf, idOfToken, mayWrite, tell, tellClient, notifyStatus,
+  publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, clientApprove, clientReject, clientRejectReason, publicReject, plainWhy, deliverHeld, sendApproval, tokenOf, idOfToken, mayWrite, tell, tellClient, notifyStatus,
   setShowcase, trackRecord, showcaseItems, publicWork, publicWorkFile, accounts, setAutopost, postNow, postTo, autoRun, autoSweep, startAutoPost,
   event, tellTeam, siteFor, firstWord, // marketing/clientChat.js: the timeline line, the team's bell, the https site address, the first name
 };

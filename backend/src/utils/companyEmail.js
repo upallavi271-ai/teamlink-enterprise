@@ -317,18 +317,21 @@ async function sendCredentials(actor, employeeIn, { password, to: rawTo } = {}) 
   };
 }
 
-// the employee whose PERSONAL address this is, once their login has moved to the company email
+// the employee whose PERSONAL address this is. It no longer needs a company email to have been "assigned" first (2026-11-11): most logins ARE the
+// company email already, and for them the personal address HR recorded (setPersonalEmail) is exactly what a person types when they only remember their Gmail.
+// A typed address that is itself a login is never looked up here: the normal path finds that account first.
 async function movedEmployee(typed) {
   const e = norm(typed);
   if (!e || !LA.looksLikeEmail(e)) return null;
-  const rows = await prisma.$queryRawUnsafe('SELECT "id", "userId", "companyEmail", "personalEmail" FROM "Employee" WHERE lower("personalEmail") = ? AND "companyEmail" IS NOT NULL AND "userId" IS NOT NULL LIMIT 1', e).catch(() => []);
-  return rows[0] || null;
+  const rows = await prisma.$queryRawUnsafe('SELECT "id", "userId", "companyEmail", "personalEmail" FROM "Employee" WHERE lower("personalEmail") = ? AND "userId" IS NOT NULL LIMIT 2', e).catch(() => []);
+  // two people on one personal address: nobody is guessed
+  return rows.length === 1 ? rows[0] : null;
 }
 
 // a right password on the old address: the company email is said; a wrong password gets the same answer as an address nobody has
 async function movedLogin(typed, password) {
   const row = await movedEmployee(typed);
-  if (!row) return null;
+  if (!row || !row.companyEmail) return null;
   const user = await prisma.user.findUnique({ where: { id: row.userId }, select: { passwordHash: true, status: true } });
   if (!user || !user.passwordHash || !(await bcrypt.compare(String(password || ''), user.passwordHash))) return null;
   return row.companyEmail;
@@ -342,6 +345,29 @@ async function recoveryLogin(typed) {
   return user ? { user, to: row.personalEmail } : null;
 }
 
+/**
+ * HR records a person's PERSONAL email (the one they remember: Gmail ...) so that "Forgot password" typed with it sends the link THERE.
+ * It does not touch the login or the company email. Refused when the address is already somebody's login or another employee's personal email,
+ * because a reset link must only ever reach the person it is for.
+ * -> { status, body }
+ */
+async function setPersonalEmail(actor, employee, typed) {
+  const e = norm(typed);
+  if (!e || !LA.looksLikeEmail(e)) return { status: 400, body: { error: 'Type a valid email address, for example name@gmail.com.', field: 'personalEmail' } };
+  if (norm(employee.email) === e) return { status: 400, body: { error: 'That is the login email. Type the personal address they remember, such as their Gmail.', field: 'personalEmail' } };
+  const login = await prisma.$queryRawUnsafe('SELECT "id" FROM "User" WHERE lower(trim("email")) = ? LIMIT 1', e).catch(() => []);
+  if (login.length) return { status: 409, body: { error: 'That address is already a TeamLink login, so it cannot be a personal recovery address.', field: 'personalEmail' } };
+  const other = await prisma.$queryRawUnsafe('SELECT "id" FROM "Employee" WHERE lower("personalEmail") = ? AND "id" <> ? LIMIT 1', e, String(employee.id)).catch(() => []);
+  if (other.length) return { status: 409, body: { error: 'Another employee already has that personal email.', field: 'personalEmail' } };
+  const before = await columns(employee.id).catch(() => null);
+  await prisma.$executeRawUnsafe('UPDATE "Employee" SET "personalEmail" = ? WHERE "id" = ?', e, String(employee.id));
+  await logAudit({
+    userId: actor && actor.id, action: 'Personal email recorded', entity: 'Employee', entityId: employee.id,
+    fromValue: (before && before.personalEmail) || null, toValue: e, reason: 'Password recovery address',
+  });
+  return { status: 200, body: { ok: true, personalEmail: e, message: 'Saved. If they forget their password they can type this address and the link comes here.' } };
+}
+
 // the profile forms send the email back with every save: the same address is fine, another one is refused while a company email is set
 async function emailLocked(employeeId, email) {
   if (email === undefined) return null;
@@ -352,5 +378,5 @@ async function emailLocked(employeeId, email) {
 
 module.exports = {
   readyMail, credentialsMail,
-  TASK, state, assign, sendCredentials, generatedPassword, movedLogin, recoveryLogin, emailLocked, allowedDomains,
+  TASK, state, assign, sendCredentials, generatedPassword, movedLogin, recoveryLogin, emailLocked, allowedDomains, setPersonalEmail,
 };

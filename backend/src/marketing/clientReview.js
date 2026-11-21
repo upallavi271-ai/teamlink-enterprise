@@ -216,23 +216,33 @@ async function tell(u, id, b = {}, base = '') {
       const nm = core.normalizeMobile(r.contactPhone);
       if (!nm.ok) { sent.push({ way: 'WhatsApp', ok: false, local: true, to: '', error: 'That number does not look right. Check it.' }); continue; } // eslint-disable-line no-continue
       let res = null; let mode = 'link'; let why = '';
-      if (b.picture === true && r.kind === 'image' && item) {
-        const f = await mediaFor(item, r.id); // eslint-disable-line no-await-in-loop
-        if (f.path) {
-          res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'text', text, media: [f], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop
-          f.cleanup();
-          if (res && res.ok) mode = 'picture';
-          else why = /24 hours/i.test(String((res && res.error) || '')) ? `WhatsApp allows a ${word} only after the client has written to this number in the last 24 hours, so the link was sent instead.` : `The ${word} itself could not be sent (${S.clip((res && res.error) || 'WhatsApp refused it', 120)}), so the link was sent instead.`;
-        } else why = `${f.skip} The link was sent instead.`;
+      if (r.kind === 'image' && item) { // a picture / video goes as ITSELF with Approve / Reject buttons (2026-11-21); never as a link
+        const AS = require('./approvalSend'); // eslint-disable-line global-require
+        const f = await AS.mediaFile(item, r.id, 15 * 1024 * 1024); // eslint-disable-line no-await-in-loop
+        if (!f.path) { sent.push({ way: 'WhatsApp', ok: false, to: core.maskMobile(nm.e164), error: f.skip || 'The file could not be prepared.' }); continue; } // eslint-disable-line no-continue
+        const caption = `${first ? `Hello ${first},` : 'Hello,'} ${r.message ? S.clip(r.message, 400) : `please review the ${word} "${S.clip(r.itemTitle, 80)}" and tell us if it is OK to use.`} Tap Approve, or Reject and tell us why.`;
+        const tpl = require('./waTemplates').payload((await require('./settings').getSettings()).waTemplates, 'approval', { name: first || 'there', occasion: S.clip(r.itemTitle, 80) }); // eslint-disable-line global-require
+        const w = await AS.waOne({ e164: nm.e164, file: f, text: caption, buttons: AS.buttonsFor('mkr', r.id), numberOpts: Sender.opts(pk), meta, templatePayload: tpl }); // eslint-disable-line no-await-in-loop
+        f.cleanup();
+        if (w.ok) { res = w.res; mode = 'picture'; }
+        else if (w.closed) { // outside the 24 hours and no approval template: a short note with no link, the file is held until the client replies
+          const note = `${first ? `Hello ${first},` : 'Hello,'} your ${word} "${S.clip(r.itemTitle, 80)}" is ready for you to approve. Please reply YES to this message and we will send it here.`;
+          res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${note}\n\nReply STOP to stop messages from us.`, vars: [note], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop
+          if (res && res.ok) { await require('./approvalSend').ensure(); await S.run('INSERT INTO "OmniMkApprovalWait" (id, type, kind, refId, optionId, phone, numberId, createdAt) VALUES (?,?,?,?,?,?,?,?)', S.newId('aw'), 'hold', 'review', r.id, null, require('./approvalSend').last10(nm.e164), pk.numberId || null, Date.now()); mode = 'held'; why = `The client is outside WhatsApp's 24 hours, so a short note went first; the ${word} goes the moment they reply.`; } // eslint-disable-line no-await-in-loop
+        } else { sent.push({ way: 'WhatsApp', ok: false, to: core.maskMobile(nm.e164), error: w.error }); continue; } // eslint-disable-line no-continue
+      } else {
+        res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${text}\n\nReply STOP to stop messages from us.`, vars: [text], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop -- words (not a picture / video): the link is the way to read them
       }
-      if (mode !== 'picture') res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${text}\n\nReply STOP to stop messages from us.`, vars: [text], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop
       const ok = !!(res && res.ok);
       if (ok) await require('./remind').schedule({ kind: 'review', refId: r.id, phone: r.contactPhone, name: P.firstWord(r.contactName), clientName: r.clientName, by: u, numberId: pk.numberId || null }); // eslint-disable-line no-await-in-loop, global-require -- ONE reminder after 24 hours if they do not answer
       sent.push({ way: 'WhatsApp', ok, to: core.maskMobile(nm.e164), mode, from: Sender.fromWords(res).trim(), note: ok ? why : '', error: ok ? '' : S.clip((res && (res.notConfigured || res.outcome === 'Not configured') ? `It is not connected: ${res.error || 'ask an Admin to connect it in Administration > Integrations'}` : (res && res.error)) || 'The sender refused it.', 200).replace(/(\+?\d[\d\s-]{8,}\d)/g, 'a number') });
     } else {
       const em = String(r.contactEmail || '').trim();
       if (!em) { sent.push({ way: 'Email', ok: false, local: true, to: '', error: 'This link has no email address.' }); continue; } // eslint-disable-line no-continue
-      const res = await messaging.send('Email', { to: em, subject: `Please review: ${r.itemTitle}`, text, meta }); // eslint-disable-line no-await-in-loop
+      let attachments; let cleanup = () => {};
+      if (r.kind === 'image' && item) { const f = await require('./approvalSend').mediaFile(item, r.id, 12 * 1024 * 1024); if (f.path) { attachments = [{ filename: f.name, content: require('fs').readFileSync(f.path), contentType: f.mime }]; cleanup = f.cleanup; } } // eslint-disable-line global-require, no-await-in-loop
+      const res = await messaging.send('Email', { to: em, subject: `Please review: ${r.itemTitle}`, text: attachments ? `${text}\n\nThe ${word} is attached. Approve: ${link}?do=approve   Reject: ${link}?do=reject` : text, ...(attachments ? { attachments } : {}), meta }); // eslint-disable-line no-await-in-loop
+      cleanup();
       const ok = !!(res && res.ok);
       sent.push({ way: 'Email', ok, to: core.maskEmail(em), mode: 'link', note: '', error: ok ? '' : S.clip((res && res.error) || 'The sender refused it.', 200).replace(/(\+?\d[\d\s-]{8,}\d)/g, 'a number') });
     }
@@ -306,4 +316,38 @@ async function publicDecide(token, b = {}, ip = '') {
   return { ok: approve ? 'Thank you. Your approval has been recorded.' : 'Thank you. Your request for changes has been sent.' };
 }
 
-module.exports = { ensure, attach, create, list, revoke, extend, tell, publicView, publicFile, publicDecide, tokenOf, idOfToken, snapshotOf, heldIds };
+// ---- the client's answer from WhatsApp (marketing/approvalSend.js onInbound) ----------------------------------------------------------------------------------
+async function answerByButton(reviewId, approve, from10, numberId) {
+  await ensure();
+  const r = await row(reviewId);
+  if (!r) return { error: 'not found' };
+  if (String(r.contactPhone || '').replace(/\D/g, '').slice(-10) !== from10) return { note: 'a tap from a number that is not the client\'s: ignored' };
+  const name = S.clip(r.contactName || r.clientName, 80) || 'Client';
+  const out = await publicDecide(tokenOf(r.id), approve ? { decision: 'approve', name, comment: '' } : { decision: 'changes', name, comment: '(reason asked on WhatsApp)' }, 'WhatsApp button');
+  if (out.error) return { error: out.error, reply: 'Thank you. ' + out.error };
+  if (approve) return { note: 'approved', reply: 'Thank you! We have recorded your approval.' };
+  await require('./approvalSend').ensure(); // eslint-disable-line global-require
+  await S.run('INSERT INTO "OmniMkApprovalWait" (id, type, kind, refId, optionId, phone, numberId, createdAt) VALUES (?,?,?,?,?,?,?,?)', S.newId('aw'), 'reason', 'review', r.id, null, from10, numberId || null, Date.now());
+  return { note: 'rejected, reason asked', reply: 'Thank you. Please reply here with a few words on what you would like changed.' };
+}
+async function setReasonByReply(reviewId, text) {
+  const r = await row(reviewId);
+  const why = S.clip(text, 600);
+  if (!r || !why) return { note: 'nothing to update' };
+  await S.run(`UPDATE "${TABLE}" SET comment = ?, updatedAt = ? WHERE id = ?`, why, Date.now(), r.id);
+  if (r.createdById) await notifyUsers([r.createdById], { title: 'Why the client rejected "' + S.clip(r.itemTitle, 60) + '"', message: S.clip(why, 280) });
+  return { note: 'reason recorded' };
+}
+async function deliverHeld(reviewId, fromPhone, numberId) {
+  const g = await load(tokenOf(reviewId));
+  if (!g || !g.item || g.r.status !== 'sent') return { note: 'nothing to deliver' };
+  const AS = require('./approvalSend'); // eslint-disable-line global-require
+  const f = await AS.mediaFile(g.item, g.r.id, 15 * 1024 * 1024);
+  if (!f.path) return { note: f.skip };
+  const word = /^video\//.test(g.item.mime || '') ? 'video' : 'picture';
+  const w = await AS.waOne({ e164: fromPhone, file: f, text: 'Here is the ' + word + ' "' + S.clip(g.r.itemTitle, 80) + '". Tap Approve, or Reject and tell us why.', buttons: AS.buttonsFor('mkr', g.r.id), numberOpts: numberId ? { numberId, automatic: true } : { automatic: true }, meta: { audience: 'client', purpose: 'AI Marketing: held picture / video for approval', module: 'AI Marketing', automatic: true } });
+  f.cleanup();
+  return { note: w.ok ? 'delivered' : 'delivery failed: ' + (w.error || '') };
+}
+
+module.exports = { ensure, attach, create, list, revoke, extend, tell, publicView, publicFile, publicDecide, answerByButton, setReasonByReply, deliverHeld, tokenOf, idOfToken, snapshotOf, heldIds };

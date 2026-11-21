@@ -13,6 +13,8 @@ const KINDS = {
   options: { label: 'The options are ready', category: 'Utility', vars: ['The client\'s first name', 'What the request is for', 'The private link'], body: 'Hello {{1}}, your options for {{2}} are ready. Please open your private page, choose the one you like and add any suggestions: {{3}} Reply STOP to stop messages about this request.' },
   declined: { label: 'We cannot take it up', category: 'Utility', vars: ['The client\'s first name', 'What the request is for', 'The reason we wrote'], body: 'Hello {{1}}, thank you for your request for {{2}}. We are sorry, we cannot take it up this time: {{3}} Reply STOP to stop messages about this request.' },
   posted: { label: 'It is live', category: 'Utility', vars: ['The client\'s first name', 'What the request is for', 'The link(s) to the live post'], body: 'Hello {{1}}, your post for {{2}} is live: {{3}} Thank you for working with us. Reply STOP to stop messages about this request.' },
+  // 2026-11-21: the video / picture ITSELF goes to the client with two buttons. Outside the 24 hours this must be a template with a VIDEO (or IMAGE) header, the words below, and two QUICK REPLY buttons (Approve, Reject).
+  approval: { label: 'The video / picture to approve (video or image header + buttons Approve and Reject)', category: 'Utility', vars: ['The client\'s first name', 'What it is for (for example Diwali offer)'], body: 'Hello {{1}}, here is your creative for {{2}}. Please watch it and tap Approve if it is good to go, or Reject and tell us what to change.' },
   // 2026-11-16: FIXED words, no blanks. Sent once, 24 hours after TeamLink sent the client a link to look at (their work / options) and they have not answered (marketing/remind.js)
   reminder: { label: 'The 24-hour reminder (the client has not answered)', category: 'Utility', vars: [], body: 'Hello from TeamLink Consultants!\n\nWe have an update regarding your project. We have shared the project details, images, and videos for your review.\n\nPlease open the link we sent you earlier and let us know if everything looks good. If you are happy with the work, please approve it so we can proceed further.\n\nIf you would like any changes, please share your feedback with us. We will be happy to make the necessary updates.\n\nThank you for choosing TeamLink Consultants!' },
 };
@@ -41,7 +43,7 @@ function payload(set, kind, values = {}) {
   if (!t || !t.name || !KINDS[kind]) return null;
   const v = {
     invite: [values.name, values.brand, values.link], accepted: [values.name, values.brand, values.occasion], options: [values.name, values.occasion, values.link],
-    declined: [values.name, values.occasion, values.reason], posted: [values.name, values.occasion, values.links],
+    declined: [values.name, values.occasion, values.reason], approval: [values.name, values.occasion], posted: [values.name, values.occasion, values.links],
     reminder: [], // fixed words: no blanks
   }[kind].map((x) => flat(x) || '-');
   return { template: { name: t.name, language: t.language || 'en' }, vars: v };

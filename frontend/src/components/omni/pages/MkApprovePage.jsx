@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
-import { PageHead, Btn, TinyBtn, Panel, Banner, Empty, GsModal, Tag, Tabs, ConfirmModal, fmtDateTime } from '../ui.jsx';
+import { PageHead, Btn, TinyBtn, Panel, Banner, Empty, GsModal, Tag, Pill, Tabs, ConfirmModal, fmtDateTime } from '../ui.jsx';
 import { useMkMeta, MkStatus, TextsPreview, TextsEditor, aiLabel, MkImg, ClientChip } from '../marketing/mk.jsx';
 import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 
@@ -33,9 +33,11 @@ export default function MkApprovePage() {
   const [pics, setPics] = useState([]); // AI pictures waiting (marketing/images.js)
   const [picBack, setPicBack] = useState(null);
   const [picNote, setPicNote] = useState('');
+  const [prjAns, setPrjAns] = useState([]); // Client projects the client answered (Approved / Rejected, with the reason): marketing/projects.js
   const [crs, setCrs] = useState([]); // client approvals: sent to a client, answered (marketing/clientReview.js)
   const [toClient, setToClient] = useState(null); // { kind, item, isVideo }: an item waiting for the team that the company rule says only a client may approve
   const loadPics = useCallback(() => omni.get('/gs/marketing/images', { status: 'waiting' }).then((d) => setPics(d.items || [])).catch(() => setPics([])), []);
+  useEffect(() => { omni.get('/gs/marketing/projects').then((d) => setPrjAns((d.projects || []).filter((x) => x.clientAnswer).sort((a, b) => String(b.clientAnswerAt).localeCompare(String(a.clientAnswerAt))).slice(0, 15))).catch(() => setPrjAns([])); }, [crs]);
   const loadCrs = useCallback(() => omni.get('/gs/marketing/client-reviews').then((d) => setCrs((d.reviews || []).filter((r) => r.status !== 'revoked'))).catch(() => setCrs([])), []);
   const load = useCallback(() => { loadPics(); loadCrs(); return omni.get('/gs/marketing/items').then((d) => { setData(d); setMsg(''); }).catch((e) => setMsg(errOf(e, 'The list could not be read.'))); }, [loadPics, loadCrs]);
   useEffect(() => { load(); omni.get('/gs/marketing/brand').then((b) => { setAvoid(b.brand.avoidWords || []); setAvoidErr(false); }).catch(() => setAvoidErr(true)); }, [load]);
@@ -202,6 +204,15 @@ export default function MkApprovePage() {
       {others.length > 0 && (
         <Panel title="Waiting for somebody else" sub="You can read these, but you cannot approve them." style={{ marginTop: 14 }}>
           {others.map((it) => card(it, <small style={{ color: 'var(--muted)' }}>{it.mine ? 'Your own content: another approver has to approve it.' : 'Another approver will decide.'}</small>))}
+        </Panel>
+      )}
+      {prjAns.length > 0 && (
+        <Panel title="Client project answers" sub="What the client answered on WhatsApp, email or their page. Open the project in Client projects to continue." style={{ marginTop: 14 }}>
+          {prjAns.map((x) => (
+            <div className="mk-row" key={x.id}>
+              <div><b>{x.title}</b> <Pill tone={x.clientAnswer === 'approved' ? 'live' : 'red'} dot>{x.clientAnswer === 'approved' ? 'Approved by the client' : 'Rejected by the client'}</Pill><small>{x.clientName} · {fmtDateTime(x.clientAnswerAt)}{x.clientAnswerNote ? ` · ${x.clientAnswerNote}` : ''}</small></div>
+            </div>
+          ))}
         </Panel>
       )}
       {crs.length > 0 && (
