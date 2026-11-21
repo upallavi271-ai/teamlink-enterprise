@@ -154,3 +154,32 @@ export function PrivacyNoticePage() {
     </Shell>
   );
 }
+
+// /verify/:token - the candidate proves the phone / e-mail on their profile with a one-time code (15.14)
+export function VerifyPage() {
+  const { token } = useParams();
+  useLang();
+  const [v, setV] = useState(null); const [fatal, setFatal] = useState(''); const [code, setCode] = useState({}); const [msg, setMsg] = useState(null);
+  const load = useCallback(() => api.get(`/public/verify/${token}`).then((r) => setV(r.data)).catch((e) => setFatal(say(e, t('This link does not work. Ask your recruiter for a new one.')))), [token]);
+  useEffect(() => { load(); }, [load]);
+  const send = (ch) => api.post(`/public/verify/${token}/send`, { channel: ch }).then((r) => setMsg({ ok: true, text: r.data.message })).catch((e) => setMsg({ ok: false, text: say(e, 'Could not send.') }));
+  const check = (ch) => api.post(`/public/verify/${token}/check`, { channel: ch, code: code[ch] }).then(() => { setMsg({ ok: true, text: 'Verified. Thank you.' }); load(); }).catch((e) => setMsg({ ok: false, text: say(e, 'That code is not right.') }));
+  if (fatal) return <Shell title="TeamLink"><div className="notice red" role="alert">{fatal}</div></Shell>;
+  if (!v) return <Shell title="TeamLink"><div className="small-muted">{t('Loading…')}</div></Shell>;
+  return (
+    <Shell title={t('Welcome, {name}!', { name: v.firstName })}>
+      <p>Please confirm that this phone number and e-mail are yours. We send a 6-digit code; type it here.</p>
+      {msg && <div className={`notice ${msg.ok ? 'green' : 'red'}`}>{msg.text}</div>}
+      {v.channels.map((c) => (
+        <div key={c.channel} className="agr-card" style={{ marginBottom: 10 }}>
+          <b>{c.channel === 'phone' ? 'Phone' : 'E-mail'}: {c.to}</b> {c.verified && <span className="small-muted">✓ {t('Verified')}</span>}
+          {!c.verified && <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+            <button type="button" className="btn btn-sm" onClick={() => send(c.channel)}>Send me a code</button>
+            <input inputMode="numeric" maxLength={6} aria-label="Code" placeholder="6-digit code" value={code[c.channel] || ''} onChange={(e) => setCode({ ...code, [c.channel]: e.target.value.replace(/\D/g, '') })} />
+            <button type="button" className="btn btn-primary btn-sm" disabled={(code[c.channel] || '').length !== 6} onClick={() => check(c.channel)}>Confirm</button>
+          </div>}
+        </div>
+      ))}
+    </Shell>
+  );
+}

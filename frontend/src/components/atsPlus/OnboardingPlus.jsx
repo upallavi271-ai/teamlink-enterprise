@@ -10,6 +10,27 @@ import { Notice, Section, Table, useLoad, useAction, Field, dmy, when, row } fro
 // ---------------------------------------------------------------------------
 const ST = { OPEN: 'To do', SUBMITTED: 'Waiting for review', DONE: 'Done', VERIFIED: 'Verified', SENT_BACK: 'Sent back', WAIVED: 'Not needed' };
 
+// background checks and assessments for this person (14.09 / 14.10): order from a vendor, see / type the result
+function ChecksAndTests({ applicationId }) {
+  const { data, reload } = useLoad('/ats-plus/integrations/connectors');
+  const { run, busy, flash } = useAction(reload);
+  const [res, setRes] = useState({});
+  if (!data || !data.rows.length) return <div className="small-muted" style={{ marginTop: 10 }}>Background checks and tests: no vendor set up yet (Administration → ATS settings → Integrations → Checks & tests).</div>;
+  const mine = data.orders.filter((o) => o.applicationId === applicationId);
+  return (
+    <div style={{ marginTop: 12 }}>
+      <b>Background checks and tests</b>{flash}
+      <div style={{ ...row, margin: '6px 0' }}>{data.rows.filter((c) => c.status === 'ON').map((c) => <button key={c.id} type="button" className="btn btn-sm" disabled={busy} onClick={() => run(() => api.post(`/ats-plus/integrations/connectors/${c.id}/order`, { applicationId }), (d) => `Ordered: ${d.note}`)}>Order: {c.title}</button>)}</div>
+      <Table rows={mine} empty="Nothing ordered for this person."
+        cols={[{ key: 'title', label: 'Order' }, { key: 'status', label: 'Status' }, { key: 'r', label: 'Result', render: (o) => (o.result ? `${o.result.verdict}${o.result.score !== null && o.result.score !== undefined ? ` (${o.result.score})` : ''}` : (
+          <span style={row}><select aria-label="Verdict" value={(res[o.id] || {}).verdict || ''} onChange={(e) => setRes({ ...res, [o.id]: { ...(res[o.id] || {}), verdict: e.target.value } })}><option value="">Result…</option>{data.verdicts.map((v) => <option key={v}>{v}</option>)}</select>
+            <input aria-label="Score" type="number" placeholder="Score" style={{ width: 70 }} value={(res[o.id] || {}).score || ''} onChange={(e) => setRes({ ...res, [o.id]: { ...(res[o.id] || {}), score: e.target.value } })} />
+            <button type="button" className="btn btn-sm" disabled={!(res[o.id] || {}).verdict} onClick={() => run(() => api.post(`/ats-plus/integrations/orders/${o.id}/result`, res[o.id]), 'Result saved.')}>Save</button></span>
+        )) }]} />
+    </div>
+  );
+}
+
 export function OnboardingPack({ applicationId, onClose }) {
   const { data, err, reload } = useLoad(`/ats-plus/onboarding/${applicationId}`);
   const { run, busy, flash } = useAction(reload);
@@ -52,6 +73,7 @@ export function OnboardingPack({ applicationId, onClose }) {
             {r.status === 'OPEN' && <button type="button" className="btn btn-sm" onClick={() => mark(r, 'WAIVED')}>Not needed</button>}
           </span> },
         ]} />}
+      <ChecksAndTests applicationId={applicationId} />
     </Modal>
   );
 }

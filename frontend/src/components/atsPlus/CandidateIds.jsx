@@ -33,6 +33,7 @@ function Body({ c }) {
         {f.kind === 'BANK' && <input aria-label="IFSC" placeholder="IFSC" value={f.ifsc} onChange={(e) => setF({ ...f, ifsc: e.target.value })} />}
         <button type="button" className="btn btn-sm btn-primary" disabled={busy || !f.value} onClick={() => run(() => api.post(`/ats-plus/privacy/candidates/${c.id}/ids`, f), 'Saved (masked).').then(() => setF({ ...f, value: '', ifsc: '' }))}>Save</button>
       </div>
+      <IdentityCheck c={c} />
       <b>Consent log</b>
       {cons.data && <Table rows={cons.data.rows} empty="No consent recorded in the log yet."
         cols={[{ key: 'createdAt', label: 'When', render: (r) => when(r.createdAt) }, { key: 'status', label: 'Consent' }, { key: 'noticeVersion', label: 'Notice' }, { key: 'channel', label: 'How' }, { key: 'createdByName', label: 'By' }, { key: 'reason', label: 'Words', render: (r) => r.reason || '—' }]} />}
@@ -44,6 +45,21 @@ function Body({ c }) {
     </>
   );
 }
+// 15.14: the candidate proves the phone / e-mail on the profile with a one-time code
+function IdentityCheck({ c }) {
+  const { data, reload } = useLoad(`/ats-plus/idverify/${c.id}`);
+  const [link, setLink] = useState(null);
+  const { run, busy, flash } = useAction(reload);
+  return (
+    <div style={{ margin: '10px 0' }}>
+      <b>Identity check</b>{flash}
+      {data && <div className="small-muted">Phone: {data.verified.phone ? `verified ${when(data.verified.phone)}` : 'not verified'} · E-mail: {data.verified.email ? `verified ${when(data.verified.email)}` : 'not verified'}. {data.photoMatch}</div>}
+      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(() => api.post(`/ats-plus/idverify/${c.id}/start`, { channels: ['phone', 'email'] }), (d) => d.message).then((d) => { if (d) setLink(`${window.location.origin}${d.link}`); })}>Make an identity check link</button>
+      {link && <div style={{ marginTop: 4 }}><input readOnly value={link} style={{ width: 360 }} aria-label="Identity check link" onFocus={(e) => e.target.select()} /></div>}
+    </div>
+  );
+}
+
 export default function CandidateIds({ c, user }) {
   const [open, setOpen] = useState(false);
   if (!mayIds(user) || !c) return null;

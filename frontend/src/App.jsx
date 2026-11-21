@@ -83,9 +83,10 @@ import FitSettings from './components/resume/FitSettings.jsx'; // fit_: Admin �
 import AtsAlertSettings from './pages/admin/AtsAlertSettings.jsx'; // Admin → Step timing (dashboards)
 import DataCleanup from './pages/admin/DataCleanup.jsx'; // Admin → Company Setup → Data cleanup (dashboards)
 import CandidateFields from './pages/admin/CandidateFields.jsx'; // Admin → Company Setup → Candidate fields (custom fields on the profile)
-import PipelineSettings from './pages/admin/PipelineSettings.jsx';
-import AtsPlusSettings from './pages/admin/AtsPlusSettings.jsx';
-import BusinessDev from './components/atsPlus/BusinessDev.jsx'; // ATS -> Clients -> Business development (market wave 2026-11-21; not the CRM) // Admin → Company Setup → ATS settings (market wave 2026-11-21: branches, forms, onboarding, integrations, privacy) // Admin → Company Setup → Pipeline & checks (stage names, sub-statuses, share checklist)
+import PipelineSettings from './pages/admin/PipelineSettings.jsx'; // Admin → Company Setup → Pipeline & checks (stage names, sub-statuses, share checklist)
+import AtsPlusSettings from './pages/admin/AtsPlusSettings.jsx'; // Admin → Company Setup → ATS settings (market wave 2026-11-21: branches, forms, onboarding, integrations, privacy)
+import BusinessDev from './components/atsPlus/BusinessDev.jsx'; // ATS -> Clients -> Business development (market wave 2026-11-21; not the CRM)
+import { SsoCallback } from './components/atsPlus/SsoLogin.jsx'; // single sign-on: the IdP sends the browser back here
 import Profile from './pages/admin/Profile.jsx';
 
 // THE JOB PORTAL (2026-10-05): the customer's own portal, embedded at /jobs
@@ -101,7 +102,7 @@ import UpdateProfile from './pages/UpdateProfile.jsx'; // market wave B 03.17: t
 import AiGovernance from './components/mktb/AiGovernance.jsx'; // market wave B: Administration > ATS settings > AI governance & automation
 import JoiningLink from './pages/JoiningLink.jsx'; // client hiring: the candidate's joining-letter link (public)
 import { SelfBookPage, TakeTestPage, CareersSitePage, SiteJobPage } from './pages/MktPublic.jsx'; // market wave 2026-11-21: self-booking, tests, the careers site (public)
-import { PreboardingPage, StatusPage, TrustPage, SlaPage, PrivacyNoticePage } from './pages/public/PublicPages.jsx'; // market wave public pages (no login)
+import { PreboardingPage, StatusPage, TrustPage, SlaPage, PrivacyNoticePage, VerifyPage } from './pages/public/PublicPages.jsx'; // market wave public pages (no login)
 import InterviewPrepPage from './pages/InterviewPrepPage.jsx'; // the candidate's How-to-prepare page (public, signed link)
 import PublicForm from './components/omni/crm/PublicForm.jsx'; // Omni-Channel Web Forms: the public capture form (no login)
 import ClientReviewPage from './components/omni/marketing/ClientReviewPage.jsx'; // AI Marketing: the client's approval page (private link, no login)
@@ -235,6 +236,8 @@ export default function App() {
       <Route path="/agreement/:token" element={<AgreementSigning />} />
       <Route path="/offer/:token" element={<OfferSigning />} />
       <Route path="/preboarding/:token" element={<PreboardingPage />} />
+      <Route path="/sso/callback" element={<SsoCallback />} />
+      <Route path="/verify/:token" element={<VerifyPage />} />
       <Route path="/status" element={<StatusPage />} />
       <Route path="/trust" element={<TrustPage />} />
       <Route path="/sla" element={<SlaPage />} />

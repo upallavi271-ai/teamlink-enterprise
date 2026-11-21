@@ -390,6 +390,215 @@ const section = (id, title) => { if (want(id)) console.log(`\n== ${id} ${title}`
     const s = await call('GET', '/public/sla', null, null);
     check('the SLA page shows the targets an Admin set against the measured uptime', u.status === 200 && s.status === 200 && s.body.uptimeTarget === 99.9 && s.body.response.P1 === '1 hour' && s.body.measured.month, s.body);
   }
+
+  // ================================================================ 13 administration
+  const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
+  if (section('13.02', 'Custom forms and layouts')) {
+    check('a TL cannot change a form', (await call('PUT', '/ats-plus/forms/Requirement', { sections: [] }, tT)).status === 403);
+    const f = await call('PUT', '/ats-plus/forms/Requirement', { sections: [{ title: 'Client specifics', fields: [{ label: 'Shift', type: 'select', options: 'Day,Night', required: true }, { label: 'Bond months', type: 'number' }] }] }, tA);
+    check('the Admin adds a section with two fields to the job form', f.status === 200 && f.body.sections[0].fields.length === 2, f.body);
+    const g = await call('GET', `/ats-plus/forms/Requirement/${req.id}`, null, tR);
+    check('the job page shows the section and what is still needed', g.status === 200 && g.body.missing.includes('Shift'), g.body);
+    check('a value outside the pick list is refused', (await call('PUT', `/ats-plus/forms/Requirement/${req.id}`, { values: { shift: 'Evening' } }, tR)).status === 400);
+    const s = await call('PUT', `/ats-plus/forms/Requirement/${req.id}`, { values: { shift: 'Night', bond_months: '12' } }, tR);
+    check('the recruiter fills the details of their job', s.status === 200 && s.body.values.shift === 'Night' && s.body.values.bond_months === 12, s.body);
+    const other = await prisma.requirement.findFirst({ where: { id: { not: req.id }, department: { not: 'IT' } }, select: { id: true } });
+    if (other) check('a job outside the recruiter\'s area is not reachable', (await call('GET', `/ats-plus/forms/Requirement/${other.id}`, null, tR)).status === 404);
+    check('the client form is separate', (await call('GET', `/ats-plus/forms/Client/${client.id}`, null, tA)).body.form.sections.length === 0);
+  }
+  if (section('13.03', 'Custom workflows / blueprints')) {
+    const b = await call('PUT', '/ats-plus/blueprints', { rules: [{ department: 'IT', stage: 'INTERVIEW_SCHEDULED', kind: 'comment', words: 5 }, { department: 'Healthcare', stage: 'JOINED', kind: 'onboarding' }] }, tA);
+    check('the Admin saves a blueprint for IT and one for Healthcare', b.status === 200 && b.body.rules.length === 2, b.body);
+    await prisma.application.update({ where: { id: apps[1].id }, data: { stage: 'SHARED_WITH_CLIENT' } });
+    const mv = await call('PATCH', `/applications/${apps[1].id}/stage`, { stage: 'INTERVIEW_SCHEDULED', comment: 'ok' }, tA);
+    check('moving an IT person to Interview without a 5-word comment is stopped by the blueprint', mv.status === 409 && mv.body.code === 'BLUEPRINT' && /comment/.test(mv.body.error), mv.body);
+    const ck = await call('POST', '/ats-plus/blueprints/check', { applicationId: apps[1].id, stage: 'INTERVIEW_SCHEDULED', comment: 'Client asked for a Tuesday slot please' }, tA);
+    check('with the comment the blueprint lets it through', ck.status === 200 && ck.body.blocked === null, ck.body);
+    const mv2 = await call('PATCH', `/applications/${apps[1].id}/stage`, { stage: 'INTERVIEW_SCHEDULED', comment: 'Client asked for a Tuesday slot please' }, tA);
+    check('...and the real move is no longer stopped by it', mv2.body.code !== 'BLUEPRINT', mv2.body);
+    await call('PUT', '/ats-plus/blueprints', { rules: [] }, tA);
+  }
+  if (section('13.06', 'Multi-language interface')) {
+    check('a language outside the list is refused', (await call('PUT', '/ats-plus/i18n/me', { lang: 'fr' }, tR)).status === 400);
+    await call('PUT', '/ats-plus/i18n/me', { lang: 'te' }, tR);
+    check('the recruiter picks Telugu and it stays on their login', (await call('GET', '/ats-plus/i18n/me', null, tR)).body.lang === 'te');
+    check('others stay English', (await call('GET', '/ats-plus/i18n/me', null, tT)).body.lang === 'en');
+    const fe = fs.readFileSync(path.join(BACK, '..', 'frontend', 'src', 'i18n.jsx'), 'utf8');
+    check('the words of the main screens exist in Telugu and Hindi', /Candidates: 'అభ్యర్థులు'/.test(fe) && /Candidates: 'उम्मीदवार'/.test(fe) && /'Before your first day'/.test(fe));
+  }
+  if (section('13.07', 'Multi-currency')) {
+    const c0 = await call('GET', '/ats-plus/currency/convert?amount=100&from=USD', null, tR);
+    check('USD is converted to INR with the default rate', c0.status === 200 && c0.body.value === 8350, c0.body);
+    check('a TL cannot change rates', (await call('PUT', '/ats-plus/currency', { rates: { USD: 84 } }, tT)).status === 403);
+    await call('PUT', '/ats-plus/currency', { rates: { USD: 84, AED: 22.9 } }, tA);
+    const c1 = await call('GET', '/ats-plus/currency/convert?amount=1000&from=AED&to=USD', null, tR);
+    check('the Admin\'s rates are used, any pair', c1.body.value === Math.round((1000 * 22.9 / 84) * 100) / 100, c1.body);
+    check('an unknown currency is refused', (await call('GET', '/ats-plus/currency/convert?amount=1&from=XYZ', null, tR)).status === 400);
+  }
+  if (section('13.12', 'Seat and plan management')) {
+    const s = await call('PUT', '/ats-plus/seats', { plan: 'Enterprise 50', seats: { RECRUITER: 0, TL: 500 } }, tA);
+    check('seats per role against the active logins; an over-seat role is flagged', s.status === 200 && s.body.rows.find((r) => r.role === 'RECRUITER').over && !s.body.rows.find((r) => r.role === 'TL').over && s.body.plan === 'Enterprise 50', s.body);
+    check('only an Admin sees seats', (await call('GET', '/ats-plus/seats', null, tM)).status === 403);
+  }
+
+  // ================================================================ 14 integrations
+  let apiKey = null;
+  if (section('14.01', 'Open REST API')) {
+    check('only an Admin makes API keys', (await call('POST', '/ats-plus/integrations/api-keys', { name: 'x', scopes: ['jobs:read'] }, tT)).status === 403);
+    const k = await call('POST', '/ats-plus/integrations/api-keys', { name: 'Website jobs', scopes: ['jobs:read', 'candidates:write'], rateLimit: 4 }, tA);
+    apiKey = k.body.key;
+    check('a key is made and shown once', k.status === 201 && /^tlk_/.test(apiKey), k.body);
+    const list = await call('GET', '/ats-plus/integrations/api-keys', null, tA);
+    check('the list never shows the key itself', !JSON.stringify(list.body).includes(apiKey) && list.body.rows.some((r) => r.prefix === apiKey.slice(0, 10)));
+    check('no key = 401', (await call('GET', '/v1/open/jobs', null, null)).status === 401);
+    const j = await call('GET', '/v1/open/jobs?limit=5', null, null, { Authorization: `Bearer ${apiKey}` });
+    check('the key reads open jobs', j.status === 200 && Array.isArray(j.body.data) && j.body.limit === 5, j.body);
+    check('a scope the key lacks = 403', (await call('GET', '/v1/open/applications', null, null, { Authorization: `Bearer ${apiKey}` })).status === 403);
+    const statuses = [];
+    for (let i = 0; i < 3; i += 1) statuses.push((await call('GET', '/v1/open/jobs?limit=1', null, null, { 'X-Api-Key': apiKey })).status); // eslint-disable-line no-await-in-loop
+    check('above 4 a minute = 429 with Retry-After', statuses.includes(429), statuses);
+    const d = await fetch(`${API}/docs`).then((r) => r.text());
+    const o = await call('GET', '/docs/openapi.json', null, null);
+    check('the docs page and the OpenAPI file are public', /TeamLink ATS API/.test(d) && o.status === 200 && o.body.openapi === '3.0.3' && o.body.paths['/jobs']);
+  }
+  if (section('14.04', 'Zapier / n8n webhooks (OFF by default)')) {
+    const w = await call('POST', '/ats-plus/integrations/webhooks', { name: 'n8n', type: 'generic', url: `http://localhost:${STUB}/hook-generic`, events: ['candidate.created', 'application.stage_changed'] }, tA);
+    check('a webhook is added with a signing secret shown once', w.status === 201 && w.body.secret, w.body);
+    const before = hooks.length;
+    await call('POST', '/candidates', { name: `Mkd Hook Person ${RUN}`, phone: `7${String(Date.now()).slice(-9)}`, overrideReason: 'test', skills: 'Java', currentSalary: '4 LPA', expectedSalary: '5 LPA' }, tA);
+    await sleep(1200);
+    check('while webhooks are OFF nothing is sent', hooks.length === before);
+    await call('PUT', '/ats-plus/integrations/webhook-settings', { enabled: true }, tA);
+    const cc = await call('POST', '/candidates', { name: `Mkd Hook Two ${RUN}`, phone: `6${String(Date.now()).slice(-9)}`, overrideReason: 'test', skills: 'Java', currentSalary: '4 LPA', expectedSalary: '5 LPA' }, tA);
+    await sleep(1500);
+    const got = hooks.find((h) => h.path === '/hook-generic' && /candidate\.created/.test(h.body));
+    const sigOk = got && got.headers['x-teamlink-signature'] === `sha256=${crypto.createHmac('sha256', w.body.secret).update(got.body).digest('hex')}`;
+    check('switched on: adding a candidate posts candidate.created, signed with the secret', [200, 201].includes(cc.status) && !!got && sigOk, { cc: cc.status, n: hooks.length, got: got && got.body });
+    check('the payload carries no phone or e-mail', got && !/"phone"|"email"/.test(got.body));
+    const t = await call('POST', `/ats-plus/integrations/webhooks/${w.body.id}/test`, null, tA);
+    check('the test button delivers', t.status === 200 && t.body.status === 200, t.body);
+    const ov = await call('GET', '/ats-plus/integrations/webhooks', null, tA);
+    check('deliveries are listed and the Zapier / n8n recipes are there', ov.body.deliveries.length >= 2 && ov.body.recipes.some((r) => r.tool === 'n8n'));
+  }
+  if (section('14.06', 'Slack / Microsoft Teams (OFF by default)')) {
+    await call('POST', '/ats-plus/integrations/webhooks', { name: 'Slack #joinings', type: 'slack', url: `http://localhost:${STUB}/hook-slack`, events: ['candidate.created'] }, tA);
+    await call('POST', '/ats-plus/integrations/webhooks', { name: 'Teams', type: 'teams', url: `http://localhost:${STUB}/hook-teams`, events: ['candidate.created'] }, tA);
+    await call('POST', '/candidates', { name: `Mkd Slack One ${RUN}`, phone: `8${String(Date.now()).slice(-9)}`, overrideReason: 'test', skills: 'Java', currentSalary: '4 LPA', expectedSalary: '5 LPA' }, tA);
+    await sleep(1200);
+    check('Slack / Teams stay quiet while their switch is OFF', !hooks.some((h) => h.path === '/hook-slack'));
+    await call('PUT', '/ats-plus/integrations/webhook-settings', { chatEnabled: true }, tA);
+    await call('POST', '/candidates', { name: `Mkd Slack Two ${RUN}`, phone: `9${String(Date.now()).slice(-9)}`, overrideReason: 'test', skills: 'Java', currentSalary: '4 LPA', expectedSalary: '5 LPA' }, tA);
+    await sleep(1500);
+    const s = hooks.find((h) => h.path === '/hook-slack'); const tm = hooks.find((h) => h.path === '/hook-teams');
+    check('switched on: Slack gets { text } and Teams a MessageCard', s && JSON.parse(s.body).text.includes('A candidate is added') && tm && JSON.parse(tm.body)['@type'] === 'MessageCard', { s: s && s.body, tm: tm && tm.body });
+    check('a Slack address must be a Slack webhook', (await call('POST', '/ats-plus/integrations/webhooks', { type: 'slack', url: 'https://example.com/x', events: ['candidate.created'] }, tA)).status === 400);
+    await call('PUT', '/ats-plus/integrations/webhook-settings', { enabled: false, chatEnabled: false }, tA);
+  }
+  if (section('14.05', 'Google Workspace and Microsoft 365')) {
+    const w = await call('PUT', '/ats-plus/integrations/workspace', { googleClientId: 'g-client', googleSecret: 'g-secret', msTenantId: 'tenant-1', msClientId: 'ms-client' }, tA);
+    const o = await call('GET', '/ats-plus/integrations/overview', null, tA);
+    check('the Google / Microsoft app details are kept, the secret encrypted', w.status === 200 && o.body.google.hasSecret && o.body.microsoft.tenantId === 'tenant-1' && !JSON.stringify(o.body).includes('g-secret'));
+    await prisma.application.update({ where: { id: apps[1].id }, data: { interviewAt: new Date(Date.now() + 2 * 86400000) } });
+    const l = await call('GET', `/ats-plus/integrations/calendar-links/${apps[1].id}`, null, tR);
+    check('an interview gets Add to Google Calendar and Outlook links', l.status === 200 && /calendar\.google\.com/.test(l.body.google) && /outlook\.office\.com/.test(l.body.outlook), l.body);
+  }
+  if (section('14.09', 'Background-check connectors')) {
+    const c = await call('POST', '/ats-plus/integrations/connectors', { type: 'bgv', name: 'Stub BGV', mode: 'http', url: `http://localhost:${STUB}/hook-bgv`, auth: 'Bearer vendor-key', bodyTemplate: '{"name":"{{candidate.name}}","callback":"{{order.callback}}"}' }, tA);
+    check('the Admin adds a generic HTTP background-check connector', c.status === 201, c.body);
+    const o = await call('POST', `/ats-plus/integrations/connectors/${c.body.id}/order`, { applicationId: apps[0].id }, tR);
+    await sleep(300);
+    const sent = hooks.find((h) => h.path === '/hook-bgv');
+    check('the recruiter orders a check: the vendor gets the name, the callback and the auth header', o.status === 201 && sent && JSON.parse(sent.body).name === cands[0].name && sent.headers.authorization === 'Bearer vendor-key', { o: o.body, sent: sent && sent.body });
+    const cb = await call('POST', `/public/connectors/callback/${o.body.order.id}/wrong-token`, { verdict: 'Clear' }, null);
+    check('a callback with a wrong token is refused', cb.status === 404);
+    const ok = await call('POST', o.body.callback.replace('/api', ''), { verdict: 'Clear', reportUrl: 'https://vendor.test/report/1' }, null);
+    const list = await call('GET', '/ats-plus/integrations/connectors', null, tT);
+    check('the vendor posts the result; the TL sees it Done / Clear', ok.status === 200 && list.body.orders.some((x) => x.id === o.body.order.id && x.status === 'DONE' && x.result.verdict === 'Clear'), list.body.orders);
+    check('a manager cannot order', (await call('POST', `/ats-plus/integrations/connectors/${c.body.id}/order`, { applicationId: apps[0].id }, tM)).status === 403);
+  }
+  if (section('14.10', 'Assessment connectors')) {
+    const c = await call('POST', '/ats-plus/integrations/connectors', { type: 'assessment', name: 'HackerEarth (manual)', mode: 'manual' }, tA);
+    const o = await call('POST', `/ats-plus/integrations/connectors/${c.body.id}/order`, { applicationId: apps[2].id }, tR);
+    const r = await call('POST', `/ats-plus/integrations/orders/${o.body.order.id}/result`, { verdict: 'Passed', score: 78 }, tR);
+    check('a manual assessment: ordered, then the score typed in', c.status === 201 && o.status === 201 && r.status === 200 && r.body.order.result.score === 78, r.body);
+    check('a wrong verdict is refused', (await call('POST', `/ats-plus/integrations/orders/${o.body.order.id}/result`, { verdict: 'Great' }, tR)).status === 400);
+  }
+  if (section('14.15', 'Job-board connectors incl. India')) {
+    const b = await call('GET', '/ats-plus/integrations/job-boards', null, tR);
+    const names = (b.body.rows || []).map((r) => r.name).join(' | ');
+    check('one registry with each board and its status', b.status === 200 && /Naukri/.test(names) && /Shine/.test(names) && /LinkedIn/.test(names) && /Indeed/.test(names) && b.body.rows.every((r) => r.status), names);
+  }
+
+  // ================================================================ 15 security
+  if (section('15.01', 'Single sign-on: OIDC and SAML 2.0 (stub IdP)')) {
+    const pem = publicKey.export({ type: 'spki', format: 'pem' });
+    const s = await call('PUT', '/ats-plus/sso/settings', { providers: [{ type: 'oidc', name: 'Stub OIDC', enabled: true, issuer: `http://localhost:${STUB}`, clientId: 'teamlink-test', clientSecret: 'stub-secret' }, { type: 'saml', name: 'Stub SAML', enabled: true, entryPoint: `http://localhost:${STUB}/saml`, idpCert: pem, spEntityId: 'urn:teamlink:test' }] }, tA);
+    check('the Admin sets up an OIDC and a SAML provider', s.status === 200 && s.body.providers.length === 2, s.body);
+    const [oidc, saml] = s.body.providers;
+    const pv = await call('GET', '/sso/providers', null, null);
+    check('the login page lists both (public)', pv.status === 200 && pv.body.providers.length === 2);
+    const st = await call('GET', `/sso/${oidc.id}/start?json=1`, null, null);
+    const au = new URL(st.body.url);
+    stubState.nonce = au.searchParams.get('nonce'); stubState.email = SA.email;
+    const fin = await call('POST', '/sso/oidc/finish', { code: 'abc', state: au.searchParams.get('state') }, null);
+    check('OIDC: the id_token from the IdP signs the Admin in (a normal session)', fin.status === 200 && fin.body.token && fin.body.user, fin.body);
+    stubState.nonce = 'other';
+    check('OIDC: a token for another sign-in (nonce) is refused', (await call('POST', '/sso/oidc/finish', { code: 'abc', state: au.searchParams.get('state') }, null)).status === 401);
+    stubState.nonce = au.searchParams.get('nonce'); stubState.email = `nobody.${RUN}@nowhere-test.in`;
+    check('OIDC: an e-mail with no TeamLink login is refused (no login is made)', (await call('POST', '/sso/oidc/finish', { code: 'abc', state: au.searchParams.get('state') }, null)).status === 403);
+    // SAML
+    const X = require('../src/utils/atsPlus/samlXml');
+    const zlib = require('zlib');
+    const sst = await call('GET', `/sso/${saml.id}/start?json=1`, null, null);
+    const su = new URL(sst.body.url);
+    const reqXml = zlib.inflateRawSync(Buffer.from(su.searchParams.get('SAMLRequest'), 'base64')).toString();
+    const reqId = /ID="([^"]+)"/.exec(reqXml)[1];
+    const mkResp = (email, { tamper = false, extraAssertion = false } = {}) => {
+      const now = new Date(); const later = new Date(Date.now() + 5 * 60000);
+      const aId = `_a${crypto.randomBytes(8).toString('hex')}`;
+      const body = `<saml:Issuer>stub-idp</saml:Issuer><saml:Subject><saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">${email}</saml:NameID><saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData InResponseTo="${reqId}" NotOnOrAfter="${later.toISOString()}"/></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore="${now.toISOString()}" NotOnOrAfter="${later.toISOString()}"><saml:AudienceRestriction><saml:Audience>urn:teamlink:test</saml:Audience></saml:AudienceRestriction></saml:Conditions>`;
+      const open = `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="${aId}" Version="2.0" IssueInstant="${now.toISOString()}">`;
+      const plain = `${open}${body}</saml:Assertion>`;
+      const digest = crypto.createHash('sha256').update(X.c14n(X.parse(plain))).digest('base64');
+      const si = `<ds:SignedInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#${aId}"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>${digest}</ds:DigestValue></ds:Reference></ds:SignedInfo>`;
+      const sv = crypto.sign('RSA-SHA256', Buffer.from(X.c14n(X.parse(si))), privateKey).toString('base64');
+      const sig = `<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">${si.replace(' xmlns:ds="http://www.w3.org/2000/09/xmldsig#"', '')}<ds:SignatureValue>${sv}</ds:SignatureValue></ds:Signature>`;
+      let signed = `${open}${sig}${body}</saml:Assertion>`;
+      if (tamper) signed = signed.replace(email, SA.email);
+      const extra = extraAssertion ? `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_evil"><saml:Subject><saml:NameID>${SA.email}</saml:NameID></saml:Subject></saml:Assertion>` : '';
+      return Buffer.from(`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="_r1" Version="2.0" InResponseTo="${reqId}" IssueInstant="${now.toISOString()}"><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>${extra}${signed}</samlp:Response>`).toString('base64');
+    };
+    const acs = async (b64) => fetch(`${API}/sso/saml/acs`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ SAMLResponse: b64, RelayState: su.searchParams.get('RelayState') }), redirect: 'manual' });
+    const r1 = await acs(mkResp(TL.email));
+    const loc = r1.headers.get('location') || '';
+    const ticket = new URL(loc, 'http://x').searchParams.get('ticket');
+    const f2 = await call('POST', '/sso/finish', { ticket }, null);
+    check('SAML: a signed assertion signs the TL in', r1.status === 302 && /\/sso\/callback\?ticket=/.test(loc) && f2.status === 200 && f2.body.token && f2.body.user.id === TL.id, { loc, f2: f2.body });
+    check('SAML: a ticket works once', (await call('POST', '/sso/finish', { ticket }, null)).status === 400);
+    const r2 = await acs(mkResp(TL.email, { tamper: true }));
+    check('SAML: a changed assertion (another e-mail) is refused', /sso_error=.*changed/.test(decodeURIComponent(r2.headers.get('location') || '')), r2.headers.get('location'));
+    const r3 = await acs(mkResp(TL.email, { extraAssertion: true }));
+    check('SAML: a second (unsigned) assertion is refused - no wrapping', /sso_error=/.test(r3.headers.get('location') || '') && !/ticket=/.test(r3.headers.get('location') || ''), r3.headers.get('location'));
+    const r4 = await acs(Buffer.from('<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><x>&e;</x>').toString('base64'));
+    check('SAML: a DOCTYPE / entity is refused', /sso_error=/.test(r4.headers.get('location') || ''));
+  }
+  if (section('15.14', 'Identity verification of candidates')) {
+    const s = await call('POST', `/ats-plus/idverify/${cands[0].id}/start`, { channels: ['phone', 'email'] }, tR);
+    const token = s.body.link && s.body.link.split('/').pop();
+    check('the recruiter makes an identity check link (codes OFF by default)', s.status === 201 && s.body.sendEnabled === false, s.body);
+    const pg = await call('GET', `/public/verify/${token}`, null, null);
+    check('the page shows the phone and e-mail masked', pg.status === 200 && pg.body.channels.every((c) => /X|\*/.test(c.to)) && !JSON.stringify(pg.body).includes(cands[0].phone), pg.body);
+    check('no code goes out while the switch is OFF', (await call('POST', `/public/verify/${token}/send`, { channel: 'phone' }, null)).status === 409);
+    check('only an Admin switches it on', (await call('PUT', '/ats-plus/idverify/settings', { sendEnabled: true }, tT)).status === 403);
+    await call('PUT', '/ats-plus/idverify/settings', { sendEnabled: true }, tA);
+    const sd = await call('POST', `/public/verify/${token}/send`, { channel: 'phone' }, null);
+    check('switched on: a code is made (the sandbox sends nothing)', sd.status === 200 && /^\d{6}$/.test(sd.body.testCode || ''), sd.body);
+    check('a wrong code is refused', (await call('POST', `/public/verify/${token}/check`, { channel: 'phone', code: '000000' === sd.body.testCode ? '111111' : '000000' }, null)).status === 400);
+    const ok = await call('POST', `/public/verify/${token}/check`, { channel: 'phone', code: sd.body.testCode }, null);
+    const st = await call('GET', `/ats-plus/idverify/${cands[0].id}`, null, tT);
+    check('the right code verifies the phone; the profile shows when, and says the photo match is not available', ok.status === 200 && st.body.verified.phone && /Not available/.test(st.body.photoMatch), st.body);
+    await call('PUT', '/ats-plus/idverify/settings', { sendEnabled: false }, tA);
+  }
   // @@SECTIONS@@
 
   console.log(`\n${total - failed}/${total} passed`);

@@ -1,3 +1,4 @@
+import { MoreDetails } from '../components/atsPlus/MoreDetails.jsx'; // Admin-added client fields (market wave 13.02)
 import { ClientAiSummary } from '../components/atsPlus/BusinessDev.jsx'; // AI client summary / pitch (market wave 2026-11-21)
 import { ClientContacts, ClientCredit, PortalUsage } from '../components/clients/ClientDepth.jsx'; // unlimited contacts with roles, credit terms, portal usage (audit 133 / 134 / 142 / 711)
 import { useEffect, useMemo, useState } from 'react';
@@ -595,6 +596,7 @@ export default function ClientDetail() {
       {!data.redacted && <ClientBusiness client={c} enabled={!!meta?.actions?.businessActivities} onChanged={load} />}
       {/* AI summary & pitch (market wave 06.15, utils/atsPlus/bd.js): for the BD team (BDE, BDE TL, Admin, Manager); the server refuses anyone else. */}
       {!data.redacted && mayAiSummary(user) && <ClientAiSummary clientId={c.id} />}
+      {!data.redacted && <MoreDetails entity="Client" id={c.id} canEdit={!!p.edit} />}
 
       {/* 2026-11-20 (founder: "give clear tabs"): five tabs on screen, History under More, a tooltip on each and a line under the strip. */}
       <div style={{ marginBottom: 16 }}>

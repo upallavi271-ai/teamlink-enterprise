@@ -521,4 +521,6 @@ router.put('/me/workspace', requireAuth, async (req, res) => {
   res.json(await sessionPayload(identity));
 });
 
+// single sign-on (utils/atsPlus/sso.js) finishes a sign-in the same way as a password sign-in
+router.finishSignIn = finishSignIn;
 module.exports = router;

@@ -454,6 +454,8 @@ async function addApplication(user, {
 async function applyStageMove(user, applicationId, body = {}, opts = {}) {
   const { stage, interviewAt, comment } = body;
   if (!stage) return { status: 400, body: { error: 'stage is required' } };
+  // BLUEPRINT (market wave 13.03, utils/atsPlus/admin.js): what a department requires before a person ENTERS this step - none saved = nothing changes.
+  { const bp = await require('../utils/atsPlus/admin').blueprintCheck(applicationId, stage, body).catch(() => null); if (bp) return { status: 409, body: bp }; } // eslint-disable-line global-require
 
   // A REJECTION MUST SAY WHY, AND WHOSE DECISION IT WAS.
   //

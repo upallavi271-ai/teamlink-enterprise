@@ -1,4 +1,5 @@
 import JobKitsTab from '../components/jobs/JobKitsTab.jsx'; // market wave 2026-11-21: interview kits, apply form, tests, SMS campaign
+import { MoreDetails, CurrencyNote } from '../components/atsPlus/MoreDetails.jsx'; // Admin-added job fields + the rupee value of another currency (market wave 13.02 / 13.07)
 import RequirementPositions from '../components/clients/RequirementPositions.jsx'; // several positions inside one requirement (audit 114)
 import { RequirementWorkPanel } from '../components/ats/AtsWork.jsx'; // recruiter suggestions, assign, matching, close pipeline, workflow trail (round 3)
 import { useEffect, useRef, useState } from 'react';
@@ -698,7 +699,7 @@ export default function RequirementDetail() {
               <div>
                 <Row k="Openings">{`${r.openings}${r.filled ? ` · ${r.filled} filled` : ''} · ${r.remaining ?? r.openings} left`}</Row>
                 <Row k="Priority"><PriorityChip value={r.priority} /></Row>
-                <Row k="Salary">{`${r.salary || '—'}${r.salaryType ? ` (${r.salaryType}${r.currency ? `, ${r.currency}` : ''})` : ''}`}</Row>
+                <Row k="Salary">{`${r.salary || '—'}${r.salaryType ? ` (${r.salaryType}${r.currency ? `, ${r.currency}` : ''})` : ''}`}<CurrencyNote amount={r.salary} currency={r.currency} /></Row>
                 <Row k="Notice period">{r.noticePeriodMax}</Row>
                 <Row k="Employment type">{[r.employmentType, r.jobPreference].filter(Boolean).join(' · ')}</Row>
                 <Row k="Posted">{r.createdAt ? protoDate(r.createdAt) : null}</Row>
@@ -1533,6 +1534,7 @@ export default function RequirementDetail() {
       )}
 
       {!isClientLogin && <RequirementWorkPanel requirement={r} canAssign={!!p.assign} onChanged={refreshAfterChange} />}
+      {!isClientLogin && <MoreDetails entity="Requirement" id={r.id} />}
       {postPanel && <PostingStatusPanel requirementId={r.id} code={r.reqCode} title={r.title} onChanged={load} onClose={() => setPostPanel(false)} />}
 
       {/* EDIT REQUIREMENT — the Create Requirement form in edit mode.

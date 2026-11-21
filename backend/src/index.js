@@ -172,6 +172,8 @@ app.use('/api/followup-report/import', express.json({ limit: '2mb' })); // the f
 app.use('/api/public/mkt/boards', express.raw({ type: () => true, limit: '2mb' }));
 app.use(express.json());
 app.use('/api', require('./utils/mktb/gov').requestContext); // market wave B: an AI call knows who asked and from where (the AI governance log)
+// ATS plus webhooks / Slack / Teams (utils/atsPlus/integrations.js): after a 2xx answer of a watched route the event is sent - OFF until an Admin switches it on.
+app.use(require('./utils/atsPlus/integrations').eventMiddleware);
 // WHO LEFT AFTER JOINING (utils/joinedRule.js): a fresh set is loaded before ANY route runs, so no Joined list or number is ever built from an empty set
 app.use('/api', require('./utils/joinedRule').middleware());
 // WHO LOOKED AT WHAT (utils/readLog.js): a candidate / employee record or document opened is written after the answer (200 only).

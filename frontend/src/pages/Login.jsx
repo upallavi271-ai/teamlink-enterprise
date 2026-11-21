@@ -6,6 +6,7 @@ import { BRAND } from '../brand.js';
 import vendorApi, { setVendorToken, setVendorHome, vendorHome } from '../vendorApi';
 import api from '../api';
 import { RecoveryCodes, SetupBox } from '../components/TwoStepCard.jsx';
+import { SsoButtons } from '../components/atsPlus/SsoLogin.jsx'; // "Sign in with ..." when an Admin switched single sign-on on (market wave 15.01)
 
 // Email and password. Nothing else.
 //
@@ -306,6 +307,7 @@ export default function Login() {
         >
           {busy ? 'Signing in…' : 'Sign In'}
         </button>
+        <SsoButtons />
       </form>
     </div>
   );
