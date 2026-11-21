@@ -212,6 +212,8 @@ module.exports = function reportsPlus(H) {
     const sub = 'Days from requirement added to person joined. "Usual days" is the middle value.';
     const byDept = section('ttfDept', 'By department', cols({ key: 'department', label: 'Department' }), { sub });
     const byClient = section('ttfClient', 'By client', cols({ key: 'client', label: 'Client', ref: 'client' }), { sub, paged: true });
+    // 12.06 (market wave 2026-11-21): the same days per REQUIREMENT, so a slow job inside a fast client shows
+    const byJob = section('ttfJob', 'By requirement', cols({ key: 'requirement', label: 'Requirement', ref: 'req' }), { sub, paged: true });
     // ATS layout v3 §5 — time to hire month by month (the line chart), the
     // same people and days as the tables above, by the month they joined.
     const byMonth = section('ttfMonth', 'By month joined', cols({ key: 'month', label: 'Month' }), { sub });
@@ -231,12 +233,15 @@ module.exports = function reportsPlus(H) {
       const cr = byClient.row(x.req.clientKey || '—', { refs: x.req.internal ? {} : { client: x.req.clientId } });
       cr.cells.client = x.req.clientName;
       cr.cells.joined.add(x.id, d);
+      const jr = byJob.row(x.req.id, { refs: { req: x.req.id } });
+      jr.cells.requirement = `${x.req.reqCode ? `${x.req.reqCode} · ` : ''}${x.req.title || 'Requirement'} (${x.req.clientName})`;
+      jr.cells.joined.add(x.id, d);
       const mk = String(jd).slice(0, 7);
       const mr = byMonth.row(mk).cells;
       mr.month = `${MONTHS[Number(mk.slice(5, 7)) - 1] || mk.slice(5, 7)} ${mk.slice(0, 4)}`;
       mr.joined.add(x.id, d);
     });
-    [byDept, byClient].forEach((s) => {
+    [byDept, byClient, byJob].forEach((s) => {
       s.rows.forEach((r) => derive(r.cells));
       s.sort = (a, b) => b.cells.joined.n - a.cells.joined.n;
       addTotal(s, derive);
@@ -265,7 +270,7 @@ module.exports = function reportsPlus(H) {
     line(byDept, 'department');
     line(byClient, 'client');
     if (!all.length) notes.push(P ? 'Nobody with a joining date joined in this period.' : 'No joined person has a joining date yet.');
-    return { tiles: t.tiles, sections: [byDept, byClient, byMonth], notes, plain: true };
+    return { tiles: t.tiles, sections: [byDept, byClient, byJob, byMonth], notes, plain: true };
   }
 
   // =========================================================================

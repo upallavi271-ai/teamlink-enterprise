@@ -249,7 +249,7 @@ app.get(/^\/omnichannel(\/.*)?$/, (req, res, next) => {
 // (utils/agreementPrivacy.js): no agreement key or wording leaves these routers for those logins.
 app.use([
   '/api/clients', '/api/client-merge', '/api/requirements', '/api/job-portal', '/api/candidates', '/api/candidate-resumes', '/api/candidate-duplicates',
-  '/api/doc-fill', '/api/rejections', '/api/applications', '/api/followups', '/api/dashboard', '/api/reports', '/api/ats-reports', '/api/ats-daily',
+  '/api/doc-fill', '/api/rejections', '/api/applications', '/api/followups', '/api/dashboard', '/api/reports', '/api/ats-reports', '/api/ats-insights', '/api/ats-daily',
   '/api/ats-report-pack', '/api/pending-work', '/api/ats', '/api/ats-io', '/api/assistant', '/api/agent', '/api/insights', '/api/auth', '/api/admin/notifications',
   '/api/messaging', '/api/agreement', '/api/offer-link', '/api/job-publish', '/api/job-dist', '/api/job-broadcast', '/api/join-drop',
 ], require('./utils/agreementPrivacy').agreementGuard);
@@ -257,7 +257,7 @@ app.use([
 // utils/clientRedact.js. Mounted ahead of the ATS routers it filters.
 app.use([
   '/api/requirements', '/api/job-portal', '/api/candidates', '/api/applications', '/api/followups',
-  '/api/dashboard', '/api/reports', '/api/ats-reports', '/api/ats', '/api/assistant', '/api/agent',
+  '/api/dashboard', '/api/reports', '/api/ats-reports', '/api/ats-insights', '/api/ats', '/api/assistant', '/api/agent',
 ], require('./utils/clientRedact').clientFieldGuard);
 // The same BDE / "Candidate contact and salary" cut for the ATS routers that
 // answer outside the list above and embed candidates (client detail, rejections,
@@ -306,7 +306,9 @@ app.use('/api/omni', require('./routes/omniShared')); // Omni-Channel shared API
 app.use('/api/omni-gs', require('./routes/greenStartEmbed')); // status + session cookie for the embedded Green Start app
 app.use('/api/public/mk-work', require('./routes/mkWorkPublic')); // AI Marketing "Our work": track record and portfolio (no login; marketing/projects.js)
 app.use('/api/public/mk-project', require('./routes/mkProjectPublic')); // AI Marketing client projects: the client's private page (signed token, no login; marketing/projects.js)
-app.use('/api/public/feedback', require('./routes/feedbackPublic')); // the candidate / client experience survey (signed token, no login; utils/atsExperience.js)
+app.use('/api/public/feedback', require('./routes/feedbackPublic'));
+app.use('/api/public/qoh', require('./routes/qohPublic')); // the client's quality-of-hire rating page (signed token, no login; utils/insights/qoh.js)
+app.use('/api/bi', require('./routes/biFeed')); // read-only BI feed for Power BI / Looker / Excel (Admin-made API key; utils/insights/bi.js) // the candidate / client experience survey (signed token, no login; utils/atsExperience.js)
 app.use('/api/public/mk-review', require('./routes/mkClientReviewPublic')); // AI Marketing client approval link (signed token in the address, no login; marketing/clientReview.js)
 app.use('/api/public/mk-meeting', require('./routes/mkMeetingPublic')); // AI Marketing plans meeting: the automated spoken presentation a client opens from a WhatsApp link (signed token, no login; marketing/meeting.js)
 setTimeout(() => { try { if (!require('./utils/sandbox').isSandbox()) require('./marketing/meetingVoice').prewarm().catch(() => {}); } catch { /* no voice on this server */ } }, 60000).unref(); // the meeting's first sentences are made a minute after start (marketing/meetingVoice.js)
@@ -449,6 +451,8 @@ app.use('/api/ats-daily', require('./routes/atsDaily'));
 app.use('/api/ats-report-pack', require('./routes/atsReportPack'));
 // Candidate experience (surveys, NPS, complaints, apply funnel) and Client health (client NPS, escalations, retention) - routes/atsExperience.js.
 app.use('/api/ats-experience', require('./routes/atsExperience'));
+// ATS insights (market wave 2026-11-21): dashboard insight cards, report builder, forecasts, alerts, schedules, backdoor, quality of hire, compliance, BI keys.
+app.use('/api/ats-insights', require('./routes/atsInsights'));
 // Pending work -> the TL (digest, escalation, Remind), the BDE's client work, the end-of-day report.
 app.use('/api/pending-work', require('./routes/pendingWork'));
 // Proof reminder: daily WhatsApp + e-mail to the Accountant (utils/proofReminders.js).
@@ -715,7 +719,8 @@ const server = app.listen(PORT, () => {
   // only — does nothing until an Admin switches it on (utils/atsEscalation.js).
   require('./utils/atsEscalation').startSweep();
   require('./utils/atsWork/lifecycle').startSweep(); // failed AI / API steps retried hourly (3 tries) - only when an Admin switched it on
-  require('./routes/atsExperience').startSweep(); // late complaints / client escalations move up a level; the quarterly client survey when switched on
+  require('./routes/atsExperience').startSweep();
+  require('./routes/atsInsights').startSweeps(); // metric alerts (hourly), scheduled e-mails (15 min), quality-of-hire surveys (6 h) - each does nothing until an Admin switches it on // late complaints / client escalations move up a level; the quarterly client survey when switched on
   // Pending-work digest to the TL (10:30), escalation, BDE client-work digest, end-of-day report (18:45):
   // one tick every 5 minutes, each part sent once a day (utils/pendingWork.js).
   require('./utils/pendingWork').startSweep();
