@@ -99,7 +99,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
       await ctx.close();
     }
     {
-      const { ctx, page } = await open(tl, '/reports/ats?tab=insights');
+      const { ctx, page } = await open(tl, '/reports/ats?tab=coaching');
       check('TL: ATS Reports -> Recruiter insights shows the ratios', await seen(page, 'Recruiting ratios'));
       await page.locator('[role="tab"]', { hasText: /^Coaching$/ }).first().click({ timeout: 30000 }).catch((e) => console.log('   (coaching click:', String(e.message).slice(0, 120), ')'));
       check('TL: the Coaching tab draws', await seen(page, 'Coaching insights', 30000));
