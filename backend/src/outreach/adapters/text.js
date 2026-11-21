@@ -61,7 +61,7 @@ module.exports = function makeTextAdapter({ channel, label, messagingName, capKe
       }
       const sender = opts.messageSender || require('../../utils/messaging').send; // eslint-disable-line global-require
       const input = channel === 'whatsapp'
-        ? { to: contact.phoneE164, text: message.text, vars: message.vars && message.vars.length ? message.vars : [message.text], template: message.template || undefined, kind: 'bulk', actorUserId: message.actorUserId || null, ...(message.numberId ? { numberId: message.numberId } : {}), meta: message.meta || {} }
+        ? { to: contact.phoneE164, text: message.text, vars: message.vars && message.vars.length ? message.vars : [message.text], template: message.template || undefined, kind: 'bulk', actorUserId: message.actorUserId || null, ...(message.numberId ? { numberId: message.numberId } : {}), ...(message.media ? { media: message.media, mediaCache: message.mediaCache, forceTemplate: message.forceTemplate, mediaTemplate: message.mediaTemplate, vars: message.vars || [] } : {}), meta: message.meta || {} }
         : { to: contact.phoneE164, text: message.text, vars: [message.text], templateId: message.templateId || undefined, senderId: message.senderId || undefined, kind: 'bulk', actorUserId: message.actorUserId || null, meta: message.meta || {} };
       const r = await sender(messagingName, input);
       if (r && (r.ok || r.outcome === 'Sent')) {

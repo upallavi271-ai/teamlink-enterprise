@@ -575,6 +575,7 @@ async function planAudience(user, b) {
 const bodyFor = (b, ch, type) => ({
   type, channel: ch, requirementId: b.requirementId, segmentIds: b.segmentIds, templateId: b.templates ? b.templates[ch] : undefined, varMap: b.varMap && b.varMap[ch] ? b.varMap[ch] : (Array.isArray(b.varMap) ? b.varMap : undefined),
   script: b.masterMessage, when: b.when, at: b.at, perMinute: b.perMinute, waNumberId: b.waNumberId || undefined, // the WhatsApp number chosen in step 4
+  media: ch === 'whatsapp' && b.media && b.media.id ? b.media : undefined, // a picture / video / document for the WhatsApp message (outreach/campaignMedia.js)
 });
 // step 5: the review: per channel the plan + "Check before sending"
 async function review(user, b) {
@@ -673,7 +674,7 @@ async function editShape(user, key) {
   const o = OBJECTIVES.find((x) => x.label === m.objective) || (head.type === 'internal' ? OBJECTIVES.find((x) => x.id === 'staff') : OBJECTIVES.find((x) => x.kind && x.kind === head.kind) || OBJECTIVES[1]);
   return {
     key: g.key, name: groupName(g), objective: o.id, tag: m.tag || '', goal: m.goal || '', requirementId: head.requirementId || null, job: rq ? { id: rq.id, title: rq.title, reqCode: rq.reqCode || null } : null,
-    segmentIds: S.parse(head.segmentIds, []), channels: g.rows.map((r) => chanOf(r)), templates, varMap, masterMessage: m.masterMessage || '', cta: m.cta || '', brandVoice: m.brandVoice || '',
+    segmentIds: S.parse(head.segmentIds, []), channels: g.rows.map((r) => chanOf(r)), templates, varMap, media: (g.rows.map((r) => metaOf(r).media).find(Boolean)) || null, masterMessage: m.masterMessage || '', cta: m.cta || '', brandVoice: m.brandVoice || '',
     when: m.when || 'now', at: m.at || null, approvalMode: m.approvalMode || 'auto', perMinute: head.perMinute == null ? null : S.num(head.perMinute),
   };
 }

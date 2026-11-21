@@ -115,7 +115,7 @@ const view = (r) => ({
   requirementId: r.requirementId || null, segmentIds: S.parse(r.segmentIds, []), channel: chanOf(r), channelWords: CH_WORDS[chanOf(r)], templateId: r.templateId || null,
   templateName: (S.parse(r.templateSnapshot, null) || {}).name || null, scheduledAt: S.iso(r.scheduledAt), startedAt: S.iso(r.startedAt), completedAt: S.iso(r.completedAt),
   suppressDays: r.suppressDays, summary: S.parse(r.planSummary, null), lastError: r.lastError || null, createdById: r.createdById, createdByName: r.createdByName || '', createdAt: S.iso(r.createdAt),
-  groupId: metaOf(r).groupId || null, approval: r.approval || null, perMinute: r.perMinute == null ? null : S.num(r.perMinute),
+  groupId: metaOf(r).groupId || null, media: metaOf(r).media || null, approval: r.approval || null, perMinute: r.perMinute == null ? null : S.num(r.perMinute),
 });
 const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
 const ph = (n) => new Array(n).fill('?').join(',');
@@ -305,6 +305,13 @@ async function validate(user, b, { needSegments = true, needName = false, needTe
   if (channel === 'call') { // no template: a person rings, with this script in front of them
     return { type, channel, requirement, segmentIds, template: null, snapshot: { name: 'Call script', subject: '', body: S.clip(b.script || b.masterMessage, 2000) }, varMap: [] };
   }
+  const CMed = require('./campaignMedia'); // eslint-disable-line global-require
+  if (b.media && b.media.id && b.media.mode === 'caption') { // a WhatsApp picture / video / document with the words as its caption (no template; people who wrote to us in the last 24 hours)
+    const mc = await CMed.check(user, b.media, { channel, template: null });
+    if (mc.error) return mc;
+    const body = S.clip(mc.media.caption, 1000);
+    return { type, channel, requirement, segmentIds, template: null, snapshot: { name: 'WhatsApp media message', subject: '', body, varMap: varOrder(body), mediaKind: mc.media.kind }, varMap: varOrder(body), media: mc.media };
+  }
   if (!b.templateId && !needTemplate) return { type, channel, requirement, segmentIds, template: null, snapshot: null, varMap: [] };
   if (!b.templateId) return { error: 'Pick the message to send.', status: 400 };
   const tr = (await S.q('SELECT * FROM "OutreachTemplate" WHERE id = ?', String(b.templateId)))[0];
@@ -340,7 +347,17 @@ async function validate(user, b, { needSegments = true, needName = false, needTe
   const snapshot = { name: tr.name, subject: tr.subject || '', body: tr.body };
   if (channel === 'whatsapp') { snapshot.waTemplateName = tr.waTemplateName; snapshot.waLanguage = tr.waLanguage || 'en'; snapshot.varMap = varMap; }
   if (channel === 'sms') { snapshot.dltTemplateId = tr.dltTemplateId; snapshot.senderId = tr.senderId; }
-  return { type, channel, requirement, segmentIds, template: tr, snapshot, varMap };
+  // MEDIA (2026-11-21): a template whose header is a picture / video / document needs that file with every message; a campaign with a file needs a template with the matching header
+  let media = null;
+  if (channel === 'whatsapp') {
+    const hk = CMed.headerKind(tv);
+    const mc = await CMed.check(user, b.media, { channel, template: tv });
+    if (mc.error) return mc;
+    media = mc.media;
+    if (hk && !media) return { error: `This WhatsApp message has a ${CMed.WORDS[hk]} header, so Meta needs a ${CMed.WORDS[hk]} with every message. Upload the ${CMed.WORDS[hk]} in the message step.`, status: 400, code: 'media_missing' };
+    if (hk && media) snapshot.headerType = hk;
+  } else if (b.media && b.media.id) return { error: 'A picture, video or document can only be sent on WhatsApp.', status: 400, code: 'media_channel' };
+  return { type, channel, requirement, segmentIds, template: tr, snapshot, varMap, media };
 }
 
 // ---- the plan (live counts) ---------------------------------------------------------------------------------
@@ -369,7 +386,7 @@ async function plan(user, b) {
     ok: true, channel: v.channel, mode, people: m.ids.length, willGet: t.willGet, skipped: t.skipped, skippedTotal: m.ids.length - t.willGet, reasons: t.reasons, duplicates: m.duplicates,
     groupWords: Sup.GROUP_WORDS, suppressDays: st.suppressDays, testMode: st.emailTestMode, sendingOn: st.master, dailyCap: cap, perMinute, sentToday: adapter.sentToday, warnings,
     credits: await creditsFor(user.id, v.channel, t.willGet, { testMode: mode === 'rehearsal' }),
-    preview: { subject: out.subject, body: out.body, sampleName: firstName(sample && sample.contact && sample.contact.name) || 'Anita' },
+    preview: { media: v.media || null, subject: out.subject, body: out.body, sampleName: firstName(sample && sample.contact && sample.contact.name) || 'Anita' },
     job: v.requirement ? { id: v.requirement.id, title: v.requirement.title } : null,
   };
 }
@@ -387,7 +404,7 @@ async function create(user, b) {
   let code = '';
   for (let i = 0; i < 5; i += 1) { code = crypto.randomBytes(6).toString('base64url'); if (!(await S.q('SELECT 1 x FROM "OutreachCampaign" WHERE code = ?', code)).length) break; } // eslint-disable-line no-await-in-loop
   const extra = b.meta && typeof b.meta === 'object' ? b.meta : {};
-  const meta = { ...extra, channel: v.channel, varMap: v.varMap, origin: extra.origin || 'engine' };
+  const meta = { ...extra, channel: v.channel, varMap: v.varMap, origin: extra.origin || 'engine', ...(v.media ? { media: v.media } : {}) };
   // WHATSAPP NUMBER (utils/waNumbers.js): the maker's own number, or one they may use; it stays on the campaign
   if (v.channel === 'whatsapp') {
     try {
@@ -419,10 +436,11 @@ async function update(user, id, b) {
   if (row.status !== 'draft') return { error: 'Only a campaign that was never sent can be changed.', status: 409 };
   if (!(await canControl(user, row, reqs))) return { error: 'You can look at this campaign, but you cannot change it.', status: 403 };
   const cur = metaOf(row);
-  const v = await validate(user, { type: row.type, channel: chanOf(row), requirementId: b.requirementId !== undefined ? b.requirementId : row.requirementId, segmentIds: b.segmentIds || S.parse(row.segmentIds, []), templateId: b.templateId !== undefined ? b.templateId : row.templateId, varMap: b.varMap || cur.varMap, script: b.script || b.masterMessage || cur.masterMessage, name: b.name || row.name }, { needTemplate: chanOf(row) !== 'call' && !b.allowNoTemplate });
+  const v = await validate(user, { type: row.type, channel: chanOf(row), requirementId: b.requirementId !== undefined ? b.requirementId : row.requirementId, segmentIds: b.segmentIds || S.parse(row.segmentIds, []), templateId: b.templateId !== undefined ? b.templateId : row.templateId, varMap: b.varMap || cur.varMap, media: b.media !== undefined ? b.media : cur.media, script: b.script || b.masterMessage || cur.masterMessage, name: b.name || row.name }, { needTemplate: chanOf(row) !== 'call' && !b.allowNoTemplate });
   if (v.error) return v;
   const st = await S.settings();
   const meta = { ...cur, ...(b.meta && typeof b.meta === 'object' ? b.meta : {}), channel: v.channel, varMap: v.varMap };
+  if (v.media) meta.media = v.media; else delete meta.media;
   const chanMax = v.channel === 'email' ? st.emailPerMinute : (v.channel === 'whatsapp' ? st.waPerMinute : (v.channel === 'sms' ? st.smsPerMinute : null));
   let pm = row.perMinute == null ? null : S.num(row.perMinute);
   if (b.perMinute !== undefined) pm = chanMax && Number.isFinite(Math.floor(Number(b.perMinute))) && Math.floor(Number(b.perMinute)) > 0 ? Math.min(Math.floor(Number(b.perMinute)), chanMax) : null;
@@ -482,7 +500,7 @@ async function send(user, id, b = {}) {
   if (blocked) return { error: blocked, status: 409, code: 'needs_approval' };
   // the same checks as the plan (a job may have closed since the draft was saved; a template may have changed)
   const meta = metaOf(row);
-  const v = await validate(user, { type: row.type, channel, requirementId: row.requirementId, segmentIds: S.parse(row.segmentIds, []), templateId: row.templateId, varMap: meta.varMap, script: meta.masterMessage });
+  const v = await validate(user, { type: row.type, channel, requirementId: row.requirementId, segmentIds: S.parse(row.segmentIds, []), templateId: row.templateId, varMap: meta.varMap, script: meta.masterMessage, media: meta.media });
   if (v.error) return v;
   const st = await S.settings();
   const mode = channel === 'call' ? 'live' : (st.emailTestMode ? 'rehearsal' : 'live');

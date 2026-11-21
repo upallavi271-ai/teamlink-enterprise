@@ -6,13 +6,14 @@ import { useOmni } from '../omniContext.js';
 import { Banner, Btn, ConfirmModal, Empty, Field, GsModal, Panel, Pill } from './../ui.jsx';
 import { CH_WORD, n0 } from './shared.jsx';
 import { useWaSender } from '../../messaging/WaSender.jsx';
+import WaMediaPick from './WaMediaPick.jsx';
 
 const STEPS = ['1 · Basics', '2 · Audience', '3 · Content', '4 · Channels', '5 · Review'];
 const TEXT = ['whatsapp', 'sms', 'email'];
 const WIZ_VOICES = ['Warm & confident', 'Professional', 'Playful']; // the brand voices the wizard offers (gsCampaigns.js options.brandVoices)
 const TODAY_IST = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
 const tomorrowIst = () => new Date(Date.now() + 86400000 + 5.5 * 3600000).toISOString().slice(0, 10);
-const blank = () => ({ name: '', objective: 'recruitment', tag: '', goal: '', job: null, segmentIds: [], channels: [], templates: {}, masterMessage: '', cta: '', brandVoice: 'Warm & confident', when: 'now', date: tomorrowIst(), time: '10:00', approvalMode: 'auto', perMinute: '' });
+const blank = () => ({ name: '', objective: 'recruitment', tag: '', goal: '', job: null, segmentIds: [], channels: [], templates: {}, media: null, mediaType: 'text', masterMessage: '', cta: '', brandVoice: 'Warm & confident', when: 'now', date: tomorrowIst(), time: '10:00', approvalMode: 'auto', perMinute: '' });
 
 // plain fill of {{words}} with sample values for the live preview (the server does the real one)
 const fill = (text, vars) => String(text || '').replace(/\{\{\s*([^{}]*?)\s*\}\}/g, (m, v) => (v in vars ? vars[v] : m));
@@ -67,7 +68,7 @@ export default function CampaignWizard({ editKey, initialSegment, initialContent
   useEffect(() => {
     if (!editKey) return;
     omni.get(`/gs/campaigns/campaign/${editKey}/edit`).then((e) => {
-      const next = { ...blank(), name: e.name, objective: e.objective, tag: e.tag, goal: e.goal, job: e.job, segmentIds: e.segmentIds, channels: e.channels, templates: e.templates || {}, masterMessage: e.masterMessage, cta: e.cta, brandVoice: e.brandVoice || 'Warm & confident', approvalMode: e.approvalMode || 'auto', perMinute: e.perMinute || '' };
+      const next = { ...blank(), name: e.name, objective: e.objective, tag: e.tag, goal: e.goal, job: e.job, segmentIds: e.segmentIds, channels: e.channels, templates: e.templates || {}, media: e.media || null, mediaType: e.media ? e.media.kind : 'text', masterMessage: e.masterMessage, cta: e.cta, brandVoice: e.brandVoice || 'Warm & confident', approvalMode: e.approvalMode || 'auto', perMinute: e.perMinute || '' };
       if (e.when === 'at' && e.at) { const ms = Date.parse(e.at); if (Number.isFinite(ms)) { next.when = 'at'; next.date = new Date(ms + 5.5 * 3600000).toISOString().slice(0, 10); next.time = new Date(ms + 5.5 * 3600000).toISOString().slice(11, 16); } }
       setF(next); setInit(JSON.stringify(next));
     }).catch((e) => setErr(errOf(e, 'This campaign cannot be changed.'))).finally(() => setLoadingEdit(false));
@@ -93,7 +94,7 @@ export default function CampaignWizard({ editKey, initialSegment, initialContent
   const atIso = f.when === 'at' ? `${f.date}T${f.time}:00+05:30` : undefined;
   // WhatsApp: the company number this campaign leaves from (kept on the campaign; only numbers the Admin gave this login)
   const wa = useWaSender(f.channels.includes('whatsapp'));
-  const body = useMemo(() => ({ objective: f.objective, requirementId: f.job ? f.job.id : undefined, segmentIds: f.segmentIds, channels: f.channels, templates: f.templates, masterMessage: f.masterMessage, cta: f.cta, when: f.when, at: atIso, perMinute: f.perMinute ? Number(f.perMinute) : undefined, waNumberId: f.channels.includes('whatsapp') ? wa.numberId : undefined }), [f, atIso, wa.numberId]);
+  const body = useMemo(() => ({ objective: f.objective, requirementId: f.job ? f.job.id : undefined, segmentIds: f.segmentIds, channels: f.channels, templates: f.templates, media: f.media && f.media.id ? { id: f.media.id, mode: f.media.mode || 'template', caption: f.media.caption || '' } : undefined, masterMessage: f.masterMessage, cta: f.cta, when: f.when, at: atIso, perMinute: f.perMinute ? Number(f.perMinute) : undefined, waNumberId: f.channels.includes('whatsapp') ? wa.numberId : undefined }), [f, atIso, wa.numberId]);
 
   // step 2: the live plan (who would get it)
   const planSeq = useRef(0);
@@ -212,7 +213,8 @@ export default function CampaignWizard({ editKey, initialSegment, initialContent
                   <Field label="BRAND VOICE"><select value={f.brandVoice} onChange={(e) => set('brandVoice', e.target.value)}>{opts.brandVoices.map((v) => <option key={v}>{v}</option>)}</select></Field>
                 </div>
                 <div className="panel-title" style={{ margin: '16px 0 8px' }}>Message for each channel</div>
-                {TEXT.map((ch) => {
+                {f.channels.includes('whatsapp') || !f.channels.length ? <WaMediaPick f={f} set={set} tplList={tplList('whatsapp')} /> : null}
+                {TEXT.filter((ch) => !(ch === 'whatsapp' && f.mediaType !== 'text')).map((ch) => {
                   const t = tplOf(ch); const list = tplList(ch);
                   return (
                     <div key={ch}>
@@ -263,7 +265,7 @@ export default function CampaignWizard({ editKey, initialSegment, initialContent
                   <div className="settings-list">
                     {!f.channels.length && <p style={{ fontSize: 11, color: 'var(--muted)', padding: '4px 2px' }}>Select at least one channel to publish this campaign.</p>}
                     {opts.channels.filter((c) => f.channels.includes(c.channel)).map((c) => {
-                      const needsMsg = TEXT.includes(c.channel) && !f.templates[c.channel];
+                      const needsMsg = TEXT.includes(c.channel) && !f.templates[c.channel] && !(c.channel === 'whatsapp' && f.media && f.media.mode === 'caption');
                       return (
                         <div key={c.channel} className="settings-item">
                           <div><strong>{c.label}</strong><small>{c.note}{needsMsg ? ' · Pick its message in step 3.' : ''}</small></div>
@@ -296,6 +298,7 @@ export default function CampaignWizard({ editKey, initialSegment, initialContent
                     {rev.channels.map((c) => (
                       <Panel key={c.channel} title={c.label} sub={c.plan && c.plan.willGet != null ? `${n0(c.plan.willGet)} will get it · ${n0(c.plan.skippedTotal)} left out` : ''} style={{ marginTop: 10 }}>
                         <div>{c.check.checks.map((k) => <div key={k.id} className={`cmp-check ${k.status}`}><b>{k.status === 'ok' ? 'OK' : (k.status === 'warn' ? 'Note' : 'Fix')}</b><span>{k.label}{k.detail ? <small>{k.detail}{k.status === 'block' && k.fix ? ` ${k.fix}` : ''}</small> : null}</span></div>)}</div>
+                        {c.plan && c.plan.preview && c.plan.preview.media && <div style={{ marginTop: 8, fontSize: 11 }}><Pill tone="live">{({ image: 'Picture', video: 'Video', document: 'Document' })[c.plan.preview.media.kind] || 'File'}</Pill> <b>{c.plan.preview.media.name}</b> goes with the message ({c.plan.preview.media.mode === 'caption' ? 'free message with caption' : 'in the approved template header'}).</div>}
                         {c.plan && c.plan.preview && c.plan.preview.body && <div style={{ marginTop: 8, background: '#fbfdfc', border: '1px solid var(--line)', borderRadius: 10, padding: '8px 11px' }}><small style={{ color: 'var(--muted)', fontSize: 9, fontWeight: 800 }}>SAMPLE MESSAGE (to {c.plan.preview.sampleName})</small><div className="cmp-msg">{c.plan.preview.subject ? <b>{c.plan.preview.subject}{'\n\n'}</b> : null}{c.plan.preview.body}</div></div>}
                       </Panel>
                     ))}

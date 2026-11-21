@@ -11,6 +11,7 @@ const A = require('../outreach/access');
 const Camp = require('../outreach/campaigns');
 const Gs = require('../outreach/gsCampaigns');
 const Appr = require('../outreach/approval');
+const CM = require('../outreach/campaignMedia');
 const MLog = require('../outreach/messageLog');
 const { deptOf } = require('../outreach/chrome');
 const { logAudit } = require('../utils/audit');
@@ -57,6 +58,15 @@ router.get('/approvals', limit(), wrap(async (req, res) => res.json({ approvals:
 // ---- the wizard's helpers ----------------------------------------------------------------------------------------------------------------
 router.get('/options', limit(), wrap(async (req, res) => res.json(await Gs.options(req.user, { audience: req.query.audience }))));
 router.get('/jobs', limit(), wrap(async (req, res) => res.json(await Camp.jobs(req.user, { q: req.query.q }))));
+// WhatsApp media campaigns (outreach/campaignMedia.js): the file goes up as the raw body (?filename=), is checked against WhatsApp's rules, and can be looked at again for the preview
+router.get('/media/rules', limit(), (req, res) => res.json({ types: Object.entries(CM.TYPES).map(([mime, t]) => ({ mime, kind: t.kind, ext: t.ext, maxMb: Math.round(t.max / 1048576) })) }));
+router.post('/media', limit(30), (req, res, next) => (mustCreate(req, res) ? next() : undefined), express.raw({ type: () => true, limit: '26mb' }), wrap(async (req, res) => send(res, await CM.upload(req.user, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), req.headers['content-type'], String(req.query.filename || '').slice(0, 120)))));
+router.get('/media/:id/file', limit(), wrap(async (req, res) => {
+  const f = await CM.fileOf(String(req.params.id || '').slice(0, 60));
+  if (!f) return res.status(404).json({ error: 'The file was not found.' });
+  res.setHeader('Content-Type', f.mime); res.setHeader('Cache-Control', 'private, max-age=300'); res.setHeader('X-Content-Type-Options', 'nosniff');
+  return require('fs').createReadStream(f.path).pipe(res); // eslint-disable-line global-require
+}));
 router.post('/plan', limit(120), wrap(async (req, res) => send(res, await Gs.planAudience(req.user, req.body || {}))));
 router.post('/review', limit(60), wrap(async (req, res) => send(res, await Gs.review(req.user, req.body || {}))));
 router.post('/create', limit(30), wrap(async (req, res) => { if (!mustCreate(req, res)) return undefined; return send(res, await Gs.createGroup(req.user, req.body || {})); }));

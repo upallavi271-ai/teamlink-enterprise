@@ -145,11 +145,15 @@ async function processOne(msg, ctx) {
     );
   } else {
     const wa = channel === 'whatsapp';
+    // a picture / video / document campaign (outreach/campaignMedia.js): the file, WhatsApp's remembered media id, and whether it goes through the approved template header or as a free message with a caption
+    const mediaSend = wa && campMeta.media ? await require('./campaignMedia').forSend(campMeta.media).catch(() => null) : null; // eslint-disable-line global-require
+    if (wa && campMeta.media && !mediaSend) { await finish(msg, 'failed', { reason: 'rejected', error: 'The campaign file is missing. Upload it again and copy the campaign.', failedAt: now }); await Ev.record('failed', msg, camp, { detail: { reason: 'media_missing' }, at: now }); return 'failed'; }
     r = await adapter.send(
       { id: contact.id, contactType: contact.contactType, name: contact.name, phoneE164: contact.phoneE164 },
       {
         text: out.body, vars: out.vars, kind, actorUserId: camp.createdById || null, ...(wa && campMeta.waNumberId ? { numberId: campMeta.waNumberId } : {}),
-        template: wa ? { name: snapshot.waTemplateName, language: snapshot.waLanguage || 'en', vars: out.vars } : null,
+        template: wa && snapshot.waTemplateName ? { name: snapshot.waTemplateName, language: snapshot.waLanguage || 'en', vars: out.vars } : null,
+        ...(mediaSend ? { media: [mediaSend.file], mediaCache: mediaSend.cache, forceTemplate: mediaSend.mode === 'template', mediaTemplate: mediaSend.mode === 'template' ? { name: snapshot.waTemplateName, language: snapshot.waLanguage || 'en' } : undefined } : {}),
         templateId: wa ? null : snapshot.dltTemplateId, senderId: wa ? null : snapshot.senderId,
         meta: { template: snapshot.name || camp.name, purpose: 'campaign', campaignId: camp.id, source: 'campaign' },
       },
