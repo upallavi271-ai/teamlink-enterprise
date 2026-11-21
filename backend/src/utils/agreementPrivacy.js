@@ -35,7 +35,8 @@ const SAYS_AGREEMENT_KEYS = new Set(['error', 'gateNote', 'nextAction', 'hint', 
 const NOT_FOR_ROLE = 'This is not available for your role.';
 const HIDE_STRING_KEYS = new Set(['workStatus', 'lastActivityWhat', 'lastActivityBy', 'sub', 'tip', 'help', 'note', 'detail', 'what']);
 const LABEL_KEYS = ['label', 'header', 'purposeLabel', 'purpose', 'key', 'sub', 'id'];
-const DROP_KEY = /^(agreement|esign|e_sign|signedcopy|client agreements)/i;
+// unsigned*: the "opened without a signed agreement" stamp on a job (unsignedApprovedAt / By, utils/unsignedOpen.js) - audit 2026-11-20
+const DROP_KEY = /^(agreement|esign|e_sign|signedcopy|client agreements|unsigned)/i;
 const DROP_EXACT = new Set(['gatedRequirements', 'waitingAgreement', 'signedWaiting', 'unsignedAgreements', 'agreementPending']);
 // whole-string value rewrites (exact match, so free text is never touched)
 const VALUE_MAP = new Map([
