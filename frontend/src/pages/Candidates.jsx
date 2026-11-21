@@ -107,6 +107,16 @@ import {
 import {
   JobPickerCombo, useJobRows, useAttentionTop, useClientNameOfJobs,
 } from '../components/JobPicker.jsx';
+// The look of this page (founder 2026-11-21: "make this page look more attractive"): loaded last, so it sits over the kit's rules.
+import '../components/candidates-v4/candidatesLook.css';
+
+// A soft colour per person for the initials circle (the same name always gets the same colour).
+const AVATAR_TONES = 8;
+const avatarTone = (name) => { let h = 0; for (const ch of String(name || '')) h = (h * 31 + ch.charCodeAt(0)) % 997; return h % AVATAR_TONES; };
+// The counts beside the title: the same numbers as the status strip, as small coloured pills.
+const HEAD_STATS = [['active', 'Active', 'blue'], ['hold', 'On hold', 'amber'], ['joined', 'Joined', 'green'], ['rejected', 'Rejected', 'red']];
+// Columns that hold a number: right-aligned.
+const NUM_COLS = new Set(['experience']);
 
 // The Step filter's options in everyday words (the server's names are the
 // old ones: "TL Review", "Client Submitted"…). Internal hiring keeps its own.
@@ -329,7 +339,7 @@ const toggleCsv = (v, one) => { const l = csvList(v); return (l.includes(one) ? 
 const SIMPLE_COL = { salary: { id: 'salary', label: 'Salary', sort: 'ctc', tip: 'Now = what they earn now. Wants = what they ask for. The chip says how it fits the client budget.' } };
 // Simple view: ONE set of column widths for the header and every row (a fixed grid).
 const SIMPLE_W = {
-  source: 100, phone: 108, experience: 58, salary: 104, stage: 104, joining: 100, next: 126,
+  source: 112, phone: 112, experience: 84, salary: 132, stage: 108, joining: 96, next: 150,
 };
 const FEEDBACK_COLUMNS = ['candidate', 'client', 'requirement', 'ivdate', 'waiting', 'next'];
 // The Rejected tab shows its own set (change list §10): Job (client) · Rejected by · Reason · Date.
@@ -1538,6 +1548,17 @@ export default function Candidates() {
                 ? <ScopeLine user={user} count={fresh ? fresh.scopeTotal : (viewCounts.master || 0)} noun={viewNoun} />
                 : <span className="small-muted">New from the job portal — not checked yet</span>}
             </span>
+            {main === 'pipeline' && tabId !== 'todo' && fresh && (
+              <span className="cv4-stats">
+                {HEAD_STATS.map(([k, l, t]) => (
+                  <span key={k} className={`cv4-stat tone-${t}`} title={`${l}: ${Number((counts.subs || {})[k] ?? 0).toLocaleString('en-IN')} applications in this list`}>
+                    <i aria-hidden="true" />
+                    <b>{Number((counts.subs || {})[k] ?? 0).toLocaleString('en-IN')}</b>
+                    {` ${l}`}
+                  </span>
+                ))}
+              </span>
+            )}
           </p>
         </div>
         <div className="ak-page-tools cv4-tools">
@@ -2014,7 +2035,7 @@ export default function Candidates() {
                     {rows.map((c) => (
                       <tr key={c.id} className={`row-link${drawer && drawer.candidateId === c.id ? ' cpl-row-open' : ''}`} onClick={() => openRow(c)}>
                         <td className="cpl-sticky cpl-sticky-1 cpl-cand">
-                          <span className="avatarsm">{initials(c.name)}</span>
+                          <span className="avatarsm" data-tone={avatarTone(c.name)}>{initials(c.name)}</span>
                           <span className="cpl-cand-name">{c.name}</span>
                           <RejectedBadge row={c} />
                           <DupChip dup={c.dup} candidateId={c.id} onChanged={reload} />
@@ -2113,6 +2134,7 @@ export default function Candidates() {
             )}
           />
           )}
+          <div className="cv4-filtercard">
           {!external && filterBar}
           <ListToolbar
             search={filters.search}
@@ -2156,6 +2178,7 @@ export default function Candidates() {
             chips={chips}
             onClearAll={clearAll}
           />
+          </div>
           {quick && defs[quick] && <div className="small-muted cviews-def">{defs[quick]}</div>}
           {rowFlash && (
             <div className={`notice${rowFlash.ok ? '' : ' red'} cpl-flash`}>
@@ -2237,7 +2260,7 @@ export default function Candidates() {
                     <input type="checkbox" aria-label="Select this page" checked={pageAllOn} onChange={(e) => togglePage(e.target.checked)} />
                   </th>
                   {shownCols.map((col) => (
-                    <th key={col.id} className={col.id === 'candidate' ? 'cpl-sticky cpl-sticky-1' : undefined}>
+                    <th key={col.id} className={col.id === 'candidate' ? 'cpl-sticky cpl-sticky-1' : (NUM_COLS.has(col.id) ? 'cpl-num' : undefined)}>
                       {col.sort
                         ? (
                           <button type="button" className={`cpl-th${sort.key === col.sort ? ' is-on' : ''}`} onClick={() => sortBy(col.sort)}>
@@ -2522,7 +2545,7 @@ function Cell({
         return (
           <td className="cpl-sticky cpl-sticky-1 cpl-cand">
             <div className="cpl-s-top">
-              <span className="avatarsm">{initials(c.name)}</span>
+              <span className="avatarsm" data-tone={avatarTone(c.name)}>{initials(c.name)}</span>
               <span className="cpl-cand-name" title={c.name}>{c.name}</span>
               <RejectedBadge row={c} minTimes={ctx.rejectedTab ? 2 : 1} />
             </div>
@@ -2537,7 +2560,7 @@ function Cell({
       }
       return (
         <td className="cpl-sticky cpl-sticky-1 cpl-cand">
-          <span className="avatarsm">{initials(c.name)}</span>
+          <span className="avatarsm" data-tone={avatarTone(c.name)}>{initials(c.name)}</span>
           <span className="cpl-cand-name">{c.name}</span>
           <RejectedBadge row={c} minTimes={ctx && ctx.rejectedTab ? 2 : 1} />
           <DupChip dup={c.dup} candidateId={c.candidateId || c.id} onChanged={ctx && ctx.reload} />
@@ -2557,7 +2580,7 @@ function Cell({
         </td>
       );
     }
-    case 'experience': return <td className="cpl-nowrap">{c.experienceYears != null ? `${c.experienceYears} yrs` : dash}</td>;
+    case 'experience': return <td className="cpl-nowrap cpl-num">{c.experienceYears != null ? `${c.experienceYears} yrs` : dash}</td>;
     case 'ctc':
       return (
         <td className="cpl-nowrap" title={[c.currentSalary && `Now: ${c.currentSalary}`, c.expectedSalary && `Wants: ${c.expectedSalary}`].filter(Boolean).join('\n') || undefined}>
@@ -2828,7 +2851,7 @@ function PhoneCards({
         <div key={c.id} className="cpl-cardwrap">
         <button type="button" className="cpl-card" onClick={() => onOpen(c)}>
           <span className="cpl-card-top">
-            <span className="avatarsm">{initials(c.name)}</span>
+            <span className="avatarsm" data-tone={avatarTone(c.name)}>{initials(c.name)}</span>
             <b>{c.name}</b>
             {c.currentStage && <StatusChip status={c.stageGroupLabel}>{c.currentStageLabel || c.stageGroupLabel}</StatusChip>}
           </span>
