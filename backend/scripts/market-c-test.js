@@ -78,7 +78,7 @@ const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), crypto.random
   const mgr = await mk('mgr', { role: 'EMPLOYEE', atsRole: 'MANAGER', atsDepartment: 'IT', atsScopeDepartments: 'IT' }, { designation: 'Manager', department: 'IT' });
   const bde = await mk('bde', { role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: 'BDE' });
   const client = await prisma.client.create({ data: { name: `Mkcorbit Systems ${RUN}`, ownerDepartment: 'IT', agreementStatus: 'ACTIVE' } });
-  const req = await prisma.requirement.create({ data: { title: `Mkcloud Engineer ${RUN}`, clientId: client.id, department: 'IT', status: 'OPEN', tlId: tl.id, tl: tl.name, recruiterId: rec.id, bdeId: bde.id, reqCode: `MKC-${RUN}`.toUpperCase().slice(0, 14), openings: 2, skills: 'Kubernetes, Terraform, AWS', experience: '3-6', location: 'Hyderabad', portalPublished: true, portalPublishedAt: new Date(), jobDescription: 'Run our cloud platform on Kubernetes and AWS.' } });
+  const req = await prisma.requirement.create({ data: { title: `Mkcloud Engineer ${RUN}`, clientId: client.id, department: 'IT', status: 'OPEN', tlId: tl.id, tl: tl.name, recruiterId: rec.id, bdeId: bde.id, reqCode: `MKC-${RUN}`.toUpperCase().slice(0, 14), openings: 2, skills: 'Kubernetes, Terraform, AWS', experience: '3-6', location: 'Hyderabad', portalPublished: true, portalPublishedAt: new Date(), jobDescription: `Mkcorbit Systems ${RUN} needs someone to run our cloud platform on Kubernetes and AWS.` } });
   global.REQ_ID = req.id;
   const cand = await prisma.candidate.create({ data: { name: `Mkperson Quillfeather ${RUN}`, phone: `8${String(Date.now()).slice(-9)}`, email: `mk.${RUN}@gmail.com`, skills: 'Kubernetes', currentSalary: '7 LPA', expectedSalary: '10 LPA', noticePeriod: '30 Days' } });
   const at = new Date(Date.now() + 3 * 86400e3);
@@ -405,6 +405,7 @@ const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), crypto.random
     section('10.02 SEO, mobile and localised job page');
     r = await call('GET', `/public/mkt/job/${req.id}`, undefined, undefined, { raw: true });
     check('server-rendered page: title, description, canonical, hreflang, JSON-LD JobPosting, phone width', r.status === 200 && /<meta name="description"/.test(r.text) && /rel="canonical"/.test(r.text) && /hreflang="te-IN"/.test(r.text) && /"@type":"JobPosting"/.test(r.text) && /width=device-width/.test(r.text), r.text.slice(0, 300));
+    check('the public page never names the client (the careers page own job text)', !r.text.includes('Mkcorbit'), r.text.match(/Mkcorbit.{0,40}/));
     r = await call('GET', `/public/mkt/job/${req.id}?lang=te`, undefined, undefined, { raw: true });
     check('Telugu page text', r.status === 200 && /lang="te"/.test(r.text) && r.text.includes('ఇప్పుడే దరఖాస్తు చేయండి'));
     r = await call('GET', `/public/mkt/job/${req.id}?lang=hi`, undefined, undefined, { raw: true });

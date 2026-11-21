@@ -85,13 +85,17 @@ const T = {
   hi: { apply: 'अभी आवेदन करें', location: 'स्थान', experience: 'अनुभव', salary: 'वेतन', skills: 'कौशल', type: 'नौकरी का प्रकार', about: 'नौकरी के बारे में', posted: 'प्रकाशित', more: 'और नौकरियाँ', lang: 'हिन्दी', intro: (t, l) => `${t} की नौकरी${l ? ` - ${l}` : ''}. दो मिनट में ऑनलाइन आवेदन करें.`, linkedin: 'LinkedIn से आवेदन', alert: 'नौकरी अलर्ट पाएँ' },
 };
 const escHtml = (t) => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// the job text a stranger may read: the careers page's own (no client name, no fee or agreement notes - utils/jobText.masterForCareers)
+async function safeText(job) {
+  try { return String((await require('../jobText').masterForCareers(job)) || '').trim(); } catch { return ''; } // eslint-disable-line global-require
+}
 // the job's own words in Telugu / Hindi: written once by the AI and kept (MktJobI18n); English when the model is not there
 async function translated(job, lang) {
   if (lang === 'en') return null;
   await x('CREATE TABLE IF NOT EXISTS "MktJobI18n" ("requirementId" TEXT NOT NULL, "lang" TEXT NOT NULL, "title" TEXT, "summary" TEXT, "at" TEXT NOT NULL, PRIMARY KEY ("requirementId","lang"))');
   const had = (await q('SELECT * FROM "MktJobI18n" WHERE "requirementId" = ? AND "lang" = ?', job.id, lang))[0];
   if (had && new Date(had.at) > new Date(job.updatedAt || 0)) return { title: had.title, summary: had.summary };
-  const words = String(job.jobDescription || job.description || '').slice(0, 1500);
+  const words = (await safeText(job)).slice(0, 1500);
   const ai = await C.aiJson(`Translate a job advert into ${lang === 'te' ? 'Telugu' : 'Hindi'} for job seekers. Keep company names, skill names and numbers as they are. JSON only: {"title":"...","summary":"3-4 short sentences"}.`, C.maskPii(`Title: ${job.title}\n${words}`, []), { maxTokens: 700, timeoutMs: 9000 });
   if (!ai || !ai.value || !ai.value.title) return null;
   const v = { title: txt(ai.value.title, 200), summary: txt(ai.value.summary, 1500) };
@@ -107,7 +111,7 @@ async function seoJobPage(req, job, { lang = 'en', applyUrl } = {}) {
   const ld = JSON.stringify(await pub.jobPostingLdSafe(job, base)).split('<').join('\\u003c');
   const tr = await translated(job, L).catch(() => null);
   const title = (tr && tr.title) || job.title;
-  const desc = String(job.jobDescription || job.description || '').trim();
+  const desc = await safeText(job);
   const metaDesc = `${t.intro(job.title, job.location)} ${desc.replace(/\s+/g, ' ').slice(0, 120)}`.trim().slice(0, 160);
   const path = careersPath(job);
   const canonical = `${base}${path}`;
@@ -352,10 +356,13 @@ async function linkedinFeed(req) {
   const { slugOf } = require('../jobSlug'); // eslint-disable-line global-require
   const base = C.publicBase(req);
   const jobs = (await CP.listedJobs()).filter((j) => !j.internal);
+  const full = jobs.length ? await prisma.requirement.findMany({ where: { id: { in: jobs.map((j) => j.id) } } }) : [];
+  const texts = {};
+  for (const j of full) texts[j.id] = await safeText(j); // eslint-disable-line no-await-in-loop
   const cd = (v) => `<![CDATA[${String(v == null ? '' : v).replace(/]]>/g, ']]]]><![CDATA[>')}]]>`;
   const s = await C.settings();
   const company = (s.site.brand && s.site.brand.name) || 'TeamLink Consultants';
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<source>\n<lastBuildDate>${new Date().toUTCString()}</lastBuildDate>\n<publisherUrl>${cd(base)}</publisherUrl>\n<publisher>${cd(company)}</publisher>\n${jobs.map((j) => `<job>\n<partnerJobId>${cd(j.id)}</partnerJobId>\n<company>${cd(company)}</company>\n<title>${cd(j.title)}</title>\n<description>${cd(j.jobDescription || j.description || j.title)}</description>\n<applyUrl>${cd(`${base}/site/job/${encodeURIComponent(slugOf(j))}?src=LinkedIn`)}</applyUrl>\n<location>${cd(j.location || 'India')}</location>\n<country>${cd('IN')}</country>\n<workplaceTypes>${cd(/remote/i.test(j.workMode || '') ? 'Remote' : (/hybrid/i.test(j.workMode || '') ? 'Hybrid' : 'On-site'))}</workplaceTypes>\n<jobtype>${cd(/contract/i.test(j.employmentType || '') ? 'CONTRACT' : 'FULL_TIME')}</jobtype>\n</job>`).join('\n')}\n</source>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<source>\n<lastBuildDate>${new Date().toUTCString()}</lastBuildDate>\n<publisherUrl>${cd(base)}</publisherUrl>\n<publisher>${cd(company)}</publisher>\n${jobs.map((j) => `<job>\n<partnerJobId>${cd(j.id)}</partnerJobId>\n<company>${cd(company)}</company>\n<title>${cd(j.title)}</title>\n<description>${cd(texts[j.id] || j.title)}</description>\n<applyUrl>${cd(`${base}/site/job/${encodeURIComponent(slugOf(j))}?src=LinkedIn`)}</applyUrl>\n<location>${cd(j.location || 'India')}</location>\n<country>${cd('IN')}</country>\n<workplaceTypes>${cd(/remote/i.test(j.workMode || '') ? 'Remote' : (/hybrid/i.test(j.workMode || '') ? 'Hybrid' : 'On-site'))}</workplaceTypes>\n<jobtype>${cd(/contract/i.test(j.employmentType || '') ? 'CONTRACT' : 'FULL_TIME')}</jobtype>\n</job>`).join('\n')}\n</source>\n`;
 }
 
 // ================================================================== 10.11 browser extension keys
