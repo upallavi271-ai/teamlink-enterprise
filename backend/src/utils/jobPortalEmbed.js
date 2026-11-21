@@ -356,6 +356,9 @@ function inject(html, kind) {
   // the portal's code is not changed.
   const end = out.lastIndexOf('</body>');
   if (kind === 'page' && at >= 0 && end >= 0) out = `${out.slice(0, end)}${ADDON_TAG}\n${out.slice(end)}`;
+  // THE IMPORT WIZARD'S JOB LIST showed only the first 80 roles until something was typed (2026-11-21: Education recruiters saw only a few clients' roles).
+  // A department now has a few hundred roles, so the list shows up to 1000 (it scrolls); the portal's own file is not changed.
+  if (kind === 'page') out = out.replace('hits = hits.slice(0, 80);', 'hits = hits.slice(0, 1000);');
   const head = out.indexOf(CHARSET);
   if (kind === 'reset' && head >= 0) {
     const cut = head + CHARSET.length;
