@@ -227,7 +227,6 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
   });
   return (
     <>
-    {previewing && <BulkPreview body={previewBody()} onCancel={() => setPreviewing(false)} onConfirm={() => { setPreviewing(false); run(); }} />}
     <Modal
       title={`${TITLES[kind]} — ${items.length} candidate${items.length === 1 ? '' : 's'}`}
       onClose={onClose}
@@ -242,7 +241,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
           >
             {busy ? `Working... ${progress}/${items.length}` : `${TITLES[kind]} (${items.length})`}
           </button>
-        </>
+    </>
       )}
     >
       {kind === 'assign' && (
@@ -360,6 +359,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
       )}
       {error && <div className="error-text">{error}</div>}
     </Modal>
+    {previewing && <BulkPreview body={previewBody()} onCancel={() => setPreviewing(false)} onConfirm={() => { setPreviewing(false); run(); }} />}
     </>
   );
 }

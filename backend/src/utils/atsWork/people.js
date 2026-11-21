@@ -348,6 +348,13 @@ async function bulkPreview(user, body) {
       else out.willMove.push({ id, name, from: r.recruiterId || r.tlId || 'unassigned', to: 'the chosen person' });
     });
   } else return { status: 400, error: 'Unknown bulk action.' };
+  // names, never record ids (founder 2026-11-21: "From" showed an id and "To" said "the chosen person")
+  const pickIds = [...new Set([body.userId, ...(Array.isArray(body.userIds) ? body.userIds : []), body.recruiterId].filter(Boolean).map(String))];
+  const fromIds = [...new Set(out.willMove.map((r) => r.from).filter((x) => /^c[a-z0-9]{15,}$/i.test(String(x))))];
+  const ppl = (pickIds.length || fromIds.length) ? await prisma.user.findMany({ where: { id: { in: [...pickIds, ...fromIds] } }, select: { id: true, name: true } }).catch(() => []) : [];
+  const nm = new Map(ppl.map((u) => [u.id, u.name]));
+  const toWord = pickIds.map((id) => nm.get(id)).filter(Boolean).join(', ');
+  out.willMove = out.willMove.map((r) => ({ ...r, from: nm.get(r.from) || (r.from === 'unassigned' ? 'nobody yet' : r.from), to: /^the chosen/.test(r.to) && toWord ? toWord : r.to }));
   return { status: 200, counts: { willMove: out.willMove.length, skipped: out.skipped.length }, ...out };
 }
 

@@ -7,6 +7,7 @@ import { TlOptions, RecruiterOptions, RecruiterMulti, leastBusyTl } from './assi
 import TlChecklist from './TlChecklist.jsx'; // several team leads as checkboxes (2026-10-14)
 import './jobops.css';
 import { BulkPreview } from '../ats/AtsWork.jsx'; // "Who will move" before the action (Extra 763)
+import { useResponseRecipients, RecipientsChecklist } from './ResponseRecipients.jsx'; // who receives the responses (founder 2026-11-21)
 
 // ---------------------------------------------------------------------------
 // BULK ACTIONS on selected jobs (ATS review #2 §21; change list 2026-10-03 §5
@@ -54,6 +55,16 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
   const [error, setError] = useState('');
   const [result, setResult] = useState(null); // { rows, undoId, targetName }
   const [undone, setUndone] = useState('');
+  // BOTH OPTIONS IN ONE WINDOW (founder 2026-11-21: "assign chesey dhanaiki existing dhi & new dhi"): for one job, Assign recruiter also says
+  // WHO RECEIVES THE RESPONSES (the people who apply by themselves). The picked recruiters are ticked by default until the user changes it.
+  const rrJob = kind === 'assign-recruiter' && items.length === 1 ? items[0].id : null;
+  const rr = useResponseRecipients(rrJob, { options: true });
+  const [rcpt, setRcpt] = useState(null); // null = follow the picked recruiters
+  const [rcptWhy, setRcptWhy] = useState('');
+  const rrOn = !!(rrJob && rr.data && rr.data.canChange);
+  const rrIds = rcpt === null ? (rr.data && rr.data.set ? rr.data.ids : userIds) : rcpt;
+  const rrChanged = rrOn && !(rr.data.ids.length === rrIds.length && rr.data.ids.every((x) => rrIds.includes(x)));
+  const rrNeedWhy = rrChanged && rr.data.set;
 
   useEffect(() => {
     if (!assign) return;
@@ -94,6 +105,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
   const multiTl = kind === 'assign-tl'; // pick one or MORE team leads, as checkboxes (2026-10-14)
   const several = multi || multiTl;
   const ready = assign ? (several ? userIds.length > 0 : !!userId) && jobs.length > 0 : !!priority;
+  const rrOk = !rrOn || (rrIds.length > 0 && (!rrNeedWhy || rcptWhy.trim().length >= 3));
   const one = items.length === 1;
 
   async function run() {
@@ -110,6 +122,11 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
         all.push(...(res.data.results || []));
         undoId = res.data.undoId || undoId;
         targetName = res.data.targetName || targetName;
+      }
+      if (rrOn && rrChanged && all.some((x) => x.ok)) {
+        try {
+          await api.put(`/requirements/${rrJob}/response-recipients`, { userIds: rrIds, reason: rcptWhy.trim() || 'Set with Assign recruiter' });
+        } catch (e) { setError(`Recruiters assigned, but who receives the responses was not saved: ${e.response?.data?.error || 'try again on the Team tab.'}`); }
       }
       setResult({ rows: all, undoId, targetName });
       if (all.some((x) => x.ok) && onDone) onDone();
@@ -177,14 +194,13 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
 
   return (
     <>
-      {previewing && <BulkPreview body={{ kind: kind === 'priority' ? 'requirement-priority' : 'requirement-assign', ids: items.map((x) => x.id), userId: several ? userIds[0] : userId, priority }} onCancel={() => setPreviewing(false)} onConfirm={() => { setPreviewing(false); run(); }} />}
     <Modal
       title={`${TITLES[kind]} — ${one ? (items[0].reqCode || items[0].title) : plural(items.length, 'requirement', 'requirements')}`}
       onClose={onClose}
       footer={(
         <>
           <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="button" className="btn btn-primary" disabled={!ready || busy} onClick={() => setPreviewing(true)}>
+          <button type="button" className="btn btn-primary" disabled={!ready || !rrOk || busy} onClick={() => setPreviewing(true)}>
             {busy ? 'Working…' : `${TITLES[kind]}${!one && jobs.length ? ` to ${plural(jobs.length, 'requirement', 'requirements')}` : ''}`}
           </button>
         </>
@@ -269,6 +285,22 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
             {bench && bench.jobs.length > 0 && !people.length && (
               <div className="small-muted">{`Ask an Admin to add a ${lower} for ${dept || 'this department'} in Administration → Users.`}</div>
             )}
+            {rrOn && (
+              <div className="rr-in-assign" style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 600, marginBottom: 2 }}>Who receives the responses</div>
+                <div className="small-muted" style={{ marginBottom: 6 }}>
+                  The people who apply by themselves (Job Portal, careers page, job boards, WhatsApp / AI apply links) go to these recruiters, one by one in turn. The recruiters above work and source the job.
+                </div>
+                <RecipientsChecklist groups={rr.data.options || null} value={rrIds} onChange={(v) => setRcpt(v)} assignedIds={userIds} />
+                {rrIds.length === 0 && <div className="error-text">Tick at least one recruiter who receives the responses.</div>}
+                {rrNeedWhy && (
+                  <label className="field" style={{ marginTop: 6 }}>
+                    <span>Why do the responses go to other people? (kept on the history)</span>
+                    <input type="text" value={rcptWhy} maxLength={200} onChange={(e) => setRcptWhy(e.target.value)} placeholder="e.g. Uma is on leave this week" />
+                  </label>
+                )}
+              </div>
+            )}
             <div className="small-muted" style={{ margin: '6px 0' }}>
               {`The new ${lower} gets a message in the app. You can undo this for 24 hours.`}
             </div>
@@ -277,6 +309,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
         {error && <div className="error-text">{error}</div>}
       </div>
     </Modal>
+      {previewing && <BulkPreview body={{ kind: kind === 'priority' ? 'requirement-priority' : 'requirement-assign', ids: items.map((x) => x.id), userId: several ? userIds[0] : userId, userIds: several ? userIds : undefined, priority }} onCancel={() => setPreviewing(false)} onConfirm={() => { setPreviewing(false); run(); }} />}
     </>
   );
 }

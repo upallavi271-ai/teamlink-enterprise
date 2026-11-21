@@ -135,6 +135,32 @@ const ID = { tlA: 'cmudx9z15001u25ry8ib01xiu', sneha: 'cmudx9yc2001925rygfytrgza
         check('TL: the change is saved with its reason and listed under Changes', /D Sony/.test(t2.split('Responses go to')[1] || '') && /walk-in drive/.test(t2), t2.slice(0, 500));
       } else check('TL: Change opens the tick list', false);
     }
+    // BOTH OPTIONS IN THE ASSIGN WINDOW (founder 2026-11-21) and the "Who will move" check on TOP of it
+    await page.goto(`http://localhost:${WEB}/requirements/${job.id}`, { waitUntil: 'commit', timeout: 120000 });
+    const assignBtn = page.locator('button', { hasText: /^Assign recruiter$/ }).first();
+    const ab = await assignBtn.waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false);
+    if (ab) {
+      await assignBtn.click();
+      const dlg = page.locator('.modal', { hasText: 'Assign recruiter' }).first();
+      const rrUp = await dlg.locator('text=Who receives the responses').waitFor({ state: 'visible', timeout: 30000 }).then(() => true).catch(() => false);
+      check('Assign recruiter window shows BOTH: the recruiters to assign AND "Who receives the responses"', rrUp && (await dlg.locator('input[aria-label^="Responses to"]').count()) >= 1, (await dlg.innerText().catch(() => '')).slice(0, 400));
+      await dlg.locator('text=Loading recruiters').waitFor({ state: 'detached', timeout: 30000 }).catch(() => null);
+      const go = dlg.locator('.modal-foot button.btn-primary');
+      if (!(await go.isEnabled().catch(() => false))) await dlg.locator('text=D Sony').first().click().catch(() => null);
+      await page.waitForTimeout(500);
+      if (await go.isEnabled().catch(() => false)) {
+        await go.click();
+        const prev = page.locator('.modal', { hasText: 'Who will move' }).last();
+        const pv = await prev.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
+        // on top = the element at the centre of the "Who will move" window belongs to it, not to the Assign window behind
+        const onTop = pv && await prev.evaluate((el) => { const r = el.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(40, r.height / 2)); return !!hit && el.contains(hit); }).catch(() => false);
+        check('"Who will move" opens ON TOP of the Assign window (not hidden behind it)', onTop);
+        if (pv) await prev.locator('text=will move').first().waitFor({ state: 'visible', timeout: 20000 }).catch(() => null);
+        const pt = pv ? await prev.innerText() : '';
+        check('"Who will move" names the people (From / To), never a record id', pv && pt.includes('D Sony') && !/c[a-z0-9]{20,}/.test(pt), pt.slice(0, 300));
+        await page.screenshot({ path: path.join(SHOTS, 'assign-both-options.png') }).catch(() => {});
+      } else check('the Assign button is enabled with recruiters picked', false, (await dlg.innerText().catch(() => '')).slice(0, 300));
+    } else check('the job page has an Assign recruiter button for the TL', false);
   } catch (e) {
     check(`no browser error (${e.message})`, false);
   } finally {
