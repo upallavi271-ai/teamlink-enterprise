@@ -20,7 +20,7 @@ const SIZES = {
   '4:5': { w: 1080, h: 1350, label: 'Instagram portrait (4:5)' },
   '9:16': { w: 1080, h: 1920, label: 'Story / Reel cover (9:16)' },
 };
-const LAYOUTS = { split: 'Split: words and picture side by side', overlay: 'Overlay: full picture with the words on it', bold: 'Bold: brand colours and shapes (no picture needed)', offer: 'Offer: a big badge with the offer' };
+const LAYOUTS = { showcase: 'Showcase: logo band, two-tone headline, hero picture, service icons, price cards, who it is for, website (like a full promo poster)', split: 'Split: words and picture side by side', overlay: 'Overlay: full picture with the words on it', bold: 'Bold: brand colours and shapes (no picture needed)', offer: 'Offer: a big badge with the offer' };
 const HEX = /^#[0-9a-f]{6}$/i;
 const esc = (t) => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const clean = (t, n) => String(t == null ? '' : t).replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, n);
@@ -52,6 +52,7 @@ async function roundCorners(buf, w, h, r) { return sharp(buf).composite([{ input
  * -> { buf (PNG), w, h }
  */
 async function makeBanner(spec = {}) {
+  if (spec.layout === 'showcase') return require('./bannerShowcase').makeShowcase(spec, { SIZES, textPng, fit, svg, cover, roundCorners, mix, readable, HEX }); // eslint-disable-line global-require
   const sz = SIZES[spec.size] || SIZES['1:1'];
   const { w, h } = sz;
   const layout = LAYOUTS[spec.layout] ? spec.layout : (spec.photo ? 'overlay' : 'bold');

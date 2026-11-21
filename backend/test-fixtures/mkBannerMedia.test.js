@@ -35,6 +35,18 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
     assert.ok(x.item, `${size}/${layout}: ${JSON.stringify(x)}`);
     const m = await sharp(Img.rawFile(await Img.rawRow(x.item.id)).path).metadata(); assert.equal(m.width, w); assert.equal(m.height, h);
   }
+  // the showcase layout (a full promo poster): services with icons, price cards, who it is for, website chip, in every size
+  for (const [size, w, h] of [['16:9', 1920, 1080], ['4:5', 1080, 1350], ['1:1', 1080, 1080], ['9:16', 1080, 1920]]) {
+    const x = await Img.createBanner(admin, { layout: 'showcase', size, headline: 'AI-Powered', headline2: 'Digital Marketing', sub: 'Smart Marketing. Better Visibility. Measurable Growth.', servicesTitle: 'Our Digital Marketing Services',
+      services: ['Social Media Marketing', 'SEO', 'AEO', 'GEO', 'Google Business Profile Management', 'LinkedIn Business Marketing', 'AI Content Creation'],
+      plans: [{ name: 'Basic', price: '₹3,999', unit: '/ Month' }, { name: 'Growth', price: '₹7,999', unit: '/ Month' }, { name: 'Premium', price: '₹14,999', unit: '/ Month' }], audienceTitle: 'Target Customers:', audience: 'Doctors, Clinics, Hospitals and IT Companies.', chip: 'tmlink.in', badge: 'AI' });
+    assert.ok(x.item, `showcase ${size}: ${JSON.stringify(x)}`);
+    const m = await sharp(Img.rawFile(await Img.rawRow(x.item.id)).path).metadata(); assert.equal(m.width, w); assert.equal(m.height, h);
+  }
+  const sparse = await Img.createBanner(admin, { layout: 'showcase', headline: 'Only a headline' }); // empty sections are simply left out
+  assert.ok(sparse.item, JSON.stringify(sparse));
+  const SH = require('../src/marketing/bannerShowcase');
+  assert.equal(SH.iconFor('Google Business Profile Management', 0), 'pin'); assert.equal(SH.iconFor('SEO', 0), 'search'); assert.equal(SH.iconFor('Something else', 1), 'bolt');
   assert.equal((await Img.createBanner(admin, { headline: '' })).status, 400);
   assert.equal((await Img.createBanner(admin, { headline: 'Uses a video', photoItemId: 'nope' })).status, 404);
 
