@@ -28,6 +28,8 @@
 .cpl.cv4 .cv4-head h1{font-size:25px;font-weight:800;letter-spacing:-.015em;line-height:1.2;color:var(--ink)}
 .cpl.cv4 .cv4-head p{margin-top:6px;gap:6px 8px}
 .cpl.cv4 .cv4-scope .scope-tag,.cpl.cv4 .cv4-scope .scope-tag-inline{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:999px;background:var(--navy-tint,#E7EDF7);color:var(--navy);font-size:12px;font-weight:600}
+/* the ? tip beside "Your area" opens leftwards, so it never pushes a phone screen sideways */
+.cpl.cv4 .cv4-head .gd-help::after{left:auto;right:-8px;transform:none}
 .cpl.cv4 .cv4-stats{display:inline-flex;flex-wrap:wrap;gap:6px}
 .cpl.cv4 .cv4-stat{display:inline-flex;align-items:center;gap:5px;padding:2px 10px 2px 8px;border-radius:999px;font-size:12px;line-height:20px;font-weight:500;white-space:nowrap;background:var(--cl-blue-tint);color:var(--cl-blue-ink)}
 .cpl.cv4 .cv4-stat b{font-weight:700;font-variant-numeric:tabular-nums}
@@ -77,7 +79,7 @@
 .cpl.cv4 .cv4-status [data-tab="rejected"].active{box-shadow:0 1px 3px rgba(22,32,43,.12),inset 0 -2px 0 var(--cl-red)}
 .cpl.cv4 .cv4-status .tabstrip-extra{margin-left:0}
 /* the Show chips: soft toggles with a clear "on" state */
-.cpl.cv4 .cv4-show-l{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint)}
+.cpl.cv4 .cv4-show-l{font-size:12px;font-weight:700;color:var(--ink-faint)}
 .cpl.cv4 .cv4-listpanel .cpl-quick{gap:6px}
 .cpl.cv4 .cv4-listpanel .cpl-quick .cpl-chip{padding:5px 11px;font-size:12.5px;font-weight:600;border:1px solid transparent;background:var(--cl-soft);color:var(--ink-soft);transition:background .12s,border-color .12s}
 .cpl.cv4 .cv4-listpanel .cpl-quick .cpl-chip:hover{background:var(--navy-tint,#E7EDF7);color:var(--ink)}
@@ -91,7 +93,7 @@
 .cpl.cv4 .cv4-filtercard{background:var(--cl-soft);border:1px solid var(--line-soft,#EDF1F6);border-radius:12px;padding:12px 14px;margin:0 0 12px}
 .cpl.cv4 .cv4-filtercard .fbar{margin:0 0 10px;padding:0 0 10px;border-bottom:1px dashed var(--line)}
 .cpl.cv4 .cv4-filtercard .fbar-row{gap:10px 10px;align-items:flex-end}
-.cpl.cv4 .cv4-filtercard .lph-facet-lbl{font-size:11px;font-weight:700;letter-spacing:.03em;color:var(--ink-faint);text-transform:uppercase;line-height:16px}
+.cpl.cv4 .cv4-filtercard .lph-facet-lbl{font-size:11.5px;font-weight:700;color:var(--ink-soft);line-height:16px}
 .cpl.cv4 .cv4-filtercard .msel-btn,
 .cpl.cv4 .cv4-filtercard input:not([type="checkbox"]):not([type="radio"]),
 .cpl.cv4 .cv4-filtercard select,
@@ -123,7 +125,7 @@
 .cpl.cv4 .cpl-layout button.is-on{background:var(--navy);color:#fff;box-shadow:0 1px 3px rgba(31,56,100,.25)}
 /* the active filters as chips */
 .cpl.cv4 .filter-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}
-.cpl.cv4 .filter-chips-lead{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint)}
+.cpl.cv4 .filter-chips-lead{font-size:12px;font-weight:700;color:var(--ink-soft)}
 .cpl.cv4 .filter-chips-sep{display:none}
 .cpl.cv4 .filter-chips-chip{display:inline-flex;align-items:center;gap:3px;padding:3px 6px 3px 10px;border-radius:999px;background:var(--cl-card);border:1px solid var(--navy-tint,#CFDAEC);color:var(--navy);font-size:12px}
 .cpl.cv4 .filter-chips-x{border:0;background:var(--navy-tint,#E7EDF7);color:var(--navy);border-radius:50%;width:18px;height:18px;display:inline-grid;place-items:center;padding:0;margin-left:3px;cursor:pointer;line-height:1}
