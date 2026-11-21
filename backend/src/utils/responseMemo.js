@@ -76,21 +76,29 @@ function memoRoute(tag, ttlMs = TTL_MS) {
       const job = new Promise((resolve) => { settle = resolve; });
       inflight.set(key, job);
       const finish = (entry) => { if (inflight.get(key) === job) inflight.delete(key); settle(entry || null); };
+      // The answer still goes through the res.json wrappers mounted BEFORE this route (utils/agreementPrivacy.js agreementGuard,
+      // utils/clientRedact.js, the BDE salary cut): what is kept is the text they finally send, captured at res.send.
+      // (audit 2026-11-20: the memo used to send JSON.stringify(body) itself, so TL / STL / Recruiter logins got the agreement
+      // fields of the Clients and Jobs lists and the BDE side the salary figures of the board.)
       const orig = res.json.bind(res);
       res.json = (body) => {
-        try {
-          if (res.statusCode === 200 && version === Number(key.split('|')[2])) {
-            const text = JSON.stringify(body);
-            const headers = {};
-            KEEP_HEADERS.forEach((h) => { const v = res.get(h); if (v !== undefined) headers[h] = v; });
-            const entry = { at: Date.now(), body: text, headers };
-            store(key, entry);
-            finish(entry);
-            res.type('application/json');
-            return res.send(text);
-          }
-        } catch { /* fall through to the normal answer */ }
-        finish(null);
+        let keep = false;
+        try { keep = res.statusCode === 200 && version === Number(key.split('|')[2]); } catch { keep = false; }
+        if (!keep) { finish(null); return orig(body); }
+        const origSend = res.send;
+        res.send = function capture(chunk) {
+          res.send = origSend;
+          try {
+            if (res.statusCode === 200) {
+              const text = typeof chunk === 'string' ? chunk : (Buffer.isBuffer(chunk) ? chunk.toString('utf8') : JSON.stringify(chunk));
+              const headers = {};
+              KEEP_HEADERS.forEach((h) => { const v = res.get(h); if (v !== undefined) headers[h] = v; });
+              store(key, { at: Date.now(), body: text, headers });
+              finish(memo.get(key));
+            } else finish(null);
+          } catch { finish(null); }
+          return origSend.call(this, chunk);
+        };
         return orig(body);
       };
       res.on('close', () => finish(null)); // no 200 was sent (error, closed): waiting requests run themselves

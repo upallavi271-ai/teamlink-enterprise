@@ -2731,7 +2731,12 @@ router.get('/:id', async (req, res) => {
       }
       if (rs.resubmittedAt) payload.requestResubmitted = { at: rs.resubmittedAt, byName: rs.resubmittedByName || null, times: rs.resubmits || 1 };
     }
-    payload.requestRejectReasons = require('../utils/requestAccept').REJECT_REASONS; // eslint-disable-line global-require
+    // the reasons list is for the people who may reject (BDE TL / Manager / Admin); it names the agreement, which a TL / STL /
+    // Recruiter / HR login never hears about (utils/agreementPrivacy.js, audit 2026-11-20)
+    if (REJECT_KINDS.includes(JC.kindOf(req.user)) && !agreementPrivacy.blindTo(req.user)) payload.requestRejectReasons = require('../utils/requestAccept').REJECT_REASONS; // eslint-disable-line global-require
+    if (payload.requestRejection && agreementPrivacy.blindTo(req.user) && /agreement/i.test(`${payload.requestRejection.reason || ''} ${payload.requestRejection.note || ''}`)) {
+      payload.requestRejection = { ...payload.requestRejection, reason: 'Other', note: null, text: 'Rejected' };
+    }
     // the sub-status chip next to each person's stage (utils/atsFlowConfig.js)
     if (Array.isArray(payload.applications)) await require('../utils/atsFlowConfig').attachSubStatus(payload.applications); // eslint-disable-line global-require
   }
