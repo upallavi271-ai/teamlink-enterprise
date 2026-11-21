@@ -409,6 +409,23 @@ async function jobChanges(user) {
   return list.filter((r) => ok.has(r.candidateId)).map((r) => ({ candidateId: r.candidateId, name: ok.get(r.candidateId), at: r.usedAt, from: r.changes.currentCompany.from, to: r.changes.currentCompany.to }));
 }
 
+// weekly, only with alerts.staleProfile ON: one bell per recruiter with how many of their people are stale (send them the update link)
+async function staleSweep() {
+  if (!(await S.setting('alerts.staleProfile'))) return { off: true, told: 0 };
+  const d = Number(await S.setting('stale.days')) || 180;
+  const cutoff = new Date(Date.now() - d * 864e5);
+  const apps = await prisma.application.findMany({ where: { ownerRecruiterId: { not: null }, updatedAt: { lt: cutoff }, candidate: { createdAt: { lt: cutoff }, doNotContact: false, applications: { none: { updatedAt: { gte: cutoff } } } } }, select: { ownerRecruiterId: true, candidateId: true }, take: 50000 });
+  const by = new Map();
+  apps.forEach((a) => { if (!by.has(a.ownerRecruiterId)) by.set(a.ownerRecruiterId, new Set()); by.get(a.ownerRecruiterId).add(a.candidateId); });
+  let told = 0;
+  for (const [uid, set] of by) {
+    told += 1;
+    // eslint-disable-next-line no-await-in-loop
+    await require('../notify').notifyUsers([uid], { title: 'Profiles to refresh', message: `${set.size} of your people have not been updated for ${d}+ days. Send them the update link (Candidates > Hiring tools > Records to refresh).`, open: '/candidates?view=tools&tool=records' }).catch(() => {}); // eslint-disable-line global-require
+  }
+  return { told };
+}
+
 // ---- 03.17 profile-update link ---------------------------------------------------------------------------------------------------------
 const LINK_DAYS = 14;
 const SELF_FIELDS = { location: 120, preferredLocation: 200, currentCompany: 120, currentDesignation: 120, experienceYears: 0, noticePeriod: 60, expectedSalary: 60, currentSalary: 60, skills: 1000, education: 120 };
@@ -743,7 +760,7 @@ module.exports = {
   ocrBacklog, ocrRerun, latestResume, fieldRules, saveFieldRule, deleteFieldRule, parseFields, applyFields, FIELD_METHODS,
   parseNl, search, filterChips, listLink, noticeDaysOf, savedSearches, saveSearch, runSaved, updateSaved, deleteSaved, savedSweep,
   pools, createPool, updatePool, deletePool, poolMembers, addMembers, removeMembers, poolsOfCandidate,
-  enrichment, applyEnrichment, staleProfiles, jobChanges, createLink, linkView, linkSubmit, linksOf,
+  enrichment, applyEnrichment, staleProfiles, staleSweep, jobChanges, createLink, linkView, linkSubmit, linksOf,
   docExpiry, setDocExpiry, expiringDocs, docExpirySweep, fraudScan, fraudFlags, decideFraud, reviewScore, bulkReview, reviewsOf,
   resumeContent, resumePdf,
 };

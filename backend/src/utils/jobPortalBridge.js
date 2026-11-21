@@ -379,6 +379,12 @@ async function ingestOne(payload) {
     },
   });
   const resume = await attachResume(app, candidate, requirement);
+  // SCREENING ANSWERS from the portal's apply form (market wave B 02.10; the portal reads the questions at
+  // GET /api/public/mkt/jobs/:id/screening): { questionId: answer } in p.screening or app.screening. A knockout answer flags / holds.
+  try {
+    const ans = (p.screening && typeof p.screening === 'object' && p.screening) || (app.screening && typeof app.screening === 'object' && app.screening) || null;
+    if (ans) await require('./mktb/jobs').recordAnswers(application, ans, { source: 'Job portal' }); // eslint-disable-line global-require
+  } catch (err) { console.error(`[job-portal] screening answers not stored for ${application.id}: ${err.message}`); }
   // b5_/b6_ (ATS-100): the portal's own consent answers, and where the person
   // came from — utm_* + ?ref=<code> remembered by the embed host (p.attribution),
   // or a referral code the portal recorded as the source (it reads ?ref= too).

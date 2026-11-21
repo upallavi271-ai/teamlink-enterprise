@@ -246,6 +246,7 @@ const wr = await call('GET', `${M}/jobs/${job.id}/watch`, null, tR);
   check('03.13 the job change is listed for the recruiter', jc.status === 200 && jc.body.rows.some((r) => r.candidateId === C1.id && r.to === 'Acme Labs'), jc.body);
   const st = await call('GET', `${M}/stale?days=1`, null, tR);
   check('03.13 the stale-profile list answers', st.status === 200 && Array.isArray(st.body.rows));
+  check('03.13 the weekly stale-profile reminder stays OFF until the Admin switch', (await C.staleSweep()).off === true);
 
   section('03.18 documents with expiry');
   const doc = await prisma.candidateDocument.create({ data: { candidateId: C1.id, docType: 'ID', name: 'Passport' } });

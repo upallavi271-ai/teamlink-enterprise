@@ -383,6 +383,7 @@ function start() {
   every(6 * 3600e3, 'job-watch', () => require('./jobs').watchSweep(), 20 * 60e3); // eslint-disable-line global-require
   every(6 * 3600e3, 'saved-search', () => require('./cands').savedSweep(), 25 * 60e3); // eslint-disable-line global-require
   every(6 * 3600e3, 'doc-expiry', () => require('./cands').docExpirySweep(), 30 * 60e3); // eslint-disable-line global-require
+  every(7 * 24 * 3600e3, 'stale-profiles', () => require('./cands').staleSweep(), 2 * 3600e3); // eslint-disable-line global-require
   every(24 * 3600e3, 'data-health', async () => { if (await S.setting('dataHealth.schedule')) await dataHealth({ fix: !!(await S.setting('dataHealth.autofix')) }); }, 60 * 60e3);
   every(24 * 3600e3, 'fraud-scan', async () => { await require('./cands').fraudScan(); await require('./pipe').backdoorScan(); }, 90 * 60e3); // eslint-disable-line global-require
 }
