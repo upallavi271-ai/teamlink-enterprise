@@ -332,6 +332,9 @@ export const ADMIN_ITEMS = [
   // ORGANIZATION CHART (founder 2026-11-17): the whole company as a tree, Super Admin down to every employee, with a Message button on each person (pages/admin/OrgChart.jsx)
   leaf('🌳', '/admin/org-chart', 'Organization Chart', [['administration', 'Organization Structure', 'view']]),
   leaf('📜', '/admin/audit', 'Audit Logs', [['administration', 'Audit Logs', 'view']]),
+  // The credentials vault is a Company Setup tab. A person granted the vault who does NOT reach Company Setup (no Company Setup view)
+  // gets this one entry inside Administration instead, so the grant is reachable; the Super Admin never sees it here.
+  { ...leaf('🔒', '/admin/credentials', 'Credentials vault', null), when: (u) => !!u && !!(u.credentialsVault && u.credentialsVault.open) && !can(u, null, 'administration', 'Company Setup', 'view') },
   leaf('🔔', '/admin/notifications', 'Notifications', null),
   leaf('👤', '/admin/profile', 'Profile', null),
 ];
@@ -357,6 +360,9 @@ export const SETUP_TABS = [
   // Message templates (2026-10-09): the words of every Email / SMS / WhatsApp message, the channels' honest status, sent messages, limits. Admin, HR, TL edit; managers look (server-enforced).
   { ...leaf('✉️', '/admin/message-templates', 'Message templates', null), when: (u) => !!u && !u.viewAs && ([u.role, u.hrmsRole, u.atsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR', 'TL', 'MANAGER', 'ASSISTANT_MANAGER', 'STL'].includes(r)) || u.accountsRole === 'ACCOUNTANT') },
   { ...leaf('💾', '/admin/system', 'Backups & safety', null), when: (u) => !!u && u.role === 'SUPER_ADMIN' && !u.hrSuper && !u.viewAs },
+  // CREDENTIALS VAULT (founder 2026-11-21): every company login (Naukri, Hostinger, Gmail ...) in one place, encrypted. Super Admin only
+  // unless granted (Role Catalog "Credentials Vault" or the vault's Access tab); the server decides (credentialsVault on /auth/me).
+  { ...leaf('🔒', '/admin/credentials', 'Credentials vault', null), when: (u) => !!u && !!(u.credentialsVault && u.credentialsVault.open) },
 ];
 export const SETUP_PATHS = SETUP_TABS.map((t) => t.to);
 

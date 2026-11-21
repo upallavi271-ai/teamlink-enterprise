@@ -78,6 +78,7 @@ import Integrations from './pages/admin/Integrations.jsx';
 import Notifications from './pages/admin/Notifications.jsx';
 import AuditLogs from './pages/admin/AuditLogs.jsx';
 import SystemSafety from './pages/admin/SystemSafety.jsx';
+import CredentialsVault from './pages/admin/CredentialsVault.jsx';
 import FitSettings from './components/resume/FitSettings.jsx'; // fit_: Admin → Fit settings
 import AtsAlertSettings from './pages/admin/AtsAlertSettings.jsx'; // Admin → Step timing (dashboards)
 import DataCleanup from './pages/admin/DataCleanup.jsx'; // Admin → Company Setup → Data cleanup (dashboards)
@@ -423,6 +424,7 @@ export default function App() {
         <Route path="admin/pipeline" element={<PipelineSettings />} />
         <Route path="admin/ai-governance" element={<AiGovernance />} />
         <Route path="admin/vendor-logins" element={<VendorLogins />} />
+        <Route path="admin/credentials" element={<CredentialsVault />} />
         <Route path="admin/partners" element={<Partners />} />
         <Route path="admin/message-templates" element={<MessageTemplates />} />
         <Route path="admin/alerts" element={<Navigate to="/admin/step-timing" replace />} />
