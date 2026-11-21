@@ -2496,9 +2496,15 @@ router.get('/catalog', guarded(async (req, res) => {
     // routes/atsExperience.js, every list cut to this login's scope there. HR has no client book, so no Client health.
     experience: !!view,
     clientHealth: !!view && !(scopeOf(req.user).atsRole === 'HR' && !scopeOf(req.user).global),
+    // the insight tabs (routes/atsInsights.js, market wave 2026-11-21): the same rule the insight routes apply
+    ...(await (async () => {
+      const ia = await require('../utils/insights/core').access(req.user); // eslint-disable-line global-require
+      const hr = [req.user.role, req.user.atsRole, req.user.hrmsRole].includes('HR');
+      return { insights: ia.ok && ia.view, insightsBackdoor: ia.ok && ia.view && !ia.hr, compliance: ia.ok && (ia.admin || hr), biFeed: ia.admin };
+    })()),
     scope: view ? scopeLabel(req.user, 'ats') : null,
     ownOnly,
-    ...(ownOnly ? { view: false, export: false, revenue: false, recruiterRevenue: false, jobPortal: false, accounts: false, myBusiness: false, experience: false, clientHealth: false, ownReports: OWN.OWN_REPORTS, scope: 'Your own numbers' } : {}),
+    ...(ownOnly ? { view: false, export: false, revenue: false, recruiterRevenue: false, jobPortal: false, accounts: false, myBusiness: false, experience: false, clientHealth: false, insights: false, insightsBackdoor: false, compliance: false, biFeed: false, ownReports: OWN.OWN_REPORTS, scope: 'Your own numbers' } : {}),
   });
 }));
 

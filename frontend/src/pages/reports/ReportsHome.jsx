@@ -46,6 +46,7 @@ export const REPORT_GROUPS = [
       { id: 'clientsjobs', icon: '🏢', title: 'Client-wise requirements', answers: 'Which clients get their requirements filled, and which are stuck?', views: [['clients', 'Clients'], ['requirements', 'Requirements']] },
       { id: 'mybusiness', icon: '💼', title: 'My business', answers: 'My clients, my requirements and my follow-ups in one place.', views: [['mybusiness', 'My business']] },
       { id: 'supply', icon: '⚖️', title: 'Supply vs demand', answers: 'Which specializations need more candidates?', views: [['specialisations', 'Supply vs demand']] },
+      { id: 'backdoor', icon: '🚪', title: 'Backdoor hires', answers: 'Who did we send to a client that then joined them without us?', views: [['backdoor', 'Backdoor hires']] },
       { id: 'clienthealth', icon: '🩺', title: 'Client health', answers: 'Are clients happy (NPS), what are they escalating, who stays and who did we lose?', views: [['clienthealth', 'Client health']] },
     ],
   },
@@ -61,7 +62,8 @@ export const REPORT_GROUPS = [
     id: 'speed',
     title: 'Speed & quality',
     cards: [
-      { id: 'ttf', icon: '⚡', title: 'Time to hire', answers: 'How many days to fill a requirement?', views: [['timetofill', 'Time to fill']] },
+      { id: 'ttf', icon: '⚡', title: 'Time to hire', answers: 'How many days to fill a requirement - per requirement, per client and per opening?', views: [['timetofill', 'Time to fill'], ['ttfjob', 'By job & client'], ['openings', 'Per opening']] },
+      { id: 'qoh', icon: '⭐', title: 'Quality of hire', answers: 'How do clients rate the people we placed, 30, 60 and 90 days after joining?', views: [['qoh', 'Quality of hire']] },
       { id: 'ops', icon: '⏱️', title: 'Late & waiting', answers: 'What is late: steps past their time, follow-ups not done?', views: [['sla', 'Late steps'], ['followups', 'Follow-ups']] },
       { id: 'rejections', icon: '✋', title: 'Rejections', answers: 'Who rejects people, and why?', views: [['rejections', 'Rejection reasons']] },
       { id: 'overrides', icon: '⚠️', title: 'Added by override', answers: 'Who was added although they did not fit the requirement, and why?', views: [['overrides', 'Added by override']] },
@@ -78,11 +80,28 @@ export const REPORT_GROUPS = [
       { id: 'accounts', icon: '🧾', title: 'Accounts reports', answers: 'Invoices, payments and dues in detail.', link: '/reports/accounts', needs: 'accounts', open: true },
     ],
   },
+  {
+    // market wave 2026-11-21 (routes/atsInsights.js): forecasts, the report builder, alerts / e-mails, compliance and the BI feed
+    id: 'build',
+    title: 'Forecast, build & data',
+    cards: [
+      { id: 'forecast', icon: '🔮', title: 'Forecast & closest to fill', answers: 'How many joinings (and fees) will the pipeline bring, which jobs are nearly filled, and where do people get stuck?', views: [['forecast', 'Pipeline forecast'], ['readiness', 'Closest to fill'], ['bottlenecks', 'Bottlenecks & forecast']] },
+      { id: 'builder', icon: '🧩', title: 'Build your own report', answers: 'Pick what, which columns, filters and grouping - or just ask for a chart. Save, share with your team, download.', views: [['builder', 'Build a report'], ['askchart', 'Ask for a chart']] },
+      { id: 'schedules', icon: '🔔', title: 'Alerts & scheduled e-mails', answers: 'Tell me when a number crosses my limit, and e-mail my dashboard or a report on a schedule.', views: [['schedules', 'Alerts & e-mails']] },
+      { id: 'compliance', icon: '🛡️', title: 'Compliance (DPDP)', answers: 'Consent status, data retention and who opened personal data.', views: [['compliance', 'Compliance (DPDP)']] },
+      { id: 'bifeed', icon: '🔌', title: 'BI feed', answers: 'Connect Power BI, Looker Studio or Excel to TeamLink numbers with a read-only key.', views: [['bifeed', 'BI feed']] },
+    ],
+  },
 ];
 
 // MAY THIS LOGIN OPEN THIS REPORT? The catalog's answer: a few reports have their own switch, the rest are the role's list
 // (catalog.reports; null = every report for a login with ATS Reports).
-const OWN_SWITCH = { mybusiness: 'myBusiness', jobportal: 'jobPortal', revenue: 'revenue', 'recruiter-revenue': 'recruiterRevenue', experience: 'experience', clienthealth: 'clientHealth' };
+const OWN_SWITCH = {
+  mybusiness: 'myBusiness', jobportal: 'jobPortal', revenue: 'revenue', 'recruiter-revenue': 'recruiterRevenue', experience: 'experience', clienthealth: 'clientHealth',
+  // the insight tabs (routes/atsInsights.js): the catalog's flags
+  ttfjob: 'insights', openings: 'insights', readiness: 'insights', forecast: 'insights', bottlenecks: 'insights', builder: 'insights', askchart: 'insights',
+  schedules: 'insights', backdoor: 'insightsBackdoor', qoh: 'insights', compliance: 'compliance', bifeed: 'biFeed',
+};
 export function mayOpen(cat, id) {
   if (!cat) return false;
   if (OWN_SWITCH[id]) return !!cat[OWN_SWITCH[id]];

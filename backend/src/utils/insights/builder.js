@@ -260,7 +260,7 @@ function describe(spec) {
 function parseQuestion(q) {
   const t = ` ${String(q || '').toLowerCase()} `;
   let entity = 'applications';
-  if (/\bjoin(ed|ing|ings|ers)?\b|\bhires?\b|\bhired\b|placements?/.test(t)) entity = 'joinings';
+  if (/\bjoin(ed|ing|ings|ers)?\b|\bhires?\b|\bhired\b|placements?|(days|time) to (fill|hire)/.test(t)) entity = 'joinings';
   else if (/\binterviews?\b/.test(t)) entity = 'interviews';
   else if (/\b(requirements?|jobs?|openings?|vacanc(y|ies)|positions?)\b/.test(t)) entity = 'requirements';
   const E = ENTITIES[entity];
@@ -276,7 +276,9 @@ function parseQuestion(q) {
     [/\b(by|per|each)\s+location|location[- ]?wise/, 'location'],
     [/\b(by|per|each)\s+(result|outcome)/, 'result'],
     [/\b(by|per|each)\s+(mode)/, 'mode'],
-  ].find(([re, k]) => re.test(t) && E.fields[k]);
+  ].find(([re, k]) => re.test(t) && E.fields[k])
+    // "top 10 sources by joinings", "which clients ...": the plural noun names the grouping
+    || [[/ sources /, 'source'], [/ clients /, 'client'], [/ recruiters /, 'recruiter'], [/ departments /, 'department'], [/ locations /, 'location']].find(([re, k]) => re.test(t) && E.fields[k]);
   const range = /last 7 days|this week|past week/.test(t) ? '7d' : /last 30 days|past month|last one month/.test(t) ? '30d' : /last 90 days|last 3 months|last quarter|past 3 months/.test(t) ? '90d'
     : /last 6 months|past 6 months/.test(t) ? '180d' : /last 12 months|last year|past year/.test(t) ? '365d' : /this month/.test(t) ? 'thisMonth' : /last month|previous month/.test(t) ? 'lastMonth' : /this year/.test(t) ? 'thisYear' : 'all';
   const filters = [];

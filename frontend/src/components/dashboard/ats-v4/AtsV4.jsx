@@ -8,6 +8,7 @@ import { LineChart, DonutChart } from '../../charts';
 import { can, canRaiseRequirement, canStartJob } from '../../../permissions';
 import './atsV4.css';
 import { TeamJoinTile } from './TeamJoinTile.jsx'; // one joinings card per team (2026-11-20)
+import { useInsightCards } from './InsightCards.jsx'; // time to fill, closest to fill, forecast, plan my day, leaderboard, ask for a chart, my charts (2026-11-21)
 import {
   arrange, moveOnto, moveBy, cardKey, LayoutBox, LayoutBar,
 } from './CardLayout.jsx'; // my dashboard layout (2026-11-17)
@@ -654,6 +655,8 @@ export default function AtsV4({
   const hidden = new Set((layout && layout.hidden) || []);
 
   const card = (id, label, node, flex) => (node ? { id: cardKey(id), label, node, flex } : null);
+  // the insight cards (InsightCards.jsx): not while reading someone else's dashboard, and only for a login with ATS Reports
+  const insightSections = useInsightCards({ enabled: !readOnly && !!user && (can(user, null, 'reports', 'ATS Reports', 'view') || can(user, null, 'reports', 'My Results', 'view')), card });
   const wLabel = (w, fallback) => (w && (w.title || FOLD_NAMES[w.type])) || fallback;
   const sections = [
     { id: 'workspace', label: 'My business workspace', cards: [card('workspace', 'My business workspace', workspace && draw(workspace))] },
@@ -727,6 +730,7 @@ export default function AtsV4({
         card('activity', 'Recent activity', (today || banner) && <Activity today={today} banner={banner} onDrill={onDrill} />, 'activity'),
       ],
     },
+    ...insightSections,
     {
       id: 'below',
       label: 'More on your dashboard',

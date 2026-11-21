@@ -86,7 +86,11 @@ function readiness(ctx, { limit = 0 } = {}) {
     const c = byReq.get(r.id) || { joined: 0, accepted: 0, offer: 0, selected: 0, interview: 0, shared: 0, early: 0 };
     const openings = Math.max(1, Number(r.openings) || 1);
     const left = Math.max(0, openings - c.joined);
-    const cover = Object.entries(WEIGHTS).reduce((n, [k, w]) => n + c[k] * w, 0);
+    // late steps count in full; interviews and "with the client" together at most half of the openings left (a pile of
+    // people sitting with the client does not make a job nearly filled)
+    const late = c.accepted * WEIGHTS.accepted + c.offer * WEIGHTS.offer + c.selected * WEIGHTS.selected;
+    const early = Math.min(left * 0.5, c.interview * WEIGHTS.interview + c.shared * WEIGHTS.shared);
+    const cover = late + early;
     const readinessPct = left ? Math.min(100, Math.round((cover / left) * 100)) : 100;
     const best = Object.keys(WEIGHTS).find((k) => c[k] > 0);
     let next;

@@ -62,6 +62,7 @@ import PartnersReport from './PartnersReport.jsx';
 import JoinDropReport from './JoinDropReport.jsx'; // Joinings and drops + Client history
 import CandidateExperienceReport from './CandidateExperienceReport.jsx'; // surveys, NPS, complaints, apply form (routes/atsExperience.js)
 import ClientHealthReport from './ClientHealthReport.jsx'; // client NPS, escalations + matrix, retention / lost clients
+import InsightReports, { INSIGHT_TABS, INSIGHT_TAB_IDS } from './InsightReports.jsx'; // Build, forecast & data (routes/atsInsights.js, market wave 2026-11-21)
 import CandidateSources from '../../components/candidate/CandidateSources.jsx'; // 'Where candidates come from' (also a tab of Candidates & Pipeline)
 
 // ---------------------------------------------------------------------------
@@ -143,6 +144,9 @@ export const ATS_REPORT_TABS = [
   ['clienthealth', 'Client health'],
   // The actual workflow (2026-09-29), live counts per box, each box opening its list.
   ['workflow', 'Workflow'],
+  // Market wave 2026-11-21 (routes/atsInsights.js): time to fill by job, per opening, closest to fill, forecasts, builder, ask, alerts & e-mails,
+  // backdoor hires, quality of hire, compliance (DPDP), BI feed.
+  ...INSIGHT_TABS,
 ];
 const TAB_IDS = ATS_REPORT_TABS.map(([id]) => id);
 // Addresses from before this page settled — the first cut's tab names, and
@@ -490,7 +494,7 @@ const CLEARS = {
   tl: ['recruiter'],
   clientId: ['requirementId'],
 };
-const NO_FILTER_TABS = ['workflow', 'daily', 'jobportal', 'partners', 'teamwise', 'mybusiness', 'came', 'joindrop', 'experience', 'clienthealth'];
+const NO_FILTER_TABS = ['workflow', 'daily', 'jobportal', 'partners', 'teamwise', 'mybusiness', 'came', 'joindrop', 'experience', 'clienthealth', ...INSIGHT_TAB_IDS];
 // v3 colours on the cards: green good / yellow pending / red late or rejected.
 const BAD_WORDS = /late|overdue|reject|pending|waiting|not add up|no joining|still to come|drop|no-show|did not/i;
 function tileTone(label) {
@@ -787,7 +791,7 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
       {NO_FILTER_TABS.includes(tab) ? (
         <>
           {viewSwitch && <div style={{ marginBottom: 10 }}>{viewSwitch}</div>}
-          {tab === 'workflow' ? <WorkflowDiagram /> : tab === 'jobportal' ? <JobPortalReports embedded /> : tab === 'partners' ? <PartnersReport canExport={canExport} /> : tab === 'teamwise' ? <TeamReports /> : tab === 'came' ? <CandidateSources embedded user={user} /> : tab === 'joindrop' ? <JoinDropReport /> : tab === 'experience' ? <CandidateExperienceReport /> : tab === 'clienthealth' ? <ClientHealthReport /> : tab === 'mybusiness' ? <MyBusinessReports /> : <DailyReport />}
+          {INSIGHT_TAB_IDS.includes(tab) ? <InsightReports tab={tab} canExport={canExport} /> : tab === 'workflow' ? <WorkflowDiagram /> : tab === 'jobportal' ? <JobPortalReports embedded /> : tab === 'partners' ? <PartnersReport canExport={canExport} /> : tab === 'teamwise' ? <TeamReports /> : tab === 'came' ? <CandidateSources embedded user={user} /> : tab === 'joindrop' ? <JoinDropReport /> : tab === 'experience' ? <CandidateExperienceReport /> : tab === 'clienthealth' ? <ClientHealthReport /> : tab === 'mybusiness' ? <MyBusinessReports /> : <DailyReport />}
         </>
       ) : (<>
       {/* The same filters as every page (ATS layout v3): Department · Date
