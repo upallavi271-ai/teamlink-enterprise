@@ -6,6 +6,7 @@ import { when } from './jpKit.js';
 import NaukriShineMailboxes from './NaukriShineMailboxes.jsx';
 import CandidateLogins from './CandidateLogins.jsx';
 import ConnectedAccounts from './ConnectedAccounts.jsx';
+import { CareersSiteAdmin, BoardSyncAdmin } from '../admin/MarketAdmin.jsx';
 import './jobpublish.css';
 import './naukriShineMailboxes.css';
 import './portalSettings.css';
@@ -24,6 +25,8 @@ import './portalSettings.css';
 // ---------------------------------------------------------------------------
 const SUBTABS = [
   ['mailboxes', 'Naukri & Shine mailboxes'], ['sites', 'Job sites'], ['notify', 'Notifications (Email · SMS · WhatsApp)'], ['screening', 'AI screening'], ['logins', 'Candidate logins'], ['accounts', 'WhatsApp, social media & AI calling'],
+  // market wave 2026-11-21: the agency careers site + job alerts, and job-board applications coming straight in (components/admin/MarketAdmin.jsx)
+  ['site', 'Careers site'], ['boardapps', 'Board applications in'],
 ];
 const errOf = (e) => {
   const x = e && e.response && e.response.data && e.response.data.error;
@@ -429,6 +432,8 @@ export default function JobPortalSettings({ initial = 'mailboxes', legacy = null
       {sub === 'screening' && <Screening />}
       {sub === 'logins' && <CandidateLogins />}
       {sub === 'accounts' && <ConnectedAccounts />}
+      {sub === 'site' && <CareersSiteAdmin />}
+      {sub === 'boardapps' && <BoardSyncAdmin />}
       {sub === 'legacy' && legacy}
     </div>
   );

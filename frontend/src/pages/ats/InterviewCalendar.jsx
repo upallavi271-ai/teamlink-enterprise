@@ -46,6 +46,7 @@ import { Modal } from '../../components/proto.jsx';
 import PanelView from '../../components/interviews/PanelView.jsx';
 import PanelPicker from '../../components/interviews/PanelPicker.jsx';
 import MeetingLinkButton from '../../components/interviews/MeetingLinkButton.jsx';
+import InterviewTools from '../../components/interviews/InterviewTools.jsx'; // market wave 2026-11-21: scorecard, briefing, recordings, AI notes, voice feedback, summary, scheduling
 import InterviewRounds from '../../components/interviews/InterviewRounds.jsx'; // every round: type, typed feedback, files, interviewer rating, suggested decision (audit 232-250)
 import AllCalendar from '../../components/ats/AllCalendar.jsx'; // interviews + joinings + follow-ups + tasks in one month / week calendar (audit 428)
 // 2026-10-14: Start interview (opens the Meet link), e-mail status with Resend, Admin e-mail / Meet settings.
@@ -1649,6 +1650,7 @@ function DetailPanel({
       )}
       {row.canSetLink && !!link && <div style={{ marginBottom: 6 }}><StartInterviewButton row={{ ...row, start: { show: true, can: true, needsLink: true, online: true, label: 'Change the Meet link' } }} onChanged={() => { setMailKey((k) => k + 1); if (onChanged) onChanged({}); }} /></div>}
       <div style={{ marginBottom: 10 }}><InterviewMailStatus applicationId={row.id} reloadKey={mailKey} /></div>
+      {!row.ai && <InterviewTools applicationId={row.id} round={row.round || 1} />}
       <InterviewPrepSection applicationId={row.id} />
       <ScheduledMessagesPanel applicationId={row.id} only="interview" compact />
       <div className="ivx-actions">

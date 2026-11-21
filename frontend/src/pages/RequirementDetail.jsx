@@ -1,3 +1,4 @@
+import JobKitsTab from '../components/jobs/JobKitsTab.jsx'; // market wave 2026-11-21: interview kits, apply form, tests, SMS campaign
 import RequirementPositions from '../components/clients/RequirementPositions.jsx'; // several positions inside one requirement (audit 114)
 import { RequirementWorkPanel } from '../components/ats/AtsWork.jsx'; // recruiter suggestions, assign, matching, close pipeline, workflow trail (round 3)
 import { useEffect, useRef, useState } from 'react';
@@ -194,9 +195,9 @@ export const JOB_PORTAL = 'TeamLink Job Portal';
 //   → Candidates Available → On Hold / Closed
 const FLOW = ['DRAFT', 'AGREEMENT_CHECK', 'OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
 const PARKED = ['ON_HOLD', 'CLOSED'];
-const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', 'distribute', 'history', 'activity', 'tools'];
+const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', 'distribute', 'kits', 'history', 'activity', 'tools'];
 const TAB_LABELS = {
-  tools: 'Hiring tools', overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', distribute: 'Postings', history: 'History', activity: 'Activity',
+  tools: 'Hiring tools', overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', distribute: 'Postings', kits: 'Kits & tests', history: 'History', activity: 'Activity',
 };
 // What each tab is for: the line under the strip and the tab's tooltip. Main: Overview · Candidates · Team · Interviews · Postings; under More: Client · Agreement · History · Activity.
 const TAB_SAY = {
@@ -205,6 +206,7 @@ const TAB_SAY = {
   overview: 'The requirement at a glance: status, who works on it, the people nearby and what needs doing next.',
   candidates: 'People in the pipeline for this requirement, and good matches to add. Move them to the next step here.',
   interviews: 'Client and recruitment interviews for this requirement: booked, done, waiting for feedback.',
+  kits: 'The interview questions per round, extra apply-form questions, online tests and an SMS campaign for this job.',
   recruiter: 'Who works on this requirement: the team lead, recruiters and client manager. Change the team here.',
   distribute: 'Where this requirement is posted: job portal, job sites and tracked links, and how each posting is doing.',
   client: 'The client contact for this requirement.',
@@ -1195,9 +1197,10 @@ export default function RequirementDetail() {
   // the API did not send its data).
   const tabs = TABS.filter((t) => (t !== 'client' || r.internal || !r.sections || !!r.sections.clientContact)
     && (t !== 'agreement' || showAgreementTab)
-    && (t !== 'tools' || (!isClientLogin && user?.role !== 'CANDIDATE')));
+    && (t !== 'tools' || (!isClientLogin && user?.role !== 'CANDIDATE'))
+    && (t !== 'kits' || !['CLIENT', 'CANDIDATE'].includes(user && (user.atsRole || user.role))));
   const bodies = {
-    overview, candidates: candidatesTab, recruiter: recruiterTab, client: clientTab, interviews: interviewsTab, agreement: agreementTab, distribute: <PostingsTab job={r} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load}><DistributeTab job={r} onChanged={load} /></PostingsTab>, history: <div className="card section"><HistoryTab key={r.id} requirementId={r.id} /></div>, activity: activityTab,
+    overview, candidates: candidatesTab, recruiter: recruiterTab, client: clientTab, interviews: interviewsTab, agreement: agreementTab, distribute: <PostingsTab job={r} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load}><DistributeTab job={r} onChanged={load} /></PostingsTab>, kits: <JobKitsTab job={r} />, history: <div className="card section"><HistoryTab key={r.id} requirementId={r.id} /></div>, activity: activityTab,
     tools: <RequirementTools key={r.id} job={r} onChanged={load} />,
   };
   const tabCount = { candidates: applications.length, interviews: interviewRows.length };

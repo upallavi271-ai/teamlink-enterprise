@@ -1,3 +1,4 @@
+import OutreachTools from '../components/candidate/OutreachTools.jsx'; // market wave 2026-11-21: AI drafts, sequences, call notes, email tools, tests
 import { useEffect, useState } from 'react';
 import CallHistory from '../components/browsercall/CallHistory.jsx'; // real browser calls on this candidate
 import CandidateHistory from '../components/ats/CandidateHistory.jsx'; // History tab: the complete history of the person (applications, totals, one timeline)
@@ -669,6 +670,7 @@ export default function CandidateDetail() {
           Status is Upcoming / Due Today / Overdue / Completed, derived on the
           server from the due date so it is never stale. --- */}
       {tab === 'aicalling' && internal && <AiCallingSlot {...slot} refreshKey={refreshKey} />}
+      {tab === 'outreach' && internal && <OutreachTools key={c.id} candidateId={c.id} applicationId={primary ? primary.id : undefined} />}
       {tab === 'scheduled' && internal && <ScheduleMessageTab key={c.id} candidateId={c.id} applicationId={primary ? primary.id : undefined} />}
       {tab === 'conversation' && internal && <CandidateConversation candidateId={c.id} name={c.name} applicationId={primary ? primary.id : undefined} requirementId={primary ? primary.requirementId : undefined} onChanged={load} />}
       {tab === 'history' && internal && <CallHistory candidateId={c.id} />}

@@ -1,0 +1,34 @@
+/* Interview tools, Kits & tests, Outreach tools (market wave 2026-11-21) */
+.ivt { padding: 10px 12px; margin: 10px 0; }
+.ivt-head { display: flex; gap: 8px; align-items: baseline; width: 100%; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; flex-wrap: wrap; }
+.ivt-head > span:last-child { margin-left: auto; }
+.ivt-body { padding-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+.ivt-body h4 { font-size: 13px; margin: 8px 0 2px; }
+.ivt-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ivt-row input[type=text], .ivt-row input[type=url], .ivt-row input:not([type]) { flex: 1 1 160px; min-width: 0; }
+.ivt-body textarea { width: 100%; box-sizing: border-box; }
+.ivt-qs { padding-left: 18px; margin: 4px 0; }
+.ivt-qs li { margin-bottom: 8px; }
+.ivt-scale { display: flex; gap: 3px; flex-wrap: wrap; }
+.ivt-guide { font-size: 12.5px; background: var(--line-soft); border-radius: 6px; padding: 6px 8px; }
+.ivt-recrow { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.ivt-tr { white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 12px; background: var(--line-soft); padding: 6px; border-radius: 6px; }
+.ivt-notes { background: var(--teal-tint, #e6f4f1); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+.ivt-notes ul { margin: 2px 0 4px; padding-left: 18px; }
+.ivt-voice { border-top: 1px dashed var(--line); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.ivt-summary { margin: 0; line-height: 1.55; }
+.ivt-slot { display: block; font-size: 13px; }
+.ivt-code { display: block; word-break: break-all; font-size: 12px; margin: 4px 0; }
+.ivt-brief h4 { margin-top: 4px; }
+.mkt-sec { margin-bottom: 14px; }
+.mkt-sec h3 { font-size: 14px; margin: 0 0 6px; }
+.mkt-q { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px; }
+.mkt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.mkt-switch { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
+.mkt-switch:last-child { border-bottom: 0; }
+@media (max-width: 640px) {
+  .ivt .grid-2 { grid-template-columns: 1fr; }
+}
+@media print {
+  .ivt-head, .ivt .btn { display: none; }
+}

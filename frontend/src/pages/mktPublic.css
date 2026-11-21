@@ -1,0 +1,48 @@
+/* The no-login pages of the market wave: self-booking, tests, the careers site and its job / apply page. Phone width first. */
+.mkp { min-height: 100vh; background: #f8fafc; color: #111827; font-family: system-ui, -apple-system, 'Segoe UI', Arial, sans-serif; }
+.mkp-wrap { max-width: 960px; margin: 0 auto; padding: 0 16px; box-sizing: border-box; }
+.mkp-top { background: #fff; border-bottom: 1px solid #e5e7eb; }
+.mkp-topin { display: flex; align-items: center; justify-content: space-between; min-height: 52px; gap: 8px; }
+.mkp-topin a { color: inherit; text-decoration: none; }
+.mkp-langs { display: flex; gap: 4px; }
+.mkp-langs button { border: 1px solid #d1d5db; background: #fff; border-radius: 14px; padding: 3px 9px; font-size: 12.5px; cursor: pointer; }
+.mkp-langs button.on { background: #111827; color: #fff; border-color: #111827; }
+.mkp-hero { color: #fff; padding: 44px 0; }
+.mkp-hero h1 { font-size: 28px; margin: 0 0 8px; }
+.mkp-hero p { font-size: 16px; opacity: .92; margin: 0 0 16px; }
+.mkp-sec { padding-top: 22px; padding-bottom: 8px; }
+.mkp-sec h2 { font-size: 18px; margin: 0 0 10px; }
+.mkp-h1 { font-size: 24px; margin: 4px 0 10px; }
+.mkp-search { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; margin-bottom: 12px; font-size: 15px; }
+.mkp-jobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.mkp-job { display: flex; flex-direction: column; gap: 4px; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; color: inherit; text-decoration: none; }
+.mkp-job:hover { border-color: #9ca3af; }
+.mkp-facts { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 10px; }
+.mkp-desc { white-space: pre-wrap; line-height: 1.55; }
+.mkp-form, .mkp-alerts { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
+.mkp-alerts input[type=email], .mkp-alerts input[type=text] { padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 15px; }
+.mkp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.mkp-f { display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; color: #374151; }
+.mkp-f input, .mkp-f select { padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 15px; background: #fff; }
+.mkp-choose { display: flex; gap: 8px; flex-wrap: wrap; }
+.mkp-choose label { border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+.mkp-choose label.on { border-color: #1f6feb; background: #eff6ff; }
+.mkp-opt { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; margin: 4px 0; }
+.mkp-btn { display: inline-block; background: #1f6feb; color: #fff; border: 0; border-radius: 8px; padding: 12px 20px; font-weight: 600; font-size: 15px; cursor: pointer; text-decoration: none; text-align: center; }
+.mkp-btn:disabled { opacity: .5; cursor: default; }
+.mkp-btn.light { background: #fff; color: #111827; }
+.mkp-btn.ghost { background: #fff; color: #1f6feb; border: 1px solid #1f6feb; }
+.mkp-ok { color: #047857; font-weight: 600; }
+.mkp-hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.mkp-slots { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.mkp-slot { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px 12px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+.mkp-slot.on { border-color: #1f6feb; background: #eff6ff; }
+.mkp-none { margin-top: 14px; }
+.mkp-none textarea, .mkp-qs textarea { width: 100%; box-sizing: border-box; margin: 6px 0; padding: 8px; border: 1px solid #d1d5db; border-radius: 8px; }
+.mkp-qs { padding-left: 20px; }
+.mkp-qs li { margin-bottom: 14px; }
+.mkp-foot { padding: 24px 16px; }
+@media (max-width: 600px) {
+  .mkp-grid { grid-template-columns: 1fr; }
+  .mkp-hero h1 { font-size: 23px; }
+}

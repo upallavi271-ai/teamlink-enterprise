@@ -86,14 +86,17 @@ export const C360_TAB_ALIAS = {
   'follow-ups-notes': 'followups',
   messages: 'conversation',
   calls: 'aicalling',
+  outreach: 'outreach',
+  sequences: 'outreach',
+  tests: 'outreach',
 };
 // Career is under More so that five tabs are on screen (it is opened less than the follow-ups and documents).
-export const C360_MORE = ['career', 'conversation', 'scheduled', 'aicalling', 'tools'];
+export const C360_MORE = ['career', 'conversation', 'scheduled', 'aicalling', 'tools', 'outreach'];
 // Tabs only a TeamLink login sees (a client / candidate login never does).
-export const C360_INTERNAL_ONLY = ['career', 'followups', 'conversation', 'scheduled', 'aicalling', 'tools'];
+export const C360_INTERNAL_ONLY = ['career', 'followups', 'conversation', 'scheduled', 'aicalling', 'tools', 'outreach'];
 // Tabs that need the right to contact the person (the server decides who:
 // not a BDE, BDE TL or Accounts login).
-export const C360_REACH_ONLY = ['conversation', 'aicalling'];
+export const C360_REACH_ONLY = ['conversation', 'aicalling', 'outreach'];
 
 // ---- Requirement page -----------------------------------------------------
 export const REQ_TAB_ALIAS = {
@@ -105,9 +108,12 @@ export const REQ_TAB_ALIAS = {
   pipeline: 'candidates',
   matching: 'candidates',
   interview: 'interviews',
+  tests: 'kits',
+  assessments: 'kits',
+  kit: 'kits',
 };
 // ?tab=history opens the requirement's own History tab (the people history), under More with Activity (every change)
-export const REQ_MORE = ['client', 'agreement', 'history', 'activity', 'tools'];
+export const REQ_MORE = ['client', 'agreement', 'kits', 'history', 'activity', 'tools'];
 export const reqTabKey = (k, all) => {
   const v = String(k || '').toLowerCase();
   const to = REQ_TAB_ALIAS[v] || v;

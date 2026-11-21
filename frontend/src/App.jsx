@@ -97,6 +97,7 @@ import TalkLink from './pages/TalkLink.jsx'; // 2026-10-28: the candidate's free
 import UpdateProfile from './pages/UpdateProfile.jsx'; // market wave B 03.17: the candidate's own profile-update link (public)
 import AiGovernance from './components/mktb/AiGovernance.jsx'; // market wave B: Administration > ATS settings > AI governance & automation
 import JoiningLink from './pages/JoiningLink.jsx'; // client hiring: the candidate's joining-letter link (public)
+import { SelfBookPage, TakeTestPage, CareersSitePage, SiteJobPage } from './pages/MktPublic.jsx'; // market wave 2026-11-21: self-booking, tests, the careers site (public)
 import InterviewPrepPage from './pages/InterviewPrepPage.jsx'; // the candidate's How-to-prepare page (public, signed link)
 import PublicForm from './components/omni/crm/PublicForm.jsx'; // Omni-Channel Web Forms: the public capture form (no login)
 import ClientReviewPage from './components/omni/marketing/ClientReviewPage.jsx'; // AI Marketing: the client's approval page (private link, no login)
@@ -233,6 +234,11 @@ export default function App() {
       <Route path="/joining/:token" element={<JoiningLink />} />
       <Route path="/update-profile/:token" element={<UpdateProfile />} />
       <Route path="/prep/:token" element={<InterviewPrepPage />} />
+      {/* market wave 2026-11-21 (routes/mktPublic.js): the candidate picks an interview time, takes a test; the agency careers site and its job / apply page */}
+      <Route path="/book/:token" element={<SelfBookPage />} />
+      <Route path="/test/:token" element={<TakeTestPage />} />
+      <Route path="/site" element={<CareersSitePage />} />
+      <Route path="/site/job/:id" element={<SiteJobPage />} />
       <Route path="/forms-public/:token" element={<PublicForm />} />
       {/* AI Marketing client approval: the client opens a private link, no login (marketing/clientReview.js) */}
       <Route path="/client-review/:token" element={<ClientReviewPage />} />

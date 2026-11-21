@@ -1,6 +1,7 @@
 import { AtsWorkSettings } from '../../components/ats/AtsWork.jsx'; // work allocation and automation switches, TL escalation card, failed steps
 import { useEffect, useState } from 'react';
 import api from '../../api';
+import { AddonSwitches } from '../../components/admin/MarketAdmin.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import PendingWorkSettings from '../../components/team/PendingWorkSettings.jsx'; // "Reminders to team leads" card (2026-10-10)
 import JoinDropSettings from './JoinDropSettings.jsx'; // who is told when someone joins / drops / the client answers (2026-10-17)
@@ -98,6 +99,8 @@ export default function AtsAlertSettings() {
         </div>
         {edit && <button type="button" className="btn btn-primary" disabled={busy} onClick={() => save()}>{busy ? 'Saving…' : 'Save'}</button>}
       </div>
+      {/* market wave 2026-11-21: the add-ons that message people or run by themselves - all OFF until turned on (components/admin/MarketAdmin.jsx) */}
+      <AddonSwitches />
       {!edit && <div className="notice">Only a Super Admin or Admin can change these. You can read them.</div>}
       {saved && <div className="notice green">{saved}</div>}
       {error && <div className="notice red">{error}</div>}

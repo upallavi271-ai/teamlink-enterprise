@@ -74,6 +74,8 @@ export const C360_TABS = [
   ['aicalling', 'AI Calling'],
   // market wave B (2026-11-21): client resume PDF, submission notes + packet, update link, enrichment, pools, checks (internal; under More)
   ['tools', 'Hiring tools'],
+  // market wave 2026-11-21: AI drafts, sequences, call notes, email check / tracking / my mailbox, tests, the LinkedIn extension key (under More)
+  ['outreach', 'Outreach tools'],
 ];
 // What each tab is for: the line under the strip, and the tab's tooltip.
 export const C360_SAY = {
@@ -87,6 +89,7 @@ export const C360_SAY = {
   scheduled: 'Write a WhatsApp, SMS or email now and send it later; every scheduled, sent and cancelled message of this person.',
   aicalling: 'Calls the AI made to this person, and a button to start another.',
   tools: 'The client resume PDF, submission notes and packets, the profile-update link, gaps filled from the resume, talent pools and checks.',
+  outreach: 'Draft a message with AI, run a sequence, pull facts from a call, check their email, send a test.',
 };
 export const tabKeyOf = (k) => { const v = String(k || '').toLowerCase(); return C360_TAB_ALIAS[v] || (C360_TABS.some(([x]) => x === v) ? v : 'applications'); };
 const CLOSED = ['REJECTED', 'JOINED', 'HIRED'];
