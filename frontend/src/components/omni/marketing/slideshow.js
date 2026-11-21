@@ -28,7 +28,7 @@ export function recordType(withAudio = false) {
 
 // items: [{ kind: 'image' | 'clip', len }] -> the scenes with their start and length (a clip plays for at most clipSec, and never past its own end)
 export function timeline(items, secPer, clipSec = 6) {
-  const scenes = [{ type: 'intro', dur: INTRO }, ...items.map((p, i) => ({ type: p.kind === 'clip' ? 'clip' : 'pic', idx: i, dur: p.kind === 'clip' ? Math.max(1, Math.min(clipSec, p.len || clipSec)) : secPer })), { type: 'outro', dur: OUTRO }];
+  const scenes = [{ type: 'intro', dur: INTRO }, ...items.map((p, i) => ({ type: p.kind === 'clip' ? 'clip' : 'pic', idx: i, dur: p.kind === 'clip' ? Math.max(1, Math.min(clipSec, p.len || clipSec)) : Math.max(secPer, p.voiceSec ? p.voiceSec + 0.6 : 0) })), { type: 'outro', dur: OUTRO }];
   let t = 0;
   scenes.forEach((s) => { s.start = t; t += s.dur; });
   return { scenes, total: t };
@@ -160,6 +160,21 @@ export function drawFrame(ctx, W, H, t, d, tl) {
   ctx.restore();
 }
 
+// ---- the voice-over (2026-11-21): each scene's caption is spoken by the server's free voice; the scene lasts as long as the sentence (timeline: voiceSec) and the sound goes to the recording ----
+function ensureAC() {
+  const Ctor = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
+  if (!Ctor) return null;
+  if (!AC) AC = new Ctor();
+  if (AC.state === 'suspended') AC.resume().catch(() => {});
+  return AC;
+}
+/** Decode the spoken sentences (wav bytes per scene, or null) -> AudioBuffer per scene. */
+export async function decodeVoices(buffers) {
+  const c = ensureAC();
+  if (!c) throw new Error('This browser cannot play sound.');
+  return Promise.all(buffers.map((b) => (b ? c.decodeAudioData(b.slice(0)) : null)));
+}
+
 // ---- the clips' sound: one shared AudioContext; each clip's element is wired ONCE (the browser allows only one source per element) ----------------
 let AC = null;
 function wireAudio(videos, toRecorder) {
@@ -180,6 +195,7 @@ function wireAudio(videos, toRecorder) {
 }
 const muteAll = (videos) => videos.forEach((v) => { if (v) v.muted = true; });
 const stopClips = (videos) => videos.forEach((v) => { if (v) { try { v.pause(); } catch { /* ignore */ } } });
+const stopVoices = (list) => { list.forEach((v) => { try { v.stop(); } catch { /* already ended */ } }); list.length = 0; };
 
 // play (preview) or record. Returns a stop() function; onDone(blob|null, why) is called at the end.
 export function play(canvas, d, { secPer, clipSec = 6, record = false, onProgress, onDone }) {
@@ -189,18 +205,22 @@ export function play(canvas, d, { secPer, clipSec = 6, record = false, onProgres
   const videos = (d.videos || []).filter(Boolean);
   const hasClips = d.pics.some((p) => p.kind === 'clip');
   const sound = !!d.sound && hasClips;
+  const voices = d.voices || [];
+  const hasVoice = voices.some(Boolean);
+  const voiceSrc = [];
   let rec = null; const chunks = []; let stopped = false;
-  const type = record ? recordType(sound) : null;
+  const type = record ? recordType(sound || hasVoice) : null;
   videos.forEach((v) => { try { v.pause(); v.currentTime = 0; } catch { /* ignore */ } });
   let dest = null;
   if (sound) { try { dest = wireAudio(videos, record); } catch { dest = null; muteAll(videos); } } else muteAll(videos);
+  if (hasVoice && record) { const c = ensureAC(); if (c) dest = dest || c.createMediaStreamDestination(); }
   if (record) {
     if (!type || !canvas.captureStream) { onDone(null, 'This browser cannot record video. Use a recent Chrome or Edge.'); return () => {}; }
     const vs = canvas.captureStream(30);
     const stream = dest && dest.stream.getAudioTracks().length ? new MediaStream([...vs.getVideoTracks(), ...dest.stream.getAudioTracks()]) : vs;
     rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 6000000 });
     rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-    rec.onstop = () => { stopClips(videos); onDone(stopped ? null : new Blob(chunks, { type: type.split(';')[0] })); };
+    rec.onstop = () => { stopClips(videos); stopVoices(voiceSrc); onDone(stopped ? null : new Blob(chunks, { type: type.split(';')[0] })); };
     drawFrame(ctx, W, H, 0, d, tl);
     rec.start(250);
   }
@@ -212,6 +232,9 @@ export function play(canvas, d, { secPer, clipSec = 6, record = false, onProgres
     if (prev && prev.type === 'clip') { const pv = d.videos[prev.idx]; if (pv) { try { pv.pause(); } catch { /* ignore */ } } }
     const s = tl.scenes[i];
     if (s.type === 'clip') { const v = d.videos[s.idx]; if (v) { try { v.currentTime = 0; const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); } catch { /* ignore */ } } }
+    if (s.type === 'pic' && voices[s.idx] && AC) { // this scene's sentence
+      try { const src = AC.createBufferSource(); src.buffer = voices[s.idx]; src.connect(record && dest ? dest : AC.destination); src.start(0); voiceSrc.push(src); } catch { /* the video goes on without it */ }
+    }
     lastI = i;
   };
   const tick = () => {
@@ -224,8 +247,8 @@ export function play(canvas, d, { secPer, clipSec = 6, record = false, onProgres
     if (onProgress) onProgress(Math.min(1, t / tl.total), t);
     if (t < tl.total) requestAnimationFrame(tick);
     else if (rec) setTimeout(() => rec.state !== 'inactive' && rec.stop(), 200); // the last frame is held a moment so it is recorded
-    else { stopClips(videos); onDone && onDone(null); }
+    else { stopClips(videos); stopVoices(voiceSrc); onDone && onDone(null); }
   };
   requestAnimationFrame(tick);
-  return () => { stopped = true; stopClips(videos); if (rec && rec.state !== 'inactive') rec.stop(); else if (onDone && !rec) onDone(null); };
+  return () => { stopped = true; stopClips(videos); stopVoices(voiceSrc); if (rec && rec.state !== 'inactive') rec.stop(); else if (onDone && !rec) onDone(null); };
 }

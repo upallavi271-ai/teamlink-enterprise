@@ -144,6 +144,18 @@ router.get('/images', wrap(async (req, res) => {
 router.post('/images/upload', mustWrite, express.raw({ type: ['image/png', 'image/jpeg', 'image/webp'], limit: '11mb' }), wrap(async (req, res) => send(res, await Img.saveUpload(req.user, req.body, req.headers['content-type'], req.query || {}))));
 // AI Video: the slideshow made in the browser arrives as raw MP4 / WebM bytes (up to 40 MB); the details come in the address
 router.post('/images/video', mustWrite, express.raw({ type: ['video/mp4', 'video/webm'], limit: '41mb' }), wrap(async (req, res) => send(res, await Img.saveVideo(req.user, req.body, req.headers['content-type'], req.query || {}))));
+// the video maker's voice-over: the free server voices (Piper / the AI-call voices) say the scene captions in English, Telugu or Hindi; 30 sentences a minute per person
+const voiceHits = new Map();
+router.get('/video/voice', mustWrite, wrap(async (req, res) => res.json(require('../marketing/meetingVoice').status())));
+router.post('/video/voice', mustWrite, wrap(async (req, res) => {
+  const now = Date.now(); const hits = (voiceHits.get(req.user.id) || []).filter((t) => now - t < 60000);
+  if (hits.length >= 30) return res.status(429).json({ error: 'Too many voice requests in one minute. Wait a moment.' });
+  hits.push(now); voiceHits.set(req.user.id, hits);
+  const lang = ['en', 'te', 'hi'].includes((req.body || {}).lang) ? req.body.lang : 'en';
+  const out = await require('../marketing/meetingVoice').speakAny(lang, (req.body || {}).text);
+  if (out.error) return res.status(out.status || 502).json({ error: out.error });
+  return res.set({ 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store' }).send(out.wav);
+}));
 router.get('/banners/meta', mustWrite, wrap(async (req, res) => res.json(await Img.bannerMeta())));
 router.post('/banners', mustWrite, wrap(async (req, res) => send(res, await Img.createBanner(req.user, req.body || {}))));
 router.post('/images', mustWrite, wrap(async (req, res) => send(res, await Img.create(req.user, req.body || {}))));

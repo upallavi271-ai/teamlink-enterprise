@@ -8,7 +8,7 @@ import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import AiClipPanel from '../marketing/AiClipPanel.jsx';
 import StockClipPanel from '../marketing/StockClipPanel.jsx';
 import AutoStudioPanel from '../marketing/AutoStudioPanel.jsx';
-import { FORMATS, MOTIONS, recordType, timeline, play, drawFrame } from '../marketing/slideshow.js';
+import { FORMATS, MOTIONS, recordType, timeline, play, drawFrame, decodeVoices } from '../marketing/slideshow.js';
 import '../marketing/marketing.css';
 
 // AI MARKETING > AI VIDEO: a short video from APPROVED pictures and the person's own video CLIPS, with the brand intro and outro, made and recorded in
@@ -49,7 +49,7 @@ export default function MkVideosPage() {
   const [pick, setPick] = useState([]); // [{ id, kind: 'image' | 'clip', caption }] in video order
   const [imgs, setImgs] = useState({}); // id -> HTMLImageElement
   const [vids, setVids] = useState({}); // id -> HTMLVideoElement (clips)
-  const [f, setF] = useState({ title: '', format: '9:16', secPer: 3, clipSec: 6, motion: 'mixed', keepSound: true, headline: '', tagline: '', cta: '', footer1: '', footer2: '', useLogo: true });
+  const [f, setF] = useState({ title: '', format: '9:16', secPer: 3, clipSec: 6, motion: 'mixed', keepSound: true, voice: '', headline: '', tagline: '', cta: '', footer1: '', footer2: '', useLogo: true });
   const [mode, setMode] = useState(''); // '' | 'preview' | 'record'
   const [prog, setProg] = useState(0);
   const [made, setMade] = useState(null); // { blob, url, type }
@@ -139,11 +139,24 @@ export default function MkVideosPage() {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const toggle = (p) => setPick((cur) => (cur.some((x) => x.id === p.id) ? cur.filter((x) => x.id !== p.id) : cur.length >= 8 ? (toast('At most 8 pictures and clips in one video'), cur) : [...cur, { id: p.id, kind: p.kind, caption: p.kind === 'image' ? (p.headline || '') : '' }]));
   const move = (i, d) => setPick((cur) => { const n = [...cur]; const j = i + d; if (j < 0 || j >= n.length) return cur; [n[i], n[j]] = [n[j], n[i]]; return n; });
-  const run = (record) => {
+  // the voice-over: each scene's words are spoken by the server's free voice (marketing/meetingVoice.js speakAny); the scene lasts as long as the sentence
+  const withVoices = async () => {
+    if (!f.voice) return { d: data, seconds: tl.total };
+    const bufs = await Promise.all(pick.map((p) => (p.kind === 'image' && String(p.caption || '').trim().length > 1
+      ? omni.post('/gs/marketing/video/voice', { lang: f.voice, text: p.caption }, { responseType: 'arraybuffer', timeout: 60000 }).catch((e) => { throw new Error(errOf(e, 'The voice could not be made.')); })
+      : null)));
+    const voices = await decodeVoices(bufs);
+    const d2 = { ...data, voices, pics: data.pics.map((p, i) => ({ ...p, voiceSec: voices[i] ? voices[i].duration : 0 })) };
+    return { d: d2, seconds: timeline(d2.pics, Number(f.secPer), Number(f.clipSec)).total };
+  };
+  const secondsRef = useRef(0);
+  const run = async (record) => {
     if (!ready) { toast('Pick at least one picture or clip (and wait for it to load)'); return; }
     if (stopRef.current) stopRef.current();
     setMode(record ? 'record' : 'preview'); setProg(0); if (record) setMade(null);
-    stopRef.current = play(canvasRef.current, data, {
+    let useData = data;
+    try { const v = await withVoices(); useData = v.d; secondsRef.current = v.seconds; } catch (e) { toast(e.message || 'The voice could not be made.'); setMode(''); return; }
+    stopRef.current = play(canvasRef.current, useData, {
       secPer: Number(f.secPer), clipSec: Number(f.clipSec), record,
       onProgress: (p) => setProg(p),
       onDone: (blob, why) => {
@@ -161,7 +174,7 @@ export default function MkVideosPage() {
     try {
       const r = await omni.post('/gs/marketing/images/video', made.blob, {
         headers: { 'Content-Type': made.type.split(';')[0] },
-        params: { title: f.title || f.headline || 'Video', aspect: f.format, scenes: pick.length, seconds: Math.round(tl.total), logo: f.useLogo && logo ? '1' : '0', headline: f.headline, ...(proj ? { projectId: proj.id } : {}), ...(getState().dept ? { department: getState().dept } : {}) },
+        params: { title: f.title || f.headline || 'Video', aspect: f.format, scenes: pick.length, seconds: Math.round(secondsRef.current || tl.total), logo: f.useLogo && logo ? '1' : '0', headline: f.headline, ...(proj ? { projectId: proj.id } : {}), ...(getState().dept ? { department: getState().dept } : {}) },
         timeout: 300000,
       });
       if (andSubmit) { const s = await omni.post(`/gs/marketing/images/${r.item.id}/submit`); toast(s.ok); } else toast('Video saved');
@@ -267,6 +280,7 @@ export default function MkVideosPage() {
                   <Field label="SECONDS PER PICTURE"><select value={f.secPer} onChange={(e) => setF({ ...f, secPer: Number(e.target.value) })} disabled={!!mode}>{[2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}</select></Field>
                   <Field label="HOW PICTURES MOVE"><select value={f.motion} onChange={set('motion')} disabled={!!mode}>{Object.entries(MOTIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
                   {hasClip ? <Field label="SECONDS FROM EACH CLIP" hint="A clip plays from its start, at most this long."><select value={f.clipSec} onChange={(e) => setF({ ...f, clipSec: Number(e.target.value) })} disabled={!!mode}>{[3, 4, 5, 6, 8, 10, 15].map((n) => <option key={n} value={n}>{n}</option>)}</select></Field> : null}
+                  <Field label="VOICE-OVER" hint="The words you type on each picture are spoken in a free voice, and the picture stays as long as the sentence."><select value={f.voice} onChange={set('voice')} disabled={!!mode}><option value="">No voice</option><option value="en">English voice</option><option value="te">Telugu voice</option><option value="hi">Hindi voice</option></select></Field>
                   {hasClip ? <Field label="CLIP SOUND" full><label style={{ fontSize: 11, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={f.keepSound} disabled={!!mode} onChange={(e) => setF({ ...f, keepSound: e.target.checked })} />Keep the clips' own sound <small style={{ color: 'var(--muted)' }}>(while recording, your computer stays quiet; pictures have no sound)</small></label></Field> : null}
                   <Field label="INTRO HEADLINE" full><input value={f.headline} maxLength={70} onChange={set('headline')} /></Field>
                   <Field label="INTRO LINE UNDER IT" full><input value={f.tagline} maxLength={80} onChange={set('tagline')} /></Field>

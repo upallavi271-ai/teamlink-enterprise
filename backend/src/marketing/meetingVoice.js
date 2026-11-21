@@ -49,6 +49,15 @@ async function speak(lang, text) {
     try { extra = await require('./meeting').customSentences(); } catch { extra = null; } // eslint-disable-line global-require
     if (!(extra && extra[lang] && extra[lang].has(t))) return { error: 'Not found', status: 404 };
   }
+  return render(lang, t);
+}
+// the same voice for ANY words typed by a signed-in team member (the video maker's voice-over, 2026-11-21). Short text only; the allow-list above still guards the PUBLIC address.
+async function speakAny(lang, text) {
+  const t = String(text || '').replace(/s+/g, ' ').trim().slice(0, 320);
+  if (!NAME[lang] || !t) return { error: 'Write the words to be spoken.', status: 400 };
+  return render(lang, t);
+}
+async function render(lang, t) {
   if (!ready(lang)) return { error: 'The voice is not available', status: 503 };
   const key = `${lang}|${t}`;
   let wav = kept.get(key) || fromDisk(key);
@@ -87,4 +96,4 @@ async function prewarm(max = 14) {
   }
 }
 
-module.exports = { status, speak, ready, prewarm, ALLOW, _kept: kept };
+module.exports = { status, speak, speakAny, ready, prewarm, ALLOW, _kept: kept };

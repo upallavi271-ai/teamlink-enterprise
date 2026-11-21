@@ -488,15 +488,21 @@ async function produce(u, x) {
 
 // ---- AI Video: a slideshow video made in the browser (MkVideosPage.jsx) and saved here; from then on it is approved and linked like a picture ----------
 // q: { title, aspect, scenes (how many pictures), seconds, logo ('1' = carries the logo), department }. Only MP4 / WebM, checked by its first bytes.
-async function saveVideo(u, buf, mime, q = {}) {
+async function saveVideo(u, buf0, mime, q = {}) {
   await ensure();
+  let buf = buf0;
   if (!mayWrite(u)) return { error: 'Your login can look at videos but not make them.', status: 403 };
-  const type = String(mime || '').split(';')[0].trim().toLowerCase();
+  let type = String(mime || '').split(';')[0].trim().toLowerCase();
   if (!['video/mp4', 'video/webm'].includes(type)) return { error: 'Only MP4 or WebM videos can be saved.', status: 400 };
   if (!Buffer.isBuffer(buf) || buf.length < 1000) return { error: 'The video is empty. Make it again.', status: 400 };
   if (buf.length > VIDEO_MAX_BYTES) return { error: `The video is too big (${Math.round(buf.length / 1048576)} MB). ${q.kind === 'clip' ? 'Use a clip under 40 MB (a few seconds is enough).' : 'Use fewer scenes or a shorter time per picture.'}`, status: 413 };
   const looks = type === 'video/mp4' ? buf.slice(4, 8).toString('ascii') === 'ftyp' : buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3;
   if (!looks) return { error: 'That file is not really an MP4 / WebM video.', status: 400 };
+  // a WebM (some browsers record only that) is made into a normal MP4 so WhatsApp, Instagram and mail apps can play it; kept as it was when that is not possible (marketing/videoFix.js)
+  if (type === 'video/webm' && q.kind !== 'clip' && process.env.MK_VIDEO_TO_MP4 !== '0') {
+    const mp4 = await require('./videoFix').toMp4(buf); // eslint-disable-line global-require
+    if (mp4 && mp4.length <= VIDEO_MAX_BYTES) { buf = mp4; type = 'video/mp4'; }
+  }
   // q.kind === 'clip': a person's own short video clip (made with the Gemini app, a phone ...) uploaded as RAW FOOTAGE for AI Video to join into a
   // video; it is approved like a picture before it can be used. Otherwise it is a finished slideshow video made in the browser.
   const clip = q.kind === 'clip';
