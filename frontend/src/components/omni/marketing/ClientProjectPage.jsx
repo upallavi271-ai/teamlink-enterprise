@@ -59,6 +59,12 @@ export default function ClientProjectPage({ token: tokenProp = '', embedded = fa
   const label = { display: 'block', fontSize: 13, fontWeight: 700, margin: '14px 0 4px' };
   const box = (bg, fg) => ({ background: bg, color: fg, borderRadius: 10, padding: '12px 14px', lineHeight: 1.55 });
 
+  // the Approve / Reject buttons of the email open this page on that option (?o=<option>&do=approve|reject)
+  useEffect(() => {
+    if (!d || !d.options || embedded) return;
+    const q = new URLSearchParams(window.location.search); const o = q.get('o'); const act = q.get('do');
+    if (o && d.options.some((x) => x.id === o)) { setPick(o); if (act === 'reject') setMode('reject'); }
+  }, [d]); // eslint-disable-line react-hooks/exhaustive-deps
   if (gone) return <div style={page}><div style={{ ...card, marginTop: 40 }}><h1 style={{ fontSize: 20, margin: '0 0 8px' }}>{temp ? 'One moment, please' : 'This link does not work'}</h1><p style={{ margin: 0, lineHeight: 1.6 }}>{gone}</p>{temp ? <button type="button" style={{ ...btn('#15803d'), marginTop: 14, width: '100%' }} onClick={() => { setGone(''); setTemp(false); load(); }}>Try again</button> : null}</div></div>;
   if (!d) return <div style={page}><div style={{ ...card, marginTop: 40 }}><p style={{ margin: 0 }}>Loading…</p></div></div>;
 
@@ -82,12 +88,6 @@ export default function ClientProjectPage({ token: tokenProp = '', embedded = fa
       const res = await api.post(`${base}/request`, body); setDone(res.data.ok || 'Thank you.'); load(); if (onChanged) onChanged();
     } catch (e) { setErr(errOf(e, 'It could not be sent. Please try again.')); } finally { setBusy(false); }
   };
-  // the Approve / Reject buttons of the email open this page on that option (?o=<option>&do=approve|reject)
-  useEffect(() => {
-    if (!d || !d.options || embedded) return;
-    const q = new URLSearchParams(window.location.search); const o = q.get('o'); const act = q.get('do');
-    if (o && d.options.some((x) => x.id === o)) { setPick(o); if (act === 'reject') setMode('reject'); }
-  }, [d]); // eslint-disable-line react-hooks/exhaustive-deps
   const answer = async (kind) => {
     setErr('');
     if (name.trim().length < 2) { setErr('Please write your name first.'); return; }

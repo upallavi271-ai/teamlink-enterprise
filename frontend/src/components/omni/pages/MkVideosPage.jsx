@@ -58,6 +58,7 @@ export default function MkVideosPage() {
   const [del, setDel] = useState(null);
   const [toClient, setToClient] = useState(null); // the video being sent to a client
   const canvasRef = useRef(null);
+  const secondsRef = useRef(0); // the length of the last made video (voice-over can make it longer): a hook, so it stays above every early return
   const stopRef = useRef(null);
   const urls = useRef([]);
   const fileRef = useRef(null);
@@ -149,7 +150,6 @@ export default function MkVideosPage() {
     const d2 = { ...data, voices, pics: data.pics.map((p, i) => ({ ...p, voiceSec: voices[i] ? voices[i].duration : 0 })) };
     return { d: d2, seconds: timeline(d2.pics, Number(f.secPer), Number(f.clipSec)).total };
   };
-  const secondsRef = useRef(0);
   const run = async (record) => {
     if (!ready) { toast('Pick at least one picture or clip (and wait for it to load)'); return; }
     if (stopRef.current) stopRef.current();
