@@ -632,8 +632,8 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
     // can offer ALL requirements to a recruiter (not only the published ones). They are in knownIds, so the prune keeps them.
     const liveIds = new Set(live.map((r) => r.id));
     const stubRows = await prisma.requirement.findMany({
-      where: { status: { notIn: ['CLOSED'] } },
-      select: { id: true, reqCode: true, title: true, location: true, department: true, client: { select: { name: true } } },
+      // every requirement, closed ones too (2026-11-21: a department's import list is ALL its requirements; "a past requirement is still a requirement")
+      select: { id: true, reqCode: true, title: true, location: true, department: true, status: true, client: { select: { name: true } } },
     });
     const stubs = stubRows.filter((r) => !liveIds.has(r.id) && r.title).map((r) => ({
       requirementId: r.id,
@@ -642,6 +642,8 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
       location: r.location || null,
       department: r.department || null,
       status: 'closed',
+      // the requirement's REAL state, for the import wizard's list (embed/import-jobs.mjs): the stub itself is always a hidden, closed portal job
+      desc: `[tl-status:${String(r.status || '').toUpperCase()}]`,
       importStub: true,
     }));
     const res = await portalFetch('/integrations/teamlink/jobs/sync', {

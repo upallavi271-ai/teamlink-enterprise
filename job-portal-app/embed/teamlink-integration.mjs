@@ -690,7 +690,10 @@ export function teamlinkFrontRouter({ root, express }) {
   // the import wizards' job list: every department near the top, the department in each label (embed/import-jobs.mjs)
   r.get('/api/candidates/import/jobs', wrap(async (req, res, next) => {
     const M = await import(pathToFileURL(join(import.meta.dirname, 'import-jobs.mjs')).href);
-    return M.importJobsMiddleware()(req, res, next);
+    const { withUser } = await portal();
+    const { resolveSession } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'auth.js')).href);
+    const { cookieOf } = await import(pathToFileURL(join(import.meta.dirname, 'kavya-campaign.mjs')).href);
+    return M.importJobsForDepartment({ resolveSession, withUser, cookieOf, cookieName: process.env.SESSION_COOKIE || 'tl_session' })(req, res, (err) => (err ? next(err) : M.importJobsMiddleware()(req, res, next)));
   }));
   // the Talent Pool / Find Candidates list says who imported each candidate (embed/import-stats.mjs)
   r.get('/api/candidates', wrap(async (req, res, next) => {

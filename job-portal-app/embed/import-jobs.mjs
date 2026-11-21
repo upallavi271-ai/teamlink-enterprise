@@ -48,3 +48,44 @@ export function importJobsMiddleware() {
     next();
   };
 }
+
+/*
+ * EACH DEPARTMENT SEES ITS OWN ROLES, ALL OF THEM (2026-11-21: "education vallaki education total requirements, non IT department vallaki medical + non IT medical
+ * both, medical vallaki entire medical"): the list the import wizard offers is the caller's department - every requirement of it, open AND closed -
+ * and not the first 80 of everybody's. Admin sees every department. Unknown / no department: the portal's own answer is left as it is.
+ *   Education      -> Education
+ *   Manufacturing  -> Manufacturing
+ *   Medical        -> Medical + Non IT Medical   (the entire medical desk)
+ *   Non IT         -> Medical + Non IT Medical   (both medical and non-IT roles)
+ *   anything else  -> its own department
+ * Departments are compared on their first four letters, like the desks already are (Education / Educational, Manufacture / Manufacturing).
+ */
+export const deptKey = (d) => String(d || '').replace(/[^A-Za-z]/g, '').toLowerCase().slice(0, 4);
+const GROUPS = { noni: ['noni', 'medi'], medi: ['medi', 'noni'] };
+export const allowedKeys = (dept) => { const k = deptKey(dept); return k ? (GROUPS[k] || [k]) : []; };
+
+/** deps: { resolveSession(token), withUser, cookieOf, cookieName } - answers the list itself for a department-scoped caller, else calls next(). */
+export function importJobsForDepartment(deps) {
+  return async function mw(req, res, next) {
+    try {
+      const token = deps.cookieOf(req.headers && req.headers.cookie, deps.cookieName);
+      const session = token ? await deps.resolveSession(token) : null;
+      if (!session || session.role === 'admin') return next(); // not signed in: the portal says so; admin: everything (the portal's list, all departments)
+      const SYSTEM = { userId: '', role: 'admin', profileId: null };
+      const dept = session.profileId ? await deps.withUser(SYSTEM, async (c) => ((await c.query('select department from recruiters where id = $1', [session.profileId])).rows[0] || {}).department) : null;
+      const keys = allowedKeys(dept);
+      if (!keys.length) return next();
+      const q = String((req.query || {}).q || '').trim().toLowerCase().slice(0, 80);
+      const rows = await deps.withUser(SYSTEM, async (c) => (await c.query(
+        `select id, title, location, status, department, description from jobs where id like 'tl\\_%' order by (status = 'open') desc, published_at desc nulls last, id limit 5000`)).rows);
+      // an import stub is always a hidden CLOSED portal job; the requirement's real state travels in its description ([tl-status:OPEN]) so the wizard says open / closed truthfully
+      rows.forEach((j) => {
+        const m = /^\[tl-status:([A-Z_]+)\]/.exec(String(j.description || ''));
+        if (m) j.status = m[1] === 'CLOSED' ? 'closed' : 'open';
+        delete j.description;
+      });
+      const mine = rows.filter((j) => keys.includes(deptKey(j.department)) && (!q || String(j.title || '').toLowerCase().includes(q)));
+      return res.json({ jobs: reshapeImportJobs(mine) });
+    } catch { return next(); }
+  };
+}
