@@ -116,6 +116,9 @@ const asked = new Map(); // "applicationId|stage|userId" -> time of the last not
 async function gate(existing, toStage, user, { viaFlow = false } = {}) {
   try {
     if (viaFlow || !toStage || ['HOLD', 'REJECTED'].includes(toStage) || existing.stage === toStage) return null;
+    // A CLIENT'S OWN PIPELINE (market wave B 02.09, utils/mktb/jobs.js) is checked first: when the client has a rule for this step it decides.
+    const byClient = await require('./mktb/jobs').clientGate(existing, toStage, user, { viaFlow }); // eslint-disable-line global-require
+    if (byClient) return byClient.pass ? null : byClient;
     const dept = deptKey(existing.requirement && existing.requirement.department);
     if (!dept) return null;
     const cfg = (await all())[dept];

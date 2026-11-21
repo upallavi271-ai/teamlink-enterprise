@@ -311,6 +311,8 @@ router.get('/jobs/:id', readLimit, async (req, res) => {
     closingDate: clean(r.closingDate),
     closed: false,
     similar,
+    // market wave B 02.10: the job's screening questions (never the knockout answers); the form sends the answers as `screening` (JSON)
+    screeningQuestions: await require('../utils/mktb/jobs').publicQuestions(r.id).catch(() => []), // eslint-disable-line global-require
   });
 });
 
@@ -491,6 +493,12 @@ router.post('/jobs/:id/apply', async (req, res) => {
     return res.status(409).json({ error: 'You have already applied to this job. You can see it under "My applications".', duplicate: true });
   }
   const { candidate, application } = out;
+  // SCREENING / KNOCKOUT QUESTIONS (market wave B 02.10): a failing answer flags the application, or puts it on hold (the job's choice).
+  try {
+    let answers = {};
+    try { answers = fields.screening ? JSON.parse(String(fields.screening).slice(0, 8000)) : {}; } catch { answers = {}; }
+    await require('../utils/mktb/jobs').recordAnswers(application, answers && typeof answers === 'object' ? answers : {}, { source: 'Job portal' }); // eslint-disable-line global-require
+  } catch (err) { console.error(`[careers] screening answers not stored for ${application.id}: ${err.message}`); }
   // The Apply form's session is now submitted (completion / abandonment report).
   await require('../utils/atsExperience').applySubmitted({ session: fields.applySession, jobId: job.id, applicationId: application.id, source: src || fields.utm_source || null }).catch(() => {}); // eslint-disable-line global-require
   // The resume, as an ORIGINAL version (Resume tab, Fit %, extraction).

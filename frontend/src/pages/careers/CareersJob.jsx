@@ -51,6 +51,9 @@ function ApplyForm({ job, src }) {
   });
   const [file, setFile] = useState(null);
   const [consent, setConsent] = useState(false);
+  // Screening questions of this job (market wave B 02.10): answered here, sent with the application as `screening`.
+  const questions = Array.isArray(job.screeningQuestions) ? job.screeningQuestions : [];
+  const [answers, setAnswers] = useState({});
   const [more, setMore] = useState(false);
   const [state, setState] = useState({ step: 'form', error: '' }); // form | sending | done | duplicate
   const fileRef = useRef(null);
@@ -87,11 +90,14 @@ function ApplyForm({ job, src }) {
     const sal = validateSalaries({ currentSalary: form.currentSalary, expectedSalary: form.expectedSalary });
     if (!sal.ok) { setState({ step: 'form', error: sal.message }); return; }
     if (!file) { setState({ step: 'form', error: 'Please attach your resume (PDF or Word file).' }); return; }
+    const unanswered = questions.filter((q) => q.required && !String(answers[q.id] || '').trim());
+    if (unanswered.length) { setState({ step: 'form', error: `Please answer: ${unanswered.map((q) => q.text).join('; ')}` }); return; }
     if (!consent) { setState({ step: 'form', error: 'Please tick the box to agree that TeamLink may use your resume for this job.' }); return; }
     setState({ step: 'sending', error: '' });
     const fd = new FormData();
     Object.entries(form).forEach(([k, v]) => fd.append(k, v));
     fd.append('consent', 'yes');
+    if (questions.length) fd.append('screening', JSON.stringify(answers));
     // B9.5: the "I am human" token when Bot protection (Cloudflare Turnstile) is on.
     if (job.botProtection) {
       const tok = e.target.querySelector('[name="cf-turnstile-response"]');
@@ -188,6 +194,30 @@ function ApplyForm({ job, src }) {
         <label htmlFor="apWebsite">Website</label>
         <input id="apWebsite" tabIndex={-1} autoComplete="off" value={form.website} onChange={set('website')} />
       </div>
+
+      {questions.length > 0 && (
+        <fieldset className="jp-screening" style={{ border: 0, padding: 0, margin: '8px 0' }}>
+          <legend style={{ fontWeight: 600, marginBottom: 4 }}>A few questions about this job</legend>
+          {questions.map((q) => (
+            <div key={q.id} style={{ marginBottom: 8 }}>
+              <label htmlFor={`apQ-${q.id}`}>{q.text}{q.required ? ' *' : ''}</label>
+              {q.type === 'yesno' && (
+                <select id={`apQ-${q.id}`} value={answers[q.id] || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}>
+                  <option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option>
+                </select>
+              )}
+              {q.type === 'choice' && (
+                <select id={`apQ-${q.id}`} value={answers[q.id] || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}>
+                  <option value="">Choose</option>
+                  {(q.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              )}
+              {q.type === 'number' && <input id={`apQ-${q.id}`} type="number" inputMode="decimal" value={answers[q.id] || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} />}
+              {q.type === 'text' && <input id={`apQ-${q.id}`} maxLength={300} value={answers[q.id] || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} />}
+            </div>
+          ))}
+        </fieldset>
+      )}
 
       {/* B9.5: Cloudflare Turnstile — only drawn when Administration → Integrations → Bot protection is set up. */}
       {job.botProtection && job.botProtection.provider === 'turnstile' && <TurnstileBox siteKey={job.botProtection.siteKey} />}

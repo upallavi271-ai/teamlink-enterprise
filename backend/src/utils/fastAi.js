@@ -121,7 +121,7 @@ async function callProvider(p, model, system, history, { maxTokens, temperature,
 // A free-plan limit (429): the wait the provider names (at most 8 s) and one more try, then the provider's smaller backup model (its own
 // limit bucket), then the next provider. Only then does the provider rest, for as long as it asked.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function chat(system, history, opts = {}) {
+async function chatRaw(system, history, opts = {}) {
   if (require('./viewAs').isViewingAs()) throw new FastAiError('The AI agents are switched off while you are viewing as someone (read-only).', 403); // eslint-disable-line global-require
   const maxTokens = Math.min(Math.max(Number(opts.maxTokens) || 700, 64), 4000);
   const temperature = opts.temperature != null ? Number(opts.temperature) : 0.1;
@@ -190,6 +190,9 @@ async function chat(system, history, opts = {}) {
       : `The AI could not answer right now (${tried.join('; ')}). ${err.message || ''}`.trim(), err.status || 503);
   }
 }
+
+// AI GOVERNANCE (utils/mktb/gov.js): masked, metered and logged; a fall-back to utils/ai.js inside is not logged twice.
+const chat = (system, history, opts = {}) => require('./mktb/gov').wrap('fast', chatRaw, system, history, opts); // eslint-disable-line global-require
 
 async function status() {
   const list = await providerList();

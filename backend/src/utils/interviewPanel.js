@@ -117,7 +117,8 @@ async function panelsFor(apps) {
       feedback: fb ? { technical: fb.technical, communication: fb.communication, experience: fb.experience, roleFit: fb.roleFit, overall: fb.overall, recommendation: fb.recommendation, at: fb.updatedAt, by: fb.submittedBy } : null,
     }]);
   });
-  return map;
+  // FEEDBACK BLINDING (market wave B 04.16, utils/mktb/pipe.js): a panelist who has not submitted sees no other panelist's scores.
+  return require('./mktb/pipe').blindPanels(map); // eslint-disable-line global-require
 }
 
 // Staff logins on the current round's panel (for notices and reminders).

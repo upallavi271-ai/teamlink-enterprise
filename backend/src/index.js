@@ -167,6 +167,7 @@ app.use('/api/outreach/gs/marketing/projects', express.json({ limit: '700kb' }))
 app.use('/api/public/mk-project', express.json({ limit: '700kb' })); // the client's request form can carry their logo
 app.use('/api/followup-report/import', express.json({ limit: '2mb' })); // the follow-up import's choices: one per row of a sheet of up to 5,000 rows
 app.use(express.json());
+app.use('/api', require('./utils/mktb/gov').requestContext); // market wave B: an AI call knows who asked and from where (the AI governance log)
 // WHO LEFT AFTER JOINING (utils/joinedRule.js): a fresh set is loaded before ANY route runs, so no Joined list or number is ever built from an empty set
 app.use('/api', require('./utils/joinedRule').middleware());
 // WHO LOOKED AT WHAT (utils/readLog.js): a candidate / employee record or document opened is written after the answer (200 only).
@@ -306,6 +307,8 @@ app.use('/api/omni', require('./routes/omniShared')); // Omni-Channel shared API
 app.use('/api/omni-gs', require('./routes/greenStartEmbed')); // status + session cookie for the embedded Green Start app
 app.use('/api/public/mk-work', require('./routes/mkWorkPublic')); // AI Marketing "Our work": track record and portfolio (no login; marketing/projects.js)
 app.use('/api/public/mk-project', require('./routes/mkProjectPublic')); // AI Marketing client projects: the client's private page (signed token, no login; marketing/projects.js)
+app.use('/api/public/mkt', require('./routes/mktBPublic').publicRouter); // market wave B: the profile-update link + a public job's screening questions (no login)
+app.use('/api/mcp', require('./routes/mktBPublic').mcpRouter); // market wave B: the read-only MCP server (OFF by default, own token)
 app.use('/api/public/feedback', require('./routes/feedbackPublic'));
 app.use('/api/public/qoh', require('./routes/qohPublic')); // the client's quality-of-hire rating page (signed token, no login; utils/insights/qoh.js)
 app.use('/api/bi', require('./routes/biFeed')); // read-only BI feed for Power BI / Looker / Excel (Admin-made API key; utils/insights/bi.js) // the candidate / client experience survey (signed token, no login; utils/atsExperience.js)
@@ -438,6 +441,7 @@ app.use('/api/crm', require('./routes/crm'));
 app.use('/api/bde-agent', require('./routes/bdeAgent'));
 app.use('/api/call-lists', require('./routes/callLists')); // the call sheet split among recruiters, who call it from VICIdial
 app.use('/api/ats/data-verify', require('./routes/dataVerify')); // verify queue, stale data, switches, parsing quality (round 3, 2026-11-18)
+app.use('/api/ats/mkt', require('./routes/mktB')); // market wave B (2026-11-21): hiring tools, talent pools, AI governance, agents (utils/mktb/*.js)
 app.use('/api/ats/data-quality', require('./routes/dataQuality')); // profile completeness, duplicates, stale profiles (utils/dataQuality.js)
 app.use('/api/privacy', require('./routes/privacy')); // DPDP: a candidate's data export, legal hold, erasure, consent review (utils/candidatePrivacy.js)
 app.use('/api/crm-public', require('./routes/crmPublic')); // the campaign email unsubscribe link (no login)
@@ -652,6 +656,7 @@ const server = app.listen(PORT, () => {
   setTimeout(() => require('./marketing/aiclips').resume().catch((e) => console.error('[omni-mk] clip resume:', e.message)), 15 * 1000).unref();
   // Timesheet daily tracking: 18:00 "not finished today - what happened?", 19:00 to whoever gave it - utils/taskDayUpdate.js (2026-11-10)
   require('./utils/taskDayUpdate').start();
+  require('./utils/mktb/agents').start(); // market wave B timers: each one does nothing until its Admin switch is ON; never in the sandbox
   // Requests waiting since before 2026-11-02 whose own TL was skipped as "below the requester's level" go back to that TL (once, at start).
   // follow-ups of the last 30 days stamped with the requirement's team lead instead of their recruiter's seat TL (utils/teamLeadChange.js):
   // counted first (dry run, logged), then re-stamped and audit-logged; safe to run again. Not on a test server.

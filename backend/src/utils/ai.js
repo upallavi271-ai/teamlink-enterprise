@@ -352,7 +352,7 @@ function refuseWhileViewingAs() {
 const useClaude = (opts = {}) => (opts.provider === 'claude' ? true : (opts.provider === 'ollama' ? false : provider() === 'claude'));
 
 // Plain text reply.
-async function chat(systemPrompt, history, opts = {}) {
+async function chatRaw(systemPrompt, history, opts = {}) {
   refuseWhileViewingAs();
   return useClaude(opts)
     ? claudeChat(systemPrompt, history, { model: opts.model, maxTokens: opts.maxTokens, effort: opts.effort, fallbacks: opts.fallbacks, timeoutMs: opts.timeoutMs, meta: opts.meta })
@@ -368,7 +368,7 @@ async function localChat(systemPrompt, history, { json = false, model = null, ti
 // Parsed JSON. An unreadable reply is a clarify result, never a throw — the
 // agent route validates whatever comes back against its allowlist anyway.
 // opts: { model, timeoutMs, waitMs } for one call (the WhatsApp agent's own settings; AI Marketing's quick plan); empty = the app's model and time limit.
-async function chatJson(systemPrompt, history, opts = {}) {
+async function chatJsonRaw(systemPrompt, history, opts = {}) {
   refuseWhileViewingAs();
   const text = useClaude(opts)
     ? await claudeChat(systemPrompt, history, { json: true, model: opts.provider === 'claude' ? opts.model : (opts.claudeModel || opts.model), maxTokens: opts.maxTokens, effort: opts.effort, fallbacks: opts.fallbacks, timeoutMs: opts.timeoutMs, meta: opts.meta })
@@ -377,6 +377,11 @@ async function chatJson(systemPrompt, history, opts = {}) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...CLARIFY_UNREADABLE };
   return parsed;
 }
+
+// AI GOVERNANCE (market wave B, utils/mktb/gov.js): every call is masked (contact details / ID numbers never reach the model, the answer
+// gets them back), metered against the Admin's monthly limit and logged (who, why, model, outcome - never the text).
+const chat = (systemPrompt, history, opts = {}) => require('./mktb/gov').wrap('app', chatRaw, systemPrompt, history, opts); // eslint-disable-line global-require
+const chatJson = (systemPrompt, history, opts = {}) => require('./mktb/gov').wrap('app-json', chatJsonRaw, systemPrompt, history, opts); // eslint-disable-line global-require
 
 // { provider, available, modelPulled, model, reason } — cached, because every
 // open tab polls it for the status dot.
