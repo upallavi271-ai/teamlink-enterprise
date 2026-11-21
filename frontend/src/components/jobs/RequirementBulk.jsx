@@ -309,7 +309,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
         {error && <div className="error-text">{error}</div>}
       </div>
     </Modal>
-      {previewing && <BulkPreview body={{ kind: kind === 'priority' ? 'requirement-priority' : 'requirement-assign', ids: items.map((x) => x.id), userId: several ? userIds[0] : userId, userIds: several ? userIds : undefined, priority }} onCancel={() => setPreviewing(false)} onConfirm={() => { setPreviewing(false); run(); }} />}
+      {previewing && <BulkPreview body={{ kind: kind === 'priority' ? 'requirement-priority' : 'requirement-assign', ids: items.map((x) => x.id), userId: several ? userIds[0] : userId, userIds: several ? userIds : undefined, role, priority }} onCancel={() => setPreviewing(false)} onConfirm={() => { setPreviewing(false); run(); }} />}
     </>
   );
 }

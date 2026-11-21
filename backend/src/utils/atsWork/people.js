@@ -345,16 +345,20 @@ async function bulkPreview(user, body) {
       else if (!S.matches(r, S.requirementWhere(user))) out.skipped.push({ id, name, reason: 'Outside your access' });
       else if (kind === 'requirement-priority' && r.priority === body.priority) out.skipped.push({ id, name, reason: `Already ${r.priority}` });
       else if (kind === 'requirement-assign' && body.userId && (r.recruiterId === body.userId || r.tlId === body.userId)) out.skipped.push({ id, name, reason: 'Already assigned to them' });
-      else out.willMove.push({ id, name, from: r.recruiterId || r.tlId || 'unassigned', to: 'the chosen person' });
+      else {
+        // FROM = who holds that job today in the SAME role (founder 2026-11-21: assigning recruiters showed the job's team lead "Usha" as From)
+        const fromIds = body.role === 'TL' ? [r.tlId].filter(Boolean) : [r.recruiterId, ...String(r.recruiterIds || '').split(',').map((x) => x.trim())].filter(Boolean);
+        out.willMove.push({ id, name, from: fromIds.length ? [...new Set(fromIds)].join(',') : 'unassigned', to: 'the chosen person' });
+      }
     });
   } else return { status: 400, error: 'Unknown bulk action.' };
   // names, never record ids (founder 2026-11-21: "From" showed an id and "To" said "the chosen person")
   const pickIds = [...new Set([body.userId, ...(Array.isArray(body.userIds) ? body.userIds : []), body.recruiterId].filter(Boolean).map(String))];
-  const fromIds = [...new Set(out.willMove.map((r) => r.from).filter((x) => /^c[a-z0-9]{15,}$/i.test(String(x))))];
+  const fromIds = [...new Set(out.willMove.flatMap((r) => String(r.from).split(',')).filter((x) => /^c[a-z0-9]{15,}$/i.test(String(x))))];
   const ppl = (pickIds.length || fromIds.length) ? await prisma.user.findMany({ where: { id: { in: [...pickIds, ...fromIds] } }, select: { id: true, name: true } }).catch(() => []) : [];
   const nm = new Map(ppl.map((u) => [u.id, u.name]));
   const toWord = pickIds.map((id) => nm.get(id)).filter(Boolean).join(', ');
-  out.willMove = out.willMove.map((r) => ({ ...r, from: nm.get(r.from) || (r.from === 'unassigned' ? 'nobody yet' : r.from), to: /^the chosen/.test(r.to) && toWord ? toWord : r.to }));
+  out.willMove = out.willMove.map((r) => ({ ...r, from: r.from === 'unassigned' ? 'nobody yet' : String(r.from).split(',').map((x) => nm.get(x) || x).join(', '), to: /^the chosen/.test(r.to) && toWord ? toWord : r.to }));
   return { status: 200, counts: { willMove: out.willMove.length, skipped: out.skipped.length }, ...out };
 }
 
