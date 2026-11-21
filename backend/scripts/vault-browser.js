@@ -121,6 +121,22 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     check('"Who opened what" has the line: the Super Admin, password shown, the Hostinger login', await line.first().waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false), (await page.locator('[data-testid=cv-log]').innerText().catch(() => '')).slice(0, 400));
     check('...and the wrong password and the import are there too', (await page.locator('[data-testid=cv-log-row]', { hasText: 'wrong password' }).count()) >= 1 && (await page.locator('[data-testid=cv-log-row]', { hasText: 'logins imported' }).count()) >= 1);
     await page.screenshot({ path: path.join(SHOTS, 'who-opened-what.png') });
+    // Add a login: the Platform list shows the platform NAMES (founder 2026-11-21: it showed empty rows)
+    await page.locator('button[role=tab]', { hasText: 'All logins' }).click();
+    const addBtn = page.locator('button', { hasText: /Add login/ }).first();
+    if (await addBtn.isVisible().catch(() => false)) {
+      await addBtn.click();
+      const m = page.locator('.modal', { hasText: 'Add a login' });
+      await m.locator('#cv-platform').first().click().catch(() => null);
+      await m.locator('.mpk-opt').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => null);
+      const naukri = m.locator('.mpk-opt', { hasText: 'Naukri' }).first();
+      const box = await naukri.boundingBox().catch(() => null);
+      const cb = await naukri.locator('input[type=checkbox]').boundingBox().catch(() => null);
+      check('Add a login: the Platform list shows the names (Naukri visible, the tick box small)', !!box && (await naukri.isVisible()) && !!cb && cb.width < 40, [box, cb]);
+      await page.screenshot({ path: path.join(SHOTS, 'add-platform-list.png') });
+      await page.keyboard.press('Escape').catch(() => null);
+      await m.locator('button', { hasText: /^Cancel$/ }).first().click().catch(() => null);
+    } else check('the Add a login button is there', false);
     // phone width: no sideways scroll of the page
     await page.setViewportSize({ width: 375, height: 800 });
     await page.locator('button[role=tab]', { hasText: 'All logins' }).click();
