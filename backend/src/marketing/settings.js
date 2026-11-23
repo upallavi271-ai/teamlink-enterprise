@@ -21,7 +21,7 @@ const CLIENT_KINDS = ['words', 'pictures', 'videos'];
 const DEFAULT_NOTIFY = { auto: true, whatsapp: true, email: true, chat: true, remind: true };
 // waTemplates (2026-11-14): the Meta-approved WhatsApp template to use for each kind of message TeamLink sends in AI Marketing { kind: { name, language } } (marketing/waTemplates.js); a kind with none goes as free text
 const WT = require('./waTemplates');
-const DEFAULT_SETTINGS = { aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: CLIENT_KINDS.slice(), autoPostAllowed: false, autoMake: 'off', clientNotify: { ...DEFAULT_NOTIFY } };
+const DEFAULT_SETTINGS = { aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: CLIENT_KINDS.slice(), autoPostAllowed: false, accessLogin: '', accessBusinessId: '', autoMake: 'off', clientNotify: { ...DEFAULT_NOTIFY } };
 const DEFAULT_COLORS = { primary: '#0f766e', secondary: '#134e4a', accent: '#f59e0b' };
 const DEFAULT_BRAND = {
   brandName: '', about: '', voice: '', tone: 'Warm & confident', language: 'English', cta: '', signOff: '', doWords: [], avoidWords: [], samples: [],
@@ -53,6 +53,9 @@ async function getSettings() {
     clientRequired: s.clientRequired === true,
     clientFor: Array.isArray(s.clientFor) ? CLIENT_KINDS.filter((k) => s.clientFor.includes(k)) : CLIENT_KINDS.slice(),
     autoPostAllowed: s.autoPostAllowed === true,
+    // 2026-11-23: what the client is told to do on their own Page so TeamLink may post for them (the "give us access" box on the client's page): the Facebook login to add, and our Meta Business ID
+    accessLogin: clip(s.accessLogin, 120),
+    accessBusinessId: String(s.accessBusinessId || '').replace(/\D/g, '').slice(0, 30),
     autoMake: ['options', 'send'].includes(s.autoMake) ? s.autoMake : 'off',
     clientNotify: { auto: !s.clientNotify || s.clientNotify.auto !== false, whatsapp: !s.clientNotify || s.clientNotify.whatsapp !== false, email: !s.clientNotify || s.clientNotify.email !== false, chat: !s.clientNotify || s.clientNotify.chat !== false, remind: !s.clientNotify || s.clientNotify.remind !== false },
     waTemplates: (WT.clean(s.waTemplates || {}).value) || {},
@@ -67,6 +70,12 @@ function cleanSettings(b, cur) {
   if (b.aiMonthlyCap !== undefined) { const n = Number(b.aiMonthlyCap); if (!Number.isFinite(n) || n < 0 || n > 1000000) return { error: 'The monthly AI limit must be a number (0 = no limit).' }; next.aiMonthlyCap = Math.floor(n); }
   if (b.selfApprove !== undefined) next.selfApprove = b.selfApprove === true;
   if (b.autoPostAllowed !== undefined) next.autoPostAllowed = b.autoPostAllowed === true;
+  if (b.accessLogin !== undefined) next.accessLogin = clip(b.accessLogin, 120);
+  if (b.accessBusinessId !== undefined) {
+    const raw = String(b.accessBusinessId || '').trim(); const digits = raw.replace(/\D/g, '');
+    if (raw && (digits.length < 8 || digits.length > 30)) return { error: 'The Meta Business ID is a number of 8 to 30 digits (Meta Business settings > Business info). Leave it empty if you do not use a business portfolio.' };
+    next.accessBusinessId = digits;
+  }
   if (b.autoMake !== undefined) next.autoMake = ['options', 'send'].includes(b.autoMake) ? b.autoMake : 'off';
   if (b.clientNotify !== undefined && b.clientNotify && typeof b.clientNotify === 'object') {
     const cur0 = { ...DEFAULT_NOTIFY, ...(cur.clientNotify || {}) };

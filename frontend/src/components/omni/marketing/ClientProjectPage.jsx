@@ -19,6 +19,28 @@ const readLogo = (file) => new Promise((resolve, reject) => {
   const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = () => reject(new Error('The logo could not be read.')); r.readAsDataURL(file);
 });
 
+// 2026-11-23 (owner: "my client gives me their account name and password so it is posted automatically" -> no password, a one-time permission instead): "Give us access to your page".
+// Shown while the request is open (before the client approves) when an Admin has switched posting on and written our Facebook login / Meta Business ID (AI usage > Posting to client accounts),
+// and the client wants Facebook or Instagram. It tells the client how to add us to THEIR Page on Facebook itself: nothing is typed here and TeamLink never sees or keeps a password.
+function AccessBox({ access, platforms, brand, status, box, card }) {
+  if (!access || !['invited', 'request', 'working', 'awaiting_client'].includes(status)) return null;
+  if (!(platforms || []).some((k) => k === 'facebook' || k === 'instagram')) return null;
+  const who = (brand && brand.name) || 'us';
+  return (
+    <div style={{ ...card, marginTop: 14 }}>
+      <details style={{ ...box('#f4f6f5', '#1c2a24'), fontSize: 14 }}>
+      <summary style={{ cursor: 'pointer', fontWeight: 800 }}>Want {who} to post it for you? Give us access to your page (one time, about 2 minutes, no password)</summary>
+      <ol style={{ margin: '10px 0 0', paddingLeft: 20, lineHeight: 1.7 }}>
+        {access.login ? <li>Open your Facebook Page, then <b>Settings</b> &rarr; <b>Page access</b> (or <b>Page setup</b> &rarr; <b>Facebook access</b>) &rarr; <b>Add new</b>. Search for <b>{access.login}</b>, give it <b>Full control</b> and confirm.</li> : null}
+        {access.businessId ? <li>{access.login ? 'Or, if your Page is in a Meta Business portfolio:' : 'Open'} <b>Business settings</b> &rarr; <b>Partners</b> &rarr; <b>Add</b>, enter our Business ID <b>{access.businessId}</b>, and tick your Facebook Page and your Instagram account.</li> : null}
+        <li>For Instagram: the account must be a <b>Business or Creator</b> account, linked to that Facebook Page.</li>
+      </ol>
+      <p style={{ margin: '10px 0 0', fontSize: 13, color: '#4b5a52', lineHeight: 1.6 }}>We never ask for your password. We can post only after you approve your work and tick the box that allows it. You can remove our access at any time on the same screen.</p>
+      </details>
+    </div>
+  );
+}
+
 // `embedded` (the Client Portal, a signed-in client): the same page inside the portal, with the token handed over, the person's own name filled in and no full-screen frame.
 export default function ClientProjectPage({ token: tokenProp = '', embedded = false, defaultName = '', onChanged = null } = {}) {
   const { token: routeToken } = useParams();
@@ -215,6 +237,7 @@ export default function ClientProjectPage({ token: tokenProp = '', embedded = fa
           </div>
         ) : null}
       </div>
+      <AccessBox access={d.access} platforms={r.status === 'invited' ? f.platforms : r.platforms} brand={brand} status={r.status} box={box} card={card} />
       <div style={{ padding: '24px 16px 0' }}><OurWork P={P} title="Our recent work" /></div>
     </div>
   );

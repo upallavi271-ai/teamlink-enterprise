@@ -981,8 +981,11 @@ async function publicView(token) {
   if (!r) return GONE;
   await S.run(`UPDATE "${T}" SET viewedAt = ?, views = views + 1 WHERE id = ?`, Date.now(), r.id);
   const now = Date.now();
+  const setP = await Cfg.getSettings();
   const out = {
     brand: await ourBrand(),
+    // the "give us access to your page" box: only when an Admin switched posting on and wrote at least the login or the Business ID (AI usage > Posting to client accounts); never a password
+    access: setP.autoPostAllowed && (setP.accessLogin || setP.accessBusinessId) ? { login: setP.accessLogin, businessId: setP.accessBusinessId } : null,
     project: { status: r.status, clientName: r.clientName, occasion: r.occasion || '', brief: r.brief || '', deliverable: r.deliverable || 'video', platforms: parse(r.platforms, []), dueDate: r.dueDate || '', message: r.clientMessage || '', caption: r.caption || '', postingHeld: S.num(r.autoPost) === 1 && r.autoState === 'consent', expiresAt: S.iso(r.linkExpiresAt), expired: r.status === 'awaiting_client' && S.num(r.linkExpiresAt) < now, declinedNote: r.declinedNote || '', decidedByName: r.decidedByName || '', decidedAt: S.iso(r.decidedAt), decisionNote: r.decisionNote || '', postUrl: r.postUrl || '', postedAt: S.iso(r.postedAt), contactName: r.contactName || '', contactEmail: r.contactEmail || '', contactPhone: r.contactPhone || '', handles: r.handles || '', colors: parse(r.colors, null), hasLogo: !!r.logoData },
     // the tick on the approve form names the accounts (public Page / account names only, nothing else)
     posting: S.num(r.autoPost) === 1 && r.status === 'awaiting_client' ? { accounts: parse(r.autoTargets, []).map((t) => ({ platform: t.platform, name: t.name })) } : null,
