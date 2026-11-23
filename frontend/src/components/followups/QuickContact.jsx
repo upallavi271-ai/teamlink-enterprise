@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import ContactDialog from '../messaging/ContactDialog.jsx';
+import CallButton from '../browsercall/CallButton.jsx';
 import { useContactRule } from '../messaging/useMayMessage.js';
 import { useReachPriority } from '../candidate/ReachPriorityCard.jsx';
 import './followups.css';
@@ -51,7 +52,9 @@ export default function QuickContact({
   return (
     <div className="fux-quick-wrap">
       <div className="fux-quick">
-        {BUTTONS.map(([id, icon, label, hint]) => (
+        {/* CALL = the browser call (founder 2026-11-23: "remove this button, put the other Call button in its place"): it rings the person from the SIM line straight away */}
+        <CallButton candidateId={candidate.id} applicationId={applicationId} name={name} hasNumber={!!phone} size="sm" />
+        {BUTTONS.filter(([id]) => id !== 'Call').map(([id, icon, label, hint]) => (
           <button
             key={id}
             type="button"
@@ -67,7 +70,7 @@ export default function QuickContact({
             Best way to reach: {bestRow.key} ({bestRow.words}){bestRow.key === 'AI call' ? ' · start it from AI Calling' : ''}
           </span>
         )}
-        {!compact && <span className="fux-quick-note">{rule.masked ? 'TeamLink makes the call and sends the message for you: the number stays hidden. Everything is logged by itself.' : 'Each one opens a window with a ready message. Every call, mail, WhatsApp and SMS is logged by itself.'}</span>}
+        {!compact && <span className="fux-quick-note">{rule.masked ? 'TeamLink makes the call and sends the message for you: the number stays hidden. Everything is logged by itself.' : 'Call rings the person from the office SIM line. Mail, WhatsApp and SMS open a window with a ready message. Everything is logged by itself.'}</span>}
       </div>
       {open && (
         <ContactDialog
