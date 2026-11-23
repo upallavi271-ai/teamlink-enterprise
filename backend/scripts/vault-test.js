@@ -282,6 +282,34 @@ const readBook = (buf) => { const wb = XLSX.read(buf, { type: 'buffer' }); retur
   check('an unknown header asks which column is which (needsMapping, Username / Email missing)', pm.status === 200 && pm.body.needsMapping && pm.body.missing.includes('Username / Email') && noSecret(pm.text), pm.body);
   const pm2 = await fileCall(`${V}/import/preview`, T.sa, odd, 'odd.xlsx', { mapping: JSON.stringify({ platform: 0, username: 1, password: 2 }) });
   check('...and with the columns chosen it previews 1 Ready', pm2.status === 200 && !pm2.body.needsMapping && pm2.body.counts.ready === 1 && noSecret(pm2.text), pm2.body && pm2.body.counts);
+  // SMART IMPORT (founder 2026-11-23): a team's own workbook - one sheet per platform, two logins on one row, a sheet without a header row,
+  // a phone-numbers sheet with no password, a person who is not an employee
+  const book = (() => {
+    const wb = XLSX.utils.book_new();
+    const add = (aoa, name) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
+    add([['Account', 'Password', 'Mobile Number'], [`sm.nk.${RUN}@example.test`, PW.plain(21), '9000000001']], 'Naukri Logins');
+    add([['Recruiter', 'Position', 'VC Dail Logins', 'Password', 'User Login', 'Password'], ['Nobody Fakename', 'Recruiter', `80${RUN.slice(-4)}1`, PW.plain(22), `edu${RUN}`, PW.plain(23)]], 'Vici Dial Credentials');
+    add([['Recrutiers Names', 'Position', 'Present Mobile Numbers Using'], ['Nobody Fakename', 'Recruiter', '9000000002']], 'Mobile Numbers');
+    add([[], ['Shine', 'Nobody Fakename', `smshine_${RUN}`, PW.plain(24), '9000000003']], "Shine Login's");
+    add([['Name', 'Position', 'Mail ID', 'Password', 'Recovery Mail'], ['Nobody Fakename', 'TL', `sm.gm.${RUN}@gmail.com`, PW.plain(25), 'rec@example.test']], 'GMail Credentials');
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  })();
+  const sp = await fileCall(`${V}/import/preview`, T.sa, book, 'team-workbook.xlsx');
+  const sr = (sp.body && sp.body.rows) || [];
+  const plat = (p) => sr.filter((r) => r.platform === p);
+  check('smart import: every sheet is read, no column picking asked', sp.status === 200 && !sp.body.needsMapping && Array.isArray(sp.body.smartSheets) && sp.body.sheet === 'All sheets' && noSecret(sp.text), sp.body && (sp.body.smartSheets || sp.body.missing));
+  check('smart import: the platform comes from the sheet name (Naukri, ViciDial, Shine, Gmail)', plat('Naukri').length === 1 && plat('ViciDial').length === 2 && plat('Shine').length === 1 && plat('Gmail').length === 1, sr.map((r) => r.platform));
+  check('smart import: two logins on one row (VC Dail login + User login) become two logins', plat('ViciDial').some((r) => /VC Dail Logins/.test(r.label)) && plat('ViciDial').some((r) => /User Login/.test(r.label)));
+  check('smart import: a sheet without a header row is read by what its cells look like', !!plat('Shine')[0] && plat('Shine')[0].username === `smshine_${RUN}` && plat('Shine')[0].hasPassword);
+  check('smart import: a phone-numbers sheet with no password is skipped, not guessed', (sp.body.smartSheets || []).some((x) => x.name === 'Mobile Numbers' && x.skipped));
+  check('smart import: a person who is not an employee is kept (label + note), not refused', sr.length === 5 && sr.every((r) => r.status === 'ready') && !!plat('Gmail')[0] && plat('Gmail')[0].label === 'Nobody Fakename' && /Position: TL/.test(plat('Gmail')[0].notes), sr.map((r) => [r.where, r.status, r.reasons]));
+  check('smart import: rows say which sheet and row they came from', sr.every((r) => /· row \d+$/.test(r.where || '')), sr.map((r) => r.where));
+  const sa2 = await call('POST', `${V}/import/apply`, { batchId: sp.body.batchId }, T.sa);
+  check('smart import: Import adds all 5 logins', sa2.status === 200 && sa2.body.created === 5, sa2.body);
+  const vcRow = (await prisma.$queryRawUnsafe('SELECT "id" FROM "Credential" WHERE "importBatchId" = ? AND "label" LIKE ?', sp.body.batchId, '%User Login%'))[0];
+  const tkS = (await reauth(T.sa, PW.sa)).body.token;
+  check('smart import: the second password of the row reveals to its own exact value', !!vcRow && (await reveal(T.sa, vcRow.id, tkS)).body.value === PW.plain(23));
+  await call('POST', `${V}/import/batches/${sp.body.batchId}/undo`, null, T.sa);
   // undo
   await prisma.$executeRawUnsafe('UPDATE "Credential" SET "updatedAt" = ? WHERE "id" = ?', new Date(Date.now() + 5000).toISOString(), shineId); // somebody changed it since
   const un = await call('POST', `${V}/import/batches/${pv.body.batchId}/undo`, null, T.sa);

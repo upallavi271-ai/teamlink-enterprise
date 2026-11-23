@@ -731,6 +731,124 @@ function readSheet(file, mapping, asked) {
   };
 }
 
+// ---- SMART IMPORT: a team's own workbook, every sheet at once (founder 2026-11-23) -----------------------------------------
+// Teams keep logins as one sheet per platform ("Naukri Logins", "Shine Logins", "Vici Dial Credentials", "GMail Credentials", "Hrms
+// Credentials", "Phone's Number"), with the person's name and position, sometimes two logins on one row (a ViciDial phone login and a user
+// login, each with its own Password column) and sometimes no header row at all. When the chosen sheet has no Platform column, every sheet
+// is read: the platform comes from the sheet's name (or a header such as "VC Dail Logins"), each login column + the Password column right
+// after it becomes one login, the person's name is matched to an employee (a name that is not in TeamLink becomes the label instead of
+// refusing the row), position / phone numbers / group go into the notes and recovery phone / e-mail into the encrypted extra secret.
+// Sheets with no password at all (only phone numbers) are listed as skipped.
+const SMART_PLATFORM = [
+  [/vici|vcdail|vcdial|dialer|portnumber/, 'ViciDial'], [/naukri/, 'Naukri'], [/shine/, 'Shine'], [/foundit|monster/, 'foundit'], [/linkedin/, 'LinkedIn'],
+  [/indeed/, 'Indeed'], [/hrms|teamlink/, 'HRMS'], [/webmail|weblogin|webmails/, 'Webmail'], [/gmail|googlemail|officegmail/, 'Gmail'],
+  [/hostinger/, 'Hostinger'], [/cpanel/, 'cPanel'], [/zoho/, 'Zoho'], [/whatsapp/, 'WhatsApp Business'], [/outlook|office365|microsoft/, 'Microsoft 365'],
+];
+const smartPlatformOf = (...texts) => { for (const t of texts) { const k = hkey(t); const hit = SMART_PLATFORM.find(([re]) => re.test(k)); if (hit) return hit[1]; } return ''; };
+const isPwHead = (k) => /^(password|passwords|pass|pwd|passcode|loginpassword)\d*$/.test(k);
+const isLoginHead = (k) => /mailid|mailids|emailid|email|account|userlogin|login|logins|username|userid|portnumber|vcdail|vcdial|officemail/.test(k) && !isPwHead(k) && !/recovery/.test(k);
+const isNameHead = (k) => /^(name|names|recruiter|recuriter|recruitername|recuritername|recrutiersnames|recruitersnames|recruiterpositionname|employee|employeename|staff)$/.test(k) || (/name/.test(k) && !/user|mail|login|account/.test(k));
+const isRecoveryHead = (k) => /recovery/.test(k);
+const isPositionHead = (k) => /position|designation|role/.test(k) && !/name/.test(k);
+const HEAD_WORDS = /password|mail|name|position|account|login|number|phone|mobile|recovery|website|whatsapp|sim|recruiter|recuriter/;
+const looksEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim());
+const looksPhone = (v) => /^\+?\d[\d\s-]{8,13}\d$/.test(String(v).trim());
+const looksAccountId = (v) => /^[A-Za-z0-9._-]{4,}$/.test(String(v).trim()) && /[A-Za-z]/.test(String(v)) && !looksPhone(v);
+const looksPersonName = (v) => /^[A-Za-z][A-Za-z .']{1,60}$/.test(String(v).trim()) && !looksEmail(v);
+
+function smartSheet(sheetName, grid, startRow) {
+  const out = [];
+  const text = (v) => (v === null || v === undefined ? '' : String(v).trim());
+  const rowsAll = grid.map((r) => (r || []).map(text));
+  // a header row always names a Password column; a sheet without one is read row by row
+  const hdrIdx = rowsAll.slice(0, 5).findIndex((r) => r.filter((c) => c && HEAD_WORDS.test(hkey(c)) && !looksEmail(c)).length >= 2 && r.some((c) => isPwHead(hkey(c))));
+  const sheetPlatform = smartPlatformOf(sheetName);
+  let n = 0;
+  const push = (o) => {
+    n += 1;
+    const lines = String(o.username || '').split(/[\r\n]+/).map((x) => x.trim()).filter(Boolean);
+    const username = lines[0] || '';
+    const notes = lines.length > 1 ? `${o.notes}\nAlso in the same cell: ${lines.slice(1).join(", ")}` : o.notes;
+    let { platform } = o;
+    if (!smartPlatformOf(platform) && !PLATFORMS.includes(platform)) {
+      if (/@gmail\.com/i.test(username)) platform = 'Gmail';
+      else if (/@tmlink\.in$/i.test(username)) platform = 'Webmail';
+    }
+    out.push({ ...o, username, notes, platform, row: startRow + n, sheet: sheetName }); // one unique number per login (a row can hold two)
+  };
+  if (hdrIdx >= 0) {
+    const head = rowsAll[hdrIdx]; const keys = head.map(hkey);
+    const nameCol = keys.findIndex(isNameHead);
+    const posCol = keys.findIndex(isPositionHead);
+    const pwCols = keys.map((k, i) => (isPwHead(k) ? i : -1)).filter((i) => i >= 0);
+    // each Password column takes the nearest login column on its left that no other Password column took
+    const taken = new Set(); const pairs = [];
+    pwCols.forEach((pc) => {
+      for (let i = pc - 1; i >= 0; i -= 1) {
+        if (taken.has(i) || pwCols.includes(i)) continue; // eslint-disable-line no-continue
+        if (isLoginHead(keys[i])) { taken.add(i); pairs.push({ u: i, p: pc }); return; }
+      }
+    });
+    const recCols = keys.map((k, i) => (isRecoveryHead(k) ? i : -1)).filter((i) => i >= 0);
+    const used = new Set([nameCol, posCol, ...pwCols, ...pairs.map((x) => x.u), ...recCols].filter((i) => i >= 0));
+    const noteCols = keys.map((k, i) => (k && !used.has(i) ? i : -1)).filter((i) => i >= 0);
+    rowsAll.slice(hdrIdx + 1).forEach((r, ri) => {
+      if (!r.some(Boolean)) return;
+      const person = nameCol >= 0 ? r[nameCol] : '';
+      const notes = [posCol >= 0 && r[posCol] ? `Position: ${r[posCol]}` : '', ...noteCols.map((i) => (r[i] ? `${head[i]}: ${r[i]}` : ''))].filter(Boolean);
+      const extra = recCols.map((i) => (r[i] ? `${head[i]}: ${r[i]}` : '')).filter(Boolean).join('\n');
+      pairs.forEach(({ u, p }) => {
+        const username = r[u]; const password = r[p];
+        if (!username && !password) return;
+        const platform = smartPlatformOf(head[u], sheetName) || sheetPlatform || canonicalPlatform(sheetName);
+        push({
+          row: startRow + hdrIdx + 1 + ri, where: `${sheetName} · row ${hdrIdx + 2 + ri}`, platform, label: [person, pairs.length > 1 ? head[u] : ''].filter(Boolean).join(' - ').slice(0, 150),
+          loginUrl: '', username, password, employee: person, department: '', notes: [`From sheet "${sheetName}"`, ...notes].join('\n'), renewalRaw: '', extra, softEmployee: true,
+        });
+      });
+    });
+    return { rows: out, skipped: pairs.length ? null : 'no password column' };
+  }
+  // a sheet WITH a header row (Name / Position ...) but no Password column holds no logins (only phone numbers): skipped, not guessed
+  if (rowsAll.slice(0, 5).some((r) => r.filter((c) => c && HEAD_WORDS.test(hkey(c)) && !looksEmail(c)).length >= 2 && r.some((c) => isNameHead(hkey(c)) || isPositionHead(hkey(c))))) return { rows: [], skipped: "no password column" };
+  // no header row: each row is read by what its cells look like - a group word, a name, the login (an e-mail or an account id),
+  // the password right after it, and a phone number / e-mail after that.
+  rowsAll.forEach((r, ri) => {
+    const cells = r.map((c, i) => ({ c, i })).filter((x) => x.c);
+    if (cells.length < 2) return;
+    const ui = cells.findIndex((x, j) => j > 0 && (looksEmail(x.c) || looksAccountId(x.c)) && cells[j + 1]);
+    if (ui < 0) return;
+    const username = cells[ui].c; const password = cells[ui + 1].c;
+    const before = cells.slice(0, ui).map((x) => x.c);
+    const person = before.slice().reverse().find((v) => looksPersonName(v) && !smartPlatformOf(v)) || '';
+    const group = before.filter((v) => v !== person);
+    const after = cells.slice(ui + 2).map((x) => x.c);
+    const platform = smartPlatformOf(...group, sheetName) || sheetPlatform || canonicalPlatform(sheetName);
+    push({
+      row: startRow + ri, where: `${sheetName} · row ${ri + 1}`, platform, label: person.slice(0, 150), loginUrl: '', username, password, employee: person, department: '',
+      notes: [`From sheet "${sheetName}"`, group.length ? `Group: ${group.join(', ')}` : '', after.length ? `Contact: ${after.join(', ')}` : ''].filter(Boolean).join('\n'),
+      renewalRaw: '', extra: '', softEmployee: true,
+    });
+  });
+  return { rows: out, skipped: out.length ? null : 'no login and password found' };
+}
+
+function readAllSheets(file) {
+  const wb = readWorkbook(file);
+  const names = (wb.SheetNames || []).filter((nm) => !GUIDE_SHEETS.includes(hkey(nm)));
+  const rows = []; const sheets = [];
+  names.forEach((nm, si) => {
+    const xs = wb.Sheets[nm];
+    if (!xs || !xs['!ref']) { sheets.push({ name: nm, logins: 0, skipped: 'empty' }); return; }
+    const grid = XLSX.utils.sheet_to_json(xs, { header: 1, raw: false, defval: '', blankrows: true });
+    const r = smartSheet(nm, grid, (si + 1) * 10000);
+    rows.push(...r.rows);
+    sheets.push({ name: nm, logins: r.rows.length, skipped: r.skipped });
+  });
+  if (rows.length > MAX_ROWS) throw new VaultError(400, `That workbook has ${rows.length} logins. At most ${MAX_ROWS} at a time - split the file.`);
+  return { rows, sheets, names };
+}
+
 async function employeeIndex() {
   const all = await prisma.employee.findMany({ select: { id: true, name: true, employeeCode: true, email: true, department: true, employmentStatus: true, user: { select: { email: true } } } });
   const by = { code: new Map(), email: new Map(), name: new Map() };
@@ -756,7 +874,7 @@ async function resolveRows(rows, choices = {}) {
   const seen = new Map();
   return rows.map((r) => {
     const out = {
-      row: r.row, platform: canonicalPlatform(r.platform), label: r.label.slice(0, 150), loginUrl: '', username: r.username.slice(0, 200),
+      row: r.row, where: r.where || null, platform: canonicalPlatform(r.platform), label: r.label.slice(0, 150), loginUrl: '', username: r.username.slice(0, 200),
       hasPassword: !!r.password, password: r.password ? MASK : '', hasExtra: !!r.extra, extra: r.extra ? MASK : '',
       employeeText: r.employee, employees: [], department: r.department.slice(0, 100), notes: r.notes.slice(0, 2000), renewalDate: '',
       status: 'ready', reasons: [], choices: [],
@@ -775,10 +893,14 @@ async function resolveRows(rows, choices = {}) {
     tokens.forEach((t, i) => {
       const key = `${r.row}:${i}`;
       const found = findEmployees(ix, t);
-      if (!found.length) { out.reasons.push(`No employee "${t.slice(0, 60)}" in TeamLink`); return; }
+      if (!found.length) {
+        if (r.softEmployee) { out.notes = [`Person: ${t.slice(0, 60)} (no TeamLink employee with this name)`, out.notes].filter(Boolean).join('\n').slice(0, 2000); return; }
+        out.reasons.push(`No employee "${t.slice(0, 60)}" in TeamLink`); return;
+      }
       if (found.length === 1) { out.employees.push(empOpt(found[0])); return; }
       const picked = choices && choices[key] ? found.find((e) => e.id === String(choices[key])) : null;
       if (picked) { out.employees.push(empOpt(picked)); return; }
+      if (r.softEmployee && !(choices && choices[key])) { out.notes = [`Person: ${t.slice(0, 60)} (${found.length} employees with this name - pick one after the import)`, out.notes].filter(Boolean).join('\n').slice(0, 2000); return; }
       out.choices.push({ key, text: t.slice(0, 60), options: found.slice(0, 20).map(empOpt) });
     });
     if (!out.department && out.employees.length === 1) out.department = out.employees[0].department;
@@ -819,7 +941,17 @@ function openRows(rows) {
 
 async function preview(user, file, { mapping, sheet } = {}) {
   await purgeStale();
-  const read = readSheet(file, mapping, sheet);
+  let read = readSheet(file, mapping, sheet);
+  let smartSheets = null;
+  // only a workbook of several sheets, or one sheet named after a platform ("Naukri Logins"), is read the smart way
+  const manySheets = (read.sheets || []).filter((nm) => !GUIDE_SHEETS.includes(hkey(nm))).length > 1;
+  if (!mapping && ((manySheets && !sheet) || (read.missing.length && smartPlatformOf(read.sheet)))) {
+    const all = readAllSheets(file);
+    if (all.rows.length) {
+      smartSheets = all.sheets;
+      read = { ...read, sheet: 'All sheets', missing: [], rows: all.rows };
+    }
+  }
   if (read.missing.length) {
     return { needsMapping: true, missing: read.missing, fileColumns: read.fileColumns, mapping: read.mapping, sheet: read.sheet, sheets: read.sheets, rows: [], counts: countsOf([]) };
   }
@@ -831,7 +963,7 @@ async function preview(user, file, { mapping, sheet } = {}) {
   await x('UPDATE "CredentialImportBatch" SET "payload" = NULL, "status" = \'expired\' WHERE "byUserId" = ? AND "status" = \'preview\'', user.id);
   await x(`INSERT INTO "CredentialImportBatch" ("id","byUserId","byName","fileName","createdAt","status","totalRows","readyRows","choiceRows","refusedRows","payload")
     VALUES (?,?,?,?,?,?,?,?,?,?,?)`, id, user.id, user.name || null, String((file && file.filename) || 'sheet').slice(0, 150), nowIso(), 'preview', c.total, c.ready, c.choice, c.refused, JSON.stringify({ rows: sealed }));
-  return { batchId: id, fileColumns: read.fileColumns, mapping: read.mapping, sheet: read.sheet, sheets: read.sheets, rows: resolved, counts: c };
+  return { batchId: id, fileColumns: read.fileColumns, mapping: read.mapping, sheet: read.sheet, sheets: read.sheets, smartSheets, rows: resolved, counts: c };
 }
 
 async function batchFor(user, batchId, statusWanted = 'preview') {
@@ -897,6 +1029,7 @@ async function undo(user, batchId, ip) {
 
 module.exports = {
   FEATURE, VaultError, CONFIRM_WORDS, MAX_BYTES, SHOW_SECONDS, REAUTH_MS, LOCK_AFTER, LOCK_MS, PLATFORMS, COLUMNS,
+  readAllSheets, smartSheet,
   ensure, rightsFor, menuRightsFor, isRealSuper, reauth, checkReauth, list, detail, reveal, save, remove, bulk, historyOf, accessLog,
   grants, setGrant, options, exportBook, logAccess, template, preview, check, apply, batches, undo, canonicalPlatform, applyFilters,
 };

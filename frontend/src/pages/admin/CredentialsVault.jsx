@@ -592,8 +592,15 @@ function ImportPanel() {
       )}
       {prev && (
         <>
-          <h4 className="cv-h4">Which column is which</h4>
+          {prev.smartSheets && (
+            <div className="notice" data-testid="cv-smart-sheets">
+              <b>Every sheet was read</b> (the platform comes from each sheet&apos;s name; a name that is not an employee is kept as the label):{' '}
+              {prev.smartSheets.map((x) => (x.skipped ? `${x.name.trim()}: skipped (${x.skipped})` : `${x.name.trim()}: ${x.logins}`)).join(' · ')}
+            </div>
+          )}
+          {!prev.smartSheets && <h4 className="cv-h4">Which column is which</h4>}
           {prev.needsMapping && <div className="notice amber">These columns were not found: {prev.missing.join(', ')}. Pick them below and press Check again.</div>}
+          {!prev.smartSheets && <>
           <div className="cv-map">
             {(prev.mapping || []).map((m) => (
               <label key={m.key} className="field"><span>{m.label}{m.need ? ' (needed)' : ''}</span>
@@ -605,6 +612,7 @@ function ImportPanel() {
             ))}
           </div>
           <button type="button" className="btn btn-sm" disabled={!file || busy === 'preview'} onClick={() => send(file, Object.fromEntries(Object.entries(mapping || {}).map(([k, val]) => [k, val === '' ? null : Number(val)])))}>Check again</button>
+          </>}
           {counts && !prev.needsMapping && (
             <>
               <div className="cv-counts">
@@ -619,7 +627,7 @@ function ImportPanel() {
                   <tbody>
                     {rows.map((r) => (
                       <tr key={r.row} data-testid="cv-prev-row">
-                        <td>{r.row}</td>
+                        <td>{r.where || r.row}</td>
                         <td>{r.platform}{r.label && <div className="small-muted">{r.label}</div>}</td>
                         <td className="cv-user">{r.username}</td>
                         <td><span className="cv-mask">{r.password || <span className="small-muted">none</span>}</span>{r.hasExtra && <div className="small-muted">+ extra secret</div>}</td>
