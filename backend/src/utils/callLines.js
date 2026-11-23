@@ -140,7 +140,7 @@ async function startOnPhoneLine(lineId, args) {
   const ln = await PL.resolveForCall(args.user, id);
   if (!ln.ok || ln.line.builtIn) return { ok: false, notConfigured: true, error: ln.reason || 'Pick a line.', line: lineId };
   const r = phoneLineReady(ln.line);
-  if (!r.ok) return { ok: false, notConfigured: true, error: r.reason, line: lineId };
+  if (!r.ok) return { ok: false, notConfigured: true, error: r.reason, line: `${PHONE}${ln.line.id}` };
   const out = await originateOn({ endpoint: ln.line.endpoint, format: ln.line.dialFormat, prefix: ln.line.prefix, callerId: ln.line.callerId, lineName: ln.line.name }, args);
   return { ...out, line: `${PHONE}${ln.line.id}`, lineName: ln.line.name };
 }
