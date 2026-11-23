@@ -98,6 +98,24 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     const listText = await page.locator('.cv-list').innerText().catch(() => '');
     check('All logins lists the 3 imported logins with masked passwords and no password text', ROWS.every(([, u]) => listText.includes(u)) && listText.includes('••••••••') && !ROWS.some(([, , pw]) => listText.includes(pw)), listText.slice(0, 400));
     await page.screenshot({ path: path.join(SHOTS, 'list-masked.png') });
+    // THE FILTER ROW LINES UP (founder 2026-11-23: "align this properly"): with a department picked and its list open, every box of the
+    // row has the same height and top, and nothing runs past the card
+    const measure = () => page.evaluate(() => {
+      const bar = document.querySelector('.cv-toolbar'); const card = bar && bar.closest('.cv-list');
+      const kids = bar ? [...bar.children].filter((el) => el.offsetParent) : [];
+      const box = (el) => { const t = el.matches('.cv-filter') ? el.querySelector('.mpk-chips') : (el.matches('label') ? (el.querySelector('select') || el) : el); const r = t.getBoundingClientRect(); return { cls: el.className, top: Math.round(r.top), h: Math.round(r.height), right: Math.round(r.right) }; };
+      return { boxes: kids.map(box), cardRight: card ? Math.round(card.getBoundingClientRect().right) : 0 };
+    });
+    await page.locator('.cv-filter').nth(1).locator('.mpk-chips').click().catch(() => {});
+    await page.locator('.cv-filter .mpk-opt').first().click().catch(() => {});
+    const m = await measure();
+    const fields = m.boxes.filter((b) => /cv-search|cv-filter|cv-sort|cv-check/.test(b.cls));
+    const tops = new Set(fields.map((b) => b.top)); const hs = new Set(fields.map((b) => b.h));
+    check('filter row: every box the same height and in one straight line (a department picked, its list open)', hs.size === 1 && tops.size <= 2, m);
+    check('filter row: nothing runs past the right edge of the card', m.boxes.every((b) => b.right <= m.cardRight + 1), m);
+    await page.screenshot({ path: path.join(SHOTS, 'filters-open.png') });
+    await page.keyboard.press('Escape').catch(() => {});
+    await page.mouse.click(5, 5).catch(() => {});
     // reveal one after re-auth
     const row = page.locator('[data-testid=cv-row]', { hasText: ROWS[1][1] });
     await row.locator('button[aria-label="Show password"]').click();
