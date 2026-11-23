@@ -1603,6 +1603,9 @@ const stillWorking = (u) => !(u.employee && LEFT_EMPLOYMENT.includes(u.employee.
 // a job or re-assign one — not a Recruiter / BDE / view-only login.
 async function mayPickAnyTl(user) {
   if (scopeOf(user).global) return true;
+  // THE BDE DECIDES (founder 2026-11-23): which team lead(s) take a requirement, and how many, is the BDE's / BDE TL's call - they
+  // see every team lead and can give one requirement to several (Usha AND Sirisha), not only one at a time.
+  if (bdeSide(user)) return true;
   const [create, assign] = await Promise.all([
     can(user, 'ats', 'requirements', 'Create Requirement', 'create'),
     can(user, 'ats', 'requirements', 'Requirement Detail', 'assign'),

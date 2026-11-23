@@ -158,6 +158,19 @@ const rows = (r) => (Array.isArray(r.body) ? r.body : (r.body && (r.body.rows ||
     check('bulk saved the also-assigned TLs (both jobs)', (await listIds(T.c)).includes(j2.id) && (await listIds(T.d)).includes(j2.id) && (await listIds(T.c)).includes(j1.id));
     const bulk1 = await call('POST', '/api/requirements/bulk', T.admin, { action: 'assign-tl', ids: [j2.id], userId: uB.id });
     check('bulk with ONE TL replaces the team', bulk1.status === 200 && !(await listIds(T.c)).includes(j2.id));
+    // THE BDE DECIDES (founder 2026-11-23: "Usha & Sirisha both could not be assigned, only one"): a BDE of the client sees every
+    // team lead and gives one requirement to two of them at once
+    const uBde = await mk('bde', { role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: DA, atsScopeDepartments: DA });
+    await prisma.client.update({ where: { id: client.id }, data: { bdeId: uBde.id } }).catch(() => {});
+    const tBde = await mint(uBde);
+    const bdeTls = await call('GET', '/api/requirements/assignable-people?tls=all', tBde);
+    const offered = ((bdeTls.body && bdeTls.body.tls) || []).map((t) => t.id);
+    check('BDE: every team lead is offered (other departments too)', bdeTls.status === 200 && [uA.id, uB.id, uC.id, uD.id].every((id) => offered.includes(id)), bdeTls.body && bdeTls.body.error);
+    const bdeTwo = await call('POST', '/api/requirements/bulk', tBde, { action: 'assign-tl', ids: [j2.id], userId: uC.id, userIds: [uC.id, uD.id] });
+    check('BDE: one requirement to TWO team leads at once', bdeTwo.status === 200 && bdeTwo.body.done === 1, bdeTwo.body || bdeTwo.text);
+    { const RTx = require(path.join(BACK, 'src/utils/reqTeamLeads')); await RTx.ensure(true); // eslint-disable-line global-require
+      const j2r = await prisma.requirement.findUnique({ where: { id: j2.id } });
+      check('BDE: the main TL and the also-assigned TL are both saved', j2r.tlId === uC.id && RTx.extrasOf(j2.id).includes(uD.id), { main: j2r.tlId, extras: RTx.extrasOf(j2.id) }); }
 
     // ---- validation ------------------------------------------------------------------------------------
     const vNon = await call('PUT', `/api/requirements/${j2.id}`, T.admin, { tlIds: [uB.id, uR.id] });
