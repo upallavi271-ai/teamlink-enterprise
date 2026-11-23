@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import api from '../api';
 import BrowserCallProvider, { useBrowserCall } from '../components/browsercall/CallProvider.jsx';
 import CallBar from '../components/browsercall/CallBar.jsx';
 
@@ -8,16 +10,26 @@ import CallBar from '../components/browsercall/CallBar.jsx';
 // browser allows the microphone and the sound of the call. Not signed in: ProtectedRoute sends the person to the login first.
 function Inner() {
   const [q] = useSearchParams();
-  const candidateId = (q.get('candidateId') || '').trim();
+  const phone = (q.get('phone') || '').trim();
+  const [found, setFound] = useState(null); // { id, name } by phone | { error }
+  const candidateId = found && found.id ? found.id : (phone && !found ? '' : (q.get('candidateId') || '').trim());
   const applicationId = (q.get('applicationId') || '').trim() || undefined;
-  const name = (q.get('name') || '').trim() || 'Candidate';
+  const name = (q.get('name') || '').trim() || (found && found.name) || 'Candidate';
   const { available, info, state, call } = useBrowserCall();
+  // the Job Portal app knows people by its own ids: with ?phone= the TeamLink candidate is found by that number (same access rules)
+  useEffect(() => {
+    if (!phone || !available) return;
+    api.get('/browser-calling/lookup', { params: { phone } }).then((r) => setFound(r.data.candidate))
+      .catch((e) => { const fb = (q.get('candidateId') || '').trim(); setFound(fb ? { id: fb } : { error: (e.response && e.response.data && e.response.data.error) || 'Could not find this person in TeamLink.' }); });
+  }, [phone, available]); // eslint-disable-line react-hooks/exhaustive-deps
   const live = ['starting', 'calling', 'ringing', 'connected'].includes(state.phase);
   const over = ['ended', 'failed'].includes(state.phase);
   let body;
-  if (!candidateId) body = <div className="notice red">No candidate was given. Open this from a candidate in the Job Portal or TeamLink.</div>;
+  if (!candidateId && !phone) body = <div className="notice red">No candidate was given. Open this from a candidate in the Job Portal or TeamLink.</div>;
+  else if (found && found.error) body = <div className="notice red">{found.error}</div>;
   else if (!info) body = <div className="small-muted">Checking that browser calling is on for your login…</div>;
   else if (!available) body = <div className="notice red">{info.reason || 'Browser calling is switched off, or your login may not use it. Ask an Admin.'}</div>;
+  else if (!candidateId) body = <div className="small-muted">Finding this person in TeamLink…</div>;
   else {
     body = (
       <>

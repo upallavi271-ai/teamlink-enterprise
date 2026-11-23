@@ -62,6 +62,21 @@ router.post('/session', async (req, res) => {
 
 // place a call: the server picks the number from the candidate record (the browser never chooses it), checks scope / mode / test list,
 // and writes the row; the real status then comes from Asterisk.
+// find the TeamLink candidate behind a phone number (the Job Portal app knows people by its own ids): only people this login may see, the newest record first
+router.get('/lookup', async (req, res) => {
+  try {
+    const w = await who(req.user);
+    if (!w.ok) return fail(res, w.code, w.reason);
+    const D = require('../utils/candidateDedupe'); // eslint-disable-line global-require
+    const keys = D.phoneKeys(clip(req.query && req.query.phone, 40));
+    if (!keys.length) return fail(res, 400, 'That is not a phone number.');
+    const rows = await prisma.candidate.findMany({ where: { ...scope.candidateWhere(req.user), OR: keys.map((k) => ({ phone: { contains: k } })) }, select: { id: true, name: true, phone: true, updatedAt: true }, orderBy: { updatedAt: 'desc' }, take: 20 });
+    const hit = rows.find((c) => D.phoneKeys(c.phone).some((k) => keys.includes(k)));
+    if (!hit) return fail(res, 404, 'This person is not in TeamLink yet (or your login may not see them). Add them to the ATS first.');
+    res.json({ candidate: { id: hit.id, name: hit.name } });
+  } catch (e) { console.error('[browser-call] lookup:', e.message); fail(res, 500, 'Could not look the person up.'); }
+});
+
 router.post('/calls', async (req, res) => {
   try {
     const w = await who(req.user);
