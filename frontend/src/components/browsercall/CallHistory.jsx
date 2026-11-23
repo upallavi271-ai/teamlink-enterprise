@@ -23,11 +23,11 @@ export default function CallHistory({ candidateId }) {
       {rows && rows.length === 0 && <div className="small-muted">No browser calls yet.</div>}
       {rows && rows.length > 0 && (
         <table className="table">
-          <thead><tr><th>When</th><th>Recruiter</th><th>Number</th><th>Status</th><th>Talk time</th><th>Reason</th></tr></thead>
+          <thead><tr><th>When</th><th>Recruiter</th><th>Number</th><th>Line</th><th>Status</th><th>Talk time</th><th>Reason</th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
-                <td>{at(r.startAt)}</td><td>{r.userName || '—'}</td><td>{r.number}</td><td>{statusWord(r.status)}</td><td>{mmss(r.talkSec)}</td>
+                <td>{at(r.startAt)}</td><td>{r.userName || '—'}</td><td>{r.number}</td><td>{r.lineName || 'Office Synway (SIM)'}</td><td>{statusWord(r.status)}</td><td>{mmss(r.talkSec)}</td>
                 <td className="small-muted">{r.hangupReason || (r.status === 'completed' ? 'Hung up' : '')}</td>
               </tr>
             ))}

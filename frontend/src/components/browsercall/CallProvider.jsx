@@ -6,14 +6,19 @@ import api from '../../api';
 // The SIP password is fetched per session from the server (POST /browser-calling/session), kept only in memory, never stored.
 // Status words come from what really happens: SIP progress in this browser, then the server's row (written from Asterisk events).
 const Ctx = createContext(null);
-export const useBrowserCall = () => useContext(Ctx) || { available: false, state: { phase: 'idle' }, call: () => {}, hangup: () => {}, toggleMute: () => {}, toggleHold: () => {} };
+export const useBrowserCall = () => useContext(Ctx) || { available: false, state: { phase: 'idle' }, lines: [], call: () => {}, pickAndCall: () => {}, testCall: () => {}, chooseLine: () => {}, hangup: () => {}, toggleMute: () => {}, toggleHold: () => {} };
 
 const errOf = (e, d) => (e && e.response && e.response.data && e.response.data.error) || d;
+// PHONE LINES (2026-11-23): which line the call goes out on ("Call using"). The server lists the lines this login may use (GET /status) and decides
+// the line of each call; the browser only sends the header value the server handed back. The last choice is remembered on this computer.
+const LINE_KEY = 'tl_browser_call_line';
+const savedLine = () => { try { return localStorage.getItem(LINE_KEY) || ''; } catch { return ''; } };
 
 export default function BrowserCallProvider({ children }) {
   const [info, setInfo] = useState(null); // GET /status
   const [state, setState] = useState({ phase: 'idle' }); // idle | starting | calling | ringing | connected | failed | ended
   const [seconds, setSeconds] = useState(0);
+  const [linePick, setLinePick] = useState(savedLine);
   const ua = useRef(null); const reg = useRef(null); const sess = useRef(null); const audioEl = useRef(null); const poll = useRef(null); const tick = useRef(null);
   const creds = useRef(null); const tone = useRef(null);
   const stopTone = () => { try { if (tone.current) { tone.current.osc.stop(); tone.current.ctx.close(); } } catch { /* done */ } tone.current = null; };
@@ -27,7 +32,8 @@ export default function BrowserCallProvider({ children }) {
     } catch { /* no audio context */ }
   };
 
-  useEffect(() => { api.get('/browser-calling/status').then((r) => setInfo(r.data)).catch(() => setInfo({ canCall: false })); }, []);
+  const refresh = useCallback(() => api.get('/browser-calling/status').then((r) => setInfo(r.data)).catch(() => setInfo({ canCall: false })), []);
+  useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => () => { try { if (ua.current) ua.current.stop(); } catch { /* closing */ } clearInterval(poll.current); clearInterval(tick.current); }, []);
 
   const stopTimers = () => { clearInterval(poll.current); clearInterval(tick.current); stopTone(); };
@@ -67,7 +73,12 @@ export default function BrowserCallProvider({ children }) {
     audioEl.current.play().catch(() => {});
   };
 
-  const call = useCallback(async ({ candidateId, applicationId, name }) => {
+  const lines = useMemo(() => (info && info.lines) || [], [info]);
+  const curLine = lines.find((l) => l.id === linePick) || lines[0] || null;
+  const chooseLine = useCallback((id) => { setLinePick(id); try { localStorage.setItem(LINE_KEY, id); } catch { /* kept for this visit only */ } }, []);
+
+  // one call, whatever asked for it: `placeIt` asks the server for the row (and the line), then the browser sends the INVITE
+  const run = useCallback(async ({ candidateId, name }, placeIt) => {
     if (sess.current) { setState((s) => ({ ...s, note: 'A call is already in progress.' })); return; }
     setState({ phase: 'starting', name, candidateId });
     try {
@@ -76,14 +87,16 @@ export default function BrowserCallProvider({ children }) {
     let placed;
     try {
       await ensureUa();
-      placed = (await api.post('/browser-calling/calls', { candidateId, applicationId })).data;
+      placed = await placeIt();
     } catch (e) { setState({ phase: 'failed', name, candidateId, error: errOf(e, e.message || 'Could not start the call.') }); return; }
     const target = UserAgent.makeURI(`sip:${placed.number}@${creds.current.domain}`);
-    const inviter = new Inviter(ua.current, target, { extraHeaders: [`X-TL-Call: ${placed.token}`], sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } } });
+    const headers = [`X-TL-Call: ${placed.token}`];
+    if (placed.line && placed.line.header) headers.push(`X-TL-Line: ${placed.line.header}`);
+    const inviter = new Inviter(ua.current, target, { extraHeaders: headers, sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } } });
     sess.current = inviter;
     setSeconds(0);
     startTone();
-    setState({ phase: 'calling', name: placed.candidate.name, candidateId, callId: placed.callId, number: placed.number });
+    setState({ phase: 'calling', name: placed.candidate.name, candidateId, callId: placed.callId, number: placed.number, lineName: placed.line ? placed.line.name : '' });
     let answeredAt = null;
     inviter.stateChange.addListener((s) => {
       if (s === SessionState.Established) {
@@ -107,6 +120,17 @@ export default function BrowserCallProvider({ children }) {
       },
     }).catch((e) => { sess.current = null; finish('failed', { error: e.message || 'The call could not be sent.' }); });
   }, [ensureUa, finish]);
+
+  // a candidate call on the chosen line (or the one given)
+  const call = useCallback(({ candidateId, applicationId, name, lineId }) => {
+    const ln = lineId || (curLine && curLine.id) || undefined;
+    return run({ candidateId, name }, async () => (await api.post('/browser-calling/calls', { candidateId, applicationId, lineId: ln })).data);
+  }, [run, curLine]);
+  // "pick the line first": the call bar shows "Call using" and the Call button
+  const pickAndCall = useCallback((args) => { if (!sess.current) setState({ phase: 'choose', ...args }); }, []);
+  // Admin: a test call on one line to one of the Test numbers (Phone lines > Test call)
+  const testCall = useCallback(({ lineId, number, lineName }) => run({ candidateId: 'test-call', name: `Test call · ${lineName || ''}` },
+    async () => (await api.post(`/browser-calling/admin/lines/${encodeURIComponent(lineId)}/test-call`, { number })).data), [run]);
 
   const hangup = useCallback(() => {
     const s = sess.current;
@@ -135,6 +159,6 @@ export default function BrowserCallProvider({ children }) {
   }, [state.held]);
 
   const dismiss = useCallback(() => setState({ phase: 'idle' }), []);
-  const value = useMemo(() => ({ available: !!(info && info.canCall), info, state, seconds, call, hangup, toggleMute, toggleHold, dismiss }), [info, state, seconds, call, hangup, toggleMute, toggleHold, dismiss]);
+  const value = useMemo(() => ({ available: !!(info && info.canCall), info, state, seconds, lines, line: curLine, chooseLine, call, pickAndCall, testCall, refresh, hangup, toggleMute, toggleHold, dismiss }), [refresh, info, state, seconds, lines, curLine, chooseLine, call, pickAndCall, testCall, hangup, toggleMute, toggleHold, dismiss]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
