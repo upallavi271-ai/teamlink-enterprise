@@ -109,19 +109,34 @@ async function transcribe(wavBuf, mp3Path) {
   if (key) {
     try {
       const file = mp3Path && fs.existsSync(mp3Path) ? mp3Path : null;
-      const body = new FormData();
       const data = file ? fs.readFileSync(file) : wavBuf;
-      body.append('file', new Blob([data], { type: file ? 'audio/mpeg' : 'audio/wav' }), file ? 'call.mp3' : 'call.wav');
-      body.append('model', 'whisper-large-v3');
-      body.append('response_format', 'json');
-      body.append('temperature', '0');
-      const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 120000); t.unref();
-      const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body, signal: ctl.signal });
-      clearTimeout(t);
-      if (!r.ok) throw new Error(`Groq answered ${r.status}`);
-      const j = await r.json();
+      const ask = async (what) => {
+        const body = new FormData();
+        body.append('file', new Blob([data], { type: file ? 'audio/mpeg' : 'audio/wav' }), file ? 'call.mp3' : 'call.wav');
+        body.append('model', 'whisper-large-v3');
+        body.append('response_format', 'verbose_json');
+        body.append('temperature', '0');
+        const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 120000); t.unref();
+        const r = await fetch(`https://api.groq.com/openai/v1/audio/${what}`, { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body, signal: ctl.signal });
+        clearTimeout(t);
+        if (!r.ok) throw new Error(`Groq answered ${r.status}`);
+        return r.json();
+      };
+      const j = await ask('transcriptions');
       const gtext = String(j.text || '').trim();
-      if (gtext) return { text: gtext, source: 'Groq Whisper (whisper-large-v3)' };
+      const lang = String(j.language || '').trim();
+      // A call in Telugu / Hindi (founder 2026-11-23: the Telugu-letter text "had nothing to do with the audio"): what was said is
+      // written in ENGLISH (Whisper's own translation of the audio, which keeps the meaning), with the words as spoken below it.
+      // The summary reads the English part.
+      if (gtext && lang && !/^en(glish)?$/i.test(lang)) {
+        let english = '';
+        try { english = String((await ask('translations')).text || '').trim(); } catch { english = ''; }
+        if (english) {
+          const L = lang.charAt(0).toUpperCase() + lang.slice(1);
+          return { text: `${english}\n\n— As spoken (${L}) —\n${gtext}`, english, source: `Groq Whisper (spoken ${L}, written in English)` };
+        }
+      }
+      if (gtext) return { text: gtext, english: gtext, source: 'Groq Whisper (whisper-large-v3)' };
       errors.push('Groq Whisper: heard nothing');
     } catch (e) { errors.push(`Groq Whisper: ${clip(String(e.message).replace(key, '•••'), 80)}`); }
   }
@@ -208,6 +223,7 @@ async function activity(row, line) {
 
 // ---- the job ----------------------------------------------------------------------------------------------------------------------------
 async function processCall(id) {
+  let englishText = ''; // what the summary reads: the English of the call (a Telugu / Hindi call is translated by the transcriber)
   const row = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', id);
   if (!row || row.processedAt) return { skipped: true };
   if (!row.answerAt) {
@@ -241,12 +257,13 @@ async function processCall(id) {
       try { tr = await transcribe(sttOk ? fs.readFileSync(sttWav) : buf, sttOk ? null : (stored.endsWith('.mp3') ? stored : null)); } finally { try { fs.unlinkSync(sttWav); } catch { /* gone */ } }
       if (tr.text) Object.assign(set, { transcript: clip(tr.text, 60000), transcriptSource: tr.source });
       else set.transcriptSource = clip(tr.reason, 300);
+      if (tr.english) englishText = tr.english;
       try { fs.unlinkSync(raw); } catch { /* removed already */ }
     }
   }
   let line = '';
   if (set.transcript) {
-    const sm = await summarize(set.transcript, user);
+    const sm = await summarize(englishText || String(set.transcript).split('\n\n— As spoken (')[0], user);
     Object.assign(set, { summary: JSON.stringify(sm.data), summaryText: clip(textOf(sm.data), 2000), summarySource: sm.source });
     line = oneLine(sm.data);
   }
