@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execFile } = require('child_process');
 const S = require('./schema');
 const CFG = require('./config');
@@ -71,6 +72,12 @@ async function findRaw(token) {
 }
 
 // ---- 2. ONE ffmpeg command ----------------------------------------------------------------------------------------------------------
+// for the transcriber only (deleted right after): mono 16 kHz WAV at normal loudness
+function toSttWav(src, dst) {
+  return new Promise((resolve) => {
+    execFile(ENV.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-ac', '1', '-ar', '16000', '-af', 'loudnorm=I=-18:TP=-2', '-c:a', 'pcm_s16le', dst], { timeout: 180000, windowsHide: true }, (e) => resolve(!e && fs.existsSync(dst) && fs.statSync(dst).size > 44));
+  });
+}
 function toMp3(src, dst) {
   return new Promise((resolve) => {
     execFile(ENV.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-ac', '1', '-ar', '16000', '-af', 'loudnorm=I=-18:TP=-2', '-c:a', 'libmp3lame', '-b:a', '24k', dst], { /* loudnorm (23 Nov 2026): phone audio is quiet - Whisper heard only "Thank you." in a real call until it was brought up to normal loudness */ timeout: 180000, windowsHide: true }, (e) => resolve(!e && fs.existsSync(dst) && fs.statSync(dst).size > 0));
@@ -227,7 +234,11 @@ async function processCall(id) {
       if (await toMp3(raw, mp3)) stored = mp3;
       else { const wav = path.join(dir, `${row.id}.wav`); fs.copyFileSync(raw, wav); stored = wav; set.recordingNote = 'Kept as WAV: ffmpeg is not available on this server.'; }
       Object.assign(set, { recordingStatus: 'done', recordingPath: path.relative(storeDir(), stored), recordingBytes: fs.statSync(stored).size, recordingSec: info ? info.seconds : null });
-      const tr = await transcribe(buf, stored.endsWith('.mp3') ? stored : null);
+      // the transcriber gets a clean 16 kHz WAV at normal loudness (23 Nov 2026): the small MP3 made Whisper drop most of a real call
+      const sttWav = path.join(os.tmpdir(), `tl-stt-${row.id}.wav`);
+      const sttOk = await toSttWav(raw, sttWav);
+      let tr;
+      try { tr = await transcribe(sttOk ? fs.readFileSync(sttWav) : buf, sttOk ? null : (stored.endsWith('.mp3') ? stored : null)); } finally { try { fs.unlinkSync(sttWav); } catch { /* gone */ } }
       if (tr.text) Object.assign(set, { transcript: clip(tr.text, 60000), transcriptSource: tr.source });
       else set.transcriptSource = clip(tr.reason, 300);
       try { fs.unlinkSync(raw); } catch { /* removed already */ }
