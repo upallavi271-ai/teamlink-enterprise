@@ -49,7 +49,7 @@ export default function MkReportsPage() {
   const c = d && d.content; const m = d && d.media; const cl = d && d.clients;
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="Reports" lead="Plain numbers for the dates you pick: what was written, made, approved, posted and answered by clients, and how much AI was used.">
+      <PageHead eyebrow="AI Marketing" title="Reports">
         <select value={range} onChange={(e) => setRange(e.target.value)} aria-label="Date range">{RANGES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         {range === 'custom' ? <><input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} aria-label="From" /><input type="date" value={to} min={from} max={today()} onChange={(e) => setTo(e.target.value)} aria-label="To" /></> : null}
         <Btn disabled={busy || !d} onClick={csv}>{busy ? 'Making…' : '⬇ Download CSV'}</Btn>

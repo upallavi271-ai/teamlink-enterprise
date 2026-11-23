@@ -115,7 +115,7 @@ export default function MkBrandPage() {
 
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="Brand voice" lead="Your brand kit: how the company sounds, who it talks to and how it looks. The AI follows it on every message, and the image and video makers use the logo and colours.">
+      <PageHead eyebrow="AI Marketing" title="Brand voice">
         <Btn primary disabled={busy || !can || !dirty} onClick={save}>{busy ? 'Saving…' : dirty ? '💾 Save brand voice' : '✓ Saved'}</Btn>
       </PageHead>
       {err ? <Banner tone="error">{err}</Banner> : null}
@@ -131,7 +131,7 @@ export default function MkBrandPage() {
       </Panel>
 
       <div className="mk-two">
-        <Panel title="Who you are" sub="Short and plain is best.">
+        <Panel title="Who you are">
           <div className="form-grid">
             <Field label="BRAND NAME" full><input value={f.brandName} maxLength={80} placeholder="TeamLink" onChange={set('brandName')} disabled={!can} /></Field>
             <Field label="TAGLINE" full hint="One short line, used on images and videos."><input value={f.tagline} maxLength={120} placeholder="The right people, fast." onChange={set('tagline')} disabled={!can} /></Field>
@@ -141,7 +141,7 @@ export default function MkBrandPage() {
           </div>
         </Panel>
 
-        <Panel title="Look and feel" sub="For the AI image and video makers, and for this preview.">
+        <Panel title="Look and feel">
           <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
             <div style={{ width: 88, height: 88, borderRadius: 12, border: '1px dashed var(--line)', display: 'grid', placeItems: 'center', background: '#fff', overflow: 'hidden' }}>
               {logo ? <img src={logo.dataUrl} alt={`${f.brandName || 'Brand'} logo`} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} /> : <span style={{ fontSize: 10, color: 'var(--muted)', textAlign: 'center' }}>No logo yet</span>}
@@ -176,14 +176,14 @@ export default function MkBrandPage() {
       </div>
 
       <div className="mk-two" style={{ marginTop: 14 }}>
-        <Panel title="Who you talk to and what you say" sub="The AI uses these when they fit the brief.">
+        <Panel title="Who you talk to and what you say">
           <div className="form-grid">
             <Field label="WHO WE TALK TO" full hint="For example: job seekers in healthcare and IT, and HR heads of hospitals."><textarea style={{ minHeight: 60 }} value={f.audience} maxLength={300} onChange={set('audience')} disabled={!can} /></Field>
             <Field label={<>INDUSTRIES WE HIRE FOR <Count n={words(f.industries).length} max={L.industries} /></>} full hint="Separated by commas."><input value={f.industries} onChange={set('industries')} placeholder="Medical, IT, Education, Manufacturing" disabled={!can} /></Field>
             <Field label={<>KEY MESSAGES <Count n={rows(f.keyMessages).length} max={L.keyMessages} /></>} full hint={`One per line, up to ${L.keyMessageChars} characters each. What makes you different.`}><textarea style={{ minHeight: 84 }} value={f.keyMessages} onChange={set('keyMessages')} placeholder={'Verified candidates within 7 days\nReplacement guarantee'} disabled={!can} /></Field>
           </div>
         </Panel>
-        <Panel title="Social media" sub="Your pages and hashtags. Social posts use them.">
+        <Panel title="Social media">
           <div className="form-grid">
             <Field label="FACEBOOK PAGE"><input value={f.socials.facebook} maxLength={120} onChange={setSocial('facebook')} placeholder="facebook.com/yourpage" disabled={!can} /></Field>
             <Field label="INSTAGRAM"><input value={f.socials.instagram} maxLength={120} onChange={setSocial('instagram')} placeholder="@yourbrand" disabled={!can} /></Field>
@@ -195,7 +195,7 @@ export default function MkBrandPage() {
       </div>
 
       <div className="mk-two" style={{ marginTop: 14 }}>
-        <Panel title="How you write" sub="Told to the AI on every message.">
+        <Panel title="How you write">
           <div className="form-grid">
             <Field label="HOW WE SOUND" full hint="For example: warm, clear, no jargon, short sentences."><textarea style={{ minHeight: 70 }} value={f.voice} maxLength={400} onChange={set('voice')} disabled={!can} /></Field>
             <Field label="DEFAULT TONE"><select value={f.tone} onChange={set('tone')} disabled={!can}>{data.tones.map((t) => <option key={t}>{t}</option>)}</select></Field>
@@ -206,7 +206,7 @@ export default function MkBrandPage() {
             <Field label="EMAIL DISCLAIMER" full hint="Optional. Added word for word at the end of every email."><input value={f.disclaimer} maxLength={300} placeholder="We never ask candidates for money." onChange={set('disclaimer')} disabled={!can} /></Field>
           </div>
         </Panel>
-        <Panel title="Words and examples" sub="Checked on every text the AI writes.">
+        <Panel title="Words and examples">
           <div className="form-grid">
             <Field label={<>WORDS TO USE <Count n={words(f.doWords).length} max={L.doWords} /></>} full hint="One per line or separated by commas."><textarea style={{ minHeight: 70 }} value={f.doWords} onChange={set('doWords')} placeholder={'talent\npartner'} disabled={!can} /></Field>
             <Field label={<>NEVER USE THESE WORDS <Count n={words(f.avoidWords).length} max={L.avoidWords} /></>} full hint="The AI is told not to use them, and any that slip in are flagged before approval."><textarea style={{ minHeight: 70 }} value={f.avoidWords} onChange={set('avoidWords')} placeholder={'guarantee\nfree'} disabled={!can} /></Field>
@@ -216,7 +216,7 @@ export default function MkBrandPage() {
         </Panel>
       </div>
 
-      <Panel title="Try the voice" sub="The AI writes one short introduction in the saved brand voice, so you can hear how it sounds. It uses one AI request." style={{ marginTop: 14 }}>
+      <Panel title="Try the voice" style={{ marginTop: 14 }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Btn disabled={trialBusy || !can || dirty || !b.brandName || !(meta && aiReady(meta.ai))} onClick={tryVoice}>{trialBusy ? 'Writing…' : '✦ Write a sample'}</Btn>
           <span style={{ fontSize: 10, color: 'var(--muted)' }}>{!can ? 'Your login cannot use AI writing.' : dirty ? 'Save your changes first: the sample uses the saved voice.' : !b.brandName ? 'Save a brand name first.' : meta && !aiReady(meta.ai) ? 'The AI is not ready (see AI usage for the reason).' : ''}</span>

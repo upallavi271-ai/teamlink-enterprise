@@ -235,7 +235,7 @@ export default function MkVideosPage() {
 
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="AI Video" lead="Type your idea (and your own title, heading and words) and TeamLink makes the pictures and the video by itself, free. Or join pictures and your own video clips by hand. It is made in this browser: nothing is sent anywhere until you save it.">
+      <PageHead eyebrow="AI Marketing" title="AI Video">
         {canWrite ? (
           <>
             <input ref={fileRef} type="file" accept="video/mp4,video/webm" multiple style={{ display: 'none' }} onChange={uploadClips} />
@@ -254,7 +254,6 @@ export default function MkVideosPage() {
       {canWrite ? (
         <>
           <AutoStudioPanel kind="video" projectId={projectId} onVideo={startAuto} onMade={load} toast={toast} />
-          <Banner tone="info"><b>Want real, moving video?</b> Pictures only zoom or pan. For real motion, press <b>🎞 Free stock clips</b> below to search real footage (free), or make short clips in the <b>Gemini app</b> (gemini.google.com: your plan's video maker, if it has one), a phone or any tool, press <b>⬆ Upload video clips</b>, then mix them with pictures below (raw footage needs no approval). Clips from the Gemini app often carry sound: you can keep it.</Banner>
           <StockClipPanel toast={toast} onMade={load} />
           <AiClipPanel pictures={pics} toast={toast} onMade={load} />
           <Panel title="1 · Pick the pictures and clips" sub={sources.length ? `Tap them in the order they should play (up to 8). ${pick.length} picked.` : undefined}>
@@ -327,7 +326,7 @@ export default function MkVideosPage() {
       ) : <Banner tone="info">You can watch the videos of your department and approve them in Approvals. Only Marketing and Admins make videos.</Banner>}
 
       {clipsAll.length > 0 ? (
-        <Panel title="Your clips" sub="Raw footage you uploaded or saved from the free stock clips. It is ready to use: no approval needed. The finished video is what gets approved." style={{ marginTop: 14 }} right={<span className="pill live">{clipsAll.length}</span>}>
+        <Panel title="Your clips" style={{ marginTop: 14 }} right={<span className="pill live">{clipsAll.length}</span>}>
           <div className="mki-grid">{clipsAll.map((v) => card(v, true))}</div>
         </Panel>
       ) : null}

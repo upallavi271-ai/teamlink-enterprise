@@ -157,7 +157,6 @@ export default function MkMeetingPage() {
         <div>
           <div className="mkm-eyebrow">AI Marketing</div>
           <h1>Plans meeting</h1>
-          <p>Send a client a link on WhatsApp: an automated assistant presents the plans in English, Telugu or Hindi and answers questions. Clients who ask for a call appear first, with a Call button.</p>
         </div>
         <Btn onClick={() => window.open('/plans-meeting', '_blank', 'noopener')} title="Opens the meeting the way a client sees it. It is saved as “Opened without a link”.">▶ Try it yourself</Btn>
       </div>
@@ -183,7 +182,6 @@ export default function MkMeetingPage() {
 
           <section className="mkm-card">
             <div className="mkm-listhead"><h3>Questions the assistant could not answer</h3><span style={{ fontSize: 11, color: 'var(--muted)' }}>{d.unanswered.length} waiting · {d.answers.length} added by you</span></div>
-            <p>Write the answer once, in any language, and the assistant answers it (and the same words) for every client from then on. It never makes up policy: these are your words.</p>
             {ed ? (
               <div className="mkm-more" style={{ marginBottom: 10 }}>
                 <div className="lab">THE QUESTION</div>
@@ -219,7 +217,6 @@ export default function MkMeetingPage() {
         <aside className="mkm-side">
           <section className="mkm-card">
             <h3>New meeting link</h3>
-            <p>One link for one client, valid for 30 days. Open the new row to send it.</p>
             <div className="mkm-form">
               <label>Client's name<input value={f.name} maxLength={80} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="For example: Ravi" /></label>
               <label>WhatsApp number<input value={f.phone} maxLength={30} inputMode="tel" onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+91…" /></label>
@@ -234,7 +231,6 @@ export default function MkMeetingPage() {
 
           <section className="mkm-card">
             <h3>Calls and alerts</h3>
-            <p>A client who asks for a call rings the bell in TeamLink. The WhatsApp alert puts it on your phone too.</p>
             <div className="mkm-form">
               <label>Call the client from
                 <select value={callLine} onChange={(e) => setCallLine(e.target.value)} aria-label="The line the call goes out on">
@@ -256,7 +252,6 @@ export default function MkMeetingPage() {
           {au ? (
             <section className="mkm-card">
               <h3>Automatic demo for new enquiries</h3>
-              <p>No need to add a number and send a link each time. When a <b>new person</b> writes to a number ticked here, TeamLink sends them their own demo link by itself, in their language. Once per person in 30 days; never after STOP; never to a candidate, employee or client contact.</p>
               <div className="mkm-form">
                 <label className="mkm-check"><input type="checkbox" disabled={!d.offer.canEdit || busy === 'offer'} checked={!!au.on} onChange={(e) => setAu({ ...au, on: e.target.checked })} /> Offer the demo to new WhatsApp enquiries</label>
                 <div className={au.on ? '' : 'mkm-dim'}>
@@ -280,7 +275,6 @@ export default function MkMeetingPage() {
 
           <section className="mkm-card">
             <h3>Share the demo anywhere</h3>
-            <p>One open link for your Instagram bio, website, posts and visiting cards. Each person who opens it gets a meeting of their own (a row “Opened without a link”); their number is asked only if they ask for a call.</p>
             <div className="mkm-form">
               <input readOnly value={openLink} onFocus={(e) => e.target.select()} aria-label="The open demo link" />
               <div className="row" style={{ flexWrap: 'wrap' }}>
@@ -293,7 +287,6 @@ export default function MkMeetingPage() {
 
           <section className="mkm-card">
             <h3>“First ten customers” offer</h3>
-            <p>Nothing counts customers by itself, so you keep the number. At 0 the assistant stops mentioning the offer.</p>
             <div className="mkm-form">
               <div className="row" style={{ alignItems: 'center' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, textTransform: 'none', letterSpacing: 0, fontSize: 12, fontWeight: 600 }}>Spots left <input type="number" min={0} max={99} value={spots == null ? '' : spots} onChange={(e) => setSpots(e.target.value)} style={{ width: 70, marginTop: 0 }} /></label>

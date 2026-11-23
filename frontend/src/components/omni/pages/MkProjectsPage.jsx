@@ -201,7 +201,7 @@ function ShowcasePanel({ p, onSaved, toast }) {
     try { const r = await omni.post(`/gs/marketing/projects/${p.id}/showcase`, { show, consent: f.consent, showName: f.showName, title: f.title }); toast(r.ok || 'Saved'); onSaved(); } catch (e) { setErr(errOf(e, 'It could not be saved.')); } finally { setBusy(false); }
   };
   return (
-    <Panel title="Show this to other clients" sub="New clients trust us when they see real finished work. It appears on the client pages and on the public “Our work” page." right={p.showcase ? <Pill tone="live" dot>In our portfolio</Pill> : null}>
+    <Panel title="Show this to other clients" right={p.showcase ? <Pill tone="live" dot>In our portfolio</Pill> : null}>
       {err ? <Banner tone="error">{err}</Banner> : null}
       <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, lineHeight: 1.5 }}><input type="checkbox" style={{ marginTop: 3 }} checked={f.consent} onChange={(e) => setF({ ...f, consent: e.target.checked })} />The client agrees that we may show this work to other clients.</label>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, margin: '8px 0' }}><input type="checkbox" checked={f.showName} onChange={(e) => setF({ ...f, showName: e.target.checked })} />Also show the client's name ({p.clientName}). Otherwise it says “A client”.</label>
@@ -298,7 +298,7 @@ function Detail({ id, meta, onBack, onChanged }) {
           </Panel>
 
           {p.status === 'request' ? (
-            <Panel title="A new request" sub="Accept it to start work, or decline with a reason the client will see." style={{ marginTop: 14 }}>
+            <Panel title="A new request" style={{ marginTop: 14 }}>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <Btn primary disabled={!!busy} onClick={() => act('accept', {}, 'Accepted')}>✔ Accept and start</Btn>
                 <Btn disabled={!!busy} onClick={() => { setReason(''); setModal('decline'); }}>Decline…</Btn>
@@ -307,7 +307,7 @@ function Detail({ id, meta, onBack, onChanged }) {
           ) : null}
 
           {p.status === 'working' ? (
-            <Panel title="Make and pick the options" sub="Make a few pictures and videos for this client with AI, then pick the ones to show. The client chooses one." style={{ marginTop: 14 }}>
+            <Panel title="Make and pick the options" style={{ marginTop: 14 }}>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                 <Btn small onClick={() => go('mkvideos', { project: p.id })} title="Opens AI Video with this client's logo and colours">🎬 Make a video for this client</Btn>
                 <Btn small onClick={() => go('mkimages', { project: p.id })}>🖼 Make pictures</Btn>
@@ -362,7 +362,7 @@ function Detail({ id, meta, onBack, onChanged }) {
           {['approved', 'posted'].includes(p.status) ? <div style={{ marginTop: 14 }}><ShowcasePanel key={`${p.id}-${p.showcase}`} p={p} toast={toast} onSaved={() => { onChanged(); load(); }} /></div> : null}
 
           {p.status === 'approved' ? (
-            <Panel title="Ready to post" sub="The client approved it. Post it on their pages, then mark it as posted." style={{ marginTop: 14 }}>
+            <Panel title="Ready to post" style={{ marginTop: 14 }}>
               <Field label="THE POST WORDS" full>
                 <textarea style={{ minHeight: 70 }} value={caption} maxLength={3000} onChange={(e) => setCaption(e.target.value)} onBlur={() => { if (caption !== (p.caption || '')) omni.put(`/gs/marketing/projects/${id}`, { caption }).then(() => load()).catch((e) => setErr(errOf(e, 'The caption could not be saved.'))); }} />
               </Field>
@@ -408,12 +408,12 @@ function Detail({ id, meta, onBack, onChanged }) {
 
         <div>
           {!['declined'].includes(p.status) ? (
-            <Panel title="The client's page" sub={p.status === 'invited' ? 'Send this so the client can write the request.' : p.status === 'awaiting_client' ? 'Send this so the client can choose.' : 'The client follows progress here. Same link all the way.'}>
+            <Panel title="The client's page">
               {share(p.status === 'invited' ? `Hello${p.contactName ? ` ${p.contactName}` : ''}, please tell us what you need and add your logo here:` : p.status === 'awaiting_client' ? `Hello${p.contactName ? ` ${p.contactName}` : ''}, please look at the options for "${p.occasion || p.title}", pick the one you like and tell us any suggestions:` : `Hello${p.contactName ? ` ${p.contactName}` : ''}, you can follow "${p.occasion || p.title}" here:`, p.status === 'awaiting_client' ? `Please choose: ${p.occasion || p.title}` : `Your request: ${p.occasion || p.title}`)}
             </Panel>
           ) : null}
           {d.made.length > 0 ? (
-            <Panel title="Made for this project" sub="Pictures and videos made with this project's logo and colours." style={{ marginTop: 14 }}>
+            <Panel title="Made for this project" style={{ marginTop: 14 }}>
               <div className="mki-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', marginTop: 0 }}>
                 {d.made.slice(0, 12).map((m) => <div key={m.id}><MkImg id={m.id} lazy alt={m.title} video={m.kind === 'video'} controls={false} style={{ aspectRatio: String(m.aspect).replace(':', ' / '), objectFit: 'cover', ...(m.kind === 'video' ? { background: '#000' } : {}) }} /><small style={{ fontSize: 9.5, color: 'var(--muted)' }}>{m.title} · {m.status}</small></div>)}
               </div>
@@ -519,7 +519,7 @@ export default function MkProjectsPage() {
   const label = (arr, k) => (arr.find((x) => x.key === k) || {}).label || '';
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="Client projects" lead="A client asks for a creative. Accept it, make options with AI, show them on one private link, and the client picks one and adds suggestions. Then post it on their pages.">
+      <PageHead eyebrow="AI Marketing" title="Client projects">
         <Btn onClick={async () => { const u2 = `${origin()}/our-work`; try { await navigator.clipboard.writeText(u2); toast('Link to “Our work” copied: send it to a new client'); } catch { window.prompt('Copy the link:', u2); } }} title="A public page with our finished projects and how fast and accurate we are">🌐 Copy the “Our work” link</Btn>
         <Btn onClick={() => setModal('invite')}>🔗 Invite a client to request</Btn>
         <Btn primary onClick={() => setModal('new')}>＋ Log a request</Btn>

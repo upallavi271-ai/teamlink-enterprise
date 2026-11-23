@@ -73,16 +73,15 @@ export default function MkLeadsPage() {
   const firstReplyWords = ap.firstReply.length ? ap.firstReply.filter((x) => x.on).map((x) => `${x.channel === 'email' ? 'an email' : 'an SMS'}${x.afterHours ? ` after ${x.afterHours} h` : ' at once'}`).join(' and ') : 'a mail and an SMS';
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="Lead generation" lead="Every new lead from your website form, an ad-lead file or typed in by hand is scored Hot, Warm or Cold with the reasons, given an owner in turn, and the owner is told. Nothing here messages anyone: the first reply is the CRM Autopilot.">
+      <PageHead eyebrow="AI Marketing" title="Lead generation">
         <Btn onClick={() => setImp(true)}>⬆ Import ad leads</Btn>
         {d.canManage ? <Btn onClick={() => setAsk('all')} disabled={busy === 'score'} title="Score every open lead already in the CRM (the Hot / Warm / Cold rating is filled only where it is empty)">Score the leads already in the CRM</Btn> : null}
       </PageHead>
       {err ? <Banner tone="error">{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => setErr('')}>Close</button></Banner> : null}
-      <Panel title="How it works" sub="Scoring and owners are done here. The first reply is done by the CRM Autopilot." right={d.canManage ? <Btn small primary={!st.on} onClick={() => save({ on: !st.on })} disabled={busy === 'save'}>{st.on ? 'Switch scoring off' : 'Switch scoring on'}</Btn> : <Pill tone={st.on ? 'live' : 'draft'} dot>{st.on ? 'On' : 'Off'}</Pill>}>
+      <Panel title="Scoring and first reply" right={d.canManage ? <Btn small primary={!st.on} onClick={() => save({ on: !st.on })} disabled={busy === 'save'}>{st.on ? 'Switch scoring off' : 'Switch scoring on'}</Btn> : <Pill tone={st.on ? 'live' : 'draft'} dot>{st.on ? 'On' : 'Off'}</Pill>}>
         <div className="mk-prov">
           <div><b>Scoring and owners {st.on ? <Pill tone="live" dot>On</Pill> : <Pill tone="warn" dot>Off</Pill>}</b><span>{st.on ? `New leads that arrive are scored within a minute (since ${fmtDateTime(st.armedAt)}). Old leads are not touched unless a manager presses “Score the leads already in the CRM”.` : 'Off. A Sales manager or an Admin switches it on; then only leads that arrive after that are scored by themselves.'}</span></div>
           <div><b>First reply (CRM Autopilot) {ap.on ? <Pill tone="live" dot>On</Pill> : <Pill tone="warn" dot>Off</Pill>}</b><span>{ap.on ? `Each new lead gets ${firstReplyWords}, then a short follow-up over the week. It stops when they reply, opt out or a person takes over.` : 'Off. When a Sales manager switches the Autopilot on (Sales CRM), each new lead gets a first mail and SMS at once.'}</span></div>
-          <div><b>What a score is</b><span>Points for a real phone and email, a business email, a decision maker, a message about hiring or a price, a referral or the website form, a kind of company you serve. Points off for fake numbers, test entries and no way to reach them. Hot from {st.hot}, Warm from {st.warm}. Every reason is shown.</span></div>
         </div>
         {d.canManage ? (
           <div className="form-grid" style={{ marginTop: 10 }}>
@@ -104,7 +103,7 @@ export default function MkLeadsPage() {
         <Kpi label="Replied to" icon="✉" value={fmtNum(c.replied)} meta="by the Autopilot" />
       </Kpis>
       {d.bySource.length ? <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '10px 0 0', fontSize: 11.5, alignItems: 'center' }}><span style={{ color: 'var(--muted)' }}>Where they came from:</span>{d.bySource.map((s) => <Tag key={s.source}>{s.source} · {s.n}</Tag>)}</div> : null}
-      <Panel title="Your leads" sub="Newest first. Press a lead to see why it got its score." style={{ marginTop: 14 }} right={<select value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Show"><option value="">All</option><option value="Hot">Hot</option><option value="Warm">Warm</option><option value="Cold">Cold</option><option value="new">Not scored yet</option></select>}>
+      <Panel title="Your leads" sub="Newest first" style={{ marginTop: 14 }} right={<select value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Show"><option value="">All</option><option value="Hot">Hot</option><option value="Warm">Warm</option><option value="Cold">Cold</option><option value="new">Not scored yet</option></select>}>
         {shown.length === 0 ? <Empty title="No leads here yet">A lead that fills your website form, or comes in an ad-lead file, appears here with its score.</Empty> : shown.map((l) => (
           <div className="mk-row" key={l.id} style={{ alignItems: 'flex-start' }}>
             <div style={{ flex: 1, minWidth: 0 }}>

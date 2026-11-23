@@ -6,7 +6,6 @@ import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, ConfirmModal
 import { MkStatus, MkImg, downloadMkImg, ClientChip } from '../marketing/mk.jsx';
 import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import AutoStudioPanel from '../marketing/AutoStudioPanel.jsx';
-import BannerPanel from '../marketing/BannerPanel.jsx';
 import '../marketing/marketing.css';
 
 // AI MARKETING > AI IMAGES: ONE place to make pictures, "✦ Create from your content" (AutoStudioPanel: type an idea, TeamLink makes the post pictures by itself, free).
@@ -71,13 +70,13 @@ export default function MkImagesPage() {
   const copyLink = async (it) => { const url = `${window.location.origin}${it.publicPath}`; try { await navigator.clipboard.writeText(url); toast('Public link copied'); } catch { window.prompt('Copy the public link:', url); } };
   const download = async (it) => { try { await downloadMkImg(it.id, it.title); } catch (e) { toast(errOf(e, 'It could not be downloaded.')); } };
 
-  const shown = tab === 'banner' ? list.filter((i) => i.style === 'banner') : (tab ? list.filter((i) => i.status === tab) : list);
+  const shown = tab ? list.filter((i) => i.status === tab) : list;
   const cnt = (s) => list.filter((i) => i.status === s).length;
   const ratio = (a) => { const [w, h] = String(a || '1:1').split(':').map(Number); return `${w} / ${h}`; };
 
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="AI Images" lead="Type your idea and TeamLink makes the post pictures for you, free, in your brand colours and with your logo, or upload your own. A picture is used only after it is approved.">
+      <PageHead eyebrow="AI Marketing" title="AI Images">
         {meta.canWrite ? (
           <>
             <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" multiple style={{ display: 'none' }} onChange={upload} />
@@ -86,7 +85,7 @@ export default function MkImagesPage() {
         ) : null}
       </PageHead>
       {meta.canWrite ? <AutoStudioPanel kind="post" projectId={projectId} onMade={load} toast={toast} /> : null}
-      {meta.canWrite ? <BannerPanel projectId={projectId} pictures={list} onMade={load} toast={toast} /> : null}
+      {/* 21 Nov 2026 (owner: "remove the banner too, it becomes a mess"): the "Design a banner" card is gone from this screen. marketing/banner.js, the server routes and BannerPanel.jsx are untouched, so putting it back is one line. */}
       {proj ? (
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', background: '#eef6ff', border: '1px solid #c9defa', borderRadius: 10, padding: '9px 12px', margin: '0 0 12px', fontSize: 12, color: '#1d4fa8' }}>
           <span><b>Making pictures for {proj.clientName}</b>{proj.occasion ? ` · ${proj.occasion}` : ''}. {proj.hasLogo ? 'Their logo and colours are used.' : 'No logo is saved for this client yet: add one in the project.'} Then go back to the project and pick them as options.</span>
@@ -95,21 +94,11 @@ export default function MkImagesPage() {
       ) : null}
       {msg ? <Banner tone="error">{msg}</Banner> : null}
 
-      {meta.canWrite ? (
-        <Panel title="How it works" sub="Nothing is posted from here.">
-          <ol style={{ fontSize: 11.5, lineHeight: 1.8, margin: 0, paddingLeft: 18 }}>
-            <li>Type your idea in <b>✦ Create from your content</b> above and press <b>Create the post</b>. The pictures are made for you, free.</li>
-            <li>Keep the ones you like; delete the rest.</li>
-            <li>Press <b>Ask for approval</b>. A Team Lead or an Admin approves it in <b>Approvals</b>.</li>
-            <li>An approved picture can be downloaded, gets a public link, and can be picked in <b>AI Video</b>.</li>
-          </ol>
-          <div style={{ fontSize: 10.5, marginTop: 10 }}><b>Your own pictures:</b> press <b>⬆ Upload pictures</b> (phone, Canva, the Gemini app). Only upload pictures you own or may use; the place and camera details are removed.</div>
-          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 10 }}>Check every picture before you use it: the words and faces must be right for your client.</div>
-        </Panel>
-      ) : <Banner tone="info">You can look at the pictures of your department and approve them in Approvals. Only Marketing and Admins make pictures.</Banner>}
+      {/* 21 Nov 2026 (owner: "remove this, it becomes a mess"): the "How it works" panel is gone; the page lead says it in one line */}
+      {meta.canWrite ? null : <Banner tone="info">You can look at the pictures of your department and approve them in Approvals. Only Marketing and Admins make pictures.</Banner>}
 
       <Panel title="Your pictures" sub="Newest first" style={{ marginTop: 14 }} right={<span className="pill live">{list.length}</span>}>
-        <Tabs value={tab} onChange={setTab} tabs={[['', 'All', list.length], ['banner', 'Banners', list.filter((i) => i.style === 'banner').length], ['draft', 'Saved', cnt('draft')], ['waiting', 'Waiting', cnt('waiting')], ['changes', 'Changes needed', cnt('changes')], ['approved', 'Approved', cnt('approved')]]} />
+        <Tabs value={tab} onChange={setTab} tabs={[['', 'All', list.length], ['draft', 'Saved', cnt('draft')], ['waiting', 'Waiting', cnt('waiting')], ['changes', 'Changes needed', cnt('changes')], ['approved', 'Approved', cnt('approved')]]} />
         {shown.length === 0 ? <Empty title="No pictures here yet">{list.length ? 'Nothing with that status.' : 'Type your idea in the box above and press Create the post.'}</Empty> : (
           <div className="mki-grid">
             {shown.map((it) => (

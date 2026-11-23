@@ -26,7 +26,7 @@ export default function MkUsagePage() {
   };
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="AI usage" lead={d.scope === 'all' ? 'Every AI request made in AI Marketing, by everybody.' : 'Your own AI requests. An Admin sees everybody\'s.'} />
+      <PageHead eyebrow="AI Marketing" title="AI usage" />
       <AiBanner ai={d.ai} />
       <Kpis>
         <Kpi label="This month" icon="✧" value={fmtNum(s.month)} meta="AI requests that worked" />
@@ -35,7 +35,7 @@ export default function MkUsagePage() {
         <Kpi label="Company limit" icon="∑" value={d.settings.aiMonthlyCap ? fmtNum(d.settings.aiMonthlyCap) : 'None'} meta="AI requests a month" />
       </Kpis>
       {d.canEdit && roles ? (
-        <Panel title="Who sees what in AI Marketing" sub="Every login sees only its own part. This table is made from the real rules, so it is always right. Marketing = logins you tick as Marketing in Omni-Channel > Settings." style={{ marginTop: 14 }}>
+        <Panel title="Who sees what in AI Marketing" style={{ marginTop: 14 }}>
           <div style={{ overflowX: 'auto' }}>
             <table className="mk-table"><thead><tr><th>LOGIN</th><th>SEES IN AI MARKETING</th><th>MAY</th></tr></thead>
               <tbody>{roles.map((r) => (
@@ -48,7 +48,7 @@ export default function MkUsagePage() {
           </div>
         </Panel>
       ) : null}
-      <Panel title="What is connected" sub="The shared AI layer has one slot per kind of AI: text, pictures, video clips and audio. A slot that is not connected says so; nothing is faked." style={{ marginTop: 14 }}>
+      <Panel title="What is connected" style={{ marginTop: 14 }}>
         <div className="mk-prov">
           {Object.keys(SLOT).map((k) => { const a = d.ai[k] || {}; return (
             <div key={k}><b>{SLOT[k]} {a.ready ? <Pill tone={a.demo ? 'warn' : 'live'} dot>{a.demo ? 'Sample writer' : 'Ready'}</Pill> : <Pill tone="draft">Not connected</Pill>}</b>
@@ -57,22 +57,22 @@ export default function MkUsagePage() {
         </div>
       </Panel>
       {d.canEdit && (
-        <Panel title="Limits" sub="Stop one person, or the whole company, from using too much AI." style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save limits</Btn>}>
+        <Panel title="Limits" style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save limits</Btn>}>
           <div className="form-grid">
-            <Field label="AI REQUESTS PER PERSON PER DAY" hint="0 switches AI off for everybody."><input type="number" min="0" max="2000" value={lim.aiDailyPerUser} onChange={(e) => setLim({ ...lim, aiDailyPerUser: e.target.value })} /></Field>
-            <Field label="COMPANY LIMIT PER MONTH" hint="0 = no company limit."><input type="number" min="0" value={lim.aiMonthlyCap} onChange={(e) => setLim({ ...lim, aiMonthlyCap: e.target.value })} /></Field>
-            <Field label="AN ADMIN MAY APPROVE THEIR OWN CONTENT" full hint="On: an Admin who wrote something can approve it (it is recorded as self-approved). Off: another approver has to."><select value={lim.selfApprove ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, selfApprove: e.target.value === 'yes' })}><option value="yes">Yes</option><option value="no">No</option></select></Field>
+            <Field label="AI REQUESTS PER PERSON PER DAY"><input type="number" min="0" max="2000" value={lim.aiDailyPerUser} onChange={(e) => setLim({ ...lim, aiDailyPerUser: e.target.value })} /></Field>
+            <Field label="COMPANY LIMIT PER MONTH"><input type="number" min="0" value={lim.aiMonthlyCap} onChange={(e) => setLim({ ...lim, aiMonthlyCap: e.target.value })} /></Field>
+            <Field label="AN ADMIN MAY APPROVE THEIR OWN CONTENT" full><select value={lim.selfApprove ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, selfApprove: e.target.value === 'yes' })}><option value="yes">Yes</option><option value="no">No</option></select></Field>
           </div>
         </Panel>
       )}
       {d.canEdit && (
-        <Panel title="Who approves: your team or the client" sub="Choose whether the client must approve before anything is used." style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
+        <Panel title="Who approves: your team or the client" style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
           <div className="form-grid">
-            <Field label="ONLY A CLIENT CAN APPROVE" full hint="Off: your team approves, and a client may also be asked to confirm. On: for the kinds ticked below, nobody on the team can approve. The work goes to the client on a private link, and the client's answer is the approval.">
+            <Field label="ONLY A CLIENT CAN APPROVE" full>
               <select value={lim.clientRequired ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, clientRequired: e.target.value === 'yes' })}><option value="no">Off: my team approves</option><option value="yes">On: only the client approves</option></select>
             </Field>
             {lim.clientRequired ? (
-              <Field label="THE CLIENT MUST APPROVE" full hint="Raw video clips are never included (they cannot be sent to a client). Things already approved stay approved.">
+              <Field label="THE CLIENT MUST APPROVE" full>
                 <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12 }}>
                   {[['words', 'Words (AI Content)'], ['pictures', 'Pictures'], ['videos', 'Finished videos']].map(([k, label]) => (
                     <label key={k} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -80,22 +80,21 @@ export default function MkUsagePage() {
                     </label>
                   ))}
                 </div>
-                {lim.clientFor.includes('pictures') ? <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6 }}>Note: a picture you want to use inside a video must be approved first, so with Pictures ticked the client approves each picture and then the video. Untick Pictures to let your team approve pictures.</div> : null}
               </Field>
             ) : null}
           </div>
         </Panel>
       )}
       {d.canEdit && (
-        <Panel title="Telling the client" sub="TeamLink sends the client a WhatsApp message and an email at each step of their project, through the connections in Administration > Integrations." style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
+        <Panel title="Telling the client" style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
           <div className="form-grid">
-            <Field label="TELL THE CLIENT BY ITSELF" full hint="On: the client is messaged when their request is accepted, when their options are ready, when a request is declined and when the post is live. Off: nothing goes by itself; the team uses the Send buttons on the project. A message that cannot go is written on the project's timeline and the team is told.">
+            <Field label="TELL THE CLIENT BY ITSELF" full>
               <select value={lim.clientNotify.auto ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, clientNotify: { ...lim.clientNotify, auto: e.target.value === 'yes' } })}><option value="yes">On: tell the client at each step</option><option value="no">Off: the team sends by hand</option></select>
             </Field>
-            <Field label="ANSWER THE CLIENT'S WHATSAPP MESSAGES BY ITSELF" full hint="On: when a client of a project writes on WhatsApp (words, a photo, a video or a file), TeamLink answers in a few simple fixed words (no AI, no cost): hello, thanks, 'what is the status', 'ok / approved' (it points to their private page, where their own press is the approval), or 'we received your photo / video'. The team always gets a line on the project and a bell, and the automatic reply stays quiet while a person is chatting with them, after STOP, and after 6 replies in a day. Off: nothing is answered by itself.">
+            <Field label="ANSWER THE CLIENT'S WHATSAPP MESSAGES BY ITSELF" full>
               <select value={lim.clientNotify.chat !== false ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, clientNotify: { ...lim.clientNotify, chat: e.target.value === 'yes' } })}><option value="yes">On: answer simply by itself</option><option value="no">Off: only the team answers</option></select>
             </Field>
-            <Field label="ONE REMINDER AFTER 24 HOURS" full hint="On: when TeamLink has sent a client a link by WhatsApp (their work to approve, or their options) and they have not answered in 24 hours, they get ONE reminder, only between 9 in the morning and 8 in the evening. It stops if they decide, write to you, send STOP, or the link is cancelled. It needs the '24-hour reminder' template below (made at Meta, fixed words); with none saved nothing is sent and the team is told. Off: no reminders.">
+            <Field label="ONE REMINDER AFTER 24 HOURS" full>
               <select value={lim.clientNotify.remind !== false ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, clientNotify: { ...lim.clientNotify, remind: e.target.value === 'yes' } })}><option value="yes">On: one reminder after 24 hours</option><option value="no">Off: no reminders</option></select>
             </Field>
             <Field label="WAYS" full>
@@ -103,7 +102,7 @@ export default function MkUsagePage() {
               <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, margin: '2px 0' }}><input type="checkbox" checked={lim.clientNotify.email} onChange={(e) => setLim({ ...lim, clientNotify: { ...lim.clientNotify, email: e.target.checked } })} />Email {ways ? (ways.email.ready ? <Pill tone="live" dot>Connected</Pill> : <Pill tone="warn" dot>Not connected: {ways.email.reason}</Pill>) : null}</label>
             </Field>
             {ways && ways.suggestions ? (
-              <Field label="WHATSAPP TEMPLATES" full hint="Your WhatsApp is the official company number. Meta lets a business send free text only within 24 hours of the person's last message; otherwise a template Meta has approved is needed. For each message below, make a template at Meta with the suggested words (or your own words, with the blanks meaning the same, in the same order), wait for approval, and type its exact name here. With no name for a message, TeamLink uses the ONE general template saved in Administration > Integrations > WhatsApp Business (“Template name — bulk / general”, whose blank {{1}} is the whole message), if there is one; with neither, it sends free text (it may be refused) and the email goes too.">
+              <Field label="WHATSAPP TEMPLATES" full>
                 {Object.entries(ways.suggestions).map(([k, sg]) => {
                   const cur = lim.waTemplates[k] || { name: '', language: 'en' }; const known = (ways.templates && ways.templates[k] && ways.templates[k].known) || 'none';
                   const set = (p) => setLim({ ...lim, waTemplates: { ...lim.waTemplates, [k]: { ...cur, ...p } } });
@@ -138,9 +137,9 @@ export default function MkUsagePage() {
         </Panel>
       )}
       {d.canEdit && (
-        <Panel title="Posting to client accounts" sub="Let your team post an approved project on the client's Facebook Page, Instagram and X with one click." style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
+        <Panel title="Posting to client accounts" style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
           <div className="form-grid">
-            <Field label="POST FROM TEAMLINK" full hint="Off: the team copies the words, downloads the file and posts by hand. On: an approved project shows Facebook, Instagram and X buttons; the accounts are the ones connected in Administration > Integrations > Social Media. Posting is public, so each click asks to confirm.">
+            <Field label="POST FROM TEAMLINK" full>
               <select value={lim.autoPostAllowed ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, autoPostAllowed: e.target.value === 'yes' })}><option value="no">Off: post by hand</option><option value="yes">On: the team can post with a click</option></select>
             </Field>
           </div>
@@ -160,7 +159,7 @@ export default function MkUsagePage() {
           </Panel>
         )}
       </div>
-      <Panel title="Recent requests" sub="The last 50. Only sizes and times are kept here, not the words." style={{ marginTop: 14 }}>
+      <Panel title="Recent requests" style={{ marginTop: 14 }}>
         {d.recent.length === 0 ? <div style={{ fontSize: 12, color: 'var(--muted)' }}>No requests yet.</div> : (
           <div style={{ overflowX: 'auto' }}>
             <table className="mk-table"><thead><tr><th>WHEN</th><th>WHO</th><th>TASK</th><th>AI</th><th className="num">SIZE</th><th className="num">TIME</th><th>RESULT</th></tr></thead>

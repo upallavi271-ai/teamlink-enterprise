@@ -27,18 +27,18 @@ export default function MkOurWorkPage() {
   const shown = projects.filter((p) => p.showcase); const rest = projects.filter((p) => !p.showcase);
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="Our work" lead="Our track record and finished projects. Clients see the same thing on their own page, so a new client can see how fast and how accurate we are before giving us a project.">
+      <PageHead eyebrow="AI Marketing" title="Our work">
         <Btn onClick={copy} title="A public page you can send to any new client">🌐 Copy the public link</Btn>
         <Btn onClick={() => window.open('/our-work', '_blank', 'noopener')}>See it as a client ↗</Btn>
       </PageHead>
       {err ? <Banner tone="error">{err}</Banner> : null}
-      <Panel title="What clients see" sub="The numbers cover every finished project and name nobody. A percentage appears once 3 projects stand behind it.">
+      <Panel title="What clients see">
         <div style={{ background: '#f4f6f5', borderRadius: 12, padding: '16px 12px' }}>
           <OurWork key={ver} title="Our work" />
           {!projects.length ? <div style={{ fontSize: 12.5, color: 'var(--muted)', textAlign: 'center', padding: '12px 0' }}>Nothing to show yet. When a client approves their first project, the numbers start here.</div> : null}
         </div>
       </Panel>
-      <Panel title="Finished projects" sub="Projects a client approved. Add the ones the client agrees we may show; they appear above and on the clients' pages." style={{ marginTop: 14 }} right={<span className="pill live">{projects.length}</span>}>
+      <Panel title="Finished projects" style={{ marginTop: 14 }} right={<span className="pill live">{projects.length}</span>}>
         {projects.length === 0 ? <Empty title="No approved projects yet" action={<Btn primary onClick={() => go('mkprojects')}>Open Client projects</Btn>}>Projects appear here after the client chooses an option.</Empty> : [...shown, ...rest].map((p) => (
           <div className="mk-row" key={p.id}>
             <div>

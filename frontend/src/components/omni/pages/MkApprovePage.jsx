@@ -120,7 +120,7 @@ export default function MkApprovePage() {
   };
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="Approvals" lead="AI-written words are used only after a person approves them. Approved words go into the Content Library, where the campaign screens find them." />
+      <PageHead eyebrow="AI Marketing" title="Approvals" />
       {msg ? <Banner tone="error">{msg}</Banner> : null}
       {meta.limits && meta.limits.clientRequired ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 11.5, color: 'var(--muted)', margin: '0 0 12px' }}>
@@ -156,7 +156,7 @@ export default function MkApprovePage() {
         ), true))}
       </Panel>
       {heldWords.length + heldPics.length > 0 && (
-        <Panel title="Waiting for the client" sub="Only the client's answer approves these. Their private links are under Client approvals below." style={{ marginTop: 14 }} right={<span className="pill live">{heldWords.length + heldPics.length}</span>}>
+        <Panel title="Waiting for the client" style={{ marginTop: 14 }} right={<span className="pill live">{heldWords.length + heldPics.length}</span>}>
           {heldWords.map((it) => card(it, <><ClientChip cr={it.clientReview} /><small style={{ color: 'var(--muted)' }}>Only the client can approve this.</small></>))}
           {heldPics.length > 0 && (
             <div className="mki-grid" style={{ marginTop: heldWords.length ? 10 : 0 }}>
@@ -202,12 +202,12 @@ export default function MkApprovePage() {
         </GsModal>
       ) : null}
       {others.length > 0 && (
-        <Panel title="Waiting for somebody else" sub="You can read these, but you cannot approve them." style={{ marginTop: 14 }}>
+        <Panel title="Waiting for somebody else" style={{ marginTop: 14 }}>
           {others.map((it) => card(it, <small style={{ color: 'var(--muted)' }}>{it.mine ? 'Your own content: another approver has to approve it.' : 'Another approver will decide.'}</small>))}
         </Panel>
       )}
       {prjAns.length > 0 && (
-        <Panel title="Client project answers" sub="What the client answered on WhatsApp, email or their page. Open the project in Client projects to continue." style={{ marginTop: 14 }}>
+        <Panel title="Client project answers" style={{ marginTop: 14 }}>
           {prjAns.map((x) => (
             <div className="mk-row" key={x.id}>
               <div><b>{x.title}</b> <Pill tone={x.clientAnswer === 'approved' ? 'live' : 'red'} dot>{x.clientAnswer === 'approved' ? 'Approved by the client' : 'Rejected by the client'}</Pill><small>{x.clientName} · {fmtDateTime(x.clientAnswerAt)}{x.clientAnswerNote ? ` · ${x.clientAnswerNote}` : ''}</small></div>
@@ -216,7 +216,7 @@ export default function MkApprovePage() {
         </Panel>
       )}
       {crs.length > 0 && (
-        <Panel title="Client approvals" sub="Items sent to a client on a private link. When it says “Client approves”, the client's answer is the approval; otherwise the client confirms what your team already approved." style={{ marginTop: 14 }} right={<span className="pill live">{crs.length}</span>}>
+        <Panel title="Client approvals" style={{ marginTop: 14 }} right={<span className="pill live">{crs.length}</span>}>
           {crs.slice(0, 20).map((r) => (
             <div className="mk-row" key={r.id}>
               <div style={{ flex: 1, minWidth: 0 }}>

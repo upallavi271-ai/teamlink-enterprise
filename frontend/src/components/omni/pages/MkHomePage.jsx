@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
-import { PageHead, Btn, Kpi, Kpis, Panel, Pill, Banner, fmtNum } from '../ui.jsx';
+import { PageHead, Btn, Kpi, Kpis, Panel, Banner, fmtNum } from '../ui.jsx';
 import { useMkMeta, AiBanner } from '../marketing/mk.jsx';
 
 // AI MARKETING > OVERVIEW: what needs this login's attention right now (approvals, overdue posts, client answers), quick starts, the next steps and the modules of the
@@ -21,11 +21,7 @@ export default function MkHomePage() {
   const at = ov.attention || {}; const have = ov.have || {};
   // THREE LOOKS (the server decides who is which: outreach/access.js): an Admin sees everything and the settings, a Marketing login sees its working tools, an approver sees what waits for them
   const look = meta.isAdmin ? 'admin' : (meta.canWrite ? 'team' : 'approver');
-  const LOOK = {
-    admin: ['Admin view', 'Everything in AI Marketing, and the settings: AI limits, who approves, telling clients, posting. Nothing is posted or spent without a person\'s approval; short notices to clients go by themselves and can be switched off in AI usage.'],
-    team: ['Marketing team', 'Your tools for pictures, videos and client projects. What you make waits for an approver before it is used.'],
-    approver: ['Approver', 'What your team made is waiting for you here. Approve it, or send it back with a note.'],
-  }[look];
+  const LOOK = { admin: 'Admin view', team: 'Marketing team', approver: 'Approver' }[look];
   const steps = [
     look === 'admin' && ['Check who sees what, the AI limits and who approves (AI usage)', false, 'mkusage', 'Open AI usage'],
     meta.canWrite && ['Set up your brand kit, so the AI writes and draws like your company', ov.brandReady, 'mkbrand', ov.brandReady ? 'Change' : 'Set it up'],
@@ -42,11 +38,11 @@ export default function MkHomePage() {
   ].filter((x) => x[0] > 0);
   return (
     <div>
-      <PageHead eyebrow={`AI Marketing · ${LOOK[0]}`} title="AI Marketing" lead={LOOK[1]}>
+      <PageHead eyebrow={`AI Marketing · ${LOOK}`} title="AI Marketing">
         {meta.canWrite && <Btn onClick={() => go('mkimages')}>◩ Make a picture</Btn>}
       </PageHead>
       <AiBanner ai={meta.ai} />
-      <Panel title="Needs your attention" sub={todo.length ? 'What is waiting for you right now' : undefined} style={{ marginBottom: 14 }} right={<Btn small onClick={loadOv}>Refresh</Btn>}>
+      <Panel title="Needs your attention" style={{ marginBottom: 14 }} right={<Btn small onClick={loadOv}>Refresh</Btn>}>
         {todo.length === 0 ? <div style={{ fontSize: 12, color: '#166534', fontWeight: 700, padding: '4px 0' }}>✓ All clear: nothing is waiting for you.</div> : (
           <ul className="mk-steps">
             {todo.map(([n, words, page, label, hot]) => (
@@ -67,22 +63,6 @@ export default function MkHomePage() {
           ))}
         </ul>
       </Panel>
-      <div className="panel-title" style={{ margin: '18px 0 8px' }}>Your tools</div>
-      <div className="mk-mods">
-        {[...meta.modules].filter((m) => m.canOpen).sort((a, b) => a.no - b.no).map((m, i) => (
-          <div key={m.id} className="card mk-mod live">
-            <div className="mk-mod-top"><span className="mk-mod-no">{i + 1}</span><Pill tone="live" dot>Ready</Pill></div>
-            <h3>{m.label}</h3>
-            <p>{m.blurb}</p>
-            <div><Btn small primary onClick={() => go(m.page)}>Open</Btn></div>
-          </div>
-        ))}
-      </div>
-      {look === 'admin' && (meta.later || []).length > 0 ? (
-        <Panel title="On the menu for later" sub="Other modules of the AI Marketing OS list. They are not built: the shared AI layer, approval, audit and roles are made so each can be added." style={{ marginTop: 18 }}>
-          <div className="mk-chips">{meta.later.map((n) => <span className="mk-chip" key={n}>{n}</span>)}</div>
-        </Panel>
-      ) : null}
     </div>
   );
 }
