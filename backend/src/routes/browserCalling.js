@@ -70,7 +70,7 @@ router.get('/lookup', async (req, res) => {
     const D = require('../utils/candidateDedupe'); // eslint-disable-line global-require
     const keys = D.phoneKeys(clip(req.query && req.query.phone, 40));
     if (!keys.length) return fail(res, 400, 'That is not a phone number.');
-    const rows = await prisma.candidate.findMany({ where: { ...scope.candidateWhere(req.user), OR: keys.map((k) => ({ phone: { contains: k } })) }, select: { id: true, name: true, phone: true, updatedAt: true }, orderBy: { updatedAt: 'desc' }, take: 20 });
+    const rows = await prisma.candidate.findMany({ where: { ...scope.candidateWhere(req.user), OR: keys.map((k) => ({ phone: { contains: k } })) }, select: { id: true, name: true, phone: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 20 });
     const hit = rows.find((c) => D.phoneKeys(c.phone).some((k) => keys.includes(k)));
     if (!hit) return fail(res, 404, 'This person is not in TeamLink yet (or your login may not see them). Add them to the ATS first.');
     res.json({ candidate: { id: hit.id, name: hit.name } });
