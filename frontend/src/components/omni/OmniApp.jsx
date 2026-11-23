@@ -79,7 +79,7 @@ export default function OmniApp({ embedded = false } = {}) {
   const bare = (() => { try { return window.self !== window.top && /(^|[?&])bare=1(&|$)/.test(search); } catch { return false; } })();
   return (
     <OmniCtx.Provider value={ctx}>
-      <div className="gsx" data-page={page}>
+      <div className="gsx" data-page={page} data-embedded={embedded ? '1' : undefined}>
         <div className="content">
           {viewing && <div role="status" style={{ background: '#fff1d6', border: '1px solid #f0b34a', color: '#7a4a00', borderRadius: 10, padding: '9px 12px', fontSize: 11, marginBottom: 12 }}><b>You are in View as mode: this page is read-only.</b> Changes need &quot;Switch to Act as (edit)&quot;.</div>}
           {!embedded && !bare && tabsOf.length > 1 && (
