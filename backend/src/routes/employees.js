@@ -3520,6 +3520,14 @@ function docAuditLabel(doc) {
   return `${doc.docType}: ${String(doc.docName).replace(/\d{4,}/g, '••••').slice(0, 80)}`;
 }
 
+// The employee's own view of their Documents: the Offer Letter is hidden until My Profile would let them download it (see
+// utils/offerLetterMail.js offerLetterHiddenFromSelf). -> (doc) => true when this caller must not see that document
+function offerLetterHider(access, employee, userId) {
+  const OL = require('../utils/offerLetterMail'); // eslint-disable-line global-require
+  const pct = completionPct(employee);
+  return (doc) => OL.offerLetterHiddenFromSelf({ isSelf: access.self, isHr: access.hr, userId, doc, employee, completionPct: pct });
+}
+
 async function loadForDocuments(req, res, { read = false } = {}) {
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!employee) { res.status(404).json({ error: 'Employee not found' }); return null; }
@@ -3532,9 +3540,10 @@ router.get('/:id/documents', async (req, res) => {
   const ctx = await loadForDocuments(req, res, { read: true });
   if (!ctx) return;
   const { employee, access } = ctx;
-  const docs = await prisma.employeeDocument.findMany({
+  const hidden = offerLetterHider(access, employee, req.user.id);
+  const docs = (await prisma.employeeDocument.findMany({
     where: { employeeId: employee.id }, orderBy: { uploadedAt: 'desc' },
-  });
+  })).filter((d) => !hidden(d));
   // `uploadedBy` holds the uploader's user id (so "their own upload" is a
   // fact, not a name match); the screen is given the name.
   const uploaderIds = [...new Set(docs.map((d) => d.uploadedBy).filter(Boolean))];
@@ -3674,6 +3683,7 @@ router.get('/:id/documents/:docId/file', async (req, res) => {
   if (!ctx) return;
   const doc = await prisma.employeeDocument.findUnique({ where: { id: req.params.docId } });
   if (!doc || doc.employeeId !== ctx.employee.id) return res.status(404).json({ error: 'Document not found' });
+  if (offerLetterHider(ctx.access, ctx.employee, req.user.id)(doc)) return res.status(404).json({ error: 'Document not found' }); // not yet: My Profile -> Your offer letter
   const full = attachments.resolveStored(doc.file);
   if (!full) return res.status(404).json({ error: 'The file is no longer on the server' });
   const disposition = req.query.disposition === 'inline' ? 'inline' : 'attachment';

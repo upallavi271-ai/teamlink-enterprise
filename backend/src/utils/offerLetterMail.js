@@ -901,6 +901,15 @@ function selfDownloadGate(employee, completionPct, today = istToday()) {
   return { ok: true };
 }
 
+// The employee's OWN Documents list and file download: the Offer Letter HR / TeamLink made stays out of sight until My Profile would
+// let them download it (selfDownloadGate), so "Your offer letter" is the one door and its rule always applies. HR always sees it, and
+// so does a letter the employee uploaded themselves.
+function offerLetterHiddenFromSelf({ isSelf, isHr, userId, doc, employee, completionPct }) {
+  if (!isSelf || isHr || !doc || doc.docType !== OFFER_DOC_TYPE) return false;
+  if (userId && doc.uploadedBy === userId) return false;
+  return !selfDownloadGate(employee, completionPct).ok;
+}
+
 // "Email offer letter" (HR presses it on the employee's Documents): the offer letter that is ON FILE (the one made here, or an
 // e-signed copy) goes to the employee as a PDF attachment, with a short covering note. It goes to the work email, or the personal
 // one when there is no work email. -> { state: 'SENT', to } | { state: 'NOT_SENT', message }
@@ -959,5 +968,5 @@ module.exports = {
   loadSettings, setAutomatic, cleanTemplate, saveTemplate, resetTemplate,
   buildModel, renderHtml, renderText, renderPdf, valuesFor,
   maybeSendAuto, sendNow, statusOf, previewOf, pdfOf, previewTemplate, blocker, rowOf,
-  pdfForEmployee, fileForEmployee, emailForEmployee, selfDownloadGate, NEW_JOINER_DAYS,
+  pdfForEmployee, fileForEmployee, emailForEmployee, selfDownloadGate, offerLetterHiddenFromSelf, NEW_JOINER_DAYS,
 };

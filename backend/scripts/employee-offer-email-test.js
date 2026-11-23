@@ -99,6 +99,22 @@ const check = (name, ok, extra) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${nam
   check('self download: no designation -> not ready', G({ ...joinedEmp, designation: '' }, 100).ok === false);
   check('self download: a joining date still ahead is said before an incomplete profile', /joining date/.test(G({ ...joinedEmp, dateOfJoining: new Date(`${day(5)}T00:00:00Z`) }, 40).why));
 
+  // ---- the employee's own Documents list / file: the Offer Letter stays out of sight until the card would let them download it
+  const H = O.offerLetterHiddenFromSelf;
+  const letter = { docType: 'Offer Letter', uploadedBy: 'u-hr' };
+  const base = { isSelf: true, isHr: false, userId: 'u-emp', doc: letter, employee: joinedEmp, completionPct: 100 };
+  check('hidden from the employee: profile only 78%', H({ ...base, completionPct: 78 }) === true);
+  check('hidden from the employee: joining date still ahead', H({ ...base, employee: { ...joinedEmp, dateOfJoining: new Date(`${day(2)}T00:00:00Z`) } }) === true);
+  check('hidden from the employee: no joining date on the record', H({ ...base, employee: { designation: 'Employee' } }) === true);
+  check('shown to the employee once the profile is 100% and they have joined', H(base) === false);
+  check('shown on the joining day itself', H({ ...base, employee: { ...joinedEmp, dateOfJoining: new Date(`${day(0)}T00:00:00Z`) } }) === false);
+  check('HR always sees it, however incomplete the profile', H({ ...base, isSelf: false, isHr: true, completionPct: 10 }) === false);
+  check('someone who is both HR and the employee still sees it', H({ ...base, isHr: true, completionPct: 10 }) === false);
+  check('a viewer who is neither (a manager) is not affected by this rule', H({ ...base, isSelf: false, isHr: false, completionPct: 10 }) === false);
+  check('a letter the employee uploaded themselves is never hidden from them', H({ ...base, completionPct: 10, doc: { docType: 'Offer Letter', uploadedBy: 'u-emp' } }) === false);
+  check('other documents (Aadhaar, Photo, Joining Letter) are never hidden by this rule', ['Aadhaar', 'Photo', 'Joining Letter', 'PAN', 'Education Certificate'].every((t) => H({ ...base, completionPct: 10, doc: { docType: t, uploadedBy: 'u-hr' } }) === false));
+  check('a letter made by the system (no uploader) is hidden until allowed', H({ ...base, completionPct: 10, doc: { docType: 'Offer Letter', uploadedBy: null } }) === true);
+
   console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');
   process.exitCode = fails ? 1 : 0;
 })().catch((e) => { console.error(e); process.exitCode = 1; });
