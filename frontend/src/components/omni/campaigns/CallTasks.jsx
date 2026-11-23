@@ -3,6 +3,7 @@ import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { Btn, Panel, Pill, Tabs } from '../ui.jsx';
 import { fmtShort } from './shared.jsx';
+import CallButton from '../../browsercall/CallButton.jsx'; // manual browser calling (SIM line); the person still logs the result
 
 // the call list of a Voice campaign: a person rings each one and logs it (Called with minutes, No answer, Skip). Nothing is dialled by the machine.
 export default function CallTasks({ campaignKey, onChanged }) {
@@ -50,6 +51,7 @@ export default function CallTasks({ campaignKey, onChanged }) {
                 <td>
                   {t.status === 'queued' && d.can ? (
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <CallButton outreachTaskId={t.id} name={t.name} hasNumber={!!t.phone} compact />
                       <input aria-label="Minutes" type="number" min="0" max="600" placeholder="min" style={{ width: 58, height: 30 }} value={mins[t.id] === undefined ? '' : mins[t.id]} onChange={(e) => setMins({ ...mins, [t.id]: e.target.value })} />
                       <Btn small primary disabled={busy === t.id} onClick={() => mark(t, 'called')}>Called</Btn>
                       <Btn small disabled={busy === t.id} onClick={() => mark(t, 'no_answer')}>No answer</Btn>

@@ -67,7 +67,13 @@ router.post('/calls', async (req, res) => {
     const w = await who(req.user);
     if (!w.ok) return fail(res, w.code, w.reason);
     const candidateId = clip(req.body && req.body.candidateId, 60);
-    const cand = candidateId ? await prisma.candidate.findFirst({ where: { id: candidateId, ...scope.candidateWhere(req.user) }, select: { id: true, name: true, phone: true } }) : null;
+    const taskId = clip(req.body && req.body.outreachTaskId, 60);
+    let cand = null;
+    if (taskId) { // a person of an Omni-Channel call campaign (no ATS candidate): the row is kept as omni:<contact id>
+      const t = await require('../outreach/campaigns').callTarget(req.user, taskId); // eslint-disable-line global-require
+      if (t.error) return fail(res, t.status || 400, t.error);
+      cand = { id: `omni:${t.contactId}`, name: t.name, phone: t.phone };
+    } else cand = candidateId ? await prisma.candidate.findFirst({ where: { id: candidateId, ...scope.candidateWhere(req.user) }, select: { id: true, name: true, phone: true } }) : null;
     if (!cand) return fail(res, 404, 'Candidate not found.');
     const n = core.normalizeMobile(cand.phone);
     if (!n.ok) return fail(res, 400, n.reason);
@@ -123,6 +129,7 @@ async function listenable(req) {
   const r = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', clip(req.params.id, 60));
   if (!r) return { code: 404, error: 'Call not found.' };
   if (r.candidateId === TEST_CALL) { if (!isAdmin(req.user)) return { code: 404, error: 'Call not found.' }; return { r }; }
+  if (String(r.candidateId).startsWith('omni:')) { if (!isAdmin(req.user) && r.userId !== req.user.id) return { code: 404, error: 'Call not found.' }; return { r }; } // an Omni call-campaign person: the caller or an Admin
   const cand = await prisma.candidate.findFirst({ where: { id: r.candidateId, ...scope.candidateWhere(req.user) }, select: { id: true } });
   if (!cand) return { code: 404, error: 'Call not found.' };
   return { r };
@@ -188,6 +195,8 @@ router.get('/report', async (req, res) => {
     const ids = [...new Set([...byCand.map((r) => r.candidateId), ...rows.map((r) => r.candidateId)])];
     const names = await prisma.candidate.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
     const nm = new Map(names.map((c) => [c.id, c.name]));
+    const omniIds = ids.filter((x) => String(x).startsWith('omni:')).map((x) => x.slice(5));
+    if (omniIds.length) { const ph = omniIds.map(() => '?').join(','); (await S.all(`SELECT "id","name" FROM "OutreachContact" WHERE "id" IN (${ph})`, ...omniIds)).forEach((c) => nm.set(`omni:${c.id}`, c.name)); }
     const byLine = await S.all(`SELECT COALESCE("lineName", 'Office Synway (SIM)') AS "lineName", COUNT(*) AS total, SUM("answerAt" IS NOT NULL) AS connected, COALESCE(SUM("talkSec"),0) AS "talkSec" FROM "BrowserCall" WHERE ${where} GROUP BY 1 ORDER BY total DESC`, ...p);
     res.json({ from: f, to: t, recruiters: byUser, lines: byLine, candidates: byCand.filter((r) => r.candidateId !== TEST_CALL).map((r) => ({ ...r, name: nm.get(r.candidateId) || null })), calls: rows.map((r) => ({ ...shape(r, req.user), candidateName: r.candidateId === TEST_CALL ? 'Test call' : (nm.get(r.candidateId) || null) })) });
   } catch (e) { console.error('[browser-call] report:', e.message); fail(res, 500, 'Could not build the report.'); }

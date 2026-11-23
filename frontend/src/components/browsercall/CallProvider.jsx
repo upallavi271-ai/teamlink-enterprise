@@ -122,9 +122,9 @@ export default function BrowserCallProvider({ children }) {
   }, [ensureUa, finish]);
 
   // a candidate call on the chosen line (or the one given)
-  const call = useCallback(({ candidateId, applicationId, name, lineId }) => {
+  const call = useCallback(({ candidateId, applicationId, name, lineId, outreachTaskId }) => {
     const ln = lineId || (curLine && curLine.id) || undefined;
-    return run({ candidateId, name }, async () => (await api.post('/browser-calling/calls', { candidateId, applicationId, lineId: ln })).data);
+    return run({ candidateId: candidateId || (outreachTaskId ? `task:${outreachTaskId}` : undefined), name }, async () => (await api.post('/browser-calling/calls', { candidateId, applicationId, lineId: ln, outreachTaskId })).data);
   }, [run, curLine]);
   // "pick the line first": the call bar shows "Call using" and the Call button
   const pickAndCall = useCallback((args) => { if (!sess.current) setState({ phase: 'choose', ...args }); }, []);

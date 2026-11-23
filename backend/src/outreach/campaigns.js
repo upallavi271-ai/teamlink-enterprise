@@ -631,6 +631,18 @@ async function callTasks(user, id, { status, q, page = 1, pageSize = 25 } = {}) 
     tasks: rows.map((r) => ({ id: r.id, name: r.name || '(removed)', phone: ph2(r.phoneE164), city: r.city || '', company: r.company || '', status: r.status, statusWords: r.status === 'queued' ? 'To call' : (r.status === 'sent' ? 'Called' : (r.status === 'failed' ? 'No answer' : 'Skipped')), minutes: r.callMinutes == null ? null : S.num(r.callMinutes), at: S.iso(r.sentAt || r.failedAt) })),
   };
 }
+// who a call task would ring from the browser (browser calling): the task's person, only for a login that may work this campaign and sees real numbers.
+async function callTarget(user, messageId) {
+  const m = (await S.q('SELECT * FROM "OutreachMessage" WHERE id = ?', String(messageId || '')))[0];
+  if (!m || m.channel !== 'call') return { error: 'This call task was not found.', status: 404 };
+  const f = await rowFor(user, m.campaignId);
+  if (f.error) return f;
+  if (A.masked(user)) return { error: 'Your login sees masked numbers, so it cannot call from here.', status: 403 };
+  if (!(await canControl(user, f.row, f.reqs))) return { error: 'You may not work the calls of this campaign.', status: 403 };
+  const c = (await S.q('SELECT id, name, phoneE164 FROM "OutreachContact" WHERE id = ?', m.contactId))[0];
+  if (!c || !c.phoneE164) return { error: 'This person has no phone number.', status: 400 };
+  return { contactId: c.id, name: c.name || 'Contact', phone: `+${String(c.phoneE164).replace(/^\+/, '')}` };
+}
 // log one call: outcome 'called' (minutes) | 'no_answer' | 'skip'. Only from "To call". sentAt = now; the ledger row (call credits, default 0) is written once.
 async function markCall(user, messageId, { outcome, minutes, note } = {}) {
   const m = (await S.q('SELECT * FROM "OutreachMessage" WHERE id = ?', String(messageId || '')))[0];
@@ -739,6 +751,6 @@ async function resolveClick(token, { ua, method = 'GET', now = Date.now() } = {}
 }
 
 module.exports = {
-  KINDS, TABS, CH_WORDS, ensureKind, STATUS_WORDS, list, get, messages, jobs, plan, create, update, send, control, removeDraft, resendFailed, callTasks, markCall, testSend, materialize, finishPreparing,
+  KINDS, TABS, CH_WORDS, ensureKind, STATUS_WORDS, list, get, messages, jobs, plan, create, update, send, control, removeDraft, resendFailed, callTasks, callTarget, markCall, testSend, materialize, finishPreparing,
   renderFor, abVariant, varOrder, shortLink, targetUrl, resolveClick, uaClass, validate, canSee, canControl, abilities, rowFor, reqRows, countsFor, view, visibleRows, creditsFor, groupRows, patchMeta, metaOf, chanOf, dbChannel,
 };

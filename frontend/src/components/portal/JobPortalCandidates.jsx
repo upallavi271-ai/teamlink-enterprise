@@ -13,6 +13,7 @@ import AiCallDialog from '../aicalling/AiCallDialog.jsx'; // JOB PORTAL AI calli
 import { KavyaGiveDialog } from '../aicalling/KavyaTab.jsx'; // Kavya: the Telugu / Hindi / English AI caller on our own server (2026-11-12)
 import { ListFilterStrip, useListXf } from '../ats/ListFilters.jsx';
 import JobMatchDialog from './JobMatchDialog.jsx'; // JOB PORTAL AI calling: another matching job
+import CallButton from '../browsercall/CallButton.jsx'; // manual browser calling (SIM line)
 import TabStrip from '../ui/TabStrip.jsx'; // main tabs + More + the caption line (founder 2026-11-20)
 
 // ---------------------------------------------------------------------------
@@ -272,6 +273,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
                   {a.aiCall && a.aiCall.ok && (
                     <button type="button" className="btn btn-sm btn-ghost" style={{ marginRight: 4 }} onClick={() => setAiCallIds([a.id])} title={`AI interview not taken yet${a.aiCall.deadline ? ` · last day ${a.aiCall.deadline}` : ''}. The AI assistant reminds them.`}>📞 AI call</button>
                   )}
+                  <CallButton candidateId={a.candidateId} name={a.candidate} hasNumber={!!a.phone} compact />
                   <button type="button" className="btn btn-sm btn-ghost" style={{ marginRight: 4 }} onClick={() => setJobMatch({ candidateId: a.candidateId, name: a.candidate })} title="Other live requirements this person fits: add them to one and let the AI assistant call them">Other jobs</button>
                   {(() => {
                     if (a.portalTab === 'sent') return <Link className="small-muted" to={`/candidates/${a.candidateId}`}>{`On the requirement${a.importedAt ? ` · ${fmt(a.importedAt)}` : ''}`}</Link>;

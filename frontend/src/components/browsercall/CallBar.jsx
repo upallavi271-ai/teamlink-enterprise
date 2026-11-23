@@ -28,7 +28,7 @@ export default function CallBar() {
         <div style={{ fontWeight: 600 }}>{state.name || 'Candidate'}</div>
         <LineSelect />
         <div style={{ display: 'flex', gap: 6 }}>
-          <button type="button" className="btn btn-sm btn-primary" onClick={() => call({ candidateId: state.candidateId, applicationId: state.applicationId, name: state.name })}>{'☎'} Call</button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => call({ candidateId: state.candidateId, applicationId: state.applicationId, name: state.name, outreachTaskId: state.outreachTaskId })}>{'☎'} Call</button>
           <button type="button" className="btn btn-sm" onClick={dismiss}>Cancel</button>
         </div>
       </div>
