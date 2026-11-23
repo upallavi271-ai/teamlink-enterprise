@@ -88,24 +88,75 @@ async function place(user, w, { candidateId, applicationId, number, lineId }) {
   const ext = await S.one('SELECT "extension" FROM "BrowserCallExtension" WHERE "userId"=? AND "active"=1', user.id);
   if (!ext) return { code: 409, error: 'Start the phone first (no extension for your login yet).' };
   const hourAgo = new Date(Date.now() - 3600000).toISOString();
-  const busy = await S.one(`SELECT "id" FROM "BrowserCall" WHERE "userId"=? AND "status" IN ${LIVE} AND "startAt">?`, user.id, hourAgo);
+  const busy = await S.one(`SELECT "id" FROM "BrowserCall" WHERE "userId"=? AND "direction"='outbound' AND "status" IN ${LIVE} AND "startAt">?`, user.id, hourAgo);
   if (busy) return { code: 409, error: 'You already have a call in progress.' };
   if (ln.line.maxCalls) {
     const used = await S.one(`SELECT COUNT(*) AS n FROM "BrowserCall" WHERE "lineId"=? AND "status" IN ${LIVE} AND "startAt">?`, ln.line.id, hourAgo);
     if (used && Number(used.n) >= ln.line.maxCalls) return { code: 409, error: `All ${ln.line.maxCalls} calls of the line "${ln.line.name}" are in use. Try again in a moment or pick another line.`, extra: { code: 'LINE_FULL' } };
   }
   const id = crypto.randomUUID(); const token = crypto.randomBytes(12).toString('hex'); const now = S.nowIso();
-  await S.run('INSERT INTO "BrowserCall" ("id","token","candidateId","applicationId","userId","userName","toNumber","extension","direction","mode","status","startAt","createdAt","updatedAt","lineId","lineName") VALUES (?,?,?,?,?,?,?,?,\'outbound\',?,\'initiated\',?,?,?,?,?)',
-    id, token, candidateId, applicationId, user.id, clip(user.name, 80), number, ext.extension, w.s.mode, now, now, now, ln.line.id, ln.line.name);
+  await S.run('INSERT INTO "BrowserCall" ("id","token","candidateId","applicationId","userId","userName","toNumber","extension","direction","mode","status","startAt","createdAt","updatedAt","lineId","lineName","recordingStatus") VALUES (?,?,?,?,?,?,?,?,\'outbound\',?,\'initiated\',?,?,?,?,?,?)',
+    id, token, candidateId, applicationId, user.id, clip(user.name, 80), number, ext.extension, w.s.mode, now, now, now, ln.line.id, ln.line.name, w.s.record ? 'pending' : 'off');
   return { id, token, extension: ext.extension, line: ln.line };
 }
 
-const shape = (r) => ({ id: r.id, candidateId: r.candidateId, userId: r.userId, userName: r.userName, number: r.toNumber, extension: r.extension, direction: r.direction, status: r.status, startAt: r.startAt, answerAt: r.answerAt, endAt: r.endAt, durationSec: r.durationSec, talkSec: r.talkSec, hangupCause: r.hangupCause, hangupReason: r.hangupReason, asteriskUniqueId: r.asteriskUniqueId, lineId: r.lineId || null, lineName: r.lineName || null, testCall: r.candidateId === TEST_CALL });
+// who may PLAY a recording or READ what was said (founder 2026-11-23): only people who may see that candidate - never a BDE (limited view)
+// or a Manager / Assistant Manager (view only), even if an Admin lets their role call.
+const mayListen = (u) => !!u && !['bde', 'view', 'none'].includes(kindOf(u));
+const secsBetween = (a, b) => (a && b ? Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 1000)) : null);
+const shape = (r, viewer) => {
+  const listen = viewer ? mayListen(viewer) : false;
+  let summary = null; try { summary = r.summary ? JSON.parse(r.summary) : null; } catch { summary = null; }
+  return {
+    id: r.id, candidateId: r.candidateId, userId: r.userId, userName: r.userName, number: r.toNumber, extension: r.extension, direction: r.direction, status: r.status, startAt: r.startAt, answerAt: r.answerAt, endAt: r.endAt, durationSec: r.durationSec, talkSec: r.talkSec, hangupCause: r.hangupCause, hangupReason: r.hangupReason, asteriskUniqueId: r.asteriskUniqueId, lineId: r.lineId || null, lineName: r.lineName || null, testCall: r.candidateId === TEST_CALL,
+    ringSec: r.answerAt ? secsBetween(r.startAt, r.answerAt) : secsBetween(r.startAt, r.endAt),
+    recordingStatus: r.recordingStatus || null, recordingSec: r.recordingSec || null, recordingNote: r.recordingNote || null, hasRecording: !!r.recordingPath,
+    hasTranscript: !!r.transcript, transcriptNote: r.transcript ? null : (r.transcriptSource || null),
+    mayListen: listen, summary: listen ? summary : null, summaryText: listen ? (r.summaryText || null) : null, summarySource: listen ? (r.summarySource || null) : null,
+  };
+};
+// a call whose recording / transcript this login asks for: the call exists, the login may listen, and may see that candidate
+async function listenable(req) {
+  const w = await who(req.user);
+  if (!w.ok) return { code: w.code, error: w.reason };
+  if (!mayListen(req.user)) return { code: 403, error: 'Your role may not play call recordings or read what was said.' };
+  const r = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', clip(req.params.id, 60));
+  if (!r) return { code: 404, error: 'Call not found.' };
+  if (r.candidateId === TEST_CALL) { if (!isAdmin(req.user)) return { code: 404, error: 'Call not found.' }; return { r }; }
+  const cand = await prisma.candidate.findFirst({ where: { id: r.candidateId, ...scope.candidateWhere(req.user) }, select: { id: true } });
+  if (!cand) return { code: 404, error: 'Call not found.' };
+  return { r };
+}
 
 router.get('/calls/:id', async (req, res) => {
   const r = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', clip(req.params.id, 60));
   if (!r || (r.userId !== req.user.id && !isAdmin(req.user))) return fail(res, 404, 'Call not found.');
-  res.json({ call: shape(r) });
+  res.json({ call: shape(r, req.user) });
+});
+
+// the recording, streamed through this authenticated route (the browser fetches it with its login and plays it)
+router.get('/calls/:id/recording', async (req, res) => {
+  try {
+    const g = await listenable(req);
+    if (g.error) return fail(res, g.code, g.error);
+    const REC = require('../browsercall/recording'); // eslint-disable-line global-require
+    const file = g.r.recordingPath ? REC.resolveStored(g.r.recordingPath) : null;
+    if (!file || !require('fs').existsSync(file)) return fail(res, 404, g.r.recordingNote || 'There is no recording of this call.'); // eslint-disable-line global-require
+    await logAudit({ userId: req.user.id, action: 'Browser call recording played', entity: 'Candidate', entityId: g.r.candidateId, toValue: g.r.id });
+    res.set('Cache-Control', 'private, no-store');
+    res.type(file.endsWith('.mp3') ? 'audio/mpeg' : 'audio/wav');
+    return res.sendFile(file);
+  } catch (e) { return fail(res, 500, 'Could not play the recording.'); }
+});
+// "Show full conversation": the transcript + the summary
+router.get('/calls/:id/transcript', async (req, res) => {
+  try {
+    const g = await listenable(req);
+    if (g.error) return fail(res, g.code, g.error);
+    const c = shape(g.r, req.user);
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({ id: c.id, transcript: g.r.transcript || null, transcriptSource: g.r.transcriptSource || null, summary: c.summary, summaryText: c.summaryText, summarySource: c.summarySource });
+  } catch (e) { return fail(res, 500, 'Could not load the conversation.'); }
 });
 
 // history on the candidate profile (only candidates this login may see)
@@ -116,7 +167,7 @@ router.get('/candidates/:id/calls', async (req, res) => {
     const cand = await prisma.candidate.findFirst({ where: { id: clip(req.params.id, 60), ...scope.candidateWhere(req.user) }, select: { id: true } });
     if (!cand) return fail(res, 404, 'Candidate not found.');
     const rows = await S.all('SELECT * FROM "BrowserCall" WHERE "candidateId"=? ORDER BY "startAt" DESC LIMIT 100', cand.id);
-    res.json({ rows: rows.map(shape) });
+    res.json({ rows: rows.map((r) => shape(r, req.user)), mayListen: mayListen(req.user) });
   } catch (e) { fail(res, 500, 'Could not load the call history.'); }
 });
 
@@ -131,14 +182,14 @@ router.get('/report', async (req, res) => {
     const uid = isAdmin(req.user) ? clip(req.query.userId, 60) : req.user.id;
     const where = `"startAt">=? AND "startAt"<=? AND "status"<>'initiated'${uid ? ' AND "userId"=?' : ''}`;
     const p = uid ? [f, t, uid] : [f, t];
-    const byUser = await S.all(`SELECT "userId", MAX("userName") AS "userName", COUNT(*) AS total, SUM("answerAt" IS NOT NULL) AS connected, SUM("status" IN ('failed','busy')) AS failed, SUM("status" IN ('missed','cancelled')) AS missed, COALESCE(SUM("talkSec"),0) AS "talkSec" FROM "BrowserCall" WHERE ${where} GROUP BY "userId" ORDER BY total DESC`, ...p);
+    const byUser = await S.all(`SELECT "userId", MAX("userName") AS "userName", COUNT(*) AS total, SUM("answerAt" IS NOT NULL) AS connected, SUM("status" IN ('failed','busy')) AS failed, SUM("status" IN ('missed','cancelled')) AS missed, COALESCE(SUM("talkSec"),0) AS "talkSec", SUM("recordingPath" IS NOT NULL) AS recorded FROM "BrowserCall" WHERE ${where} GROUP BY "userId" ORDER BY total DESC`, ...p);
     const byCand = await S.all(`SELECT "candidateId", COUNT(*) AS total, SUM("answerAt" IS NOT NULL) AS connected, COALESCE(SUM("talkSec"),0) AS "talkSec", MAX("startAt") AS "lastAt" FROM "BrowserCall" WHERE ${where} GROUP BY "candidateId" ORDER BY total DESC LIMIT 200`, ...p);
     const rows = await S.all(`SELECT * FROM "BrowserCall" WHERE ${where} ORDER BY "startAt" DESC LIMIT 500`, ...p);
     const ids = [...new Set([...byCand.map((r) => r.candidateId), ...rows.map((r) => r.candidateId)])];
     const names = await prisma.candidate.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
     const nm = new Map(names.map((c) => [c.id, c.name]));
     const byLine = await S.all(`SELECT COALESCE("lineName", 'Office Synway (SIM)') AS "lineName", COUNT(*) AS total, SUM("answerAt" IS NOT NULL) AS connected, COALESCE(SUM("talkSec"),0) AS "talkSec" FROM "BrowserCall" WHERE ${where} GROUP BY 1 ORDER BY total DESC`, ...p);
-    res.json({ from: f, to: t, recruiters: byUser, lines: byLine, candidates: byCand.filter((r) => r.candidateId !== TEST_CALL).map((r) => ({ ...r, name: nm.get(r.candidateId) || null })), calls: rows.map((r) => ({ ...shape(r), candidateName: r.candidateId === TEST_CALL ? 'Test call' : (nm.get(r.candidateId) || null) })) });
+    res.json({ from: f, to: t, recruiters: byUser, lines: byLine, candidates: byCand.filter((r) => r.candidateId !== TEST_CALL).map((r) => ({ ...r, name: nm.get(r.candidateId) || null })), calls: rows.map((r) => ({ ...shape(r, req.user), candidateName: r.candidateId === TEST_CALL ? 'Test call' : (nm.get(r.candidateId) || null) })) });
   } catch (e) { console.error('[browser-call] report:', e.message); fail(res, 500, 'Could not build the report.'); }
 });
 
@@ -152,9 +203,12 @@ router.put('/admin/config', async (req, res) => {
   if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
   try {
     const b = req.body || {};
-    const s = await CFG.save({ mode: b.mode, testNumbers: b.testNumbers, kinds: b.kinds });
-    await logAudit({ userId: req.user.id, action: 'Browser calling settings saved', entity: 'Integration', entityId: 'browser-calling', toValue: `Switch: ${s.mode}` });
-    res.json({ ...s, testNumbers: s.testNumbers.join(', ') });
+    const before = await CFG.load();
+    const s = await CFG.save({ mode: b.mode, testNumbers: b.testNumbers, kinds: b.kinds, record: b.record, keepDays: b.keepDays });
+    let config = null;
+    if (before.record !== s.record) config = await L.writeConfig(); // the dialplan carries the recording line only while the switch is on
+    await logAudit({ userId: req.user.id, action: 'Browser calling settings saved', entity: 'Integration', entityId: 'browser-calling', toValue: `Switch: ${s.mode} · Record calls: ${s.record ? 'on' : 'off'} · keep ${s.keepDays} days` });
+    res.json({ ...s, testNumbers: s.testNumbers.join(', '), config });
   } catch (e) { fail(res, 400, e.message); }
 });
 

@@ -43,6 +43,20 @@ const DDL = [
 const ALTERS = [
   'ALTER TABLE "BrowserCall" ADD COLUMN "lineId" TEXT',
   'ALTER TABLE "BrowserCall" ADD COLUMN "lineName" TEXT',
+  // RECORDING + TRANSCRIPT + SUMMARY (2026-11-23, browsercall/recording.js). recordingStatus: off | pending | processing | done | missing | failed | none | deleted
+  'ALTER TABLE "BrowserCall" ADD COLUMN "recordingStatus" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "recordingPath" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "recordingBytes" INTEGER',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "recordingSec" INTEGER',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "recordingNote" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "recordingDeletedAt" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "transcript" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "transcriptSource" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "summary" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "summaryText" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "summarySource" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "processedAt" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "processTries" INTEGER',
 ];
 
 let ready = null;

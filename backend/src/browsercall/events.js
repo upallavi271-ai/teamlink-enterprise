@@ -30,6 +30,11 @@ async function onEvent(e) {
     const row = await S.one('SELECT * FROM "BrowserCall" WHERE "token"=?', String(e.Token || ''));
     if (!row) return;
     byUid.set(e.Uniqueid, row.id);
+    if (String(e.Answered || '') === '1') {
+      // click-to-call on a phone line: sent from the CANDIDATE's leg the moment they answer ([tl-c2c-answer]); its Hangup ends the row
+      await S.run('UPDATE "BrowserCall" SET "asteriskUniqueId"=COALESCE("asteriskUniqueId",?), "asteriskLinkedId"=COALESCE("asteriskLinkedId",?), "status"=\'connected\', "answerAt"=COALESCE("answerAt",?), "dialStatus"=\'ANSWER\', "updatedAt"=? WHERE "id"=?', e.Uniqueid, e.Linkedid || e.Uniqueid, S.nowIso(), S.nowIso(), row.id);
+      return log(row.id, e.Uniqueid, name, e);
+    }
     await S.run('UPDATE "BrowserCall" SET "asteriskUniqueId"=?, "asteriskLinkedId"=?, "status"=CASE WHEN "status"=\'initiated\' THEN \'calling\' ELSE "status" END, "updatedAt"=? WHERE "id"=?', e.Uniqueid, e.Linkedid || e.Uniqueid, S.nowIso(), row.id);
     return log(row.id, e.Uniqueid, name, e);
   }
@@ -55,6 +60,7 @@ async function onEvent(e) {
     const final = answered ? 'completed' : (FINAL.has(row.status) ? row.status : 'failed');
     await S.run('UPDATE "BrowserCall" SET "endAt"=?, "durationSec"=?, "talkSec"=?, "hangupCause"=?, "hangupReason"=COALESCE("hangupReason",?), "status"=?, "updatedAt"=? WHERE "id"=?',
       end, secs(row.startAt, end), answered ? secs(row.answerAt, end) : 0, Number(e.Cause) || null, e['Cause-txt'] || null, final, end, id);
+    require('./recording').enqueue(id); // eslint-disable-line global-require -- the recording, transcript and summary, after the call, one at a time
     return log(id, e.Uniqueid, name, e);
   }
   return undefined;
@@ -74,7 +80,9 @@ async function connect() {
 // a call that never reached Asterisk (no TLCall within 90 s) is a real failure, said plainly
 async function sweepStale() {
   const cut = new Date(Date.now() - 90000).toISOString();
-  await S.run('UPDATE "BrowserCall" SET "status"=\'failed\', "endAt"=?, "durationSec"=0, "talkSec"=0, "hangupReason"=\'The call never reached the phone system (browser could not connect)\', "updatedAt"=? WHERE "status"=\'initiated\' AND "startAt"<?', S.nowIso(), S.nowIso(), cut);
+  await S.run('UPDATE "BrowserCall" SET "status"=\'failed\', "endAt"=?, "durationSec"=0, "talkSec"=0, "hangupReason"=\'The call never reached the phone system (browser could not connect)\', "updatedAt"=? WHERE "status"=\'initiated\' AND "direction"=\'outbound\' AND "startAt"<?', S.nowIso(), S.nowIso(), cut);
+  // click-to-call on a phone line that nobody answered within 2 minutes (no "answered" event came)
+  await S.run('UPDATE "BrowserCall" SET "status"=\'missed\', "endAt"=?, "durationSec"=0, "talkSec"=0, "hangupReason"=\'Not answered (or the call did not connect)\', "processedAt"=?, "recordingStatus"=\'none\', "updatedAt"=? WHERE "status"=\'initiated\' AND "direction"=\'click-to-call\' AND "startAt"<?', S.nowIso(), S.nowIso(), S.nowIso(), new Date(Date.now() - 120000).toISOString());
   // calls that stayed open for 6 h without a Hangup event (AMI was down): close them, do not invent talk time
   const old = new Date(Date.now() - 6 * 3600000).toISOString();
   await S.run('UPDATE "BrowserCall" SET "status"=CASE WHEN "answerAt" IS NULL THEN \'failed\' ELSE \'completed\' END, "endAt"=?, "hangupReason"=\'Closed: no end event from the phone system\', "updatedAt"=? WHERE "status" IN (\'calling\',\'ringing\',\'connected\') AND "startAt"<?', S.nowIso(), S.nowIso(), old);
@@ -82,5 +90,8 @@ async function sweepStale() {
 function start() {
   S.ensure().then(connect).catch((e) => console.error('[browser-call] start:', e.message));
   sweep = setInterval(() => sweepStale().catch(() => {}), 30000); sweep.unref();
+  // recordings older than the Admin's "keep" days are deleted; calls left unprocessed by a restart are queued (hourly, and once at start)
+  const rec = () => require('./recording').sweepOld().catch((e) => console.error('[browser-call] recordings sweep:', e.message)); // eslint-disable-line global-require
+  setTimeout(rec, 60000).unref(); setInterval(rec, 3600000).unref();
 }
 module.exports = { start, getStatus: () => status, onEvent, sweepStale };

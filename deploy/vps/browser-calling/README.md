@@ -29,7 +29,17 @@ Install once, in this order (backups first):
 15. Line status (Registered / Reachable / Unreachable, round-trip ms) is read with AMI `PJSIPShowContacts` when the manager user has the `system` right,
     otherwise with `asterisk -rx "pjsip show contacts"` (the backend runs as root). Nothing to install for it.
 
-Optional backend .env: BROWSER_CALL_LINES_PJSIP_FILE, BROWSER_CALL_LINES_DIALPLAN_FILE (the two paths above), BROWSER_CALL_PUBLIC_IP (72.61.233.104),
+## Silent call recording, transcript and summary - 23 Nov 2026
+The generated `[tl-line-route]` puts `MixMonitor(/var/spool/asterisk/monitor/teamlink/${FILTER(a-z0-9,${TLTOKEN})}.wav,b)` before every Dial while the
+Admin switch "Record calls" is on (default on): option `b` = only the answered (bridged) part, both sides mixed, no beep, no announcement to anyone.
+Click-to-call on a phone line records the same way from `[tl-c2c-answer]` (Dial option `U(tl-c2c-answer^<token>)`). Switching it off rewrites the file without it.
+16. `mkdir -p /var/spool/asterisk/monitor/teamlink && chown asterisk:asterisk /var/spool/asterisk/monitor/teamlink && chmod 750 /var/spool/asterisk/monitor/teamlink`
+17. Nothing else on Asterisk: recording needs steps 9-11 (the include and the new `[browser-out]`); without them calls still work, unrecorded.
+18. After each hangup the backend (root) reads the WAV, runs ONE `ffmpeg -i <wav> -ac 1 -ar 16000 -c:a libmp3lame -b:a 24k <mp3>` (one call at a time),
+    stores the MP3 in `<UPLOAD_DIR>/call-recordings/`, transcribes (AI_VOICE_WHISPER_URL if set, else Groq whisper-large-v3 with the Fast AI Groq key),
+    summarises through Fast AI (phone numbers and e-mails masked first) and deletes the WAV. Audio + transcript are deleted after "Keep recordings" days (default 180).
+
+Optional backend .env: BROWSER_CALL_REC_DIR (default /var/spool/asterisk/monitor/teamlink), FFMPEG_PATH, BROWSER_CALL_LINES_PJSIP_FILE, BROWSER_CALL_LINES_DIALPLAN_FILE (the two paths above), BROWSER_CALL_PUBLIC_IP (72.61.233.104),
 BROWSER_CALL_REGISTER_PORT (5160). Click-to-call on a line from the Call window uses the AI_VOICE_AMI_* manager login (the same as the SIP line).
 
 Rollback: restore the /root/browser-calling-backup-* copies, `module reload res_pjsip.so`, `dialplan reload`, `manager reload`, remove the nginx location.

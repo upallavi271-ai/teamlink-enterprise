@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api';
-import { mmss, statusWord } from './CallHistory.jsx';
+import { mmss, statusWord, PlayButton, CallSummary } from './CallHistory.jsx';
 import PhoneLinesSection from './PhoneLinesSection.jsx';
 
 const ist = (d) => new Date(d.getTime() + 330 * 60000).toISOString().slice(0, 10);
@@ -21,8 +21,8 @@ export default function BrowserCallingTab() {
   const saveCfg = async (patch) => { try { const r = await api.put('/browser-calling/admin/config', { ...cfg, ...patch }); setCfg((c) => ({ ...c, ...r.data })); setMsg('Saved.'); api.get('/browser-calling/status').then((s) => setStatus(s.data)); load(); } catch (e) { setMsg(errOf(e, 'Could not save.')); } };
   const csv = () => {
     if (!rep) return;
-    const head = ['Start (IST)', 'Recruiter', 'Candidate', 'Number', 'Line', 'Status', 'Talk sec', 'Duration sec', 'Reason'];
-    const lines = rep.calls.map((c) => [c.startAt, c.userName, c.candidateName, c.number, c.lineName || 'Office Synway (SIM)', statusWord(c.status), c.talkSec, c.durationSec, c.hangupReason].map((v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(','));
+    const head = ['Start (IST)', 'Recruiter', 'Candidate', 'Number', 'Line', 'Status', 'Ring sec', 'Talk sec', 'Duration sec', 'Recorded', 'Summary', 'Reason'];
+    const lines = rep.calls.map((c) => [c.startAt, c.userName, c.candidateName, c.number, c.lineName || 'Office Synway (SIM)', statusWord(c.status), c.ringSec, c.talkSec, c.durationSec, c.hasRecording ? 'Yes' : 'No', c.summaryText, c.hangupReason].map((v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(','));
     const url = URL.createObjectURL(new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv' }));
     const a = document.createElement('a'); a.href = url; a.download = `browser-calls-${from}-${to}.csv`; a.click(); URL.revokeObjectURL(url);
   };
@@ -42,6 +42,14 @@ export default function BrowserCallingTab() {
             <span>Test numbers (10 digits, comma separated)</span>
             <input value={cfg.testNumbers || ''} onChange={(e) => setCfg({ ...cfg, testNumbers: e.target.value })} onBlur={() => saveCfg({ testNumbers: cfg.testNumbers })} />
           </label>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 4 }} data-testid="record-switch">
+            <b style={{ fontSize: 13 }}>Record calls</b>
+            {[true, false].map((on) => <button key={String(on)} type="button" className={`btn btn-sm${cfg.record === on ? ' btn-primary' : ''}`} onClick={() => saveCfg({ record: on })}>{on ? 'On' : 'Off'}</button>)}
+            <label className="small-muted">Keep recordings{' '}
+              <input type="number" min={1} max={3650} value={cfg.keepDays || 180} style={{ width: 70 }} onChange={(e) => setCfg({ ...cfg, keepDays: e.target.value })} onBlur={() => saveCfg({ keepDays: Number(cfg.keepDays) })} aria-label="Keep recordings for days" /> days
+            </label>
+          </div>
+          <div className="small-muted" style={{ marginTop: 4 }}>Recording is silent: no beep and no message is played to either side. Only the answered part is recorded. After the call TeamLink writes what was said and a short summary into the call history. Audio and the full text are deleted after the days above; the summary and the talk time stay.</div>
           {msg && <div className="small-muted">{msg}</div>}
         </div>
       )}
@@ -56,10 +64,10 @@ export default function BrowserCallingTab() {
         <>
           <div className="section-label">Recruiter-wise</div>
           <table className="table">
-            <thead><tr><th>Recruiter</th><th>Total</th><th>Connected</th><th>Failed</th><th>Missed</th><th>Talk time</th></tr></thead>
+            <thead><tr><th>Recruiter</th><th>Total</th><th>Connected</th><th>Failed</th><th>Missed</th><th>Total talk time</th><th>Recorded</th></tr></thead>
             <tbody>
-              {rep.recruiters.length === 0 && <tr><td colSpan={6} className="small-muted">No calls in these dates.</td></tr>}
-              {rep.recruiters.map((r) => <tr key={r.userId}><td>{r.userName || r.userId}</td><td>{r.total}</td><td>{r.connected}</td><td>{r.failed}</td><td>{r.missed}</td><td>{mmss(r.talkSec)}</td></tr>)}
+              {rep.recruiters.length === 0 && <tr><td colSpan={7} className="small-muted">No calls in these dates.</td></tr>}
+              {rep.recruiters.map((r) => <tr key={r.userId}><td>{r.userName || r.userId}</td><td>{r.total}</td><td>{r.connected}</td><td>{r.failed}</td><td>{r.missed}</td><td>{mmss(r.talkSec)}</td><td>{r.recorded || 0}</td></tr>)}
             </tbody>
           </table>
           {rep.lines && rep.lines.length > 0 && (
@@ -77,10 +85,18 @@ export default function BrowserCallingTab() {
             <tbody>{rep.candidates.map((r) => <tr key={r.candidateId}><td>{r.name || r.candidateId}</td><td>{r.total}</td><td>{r.connected}</td><td>{mmss(r.talkSec)}</td><td>{new Date(r.lastAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</td></tr>)}</tbody>
           </table>
           <div className="section-label" style={{ marginTop: 14 }}>Every call</div>
-          <table className="table">
-            <thead><tr><th>When</th><th>Recruiter</th><th>Candidate</th><th>Line</th><th>Status</th><th>Talk</th><th>Reason</th></tr></thead>
-            <tbody>{rep.calls.map((c) => <tr key={c.id}><td>{new Date(c.startAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</td><td>{c.userName}</td><td>{c.candidateName || c.candidateId}</td><td>{c.lineName || 'Office Synway (SIM)'}</td><td>{statusWord(c.status)}</td><td>{mmss(c.talkSec)}</td><td className="small-muted">{c.hangupReason || ''}</td></tr>)}</tbody>
-          </table>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead><tr><th>When</th><th>Called by</th><th>Candidate</th><th>Line</th><th>Ring</th><th>Talk</th><th>Result</th><th>Recording</th><th>What was said</th></tr></thead>
+              <tbody>{rep.calls.map((c) => (
+                <tr key={c.id}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{new Date(c.startAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</td><td>{c.userName}</td><td>{c.candidateName || c.candidateId}</td><td>{c.lineName || 'Office Synway (SIM)'}</td>
+                  <td>{mmss(c.ringSec)}</td><td>{mmss(c.talkSec)}</td><td>{statusWord(c.status)}{c.hangupReason && c.status !== 'completed' ? <div className="small-muted">{c.hangupReason}</div> : null}</td>
+                  <td><PlayButton call={c} /></td><td style={{ minWidth: 220 }}><CallSummary call={c} /></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
         </>
       )}
     </div>

@@ -57,7 +57,7 @@ async function originateOn(target, { agent, to }) {
       Action: 'Originate',
       Channel: `PJSIP/${pre}${dialNumber(a.e164, target.format)}@${target.endpoint}`, // the caller's own phone rings first
       Application: 'Dial',
-      Data: `PJSIP/${pre}${dialNumber(p.e164, target.format)}@${target.endpoint},40`, // answered -> Asterisk dials the person and joins the two
+      Data: `PJSIP/${pre}${dialNumber(p.e164, target.format)}@${target.endpoint},40${target.dialOpts ? `,${target.dialOpts}` : ''}`, // answered -> Asterisk dials the person and joins the two
       Timeout: '35000',
       ...(target.callerId ? { CallerID: target.callerId } : {}),
       Async: 'true',
@@ -141,8 +141,26 @@ async function startOnPhoneLine(lineId, args) {
   if (!ln.ok || ln.line.builtIn) return { ok: false, notConfigured: true, error: ln.reason || 'Pick a line.', line: lineId };
   const r = phoneLineReady(ln.line);
   if (!r.ok) return { ok: false, notConfigured: true, error: r.reason, line: `${PHONE}${ln.line.id}` };
-  const out = await originateOn({ endpoint: ln.line.endpoint, format: ln.line.dialFormat, prefix: ln.line.prefix, callerId: ln.line.callerId, lineName: ln.line.name }, args);
-  return { ...out, line: `${PHONE}${ln.line.id}`, lineName: ln.line.name };
+  // a CANDIDATE call on a phone line gets a call row like a browser call (talk time, silent recording, transcript, summary): the dialplan's
+  // [tl-c2c-answer] runs on the candidate's leg when they answer (Dial option U) and reports it with the row's token.
+  const row = await c2cRow(ln.line, args).catch(() => null);
+  const out = await originateOn({ endpoint: ln.line.endpoint, format: ln.line.dialFormat, prefix: ln.line.prefix, callerId: ln.line.callerId, lineName: ln.line.name, dialOpts: row ? `U(tl-c2c-answer^${row.token})` : '' }, args);
+  if (row && !out.ok) await require('../browsercall/schema').run('UPDATE "BrowserCall" SET "status"=\'failed\', "endAt"=?, "hangupReason"=?, "processedAt"=?, "recordingStatus"=\'none\' WHERE "id"=?', new Date().toISOString(), String(out.error || 'Did not start').slice(0, 300), new Date().toISOString(), row.id).catch(() => {}); // eslint-disable-line global-require
+  return { ...out, line: `${PHONE}${ln.line.id}`, lineName: ln.line.name, callId: row ? row.id : undefined };
+}
+async function c2cRow(line, args) {
+  const m = String(args.ref || '').match(/^candidates:([\w-]{1,60})$/);
+  if (!m || !args.user) return null;
+  const crypto = require('crypto'); // eslint-disable-line global-require
+  const S = require('../browsercall/schema'); // eslint-disable-line global-require
+  const CFG = require('../browsercall/config'); // eslint-disable-line global-require
+  const core = require('./messagingCore'); // eslint-disable-line global-require
+  const n = core.normalizeMobile(args.to);
+  const s = await CFG.load();
+  const id = crypto.randomUUID(); const token = crypto.randomBytes(12).toString('hex'); const now = new Date().toISOString();
+  await S.run('INSERT INTO "BrowserCall" ("id","token","candidateId","applicationId","userId","userName","toNumber","extension","direction","mode","status","startAt","createdAt","updatedAt","lineId","lineName","recordingStatus") VALUES (?,?,?,?,?,?,?,\'c2c\',\'click-to-call\',?,\'initiated\',?,?,?,?,?,?)',
+    id, token, m[1], args.applicationId || null, args.user.id, String(args.user.name || '').slice(0, 80), n.ok ? n.national : String(args.to || '').slice(-10), s.mode, now, now, now, line.id, line.name, s.record ? 'pending' : 'off');
+  return { id, token };
 }
 
 /** Start a call on a line. A line that is unknown is the API line; one that is not ready answers { ok:false, notConfigured:true, error }.

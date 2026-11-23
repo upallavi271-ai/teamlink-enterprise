@@ -27,7 +27,12 @@ const env = {
   INTEGRATION_SECRET_KEY: 'phone-lines-test-key', BROWSER_CALL_LINES_PJSIP_FILE: path.join(ETC, 'pjsip_tl_lines.conf'), BROWSER_CALL_LINES_DIALPLAN_FILE: path.join(ETC, 'extensions_tl_lines.conf'),
   BROWSER_CALL_PJSIP_MAIN: path.join(ETC, 'pjsip.conf'), BROWSER_CALL_RELOAD_CMD: path.join(ETC, 'no-asterisk-here'), BROWSER_CALL_AMI_USER: '', BROWSER_CALL_AMI_SECRET: '',
   AI_VOICE_AMI_USER: '', AI_VOICE_AMI_SECRET: '', AI_VOICE_SIP_TRUNK: '', AI_VOICE_DIAL_VIA: '',
+  // recording pipeline: the "Asterisk" spool folder and the uploads store are temp folders; a fake transcriber and a fake AI (sandbox only)
+  BROWSER_CALL_REC_DIR: path.join(ETC, 'monitor'), UPLOAD_DIR: path.join(ETC, 'uploads'), FFMPEG_PATH: path.join(ETC, 'no-ffmpeg-here'),
+  BROWSER_CALL_FAKE_STT: 'Hello, this is Ravi from TeamLink. Yes I am interested. My current salary is 6 lakhs and I expect 9 lakhs. Notice period 30 days. Call me on 9876543210 or ravi.k@example.com. I will send my resume tomorrow.',
+  BROWSER_CALL_FAKE_AI: '1', GROQ_API_KEY: '', AI_VOICE_WHISPER_URL: '',
 };
+fs.mkdirSync(path.join(ETC, 'monitor'), { recursive: true });
 Object.assign(process.env, env);
 fs.writeFileSync(env.BROWSER_CALL_PJSIP_MAIN, '; test\n');
 const jwt = require('jsonwebtoken');
@@ -162,9 +167,19 @@ const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return 
   check('pjsip: the built-in teamlink-gw is never written', !/\[teamlink-gw\]/.test(pj));
   check('pjsip: every one of the 11 lines is in the file', (pj.match(/type=endpoint/g) || []).length === 11, (pj.match(/type=endpoint/g) || []).length);
   const viciDp = [`exten => ${v.header},1,NoOp(TeamLink line: ViciDial main ${P})`, ` same => n,Set(GROUP(tllines)=${v.header})`, ` same => n,GotoIf($[\${GROUP_COUNT(${v.header}@tllines)} > 2]?full)`,
-    ' same => n,Set(CALLERID(num)=04012345678)', ` same => n,Dial(PJSIP/90\${ARG1}@${v.endpoint},45)`, ' same => n,Return()', ' same => n(full),NoOp(All 2 calls of this line are in use)', ' same => n,Hangup(34)'].join('\n');
+    ' same => n,Set(CALLERID(num)=04012345678)', ` same => n,MixMonitor(${path.join(ETC, 'monitor').replace(/[^A-Za-z0-9/._-]/g, '')}/\${FILTER(a-z0-9,\${TLTOKEN})}.wav,b)`, ` same => n,Dial(PJSIP/90\${ARG1}@${v.endpoint},45)`, ' same => n,Return()', ' same => n(full),NoOp(All 2 calls of this line are in use)', ' same => n,Hangup(34)'].join('\n');
   check('dialplan: the ViciDial line exactly (prefix 9 + 0 + number, caller ID, 2 at once)', dp.includes(viciDp), dp.slice(0, 1500));
-  check('dialplan: "default" is the office Synway (teamlink-gw), as before', dp.includes('[tl-line-route]\nexten => default,1,NoOp(TeamLink line: Office Synway SIM)\n same => n,Dial(PJSIP/${ARG1}@teamlink-gw,45)\n same => n,Return()')); // eslint-disable-line no-template-curly-in-string
+  check('dialplan: "default" is the office Synway (teamlink-gw), recorded silently (record is ON by default)', dp.includes(`[tl-line-route]\nexten => default,1,NoOp(TeamLink line: Office Synway SIM)\n same => n,MixMonitor(${path.join(ETC, 'monitor').replace(/[^A-Za-z0-9/._-]/g, '')}/\${FILTER(a-z0-9,\${TLTOKEN})}.wav,b)\n same => n,Dial(PJSIP/\${ARG1}@teamlink-gw,45)\n same => n,Return()`), dp.slice(0, 700));
+  const mixes = dp.split('\n').filter((x) => /^ same => n,MixMonitor/.test(x));
+  check('dialplan: every MixMonitor is silent (only option b: no beep B(), no announcement, no Playback)', mixes.length >= 3 && mixes.every((x) => /,b\)$/.test(x)) && !/Playback|Background|B\(/.test(dp), mixes);
+  check('dialplan: click-to-call answer hook reports the answer and records', dp.includes('[tl-c2c-answer]\nexten => s,1,UserEvent(TLCall,Token: ${ARG1},Answered: 1)\n same => n,MixMonitor(') && dp.includes('${FILTER(a-z0-9,${ARG1})}.wav,b)\n same => n,Return()')); // eslint-disable-line no-template-curly-in-string
+  const recOff = await call('PUT', '/browser-calling/admin/config', { record: false }, tA);
+  const dpOff = read(env.BROWSER_CALL_LINES_DIALPLAN_FILE);
+  check('"Record calls" Off: the dialplan is rewritten with no MixMonitor at all', recOff.status === 200 && recOff.body.record === false && !/MixMonitor/.test(dpOff) && /Recording: OFF/.test(dpOff), dpOff.slice(0, 400));
+  const recOn = await call('PUT', '/browser-calling/admin/config', { record: true }, tA);
+  check('...and On again puts it back', recOn.status === 200 && recOn.body.record === true && /MixMonitor/.test(read(env.BROWSER_CALL_LINES_DIALPLAN_FILE)));
+  check('keep recordings: 0 days is refused, 90 is saved', (await call('PUT', '/browser-calling/admin/config', { keepDays: 0 }, tA)).status === 400 && (await call('PUT', '/browser-calling/admin/config', { keepDays: 90 }, tA)).body.keepDays === 90);
+  await call('PUT', '/browser-calling/admin/config', { keepDays: 180 }, tA);
   check('dialplan: 91 format and +91 format', dp.includes(`Dial(PJSIP/91\${ARG1}@${d.endpoint},45)`) && dp.includes(`Dial(PJSIP/+91\${ARG1}@${t.endpoint},45)`));
   check('pjsip file is not readable by everyone (0640)', process.platform === 'win32' || (fs.statSync(env.BROWSER_CALL_LINES_PJSIP_FILE).mode & 0o007) === 0);
 
@@ -253,6 +268,89 @@ const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return 
   check('click-to-call on a phone line here: refused with the plain reason (no manager login), never pretends to dial', !s3.ok && s3.notConfigured && /ViciDial main/.test(s3.error), s3);
   const s4 = await CL.startCall('dinstar', { agent: '9876543210', to: phone, user: uA });
   check('a saved "Dinstar" choice now goes to the Dinstar line', !s4.ok && /dinstar/i.test(s4.error) && String(s4.line).startsWith('line:'), s4);
+
+  // ---- RECORDING -> transcript -> summary (after the hangup, from the AMI events; events.onEvent is fed the events Asterisk would send)
+  {
+    const EV = require('../src/browsercall/events');
+    const REC = require('../src/browsercall/recording');
+    const wav = (sec) => { const rate = 8000; const n = rate * sec; const b = Buffer.alloc(44 + n * 2); b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVE', 8); b.write('fmt ', 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40); for (let i = 0; i < n; i += 1) b.writeInt16LE(Math.round(8000 * Math.sin(i / 6)), 44 + i * 2); return b; };
+    check('the WAV length is read from its header', REC.wavInfo(wav(3)).seconds === 3);
+    const rc = await call('POST', '/browser-calling/calls', { candidateId: cand.id, lineId: v.id }, tR);
+    const row = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', rc.body && rc.body.callId);
+    check('a new call is marked to be recorded (switch on)', rc.status === 200 && row.recordingStatus === 'pending', rc.body);
+    const RAW = path.join(ETC, 'monitor', `${row.token}.wav`);
+    fs.writeFileSync(RAW, wav(4));
+    await EV.onEvent({ Event: 'UserEvent', UserEvent: 'TLCall', Token: row.token, Uniqueid: `u-${P}`, Linkedid: `u-${P}` });
+    await EV.onEvent({ Event: 'DialBegin', Uniqueid: `u-${P}`, DestUniqueid: `d-${P}` });
+    await EV.onEvent({ Event: 'DialEnd', Uniqueid: `u-${P}`, DialStatus: 'ANSWER' });
+    await S.run('UPDATE "BrowserCall" SET "answerAt"=? WHERE "id"=?', new Date(Date.now() - 42000).toISOString(), row.id); // answered 42 s ago
+    await S.run('UPDATE "BrowserCall" SET "startAt"=? WHERE "id"=?', new Date(Date.now() - 50000).toISOString(), row.id); // rang 8 s
+    await EV.onEvent({ Event: 'Hangup', Uniqueid: `u-${P}`, Cause: '16', 'Cause-txt': 'Normal Clearing' });
+    await REC.drain();
+    const done = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', row.id);
+    const stored = done.recordingPath && REC.resolveStored(done.recordingPath);
+    check('after the hangup: the recording is in the uploads store, its length known, the raw file deleted', done.recordingStatus === 'done' && stored && fs.existsSync(stored) && stored.startsWith(path.join(ETC, 'uploads')) && done.recordingSec === 4 && done.recordingBytes > 0 && !fs.existsSync(RAW), { st: done.recordingStatus, p: done.recordingPath, note: done.recordingNote });
+    check('no ffmpeg here: kept as WAV and says so', /ffmpeg/.test(done.recordingNote || ''), done.recordingNote);
+    check('the transcript is saved', done.transcript === env.BROWSER_CALL_FAKE_STT && /Test transcriber/.test(done.transcriptSource || ''), done.transcriptSource);
+    check('the summary is saved, from MASKED text (no phone number or e-mail reaches the model)', /Test summary/.test(done.summaryText || '') && !/9876543210|ravi\.k@/.test(done.summaryText) && /\[phone\].*\[email\]/.test(REC.mask(env.BROWSER_CALL_FAKE_STT)) && /Notice period: .*30 days/i.test(done.summaryText) && /Expected salary: .*9 lakhs/.test(done.summaryText), done.summaryText);
+    check('talk time from the events (42 s)', done.talkSec >= 41 && done.talkSec <= 44, done.talkSec);
+    const msgRow = await prisma.candidateMessage.findFirst({ where: { candidateId: cand.id, template: 'BROWSER_CALL', providerRef: row.id } });
+    check('the candidate\'s activity gets "Call by <name>, 0:42 talk - <summary>"', !!msgRow && new RegExp(`^Call by Pl rec ${P}, 0:4[1-4] talk - Test summary`).test(msgRow.statusDetail), msgRow && msgRow.statusDetail);
+    // history + access
+    const hR = await call('GET', `/browser-calling/candidates/${cand.id}/calls`, null, tR);
+    const hrow = hR.body && hR.body.rows.find((r) => r.id === row.id);
+    check('history row: who, line, ring time, talk time, result, recording and summary', hR.status === 200 && hrow && hrow.userName === `Pl rec ${P}` && hrow.lineName === `ViciDial main ${P}` && hrow.ringSec >= 7 && hrow.ringSec <= 9 && hrow.talkSec >= 41 && hrow.status === 'completed' && hrow.hasRecording && hrow.mayListen && /Test summary/.test(hrow.summaryText) && hrow.hasTranscript, hrow);
+    const play = await fetch(`${API}/browser-calling/calls/${row.id}/recording`, { headers: { Authorization: `Bearer ${tR}` } });
+    const audio = Buffer.from(await play.arrayBuffer());
+    check('Play: the recruiter who may see the candidate gets the audio', play.status === 200 && /audio\//.test(play.headers.get('content-type')) && audio.slice(0, 4).toString() === 'RIFF', { s: play.status, t: play.headers.get('content-type') });
+    const trR = await call('GET', `/browser-calling/calls/${row.id}/transcript`, null, tR);
+    check('Show full conversation: the transcript', trR.status === 200 && trR.body.transcript === env.BROWSER_CALL_FAKE_STT, trR.body);
+    check('Play without a login is refused', (await fetch(`${API}/browser-calling/calls/${row.id}/recording`)).status === 401);
+    const rec2 = await mk('rec2', { role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: 'Finance', atsScopeDepartments: 'Finance' });
+    const tR2 = await tok(rec2.id);
+    check('a recruiter who may NOT see that candidate cannot play or read it', (await call('GET', `/browser-calling/calls/${row.id}/recording`, null, tR2)).status === 404 && (await call('GET', `/browser-calling/calls/${row.id}/transcript`, null, tR2)).status === 404);
+    // BDE / Manager: even when an Admin lets their role call, they may not play or read
+    await call('PUT', '/browser-calling/admin/config', { kinds: ['admin', 'tl', 'recruiter', 'hr', 'bde'] }, tA);
+    const pB = await call('GET', `/browser-calling/calls/${row.id}/recording`, null, tB);
+    const tB2 = await call('GET', `/browser-calling/calls/${row.id}/transcript`, null, tB);
+    const hB = await call('GET', `/browser-calling/candidates/${cand.id}/calls`, null, tB);
+    check('BDE (role allowed to call): may NOT play or read, and the history hides the summary', pB.status === 403 && tB2.status === 403 && (hB.status !== 200 || hB.body.rows.every((r) => !r.summaryText && !r.mayListen)), { pB: pB.status, tB: tB2.status, h: hB.status });
+    await call('PUT', '/browser-calling/admin/config', { kinds: ['admin', 'tl', 'recruiter', 'hr'] }, tA);
+    check('Manager (view only): may NOT play or read', (await call('GET', `/browser-calling/calls/${row.id}/recording`, null, tM)).status === 403 && (await call('GET', `/browser-calling/calls/${row.id}/transcript`, null, tM)).status === 403);
+    const rp2 = await call('GET', '/browser-calling/report', null, tA);
+    const mine = rp2.body.recruiters.find((x) => x.userId === rec.id);
+    check('report: total talk time and a Recorded count per recruiter', mine && mine.recorded >= 1 && mine.talkSec >= 41, mine);
+    // the model is down -> a summary made by code; recording off; file missing
+    process.env.BROWSER_CALL_FAKE_AI = 'down';
+    const fb = await REC.summarize(env.BROWSER_CALL_FAKE_STT, null);
+    process.env.BROWSER_CALL_FAKE_AI = '1';
+    check('the AI is down: a summary is still made from the words (salary, notice, next step)', /Made from the words/.test(fb.source) && /30 days/.test(fb.data.noticePeriod) && /9 lakhs/.test(fb.data.expectedSalary) && /send my resume tomorrow/i.test(fb.data.nextStep) && !/9876543210/.test(JSON.stringify(fb.data)), fb.data);
+    const mkRow = async (status, sec) => { const id = `pl-rec-${status}-${P}`; const t0 = new Date(Date.now() - 60000).toISOString(); await S.run('INSERT INTO "BrowserCall" ("id","token","candidateId","userId","userName","toNumber","extension","status","startAt","answerAt","endAt","talkSec","createdAt","updatedAt","recordingStatus") VALUES (?,?,?,?,?,?,?,\'completed\',?,?,?,?,?,?,?)', id, `tok${status}${P}`.replace(/[^a-z0-9]/g, ''), cand.id, rec.id, rec.name, phone, '7901', t0, t0, S.nowIso(), sec, t0, t0, status); return id; };
+    const offId = await mkRow('off', 20); const missId = await mkRow('pending', 15);
+    REC.enqueue(offId); REC.enqueue(missId); await REC.drain(40000);
+    const offRow = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', offId); const missRow = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', missId);
+    check('recording was off for a call: nothing recorded, said so, activity still written', offRow.recordingStatus === 'off' && !offRow.recordingPath && /switched off/.test(offRow.recordingNote) && !!(await prisma.candidateMessage.findFirst({ where: { providerRef: offId } })));
+    check('no file came from the phone system: "missing" with the reason', missRow.recordingStatus === 'missing' && /No recording file/.test(missRow.recordingNote), missRow.recordingNote);
+    // retention
+    await S.run('UPDATE "BrowserCall" SET "startAt"=? WHERE "id"=?', new Date(Date.now() - 181 * 86400000).toISOString(), row.id);
+    const sw = await REC.sweepOld();
+    const gone = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', row.id);
+    check('after 180 days: the audio and the transcript are deleted, the summary and talk time stay', sw.deleted >= 1 && !fs.existsSync(stored) && !gone.recordingPath && !gone.transcript && gone.recordingStatus === 'deleted' && /Test summary/.test(gone.summaryText) && gone.talkSec >= 41, { sw, st: gone.recordingStatus });
+    check('a deleted recording cannot be played', (await call('GET', `/browser-calling/calls/${row.id}/recording`, null, tA)).status === 404);
+    // click-to-call on a phone line: the answer comes from [tl-c2c-answer] on the candidate's leg; its Hangup ends the row
+    const c2c = `pl-c2c-${P}`; const ctok = `c2ctok${P}`;
+    await S.run('INSERT INTO "BrowserCall" ("id","token","candidateId","userId","userName","toNumber","extension","direction","status","startAt","createdAt","updatedAt","lineId","lineName","recordingStatus") VALUES (?,?,?,?,?,?,\'c2c\',\'click-to-call\',\'initiated\',?,?,?,?,?,\'pending\')', c2c, ctok, cand.id, rec.id, rec.name, phone, S.nowIso(), S.nowIso(), S.nowIso(), v.id, v.name);
+    await EV.onEvent({ Event: 'UserEvent', UserEvent: 'TLCall', Token: ctok, Answered: '1', Uniqueid: `c-${P}`, Linkedid: `c-${P}` });
+    const ans = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', c2c);
+    await S.run('UPDATE "BrowserCall" SET "answerAt"=? WHERE "id"=?', new Date(Date.now() - 30000).toISOString(), c2c);
+    await EV.onEvent({ Event: 'Hangup', Uniqueid: `c-${P}`, Cause: '16' });
+    await REC.drain(40000);
+    const c2cDone = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', c2c);
+    check('click-to-call on a line: answered event -> connected; hangup -> completed with talk time, then processed', ans.status === 'connected' && c2cDone.status === 'completed' && c2cDone.talkSec >= 29 && !!c2cDone.processedAt, { a: ans.status, d: c2cDone.status, t: c2cDone.talkSec });
+    check('a click-to-call row never blocks the caller\'s browser calls', (await call('POST', '/browser-calling/calls', { candidateId: cand.id }, tR)).status === 200);
+    await S.run('UPDATE "BrowserCall" SET "status"=\'completed\' WHERE "status" IN (\'initiated\',\'calling\',\'ringing\',\'connected\')');
+    check('a stored path outside the recordings folder is never served', REC.resolveStored('../../etc/passwd') === null && REC.resolveStored('x.mp3') === null);
+  }
 
   // ---- live state
   const ls = await call('GET', '/browser-calling/admin/lines/status', null, tA);
