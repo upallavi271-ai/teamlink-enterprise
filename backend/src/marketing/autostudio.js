@@ -11,6 +11,7 @@ const S = require('../outreach/store');
 const A = require('../outreach/access');
 const AI = require('./ai');
 const Cfg = require('./settings');
+const BC = require('./briefContent');
 
 const mayWrite = (u) => A.has('mayAiMarketing')(u);
 const LANGS = ['English', 'Telugu', 'Hindi'];
@@ -32,6 +33,7 @@ function systemFor(brand, who, kind, n, language, day, project) {
     `You are the creative director of a social media team. You turn one request into a ready-to-use ${kind === 'video' ? `short vertical video of ${n} scenes` : `picture post of ${n} picture${n === 1 ? '' : 's'}`} for ${who}.`,
     !project && brand.about ? `About the company: ${brand.about}` : '', !project && brand.voice ? `Brand voice: ${brand.voice}` : '', !project && brand.audience ? `The company talks to: ${brand.audience}.` : '',
     project && project.brief ? `The client's own brief: ${project.brief}` : '',
+    project ? BC.guide(`${project.clientName} ${project.occasion} ${project.brief}`) : '',
     !project && brand.keyMessages && brand.keyMessages.length ? `Key messages: ${brand.keyMessages.join(' | ')}` : '',
     brand.avoidWords && brand.avoidWords.length ? `Never use these words: ${brand.avoidWords.join(', ')}.` : '',
     !project && brand.hashtags && brand.hashtags.length ? `Brand hashtags you may reuse: ${brand.hashtags.join(' ')}.` : '',
@@ -104,7 +106,11 @@ async function plan(u, b = {}) {
   if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not use it to create.', status: 403 };
   const mine = { title: S.clip(b.title, 80), heading: S.clip(b.heading, 80), cta: S.clip(b.cta, 30), content: String(b.content || '').replace(/\r/g, '').trim().slice(0, 1200) };
   const idea = String(b.prompt || '').replace(/\s+/g, ' ').trim().slice(0, 800);
-  const prompt = idea.length >= 8 ? idea : `${mine.title} ${mine.heading} ${mine.content}`.replace(/\s+/g, ' ').trim().slice(0, 800);
+  let prompt = idea.length >= 8 ? idea : `${mine.title} ${mine.heading} ${mine.content}`.replace(/\s+/g, ' ').trim().slice(0, 800);
+  // a client project with no idea typed: the brief IS the idea (the video is written from what the client asked for)
+  const project0 = prompt.length < 8 ? await projectOf(b.projectId) : null;
+  const fromBrief = !!(project0 && String(project0.brief || '').trim().length >= 10);
+  if (fromBrief) prompt = `${project0.occasion ? `${project0.occasion}. ` : ''}${project0.brief}`.split(/s+/).join(' ').trim().slice(0, 800);
   if (prompt.length < 8) return { error: 'Tell the AI what you want in a sentence (the topic, who it is for and the day), or write your own title, heading and content. For example: "A Diwali offer video for our software clients, 20% off, for 12 November."', status: 400 };
   const kind = b.kind === 'post' ? 'post' : 'video';
   const n = kind === 'video' ? clamp(Math.floor(Number(b.scenes)) || 4, 3, 6) : clamp(Math.floor(Number(b.scenes)) || 2, 1, 3);
@@ -118,17 +124,18 @@ async function plan(u, b = {}) {
   try {
     const given = [mine.title ? `Title: ${mine.title}` : '', mine.heading ? `Heading: ${mine.heading}` : '', mine.cta ? `Call to action: ${mine.cta}` : '', mine.content ? `Content the person wrote (use it as it is, do not change a word): ${mine.content}` : ''].filter(Boolean).join('\n');
     // quickMs: the web server (nginx) gives up at 60 seconds, so the AI writer gets 40: the one small model here is shared with the WhatsApp assistant and can be busy for minutes
-    r = await AI.generate({ user: u, module: 'studio', task: kind, system: systemFor(brand, who, kind, n, language, day, project), prompt: `Request: ${prompt}${given ? `\n${given}` : ''}`, json: true, demo: () => demoPlan(prompt, who, kind, n, day), department: S.clip(b.department, 60) || undefined, quickMs: 40000 });
+    r = await AI.generate({ user: u, module: 'studio', task: kind, system: systemFor(brand, who, kind, n, language, day, project), prompt: `Request: ${prompt}${given ? `\n${given}` : ''}`, json: true, demo: () => (fromBrief ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n }) : demoPlan(prompt, who, kind, n, day)), department: S.clip(b.department, 60) || undefined, quickMs: 40000 });
   } catch (e) {
     // a person's own limit (429) or a refused login (403) is shown as it is; anything else (the AI busy, off, or unreadable) must never stop a post: make the plain plan from the person's own words
     if (e.status === 429 || e.status === 403) return { error: e.message, status: e.status, code: e.code };
-    r = { result: plainPlan(prompt, who, kind, n, day), provider: 'standard', demo: false };
-    note = 'The AI writer is busy right now, so TeamLink made the post from your own words. Change the post words below if you like.';
+    // from a client's brief the free writer makes real, useful content (briefContent.js); from a bare idea it can only use the person's own words
+    r = { result: fromBrief ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n }) : plainPlan(prompt, who, kind, n, day), provider: 'standard', demo: false };
+    note = fromBrief ? "TeamLink wrote the video from the client's brief with its own free writer. Change any words below if you like." : 'The AI writer is busy right now, so TeamLink made the post from your own words. Change the post words below if you like.';
   }
   const p = applyMine(clean(r.result, { n, who, prompt, kind, day }), mine, n);
   const text = `${p.title} ${p.headline} ${p.tagline} ${p.caption} ${p.scenes.map((s) => s.caption).join(' ')}`;
   const flags = (brand.avoidWords || []).filter((w) => new RegExp(`(^|[^\\p{L}\\p{N}])${String(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu').test(text));
-  return { plan: { ...p, kind, language, date: day, dateLabel: dateLabel(day), who }, flags, demo: !!r.demo, provider: r.provider || '', ...(note ? { note } : {}) };
+  return { plan: { ...p, kind, language, date: day, dateLabel: dateLabel(day), who }, flags, demo: !!r.demo, provider: r.provider || '', fromBrief, ...(note ? { note } : {}) };
 }
 
 module.exports = { plan, dateLabel, clean, partsOf, applyMine }; // clean: exported for the tests (a model answer that is incomplete or too long is repaired, never trusted)

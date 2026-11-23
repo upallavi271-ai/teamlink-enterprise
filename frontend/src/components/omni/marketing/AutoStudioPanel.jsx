@@ -49,6 +49,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const [thumbs, setThumbs] = useState([]);
   const [kit, setKit] = useState({ colors: null, logo: null, brandName: '', footer: '' }); // the brand (or the client project's) colours, logo and name
   const [can, setCan] = useState({ stock: false, ai: false, aiFree: false });
+  const [brief, setBrief] = useState(null); // the client project's own brief: with no idea typed, the video is written from it
   const stop = useRef(false);
   const urls = useRef([]);
   useEffect(() => () => { stop.current = true; urls.current.forEach((u) => URL.revokeObjectURL(u)); }, []);
@@ -57,7 +58,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
     omni.get('/gs/marketing/meta').then((m) => setCan((c) => ({ ...c, ai: !!(m.ai && m.ai.image && m.ai.image.ready && !m.ai.image.demo), aiFree: !!(m.ai && m.ai.image && m.ai.image.ready && m.ai.image.provider === 'cloudflare') }))).catch(() => {});
     const useBrand = () => Promise.all([omni.get('/gs/marketing/brand'), omni.get('/gs/marketing/brand/logo').catch(() => ({ logo: null }))]).then(([b, l]) => ({ colors: b.brand.colors, brandName: b.brand.brandName, footer: [b.brand.website, b.brand.contact].filter(Boolean).join('  ·  '), logoUrl: l.logo ? l.logo.dataUrl : '' }));
     const go = projectId
-      ? omni.get(`/gs/marketing/projects/${projectId}`).then(async (x) => { const base = await useBrand().catch(() => ({ colors: null, brandName: '', footer: '', logoUrl: '' })); const p = x.project; return { colors: { ...(base.colors || {}), ...(p.colors && p.colors.primary ? { primary: p.colors.primary } : {}), ...(p.colors && p.colors.secondary ? { secondary: p.colors.secondary } : {}) }, brandName: p.clientName, footer: [(p.handles || '').split('\n')[0], p.contactPhone].filter(Boolean).join('  ·  '), logoUrl: x.logo || '' }; }).catch(() => useBrand())
+      ? omni.get(`/gs/marketing/projects/${projectId}`).then(async (x) => { setBrief({ clientName: x.project.clientName, occasion: x.project.occasion, text: x.project.brief || '' }); const base = await useBrand().catch(() => ({ colors: null, brandName: '', footer: '', logoUrl: '' })); const p = x.project; return { colors: { ...(base.colors || {}), ...(p.colors && p.colors.primary ? { primary: p.colors.primary } : {}), ...(p.colors && p.colors.secondary ? { secondary: p.colors.secondary } : {}) }, brandName: p.clientName, footer: [(p.handles || '').split('\n')[0], p.contactPhone].filter(Boolean).join('  ·  '), logoUrl: x.logo || '' }; }).catch(() => useBrand())
       : useBrand();
     go.then(async (k) => { let logo = null; if (k.logoUrl) { try { logo = await loadImage(k.logoUrl); } catch { logo = null; } } setKit({ colors: k.colors, logo, brandName: k.brandName, footer: k.footer }); }).catch(() => {});
   }, [projectId]);
@@ -129,7 +130,9 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   };
 
   const text = plan ? `${plan.caption}${plan.hashtags.length ? `\n\n${plan.hashtags.join(' ')}` : ''}` : '';
-  const mine = prompt.trim().length >= 8 || (title.trim() + heading.trim() + content.trim()).length >= 8;
+  const ownWords = prompt.trim().length >= 8 || (title.trim() + heading.trim() + content.trim()).length >= 8;
+  const fromBrief = !ownWords && !!(brief && brief.text.trim().length >= 10); // nothing typed, a client brief exists: TeamLink writes the video from the brief
+  const mine = ownWords || fromBrief;
 
   return (
     <>
@@ -143,6 +146,12 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
             <div className="mk-revise" style={{ marginBottom: 8 }}>
               <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 700 }}>START FROM:</span>
               {STARTERS.map((s) => <TinyBtn key={s.label} disabled={working} onClick={() => { setPrompt(s.idea); setHeading(s.heading); }}>{s.label}</TinyBtn>)}
+            </div>
+          ) : null}
+          {brief && brief.text.trim() ? (
+            <div style={{ background: '#eef6ff', border: '1px solid #c7ddf7', borderRadius: 10, padding: '9px 12px', margin: '0 0 10px', fontSize: 12 }}>
+              <b>The client's brief ({brief.clientName}{brief.occasion ? `, ${brief.occasion}` : ''}):</b> {brief.text.length > 260 ? `${brief.text.slice(0, 260)}…` : brief.text}
+              <div style={{ marginTop: 4, color: 'var(--muted)' }}>Leave the idea below empty and press <b>Create</b>: TeamLink reads this brief and writes the {isVideo ? 'video' : 'post'} for the client's own customers, with useful points, real photos and a call to action, free. Type your own words only if you want to change it.</div>
             </div>
           ) : null}
           <Field label="YOUR IDEA OR CONCEPT" full hint="For example: A Diwali offer video for our software clients, 20% off all this week, friendly and festive. You can leave this empty if you fill in the title, heading and content below.">
@@ -166,7 +175,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
                 {isVideo ? <><option value="9:16">Tall 9:16 (Reels, Status)</option><option value="16:9">Wide 16:9 (YouTube)</option><option value="1:1">Square 1:1</option></> : <><option value="1:1">Square post 1:1</option><option value="4:5">Instagram portrait 4:5</option><option value="9:16">Story 9:16</option><option value="16:9">Banner 16:9</option></>}
               </select>
             </Field>
-            <Btn primary disabled={working || !mine} onClick={create}>{working ? 'Creating…' : isVideo ? '✦ Create the video' : '✦ Create the post'}</Btn>
+            <Btn primary disabled={working || !mine} onClick={create}>{working ? 'Creating…' : fromBrief ? (isVideo ? '✦ Create the video from the brief' : '✦ Create the post from the brief') : isVideo ? '✦ Create the video' : '✦ Create the post'}</Btn>
             {working ? <Btn onClick={() => { stop.current = true; }}>Stop</Btn> : null}
             <button type="button" className="link-btn" style={{ fontSize: 11.5, paddingBottom: 9 }} onClick={() => setMore(!more)}>{more ? 'Fewer options' : 'More options'}</button>
           </div>
@@ -176,7 +185,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
               {can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>Pictures: <select value={look} disabled={working} onChange={(e) => setLook(e.target.value)}><option value="designed">Designed by TeamLink (free)</option><option value="ai">{can.aiFree ? 'Made by the AI picture service (free daily allowance)' : 'Made by the AI picture service (may need billing; designed instead if it says no)'}</option></select></label> : <span style={{ color: 'var(--muted)' }}>Pictures are designed by TeamLink (free). A real AI-made picture needs the free Cloudflare picture service: an Admin adds it in Administration &gt; Integrations.</span>}
             </div>
           ) : null}
-          {!mine && !working ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Write your idea in a sentence, or fill in the title, heading and content.</div> : null}
+          {!mine && !working ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>{projectId ? 'This client project has no brief yet. ' : ''}Write your idea in a sentence, or fill in the title, heading and content.</div> : null}
           {projectId ? <div style={{ fontSize: 11, color: '#1d4fa8', marginTop: 6 }}>Made for the client project: their logo and colours are used.</div> : null}
           {note ? <div style={{ fontSize: 11.5, color: '#92400e', marginTop: 8, lineHeight: 1.5 }}>{note}</div> : null}
 
