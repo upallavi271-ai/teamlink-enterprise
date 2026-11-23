@@ -76,7 +76,7 @@ const searchOf = (s) => {
 function clean(raw, { n, who, prompt, kind, day }) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const fallback = demoPlan(prompt, who, kind, n, day);
-  const scenes = (Array.isArray(r.scenes) ? r.scenes : []).map((s) => ({ caption: S.clip(s && s.caption, 80), imagePrompt: S.clip(s && s.imagePrompt, 400), search: searchOf(s) })).filter((s) => s.imagePrompt.length >= 8).slice(0, n);
+  const scenes = (Array.isArray(r.scenes) ? r.scenes : []).map((s) => ({ caption: S.clip(s && s.caption, 80), imagePrompt: S.clip(s && s.imagePrompt, 400), search: searchOf(s), say: S.clip(s && s.say, 260) })).filter((s) => s.imagePrompt.length >= 8).slice(0, n);
   while (scenes.length < n) scenes.push(fallback.scenes[scenes.length]);
   return {
     title: S.clip(r.title, 80) || fallback.title, headline: S.clip(r.headline, 80) || fallback.headline, tagline: S.clip(r.tagline, 100) || fallback.tagline, cta: S.clip(r.cta, 30) || fallback.cta,
@@ -98,7 +98,7 @@ function applyMine(p, mine, n) {
   if (mine.title) out.title = mine.title;
   if (mine.heading) out.headline = mine.heading;
   if (mine.cta) out.cta = mine.cta;
-  partsOf(mine.content, n).forEach((t, i) => { if (out.scenes[i]) out.scenes[i].caption = t; });
+  partsOf(mine.content, n).forEach((t, i) => { if (out.scenes[i]) { out.scenes[i].caption = t; out.scenes[i].say = ''; } }); // the person's own words are said as they wrote them (the spoken line is made from them again)
   return out;
 }
 
@@ -111,7 +111,7 @@ async function plan(u, b = {}) {
   // a client project with no idea typed: the brief IS the idea (the video is written from what the client asked for)
   const project0 = prompt.length < 8 ? await projectOf(b.projectId) : null;
   const fromBrief = !!(project0 && String(project0.brief || '').trim().length >= 10);
-  if (fromBrief) prompt = `${project0.occasion ? `${project0.occasion}. ` : ''}${project0.brief}`.split(/s+/).join(' ').trim().slice(0, 800);
+  if (fromBrief) prompt = `${project0.occasion ? `${project0.occasion}. ` : ''}${project0.brief}`.split(/\s+/).join(' ').trim().slice(0, 800);
   if (prompt.length < 8) return { error: 'Tell the AI what you want in a sentence (the topic, who it is for and the day), or write your own title, heading and content. For example: "A Diwali offer video for our software clients, 20% off, for 12 November."', status: 400 };
   const kind = b.kind === 'post' ? 'post' : 'video';
   const n = kind === 'video' ? clamp(Math.floor(Number(b.scenes)) || 4, 3, 6) : clamp(Math.floor(Number(b.scenes)) || 2, 1, 3);
@@ -138,6 +138,8 @@ async function plan(u, b = {}) {
     note = fromBrief ? "TeamLink wrote the video from the client's brief with its own free writer. Change any words below if you like." : 'The AI writer is busy right now, so TeamLink made the post from your own words. Change the post words below if you like.';
   }
   const p = applyMine(clean(r.result, { n, who, prompt, kind, day }), mine, n);
+  // the spoken line of every scene (the voice-over of a video is a person explaining): the writer's own, else made from the scene words (English words only get the English lines)
+  if (kind === 'video' && p.scenes.some((s) => !s.say)) { const said = BC.sayFor(p.scenes, { who, cta: p.cta, health: !!project && BC.profileOf(`${who} ${project.occasion} ${project.brief}`).id !== 'general' }); p.scenes.forEach((s, i) => { if (!s.say) s.say = said[i]; }); }
   const text = `${p.title} ${p.headline} ${p.tagline} ${p.caption} ${p.scenes.map((s) => s.caption).join(' ')}`;
   const flags = (brand.avoidWords || []).filter((w) => new RegExp(`(^|[^\\p{L}\\p{N}])${String(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu').test(text));
   return { plan: { ...p, kind, language, date: day, dateLabel: dateLabel(day), who }, flags, demo: !!r.demo, provider: r.provider || '', fromBrief, ...(note ? { note } : {}) };

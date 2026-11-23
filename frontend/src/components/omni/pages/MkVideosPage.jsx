@@ -24,6 +24,8 @@ const loadVid = (src) => new Promise((res, rej) => {
   v.src = src;
 });
 // the size of a clip as a post size, from its own width and height
+// the subtitle under a picture: the spoken line, cut at a word to fit two lines on the caption band
+const subtitleOf = (say) => { const t = String(say || '').split(/\s+/).join(' ').trim(); if (t.length <= 88) return t; const cut = t.slice(0, 88); return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), 40))}…`; };
 const nearestAspect = (w, h) => ['1:1', '4:5', '9:16', '16:9', '3:4'].map((k) => { const [x, y] = k.split(':').map(Number); return { k, d: Math.abs(Math.log((w / h) / (x / y))) }; }).sort((a, b) => a.d - b.d)[0].k;
 const readClip = (file) => new Promise((res, rej) => {
   const v = document.createElement('video'); const u = URL.createObjectURL(file);
@@ -118,15 +120,17 @@ export default function MkVideosPage() {
   const runRef = useRef(null);
   const startAuto = (plan, ids, designed) => {
     // a designed picture already carries its own words, so the video does not write the scene text over it a second time
-    setF((cur) => ({ ...cur, title: plan.title || cur.title, headline: plan.headline || cur.headline, tagline: plan.tagline || cur.tagline, cta: plan.cta || cur.cta, format: '9:16', secPer: 3 }));
-    setPick(ids.map((id, i) => ({ id, kind: 'image', caption: designed ? '' : ((plan.scenes[i] && plan.scenes[i].caption) || '') })));
+    // the voice-over is ON: a person explains the video scene by scene (the spoken line of each scene), and the line is also shown under the picture as a subtitle
+    const lang = ({ English: 'en', Telugu: 'te', Hindi: 'hi' })[plan.language] || 'en';
+    setF((cur) => ({ ...cur, title: plan.title || cur.title, headline: plan.headline || cur.headline, tagline: plan.tagline || cur.tagline, cta: plan.cta || cur.cta, format: '9:16', secPer: 3, voice: cur.voice || lang }));
+    setPick(ids.map((id, i) => { const sc = plan.scenes[i] || {}; const say = sc.say || sc.caption || ''; return { id, kind: 'image', say, caption: designed ? subtitleOf(say) : (sc.caption || '') }; }));
     setAutoGo(true);
   };
   useEffect(() => {
     if (!autoGo || !ready || mode || !recordType(false)) return;
     setAutoGo(false);
     if (canvasRef.current && canvasRef.current.scrollIntoView) canvasRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    if (runRef.current) runRef.current(true);
+    if (runRef.current) runRef.current(true, true);
   }, [autoGo, ready, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // a still of the first scene after the intro whenever something changes and nothing is playing
@@ -145,19 +149,24 @@ export default function MkVideosPage() {
   // the voice-over: each scene's words are spoken by the server's free voice (marketing/meetingVoice.js speakAny); the scene lasts as long as the sentence
   const withVoices = async () => {
     if (!f.voice) return { d: data, seconds: tl.total };
-    const bufs = await Promise.all(pick.map((p) => (p.kind === 'image' && String(p.caption || '').trim().length > 1
-      ? omni.post('/gs/marketing/video/voice', { lang: f.voice, text: p.caption }, { responseType: 'arraybuffer', timeout: 60000 }).catch((e) => { throw new Error(errOf(e, 'The voice could not be made.')); })
+    const bufs = await Promise.all(pick.map((p) => (p.kind === 'image' && String(p.say || p.caption || '').trim().length > 1
+      ? omni.post('/gs/marketing/video/voice', { lang: f.voice, text: p.say || p.caption }, { responseType: 'arraybuffer', timeout: 60000 }).catch((e) => { throw new Error(errOf(e, 'The voice could not be made.')); })
       : null)));
     const voices = await decodeVoices(bufs);
     const d2 = { ...data, voices, pics: data.pics.map((p, i) => ({ ...p, voiceSec: voices[i] ? voices[i].duration : 0 })) };
     return { d: d2, seconds: timeline(d2.pics, Number(f.secPer), Number(f.clipSec)).total };
   };
-  const run = async (record) => {
+  const run = async (record, autoRun = false) => {
     if (!ready) { toast('Pick at least one picture or clip (and wait for it to load)'); return; }
     if (stopRef.current) stopRef.current();
     setMode(record ? 'record' : 'preview'); setProg(0); if (record) setMade(null);
     let useData = data;
-    try { const v = await withVoices(); useData = v.d; secondsRef.current = v.seconds; } catch (e) { toast(e.message || 'The voice could not be made.'); setMode(''); return; }
+    try { const v = await withVoices(); useData = v.d; secondsRef.current = v.seconds; } catch (e) {
+      // a video made by itself never stops for the voice: it is made without it and the person is told (they can press Make again when the voice is back)
+      if (!autoRun) { toast(e.message || 'The voice could not be made.'); setMode(''); return; }
+      toast('The voice-over is not available right now, so the video is made without it. Press Make again later to add it.');
+      useData = data; secondsRef.current = tl.total;
+    }
     stopRef.current = play(canvasRef.current, useData, {
       secPer: Number(f.secPer), clipSec: Number(f.clipSec), record,
       onProgress: (p) => setProg(p),

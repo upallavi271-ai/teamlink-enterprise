@@ -82,6 +82,21 @@ function profileOf(text) {
 // the sentences of the brief, cleaned: what the client said, in their order
 const sentences = (brief) => (String(brief || '').replace(/\r/g, '').match(/[^.!?\n]+[.!?]*/g) || []).map((x) => clip(x, 160)).filter((x) => x.length >= 8);
 
+// WHAT IS SAID (2026-11-23): the voice-over of a video is a person explaining, so each scene gets a spoken line (`say`), longer and warmer than the words on the screen.
+// Scene 1 greets and names the topic, the middle scenes give one point each in order, the last one invites the viewer. English only: the lines are built from English words.
+const stop = (t) => clip(t, 200).replace(/[.!?\s]+$/, '');
+const SAY_OPEN = ['Hello, this is {who}.', 'Namaste, this is {who}.', 'Hello, {who} here.'];
+const SAY_POINT = ['Here is the first thing to remember: {t}.', 'Next, {t}.', 'Another important point: {t}.', 'And one more thing: {t}.', 'Please also remember this: {t}.'];
+function sayFor(scenes, { who, cta, health }) {
+  const w = clip(who, 50);
+  return scenes.map((s, i) => {
+    const cap = stop(s.caption);
+    if (i === 0) return clip(`${SAY_OPEN[w.length % SAY_OPEN.length].replace('{who}', w)} ${cap}. Let us look at a few simple points.`, 240);
+    if (i === scenes.length - 1) return clip(`${health ? 'This is general information, so please speak to your doctor about your own case. ' : ''}${stop(cta)} with ${w}. We are happy to help.`, 240);
+    return clip(SAY_POINT[(i - 1) % SAY_POINT.length].replace('{t}', cap.charAt(0).toLowerCase() + cap.slice(1)), 240);
+  });
+}
+
 // A complete plan with no AI service. n = number of scenes (3 to 6). Scene 1 = the hook, the last scene = the call to action, the ones between = useful points.
 function buildPlan({ who, occasion, brief, n }) {
   const text = `${who} ${occasion} ${brief}`;
@@ -97,6 +112,9 @@ function buildPlan({ who, occasion, brief, n }) {
   const scenes = [{ caption: heading, imagePrompt: `A calm, professional, welcoming scene for ${clip(who, 60)}: ${clip(occasion || p.search[0], 60)}. Natural light, real people, clean look.`, search: p.search[0] }];
   points.forEach((t, i) => scenes.push({ caption: clip(t, 120), imagePrompt: `${clip(t, 120)}. Calm, professional, natural light, friendly mood. For ${clip(who, 60)}.`, search: p.search[(i + 1) % p.search.length] }));
   scenes.push({ caption: `${clip(who, 50)}: ${p.cta}`, imagePrompt: `A friendly closing scene for ${clip(who, 60)}, inviting people to get in touch.`, search: p.search[(count - 1) % p.search.length] });
+  // what is said, scene by scene (a person explaining)
+  const said = sayFor(scenes, { who, cta: p.cta, health: HEALTH.has(p.id) });
+  scenes.forEach((s, i) => { s.say = said[i]; });
   const caption = [
     heading + '.',
     ...(p.tips.length ? points.map((t) => `• ${t}`) : []),
@@ -119,4 +137,4 @@ function guide(text) {
   return lines.join('\n');
 }
 
-module.exports = { profileOf, buildPlan, guide, PROFILES };
+module.exports = { profileOf, buildPlan, guide, sayFor, PROFILES };

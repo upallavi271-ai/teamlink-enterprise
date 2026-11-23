@@ -46,6 +46,15 @@ let pass = 0; const ok = (n) => { pass += 1; console.log(`PASS  ${n}`); };
   const edited = await P.update(admin, p.id, { clientName: 'Dr Rao Dental Care', occasion: 'Dental care month', brief: 'We are a dental clinic. Please make videos about brushing and check-ups for families.', contactName: 'Dr Rao', contactPhone: '+919000000002', source: p.source, deliverable: 'video' });
   assert.ok(edited.project && /dental|brush|smile|teeth|check/i.test(edited.project.draft.scenes.join(' ')), JSON.stringify(edited).slice(0, 300)); ok('when the brief changes, the starter content follows it');
 
+  // 2c. A PERSON EXPLAINING: every scene has a spoken line, warmer and longer than the words on screen
+  assert.ok(r.plan.scenes.every((s) => s.say && s.say.length > s.caption.length - 5), JSON.stringify(r.plan.scenes.map((s) => s.say))); ok('every scene has a spoken line for the voice-over');
+  assert.ok(/Dr Rao Skin Clinic/.test(r.plan.scenes[0].say) && /^(Hello|Namaste)/.test(r.plan.scenes[0].say)); ok('the first line greets and names the client');
+  const lastSay = r.plan.scenes[r.plan.scenes.length - 1].say;
+  assert.ok(/speak to your doctor/i.test(lastSay) && /Book a consultation/.test(lastSay)); ok('the last line invites the viewer (and, for a doctor, says to see a doctor)');
+  assert.ok(r.plan.scenes.slice(1, -1).every((s) => /^(Here is|Next|Another|And one|Please also)/.test(s.say) && !/\.\s[a-z]/.test(s.say))); ok('the middle lines read like speech, one point each, with proper sentences');
+  const typed = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 3, content: 'Free skin check this Sunday\nBring your old reports\nCall to book' });
+  assert.ok(typed.plan.scenes[0].say.includes('Free skin check this Sunday')); ok('the typed words are what is said, as they were written');
+
   // 3. what a person types still wins
   const r2 = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 4, prompt: 'Free skin check camp this Sunday at our clinic', heading: 'Free skin check camp' });
   assert.ok(!r2.fromBrief && r2.plan.headline === 'Free skin check camp'); ok('the person\'s own idea and heading still win over the brief');
