@@ -96,22 +96,8 @@ async function transcribe(wavBuf, mp3Path) {
     return { text: '', reason: 'Transcript not available: this is a test copy, the recording is not sent anywhere.' };
   }
   const errors = [];
-  if (process.env.AI_VOICE_WHISPER_URL && wavBuf) {
-    try {
-      const R = require('../calling/voice/engines'); // eslint-disable-line global-require
-      const wh = R.whisperHttp({ url: process.env.AI_VOICE_WHISPER_URL, key: process.env.AI_VOICE_KEY || '' });
-      const { pcm } = pcm16kFromWav(wavBuf);
-      const CHUNK = 16000 * 2 * 25; const parts = [];
-      for (let at = 0; at < pcm.length && at < CHUNK * 72; at += CHUNK) { // at most 30 minutes
-        const piece = pcm.slice(at, at + CHUNK);
-        if (piece.length < 16000) break;
-        // eslint-disable-next-line no-await-in-loop
-        const t = await Promise.race([wh.stt(piece, 'auto', 16000), new Promise((_, rej) => { setTimeout(() => rej(new Error('Whisper took too long')), 90000).unref(); })]);
-        if (String(t || '').trim()) parts.push(String(t).trim());
-      }
-      return { text: parts.join(' ').replace(/\s+/g, ' ').trim(), source: 'Whisper (TeamLink server)' };
-    } catch (e) { errors.push(`Whisper server: ${clip(e.message, 80)}`); }
-  }
+  // ORDER (23 Nov 2026): Groq Whisper large-v3 first - it writes a whole call (Telugu / Hindi / English mixed) far better; the AI phone's own
+  // Whisper server is tuned for short answers and heard nothing in a full recording. It stays as the second try.
   const key = await groqKey();
   if (key) {
     try {
@@ -127,8 +113,28 @@ async function transcribe(wavBuf, mp3Path) {
       clearTimeout(t);
       if (!r.ok) throw new Error(`Groq answered ${r.status}`);
       const j = await r.json();
-      return { text: String(j.text || '').trim(), source: 'Groq Whisper (whisper-large-v3)' };
+      const gtext = String(j.text || '').trim();
+      if (gtext) return { text: gtext, source: 'Groq Whisper (whisper-large-v3)' };
+      errors.push('Groq Whisper: heard nothing');
     } catch (e) { errors.push(`Groq Whisper: ${clip(String(e.message).replace(key, '•••'), 80)}`); }
+  }
+  if (process.env.AI_VOICE_WHISPER_URL && wavBuf) {
+    try {
+      const R = require('../calling/voice/engines'); // eslint-disable-line global-require
+      const wh = R.whisperHttp({ url: process.env.AI_VOICE_WHISPER_URL, key: process.env.AI_VOICE_KEY || '' });
+      const { pcm } = pcm16kFromWav(wavBuf);
+      const CHUNK = 16000 * 2 * 25; const parts = [];
+      for (let at = 0; at < pcm.length && at < CHUNK * 72; at += CHUNK) { // at most 30 minutes
+        const piece = pcm.slice(at, at + CHUNK);
+        if (piece.length < 16000) break;
+        // eslint-disable-next-line no-await-in-loop
+        const t = await Promise.race([wh.stt(piece, 'auto', 16000), new Promise((_, rej) => { setTimeout(() => rej(new Error('Whisper took too long')), 90000).unref(); })]);
+        if (String(t || '').trim()) parts.push(String(t).trim());
+      }
+      const wtext = parts.join(' ').replace(/\s+/g, ' ').trim();
+      if (wtext) return { text: wtext, source: 'Whisper (TeamLink server)' };
+      errors.push('Whisper server: heard nothing');
+    } catch (e) { errors.push(`Whisper server: ${clip(e.message, 80)}`); }
   }
   return { text: '', reason: `Transcript not available: ${errors.length ? errors.join('; ') : 'no speech-to-text is set up (AI_VOICE_WHISPER_URL, or a Groq key in Administration > Integrations > Fast AI).'}` };
 }
