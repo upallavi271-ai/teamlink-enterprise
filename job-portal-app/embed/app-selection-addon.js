@@ -5,6 +5,7 @@
      AI Call  the selected applicants are called by Kavya (the bulk "Start AI Calls" route, embed/kavya-campaign.mjs), one request per job
      SMS      the portal's bulk message box (web/teamlink-bulk-message.js), given the selected applicants' candidates
      Email    the same box, by email
+   Call     a normal (manual) call: ONE applicant selected opens TeamLink's browser calling for them (/call-start?phone=&name=, the recruiter speaks)
    RCS is not here: there is no bulk RCS sender for candidates yet (RCS exists for the login message only).
    Nothing is sent from a button; SMS / Email open the compose box, AI Call asks before it calls.
    ===================================================================== */
@@ -71,7 +72,17 @@
     next(0);
   }
 
+  /* A manual browser call (TeamLink's softphone, /call-start): one person at a time */
+  function manualCall() {
+    var ps = pairs();
+    if (ps.length !== 1) { toast(ps.length ? 'Select ONE applicant to call from your browser (Call). For many people use AI Call.' : 'Select an applicant first', '☑️'); return; }
+    var c = ps[0].cand;
+    if (!c.phone) { toast('This applicant has no phone number.', '⚠️'); return; }
+    window.open('/call-start?phone=' + encodeURIComponent(String(c.phone)) + '&name=' + encodeURIComponent(String(c.name || '')), '_blank');
+  }
+
   var BUTTONS = [
+    ['tlas-mcall', 'Call', 'Call the applicant from your browser (one person at a time)', manualCall],
     ['tlas-call', 'AI Call', 'Kavya (the AI caller) phones the selected applicants', aiCall],
     ['tlas-sms', 'SMS', 'Write an SMS to the selected applicants', function () { compose('sms'); }],
     ['tlas-mail', 'Email', 'Write an email to the selected applicants', function () { compose('email'); }],
@@ -79,7 +90,7 @@
 
   function decorate() {
     var bar = document.getElementById('tlasBar');
-    if (!bar || bar.querySelector('.tlas-call')) return;
+    if (!bar || bar.querySelector('.tlas-mcall')) return;
     var anchor = bar.querySelector('.tlas-clear');
     BUTTONS.forEach(function (b) {
       var el = document.createElement('button');
