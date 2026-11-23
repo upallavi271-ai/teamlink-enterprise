@@ -1,0 +1,49 @@
+/* The dashboard "Updates & reports" centre (components/dashboard/UpdatesCentre.jsx). Scoped under .uc. */
+.uc { padding: 12px 14px; margin: 0 0 14px; }
+.uc .uc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.uc .uc-head h3 { margin: 0; font-size: 15px; }
+.uc .uc-right { margin-left: auto; display: inline-flex; gap: 12px; align-items: center; }
+.uc .uc-today { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft, #eef0f3); }
+.uc .uc-ivs { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.uc .uc-ivs li { display: grid; grid-template-columns: 78px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; font-size: 13px; }
+.uc .uc-ivs li.past { opacity: .55; }
+.uc .uc-time { color: #92400e; }
+.uc .uc-ivmain { min-width: 0; overflow-wrap: anywhere; }
+.uc .uc-ivwhere { color: var(--ink-soft, #5b6577); white-space: nowrap; }
+.uc .uc-join { margin-left: 8px; font-weight: 600; }
+.uc .uc-warn { color: #b42318; }
+.uc .uc-counts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.uc .uc-count { display: inline-flex; gap: 6px; align-items: center; font: inherit; font-size: 12px; border: 1px solid var(--line, #e5e7eb); background: var(--paper-raised, #fff); border-radius: 14px; padding: 2px 10px; cursor: pointer; }
+.uc .uc-count b { font-size: 11px; min-width: 18px; text-align: center; border-radius: 9px; background: var(--line-soft, #eef0f3); padding: 0 5px; }
+.uc .uc-count.has b { background: var(--red, #dc2626); color: #fff; }
+.uc-list { list-style: none; margin: 0; padding: 0; }
+.uc-row { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line-soft, #eef0f3); }
+.uc-row:first-child { border-top: 0; }
+.uc-row.unread { background: var(--brand-tint, #eef2ff); }
+.uc-main { flex: 1; min-width: 0; display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; background: none; border: 0; padding: 8px 6px; font: inherit; color: inherit; cursor: pointer; }
+.uc-main:hover { background: var(--navy-tint, #f1f5f9); }
+.uc-dot { width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--line, #e5e7eb); }
+.uc-row.unread .uc-dot { background: var(--brand, #2563eb); border-color: var(--brand, #2563eb); }
+.uc-body { min-width: 0; display: flex; flex-direction: column; }
+.uc-title { font-size: 13.5px; overflow-wrap: anywhere; }
+.uc-row.unread .uc-title { font-weight: 700; }
+.uc-text { font-size: 12.5px; color: var(--ink-soft, #5b6577); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.uc-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; }
+.uc-kind { font-size: 11px; font-weight: 600; border-radius: 9px; padding: 1px 7px; background: var(--line-soft, #eef0f3); color: var(--ink-soft, #5b6577); max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.uc-kind.k-client { background: #e0ecff; color: #1d4ed8; }
+.uc-kind.k-interview { background: #fef3dc; color: #92400e; }
+.uc-kind.k-report { background: #e7f6ec; color: #166534; }
+.uc-kind.k-alert, .uc-kind.k-followup { background: #fdecea; color: #b42318; }
+.uc-when { font-size: 11.5px; color: var(--ink-soft, #5b6577); }
+.uc-acts { display: inline-flex; gap: 10px; padding-right: 8px; font-size: 12px; white-space: nowrap; }
+.uc-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 10px; }
+.uc-filters label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink-soft, #5b6577); }
+.uc-filters select, .uc-filters input { font: inherit; font-size: 13px; padding: 4px 6px; }
+.uc-full { max-height: 62vh; overflow-y: auto; }
+@media (max-width: 640px) {
+  .uc .uc-ivs li { grid-template-columns: 64px minmax(0, 1fr); }
+  .uc .uc-ivwhere { grid-column: 2; white-space: normal; }
+  .uc-main { grid-template-columns: 10px minmax(0, 1fr); }
+  .uc-side { grid-column: 2; flex-direction: row; gap: 8px; }
+  .uc-row { flex-wrap: wrap; }
+}

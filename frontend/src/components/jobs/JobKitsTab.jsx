@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import api from '../../api';
 import TabStrip from '../ui/TabStrip.jsx';
 import '../interviews/interviewTools.css';
+import AutoScreenTab from './AutoScreenTab.jsx'; // auto-screen new applications, OFF by default (2026-11-23)
 
 // ---------------------------------------------------------------------------
 // REQUIREMENT > KITS & TESTS (market wave 2026-11-21; server routes/mktInterviews.js + routes/mktComms.js)
@@ -17,6 +18,7 @@ const SUB = [
   { key: 'form', label: 'Apply form & page', hint: 'Extra apply questions, LinkedIn apply, self-booking, and the public job page.' },
   { key: 'tests', label: 'Tests', hint: 'Short online tests for candidates, scored by TeamLink.' },
   { key: 'sms', label: 'SMS campaign', hint: 'Text this job to people in the talent pool.' },
+  { key: 'screen', label: 'Auto-screen', hint: 'Check each new application against this job (off by default).' },
 ];
 
 export default function JobKitsTab({ job }) {
@@ -28,6 +30,7 @@ export default function JobKitsTab({ job }) {
       {sub === 'form' && <FormSettings job={job} />}
       {sub === 'tests' && <Tests job={job} />}
       {sub === 'sms' && <SmsCampaign job={job} />}
+      {sub === 'screen' && <AutoScreenTab job={job} />}
     </div>
   );
 }

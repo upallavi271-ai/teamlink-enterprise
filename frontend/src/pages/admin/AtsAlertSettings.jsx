@@ -7,6 +7,7 @@ import PendingWorkSettings from '../../components/team/PendingWorkSettings.jsx';
 import JoinDropSettings from './JoinDropSettings.jsx'; // who is told when someone joins / drops / the client answers (2026-10-17)
 import InterviewReminderSettings from './InterviewReminderSettings.jsx'; // who is reminded of an interview, when and how (2026-10-10)
 import RemindersSettings from '../../components/reminders/RemindersSettings.jsx'; // scheduled messages to the candidate before an interview / joining (2026-11-20)
+import ClientUpdateSettings from './ClientUpdateSettings.jsx'; // client-update pop-ups + mails, interview pop-ups / mails, auto-screen default (2026-11-23)
 import AtsTriggersSettings from '../../components/reminders/AtsTriggersSettings.jsx'; // automatic messages on ATS events, all OFF by default (2026-11-20)
 
 // ---------------------------------------------------------------------------
@@ -223,6 +224,8 @@ export default function AtsAlertSettings() {
       )}
 
       <InterviewReminderSettings />
+
+      <ClientUpdateSettings />
 
       <RemindersSettings />
 

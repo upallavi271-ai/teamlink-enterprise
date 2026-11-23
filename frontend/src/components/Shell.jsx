@@ -26,6 +26,7 @@ import SelectionMailPopup from './SelectionMailPopup.jsx';
 import UnsignedAgreementPopup from './UnsignedAgreementPopup.jsx'; // a requirement on an unsigned agreement: the question, and the BDE TL's approval (2026-11-05)
 import FollowUpReminderPopup from './FollowUpReminderPopup.jsx'; // a follow-up's call-back day, on screen (2026-11-04) // the TL sends the Selected confirmation mail (2026-11-04)
 import InterviewPopup from './InterviewPopup.jsx'; // every-hour interview reminders on screen (2026-11-04)
+import UpdatesPopupStack from './UpdatesPopupStack.jsx'; // client updates + Your interviews today, top right on every page (2026-11-23)
 import HealthDot from './dashboard/HealthDot.jsx';
 import TodayTasks from './dashboard/TodayTasks.jsx';
 import GlobalSearch from './GlobalSearch.jsx';
@@ -407,6 +408,8 @@ export default function Shell() {
             {hasAtsWork(user) && <FollowUpReminderPopup />}
             {/* From the day before an interview, every hour: the recruiter, TL and BDE see it on screen (2026-11-04). */}
             {hasAtsWork(user) && <InterviewPopup />}
+            {/* What a client did (feedback, a comment, a requirement, an offer ...) pops up for everyone concerned; today's interviews once a day (2026-11-23). */}
+            {hasAtsWork(user) && <UpdatesPopupStack />}
             {/* Admin health dot: system problems only (dashboard review #2). */}
             {hasAtsWork(user) && <HealthDot />}
             <div className="avatar">{initials(user?.name)}</div>

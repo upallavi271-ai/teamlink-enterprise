@@ -30,7 +30,7 @@ export function useCandidateXf({ onWrite } = {}) {
 
 // The existing page filters that were not in the address bar: kept there now, so Back from a candidate keeps them.
 export const URL_FILTER_KEYS = ['location', 'spec', 'qual', 'desig', 'expBand', 'notice', 'tag', 'skills', 'minExp', 'maxExp', 'maxSalary', 'minMatch',
-  'qualificationId', 'specialisationId', 'owner', 'contact', 'rejectedBefore', 'salaryFit', 'appliedFrom', 'appliedTo', 'contactAge'];
+  'qualificationId', 'specialisationId', 'owner', 'contact', 'rejectedBefore', 'salaryFit', 'appliedFrom', 'appliedTo', 'contactAge', 'screening'];
 export function readUrlFilters(sp) {
   const out = {};
   URL_FILTER_KEYS.forEach((k) => { const v = sp.get(k); if (v) out[k] = v; });

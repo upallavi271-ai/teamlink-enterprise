@@ -76,6 +76,7 @@ import JobPortalCandidates from '../components/portal/JobPortalCandidates.jsx';
 import DupWorklist from '../components/duplicates/DupWorklist.jsx'; // dup_: the Duplicates tab
 import { VerifyButton, VerifyPanel } from '../components/candidate/VerifyQueue.jsx'; // round 3: resume data that needs a person's check
 import { DupChip } from '../components/duplicates/DupChip.jsx';
+import ScreenChip, { SCREEN_OPTIONS } from '../components/candidates-v4/ScreenChip.jsx'; // the auto-screen result (2026-11-23)
 import StatusChip from '../components/ui/StatusChip.jsx';
 import EmptyState from '../components/ui/EmptyState.jsx';
 import { nextActionsFor, ReturnDialog } from '../components/Candidate360.jsx';
@@ -195,11 +196,13 @@ const EMPTY_FILTERS = {
   contactAge: '', available: '',
   // Salary fit (pipeline: within / slightly / above / missing / nobudget) and People "Salary missing" (1).
   salaryFit: '', salaryMissing: '',
+  // The auto-screen result (Pass / Review / Not suitable / Not screened), pipeline only (2026-11-23).
+  screening: '',
 };
 // Typed filters wait for typing to pause before they reach the server.
 const TYPED_KEYS = ['skills', 'minExp', 'maxExp', 'maxSalary', 'minMatch'];
 // Filters the Candidate Master (one row per person) does not take.
-const PIPELINE_ONLY = ['stage', 'followUp', 'status', 'skills', 'minExp', 'maxExp', 'notice', 'maxSalary', 'minMatch', 'owner', 'contact', 'rejectedBefore', 'rejSide', 'rejReason', 'contactAge', 'salaryFit'];
+const PIPELINE_ONLY = ['stage', 'followUp', 'status', 'skills', 'minExp', 'maxExp', 'notice', 'maxSalary', 'minMatch', 'owner', 'contact', 'rejectedBefore', 'rejSide', 'rejReason', 'contactAge', 'salaryFit', 'screening'];
 // The pipeline does not take the People-only "available" filter.
 const MASTER_ONLY = ['available', 'salaryMissing'];
 const SOURCED_STAGES = 'stage:NEW,AI_INTERVIEW_REQUIRED,AI_INTERVIEW_SCHEDULED,AI_INTERVIEW_COMPLETED';
@@ -1466,6 +1469,7 @@ export default function Candidates() {
           />
           <FacetSelect multi label="Last contact" allLabel="Any time" value={filters.contact} onChange={(v) => setFilter({ contact: v })} options={withCurrent(facets.contact, filters.contact)} loading={facetsLoading} />
           <FacetSelect multi label="Rejected before" allLabel="Either" value={filters.rejectedBefore} onChange={(v) => setFilter({ rejectedBefore: v })} options={withCurrent(facets.rejectedBefore, filters.rejectedBefore)} loading={facetsLoading} />
+          <FacetSelect multi label="Auto-screen" allLabel="Any" value={filters.screening} onChange={(v) => setFilter({ screening: v })} options={SCREEN_OPTIONS} title="The automatic screening result of the application (jobs with Auto-screen on)" />
           {(pipeSub === 'rejected' || filters.status === 'Rejected' || filters.rejSide || filters.rejReason) && (
             <>
               <FacetSelect multi label="Rejected by" allLabel="Anyone" value={filters.rejSide} onChange={(v) => setFilter({ rejSide: v })} options={withCurrent(facets.rejSide, filters.rejSide)} loading={facetsLoading} />
@@ -2550,9 +2554,10 @@ function Cell({
               <RejectedBadge row={c} minTimes={ctx.rejectedTab ? 2 : 1} />
             </div>
             <div className="small-muted cpl-s-line" title={job}>{job}{c.applicationsCount > 1 ? ` · ${c.applicationsCount} applications` : ''}</div>
-            {c.dup && (
+            {(c.dup || c.screening) && (
               <div className="cpl-s-line cpl-s-tags">
-                <DupChip dup={c.dup} candidateId={c.candidateId || c.id} onChanged={ctx.reload} />
+                {c.dup && <DupChip dup={c.dup} candidateId={c.candidateId || c.id} onChanged={ctx.reload} />}
+                <ScreenChip s={c.screening} />
               </div>
             )}
           </td>
@@ -2564,6 +2569,7 @@ function Cell({
           <span className="cpl-cand-name">{c.name}</span>
           <RejectedBadge row={c} minTimes={ctx && ctx.rejectedTab ? 2 : 1} />
           <DupChip dup={c.dup} candidateId={c.candidateId || c.id} onChanged={ctx && ctx.reload} />
+          <ScreenChip s={c.screening} />
           <div className="small-muted cviews-code">
             {/* v3: the job this row is about, when the Job column is off. */}
             {ctx && ctx.showJob && c.requirementTitle ? `${c.requirementTitle}${c.clientName ? ` · ${c.clientName}` : ''}` : c.code}

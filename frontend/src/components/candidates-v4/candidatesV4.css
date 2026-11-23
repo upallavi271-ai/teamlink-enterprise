@@ -227,3 +227,10 @@ main:has(> .cv4){max-width:none}
 
 /* ---- Names fit (2026-10-17): job title + client in the candidate filters panel wrap instead of "..." ---- */
 .cv4 .cv4-reqtitle span,.cv4 .cv4-reqtitle small{white-space:normal;overflow-wrap:anywhere;line-height:1.25}
+
+/* The auto-screen chip on a candidate row (components/candidates-v4/ScreenChip.jsx, 2026-11-23). */
+.scr-chip { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 9px; padding: 1px 7px; margin-left: 4px; white-space: nowrap; cursor: help; }
+.scr-chip.scr-green { background: #e7f6ec; color: #166534; }
+.scr-chip.scr-amber { background: #fef3dc; color: #92400e; }
+.scr-chip.scr-red { background: #fdecea; color: #b42318; }
+.scr-chip.scr-grey { background: #eef0f3; color: #5b6577; }
