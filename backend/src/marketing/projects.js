@@ -200,8 +200,12 @@ async function briefAssist(u, b = {}) {
   const prompt = `Client (company): ${client}\nWhat it is for: ${topic}\nThey want: ${what}${places ? `\nTo be posted on: ${places}` : ''}${own ? `\n\nThe team already wrote this (keep its facts, complete and improve it):\n${own}` : ''}`;
   let r;
   try {
-    r = await AI.generate({ user: u, module: 'projects', task: 'brief', system, prompt, json: true, demo: () => ({ brief: `SAMPLE (test mode, not written by AI): ${client} would like ${what} for ${topic}. Message, offer and look: to be confirmed with the client.` }), department: u.department });
-  } catch (e) { return { error: e.message, status: e.status || 503, code: e.code }; }
+    r = await AI.generate({ user: u, module: 'projects', task: 'brief', system, prompt, json: true, quickMs: 40000, demo: () => ({ brief: `SAMPLE (test mode, not written by AI): ${client} would like ${what} for ${topic}. Message, offer and look: to be confirmed with the client.` }), department: u.department });
+  } catch (e) {
+    // quickMs: nginx gives up at 60 seconds and the one small model is shared with the WhatsApp assistant (live 23 Nov: 20 to 50 seconds, and refusals while busy), so the AI gets 40 seconds and a miss is said in words, never a gateway error
+    if (e.code === 'timeout') return { error: 'The AI is slow right now. Try again in a moment, or write the brief yourself.', status: 504, code: 'timeout' };
+    return { error: e.message, status: e.status || 503, code: e.code };
+  }
   let text = r.result && typeof r.result === 'object' ? (r.result.brief || r.result.text || '') : String(r.result || '');
   text = String(text).replace(/\*\*|__|^#+\s*/gm, '').replace(/[ \t]+\n/g, '\n').trim();
   if (text.length < 10) return { error: 'The AI did not write anything useful. Try again, or write the brief yourself.', status: 502, code: 'empty' };

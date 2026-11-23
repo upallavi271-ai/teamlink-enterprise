@@ -77,7 +77,7 @@ const until = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now(
 
   // 4. the real model path (a stand-in model that records what it was asked)
   const seen = []; let answer = { brief: '**Rao Hospital** would like a warm Doctors Day greeting.\nShow gratitude, no offers. Date and hospital logo: to be confirmed with the client.' };
-  AI.register('text', { id: 'stub', usable: () => true, async status() { return { ready: true, provider: 'stub', model: 'stub-1', reason: '' }; }, async json(system, prompt) { seen.push({ system, prompt }); if (typeof answer === 'function') return answer(); return answer; } });
+  AI.register('text', { id: 'stub', usable: () => true, async status() { return { ready: true, provider: 'stub', model: 'stub-1', reason: '' }; }, async json(system, prompt, lim) { seen.push({ system, prompt, lim }); if (typeof answer === 'function') return answer(); return answer; } });
   AI.register('text', { id: 'demo', usable: () => false, async status() { return { ready: true, provider: 'demo', model: 'x', reason: '' }; } }); // the sample writer steps aside
   await Cfg.saveBrand({ ...(await Cfg.getBrand()), brandName: 'TeamLink Digital', tone: 'Friendly', avoidWords: ['cheap'], language: 'English' }, admin);
   r = await P.briefAssist(admin, asks());
@@ -118,6 +118,13 @@ const until = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now(
   for (let i = 0; i < 12 && !blocked; i += 1) { const x = await P.briefAssist(flood, asks()); if (x.error) blocked = x; } // eslint-disable-line no-await-in-loop
   assert.ok(blocked && blocked.status === 429 && /Too many AI requests in one minute/.test(blocked.error), JSON.stringify(blocked));
   console.log('PASS logged as projects/brief; the off switch, the daily limit and the one-minute limit apply');
+
+  // 9. the AI gets 40 seconds (the web server gives up at 60) and a miss is said in words, not as a gateway error
+  assert.equal(seen[0].lim && seen[0].lim.timeoutMs, 40000, 'the model is asked to answer within 40 seconds');
+  const rate = { id: 'u-slow', name: 'Slow Tester', role: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN' };
+  answer = () => { throw new AI.AiMkError('The local AI took too long to answer.', 504, 'timeout'); };
+  r = await P.briefAssist(rate, asks()); assert.equal(r.status, 504); assert.equal(r.code, 'timeout'); assert.ok(/The AI is slow right now\. Try again in a moment, or write the brief yourself\./.test(r.error), r.error); assert.ok(!r.brief);
+  console.log('PASS the AI gets 40 seconds and a miss is a plain message');
 
   console.log('mkBriefAssist: all passed');
   process.exit(0);
