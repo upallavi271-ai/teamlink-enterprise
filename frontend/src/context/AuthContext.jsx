@@ -45,6 +45,20 @@ export function AuthProvider({ children }) {
     mark();
     const evs = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'];
     evs.forEach((e) => window.addEventListener(e, onAct, { passive: true }));
+    // AI MARKETING INSIDE GREEN START (2026-11-21): Green Start shows this app in a frame (/embed/ai-marketing). What a person does in Green Start itself is invisible to this page,
+    // so after the idle minutes every frame fell back to this sign-in while they were still working. Green Start now tells the frame it is being used (a message from ITS OWN address only);
+    // that counts as activity here (see the two clocks below). Nothing else changes: the idle rule, the 8 hours and "sign out" work exactly as before.
+    const gsOrigin = `${window.location.protocol}//${window.location.hostname.replace(/^teamlink\./i, 'greenstart.')}`;
+    // Two clocks end a session for being idle: this browser one (mark) AND the server's (utils/sessions.js checkClaims ends a session it has not SEEN for the idle minutes, and only an API call counts
+    // as seen). So the message does both: it marks the activity, and makes ONE cheap authenticated call (at most once a minute) that the server counts as "seen".
+    let lastTouch = 0;
+    const onGs = (e) => {
+      if (e.origin !== gsOrigin || !e.data || e.data.source !== 'greenstart-activity') return;
+      mark();
+      if (Date.now() - lastTouch > 55000) { lastTouch = Date.now(); api.get('/security/idle').catch(() => {}); }
+    };
+    const framed = (() => { try { return window.self !== window.top; } catch { return true; } })();
+    if (framed) window.addEventListener('message', onGs);
     const t = setInterval(() => {
       let last = Date.now();
       try { last = Number(localStorage.getItem(KEY)) || Date.now(); } catch { /* storage blocked */ }
@@ -56,7 +70,7 @@ export function AuthProvider({ children }) {
         setUser(null);
       }
     }, 30000);
-    return () => { clearInterval(t); evs.forEach((e) => window.removeEventListener(e, onAct)); };
+    return () => { clearInterval(t); evs.forEach((e) => window.removeEventListener(e, onAct)); window.removeEventListener('message', onGs); };
   }, [idleMin]);
 
   // The login response carries the whole resolved identity — employee record,
