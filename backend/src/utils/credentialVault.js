@@ -816,7 +816,10 @@ function smartSheet(sheetName, grid, startRow) {
   rowsAll.forEach((r, ri) => {
     const cells = r.map((c, i) => ({ c, i })).filter((x) => x.c);
     if (cells.length < 2) return;
-    const ui = cells.findIndex((x, j) => j > 0 && (looksEmail(x.c) || looksAccountId(x.c)) && cells[j + 1]);
+    // the login is the first e-mail of the row; only when there is none, an account id (letters with a digit, _ or .) - a plain name
+    // such as "Ragini" is never taken for the login (founder 2026-11-23: the name was read as the login and the e-mail as the password)
+    let ui = cells.findIndex((x, j) => j > 0 && looksEmail(x.c) && cells[j + 1]);
+    if (ui < 0) ui = cells.findIndex((x, j) => j > 0 && looksAccountId(x.c) && /[\d_.]/.test(x.c) && cells[j + 1]);
     if (ui < 0) return;
     const username = cells[ui].c; const password = cells[ui + 1].c;
     const before = cells.slice(0, ui).map((x) => x.c);
