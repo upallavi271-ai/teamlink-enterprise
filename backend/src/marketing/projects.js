@@ -38,6 +38,8 @@ async function ensure() {
     // the portfolio flags (2026-11-14): "the client agrees we show this work", its public title, and whether the client's name may be shown
     // automatic posting (2026-11-14): on/off, the client's accounts [{accountId, platform, name}], when, its state, what happened per account, the https site address Meta fetches the media from
     for (const col of ['"autoPost" INTEGER NOT NULL DEFAULT 0', '"autoTargets" TEXT', '"autoAt" DATETIME', '"autoState" TEXT', '"autoResult" TEXT', '"autoBase" TEXT']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
+    // 2026-11-21: the client's permission to post by itself (ticked on the approve form): when, who, and which accounts (ids) it covers
+    for (const col of ['"postConsentAt" DATETIME', '"postConsentBy" TEXT', '"postConsentIds" TEXT']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
     for (const col of ['"showcase" INTEGER NOT NULL DEFAULT 0', '"showcaseTitle" TEXT', '"showcaseClient" INTEGER NOT NULL DEFAULT 0']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
     // 2026-11-21: the client's last answer (approved / rejected, with the reason) so the project shows a clear stage, whichever way the answer came (page, WhatsApp button, email)
     for (const col of ['"clientAnswer" TEXT', '"clientAnswerNote" TEXT', '"clientAnswerAt" DATETIME']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
@@ -76,7 +78,7 @@ function visible(u, r) {
 }
 // The newest columns are added with ALTER TABLE on first use. Right after that, the database layer can still hand back "SELECT *" rows with the OLD column list
 // (found 2026-11-14: a fresh test database returned 46 of 51 fields, so automatic posting looked switched off). So when they are missing they are read by name.
-const NEWEST = 'autoPost, autoTargets, autoAt, autoState, autoResult, autoBase, showcase, showcaseTitle, showcaseClient, clientAnswer, clientAnswerNote, clientAnswerAt';
+const NEWEST = 'autoPost, autoTargets, autoAt, autoState, autoResult, autoBase, showcase, showcaseTitle, showcaseClient, clientAnswer, clientAnswerNote, clientAnswerAt, postConsentAt, postConsentBy, postConsentIds';
 const row = async (id) => {
   const r = (await S.q(`SELECT * FROM "${T}" WHERE id = ?`, String(id || '')))[0] || null;
   if (!r || 'autoPost' in r) return r;
@@ -122,6 +124,7 @@ const short = (r, counts) => ({
   postUrl: r.postUrl || '', postedAt: S.iso(r.postedAt), postedByName: r.postedByName || '', declinedNote: r.declinedNote || '', views: S.num(r.views), viewedAt: S.iso(r.viewedAt),
   showcase: S.num(r.showcase) === 1, showcaseTitle: r.showcaseTitle || '', showcaseClient: S.num(r.showcaseClient) === 1,
   autoPost: S.num(r.autoPost) === 1, autoTargets: parse(r.autoTargets, []), autoAt: S.iso(r.autoAt), autoState: r.autoState || '', autoResult: parse(r.autoResult, []),
+  postConsent: r.postConsentAt ? { at: S.iso(r.postConsentAt), by: r.postConsentBy || '', accountIds: parse(r.postConsentIds, []) } : null,
   link: `/client-project/${tokenOf(r.id)}`,
 });
 
@@ -645,6 +648,8 @@ async function accounts(u) {
   const pick = (p) => (all[p] || []).filter((a) => a.status !== 'Removed').map((a) => ({ id: a.id, platform: a.platform, name: a.name, username: a.username || '', parentName: a.parentName || '', status: a.status, error: a.error || '' }));
   return { allowed: set.autoPostAllowed === true, accounts: [...pick('facebook'), ...pick('instagram'), ...pick('x')] };
 }
+// 2026-11-21: automatic posting only goes out with the client's own tick ("I allow you to post this on my page"), saved with their name and time, and only for the accounts it named.
+const consentCovers = (r, targets) => { const ids = parse(r.postConsentIds, []); return !!r.postConsentAt && targets.length > 0 && targets.every((t) => ids.includes(t.accountId)); };
 async function setAutopost(u, id, b = {}, base = '') {
   const g = await getVisible(u, id); if (g.error) return g;
   const { r } = g;
@@ -674,10 +679,12 @@ async function setAutopost(u, id, b = {}, base = '') {
   }
   const site = baseOk(base) ? base : (baseOk(r.autoBase) ? r.autoBase : '');
   if (!site) return { error: 'Automatic posting needs this page opened on the site\'s https address (Meta fetches the picture or video from it).', status: 400 };
-  const state = r.status === 'approved' && r.decisionNote ? 'review' : 'scheduled';
+  const heldNoConsent = r.status === 'approved' && !consentCovers(r, targets); // approved earlier without the client's tick for these accounts
+  const state = heldNoConsent ? 'consent' : (r.status === 'approved' && r.decisionNote ? 'review' : 'scheduled');
   await S.run(`UPDATE "${T}" SET autoPost = 1, autoTargets = ?, autoAt = ?, autoState = ?, autoBase = ?, autoResult = NULL, updatedAt = ? WHERE id = ?`, JSON.stringify(targets), at, state, site, Date.now(), r.id);
   await event(r.id, 'autopost_on', u.name, `Will be posted automatically on ${targets.map((t) => `${t.name} (${t.platform === 'instagram' ? 'Instagram' : 'Facebook'})`).join(', ')}${at ? ` at ${new Date(at + 19800000).toISOString().slice(0, 16).replace('T', ' ')} IST` : ' as soon as the client approves'}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: automatic posting set for a client project', entity: T, entityId: r.id, toValue: `${r.clientName}: ${targets.map((t) => t.name).join(', ')}${at ? `; ${new Date(at).toISOString()}` : ''}` });
+  if (heldNoConsent) return { ok: 'Saved, but the client has not given permission to post on these accounts, so it will NOT post by itself. Ask the client, or press Post now when you have their permission.', project: (await shortRow(r.id)) };
   return { ok: 'Done. It will be posted automatically after the client approves.', project: (await shortRow(r.id)) };
 }
 // ---- POSTING BY ITSELF, FOR EVERY PROJECT OF A CLIENT (2026-11-21) -------------------------------------------------------------------------------------
@@ -721,6 +728,7 @@ async function autoRun(id, { by = null, force = false } = {}) {
     if (!set.autoPostAllowed) return { error: 'Automatic posting is switched off. An Admin can allow it in AI usage.', status: 409, code: 'auto_off' };
     const targets = parse(r.autoTargets, []);
     if (!targets.length) return { error: 'Pick the client\'s accounts to post on first.', status: 400 };
+    if (!force && !consentCovers(r, targets)) { await S.run(`UPDATE "${T}" SET autoState = 'consent', updatedAt = ? WHERE id = ?`, Date.now(), r.id); return { skipped: true, why: 'the client has not given permission to post on these accounts' }; }
     if (!baseOk(r.autoBase)) return { error: 'Automatic posting needs the site\'s https address: set it again from the project page on the live site.', status: 400 };
     const mo = await mediaOf(r, r.autoBase);
     if (mo.error) return mo;
@@ -913,7 +921,9 @@ async function publicView(token) {
   const now = Date.now();
   const out = {
     brand: await ourBrand(),
-    project: { status: r.status, clientName: r.clientName, occasion: r.occasion || '', brief: r.brief || '', deliverable: r.deliverable || 'video', platforms: parse(r.platforms, []), dueDate: r.dueDate || '', message: r.clientMessage || '', caption: r.caption || '', expiresAt: S.iso(r.linkExpiresAt), expired: r.status === 'awaiting_client' && S.num(r.linkExpiresAt) < now, declinedNote: r.declinedNote || '', decidedByName: r.decidedByName || '', decidedAt: S.iso(r.decidedAt), decisionNote: r.decisionNote || '', postUrl: r.postUrl || '', postedAt: S.iso(r.postedAt), contactName: r.contactName || '', contactEmail: r.contactEmail || '', contactPhone: r.contactPhone || '', handles: r.handles || '', colors: parse(r.colors, null), hasLogo: !!r.logoData },
+    project: { status: r.status, clientName: r.clientName, occasion: r.occasion || '', brief: r.brief || '', deliverable: r.deliverable || 'video', platforms: parse(r.platforms, []), dueDate: r.dueDate || '', message: r.clientMessage || '', caption: r.caption || '', postingHeld: S.num(r.autoPost) === 1 && r.autoState === 'consent', expiresAt: S.iso(r.linkExpiresAt), expired: r.status === 'awaiting_client' && S.num(r.linkExpiresAt) < now, declinedNote: r.declinedNote || '', decidedByName: r.decidedByName || '', decidedAt: S.iso(r.decidedAt), decisionNote: r.decisionNote || '', postUrl: r.postUrl || '', postedAt: S.iso(r.postedAt), contactName: r.contactName || '', contactEmail: r.contactEmail || '', contactPhone: r.contactPhone || '', handles: r.handles || '', colors: parse(r.colors, null), hasLogo: !!r.logoData },
+    // the tick on the approve form names the accounts (public Page / account names only, nothing else)
+    posting: S.num(r.autoPost) === 1 && r.status === 'awaiting_client' ? { accounts: parse(r.autoTargets, []).map((t) => ({ platform: t.platform, name: t.name })) } : null,
     options: [],
     suggestions: (await S.q(`SELECT at, byName, text FROM "${TE}" WHERE projectId = ? AND kind = 'client_changes' ORDER BY at ASC`, r.id)).map((e) => ({ at: S.iso(e.at), byName: e.byName || '', text: e.text || '' })),
   };
@@ -989,12 +999,20 @@ async function publicChoose(token, b = {}, ip = '') {
   }
   await S.run(`UPDATE "${T}" SET status = 'approved', chosenOptionId = ?, decidedAt = ?, decidedByName = ?, decisionNote = ?, clientAnswer = 'approved', clientAnswerNote = ?, clientAnswerAt = ?, updatedAt = ? WHERE id = ? AND status = 'awaiting_client'`, chosen.id, now, name, comment || null, comment || null, now, now, r.id);
   await event(r.id, 'client_chose', `${name} (client: ${r.clientName})`, `Chose ${chosen.label}${comment ? `. Suggestions: ${comment}` : ''}`);
-  // automatic posting: with suggestions the team reads them first ("Post now"); without, it goes out now or at the time set (the sweep posts a later time)
+  // automatic posting needs the client's tick ("I allow you to post this on my page"): saved with their name and time. No tick (or an answer by a WhatsApp button, which has no tick) = it is NOT posted by itself.
+  // With suggestions the team reads them first ("Post now"); without, it goes out now or at the time set (the sweep posts a later time)
   let autoNote = '';
   if (S.num(r.autoPost) === 1) {
-    if (comment) { await S.run(`UPDATE "${T}" SET autoState = 'review' WHERE id = ?`, r.id); autoNote = ' The client added suggestions, so it is NOT posted by itself: read them, then press Post now.'; }
-    else if (!r.autoAt || S.num(r.autoAt) <= Date.now()) { setImmediate(() => { autoRun(r.id).then((out) => { if (out && (out.error || out.skipped)) console.error('[omni-mk] auto post did not run:', out.error || out.why || 'skipped'); }).catch((e) => console.error('[omni-mk] auto post:', e.message)); }); autoNote = ' It is being posted automatically.'; } // eslint-disable-line no-console
-    else autoNote = ' It will be posted automatically at the time you set.';
+    const targets = parse(r.autoTargets, []);
+    const allowed = b.allowPosting === true && targets.length > 0;
+    if (allowed) {
+      await S.run(`UPDATE "${T}" SET postConsentAt = ?, postConsentBy = ?, postConsentIds = ? WHERE id = ?`, now, S.clip(name, 80), JSON.stringify(targets.map((t) => t.accountId)), r.id);
+      await event(r.id, 'post_consent', `${name} (client: ${r.clientName})`, `Allowed posting on ${targets.map((t) => t.name).join(', ')}`);
+    }
+    if (!allowed) { await S.run(`UPDATE "${T}" SET autoState = 'consent' WHERE id = ?`, r.id); autoNote = ' The client did NOT tick permission to post, so it is NOT posted by itself: ask the client, or press Post now when you have their permission.'; }
+    else if (comment) { await S.run(`UPDATE "${T}" SET autoState = 'review' WHERE id = ?`, r.id); autoNote = ' The client allowed posting but added suggestions, so it is NOT posted by itself: read them, then press Post now.'; }
+    else if (!r.autoAt || S.num(r.autoAt) <= Date.now()) { setImmediate(() => { autoRun(r.id).then((out) => { if (out && (out.error || out.skipped)) console.error('[omni-mk] auto post did not run:', out.error || out.why || 'skipped'); }).catch((e) => console.error('[omni-mk] auto post:', e.message)); }); autoNote = ' The client allowed posting. It is being posted automatically.'; } // eslint-disable-line no-console
+    else autoNote = ' The client allowed posting. It will be posted automatically at the time you set.';
   }
   await tellTeam(r, `Client approved "${S.clip(r.title, 60)}"`, `${name} (${S.clip(r.clientName, 60)}) chose ${chosen.label}${comment ? `: ${S.clip(comment, 200)}` : ''}. It is Approved.${autoNote || ' Schedule and post it from Client projects.'}`);
   await logAudit({ userId: r.createdById, actorName: `${name} (client: ${r.clientName})`, action: 'Omni-Channel AI Marketing: client chose an option (approved)', entity: T, entityId: r.id, toValue: `${r.title}; ${chosen.label}${comment ? `: ${S.clip(comment, 200)}` : ''}; ${S.clip(ip, 60)}` });

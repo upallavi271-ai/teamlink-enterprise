@@ -16,7 +16,7 @@ const STATUS = {
 };
 const TABS = [['', 'All'], ['request', 'New requests'], ['working', 'In progress'], ['awaiting_client', 'With the client'], ['approved', 'Approved'], ['posted', 'Posted'], ['invited', 'Invited'], ['declined', 'Declined']];
 const STEPS = [['request', 'Request'], ['working', 'Accepted'], ['awaiting_client', 'With the client'], ['approved', 'Client chose'], ['posted', 'Posted']];
-const KIND_ICON = { request: '✉', invited: '🔗', accepted: '✔', declined: '✖', options_sent: '➤', client_chose: '★', client_changes: '✎', cancelled: '↩', extended: '⏱', scheduled: '🗓', posted: '✓', told: '💬', told_failed: '⚠', client_msg: '📥', chat_auto: '💬', chat_failed: '⚠' };
+const KIND_ICON = { request: '✉', invited: '🔗', accepted: '✔', declined: '✖', options_sent: '➤', client_chose: '★', client_changes: '✎', cancelled: '↩', extended: '⏱', scheduled: '🗓', posted: '✓', post_consent: '✓', told: '💬', told_failed: '⚠', client_msg: '📥', chat_auto: '💬', chat_failed: '⚠' };
 const SEND = [['facebook', 'Facebook', 'f', '#1877f2'], ['instagram', 'Instagram', '◎', '#d62976'], ['x', 'X', '𝕏', '#111111']]; // the send buttons of an approved project
 const digits = (s) => String(s || '').replace(/\D/g, '');
 const origin = () => window.location.origin;
@@ -367,6 +367,9 @@ function Detail({ id, meta, onBack, onChanged }) {
                 <textarea style={{ minHeight: 70 }} value={caption} maxLength={3000} onChange={(e) => setCaption(e.target.value)} onBlur={() => { if (caption !== (p.caption || '')) omni.put(`/gs/marketing/projects/${id}`, { caption }).then(() => load()).catch((e) => setErr(errOf(e, 'The caption could not be saved.'))); }} />
               </Field>
               <div style={{ fontSize: 11, margin: '8px 0', color: 'var(--muted)' }}>Post on: {p.platforms.length ? p.platforms.map((k) => (meta.platforms.find((x) => x.key === k) || {}).label || k).join(', ') : 'no page chosen yet (edit the request)'}{p.handles ? ` · ${p.handles.replace(/\n/g, ', ')}` : ''}</div>
+              {p.autoPost ? (p.postConsent
+                ? <div style={{ fontSize: 11.5, margin: '0 0 8px', color: '#166534', fontWeight: 600 }}>✓ {p.postConsent.by || 'The client'} allowed posting on {p.autoTargets.filter((t) => p.postConsent.accountIds.includes(t.accountId)).map((t) => t.name).join(', ') || 'the chosen accounts'} ({fmtDateTime(p.postConsent.at)}).</div>
+                : <div style={{ fontSize: 11.5, margin: '0 0 8px', color: '#92400e', fontWeight: 600 }}>The client has not ticked permission to post by itself. It will not post on its own: press Post now only when you have their permission.</div>) : null}
               <div style={{ margin: '10px 0 12px' }}>
                 <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>Send it</div>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>

@@ -29,6 +29,7 @@ export default function ClientProjectPage({ token: tokenProp = '', embedded = fa
   const [pick, setPick] = useState('');
   const [name, setName] = useState(defaultName || '');
   const [comment, setComment] = useState('');
+  const [allow, setAllow] = useState(false); // 2026-11-21: "I allow you to post this on my page" (never ticked for the client)
   const [mode, setMode] = useState(''); // '' | 'changes'
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -102,7 +103,7 @@ export default function ClientProjectPage({ token: tokenProp = '', embedded = fa
     }
     if (kind === 'changes' && comment.trim().length < 5) { setMode('changes'); setErr('Please tell us what you would like changed (a few words).'); return; }
     setBusy(true);
-    try { const res = await api.post(`${base}/${kind}`, { name: name.trim(), comment: comment.trim(), optionId: pick }); setDone(res.data.ok || 'Thank you.'); load(); if (onChanged) onChanged(); } catch (e) { setErr(errOf(e, 'It could not be sent. Please try again.')); } finally { setBusy(false); }
+    try { const res = await api.post(`${base}/${kind}`, { name: name.trim(), comment: comment.trim(), optionId: pick, ...(kind === 'choose' && d && d.posting ? { allowPosting: allow } : {}) }); setDone(res.data.ok || 'Thank you.'); load(); if (onChanged) onChanged(); } catch (e) { setErr(errOf(e, 'It could not be sent. Please try again.')); } finally { setBusy(false); }
   };
 
   return (
@@ -188,6 +189,12 @@ export default function ClientProjectPage({ token: tokenProp = '', embedded = fa
                 <input id="cp-name" style={input} value={name} maxLength={80} autoComplete="name" onChange={(e) => setName(e.target.value)} placeholder="So we know who answered" />
                 <label htmlFor="cp-comment" style={label}>{mode === 'changes' || mode === 'reject' ? 'Why are you rejecting it? What would you like changed?' : 'Your suggestions (optional)'}</label>
                 <textarea id="cp-comment" style={{ ...input, minHeight: 90 }} value={comment} maxLength={800} onChange={(e) => setComment(e.target.value)} placeholder={mode === 'changes' || mode === 'reject' ? 'For example: please use our new logo and a blue background' : 'Anything you would like us to adjust, for example: make the logo bigger.'} />
+                {d.posting && d.posting.accounts.length && mode !== 'reject' && mode !== 'changes' ? (
+                  <label htmlFor="cp-allow" style={{ ...box('#f4f6f5', '#1c2a24'), display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 14, fontSize: 14, cursor: 'pointer' }}>
+                    <input id="cp-allow" type="checkbox" checked={allow} onChange={(e) => setAllow(e.target.checked)} style={{ marginTop: 3, width: 18, height: 18, flex: 'none' }} />
+                    <span>I allow {brand.name} to post the one I approve on my {d.posting.accounts.length === 1 ? 'page' : 'pages'}: <b>{d.posting.accounts.map((a) => `${a.name} (${a.platform === 'instagram' ? 'Instagram' : a.platform === 'x' ? 'X' : 'Facebook'})`).join(', ')}</b>. If I leave this empty, nothing is posted until we talk.</span>
+                  </label>
+                ) : null}
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
                   <button type="button" disabled={busy} style={btn('#15803d')} onClick={() => answer('choose')}>{busy ? 'Sending…' : pick ? '✔ Approve this one' : '✔ Approve the one I tapped'}</button>
                   <button type="button" disabled={busy} style={btn('#fff', '#b91c1c')} onClick={() => (mode === 'reject' ? answer('reject') : (setMode('reject'), setErr(pick || options.length === 1 ? 'Write why, then press Reject again.' : 'Tap the option you want to reject, write why, then press Reject.')))}><span style={{ border: '2px solid #dc2626', borderRadius: 10, padding: '10px 16px', display: 'block' }}>✖ Reject{mode === 'reject' ? ' (send)' : ''}</span></button>
@@ -203,7 +210,7 @@ export default function ClientProjectPage({ token: tokenProp = '', embedded = fa
           <div>
             {options.map((o) => <div key={o.id} style={{ marginBottom: 12 }}>{media(o, true)}<div style={{ fontWeight: 800, marginTop: 6 }}>{o.label}</div></div>)}
             <div style={box('#e6f6ec', '#14532d')}><b>Approved</b> by {r.decidedByName} on {when(r.decidedAt)}.{r.decisionNote ? <div style={{ marginTop: 4 }}>Your suggestions: “{r.decisionNote}”</div> : null}</div>
-            {r.status === 'approved' ? <p style={{ margin: '12px 0 0', lineHeight: 1.6 }}>We will post it on your page shortly. This page will tell you when it is live.</p> : null}
+            {r.status === 'approved' ? <p style={{ margin: '12px 0 0', lineHeight: 1.6 }}>{r.postingHeld ? 'You did not tick the permission to post, so we have not posted it. We will ask you before we do.' : 'We will post it on your page shortly. This page will tell you when it is live.'}</p> : null}
             {r.status === 'posted' ? <p style={{ margin: '12px 0 0', lineHeight: 1.6 }}>It was posted on {when(r.postedAt)}.{r.postUrl ? <> <a href={r.postUrl} target="_blank" rel="noopener noreferrer">See the post</a></> : null}</p> : null}
           </div>
         ) : null}

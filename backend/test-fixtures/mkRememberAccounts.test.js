@@ -47,7 +47,7 @@ async function ready(clientName) {
 const send = async (id, body = {}) => { const out = await P.send(admin, id, body, SITE); assert.ok(out.ok, JSON.stringify(out)); return stateOf(id); };
 const approve = async (id, comment = '') => {
   const opt = (await P.get(admin, id)).options.find((o) => o.stage === 'presented');
-  const out = await P.clientApprove(P.tokenOf(id), { optionId: opt.id, name: 'Ravi Kumar', comment, via: 'test' });
+  const out = await P.publicChoose(P.tokenOf(id), { optionId: opt.id, name: 'Ravi Kumar', comment, allowPosting: true }, '1.2.3.4');
   assert.ok(out.ok, JSON.stringify(out));
 };
 const until = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 100)); } return false; };
