@@ -11,7 +11,7 @@ import { ComposeModal, Field, AiAssist, useSubmit, CheckLine } from '../../compo
 import ApprovalChain, { ApprovalChainLine, fmtDateTime } from '../../components/ApprovalChain.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 import { useSearchParams } from 'react-router-dom';
-import ExitApprovals, { ExitChecklist, ExitRecordModal, EditDateModal } from './ExitCenter.jsx';
+import ExitApprovals, { ExitChecklist, ExitLetters, ExitRecordModal, EditDateModal } from './ExitCenter.jsx';
 import './Resignation.css';
 
 // ---------------------------------------------------------------------------
@@ -516,6 +516,7 @@ function ResignationDetailModal({ id, isHR, myEmployeeId, onClose, onChanged }) 
             />
           )}
           <ExitChecklist recordId={r.id} />
+          {isHR && <ExitLetters recordId={r.id} />}
           <SectionLabel style={{ marginTop: 16 }}>Approval Chain</SectionLabel>
           {mayDecide && lastStep && (
             <Field label="Approved last working date (optional)" hint={`Blank keeps the requested date (${f?.requestedLastWorkingDate ? lorDate(f.requestedLastWorkingDate) : '—'}). Used only when this approval is the final one.`}>

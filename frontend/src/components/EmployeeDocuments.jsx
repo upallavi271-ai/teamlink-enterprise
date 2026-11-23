@@ -220,6 +220,18 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
     }
   }
 
+  // "Make offer letter" (HR, while none is on file): the offer letter in the company format, filled from this record.
+  async function makeOfferLetter() {
+    setError(''); setNotice(''); setBusy('offer');
+    try {
+      const res = await api.post(`/employees/${target}/offer-letter`);
+      setNotice(res.data?.message || 'The offer letter was made.');
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'The offer letter could not be made.');
+    } finally { setBusy(''); }
+  }
+
   async function remove(doc) {
     // eslint-disable-next-line no-alert
     if (!confirm(`Delete "${doc.docType === OTHER ? doc.docName : doc.docType}" (${doc.fileName})? This can't be undone.`)) return;
@@ -272,6 +284,12 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
       )}
       {error && <div className="error-text" style={{ marginBottom: 8 }}>{error}</div>}
       {notice && <div className="notice" style={{ marginBottom: 8 }}>{notice}</div>}
+      {!readOnly && !draft && data?.canMakeOfferLetter && (
+        <div className="small-muted" style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-sm" disabled={busy === 'offer'} onClick={makeOfferLetter}>{busy === 'offer' ? 'Making…' : 'Make offer letter'}</button>
+          <span>No offer letter on file. This makes one in the company format from this record (designation, department, joining date) and keeps it here.</span>
+        </div>
+      )}
 
       {canUpload && docTypes.length > 0 && (
         <div className="edocs-add">

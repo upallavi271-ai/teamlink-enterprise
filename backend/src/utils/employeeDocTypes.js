@@ -12,7 +12,9 @@ const OTHER_DOC_TYPE = 'Other Documents';
 // Spec item 25 — the Document type dropdown, in this order.
 const DOC_TYPES = [
   PHOTO_DOC_TYPE, 'Aadhaar', 'PAN', 'Passport', 'Education Certificate',
-  'Experience Certificate', 'Offer Letter', 'Joining Letter', 'Bank Document', OTHER_DOC_TYPE,
+  'Experience Certificate', 'Offer Letter', 'Joining Letter', 'Bank Document',
+  // the exit letters TeamLink itself issues (utils/exitLetters.js); 'Experience Certificate' stays the one from an EARLIER employer
+  'Service Certificate', 'Relieving Letter', OTHER_DOC_TYPE,
 ];
 // Names used before item 25. Not offered any more; a file already filed under
 // one keeps its type and stays viewable (the documents list shows it).

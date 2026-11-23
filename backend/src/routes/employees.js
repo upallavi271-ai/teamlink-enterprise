@@ -2123,10 +2123,18 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
   });
   await logAudit({ userId: req.user.id, action: `Sign-in details: ${credentials.status}`, entity: 'Employee', entityId: employee.id });
 
+  // A NEW joiner added here gets the offer letter in the company format, kept in their documents (utils/offerLetterMail.js
+  // fileForEmployee). Never breaks the save: a letter that could not be made is reported, not thrown.
+  let offerLetter;
+  try {
+    offerLetter = await require('../utils/offerLetterMail').fileForEmployee(employee, req.user.id, { auto: true }); // eslint-disable-line global-require
+  } catch (e) { offerLetter = { state: 'FAILED', message: `The offer letter could not be made: ${e.message}` }; }
+
   const fresh = await prisma.employee.findUnique({ where: { id: employee.id }, include: EMP_MGMT_INCLUDE });
   res.status(201).json({
     ...shapeEmployeeMgmtRow(fresh),
     credentials,
+    offerLetter,
     login: {
       id: user.id, email: user.email, role: user.role, atsRole: user.atsRole,
       products: { hrms: user.hrmsAccess, ats: user.atsAccess, accounts: user.accountsAccess },
@@ -3512,6 +3520,8 @@ router.get('/:id/documents', async (req, res) => {
     maxBytes: attachments.MAX_BYTES,
     allowedTypes: Object.keys(attachments.ALLOWED),
     canUpload: access.allowed,
+    // "Make offer letter": HR, and only while no offer letter is on file (one made earlier, or an e-signed copy, is never replaced)
+    canMakeOfferLetter: !!access.hr && !docs.some((d) => d.docType === 'Offer Letter'),
     documents: docs.map((d) => ({
       id: d.id,
       docType: d.docType,
@@ -3525,6 +3535,21 @@ router.get('/:id/documents', async (req, res) => {
       canDelete: access.hr || (access.self && selfOpen && d.uploadedBy === req.user.id),
     })),
   });
+});
+
+// "Make offer letter" (HR): the offer letter in the company format, filled from this employee's record and kept in the
+// documents. Refused while an offer letter is already on file, so an e-signed copy is never replaced.
+router.post('/:id/offer-letter', async (req, res) => {
+  const ctx = await loadForDocuments(req, res);
+  if (!ctx) return;
+  if (!ctx.access.hr) { res.status(403).json({ error: 'Only HR can make an offer letter.' }); return; }
+  try {
+    const out = await require('../utils/offerLetterMail').fileForEmployee(ctx.employee, req.user.id); // eslint-disable-line global-require
+    if (out.state !== 'MADE') { res.status(409).json({ error: out.message }); return; }
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: `The offer letter could not be made: ${e.message}` });
+  }
 });
 
 // Multipart: docType, docName (required for "Other Documents"), file.

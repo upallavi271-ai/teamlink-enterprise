@@ -258,6 +258,84 @@ export function ExitChecklist({ recordId }) {
   );
 }
 
+// THE EXIT LETTERS (backend: utils/exitLetters.js): the service certificate and the relieving letter, filled in from the records.
+// Preview opens the PDF; "Generate and save" files it in the employee's documents. HR only: for anybody else the server says no and
+// this shows nothing.
+export function ExitLetters({ recordId }) {
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [problem, setProblem] = useState('');
+  const [msg, setMsg] = useState('');
+  const [sign, setSign] = useState(null); // { name, title } while editing the signatory
+  const load = () => api.get(`/resignations/${recordId}/letters`).then((r) => setD(r.data)).catch(() => setD(null));
+  useEffect(() => { load(); }, [recordId]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!d) return null;
+
+  async function preview(key) {
+    setProblem(''); setMsg('');
+    const w = window.open('', '_blank'); // opened now, so the browser does not block it as a pop-up
+    try {
+      const r = await api.get(`/resignations/${recordId}/letters/${key}/pdf`, { responseType: 'blob' });
+      const url = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }));
+      if (w) w.location.href = url; else window.location.href = url;
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      if (w) w.close();
+      let text = 'The letter could not be made.';
+      try { text = JSON.parse(await e.response.data.text()).error || text; } catch { /* keep the plain words */ }
+      setProblem(text);
+    }
+  }
+  async function issue(l) {
+    if (l.issued && !window.confirm(`A ${l.title} is already in the documents. Make a new one in its place?`)) return;
+    setBusy(l.key); setProblem(''); setMsg('');
+    try { const r = await api.post(`/resignations/${recordId}/letters/${l.key}`); setD(r.data); setMsg(r.data.message || 'Saved.'); } catch (e) { setProblem(err(e, 'The letter could not be saved')); } finally { setBusy(''); }
+  }
+  async function saveSign() {
+    setBusy('sign'); setProblem(''); setMsg('');
+    try { await api.put('/resignations/letters/settings', { signatoryName: sign.name, signatoryTitle: sign.title }); setSign(null); await load(); setMsg('The signatory is saved for every exit letter.'); } catch (e) { setProblem(err(e, 'That could not be saved')); } finally { setBusy(''); }
+  }
+
+  return (
+    <div className="xcl" style={{ marginTop: 12 }}>
+      <div className="xcl-head">
+        <b>Exit letters</b>
+        <span>Filled in from the records</span>
+      </div>
+      {d.letters.map((l) => (
+        <div key={l.key} className={`xcl-row${l.issued ? ' done' : ''}`} style={{ alignItems: 'flex-start' }}>
+          <span className="xcl-text">
+            <span className="xcl-label">{l.title}</span>
+            {l.issued && <span className="xcl-note">In the documents since {dmy(String(l.issued.at).slice(0, 10))}{l.issued.by ? `, by ${l.issued.by}` : ''}</span>}
+            {!l.ready && <span className="xcl-note">{l.why}</span>}
+            {l.note && <span className="xcl-note">{l.note}</span>}
+          </span>
+          {l.ready && (
+            <span style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <button type="button" className="btn btn-sm" onClick={() => preview(l.key)}>Preview</button>
+              <button type="button" className="btn btn-sm btn-primary" disabled={busy === l.key} onClick={() => issue(l)}>{busy === l.key ? 'Saving…' : (l.issued ? 'Make again' : 'Generate and save')}</button>
+            </span>
+          )}
+        </div>
+      ))}
+      <div className="small-muted" style={{ marginTop: 8 }}>
+        Signed by: <b>{d.signatory.name || 'Authorized Signatory'}</b>, {d.signatory.title}
+        {!sign && <> · <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSign({ name: d.signatory.name, title: d.signatory.title })}>Change</button></>}
+      </div>
+      {sign && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+          <input type="text" value={sign.name} placeholder="Name of the person who signs" aria-label="Signatory name" onChange={(e) => setSign({ ...sign, name: e.target.value })} />
+          <input type="text" value={sign.title} placeholder="HR Department" aria-label="Signatory title" onChange={(e) => setSign({ ...sign, title: e.target.value })} />
+          <button type="button" className="btn btn-sm btn-primary" disabled={busy === 'sign'} onClick={saveSign}>Save</button>
+          <button type="button" className="btn btn-sm" onClick={() => setSign(null)}>Cancel</button>
+        </div>
+      )}
+      {msg && <div className="notice" style={{ marginTop: 8, marginBottom: 0 }}>{msg}</div>}
+      {problem && <div className="error-text">{problem}</div>}
+    </div>
+  );
+}
+
 export function ExitRecordModal({ id, onClose, onChanged, autoEdit = false }) {
   const [v, setV] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -307,6 +385,7 @@ export function ExitRecordModal({ id, onClose, onChanged, autoEdit = false }) {
           </div>
 
           <ExitChecklist recordId={v.id} />
+          <ExitLetters recordId={v.id} />
 
           {/* THE APPROVAL CARD: three separate buttons for the person whose turn it is */}
           {(a.canApprove || a.canReject || a.canSendBack) && v.status === 'Pending Approval' && (

@@ -163,7 +163,12 @@ async function sendJoiningPack({ employeeId, applicationId, actorId, resend = fa
     if (application) {
       const ver = await prisma.offerVersion.findFirst({ where: { applicationId: application.id, signedAt: { not: null }, pdfFile: { not: null } }, orderBy: { createdAt: 'desc' } }).catch(() => null);
       const full = ver ? require('./attachments').resolveStored(ver.pdfFile) : null; // eslint-disable-line global-require
-      if (full) { await fileDocument(employee.id, 'Offer Letter', fs.readFileSync(full), `Offer-letter-${employee.employeeCode}.pdf`, actorId); out.offerLetter = 'signed copy kept in the employee documents'; } else out.offerLetter = 'no signed offer PDF to keep';
+      if (full) { await fileDocument(employee.id, 'Offer Letter', fs.readFileSync(full), `Offer-letter-${employee.employeeCode}.pdf`, actorId); out.offerLetter = 'signed copy kept in the employee documents'; } else {
+        // no e-signed copy: the offer letter in the company's format (utils/offerLetterMail.js, the same letter the candidate is mailed)
+        // is made from the application and kept, so every new joiner has their offer letter on file (2026-11-23)
+        const made = await require('./offerLetterMail').pdfOf(application.id); // eslint-disable-line global-require
+        if (made && made.pdf) { await fileDocument(employee.id, 'Offer Letter', made.pdf, `Offer-letter-${employee.employeeCode}.pdf`, actorId); out.offerLetter = 'made and kept in the employee\'s documents'; } else out.offerLetter = 'no offer letter could be made';
+      }
     }
   } catch (e) { out.offerLetter = `not kept: ${e.message}`; }
 
@@ -212,4 +217,4 @@ async function resendCredentials(employee, actorId) {
   return `sign-in link sent again: ${(r && r.status) || 'done'}`;
 }
 
-module.exports = { sendJoiningPack, joiningLetterPdf, DEFAULT_TEMPLATE, TEMPLATE_KEY };
+module.exports = { sendJoiningPack, joiningLetterPdf, fileDocument, DEFAULT_TEMPLATE, TEMPLATE_KEY };

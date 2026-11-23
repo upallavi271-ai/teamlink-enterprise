@@ -50,8 +50,10 @@ const TOKENS = [
   { key: 'location', label: 'Place of work', sample: 'Hyderabad' },
   { key: 'joiningDate', label: 'Joining date', sample: '1 December 2026' },
   { key: 'joiningDay', label: 'Day of the week of joining', sample: 'Tuesday' },
-  { key: 'monthlySalary', label: 'Trainee stipend per month (set below in the editor)', sample: '₹ 10,000 per month' },
-  { key: 'confirmedCtc', label: 'Annual CTC on confirmation (set below in the editor)', sample: '₹ 3,00,000 per annum' },
+  { key: 'monthlySalary', label: 'Trainee stipend per month (set below in the editor)', sample: '₹10,000/- per month' },
+  { key: 'monthlySalaryWords', label: 'Trainee stipend in words', sample: 'Rupees Ten Thousand only' },
+  { key: 'confirmedCtc', label: 'Annual CTC on confirmation (set below in the editor)', sample: '₹3,00,000/- per annum' },
+  { key: 'confirmedCtcWords', label: 'Annual CTC on confirmation in words', sample: 'Rupees Three Lakhs only' },
   { key: 'workingHours', label: 'Working hours (set below in the editor)', sample: '9:30 am to 6:30 pm, Monday to Friday' },
   { key: 'ctc', label: 'Annual CTC from the offer (not used in the standard letter)', sample: '₹ 1,20,000 per annum' },
   { key: 'manager', label: 'Reporting manager (the job’s team lead)', sample: 'Ravi Kumar, Team Lead' },
@@ -76,12 +78,15 @@ const DEFAULT_TEMPLATE = {
     '',
     'To accept, please reply to this email with the words "I accept the offer", or sign the attached letter and send it back to us. If you have any question, just reply to this email and we will help you.',
   ].join('\n'),
-  title: 'Offer of Employment',
+  // The letter follows the founder's reference offer letter (Offer_Letter_Teamlink_Divyasri.docx, 2026-11-23): OFFER LETTER,
+  // the date, To / name / place, the opening paragraph, four numbered points, the welcome line, the signature and the acceptance.
+  title: 'Offer Letter',
   intro: [
     'Dear {{name}},',
     '',
-    'Further to your application and the discussions you had with us, we are pleased to offer you the position of {{designation}} at {{company}}, on the terms set out below.',
+    'Further to your application and the subsequent interview, we are pleased to offer you the position of {{designation}} in the {{department}} Department at {{company}}, based at our Corporate Office in {{location}}, under the following terms and conditions:',
   ].join('\n'),
+  termsHeading: '', // a heading over the numbered points; empty = none (the reference letter has none)
   // TeamLink pays one flat salary per month to every new and experienced employee (founder 2026-11-18): no CTC break-up.
   // showCtc is the old name of the "print the salary" tick; it switches the salary lines off when false.
   showCtc: true,
@@ -89,38 +94,43 @@ const DEFAULT_TEMPLATE = {
   traineeMonths: 3, // the trainee period (probation) in months
   confirmedCtc: 300000, // the annual CTC on confirmation (the same reference letter)
   workingHours: '', // the founder types the real hours once; until then the working-hours lines are left out
-  details: [
-    { label: 'Designation', value: '{{designation}}' },
-    { label: 'Department', value: '{{department}}' },
-    { label: 'Date of joining', value: '{{joiningDate}} ({{joiningDay}})' },
-    { label: 'Place of work', value: '{{location}}' },
-    { label: 'Reporting to', value: '{{manager}}' },
-    { label: 'Trainee period', value: '{{probationMonths}} months, on a stipend of {{monthlySalary}}' },
-    { label: 'Annual CTC on confirmation', value: '{{confirmedCtc}}' },
-    { label: 'Working hours', value: '{{workingHours}}' },
-  ],
+  details: [], // the reference letter has no details table; rows can still be added in the editor
   terms: [
-    { title: 'Trainee period and stipend', text: 'You join as a trainee, on probation, for {{probationMonths}} months from your date of joining. During this period you receive a stipend of {{monthlySalary}}, paid every month into your bank account, after any deduction that the law requires. Standard regular employee benefits do not apply during the trainee period.' },
-    { title: 'Confirmation and CTC', text: 'On successful evaluation, and when you meet the performance targets your reporting manager gives you in writing during the trainee period, your employment will be confirmed as a permanent employee with an annual Cost to Company (CTC) of {{confirmedCtc}} from the date of confirmation.' },
-    { title: 'Notice period', text: 'After confirmation, either you or the company may end the employment by giving 30 days’ written notice, or salary in lieu of the notice period. During the trainee period, 7 days’ written notice from either side is enough.' },
-    { title: 'Working hours', text: 'Your normal working hours are {{workingHours}}. You may be asked to work extra hours, or on a weekly off, when the work needs it, as the Company’s policy allows.' },
-    { title: 'Leave and holidays', text: 'Leave and public holidays follow the Company’s leave policy, which HR will explain to you when you join.' },
-    { title: 'Documents on your first day', text: 'Please bring the originals and one copy of: your ID proof (Aadhaar), PAN card, education certificates, experience / relieving letters from your earlier employers, two passport-size photographs and your bank account details.' },
-    { title: 'Conduct and confidentiality', text: 'You will follow the policies of the company, and you will keep the information of the company and of its clients confidential, during your employment and after it.' },
-    { title: 'Verification', text: 'This offer stands on the documents and details you gave us being true, and on a satisfactory verification of your background.' },
+    { title: 'Date of Appointment', text: '{{joiningDate}}' },
+    { title: 'Trainee Period & Stipend', text: 'Initial designation will be {{designation}} on a temporary/probationary basis with a stipend of {{monthlySalary}} ({{monthlySalaryWords}}). Standard regular employee benefits will not apply during this trainee phase.' },
+    { title: 'Confirmation & CTC Enhancement', text: 'Upon successful evaluation and meeting required performance targets within {{probationMonths}} months, your employment will be confirmed as a permanent employee with an annual Cost to Company (CTC) of {{confirmedCtc}} ({{confirmedCtcWords}}).' },
+    {
+      title: 'Documents Required at Joining',
+      text: [
+        '• Relieving and Service Certificates from previous employers (if applicable).',
+        '• Last 6 months’ pay slips from previous organization.',
+        '• Photocopies of Academic Certificates.',
+        '• Two passport-sized photographs.',
+        '• Photocopies of Address & ID proofs (PAN Card & Aadhaar Card).',
+      ].join('\n'),
+    },
   ],
-  closing: 'We look forward to welcoming you to {{company}} and wish you a long and rewarding career with us.',
+  closing: 'We welcome you to {{company}} for a long and fruitful association, and look forward to your valuable contributions towards the organization’s growth. We wish you the very best of luck!',
   signatoryName: '',
-  signatoryTitle: 'Human Resources',
-  acceptanceLine: 'I have read and understood this offer letter, and I accept the offer on the terms above.',
+  signatoryTitle: 'HR Department',
+  acceptanceLine: 'I have read and understood this offer letter, and I accept the offer on the terms and conditions above.',
   footerNote: 'This letter is confidential and meant only for {{name}}.',
 };
 const LIMITS = {
-  subject: 200, coverNote: 3000, title: 80, intro: 2000, closing: 1000, signatoryName: 80, signatoryTitle: 120, acceptanceLine: 600, footerNote: 300,
+  subject: 200, coverNote: 3000, title: 80, termsHeading: 80, intro: 2000, closing: 1000, signatoryName: 80, signatoryTitle: 120, acceptanceLine: 600, footerNote: 300,
   rowLabel: 60, rowValue: 200, termTitle: 80, termText: 1500, maxDetails: 12, maxTerms: 20, workingHours: 120, maxMonthlySalary: 1000000, maxConfirmedCtc: 100000000, maxTraineeMonths: 12,
 };
-const monthlyText = (n) => (Number(n) > 0 ? `₹ ${Math.round(Number(n)).toLocaleString('en-IN')} per month` : '');
-const yearlyText = (n) => (Number(n) > 0 ? `₹ ${Math.round(Number(n)).toLocaleString('en-IN')} per annum` : '');
+// "₹10,000/- per month" and "Rupees Ten Thousand only", the way the reference offer letter writes money.
+const monthlyText = (n) => (Number(n) > 0 ? `₹${Math.round(Number(n)).toLocaleString('en-IN')}/- per month` : '');
+const yearlyText = (n) => (Number(n) > 0 ? `₹${Math.round(Number(n)).toLocaleString('en-IN')}/- per annum` : '');
+function rupeeWords(n) {
+  if (!(Number(n) > 0)) return '';
+  const { wordsINR } = require('./accounts'); // eslint-disable-line global-require
+  return wordsINR(Math.round(Number(n)))
+    .replace(/^Indian Rupee /, 'Rupees ')
+    .replace(/ Only$/, ' only')
+    .replace(/\b(\w+) (Lakh|Crore)\b/g, (m, a, unit) => (a === 'One' ? m : `${a} ${unit}s`));
+}
 
 // --- settings (one AppSetting row: { enabled, template }) ---------------------------------------------------------------
 function parse(row) {
@@ -131,9 +141,12 @@ function parse(row) {
 async function loadSettings() {
   const row = await prisma.appSetting.findUnique({ where: { key: SETTINGS_KEY } }).catch(() => null);
   const v = parse(row);
+  const saved = v.template && typeof v.template === 'object' ? v.template : null;
+  // A letter saved before the heading became editable always printed "Terms of employment": it keeps it.
+  const legacyHeading = saved && !('termsHeading' in saved) ? { termsHeading: 'Terms of employment' } : {};
   return {
     enabled: v.enabled === true,
-    template: { ...DEFAULT_TEMPLATE, ...(v.template && typeof v.template === 'object' ? v.template : {}) },
+    template: { ...DEFAULT_TEMPLATE, ...legacyHeading, ...(saved || {}) },
     custom: !!(v.template && typeof v.template === 'object'),
     updatedByName: row ? row.updatedByName : null,
     updatedAt: row ? row.updatedAt : null,
@@ -177,6 +190,7 @@ function cleanTemplate(body) {
     coverNote: s(b.coverNote, LIMITS.coverNote),
     title: s(b.title, LIMITS.title),
     intro: s(b.intro, LIMITS.intro),
+    termsHeading: s(b.termsHeading, LIMITS.termsHeading),
     showCtc: b.showCtc !== false,
     monthlySalary: Math.round(salary),
     traineeMonths: months,
@@ -196,7 +210,7 @@ function cleanTemplate(body) {
   if (!value.details.length && !value.terms.length) return { error: 'The letter needs its details table or at least one term.' };
   if ((Array.isArray(b.details) ? b.details.length : 0) > LIMITS.maxDetails) return { error: `Keep the details table to ${LIMITS.maxDetails} rows or fewer.` };
   if ((Array.isArray(b.terms) ? b.terms.length : 0) > LIMITS.maxTerms) return { error: `Keep the terms to ${LIMITS.maxTerms} or fewer.` };
-  const all = [value.subject, value.coverNote, value.intro, value.closing, value.acceptanceLine, value.footerNote, value.signatoryName, value.signatoryTitle,
+  const all = [value.subject, value.coverNote, value.intro, value.termsHeading, value.closing, value.acceptanceLine, value.footerNote, value.signatoryName, value.signatoryTitle,
     ...value.details.flatMap((r) => [r.label, r.value]), ...value.terms.flatMap((r) => [r.title, r.text])];
   const bad = [...new Set(all.flatMap(tokensIn).filter((k) => !TOKEN_KEYS.has(k)))];
   if (bad.length) return { error: `These placeholders are not known: ${bad.map((k) => `{{${k}}}`).join(', ')}. Use the list beside the editor.` };
@@ -258,7 +272,9 @@ async function valuesFor(app, tpl) {
     joiningDay: longDay(app.joiningDate, { day: undefined, month: undefined, year: undefined, weekday: 'long' }),
     ctc: tpl.showCtc === false ? '' : inr(app.offeredCtc),
     monthlySalary: tpl.showCtc === false ? '' : monthlyText(tpl.monthlySalary),
+    monthlySalaryWords: tpl.showCtc === false ? '' : rupeeWords(tpl.monthlySalary),
     confirmedCtc: tpl.showCtc === false ? '' : yearlyText(tpl.confirmedCtc),
+    confirmedCtcWords: tpl.showCtc === false ? '' : rupeeWords(tpl.confirmedCtc),
     workingHours: tpl.workingHours || '',
     manager: await managerOf(r),
     company: company.name,
@@ -294,11 +310,13 @@ async function buildModel(app, tpl, { sample = false } = {}) {
   // the salary and the working hours are typed once in the editor, so the sample shows exactly what the editor holds
   if (sample) {
     vals.monthlySalary = tpl.showCtc === false ? '' : monthlyText(tpl.monthlySalary);
+    vals.monthlySalaryWords = tpl.showCtc === false ? '' : rupeeWords(tpl.monthlySalary);
     vals.confirmedCtc = tpl.showCtc === false ? '' : yearlyText(tpl.confirmedCtc);
+    vals.confirmedCtcWords = tpl.showCtc === false ? '' : rupeeWords(tpl.confirmedCtc);
     vals.probationMonths = String(tpl.traineeMonths || 3);
     vals.workingHours = tpl.workingHours || '';
   }
-  const why = (missing) => missing.map((k) => (k === 'monthlySalary' ? 'trainee stipend not written in the editor' : k === 'confirmedCtc' ? 'annual CTC on confirmation not written in the editor' : k === 'workingHours' ? 'working hours not written in the editor' : `no ${k} on file`)).join(', ');
+  const why = (missing) => [...new Set(missing.map((k) => k.replace(/Words$/, '')))].map((k) => (k === 'monthlySalary' ? 'trainee stipend not written in the editor' : k === 'confirmedCtc' ? 'annual CTC on confirmation not written in the editor' : k === 'workingHours' ? 'working hours not written in the editor' : `no ${k} on file`)).join(', ');
   const omitted = [];
   const details = [];
   (tpl.details || []).forEach((row) => {
@@ -321,6 +339,7 @@ async function buildModel(app, tpl, { sample = false } = {}) {
     coverNote: fillPlain(tpl.coverNote, vals),
     intro: fillPlain(tpl.intro, vals),
     details,
+    termsHeading: fillPlain(tpl.termsHeading, vals),
     terms,
     closing: fillPlain(tpl.closing, vals),
     signatory: { name: fillPlain(tpl.signatoryName, vals), title: fillPlain(tpl.signatoryTitle, vals), company: company.name },
@@ -333,6 +352,8 @@ async function buildModel(app, tpl, { sample = false } = {}) {
 }
 
 // --- the HTML (the mail itself, and the preview on screen) -----------------------------------------------------------------
+// "Date of Appointment:" - a numbered point's heading ends with a colon (the reference letter's style), unless it already ends in . : ? !
+const termLabel = (title) => (/[.:?!]$/.test(String(title).trim()) ? String(title).trim() : `${String(title).trim()}:`);
 const para = (text) => String(text || '').split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px 0">${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
 function renderHtml(m, { logoSrc = null, withCover = true } = {}) {
   const fontStack = "'Segoe UI',Calibri,Arial,Helvetica,sans-serif";
@@ -345,7 +366,7 @@ function renderHtml(m, { logoSrc = null, withCover = true } = {}) {
         ${m.company.phone || m.company.email ? `<div>${[m.company.phone, m.company.email].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ')}</div>` : ''}
       </td></tr></table>`;
   const rows = m.details.map((r) => `<tr><td style="padding:9px 12px;width:34%;background:#eef1f7;border:1px solid #d5dbe5;font-size:13px;font-weight:600;color:${NAVY}">${esc(r.label)}</td><td style="padding:9px 12px;border:1px solid #d5dbe5;font-size:14px;color:#111">${esc(r.value)}</td></tr>`).join('');
-  const terms = m.terms.map((t, i) => `<tr><td style="vertical-align:top;width:26px;padding:0 0 12px 0;font-size:14px;font-weight:700;color:${NAVY}">${i + 1}.</td><td style="padding:0 0 12px 0;font-size:14px;line-height:1.6;color:#222">${t.title ? `<b style="color:${NAVY}">${esc(t.title)}.</b> ` : ''}${esc(t.text).replace(/\n/g, '<br>')}</td></tr>`).join('');
+  const terms = m.terms.map((t, i) => `<tr><td style="vertical-align:top;width:26px;padding:0 0 12px 0;font-size:14px;font-weight:700;color:${NAVY}">${i + 1}.</td><td style="padding:0 0 12px 0;font-size:14px;line-height:1.6;color:#222">${t.title ? `<b style="color:${NAVY}">${esc(termLabel(t.title))}</b>${t.text.includes('\n') ? '<br>' : ' '}` : ''}${esc(t.text).replace(/\n/g, '<br>')}</td></tr>`).join('');
   const cover = withCover && m.coverNote
     ? `<div style="font-size:14px;line-height:1.65;color:#222;padding:0 4px 18px 4px">${para(m.coverNote)}</div>`
     : '';
@@ -360,18 +381,18 @@ ${head}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 4px 0"><tr>
   <td style="font-size:12px;color:${MUTED}">Ref: <b style="color:#111">${esc(m.refNo)}</b></td>
   <td style="font-size:12px;color:${MUTED};text-align:right">Date: <b style="color:#111">${esc(m.dateLong)}</b></td></tr></table>
-<div style="margin:14px 0 2px 0;font-size:13px;color:#111;line-height:1.5"><b>${esc(m.to.name)}</b>${m.to.place ? `<br>${esc(m.to.place)}` : ''}</div>
+<div style="margin:14px 0 2px 0;font-size:13px;color:#111;line-height:1.5">To,<br><b>${esc(m.to.name)}</b>${m.to.place ? `<br>${esc(m.to.place)}` : ''}</div>
 <h1 style="margin:22px 0 4px 0;font-size:21px;letter-spacing:.6px;text-transform:uppercase;color:${NAVY};text-align:center;font-weight:700">${esc(m.title)}</h1>
 <div style="height:2px;width:64px;background:${NAVY};margin:6px auto 20px auto"></div>
 <div style="font-size:14px;line-height:1.65;color:#222">${para(m.intro)}</div>
 ${rows ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:6px 0 20px 0">${rows}</table>` : ''}
-${terms ? `<div style="font-size:15px;font-weight:700;color:${NAVY};margin:6px 0 10px 0">Terms of employment</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${terms}</table>` : ''}
+${terms ? `${m.termsHeading ? `<div style="font-size:15px;font-weight:700;color:${NAVY};margin:6px 0 10px 0">${esc(m.termsHeading)}</div>` : '<div style="height:4px"></div>'}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${terms}</table>` : ''}
 ${m.closing ? `<div style="font-size:14px;line-height:1.65;color:#222;margin-top:6px">${para(m.closing)}</div>` : ''}
 <div style="margin-top:18px;font-size:14px;color:#222;line-height:1.5">Yours sincerely,<br><b>For ${esc(m.signatory.company)}</b>
   <div style="height:46px"></div>
   <div style="border-top:1px solid #8b93a3;width:230px;padding-top:5px">${m.signatory.name ? `<b>${esc(m.signatory.name)}</b><br>` : ''}${esc(m.signatory.title)}</div></div>
 ${m.acceptance.line ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px;border:1px solid #c3cbdb;border-radius:4px;background:#f8f9fc"><tr><td style="padding:16px 18px">
-  <div style="font-size:13px;font-weight:700;color:${NAVY};text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Acceptance</div>
+  <div style="font-size:13px;font-weight:700;color:${NAVY};text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Acceptance of Offer</div>
   <div style="font-size:13px;line-height:1.6;color:#222">${esc(m.acceptance.line)}</div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:22px;font-size:12px;color:${MUTED}"><tr>
     <td width="40%" style="border-top:1px solid #8b93a3;padding-top:4px">Name: ${esc(m.acceptance.name)}</td><td width="4%"></td>
@@ -390,15 +411,15 @@ function renderText(m) {
   if (m.coverNote) lines.push(m.coverNote, '', '------------------------------------------------------------', '');
   lines.push(m.company.name.toUpperCase());
   if (m.company.address) lines.push(m.company.address);
-  lines.push('', `Ref: ${m.refNo}`, `Date: ${m.dateLong}`, '', m.to.name, ...(m.to.place ? [m.to.place] : []), '', m.title.toUpperCase(), '', m.intro, '');
+  lines.push('', `Ref: ${m.refNo}`, `Date: ${m.dateLong}`, '', 'To,', m.to.name, ...(m.to.place ? [m.to.place] : []), '', m.title.toUpperCase(), '', m.intro, '');
   m.details.forEach((r) => lines.push(`${r.label}: ${r.value}`));
   if (m.details.length) lines.push('');
-  if (m.terms.length) lines.push('TERMS OF EMPLOYMENT');
-  m.terms.forEach((t, i) => lines.push(`${i + 1}. ${t.title ? `${t.title}. ` : ''}${t.text}`));
+  if (m.terms.length && m.termsHeading) lines.push(m.termsHeading.toUpperCase());
+  m.terms.forEach((t, i) => lines.push(`${i + 1}. ${t.title ? `${termLabel(t.title)}${t.text.includes('\n') ? '\n' : ' '}` : ''}${t.text}`));
   if (m.terms.length) lines.push('');
   if (m.closing) lines.push(m.closing, '');
   lines.push('Yours sincerely,', `For ${m.signatory.company}`, '', ...(m.signatory.name ? [m.signatory.name] : []), m.signatory.title);
-  if (m.acceptance.line) lines.push('', 'ACCEPTANCE', m.acceptance.line, `Name: ${m.acceptance.name}`);
+  if (m.acceptance.line) lines.push('', 'ACCEPTANCE OF OFFER', m.acceptance.line, `Name: ${m.acceptance.name}`);
   return lines.join('\n');
 }
 
@@ -457,6 +478,7 @@ async function renderPdf(m) {
     doc.font('Helvetica-Bold').fillColor('#111').text(t(m.dateLong), L + W - dateW, refY, { lineBreak: false });
     doc.y = refY + 12; doc.x = L;
     doc.moveDown(0.9);
+    doc.font('Helvetica').fontSize(10.5).fillColor('#111').text('To,', L, doc.y, { width: W });
     doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111').text(t(m.to.name), L, doc.y, { width: W });
     if (m.to.place) doc.font('Helvetica').fontSize(10).fillColor('#333').text(t(m.to.place), { width: W });
 
@@ -497,15 +519,24 @@ async function renderPdf(m) {
     // terms
     if (m.terms.length) {
       need(60);
-      doc.font('Helvetica-Bold').fontSize(12).fillColor(NAVY).text('Terms of employment', L, doc.y, { width: W });
-      doc.moveDown(0.5);
+      if (m.termsHeading) {
+        doc.font('Helvetica-Bold').fontSize(12).fillColor(NAVY).text(t(m.termsHeading), L, doc.y, { width: W });
+        doc.moveDown(0.5);
+      }
       m.terms.forEach((x, i) => {
+        const label = x.title ? termLabel(x.title) : '';
+        const list = x.text.includes('\n'); // a list (the documents to bring): the heading on its own line, one line per item
         doc.font('Helvetica').fontSize(10.5);
-        const txt = `${x.title ? `${x.title}. ` : ''}${x.text}`;
+        const txt = `${label ? `${label}${list ? '\n' : ' '}` : ''}${x.text}`;
         need(Math.min(doc.heightOfString(t(txt), { width: W - 22, lineGap: 2.4 }) + 8, 120));
         const y = doc.y;
         doc.font('Helvetica-Bold').fontSize(10.5).fillColor(NAVY).text(`${i + 1}.`, L, y, { width: 20 });
-        if (x.title) doc.font('Helvetica-Bold').fontSize(10.5).fillColor(NAVY).text(t(`${x.title}. `), L + 22, y, { width: W - 22, continued: true, lineGap: 2.4 }).font('Helvetica').fillColor('#222').text(t(x.text), { lineGap: 2.4 });
+        if (label && list) {
+          doc.font('Helvetica-Bold').fontSize(10.5).fillColor(NAVY).text(t(label), L + 22, y, { width: W - 22, lineGap: 2.4 });
+          x.text.split('\n').forEach((line) => {
+            doc.font('Helvetica').fontSize(10.5).fillColor('#222').text(t(line), L + 34, doc.y, { width: W - 34, lineGap: 2.4 });
+          });
+        } else if (label) doc.font('Helvetica-Bold').fontSize(10.5).fillColor(NAVY).text(t(`${label} `), L + 22, y, { width: W - 22, continued: true, lineGap: 2.4 }).font('Helvetica').fillColor('#222').text(t(x.text), { lineGap: 2.4 });
         else doc.font('Helvetica').fontSize(10.5).fillColor('#222').text(t(x.text), L + 22, y, { width: W - 22, lineGap: 2.4 });
         doc.moveDown(0.5); doc.x = L;
       });
@@ -513,7 +544,7 @@ async function renderPdf(m) {
     // the closing line, the signature and the acceptance box stay together on one page
     doc.font('Helvetica').fontSize(10.5);
     const closingH = m.closing ? doc.heightOfString(t(m.closing), { width: W, lineGap: 2.4 }) + 12 : 0;
-    need(closingH + (m.acceptance.line ? 270 : 130));
+    need(closingH + (m.acceptance.line ? 195 : 110)); // the measured height of the signature + the acceptance box (about 183pt), with a little room
     if (m.closing) { doc.moveDown(0.3); body(m.closing); }
     doc.moveDown(0.6);
     doc.font('Helvetica').fontSize(10.5).fillColor('#222').text('Yours sincerely,', L, doc.y, { width: W });
@@ -532,7 +563,7 @@ async function renderPdf(m) {
       const textH = doc.heightOfString(t(m.acceptance.line), { width: W - 28, lineGap: 2.4 });
       const boxH = textH + 86;
       doc.rect(L, by, W, boxH).fillAndStroke('#f8f9fc', '#c3cbdb');
-      doc.font('Helvetica-Bold').fontSize(9.5).fillColor(NAVY).text('ACCEPTANCE', L + 14, by + 12, { width: W - 28, characterSpacing: 0.6 });
+      doc.font('Helvetica-Bold').fontSize(9.5).fillColor(NAVY).text('ACCEPTANCE OF OFFER', L + 14, by + 12, { width: W - 28, characterSpacing: 0.6 });
       doc.font('Helvetica').fontSize(10).fillColor('#222').text(t(m.acceptance.line), L + 14, by + 28, { width: W - 28, lineGap: 2.4 });
       const ly = by + textH + 64;
       const cols = [[L + 14, 190, `Name: ${m.acceptance.name}`], [L + 220, 150, 'Signature'], [L + 386, W - 400, 'Date']];
@@ -812,6 +843,55 @@ async function pdfOf(applicationId) {
   const settings = await loadSettings();
   return { pdf: await renderPdf(await buildModel(app, settings.template)), name: `Offer-letter-${String((app.candidate && app.candidate.name) || 'candidate').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)}.pdf` };
 }
+// --- AN EMPLOYEE ADDED STRAIGHT IN HRMS (Employees -> Add employee, no application; 2026-11-23) ------------------------------
+// The same letter, filled from the employee record: designation, department, place (branch / location + state), date of joining,
+// reporting manager. Made by itself when HR adds a NEW joiner (joining date at most NEW_JOINER_DAYS ago, or still to come); an
+// existing employee typed in later is not given a letter dated today. HR can still press "Make offer letter" on the documents.
+const NEW_JOINER_DAYS = 30;
+const OFFER_DOC_TYPE = 'Offer Letter';
+const istDayOf = (d) => {
+  if (!d) return null;
+  const t = new Date(d).getTime();
+  return Number.isNaN(t) ? null : new Date(t + 330 * 60000).toISOString().slice(0, 10);
+};
+async function appFromEmployee(employee) {
+  let tlId = null; // the reporting manager's login, so the "reporting manager" detail works as it does for a hire
+  if (employee.reportingManagerId) {
+    const mgr = await prisma.employee.findUnique({ where: { id: employee.reportingManagerId }, select: { userId: true } }).catch(() => null);
+    tlId = (mgr && mgr.userId) || null;
+  }
+  const place = [employee.branch || employee.location || employee.city, employee.state].filter(Boolean).join(', ');
+  return {
+    id: employee.employeeCode || employee.id, // only the letter's reference uses it: TL/OL/<year>/<employee code>
+    joiningDate: istDayOf(employee.dateOfJoining),
+    offeredCtc: null,
+    candidate: { name: employee.name || '', location: place },
+    requirement: { title: employee.designation || '', department: employee.department || '', location: place, tlId },
+  };
+}
+async function pdfForEmployee(employee) {
+  const settings = await loadSettings();
+  const m = await buildModel(await appFromEmployee(employee), settings.template);
+  return { pdf: await renderPdf(m), name: `Offer-letter-${employee.employeeCode || 'employee'}.pdf`, omitted: m.omitted };
+}
+// Makes the letter and keeps it in the employee's documents. -> { state: 'MADE' | 'SKIPPED', message, omitted? }
+// auto = the Add employee save (only a new joiner); without it = a person pressing "Make offer letter".
+async function fileForEmployee(employee, actorId, { auto = false } = {}) {
+  if (!employee) return { state: 'SKIPPED', message: 'The employee was not found.' };
+  const joined = istDayOf(employee.dateOfJoining);
+  if (!joined) return { state: 'SKIPPED', message: 'No date of joining on the record, so no offer letter was made. Add it, then press Make offer letter.' };
+  if (!employee.designation) return { state: 'SKIPPED', message: 'No designation on the record, so no offer letter was made. Add it, then press Make offer letter.' };
+  const oldest = new Date(Date.now() + 330 * 60000 - NEW_JOINER_DAYS * 86400000).toISOString().slice(0, 10);
+  if (auto && joined < oldest) return { state: 'SKIPPED', message: `Joined more than ${NEW_JOINER_DAYS} days ago, so no offer letter was made by itself. Press Make offer letter on the documents if one is needed.` };
+  const have = await prisma.employeeDocument.findFirst({ where: { employeeId: employee.id, docType: OFFER_DOC_TYPE } }).catch(() => null);
+  if (have) return { state: 'SKIPPED', message: 'An offer letter is already in the documents.' };
+  const made = await pdfForEmployee(employee);
+  const { fileDocument } = require('./internalOnboarding'); // eslint-disable-line global-require
+  await fileDocument(employee.id, OFFER_DOC_TYPE, made.pdf, made.name, actorId || null);
+  await logAudit({ userId: actorId || null, action: `Offer letter made and kept in the documents${auto ? ' (automatic, new employee)' : ''}`, entity: 'Employee', entityId: employee.id, toValue: `${employee.name} (${employee.employeeCode})` });
+  return { state: 'MADE', message: 'The offer letter was made and kept in the employee’s documents.', omitted: made.omitted };
+}
+
 // The editor's preview: the Admin's unsaved wording filled with sample details.
 async function previewTemplate(body) {
   const base = (await loadSettings()).template;
@@ -827,4 +907,5 @@ module.exports = {
   loadSettings, setAutomatic, cleanTemplate, saveTemplate, resetTemplate,
   buildModel, renderHtml, renderText, renderPdf, valuesFor,
   maybeSendAuto, sendNow, statusOf, previewOf, pdfOf, previewTemplate, blocker, rowOf,
+  pdfForEmployee, fileForEmployee, NEW_JOINER_DAYS,
 };

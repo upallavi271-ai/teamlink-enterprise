@@ -504,7 +504,9 @@ export default function Employees() {
       const res = await api.post('/employees/management', body);
       setNotice(`${res.data.name} (${res.data.employeeCode}) created — employee record and login together.`
         + ` Role ${atsRoleLabel(res.data.login.role)}${res.data.login.atsRole ? ` · ATS ${atsRoleLabel(res.data.login.atsRole)}` : ''}`
-        + ` · scope ${res.data.login.scope}. Email ${res.data.emailChannel}.`);
+        + ` · scope ${res.data.login.scope}. Email ${res.data.emailChannel}.`
+        // the offer letter made for a new joiner (or why not), verbatim from the server
+        + (res.data.offerLetter && res.data.offerLetter.message ? ` Offer letter: ${res.data.offerLetter.message}` : ''));
       // What actually happened to the sign-in email, verbatim from the server.
       // When there is no SMTP provider this says so and hands over the link;
       // it never implies the employee has been told.

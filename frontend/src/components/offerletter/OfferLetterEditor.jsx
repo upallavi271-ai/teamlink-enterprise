@@ -154,7 +154,8 @@ export default function OfferLetterEditor() {
             ))}
             {edit && t.details.length < (data.limits.maxDetails || 12) && <button type="button" className="btn btn-sm" onClick={() => set('details', [...t.details, { label: '', value: '' }])}>＋ Add a row</button>}
 
-            <div className="olm-sub" style={{ marginTop: 16 }}>Terms <span className="small-muted">(numbered in the letter; probation and notice period are here, edit the words as you need)</span></div>
+            <div className="olm-sub" style={{ marginTop: 16 }}>Terms <span className="small-muted">(numbered in the letter; a heading prints with a colon after it, e.g. “Date of Appointment:”; a term written on several lines prints as a list)</span></div>
+            <div className="field"><label>Heading over the numbered points <span className="small-muted">- empty = no heading</span></label><input type="text" {...field('termsHeading')} placeholder="e.g. Terms of employment" /></div>
             {t.terms.map((r, i) => (
               <div className="olm-term" key={`t${i}`}>
                 <div className="olm-term-head">

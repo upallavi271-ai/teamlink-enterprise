@@ -126,11 +126,11 @@ async function stop(code) {
   // ================================================================ the template and the switches
   console.log('\n--- A. template, switches, who may change them');
   const t0 = await call('GET', '/ats/offer-letter-mail/template', null, tA);
-  check('the Admin reads the template: switch OFF, starting words, the placeholder list', t0.status === 200 && t0.body.enabled === false && t0.body.custom === false && t0.body.canEdit === true && t0.body.template.terms.length >= 6 && t0.body.tokens.some((x) => x.key === 'joiningDate'), t0.body);
-  check('the starting terms carry the trainee period and notice period as editable text', t0.body.template.terms.some((x) => /trainee/i.test(x.title)) && t0.body.template.terms.some((x) => /notice/i.test(x.title)));
+  check('the Admin reads the template: switch OFF, starting words, the placeholder list', t0.status === 200 && t0.body.enabled === false && t0.body.custom === false && t0.body.canEdit === true && t0.body.template.terms.length >= 4 && t0.body.tokens.some((x) => x.key === 'joiningDate'), t0.body);
+  check('the starting terms follow the reference offer letter (Date of Appointment, Trainee Period & Stipend, Confirmation & CTC Enhancement, Documents Required at Joining), no heading over them', ['Date of Appointment', 'Trainee Period & Stipend', 'Confirmation & CTC Enhancement', 'Documents Required at Joining'].every((h, i) => t0.body.template.terms[i] && t0.body.template.terms[i].title === h) && t0.body.template.termsHeading === '' && t0.body.template.details.length === 0, t0.body.template.terms.map((x) => x.title));
   const dt = t0.body.template;
-  check('the starting letter has the reference terms: a 3-month trainee period on a Rs 10,000 stipend, and Rs 3,00,000 CTC on confirmation', dt.monthlySalary === 10000 && dt.traineeMonths === 3 && dt.confirmedCtc === 300000 && dt.terms.some((r) => /trainee/i.test(r.title) && /\{\{monthlySalary\}\}/.test(r.text) && /\{\{probationMonths\}\}/.test(r.text)) && dt.terms.some((r) => /\{\{confirmedCtc\}\}/.test(r.text)) && dt.details.some((r) => /\{\{confirmedCtc\}\}/.test(r.value)), dt);
-  check('working hours have a row and a term, and the hours are EMPTY until the founder writes them (no invented hours)', dt.workingHours === '' && dt.details.some((r) => r.label === 'Working hours') && dt.terms.some((r) => r.title === 'Working hours'));
+  check('the starting letter has the reference terms: a 3-month trainee period on a Rs 10,000 stipend, and Rs 3,00,000 CTC on confirmation', dt.monthlySalary === 10000 && dt.traineeMonths === 3 && dt.confirmedCtc === 300000 && dt.terms.some((r) => /trainee/i.test(r.title) && /\{\{monthlySalary\}\}/.test(r.text) && /\{\{monthlySalaryWords\}\}/.test(r.text)) && dt.terms.some((r) => /\{\{probationMonths\}\}/.test(r.text) && /\{\{confirmedCtc\}\}/.test(r.text) && /\{\{confirmedCtcWords\}\}/.test(r.text)), dt);
+  check('the working hours are EMPTY until the founder writes them (no invented hours), and the reference letter has no working-hours line', dt.workingHours === '' && !dt.details.some((r) => r.label === 'Working hours') && !dt.terms.some((r) => r.title === 'Working hours'));
   const t1 = await call('GET', '/ats/offer-letter-mail/template', null, tTL);
   check('a team lead may read it but not edit (canEdit false)', t1.status === 200 && t1.body.canEdit === false, t1.body);
   check('a team lead cannot save the template', (await call('PUT', '/ats/offer-letter-mail/template', t0.body.template, tTL)).status === 403);
@@ -142,7 +142,10 @@ async function stop(code) {
   check('a salary that is not a number is refused', (await call('PUT', '/ats/offer-letter-mail/template', { ...t0.body.template, monthlySalary: 'ten thousand' }, tA)).status === 400 && (await call('PUT', '/ats/offer-letter-mail/template', { ...t0.body.template, monthlySalary: -5 }, tA)).status === 400);
   const edited = {
     ...t0.body.template, signatoryName: 'Priya Sharma', signatoryTitle: 'Head of Human Resources', workingHours: '10 am to 7 pm, Monday to Saturday',
-    terms: t0.body.template.terms.map((x) => (/notice/i.test(x.title) ? { ...x, text: 'Either side gives 45 days written notice after confirmation. <i>No tags</i>.' } : x)),
+    // the rows and terms the checks below lean on (left out when a detail is missing); the reference letter itself has none of them
+    termsHeading: 'Terms of employment',
+    details: [{ label: 'Date of joining', value: '{{joiningDate}} ({{joiningDay}})' }, { label: 'Reporting to', value: '{{manager}}' }, { label: 'Working hours', value: '{{workingHours}}' }],
+    terms: [...t0.body.template.terms, { title: 'Notice period', text: 'Either side gives 45 days written notice after confirmation. <i>No tags</i>.' }, { title: 'Working hours', text: 'Your normal working hours are {{workingHours}}.' }],
   };
   const sv = await call('PUT', '/ats/offer-letter-mail/template', edited, tA);
   check('the Admin saves new wording (notice period, signatory); it is audited', sv.status === 200 && sv.body.custom === true && sv.body.template.signatoryName === 'Priya Sharma' && (await audited('offer-letter-mail', /template changed/)).length === 1, sv.body && sv.body.error);
@@ -179,9 +182,9 @@ async function stop(code) {
   check('exactly one mail reached the candidate', m1.length === 1, m1.length);
   const mail = m1[0] || {};
   check('subject comes from the template (designation + company)', /Your offer letter - Talent Acquisition Executive at TeamLink Consultants/.test(mail.subject || ''), mail.subject);
-  check('the letter is IN the mail: name, designation, department, joining date, place, reporting manager, monthly salary, working hours, signatory', [c1.name, 'Talent Acquisition Executive', 'HR', longDay(d3), 'Hyderabad', TL.name.replace(/ZZTEST /, ''), '10,000 per month', '3,00,000 per annum', 'trainee period', '10 am to 7 pm, Monday to Saturday', 'Priya Sharma', 'Terms of employment', 'acceptance'].every((s) => (mail.html || '').toLowerCase().includes(String(s).toLowerCase())), (mail.html || '').slice(0, 300));
+  check('the letter is IN the mail: name, designation, department, joining date, place, reporting manager, monthly salary, working hours, signatory', [c1.name, 'Talent Acquisition Executive', 'HR', longDay(d3), 'Hyderabad', TL.name.replace(/ZZTEST /, ''), '10,000/- per month', 'Rupees Ten Thousand only', '3,00,000/- per annum', 'Rupees Three Lakhs only', 'trainee period', '10 am to 7 pm, Monday to Saturday', 'Priya Sharma', 'Terms of employment', 'acceptance'].every((s) => (mail.html || '').toLowerCase().includes(String(s).toLowerCase())), (mail.html || '').slice(0, 300));
   check('the edited notice period is in the mail (45 days), not the starting one', /45 days/.test(mail.html || '') && !/30 days/.test(mail.html || ''));
-  check('the mail has a plain-text part too', /OFFER OF EMPLOYMENT/.test(mail.text || '') && (mail.text || '').includes(c1.name));
+  check('the mail has a plain-text part too', /OFFER LETTER/.test(mail.text || '') && (mail.text || '').includes(c1.name));
   const pdf = (mail.attachments || []).find((a) => a.pdf);
   check('a real PDF is attached (starts with %PDF, a sensible size, named for the candidate)', !!pdf && pdf.size > 4000 && /^Offer-letter-.*\.pdf$/.test(pdf.filename) && pdf.contentType === 'application/pdf', mail.attachments);
   check('the logo is inline (cid), the mail comes from the company address and replies go to a person', /cid:teamlink-logo/.test(mail.html || '') && /noreply@teamlink\.example\.test/.test(mail.from || '') && /@/.test(mail.replyTo || ''), { from: mail.from, replyTo: mail.replyTo });
@@ -192,7 +195,7 @@ async function stop(code) {
   check('the pipeline history says the letter was emailed (automatic) and the audit log too', (await events(a1.id, /Offer letter emailed to the candidate \(automatic\)/)).length === 1 && (await audited(a1.id, /Offer letter emailed automatically/)).length === 1);
   const everything = JSON.stringify([msgs, await prisma.applicationStageEvent.findMany({ where: { applicationId: a1.id } }), await prisma.auditLog.findMany({ where: { entityId: a1.id } }), await prisma.notification.findMany({ where: { message: { contains: 'offer letter' } }, take: 50 })]);
   check('the salary is in the letter only: not in Communications, the timeline, the audit log or any bell', !/10,000|10000/.test(everything), everything.match(/.{30}10,?000.{20}/));
-  check('the annual CTC on the record (Rs 6,12,345) is NOT printed: the letter prints the reference stipend and CTC instead', !/6,12,345|612345/.test(mail.html + mail.text) && /10,000 per month/.test(mail.html || '') && /3,00,000 per annum/.test(mail.html || ''));
+  check('the annual CTC on the record (Rs 6,12,345) is NOT printed: the letter prints the reference stipend and CTC instead', !/6,12,345|612345/.test(mail.html + mail.text) && /10,000/- per month/.test(mail.html || '') && /3,00,000/- per annum/.test(mail.html || ''));
 
   console.log('\n--- E. once per joining');
   const s4 = await schedule(tA, a1.id, d4);
@@ -277,7 +280,7 @@ async function stop(code) {
   const c9 = await mkCandidate({ name: `Zed <script>alert(1)</script> & Co ${RUN}` }); const a9 = await mkApp(c9, REQ2.id, { joiningDate: day(25), offeredCtc: null });
   const p9 = await call('GET', `/ats/offer-letter-mail/${a9.id}/preview`, null, tA);
   check('a name with HTML in it is escaped in the letter', /&lt;script&gt;alert\(1\)&lt;\/script&gt;/.test(p9.body.html) && !/<script>alert/.test(p9.body.html), p9.status);
-  check('a line with no data is left out: no reporting manager on this job -> "Reporting to" is not printed; the flat salary and the date still are', !/Reporting to/.test(p9.body.html) && /Date of joining/.test(p9.body.html) && /10,000 per month/.test(p9.body.html), p9.body.omitted);
+  check('a line with no data is left out: no reporting manager on this job -> "Reporting to" is not printed; the flat salary and the date still are', !/Reporting to/.test(p9.body.html) && /Date of joining/.test(p9.body.html) && /10,000/- per month/.test(p9.body.html), p9.body.omitted);
   check('the preview names what was left out, so a person can fix the record', p9.body.omitted.some((x) => /Reporting to \(no manager on file\)/.test(x)), p9.body.omitted);
   const noHours = await call('PUT', '/ats/offer-letter-mail/template', { ...edited, workingHours: '' }, tA);
   const p9b = await call('GET', `/ats/offer-letter-mail/${a9.id}/preview`, null, tA);
@@ -285,7 +288,7 @@ async function stop(code) {
   await call('PUT', '/ats/offer-letter-mail/template', { ...edited }, tA);
   const sal = await call('PUT', '/ats/offer-letter-mail/template', { ...edited, monthlySalary: '12,500' }, tA);
   const p9c = await call('GET', `/ats/offer-letter-mail/${a9.id}/preview`, null, tA);
-  check('the Admin can change the one monthly salary (12,500 typed with a comma) and the letter follows', sal.status === 200 && sal.body.template.monthlySalary === 12500 && /12,500 per month/.test(p9c.body.html) && !/10,000/.test(p9c.body.html), sal.body && sal.body.error);
+  check('the Admin can change the one monthly salary (12,500 typed with a comma) and the letter follows', sal.status === 200 && sal.body.template.monthlySalary === 12500 && /12,500/- per month/.test(p9c.body.html) && !/10,000/.test(p9c.body.html), sal.body && sal.body.error);
   await call('PUT', '/ats/offer-letter-mail/template', { ...edited }, tA);
   check('a bad placeholder can never get into a sent letter: an unfilled {{ }} is never printed', !/\{\{/.test(p9.body.html));
   const noCtc = await call('PUT', '/ats/offer-letter-mail/template', { ...edited, showCtc: false }, tA);

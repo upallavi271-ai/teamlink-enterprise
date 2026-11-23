@@ -470,6 +470,53 @@ router.post('/', async (req, res, next) => {
 });
 
 // ---- ONE RESIGNATION, with its form and full approval history ---------------
+// ---- THE EXIT LETTERS: service certificate + relieving letter (utils/exitLetters.js), HR desk only ----------
+const exitLetters = require('../utils/exitLetters');
+const hrOnly = (req, res) => { if (exitDate.isHrDesk(req.user)) return true; res.status(403).json({ error: 'Only HR can make exit letters.' }); return false; };
+
+// who signs the letters (one setting for both)
+router.get('/letters/settings', async (req, res, next) => {
+  try { if (!hrOnly(req, res)) return undefined; return res.json(await exitLetters.loadSettings()); } catch (err) { return next(err); }
+});
+router.put('/letters/settings', async (req, res, next) => {
+  try { if (!hrOnly(req, res)) return undefined; return res.json(await exitLetters.saveSettings(req.body || {}, req.user)); } catch (err) { return next(err); }
+});
+
+async function letterRecord(req, res) {
+  if (!hrOnly(req, res)) return null;
+  const record = await prisma.employeeRecord.findUnique({ where: { id: req.params.id }, include: { employee: true } });
+  if (!record || record.type !== 'RESIGNATION' || !record.employee) { res.status(404).json({ error: 'Resignation not found' }); return null; }
+  if (!await workflow.canSee(WF_RES, record.id, req.user, record.employee)) { res.status(403).json(OUT_OF_SCOPE); return null; }
+  return record;
+}
+// both letters: ready or not (and why), and the one already filed in the employee's documents
+router.get('/:id/letters', async (req, res, next) => {
+  try { const record = await letterRecord(req, res); if (!record) return undefined; return res.json(await exitLetters.statusOf(record)); } catch (err) { return next(err); }
+});
+// the PDF, made fresh from the records (Preview / Download); nothing is saved
+router.get('/:id/letters/:kind/pdf', async (req, res, next) => {
+  try {
+    const record = await letterRecord(req, res);
+    if (!record) return undefined;
+    const out = await exitLetters.pdfFor(record, req.params.kind);
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${out.fileName.replace(/[^\w .()-]/g, '_')}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(out.pdf);
+  } catch (err) { return next(err); }
+});
+// Generate and save: the PDF is filed in the employee's documents (a newer one replaces the older one TeamLink made)
+router.post('/:id/letters/:kind', async (req, res, next) => {
+  try {
+    const record = await letterRecord(req, res);
+    if (!record) return undefined;
+    const out = await exitLetters.issue(record, req.params.kind, req.user);
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    return res.json({ ...out.status, message: `${exitLetters.KINDS[req.params.kind].title} saved in ${record.employee.name}'s documents.` });
+  } catch (err) { return next(err); }
+});
+
 router.get('/:id', async (req, res, next) => {
   try {
     const record = await prisma.employeeRecord.findUnique({ where: { id: req.params.id }, include: { employee: true } });
