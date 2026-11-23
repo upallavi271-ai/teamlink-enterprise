@@ -32,6 +32,18 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   const load = () => omni.get('/gs/marketing/client-reviews', { kind, itemId: item.id }).then((d) => setReviews(d.reviews || [])).catch((e) => setErr(errOf(e, 'The client approvals could not be read.')));
   useEffect(() => { load(); omni.get('/gs/marketing/projects/notify').then(setWays).catch(() => setWays(null)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const names = useMemo(() => people.map((c) => c.name), [people]);
+  // a picture / video made for a CLIENT PROJECT: the client's name, contact person, WhatsApp number and email are the ones they gave in their request, so ONE press sends it to them
+  const [fromRequest, setFromRequest] = useState(false);
+  useEffect(() => {
+    if (!item.projectId) return undefined;
+    let on = true;
+    omni.get(`/gs/marketing/projects/${item.projectId}`).then((x) => {
+      const p = x && x.project; if (!on || !p) return;
+      setF((cur) => ({ ...cur, clientName: cur.clientName || p.clientName || '', contactName: cur.contactName || p.contactName || '', contactPhone: cur.contactPhone || p.contactPhone || '', contactEmail: cur.contactEmail || p.contactEmail || '' }));
+      setFromRequest(!!(p.contactPhone || p.contactEmail));
+    }).catch(() => {});
+    return () => { on = false; };
+  }, [item.projectId]);
 
   const pickClient = (name) => {
     const c = find(name);
@@ -127,6 +139,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
       ) : null}
       {showForm ? (
         <div className="form-grid" style={{ marginTop: current && !again ? 14 : 0 }}>
+          {fromRequest ? <div className="mk-note ok" style={{ gridColumn: '1 / -1' }}>The client's details are taken from their request (name, WhatsApp number, email). Check the number, then press <b>Send</b>: the {word} itself goes to that number with Approve and Reject buttons.</div> : null}
           <Field label="CLIENT (COMPANY)" full>
             <input list="mk-clients" value={f.clientName} maxLength={120} onChange={(e) => pickClient(e.target.value)} placeholder="Pick or type the client's name" />
             <datalist id="mk-clients">{names.map((n) => <option key={n} value={n} />)}</datalist>
@@ -137,7 +150,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
           <Field label="MESSAGE TO THE CLIENT (OPTIONAL)" full><textarea style={{ minHeight: 60 }} value={f.message} maxLength={400} onChange={(e) => setF({ ...f, message: e.target.value })} placeholder={`Please check this ${word} and tell us if it is OK to use.`} /></Field>
           <Field label="THE LINK WORKS FOR"><select value={f.days} onChange={(e) => setF({ ...f, days: Number(e.target.value) })}>{[3, 7, 14, 30].map((n) => <option key={n} value={n}>{n} days</option>)}</select></Field>
           <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
-            <Btn primary disabled={!!busy || f.clientName.trim().length < 2 || !String(f.contactPhone).trim() || (ways && !ways.whatsapp.ready)} onClick={makeAndSend} title={!String(f.contactPhone).trim() ? 'Write the client\'s WhatsApp number first' : 'Makes the private link and sends it on WhatsApp from the company number'}>{busy === 'makesend' ? 'Sending…' : 'Make the link and send on WhatsApp'}</Btn>
+            <Btn primary disabled={!!busy || f.clientName.trim().length < 2 || !String(f.contactPhone).trim() || (ways && !ways.whatsapp.ready)} onClick={makeAndSend} title={!String(f.contactPhone).trim() ? 'Write the client\'s WhatsApp number first' : 'Makes the private link and sends it on WhatsApp from the company number'}>{busy === 'makesend' ? 'Sending…' : 'Send to the client on WhatsApp'}</Btn>
             <Btn disabled={!!busy || f.clientName.trim().length < 2} onClick={make}>{busy === 'make' ? 'Making…' : 'Make the private link only'}</Btn>
             {again ? <Btn onClick={() => setAgain(false)}>Back</Btn> : null}
           </div>
