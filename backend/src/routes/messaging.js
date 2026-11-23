@@ -113,7 +113,7 @@ router.put('/limits', async (req, res, next) => {
 
 // WHICH LINE a call goes out on (utils/callLines.js): API (calls & msgs), Dinstar (calls & msgs), SIP (call). The dropdown in the Call window reads this.
 router.get('/call-lines', async (req, res, next) => {
-  try { return res.json(await require('../utils/callLines').list()); } catch (err) { return next(err); } // eslint-disable-line global-require
+  try { return res.json(await require('../utils/callLines').list(req.user)); } catch (err) { return next(err); } // eslint-disable-line global-require
 });
 
 // CALL THROUGH TEAMLINK (Exotel click-to-call, utils/callGateway.js): the caller's own phone rings
@@ -134,11 +134,11 @@ router.post('/call', async (req, res, next) => {
     if (!own.phone) return res.status(409).json({ error: 'Your own phone number is not on your employee profile, so TeamLink does not know which phone to ring first. Add it on your profile.' });
     const lines = require('../utils/callLines'); // eslint-disable-line global-require
     const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '') || null;
-    const out = await lines.startCall(b.line, { agent: own.phone, to: person.mobile, ref: `${audience}:${person.id}`.slice(0, 120), callbackBase: base });
+    const out = await lines.startCall(b.line, { agent: own.phone, to: person.mobile, ref: `${audience}:${person.id}`.slice(0, 120), callbackBase: base, user: req.user });
     if (!out.ok && out.notConfigured) return res.status(409).json({ error: out.error, notConfigured: true });
     if (!out.ok && out.invalid) return res.status(400).json({ error: out.error });
     const detail = out.ok
-      ? `Call through TeamLink started: ${own.name}'s phone rings first${out.sandbox ? ' (test server, no real call)' : ''}.${out.recording ? ' Recording is ON.' : ''}`
+      ? `Call through TeamLink started${out.lineName && out.line !== 'api' ? ` on ${out.lineName}` : ''}: ${own.name}'s phone rings first${out.sandbox ? ' (test server, no real call)' : ''}.${out.recording ? ' Recording is ON.' : ''}`
       : `Call did not start: ${out.error}`;
     if (audience === 'candidates') {
       await require('../db').candidateMessage.create({ data: { // eslint-disable-line global-require

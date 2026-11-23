@@ -29,12 +29,32 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS "BrowserCallEvent" (
     "id" TEXT NOT NULL PRIMARY KEY, "callId" TEXT, "uniqueId" TEXT, "event" TEXT NOT NULL, "payload" TEXT, "at" TEXT NOT NULL)`,
   'CREATE INDEX IF NOT EXISTS "BrowserCallEvent_call" ON "BrowserCallEvent"("callId", "at")',
+  // PHONE LINES (2026-11-23): the lines a manual call can go out on besides the built-in office Synway (teamlink-gw). browsercall/lines.js.
+  // Secrets (the password a device registers with, or the far end's password) are encrypted (utils/secrets) and never sent back to the browser.
+  `CREATE TABLE IF NOT EXISTS "BrowserCallLine" (
+    "id" TEXT NOT NULL PRIMARY KEY, "shortId" TEXT NOT NULL, "name" TEXT NOT NULL, "type" TEXT NOT NULL, "connect" TEXT NOT NULL,
+    "host" TEXT, "port" INTEGER, "transport" TEXT NOT NULL DEFAULT 'udp', "username" TEXT, "secretEnc" TEXT,
+    "acceptFromIpOnly" INTEGER NOT NULL DEFAULT 0, "dialFormat" TEXT NOT NULL DEFAULT '10', "prefix" TEXT, "callerId" TEXT,
+    "maxCalls" INTEGER NOT NULL DEFAULT 4, "kinds" TEXT, "active" INTEGER NOT NULL DEFAULT 1,
+    "createdById" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL)`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS "BrowserCallLine_short" ON "BrowserCallLine"("shortId")',
+];
+// columns added later to existing tables (guarded: "duplicate column" means it is already there)
+const ALTERS = [
+  'ALTER TABLE "BrowserCall" ADD COLUMN "lineId" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "lineName" TEXT',
 ];
 
 let ready = null;
 function ensure() {
   if (!ready) {
-    ready = (async () => { for (const sql of DDL) await prisma.$executeRawUnsafe(sql); })().catch((e) => { ready = null; throw e; }); // eslint-disable-line no-await-in-loop
+    ready = (async () => {
+      for (const sql of DDL) await prisma.$executeRawUnsafe(sql); // eslint-disable-line no-await-in-loop
+      for (const sql of ALTERS) {
+        // eslint-disable-next-line no-await-in-loop
+        try { await prisma.$executeRawUnsafe(sql); } catch (e) { if (!/duplicate column/i.test(String(e && e.message))) throw e; }
+      }
+    })().catch((e) => { ready = null; throw e; });
   }
   return ready;
 }

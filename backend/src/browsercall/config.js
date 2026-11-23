@@ -14,6 +14,11 @@ const ENV = {
   extStart: Number(env.BROWSER_CALL_EXT_START || 7001),
   sessionMinutes: Number(env.BROWSER_CALL_SESSION_MIN || 480),
   stun: env.BROWSER_CALL_STUN || 'stun:stun.l.google.com:19302',
+  // PHONE LINES (browsercall/lines.js): the two generated files, and what a device that registers to us must type in
+  linesPjsipFile: env.BROWSER_CALL_LINES_PJSIP_FILE || '/etc/asterisk/pjsip_tl_lines.conf',
+  linesDialplanFile: env.BROWSER_CALL_LINES_DIALPLAN_FILE || '/etc/asterisk/extensions_tl_lines.conf',
+  publicIp: env.BROWSER_CALL_PUBLIC_IP || '72.61.233.104',
+  registerPort: Number(env.BROWSER_CALL_REGISTER_PORT || 5160), // transport-gw (the office internet blocks UDP 5060)
 };
 const DEFAULTS = { mode: 'Off', testNumbers: '', kinds: 'admin,tl,recruiter,hr' };
 const MODES = ['Off', 'Test', 'Live'];

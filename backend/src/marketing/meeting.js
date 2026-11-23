@@ -353,7 +353,7 @@ async function call(u, id, b = {}) {
   if (ownNm.ok && ownNm.e164 === nm.e164) return { error: `The client's number (${core().maskMobile(nm.e164)}) is the same as the phone that rings first (${core().maskMobile(ownNm.e164)}): TeamLink would be calling you twice and the second call cannot connect. To test, put a different number in the client's WhatsApp number (open the row), for example a colleague's.`, status: 400 };
   const lines = require('../utils/callLines'); // eslint-disable-line global-require
   const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '') || null;
-  const out = await lines.startCall(b.line, { agent: ringFirst, to: r.phone, ref: `mkmeeting:${r.id}`.slice(0, 120), callbackBase: base });
+  const out = await lines.startCall(b.line, { agent: ringFirst, to: r.phone, ref: `mkmeeting:${r.id}`.slice(0, 120), callbackBase: base, user: u });
   const detail = out.ok ? `Call through TeamLink started on the ${String(out.line || b.line || 'api').toUpperCase()} line: ${own.name}'s phone (${core().maskMobile(ringFirst)}) rings first${out.sandbox ? ' (test server, no real call)' : ''}.` : `Call did not start: ${out.error}`;
   await logAudit({ userId: u.id, actorName: u.name, action: out.ok ? 'Omni-Channel AI Marketing: plans meeting, call to the client started' : 'Omni-Channel AI Marketing: plans meeting, call to the client failed', entity: TABLE, entityId: r.id, toValue: `${r.name || 'client'} (${core().maskMobile(nm.e164)}): ${detail}`.slice(0, 300) });
   if (!out.ok) return { error: out.error, status: out.notConfigured ? 409 : (out.invalid ? 400 : (out.transient ? 503 : 502)) };

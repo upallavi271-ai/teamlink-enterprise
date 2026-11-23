@@ -14,6 +14,7 @@ const S = require('../browsercall/schema');
 const CFG = require('../browsercall/config');
 const prov = require('../browsercall/provision');
 const events = require('../browsercall/events');
+const L = require('../browsercall/lines');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -23,6 +24,7 @@ const isAdmin = (u) => kindOf(u) === 'admin';
 const clip = (v, n) => String(v == null ? '' : v).slice(0, n);
 const fail = (res, code, error, extra = {}) => res.status(code).json({ error, ...extra });
 const LIVE = "('initiated','calling','ringing','connected')";
+const TEST_CALL = 'test-call'; // candidateId of an Admin's "Test call" on a line (no candidate)
 
 async function who(user) {
   const s = await CFG.load();
@@ -40,7 +42,9 @@ router.get('/status', async (req, res) => {
   try {
     const w = await who(req.user);
     const st = events.getStatus();
-    res.json({ canCall: w.ok, reason: w.ok ? null : w.reason, mode: w.s.mode, testMode: w.s.mode === 'Test', pbx: { eventsConnected: st.connected, error: isAdmin(req.user) ? st.error : undefined }, wssConfigured: !!CFG.ENV.wssUrl, isAdmin: isAdmin(req.user) });
+    // the lines this login may call on ("Call using" in the call bar); the built-in office Synway first
+    const lines = w.ok ? (await L.usableBy(req.user)).map((l) => ({ id: l.id, name: l.name, type: l.type, typeLabel: l.typeLabel, builtIn: !!l.builtIn })) : [];
+    res.json({ canCall: w.ok, reason: w.ok ? null : w.reason, mode: w.s.mode, testMode: w.s.mode === 'Test', pbx: { eventsConnected: st.connected, error: isAdmin(req.user) ? st.error : undefined }, wssConfigured: !!CFG.ENV.wssUrl, isAdmin: isAdmin(req.user), lines, defaultLine: lines.length ? lines[0].id : null });
   } catch (e) { fail(res, 500, 'Could not read the browser calling status.'); }
 });
 
@@ -69,20 +73,34 @@ router.post('/calls', async (req, res) => {
     if (!n.ok) return fail(res, 400, n.reason);
     if (n.cc !== '91') return fail(res, 400, 'Only Indian mobile numbers can be called from here.');
     if (w.s.mode === 'Test' && !w.s.testNumbers.includes(n.national)) return fail(res, 403, "Test mode: only the Admin's test phone numbers can be called.", { code: 'TEST_MODE' });
-    const ext = await S.one('SELECT "extension" FROM "BrowserCallExtension" WHERE "userId"=? AND "active"=1', req.user.id);
-    if (!ext) return fail(res, 409, 'Start the phone first (no extension for your login yet).');
-    const busy = await S.one(`SELECT "id" FROM "BrowserCall" WHERE "userId"=? AND "status" IN ${LIVE} AND "startAt">?`, req.user.id, new Date(Date.now() - 3600000).toISOString());
-    if (busy) return fail(res, 409, 'You already have a call in progress.');
-    const id = crypto.randomUUID(); const token = crypto.randomBytes(12).toString('hex'); const now = S.nowIso();
-    const appId = clip(req.body && req.body.applicationId, 60) || null;
-    await S.run('INSERT INTO "BrowserCall" ("id","token","candidateId","applicationId","userId","userName","toNumber","extension","direction","mode","status","startAt","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,?,\'outbound\',?,\'initiated\',?,?,?)',
-      id, token, cand.id, appId, req.user.id, clip(req.user.name, 80), n.national, ext.extension, w.s.mode, now, now, now);
-    await logAudit({ userId: req.user.id, action: 'Browser call started', entity: 'Candidate', entityId: cand.id, toValue: `ext ${ext.extension} -> ${core.maskMobile(n.national)}` });
-    res.json({ callId: id, token, number: n.national, candidate: { id: cand.id, name: cand.name } });
+    const placed = await place(req.user, w, { candidateId: cand.id, applicationId: clip(req.body && req.body.applicationId, 60) || null, number: n.national, lineId: req.body && req.body.lineId });
+    if (placed.error) return fail(res, placed.code, placed.error, placed.extra || {});
+    await logAudit({ userId: req.user.id, action: 'Browser call started', entity: 'Candidate', entityId: cand.id, toValue: `ext ${placed.extension} -> ${core.maskMobile(n.national)} on ${placed.line.name}` });
+    res.json({ callId: placed.id, token: placed.token, number: n.national, candidate: { id: cand.id, name: cand.name }, line: { id: placed.line.id, name: placed.line.name, header: placed.line.header } });
   } catch (e) { console.error('[browser-call] place:', e.message); fail(res, 500, 'Could not start the call.'); }
 });
 
-const shape = (r) => ({ id: r.id, candidateId: r.candidateId, userId: r.userId, userName: r.userName, number: r.toNumber, extension: r.extension, direction: r.direction, status: r.status, startAt: r.startAt, answerAt: r.answerAt, endAt: r.endAt, durationSec: r.durationSec, talkSec: r.talkSec, hangupCause: r.hangupCause, hangupReason: r.hangupReason, asteriskUniqueId: r.asteriskUniqueId });
+// the row of a call that is about to leave the browser. The SERVER decides the line (exists, switched on, this role may use it, not full)
+// and hands back the X-TL-Line header value; the dialplan only trusts a value that exists in [tl-line-route].
+async function place(user, w, { candidateId, applicationId, number, lineId }) {
+  const ln = await L.resolveForCall(user, lineId);
+  if (!ln.ok) return { code: ln.code, error: ln.reason, extra: { code: 'LINE' } };
+  const ext = await S.one('SELECT "extension" FROM "BrowserCallExtension" WHERE "userId"=? AND "active"=1', user.id);
+  if (!ext) return { code: 409, error: 'Start the phone first (no extension for your login yet).' };
+  const hourAgo = new Date(Date.now() - 3600000).toISOString();
+  const busy = await S.one(`SELECT "id" FROM "BrowserCall" WHERE "userId"=? AND "status" IN ${LIVE} AND "startAt">?`, user.id, hourAgo);
+  if (busy) return { code: 409, error: 'You already have a call in progress.' };
+  if (ln.line.maxCalls) {
+    const used = await S.one(`SELECT COUNT(*) AS n FROM "BrowserCall" WHERE "lineId"=? AND "status" IN ${LIVE} AND "startAt">?`, ln.line.id, hourAgo);
+    if (used && Number(used.n) >= ln.line.maxCalls) return { code: 409, error: `All ${ln.line.maxCalls} calls of the line "${ln.line.name}" are in use. Try again in a moment or pick another line.`, extra: { code: 'LINE_FULL' } };
+  }
+  const id = crypto.randomUUID(); const token = crypto.randomBytes(12).toString('hex'); const now = S.nowIso();
+  await S.run('INSERT INTO "BrowserCall" ("id","token","candidateId","applicationId","userId","userName","toNumber","extension","direction","mode","status","startAt","createdAt","updatedAt","lineId","lineName") VALUES (?,?,?,?,?,?,?,?,\'outbound\',?,\'initiated\',?,?,?,?,?)',
+    id, token, candidateId, applicationId, user.id, clip(user.name, 80), number, ext.extension, w.s.mode, now, now, now, ln.line.id, ln.line.name);
+  return { id, token, extension: ext.extension, line: ln.line };
+}
+
+const shape = (r) => ({ id: r.id, candidateId: r.candidateId, userId: r.userId, userName: r.userName, number: r.toNumber, extension: r.extension, direction: r.direction, status: r.status, startAt: r.startAt, answerAt: r.answerAt, endAt: r.endAt, durationSec: r.durationSec, talkSec: r.talkSec, hangupCause: r.hangupCause, hangupReason: r.hangupReason, asteriskUniqueId: r.asteriskUniqueId, lineId: r.lineId || null, lineName: r.lineName || null, testCall: r.candidateId === TEST_CALL });
 
 router.get('/calls/:id', async (req, res) => {
   const r = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', clip(req.params.id, 60));
@@ -119,7 +137,8 @@ router.get('/report', async (req, res) => {
     const ids = [...new Set([...byCand.map((r) => r.candidateId), ...rows.map((r) => r.candidateId)])];
     const names = await prisma.candidate.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
     const nm = new Map(names.map((c) => [c.id, c.name]));
-    res.json({ from: f, to: t, recruiters: byUser, candidates: byCand.map((r) => ({ ...r, name: nm.get(r.candidateId) || null })), calls: rows.map((r) => ({ ...shape(r), candidateName: nm.get(r.candidateId) || null })) });
+    const byLine = await S.all(`SELECT COALESCE("lineName", 'Office Synway (SIM)') AS "lineName", COUNT(*) AS total, SUM("answerAt" IS NOT NULL) AS connected, COALESCE(SUM("talkSec"),0) AS "talkSec" FROM "BrowserCall" WHERE ${where} GROUP BY 1 ORDER BY total DESC`, ...p);
+    res.json({ from: f, to: t, recruiters: byUser, lines: byLine, candidates: byCand.filter((r) => r.candidateId !== TEST_CALL).map((r) => ({ ...r, name: nm.get(r.candidateId) || null })), calls: rows.map((r) => ({ ...shape(r), candidateName: r.candidateId === TEST_CALL ? 'Test call' : (nm.get(r.candidateId) || null) })) });
   } catch (e) { console.error('[browser-call] report:', e.message); fail(res, 500, 'Could not build the report.'); }
 });
 
@@ -139,4 +158,79 @@ router.put('/admin/config', async (req, res) => {
   } catch (e) { fail(res, 400, e.message); }
 });
 
+// ---------------------------------------------------------------------------- PHONE LINES (Admin): Synway / Dinstar / ViciDial / other SIP by IP
+// Secrets never leave the server again after creation (a registering device's password is shown ONCE, in the create / new-password answer).
+const lineMeta = () => ({
+  types: Object.entries(L.TYPES).map(([id, t]) => ({ id, label: t.label, help: t.help })),
+  connects: Object.entries(L.CONNECTS).map(([id, label]) => ({ id, label })),
+  formats: Object.entries(L.FORMATS).map(([id, label]) => ({ id, label })),
+  allKinds: L.ALL_KINDS,
+  register: { server: CFG.ENV.publicIp, port: CFG.ENV.registerPort, transport: 'UDP' },
+});
+async function adminLines() {
+  const rows = (await L.rows()).map(L.shape);
+  const s = await CFG.load();
+  return { lines: [L.DEFAULT_LINE, ...rows], browserKinds: s.kinds, pbx: L.isPbx(), lastWrite: L.lastWrite(), ...lineMeta() };
+}
+const applied = (cfg) => (cfg.pbx ? (cfg.reloaded ? 'Asterisk updated and reloaded.' : (cfg.error || 'Asterisk was not reloaded.')) : cfg.note);
+
+router.get('/admin/lines', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try { return res.json(await adminLines()); } catch (e) { console.error('[browser-call] lines:', e.message); return fail(res, 500, 'Could not load the phone lines.'); }
+});
+router.get('/admin/lines/status', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try { const all = [L.DEFAULT_LINE, ...(await L.rows()).map(L.shape)]; return res.json(await L.statusAll(all)); } catch (e) { return fail(res, 500, 'Could not read the line states.'); }
+});
+router.post('/admin/lines', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try {
+    const out = await L.create(req.user, req.body || {});
+    if (out.error) return fail(res, out.status, out.error);
+    const cfg = await L.writeConfig();
+    await logAudit({ userId: req.user.id, action: 'Phone line added', entity: 'Integration', entityId: out.line.id, toValue: `${out.line.name} · ${out.line.typeLabel} · ${out.line.connectLabel}${out.line.host ? ` · ${out.line.host}${out.line.port ? `:${out.line.port}` : ''}` : ''}` });
+    res.set('Cache-Control', 'no-store');
+    return res.status(201).json({ line: out.line, setup: out.setup, config: cfg, message: `Saved. ${applied(cfg)}` });
+  } catch (e) { console.error('[browser-call] line add:', e.message); return fail(res, 500, 'Could not save the line.'); }
+});
+router.put('/admin/lines/:id', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  if (req.params.id === 'default') return fail(res, 400, 'The built-in office Synway line is managed by its own config on the phone system and cannot be edited here.');
+  try {
+    const out = await L.update(req.user, req.params.id, req.body || {});
+    if (out.error) return fail(res, out.status, out.error);
+    const cfg = await L.writeConfig();
+    const what = out.before.active !== out.line.active ? (out.line.active ? 'Phone line switched on' : 'Phone line switched off') : 'Phone line changed';
+    await logAudit({ userId: req.user.id, action: what, entity: 'Integration', entityId: out.line.id, fromValue: out.before.name, toValue: `${out.line.name} · ${out.line.typeLabel}${out.line.host ? ` · ${out.line.host}` : ''}` });
+    return res.json({ line: out.line, config: cfg, message: `Saved. ${applied(cfg)}` });
+  } catch (e) { console.error('[browser-call] line edit:', e.message); return fail(res, 500, 'Could not save the line.'); }
+});
+router.post('/admin/lines/:id/new-password', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try {
+    const out = await L.rotatePassword(req.params.id);
+    if (out.error) return fail(res, out.status, out.error);
+    const cfg = await L.writeConfig();
+    await logAudit({ userId: req.user.id, action: 'Phone line: new device password', entity: 'Integration', entityId: out.line.id, toValue: out.line.name });
+    res.set('Cache-Control', 'no-store');
+    return res.json({ line: out.line, setup: out.setup, config: cfg, message: `New password made. Type it into the device now: it is not shown again. ${applied(cfg)}` });
+  } catch (e) { return fail(res, 500, 'Could not make a new password.'); }
+});
+// "Test call" on a line: the Admin calls one of their own test numbers (Browser calling Test numbers), from the browser, on that line.
+router.post('/admin/lines/:id/test-call', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try {
+    const w = await who(req.user);
+    if (!w.ok) return fail(res, w.code, w.reason);
+    const num = String((req.body && req.body.number) || '').replace(/\D/g, '').slice(-10);
+    if (!w.s.testNumbers.length) return fail(res, 400, 'Add your own phone number to "Test numbers" above first.');
+    if (!w.s.testNumbers.includes(num)) return fail(res, 403, 'A test call only goes to one of the Test numbers above.', { code: 'TEST_MODE' });
+    const placed = await place(req.user, w, { candidateId: TEST_CALL, applicationId: null, number: num, lineId: req.params.id });
+    if (placed.error) return fail(res, placed.code, placed.error, placed.extra || {});
+    await logAudit({ userId: req.user.id, action: 'Phone line test call', entity: 'Integration', entityId: placed.line.id, toValue: `${placed.line.name} -> ${core.maskMobile(num)}` });
+    return res.json({ callId: placed.id, token: placed.token, number: num, candidate: { id: TEST_CALL, name: `Test call · ${placed.line.name}` }, line: { id: placed.line.id, name: placed.line.name, header: placed.line.header } });
+  } catch (e) { console.error('[browser-call] test call:', e.message); return fail(res, 500, 'Could not start the test call.'); }
+});
+
 module.exports = router;
+
