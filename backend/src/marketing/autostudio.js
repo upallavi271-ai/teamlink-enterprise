@@ -25,6 +25,7 @@ const hashtagsOf = (v) => (Array.isArray(v) ? v : String(v || '').split(/[\s,]+/
 async function projectOf(id) {
   const pid = S.clip(id, 40);
   if (!pid) return null;
+  try { return (await S.q('SELECT clientName, occasion, brief, draftPlan FROM "OmniMkProject" WHERE id = ? AND deletedAt IS NULL', pid))[0] || null; } catch { /* the starter-content column is not made yet */ }
   try { return (await S.q('SELECT clientName, occasion, brief FROM "OmniMkProject" WHERE id = ? AND deletedAt IS NULL', pid))[0] || null; } catch { return null; }
 }
 
@@ -121,10 +122,14 @@ async function plan(u, b = {}) {
   const language = LANGS.includes(b.language) ? b.language : (LANGS.includes(brand.language) ? brand.language : 'English');
   let r;
   let note = '';
+  // the project's own starter content (written when the project was made, shown on its page): used as it is when its scene count fits, so what the team read is what becomes the video
+  const stored = fromBrief && b.useDraft === true && project && project.draftPlan ? (() => { try { const d = JSON.parse(project.draftPlan); return d && Array.isArray(d.scenes) && d.scenes.length === n ? d : null; } catch { return null; } })() : null;
   try {
+    if (stored) { r = { result: stored, provider: 'standard', demo: false }; note = "This is the starter content TeamLink wrote from the client's brief. Change any words below if you like."; } else {
     const given = [mine.title ? `Title: ${mine.title}` : '', mine.heading ? `Heading: ${mine.heading}` : '', mine.cta ? `Call to action: ${mine.cta}` : '', mine.content ? `Content the person wrote (use it as it is, do not change a word): ${mine.content}` : ''].filter(Boolean).join('\n');
     // quickMs: the web server (nginx) gives up at 60 seconds, so the AI writer gets 40: the one small model here is shared with the WhatsApp assistant and can be busy for minutes
     r = await AI.generate({ user: u, module: 'studio', task: kind, system: systemFor(brand, who, kind, n, language, day, project), prompt: `Request: ${prompt}${given ? `\n${given}` : ''}`, json: true, demo: () => (fromBrief ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n }) : demoPlan(prompt, who, kind, n, day)), department: S.clip(b.department, 60) || undefined, quickMs: 40000 });
+    }
   } catch (e) {
     // a person's own limit (429) or a refused login (403) is shown as it is; anything else (the AI busy, off, or unreadable) must never stop a post: make the plain plan from the person's own words
     if (e.status === 429 || e.status === 403) return { error: e.message, status: e.status, code: e.code };

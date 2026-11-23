@@ -36,6 +36,16 @@ let pass = 0; const ok = (n) => { pass += 1; console.log(`PASS  ${n}`); };
   assert.ok(/skin|derm|clinic|doctor/i.test(r.plan.scenes[1].search) || /skin|derm|clinic|doctor|sunscreen/i.test(r.plan.scenes.map((s) => s.search).join(' '))); ok('the stock-photo search words match the client');
   assert.equal(r.plan.who, 'Dr Rao Skin Clinic'); assert.ok(r.plan.hashtags.length >= 1); ok('the client is the brand; hashtags are made');
 
+  // 2b. STARTER CONTENT is written the moment the project is made, shown on the project, and used when asked
+  assert.ok(p.draft && p.draft.headline && p.draft.scenes.length === 4 && p.draft.caption && p.draft.hashtags.length, JSON.stringify(p.draft)); ok('the starter content is written as soon as the project is created');
+  assert.ok(/skin|sunscreen|dermatolog/i.test(p.draft.scenes.join(' '))); ok('it is about the client (skin care for a skin clinic)');
+  const used = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 4, useDraft: true });
+  assert.ok(used.fromBrief && used.plan.headline === p.draft.headline && used.plan.scenes[1].caption === p.draft.scenes[1]); ok('the video is made from that same starter content when asked (what the team read is what is made)');
+  const other = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 5, useDraft: true });
+  assert.equal(other.plan.scenes.length, 5); ok('a different number of scenes is written fresh, never cut or stretched');
+  const edited = await P.update(admin, p.id, { clientName: 'Dr Rao Dental Care', occasion: 'Dental care month', brief: 'We are a dental clinic. Please make videos about brushing and check-ups for families.', contactName: 'Dr Rao', contactPhone: '+919000000002', source: p.source, deliverable: 'video' });
+  assert.ok(edited.project && /dental|brush|smile|teeth|check/i.test(edited.project.draft.scenes.join(' ')), JSON.stringify(edited).slice(0, 300)); ok('when the brief changes, the starter content follows it');
+
   // 3. what a person types still wins
   const r2 = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 4, prompt: 'Free skin check camp this Sunday at our clinic', heading: 'Free skin check camp' });
   assert.ok(!r2.fromBrief && r2.plan.headline === 'Free skin check camp'); ok('the person\'s own idea and heading still win over the brief');

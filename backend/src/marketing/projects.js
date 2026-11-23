@@ -42,6 +42,7 @@ async function ensure() {
     for (const col of ['"postConsentAt" DATETIME', '"postConsentBy" TEXT', '"postConsentIds" TEXT']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
     for (const col of ['"showcase" INTEGER NOT NULL DEFAULT 0', '"showcaseTitle" TEXT', '"showcaseClient" INTEGER NOT NULL DEFAULT 0']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
     // 2026-11-21: the client's last answer (approved / rejected, with the reason) so the project shows a clear stage, whichever way the answer came (page, WhatsApp button, email)
+    try { await S.run(`ALTER TABLE "${T}" ADD COLUMN "draftPlan" TEXT`); } catch { /* the column is there already */ }
     for (const col of ['"clientAnswer" TEXT', '"clientAnswerNote" TEXT', '"clientAnswerAt" DATETIME']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
     for (const col of ['"answer" TEXT', '"answerNote" TEXT', '"answerAt" DATETIME']) { try { await S.run(`ALTER TABLE "${TO}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop -- 2026-11-21: the client's answer per option (approved / rejected, with the reason)
     await AI.ensure(); okAt = Date.now(); return true;
@@ -112,7 +113,22 @@ async function countsFor(ids) { // -> Map projectId -> { images, videos }
   } catch { /* the pictures table is not made yet: no counts */ }
   return out;
 }
+// STARTER CONTENT (2026-11-23): the moment a client project exists (or its brief changes) TeamLink writes the content for it from the brief: the hook, the useful points, the call to action,
+// the caption and hashtags (marketing/briefContent.js: free, instant, no AI service; for a doctor it teaches patients something useful). It is kept with the project, shown on the project page, and
+// "Create from your content" in AI Video turns it into the video. Never throws: a project is never stopped by it.
+async function makeDraft(id, byName) {
+  try {
+    const r = (await S.q(`SELECT clientName, occasion, brief FROM "${T}" WHERE id = ?`, id))[0];
+    if (!r || String(r.brief || '').trim().length < 10) return null;
+    const plan = require('./briefContent').buildPlan({ who: r.clientName, occasion: r.occasion || '', brief: r.brief, n: 4 }); // eslint-disable-line global-require
+    await S.run(`UPDATE "${T}" SET draftPlan = ? WHERE id = ?`, JSON.stringify({ ...plan, madeAt: Date.now() }), id);
+    await event(id, 'draft', byName || 'TeamLink', 'Starter content written from the brief (open AI Video to make the video from it)');
+    return plan;
+  } catch { return null; }
+}
+const draftOf = (r) => { const d = parse(r.draftPlan, null); return d && d.headline ? { headline: d.headline, caption: d.caption, hashtags: d.hashtags || [], cta: d.cta, scenes: (d.scenes || []).map((x) => x.caption), kindOfClient: d.profile || '' } : null; };
 const short = (r, counts) => ({
+  draft: draftOf(r),
   stage: stageOf(r, counts), stageLabel: STAGES[stageOf(r, counts)] || r.status, counts: { images: counts ? S.num(counts.images) : 0, videos: counts ? S.num(counts.videos) : 0 },
   clientAnswer: r.clientAnswer || '', clientAnswerNote: r.clientAnswerNote || '', clientAnswerAt: S.iso(r.clientAnswerAt),
   id: r.id, title: r.title, clientName: r.clientName, contactName: r.contactName || '', contactEmail: r.contactEmail || '', contactPhone: r.contactPhone || '', source: r.source || 'other',
@@ -176,6 +192,7 @@ async function create(u, b = {}) {
     accept ? u.id : null, accept ? S.clip(u.name, 80) : null, u.id, S.clip(u.name, 80), accept ? now : null, accept ? S.clip(u.name, 80) : null, now, now);
   await event(id, 'request', u.name, `Request logged (${(SOURCES.find((s) => s.key === v.source) || {}).label || 'Other'}): ${v.occasion}`);
   if (accept) await event(id, 'accepted', u.name, 'Accepted: the team starts work');
+  await makeDraft(id, u.name);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client project started', entity: T, entityId: id, toValue: `${v.clientName}: ${v.occasion}; ${v.source}${accept ? '; accepted' : ''}` });
   return { project: (await shortRow(id)) };
 }
@@ -243,6 +260,7 @@ async function update(u, id, b = {}) {
   await S.run(`UPDATE "${T}" SET clientName = ?, contactName = ?, contactEmail = ?, contactPhone = ?, source = ?, occasion = ?, brief = ?, deliverable = ?, platforms = ?, handles = ?, caption = ?, dueDate = ?, logoData = ?, colors = ?, title = ?, updatedAt = ? WHERE id = ?`,
     v.clientName, v.contactName || null, v.contactEmail || null, v.contactPhone || null, v.source, v.occasion || null, v.brief || null, v.deliverable, JSON.stringify(v.platforms), v.handles || null, v.caption || null, v.dueDate || null, v.logoData, v.colors ? JSON.stringify(v.colors) : null,
     b.title !== undefined ? (S.clip(b.title, 120) || r.title) : r.title, Date.now(), r.id);
+  if ((v.brief || '') !== (r.brief || '') || (v.occasion || '') !== (r.occasion || '')) await makeDraft(r.id, u.name); // the brief changed: the starter content follows it
   return { project: (await shortRow(r.id)) };
 }
 
@@ -971,6 +989,7 @@ async function publicSubmitRequest(token, b = {}) {
   await S.run(`UPDATE "${T}" SET title = ?, contactName = ?, contactEmail = ?, contactPhone = ?, occasion = ?, brief = ?, deliverable = ?, platforms = ?, handles = ?, dueDate = ?, logoData = ?, colors = ?, source = ?, status = 'request', createdAt = ?, updatedAt = ? WHERE id = ? AND status = 'invited'`,
     `${r.clientName}: ${v.occasion}`, v.contactName, v.contactEmail || null, v.contactPhone || null, v.occasion, v.brief, v.deliverable, JSON.stringify(v.platforms), v.handles || null, v.dueDate || null, v.logoData, v.colors ? JSON.stringify(v.colors) : null, via, now, now, r.id);
   await event(r.id, 'request', `${v.contactName} (client: ${r.clientName})`, `Request sent by the client: ${v.occasion}`);
+  await makeDraft(r.id, 'TeamLink');
   await tellTeam(r, `New client request: ${S.clip(r.clientName, 60)}`, `${v.contactName} asked for "${S.clip(v.occasion, 80)}". Open Omni-Channel > AI Marketing > Client projects to accept it.`);
   await logAudit({ userId: r.createdById, actorName: `${v.contactName} (client: ${r.clientName})`, action: 'Omni-Channel AI Marketing: client sent a request', entity: T, entityId: r.id, toValue: v.occasion });
   // 2026-11-21: with "Make the first options by itself" on (AI usage), TeamLink starts the first picture options in the background (marketing/autocreate.js). The client's answer never waits for it.
@@ -1086,7 +1105,7 @@ async function portalStart(u) {
 }
 
 module.exports = {
-  portalList, portalStart,
+  portalList, portalStart, makeDraft,
   ensure, SOURCES, DELIVERABLES, PLATFORM_KEYS, PLATFORM_LABEL, create, invite, list, get, update, accept, decline, setOptions, send, cancelPresentation, extend, scheduled, posted, heldIds,
   publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, clientApprove, clientReject, clientRejectReason, publicReject, plainWhy, deliverHeld, sendApproval, tokenOf, idOfToken, mayWrite, tell, tellClient, notifyStatus,
   setShowcase, trackRecord, showcaseItems, publicWork, publicWorkFile, accounts, setAutopost, postNow, postTo, autoRun, autoSweep, startAutoPost,

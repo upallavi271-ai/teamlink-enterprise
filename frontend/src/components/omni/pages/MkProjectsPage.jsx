@@ -288,6 +288,16 @@ function Detail({ id, meta, onBack, onChanged }) {
                 <div style={{ marginTop: 6 }}><Tag>{(meta.sources.find((s) => s.key === p.source) || {}).label || 'Other'}</Tag> <Tag>{(meta.deliverables.find((x) => x.key === p.deliverable) || {}).label}</Tag> {p.platforms.map((k) => <Tag key={k} green>{(meta.platforms.find((x) => x.key === k) || {}).label || k}</Tag>)}</div>
                 <div style={{ marginTop: 8 }}><b>{p.occasion}</b></div>
                 <div style={{ whiteSpace: 'pre-wrap' }}>{p.brief}</div>
+                {p.draft ? (
+                  <details style={{ marginTop: 8, background: '#f1f8f4', border: '1px solid #cfe6d8', borderRadius: 8, padding: '6px 10px' }}>
+                    <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Starter content, written from the brief</summary>
+                    <div style={{ marginTop: 4 }}><b>{p.draft.headline}</b></div>
+                    <ol style={{ margin: '4px 0 4px 16px', padding: 0 }}>{p.draft.scenes.map((t, i) => <li key={i}>{t}</li>)}</ol>
+                    <div style={{ whiteSpace: 'pre-wrap', color: 'var(--muted)' }}>{p.draft.caption}</div>
+                    <div style={{ marginTop: 4 }}>{(p.draft.hashtags || []).join(' ')}</div>
+                    <div style={{ marginTop: 4, color: 'var(--muted)' }}>Open <b>AI Video</b> for this project and press Create: this becomes the video.</div>
+                  </details>
+                ) : null}
                 {p.handles ? <div style={{ marginTop: 6, color: 'var(--muted)', whiteSpace: 'pre-wrap' }}>Pages: {p.handles}</div> : null}
                 <div style={{ marginTop: 6, color: 'var(--muted)' }}>{p.dueDate ? `Needed by ${fmtDate(p.dueDate)} · ` : ''}Received {fmtDateTime(p.createdAt)}{p.ownerName ? ` · Owner: ${p.ownerName}` : ''}</div>
               </div>

@@ -46,6 +46,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const [note, setNote] = useState('');
   const [open, setOpen] = useState(true);
   const [more, setMore] = useState(false);
+  const [fresh, setFresh] = useState(false); // true: write the video fresh with the AI writer instead of using the project's starter content
   const [thumbs, setThumbs] = useState([]);
   const [kit, setKit] = useState({ colors: null, logo: null, brandName: '', footer: '' }); // the brand (or the client project's) colours, logo and name
   const [can, setCan] = useState({ stock: false, ai: false, aiFree: false });
@@ -58,7 +59,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
     omni.get('/gs/marketing/meta').then((m) => setCan((c) => ({ ...c, ai: !!(m.ai && m.ai.image && m.ai.image.ready && !m.ai.image.demo), aiFree: !!(m.ai && m.ai.image && m.ai.image.ready && m.ai.image.provider === 'cloudflare') }))).catch(() => {});
     const useBrand = () => Promise.all([omni.get('/gs/marketing/brand'), omni.get('/gs/marketing/brand/logo').catch(() => ({ logo: null }))]).then(([b, l]) => ({ colors: b.brand.colors, brandName: b.brand.brandName, footer: [b.brand.website, b.brand.contact].filter(Boolean).join('  ·  '), logoUrl: l.logo ? l.logo.dataUrl : '' }));
     const go = projectId
-      ? omni.get(`/gs/marketing/projects/${projectId}`).then(async (x) => { setBrief({ clientName: x.project.clientName, occasion: x.project.occasion, text: x.project.brief || '' }); const base = await useBrand().catch(() => ({ colors: null, brandName: '', footer: '', logoUrl: '' })); const p = x.project; return { colors: { ...(base.colors || {}), ...(p.colors && p.colors.primary ? { primary: p.colors.primary } : {}), ...(p.colors && p.colors.secondary ? { secondary: p.colors.secondary } : {}) }, brandName: p.clientName, footer: [(p.handles || '').split('\n')[0], p.contactPhone].filter(Boolean).join('  ·  '), logoUrl: x.logo || '' }; }).catch(() => useBrand())
+      ? omni.get(`/gs/marketing/projects/${projectId}`).then(async (x) => { setBrief({ clientName: x.project.clientName, occasion: x.project.occasion, text: x.project.brief || '', draft: x.project.draft || null }); const base = await useBrand().catch(() => ({ colors: null, brandName: '', footer: '', logoUrl: '' })); const p = x.project; return { colors: { ...(base.colors || {}), ...(p.colors && p.colors.primary ? { primary: p.colors.primary } : {}), ...(p.colors && p.colors.secondary ? { secondary: p.colors.secondary } : {}) }, brandName: p.clientName, footer: [(p.handles || '').split('\n')[0], p.contactPhone].filter(Boolean).join('  ·  '), logoUrl: x.logo || '' }; }).catch(() => useBrand())
       : useBrand();
     go.then(async (k) => { let logo = null; if (k.logoUrl) { try { logo = await loadImage(k.logoUrl); } catch { logo = null; } } setKit({ colors: k.colors, logo, brandName: k.brandName, footer: k.footer }); }).catch(() => {});
   }, [projectId]);
@@ -105,7 +106,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const create = async () => {
     stop.current = false; setErr(''); setNote(''); setPlan(null); setFlags([]); setThumbs([]); setPhase('plan');
     try {
-      const r = await omni.post('/gs/marketing/studio/plan', { prompt, title, heading, content, cta, kind, scenes, date, ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
+      const r = await omni.post('/gs/marketing/studio/plan', { prompt, title, heading, content, cta, kind, scenes, date, ...(projectId && brief && brief.draft && !fresh ? { useDraft: true } : {}), ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
       setPlan(r.plan); setFlags(r.flags || []);
       if (r.note) setNote(r.note); // the AI writer was busy: the server made the post from the person's own words
       setPhase('pics'); const ids = []; let useAi = look === 'ai' && can.ai; let anyDesigned = false;
@@ -151,6 +152,13 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           {brief && brief.text.trim() ? (
             <div style={{ background: '#eef6ff', border: '1px solid #c7ddf7', borderRadius: 10, padding: '9px 12px', margin: '0 0 10px', fontSize: 12 }}>
               <b>The client's brief ({brief.clientName}{brief.occasion ? `, ${brief.occasion}` : ''}):</b> {brief.text.length > 260 ? `${brief.text.slice(0, 260)}…` : brief.text}
+              {brief.draft ? (
+                <div style={{ marginTop: 6, padding: '6px 9px', background: '#fff', border: '1px solid #c7ddf7', borderRadius: 8 }}>
+                  <b>Starter content, already written for this project:</b> “{brief.draft.headline}”
+                  <ol style={{ margin: '4px 0 0 16px', padding: 0 }}>{brief.draft.scenes.map((t, i) => <li key={i}>{t}</li>)}</ol>
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, fontSize: 11 }}><input type="checkbox" checked={fresh} onChange={(e) => setFresh(e.target.checked)} />Write it fresh with the AI writer instead (slower, uses this brief's own details)</label>
+                </div>
+              ) : null}
               <div style={{ marginTop: 4, color: 'var(--muted)' }}>Leave the idea below empty and press <b>Create</b>: TeamLink reads this brief and writes the {isVideo ? 'video' : 'post'} for the client's own customers, with useful points, real photos and a call to action, free. Type your own words only if you want to change it.</div>
             </div>
           ) : null}
