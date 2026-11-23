@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 /**
- * The Job Portal uses TeamLink's Integrations by itself (utils/portalIntegrations.js + the bridge's whatsapp/primary door).
- *   Part 1: the bridge, against a SANDBOX portal (never the live one):  node scripts/portal-integrations-test.js [--portal http://127.0.0.1:4324] [--token testtoken]
- *   Part 2: the TeamLink side, with the portal replaced by a recorder (nothing is ever sent anywhere).
+ * The Job Portal uses TeamLink's Integrations by itself (utils/portalIntegrations.js + the bridge's doors).
+ *   Part 1 (only with --portal): the portal's doors, against a SANDBOX portal (never the live one):
+ *     node scripts/portal-integrations-test.js --portal http://127.0.0.1:4324 [--token testtoken]
+ *   Part 2: the TeamLink side, with the portal replaced by a recorder (nothing is ever sent anywhere). Since 2026-11-23 the portal ASKS for the
+ *     values (GET /api/public/job-portal/integrations, tested by scripts/integrations-bridge-test.js); TeamLink only nudges it, and no value is
+ *     ever in a nudge.
  */
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : d; };
-const PORTAL = arg('portal', 'http://127.0.0.1:4324');
+const PORTAL = arg('portal', '');
 const TOKEN = arg('token', 'testtoken');
 let failed = 0;
 const check = (name, ok, detail) => { if (!ok) failed += 1; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${!ok && detail !== undefined ? `  -> ${JSON.stringify(detail).slice(0, 300)}` : ''}`); };
@@ -18,7 +21,9 @@ const call = async (path, body, method = 'POST') => {
 
 (async () => {
   // ---- part 1: the portal's door ----------------------------------------------------------------------------------------------
-  let r = await call('/whatsapp/primary', undefined, 'GET');
+  let r;
+  if (PORTAL) {
+  r = await call('/whatsapp/primary', undefined, 'GET');
   check('the portal says whether it has a WhatsApp number (and never the token)', r.status === 200 && typeof r.json.configured === 'boolean' && !/token|key/i.test(Object.keys(r.json).join(',')), r);
   r = await call('/whatsapp/primary', { accessToken: '', phoneNumberId: '123456789' });
   check('a number without a token is refused', r.status === 422, r);
@@ -58,24 +63,27 @@ const call = async (path, body, method = 'POST') => {
   check('the email now uses the account TeamLink gave (it tried the server: failed, not "not configured")', sent1 && sent1.delivery && sent1.delivery.email && sent1.delivery.email !== 'not_configured', sent1);
   mock.close();
 
+  } else console.log('(part 1 skipped: no --portal sandbox given)');
+
   // ---- part 2: TeamLink's side ------------------------------------------------------------------------------------------------
   process.env.NODE_ENV = 'development';
   const stub = (rel, exports) => { const p = require.resolve(rel); require.cache[p] = { id: p, filename: p, loaded: true, exports }; };
-  const sent = [];
+  const nudges = [];
   let portalPid = 111;
-  let portalHas = false;
-  let emailHas = false;
-  let relayOn = false;
+  let state = { inUse: { email: true, sms: true, whatsapp: true, ai: true }, own: { email: false, sms: false, whatsapp: false } };
   stub('../src/utils/sandbox', { isSandbox: () => false });
   stub('../src/utils/jobPortalBridge', {
     portalFetch: async (p, o = {}) => {
-      if (/email\/config/.test(p)) { if (o.method === 'POST') { sent.push({ email: o.body }); emailHas = true; return { configured: true, host: o.body.host, pid: portalPid }; } return { configured: emailHas, pid: portalPid }; }
-      if (/sms\/relay/.test(p)) { if (o.method === 'POST') { sent.push({ relay: o.body }); relayOn = true; return { relay: true, pid: portalPid }; } return { relay: relayOn, pid: portalPid }; }
-      if (o.method === 'POST') { sent.push(o.body); portalHas = true; return { configured: true, phoneNumberId: `…${String(o.body.phoneNumberId).slice(-4)}`, pid: portalPid }; }
-      return { configured: portalHas, phoneNumberId: null, pid: portalPid };
+      if (/integrations\/refresh/.test(p)) {
+        if (o.method === 'POST') nudges.push(o.body);
+        return { pid: portalPid, registered: true, ...state, error: null };
+      }
+      if (/email\/config/.test(p)) return { configured: true, host: 'mail.zz.test', from: 'hr@zz.test', pid: portalPid };
+      if (/sms\/relay/.test(p)) return { relay: true, inUse: true, pid: portalPid };
+      return { configured: true, phoneNumberId: '…0111', pid: portalPid };
     },
   });
-  let cfg = { configured: true, token: 'SECRET-TOKEN-1', phoneId: '555000111', wabaId: 'W1', display: '+91 90000 00000', problems: [] };
+  let cfg = { configured: true, token: 'SECRET-TOKEN-1', phoneId: '555000111', wabaId: 'W1', display: '+91 90000 00000', language: 'en', templates: { bulk: 'zz_bulk', otp: '', link: 'zz_link' }, problems: [] };
   stub('../src/utils/waNumbers', { hasNumbers: async () => true, defaultConfig: async () => cfg, listRows: async () => [{ label: 'Company', displayNumber: '+91 90000 00000', isDefault: true, active: true, removedAt: null }] });
   stub('../src/utils/whatsappCloud', { legacyConfig: async () => ({ configured: false, reason: 'not set' }) });
   stub('../src/utils/socialAccounts', { PLATFORMS: ['facebook', 'instagram'], list: async () => ({ facebook: [{ name: 'Page A', username: null, status: 'Connected', isDefault: true, tokenEnc: 'SHOULD-NOT-LEAK' }], instagram: [] }) });
@@ -83,45 +91,36 @@ const call = async (path, body, method = 'POST') => {
   const emailCfg = { configured: true, host: 'mail.zz.test', port: 465, secure: true, user: 'hr@zz.test', pass: 'EMAIL-SECRET-1', fromAddress: 'hr@zz.test', fromName: 'ZZ HR' };
   stub('../src/utils/mailer', { emailConfig: async () => emailCfg });
   stub('../src/utils/smsGateway', { smsConfig: async () => ({ configured: true, provider: 'SMSGW' }) });
+  stub('../src/utils/aiAgent', { agentConfig: async () => ({ configured: true, apiKey: 'SECRET-AI-1' }) });
   const P = require('../src/utils/portalIntegrations');
 
-  let out = await P.pushWhatsapp();
-  check('TeamLink hands its default WhatsApp number to the portal', out.pushed === true && sent.length === 1 && sent[0].accessToken === 'SECRET-TOKEN-1' && sent[0].phoneNumberId === '555000111', { out, sent });
-  out = await P.pushWhatsapp();
-  check('nothing changed: it is not sent again', out.unchanged === true && sent.length === 1, { out, sent: sent.length });
-  portalPid = 222; portalHas = false;
-  out = await P.pushWhatsapp();
-  check('the portal started again (new process): it is sent again by itself', out.pushed === true && sent.length === 2, { out, sent: sent.length });
+  const v = await P.valuesForPortal();
+  check('the values for the portal: TeamLink SMTP, its default WhatsApp number with the bulk template, SMS by TeamLink, the AI key', v.email.pass === 'EMAIL-SECRET-1' && v.email.encryption === 'SSL' && v.whatsapp.accessToken === 'SECRET-TOKEN-1' && v.whatsapp.phoneNumberId === '555000111' && v.whatsapp.templateBulk === 'zz_bulk' && !('templateAgreement' in v.whatsapp) && v.sms.relay === true && v.ai.apiKey === 'SECRET-AI-1', v);
+  let out = await P.pushAll();
+  check('the portal is nudged to ask, and the nudge carries no value', out.whatsapp.pushed === true && out.email.inUse === true && nudges.length === 1 && JSON.stringify(nudges[0]) === '{}', { out, nudges });
+  out = await P.pushAll();
+  check('nothing changed: no second nudge', out.whatsapp.unchanged === true && nudges.length === 1, { out, n: nudges.length });
+  portalPid = 222;
+  out = await P.pushAll();
+  check('the portal started again (new process): nudged again by itself', out.email.pushed === true && nudges.length === 2, { out, n: nudges.length });
   cfg = { ...cfg, token: 'SECRET-TOKEN-2' };
-  out = await P.pushWhatsapp();
-  check('the token changed in Integrations: the portal gets the new one', out.pushed === true && sent.length === 3 && sent[2].accessToken === 'SECRET-TOKEN-2', { out, sent: sent.length });
-  cfg = { configured: false, reason: 'no token', problems: ['no token'] };
-  out = await P.pushWhatsapp();
-  check('with no working number in TeamLink nothing is sent (and nothing is invented)', out.configured === false && sent.length === 3, out);
-
-  // email and SMS
-  const before = sent.length;
-  let e1 = await P.pushEmail();
-  check('TeamLink hands its SMTP account to the portal', e1.pushed === true && sent.length === before + 1 && sent[before].email.host === 'mail.zz.test' && sent[before].email.pass === 'EMAIL-SECRET-1' && sent[before].email.encryption === 'SSL', { e1, last: sent[before] });
-  e1 = await P.pushEmail();
-  check('unchanged: the email account is not sent again', e1.unchanged === true && sent.length === before + 1, e1);
+  out = await P.pushAll();
+  check('the token changed in Integrations: nudged again', out.whatsapp.pushed === true && nudges.length === 3, { out, n: nudges.length });
   emailCfg.pass = 'EMAIL-SECRET-2';
-  e1 = await P.pushEmail();
-  check('the password changed in Integrations: the portal gets the new one', e1.pushed === true && sent[sent.length - 1].email.pass === 'EMAIL-SECRET-2', e1);
-  let s1 = await P.pushSms();
-  check('the portal is switched to TeamLink SMS', s1.pushed === true && s1.relay === true, s1);
-  s1 = await P.pushSms();
-  check('and not again while it stays on', s1.unchanged === true, s1);
-  portalPid = 333; emailHas = false; relayOn = false;
-  const all = await P.pushAll();
-  check('the portal started again: WhatsApp, email and SMS are all handed over again by itself', all.whatsapp.pushed === undefined || all.email.pushed === true, all);
-  check('(SMS too)', all.sms.pushed === true, all);
+  out = await P.pushAll();
+  check('the SMTP password changed: nudged again', out.email.pushed === true && nudges.length === 4, { out, n: nudges.length });
+  state = { inUse: { email: false, sms: true, whatsapp: true, ai: true }, own: { email: true, sms: false, whatsapp: false } };
+  out = await P.pushAll({ force: true });
+  check('a portal that connected its own Email says so: email is the portal own, not TeamLink', out.email.own === true && out.email.inUse === false && out.whatsapp.inUse === true, out);
+  cfg = { configured: false, reason: 'no token', problems: ['no token'] };
+  const v2 = await P.valuesForPortal();
+  check('with no working number in TeamLink no WhatsApp is handed over (and nothing is invented)', !v2.whatsapp && !!v2.email, v2);
 
   const snap = await P.snapshot();
   const text = JSON.stringify(snap);
   check('the screen data lists the WhatsApp numbers, the social accounts and the AI calling state', snap.whatsapp.numbers.length === 1 && snap.social[0].accounts[0].name === 'Page A' && snap.aiCalling.state === 'Connected', snap);
-  check('no token, no secret and no encrypted value is in what a screen gets', !/SECRET-TOKEN|SHOULD-NOT-LEAK|tokenEnc|EMAIL-SECRET/.test(text), text);
-  check('the screen data also has the email and SMS state', snap.email && snap.email.teamlink && snap.email.teamlink.host === 'mail.zz.test' && snap.sms && snap.sms.teamlink.provider === 'SMSGW', snap);
+  check('no token, no secret and no encrypted value is in what a screen gets', !/SECRET-TOKEN|SHOULD-NOT-LEAK|tokenEnc|EMAIL-SECRET|SECRET-AI/.test(text), text);
+  check('the screen data also has the email and SMS state, and which portal channels use TeamLink', snap.email && snap.email.teamlink && snap.email.teamlink.host === 'mail.zz.test' && snap.sms && snap.sms.teamlink.provider === 'SMSGW' && snap.bridge && snap.bridge.inUse && snap.bridge.inUse.whatsapp === true, snap);
 
   console.log(failed ? `\n${failed} FAILED` : '\nALL PASSED');
   process.exit(failed ? 1 : 0);

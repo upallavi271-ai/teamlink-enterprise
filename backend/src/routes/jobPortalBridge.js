@@ -117,6 +117,24 @@ router.post('/sms', async (req, res) => {
   }
 });
 
+// TEAMLINK'S INTEGRATIONS FOR THE PORTAL'S OWN SENDERS (2026-11-23, utils/portalIntegrations.js valuesForPortal). The portal process on THIS
+// machine asks here for the Email / WhatsApp / SMS / AI values of Administration > Integrations, for the channels its own administrator has
+// not connected. Answered ONLY to a request that comes from this machine itself (127.0.0.1 / ::1, with no proxy header - a browser's request
+// comes through nginx, which adds X-Forwarded-For / X-Real-IP) AND carries the bridge secret; anything else is a plain 404, as if the path did
+// not exist. Never cached, never logged.
+const LOCAL = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const PROXY_HEADERS = ['x-forwarded-for', 'x-real-ip', 'forwarded', 'x-forwarded-host', 'via', 'cf-connecting-ip', 'true-client-ip'];
+function localPortalOnly(req) {
+  if (!LOCAL.has(String((req.socket && req.socket.remoteAddress) || ''))) return false;
+  if (PROXY_HEADERS.some((h) => req.headers[h] !== undefined)) return false;
+  return bridge.secretMatches(req.get('x-job-portal-secret'));
+}
+router.get('/integrations', async (req, res) => {
+  if (!localPortalOnly(req)) return res.status(404).json({ error: 'Not found' });
+  res.set('Cache-Control', 'no-store');
+  return res.json(await require('../utils/portalIntegrations').valuesForPortal()); // eslint-disable-line global-require
+});
+
 // THE CANDIDATE LOGIN ALSO GOES BY RCS (founder 2026-11-10): the portal's SMS wrapper (job-portal-app/embed/rcs-login.mjs) hands each
 // message that carries a NEW temporary password here, server to server with the bridge secret. utils/rcsCandidateLogin.js sends it with
 // the approved RCS login template, once per account event, and never stores the password in plain text. Always 200 (see /sms above).

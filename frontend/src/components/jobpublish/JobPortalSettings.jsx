@@ -286,6 +286,7 @@ function ChannelCard({ c, onChanged, keyOk }) {
       </div>
       <p className="jp-note" style={{ margin: 0 }}>{def.desc}</p>
       {c.summary && <div className="nsm-hint">{c.summary}</div>}
+      {c.usingTeamlink && <div className="nsm-hint">{c.usingTeamlinkLabel || 'Using TeamLink Administration > Integrations'}. Connect here only if the Job Portal should use different settings.</div>}
       {c.usingEnvironment && <div className="nsm-hint">Not connected here: the Job Portal uses the settings in its server environment for this channel.</div>}
       {!c.secretsReadable && <div className="jp-err" style={{ margin: 0 }}>The saved secret cannot be read on the Job Portal server (INTEGRATION_SECRET_KEY missing or changed). Enter it again.</div>}
       {c.lastTest && <div className="nsm-hint">Last test {when(c.lastTest.at)}: {c.lastTest.ok ? '✅' : '❌'} {c.lastTest.message}</div>}

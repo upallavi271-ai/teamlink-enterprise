@@ -205,8 +205,8 @@ export const withoutStandIn = (body, standIn) => {
 /*
  * THE LOGIN ALSO GOES BY RCS (founder 2026-11-10): right after the SMS of a message that carries a NEW password, the same login is handed
  * to TeamLink's RCS sender (embed/rcs-login.mjs -> backend/src/utils/rcsCandidateLogin.js). Each send function is wrapped once (marked);
- * the SMS relay below replaces smsProvider.send and calls this again, so the login text and the RCS stay on (before, turning the relay on
- * after the portal had loaded dropped the login text).
+ * (2026-11-23) the SMS relay to TeamLink no longer replaces smsProvider.send: the portal's own send hands the message on (host-integrations.js),
+ * so this one wrapper keeps the login text and the RCS on whichever way the SMS leaves.
  */
 const rcsOpts = () => ({ api: teamlinkApi(), secret: pushSecret() });
 export function installLoginText(providers) {
@@ -580,8 +580,56 @@ async function pushRecent() {
  * the router
  * ------------------------------------------------------------------ */
 
+/*
+ * TEAMLINK'S INTEGRATIONS, ASKED FOR BY THE PORTAL (2026-11-23; backend routes/jobPortalBridge.js GET /api/public/job-portal/integrations,
+ * utils/portalIntegrations.js valuesForPortal). Only over this machine's loopback (TEAMLINK_API_URL must be 127.0.0.1 / localhost) with the
+ * bridge secret; the answer goes straight into the portal's memory (api/src/notify/host-integrations.js) and is never logged or stored.
+ */
+const hostApi = () => import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'host-integrations.js')).href);
+export function loopbackUrl(u) {
+  try {
+    const x = new URL(u);
+    return x.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(x.hostname);
+  } catch { return false; }
+}
+export async function pullTeamlinkIntegrations({ api = teamlinkApi(), secret = pushSecret(), fetchFn = fetch } = {}) {
+  if (!secret) throw new Error('JOB_PORTAL_PUSH_SECRET is not set');
+  if (!loopbackUrl(api)) throw new Error('TEAMLINK_API_URL is not this machine; TeamLink Integrations are only read over 127.0.0.1');
+  const res = await fetchFn(`${api}/api/public/job-portal/integrations`, { headers: { 'x-job-portal-secret': secret }, signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`TeamLink answered ${res.status}`);
+  return res.json();
+}
+/* one portal SMS, sent by TeamLink's SMS channel (its DLT templates, opt-out list and "proven" rule): backend POST /api/public/job-portal/sms */
+export async function relaySmsToTeamlink({ to, text, purpose }) {
+  if (!to) return { status: 'skipped_no_address', provider: 'teamlink-sms', error: 'no phone number' };
+  try {
+    const res2 = await fetch(`${teamlinkApi()}/api/public/job-portal/sms`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-job-portal-secret': pushSecret() },
+      body: JSON.stringify({ to, text, purpose: purpose || null }), signal: AbortSignal.timeout(20000),
+    });
+    const out = await res2.json().catch(() => ({}));
+    if (out && out.ok) return { status: 'sent', provider: 'teamlink-sms', ref: out.providerRef || null };
+    if (out && out.notConfigured) return { status: 'not_configured', provider: 'teamlink-sms', error: String(out.error || 'TeamLink SMS is not ready').slice(0, 300) };
+    return { status: 'failed', provider: 'teamlink-sms', error: String((out && out.error) || `HTTP ${res2.status}`).slice(0, 300) };
+  } catch (e) { return { status: 'failed', provider: 'teamlink-sms', error: String((e && e.message) || e).slice(0, 300) }; }
+}
+let integrationsRegistered = false;
+function registerTeamlinkIntegrations() {
+  if (integrationsRegistered) return;
+  integrationsRegistered = true;
+  hostApi().then((H) => {
+    H.useHostIntegrations({ load: () => pullTeamlinkIntegrations(), sendSms: relaySmsToTeamlink });
+    log('integrations: the portal uses TeamLink Administration > Integrations for the channels it has not connected itself');
+    // TeamLink may still be starting: ask now, and again a little later
+    H.refreshHostIntegrations({ force: true }).catch(() => {});
+    const again = setTimeout(() => { H.refreshHostIntegrations({ force: true }).catch(() => {}); }, 20000);
+    if (again.unref) again.unref();
+  }).catch((err) => log('integrations: not registered:', String((err && err.message) || err).slice(0, 160)));
+}
+
 export function teamlinkFrontRouter({ root, express }) {
   ROOT = root;
+  registerTeamlinkIntegrations();
   const r = express.Router();
   const json = express.json({ limit: '5mb' });
   const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -1044,14 +1092,10 @@ export function teamlinkFrontRouter({ root, express }) {
     const token = String(b.accessToken || '').trim();
     const phoneId = String(b.phoneNumberId || '').trim();
     if (!token || !/^\d{5,24}$/.test(phoneId)) return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: 'accessToken and a numeric phoneNumberId are required' } });
-    const cfg = (await import(pathToFileURL(join(ROOT, 'api', 'src', 'config.js')).href)).config;
-    cfg.whatsappApiKey = token;
-    cfg.whatsappPhoneId = phoneId;
-    process.env.WHATSAPP_API_KEY = token;
-    process.env.WHATSAPP_PHONE_ID = phoneId;
-    if (b.businessId) { cfg.waBusinessId = String(b.businessId).trim(); process.env.WHATSAPP_BUSINESS_ID = cfg.waBusinessId; }
-    try { (await import(pathToFileURL(join(ROOT, 'api', 'src', 'whatsapp', 'numbers.js')).href)).forgetNumberCredentials(); } catch { /* the cache is only 8 s */ }
-    log('whatsapp: the portal now sends from TeamLink\'s number');
+    /* (2026-11-23) into the TeamLink layer of the channel overlay, so a WhatsApp channel the portal administrator connected still wins */
+    const H = await hostApi();
+    H.setHostValues('whatsapp', { ...(H.hostValues().whatsapp || {}), accessToken: token, phoneNumberId: phoneId, businessId: b.businessId ? String(b.businessId).trim() : '' });
+    log('whatsapp: TeamLink\'s number handed over (used while the portal\'s own WhatsApp channel is not connected)');
     return res.json(await waInfo());
   }));
 
@@ -1079,49 +1123,47 @@ export function teamlinkFrontRouter({ root, express }) {
     const fromAddress = String(b.fromAddress || '').trim();
     const port = Number(b.port);
     if (!host || !fromAddress || !Number.isInteger(port) || port < 1 || port > 65535) return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: 'host, fromAddress and a port are required' } });
-    const cfgMod = await import(pathToFileURL(join(ROOT, 'api', 'src', 'config.js')).href);
-    const cfg = cfgMod.config;
+    /* (2026-11-23) into the TeamLink layer of the channel overlay, so an Email channel the portal administrator connected still wins */
     const enc = String(b.encryption || '').toUpperCase();
-    cfg.smtpHost = host;
-    cfg.smtpPort = port;
-    cfg.smtpSecure = b.secure === true;
-    cfg.smtpEncryption = enc === 'STARTTLS' ? 'STARTTLS' : enc === 'NONE' ? 'None' : 'SSL';
-    cfg.smtpUser = String(b.user || '').trim();
-    cfg.smtpPass = String(b.pass || '');
-    cfg.emailFrom = fromAddress;
-    cfg.emailFromName = String(b.fromName || '').trim();
-    try { (await import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'providers.js')).href)).resetSmtp(); } catch { /* the next send builds it again */ }
-    log('email: the portal now sends through TeamLink\'s SMTP account');
+    (await hostApi()).setHostValues('email', {
+      host, port, encryption: enc === 'STARTTLS' ? 'STARTTLS' : enc === 'NONE' ? 'None' : (b.secure === false && !enc ? 'STARTTLS' : 'SSL'),
+      user: String(b.user || '').trim(), pass: String(b.pass || ''), fromAddress, fromName: String(b.fromName || '').trim(),
+    });
+    log('email: TeamLink\'s SMTP account handed over (used while the portal\'s own Email channel is not connected)');
     return res.json(await emailInfo());
   }));
 
-  let smsRelay = false;
-  const relayInfo = () => ({ relay: smsRelay, pid: process.pid });
-  r.get('/api/integrations/teamlink/sms/relay', (_req, res) => res.json(relayInfo()));
+  /* (2026-11-23) the relay is now part of the channel overlay (api/src/notify/host-integrations.js): the portal's SMS sender hands a message
+     to TeamLink only while the portal's own SMS channel is not connected. This door stays for the older TeamLink tick. */
+  const relayInfo = async () => {
+    const H = await hostApi();
+    return { relay: !!(H.hostValues().sms && H.hostValues().sms.relay), inUse: H.hostSmsActive(), pid: process.pid };
+  };
+  r.get('/api/integrations/teamlink/sms/relay', wrap(async (_req, res) => res.json(await relayInfo())));
   r.post('/api/integrations/teamlink/sms/relay', wrap(async (req, res) => {
     if (!req.body || typeof req.body.on !== 'boolean') return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: 'on must be true or false' } });
-    const { smsProvider } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'providers.js')).href);
-    if (req.body.on && !smsRelay) {
-      smsRelay = true;
-      smsProvider.configured = () => true;
-      smsProvider.send = async ({ to, text, purpose }) => {
-        if (!to) return { status: 'skipped_no_address', provider: 'teamlink-sms', error: 'no phone number' };
-        try {
-          const res2 = await fetch(`${teamlinkApi()}/api/public/job-portal/sms`, {
-            method: 'POST', headers: { 'content-type': 'application/json', 'x-job-portal-secret': pushSecret() },
-            body: JSON.stringify({ to, text, purpose: purpose || null }), signal: AbortSignal.timeout(20000),
-          });
-          const out = await res2.json().catch(() => ({}));
-          if (out && out.ok) return { status: 'sent', provider: 'teamlink-sms', ref: out.providerRef || null };
-          if (out && out.notConfigured) return { status: 'not_configured', provider: 'teamlink-sms', error: String(out.error || 'TeamLink SMS is not ready').slice(0, 300) };
-          return { status: 'failed', provider: 'teamlink-sms', error: String((out && out.error) || `HTTP ${res2.status}`).slice(0, 300) };
-        } catch (e) { return { status: 'failed', provider: 'teamlink-sms', error: String((e && e.message) || e).slice(0, 300) }; }
-      };
-      // the login text + the RCS login wrap the new send too (installLoginText above)
-      try { installLoginText((await import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'providers.js')).href)).providers); } catch { /* the plain relay still sends */ }
-      log('sms: the portal now sends SMS through TeamLink\'s SMS channel');
-    }
-    return res.json(relayInfo());
+    (await hostApi()).setHostValues('sms', { relay: req.body.on });
+    return res.json(await relayInfo());
+  }));
+
+  /*
+   * TEAMLINK ADMINISTRATION > INTEGRATIONS FOR THE PORTAL'S CHANNELS (2026-11-23). The portal ASKS TeamLink (this machine only, the bridge
+   * secret) for its Email / WhatsApp / SMS / AI values - at start, when it sends (at most once a minute), every minute, and when TeamLink
+   * nudges it here. A channel the portal administrator connected in the portal's own Integrations always wins. Answers say which
+   * channels are in use, never a value.
+   *   GET  .../integrations/refresh   ->  { pid, registered, inUse: { email, sms, whatsapp, ai }, own: { email, sms, whatsapp }, error }
+   *   POST .../integrations/refresh   ->  the same, after asking TeamLink again
+   */
+  const bridgeState = async () => {
+    const H = await hostApi();
+    const inUse = Object.fromEntries(['email', 'sms', 'whatsapp', 'ai'].map((k) => [k, H.channelInUse(k)]));
+    const own = Object.fromEntries(['email', 'sms', 'whatsapp'].map((k) => [k, H.ownChannelConnected(k)]));
+    return { pid: process.pid, registered: H.hostRegistered(), inUse, own, error: H.hostLastError() };
+  };
+  r.get('/api/integrations/teamlink/integrations/refresh', wrap(async (_req, res) => res.json(await bridgeState())));
+  r.post('/api/integrations/teamlink/integrations/refresh', wrap(async (_req, res) => {
+    await (await hostApi()).refreshHostIntegrations({ force: true });
+    return res.json(await bridgeState());
   }));
 
   r.get('/api/integrations/teamlink/ping', (_req, res) => res.json({ ok: true, host: 'teamlink-embed', pid: process.pid }));

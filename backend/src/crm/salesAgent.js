@@ -191,7 +191,7 @@ function guard(reply, st, channel, meetingLink) {
 async function send(channel, lead, body, subject, deps) {
   if (channel === 'Email') {
     if (!lead.email) return { ok: false, error: 'no email on the lead' };
-    const mail = deps.sendMail || ((m) => require('../utils/mailer').sendMail({ useEmployeeFrom: false, fromName: 'TeamLink', ...m })); // eslint-disable-line global-require
+    const mail = deps.sendMail || ((m) => require('../utils/mailer').sendMail({ useEmployeeFrom: false, ...m })); // eslint-disable-line global-require
     const subj = /^re:/i.test(String(subject || '')) ? subject : `Re: ${subject || 'Your message to TeamLink'}`;
     return mail({ to: lead.email, subject: S.clip(subj, 180), text: body });
   }
@@ -200,7 +200,8 @@ async function send(channel, lead, body, subject, deps) {
     const messaging = require('../utils/messaging'); // eslint-disable-line global-require
     const m = require('../utils/messagingCore').normalizeMobile(lead.phone); // eslint-disable-line global-require
     if (!m.ok) return { ok: false, error: 'the phone number is not usable' };
-    return messaging.send('SMS', { to: m.e164, kind: 'text', text: body, vars: [body] });
+    // 'bulk' = the SMS channel's Bulk / General DLT template (Administration > Integrations > SMS) and its STOP list; 'text' matched no template
+    return messaging.send('SMS', { to: m.e164, kind: 'bulk', text: body, vars: [body] });
   }
   if (deps.sendWa) return deps.sendWa(lead.phone, body);
   // the WhatsApp inbox's own sender: the 24-hour window, opt-outs and the chat screen are all kept (omniwa/agent.js)
@@ -263,13 +264,9 @@ async function respond({ channel, lead, message, subject }, { deps = {}, now = D
   let out;
   try {
     // Claude at low effort (short replies, quick), with the refusal fallback; any failure answers with the local model instead
-    const chat = deps.chat || (async (sys, msgs) => {
-      const AI = require('../utils/ai'); // eslint-disable-line global-require
-      if (st.useClaude !== false) {
-        try { return await AI.chatJson(sys, msgs, { provider: 'claude', model: 'claude-opus-5-5', effort: 'low', fallbacks: true, timeoutMs: 20000, maxTokens: 500 }); } catch (e) { /* the local model below */ }
-      }
-      return AI.chatJson(sys, msgs);
-    });
+    // (2026-11-23) the same order as the AI meeting (crm/productSales.js askAi): Claude (Integrations > AI Assistant, unless "Use Claude" is off),
+    // then the fast AI (Integrations > Fast AI: Groq / Gemini), then the local model - it used to jump from Claude straight to the local model
+    const chat = deps.chat || ((sys, msgs) => require('./productSales').askAi(sys, msgs, 'reply')); // eslint-disable-line global-require
     const msgs = await history(lead.id);
     if (!msgs.length || msgs[msgs.length - 1].role !== 'user') msgs.push({ role: 'user', content: S.clip(message, 1500) });
     out = await chat(prompt(st, lead, channel, lead.ownerName, { product, booked: booked ? whenOf(booked) : null }), msgs);

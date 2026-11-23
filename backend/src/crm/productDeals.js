@@ -119,7 +119,7 @@ async function onNewLead(lead, { products, text } = {}, deps = {}) {
     const CMP = require('./campaigns'); // eslint-disable-line global-require
     const sent = [];
     if (lead.email && !(await CMP.optedOut('email', lead.email).catch(() => false))) {
-      const mail = deps.sendMail || ((m) => require('../utils/mailer').sendMail({ useEmployeeFrom: false, fromName: 'TeamLink', ...m })); // eslint-disable-line global-require
+      const mail = deps.sendMail || ((m) => require('../utils/mailer').sendMail({ useEmployeeFrom: false, ...m })); // eslint-disable-line global-require
       const r = await mail({ to: lead.email, subject: `Your ${names} demo`, text: `${text2}\n\nTeamLink` }).catch((e) => ({ ok: false, error: e.message }));
       if (r && r.ok !== false) sent.push('email');
     }
@@ -200,7 +200,7 @@ async function quoteByStaff(user, id, body = {}) {
   let sent = null;
   if (body.channel === 'email') {
     if (!row.email) return S.fail(400, 'This lead has no email address.');
-    const r = await require('../utils/mailer').sendMail({ to: row.email, subject: `Your TeamLink quote ${out.quote.number}`, text: `${text}\n\nTeamLink`, useEmployeeFrom: false, fromName: 'TeamLink' }).catch((e) => ({ ok: false, error: e.message })); // eslint-disable-line global-require
+    const r = await require('../utils/mailer').sendMail({ to: row.email, subject: `Your TeamLink quote ${out.quote.number}`, text: `${text}\n\nTeamLink`, useEmployeeFrom: false }).catch((e) => ({ ok: false, error: e.message })); // eslint-disable-line global-require
     if (!r || r.ok === false) return S.fail(502, `The quote is made but the email could not be sent: ${(r && r.error) || 'mail is not set up'}. Copy the link instead.`);
     sent = 'email';
   }
@@ -326,7 +326,7 @@ async function book(token, body = {}) {
   await S.insert('CrmTask', { id: S.newId('task'), title: `Call ${lead.contactName || lead.company} at ${time} - booked by the lead${phone ? ` (on ${phone})` : ''}`, dueDate: day.day, dueTime: time, status: 'Open', leadId: lead.id, accountId: lead.accountId || null, dealId: lead.dealId || null, ownerId: lead.ownerId || null, ownerName: lead.ownerName || null, createdById: lead.ownerId || null, createdAt: now, updatedAt: now });
   await PS.note(lead.id, lead.accountId, 'note', `Booked a call with a person: ${day.label} ${time}`, phone ? `Call on ${phone}` : null);
   await PS.bellOwner(lead, `📅 ${lead.company || 'A lead'} booked a call`, `${day.label} at ${time}${phone ? ` on ${phone}` : ''}.`);
-  if (lead.email) await require('../utils/mailer').sendMail({ to: lead.email, subject: `Your call with TeamLink: ${day.label} ${time}`, text: `Hello${lead.contactName ? ` ${String(lead.contactName).split(' ')[0]}` : ''},\n\nYour call with our team is booked for ${day.label} at ${time} (India time). We will call you${phone ? ` on ${phone}` : ''}.\n\nTeamLink`, useEmployeeFrom: false, fromName: 'TeamLink' }).catch(() => null); // eslint-disable-line global-require
+  if (lead.email) await require('../utils/mailer').sendMail({ to: lead.email, subject: `Your call with TeamLink: ${day.label} ${time}`, text: `Hello${lead.contactName ? ` ${String(lead.contactName).split(' ')[0]}` : ''},\n\nYour call with our team is booked for ${day.label} at ${time} (India time). We will call you${phone ? ` on ${phone}` : ''}.\n\nTeamLink`, useEmployeeFrom: false }).catch(() => null); // eslint-disable-line global-require
   return { ok: true, day: day.label, time };
 }
 

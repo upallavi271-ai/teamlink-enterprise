@@ -327,7 +327,7 @@ async function demoLink(user, id, body = {}) {
   let sent = null;
   if (channel === 'email') {
     if (!row.email) return S.fail(400, 'This lead has no email address.');
-    const r = await require('../utils/mailer').sendMail({ to: row.email, subject: `Your ${names} demo`, text, useEmployeeFrom: false, fromName: 'TeamLink' }).catch((e) => ({ ok: false, error: e.message })); // eslint-disable-line global-require
+    const r = await require('../utils/mailer').sendMail({ to: row.email, subject: `Your ${names} demo`, text, useEmployeeFrom: false }).catch((e) => ({ ok: false, error: e.message })); // eslint-disable-line global-require
     sent = r && r.ok !== false ? 'email' : null;
     if (!sent) return S.fail(502, `The email could not be sent: ${(r && r.error) || 'mail is not set up'}.`);
   }
@@ -482,7 +482,10 @@ function readQuestion(q, prods) {
 // The AI meeting asks Claude itself (founder 2026-11-17: "Yes, use Claude" - fast, natural Telugu) while the rest of TeamLink stays on the
 // local model; CRM > Automatic > AI assistant > "Use Claude" turns it off. Answers at low effort (short, quick), the summary at medium.
 // Any Claude failure (no key / credit, an error, more than 20 s, a refusal) answers that turn another way, so a meeting never stops.
-const CLAUDE = { model: 'claude-opus-5-5', answer: { effort: 'low', timeoutMs: 20000, maxTokens: 400 }, summary: { effort: 'medium', timeoutMs: 60000, maxTokens: 600 } };
+// 2026-11-23 (founder: "use what is in Administration > Integrations"): `reply` is the AI assistant's lead reply (crm/salesAgent.js) and `page` the
+// product page draft from a demo video's narration (crm/productVideo.js); both used to skip the fast AI and wait for the local model.
+const CLAUDE = { model: 'claude-opus-5-5', answer: { effort: 'low', timeoutMs: 20000, maxTokens: 400 }, summary: { effort: 'medium', timeoutMs: 60000, maxTokens: 600 },
+  reply: { effort: 'low', timeoutMs: 20000, maxTokens: 500 }, page: { effort: 'medium', timeoutMs: 120000, maxTokens: 1400, localTimeoutMs: 6 * 60000 } };
 async function askAi(system, history, kind, meta = {}, { localOk = true } = {}) {
   const AI = require('../utils/ai'); // eslint-disable-line global-require
   const st = await require('./salesAgent').load().catch(() => ({ useClaude: true })); // eslint-disable-line global-require
@@ -510,7 +513,7 @@ async function askAi(system, history, kind, meta = {}, { localOk = true } = {}) 
     if (!failure) failure = e;
   }
   if (!localOk && failure) throw failure;
-  return AI.chatJson(system, history, { maxTokens: c.maxTokens, meta });
+  return AI.chatJson(system, history, { maxTokens: c.maxTokens, meta, ...(c.localTimeoutMs ? { timeoutMs: c.localTimeoutMs } : {}) });
 }
 const LANGS = { 'en-IN': 'English', 'te-IN': 'Telugu', 'hi-IN': 'Hindi', 'ta-IN': 'Tamil', 'kn-IN': 'Kannada', 'ml-IN': 'Malayalam', 'mr-IN': 'Marathi', 'bn-IN': 'Bengali', 'gu-IN': 'Gujarati' };
 async function meetingSay(token, text, lang) {
@@ -712,5 +715,5 @@ async function onWon(dealId) {
 module.exports = {
   PRODUCT_KEYS, ensure, products, saveProduct, setLeadProducts, demoLink, demoForToken, demoEvent, meetingLink, meetingFor, meetingSay, meetingEnd,
   meetingsOf, onWon, videoPathOf, setVideoFile, staffVideoLink, productKeys, addProduct, addExtraVideo, removeExtraVideo, extraPathOf, readToken, makeToken, VIDEO_DIR, guardReply, keysOf,
-  siteBase, note, bellOwner, followUp, leadFor, LANGS, faqMatch, knowledge, guardClaims, isPriceQuestion, priceAnswer, gstOk, readQuestion, qaOf, listLike, fixWrittenText,
+  siteBase, note, bellOwner, followUp, leadFor, askAi, LANGS, faqMatch, knowledge, guardClaims, isPriceQuestion, priceAnswer, gstOk, readQuestion, qaOf, listLike, fixWrittenText,
 };

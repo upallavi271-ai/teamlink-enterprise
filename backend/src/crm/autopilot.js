@@ -121,7 +121,7 @@ async function quietNow(now) {
   const R = require('../utils/omniRules');
   return R.inQuiet(await R.settings(), new Date(now));
 }
-const realMail = (deps) => deps.sendMail || ((m) => require('../utils/mailer').sendMail({ useEmployeeFrom: false, fromName: 'TeamLink', ...m })); // eslint-disable-line global-require
+const realMail = (deps) => deps.sendMail || ((m) => require('../utils/mailer').sendMail({ useEmployeeFrom: false, ...m })); // eslint-disable-line global-require
 async function sendSms(phone, text, deps) {
   if (deps.sendSms) return deps.sendSms(phone, text);
   const messaging = require('../utils/messaging'); // eslint-disable-line global-require
