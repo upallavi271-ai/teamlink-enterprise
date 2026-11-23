@@ -85,6 +85,10 @@ function cleanSettings(b, cur) {
   return { value: next };
 }
 async function saveSettings(v) { await write(SETTINGS_KEY, v); }
+// the social accounts remembered per client for posting by itself (2026-11-21; marketing/projects.js armPosting): { '<c:clientId | n:company name>': { accountIds[], by, at } }
+const CLIENT_ACCOUNTS_KEY = 'omni.mk.clientAccounts';
+async function getClientAccounts() { const v = await read(CLIENT_ACCOUNTS_KEY); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
+async function saveClientAccounts(v) { await write(CLIENT_ACCOUNTS_KEY, v); }
 
 const HEX = /^#[0-9a-f]{6}$/i;
 const colorsOf = (c) => {
@@ -168,4 +172,4 @@ function cleanLogo(b) {
 async function saveLogo(v) { await write(LOGO_KEY, v); }
 async function removeLogo() { try { await prisma.appSetting.delete({ where: { key: LOGO_KEY } }); } catch { /* nothing to remove */ } }
 
-module.exports = { getSettings, cleanSettings, saveSettings, clientNeeded, CLIENT_KINDS, getBrand, cleanBrand, saveBrand, getLogo, cleanLogo, saveLogo, removeLogo, DEFAULT_SETTINGS, LANGUAGES, EMOJI, LIMITS, clip };
+module.exports = { getSettings, cleanSettings, saveSettings, getClientAccounts, saveClientAccounts, clientNeeded, CLIENT_KINDS, getBrand, cleanBrand, saveBrand, getLogo, cleanLogo, saveLogo, removeLogo, DEFAULT_SETTINGS, LANGUAGES, EMOJI, LIMITS, clip };

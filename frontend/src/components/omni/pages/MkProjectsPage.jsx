@@ -232,10 +232,13 @@ function Detail({ id, meta, onBack, onChanged }) {
   const [sendF, setSendF] = useState({ days: 14, message: '' });
   const [reason, setReason] = useState('');
   const [postUrl, setPostUrl] = useState('');
+  const [autoSel, setAutoSel] = useState(null); // the accounts ticked in the Send box for posting by itself (null = untouched: the ones remembered for this client)
+  const [remember, setRemember] = useState(false);
 
   const load = useCallback(() => omni.get(`/gs/marketing/projects/${id}`).then((x) => {
     setD(x); setCaption(x.project.caption || '');
     setStaged(x.options.filter((o) => o.stage === 'staged').map((o) => ({ itemId: o.itemId, label: o.label, item: o.item })));
+    if (x.project.status === 'working') omni.get('/gs/marketing/projects/accounts').then(setAccts).catch(() => setAccts({ allowed: false, accounts: [] })); // the Send box lists the client's accounts
     if (['approved', 'posted'].includes(x.project.status)) {
       omni.get('/gs/marketing/images', { status: 'approved' }).then((l) => setApprovedList(l.items || [])).catch(() => setApprovedList([]));
       omni.get('/gs/marketing/projects/accounts').then(setAccts).catch(() => setAccts({ allowed: false, accounts: [] }));
@@ -455,10 +458,28 @@ function Detail({ id, meta, onBack, onChanged }) {
       {modal === 'edit' ? <RequestModal meta={meta} project={p} onClose={() => setModal('')} onDone={() => { setModal(''); onChanged(); load(); }} toast={toast} /> : null}
       {modal === 'pick' ? <PickModal project={p} taken={staged.map((s) => s.itemId)} onClose={() => setModal('')} onPick={async (ids) => { setModal(''); await saveStaged([...staged, ...ids.map((itemId) => ({ itemId, label: '' }))].map((s, i) => ({ ...s, label: s.label || `Option ${String.fromCharCode(65 + i)}` }))); }} /> : null}
       {modal === 'send' ? (
-        <GsModal title="Send the options to the client" sub={`${staged.length} option${staged.length === 1 ? '' : 's'}. Each goes to the client as the real video or picture (WhatsApp and email) with Approve and Reject buttons. Their answer comes back here: Approved or Rejected, with the reason.`} width={520} onClose={() => setModal('')} foot={<><Btn onClick={() => setModal('')}>Cancel</Btn><Btn primary disabled={!!busy} onClick={async () => { const r = await act('send', { days: sendF.days, message: sendF.message, caption }, 'Sent'); if (r) setModal(''); }}>{busy === 'send' ? 'Sending…' : 'Show them to the client'}</Btn></>}>
+        <GsModal title="Send the options to the client" sub={`${staged.length} option${staged.length === 1 ? '' : 's'}. Each goes to the client as the real video or picture (WhatsApp and email) with Approve and Reject buttons. Their answer comes back here: Approved or Rejected, with the reason.`} width={520} onClose={() => setModal('')} foot={<><Btn onClick={() => setModal('')}>Cancel</Btn><Btn primary disabled={!!busy} onClick={async () => { const r = await act('send', { days: sendF.days, message: sendF.message, caption, ...(accts.allowed && autoSel ? { autoAccountIds: autoSel, remember } : {}) }, 'Sent'); if (r) { setModal(''); setAutoSel(null); setRemember(false); } }}>{busy === 'send' ? 'Sending…' : 'Show them to the client'}</Btn></>}>
           <div className="form-grid">
             <Field label="A MESSAGE FOR THE CLIENT (OPTIONAL)" full><textarea style={{ minHeight: 70 }} value={sendF.message} maxLength={500} onChange={(e) => setSendF({ ...sendF, message: e.target.value })} placeholder="For example: Here are three festive options. Tell us which one you like." /></Field>
             <Field label="THE LINK WORKS FOR"><select value={sendF.days} onChange={(e) => setSendF({ ...sendF, days: Number(e.target.value) })}>{[3, 7, 14, 30].map((n) => <option key={n} value={n}>{n} days</option>)}</select></Field>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 4 }}>POST BY ITSELF WHEN THE CLIENT APPROVES</div>
+            {!accts.allowed ? <small style={{ color: 'var(--muted)' }}>Posting by itself is switched off. An Admin can allow it in AI Marketing &gt; AI usage.</small> : accts.accounts.length === 0 ? <small style={{ color: 'var(--muted)' }}>No Facebook, Instagram or X account is connected yet (Administration &gt; Integrations &gt; Social Media).</small> : (
+              <>
+                {accts.accounts.map((a) => {
+                  const cur = autoSel || d.clientAccountIds || [];
+                  return (
+                    <label key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '3px 0' }}>
+                      <input type="checkbox" checked={cur.includes(a.id)} disabled={a.status === 'Expired'} onChange={() => setAutoSel(cur.includes(a.id) ? cur.filter((x) => x !== a.id) : [...cur, a.id])} />
+                      <span><b>{a.name}</b> · {a.platform === 'instagram' ? 'Instagram' : a.platform === 'x' ? 'X' : 'Facebook'}{a.status !== 'Connected' ? ` · ${a.status}` : ''}</span>
+                    </label>
+                  );
+                })}
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '6px 0 2px' }}><input type="checkbox" checked={remember} disabled={autoSel === null} onChange={(e) => setRemember(e.target.checked)} /> <span>Remember these accounts for this client's next projects (untick all and remember to clear them)</span></label>
+                <small style={{ display: 'block', color: 'var(--muted)', marginTop: 4 }}>Nothing is posted until the client approves. If the client adds suggestions with their choice, nothing is posted by itself: you read them and press Post.</small>
+              </>
+            )}
           </div>
         </GsModal>
       ) : null}

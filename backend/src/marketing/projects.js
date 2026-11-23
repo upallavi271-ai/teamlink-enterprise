@@ -227,7 +227,7 @@ async function get(u, id) {
   const events = (await S.q(`SELECT * FROM "${TE}" WHERE projectId = ? ORDER BY at ASC`, r.id)).map((e) => ({ id: e.id, at: S.iso(e.at), kind: e.kind, byName: e.byName || '', text: e.text || '' }));
   const made = (await S.q('SELECT id, title, mime, aspect, status, style FROM "OmniMkImage" WHERE projectId = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT 60', r.id).catch(() => [])).map((x) => ({ id: x.id, title: x.title, kind: /^video\//.test(x.mime || '') ? 'video' : 'image', aspect: x.aspect || '1:1', status: x.status, style: x.style || '' }));
   const cur = S.num(r.round);
-  return { project: short(r, (await countsFor([r.id])).get(r.id)), logo: r.logoData || null, options: withItem.map((o) => ({ ...o, stage: o.round === cur + 1 ? 'staged' : o.round === cur ? 'presented' : 'earlier' })), events, made };
+  return { project: short(r, (await countsFor([r.id])).get(r.id)), logo: r.logoData || null, options: withItem.map((o) => ({ ...o, stage: o.round === cur + 1 ? 'staged' : o.round === cur ? 'presented' : 'earlier' })), events, made, clientAccountIds: await rememberedFor(r) };
 }
 async function update(u, id, b = {}) {
   const g = await getVisible(u, id); if (g.error) return g;
@@ -461,6 +461,7 @@ async function send(u, id, b = {}, base = '') {
   await S.run(`UPDATE "${T}" SET status = 'awaiting_client', clientAnswer = NULL, clientAnswerNote = NULL, clientAnswerAt = NULL, round = ?, linkExpiresAt = ?, clientMessage = ?, caption = ?, updatedAt = ? WHERE id = ?`, round, now + days * DAY, message || null, b.caption !== undefined ? (S.clip(b.caption, 3000) || null) : r.caption, now, r.id);
   await event(r.id, 'options_sent', u.name, `${opts.length} option${opts.length === 1 ? '' : 's'} sent to the client (round ${round})${message ? `: ${message}` : ''}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: project options sent to the client', entity: T, entityId: r.id, toValue: `${r.clientName}: ${opts.length} option(s); link valid ${days} day(s)` });
+  await armPosting(u, r, b || {}, base); // 2026-11-21: posting by itself after the client approves (the remembered accounts of this client, or the ones ticked in the Send box)
   const told = await sendApproval(await row(r.id), { by: u, base, numberId: b && b.numberId, ways: Array.isArray(b && b.ways) && b.ways.length ? b.ways : null });
   return { ok: told.sent.some((x) => x.ok) ? `The options are with the client. ${told.note}` : `The options are with the client. ${told.note || 'Share the private link.'}${told.note ? ' Share the private link yourself.' : ''}`, told: told.sent, project: (await shortRow(r.id)) };
 }
@@ -678,6 +679,33 @@ async function setAutopost(u, id, b = {}, base = '') {
   await event(r.id, 'autopost_on', u.name, `Will be posted automatically on ${targets.map((t) => `${t.name} (${t.platform === 'instagram' ? 'Instagram' : 'Facebook'})`).join(', ')}${at ? ` at ${new Date(at + 19800000).toISOString().slice(0, 16).replace('T', ' ')} IST` : ' as soon as the client approves'}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: automatic posting set for a client project', entity: T, entityId: r.id, toValue: `${r.clientName}: ${targets.map((t) => t.name).join(', ')}${at ? `; ${new Date(at).toISOString()}` : ''}` });
   return { ok: 'Done. It will be posted automatically after the client approves.', project: (await shortRow(r.id)) };
+}
+// ---- POSTING BY ITSELF, FOR EVERY PROJECT OF A CLIENT (2026-11-21) -------------------------------------------------------------------------------------
+// setAutopost (above) is per project: the team would pick the client's accounts every time. Here the accounts are picked in the Send box and can be REMEMBERED for that client: every later project
+// of the client then arms automatic posting by itself when its options are sent, so the client's approval (the page, a WhatsApp or an email button) posts right away. Same safeguards as setAutopost
+// (it is what runs): an Admin must allow it in AI usage, only Facebook / Instagram / X, only an https site address, and suggestions from the client stop it (the team reads them, then presses Post).
+// Remembered in the AppSetting 'omni.mk.clientAccounts', by client id (else the lower-case company name). Nothing is posted until the client approves.
+const clientKeyOf = (r) => (r.clientId ? `c:${r.clientId}` : `n:${String(r.clientName || '').trim().toLowerCase()}`);
+async function rememberedFor(r) { const m = await Cfg.getClientAccounts(); const x = m[clientKeyOf(r)]; return x && Array.isArray(x.accountIds) ? x.accountIds : []; }
+// b.autoAccountIds: the accounts ticked in the Send box (absent = untouched: the remembered ones; an empty list = none for this project); b.remember === true keeps the ticked accounts for the client (an empty list forgets them)
+async function armPosting(u, r, b, base) {
+  try {
+    const key = clientKeyOf(r);
+    const picked = Array.isArray(b.autoAccountIds) ? b.autoAccountIds.map(String).filter((x, i, a) => x && a.indexOf(x) === i).slice(0, 12) : null;
+    if (picked && b.remember === true) {
+      const m = await Cfg.getClientAccounts();
+      if (picked.length) m[key] = { accountIds: picked, by: S.clip(u.name, 80), at: new Date().toISOString() }; else delete m[key];
+      await Cfg.saveClientAccounts(m);
+      await event(r.id, 'autopost_remembered', u.name, picked.length ? `The accounts to post on were remembered for ${r.clientName}'s next projects` : `The remembered accounts of ${r.clientName} were cleared`);
+    }
+    const ids = picked || await rememberedFor(r);
+    if (!ids.length) return;
+    const out = await setAutopost(u, r.id, { enabled: true, accountIds: ids }, siteFor(base));
+    if (out.error) {
+      await event(r.id, 'autopost_skipped', u.name, `Posting by itself was not set: ${out.error}`);
+      if (out.code !== 'auto_off') await tellTeam(r, `Posting by itself needs you: "${S.clip(r.title, 60)}"`, `${out.error} Post it yourself after the client approves.`);
+    }
+  } catch (e) { console.error('[omni-mk] arm posting:', e.message); } // eslint-disable-line no-console
 }
 // the post itself. force = a person pressed "Post now" (also for a project not set to post by itself, and after the client's suggestions were read)
 async function autoRun(id, { by = null, force = false } = {}) {
