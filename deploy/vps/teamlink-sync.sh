@@ -432,6 +432,7 @@ deploy_teamlink_fast() {   # commit  be(0/1)  fe(0/1)  backupdir
     rm -rf "$NEWB" "$NEWF"
     ls -dt "$LIVE"/backend-old-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
     ls -dt /root/teamlink-backups/*-before-auto-deploy 2>/dev/null | tail -n +11 | xargs -r rm -rf
+    ( for d in $(ls -dt /root/teamlink-backups/*-before-auto-deploy 2>/dev/null | tail -n +2); do for f in "$d/dev.db" "$d/dev.db-wal"; do [ -f "$f" ] && nice -n 19 ionice -c3 zstd -q -T1 -6 --rm "$f"; done; done ) >/dev/null 2>&1 &   # older database backups are kept compressed (zstd, about 8x smaller; zstd -d to restore); the newest stays as it is (23 Nov 2026)
     ls -dt "$LIVE"/frontend-old-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
     return 0
   fi
@@ -558,6 +559,7 @@ deploy_teamlink() {   # new commit  [changed areas]
     fi
     ls -dt "$LIVE"/backend-old-* 2>/dev/null | tail -n +4 | xargs -r rm -rf     # keep the 3 newest previous releases
     ls -dt /root/teamlink-backups/*-before-auto-deploy 2>/dev/null | tail -n +11 | xargs -r rm -rf     # keep the 10 newest database backups
+    ( for d in $(ls -dt /root/teamlink-backups/*-before-auto-deploy 2>/dev/null | tail -n +2); do for f in "$d/dev.db" "$d/dev.db-wal"; do [ -f "$f" ] && nice -n 19 ionice -c3 zstd -q -T1 -6 --rm "$f"; done; done ) >/dev/null 2>&1 &   # older database backups are kept compressed (zstd, about 8x smaller; zstd -d to restore); the newest stays as it is (23 Nov 2026)
     ls -dt "$LIVE"/frontend-old-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
     return 0
   fi

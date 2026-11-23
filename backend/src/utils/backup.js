@@ -36,7 +36,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 const TOOL = 'teamlink-backup';
 const BACKEND = path.resolve(__dirname, '..', '..');
@@ -374,6 +374,7 @@ async function makeBackup({ reason = 'manual', by = null, log = () => {} } = {})
     fs.renameSync(tmp, path.join(root, name));
     tmp = null;
     const removed = prune(log);
+    compressOldSets(log);
     const sizeBytes = manifest.db.bytes + Object.values(files).reduce((a, f) => a + (f.bytes || 0), 0);
     writeStatus({
       running: null,
@@ -387,6 +388,41 @@ async function makeBackup({ reason = 'manual', by = null, log = () => {} } = {})
   } finally {
     dropLock();
   }
+}
+
+// --- older backups are kept compressed (founder 2026-11-23: "storage compress cheyyagalava, data disturb cheyyakunda") ---
+// The two newest backups keep teamlink.db as it is (quick restore, the off-site copy reads it). Older ones keep teamlink.db.zst
+// (zstd, about 8x smaller): it is made, tested and its size checked BEFORE the plain file is removed. `zstd -d teamlink.db.zst`
+// gives the file back; the restore test below unpacks it by itself. No zstd on the machine = nothing is compressed.
+const KEEP_PLAIN = 2;
+function zstdOk() { try { execFileSync('zstd', ['--version'], { stdio: 'ignore', timeout: 10000 }); return true; } catch { return false; } }
+function compressOldSets(log = () => {}) {
+  if (!zstdOk()) return 0;
+  let n = 0;
+  for (const s of listSets().slice(KEEP_PLAIN)) {
+    const file = path.join(s.dir, (s.manifest.db && s.manifest.db.file) || 'teamlink.db');
+    if (!fs.existsSync(file) || fs.existsSync(`${file}.zst`)) continue; // eslint-disable-line no-continue
+    try {
+      const before = fs.statSync(file).size;
+      execFileSync('nice', ['-n', '19', 'zstd', '-q', '-T1', '-6', file, '-o', `${file}.zst`], { stdio: 'ignore', timeout: 30 * 60 * 1000 });
+      execFileSync('zstd', ['-q', '-t', `${file}.zst`], { stdio: 'ignore', timeout: 10 * 60 * 1000 });
+      const info = execFileSync('zstd', ['-lv', `${file}.zst`], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] });
+      const m = info.match(/Decompressed Size:.*\((\d+) B\)/);
+      if (!m || Number(m[1]) !== before) throw new Error('size check failed');
+      fs.unlinkSync(file); n += 1;
+      log(`compressed ${s.name} (${Math.round(before / 1e6)} MB -> ${Math.round(fs.statSync(`${file}.zst`).size / 1e6)} MB)`);
+    } catch (err) {
+      try { fs.unlinkSync(`${file}.zst`); } catch { /* not made */ }
+      log(`could not compress ${s.name}: ${err.message} (the plain copy is kept)`);
+    }
+  }
+  return n;
+}
+function restoreDbCopy(set, dest) {
+  const file = path.join(set.dir, set.manifest.db.file);
+  if (fs.existsSync(file)) { fs.copyFileSync(file, dest); return; }
+  if (fs.existsSync(`${file}.zst`)) { execFileSync('zstd', ['-q', '-d', '-f', `${file}.zst`, '-o', dest], { stdio: 'ignore', timeout: 30 * 60 * 1000 }); return; }
+  throw new Error(`${set.manifest.db.file} is not in the backup folder`);
 }
 
 // --- restore test ---------------------------------------------------------------
@@ -404,8 +440,8 @@ async function verifyBackup({ name = null, log = () => {} } = {}) {
   let counts = {};
   let integrity = null;
   try {
-    // 1. "Restore" it: copy the backup to a new, separate file.
-    fs.copyFileSync(path.join(set.dir, set.manifest.db.file), tmpDb);
+    // 1. "Restore" it: copy the backup to a new, separate file (an older backup is kept compressed: it is unpacked into that file).
+    restoreDbCopy(set, tmpDb);
     // 2. SQLite's own full integrity check.
     const { DatabaseSync } = sqlite();
     const db = new DatabaseSync(tmpDb, { readOnly: true });
@@ -566,6 +602,6 @@ function startSchedule() {
 
 module.exports = {
   TOOL, KEY_TABLES, dbFile, backupRoot, fileSources, listSets, retentionPlan, prune,
-  makeBackup, verifyBackup, summary, runChild, childRunning, readLock, startSchedule, scheduleInfo, dueNow,
+  makeBackup, verifyBackup, compressOldSets, restoreDbCopy, summary, runChild, childRunning, readLock, startSchedule, scheduleInfo, dueNow,
   isoWeek, localDay, inside, REPO, BACKEND,
 };
