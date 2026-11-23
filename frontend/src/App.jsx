@@ -93,6 +93,7 @@ import Profile from './pages/admin/Profile.jsx';
 // (backend utils/jobPortalEmbed.js). The morning's built-in /careers pages
 // (pages/careers/) are no longer routed: /careers* forwards to /jobs.
 import JobPortalRedirect from './pages/JobPortalRedirect.jsx';
+import CallStart from './pages/CallStart.jsx'; // /call-start: one manual browser call from the Job Portal app (bare page)
 import JobPortalLaunch from './pages/JobPortalLaunch.jsx'; // /sso/job-portal: the Job Portal already signed in with this login (2026-10-29)
 import AgreementSigning from './pages/AgreementSigning.jsx';
 import AgreementStamp from './pages/AgreementStamp.jsx';
@@ -274,6 +275,8 @@ export default function App() {
       <Route path="/embed/ai-marketing/:view" element={<ProtectedRoute><OmniApp embedded /></ProtectedRoute>} />
       {/* The Job Portal already signed in with the TeamLink login (founder 2026-10-29: recruiters get no separate login). */}
       <Route path="/sso/job-portal" element={<ProtectedRoute><JobPortalLaunch /></ProtectedRoute>} />
+      {/* One manual browser call started from the Job Portal app: /call-start?candidateId=..&applicationId=..&name=.. (bare page, own softphone, same checks) */}
+      <Route path="/call-start" element={<ProtectedRoute><CallStart /></ProtectedRoute>} />
 
       <Route
         path="/"
