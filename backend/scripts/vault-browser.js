@@ -113,6 +113,9 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     const tops = new Set(fields.map((b) => b.top)); const hs = new Set(fields.map((b) => b.h));
     check('filter row: every box the same height and in one straight line (a department picked, its list open)', hs.size === 1 && tops.size <= 2, m);
     check('filter row: nothing runs past the right edge of the card', m.boxes.every((b) => b.right <= m.cardRight + 1), m);
+    // the open list sits right under its own box and is exactly as wide as it
+    const pl = await page.evaluate(() => { const f = [...document.querySelectorAll('.cv-filter')].find((x) => x.querySelector('.mpk-panel')); if (!f) return null; const b = f.querySelector('.mpk-chips').getBoundingClientRect(); const p = f.querySelector('.mpk-panel').getBoundingClientRect(); return { boxL: Math.round(b.left), boxW: Math.round(b.width), boxB: Math.round(b.bottom), pL: Math.round(p.left), pW: Math.round(p.width), pT: Math.round(p.top) }; });
+    check('dropdown: the list opens right under its box, same left edge and same width', !!pl && Math.abs(pl.pL - pl.boxL) <= 1 && Math.abs(pl.pW - pl.boxW) <= 1 && pl.pT >= pl.boxB && pl.pT - pl.boxB <= 6, pl);
     await page.screenshot({ path: path.join(SHOTS, 'filters-open.png') });
     await page.keyboard.press('Escape').catch(() => {});
     await page.mouse.click(5, 5).catch(() => {});
