@@ -24,13 +24,31 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return;
     }
-    api
+    // Only the SERVER saying "this sign-in is no good" (401 / 403) ends the saved sign-in. Any other failure (the server restarting or deploying: a 502 / 503 / 504, a dropped
+    // connection, a timeout) says nothing about the sign-in: it used to delete the token, so every blip signed the whole company out, in every tab and every Green Start frame.
+    // Now the sign-in is kept and the question asked again every 5 seconds (the page shows "Loading..." meanwhile); after about 40 seconds the page gives up WITHOUT deleting
+    // anything, so a reload once the server is back finds the person still signed in.
+    let cancelled = false;
+    let timer = null;
+    let tries = 0;
+    const refused = (e) => !!(e && e.response && (e.response.status === 401 || e.response.status === 403));
+    const check = () => (cancelled ? null : api
       .get('/auth/me')
-      .then((res) => setUser(res.data))
-      // A failed View-as session is cleaned up by api.js; it must never sign
-      // the Super Admin's own login out.
-      .catch(() => { if (!viewingAs) localStorage.removeItem('tl_token'); })
-      .finally(() => setLoading(false));
+      .then((res) => { if (!cancelled) { setUser(res.data); setLoading(false); } })
+      .catch((e) => {
+        if (cancelled) return;
+        if (refused(e)) {
+          // A failed View-as session is cleaned up by api.js; it must never sign
+          // the Super Admin's own login out.
+          if (!viewingAs) localStorage.removeItem('tl_token');
+          setLoading(false);
+          return;
+        }
+        tries += 1;
+        if (tries < 8) timer = setTimeout(check, 5000); else setLoading(false);
+      }));
+    check();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
   // IDLE SIGN-OUT (backend utils/sessions.js, Profile -> Signed-in devices): no mouse / keyboard / touch for the company's
