@@ -712,6 +712,11 @@ export function teamlinkFrontRouter({ root, express }) {
     res.set('Cache-Control', 'no-cache');
     res.sendFile(join(import.meta.dirname, 'omni-panel-addon.js'));
   });
+  r.get('/tl-addon/app-selection.js', (_req, res) => {
+    res.set('Content-Type', 'application/javascript; charset=utf-8');
+    res.set('Cache-Control', 'no-cache');
+    res.sendFile(join(import.meta.dirname, 'app-selection-addon.js'));
+  });
   r.get('/tl-addon/kavya-bulk.js', (_req, res) => {
     res.set('Content-Type', 'application/javascript; charset=utf-8');
     res.set('Cache-Control', 'no-cache');
