@@ -13,6 +13,15 @@ const API_VERSION = 'v1';
 
 const NOTES = [
   {
+    version: '1.8.1', date: '2026-11-23', title: 'Calls: clear audio, phone lines, silent recording and what was said',
+    items: [
+      'Browser calls: both sides now hear each other (the call audio used an address only the server could see).',
+      'Candidate profile: the Call button rings the person straight away from the office SIM line.',
+      'Phone lines (Omni-Channel > AI Voice > Browser calling): add a Synway or Dinstar SIM gateway, a ViciDial server or any SIP line by IP address - the device registers to TeamLink or TeamLink sends calls to its IP. Live status, a test call per line, and "Call using" when you call.',
+      'Calls are recorded silently once answered (Record calls switch, on). After the call: Play, talk time, a short summary of what was said and the full conversation on the candidate call history; the report shows talk time and recorded calls per recruiter. Recordings are kept 180 days.',
+    ],
+  },
+  {
     version: '1.8.0', date: '2026-11-23', title: 'Client updates pop up and mail, interview pop-ups, Updates & reports, optional auto-screening',
     items: [
       'Anything a client does (shortlist, reject or hold, feedback, a comment, a new or changed requirement, an interview request, offer or joining news, a login request, a signed agreement) pops up at the top right of every ATS page for the people concerned: the recruiters and TL of the job, the client BDE and BDE TL, and Admin. It stays until Got it or Open, comes back at the next login, and also goes by mail (one mail per update, or one summary when several come within 15 minutes).',
