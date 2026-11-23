@@ -383,7 +383,38 @@ router.get('/me', async (req, res) => {
     verification: empVerify.verificationState(employee),
     emailVerification: await emailVerify.emailState(employee),
     channels: { sms: await empVerify.smsChannel() },
+    // My Profile -> "Your offer letter": ready, or the plain words for what is still missing
+    offerLetter: require('../utils/offerLetterMail').selfDownloadGate(employee, completionPct(employee)), // eslint-disable-line global-require
   });
+});
+
+// MY OFFER LETTER (the employee, from their own login - never a parameter): the PDF, once their profile is complete (100%) and their
+// joining date has arrived. The offer letter on file is given (the one TeamLink made, or an e-signed copy); with none on file it is
+// made now from their record and kept in their documents. Each download is audited.
+router.get('/me/offer-letter/pdf', async (req, res, next) => {
+  try {
+    const employee = await prisma.employee.findUnique({ where: { userId: req.user.id } });
+    if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
+    const OL = require('../utils/offerLetterMail'); // eslint-disable-line global-require
+    const gate = OL.selfDownloadGate(employee, completionPct(employee));
+    if (!gate.ok) return res.status(409).json({ error: gate.why });
+    const doc = await prisma.employeeDocument.findFirst({ where: { employeeId: employee.id, docType: 'Offer Letter' }, orderBy: { uploadedAt: 'desc' } });
+    let pdf = null;
+    let name = `Offer-letter-${employee.employeeCode}.pdf`;
+    const full = doc ? attachments.resolveStored(doc.file) : null;
+    if (full) { pdf = require('fs').readFileSync(full); name = doc.fileName || name; } // eslint-disable-line global-require
+    if (!pdf) {
+      const made = await OL.pdfForEmployee(employee);
+      pdf = made.pdf;
+      name = made.name;
+      if (!doc) await OL.fileForEmployee(employee, req.user.id).catch(() => null); // kept in their documents too
+    }
+    await logAudit({ userId: req.user.id, action: 'Offer letter downloaded by the employee', entity: 'Employee', entityId: employee.id, toValue: `${employee.name} (${employee.employeeCode})` });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/[^\w .()-]/g, '_')}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(pdf);
+  } catch (err) { return next(err); }
 });
 
 // =========================================================================

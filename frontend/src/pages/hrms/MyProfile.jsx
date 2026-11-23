@@ -55,6 +55,27 @@ export default function MyProfile() {
   const [vr, setVr] = useState(null);
   const [vbusy, setVbusy] = useState('');
   const [verr, setVerr] = useState('');
+  // "Your offer letter": the PDF, from the employee's own login (the server checks: profile 100% + joining date reached)
+  const [olBusy, setOlBusy] = useState(false);
+  const [olError, setOlError] = useState('');
+  async function downloadOfferLetter() {
+    setOlBusy(true); setOlError('');
+    try {
+      const res = await api.get('/employees/me/offer-letter/pdf', { responseType: 'blob' });
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Offer-letter-${employee?.employeeCode || 'me'}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      let text = 'Your offer letter could not be downloaded. Please try again.';
+      try { text = JSON.parse(await e.response.data.text()).error || text; } catch { /* keep the plain words */ }
+      setOlError(text);
+    } finally { setOlBusy(false); }
+  }
   // The lead's team table: Search · Role · Status · Profile status, sorted,
   // paged 25 / 50 / 100 (hooks — set up before the loading returns below).
   const teamLf = useListFilters(team, [
@@ -202,6 +223,21 @@ export default function MyProfile() {
       {/* The same words the dashboard shows, from the same component — an
           employee cannot be told two different things about one profile. */}
       <ProfileStatusBanner variant="page" employee={employee} />
+
+      {employee.offerLetter && (
+        <div className="card section">
+          <h3>Your offer letter</h3>
+          {employee.offerLetter.ok ? (
+            <>
+              <div className="small-muted" style={{ marginBottom: 8 }}>Your profile is complete and you have joined, so your offer letter is ready. Download it as a PDF.</div>
+              <button type="button" className="btn btn-primary" disabled={olBusy} onClick={downloadOfferLetter}>{olBusy ? 'Preparing…' : 'Download offer letter'}</button>
+            </>
+          ) : (
+            <div className="small-muted">{employee.offerLetter.why}</div>
+          )}
+          {olError && <div className="error-text" style={{ marginTop: 8 }}>{olError}</div>}
+        </div>
+      )}
 
       {awaitingReview && (
         <div className="card section" style={{ borderColor: 'var(--warn)' }}>

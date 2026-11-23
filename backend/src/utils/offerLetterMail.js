@@ -889,6 +889,18 @@ async function fileForEmployee(employee, actorId, { auto = false } = {}) {
   return { state: 'MADE', message: 'The offer letter was made and kept in the employee’s documents.', omitted: made.omitted };
 }
 
+// THE EMPLOYEE'S OWN DOWNLOAD (My Profile -> "Download offer letter", 2026-11-23): an employee may take their offer letter once
+// (1) their profile is complete (the same 100% rule HR sees) and (2) their joining date has arrived (today or earlier).
+// -> { ok: true } | { ok: false, why } (the plain words the screen shows)
+function selfDownloadGate(employee, completionPct, today = istToday()) {
+  const joined = istDayOf(employee && employee.dateOfJoining);
+  if (!joined) return { ok: false, why: 'Your date of joining is not on your record yet. HR will add it.' };
+  if (joined > today) return { ok: false, why: `Your offer letter can be downloaded from your joining date, ${joined.slice(8, 10)}-${joined.slice(5, 7)}-${joined.slice(0, 4)}.` };
+  if (Number(completionPct) < 100) return { ok: false, why: `Complete your profile first (${Number(completionPct) || 0}% filled in). The offer letter unlocks at 100%.` };
+  if (!employee.designation) return { ok: false, why: 'Your designation is not on your record yet. HR will add it.' };
+  return { ok: true };
+}
+
 // "Email offer letter" (HR presses it on the employee's Documents): the offer letter that is ON FILE (the one made here, or an
 // e-signed copy) goes to the employee as a PDF attachment, with a short covering note. It goes to the work email, or the personal
 // one when there is no work email. -> { state: 'SENT', to } | { state: 'NOT_SENT', message }
@@ -918,7 +930,12 @@ async function emailForEmployee(employee, actor) {
     attachments: [{ filename: doc.fileName || `Offer-letter-${employee.employeeCode || 'employee'}.pdf`, content: require('fs').readFileSync(full), contentType: doc.mime || 'application/pdf' }],
     ...reply, useEmployeeFrom: false, fromName: 'TeamLink HR',
   });
-  if (!out || !out.ok) return { state: 'NOT_SENT', message: `The email was not sent: ${(out && out.error) || 'mail is not set up'}` };
+  if (!out || !out.ok) {
+    const why = (out && out.error) || 'mail is not set up';
+    // written down, so a send that did not go can be found later (who pressed it, which address, why); never the salary
+    await logAudit({ userId: actor && actor.id ? actor.id : null, action: 'Offer letter email NOT sent', entity: 'Employee', entityId: employee.id, toValue: `${employee.name} (${employee.employeeCode}) <${to}>: ${String(why).slice(0, 300)}` }).catch(() => {});
+    return { state: 'NOT_SENT', message: `The email was not sent: ${why}` };
+  }
   // the audit log carries who and to which address, never the salary
   await logAudit({ userId: actor && actor.id ? actor.id : null, action: 'Offer letter emailed to the employee', entity: 'Employee', entityId: employee.id, toValue: `${employee.name} (${employee.employeeCode}) <${to}>` });
   return { state: 'SENT', to };
@@ -939,5 +956,5 @@ module.exports = {
   loadSettings, setAutomatic, cleanTemplate, saveTemplate, resetTemplate,
   buildModel, renderHtml, renderText, renderPdf, valuesFor,
   maybeSendAuto, sendNow, statusOf, previewOf, pdfOf, previewTemplate, blocker, rowOf,
-  pdfForEmployee, fileForEmployee, emailForEmployee, NEW_JOINER_DAYS,
+  pdfForEmployee, fileForEmployee, emailForEmployee, selfDownloadGate, NEW_JOINER_DAYS,
 };

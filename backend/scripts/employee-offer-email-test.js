@@ -64,9 +64,23 @@ const check = (name, ok, extra) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${nam
   docs[0].file = 'abc123.pdf';
   audits.length = 0; mailResult = { ok: false, error: 'SMTP is down' };
   const fail = await O.emailForEmployee(emp, actor);
-  check('the mail provider fails: reported, NOT audited as sent', fail.state === 'NOT_SENT' && /SMTP is down/.test(fail.message) && audits.length === 0, [fail, audits]);
+  check('the mail provider fails: reported, and written down as NOT sent with who, the address and why - never as sent, never the salary', fail.state === 'NOT_SENT' && /SMTP is down/.test(fail.message) && audits.length === 1 && /NOT sent/.test(audits[0].action) && /SMTP is down/.test(audits[0].toValue) && !/emailed to the employee/.test(audits[0].action) && !/10,000|CTC/.test(JSON.stringify(audits[0])), [fail, audits]);
   mailResult = { ok: false, notConfigured: true, error: 'No email channel is configured' };
   check('mail not set up: reported in plain words', /not configured|No email channel/i.test((await O.emailForEmployee(emp, actor)).message));
+
+  // ---- the employee's own download rule (My Profile -> Download offer letter)
+  const G = O.selfDownloadGate;
+  const day = (n) => new Date(Date.now() + 330 * 60000 + n * 86400000).toISOString().slice(0, 10);
+  const joinedEmp = { dateOfJoining: new Date(`${day(-14)}T00:00:00Z`), designation: 'Employee' };
+  check('self download: joined, profile 100% -> ready', G(joinedEmp, 100).ok === true);
+  check('self download: joined TODAY, profile 100% -> ready (the letter is available on the joining date)', G({ ...joinedEmp, dateOfJoining: new Date(`${day(0)}T00:00:00Z`) }, 100).ok === true);
+  const future = G({ ...joinedEmp, dateOfJoining: new Date(`${day(3)}T00:00:00Z`) }, 100);
+  check('self download: joining date still ahead -> not ready, says the date', future.ok === false && future.why.includes(day(3).split('-').reverse().join('-')), future);
+  const part = G(joinedEmp, 78);
+  check('self download: profile 78% -> not ready, says how far they are', part.ok === false && /78%/.test(part.why) && /100%/.test(part.why), part);
+  check('self download: no joining date -> not ready, says HR will add it', G({ designation: 'Employee' }, 100).ok === false && /HR will add/.test(G({ designation: 'Employee' }, 100).why));
+  check('self download: no designation -> not ready', G({ ...joinedEmp, designation: '' }, 100).ok === false);
+  check('self download: a joining date still ahead is said before an incomplete profile', /joining date/.test(G({ ...joinedEmp, dateOfJoining: new Date(`${day(5)}T00:00:00Z`) }, 40).why));
 
   console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');
   process.exitCode = fails ? 1 : 0;
