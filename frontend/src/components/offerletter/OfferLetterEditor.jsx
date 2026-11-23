@@ -36,9 +36,32 @@ export default function OfferLetterEditor() {
   const edit = !!(data && data.canEdit);
 
   const apply = useCallback((d) => { setData(d); setT(clone(d.template)); setDirty(false); }, []);
+  // The server restarts for about two minutes every time an update is installed (502 / 503 / 504 or no answer at all). The letter
+  // is not broken then, so the screen waits and asks again by itself (up to 24 times, 5 s apart) before it gives up, and then
+  // offers "Try again" instead of a dead end.
+  const [attempt, setAttempt] = useState(0);
+  const [waiting, setWaiting] = useState(false);
   useEffect(() => {
-    api.get('/ats/offer-letter-mail/template').then((r) => apply(r.data)).catch((e) => setErr(errText(e, 'Could not load the offer letter.')));
-  }, [apply]);
+    let stop = false;
+    let timer = null;
+    const load = (n) => api.get('/ats/offer-letter-mail/template')
+      .then((r) => { if (!stop) { setErr(''); setWaiting(false); apply(r.data); } })
+      .catch((e) => {
+        if (stop) return;
+        const status = e && e.response && e.response.status;
+        const restarting = !status || [502, 503, 504].includes(status);
+        if (restarting && n < 24) {
+          setWaiting(true);
+          setErr('TeamLink is restarting for an update. Trying again in a moment…');
+          timer = setTimeout(() => load(n + 1), 5000);
+          return;
+        }
+        setWaiting(false);
+        setErr(restarting ? 'TeamLink is not answering right now (an update may be installing).' : errText(e, 'Could not load the offer letter.'));
+      });
+    load(0);
+    return () => { stop = true; if (timer) clearTimeout(timer); };
+  }, [apply, attempt]);
 
   // live preview: the unsaved words, with sample details, a moment after the last key press
   useEffect(() => {
@@ -92,7 +115,14 @@ export default function OfferLetterEditor() {
     set('terms', terms);
   };
 
-  if (!t) return <div className="card">{err ? <span className="error-text">{err}</span> : 'Loading…'}</div>;
+  if (!t) {
+    return (
+      <div className="card">
+        {err ? <span className={waiting ? 'small-muted' : 'error-text'}>{err}</span> : 'Loading…'}
+        {err && !waiting && <> <button type="button" className="btn btn-sm" onClick={() => { setErr(''); setAttempt((a) => a + 1); }}>Try again</button></>}
+      </div>
+    );
+  }
   const tokens = (data.tokens || []).map((x) => ({ ...x, group: 'Details from the record' }));
 
   return (
