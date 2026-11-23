@@ -158,6 +158,17 @@ function ReauthModal({ me, onDone, onCancel }) {
   );
 }
 
+// the eye beside a password (founder 2026-11-23): open eye = show, crossed eye = hide
+function EyeIcon({ off = false }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ verticalAlign: 'middle' }}>
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+      {off && <line x1="3" y1="3" x2="21" y2="21" />}
+    </svg>
+  );
+}
+
 // ---- one secret: masked, Show (30 s) or Copy --------------------------------------------------------------------------
 function SecretCell({ cred, field = 'password', withReauth, onMessage }) {
   const [shown, setShown] = useState(null);
@@ -192,8 +203,8 @@ function SecretCell({ cred, field = 'password', withReauth, onMessage }) {
       {shown ? <code className="cv-plain" data-testid="cv-plain">{shown}</code> : <span className="cv-mask" aria-label="hidden">{field === 'extra' ? (cred.extraKinds || '••••') : '••••••••'}</span>}
       {shown ? <span className="small-muted">hides in {left}s</span> : null}
       {shown
-        ? <button type="button" className="btn btn-sm" onClick={() => { setShown(null); setLeft(0); }}>Hide</button>
-        : <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => get('show')}>{busy === 'show' ? '…' : 'Show'}</button>}
+        ? <button type="button" className="btn btn-sm cv-eye" aria-label="Hide password" title="Hide password" onClick={() => { setShown(null); setLeft(0); }}><EyeIcon off /></button>
+        : <button type="button" className="btn btn-sm cv-eye" aria-label="Show password" title="Show password (asks your TeamLink password once)" disabled={!!busy} onClick={() => get('show')}>{busy === 'show' ? '…' : <EyeIcon />}</button>}
       <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => get('copy')}>{busy === 'copy' ? '…' : 'Copy'}</button>
     </span>
   );
@@ -424,7 +435,7 @@ function EditModal({ row, opts, empOpts, rights, onClose, onSaved }) {
             <span>{row ? (row.hasPassword ? 'New password (leave empty to keep the saved one)' : 'Password') : 'Password'}</span>
             <div className="cv-row">
               <input type={showPw ? 'text' : 'password'} value={v.password} onChange={set('password')} maxLength={500} autoComplete="new-password" name="cv-secret-pw" className="cv-grow" data-testid="cv-pw-input" />
-              <button type="button" className="btn btn-sm" onClick={() => setShowPw((s) => !s)}>{showPw ? 'Hide' : 'Show'}</button>
+              <button type="button" className="btn btn-sm cv-eye" aria-label={showPw ? 'Hide password' : 'Show password'} title={showPw ? 'Hide password' : 'Show password'} onClick={() => setShowPw((s) => !s)}><EyeIcon off={showPw} /></button>
               <button type="button" className="btn btn-sm" onClick={() => { setV({ ...v, password: makePassword(16, symbols) }); setShowPw(true); }}>Generate</button>
               <label className="cv-check"><input type="checkbox" checked={symbols} onChange={(e) => setSymbols(e.target.checked)} /> with symbols</label>
             </div>

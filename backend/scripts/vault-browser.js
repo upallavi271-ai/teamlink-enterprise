@@ -100,7 +100,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     await page.screenshot({ path: path.join(SHOTS, 'list-masked.png') });
     // reveal one after re-auth
     const row = page.locator('[data-testid=cv-row]', { hasText: ROWS[1][1] });
-    await row.locator('button', { hasText: /^Show$/ }).click();
+    await row.locator('button[aria-label="Show password"]').click();
     const ask = page.locator('[data-testid=cv-reauth-input]');
     const asked = await ask.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
     check('Show asks for the Super Admin\'s own TeamLink password first', asked && (await ask.getAttribute('type')) === 'password' && (await ask.getAttribute('autocomplete')) === 'off');
@@ -113,7 +113,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     const shown = await plain.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false);
     check('after the right password the one password shows (with a countdown), the others stay masked', shown && (await plain.innerText()) === ROWS[1][2] && /hides in \d+s/.test(await row.innerText()) && !(await page.locator('.cv-list').innerText()).includes(ROWS[0][2]));
     await page.screenshot({ path: path.join(SHOTS, 'revealed.png') });
-    await row.locator('button', { hasText: 'Hide' }).click();
+    await row.locator('button[aria-label="Hide password"]').click();
     check('Hide masks it again', (await row.locator('[data-testid=cv-plain]').count()) === 0);
     // who opened what
     await page.locator('button[role=tab]', { hasText: 'Who opened what' }).click();
