@@ -173,6 +173,43 @@ function cleanFields(b, cur = {}) {
   return { value: out };
 }
 
+// ---- AI help for THE BRIEF of a client request (2026-11-23) ------------------------------------------------------------
+// Owner: "in THE BRIEF add AI assist so the AI generates the content from the title / topic and the company name". The person writes the client's company and what it is for (the topic); this writes the
+// brief for the team who will make the picture / video. It never invents facts: prices, dates, offers and numbers the person did not give are left to be confirmed with the client. Whatever the person had
+// already typed in the box is kept and completed. It goes through the shared AI layer (marketing/ai.js): the person's daily limit, the company limit, the usage log and the plain "AI is not ready" words.
+const BRIEF_WHAT = { video: 'a video', image: 'pictures', both: 'a video and pictures' };
+async function briefAssist(u, b = {}) {
+  await ensure();
+  if (!mayWrite(u)) return { error: 'Your login cannot open client projects.', status: 403 };
+  const client = S.clip(b.clientName, 120).trim();
+  const topic = S.clip(b.occasion, 120).trim();
+  if (client.length < 2) return { error: 'Write the client\'s company name first, so the AI knows who it is for.', status: 400 };
+  if (topic.length < 2) return { error: 'Write what it is for first (for example Diwali offer), so the AI knows the topic.', status: 400 };
+  const what = BRIEF_WHAT[b.deliverable] || BRIEF_WHAT.video;
+  const places = (Array.isArray(b.platforms) ? b.platforms : []).map((k) => PLATFORM_LABEL[k]).filter(Boolean).join(', ');
+  const own = S.clip(b.brief, 1200).trim();
+  const brand = await Cfg.getBrand();
+  const system = [
+    `You write the BRIEF of a creative request for a marketing team: the note the team reads before making ${what} for a client.`,
+    'Write it as the client\'s request in plain words: what they want, the message, the key points or offer, the mood and look, and what to avoid. Three to six short lines or sentences, under 700 characters, no headings, no markdown.',
+    'Use the client\'s company name. NEVER invent prices, discounts, dates, phone numbers, addresses, awards or facts: where something is not given, write that it is to be confirmed with the client.',
+    `The team belongs to ${brand.brandName || 'the agency'}${brand.tone ? `; keep a ${brand.tone} tone` : ''}${brand.language && brand.language !== 'English' ? `; write in ${brand.language}` : ''}.`,
+    ...(brand.avoidWords && brand.avoidWords.length ? [`Never use these words: ${brand.avoidWords.join(', ')}.`] : []),
+    'Answer only as JSON: {"brief": "the text"}.',
+  ].join('\n');
+  const prompt = `Client (company): ${client}\nWhat it is for: ${topic}\nThey want: ${what}${places ? `\nTo be posted on: ${places}` : ''}${own ? `\n\nThe team already wrote this (keep its facts, complete and improve it):\n${own}` : ''}`;
+  let r;
+  try {
+    r = await AI.generate({ user: u, module: 'projects', task: 'brief', system, prompt, json: true, demo: () => ({ brief: `SAMPLE (test mode, not written by AI): ${client} would like ${what} for ${topic}. Message, offer and look: to be confirmed with the client.` }), department: u.department });
+  } catch (e) { return { error: e.message, status: e.status || 503, code: e.code }; }
+  let text = r.result && typeof r.result === 'object' ? (r.result.brief || r.result.text || '') : String(r.result || '');
+  text = String(text).replace(/\*\*|__|^#+\s*/gm, '').replace(/[ \t]+\n/g, '\n').trim();
+  if (text.length < 10) return { error: 'The AI did not write anything useful. Try again, or write the brief yourself.', status: 502, code: 'empty' };
+  text = S.clip(text, 1500);
+  const flags = (brand.avoidWords || []).filter((w) => new RegExp(`(^|[^\\p{L}\\p{N}])${String(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu').test(text));
+  return { brief: text, demo: !!r.demo, provider: r.provider || '', flags };
+}
+
 // ---- staff: log a request, invite, list, open, change ---------------------------------------------------------------------------------------------
 async function create(u, b = {}) {
   await ensure();
@@ -1106,7 +1143,7 @@ async function portalStart(u) {
 
 module.exports = {
   portalList, portalStart, makeDraft,
-  ensure, SOURCES, DELIVERABLES, PLATFORM_KEYS, PLATFORM_LABEL, create, invite, list, get, update, accept, decline, setOptions, send, cancelPresentation, extend, scheduled, posted, heldIds,
+  ensure, SOURCES, DELIVERABLES, PLATFORM_KEYS, PLATFORM_LABEL, create, invite, briefAssist, list, get, update, accept, decline, setOptions, send, cancelPresentation, extend, scheduled, posted, heldIds,
   publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, clientApprove, clientReject, clientRejectReason, publicReject, plainWhy, deliverHeld, sendApproval, tokenOf, idOfToken, mayWrite, tell, tellClient, notifyStatus,
   setShowcase, trackRecord, showcaseItems, publicWork, publicWorkFile, accounts, setAutopost, postNow, postTo, autoRun, autoSweep, startAutoPost,
   event, tellTeam, siteFor, firstWord, // marketing/clientChat.js: the timeline line, the team's bell, the https site address, the first name

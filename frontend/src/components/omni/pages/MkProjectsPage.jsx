@@ -87,9 +87,20 @@ function RequestModal({ meta, project, onClose, onDone, toast }) {
   const [logo, setLogo] = useState(undefined); // undefined = unchanged, '' = removed, data URL = new
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [aiBusy, setAiBusy] = useState(false); // the AI is writing THE BRIEF
+  const [aiNote, setAiNote] = useState('');
   const names = useMemo(() => people.map((c) => c.name), [people]);
   const pickClient = (name) => { const c = find(name); setF((x) => ({ ...x, clientName: name, contactName: c ? (c.contactName || x.contactName) : x.contactName, contactEmail: c ? (c.contactEmail || x.contactEmail) : x.contactEmail, contactPhone: c ? (c.contactPhone || x.contactPhone) : x.contactPhone })); };
   const toggle = (k) => setF((x) => ({ ...x, platforms: x.platforms.includes(k) ? x.platforms.filter((p) => p !== k) : [...x.platforms, k] }));
+  // 2026-11-23: AI writes THE BRIEF from the client's company and what it is for (what is already typed is kept and completed)
+  const writeBrief = async () => {
+    setAiBusy(true); setErr(''); setAiNote('');
+    try {
+      const r = await omni.post('/gs/marketing/projects/brief-assist', { clientName: f.clientName, occasion: f.occasion, deliverable: f.deliverable, platforms: f.platforms, brief: f.brief });
+      setF((x) => ({ ...x, brief: r.brief }));
+      setAiNote(r.demo ? 'Sample text from the test sandbox, not written by AI.' : `Written by AI from the client and the topic${r.flags && r.flags.length ? `. It uses words your brand avoids: ${r.flags.join(', ')}` : ''}. Read it and change what is not right.`);
+    } catch (e) { setErr(errOf(e, 'The AI could not write the brief.')); } finally { setAiBusy(false); }
+  };
   const save = async () => {
     setBusy(true); setErr('');
     try {
@@ -109,7 +120,13 @@ function RequestModal({ meta, project, onClose, onDone, toast }) {
         <Field label="EMAIL"><input value={f.contactEmail} maxLength={160} onChange={(e) => setF({ ...f, contactEmail: e.target.value })} /></Field>
         <Field label="HOW DID THE REQUEST COME?"><select value={f.source} onChange={(e) => setF({ ...f, source: e.target.value })}>{meta.sources.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}</select></Field>
         <Field label="WHAT IS IT FOR?" full><input value={f.occasion} maxLength={120} onChange={(e) => setF({ ...f, occasion: e.target.value })} placeholder="For example: Diwali offer, Independence Day wishes" /></Field>
-        <Field label="THE BRIEF" full hint="In the client's words: what they want, the message, the offer, anything to avoid."><textarea style={{ minHeight: 90 }} value={f.brief} maxLength={3000} onChange={(e) => setF({ ...f, brief: e.target.value })} /></Field>
+        <Field label="THE BRIEF" full hint="In the client's words: what they want, the message, the offer, anything to avoid.">
+          <textarea style={{ minHeight: 90 }} value={f.brief} maxLength={3000} onChange={(e) => setF({ ...f, brief: e.target.value })} />
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+            <Btn small disabled={aiBusy || busy || f.clientName.trim().length < 2 || f.occasion.trim().length < 2} onClick={writeBrief} title={f.clientName.trim().length < 2 || f.occasion.trim().length < 2 ? 'Write the client\'s name and what it is for first' : 'The AI writes the brief from the client and what it is for'}>{aiBusy ? 'Writing…' : (f.brief.trim() ? '✦ Improve with AI' : '✦ Write with AI')}</Btn>
+            <span style={{ fontSize: 11, color: 'var(--muted)' }}>{aiNote || 'Needs the client\'s name and what it is for.'}</span>
+          </div>
+        </Field>
         <Field label="THEY WANT"><select value={f.deliverable} onChange={(e) => setF({ ...f, deliverable: e.target.value })}>{meta.deliverables.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}</select></Field>
         <Field label="NEEDED BY"><input type="date" value={f.dueDate} onChange={(e) => setF({ ...f, dueDate: e.target.value })} /></Field>
         <Field label="TO BE POSTED ON" full>

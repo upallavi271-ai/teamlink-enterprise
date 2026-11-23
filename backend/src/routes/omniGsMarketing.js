@@ -253,6 +253,7 @@ router.get('/projects/meta', mustWrite, wrap(async (req, res) => res.json({ sour
 router.get('/projects', mustWrite, wrap(async (req, res) => send(res, await Prj.list(req.user, { status: String(req.query.status || ''), q: String(req.query.q || '') }))));
 router.post('/projects', mustWrite, wrap(async (req, res) => send(res, await Prj.create(req.user, req.body || {}))));
 router.post('/projects/invite', mustWrite, wrap(async (req, res) => send(res, await Prj.invite(req.user, req.body || {}))));
+router.post('/projects/brief-assist', mustWrite, wrap(async (req, res) => send(res, await Prj.briefAssist(req.user, req.body || {})))); // AI writes THE BRIEF from the client and the topic
 router.get('/projects/accounts', mustWrite, wrap(async (req, res) => send(res, await Prj.accounts(req.user)))); // before /projects/:id
 router.get('/projects/notify', mustWrite, wrap(async (req, res) => send(res, await Prj.notifyStatus()))); // before /projects/:id
 router.get('/projects/:id', mustWrite, wrap(async (req, res) => send(res, await Prj.get(req.user, req.params.id))));
