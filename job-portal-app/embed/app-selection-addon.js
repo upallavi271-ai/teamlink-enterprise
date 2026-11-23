@@ -146,7 +146,36 @@
     });
   }
 
-  var mo = new MutationObserver(function () { decorate(); decoratePool(); });
-  var start = function () { decorate(); decoratePool(); mo.observe(document.body, { childList: true, subtree: true }); };
+  /* CANDIDATE PROFILE: a Call button right beside the mobile number in the header line ("email . phone"), for browser calling. */
+  function decorateProfile() {
+    var m = /^#\/(recruiter|admin|bde)\/candidate-profile\?(?:.*&)?id=([^&]+)/.exec(location.hash || '');
+    if (!m) return;
+    var h2 = document.querySelector('#app .panel .panel-body h2');
+    if (!h2 || !h2.parentNode) return;
+    var id = decodeURIComponent(m[2]);
+    var c = null;
+    try { c = window.DATA.candidateById(id); } catch (e) { c = null; }
+    if (!c || !c.phone) return;
+    var host = h2.parentNode;
+    if (host.querySelector('.tlprof-call')) return;
+    var last10 = String(c.phone).replace(/\D/g, '').slice(-10);
+    var line = Array.prototype.filter.call(host.querySelectorAll('div'), function (d) {
+      var t = String(d.textContent || '');
+      return d.children.length < 4 && t.indexOf('📞') >= 0 && t.replace(/\D/g, '').indexOf(last10) >= 0;
+    })[0];
+    if (!line) return;
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn btn-ghost btn-sm tlprof-call'; b.style.marginLeft = '8px';
+    b.title = 'Call from your browser'; b.textContent = '☎ Call';
+    b.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (window.TLEngagement && typeof window.TLEngagement._call === 'function') window.TLEngagement._call(id); // the same engagement check, then browser calling
+      else window.open('/call-start?phone=' + encodeURIComponent(String(c.phone)) + '&name=' + encodeURIComponent(String(c.name || '')), '_blank');
+    });
+    line.appendChild(b);
+  }
+
+  var mo = new MutationObserver(function () { decorate(); decoratePool(); decorateProfile(); });
+  var start = function () { decorate(); decoratePool(); decorateProfile(); mo.observe(document.body, { childList: true, subtree: true }); };
   if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
 })();
