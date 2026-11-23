@@ -13,6 +13,16 @@ const API_VERSION = 'v1';
 
 const NOTES = [
   {
+    version: '1.8.0', date: '2026-11-23', title: 'Client updates pop up and mail, interview pop-ups, Updates & reports, optional auto-screening',
+    items: [
+      'Anything a client does (shortlist, reject or hold, feedback, a comment, a new or changed requirement, an interview request, offer or joining news, a login request, a signed agreement) pops up at the top right of every ATS page for the people concerned: the recruiters and TL of the job, the client BDE and BDE TL, and Admin. It stays until Got it or Open, comes back at the next login, and also goes by mail (one mail per update, or one summary when several come within 15 minutes).',
+      'Interviews: "Your interviews today" on the dashboard and once a day as a pop-up, a pop-up 60 and 15 minutes before, a mail at 08:00 with the interviews of the day and a mail 60 minutes before.',
+      'Dashboard "Updates & reports": every notification and the reports of the day in one place, with unread counts, mark read and, under See all, type, date and read filters.',
+      'Administration > Step timing: pop-up and mail switches for each kind of update (all on), interview pop-up and mail times. Profile: mute my mails.',
+      'Optional auto-screening per requirement (Kits & tests > Auto-screen, off by default): new applications get Pass, Review or Not suitable with the reasons, and a Candidates filter. It only suggests unless the TL ticks "Act on the result".',
+    ],
+  },
+  {
     version: '1.7.4', date: '2026-11-20', title: 'Schedule a message, and history filters',
     items: [
       'Candidate page, new tab "Schedule a message": write any message, choose WhatsApp, SMS or Email and the time (In 1 hour, Today 5 PM, Tomorrow 10 AM or a date). Ready messages and {name} / {requirement} / {client} fill-ins; the list shows Scheduled (edit, cancel), Sent, Failed (with the reason, Send again) and Cancelled, and the automatic interview / joining reminders of the person.',
