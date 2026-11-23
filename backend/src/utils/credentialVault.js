@@ -770,7 +770,7 @@ function smartSheet(sheetName, grid, startRow) {
     const username = lines[0] || '';
     const notes = lines.length > 1 ? `${o.notes}\nAlso in the same cell: ${lines.slice(1).join(", ")}` : o.notes;
     let { platform } = o;
-    if (!smartPlatformOf(platform) && !PLATFORMS.includes(platform)) {
+    if (!o.keepPlatform && !smartPlatformOf(platform) && !PLATFORMS.includes(platform)) { // a platform the row itself names (Account Type) is kept as written
       if (/@gmail\.com/i.test(username)) platform = 'Gmail';
       else if (/@tmlink\.in$/i.test(username)) platform = 'Webmail';
     }
@@ -790,20 +790,46 @@ function smartSheet(sheetName, grid, startRow) {
       }
     });
     const recCols = keys.map((k, i) => (isRecoveryHead(k) ? i : -1)).filter((i) => i >= 0);
-    const used = new Set([nameCol, posCol, ...pwCols, ...pairs.map((x) => x.u), ...recCols].filter((i) => i >= 0));
+    // A team's own layout (founder 2026-11-23, "R&D Login Credentials"): an "Account Type" column names the platform of each row
+    // (empty = the same as the row above), section rows ("R&D1 ... emp code 510") say whose logins follow, a column WITHOUT a
+    // header holds who uses the login ("G.Velangini Keerthi", or "HR" for a team), and a second login column ("Username / Login")
+    // stands in when the e-mail is empty.
+    const platCol = keys.findIndex((k) => /^(accounttype|platform|portal|application|service|site|accounttypes)$/.test(k));
+    const codeCol = keys.findIndex((k) => /^(empcode|employeecode|empid|employeeid|code)$/.test(k));
+    const dataRows = rowsAll.slice(hdrIdx + 1);
+    let personCol = nameCol;
+    if (personCol < 0) {
+      const width = Math.max(...dataRows.map((r) => r.length), head.length);
+      for (let i = 0; i < width && personCol < 0; i += 1) if (!keys[i] && dataRows.filter((r) => looksPersonName(r[i] || '')).length >= 2) personCol = i;
+    }
+    const altLogin = keys.map((k, i) => (isLoginHead(k) && i !== platCol && !pairs.some((x) => x.u === i) ? i : -1)).filter((i) => i >= 0);
+    const used = new Set([nameCol, posCol, platCol, codeCol, personCol, ...pwCols, ...pairs.map((x) => x.u), ...recCols].filter((i) => i >= 0));
     const noteCols = keys.map((k, i) => (k && !used.has(i) ? i : -1)).filter((i) => i >= 0);
-    rowsAll.slice(hdrIdx + 1).forEach((r, ri) => {
+    const TEAM_WORD = /^(hr|bde|it|admin|accounts|team|all|common|office|management|marketing|r&d|rd)$/i;
+    let section = null; let lastPlat = '';
+    dataRows.forEach((r, ri) => {
       if (!r.some(Boolean)) return;
-      const person = nameCol >= 0 ? r[nameCol] : '';
-      const notes = [posCol >= 0 && r[posCol] ? `Position: ${r[posCol]}` : '', ...noteCols.map((i) => (r[i] ? `${head[i]}: ${r[i]}` : ''))].filter(Boolean);
+      const hasLogin = pairs.some(({ u, p }) => r[u] || r[p]);
+      // a section row: no login, a word in the first / Account Type column and (usually) an emp code
+      if (!hasLogin) {
+        const word = (platCol >= 0 ? r[platCol] : r[0]) || '';
+        if (word || (codeCol >= 0 && r[codeCol])) section = { title: word, code: codeCol >= 0 ? r[codeCol] : '', who: personCol >= 0 ? r[personCol] : '' };
+        return;
+      }
+      const who = personCol >= 0 ? r[personCol] : '';
+      const team = who && TEAM_WORD.test(who.trim()) ? who.trim() : '';
+      const person = team ? '' : (who || (section && section.who && !TEAM_WORD.test(section.who) ? section.who : '') || (section && section.code ? section.code : ''));
+      const notes = [posCol >= 0 && r[posCol] ? `Position: ${r[posCol]}` : '', section && section.title ? `Section: ${section.title}${section.code ? ` (emp code ${section.code})` : ''}` : '', team ? `Used by ${team}` : '', ...noteCols.map((i) => (r[i] ? `${head[i]}: ${r[i]}` : ''))].filter(Boolean);
       const extra = recCols.map((i) => (r[i] ? `${head[i]}: ${r[i]}` : '')).filter(Boolean).join('\n');
+      const rowPlat = platCol >= 0 ? (r[platCol] || lastPlat) : '';
+      if (platCol >= 0 && r[platCol]) lastPlat = r[platCol];
       pairs.forEach(({ u, p }) => {
-        const username = r[u]; const password = r[p];
+        const username = r[u] || altLogin.map((i) => r[i]).find(Boolean) || ''; const password = r[p];
         if (!username && !password) return;
-        const platform = smartPlatformOf(head[u], sheetName) || sheetPlatform || canonicalPlatform(sheetName);
+        const platform = (rowPlat && (smartPlatformOf(rowPlat) || canonicalPlatform(rowPlat))) || smartPlatformOf(head[u], sheetName) || sheetPlatform || canonicalPlatform(sheetName);
+        const label = [(posCol >= 0 && r[posCol]) || (team ? `Used by ${team}` : '') || (section && section.title) || person, pairs.length > 1 ? head[u] : ''].filter(Boolean).join(' - ').slice(0, 150);
         push({
-          row: startRow + hdrIdx + 1 + ri, where: `${sheetName} · row ${hdrIdx + 2 + ri}`, platform, label: [(posCol >= 0 && r[posCol]) || person, pairs.length > 1 ? head[u] : ''].filter(Boolean).join(' - ').slice(0, 150), // the sheet's Position ("Edu 1") is the label; the Employee column shows who
-
+          row: startRow + hdrIdx + 1 + ri, where: `${sheetName} · row ${hdrIdx + 2 + ri}`, platform, label, keepPlatform: !!rowPlat, // the sheet's Position ("Edu 1") or section ("R&D1") is the label; the Employee column shows who
           loginUrl: '', username, password, employee: person, department: '', notes: [`From sheet "${sheetName}"`, ...notes].join('\n'), renewalRaw: '', extra, softEmployee: true,
         });
       });
@@ -841,12 +867,15 @@ function readAllSheets(file) {
   const wb = readWorkbook(file);
   const names = (wb.SheetNames || []).filter((nm) => !GUIDE_SHEETS.includes(hkey(nm)));
   const rows = []; const sheets = [];
+  // the file's own name says the team ("R&D Login Credentials", "Education Team Information"): the department of a login nobody is matched to
+  const fname = String((file && file.filename) || '');
+  const fileDept = (/r\s*&\s*d|r and d/i.test(fname) && 'R&D') || (/education/i.test(fname) && 'Education') || (/medical/i.test(fname) && 'Medical') || (/manufactur/i.test(fname) && 'Manufacturing') || (/\bbde\b/i.test(fname) && 'BDE') || '';
   names.forEach((nm, si) => {
     const xs = wb.Sheets[nm];
     if (!xs || !xs['!ref']) { sheets.push({ name: nm, logins: 0, skipped: 'empty' }); return; }
     const grid = XLSX.utils.sheet_to_json(xs, { header: 1, raw: false, defval: '', blankrows: true });
     const r = smartSheet(nm, grid, (si + 1) * 10000);
-    rows.push(...r.rows);
+    rows.push(...r.rows.map((x) => ({ ...x, fileDept })));
     sheets.push({ name: nm, logins: r.rows.length, skipped: r.skipped });
   });
   if (rows.length > MAX_ROWS) throw new VaultError(400, `That workbook has ${rows.length} logins. At most ${MAX_ROWS} at a time - split the file.`);
@@ -911,7 +940,9 @@ async function resolveRows(rows, choices = {}) {
     tokens.forEach((t, i) => {
       const key = `${r.row}:${i}`;
       let found = findEmployees(ix, t);
-      if (!found.length && r.softEmployee) { const fz = fuzzyEmployees(ix, t, r.department); if (fz.length === 1) found = fz; }
+      // an emp code written as digits only ("510") is the employee whose code has those digits (TL510)
+      if (!found.length && r.softEmployee && /^\d{2,6}$/.test(t)) found = (ix.all || []).filter((e) => String(e.employeeCode || '').replace(/\D/g, '') === t);
+      if (!found.length && r.softEmployee) { const fz = fuzzyEmployees(ix, t, r.department || r.fileDept); if (fz.length === 1) found = fz; }
       if (!found.length) {
         if (r.softEmployee) { out.notes = [`Person: ${t.slice(0, 60)} (no TeamLink employee with this name)`, out.notes].filter(Boolean).join('\n').slice(0, 2000); return; }
         out.reasons.push(`No employee "${t.slice(0, 60)}" in TeamLink`); return;
@@ -928,6 +959,7 @@ async function resolveRows(rows, choices = {}) {
       if (byMail.length === 1) out.employees.push(empOpt(byMail[0]));
     }
     if (!out.department && out.employees.length === 1) out.department = out.employees[0].department;
+    if (!out.department && r.fileDept) out.department = r.fileDept;
     const k = `${platformKeyOf(out.platform)}|${usernameKeyOf(out.username)}`;
     if (out.platform && out.username) {
       if (known.has(k)) out.reasons.push(`Already in the vault: ${out.platform} login ${out.username}`);
@@ -969,7 +1001,9 @@ async function preview(user, file, { mapping, sheet } = {}) {
   let smartSheets = null;
   // only a workbook of several sheets, or one sheet named after a platform ("Naukri Logins"), is read the smart way
   const manySheets = (read.sheets || []).filter((nm) => !GUIDE_SHEETS.includes(hkey(nm))).length > 1;
-  if (!mapping && ((manySheets && !sheet) || (read.missing.length && smartPlatformOf(read.sheet)))) {
+  // a sheet with section rows ("R&D1 ... 510": a word, no login, no password) is a team's own layout too
+  const sectioned = !read.missing.length && read.rows.some((r) => r.platform && !r.username && !r.password);
+  if (!mapping && ((manySheets && !sheet) || sectioned || (read.missing.length && smartPlatformOf(read.sheet)))) {
     const all = readAllSheets(file);
     if (all.rows.length) {
       smartSheets = all.sheets;

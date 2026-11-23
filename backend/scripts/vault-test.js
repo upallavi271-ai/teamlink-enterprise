@@ -326,6 +326,24 @@ const readBook = (buf) => { const wb = XLSX.read(buf, { type: 'buffer' }); retur
   const one = (raw, dept) => VX.fuzzyEmployees(ixT, raw, dept).map((e) => e.id).join(',');
   check('short names find the HRMS employee: B.Sneha, S.Uma, sailaja.b', one('B.Sneha') === 'e1' && one('S.Uma') === 'e2' && one('sailaja.b') === 'e3', [one('B.Sneha'), one('S.Uma'), one('sailaja.b')]);
   check('two people with the name: the department decides, otherwise both stay (nobody is guessed)', one('Renuka', 'BDE') === 'e5' && one('Renuka') === 'e4,e5', [one('Renuka', 'BDE'), one('Renuka')]);
+  // a team's sectioned sheet (founder 2026-11-23, "R&D Login Credentials"): Account Type per row, section rows with an emp code,
+  // who uses it in a column without a header ("HR" = a team), a second login column when the e-mail is empty, the file name = department
+  const sec = sheet([
+    ['Account Type', 'Username / Email', 'Password', 'Username / Login', 'emp code'],
+    ['Team X1', '', '', '', '9999', 'Ravi Kiranx'],
+    ['Webmail', `sec.a.${RUN}@example.test`, PW.plain(31), '', '', 'Ravi Kiranx'],
+    ['cPanel', '', PW.plain(32), `cpx${RUN}`, '', 'HR'],
+    ['facebook', `phone ${RUN}1`, PW.plain(33), '', '', 'HR'],
+    ['', `phone ${RUN}2`, PW.plain(34), '', '', 'HR'],
+    ['website admin page', `sec.b.${RUN}@tmlink.in`, PW.plain(35), '', '', 'HR'],
+  ], 'Sheet1');
+  const sv = await fileCall(`${V}/import/preview`, T.sa, sec, 'R&D Login Credentials.xlsx');
+  const sx = (sv.body && sv.body.rows) || [];
+  check('sectioned sheet: read the smart way, the section row is not a login', sv.status === 200 && sv.body.sheet === 'All sheets' && sx.length === 5 && noSecret(sv.text), sx.map((r) => [r.where, r.platform, r.label]));
+  check('sectioned sheet: the section names the label (Team X1), "HR" in the who column = Used by HR', sx[0] && sx[0].label === 'Team X1' && sx.slice(1).every((r) => r.label === 'Used by HR'), sx.map((r) => r.label));
+  check('sectioned sheet: Account Type is the platform, an empty one repeats the row above, a named one is kept as written', sx[2] && sx[2].platform === 'Meta' && sx[3] && sx[3].platform === 'Meta' && sx[4] && sx[4].platform === 'website admin page', sx.map((r) => r.platform));
+  check('sectioned sheet: an empty e-mail takes the Username / Login column (cPanel)', sx[1] && sx[1].platform === 'cPanel' && sx[1].username === `cpx${RUN}`, sx[1]);
+  check('sectioned sheet: the file name gives the department (R&D) when nobody is matched', sx.every((r) => r.department === 'R&D'), sx.map((r) => r.department));
   // undo
   await prisma.$executeRawUnsafe('UPDATE "Credential" SET "updatedAt" = ? WHERE "id" = ?', new Date(Date.now() + 5000).toISOString(), shineId); // somebody changed it since
   const un = await call('POST', `${V}/import/batches/${pv.body.batchId}/undo`, null, T.sa);
