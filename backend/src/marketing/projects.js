@@ -284,7 +284,10 @@ async function get(u, id) {
   const events = (await S.q(`SELECT * FROM "${TE}" WHERE projectId = ? ORDER BY at ASC`, r.id)).map((e) => ({ id: e.id, at: S.iso(e.at), kind: e.kind, byName: e.byName || '', text: e.text || '' }));
   const made = (await S.q('SELECT id, title, mime, aspect, status, style FROM "OmniMkImage" WHERE projectId = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT 60', r.id).catch(() => [])).map((x) => ({ id: x.id, title: x.title, kind: /^video\//.test(x.mime || '') ? 'video' : 'image', aspect: x.aspect || '1:1', status: x.status, style: x.style || '' }));
   const cur = S.num(r.round);
-  return { project: short(r, (await countsFor([r.id])).get(r.id)), logo: r.logoData || null, options: withItem.map((o) => ({ ...o, stage: o.round === cur + 1 ? 'staged' : o.round === cur ? 'presented' : 'earlier' })), events, made, clientAccountIds: await rememberedFor(r) };
+  // everything sent to this client for the pictures / videos of the project: when, to which number, and what the client answered
+  let sent = [];
+  try { const ids = [...new Set([...made.map((x) => x.id), ...opts.map((o) => o.itemId)])]; const kinds = new Map(made.map((x) => [x.id, x.kind])); sent = (await require('./clientReview').forItems(ids)).map((x) => ({ ...x, kind: kinds.get(x.itemId) || 'image' })); } catch { sent = []; } // eslint-disable-line global-require
+  return { sent, project: short(r, (await countsFor([r.id])).get(r.id)), logo: r.logoData || null, options: withItem.map((o) => ({ ...o, stage: o.round === cur + 1 ? 'staged' : o.round === cur ? 'presented' : 'earlier' })), events, made, clientAccountIds: await rememberedFor(r) };
 }
 async function update(u, id, b = {}) {
   const g = await getVisible(u, id); if (g.error) return g;

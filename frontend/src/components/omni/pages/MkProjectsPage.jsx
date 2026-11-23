@@ -444,6 +444,19 @@ function Detail({ id, meta, onBack, onChanged }) {
               </div>
             </Panel>
           ) : null}
+          <Panel title="Sent to this client" sub="Every picture and video sent for approval, to which number, and what the client answered." style={{ marginTop: 14 }}>
+            {(d.sent || []).length ? (
+              <div className="table-scroll"><table className="table cmp-table-small"><thead><tr><th>What</th><th>Sent</th><th>To</th><th>Client's answer</th></tr></thead>
+                <tbody>{d.sent.map((x) => (
+                  <tr key={x.id}>
+                    <td><b>{x.kind === 'video' ? '🎬 Video' : '🖼 Picture'}</b>: {x.itemTitle}</td>
+                    <td>{fmtDateTime(x.createdAt)}{x.createdByName ? ` · ${x.createdByName}` : ''}</td>
+                    <td>{[x.to, x.email].filter(Boolean).join(' · ') || '—'}</td>
+                    <td>{({ sent: x.views ? `Opened ${x.views} time${x.views === 1 ? '' : 's'}, no answer yet` : 'Waiting, not opened yet', approved: `✔ Approved${x.decidedAt ? ` ${fmtDateTime(x.decidedAt)}` : ''}`, changes: `✖ Rejected${x.comment ? `: ${x.comment}` : ''}`, expired: 'The link expired' })[x.status] || x.status}</td>
+                  </tr>
+                ))}</tbody></table></div>
+            ) : <div style={{ fontSize: 12, color: 'var(--muted)' }}>Nothing has been sent to this client yet. Make a video, then press <b>Save and send to client</b>.</div>}
+          </Panel>
           <Panel title="What happened" style={{ marginTop: 14 }}>
             <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
               {[...d.events].reverse().map((e) => (

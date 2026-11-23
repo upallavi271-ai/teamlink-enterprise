@@ -139,6 +139,15 @@ async function list(u, { kind = '', itemId = '' } = {}) {
   const now = Date.now();
   return { reviews: rows.map((r) => full(r, now)), canWrite: mayWrite(u) };
 }
+// what was sent to the client for these items (a client project's page lists it): newest first. The caller has already checked that the person may see the project.
+async function forItems(ids) {
+  await ensure();
+  const set = [...new Set((ids || []).map(String))].slice(0, 200);
+  if (!set.length) return [];
+  const rows = await S.q(`SELECT * FROM "${TABLE}" WHERE deletedAt IS NULL AND status != 'revoked' AND itemId IN (${set.map(() => '?').join(',')}) ORDER BY createdAt DESC LIMIT 100`, ...set);
+  const now = Date.now();
+  return rows.map((r) => ({ id: r.id, itemId: r.itemId, itemTitle: r.itemTitle, status: effective(r, now), clientName: r.clientName, contactName: r.contactName || '', to: require('../utils/messagingCore').maskMobile(r.contactPhone || '') || '', email: r.contactEmail ? require('../utils/messagingCore').maskEmail(r.contactEmail) : '', createdAt: S.iso(r.createdAt), views: S.num(r.views), viewedAt: S.iso(r.viewedAt), decidedAt: S.iso(r.decidedAt), decidedByName: r.decidedByName || '', comment: r.comment || '', createdByName: r.createdByName || '' })); // eslint-disable-line global-require
+}
 // 2026-11-23 (owner: "every time I cannot enter the client details, their name, number and mail"): the clients this login has already sent something to (and their client projects), with the contact
 // details that were typed last time, newest first, one per company name. The screens offer them when the client's name is picked, so the details are typed once.
 async function contacts(u) {
@@ -377,4 +386,4 @@ async function deliverHeld(reviewId, fromPhone, numberId) {
   return { note: w.ok ? 'delivered' : 'delivery failed: ' + (w.error || '') };
 }
 
-module.exports = { ensure, attach, create, contacts, sendToClient, list, revoke, extend, tell, publicView, publicFile, publicDecide, answerByButton, setReasonByReply, deliverHeld, tokenOf, idOfToken, snapshotOf, heldIds };
+module.exports = { forItems, ensure, attach, create, contacts, sendToClient, list, revoke, extend, tell, publicView, publicFile, publicDecide, answerByButton, setReasonByReply, deliverHeld, tokenOf, idOfToken, snapshotOf, heldIds };

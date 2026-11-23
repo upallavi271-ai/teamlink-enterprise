@@ -183,14 +183,15 @@ export default function MkVideosPage() {
   const stop = () => { if (stopRef.current) stopRef.current(); };
   const download = () => { const a = document.createElement('a'); a.href = made.url; a.download = `${(f.title || 'video').replace(/[^\w\- ]+/g, '').slice(0, 60) || 'video'}.${made.type.includes('mp4') ? 'mp4' : 'webm'}`; document.body.appendChild(a); a.click(); a.remove(); };
   const save = async (andSubmit) => {
-    setBusy(andSubmit ? 'submit' : 'save');
+    setBusy(andSubmit === 'send' ? 'send' : (andSubmit ? 'submit' : 'save'));
     try {
       const r = await omni.post('/gs/marketing/images/video', made.blob, {
         headers: { 'Content-Type': made.type.split(';')[0] },
         params: { title: f.title || f.headline || 'Video', aspect: f.format, scenes: pick.length, seconds: Math.round(secondsRef.current || tl.total), logo: f.useLogo && logo ? '1' : '0', headline: f.headline, ...(proj ? { projectId: proj.id } : {}), ...(getState().dept ? { department: getState().dept } : {}) },
         timeout: 300000,
       });
-      if (andSubmit) { const s = await omni.post(`/gs/marketing/images/${r.item.id}/submit`); toast(s.ok); } else toast('Video saved');
+      if (andSubmit === 'send') { toast('Video saved: now send it to the client'); setToClient({ ...r.item, projectId: proj ? proj.id : r.item.projectId }); } // a client project's video: straight on to "send to the client" (their details are filled in from the request)
+      else if (andSubmit) { const s = await omni.post(`/gs/marketing/images/${r.item.id}/submit`); toast(s.ok); } else toast('Video saved');
       setMade(null); setTab(''); load();
       if (!proj && auto.ready) auto.send([r.item.id]); // on the client's WhatsApp for approval, if the switch above the studio is on
     } catch (e) { toast(errOf(e, 'The video could not be saved.')); } finally { setBusy(''); }
@@ -328,8 +329,8 @@ export default function MkVideosPage() {
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <Btn onClick={download}>⬇ Download</Btn>
                       <Btn disabled={!!busy} onClick={() => save(false)}>{busy === 'save' ? 'Saving…' : '💾 Save'}</Btn>
-                      {clientVideos
-                        ? <span style={{ fontSize: 11, color: 'var(--muted)', alignSelf: 'center' }}>Next: press “➤ Ask client to approve” on its card below.</span>
+                      {(clientVideos || proj)
+                        ? <Btn primary disabled={!!busy} onClick={() => save('send')}>{busy === 'send' ? 'Saving…' : '➤ Save and send to client'}</Btn>
                         : <Btn primary disabled={!!busy} onClick={() => save(true)}>{busy === 'submit' ? 'Saving…' : 'Save and ask for approval →'}</Btn>}
                     </div>
                   </div>
