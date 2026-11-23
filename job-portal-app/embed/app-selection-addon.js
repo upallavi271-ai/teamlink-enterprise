@@ -123,7 +123,30 @@
     } else if (++tries > 120) clearInterval(iv);
   }, 500);
 
-  var mo = new MutationObserver(function () { decorate(); });
-  var start = function () { decorate(); mo.observe(document.body, { childList: true, subtree: true }); };
+
+  /* TALENT POOL: a normal "Call" (TeamLink browser calling) beside each row's "AI Call". The row already shows the name and the phone; nothing else is read. */
+  function decoratePool() {
+    var btns = document.querySelectorAll('td.act button[onclick^="tpCall("]');
+    Array.prototype.forEach.call(btns, function (ai) {
+      var td = ai.parentNode;
+      if (!td || td.querySelector('.tlpool-call')) return;
+      var tr = td.closest('tr');
+      var phone = tr && tr.children[2] ? String(tr.children[2].textContent || '').trim() : '';
+      var nm = tr && tr.querySelector('.who b') ? String(tr.querySelector('.who b').textContent || '').trim() : '';
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'btn btn-ghost btn-sm tlpool-call';
+      b.title = phone ? 'Call from your browser' : 'No phone number on file';
+      b.textContent = 'Call';
+      if (!/\d{7,}/.test(phone)) b.disabled = true;
+      b.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        window.open('/call-start?phone=' + encodeURIComponent(phone) + '&name=' + encodeURIComponent(nm), '_blank');
+      });
+      td.insertBefore(b, ai);
+    });
+  }
+
+  var mo = new MutationObserver(function () { decorate(); decoratePool(); });
+  var start = function () { decorate(); decoratePool(); mo.observe(document.body, { childList: true, subtree: true }); };
   if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
 })();
