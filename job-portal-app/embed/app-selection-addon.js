@@ -100,6 +100,29 @@
     });
   }
 
+  /* The profile's "Call" (web/teamlink-shared-candidates.js, TLEngagement._call) opened the computer's own phone app (tel:) and then asked to "Log call". It now starts
+     TeamLink's browser calling instead (the call is recorded by TeamLink itself, so there is no manual log). The same engagement check (who holds this candidate)
+     runs first. */
+  var tries = 0;
+  var iv = setInterval(function () {
+    var T = window.TLEngagement;
+    if (T && typeof T._call === 'function' && typeof T.gate === 'function' && !T._call.__tlBrowserCall) {
+      T._call = function (id) {
+        var c = window.DATA && window.DATA.candidateById ? window.DATA.candidateById(id) : null;
+        if (!c || !c.phone) { toast('No phone number on file', '⚠️'); return; }
+        var tab = null;
+        try { tab = window.open('about:blank', '_blank'); } catch (e) { tab = null; } // opened inside the click, so a pop-up blocker allows it
+        Promise.resolve(T.gate({ candidateId: id, jobId: null, action: 'call' })).then(function (ok) {
+          if (!ok) { if (tab) try { tab.close(); } catch (e) { /* gone */ } return; }
+          var url = '/call-start?phone=' + encodeURIComponent(String(c.phone)) + '&name=' + encodeURIComponent(String(c.name || ''));
+          if (tab && !tab.closed) tab.location.href = url; else window.open(url, '_blank');
+        }, function () { if (tab) try { tab.close(); } catch (e) { /* gone */ } });
+      };
+      T._call.__tlBrowserCall = true;
+      clearInterval(iv);
+    } else if (++tries > 120) clearInterval(iv);
+  }, 500);
+
   var mo = new MutationObserver(function () { decorate(); });
   var start = function () { decorate(); mo.observe(document.body, { childList: true, subtree: true }); };
   if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
