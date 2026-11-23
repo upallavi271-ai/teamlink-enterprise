@@ -143,6 +143,12 @@ async function notifySigned(client, updated, verifiedVia) {
     title: `${client.name} — agreement signed`,
     message: `${updated.agreementId || 'The agreement'} was e-signed by ${updated.agreementSignedBy || 'the client'}${updated.agreementSignedByTitle ? ` (${updated.agreementSignedByTitle})` : ''} and confirmed by a one-time code (${verifiedVia}).${updated.agreementCompanySealedAt ? '' : ' Next: press "Make it active" on the client\'s Agreement tab.'}`,
   });
+  // the client's BDE(s), the BDE TL and the Admins: a pop-up + mail too (utils/atsUpdates.js; never a TL / recruiter / HR)
+  await require('../utils/atsUpdates').publish({ // eslint-disable-line global-require
+    type: 'client_agreement', clientId: client.id, title: `${client.name} signed the agreement`,
+    summary: `${updated.agreementId || 'The agreement'} signed by ${updated.agreementSignedBy || 'the client'}${updated.agreementCompanySealedAt ? '' : ' · next: Make it active'}`, open: `/clients/${client.id}`,
+    actor: { id: null, name: updated.agreementSignedBy ? `${updated.agreementSignedBy} (client)` : 'The client' },
+  }).catch(() => {});
 }
 
 // =========================================================================

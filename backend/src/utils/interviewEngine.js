@@ -253,6 +253,10 @@ async function run(ctx) {
   await require('./interviewHourly').run({ // eslint-disable-line global-require
     apps: soon, bookedAt, now, plan, summary, dryRun, force, candOn, staffOn, emailsOn, quietNow, skipP,
   });
+  // --- 15 minutes before: one more pop-up to the team (utils/interviewHourly.js runMin15)
+  await require('./interviewHourly').runMin15({ // eslint-disable-line global-require
+    apps: soon, now, summary, dryRun, force, staffOn, skipP,
+  });
 
   // --- the morning list --------------------------------------------------------------------------------------------------
   if ((staffOn || force) && digestDue({ now, plan })) {

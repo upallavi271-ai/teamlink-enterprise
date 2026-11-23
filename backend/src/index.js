@@ -174,6 +174,8 @@ app.use(express.json());
 app.use('/api', require('./utils/mktb/gov').requestContext); // market wave B: an AI call knows who asked and from where (the AI governance log)
 // ATS plus webhooks / Slack / Teams (utils/atsPlus/integrations.js): after a 2xx answer of a watched route the event is sent - OFF until an Admin switches it on.
 app.use(require('./utils/atsPlus/integrations').eventMiddleware);
+// CLIENT UPDATES (utils/clientUpdateEvents.js -> utils/atsUpdates.js): after a 2xx answer of a client-side route, everyone concerned gets a pop-up + mail (founder 2026-11-23).
+app.use(require('./utils/clientUpdateEvents').middleware);
 // WHO LEFT AFTER JOINING (utils/joinedRule.js): a fresh set is loaded before ANY route runs, so no Joined list or number is ever built from an empty set
 app.use('/api', require('./utils/joinedRule').middleware());
 // WHO LOOKED AT WHAT (utils/readLog.js): a candidate / employee record or document opened is written after the answer (200 only).
@@ -465,6 +467,8 @@ app.use('/api/ats-daily', require('./routes/atsDaily'));
 app.use('/api/ats-report-pack', require('./routes/atsReportPack'));
 // Candidate experience (surveys, NPS, complaints, apply funnel) and Client health (client NPS, escalations, retention) - routes/atsExperience.js.
 app.use('/api/ats-experience', require('./routes/atsExperience'));
+// Client-update pop-ups, Your interviews today, the Updates & Reports centre, auto-screening (routes/atsUpdates.js, 2026-11-23).
+app.use('/api/ats-updates', require('./routes/atsUpdates'));
 // ATS insights (market wave 2026-11-21): dashboard insight cards, report builder, forecasts, alerts, schedules, backdoor, quality of hire, compliance, BI keys.
 app.use('/api/ats-insights', require('./routes/atsInsights'));
 // Pending work -> the TL (digest, escalation, Remind), the BDE's client work, the end-of-day report.
@@ -751,6 +755,8 @@ const server = app.listen(PORT, () => {
   require('./utils/atsEscalation').startSweep();
   require('./utils/atsWork/lifecycle').startSweep(); // failed AI / API steps retried hourly (3 tries) - only when an Admin switched it on
   require('./routes/atsExperience').startSweep();
+  require('./utils/atsUpdates').startSweep(); // client-update digests + the team's interview mails (08:00, 60 minutes before)
+  require('./utils/autoScreen').startSweep(); // auto-screening of new applications the hook missed (OFF unless a job switches it on)
   require('./routes/atsInsights').startSweeps(); // metric alerts (hourly), scheduled e-mails (15 min), quality-of-hire surveys (6 h) - each does nothing until an Admin switches it on // late complaints / client escalations move up a level; the quarterly client survey when switched on
   // Pending-work digest to the TL (10:30), escalation, BDE client-work digest, end-of-day report (18:45):
   // one tick every 5 minutes, each part sent once a day (utils/pendingWork.js).

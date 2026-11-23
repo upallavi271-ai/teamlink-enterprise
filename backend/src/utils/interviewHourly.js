@@ -24,7 +24,8 @@ const prisma = require('../db');
 const MIN = 60000;
 const HOUR = 3600000;
 const TEAM = { Recruiter: 'recruiter', 'Team lead': 'tl', 'Client manager (BDE)': 'bde' };
-const POPUP_KEYS = ['interview|hourly|', 'interview|hour|'];
+// + the 15-minute pop-up (founder 2026-11-23: "a popup 60 and 15 minutes before"; runMin15 below)
+const POPUP_KEYS = ['interview|hourly|', 'interview|hour|', 'interview|min15|'];
 
 let tableReady = null;
 function ensureTable() {
@@ -150,6 +151,44 @@ async function run({
   }
 }
 
+// ---- 15 MINUTES BEFORE (2026-11-23) -------------------------------------------------------------------------
+// The recruiter(s), TL, BDE(s) and staff panelists get ONE more pop-up 15 minutes before the slot. The earlier hour notes of
+// the same interview are marked read first, so the pop-up shows this one only (one card per interview, never two).
+// Each person once per slot (claim). Switch: Administration > Step timing > Client updates > "Pop-up 15 minutes before".
+async function runMin15({ apps, now, summary, dryRun, force, staffOn, skipP }) {
+  summary.min15Team = 0;
+  if (!(staffOn || force)) return;
+  let on = true;
+  try { on = (await require('./atsUpdates').settings()).interviews.min15Popup !== false; } catch { on = true; } // eslint-disable-line global-require
+  if (!on) return;
+  const IN = require('./interviewNotices'); // eslint-disable-line global-require
+  const TELL = require('./interviewTell'); // eslint-disable-line global-require
+  const t = now.getTime();
+  for (const a of apps) {
+    const left = a.interviewAt.getTime() - t;
+    if (left <= 0 || left > 15 * MIN) continue; // eslint-disable-line no-continue
+    if (skipP(a.candidate && a.candidate.name)) continue; // eslint-disable-line no-continue
+    const slot = a.interviewAt.toISOString();
+    const name = a.candidate ? a.candidate.name : 'Candidate';
+    // eslint-disable-next-line no-await-in-loop
+    const parties = (await TELL.partiesOf(a)).filter((p) => p.userId);
+    const lines = IN.staffLines(a, 'reminder_hour');
+    const title = `⏰ Interview in ${Math.max(1, Math.round(left / MIN))} minutes: ${name}`;
+    for (const p of parties) {
+      const key = `interview|min15|${a.id}|${slot}|${p.userId}`;
+      if (dryRun) { summary.items.push({ applicationId: a.id, kind: 'MIN15_TEAM', to: p.name }); summary.min15Team += 1; continue; } // eslint-disable-line no-continue
+      // eslint-disable-next-line no-await-in-loop
+      if (!(await claim(key, a.id))) continue; // eslint-disable-line no-continue
+      summary.items.push({ applicationId: a.id, kind: 'MIN15_TEAM', to: p.name });
+      summary.min15Team += 1;
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.notification.updateMany({ where: { userId: p.userId, read: false, OR: [{ recipient: { startsWith: `interview|hourly|${a.id}|` } }, { recipient: { startsWith: `interview|hour|${a.id}|` } }] }, data: { read: true } }).catch(() => {});
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.notification.create({ data: { userId: p.userId, title, message: lines.join(' · '), channel: 'In-App', recipient: key, status: 'Sent' } });
+    }
+  }
+}
+
 // ---- the pop-up ----------------------------------------------------------------------------------------------
 // The caller's own unread interview reminders of the last 75 minutes (the hourly ones and the "1 hour
 // before" one), one per interview, for interviews still booked at that slot.
@@ -205,5 +244,5 @@ async function seen(userId, ids) {
 }
 
 module.exports = {
-  run, hourDue, leftWords, popupsFor, seen, claim,
+  run, runMin15, hourDue, leftWords, popupsFor, seen, claim, POPUP_KEYS,
 };

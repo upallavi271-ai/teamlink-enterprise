@@ -63,6 +63,16 @@ prisma.$use(async (params, next) => {
   return result;
 });
 
+// autoscreen_: a new application on a job with "Auto-screen new applications" ON is screened a few seconds later (utils/autoScreen.js).
+// Every door (portal, careers page, job boards, imports, Add) writes through here; never throws, nothing happens while no job has it on.
+prisma.$use(async (params, next) => {
+  const result = await next(params);
+  if (params.model === 'Application' && params.action === 'create' && result && result.id) {
+    try { require('./utils/autoScreen').onNewApplication(result.id); } catch { /* the sweep catches it */ } // eslint-disable-line global-require
+  }
+  return result;
+});
+
 // jobdup_: every way a job is created or changed keeps the duplicate-jobs worklist fresh (utils/jobDupHook.js).
 // Only marks a cache stale; never throws, writes nothing.
 prisma.$use(async (params, next) => {

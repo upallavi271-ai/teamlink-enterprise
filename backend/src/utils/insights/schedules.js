@@ -169,6 +169,9 @@ async function sendOne(s) {
     // eslint-disable-next-line no-await-in-loop
     const r = await sendMail({ to: email, subject: mail.subject, text: mail.text, html: mail.html, attachments: mail.attachments, useEmployeeFrom: false, fromName: 'TeamLink Reports' });
     results.push(r.ok ? 'sent' : (r.notConfigured ? 'e-mail not set up' : 'failed'));
+    // the same report on the person's dashboard too (Updates & reports centre, utils/atsUpdates.js): one line per send
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.notification.create({ data: { userId: id, title: `Report: ${mail.subject}`.slice(0, 190), message: `${s.kind === 'report' ? 'Your scheduled report' : 'Your scheduled dashboard'} - ${r.ok ? 'mailed to you' : 'could not be mailed'}; open it here any time.\nOpen: ${s.kind === 'report' ? '/reports/ats?tab=builder' : '/ats/dashboard'}`, channel: 'In-App', recipient: `report|sched|${s.id}`, status: 'Sent' } }).catch(() => {});
   }
   const sent = results.filter((r) => r === 'sent').length;
   const status = `${sent} of ${ids.length} sent${results.some((r) => r !== 'sent') ? ` (${[...new Set(results.filter((r) => r !== 'sent'))].join(', ')})` : ''}`;

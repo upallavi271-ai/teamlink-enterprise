@@ -294,6 +294,8 @@ router.post('/client/:clientId/users', wrap(async (req, res) => {
   await logAudit({ userId: u.id, actorName: u.name, action: `Client portal login requested (${SHORT_TYPE[T.typeFor(caps)]})`, entity: 'Client', entityId: client.id, toValue: `${email} · can: ${youCan(caps)}` });
   const approvers = (await pauseApproverIds(client)).filter((id) => id !== u.id);
   await notifyUsers(approvers, { title: 'Client login waiting for your approval', message: `${u.name} asks for a login for ${name} (${client.name}) that can: ${youCan(caps)}.` });
+  // everyone concerned with the client sees it too (pop-up + mail, utils/atsUpdates.js); never blocks the answer
+  require('../utils/atsUpdates').publish({ type: 'client_login', clientId: client.id, title: `Portal login asked for ${name} (${client.name})`, summary: `Can: ${youCan(caps)}${reason ? ` · ${reason}` : ''}`, open: '/clients/portal-logins', actor: { id: u.id, name: u.name } }).catch(() => {}); // eslint-disable-line global-require
   return res.status(201).json({ requested: true, id: r.id, message: `Request sent. The Admin will approve it, then ${name} gets an invite email.` });
 }));
 

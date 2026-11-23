@@ -1491,7 +1491,10 @@ async function pipelineCore(req, sub, built) {
   const att = hasPersonQuery(q) ? await attributedApplications(req.user, q) : null;
   const ctx = await searchCtxOf(req.user, q.search, att ? att.ids : null);
   // cand7_: archived people are not part of any pipeline count.
-  const all = q.archived === '1' ? built.rows : built.rows.filter((r) => !r.archived);
+  const all0 = q.archived === '1' ? built.rows : built.rows.filter((r) => !r.archived);
+  // AUTO-SCREEN RESULT (utils/autoScreen.js, 2026-11-23): ?screening=pass,review,notsuitable,none (r.id is the application)
+  const scr = q.screening ? await require('../utils/autoScreen').matcher(q.screening).catch(() => null) : null; // eslint-disable-line global-require
+  const all = scr ? all0.filter((r) => scr(r.id)) : all0;
   const noStage = all.filter((r) => pipelineRowMatches(r, q, ctx, { skipStage: true }));
   const filtered = q.stage ? noStage.filter((r) => pipelineStageMatches(r, q)) : noStage;
 
@@ -1534,7 +1537,7 @@ async function pipelineCore(req, sub, built) {
   if (quick) rows = rows.filter((r) => QUEUES[quick](r));
   const sorted = sortRows(rows, q);
   return {
-    quick, ctx, effSub, subs, tallyOut, queueCounts, noDue, stageOptions, role, rows: sorted.rows, sorted: { sortKey: sorted.sortKey, dir: sorted.dir }, scopeTotal: all.length,
+    quick, ctx, effSub, subs, tallyOut, queueCounts, noDue, stageOptions, role, rows: sorted.rows, sorted: { sortKey: sorted.sortKey, dir: sorted.dir }, scopeTotal: all0.length,
   };
 }
 
@@ -1572,6 +1575,7 @@ async function pipelineList(req, res, sub) {
   // "Rejected N×" + who rejected (spec 2026-10-03 §A1, utils/rejections.js), on the copies.
   const pageOut = pg.pageRows.map(pipelineOut);
   if (isInternalViewer(req.user)) await require('../utils/candidateDupes').attachFlags(pageOut); // eslint-disable-line global-require  // dup_: the red "Duplicate" chip
+  if (isInternalViewer(req.user)) await require('../utils/autoScreen').attach(pageOut); // eslint-disable-line global-require  // the auto-screen chip (Pass / Review / Not suitable)
   if (isInternalViewer(req.user)) await require('../utils/rejections').attachRejectionBadges(req.user, pageOut); // eslint-disable-line global-require
   // "Interview requested by <recruiter>" (a Recruiter / TL asked the client manager to book): utils/interviewRequest.js
   if (isInternalViewer(req.user)) await require('../utils/interviewRequest').attachTo(pageOut); // eslint-disable-line global-require

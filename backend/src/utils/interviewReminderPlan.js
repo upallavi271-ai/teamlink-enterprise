@@ -40,7 +40,7 @@ const DEFAULTS = {
     dayBefore: true, hourBefore: true, nowOnline: true, channels: ['WhatsApp', 'SMS', 'Email'], strategy: 'first', safetyNetMinutes: 10,
   },
   parties: { recruiter: partyDefault(), tl: partyDefault(), bde: partyDefault(), interviewer: partyDefault() },
-  digestAt: '08:30',
+  digestAt: '08:00', // founder 2026-11-23: the morning mail at 08:00 IST
   noShow: { on: true, afterMinutes: 30 },
   feedback: { on: true, afterHours: 2 },
   quiet: true,
