@@ -3522,6 +3522,9 @@ router.get('/:id/documents', async (req, res) => {
     canUpload: access.allowed,
     // "Make offer letter": HR, and only while no offer letter is on file (one made earlier, or an e-signed copy, is never replaced)
     canMakeOfferLetter: !!access.hr && !docs.some((d) => d.docType === 'Offer Letter'),
+    // "Email offer letter": HR, once an offer letter is on file; the address it goes to is shown so HR sees it before pressing
+    canEmailOfferLetter: !!access.hr && docs.some((d) => d.docType === 'Offer Letter'),
+    offerLetterEmailTo: access.hr ? (employee.email || employee.personalEmail || null) : null,
     documents: docs.map((d) => ({
       id: d.id,
       docType: d.docType,
@@ -3549,6 +3552,20 @@ router.post('/:id/offer-letter', async (req, res) => {
     res.json(out);
   } catch (e) {
     res.status(500).json({ error: `The offer letter could not be made: ${e.message}` });
+  }
+});
+
+// "Email offer letter" (HR): the offer letter on file goes to the employee by email, as a PDF. A person presses it; nothing sends by itself.
+router.post('/:id/offer-letter/email', async (req, res) => {
+  const ctx = await loadForDocuments(req, res);
+  if (!ctx) return;
+  if (!ctx.access.hr) { res.status(403).json({ error: 'Only HR can email an offer letter.' }); return; }
+  try {
+    const out = await require('../utils/offerLetterMail').emailForEmployee(ctx.employee, req.user); // eslint-disable-line global-require
+    if (out.state !== 'SENT') { res.status(409).json({ error: out.message }); return; }
+    res.json({ ...out, message: `The offer letter was emailed to ${out.to}.` });
+  } catch (e) {
+    res.status(500).json({ error: `The email could not be sent: ${e.message}` });
   }
 });
 

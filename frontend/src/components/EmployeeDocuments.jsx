@@ -232,6 +232,21 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
     } finally { setBusy(''); }
   }
 
+  // "Email offer letter" (HR, once an offer letter is on file): the letter goes to the employee as a PDF. Asks first, with the address.
+  async function emailOfferLetter() {
+    const to = data?.offerLetterEmailTo;
+    if (!to) { setError('There is no email address on this employee’s record. Add it, then press Email offer letter.'); return; }
+    // eslint-disable-next-line no-alert
+    if (!confirm(`Email the offer letter to ${to}?\n\nIt goes out as a real email with the PDF attached (the letter includes the stipend and CTC).`)) return;
+    setError(''); setNotice(''); setBusy('offer-mail');
+    try {
+      const res = await api.post(`/employees/${target}/offer-letter/email`);
+      setNotice(res.data?.message || 'The offer letter was emailed.');
+    } catch (err) {
+      setError(err.response?.data?.error || 'The email could not be sent.');
+    } finally { setBusy(''); }
+  }
+
   async function remove(doc) {
     // eslint-disable-next-line no-alert
     if (!confirm(`Delete "${doc.docType === OTHER ? doc.docName : doc.docType}" (${doc.fileName})? This can't be undone.`)) return;
@@ -284,6 +299,12 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
       )}
       {error && <div className="error-text" style={{ marginBottom: 8 }}>{error}</div>}
       {notice && <div className="notice" style={{ marginBottom: 8 }}>{notice}</div>}
+      {!readOnly && !draft && data?.canEmailOfferLetter && (
+        <div className="small-muted" style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-sm" disabled={busy === 'offer-mail'} onClick={emailOfferLetter}>{busy === 'offer-mail' ? 'Sending…' : 'Email offer letter'}</button>
+          <span>{data.offerLetterEmailTo ? <>Emails the offer letter on file to <b>{data.offerLetterEmailTo}</b> as a PDF.</> : 'No email address on this record yet.'}</span>
+        </div>
+      )}
       {!readOnly && !draft && data?.canMakeOfferLetter && (
         <div className="small-muted" style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button type="button" className="btn btn-sm" disabled={busy === 'offer'} onClick={makeOfferLetter}>{busy === 'offer' ? 'Making…' : 'Make offer letter'}</button>

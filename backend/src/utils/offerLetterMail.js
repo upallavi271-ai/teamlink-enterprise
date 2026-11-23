@@ -889,6 +889,41 @@ async function fileForEmployee(employee, actorId, { auto = false } = {}) {
   return { state: 'MADE', message: 'The offer letter was made and kept in the employee’s documents.', omitted: made.omitted };
 }
 
+// "Email offer letter" (HR presses it on the employee's Documents): the offer letter that is ON FILE (the one made here, or an
+// e-signed copy) goes to the employee as a PDF attachment, with a short covering note. It goes to the work email, or the personal
+// one when there is no work email. -> { state: 'SENT', to } | { state: 'NOT_SENT', message }
+async function emailForEmployee(employee, actor) {
+  if (!employee) return { state: 'NOT_SENT', message: 'The employee was not found.' };
+  const doc = await prisma.employeeDocument.findFirst({ where: { employeeId: employee.id, docType: OFFER_DOC_TYPE }, orderBy: { uploadedAt: 'desc' } }).catch(() => null);
+  if (!doc) return { state: 'NOT_SENT', message: 'There is no offer letter on file. Press Make offer letter first.' };
+  const to = String(employee.email || employee.personalEmail || '').trim();
+  if (!/^[^@\s]+@[^@\s]+$/.test(to)) return { state: 'NOT_SENT', message: 'There is no email address on this employee’s record. Add it, then press Email offer letter.' };
+  if (skipTestPerson(employee.name, to)) return { state: 'NOT_SENT', message: 'A test person is never mailed.' };
+  const full = require('./attachments').resolveStored(doc.file); // eslint-disable-line global-require
+  if (!full) return { state: 'NOT_SENT', message: 'The offer letter file could not be found on the server. Press Make offer letter again (delete the old one first).' };
+  const company = (await companyOf()).name;
+  const first = String(employee.name || '').trim().split(/\s+/)[0] || 'there';
+  const subject = `Your offer letter${employee.designation ? ` - ${employee.designation}` : ''} at ${company}`;
+  const text = [
+    `Dear ${first},`, '',
+    `Greetings from ${company}!`, '',
+    'Your offer letter is attached as a PDF.', '',
+    'To accept, please reply to this email with the words "I accept the offer", or sign the attached letter and send it back to us. If you have any question, just reply to this email and we will help you.', '',
+    'Regards,', `HR, ${company}`,
+  ].join('\n');
+  const reply = await replyToFor({ requirement: {} }, actor);
+  // eslint-disable-next-line global-require
+  const out = await require('./mailer').sendMail({
+    to, subject, text,
+    attachments: [{ filename: doc.fileName || `Offer-letter-${employee.employeeCode || 'employee'}.pdf`, content: require('fs').readFileSync(full), contentType: doc.mime || 'application/pdf' }],
+    ...reply, useEmployeeFrom: false, fromName: 'TeamLink HR',
+  });
+  if (!out || !out.ok) return { state: 'NOT_SENT', message: `The email was not sent: ${(out && out.error) || 'mail is not set up'}` };
+  // the audit log carries who and to which address, never the salary
+  await logAudit({ userId: actor && actor.id ? actor.id : null, action: 'Offer letter emailed to the employee', entity: 'Employee', entityId: employee.id, toValue: `${employee.name} (${employee.employeeCode}) <${to}>` });
+  return { state: 'SENT', to };
+}
+
 // The editor's preview: the Admin's unsaved wording filled with sample details.
 async function previewTemplate(body) {
   const base = (await loadSettings()).template;
@@ -904,5 +939,5 @@ module.exports = {
   loadSettings, setAutomatic, cleanTemplate, saveTemplate, resetTemplate,
   buildModel, renderHtml, renderText, renderPdf, valuesFor,
   maybeSendAuto, sendNow, statusOf, previewOf, pdfOf, previewTemplate, blocker, rowOf,
-  pdfForEmployee, fileForEmployee, NEW_JOINER_DAYS,
+  pdfForEmployee, fileForEmployee, emailForEmployee, NEW_JOINER_DAYS,
 };
