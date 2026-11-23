@@ -73,7 +73,7 @@ async function findRaw(token) {
 // ---- 2. ONE ffmpeg command ----------------------------------------------------------------------------------------------------------
 function toMp3(src, dst) {
   return new Promise((resolve) => {
-    execFile(ENV.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-ac', '1', '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '24k', dst], { timeout: 180000, windowsHide: true }, (e) => resolve(!e && fs.existsSync(dst) && fs.statSync(dst).size > 0));
+    execFile(ENV.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-ac', '1', '-ar', '16000', '-af', 'loudnorm=I=-18:TP=-2', '-c:a', 'libmp3lame', '-b:a', '24k', dst], { /* loudnorm (23 Nov 2026): phone audio is quiet - Whisper heard only "Thank you." in a real call until it was brought up to normal loudness */ timeout: 180000, windowsHide: true }, (e) => resolve(!e && fs.existsSync(dst) && fs.statSync(dst).size > 0));
   });
 }
 
