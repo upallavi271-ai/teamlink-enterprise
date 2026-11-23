@@ -904,12 +904,15 @@ function selfDownloadGate(employee, completionPct, today = istToday()) {
 // "Email offer letter" (HR presses it on the employee's Documents): the offer letter that is ON FILE (the one made here, or an
 // e-signed copy) goes to the employee as a PDF attachment, with a short covering note. It goes to the work email, or the personal
 // one when there is no work email. -> { state: 'SENT', to } | { state: 'NOT_SENT', message }
-async function emailForEmployee(employee, actor) {
+async function emailForEmployee(employee, actor, { to: typedTo } = {}) {
   if (!employee) return { state: 'NOT_SENT', message: 'The employee was not found.' };
   const doc = await prisma.employeeDocument.findFirst({ where: { employeeId: employee.id, docType: OFFER_DOC_TYPE }, orderBy: { uploadedAt: 'desc' } }).catch(() => null);
   if (!doc) return { state: 'NOT_SENT', message: 'There is no offer letter on file. Press Make offer letter first.' };
-  const to = String(employee.email || employee.personalEmail || '').trim();
-  if (!/^[^@\s]+@[^@\s]+$/.test(to)) return { state: 'NOT_SENT', message: 'There is no email address on this employee’s record. Add it, then press Email offer letter.' };
+  // HR may type another address (the work mailbox is not always the one the person reads): ONE address, checked here
+  const typed = String(typedTo == null ? '' : typedTo).trim();
+  if (typed && !/^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$/.test(typed)) return { state: 'NOT_SENT', message: `"${typed.slice(0, 80)}" is not a single, valid email address.` };
+  const to = typed || String(employee.email || employee.personalEmail || '').trim();
+  if (!/^[^@\s]+@[^@\s]+$/.test(to)) return { state: 'NOT_SENT', message: 'There is no email address on this employee’s record. Type one, or add it to the record, then press Email offer letter.' };
   if (skipTestPerson(employee.name, to)) return { state: 'NOT_SENT', message: 'A test person is never mailed.' };
   const full = require('./attachments').resolveStored(doc.file); // eslint-disable-line global-require
   if (!full) return { state: 'NOT_SENT', message: 'The offer letter file could not be found on the server. Press Make offer letter again (delete the old one first).' };
@@ -937,7 +940,7 @@ async function emailForEmployee(employee, actor) {
     return { state: 'NOT_SENT', message: `The email was not sent: ${why}` };
   }
   // the audit log carries who and to which address, never the salary
-  await logAudit({ userId: actor && actor.id ? actor.id : null, action: 'Offer letter emailed to the employee', entity: 'Employee', entityId: employee.id, toValue: `${employee.name} (${employee.employeeCode}) <${to}>` });
+  await logAudit({ userId: actor && actor.id ? actor.id : null, action: 'Offer letter emailed to the employee', entity: 'Employee', entityId: employee.id, toValue: `${employee.name} (${employee.employeeCode}) <${to}>${typed ? ' (address typed by HR)' : ''}` });
   return { state: 'SENT', to };
 }
 

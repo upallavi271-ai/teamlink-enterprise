@@ -234,13 +234,17 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
 
   // "Email offer letter" (HR, once an offer letter is on file): the letter goes to the employee as a PDF. Asks first, with the address.
   async function emailOfferLetter() {
-    const to = data?.offerLetterEmailTo;
-    if (!to) { setError('There is no email address on this employee’s record. Add it, then press Email offer letter.'); return; }
+    // HR confirms or types the address (the work mailbox is not always the one the person reads)
+    // eslint-disable-next-line no-alert
+    const typed = prompt('Email the offer letter to which address?\n\n(One address. The one from the record is filled in.)', data?.offerLetterEmailTo || '');
+    if (typed === null) return;
+    const to = typed.trim();
+    if (!to) { setError('Type the email address the offer letter should go to.'); return; }
     // eslint-disable-next-line no-alert
     if (!confirm(`Email the offer letter to ${to}?\n\nIt goes out as a real email with the PDF attached (the letter includes the stipend and CTC).`)) return;
     setError(''); setNotice(''); setBusy('offer-mail');
     try {
-      const res = await api.post(`/employees/${target}/offer-letter/email`);
+      const res = await api.post(`/employees/${target}/offer-letter/email`, { to });
       setNotice(res.data?.message || 'The offer letter was emailed.');
     } catch (err) {
       setError(err.response?.data?.error || 'The email could not be sent.');
@@ -302,7 +306,7 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
       {!readOnly && !draft && data?.canEmailOfferLetter && (
         <div className="small-muted" style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button type="button" className="btn btn-sm" disabled={busy === 'offer-mail'} onClick={emailOfferLetter}>{busy === 'offer-mail' ? 'Sending…' : 'Email offer letter'}</button>
-          <span>{data.offerLetterEmailTo ? <>Emails the offer letter on file to <b>{data.offerLetterEmailTo}</b> as a PDF.</> : 'No email address on this record yet.'}</span>
+          <span>{data.offerLetterEmailTo ? <>Emails the offer letter on file as a PDF. You choose the address (<b>{data.offerLetterEmailTo}</b> is filled in).</> : 'Emails the offer letter on file as a PDF. You type the address.'}</span>
         </div>
       )}
       {!readOnly && !draft && data?.canMakeOfferLetter && (

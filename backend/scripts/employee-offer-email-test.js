@@ -68,6 +68,23 @@ const check = (name, ok, extra) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${nam
   mailResult = { ok: false, notConfigured: true, error: 'No email channel is configured' };
   check('mail not set up: reported in plain words', /not configured|No email channel/i.test((await O.emailForEmployee(emp, actor)).message));
 
+  // ---- HR types the address (the work mailbox is not always the one the person reads)
+  sent.length = 0; audits.length = 0; mailResult = { ok: true, providerRef: 'fake-2' };
+  const typedOk = await O.emailForEmployee(emp, actor, { to: '  msanjanaa27@gmail.com ' });
+  check('a typed address wins over the one on the record, trimmed', typedOk.state === 'SENT' && typedOk.to === 'msanjanaa27@gmail.com' && sent.length === 1 && sent[0].to === 'msanjanaa27@gmail.com', [typedOk, sent.map((m) => m.to)]);
+  check('the same saved PDF goes to the typed address, with the covering note and no salary', sent[0].attachments[0].filename === 'Offer-letter-TL534.pdf' && Buffer.compare(sent[0].attachments[0].content, pdfBytes) === 0 && /Dear Sanjana,/.test(sent[0].text) && !/10,000|CTC/i.test(sent[0].text));
+  check('the record says the address was typed by HR (and which one)', /msanjanaa27@gmail.com/.test(audits[0].toValue) && /typed by HR/.test(audits[0].toValue), audits[0]);
+  sent.length = 0;
+  for (const bad of ['not-an-address', 'a@b', 'one@x.com, two@y.com', 'one@x.com;two@y.com', 'Sanjana <s@x.com>', 'a b@x.com']) {
+    const r = await O.emailForEmployee(emp, actor, { to: bad });
+    check(`typed "${bad}" is refused, nothing is sent`, r.state === 'NOT_SENT' && /valid email address/.test(r.message) && sent.length === 0, r);
+  }
+  const blankFallsBack = await O.emailForEmployee(emp, actor, { to: '   ' });
+  check('a blank typed address falls back to the record', blankFallsBack.state === 'SENT' && blankFallsBack.to === 'sanjanam@tmlink.in', blankFallsBack);
+  const typedNoRecordAddr = await O.emailForEmployee({ ...emp, email: '', personalEmail: '' }, actor, { to: 'msanjanaa27@gmail.com' });
+  check('an employee with no address on the record can still be sent to a typed one', typedNoRecordAddr.state === 'SENT' && typedNoRecordAddr.to === 'msanjanaa27@gmail.com', typedNoRecordAddr);
+  check('a test person is still never mailed, typed address or not', (await O.emailForEmployee({ ...emp, name: 'ZZTEST Person' }, actor, { to: 'real@gmail.com' })).state === 'NOT_SENT');
+
   // ---- the employee's own download rule (My Profile -> Download offer letter)
   const G = O.selfDownloadGate;
   const day = (n) => new Date(Date.now() + 330 * 60000 + n * 86400000).toISOString().slice(0, 10);

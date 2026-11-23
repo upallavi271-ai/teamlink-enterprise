@@ -3592,7 +3592,7 @@ router.post('/:id/offer-letter/email', async (req, res) => {
   if (!ctx) return;
   if (!ctx.access.hr) { res.status(403).json({ error: 'Only HR can email an offer letter.' }); return; }
   try {
-    const out = await require('../utils/offerLetterMail').emailForEmployee(ctx.employee, req.user); // eslint-disable-line global-require
+    const out = await require('../utils/offerLetterMail').emailForEmployee(ctx.employee, req.user, { to: req.body && req.body.to }); // eslint-disable-line global-require
     if (out.state !== 'SENT') { res.status(409).json({ error: out.message }); return; }
     res.json({ ...out, message: `The offer letter was emailed to ${out.to}.` });
   } catch (e) {
