@@ -5,6 +5,7 @@ import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, ConfirmModal, GsModal, fmtDateTime } from '../ui.jsx';
 import { MkStatus, MkImg, downloadMkImg, ClientChip } from '../marketing/mk.jsx';
 import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
+import PostItemModal from '../marketing/PostItemModal.jsx';
 import AutoStudioPanel from '../marketing/AutoStudioPanel.jsx';
 import '../marketing/marketing.css';
 
@@ -27,6 +28,7 @@ export default function MkImagesPage() {
   const [del, setDel] = useState(null);
   const [rename, setRename] = useState(null);
   const [toClient, setToClient] = useState(null); // the picture being sent to a client
+  const [postIt, setPostIt] = useState(null); // the approved picture being posted on social accounts
   const [proj, setProj] = useState(null); // a client project these pictures are made for (?project=<id>): its logo and colours are used (marketing/projects.js)
   const projectId = (() => { try { return new URLSearchParams(window.location.search).get('project') || ''; } catch { return ''; } })();
   useEffect(() => { if (projectId) omni.get(`/gs/marketing/projects/${projectId}`).then((x) => setProj({ id: x.project.id, clientName: x.project.clientName, occasion: x.project.occasion, hasLogo: x.project.hasLogo })).catch(() => setProj(null)); }, [projectId]);
@@ -115,6 +117,7 @@ export default function MkImagesPage() {
                   {it.clientHold ? <TinyBtn onClick={() => setToClient(it)}>Client…</TinyBtn> : null}
                   {it.publicPath ? <TinyBtn onClick={() => copyLink(it)}>🔗 Copy link</TinyBtn> : null}
                   {it.status === 'approved' && it.canEdit ? <TinyBtn onClick={() => setToClient(it)}>{it.clientReview && it.clientReview.status !== 'revoked' ? 'Client…' : '➤ Send to client'}</TinyBtn> : null}
+                  {it.status === 'approved' && it.canEdit && it.style !== 'clip' ? <TinyBtn onClick={() => setPostIt(it)} title="Post it on the connected Facebook, Instagram or X accounts">📣 Post…</TinyBtn> : null}
                   {it.canEdit ? <TinyBtn onClick={() => setRename({ id: it.id, title: it.title })} aria-label={`Rename ${it.title}`}>✎</TinyBtn> : null}
                   {it.canDelete ? <TinyBtn onClick={() => setDel(it)} aria-label={`Delete ${it.title}`}>🗑</TinyBtn> : null}
                 </div>
@@ -132,6 +135,7 @@ export default function MkImagesPage() {
         </GsModal>
       ) : null}
       {toClient ? <ClientReviewModal kind="image" item={toClient} onClose={() => setToClient(null)} onChanged={load} toast={toast} /> : null}
+      {postIt ? <PostItemModal item={postIt} onClose={() => setPostIt(null)} onChanged={load} toast={toast} /> : null}
       {rename ? (
         <GsModal title="Rename the picture" width={420} onClose={() => setRename(null)} foot={<><Btn onClick={() => setRename(null)}>Cancel</Btn><Btn primary disabled={!rename.title.trim()} onClick={saveName}>Save</Btn></>}>
           <Field label="NAME"><input autoFocus value={rename.title} maxLength={80} onChange={(e) => setRename({ ...rename, title: e.target.value })} /></Field>

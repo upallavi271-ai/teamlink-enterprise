@@ -5,6 +5,7 @@ import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, ConfirmModal, fmtDateTime } from '../ui.jsx';
 import { MkStatus, MkImg, downloadMkImg, ClientChip, useMkMeta } from '../marketing/mk.jsx';
 import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
+import PostItemModal from '../marketing/PostItemModal.jsx';
 import AiClipPanel from '../marketing/AiClipPanel.jsx';
 import StockClipPanel from '../marketing/StockClipPanel.jsx';
 import AutoStudioPanel from '../marketing/AutoStudioPanel.jsx';
@@ -61,6 +62,7 @@ export default function MkVideosPage() {
   const [tab, setTab] = useState('');
   const [del, setDel] = useState(null);
   const [toClient, setToClient] = useState(null); // the video being sent to a client
+  const [postIt, setPostIt] = useState(null); // the approved video being posted on social accounts
   const canvasRef = useRef(null);
   const secondsRef = useRef(0); // the length of the last made video (voice-over can make it longer): a hook, so it stays above every early return
   const stopRef = useRef(null);
@@ -239,6 +241,7 @@ export default function MkVideosPage() {
         {!isClip && v.clientHold ? <TinyBtn onClick={() => setToClient(v)}>Client…</TinyBtn> : null}
         {v.publicPath ? <TinyBtn onClick={() => copyLink(v)}>🔗 Copy link</TinyBtn> : null}
         {!isClip && v.status === 'approved' && v.canEdit ? <TinyBtn onClick={() => setToClient(v)}>{v.clientReview && v.clientReview.status !== 'revoked' ? 'Client…' : '➤ Send to client'}</TinyBtn> : null}
+        {!isClip && v.status === 'approved' && v.canEdit ? <TinyBtn onClick={() => setPostIt(v)} title="Post it on the connected Facebook, Instagram or X accounts">📣 Post…</TinyBtn> : null}
         {v.canDelete ? <TinyBtn onClick={() => setDel(v)} aria-label={`Delete ${v.title}`}>🗑</TinyBtn> : null}
       </div>
       {isClip && v.status === 'approved' ? <small style={{ fontSize: 9.5, color: '#166534' }}>Ready: pick it in step 1.</small> : null}
@@ -348,6 +351,7 @@ export default function MkVideosPage() {
         {shown.length === 0 ? <Empty title="No videos here yet">{videosAll.length ? 'Nothing with that status.' : 'Pick pictures or clips above and press Make the video.'}</Empty> : <div className="mki-grid">{shown.map((v) => card(v, false))}</div>}
       </Panel>
       {toClient ? <ClientReviewModal kind="image" item={toClient} isVideo onClose={() => setToClient(null)} onChanged={load} toast={toast} /> : null}
+      {postIt ? <PostItemModal item={postIt} isVideo onClose={() => setPostIt(null)} onChanged={load} toast={toast} /> : null}
       {del ? <ConfirmModal danger title={`Delete "${del.title}"?`} text={del.status === 'approved' ? 'Its public link stops working.' : 'It is removed.'} yes="Delete" onNo={() => setDel(null)} onYes={remove} /> : null}
     </div>
   );
