@@ -8,6 +8,7 @@ import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import AiClipPanel from '../marketing/AiClipPanel.jsx';
 import StockClipPanel from '../marketing/StockClipPanel.jsx';
 import AutoStudioPanel from '../marketing/AutoStudioPanel.jsx';
+import { useAutoSend } from '../marketing/AutoSendBox.jsx';
 import { FORMATS, MOTIONS, recordType, timeline, play, drawFrame, decodeVoices } from '../marketing/slideshow.js';
 import '../marketing/marketing.css';
 
@@ -35,6 +36,7 @@ const CLIP_MAX = 40 * 1024 * 1024;
 
 export default function MkVideosPage() {
   const { toast, go } = useOmni();
+  const auto = useAutoSend(toast); // 2026-11-23: send each saved video to a chosen client on WhatsApp by itself (off until ticked)
   const { meta: mkMeta } = useMkMeta();
   const clientVideos = !!(mkMeta && mkMeta.limits && mkMeta.limits.clientRequired && (mkMeta.limits.clientFor || []).includes('videos')); // the Admin rule: only a client approves finished videos
   const [pics, setPics] = useState(null); // approved pictures
@@ -179,6 +181,7 @@ export default function MkVideosPage() {
       });
       if (andSubmit) { const s = await omni.post(`/gs/marketing/images/${r.item.id}/submit`); toast(s.ok); } else toast('Video saved');
       setMade(null); setTab(''); load();
+      if (!proj && auto.ready) auto.send([r.item.id]); // on the client's WhatsApp for approval, if the switch above the studio is on
     } catch (e) { toast(errOf(e, 'The video could not be saved.')); } finally { setBusy(''); }
   };
   // the person's own clips (made with the Gemini app, a phone ...): up to 3 at a time, each saved as raw footage and approved before it can be used

@@ -42,4 +42,32 @@ const opts = (p) => (p && p.numberId ? { numberId: p.numberId, automatic: true }
 // "from Team Link Consultants +91 92475 58566" out of a send result (empty with the old single connection)
 const fromWords = (res) => (res && res.numberLabel ? ` from ${res.numberLabel}${res.fromNumber ? ` ${res.fromNumber}` : ''}` : '');
 
-module.exports = { numbersFor, pick, opts, fromWords };
+// 2026-11-23 (owner: "when I send my AI image or video to the client in WhatsApp it is not going"): a message went out from a number whose own WhatsApp account has not got the template
+// (Meta error 132001, "has not been sent to Meta for the WhatsApp account of ..."): the client got nothing. Now the SAME message is sent once more from another connected number whose account
+// has that template Approved (the default company number first), and the answer says which number it left from. Nothing changes when the first number can send.
+async function alternative(res, tried) {
+  try {
+    const name = res && res.templateName;
+    if (!name) return null;
+    const list = (await require('../outreach/tplWaba').approvedNumbers(name)).filter((n) => n.id !== tried); // eslint-disable-line global-require
+    if (!list.length) return null;
+    const d = await WN.defaultRow().catch(() => null);
+    return (d && list.find((n) => n.id === d.id)) || list[0];
+  } catch { return null; }
+}
+// the one way AI Marketing sends WhatsApp to a client: params as for messaging.send (with `...Sender.opts(pk)` in them)
+async function send(params) {
+  const messaging = require('../utils/messaging'); // eslint-disable-line global-require
+  const res = await messaging.send('WhatsApp', params);
+  if (res && res.code === 'TEMPLATE_OTHER_ACCOUNT' && params && params.numberId) {
+    const alt = await alternative(res, params.numberId);
+    if (alt) {
+      const again = await messaging.send('WhatsApp', { ...params, numberId: alt.id, automatic: true });
+      if (again && again.ok) return { ...again, fellBackTo: alt.label };
+      return again || res;
+    }
+  }
+  return res;
+}
+
+module.exports = { numbersFor, pick, opts, fromWords, send, alternative };

@@ -82,8 +82,7 @@ async function mediaFile(item, key, max) {
 // ---- WhatsApp: one media message with buttons ------------------------------------------------------------------------------------------------------------
 // -> { ok, mode: 'media'|'template'|'held', error, res }
 async function waOne({ e164, file, text, buttons, numberOpts, meta, templatePayload }) {
-  const messaging = require('../utils/messaging'); // eslint-disable-line global-require
-  const res = await messaging.send('WhatsApp', {
+  const res = await require('./sender').send({ // eslint-disable-line global-require -- a number that cannot send the template is swapped for one that can (marketing/sender.js send)
     to: e164, kind: 'text', text, media: [file], buttons, meta, ...numberOpts,
     ...(templatePayload ? { mediaTemplate: templatePayload.template, vars: templatePayload.vars } : {}),
   });
@@ -134,7 +133,7 @@ async function sendProject(r, items, ctx) {
         out.sent.push({ way: 'WhatsApp', ok: false, to, label: it.label, error: w.error });
       }
       if (closed) { // nothing link-only goes out: a short note without a link, and the files are held until the client replies
-        const bulk = await require('../utils/messaging').send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${first ? `Hello ${first},` : 'Hello,'} your creative${r.occasion ? ` for ${S.clip(r.occasion, 80)}` : ''} from ${brand} is ready. Please reply YES to this message and we will send it here, so you can watch it and approve it with one tap.\n\nReply STOP to stop messages about this request.`, vars: [`your creative${r.occasion ? ` for ${S.clip(r.occasion, 80)}` : ''} from ${brand} is ready. Please reply YES to this message and we will send it here, so you can watch it and approve it with one tap.`], meta, ...Sender.opts(ctx.pk || {}) }); // eslint-disable-line global-require
+        const bulk = await Sender.send({ to: nm.e164, kind: 'bulk', text: `${first ? `Hello ${first},` : 'Hello,'} your creative${r.occasion ? ` for ${S.clip(r.occasion, 80)}` : ''} from ${brand} is ready. Please reply YES to this message and we will send it here, so you can watch it and approve it with one tap.\n\nReply STOP to stop messages about this request.`, vars: [`your creative${r.occasion ? ` for ${S.clip(r.occasion, 80)}` : ''} from ${brand} is ready. Please reply YES to this message and we will send it here, so you can watch it and approve it with one tap.`], meta, ...Sender.opts(ctx.pk || {}) }); // eslint-disable-line global-require
         if (bulk && bulk.ok) {
           await S.run(`UPDATE "${TW}" SET doneAt = ? WHERE type = 'hold' AND kind = 'project' AND refId = ? AND doneAt IS NULL`, Date.now(), r.id);
           await S.run(`INSERT INTO "${TW}" (id, type, kind, refId, optionId, phone, numberId, createdAt) VALUES (?,?,?,?,?,?,?,?)`, S.newId('aw'), 'hold', 'project', r.id, null, last10(nm.e164), (ctx.pk && ctx.pk.numberId) || null, Date.now());

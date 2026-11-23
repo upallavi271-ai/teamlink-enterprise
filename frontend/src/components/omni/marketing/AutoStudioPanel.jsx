@@ -3,6 +3,7 @@ import omni, { errOf } from '../omniApi.js';
 import { getState } from '../omniStore.js';
 import { Panel, Btn, Banner, Field, Pill, TinyBtn } from '../ui.jsx';
 import { designPoster, loadImage } from './designPoster.js';
+import AutoSendBox, { useAutoSend } from './AutoSendBox.jsx';
 
 // "✦ CREATE FROM YOUR CONTENT": a person types an idea (or only their own title, heading and content) and TeamLink makes the pictures and the video BY ITSELF.
 //   plan     the AI writes what is missing: headline, scene words, caption, hashtags (marketing/autostudio.js). What the person wrote themselves is always used exactly.
@@ -26,6 +27,7 @@ const STARTERS = [
 
 export default function AutoStudioPanel({ kind = 'video', projectId = '', onVideo, onMade, toast }) {
   const isVideo = kind === 'video';
+  const auto = useAutoSend(toast); // 2026-11-23: send what is made to a chosen client on WhatsApp by itself (off until ticked; not for a client project, which has its own Send)
   const [prompt, setPrompt] = useState('');
   const [title, setTitle] = useState('');
   const [heading, setHeading] = useState('');
@@ -121,7 +123,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
       }
       setPhase('done');
       toast(isVideo ? 'Pictures ready: putting the video together' : 'Your post pictures are ready as drafts');
-      if (isVideo && onVideo) onVideo(r.plan, ids, anyDesigned); else if (onMade) onMade();
+      if (isVideo && onVideo) onVideo(r.plan, ids, anyDesigned); else { if (onMade) onMade(); if (!projectId && !isVideo) auto.send(ids); }
       if (isVideo && onMade) onMade();
     } catch (e) { if (e.message !== 'stopped') setErr(errOf(e, e.message || 'It could not be created.')); setPhase(''); if (onMade) onMade(); }
   };
@@ -130,6 +132,8 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const mine = prompt.trim().length >= 8 || (title.trim() + heading.trim() + content.trim()).length >= 8;
 
   return (
+    <>
+    {!projectId ? <AutoSendBox auto={auto} /> : null}
     <Panel title="✦ Create from your content" sub={isVideo ? 'Type your idea, and your own title, heading and words if you have them. TeamLink makes the pictures and puts the video together by itself: free, no paid AI needed.' : 'Type your idea, and your own title, heading and words if you have them. TeamLink makes the post pictures by itself: free, no paid AI needed.'} style={{ marginBottom: 14 }}
       right={<Btn small onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Open'}</Btn>}>
       {open ? (
@@ -200,5 +204,6 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
         </div>
       ) : null}
     </Panel>
+    </>
   );
 }

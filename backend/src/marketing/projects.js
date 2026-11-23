@@ -308,7 +308,7 @@ async function tellClient(r, kind, opts = {}) {
         if (pk.error) { out.sent.push({ way: label, ok: false, local: true, to: '', error: pk.error }); continue; } // eslint-disable-line no-continue
         // the official WhatsApp number can send free text only within 24 hours of the person's last message: with an approved template set for this kind (AI usage), the template goes instead
         const tpl = require('./waTemplates').payload(set.waTemplates, kind, msg.values); // eslint-disable-line global-require
-        res = await messaging.send('WhatsApp', tpl
+        res = await Sender.send(tpl
           ? { to: nm.e164, kind: 'text', text: msg.text, template: tpl.template, vars: tpl.vars, meta: { ...meta, template: tpl.template.name }, ...Sender.opts(pk) }
           // no template of its own for this kind: the company's ONE general template ("bulk / general", Administration > Integrations > WhatsApp Business: its blank {{1}} is the whole message) carries it, if an Admin saved one; with none, free text as before
           : { to: nm.e164, kind: 'bulk', text: `${msg.text}\n\nReply STOP to stop messages about this request.`, vars: [msg.text], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop

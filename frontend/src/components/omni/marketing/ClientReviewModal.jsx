@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import api from '../../../api';
 import omni, { errOf } from '../omniApi.js';
 import { Btn, TinyBtn, GsModal, Field, Banner, fmtDateTime } from '../ui.jsx';
 import { ClientChip } from './mk.jsx';
 import SenderPick from './SenderPick.jsx';
+import useClientPeople from './clientPeople.js';
 
 // "SEND TO CLIENT" (AI Marketing > client approval): for an item the team has approved, makes a private link the client opens without a login to Approve or Request
 // changes. "Send from TeamLink" WhatsApps / emails it from the company's own number (and can send the picture itself); Copy, "Open my own WhatsApp" and "Email" are the manual way.
@@ -16,7 +16,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   // draft / sent-back item ("Ask the client to approve") and for an item already waiting on such a link. An item the team approved only gets a confirmation.
   const decide = item.status !== 'approved';
   const [reviews, setReviews] = useState(null);
-  const [clients, setClients] = useState([]);
+  const { people, find } = useClientPeople(); // the clients already sent to, with the details typed last time (marketing/clientPeople.js)
   const [f, setF] = useState({ clientName: '', clientId: '', contactName: '', contactEmail: '', contactPhone: '', message: '', days: 14 });
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
@@ -30,16 +30,27 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   const word = isVideo ? 'video' : (WORD[kind] || 'item');
 
   const load = () => omni.get('/gs/marketing/client-reviews', { kind, itemId: item.id }).then((d) => setReviews(d.reviews || [])).catch((e) => setErr(errOf(e, 'The client approvals could not be read.')));
-  useEffect(() => { load(); omni.get('/gs/marketing/projects/notify').then(setWays).catch(() => setWays(null)); api.get('/clients').then((r) => setClients(Array.isArray(r.data) ? r.data : (r.data && r.data.clients) || [])).catch(() => setClients([])); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const names = useMemo(() => clients.map((c) => c.name).filter(Boolean), [clients]);
+  useEffect(() => { load(); omni.get('/gs/marketing/projects/notify').then(setWays).catch(() => setWays(null)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const names = useMemo(() => people.map((c) => c.name), [people]);
 
   const pickClient = (name) => {
-    const c = clients.find((x) => x.name === name);
-    setF((x) => ({ ...x, clientName: name, clientId: c ? c.id : '', contactName: c ? (c.contactName || x.contactName) : x.contactName, contactEmail: c ? (c.contactEmail || x.contactEmail) : x.contactEmail, contactPhone: c ? (c.contactWhatsApp || c.contactPhone || x.contactPhone) : x.contactPhone }));
+    const c = find(name);
+    setF((x) => ({ ...x, clientName: name, clientId: c ? c.clientId : '', contactName: c ? (c.contactName || x.contactName) : x.contactName, contactEmail: c ? (c.contactEmail || x.contactEmail) : x.contactEmail, contactPhone: c ? (c.contactPhone || x.contactPhone) : x.contactPhone }));
   };
   const make = async () => {
     setBusy('make'); setErr('');
     try { const r = await omni.post('/gs/marketing/client-reviews', { ...f, kind, itemId: item.id, ...(decide ? { mode: 'decide' } : {}), message: f.message || `Please check this ${word} and tell us if it is OK to use.` }); setFresh(r.review); setAgain(false); toast(decide ? 'Waiting for the client: the private link is ready' : 'The private link is ready'); load(); onChanged && onChanged(); } catch (e) { setErr(errOf(e, 'The link could not be made.')); } finally { setBusy(''); }
+  };
+  // 2026-11-23: ONE press: the private link is made and WhatsApp sends it (the picture / video itself, with Approve / Reject, when WhatsApp allows it)
+  const makeAndSend = async () => {
+    setBusy('makesend'); setErr(''); setSendNote(null);
+    let made = null;
+    try {
+      const r = await omni.post('/gs/marketing/client-reviews', { ...f, kind, itemId: item.id, ...(decide ? { mode: 'decide' } : {}), message: f.message || `Please check this ${word} and tell us if it is OK to use.` });
+      made = r.review; setFresh(made); setAgain(false); onChanged && onChanged();
+      const res = await omni.post(`/gs/marketing/client-reviews/${made.id}/tell`, { ways: ['whatsapp'], ...(numberId ? { numberId } : {}), ...(String(f.contactPhone).trim() ? { phone: String(f.contactPhone).trim() } : {}) });
+      setSendNote(res.ok); toast(res.ok); load();
+    } catch (e) { setErr(`${errOf(e, 'It could not be sent.')}${made ? ' The private link is made: press Send below to try again.' : ''}`); } finally { setBusy(''); }
   };
   const act = async (r, what) => {
     setBusy(what + r.id); setErr('');
@@ -126,7 +137,8 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
           <Field label="MESSAGE TO THE CLIENT (OPTIONAL)" full><textarea style={{ minHeight: 60 }} value={f.message} maxLength={400} onChange={(e) => setF({ ...f, message: e.target.value })} placeholder={`Please check this ${word} and tell us if it is OK to use.`} /></Field>
           <Field label="THE LINK WORKS FOR"><select value={f.days} onChange={(e) => setF({ ...f, days: Number(e.target.value) })}>{[3, 7, 14, 30].map((n) => <option key={n} value={n}>{n} days</option>)}</select></Field>
           <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
-            <Btn primary disabled={busy === 'make' || f.clientName.trim().length < 2} onClick={make}>{busy === 'make' ? 'Making…' : 'Make the private link'}</Btn>
+            <Btn primary disabled={!!busy || f.clientName.trim().length < 2 || !String(f.contactPhone).trim() || (ways && !ways.whatsapp.ready)} onClick={makeAndSend} title={!String(f.contactPhone).trim() ? 'Write the client\'s WhatsApp number first' : 'Makes the private link and sends it on WhatsApp from the company number'}>{busy === 'makesend' ? 'Sending…' : 'Make the link and send on WhatsApp'}</Btn>
+            <Btn disabled={!!busy || f.clientName.trim().length < 2} onClick={make}>{busy === 'make' ? 'Making…' : 'Make the private link only'}</Btn>
             {again ? <Btn onClick={() => setAgain(false)}>Back</Btn> : null}
           </div>
         </div>

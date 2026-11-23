@@ -215,7 +215,7 @@ async function sendWhatsApp(opts = {}) {
     || { type: 'text', text: { body: String(text || (vars || []).join(' ')).slice(0, 4096), preview_url: true } };
   if (number && content.type === 'template') {
     const bad = await templateAccountCheck(cfg, content.template.name);
-    if (bad) { SD.release(dupKey); return { ok: false, blocked: true, invalid: true, transient: false, code: 'TEMPLATE_OTHER_ACCOUNT', httpStatus: 409, numberId: number.id, templateId: bad.templateId, accountState: bad.state, error: bad.reason }; }
+    if (bad) { SD.release(dupKey); return { ok: false, blocked: true, invalid: true, transient: false, code: 'TEMPLATE_OTHER_ACCOUNT', httpStatus: 409, numberId: number.id, templateName: content.template.name, templateId: bad.templateId, accountState: bad.state, error: bad.reason }; }
   }
   // the language version Meta approved in THIS account (2026-11-04: #132001 "does not exist in the translation" = right name, other language)
   if (content.type === 'template' && content.template && content.template.language && !simulated(cfg)) {

@@ -139,6 +139,33 @@ async function list(u, { kind = '', itemId = '' } = {}) {
   const now = Date.now();
   return { reviews: rows.map((r) => full(r, now)), canWrite: mayWrite(u) };
 }
+// 2026-11-23 (owner: "every time I cannot enter the client details, their name, number and mail"): the clients this login has already sent something to (and their client projects), with the contact
+// details that were typed last time, newest first, one per company name. The screens offer them when the client's name is picked, so the details are typed once.
+async function contacts(u) {
+  await ensure();
+  if (!mayWrite(u)) return { contacts: [] };
+  const seen = new Map();
+  const add = (r) => {
+    const name = S.clip(r.clientName, 120); const key = name.trim().toLowerCase();
+    if (name.length < 2 || seen.has(key)) return;
+    seen.set(key, { name, contactName: r.contactName || '', contactEmail: r.contactEmail || '', contactPhone: r.contactPhone || '', clientId: r.clientId || '' });
+  };
+  const reviews = (await S.q(`SELECT * FROM "${TABLE}" WHERE deletedAt IS NULL ORDER BY createdAt DESC LIMIT 400`)).filter((r) => visible(u, r));
+  const P = require('./projects'); // eslint-disable-line global-require
+  let projects = []; try { projects = (await P.list(u, {})).projects || []; } catch { projects = []; }
+  [...reviews.map((r) => ({ at: S.num(r.createdAt), r })), ...projects.map((p) => ({ at: Date.parse(p.updatedAt) || 0, r: p }))].sort((a, b) => b.at - a.at).forEach((x) => add(x.r));
+  return { contacts: [...seen.values()].slice(0, 200) };
+}
+// ONE step for a made picture / video: the client's private link in "client decides" mode, then WhatsApp (and email when asked and there is an address) from the company number.
+// If the sending fails, the link stays made: the person opens "Ask client to approve" on the item and presses Send again.
+async function sendToClient(u, itemId, b = {}, base = '') {
+  const made = await create(u, { kind: 'image', itemId, mode: 'decide', clientName: b.clientName, clientId: b.clientId, contactName: b.contactName, contactEmail: b.contactEmail, contactPhone: b.contactPhone, message: b.message, days: b.days });
+  if (made.error) return made;
+  const ways = ['whatsapp'];
+  if (b.email === true && made.review.contactEmail) ways.push('email');
+  const told = await tell(u, made.review.id, { ways, numberId: b.numberId, phone: b.contactPhone }, base);
+  return { ...told, review: made.review };
+}
 async function mine(u, id) {
   await ensure();
   const r = await row(id);
@@ -226,12 +253,12 @@ async function tell(u, id, b = {}, base = '') {
         f.cleanup();
         if (w.ok) { res = w.res; mode = 'picture'; }
         else if (w.closed) { // outside the 24 hours and no approval template: a short note with no link, the file is held until the client replies
-          const note = `${first ? `Hello ${first},` : 'Hello,'} your ${word} "${S.clip(r.itemTitle, 80)}" is ready for you to approve. Please reply YES to this message and we will send it here.`;
-          res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${note}\n\nReply STOP to stop messages from us.`, vars: [note], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop
+          const note = `${first ? `Hello ${first},` : 'Hello,'} your ${word} "${S.clip(r.itemTitle, 80)}" is ready for you to approve. Please reply YES to this message and we will send it here, or open it now: ${link}`;
+          res = await Sender.send({ to: nm.e164, kind: 'bulk', text: `${note}\n\nReply STOP to stop messages from us.`, vars: [note], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop
           if (res && res.ok) { await require('./approvalSend').ensure(); await S.run('INSERT INTO "OmniMkApprovalWait" (id, type, kind, refId, optionId, phone, numberId, createdAt) VALUES (?,?,?,?,?,?,?,?)', S.newId('aw'), 'hold', 'review', r.id, null, require('./approvalSend').last10(nm.e164), pk.numberId || null, Date.now()); mode = 'held'; why = `The client is outside WhatsApp's 24 hours, so a short note went first; the ${word} goes the moment they reply.`; } // eslint-disable-line no-await-in-loop
         } else { sent.push({ way: 'WhatsApp', ok: false, to: core.maskMobile(nm.e164), error: w.error }); continue; } // eslint-disable-line no-continue
       } else {
-        res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${text}\n\nReply STOP to stop messages from us.`, vars: [text], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop -- words (not a picture / video): the link is the way to read them
+        res = await Sender.send({ to: nm.e164, kind: 'bulk', text: `${text}\n\nReply STOP to stop messages from us.`, vars: [text], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop -- words (not a picture / video): the link is the way to read them
       }
       const ok = !!(res && res.ok);
       if (ok) await require('./remind').schedule({ kind: 'review', refId: r.id, phone: r.contactPhone, name: P.firstWord(r.contactName), clientName: r.clientName, by: u, numberId: pk.numberId || null }); // eslint-disable-line no-await-in-loop, global-require -- ONE reminder after 24 hours if they do not answer
@@ -350,4 +377,4 @@ async function deliverHeld(reviewId, fromPhone, numberId) {
   return { note: w.ok ? 'delivered' : 'delivery failed: ' + (w.error || '') };
 }
 
-module.exports = { ensure, attach, create, list, revoke, extend, tell, publicView, publicFile, publicDecide, answerByButton, setReasonByReply, deliverHeld, tokenOf, idOfToken, snapshotOf, heldIds };
+module.exports = { ensure, attach, create, contacts, sendToClient, list, revoke, extend, tell, publicView, publicFile, publicDecide, answerByButton, setReasonByReply, deliverHeld, tokenOf, idOfToken, snapshotOf, heldIds };

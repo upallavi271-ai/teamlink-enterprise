@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import api from '../../../api';
+import useClientPeople from '../marketing/clientPeople.js';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, GsModal, Pill, Tag, ConfirmModal, fmtDateTime, fmtDate } from '../ui.jsx';
@@ -81,15 +81,14 @@ function ShareBox({ url, phone, email, text, subject, toast, caption, projectId,
 // ---- log a request the client sent by email / WhatsApp / phone ----------------------------------------------------------------------------------------------
 function RequestModal({ meta, project, onClose, onDone, toast }) {
   const edit = !!project;
-  const [clients, setClients] = useState([]);
+  const { people, find } = useClientPeople(); // the clients already worked for, with the details typed last time
   const [f, setF] = useState(() => (project ? { clientName: project.clientName, contactName: project.contactName, contactPhone: project.contactPhone, contactEmail: project.contactEmail, source: project.source, occasion: project.occasion, brief: project.brief, deliverable: project.deliverable, platforms: project.platforms, handles: project.handles, dueDate: project.dueDate, colors: project.colors || {}, accept: false }
     : { clientName: '', contactName: '', contactPhone: '', contactEmail: '', source: 'whatsapp', occasion: '', brief: '', deliverable: 'video', platforms: ['instagram'], handles: '', dueDate: '', colors: {}, accept: true }));
   const [logo, setLogo] = useState(undefined); // undefined = unchanged, '' = removed, data URL = new
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  useEffect(() => { api.get('/clients').then((r) => setClients(Array.isArray(r.data) ? r.data : (r.data && r.data.clients) || [])).catch(() => setClients([])); }, []);
-  const names = useMemo(() => clients.map((c) => c.name).filter(Boolean), [clients]);
-  const pickClient = (name) => { const c = clients.find((x) => x.name === name); setF((x) => ({ ...x, clientName: name, contactName: c ? (c.contactName || x.contactName) : x.contactName, contactEmail: c ? (c.contactEmail || x.contactEmail) : x.contactEmail, contactPhone: c ? (c.contactWhatsApp || c.contactPhone || x.contactPhone) : x.contactPhone })); };
+  const names = useMemo(() => people.map((c) => c.name), [people]);
+  const pickClient = (name) => { const c = find(name); setF((x) => ({ ...x, clientName: name, contactName: c ? (c.contactName || x.contactName) : x.contactName, contactEmail: c ? (c.contactEmail || x.contactEmail) : x.contactEmail, contactPhone: c ? (c.contactPhone || x.contactPhone) : x.contactPhone })); };
   const toggle = (k) => setF((x) => ({ ...x, platforms: x.platforms.includes(k) ? x.platforms.filter((p) => p !== k) : [...x.platforms, k] }));
   const save = async () => {
     setBusy(true); setErr('');
@@ -139,18 +138,17 @@ function RequestModal({ meta, project, onClose, onDone, toast }) {
 function InviteModal({ onClose, onDone, toast }) {
   const [f, setF] = useState({ clientName: '', contactName: '', contactPhone: '', contactEmail: '' });
   const [made, setMade] = useState(null);
-  const [clients, setClients] = useState([]);
+  const { people, find } = useClientPeople(); // the clients already worked for, with the details typed last time
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  useEffect(() => { api.get('/clients').then((r) => setClients(Array.isArray(r.data) ? r.data : (r.data && r.data.clients) || [])).catch(() => setClients([])); }, []);
-  const pick = (name) => { const c = clients.find((x) => x.name === name); setF((x) => ({ ...x, clientName: name, contactName: c ? (c.contactName || x.contactName) : x.contactName, contactEmail: c ? (c.contactEmail || x.contactEmail) : x.contactEmail, contactPhone: c ? (c.contactWhatsApp || c.contactPhone || x.contactPhone) : x.contactPhone })); };
+  const pick = (name) => { const c = find(name); setF((x) => ({ ...x, clientName: name, contactName: c ? (c.contactName || x.contactName) : x.contactName, contactEmail: c ? (c.contactEmail || x.contactEmail) : x.contactEmail, contactPhone: c ? (c.contactPhone || x.contactPhone) : x.contactPhone })); };
   const make = async () => { setBusy(true); setErr(''); try { const r = await omni.post('/gs/marketing/projects/invite', f); setMade(r.project); toast('The request link is ready'); onDone(); } catch (e) { setErr(errOf(e, 'The link could not be made.')); } finally { setBusy(false); } };
   return (
     <GsModal title="Invite a client to send a request" sub="The client opens a private page, writes what they need, adds their logo and the pages we post on. No login." width={560} onClose={onClose} foot={<Btn onClick={onClose}>{made ? 'Done' : 'Cancel'}</Btn>}>
       {err ? <Banner tone="error">{err}</Banner> : null}
       {made ? <ShareBox url={`${origin()}${made.link}`} phone={made.contactPhone} email={made.contactEmail} subject="Please tell us what you need" text={`Hello${made.contactName ? ` ${made.contactName}` : ''}, please tell us what you need and add your logo here:`} toast={toast} caption={`REQUEST LINK FOR ${made.clientName.toUpperCase()}`} projectId={made.id} kind="invite" onSent={onDone} /> : (
         <div className="form-grid">
-          <Field label="CLIENT (COMPANY)" full><input list="mkp-inv-clients" value={f.clientName} maxLength={120} onChange={(e) => pick(e.target.value)} placeholder="Pick or type the client's name" /><datalist id="mkp-inv-clients">{clients.map((c) => <option key={c.id || c.name} value={c.name} />)}</datalist></Field>
+          <Field label="CLIENT (COMPANY)" full><input list="mkp-inv-clients" value={f.clientName} maxLength={120} onChange={(e) => pick(e.target.value)} placeholder="Pick or type the client's name" /><datalist id="mkp-inv-clients">{people.map((c) => <option key={c.name} value={c.name} />)}</datalist></Field>
           <Field label="CONTACT PERSON"><input value={f.contactName} maxLength={120} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field>
           <Field label="WHATSAPP NUMBER"><input value={f.contactPhone} maxLength={30} inputMode="tel" onChange={(e) => setF({ ...f, contactPhone: e.target.value })} placeholder="+91…" /></Field>
           <Field label="EMAIL" full><input value={f.contactEmail} maxLength={160} onChange={(e) => setF({ ...f, contactEmail: e.target.value })} /></Field>
