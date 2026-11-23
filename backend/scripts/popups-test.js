@@ -205,10 +205,18 @@ const MAILED = ['sent', 'not-configured', 'failed', 'skipped'];
   await pushNotification({ userId: rec.id, title: 'Alert: Overdue follow-ups above 5', message: 'It is 7 now', open: '/dashboard' });
   await pushNotification({ userId: rec.id, title: 'Follow-up overdue: Ppperson', message: 'Call back today', open: '/ats/followups' });
   await prisma.notification.create({ data: { userId: rec.id, title: 'Report: My dashboard', message: 'Your scheduled dashboard - mailed to you\nOpen: /ats/dashboard', channel: 'In-App', recipient: 'report|sched|x1', status: 'Sent' } });
+  // NOT ATS (founder 2026-11-23): CRM, AI Marketing approvals, tasks / timesheets (HRMS), invoices (Accounts) stay in the bell only
+  await pushNotification({ userId: rec.id, title: 'CRM follow-up late — Teamlink', message: 'TeamLink call at 11:00', open: '/crm/followups' });
+  await pushNotification({ userId: rec.id, title: 'Client approved "Warmest Wishes · 1"', message: 'It is now Approved and can be used in the Content Calendar. Open Omni-Channel > AI Marketing > Approvals.' });
+  await pushNotification({ userId: rec.id, title: '2 tasks you gave are late', message: '-Fill Tax & billing', open: '/employee-services?tab=timesheet' });
+  await pushNotification({ userId: rec.id, title: 'Proof missing — invoice TY1', message: 'Upload the proof', open: '/accounts/dashboard#proof' });
+  await pushNotification({ userId: rec.id, title: 'Requirement REQ-0999 assigned to you', message: 'Pharmacist', open: `/requirements/${req.id}` });
   const f = await call('GET', '/ats-updates/feed?limit=200', null, T.rec);
   const kinds = new Set(((f.body && f.body.rows) || []).map((r) => r.kind));
   check('centre: client updates, interviews, metric alerts, follow-ups and reports in one list', ['client', 'interview', 'alert', 'followup', 'report'].every((k) => kinds.has(k)), [...kinds]);
   check('centre: the reports of the day (daily report, follow-up report, reminders going out) are listed with links', f.body.rows.filter((r) => r.virtual).length >= 3 && f.body.rows.some((r) => r.open === '/reports/ats?tab=daily'));
+  check('centre: CRM, AI Marketing, tasks and invoices are NOT on the ATS dashboard', !f.body.rows.some((r) => /CRM follow-up|Warmest Wishes|tasks you gave|Proof missing/.test(r.title)), f.body.rows.map((r) => r.title).slice(0, 12));
+  check('centre: ATS notices (a requirement assigned) still are', f.body.rows.some((r) => /REQ-0999/.test(r.title)));
   check('centre: newest first', f.body.rows.every((r, i, a) => i === 0 || a[i - 1].at >= r.at));
   check('centre: unread counts per type', f.body.counts.client.unread >= 1 && f.body.counts.report.unread >= 3 && typeof f.body.unread === 'number', f.body.counts);
   const fc = await call('GET', '/ats-updates/feed?type=client', null, T.rec);

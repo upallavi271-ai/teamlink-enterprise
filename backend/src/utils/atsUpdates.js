@@ -468,6 +468,23 @@ function kindOf(n) {
   return 'system';
 }
 const OPEN_RE = /\nOpen: (\/\S*)\s*$/;
+// ATS ONLY (founder 2026-11-23: "why do these show on the ATS dashboard?"): the centre on the ATS dashboard lists recruitment things only.
+// The bell keeps everything; CRM follow-ups, AI Marketing / Omni-Channel approvals, tasks and timesheets (HRMS), invoices (Accounts) and
+// developer error notices stay out of here.
+const NOT_ATS_OPEN = /^\/(employee-services|hrms|hr|attendance|leave|payroll|accounts|invoices?|billing|crm|omni|marketing|ai-marketing|monitoring|admin\/monitoring|lms|tasks?)(\/|\?|#|$)/i;
+const NOT_ATS_TITLE = /\bcrm\b|\btasks?\b|timesheet|invoice|payroll|\bleave\b|attendance|reminder - \d|screen keeps failing|content calendar|marketing|client approved "/i;
+const NOT_ATS_TEXT = /omni-channel|ai marketing|content calendar|employee-services|timesheet|\bcrm\b/i;
+const ATS_OPEN = /^\/(candidates?|requirements?|clients?|ats|reports\/ats|interviews?|jobs?|applications?|pipeline|followups?|call-lists?|search)(\/|\?|#|$)/i;
+const ATS_TITLE = /^alert:|candidate|requirement|\breq-\d|application|response|interview|follow[- ]?up|joining|joined|offer|shortlist|submission|client|agreement|resume|\bcv\b|job portal|naukri|shine|linkedin|whatsapp reply|recruiter|screening|dropped/i;
+function isAtsNote(n, open) {
+  const r = String(n.recipient || '');
+  if (r.startsWith('cu|') || r.startsWith('report|') || r.startsWith('interview')) return true;
+  const t = String(n.title || ''); const m = String(n.message || '');
+  if (open && NOT_ATS_OPEN.test(open)) return false;
+  if (NOT_ATS_TITLE.test(t) || NOT_ATS_TEXT.test(m)) return false;
+  if (open && ATS_OPEN.test(open)) return true;
+  return ATS_TITLE.test(t);
+}
 const reportBase = () => ({ kind: 'report', virtual: true });
 // The reports a person has today: the same screens they already open, one line each, read state per day.
 async function reportItems(user, { now = now0() } = {}) {
@@ -496,7 +513,7 @@ async function feed(user, { type = '', from = '', to = '', read = '', limit = 50
   const evIds = notes.filter((n) => String(n.recipient || '').startsWith('cu|')).map((n) => n.recipient.slice(3));
   const evs = evIds.length ? await q(`SELECT "id", "type", "actorName" FROM "AtsUpdateEvent" WHERE "id" IN (${evIds.map(() => '?').join(',')})`, ...evIds) : [];
   const evBy = new Map(evs.map((e) => [e.id, e]));
-  let items = notes.map((n) => {
+  let items = notes.filter((n) => { const mm = String(n.message || '').match(OPEN_RE); return isAtsNote(n, mm ? mm[1] : null); }).map((n) => {
     const m = String(n.message || '').match(OPEN_RE);
     const kind = kindOf(n);
     const e = kind === 'client' ? evBy.get(n.recipient.slice(3)) : null;
@@ -568,5 +585,5 @@ function startSweep() {
 
 module.exports = {
   TYPES, KINDS, DEFAULTS, SETTINGS_KEY, ensure, settings, saveSettings, prefOf, savePref, recipientsFor, mayHear, publish, flushDigests,
-  popupsFor, seen, interviewsToday, markRead, sweepInterviewMails, feed, markItems, markAll, kindOf, maskContact, startSweep, istDay, claim,
+  popupsFor, seen, interviewsToday, markRead, sweepInterviewMails, feed, markItems, markAll, kindOf, isAtsNote, maskContact, startSweep, istDay, claim,
 };
