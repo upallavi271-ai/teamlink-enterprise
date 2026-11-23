@@ -802,7 +802,8 @@ function smartSheet(sheetName, grid, startRow) {
         if (!username && !password) return;
         const platform = smartPlatformOf(head[u], sheetName) || sheetPlatform || canonicalPlatform(sheetName);
         push({
-          row: startRow + hdrIdx + 1 + ri, where: `${sheetName} · row ${hdrIdx + 2 + ri}`, platform, label: [person, pairs.length > 1 ? head[u] : ''].filter(Boolean).join(' - ').slice(0, 150),
+          row: startRow + hdrIdx + 1 + ri, where: `${sheetName} · row ${hdrIdx + 2 + ri}`, platform, label: [(posCol >= 0 && r[posCol]) || person, pairs.length > 1 ? head[u] : ''].filter(Boolean).join(' - ').slice(0, 150), // the sheet's Position ("Edu 1") is the label; the Employee column shows who
+
           loginUrl: '', username, password, employee: person, department: '', notes: [`From sheet "${sheetName}"`, ...notes].join('\n'), renewalRaw: '', extra, softEmployee: true,
         });
       });
@@ -857,9 +858,23 @@ async function employeeIndex() {
   const by = { code: new Map(), email: new Map(), name: new Map() };
   const add = (m, k, e) => { if (!k) return; if (!m.has(k)) m.set(k, []); if (!m.get(k).some((y) => y.id === e.id)) m.get(k).push(e); };
   all.forEach((e) => { add(by.code, low(e.employeeCode), e); add(by.email, low(e.email), e); add(by.email, low(e.user && e.user.email), e); add(by.name, low(e.name), e); });
+  by.all = all;
   return by;
 }
 const LEFT = ['Exited', 'Relieved', 'Terminated'];
+// A team sheet writes people short: "B.Sneha", "S.Uma", "sailaja.b", "Ragini" (founder 2026-11-23: the import must find them in HRMS).
+// Every word of 3+ letters must be one of the employee's name words, and a single letter must start another of them; a working
+// employee wins over one who left, the row's department breaks a tie. Only ONE match counts.
+const nameWords = (s) => low(s).replace(/[^a-z. ]/g, ' ').split(/[\s.]+/).filter(Boolean);
+function fuzzyEmployees(ix, raw, dept) {
+  const t = nameWords(raw); const main = t.filter((x) => x.length >= 3); const inits = t.filter((x) => x.length === 1);
+  if (!main.length) return [];
+  let hit = (ix.all || []).filter((e) => { const et = nameWords(e.name); return main.every((m) => et.includes(m)) && inits.every((i) => et.some((x) => !main.includes(x) && x.startsWith(i))); });
+  if (!hit.length) hit = (ix.all || []).filter((e) => { const et = nameWords(e.name); return main.every((m) => et.some((x) => x.length >= 3 && (x.startsWith(m) || m.startsWith(x)))); });
+  const working = hit.filter((e) => !LEFT.includes(e.employmentStatus)); if (working.length) hit = working;
+  if (hit.length > 1 && dept) { const d = hit.filter((e) => low(e.department) === low(dept)); if (d.length) hit = d; }
+  return hit;
+}
 function findEmployees(ix, raw) {
   const k = low(raw);
   if (!k) return [];
@@ -895,7 +910,8 @@ async function resolveRows(rows, choices = {}) {
     const tokens = r.employee ? r.employee.split(/[;,]/).map((t) => squash(t)).filter(Boolean).slice(0, 20) : [];
     tokens.forEach((t, i) => {
       const key = `${r.row}:${i}`;
-      const found = findEmployees(ix, t);
+      let found = findEmployees(ix, t);
+      if (!found.length && r.softEmployee) { const fz = fuzzyEmployees(ix, t, r.department); if (fz.length === 1) found = fz; }
       if (!found.length) {
         if (r.softEmployee) { out.notes = [`Person: ${t.slice(0, 60)} (no TeamLink employee with this name)`, out.notes].filter(Boolean).join('\n').slice(0, 2000); return; }
         out.reasons.push(`No employee "${t.slice(0, 60)}" in TeamLink`); return;
@@ -906,6 +922,11 @@ async function resolveRows(rows, choices = {}) {
       if (r.softEmployee && !(choices && choices[key])) { out.notes = [`Person: ${t.slice(0, 60)} (${found.length} employees with this name - pick one after the import)`, out.notes].filter(Boolean).join('\n').slice(0, 2000); return; }
       out.choices.push({ key, text: t.slice(0, 60), options: found.slice(0, 20).map(empOpt) });
     });
+    // no person on the row: the login's own e-mail can be a working employee's (sravanthi.m@tmlink.in)
+    if (r.softEmployee && !tokens.length && out.username) {
+      const byMail = (ix.email.get(low(out.username)) || []).filter((e) => !LEFT.includes(e.employmentStatus));
+      if (byMail.length === 1) out.employees.push(empOpt(byMail[0]));
+    }
     if (!out.department && out.employees.length === 1) out.department = out.employees[0].department;
     const k = `${platformKeyOf(out.platform)}|${usernameKeyOf(out.username)}`;
     if (out.platform && out.username) {
@@ -1032,7 +1053,7 @@ async function undo(user, batchId, ip) {
 
 module.exports = {
   FEATURE, VaultError, CONFIRM_WORDS, MAX_BYTES, SHOW_SECONDS, REAUTH_MS, LOCK_AFTER, LOCK_MS, PLATFORMS, COLUMNS,
-  readAllSheets, smartSheet,
+  readAllSheets, smartSheet, fuzzyEmployees,
   ensure, rightsFor, menuRightsFor, isRealSuper, reauth, checkReauth, list, detail, reveal, save, remove, bulk, historyOf, accessLog,
   grants, setGrant, options, exportBook, logAccess, template, preview, check, apply, batches, undo, canonicalPlatform, applyFilters,
 };

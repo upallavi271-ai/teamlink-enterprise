@@ -304,7 +304,7 @@ const readBook = (buf) => { const wb = XLSX.read(buf, { type: 'buffer' }); retur
   check('smart import: two logins on one row (VC Dail login + User login) become two logins', plat('ViciDial').some((r) => /VC Dail Logins/.test(r.label)) && plat('ViciDial').some((r) => /User Login/.test(r.label)));
   check('smart import: a sheet without a header row is read by what its cells look like', !!plat('Shine')[0] && plat('Shine')[0].username === `smshine_${RUN}` && plat('Shine')[0].hasPassword);
   check('smart import: a phone-numbers sheet with no password is skipped, not guessed', (sp.body.smartSheets || []).some((x) => x.name === 'Mobile Numbers' && x.skipped));
-  check('smart import: a person who is not an employee is kept (label + note), not refused', sr.length === 6 && sr.every((r) => r.status === 'ready') && !!plat('Gmail')[0] && plat('Gmail')[0].label === 'Nobody Fakename' && /Position: TL/.test(plat('Gmail')[0].notes), sr.map((r) => [r.where, r.status, r.reasons]));
+  check('smart import: a person who is not an employee is kept (Position as the label, the name in the notes), not refused', sr.length === 6 && sr.every((r) => r.status === 'ready') && !!plat('Gmail')[0] && plat('Gmail')[0].label === 'TL' && /Person: Nobody Fakename/.test(plat('Gmail')[0].notes), sr.map((r) => [r.where, r.status, r.label, r.reasons]));
   check('smart import: rows say which sheet and row they came from', sr.every((r) => /· row \d+$/.test(r.where || '')), sr.map((r) => r.where));
   const sa2 = await call('POST', `${V}/import/apply`, { batchId: sp.body.batchId }, T.sa);
   check('smart import: Import adds all 6 logins', sa2.status === 200 && sa2.body.created === 6, sa2.body);
@@ -313,6 +313,19 @@ const readBook = (buf) => { const wb = XLSX.read(buf, { type: 'buffer' }); retur
   const tkS = (await reauth(T.sa, PW.sa)).body.token;
   check('smart import: the second password of the row reveals to its own exact value', !!vcRow && (await reveal(T.sa, vcRow.id, tkS)).body.value === PW.plain(23));
   await call('POST', `${V}/import/batches/${sp.body.batchId}/undo`, null, T.sa);
+  // short names from a team sheet find the HRMS employee (founder 2026-11-23)
+  const VX = require('../src/utils/credentialVault');
+  const ixT = { all: [
+    { id: 'e1', name: 'Sneha Bharghavi Bapanapalli', department: 'Education', employmentStatus: 'Active' },
+    { id: 'e2', name: 'Uma S', department: 'Education', employmentStatus: 'Active' },
+    { id: 'e3', name: 'Sailaja Bongu', department: 'BDE', employmentStatus: 'Active' },
+    { id: 'e4', name: 'Renuka A', department: 'Education', employmentStatus: 'Active' },
+    { id: 'e5', name: 'Gonda Renuka', department: 'BDE', employmentStatus: 'Active' },
+    { id: 'e6', name: 'Old Sneha', department: 'Education', employmentStatus: 'Relieved' },
+  ] };
+  const one = (raw, dept) => VX.fuzzyEmployees(ixT, raw, dept).map((e) => e.id).join(',');
+  check('short names find the HRMS employee: B.Sneha, S.Uma, sailaja.b', one('B.Sneha') === 'e1' && one('S.Uma') === 'e2' && one('sailaja.b') === 'e3', [one('B.Sneha'), one('S.Uma'), one('sailaja.b')]);
+  check('two people with the name: the department decides, otherwise both stay (nobody is guessed)', one('Renuka', 'BDE') === 'e5' && one('Renuka') === 'e4,e5', [one('Renuka', 'BDE'), one('Renuka')]);
   // undo
   await prisma.$executeRawUnsafe('UPDATE "Credential" SET "updatedAt" = ? WHERE "id" = ?', new Date(Date.now() + 5000).toISOString(), shineId); // somebody changed it since
   const un = await call('POST', `${V}/import/batches/${pv.body.batchId}/undo`, null, T.sa);
