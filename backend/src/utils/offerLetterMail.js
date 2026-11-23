@@ -48,7 +48,7 @@ const TOKENS = [
   { key: 'designation', label: 'Designation (the job title)', sample: 'Senior HR Executive' },
   { key: 'department', label: 'Department', sample: 'Human Resources' },
   { key: 'location', label: 'Place of work', sample: 'Hyderabad' },
-  { key: 'joiningDate', label: 'Joining date', sample: '1 December 2026' },
+  { key: 'joiningDate', label: 'Joining date', sample: '1 Dec 2026' },
   { key: 'joiningDay', label: 'Day of the week of joining', sample: 'Tuesday' },
   { key: 'monthlySalary', label: 'Trainee stipend per month (set below in the editor)', sample: '₹10,000/- per month' },
   { key: 'monthlySalaryWords', label: 'Trainee stipend in words', sample: 'Rupees Ten Thousand only' },
@@ -59,7 +59,7 @@ const TOKENS = [
   { key: 'manager', label: 'Reporting manager (the job’s team lead)', sample: 'Ravi Kumar, Team Lead' },
   { key: 'company', label: 'Company name', sample: 'TeamLink Consultants' },
   { key: 'probationMonths', label: 'Trainee period in months (set below in the editor)', sample: '3' },
-  { key: 'offerDate', label: 'Date of this letter', sample: '17 November 2026' },
+  { key: 'offerDate', label: 'Date of this letter', sample: '17 Nov 2026' },
   { key: 'refNo', label: 'Letter reference number', sample: 'TL/OL/2026/A1B2C3' },
 ];
 const TOKEN_KEYS = new Set(TOKENS.map((t) => t.key));
@@ -113,8 +113,8 @@ const DEFAULT_TEMPLATE = {
   closing: 'We welcome you to {{company}} for a long and fruitful association, and look forward to your valuable contributions towards the organization’s growth. We wish you the very best of luck!',
   signatoryName: '',
   signatoryTitle: 'HR Department',
-  acceptanceLine: 'I have read and understood this offer letter, and I accept the offer on the terms and conditions above.',
-  footerNote: 'This letter is confidential and meant only for {{name}}.',
+  acceptanceLine: '', // the reference letter has only the signature line under "Acceptance of Offer"; words typed here print above it
+  footerNote: '', // small print at the foot of the page; the reference letter has none
 };
 const LIMITS = {
   subject: 200, coverNote: 3000, title: 80, termsHeading: 80, intro: 2000, closing: 1000, signatoryName: 80, signatoryTitle: 120, acceptanceLine: 600, footerNote: 300,
@@ -234,6 +234,9 @@ async function resetTemplate(user) {
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const isDay = (v) => /^\d{4}-\d{2}-\d{2}/.test(String(v || ''));
 const longDay = (d, opt = {}) => (isDay(d) ? new Date(`${String(d).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC', ...opt }) : '');
+// "23 Sep 2026", the way the reference offer letter writes a date
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; // spelled out: newer ICU writes "Sept"
+const shortDay = (d) => (isDay(d) ? `${Number(String(d).slice(8, 10))} ${MON[Number(String(d).slice(5, 7)) - 1]} ${String(d).slice(0, 4)}` : '');
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const inr = (v) => (Number(v) > 0 ? `₹ ${Math.round(Number(v)).toLocaleString('en-IN')} per annum` : '');
 
@@ -268,7 +271,7 @@ async function valuesFor(app, tpl) {
     designation: r.title || '',
     department: r.department || '',
     location: r.location || c.location || '',
-    joiningDate: longDay(app.joiningDate),
+    joiningDate: shortDay(app.joiningDate),
     joiningDay: longDay(app.joiningDate, { day: undefined, month: undefined, year: undefined, weekday: 'long' }),
     ctc: tpl.showCtc === false ? '' : inr(app.offeredCtc),
     monthlySalary: tpl.showCtc === false ? '' : monthlyText(tpl.monthlySalary),
@@ -279,7 +282,7 @@ async function valuesFor(app, tpl) {
     manager: await managerOf(r),
     company: company.name,
     probationMonths: String(tpl.traineeMonths || 3),
-    offerDate: longDay(istToday()),
+    offerDate: shortDay(istToday()),
     refNo: `TL/OL/${year}/${String(app.id).slice(-6).toUpperCase()}`,
   };
 }
@@ -301,6 +304,27 @@ function fillLine(text, vals) {
 }
 const fillPlain = (text, vals) => fill(text, vals).text.replace(/\n{3,}/g, '\n\n').trim();
 
+// Bold inside the letter's paragraphs: B_ON value B_OFF (control characters a template can never contain - cleanTemplate strips them).
+const B_ON = '\u0001';
+const B_OFF = '\u0002';
+const BOLD_RE = /\u0001([^\u0002]*)\u0002/g;
+const BOLD_TOKENS = ['name', 'designation', 'department', 'company', 'joiningDate', 'monthlySalary', 'confirmedCtc', 'probationMonths'];
+const unmark = (s) => String(s == null ? '' : s).replace(BOLD_RE, '$1');
+// -> [{ t, b }] runs of plain and bold text
+function runsOf(s) {
+  const str = String(s == null ? '' : s);
+  const out = [];
+  let last = 0;
+  str.replace(BOLD_RE, (m, v, i) => {
+    if (i > last) out.push({ t: str.slice(last, i), b: false });
+    out.push({ t: v, b: true });
+    last = i + m.length;
+    return m;
+  });
+  if (last < str.length) out.push({ t: str.slice(last), b: false });
+  return out;
+}
+
 // The whole letter as data; the HTML, the text and the PDF are all drawn from this.
 async function buildModel(app, tpl, { sample = false } = {}) {
   const company = await companyOf();
@@ -317,15 +341,19 @@ async function buildModel(app, tpl, { sample = false } = {}) {
     vals.workingHours = tpl.workingHours || '';
   }
   const why = (missing) => [...new Set(missing.map((k) => k.replace(/Words$/, '')))].map((k) => (k === 'monthlySalary' ? 'trainee stipend not written in the editor' : k === 'confirmedCtc' ? 'annual CTC on confirmation not written in the editor' : k === 'workingHours' ? 'working hours not written in the editor' : `no ${k} on file`)).join(', ');
+  // the details the reference letter prints in bold (name, designation, department, company, dates, amounts) carry a bold mark
+  // in the letter's body; the renderers turn it into bold, the plain text drops it
+  const bold = { ...vals };
+  BOLD_TOKENS.forEach((k) => { if (bold[k] != null && String(bold[k]).trim() !== '') bold[k] = `${B_ON}${bold[k]}${B_OFF}`; });
   const omitted = [];
   const details = [];
   (tpl.details || []).forEach((row) => {
-    const v = fillLine(row.value, vals);
+    const v = fillLine(row.value, bold);
     if (v.skip) omitted.push(`${row.label} (${why(v.missing)})`); else details.push({ label: fillPlain(row.label, vals), value: v.text });
   });
   const terms = [];
   (tpl.terms || []).forEach((row) => {
-    const v = fillLine(row.text, vals);
+    const v = fillLine(row.text, bold);
     const title = fillPlain(row.title, vals);
     if (v.skip) omitted.push(`${title || 'A term'} (${why(v.missing)})`); else terms.push({ title, text: v.text });
   });
@@ -337,11 +365,11 @@ async function buildModel(app, tpl, { sample = false } = {}) {
     title: fillPlain(tpl.title, vals),
     subjectLine: `${fillPlain(tpl.title, vals)}${vals.designation ? ` - ${vals.designation}` : ''}`,
     coverNote: fillPlain(tpl.coverNote, vals),
-    intro: fillPlain(tpl.intro, vals),
+    intro: fillPlain(tpl.intro, bold),
     details,
     termsHeading: fillPlain(tpl.termsHeading, vals),
     terms,
-    closing: fillPlain(tpl.closing, vals),
+    closing: fillPlain(tpl.closing, bold),
     signatory: { name: fillPlain(tpl.signatoryName, vals), title: fillPlain(tpl.signatoryTitle, vals), company: company.name },
     acceptance: { line: fillPlain(tpl.acceptanceLine, vals), name: vals.name },
     footerNote: fillPlain(tpl.footerNote, vals),
@@ -351,55 +379,58 @@ async function buildModel(app, tpl, { sample = false } = {}) {
   };
 }
 
-// --- the HTML (the mail itself, and the preview on screen) -----------------------------------------------------------------
-// "Date of Appointment:" - a numbered point's heading ends with a colon (the reference letter's style), unless it already ends in . : ? !
+// --- THE LAYOUT: the founder's reference offer letter (Offer_Letter_Teamlink_Divyasri.docx, 2026-11-23) ----------------------
+// Plain black text, the key details in bold: OFFER LETTER (centred) / Date (right) / To, NAME, place / Dear NAME, / the opening
+// paragraph / the points as bullets with a bold heading (a point written on several lines = a bold heading and its own bullets) /
+// the welcome line / "Yours sincerely, For <company>, signature line, signatory" on the left and "Acceptance of Offer, signature
+// line, Signature of Candidate, Date" on the right. No colours, boxes or reference number in the letter itself.
+// "Date of Appointment:" - a point's heading ends with a colon, unless it already ends in . : ? !
 const termLabel = (title) => (/[.:?!]$/.test(String(title).trim()) ? String(title).trim() : `${String(title).trim()}:`);
-const para = (text) => String(text || '').split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px 0">${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+const listLines = (text) => String(text || '').split('\n').map((l) => l.replace(/^\s*[•\-*]\s*/, '').trim()).filter(Boolean);
+const SIGN_LINE = '______________________';
+
+// --- the HTML (the mail itself, and the preview on screen) -----------------------------------------------------------------
+const hRuns = (s) => esc(s).replace(BOLD_RE, '<b>$1</b>'); // esc leaves the bold marks alone
+const para = (text, mb = 12) => String(text || '').split(/\n{2,}/).map((p) => `<p style="margin:0 0 ${mb}px 0;line-height:1.5">${hRuns(p).replace(/\n/g, '<br>')}</p>`).join('');
 function renderHtml(m, { logoSrc = null, withCover = true } = {}) {
-  const fontStack = "'Segoe UI',Calibri,Arial,Helvetica,sans-serif";
-  const head = `
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-bottom:3px solid ${NAVY};padding-bottom:14px"><tr>
-      <td style="vertical-align:middle">${logoSrc ? `<img src="${esc(logoSrc)}" alt="${esc(m.company.name)}" height="40" style="display:block;height:40px;width:auto;border:0">` : `<div style="font-size:20px;font-weight:700;color:${NAVY}">${esc(m.company.name)}</div>`}</td>
-      <td style="vertical-align:middle;text-align:right;font-size:12px;line-height:1.5;color:${MUTED}">
-        <div style="font-weight:700;color:${NAVY};font-size:13px">${esc(m.company.name)}</div>
-        ${m.company.address ? `<div>${esc(m.company.address)}</div>` : ''}
-        ${m.company.phone || m.company.email ? `<div>${[m.company.phone, m.company.email].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ')}</div>` : ''}
-      </td></tr></table>`;
-  const rows = m.details.map((r) => `<tr><td style="padding:9px 12px;width:34%;background:#eef1f7;border:1px solid #d5dbe5;font-size:13px;font-weight:600;color:${NAVY}">${esc(r.label)}</td><td style="padding:9px 12px;border:1px solid #d5dbe5;font-size:14px;color:#111">${esc(r.value)}</td></tr>`).join('');
-  const terms = m.terms.map((t, i) => `<tr><td style="vertical-align:top;width:26px;padding:0 0 12px 0;font-size:14px;font-weight:700;color:${NAVY}">${i + 1}.</td><td style="padding:0 0 12px 0;font-size:14px;line-height:1.6;color:#222">${t.title ? `<b style="color:${NAVY}">${esc(termLabel(t.title))}</b>${t.text.includes('\n') ? '<br>' : ' '}` : ''}${esc(t.text).replace(/\n/g, '<br>')}</td></tr>`).join('');
-  const cover = withCover && m.coverNote
-    ? `<div style="font-size:14px;line-height:1.65;color:#222;padding:0 4px 18px 4px">${para(m.coverNote)}</div>`
+  const font = "Calibri,Carlito,'Segoe UI',Arial,Helvetica,sans-serif";
+  const ul = (items) => `<ul style="margin:0 0 10px 0;padding-left:24px">${items.map((i) => `<li style="margin:0 0 6px 0;line-height:1.5">${i}</li>`).join('')}</ul>`;
+  // the points: one-line points share a bullet list; a point written on several lines is a bold heading and its own list
+  const blocks = [];
+  let run = [];
+  const flush = () => { if (run.length) blocks.push(ul(run)); run = []; };
+  m.terms.forEach((t) => {
+    if (t.text.includes('\n')) {
+      flush();
+      if (t.title) blocks.push(`<p style="margin:12px 0 8px 0;line-height:1.5"><b>${esc(termLabel(t.title))}</b></p>`);
+      blocks.push(ul(listLines(t.text).map(hRuns)));
+    } else run.push(`${t.title ? `<b>${esc(termLabel(t.title))}</b> ` : ''}${hRuns(t.text)}`);
+  });
+  flush();
+  const details = m.details.map((r) => `<p style="margin:0 0 6px 0;line-height:1.5"><b>${esc(termLabel(r.label))}</b> ${hRuns(r.value)}</p>`).join('');
+  const cover = withCover && (logoSrc || m.coverNote)
+    ? `<div style="font-size:14px;line-height:1.6;color:#222;padding:0 4px 18px 4px">${logoSrc ? `<img src="${esc(logoSrc)}" alt="${esc(m.company.name)}" height="36" style="display:block;height:36px;width:auto;border:0;margin:0 0 14px 0">` : ''}${m.coverNote ? para(m.coverNote) : ''}</div>`
     : '';
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(m.subjectLine)}</title></head>
-<body style="margin:0;padding:0;background:#f3f5f9;font-family:${fontStack};color:#222">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f5f9"><tr><td align="center" style="padding:22px 12px">
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:${font};color:#000">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6"><tr><td align="center" style="padding:22px 12px">
 <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px"><tr><td>
 ${cover}
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #d5dbe5;border-radius:6px"><tr><td style="padding:30px 36px 28px 36px">
-${head}
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 4px 0"><tr>
-  <td style="font-size:12px;color:${MUTED}">Ref: <b style="color:#111">${esc(m.refNo)}</b></td>
-  <td style="font-size:12px;color:${MUTED};text-align:right">Date: <b style="color:#111">${esc(m.dateLong)}</b></td></tr></table>
-<div style="margin:14px 0 2px 0;font-size:13px;color:#111;line-height:1.5">To,<br><b>${esc(m.to.name)}</b>${m.to.place ? `<br>${esc(m.to.place)}` : ''}</div>
-<h1 style="margin:22px 0 4px 0;font-size:21px;letter-spacing:.6px;text-transform:uppercase;color:${NAVY};text-align:center;font-weight:700">${esc(m.title)}</h1>
-<div style="height:2px;width:64px;background:${NAVY};margin:6px auto 20px auto"></div>
-<div style="font-size:14px;line-height:1.65;color:#222">${para(m.intro)}</div>
-${rows ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:6px 0 20px 0">${rows}</table>` : ''}
-${terms ? `${m.termsHeading ? `<div style="font-size:15px;font-weight:700;color:${NAVY};margin:6px 0 10px 0">${esc(m.termsHeading)}</div>` : '<div style="height:4px"></div>'}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${terms}</table>` : ''}
-${m.closing ? `<div style="font-size:14px;line-height:1.65;color:#222;margin-top:6px">${para(m.closing)}</div>` : ''}
-<div style="margin-top:18px;font-size:14px;color:#222;line-height:1.5">Yours sincerely,<br><b>For ${esc(m.signatory.company)}</b>
-  <div style="height:46px"></div>
-  <div style="border-top:1px solid #8b93a3;width:230px;padding-top:5px">${m.signatory.name ? `<b>${esc(m.signatory.name)}</b><br>` : ''}${esc(m.signatory.title)}</div></div>
-${m.acceptance.line ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px;border:1px solid #c3cbdb;border-radius:4px;background:#f8f9fc"><tr><td style="padding:16px 18px">
-  <div style="font-size:13px;font-weight:700;color:${NAVY};text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Acceptance of Offer</div>
-  <div style="font-size:13px;line-height:1.6;color:#222">${esc(m.acceptance.line)}</div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:22px;font-size:12px;color:${MUTED}"><tr>
-    <td width="40%" style="border-top:1px solid #8b93a3;padding-top:4px">Name: ${esc(m.acceptance.name)}</td><td width="4%"></td>
-    <td width="32%" style="border-top:1px solid #8b93a3;padding-top:4px">Signature</td><td width="4%"></td>
-    <td width="20%" style="border-top:1px solid #8b93a3;padding-top:4px">Date</td></tr></table>
-</td></tr></table>` : ''}
-${m.footerNote ? `<div style="margin-top:22px;border-top:1px solid #d5dbe5;padding-top:10px;font-size:11px;color:${MUTED};text-align:center">${esc(m.footerNote)}</div>` : ''}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #d9dce1"><tr><td style="padding:44px 48px 40px 48px;font-family:${font};font-size:15px;color:#000">
+<div style="text-align:center;font-size:24px;font-weight:700;margin:0 0 26px 0">${esc(m.title.toUpperCase())}</div>
+<div style="text-align:right;font-weight:700;margin:0 0 18px 0">Date: ${esc(m.dateLong)}</div>
+<div style="margin:0 0 18px 0;line-height:1.5"><b>To,</b><br><b>${esc(m.to.name)}</b>${m.to.place ? `<br>${esc(m.to.place)}` : ''}</div>
+${para(m.intro)}
+${details}
+${m.termsHeading && m.terms.length ? `<p style="margin:6px 0 8px 0"><b>${esc(m.termsHeading)}</b></p>` : ''}
+${blocks.join('')}
+${m.closing ? `<div style="margin:14px 0 30px 0">${para(m.closing, 0)}</div>` : ''}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+  <td width="50%" style="vertical-align:top;line-height:1.5;font-size:15px">Yours sincerely,<br><b>For ${esc(m.signatory.company)}</b><br><br><br>${SIGN_LINE}<br><b>${esc(m.signatory.name || 'Authorized Signatory')}</b>${m.signatory.title ? `<br>${esc(m.signatory.title)}` : ''}</td>
+  <td width="50%" style="vertical-align:top;text-align:right;line-height:1.5;font-size:15px">Acceptance of Offer${m.acceptance.line ? `<br><span style="font-size:13px">${esc(m.acceptance.line)}</span>` : ''}<br><br><br>${SIGN_LINE}<br><b>Signature of Candidate</b><br>Date: ______________</td>
+</tr></table>
+${m.footerNote ? `<div style="margin-top:26px;font-size:11px;color:#666;text-align:center">${esc(m.footerNote)}</div>` : ''}
 </td></tr></table>
 </td></tr></table>
 </td></tr></table>
@@ -409,21 +440,22 @@ ${m.footerNote ? `<div style="margin-top:22px;border-top:1px solid #d5dbe5;paddi
 function renderText(m) {
   const lines = [];
   if (m.coverNote) lines.push(m.coverNote, '', '------------------------------------------------------------', '');
-  lines.push(m.company.name.toUpperCase());
-  if (m.company.address) lines.push(m.company.address);
-  lines.push('', `Ref: ${m.refNo}`, `Date: ${m.dateLong}`, '', 'To,', m.to.name, ...(m.to.place ? [m.to.place] : []), '', m.title.toUpperCase(), '', m.intro, '');
-  m.details.forEach((r) => lines.push(`${r.label}: ${r.value}`));
+  lines.push(m.title.toUpperCase(), '', `Date: ${m.dateLong}`, '', 'To,', m.to.name, ...(m.to.place ? [m.to.place] : []), '', unmark(m.intro), '');
+  m.details.forEach((r) => lines.push(`${termLabel(r.label)} ${unmark(r.value)}`));
   if (m.details.length) lines.push('');
-  if (m.terms.length && m.termsHeading) lines.push(m.termsHeading.toUpperCase());
-  m.terms.forEach((t, i) => lines.push(`${i + 1}. ${t.title ? `${termLabel(t.title)}${t.text.includes('\n') ? '\n' : ' '}` : ''}${t.text}`));
+  if (m.terms.length && m.termsHeading) lines.push(m.termsHeading);
+  m.terms.forEach((t) => {
+    if (t.text.includes('\n')) { if (t.title) lines.push('', termLabel(t.title)); listLines(t.text).forEach((l) => lines.push(`• ${unmark(l)}`)); } else lines.push(`• ${t.title ? `${termLabel(t.title)} ` : ''}${unmark(t.text)}`);
+  });
   if (m.terms.length) lines.push('');
-  if (m.closing) lines.push(m.closing, '');
-  lines.push('Yours sincerely,', `For ${m.signatory.company}`, '', ...(m.signatory.name ? [m.signatory.name] : []), m.signatory.title);
-  if (m.acceptance.line) lines.push('', 'ACCEPTANCE OF OFFER', m.acceptance.line, `Name: ${m.acceptance.name}`);
+  if (m.closing) lines.push(unmark(m.closing), '');
+  lines.push('Yours sincerely,', `For ${m.signatory.company}`, '', SIGN_LINE, m.signatory.name || 'Authorized Signatory', ...(m.signatory.title ? [m.signatory.title] : []));
+  lines.push('', 'Acceptance of Offer', ...(m.acceptance.line ? [m.acceptance.line] : []), '', SIGN_LINE, `Signature of Candidate (${m.acceptance.name})`, 'Date: ______________');
+  if (m.footerNote) lines.push('', m.footerNote);
   return lines.join('\n');
 }
 
-// --- the PDF (pdfkit; the same helpers as the agreement / joining letter) ---------------------------------------------------
+// --- the PDF (pdfkit, A4; Helvetica stands in for Calibri, which a Linux server does not have) ------------------------------
 let logoCache = null;
 async function logoPng() {
   if (logoCache !== null) return logoCache || null;
@@ -441,10 +473,11 @@ async function renderPdf(m) {
   const PDFDocument = require('pdfkit'); // eslint-disable-line global-require
   const { pdfText } = require('./agreementPdf'); // eslint-disable-line global-require
   const t = (v) => pdfText(v);
-  const logo = await logoPng();
+  const SIZE = 10.5;
+  const GAP = 3; // about the reference's 1.25 line spacing
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
-      size: 'A4', margins: { top: 48, bottom: 64, left: 58, right: 58 }, bufferPages: true,
+      size: 'A4', margins: { top: 64, bottom: 60, left: 66, right: 66 }, bufferPages: true,
       info: { Title: t(`${m.title} - ${m.to.name}`), Author: t(m.company.name), Subject: t(m.subjectLine) },
     });
     const chunks = [];
@@ -453,137 +486,101 @@ async function renderPdf(m) {
     const W = doc.page.width - L - doc.page.margins.right;
     const bottomLimit = () => doc.page.height - doc.page.margins.bottom;
     const need = (h) => { if (doc.y + h > bottomLimit()) doc.addPage(); };
-
-    // letterhead
-    const top = doc.y;
-    if (logo) { try { doc.image(logo, L, top, { height: 36 }); } catch { /* optional */ } } else { doc.font('Helvetica-Bold').fontSize(18).fillColor(NAVY).text(t(m.company.name), L, top, { width: W / 2 }); }
-    doc.font('Helvetica-Bold').fontSize(10.5).fillColor(NAVY).text(t(m.company.name), L + W / 2, top, { width: W / 2, align: 'right' });
-    doc.font('Helvetica').fontSize(8.5).fillColor(MUTED);
-    if (m.company.address) doc.text(t(m.company.address), L + W / 2, doc.y, { width: W / 2, align: 'right' });
-    const contact = [m.company.phone, m.company.email].filter(Boolean).join('  |  ');
-    if (contact) doc.text(t(contact), L + W / 2, doc.y, { width: W / 2, align: 'right' });
-    const ruleY = Math.max(doc.y, top + 38) + 8;
-    doc.moveTo(L, ruleY).lineTo(L + W, ruleY).lineWidth(2).strokeColor(NAVY).stroke();
-    doc.y = ruleY + 14; doc.x = L;
-
-    // reference and date
-    const refY = doc.y;
-    doc.font('Helvetica').fontSize(9).fillColor(MUTED).text('Ref: ', L, refY, { continued: true, lineBreak: false }).font('Helvetica-Bold').fillColor('#111').text(t(m.refNo), { lineBreak: false });
-    // the date is placed by its measured width (a right-aligned "continued" run overprints)
-    doc.font('Helvetica-Bold').fontSize(9);
-    const dateW = doc.widthOfString(t(m.dateLong));
-    doc.font('Helvetica').fontSize(9);
-    const labelW2 = doc.widthOfString('Date: ');
-    doc.fillColor(MUTED).text('Date: ', L + W - dateW - labelW2, refY, { lineBreak: false });
-    doc.font('Helvetica-Bold').fillColor('#111').text(t(m.dateLong), L + W - dateW, refY, { lineBreak: false });
-    doc.y = refY + 12; doc.x = L;
-    doc.moveDown(0.9);
-    doc.font('Helvetica').fontSize(10.5).fillColor('#111').text('To,', L, doc.y, { width: W });
-    doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111').text(t(m.to.name), L, doc.y, { width: W });
-    if (m.to.place) doc.font('Helvetica').fontSize(10).fillColor('#333').text(t(m.to.place), { width: W });
-
-    // title
-    doc.moveDown(1.1);
-    doc.font('Helvetica-Bold').fontSize(16).fillColor(NAVY).text(t(m.title.toUpperCase()), L, doc.y, { width: W, align: 'center', characterSpacing: 0.8 });
-    const uy = doc.y + 3;
-    doc.moveTo(L + W / 2 - 32, uy).lineTo(L + W / 2 + 32, uy).lineWidth(1.6).strokeColor(NAVY).stroke();
-    doc.y = uy + 12; doc.x = L;
-
-    const body = (text, size = 10.5) => String(text || '').split(/\n{2,}/).forEach((p) => {
-      doc.font('Helvetica').fontSize(size).fillColor('#222').text(t(p), L, doc.y, { width: W, lineGap: 2.4 });
-      doc.moveDown(0.55);
-    });
-    body(m.intro);
-
-    // details table
-    if (m.details.length) {
-      doc.moveDown(0.2);
-      const labelW = 150;
-      m.details.forEach((r) => {
-        doc.font('Helvetica-Bold').fontSize(9.5);
-        const h1 = doc.heightOfString(t(r.label), { width: labelW - 20 });
-        doc.font('Helvetica').fontSize(10.5);
-        const h2 = doc.heightOfString(t(r.value), { width: W - labelW - 20 });
-        const h = Math.max(h1, h2) + 14;
-        need(h + 2);
-        const y = doc.y;
-        doc.rect(L, y, labelW, h).fillAndStroke('#eef1f7', '#d5dbe5');
-        doc.rect(L + labelW, y, W - labelW, h).fillAndStroke('#ffffff', '#d5dbe5');
-        doc.font('Helvetica-Bold').fontSize(9.5).fillColor(NAVY).text(t(r.label), L + 10, y + 7, { width: labelW - 20 });
-        doc.font('Helvetica').fontSize(10.5).fillColor('#111').text(t(r.value), L + labelW + 10, y + 7, { width: W - labelW - 20 });
-        doc.y = y + h; doc.x = L;
-      });
-      doc.moveDown(1);
-    }
-
-    // terms
-    if (m.terms.length) {
-      need(60);
-      if (m.termsHeading) {
-        doc.font('Helvetica-Bold').fontSize(12).fillColor(NAVY).text(t(m.termsHeading), L, doc.y, { width: W });
-        doc.moveDown(0.5);
+    const font = (b) => doc.font(b ? 'Helvetica-Bold' : 'Helvetica').fontSize(SIZE).fillColor('#000');
+    // one paragraph of plain and bold runs; pdfkit drops a space at the START of a continued run, so spaces stay at run ends
+    const runsText = (runs, x, width, opts = {}) => {
+      const rs = runs.map((r) => ({ ...r })).filter((r) => r.t !== '');
+      for (let i = 1; i < rs.length; i += 1) {
+        const lead = rs[i].t.match(/^[\s,.;:!?)]+/); // spaces and punctuation stay with the run before (pdfkit sets a gap before a lone ",")
+        if (lead) { rs[i - 1].t += lead[0]; rs[i].t = rs[i].t.slice(lead[0].length); }
       }
-      m.terms.forEach((x, i) => {
-        const label = x.title ? termLabel(x.title) : '';
-        const list = x.text.includes('\n'); // a list (the documents to bring): the heading on its own line, one line per item
-        doc.font('Helvetica').fontSize(10.5);
-        const txt = `${label ? `${label}${list ? '\n' : ' '}` : ''}${x.text}`;
-        need(Math.min(doc.heightOfString(t(txt), { width: W - 22, lineGap: 2.4 }) + 8, 120));
-        const y = doc.y;
-        doc.font('Helvetica-Bold').fontSize(10.5).fillColor(NAVY).text(`${i + 1}.`, L, y, { width: 20 });
-        if (label && list) {
-          doc.font('Helvetica-Bold').fontSize(10.5).fillColor(NAVY).text(t(label), L + 22, y, { width: W - 22, lineGap: 2.4 });
-          x.text.split('\n').forEach((line) => {
-            doc.font('Helvetica').fontSize(10.5).fillColor('#222').text(t(line), L + 34, doc.y, { width: W - 34, lineGap: 2.4 });
-          });
-        } else if (label) doc.font('Helvetica-Bold').fontSize(10.5).fillColor(NAVY).text(t(`${label} `), L + 22, y, { width: W - 22, continued: true, lineGap: 2.4 }).font('Helvetica').fillColor('#222').text(t(x.text), { lineGap: 2.4 });
-        else doc.font('Helvetica').fontSize(10.5).fillColor('#222').text(t(x.text), L + 22, y, { width: W - 22, lineGap: 2.4 });
-        doc.moveDown(0.5); doc.x = L;
+      const kept = rs.filter((r) => r.t !== '');
+      rs.length = 0; rs.push(...kept);
+      if (!rs.length) return;
+      rs.forEach((r, i) => {
+        font(r.b);
+        const o = { width, lineGap: GAP, ...opts, continued: i < rs.length - 1 };
+        if (i === 0) doc.text(t(r.t), x, doc.y, o); else doc.text(t(r.t), o);
       });
-    }
-    // the closing line, the signature and the acceptance box stay together on one page
-    doc.font('Helvetica').fontSize(10.5);
-    const closingH = m.closing ? doc.heightOfString(t(m.closing), { width: W, lineGap: 2.4 }) + 12 : 0;
-    need(closingH + (m.acceptance.line ? 195 : 110)); // the measured height of the signature + the acceptance box (about 183pt), with a little room
-    if (m.closing) { doc.moveDown(0.3); body(m.closing); }
+      doc.x = L;
+    };
+    const heightOfRuns = (runs, width) => { font(false); return doc.heightOfString(t(runs.map((r) => r.t).join('')), { width, lineGap: GAP }); };
+    const paragraphs = (text, after = 0.75) => String(text || '').split(/\n{2,}/).forEach((p) => {
+      const runs = runsOf(p);
+      need(Math.min(heightOfRuns(runs, W), 60));
+      runsText(runs, L, W);
+      doc.moveDown(after);
+    });
+    const bullet = (runs) => {
+      need(Math.min(heightOfRuns(runs, W - 22), 50) + 4);
+      const y = doc.y;
+      font(false).text('•', L + 6, y, { width: 12, lineGap: GAP });
+      doc.y = y;
+      runsText(runs, L + 22, W - 22);
+      doc.moveDown(0.35);
+    };
+
+    // title, date, addressee
+    doc.font('Helvetica-Bold').fontSize(17).fillColor('#000').text(t(m.title.toUpperCase()), L, doc.y, { width: W, align: 'center' });
+    doc.moveDown(1.3);
+    font(true).text(t(`Date: ${m.dateLong}`), L, doc.y, { width: W, align: 'right' });
+    doc.moveDown(1.1);
+    font(true).text('To,', L, doc.y, { width: W, lineGap: GAP });
+    font(true).text(t(m.to.name), L, doc.y, { width: W, lineGap: GAP });
+    if (m.to.place) font(false).text(t(m.to.place), L, doc.y, { width: W, lineGap: GAP });
+    doc.moveDown(1.1);
+
+    // body
+    paragraphs(m.intro);
+    m.details.forEach((r) => { runsText([{ t: `${termLabel(r.label)} `, b: true }, ...runsOf(r.value)], L, W); doc.moveDown(0.3); });
+    if (m.details.length) doc.moveDown(0.4);
+    if (m.termsHeading && m.terms.length) { font(true).text(t(m.termsHeading), L, doc.y, { width: W }); doc.moveDown(0.5); }
+    m.terms.forEach((x) => {
+      if (x.text.includes('\n')) {
+        doc.moveDown(0.3);
+        if (x.title) { need(40); font(true).text(t(termLabel(x.title)), L, doc.y, { width: W, lineGap: GAP }); doc.moveDown(0.4); }
+        listLines(x.text).forEach((line) => bullet(runsOf(line)));
+      } else bullet([...(x.title ? [{ t: `${termLabel(x.title)} `, b: true }] : []), ...runsOf(x.text)]);
+    });
     doc.moveDown(0.6);
-    doc.font('Helvetica').fontSize(10.5).fillColor('#222').text('Yours sincerely,', L, doc.y, { width: W });
-    doc.font('Helvetica-Bold').text(t(`For ${m.signatory.company}`), { width: W });
-    doc.moveDown(2.6);
-    const sy = doc.y;
-    doc.moveTo(L, sy).lineTo(L + 200, sy).lineWidth(0.8).strokeColor('#8b93a3').stroke();
-    doc.y = sy + 4;
-    if (m.signatory.name) doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111').text(t(m.signatory.name), L, doc.y, { width: W });
-    doc.font('Helvetica').fontSize(10).fillColor('#333').text(t(m.signatory.title), L, doc.y, { width: W });
 
-    if (m.acceptance.line) {
-      doc.moveDown(1.6);
-      const by = doc.y;
-      doc.font('Helvetica').fontSize(10);
-      const textH = doc.heightOfString(t(m.acceptance.line), { width: W - 28, lineGap: 2.4 });
-      const boxH = textH + 86;
-      doc.rect(L, by, W, boxH).fillAndStroke('#f8f9fc', '#c3cbdb');
-      doc.font('Helvetica-Bold').fontSize(9.5).fillColor(NAVY).text('ACCEPTANCE OF OFFER', L + 14, by + 12, { width: W - 28, characterSpacing: 0.6 });
-      doc.font('Helvetica').fontSize(10).fillColor('#222').text(t(m.acceptance.line), L + 14, by + 28, { width: W - 28, lineGap: 2.4 });
-      const ly = by + textH + 64;
-      const cols = [[L + 14, 190, `Name: ${m.acceptance.name}`], [L + 220, 150, 'Signature'], [L + 386, W - 400, 'Date']];
-      cols.forEach(([x, w, label]) => {
-        doc.moveTo(x, ly).lineTo(x + w, ly).lineWidth(0.8).strokeColor('#8b93a3').stroke();
-        doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(t(label), x, ly + 3, { width: w });
-      });
-      doc.y = by + boxH + 6; doc.x = L;
-    }
+    // the welcome line, then the signature (left) and the acceptance (right), kept together on one page
+    const closingH = m.closing ? heightOfRuns(runsOf(m.closing), W) + 16 : 0;
+    font(false);
+    const accH = m.acceptance.line ? doc.heightOfString(t(m.acceptance.line), { width: W / 2 - 10 }) : 0;
+    need(closingH + 120 + accH);
+    if (m.closing) { paragraphs(m.closing, 1.6); }
+    const top = doc.y;
+    const colW = W / 2 - 10;
+    const lineH = SIZE + GAP + 2.5;
+    // left: Yours sincerely, / For company / (space) / ____ / signatory / title
+    font(false).text('Yours sincerely,', L, top, { width: colW });
+    font(true).text(t(`For ${m.signatory.company}`), L, doc.y, { width: colW });
+    const leftHead = doc.y;
+    font(false);
+    const rightHead = top + lineH + (m.acceptance.line ? doc.heightOfString(t(m.acceptance.line), { width: colW }) : 0);
+    const signY = Math.max(leftHead, rightHead) + lineH * 2; // both signature lines on one row, as in the reference
+    font(false).text(SIGN_LINE, L, signY, { width: colW });
+    font(true).text(t(m.signatory.name || 'Authorized Signatory'), L, doc.y, { width: colW });
+    if (m.signatory.title) font(false).text(t(m.signatory.title), L, doc.y, { width: colW });
+    const leftEnd = doc.y;
+    // right: Acceptance of Offer / (words) / (space) / ____ / Signature of Candidate / Date
+    const R = L + W - colW;
+    font(false).text('Acceptance of Offer', R, top, { width: colW, align: 'right' });
+    if (m.acceptance.line) doc.font('Helvetica').fontSize(9).fillColor('#000').text(t(m.acceptance.line), R, doc.y, { width: colW, align: 'right' });
+    font(false).text(SIGN_LINE, R, signY, { width: colW, align: 'right' });
+    font(true).text('Signature of Candidate', R, doc.y, { width: colW, align: 'right' });
+    font(false).text('Date: ______________', R, doc.y, { width: colW, align: 'right' });
+    doc.y = Math.max(leftEnd, doc.y); doc.x = L;
 
-    // footer on every page (written below the bottom margin on purpose)
+    // the small print (only when the editor has some) and page numbers (only when the letter runs past one page)
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i += 1) {
       doc.switchToPage(i);
       doc.page.margins.bottom = 0;
-      const fy = doc.page.height - 44;
-      doc.moveTo(L, fy - 6).lineTo(L + W, fy - 6).lineWidth(0.5).strokeColor('#d5dbe5').stroke();
-      doc.font('Helvetica').fontSize(7.5).fillColor(MUTED)
-        .text(t(m.footerNote || `${m.company.name} - Private and confidential`), L, fy, { width: W * 0.7, lineBreak: false })
-        .text(`Page ${i - range.start + 1} of ${range.count}`, L + W * 0.7, fy, { width: W * 0.3, align: 'right', lineBreak: false });
+      const fy = doc.page.height - 40;
+      if (m.footerNote) doc.font('Helvetica').fontSize(7.5).fillColor('#666').text(t(m.footerNote), L, fy, { width: W * 0.75, lineBreak: false });
+      if (range.count > 1) doc.font('Helvetica').fontSize(7.5).fillColor('#666').text(`Page ${i - range.start + 1} of ${range.count}`, L + W * 0.75, fy, { width: W * 0.25, align: 'right', lineBreak: false });
     }
     doc.end();
   });

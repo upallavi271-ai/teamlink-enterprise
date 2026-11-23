@@ -57,7 +57,8 @@ const call = async (method, url, body, token) => {
 const RUN = Date.now().toString(36);
 const P = process.pid;
 const day = (d = 0) => new Date(Date.now() + d * 86400000 + 5.5 * 3600000).toISOString().slice(0, 10);
-const longDay = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const longDay = (d) => `${Number(d.slice(8, 10))} ${MON[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}`; // the letter's date style: 24 Sep 2026
 const readMails = () => { try { return fs.readFileSync(MAILS, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
 const mailsTo = (email) => readMails().filter((m) => String(m.to).toLowerCase() === String(email).toLowerCase());
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
@@ -195,7 +196,7 @@ async function stop(code) {
   check('the pipeline history says the letter was emailed (automatic) and the audit log too', (await events(a1.id, /Offer letter emailed to the candidate \(automatic\)/)).length === 1 && (await audited(a1.id, /Offer letter emailed automatically/)).length === 1);
   const everything = JSON.stringify([msgs, await prisma.applicationStageEvent.findMany({ where: { applicationId: a1.id } }), await prisma.auditLog.findMany({ where: { entityId: a1.id } }), await prisma.notification.findMany({ where: { message: { contains: 'offer letter' } }, take: 50 })]);
   check('the salary is in the letter only: not in Communications, the timeline, the audit log or any bell', !/10,000|10000/.test(everything), everything.match(/.{30}10,?000.{20}/));
-  check('the annual CTC on the record (Rs 6,12,345) is NOT printed: the letter prints the reference stipend and CTC instead', !/6,12,345|612345/.test(mail.html + mail.text) && /10,000/- per month/.test(mail.html || '') && /3,00,000/- per annum/.test(mail.html || ''));
+  check('the annual CTC on the record (Rs 6,12,345) is NOT printed: the letter prints the reference stipend and CTC instead', !/6,12,345|612345/.test(mail.html + mail.text) && /10,000\/- per month/.test(mail.html || '') && /3,00,000\/- per annum/.test(mail.html || ''));
 
   console.log('\n--- E. once per joining');
   const s4 = await schedule(tA, a1.id, d4);
@@ -280,7 +281,7 @@ async function stop(code) {
   const c9 = await mkCandidate({ name: `Zed <script>alert(1)</script> & Co ${RUN}` }); const a9 = await mkApp(c9, REQ2.id, { joiningDate: day(25), offeredCtc: null });
   const p9 = await call('GET', `/ats/offer-letter-mail/${a9.id}/preview`, null, tA);
   check('a name with HTML in it is escaped in the letter', /&lt;script&gt;alert\(1\)&lt;\/script&gt;/.test(p9.body.html) && !/<script>alert/.test(p9.body.html), p9.status);
-  check('a line with no data is left out: no reporting manager on this job -> "Reporting to" is not printed; the flat salary and the date still are', !/Reporting to/.test(p9.body.html) && /Date of joining/.test(p9.body.html) && /10,000/- per month/.test(p9.body.html), p9.body.omitted);
+  check('a line with no data is left out: no reporting manager on this job -> "Reporting to" is not printed; the flat salary and the date still are', !/Reporting to/.test(p9.body.html) && /Date of joining/.test(p9.body.html) && /10,000\/- per month/.test(p9.body.html), p9.body.omitted);
   check('the preview names what was left out, so a person can fix the record', p9.body.omitted.some((x) => /Reporting to \(no manager on file\)/.test(x)), p9.body.omitted);
   const noHours = await call('PUT', '/ats/offer-letter-mail/template', { ...edited, workingHours: '' }, tA);
   const p9b = await call('GET', `/ats/offer-letter-mail/${a9.id}/preview`, null, tA);
@@ -288,7 +289,7 @@ async function stop(code) {
   await call('PUT', '/ats/offer-letter-mail/template', { ...edited }, tA);
   const sal = await call('PUT', '/ats/offer-letter-mail/template', { ...edited, monthlySalary: '12,500' }, tA);
   const p9c = await call('GET', `/ats/offer-letter-mail/${a9.id}/preview`, null, tA);
-  check('the Admin can change the one monthly salary (12,500 typed with a comma) and the letter follows', sal.status === 200 && sal.body.template.monthlySalary === 12500 && /12,500/- per month/.test(p9c.body.html) && !/10,000/.test(p9c.body.html), sal.body && sal.body.error);
+  check('the Admin can change the one monthly salary (12,500 typed with a comma) and the letter follows', sal.status === 200 && sal.body.template.monthlySalary === 12500 && /12,500\/- per month/.test(p9c.body.html) && !/10,000/.test(p9c.body.html), sal.body && sal.body.error);
   await call('PUT', '/ats/offer-letter-mail/template', { ...edited }, tA);
   check('a bad placeholder can never get into a sent letter: an unfilled {{ }} is never printed', !/\{\{/.test(p9.body.html));
   const noCtc = await call('PUT', '/ats/offer-letter-mail/template', { ...edited, showCtc: false }, tA);
