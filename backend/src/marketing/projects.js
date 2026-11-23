@@ -935,6 +935,8 @@ async function publicSubmitRequest(token, b = {}) {
   await event(r.id, 'request', `${v.contactName} (client: ${r.clientName})`, `Request sent by the client: ${v.occasion}`);
   await tellTeam(r, `New client request: ${S.clip(r.clientName, 60)}`, `${v.contactName} asked for "${S.clip(v.occasion, 80)}". Open Omni-Channel > AI Marketing > Client projects to accept it.`);
   await logAudit({ userId: r.createdById, actorName: `${v.contactName} (client: ${r.clientName})`, action: 'Omni-Channel AI Marketing: client sent a request', entity: T, entityId: r.id, toValue: v.occasion });
+  // 2026-11-21: with "Make the first options by itself" on (AI usage), TeamLink starts the first picture options in the background (marketing/autocreate.js). The client's answer never waits for it.
+  setImmediate(() => { require('./autocreate').run(r.id).catch((e) => console.error('[omni-mk] automatic first options:', e.message)); }); // eslint-disable-line global-require, no-console
   return { ok: 'Thank you. We have your request and will come back to you.' };
 }
 const clientName = (b) => S.clip(b.name, 80);

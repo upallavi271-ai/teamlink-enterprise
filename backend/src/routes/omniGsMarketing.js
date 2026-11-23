@@ -318,6 +318,9 @@ router.put('/settings', mustAdmin, wrap(async (req, res) => {
   if (c.value.autoPostAllowed !== cur.autoPostAllowed) {
     await logAudit({ userId: req.user.id, actorName: req.user.name, action: c.value.autoPostAllowed ? 'Omni-Channel AI Marketing: automatic posting to client accounts ALLOWED' : 'Omni-Channel AI Marketing: automatic posting to client accounts switched off', entity: 'OmniMkSettings', entityId: 'settings', toValue: c.value.autoPostAllowed ? 'on' : 'off' });
   }
+  if (c.value.autoMake !== cur.autoMake) {
+    await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: making the first picture options by itself changed', entity: 'OmniMkSettings', entityId: 'settings', toValue: c.value.autoMake === 'send' ? 'make them and send them to the client' : (c.value.autoMake === 'options' ? 'make them for the team to check' : 'off') });
+  }
   if (c.value.clientRequired !== cur.clientRequired || JSON.stringify(c.value.clientFor) !== JSON.stringify(cur.clientFor)) {
     await logAudit({ userId: req.user.id, actorName: req.user.name, action: c.value.clientRequired ? 'Omni-Channel AI Marketing: rule switched ON - only a client can approve' : 'Omni-Channel AI Marketing: rule "only a client can approve" switched off', entity: 'OmniMkSettings', entityId: 'settings', toValue: c.value.clientRequired ? c.value.clientFor.join(', ') : 'off' });
   }

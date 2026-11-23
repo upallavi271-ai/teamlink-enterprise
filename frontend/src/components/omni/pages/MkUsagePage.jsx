@@ -11,11 +11,11 @@ export default function MkUsagePage() {
   const { toast } = useOmni();
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
-  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'], autoPostAllowed: false, clientNotify: { auto: true, whatsapp: true, email: true }, waTemplates: {} });
+  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'], autoPostAllowed: false, autoMake: 'off', clientNotify: { auto: true, whatsapp: true, email: true }, waTemplates: {} });
   const [busy, setBusy] = useState(false);
   const [ways, setWays] = useState(null); // is WhatsApp / email connected (what the "tell the client" switch can really use)
   const [roles, setRoles] = useState(null); // the Admin's table: who sees what in AI Marketing (a non-Admin gets a refusal and sees nothing here)
-  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'], autoPostAllowed: !!x.settings.autoPostAllowed, clientNotify: x.settings.clientNotify || { auto: true, whatsapp: true, email: true }, waTemplates: x.settings.waTemplates || {} }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
+  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'], autoPostAllowed: !!x.settings.autoPostAllowed, autoMake: x.settings.autoMake || 'off', clientNotify: x.settings.clientNotify || { auto: true, whatsapp: true, email: true }, waTemplates: x.settings.waTemplates || {} }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
   useEffect(() => { load(); omni.get('/gs/marketing/projects/notify').then(setWays).catch(() => setWays(null)); omni.get('/gs/marketing/roles').then((x) => setRoles(x.roles)).catch(() => setRoles(null)); }, [load]);
   if (err && !d) return <Banner tone="error">{err}</Banner>;
   if (!d) return <div className="card panel">Loading…</div>;
@@ -125,6 +125,15 @@ export default function MkUsagePage() {
                 })}
               </Field>
             ) : null}
+          </div>
+        </Panel>
+      )}
+      {d.canEdit && (
+        <Panel title="First options made by itself" sub="When a client asks for pictures, TeamLink can make the first picture options from their request, without anybody starting it." style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
+          <div className="form-grid">
+            <Field label="WHEN A CLIENT SENDS A REQUEST FOR PICTURES" full hint="Pictures only: a request for a video is always made by the team. Nothing is posted: the client still chooses the one they like, and that choice is the approval. The pictures use the AI limits and the picture allowance of the Admin it runs as, and every step is on the project's timeline. If something fails, the request stays as it was and the team is told.">
+              <select value={lim.autoMake || 'off'} onChange={(e) => setLim({ ...lim, autoMake: e.target.value })}><option value="off">Off: the team makes the options</option><option value="options">Make three picture options for the team to check, then the team sends them</option><option value="send">Make three picture options and send them to the client by themselves</option></select>
+            </Field>
           </div>
         </Panel>
       )}

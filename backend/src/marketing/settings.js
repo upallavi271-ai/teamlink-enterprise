@@ -16,10 +16,12 @@ const CLIENT_KINDS = ['words', 'pictures', 'videos'];
 // set up in Administration > Integrations. { auto, whatsapp, email }: auto = the steps tell the client by themselves; whatsapp / email = which ways it may use. The team's "Send the link" buttons always work.
 // chat (2026-11-14): when a client writes on WhatsApp (text, photo, video) TeamLink answers by itself in a few fixed, simple words (marketing/clientChat.js); the team is told either way
 // remind (2026-11-16): ONE reminder by WhatsApp, 24 hours after TeamLink sent a client a link to look at and they have not answered (marketing/remind.js); it needs the "reminder" template saved in AI usage
+// autoMake (2026-11-21): 'off' | 'options' | 'send'. When a client sends a request for PICTURES, TeamLink makes the first picture options by itself (marketing/autocreate.js): 'options' = they wait on the project for the
+// team to look at and send; 'send' = they also go to the client by themselves. OFF until an Admin chooses; videos are always the team's.
 const DEFAULT_NOTIFY = { auto: true, whatsapp: true, email: true, chat: true, remind: true };
 // waTemplates (2026-11-14): the Meta-approved WhatsApp template to use for each kind of message TeamLink sends in AI Marketing { kind: { name, language } } (marketing/waTemplates.js); a kind with none goes as free text
 const WT = require('./waTemplates');
-const DEFAULT_SETTINGS = { aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: CLIENT_KINDS.slice(), autoPostAllowed: false, clientNotify: { ...DEFAULT_NOTIFY } };
+const DEFAULT_SETTINGS = { aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: CLIENT_KINDS.slice(), autoPostAllowed: false, autoMake: 'off', clientNotify: { ...DEFAULT_NOTIFY } };
 const DEFAULT_COLORS = { primary: '#0f766e', secondary: '#134e4a', accent: '#f59e0b' };
 const DEFAULT_BRAND = {
   brandName: '', about: '', voice: '', tone: 'Warm & confident', language: 'English', cta: '', signOff: '', doWords: [], avoidWords: [], samples: [],
@@ -51,6 +53,7 @@ async function getSettings() {
     clientRequired: s.clientRequired === true,
     clientFor: Array.isArray(s.clientFor) ? CLIENT_KINDS.filter((k) => s.clientFor.includes(k)) : CLIENT_KINDS.slice(),
     autoPostAllowed: s.autoPostAllowed === true,
+    autoMake: ['options', 'send'].includes(s.autoMake) ? s.autoMake : 'off',
     clientNotify: { auto: !s.clientNotify || s.clientNotify.auto !== false, whatsapp: !s.clientNotify || s.clientNotify.whatsapp !== false, email: !s.clientNotify || s.clientNotify.email !== false, chat: !s.clientNotify || s.clientNotify.chat !== false, remind: !s.clientNotify || s.clientNotify.remind !== false },
     waTemplates: (WT.clean(s.waTemplates || {}).value) || {},
   };
@@ -64,6 +67,7 @@ function cleanSettings(b, cur) {
   if (b.aiMonthlyCap !== undefined) { const n = Number(b.aiMonthlyCap); if (!Number.isFinite(n) || n < 0 || n > 1000000) return { error: 'The monthly AI limit must be a number (0 = no limit).' }; next.aiMonthlyCap = Math.floor(n); }
   if (b.selfApprove !== undefined) next.selfApprove = b.selfApprove === true;
   if (b.autoPostAllowed !== undefined) next.autoPostAllowed = b.autoPostAllowed === true;
+  if (b.autoMake !== undefined) next.autoMake = ['options', 'send'].includes(b.autoMake) ? b.autoMake : 'off';
   if (b.clientNotify !== undefined && b.clientNotify && typeof b.clientNotify === 'object') {
     const cur0 = { ...DEFAULT_NOTIFY, ...(cur.clientNotify || {}) };
     next.clientNotify = { auto: b.clientNotify.auto !== undefined ? b.clientNotify.auto === true : cur0.auto, whatsapp: b.clientNotify.whatsapp !== undefined ? b.clientNotify.whatsapp === true : cur0.whatsapp, email: b.clientNotify.email !== undefined ? b.clientNotify.email === true : cur0.email, chat: b.clientNotify.chat !== undefined ? b.clientNotify.chat === true : cur0.chat, remind: b.clientNotify.remind !== undefined ? b.clientNotify.remind === true : cur0.remind };
