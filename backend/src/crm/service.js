@@ -403,7 +403,7 @@ async function create(user, kind, body = {}) {
   let saved = await insert(KINDS[kind].table, row);
   saved = await require('./plusHooks').afterCreate(user, kind, saved, body); // eslint-disable-line global-require
   await audit(user, `CRM ${KINDS[kind].label.toLowerCase()} added`, KINDS[kind].table, saved.id, `${saved.code ? `${saved.code} · ` : ''}${saved[KINDS[kind].name]}`);
-  emit(`${kind}.created`, { kind, record: saved, user, depth: body._depth });
+  emit(`${kind}.created`, { kind, record: saved, user });
   // a new lead gets its first call as a follow-up straight away (crm/sales.js firstFollowUp); an Excel import does not come through here
   let firstFollowUp = null;
   if (kind === 'lead') firstFollowUp = await require('./sales').firstFollowUp(saved).catch(() => null); // eslint-disable-line global-require
@@ -464,7 +464,7 @@ async function edit(user, kind, id, body = {}) {
   const saved = await update(KINDS[kind].table, row.id, data);
   await require('./plusHooks').afterEdit(user, kind, row, saved); // eslint-disable-line global-require
   if (data.ownerId) await audit(user, `CRM ${KINDS[kind].label.toLowerCase()} given to another BDE`, KINDS[kind].table, row.id, `${row.ownerName || '-'} -> ${data.ownerName}`);
-  emit(`${kind}.updated`, { kind, record: saved, before: row, user, depth: body._depth });
+  emit(`${kind}.updated`, { kind, record: saved, before: row, user });
   return okBody({ ok: true, [kind]: saved });
 }
 
@@ -844,7 +844,7 @@ async function addActivity(user, body = {}) {
     task = t.task;
   }
   const openFollowUps = kind !== 'note' ? await openFollowUpsFor(link.kind, link.row.id, task && task.id) : [];
-  emit('activity.logged', { kind: 'activity', record: activity, user, depth: body._depth });
+  emit('activity.logged', { kind: 'activity', record: activity, user });
   return okBody({ ok: true, activity, task, openFollowUps });
 }
 

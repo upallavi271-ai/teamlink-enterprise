@@ -16,7 +16,7 @@ import { TicketList } from './CrmSupport.jsx';
 import DashboardCharts from './CrmCharts.jsx';
 import ReportTables from './CrmReportTables.jsx';
 import { ReportBuilder, MyDashboard, Leaderboard, Trends } from './CrmInsights.jsx'; // wave A: build reports, own dashboard, leaderboard, trends
-import CrmAutomation from './CrmAutomation.jsx'; // wave A: rules, approvals, webhooks, Slack / Teams, API & AI, apps, switches
+import CrmAutomation, { Approvals } from './CrmAutomation.jsx'; // wave A: rules, approvals, webhooks, Slack / Teams, API & AI, apps, switches
 
 // EVERYTHING OPENS HERE (founder 2026-11-02: "ey buttons meedha click chesina, cards meedha click chesina, akkade display
 // avvali, vere modules loki vellakudadhu"): a card, a flow step or "View all" opens its list in a window on this page, and a
@@ -406,6 +406,9 @@ export default function CrmDashboard() {
   const [owner, setOwner] = useState(''); // one salesperson, for the charts and the reports
   const [tab, setTab] = useState(sp.get('tab') || 'overview'); // overview | activities | team | forecast
   const [settings, setSettings] = useState(false);
+  // a salesperson named as an approver in a rule sees an Approvals tab while something waits for them (managers have it inside Automation)
+  const [myApprovals, setMyApprovals] = useState(0);
+  useEffect(() => { if (!me.canAssign) api.get('/crm/automation/approvals').then((r) => setMyApprovals(r.data.waitingForMe || 0)).catch(() => {}); }, [me.canAssign]);
   return (
     <div className="page crm-page">
       <div className="page-head">
@@ -438,7 +441,7 @@ export default function CrmDashboard() {
         </div>
       </div>
       <div className="tabs" role="tablist">
-        {[['overview', 'Overview'], ['mydash', 'My dashboard'], ['activities', 'Activities'], ...(!me.seesAll || (me.rights && me.rights.reports) ? [['team', me.seesAll ? 'Team & targets' : 'My month & target']] : []), ['leaderboard', 'Leaderboard'], ...(me.rights && me.rights.reports ? [['forecast', 'Forecast & funnel']] : []), ...(!me.seesAll || (me.rights && me.rights.reports) ? [['trends', 'Trends'], ['reports', 'Reports']] : []), ['builder', 'Report builder'], ...(me.canAssign ? [['automation', 'Automation']] : [])].map(([k, l]) => (
+        {[['overview', 'Overview'], ['mydash', 'My dashboard'], ['activities', 'Activities'], ...(!me.seesAll || (me.rights && me.rights.reports) ? [['team', me.seesAll ? 'Team & targets' : 'My month & target']] : []), ['leaderboard', 'Leaderboard'], ...(me.rights && me.rights.reports ? [['forecast', 'Forecast & funnel']] : []), ...(!me.seesAll || (me.rights && me.rights.reports) ? [['trends', 'Trends'], ['reports', 'Reports']] : []), ['builder', 'Report builder'], ...(me.canAssign ? [['automation', 'Automation']] : []), ...(!me.canAssign && myApprovals ? [['approvals', `Approvals (${myApprovals})`]] : [])].map(([k, l]) => (
           <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>{l}</div>
         ))}
       </div>
@@ -452,6 +455,7 @@ export default function CrmDashboard() {
       {tab === 'trends' && <Trends />}
       {tab === 'builder' && <ReportBuilder />}
       {tab === 'automation' && me.canAssign && <CrmAutomation />}
+      {tab === 'approvals' && !me.canAssign && <Approvals />}
       {adding && <RecordForm kind={adding} preset={adding === 'deal' ? {} : { source: '' }} onClose={() => setAdding(null)} onSaved={(row) => { const k = adding; setAdding(null); openRecord(k, row.id); }} />}
       {settings && <CrmSettings onClose={() => setSettings(false)} onSaved={() => { setSettings(false); reloadMe(); }} />}
     </div>

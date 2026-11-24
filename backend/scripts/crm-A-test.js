@@ -354,6 +354,12 @@ const mails = () => { try { return fs.readFileSync(MAIL, 'utf8').split('\n').fil
   const run9 = (await call('GET', `/crm/automation/runs?ruleId=${r9.body.rule.id}`, null, tk.M)).body.runs[0];
   check('a rejection stops the rule\'s run', rj.status === 200 && rj.body.approval.status === 'Rejected' && run9.status === 'stopped', [rj.body, run9]);
 
+  const r9b = await call('POST', '/crm/automation/rules', { name: 'A approves', on: true, trigger: 'deal.created', conditions: [{ field: 'value', op: 'eq', value: '333333' }], actions: [{ type: 'approval', title: 'A says {name}', steps: [{ approver: A.id }] }] }, tk.M);
+  await mkAccDeal(tk.B, 333333);
+  const apA = await until(async () => (await call('GET', '/crm/automation/approvals', null, tk.A)).body.approvals.find((x) => /^A says/.test(x.title)));
+  check('a salesperson named as the approver sees it (and only theirs) and decides it', r9b.status === 200 && apA && apA.canDecide && (await call('GET', '/crm/automation/approvals', null, tk.A)).body.waitingForMe === 1 && (await call('POST', `/crm/automation/approvals/${apA.id}`, { decision: 'approve' }, tk.A)).body.approval.status === 'Approved', apA);
+  check('another salesperson cannot decide it', !(await call('GET', '/crm/automation/approvals', null, tk.B)).body.approvals.some((x) => /^A says/.test(x.title)));
+
   console.log('08.09 the visual builder: layout kept, try it on a record');
   const tr = await call('POST', `/crm/automation/rules/${r1.body.rule.id}/try`, { recordId: W3.lead.id }, tk.M);
   check('"Try on a record": each condition true / false and what it would do, nothing changed', tr.status === 200 && tr.body.pass === false && tr.body.conditions[0].pass === false && tr.body.conditions[0].now === 'Referral' && tr.body.actions.length === 4, tr.body);

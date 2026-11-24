@@ -312,7 +312,7 @@ function RuleEditor({ meta, rule, onClose, onSaved }) {
 }
 
 // ---- approvals ----------------------------------------------------------------------------------------------------------------
-function Approvals() {
+export function Approvals() {
   const { toast } = useCrm();
   const [all, setAll] = useState(false);
   const [d, setD] = useState(null);
