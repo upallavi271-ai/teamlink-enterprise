@@ -2,6 +2,8 @@
 // GENERATED from the meeting script document (AI-Marketing-meeting-script.docx, generator make-meeting-doc.js) on 17 Nov 2026: change the words in the document's data and generate again,
 // or edit here. Prices are written as words in the narration so the voice reads them correctly. Nothing here is invented by an AI: every sentence is fixed text.
 // 18 Nov 2026: the plans were changed by the founder to Basic / Growth / Premium for doctors (Rs 3,999 / 7,999 / 14,999 + GST; posts, reels, stories, Google Business Profile, SEO, GEO, AEO). Edited here, so the .docx script no longer matches.
+// 24 Nov 2026: the offers (slide S7, answer F16) follow the founder's proposal PDF "AI digital MARKETING": 3 months 5% off, 6 months 10%, 9 months 15%, 12 months pay for 11 get 12; and the answers F22-F27
+// (why the offers, how the year offer works, the savings, the terms, how we help, doctors and medical content) are written from the same PDF. The old "first ten customers 15%" offer is gone.
 export const LANGS = [["en","English","en-IN"],["te","తెలుగు","te-IN"],["hi","हिन्दी","hi-IN"]];
 export const SLIDES = [
   {
@@ -251,37 +253,40 @@ export const SLIDES = [
     "title": "Offers",
     "screen": {
       "en": [
-        "One offer at a time",
-        "First 10 customers: 15% off for 3 months",
+        "Our offers (one at a time)",
+        "3 months: 5% off",
         "6 months: 10% off",
-        "12 months: pay for 10, get 12",
+        "9 months: 15% off",
+        "12 months: pay for 11, get 12",
         "Trial: Rs 999 for 3 pictures + 1 video",
         "Refer a client: Rs 500 credit",
         "GST extra"
       ],
       "te": [
-        "ఒకసారి ఒక్క ఆఫర్ మాత్రమే",
-        "మొదటి 10 మంది కస్టమర్లు: 3 నెలలు 15% తగ్గింపు",
+        "మా ఆఫర్లు (ఒకసారి ఒక్కటి మాత్రమే)",
+        "3 నెలలు: 5% తగ్గింపు",
         "6 నెలలు: 10% తగ్గింపు",
-        "12 నెలలు: 10 చెల్లించి 12 పొందండి",
+        "9 నెలలు: 15% తగ్గింపు",
+        "12 నెలలు: 11 చెల్లించి 12 పొందండి",
         "ట్రయల్: ₹999కి 3 చిత్రాలు + 1 వీడియో",
         "క్లయింట్‌ను రిఫర్ చేస్తే: ₹500 క్రెడిట్",
         "జీఎస్టీ అదనం"
       ],
       "hi": [
-        "एक समय में एक ही ऑफ़र",
-        "पहले 10 ग्राहक: 3 महीने 15% छूट",
+        "हमारे ऑफ़र (एक समय में एक ही)",
+        "3 महीने: 5% छूट",
         "6 महीने: 10% छूट",
-        "12 महीने: 10 का भुगतान, 12 पाएँ",
+        "9 महीने: 15% छूट",
+        "12 महीने: 11 का भुगतान, 12 पाएँ",
         "ट्रायल: ₹999 में 3 तस्वीरें + 1 वीडियो",
         "ग्राहक को रेफर करें: ₹500 क्रेडिट",
         "जीएसटी अलग"
       ]
     },
     "voice": {
-      "en": "Here are our offers, one at a time. The first ten customers get fifteen percent off for three months. Pay for six months and get ten percent off, or pay for ten months and get twelve. You can also try us first with a nine hundred ninety-nine rupee trial of three pictures and one video, with no commitment. If you refer a new client, you get a five hundred rupee credit after their second month. GST is extra.",
-      "te": "మా ఆఫర్లు ఇవి, ఒకసారి ఒక్కటి మాత్రమే. మొదటి పది మంది కస్టమర్లకు మూడు నెలలు పదిహేను శాతం తగ్గింపు. ఆరు నెలలు చెల్లిస్తే పది శాతం తగ్గింపు, లేదా పది నెలలు చెల్లించి పన్నెండు నెలలు పొందండి. ముందుగా తొమ్మిది వందల తొంభై తొమ్మిది రూపాయల ట్రయల్‌తో, మూడు చిత్రాలు, ఒక వీడియోతో, ఎలాంటి కట్టుబాటు లేకుండా ప్రయత్నించవచ్చు. మీరు కొత్త క్లయింట్‌ను రిఫర్ చేస్తే, వారి రెండో నెల తర్వాత మీకు ఐదు వందల రూపాయల క్రెడిట్. జీఎస్టీ అదనం.",
-      "hi": "ये हमारे ऑफ़र हैं, एक समय में एक ही। पहले दस ग्राहकों को तीन महीने पंद्रह प्रतिशत की छूट। छह महीने का भुगतान करें तो दस प्रतिशत छूट, या दस महीने का भुगतान करके बारह महीने पाएँ। आप पहले नौ सौ निन्यानवे रुपये के ट्रायल से भी आज़मा सकते हैं, तीन तस्वीरें और एक वीडियो, कोई बाध्यता नहीं। नया ग्राहक रेफर करें तो उनके दूसरे महीने के बाद आपको पाँच सौ रुपये का क्रेडिट मिलता है। जीएसटी अलग।"
+      "en": "Here are our offers, one at a time. Pay upfront for three months and get five percent off. Six months, ten percent off. Nine months, fifteen percent off. And for the full year, pay for eleven months and get twelve, so one month is free. For example, on Basic the year costs forty-three thousand nine hundred eighty-nine rupees instead of forty-seven thousand nine hundred eighty-eight. You can also try us first with a nine hundred ninety-nine rupee trial of three pictures and one video, with no commitment. If you refer a new client, you get a five hundred rupee credit after their second month. GST is extra.",
+      "te": "మా ఆఫర్లు ఇవి, ఒకసారి ఒక్కటి మాత్రమే. మూడు నెలలు ముందుగా చెల్లిస్తే ఐదు శాతం తగ్గింపు. ఆరు నెలలకు పది శాతం తగ్గింపు. తొమ్మిది నెలలకు పదిహేను శాతం తగ్గింపు. ఏడాది మొత్తానికి పదకొండు నెలలు చెల్లించి పన్నెండు నెలలు పొందండి, అంటే ఒక నెల ఉచితం. ఉదాహరణకు బేసిక్ ప్లాన్ ఏడాదికి నలభై ఏడు వేల తొమ్మిది వందల ఎనభై ఎనిమిది రూపాయలకు బదులు నలభై మూడు వేల తొమ్మిది వందల ఎనభై తొమ్మిది రూపాయలు. ముందుగా తొమ్మిది వందల తొంభై తొమ్మిది రూపాయల ట్రయల్‌తో, మూడు చిత్రాలు, ఒక వీడియోతో, ఎలాంటి కట్టుబాటు లేకుండా ప్రయత్నించవచ్చు. మీరు కొత్త క్లయింట్‌ను రిఫర్ చేస్తే, వారి రెండో నెల తర్వాత మీకు ఐదు వందల రూపాయల క్రెడిట్. జీఎస్టీ అదనం.",
+      "hi": "ये हमारे ऑफ़र हैं, एक समय में एक ही। तीन महीने का भुगतान पहले करें तो पाँच प्रतिशत छूट। छह महीने पर दस प्रतिशत छूट। नौ महीने पर पंद्रह प्रतिशत छूट। और पूरे साल के लिए ग्यारह महीने का भुगतान करें और बारह महीने पाएँ, यानी एक महीना मुफ़्त। उदाहरण के लिए बेसिक प्लान का साल सैंतालीस हज़ार नौ सौ अट्ठासी रुपये की जगह तैंतालीस हज़ार नौ सौ नवासी रुपये का है। आप पहले नौ सौ निन्यानवे रुपये के ट्रायल से भी आज़मा सकते हैं, तीन तस्वीरें और एक वीडियो, कोई बाध्यता नहीं। नया ग्राहक रेफर करें तो उनके दूसरे महीने के बाद आपको पाँच सौ रुपये का क्रेडिट मिलता है। जीएसटी अलग।"
     }
   },
   {
@@ -971,9 +976,9 @@ export const FAQ = [
       "hi": "कौन से ऑफ़र हैं?"
     },
     "answer": {
-      "en": "The first ten customers get fifteen percent off for three months. Pay for six months and get ten percent off, or pay for ten months and get twelve. There is also the nine hundred ninety-nine rupee trial. One offer applies at a time.",
-      "te": "మొదటి పది మంది కస్టమర్లకు మూడు నెలలు పదిహేను శాతం తగ్గింపు. ఆరు నెలలు చెల్లిస్తే పది శాతం తగ్గింపు, లేదా పది నెలలు చెల్లించి పన్నెండు నెలలు పొందవచ్చు. తొమ్మిది వందల తొంభై తొమ్మిది రూపాయల ట్రయల్ కూడా ఉంది. ఒకసారి ఒక్క ఆఫర్ మాత్రమే వర్తిస్తుంది.",
-      "hi": "पहले दस ग्राहकों को तीन महीने पंद्रह प्रतिशत छूट। छह महीने का भुगतान करें तो दस प्रतिशत छूट, या दस महीने का भुगतान करके बारह महीने पाएँ। नौ सौ निन्यानवे रुपये का ट्रायल भी है। एक समय में एक ही ऑफ़र लागू होता है।"
+      "en": "Pay upfront for three months and get five percent off, six months ten percent off, and nine months fifteen percent off. For twelve months you pay for eleven and get twelve. One offer applies at a time, and GST is extra. There is also the nine hundred ninety-nine rupee trial.",
+      "te": "మూడు నెలలు ముందుగా చెల్లిస్తే ఐదు శాతం, ఆరు నెలలకు పది శాతం, తొమ్మిది నెలలకు పదిహేను శాతం తగ్గింపు. పన్నెండు నెలలకు పదకొండు చెల్లించి పన్నెండు పొందవచ్చు. ఒకసారి ఒక్క ఆఫర్ మాత్రమే వర్తిస్తుంది, జీఎస్టీ అదనం. తొమ్మిది వందల తొంభై తొమ్మిది రూపాయల ట్రయల్ కూడా ఉంది.",
+      "hi": "तीन महीने का भुगतान पहले करें तो पाँच प्रतिशत, छह महीने पर दस प्रतिशत और नौ महीने पर पंद्रह प्रतिशत छूट। बारह महीने के लिए ग्यारह का भुगतान करें और बारह पाएँ। एक समय में एक ही ऑफ़र लागू होता है, जीएसटी अलग। नौ सौ निन्यानवे रुपये का ट्रायल भी है।"
     },
     "keywords": [
       "offer",
@@ -989,7 +994,13 @@ export const FAQ = [
       "ऑफ़र",
       "ऑफर",
       "छूट",
-      "डिस्काउंट"
+      "डिस्काउंट",
+      "annual offer",
+      "yearly offer",
+      "eleven plus one",
+      "11+1",
+      "ఏడాది ఆఫర్",
+      "सालाना ऑफ़र"
     ]
   },
   {
@@ -1177,6 +1188,200 @@ export const FAQ = [
       "गूगल प्रोफाइल",
       "मैप",
       "रिव्यू"
+    ]
+  },
+  {
+    "id": "F22",
+    "topic": "Why offers",
+    "ask": {
+      "en": "Why do you give these offers?",
+      "te": "ఈ ఆఫర్లు ఎందుకు ఇస్తున్నారు?",
+      "hi": "आप ये ऑफ़र क्यों दे रहे हैं?"
+    },
+    "answer": {
+      "en": "Because we want to help your business grow. Good marketing works when it is steady for many months, not for one or two weeks. So the longer you stay with us, the less you pay each month, and with the full year you get one month free. Our aim is that you have enough time to see real results, not to push you into anything.",
+      "te": "ఎందుకంటే మీ వ్యాపారం ఎదగడానికి మేము సహాయం చేయాలనుకుంటున్నాం. మంచి మార్కెటింగ్ ఒకటి రెండు వారాల్లో కాదు, చాలా నెలలు నిలకడగా చేస్తేనే ఫలితం ఇస్తుంది. అందుకే మీరు మాతో ఎంత ఎక్కువ కాలం ఉంటే, నెలకు అంత తక్కువ చెల్లిస్తారు, ఏడాది మొత్తానికి ఒక నెల ఉచితం. అసలైన ఫలితాలు చూడటానికి మీకు తగినంత సమయం ఉండాలనేది మా లక్ష్యం, మిమ్మల్ని దేనిలోనూ ఒత్తిడి చేయడం కాదు.",
+      "hi": "क्योंकि हम आपके व्यवसाय को बढ़ने में मदद करना चाहते हैं। अच्छी मार्केटिंग एक-दो हफ़्ते में नहीं, कई महीनों तक लगातार करने से असर दिखाती है। इसलिए आप जितना ज़्यादा समय हमारे साथ रहते हैं, हर महीने उतना कम देते हैं, और पूरे साल पर एक महीना मुफ़्त मिलता है। हमारा मक़सद है कि आपको असली नतीजे देखने के लिए पर्याप्त समय मिले, आप पर किसी चीज़ का दबाव डालना नहीं।"
+    },
+    "keywords": [
+      "why offer",
+      "why offers",
+      "why discount",
+      "why discounts",
+      "why these offers",
+      "why do you give",
+      "reason for the offer",
+      "reason for offers",
+      "why so cheap",
+      "ఎందుకు ఆఫర్",
+      "ఆఫర్లు ఎందుకు",
+      "ఎందుకు ఇస్తున్నారు",
+      "తగ్గింపు ఎందుకు",
+      "क्यों ऑफ़र",
+      "ऑफ़र क्यों",
+      "छूट क्यों",
+      "क्यों दे रहे"
+    ]
+  },
+  {
+    "id": "F23",
+    "topic": "Twelve month offer",
+    "ask": {
+      "en": "How does the twelve month offer work?",
+      "te": "పన్నెండు నెలల ఆఫర్ ఎలా పనిచేస్తుంది?",
+      "hi": "बारह महीने का ऑफ़र कैसे काम करता है?"
+    },
+    "answer": {
+      "en": "Choose a plan and pay for eleven months upfront. You then get twelve months of service, so one month is free. For example, Basic for the year is forty-three thousand nine hundred eighty-nine rupees instead of forty-seven thousand nine hundred eighty-eight. Growth is eighty-seven thousand nine hundred eighty-nine, and Premium is one lakh sixty-four thousand nine hundred eighty-nine. GST is extra.",
+      "te": "ఒక ప్లాన్ ఎంచుకుని పదకొండు నెలలు ముందుగా చెల్లించండి. అప్పుడు మీకు పన్నెండు నెలల సేవ లభిస్తుంది, అంటే ఒక నెల ఉచితం. ఉదాహరణకు బేసిక్ ఏడాదికి నలభై ఏడు వేల తొమ్మిది వందల ఎనభై ఎనిమిది రూపాయలకు బదులు నలభై మూడు వేల తొమ్మిది వందల ఎనభై తొమ్మిది రూపాయలు. గ్రోత్ ఎనభై ఏడు వేల తొమ్మిది వందల ఎనభై తొమ్మిది, ప్రీమియం ఒక లక్ష అరవై నాలుగు వేల తొమ్మిది వందల ఎనభై తొమ్మిది. జీఎస్టీ అదనం.",
+      "hi": "एक प्लान चुनें और ग्यारह महीने का भुगतान पहले करें। फिर आपको बारह महीने की सेवा मिलती है, यानी एक महीना मुफ़्त। उदाहरण के लिए बेसिक का साल सैंतालीस हज़ार नौ सौ अट्ठासी रुपये की जगह तैंतालीस हज़ार नौ सौ नवासी रुपये का है। ग्रोथ सत्तासी हज़ार नौ सौ नवासी और प्रीमियम एक लाख चौंसठ हज़ार नौ सौ नवासी है। जीएसटी अलग।"
+    },
+    "keywords": [
+      "twelve month",
+      "12 month",
+      "twelve months",
+      "annual",
+      "yearly",
+      "one year",
+      "full year",
+      "pay for eleven",
+      "one month free",
+      "free month",
+      "పన్నెండు నెలల",
+      "12 నెలల",
+      "ఏడాది",
+      "ఒక నెల ఉచితం",
+      "बारह महीने",
+      "12 महीने",
+      "सालाना",
+      "पूरे साल",
+      "एक महीना मुफ़्त"
+    ]
+  },
+  {
+    "id": "F24",
+    "topic": "Savings",
+    "ask": {
+      "en": "How much do I save for three, six or nine months?",
+      "te": "మూడు, ఆరు, తొమ్మిది నెలలకు ఎంత ఆదా అవుతుంది?",
+      "hi": "तीन, छह या नौ महीने पर कितनी बचत होती है?"
+    },
+    "answer": {
+      "en": "Three months is five percent off, six months is ten percent off, and nine months is fifteen percent off, on the standard price of your plan. For example, Basic for nine months costs thirty thousand five hundred ninety-two rupees instead of thirty-five thousand nine hundred ninety-one.",
+      "te": "మీ ప్లాన్ సాధారణ ధరపై మూడు నెలలకు ఐదు శాతం, ఆరు నెలలకు పది శాతం, తొమ్మిది నెలలకు పదిహేను శాతం తగ్గింపు. ఉదాహరణకు బేసిక్ తొమ్మిది నెలలకు ముప్పై ఐదు వేల తొమ్మిది వందల తొంభై ఒక్క రూపాయలకు బదులు ముప్పై వేల ఐదు వందల తొంభై రెండు రూపాయలు.",
+      "hi": "आपके प्लान की सामान्य कीमत पर तीन महीने के लिए पाँच प्रतिशत, छह महीने के लिए दस प्रतिशत और नौ महीने के लिए पंद्रह प्रतिशत छूट है। उदाहरण के लिए बेसिक नौ महीने के लिए पैंतीस हज़ार नौ सौ इक्यानवे रुपये की जगह तीस हज़ार पाँच सौ बयानवे रुपये का है।"
+    },
+    "keywords": [
+      "how much do i save",
+      "save",
+      "saving",
+      "savings",
+      "three months",
+      "six months",
+      "nine months",
+      "3 months",
+      "6 months",
+      "9 months",
+      "ఎంత ఆదా",
+      "ఆదా",
+      "మూడు నెలలు",
+      "ఆరు నెలలు",
+      "తొమ్మిది నెలలు",
+      "कितनी बचत",
+      "बचत",
+      "तीन महीने",
+      "छह महीने",
+      "नौ महीने"
+    ]
+  },
+  {
+    "id": "F25",
+    "topic": "Offer terms",
+    "ask": {
+      "en": "What are the terms of the offers?",
+      "te": "ఆఫర్ల నిబంధనలు ఏమిటి?",
+      "hi": "ऑफ़र की शर्तें क्या हैं?"
+    },
+    "answer": {
+      "en": "The offers apply to the plan you choose, and you pay the full amount upfront for the months you select. The discount is on the standard price of the plan. Advertising budgets, LinkedIn licences, premium software and separately agreed services are not included. GST is extra. An offer cannot be combined with another discount.",
+      "te": "ఆఫర్లు మీరు ఎంచుకున్న ప్లాన్‌కు వర్తిస్తాయి, మీరు ఎంచుకున్న నెలలకు పూర్తి మొత్తాన్ని ముందుగా చెల్లించాలి. తగ్గింపు ప్లాన్ సాధారణ ధరపై ఉంటుంది. ప్రకటనల బడ్జెట్లు, లింక్డ్‌ఇన్ లైసెన్సులు, ప్రీమియం సాఫ్ట్‌వేర్, ప్రత్యేకంగా ఒప్పుకున్న సేవలు ఇందులో ఉండవు. జీఎస్టీ అదనం. ఒక ఆఫర్‌ను మరో తగ్గింపుతో కలపలేరు.",
+      "hi": "ऑफ़र आपके चुने हुए प्लान पर लागू होते हैं, और आपको चुने हुए महीनों की पूरी रकम पहले देनी होती है। छूट प्लान की सामान्य कीमत पर होती है। विज्ञापन का बजट, लिंक्डइन लाइसेंस, प्रीमियम सॉफ़्टवेयर और अलग से तय की गई सेवाएँ इसमें शामिल नहीं हैं। जीएसटी अलग। एक ऑफ़र को दूसरी छूट के साथ नहीं जोड़ा जा सकता।"
+    },
+    "keywords": [
+      "terms of the offer",
+      "offer terms",
+      "offer conditions",
+      "conditions",
+      "terms and conditions",
+      "upfront",
+      "combine offers",
+      "ఆఫర్ నిబంధనలు",
+      "నిబంధనలు",
+      "షరతులు",
+      "ऑफ़र की शर्तें",
+      "शर्तें",
+      "नियम और शर्तें"
+    ]
+  },
+  {
+    "id": "F26",
+    "topic": "How we help",
+    "ask": {
+      "en": "How will you help my business?",
+      "te": "మీరు నా వ్యాపారానికి ఎలా సహాయం చేస్తారు?",
+      "hi": "आप मेरे व्यवसाय की कैसे मदद करेंगे?"
+    },
+    "answer": {
+      "en": "We help people find you and trust you online. Every month we make posts, reels and stories for your approval, look after your Google Business Profile, work on SEO, clear answers and AI search readiness, and send you a report of the measured results. You approve everything before it goes out.",
+      "te": "ఆన్‌లైన్‌లో ప్రజలు మిమ్మల్ని కనుగొని నమ్మడానికి మేము సహాయం చేస్తాం. ప్రతి నెలా మీ ఆమోదం కోసం పోస్టులు, రీల్స్, స్టోరీలు తయారుచేస్తాం, మీ గూగుల్ బిజినెస్ ప్రొఫైల్‌ను చూసుకుంటాం, ఎస్‌ఈఓ, స్పష్టమైన సమాధానాలు, ఏఐ సెర్చ్ సిద్ధతపై పని చేస్తాం, కొలిచిన ఫలితాల రిపోర్ట్ పంపుతాం. బయటకు వెళ్లే ముందు ప్రతిదీ మీరే ఆమోదిస్తారు.",
+      "hi": "हम ऑनलाइन लोगों को आपको ढूँढने और आप पर भरोसा करने में मदद करते हैं। हर महीने आपकी मंज़ूरी के लिए पोस्ट, रील्स और स्टोरी बनाते हैं, आपकी गूगल बिज़नेस प्रोफ़ाइल सँभालते हैं, एसईओ, साफ़ जवाब और एआई सर्च की तैयारी पर काम करते हैं, और मापे गए नतीजों की रिपोर्ट भेजते हैं। बाहर जाने से पहले हर चीज़ आप ही मंज़ूर करते हैं।"
+    },
+    "keywords": [
+      "how will you help",
+      "how do you help",
+      "help my business",
+      "help my clinic",
+      "what will you do",
+      "how can you help",
+      "benefit",
+      "benefits",
+      "మీరు ఎలా సహాయం",
+      "ఎలా సహాయం చేస్తారు",
+      "సహాయం",
+      "आप कैसे मदद",
+      "कैसे मदद करेंगे",
+      "मदद"
+    ]
+  },
+  {
+    "id": "F27",
+    "topic": "Doctors and medical content",
+    "ask": {
+      "en": "Is it safe for doctors and clinics?",
+      "te": "డాక్టర్లకు, క్లినిక్‌లకు ఇది సురక్షితమా?",
+      "hi": "क्या यह डॉक्टरों और क्लिनिकों के लिए सुरक्षित है?"
+    },
+    "answer": {
+      "en": "For doctors and clinics, medical content is reviewed by a doctor or a qualified medical reviewer, and we never make false medical claims or promise cures. Patient photos and testimonials are used only with proper permission, and you approve every post before it is published.",
+      "te": "డాక్టర్లకు, క్లినిక్‌లకు వైద్య కంటెంట్‌ను డాక్టర్ లేదా అర్హత ఉన్న వైద్య సమీక్షకుడు సమీక్షిస్తారు, మేము ఎప్పుడూ తప్పుడు వైద్య ప్రకటనలు చేయం, నయం చేస్తామని హామీ ఇవ్వం. రోగుల ఫోటోలు, అభిప్రాయాలు సరైన అనుమతితో మాత్రమే వాడతాం, ప్రచురించే ముందు ప్రతి పోస్టును మీరే ఆమోదిస్తారు.",
+      "hi": "डॉक्टरों और क्लिनिकों के लिए मेडिकल कंटेंट की समीक्षा डॉक्टर या योग्य मेडिकल समीक्षक करते हैं, और हम कभी झूठे मेडिकल दावे नहीं करते या इलाज की गारंटी नहीं देते। मरीज़ों की तस्वीरें और राय सही अनुमति के साथ ही इस्तेमाल होती हैं, और प्रकाशित होने से पहले हर पोस्ट आप ही मंज़ूर करते हैं।"
+    },
+    "keywords": [
+      "safe for doctors",
+      "doctors",
+      "clinic",
+      "clinics",
+      "medical content",
+      "medical claims",
+      "patient photos",
+      "testimonial",
+      "testimonials",
+      "డాక్టర్లకు",
+      "క్లినిక్",
+      "వైద్య కంటెంట్",
+      "डॉक्टरों",
+      "क्लिनिक",
+      "मेडिकल कंटेंट"
     ]
   }
 ];
