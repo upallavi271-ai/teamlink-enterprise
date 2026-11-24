@@ -81,6 +81,7 @@ function Sso() {
   const { data, err, reload } = useLoad('/ats-plus/sso/settings');
   const { run, busy, flash } = useAction(reload);
   const [list, setList] = useState([]);
+  const [tests, setTests] = useState({}); // 15.01 (ATS wave 2 Z): the Test results per provider
   useEffect(() => { if (data) setList(data.providers.map((p) => ({ ...p, allowedDomains: (p.allowedDomains || []).join(', '), clientSecret: '' }))); }, [data]);
   const set = (i, k, v) => setList(list.map((p, j) => (j === i ? { ...p, [k]: v } : p)));
   const PRESET = { google: { name: 'Google', issuer: 'https://accounts.google.com' }, microsoft: { name: 'Microsoft', issuer: 'https://login.microsoftonline.com/<tenant id>/v2.0' }, okta: { name: 'Okta', issuer: 'https://<your org>.okta.com' } };
@@ -91,7 +92,9 @@ function Sso() {
       {list.map((p, i) => (
         <div key={p.id || i} className="card" style={{ padding: 10, marginBottom: 8 }}>
           <div style={row}><b>{p.type === 'saml' ? 'SAML 2.0' : 'OIDC'}</b><input aria-label="Name" value={p.name} onChange={(e) => set(i, 'name', e.target.value)} /><label><input type="checkbox" checked={!!p.enabled} onChange={(e) => set(i, 'enabled', e.target.checked)} /> on the login page</label>
-            <button type="button" className="btn btn-sm" onClick={() => setList(list.filter((_, j) => j !== i))}>Remove</button></div>
+            <button type="button" className="btn btn-sm" onClick={() => setList(list.filter((_, j) => j !== i))}>Remove</button>
+            {p.id && <button type="button" className="btn btn-sm" disabled={busy} title="Check the provider's addresses, keys and certificate (saved settings)" onClick={() => run(() => api.post(`/ats-plus/sso/${p.id}/test`), (d) => (d.ok ? 'The test passed.' : 'The test found a problem.')).then((d) => { if (d) setTests((t) => ({ ...t, [p.id]: d })); })}>Test</button>}</div>
+          {p.id && tests[p.id] && <ul className="small-muted" data-testid="sso-test" style={{ margin: '4px 0 8px 18px' }}>{tests[p.id].checks.map((c) => <li key={c.name} style={{ color: c.ok ? undefined : 'var(--red, #b42318)' }}>{c.ok ? '✓' : '✗'} {c.name}{c.detail ? `: ${c.detail}` : ''}</li>)}</ul>}
           {p.type === 'oidc' ? (
             <div className="grid-2">
               <Field label="Issuer address"><input value={p.issuer || ''} onChange={(e) => set(i, 'issuer', e.target.value)} /></Field>
