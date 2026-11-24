@@ -19,6 +19,7 @@ if (has('idverify')) router.use('/api/public/verify', require('../utils/atsPlus/
 if (has('status')) router.use('/api/public', require('../utils/atsPlus/status').publicRouter);
 if (has('integrations')) { const I = require('../utils/atsPlus/integrations'); router.use('/api/open', I.apiRouter); router.use('/api/docs', I.docsRouter); router.use('/api/public/connectors', I.publicRouter); }
 if (has('sso')) router.use('/api/sso', require('../utils/atsPlus/sso').publicRouter);
+if (has('mobileZ')) router.use(require('../utils/atsPlus/mobileZ').wellKnown); // ATS wave 2 Z: /.well-known/assetlinks.json + apple-app-site-association for the store apps
 if (has('vendorsZ')) router.use('/api/public/vendorsz', require('../utils/atsPlus/vendorsZ').publicRouter); // ATS wave 2 Z: BGV / assessment vendor results
 /* eslint-enable global-require */
 

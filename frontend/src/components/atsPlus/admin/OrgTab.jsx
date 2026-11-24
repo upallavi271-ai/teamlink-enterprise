@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../../api';
 import BranchesPanel from '../BranchesPanel.jsx';
+import PhoneAppZ from './PhoneAppZ.jsx'; // 15.13: the installable app, ATS shortcuts, store details (ATS wave 2 Z)
 import { Notice, Section, Table, useLoad, useAction, Field, row } from '../kit.jsx';
 import { translations, LanguagePicker } from '../../../i18n.jsx';
 
@@ -57,5 +58,5 @@ function Languages() {
   );
 }
 export default function OrgTab() {
-  return <><BranchesPanel /><Seats /><Currency /><Languages /></>;
+  return <><BranchesPanel /><Seats /><Currency /><Languages /><PhoneAppZ /></>;
 }

@@ -45,7 +45,7 @@ async function catalogue() {
   const pullSet = await S.settings.get('boardPullZ', { autoRead: false });
   add({ id: 'ats-board-pull', name: 'Job-board responses', category: 'Job boards', what: 'Applicants on Naukri / Shine / foundit read back into the ATS.', status: pull.status === 'Not set up' ? 'Not set up' : (pullSet.autoRead ? 'Connected' : 'Ready'), needsFounder: pull.status === 'Not set up', setUpLink: INTEG('ats-board-pull'), detail: pullSet.autoRead ? 'read every hour' : 'hourly read OFF' });
   add({ id: 'career-site', name: 'Career page and Job Portal', category: 'Job boards', what: 'Your own jobs page and the candidate Job Portal.', status: 'Built in', setUpLink: '/admin/integrations?tab=jobportal' });
-  add({ id: 'linkedin-capture', name: 'LinkedIn profile capture (browser extension)', category: 'Job boards', what: 'Save a LinkedIn profile into the ATS with one click (each recruiter makes their own key).', status: 'Built in', setUpLink: '/ats/candidates' });
+  add({ id: 'linkedin-capture', name: 'LinkedIn profile capture (browser extension)', category: 'Job boards', what: 'Save a LinkedIn profile into the ATS with one click (each recruiter makes their own key).', status: 'Built in', setUpLink: '/candidates' });
   // ---- calendar, mail, meetings
   const I = require('../mkt/interviews'); // eslint-disable-line global-require
   const gReady = (await safe(() => I.appKeys('google'), {})).saved; const mReady = (await safe(() => I.appKeys('microsoft'), {})).saved;
@@ -53,7 +53,7 @@ async function catalogue() {
   const links = await safe(async () => { await require('../mkt/core').ensure(); return (await require('../mkt/core').q('SELECT COUNT(*) AS n FROM "MktCalLink" WHERE "refreshEnc" IS NOT NULL'))[0].n; }, 0); // eslint-disable-line global-require
   const wsStatus = !(gReady || mReady) ? 'Not set up' : (Number(links) > 0 ? (push ? 'Connected' : 'Switched off') : 'Ready');
   add({ id: 'ats-workspace', name: 'Google Workspace / Microsoft 365', category: 'Calendar and mail', what: 'Interviews in each interviewer\'s Google / Outlook calendar, busy times, contacts.', status: wsStatus, needsFounder: !(gReady || mReady), setUpLink: INTEG('ats-workspace'), detail: `${[gReady && 'Google', mReady && 'Microsoft'].filter(Boolean).join(' + ') || 'no app'} · ${Number(links) || 0} calendar(s) connected · follow bookings ${push ? 'ON' : 'OFF'}` });
-  add({ id: 'calendar-feed', name: 'Calendar feed (.ics) and Add to Google / Outlook', category: 'Calendar and mail', what: 'A private calendar address per person, an .ics per interview, one-click Add to Google / Outlook.', status: 'Built in', setUpLink: '/ats/interviews' });
+  add({ id: 'calendar-feed', name: 'Calendar feed (.ics) and Add to Google / Outlook', category: 'Calendar and mail', what: 'A private calendar address per person, an .ics per interview, one-click Add to Google / Outlook.', status: 'Built in', setUpLink: '/ats/calendar' });
   for (const [id, name, what, founder] of [['calendar', 'Meeting links (Google Meet / Teams)', 'A real Meet / Teams link when an interview is booked.', true], ['email', 'E-mail (SMTP)', 'Mails from the ATS (interview invites, offers).', false], ['email-inbox', 'Shared inbox (IMAP)', 'Candidate and client replies into the ATS.', false]]) {
     const st = await channelState(id); // eslint-disable-line no-await-in-loop
     add({ id, name, category: 'Calendar and mail', what, status: st.status, needsFounder: founder && st.status === 'Not set up', setUpLink: INTEG(id), detail: st.detail });
