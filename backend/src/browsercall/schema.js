@@ -68,6 +68,11 @@ const ALTERS = [
   'ALTER TABLE "BrowserCall" ADD COLUMN "summarySource" TEXT',
   'ALTER TABLE "BrowserCall" ADD COLUMN "processedAt" TEXT',
   'ALTER TABLE "BrowserCall" ADD COLUMN "processTries" INTEGER',
+  // AFTER-CALL NOTES of a call on the Android phone (2026-11-24, browsercall/phoneLink.js): what the recruiter writes down after the call
+  'ALTER TABLE "BrowserCall" ADD COLUMN "remarks" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "nextAction" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "followUpAt" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "outcome" TEXT',
 ];
 
 // 2026-11-24 (founder: "16 sims - edu 4, team 4, medical 4, mfg 4"): a port can be given to a recruiter before its SIM's number is known

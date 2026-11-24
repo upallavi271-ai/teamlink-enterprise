@@ -17,6 +17,7 @@ const events = require('../browsercall/events');
 const L = require('../browsercall/lines');
 const VD = require('../browsercall/vicidial');
 const SIMS = require('../browsercall/sims');
+const PL = require('../browsercall/phoneLink');
 const secrets = require('../utils/secrets');
 
 const router = express.Router();
@@ -49,6 +50,8 @@ router.get('/status', async (req, res) => {
     const lines = w.ok ? (await L.usableBy(req.user)).map((l) => ({ id: l.id, name: l.name, type: l.type, typeLabel: l.typeLabel, builtIn: !!l.builtIn, ready: true })) : [];
     // VICIDIAL click to dial (browsercall/vicidial.js): always listed; pickable only when the Admin switched it on and this person has an agent ID
     if (w.ok) { const vr = await VD.readyFor(req.user, kindOf(req.user)).catch(() => ({ ok: false, reason: 'ViciDial is not connected yet.' })); lines.push({ id: VD.LINE_ID, name: VD.LINE_NAME, type: 'vicidial-click', typeLabel: 'ViciDial agent screen', builtIn: false, vicidial: true, ready: !!vr.ok, reason: vr.ok ? null : vr.reason }); }
+    // ANDROID PHONE LINK (browsercall/phoneLink.js): the paired phones this person may use; pickable only while the phone is Connected
+    if (w.ok) (await PL.usableBy(req.user, isAdmin(req.user)).catch(() => [])).forEach((d) => { const p = PL.shape(d); lines.push({ id: p.lineId, name: `Mobile ${p.number}`, type: 'android-phone', typeLabel: 'Android phone', builtIn: false, phone: true, deviceId: p.id, phoneStatus: p.status, phoneStatusWord: p.statusWord, ready: p.status === 'connected', reason: p.status === 'connected' ? null : `${p.statusWord}${p.statusWhy ? `: ${p.statusWhy}` : ''}` }); });
     const sim = w.ok && SIMS.SIM_KINDS.includes(kindOf(req.user)) ? await SIMS.mineFor(req.user).catch(() => null) : null;
     res.json({ canCall: w.ok, reason: w.ok ? null : w.reason, mode: w.s.mode, testMode: w.s.mode === 'Test', pbx: { eventsConnected: st.connected, error: isAdmin(req.user) ? st.error : undefined }, wssConfigured: !!CFG.ENV.wssUrl, isAdmin: isAdmin(req.user), lines, defaultLine: lines.length ? lines[0].id : null, sim });
   } catch (e) { fail(res, 500, 'Could not read the browser calling status.'); }
@@ -138,11 +141,12 @@ const shape = (r, viewer) => {
   const listen = viewer ? mayListen(viewer) : false;
   let summary = null; try { summary = r.summary ? JSON.parse(r.summary) : null; } catch { summary = null; }
   return {
-    id: r.id, candidateId: r.candidateId, userId: r.userId, userName: r.userName, number: r.direction === 'inbound' ? SIMS.mask(r.toNumber !== 'unknown' ? r.toNumber : '') : r.toNumber, extension: r.extension, direction: r.direction, status: r.status, startAt: r.startAt, answerAt: r.answerAt, endAt: r.endAt, durationSec: r.durationSec, talkSec: r.talkSec, hangupCause: r.hangupCause, hangupReason: r.hangupReason, asteriskUniqueId: r.asteriskUniqueId, lineId: r.lineId || null, lineName: r.lineName || null, testCall: r.candidateId === TEST_CALL,
+    id: r.id, candidateId: r.candidateId, userId: r.userId, userName: r.userName, number: r.direction === 'inbound' ? SIMS.mask(r.toNumber !== 'unknown' ? r.toNumber : '') : r.toNumber, extension: r.extension, direction: r.direction, status: r.status, startAt: r.startAt, answerAt: r.answerAt, endAt: r.endAt, durationSec: r.durationSec, talkSec: r.talkSec, hangupCause: r.hangupCause, hangupReason: r.hangupReason === 'hangup-requested' ? 'Hanging up on the phone…' : r.hangupReason, asteriskUniqueId: r.asteriskUniqueId, lineId: r.lineId || null, lineName: r.lineName || null, testCall: r.candidateId === TEST_CALL,
     ringSec: r.answerAt ? secsBetween(r.startAt, r.answerAt) : secsBetween(r.startAt, r.endAt),
     recordingStatus: r.recordingStatus || null, recordingSec: r.recordingSec || null, recordingNote: r.recordingNote || null, hasRecording: !!r.recordingPath,
     hasTranscript: !!r.transcript, transcriptNote: r.transcript ? null : (r.transcriptSource || null),
     vicidial: r.lineId === VD.LINE_ID, outcomeNote: r.lineId === VD.LINE_ID ? (r.hangupReason || null) : undefined,
+    phone: r.direction === 'phone', remarks: r.remarks || null, nextAction: r.nextAction || null, followUpAt: r.followUpAt || null, outcome: r.outcome || null,
     mayListen: listen, summary: listen ? summary : null, summaryText: listen ? (r.summaryText || null) : null, summarySource: listen ? (r.summarySource || null) : null,
   };
 };
@@ -211,9 +215,14 @@ router.get('/report', async (req, res) => {
     const ymd = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
     const f = ymd(req.query.from) ? new Date(`${req.query.from}T00:00:00+05:30`).toISOString() : new Date(Date.now() - 30 * 86400000).toISOString();
     const t = ymd(req.query.to) ? new Date(`${req.query.to}T23:59:59+05:30`).toISOString() : new Date(Date.now() + 86400000).toISOString();
-    const uid = isAdmin(req.user) ? clip(req.query.userId, 60) : req.user.id;
-    const where = `"startAt">=? AND "startAt"<=? AND "status"<>'initiated'${uid ? ' AND "userId"=?' : ''}`;
-    const p = uid ? [f, t, uid] : [f, t];
+    // a Team Leader sees the calls of their team (founder 2026-11-24, phone calling spec): own + the people under them; ?userId narrows to one of them
+    let tlTeam = null;
+    if (!isAdmin(req.user) && kindOf(req.user) === 'tl') { const tm = await require('../utils/atsHistoryPeople').teamOf(req.user.id).catch(() => null); tlTeam = [req.user.id, ...((tm && tm.ids) || [])]; } // eslint-disable-line global-require
+    const want = clip(req.query.userId, 60);
+    const uid = isAdmin(req.user) ? want : (tlTeam ? (want && tlTeam.includes(want) ? want : '') : req.user.id);
+    const inTeam = !uid && tlTeam ? ` AND "userId" IN (${tlTeam.map(() => '?').join(',')})` : '';
+    const where = `"startAt">=? AND "startAt"<=? AND "status"<>'initiated'${uid ? ' AND "userId"=?' : ''}${inTeam}`;
+    const p = uid ? [f, t, uid] : (tlTeam ? [f, t, ...tlTeam] : [f, t]);
     const byUser = await S.all(`SELECT "userId", MAX("userName") AS "userName", COUNT(*) AS total, SUM("answerAt" IS NOT NULL) AS connected, SUM("status" IN ('failed','busy')) AS failed, SUM("status" IN ('missed','cancelled')) AS missed, COALESCE(SUM("talkSec"),0) AS "talkSec", SUM("recordingPath" IS NOT NULL) AS recorded FROM "BrowserCall" WHERE ${where} GROUP BY "userId" ORDER BY total DESC`, ...p);
     const byCand = await S.all(`SELECT "candidateId", COUNT(*) AS total, SUM("answerAt" IS NOT NULL) AS connected, COALESCE(SUM("talkSec"),0) AS "talkSec", MAX("startAt") AS "lastAt" FROM "BrowserCall" WHERE ${where} GROUP BY "candidateId" ORDER BY total DESC LIMIT 200`, ...p);
     const rows = await S.all(`SELECT * FROM "BrowserCall" WHERE ${where} ORDER BY "startAt" DESC LIMIT 500`, ...p);
@@ -523,6 +532,111 @@ router.post('/admin/lines/:id/test-call', async (req, res) => {
     await logAudit({ userId: req.user.id, action: 'Phone line test call', entity: 'Integration', entityId: placed.line.id, toValue: `${placed.line.name} -> ${core.maskMobile(num)}` });
     return res.json({ callId: placed.id, token: placed.token, number: num, candidate: { id: TEST_CALL, name: `Test call · ${placed.line.name}` }, line: { id: placed.line.id, name: placed.line.name, header: placed.line.header } });
   } catch (e) { console.error('[browser-call] test call:', e.message); return fail(res, 500, 'Could not start the test call.'); }
+});
+
+// ---------------------------------------------------------------------------- ANDROID PHONE LINK (browsercall/phoneLink.js)
+// A recruiter's call on the paired Android phone: the same checks as every manual call (role, scope, contact rule, Test-mode test numbers);
+// the number comes from the candidate record; the phone app dials it from its own SIM and reports what really happened.
+const KIND_WORD_PL = { admin: 'Admin', tl: 'Team Leader', recruiter: 'Recruiter', hr: 'HR' };
+async function phonePeople() {
+  const s = await CFG.load();
+  const users = await prisma.user.findMany({ where: { status: 'Active', atsAccess: true }, orderBy: { name: 'asc' }, take: 2000 }).catch(() => []);
+  return users.map((u) => { let k = 'none'; try { k = kindOf(u); } catch { k = 'none'; } return { userId: u.id, name: u.name, role: KIND_WORD_PL[k] || k, kind: k }; })
+    .filter((p) => ['admin', 'tl', 'recruiter', 'hr'].includes(p.kind) && (p.kind === 'admin' || s.kinds.includes(p.kind)));
+}
+async function phoneAdminView() {
+  const list = await PL.devices();
+  const people = await phonePeople();
+  const nm = new Map(people.map((p) => [p.userId, p.name]));
+  return { devices: list.map((d) => PL.shape(d, { userNames: PL.ids(d.userIds).map((x) => nm.get(x) || '(not allowed now)') })), people, nextActions: PL.NEXT };
+}
+router.get('/phone/admin', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try { res.set('Cache-Control', 'no-store'); return res.json(await phoneAdminView()); } catch (e) { console.error('[phone-link] admin:', e.message); return fail(res, 500, 'Could not load the phones.'); }
+});
+router.post('/phone/admin/pair-code', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try {
+    const out = await PL.makePairCode(req.user, req.body || {});
+    if (out.error) return fail(res, out.status || 400, out.error);
+    await logAudit({ userId: req.user.id, action: 'Android phone pairing code made', entity: 'Integration', entityId: 'phone-link', toValue: `${out.name} · ${out.number} · valid till ${out.expiresAt}` });
+    res.set('Cache-Control', 'no-store');
+    return res.json(out);
+  } catch (e) { console.error('[phone-link] code:', e.message); return fail(res, 500, 'Could not make the code.'); }
+});
+router.put('/phone/admin/devices/:id', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try {
+    const out = await PL.update(req.params.id, req.body || {});
+    if (out.error) return fail(res, out.status || 400, out.error);
+    await logAudit({ userId: req.user.id, action: 'Android phone settings saved', entity: 'Integration', entityId: out.device.id, fromValue: `${out.before.name} · users ${PL.ids(out.before.userIds).length}`, toValue: `${out.device.name} · users ${PL.ids(out.device.userIds).length}` });
+    return res.json(await phoneAdminView());
+  } catch (e) { return fail(res, 500, 'Could not save.'); }
+});
+router.delete('/phone/admin/devices/:id', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try {
+    const out = await PL.unpair(req.params.id);
+    if (out.error) return fail(res, out.status || 400, out.error);
+    await logAudit({ userId: req.user.id, action: 'Android phone unpaired', entity: 'Integration', entityId: out.device.id, toValue: `${out.device.name} · ${out.device.number}` });
+    return res.json(await phoneAdminView());
+  } catch (e) { return fail(res, 500, 'Could not unpair.'); }
+});
+// the phones this login may use, with their live status (call bar, "Your Android phone" card)
+router.get('/phone/mine', async (req, res) => {
+  try {
+    const w = await who(req.user);
+    if (!w.ok) return fail(res, w.code, w.reason);
+    const list = await PL.usableBy(req.user, isAdmin(req.user));
+    res.set('Cache-Control', 'no-store');
+    return res.json({ devices: list.map((d) => PL.shape(d)), nextActions: PL.NEXT, outcomes: PL.OUTCOME });
+  } catch (e) { return fail(res, 500, 'Could not read the phone.'); }
+});
+router.post('/phone/devices/:id/:action', async (req, res) => {
+  try {
+    const w = await who(req.user);
+    if (!w.ok) return fail(res, w.code, w.reason);
+    const out = await PL.setLink(req.user, isAdmin(req.user), req.params.id, req.params.action);
+    if (out.error) return fail(res, out.status || 400, out.error);
+    await logAudit({ userId: req.user.id, action: `Android phone ${req.params.action}`, entity: 'Integration', entityId: out.device.id, toValue: `${out.device.name} · ${out.device.number}` });
+    return res.json({ device: PL.shape(out.device) });
+  } catch (e) { return fail(res, 500, 'Could not change the phone link.'); }
+});
+router.post('/phone/calls', async (req, res) => {
+  try {
+    const w = await who(req.user);
+    if (!w.ok) return fail(res, w.code, w.reason);
+    const lineId = clip(req.body && req.body.lineId, 80);
+    const devId = lineId.startsWith(PL.PREFIX) ? lineId.slice(PL.PREFIX.length) : clip(req.body && req.body.deviceId, 60);
+    const mine = await PL.usableBy(req.user, isAdmin(req.user));
+    const d = mine.find((x) => x.id === devId) || (!devId && mine.length === 1 ? mine[0] : null);
+    if (!d) return fail(res, 404, 'No Android phone is given to you. Ask an Admin to give you the phone in Browser calling > Android phones.', { code: 'NO_PHONE' });
+    const cand = await prisma.candidate.findFirst({ where: { id: clip(req.body && req.body.candidateId, 60), ...scope.candidateWhere(req.user) }, select: { id: true, name: true, phone: true } });
+    if (!cand) return fail(res, 404, 'Candidate not found.');
+    const n = core.normalizeMobile(cand.phone);
+    if (!n.ok) return fail(res, 400, n.reason);
+    if (n.cc !== '91') return fail(res, 400, 'Only Indian mobile numbers can be called from here.');
+    if (w.s.mode === 'Test' && !w.s.testNumbers.includes(n.national)) return fail(res, 403, "Test mode: only the Admin's test phone numbers can be called.", { code: 'TEST_MODE' });
+    const out = await PL.queueCall(req.user, d, { candidateId: cand.id, applicationId: clip(req.body && req.body.applicationId, 60) || null, number: n.national, mode: w.s.mode });
+    if (out.error) return fail(res, out.status || 409, out.error, { code: out.code });
+    await logAudit({ userId: req.user.id, action: 'Phone call requested', entity: 'Candidate', entityId: cand.id, toValue: `${core.maskMobile(n.national)} on Mobile ${d.number}` });
+    return res.json({ callId: out.id, number: n.national, candidate: { id: cand.id, name: cand.name }, line: { id: `${PL.PREFIX}${d.id}`, name: `Mobile ${d.number}` } });
+  } catch (e) { console.error('[phone-link] call:', e.message); return fail(res, 500, 'Could not send the call to the phone.'); }
+});
+router.post('/phone/calls/:id/hangup', async (req, res) => {
+  try {
+    const out = await PL.hangup(req.user, isAdmin(req.user), req.params.id);
+    if (out.error) return fail(res, out.status || 400, out.error);
+    return res.json({ call: shape(out.call, req.user) });
+  } catch (e) { return fail(res, 500, 'Could not hang up.'); }
+});
+router.post('/phone/calls/:id/outcome', async (req, res) => {
+  try {
+    const out = await PL.saveOutcome(req.user, isAdmin(req.user), req.params.id, req.body || {});
+    if (out.error) return fail(res, out.status || 400, out.error);
+    await logAudit({ userId: req.user.id, action: 'Phone call notes saved', entity: 'Candidate', entityId: out.call.candidateId, toValue: `${out.call.outcome || out.call.status}${out.call.nextAction ? ` · next: ${out.call.nextAction}` : ''}${out.call.followUpAt ? ` · follow-up ${out.call.followUpAt}` : ''}` });
+    return res.json({ call: shape(out.call, req.user), followUp: out.followUp, followUpSkipped: out.followUpSkipped });
+  } catch (e) { console.error('[phone-link] outcome:', e.message); return fail(res, 500, 'Could not save the call notes.'); }
 });
 
 module.exports = router;

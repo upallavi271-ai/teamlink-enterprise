@@ -3,6 +3,7 @@ import api from '../../api';
 import { mmss, statusWord, PlayButton, CallSummary } from './CallHistory.jsx';
 import PhoneLinesSection from './PhoneLinesSection.jsx';
 import SimNumbersSection from './SimNumbersSection.jsx';
+import AndroidPhonesSection from './AndroidPhonesSection.jsx';
 import { useBrowserCall } from './CallProvider.jsx';
 
 const PHONE_WORD = { ready: 'ready: calls back to your SIM ring in this browser', standby: 'another TeamLink tab of this browser takes the calls', connecting: 'connecting…', error: 'could not connect to the phone system (it tries again)', off: 'not connected' };
@@ -70,6 +71,7 @@ export default function BrowserCallingTab() {
         </div>
       )}
       <MySimCard />
+      {cfg && <AndroidPhonesSection />}
       {cfg && <SimNumbersSection />}
       {cfg && <PhoneLinesSection testNumbers={String(cfg.testNumbers || '').split(/[\s,;]+/).map((x) => x.replace(/\D/g, '').slice(-10)).filter((x) => x.length === 10)} />}
       <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap', marginBottom: 10 }}>

@@ -3,7 +3,8 @@ import api from '../../api';
 import { useBrowserCall } from './CallProvider.jsx';
 
 export const mmss = (n) => (n == null ? '—' : `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`);
-export const statusWord = (s, dir) => (dir === 'inbound' && s === 'missed' ? 'Missed' : null) || ({ completed: 'Connected', connected: 'Connected', failed: 'Failed', busy: 'Busy', missed: 'No answer', cancelled: 'Cancelled', calling: 'Calling', ringing: 'Ringing', initiated: 'Starting', requested: 'Asked ViciDial to dial' }[s] || s);
+const PHONE_STATUS = { requested: 'Call initiated', initiated: 'Sent to the phone', calling: 'On the phone', completed: 'Call completed', missed: 'Not answered / busy', busy: 'Busy', failed: 'Call failed', cancelled: 'Cancelled' };
+export const statusWord = (s, dir) => (dir === 'inbound' && s === 'missed' ? 'Missed' : null) || (dir === 'phone' ? PHONE_STATUS[s] : null) || ({ completed: 'Connected', connected: 'Connected', failed: 'Failed', busy: 'Busy', missed: 'No answer', cancelled: 'Cancelled', calling: 'Calling', ringing: 'Ringing', initiated: 'Starting', requested: 'Asked ViciDial to dial' }[s] || s);
 const at = (v) => (v ? new Date(v).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
 const errOf = (e, d) => (e && e.response && e.response.data && e.response.data.error) || d;
 const REC_WORD = { pending: 'Recording is being prepared…', processing: 'Recording is being prepared…', missing: 'No recording came from the phone system', failed: 'The recording could not be prepared', off: 'Not recorded (recording was off)', deleted: 'Recording deleted (kept for a limited time)' };
@@ -84,7 +85,7 @@ export default function CallHistory({ candidateId }) {
                 <tr key={r.id}>
                   <td style={{ whiteSpace: 'nowrap' }}>{at(r.startAt)}</td><td>{r.userName || '—'}{r.direction === 'inbound' ? <div className="small-muted" data-testid="call-incoming">Incoming, to their SIM</div> : null}</td><td data-testid={r.vicidial ? 'vici-line' : undefined}>{r.vicidial ? `ViciDial · requested by ${r.userName || '—'}` : (r.lineName || 'Office Synway (SIM)')}</td>
                   <td>{mmss(r.ringSec)}</td><td data-testid="talk-time">{mmss(r.talkSec)}</td>
-                  <td>{r.vicidial && r.outcomeNote ? r.outcomeNote : statusWord(r.status, r.direction)}{!r.vicidial && r.hangupReason && r.status !== 'completed' ? <div className="small-muted">{r.hangupReason}</div> : null}</td>
+                  <td>{r.vicidial && r.outcomeNote ? r.outcomeNote : statusWord(r.status, r.direction)}{!r.vicidial && r.hangupReason && r.status !== 'completed' ? <div className="small-muted">{r.hangupReason}</div> : null}{r.phone && (r.remarks || r.nextAction || r.followUpAt) ? <div className="small-muted" data-testid="phone-call-notes">{[r.outcome, r.remarks, r.nextAction && `Next: ${r.nextAction}`, r.followUpAt && `Follow-up ${r.followUpAt}`].filter(Boolean).join(' · ')}</div> : null}</td>
                   <td>{r.vicidial ? <span className="small-muted">Recorded in ViciDial</span> : <PlayButton call={r} />}</td>
                   <td style={{ minWidth: 220 }}><CallSummary call={r} /></td>
                 </tr>

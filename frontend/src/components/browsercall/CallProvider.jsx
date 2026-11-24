@@ -178,12 +178,55 @@ export default function BrowserCallProvider({ children }) {
     } catch (e) { setState((x) => ({ ...x, error: errOf(e, 'Could not save how the call went.') })); }
   }, [state.callId]);
 
+  // ANDROID PHONE LINK: the server queues the call for the paired phone, the phone dials it from its own SIM and reports. This browser only
+  // shows what the phone really said (Call initiated -> Sent to phone -> On the phone -> Completed / Not answered / Failed), then the notes form.
+  const PHONE_LIVE = ['requested', 'initiated', 'calling'];
+  const phoneCall = useCallback(async ({ candidateId, applicationId, name, lineId, lineName }) => {
+    if (sess.current) { setState((s) => ({ ...s, note: 'A call is already in progress.' })); return; }
+    setState({ phase: 'phone', phone: true, name, candidateId, lineName, record: { status: 'requested' } });
+    let placed;
+    try { placed = (await api.post('/browser-calling/phone/calls', { candidateId, applicationId, lineId })).data; } catch (e) {
+      setState({ phase: 'phone', phone: true, name, candidateId, lineName, record: { status: 'failed' }, error: errOf(e, 'Could not send the call to the phone.') });
+      return;
+    }
+    setState({ phase: 'phone', phone: true, name: placed.candidate.name, candidateId, applicationId, callId: placed.callId, number: placed.number, lineName: placed.line.name, record: { status: 'requested' } });
+    setSeconds(0);
+    clearInterval(poll.current); clearInterval(tick.current);
+    let onAt = null;
+    const read = () => api.get(`/browser-calling/calls/${placed.callId}`).then((r) => {
+      const c = r.data.call;
+      if (c.status === 'calling' && !onAt) { onAt = Date.now(); clearInterval(tick.current); tick.current = setInterval(() => setSeconds(Math.round((Date.now() - onAt) / 1000)), 500); }
+      if (!PHONE_LIVE.includes(c.status)) { clearInterval(poll.current); clearInterval(tick.current); }
+      setState((x) => (x.callId === placed.callId ? { ...x, record: c } : x));
+    }).catch(() => {});
+    poll.current = setInterval(read, 2000);
+    read();
+  }, []);
+  const phoneHangup = useCallback(async () => {
+    const id = state.callId; if (!id) { setState({ phase: 'idle' }); return; }
+    try { const r = await api.post(`/browser-calling/phone/calls/${encodeURIComponent(id)}/hangup`); setState((x) => ({ ...x, record: r.data.call })); } catch (e) { setState((x) => ({ ...x, error: errOf(e, 'Could not hang up.') })); }
+  }, [state.callId]);
+  const phoneNotes = useCallback(async (notes) => {
+    const id = state.callId; if (!id) return false;
+    try {
+      const r = await api.post(`/browser-calling/phone/calls/${encodeURIComponent(id)}/outcome`, notes);
+      setState((x) => ({ ...x, record: r.data.call, saved: true, savedNote: r.data.followUpSkipped || (r.data.followUp ? `Follow-up added for ${r.data.followUp.dueDate}.` : ''), error: null }));
+      return true;
+    } catch (e) { setState((x) => ({ ...x, error: errOf(e, 'Could not save the call notes.') })); return false; }
+  }, [state.callId]);
+  const phoneLink = useCallback(async (deviceId, action) => {
+    try { await api.post(`/browser-calling/phone/devices/${encodeURIComponent(deviceId)}/${action}`); } catch (e) { /* shown by the status */ }
+    return refresh();
+  }, [refresh]);
+
   // a candidate call on the chosen line (or the one given)
   const call = useCallback(({ candidateId, applicationId, name, lineId, outreachTaskId }) => {
     const ln = lineId || (curLine && curLine.id) || undefined;
     if (ln === 'vicidial' && !outreachTaskId) return viciCall({ candidateId, applicationId, name });
+    const pl = lines.find((l) => l.id === ln && l.phone);
+    if (pl && !outreachTaskId) return phoneCall({ candidateId, applicationId, name, lineId: pl.id, lineName: pl.name });
     return run({ candidateId: candidateId || (outreachTaskId ? `task:${outreachTaskId}` : undefined), name }, async () => (await api.post('/browser-calling/calls', { candidateId, applicationId, lineId: ln === 'vicidial' ? undefined : ln, outreachTaskId })).data);
-  }, [run, curLine, viciCall]);
+  }, [run, curLine, viciCall, phoneCall, lines]);
   // CRM wave B: a lead / deal / customer of the CRM on the office line (POST /crm/b/calls; the row is kept as crm:<kind>:<id>)
   const callCrm = useCallback(({ kind, id, name, lineId, to }) => run({ candidateId: `crm:${kind}:${id}`, name }, async () => (await api.post('/crm/b/calls', { kind, id, to, lineId: lineId || (curLine && !curLine.vicidial ? curLine.id : undefined) || undefined })).data, { sessionPath: '/crm/b/calls/session' }), [run, curLine]);
   // "pick the line first": the call bar shows "Call using" and the Call button
@@ -305,6 +348,6 @@ export default function BrowserCallProvider({ children }) {
     return () => { alive = false; bye(); clearInterval(beat); window.removeEventListener('pagehide', bye); leader.current = false; try { if (bc) bc.close(); } catch { /* closed */ } };
   }, [wantPhone, ensureUa]);
 
-  const value = useMemo(() => ({ available: !!(info && info.canCall), info, state, seconds, lines, line: curLine, mySim, phoneState, chooseLine, call, callCrm, pickAndCall, testCall, refresh, hangup, toggleMute, toggleHold, dismiss, viciOutcome, answer, decline }), [refresh, info, state, seconds, lines, curLine, mySim, phoneState, chooseLine, call, callCrm, pickAndCall, testCall, hangup, toggleMute, toggleHold, dismiss, viciOutcome, answer, decline]);
+  const value = useMemo(() => ({ available: !!(info && info.canCall), info, state, seconds, lines, line: curLine, mySim, phoneState, chooseLine, call, callCrm, pickAndCall, testCall, refresh, hangup, toggleMute, toggleHold, dismiss, viciOutcome, answer, decline, phoneHangup, phoneNotes, phoneLink }), [refresh, info, state, seconds, lines, curLine, mySim, phoneState, chooseLine, call, callCrm, pickAndCall, testCall, hangup, toggleMute, toggleHold, dismiss, viciOutcome, answer, decline, phoneHangup, phoneNotes, phoneLink]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
