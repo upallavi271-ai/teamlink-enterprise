@@ -118,13 +118,25 @@ function Sso() {
     </Section>
   );
 }
+// 14.09 / 14.10 (ATS wave 2 Z): the two vendor connectors whose keys are in Administration > Integrations
+function VendorStatusZ() {
+  const { data, err } = useLoad('/ats-plus/vendorsz/status');
+  return (
+    <Section title="Vendor connectors" note="A background-check vendor (SpringVerify, AuthBridge, IDfy, OnGrid ...) and a test vendor (HackerEarth, Mercer Mettl, iMocha, HackerRank ...). The keys are kept encrypted in Administration > Integrations; orders are placed from Joining > Onboarding and the result comes back on the person's record.">
+      <Notice tone="red">{err}</Notice>
+      {data && <Table rows={Object.entries(data.vendors).map(([k, v]) => ({ id: k, ...v }))}
+        cols={[{ key: 'label', label: 'Kind' }, { key: 'vendor', label: 'Vendor' }, { key: 'ready', label: 'Status', render: (r) => (r.ready ? 'Ready' : 'Not set up - needs founder credentials') }, { key: 'x', label: '', render: (r) => (data.canSetUp ? <a href={r.setUpLink}>Set up</a> : null) }]} />}
+    </Section>
+  );
+}
 function Vendors() {
   const { data, err, reload } = useLoad('/ats-plus/integrations/connectors');
   const { run, busy, flash } = useAction(reload);
   const [f, setF] = useState({ type: 'bgv', name: '', mode: 'manual', url: '', authHeader: 'Authorization', auth: '', bodyTemplate: '' });
   return (
     <>
-      <Section title="Background-check and assessment vendors" note="A vendor with an API: TeamLink posts the order to its address and gives it a callback link for the result. Without an API: Manual - the team types the result. Ordering is done from Joining → Onboarding (Checks and tests).">
+      <VendorStatusZ />
+      <Section title="Background-check and assessment vendors (manual or own HTTP)" note="A vendor with an API: TeamLink posts the order to its address and gives it a callback link for the result. Without an API: Manual - the team types the result. Ordering is done from Joining → Onboarding (Checks and tests).">
         <Notice tone="red">{err}</Notice>{flash}
         {data && <Table rows={data.rows} empty="No vendor yet." cols={[{ key: 'title', label: 'Vendor' }, { key: 'type', label: 'Kind', render: (r) => (r.type === 'bgv' ? 'Background check' : 'Assessment') }, { key: 'mode', label: 'How', render: (r) => (r.mode === 'http' ? `API (${r.url})` : 'Manual') }, { key: 'status', label: 'On' }]} />}
         {data && data.canEdit && (

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import { Notice, Section, Table, useLoad, useAction, Field, dmy, when, row } from './kit.jsx';
+import VendorOrdersZ from './VendorOrdersZ.jsx'; // 14.09 / IN-15 / 14.10: order from the BGV / test vendor, the result back on the record (ATS wave 2 Z)
 
 // ---------------------------------------------------------------------------
 // JOINING -> ONBOARDING (market benchmark 11.09 / 11.10 / 11.11 / 11.18): one pack per person (the checklist picked for the client and
@@ -15,10 +16,11 @@ function ChecksAndTests({ applicationId }) {
   const { data, reload } = useLoad('/ats-plus/integrations/connectors');
   const { run, busy, flash } = useAction(reload);
   const [res, setRes] = useState({});
-  if (!data || !data.rows.length) return <div className="small-muted" style={{ marginTop: 10 }}>Background checks and tests: no vendor set up yet (Administration → ATS settings → Integrations → Checks & tests).</div>;
+  if (!data || !data.rows.length) return <><VendorOrdersZ applicationId={applicationId} /><div className="small-muted" style={{ marginTop: 10 }}>Other checks and tests: no manual / HTTP vendor added (Administration → ATS settings → Integrations → Checks & tests).</div></>;
   const mine = data.orders.filter((o) => o.applicationId === applicationId);
   return (
     <div style={{ marginTop: 12 }}>
+      <VendorOrdersZ applicationId={applicationId} />
       <b>Background checks and tests</b>{flash}
       <div style={{ ...row, margin: '6px 0' }}>{data.rows.filter((c) => c.status === 'ON').map((c) => <button key={c.id} type="button" className="btn btn-sm" disabled={busy} onClick={() => run(() => api.post(`/ats-plus/integrations/connectors/${c.id}/order`, { applicationId }), (d) => `Ordered: ${d.note}`)}>Order: {c.title}</button>)}</div>
       <Table rows={mine} empty="Nothing ordered for this person."
