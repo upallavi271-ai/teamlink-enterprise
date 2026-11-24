@@ -54,9 +54,34 @@ async function speak(lang, text) {
 // the same voice for ANY words typed by a signed-in team member (the video maker's voice-over, 2026-11-21). Short text only; the allow-list above still guards the PUBLIC address.
 // the words as they are spoken: runs of white space become one space. (A lost backslash once turned this into /s+/ and every letter "s" was dropped from the voice: "this is" was said "thi i".)
 const cleanText = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 320);
+// THE ENGLISH VOICE OF THE VIDEO VOICE-OVER (2026-11-24, founder: "the voice is not good, change the voice"): Kokoro (the free open voice already running here for Hindi, AI_VOICE_KOKORO_URL) speaks the
+// English lines instead of the old Piper voice: much more natural. Voice af_heart by default (MK_VIDEO_VOICE_EN_VOICE changes it; MK_VIDEO_VOICE_EN=piper goes back to Piper). It takes about as long as the
+// audio to make on this CPU, so each sentence is kept as a file (like every other voice here) and a slow or failing Kokoro falls back to the Piper voice after 30 seconds. Team only (speakAny), never the public address.
+async function kokoroEnglish(t) {
+  const url = String(process.env.AI_VOICE_KOKORO_URL || '').replace(/\/+$/, '');
+  if (!url || process.env.MK_VIDEO_VOICE_EN === 'piper') return null;
+  const voice = String(process.env.MK_VIDEO_VOICE_EN_VOICE || 'af_heart').replace(/[^a-z_]/g, '').slice(0, 20) || 'af_heart';
+  const key = 'en-kokoro|' + voice + '|' + t;
+  let wav = kept.get(key) || fromDisk(key);
+  if (wav) { kept.set(key, wav); return wav; }
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 30000);
+  try {
+    const r = await fetch(url + '/speak', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(process.env.AI_VOICE_KEY ? { 'X-API-Key': process.env.AI_VOICE_KEY } : {}) }, body: JSON.stringify({ text: t, voice, lang: 'en-us', speed: 1.0 }), signal: ctl.signal });
+    if (!r.ok) throw new Error('Kokoro ' + r.status);
+    wav = Buffer.from(await r.arrayBuffer());
+    if (wav.length < 100 || wav.slice(0, 4).toString() !== 'RIFF') throw new Error('Kokoro sent no sound');
+    kept.set(key, wav); toDisk(key, wav);
+    if (kept.size > MAX_KEPT) kept.delete(kept.keys().next().value);
+    return wav;
+  } catch (e) {
+    console.error('[omni-mk] kokoro english voice:', e.message); // eslint-disable-line no-console
+    return null;
+  } finally { clearTimeout(timer); }
+}
 async function speakAny(lang, text) {
   const t = cleanText(text);
   if (!NAME[lang] || !t) return { error: 'Write the words to be spoken.', status: 400 };
+  if (lang === 'en') { const wav = await kokoroEnglish(t); if (wav) return { wav }; } // the natural English voice; the Piper voice below when it cannot answer
   return render(lang, t);
 }
 async function render(lang, t) {

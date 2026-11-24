@@ -156,9 +156,13 @@ export default function MkVideosPage() {
   // the voice-over: each scene's words are spoken by the server's free voice (marketing/meetingVoice.js speakAny); the scene lasts as long as the sentence
   const withVoices = async () => {
     if (!f.voice) return { d: data, seconds: tl.total };
-    const bufs = await Promise.all(pick.map((p) => ((p.kind === 'image' || p.stock) && String(p.say || p.caption || '').trim().length > 1
-      ? omni.post('/gs/marketing/video/voice', { lang: f.voice, text: p.say || p.caption }, { responseType: 'arraybuffer', timeout: 60000 }).catch((e) => { throw new Error(errOf(e, 'The voice could not be made.')); })
-      : null)));
+    toast('Making the voice-over: about a minute. Please wait.');
+    const bufs = []; // one scene after the other: the natural voice makes each sentence in about its own length, and one request must never wait on five others
+    for (const p of pick) { // eslint-disable-line no-restricted-syntax
+      const words = (p.kind === 'image' || p.stock) ? String(p.say || p.caption || '').trim() : '';
+      if (words.length > 1) bufs.push(await omni.post('/gs/marketing/video/voice', { lang: f.voice, text: words }, { responseType: 'arraybuffer', timeout: 90000 }).catch((e) => { throw new Error(errOf(e, 'The voice could not be made.')); })); // eslint-disable-line no-await-in-loop
+      else bufs.push(null);
+    }
     const voices = await decodeVoices(bufs);
     const d2 = { ...data, voices, pics: data.pics.map((p, i) => ({ ...p, voiceSec: voices[i] ? voices[i].duration : 0 })) };
     return { d: d2, seconds: timeline(d2.pics, Number(f.secPer), Number(f.clipSec)).total };

@@ -26,10 +26,14 @@ HOST = os.getenv("KOKORO_HOST", "127.0.0.1")
 PORT = int(os.getenv("KOKORO_PORT", "8094"))
 KEY = os.getenv("KOKORO_API_KEY", "")
 VOICE = os.getenv("KOKORO_VOICE", "hf_alpha")
-VOICES = ("hf_alpha", "hf_beta", "hm_omega", "hm_psi")
+VOICES = ("hf_alpha", "hf_beta", "hm_omega", "hm_psi")  # the Hindi voices; every other voice in the model file (English af_heart, am_michael ...) is allowed too (ALLOWED below)
 
 kokoro = Kokoro(os.getenv("KOKORO_MODEL", "kokoro-v1.0.int8.onnx"), os.getenv("KOKORO_VOICES", "voices-v1.0.bin"))
 lock = threading.Lock()
+try:
+    ALLOWED = set(kokoro.get_voices()) | set(VOICES)  # 2026-11-24: English voices for the video voice-over (lang "en-us")
+except Exception:  # noqa: BLE001
+    ALLOWED = set(VOICES)
 print(f"[kokoro] loaded, listening on {HOST}:{PORT}", flush=True)
 
 
@@ -71,7 +75,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             b = json.loads(self.rfile.read(n).decode("utf-8"))
             text = str(b.get("text", "")).strip()[:600]
-            voice = b.get("voice") if b.get("voice") in VOICES else VOICE
+            voice = b.get("voice") if b.get("voice") in ALLOWED else VOICE
             speed = min(1.6, max(0.6, float(b.get("speed", 1.0))))
             if not text:
                 return self.err(400, "text is empty")
