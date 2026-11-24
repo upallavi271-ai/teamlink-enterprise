@@ -13,7 +13,7 @@ async function createToken(user, label) {
   const token = `mcp_${crypto.randomBytes(24).toString('base64url')}`;
   const id = S.newId();
   await S.x('INSERT INTO "MktMcpToken" ("id","userId","userName","label","tokenHash","createdAt") VALUES (?,?,?,?,?,?)', id, user.id, user.name, S.clean(label, 60) || 'MCP token', S.hash(token), S.now());
-  return { id, token, note: 'Copy it now: it is shown only once. It reads only what your own login may see, and can never change anything.' };
+  return { id, token, note: 'Copy it now: it is shown only once. It reads only what your own login may see. It changes nothing unless an Admin turns on the ATS write tools (add a note, add a follow-up, move a step), and then only what your own login may change.' };
 }
 async function tokens(user) {
   return S.q('SELECT "id","label","createdAt","lastUsedAt","revokedAt" FROM "MktMcpToken" WHERE "userId" = ? ORDER BY "createdAt" DESC', user.id);
@@ -80,18 +80,24 @@ async function handle(req, res) {
   const { id, method, params = {} } = msg;
   if (!method) return rpcErr(id, -32600, 'Invalid request.');
   if (method.startsWith('notifications/')) return res.status(202).end();
-  if (method === 'initialize') return res.json({ jsonrpc: '2.0', id, result: { protocolVersion: PROTOCOL, capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'teamlink-ats', version: '1.0.0' }, instructions: 'Read-only TeamLink ATS tools. Results are limited to what the token owner may see. Contact details are never returned.' } });
+  if (method === 'initialize') return res.json({ jsonrpc: '2.0', id, result: { protocolVersion: PROTOCOL, capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'teamlink-ats', version: '1.0.0' }, instructions: 'TeamLink ATS tools. Results are limited to what the token owner may see. Contact details are never returned. The tools that add a note, a follow-up or move a step appear only when an Admin has switched them on.' } });
   if (method === 'ping') return res.json({ jsonrpc: '2.0', id, result: {} });
   // the CRM's own tools (crm/mcpTools.js, CRM wave A 15.12): listed only for a CRM team member while an Admin has them on
   const CRMT = require('../../crm/mcpTools'); // eslint-disable-line global-require
   const crmTools = await CRMT.toolsFor(user).catch(() => []);
-  if (method === 'tools/list') return res.json({ jsonrpc: '2.0', id, result: { tools: [...TOOLS, ...crmTools] } });
+  // the ATS write tools (ATS wave 2 Y, 09.14, utils/atsY/mcpWrite.js): note / follow-up / step, only while an Admin has them on
+  const ATSW = require('../atsY/mcpWrite'); // eslint-disable-line global-require
+  const atsWrite = await ATSW.toolsFor(user).catch(() => []);
+  if (method === 'tools/list') return res.json({ jsonrpc: '2.0', id, result: { tools: [...TOOLS, ...atsWrite, ...crmTools] } });
   if (method === 'tools/call') {
     const name = String(params.name || '');
     const isCrm = crmTools.some((t) => t.name === name);
-    if (!TOOLS.some((t) => t.name === name) && !isCrm) return rpcErr(id, -32602, `Unknown tool: ${name}`);
+    const isAtsWrite = atsWrite.some((t) => t.name === name);
+    if (!TOOLS.some((t) => t.name === name) && !isCrm && !isAtsWrite) return rpcErr(id, -32602, `Unknown tool: ${name}`);
     try {
-      const out = isCrm ? await CRMT.call(name, params.arguments || {}, user) : await callTool(name, params.arguments || {}, user);
+      let out;
+      if (isAtsWrite) out = await ATSW.call(name, params.arguments || {}, user);
+      else out = isCrm ? await CRMT.call(name, params.arguments || {}, user) : await callTool(name, params.arguments || {}, user);
       await require('../audit').logAudit({ userId: user.id, action: `MCP tool used: ${name}`, entity: 'Mcp', entityId: name, toValue: JSON.stringify(params.arguments || {}).slice(0, 200) }); // eslint-disable-line global-require
       return res.json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(out) }], structuredContent: out, isError: !!out.error } });
     } catch (e) {
