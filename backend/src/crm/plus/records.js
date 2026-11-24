@@ -7,7 +7,7 @@
 //   02.11 the account team: people who work an account with its owner - they may OPEN the account (read only), the owner keeps it
 //   02.12 files on leads, accounts and contacts (deals keep theirs in crm/money.js; an account also lists its deals' files)
 //   02.13 customer health: a 0-100 score with its reasons (quiet for weeks, open / late support tickets, overdue invoices, lost deals, a recent win)
-//   02.14 one search box for every CRM record (TeamLink's search box asks /api/crm/plus/search when the login is on the CRM team)
+//   02.14 one search box for every CRM record (TeamLink's search box asks /api/crm/plusc/search when the login is on the CRM team)
 //   02.05 enrichment: fill an account from its own website (title, description, social links, a guessed industry), its GSTIN (state, PAN), and an
 //         outside company-data provider once its key is saved (Administration > Integrations > CRM company data)
 //   17.04 deals in other currencies: the amount in the deal's currency and the rate of the day are kept; the deal's value stays in rupees, so every

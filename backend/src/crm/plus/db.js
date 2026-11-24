@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // CRM WAVE C (2026-11-24, founder "Yes, build to 90%"): Contacts & Accounts, Admin & Customisation, Data & Compliance, Leads.
-// The tables and the one settings row of everything in backend/src/crm/plus/*. Same pattern as crm/schema.js: raw SQL tables with no Prisma
+// The tables and the one settings row of everything in backend/src/crm/plusc/*. Same pattern as crm/schema.js: raw SQL tables with no Prisma
 // model, created with CREATE TABLE IF NOT EXISTS the first time anything needs them; columns added once ("duplicate column" is the normal
 // answer afterwards). ADDITIVE ONLY: nothing existing is altered or dropped.
 //

@@ -18,12 +18,12 @@
 //   GET|PUT /plusc/prefs  GET|POST /plus/prefs/logo   GET|POST /plus/package   GET /plus/adoption?days=
 // ---------------------------------------------------------------------------
 const express = require('express');
-const P = require('../crm/plusc/db');
-const F = require('../crm/plusc/fields');
-const R = require('../crm/plusc/records');
-const D = require('../crm/plusc/dataCare');
-const L = require('../crm/plusc/leadIn');
-const A = require('../crm/plusc/admin');
+const P = require('../crm/plus/db');
+const F = require('../crm/plus/fields');
+const R = require('../crm/plus/records');
+const D = require('../crm/plus/dataCare');
+const L = require('../crm/plus/leadIn');
+const A = require('../crm/plus/admin');
 
 const router = express.Router();
 const send = (res, out) => res.status(out.status).json(out.body);
