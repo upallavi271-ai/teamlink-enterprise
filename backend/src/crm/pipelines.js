@@ -478,7 +478,8 @@ async function analysis(user, { pipeline, from, to } = {}) {
   const f = YMD.test(String(from || '')) ? from : new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
   const t = YMD.test(String(to || '')) ? to : S.istToday();
   const inRange = (iso) => { const d = istYmd(iso); return d && d >= f && d <= t; };
-  for (const d of deals.slice(0, 2000)) await backfillLog(d); // eslint-disable-line no-await-in-loop
+  const logged = new Set((await P.all('SELECT DISTINCT "dealId" FROM "CrmDealStageLog"')).map((x) => x.dealId));
+  for (const d of deals.filter((x) => !logged.has(x.id)).slice(0, 2000)) await backfillLog(d); // eslint-disable-line no-await-in-loop
   const ids = deals.map((d) => d.id);
   const logs = [];
   for (let i = 0; i < ids.length; i += 400) {
@@ -528,8 +529,23 @@ async function analysis(user, { pipeline, from, to } = {}) {
   });
 }
 
+// The open stages a dashboard groups by: the first pipeline's (with the Admin's extra stages) and then any other stage an open deal stands
+// on (another pipeline's), so no open deal drops out of a pipeline chart. A sync read of the last loaded pipelines.
+function reportStages(stagesPresent = []) {
+  const first = loadSync().pipelines[0];
+  const base = first ? first.stages.map((s) => s.name) : CORE_OPEN;
+  const extra = [...new Set(stagesPresent)].filter((s) => s && !base.includes(s) && !['Won', 'Lost'].includes(s));
+  return [...base, ...extra];
+}
+// the probability of a stage of any pipeline (for the weighted forecast of a chart)
+function probabilityFor(stage) {
+  const cfg = loadSync();
+  const pl = cfg.pipelines.find((p) => p.stages.some((s) => s.name === stage)) || cfg.pipelines[0];
+  return probabilityOf(pl, stage);
+}
+
 module.exports = {
-  load, loadSync, config, savePipelines, prepareNewDeal, checkMove, afterCreate, afterMove, tick, changePipeline, history, stageSince, bulk,
+  reportStages, probabilityFor, load, loadSync, config, savePipelines, prepareNewDeal, checkMove, afterCreate, afterMove, tick, changePipeline, history, stageSince, bulk,
   recurring, renewal, renewalTick, renewalSettings, saveRenewalSettings, mrrOf, splits, saveSplits, forecast, submitForecast, adjustForecast, analysis,
   autoCategory, pipelineOf, stageNames, probabilityOf, FORECAST_CATS, BILLINGS, REQUIRED_FIELDS, CORE_OPEN,
 };

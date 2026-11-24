@@ -991,7 +991,7 @@ async function dashboard(user, { mine } = {}) {
   const monthStart = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - 5.5 * 3600 * 1000).toISOString();
   const deals = await DB.all(`SELECT "id", "title", "stage", "value", "finalValue", "probability", "expectedClose", "wonAt", "lostAt", "lostReason", "ownerName", "accountId" FROM "CrmDeal" WHERE ${s.sql}`, ...s.params);
   const open = deals.filter((d) => !['Won', 'Lost'].includes(d.stage));
-  const byStage = STAGES.map((st) => { const ds = deals.filter((d) => d.stage === st && (!['Won', 'Lost'].includes(st) || (d.wonAt || d.lostAt || '') >= monthStart)); return { stage: st, count: ds.length, value: ds.reduce((a, d) => a + ((st === 'Won' ? (d.finalValue != null ? d.finalValue : d.value) : d.value) || 0), 0) }; });
+  const byStage = [...require('./pipelines').reportStages(open.map((d) => d.stage)), 'Won', 'Lost'].map((st) => { /* eslint-disable-line global-require */ const ds = deals.filter((d) => d.stage === st && (!['Won', 'Lost'].includes(st) || (d.wonAt || d.lostAt || '') >= monthStart)); return { stage: st, count: ds.length, value: ds.reduce((a, d) => a + ((st === 'Won' ? (d.finalValue != null ? d.finalValue : d.value) : d.value) || 0), 0) }; });
   const wonM = deals.filter((d) => d.stage === 'Won' && (d.wonAt || '') >= monthStart);
   const lostM = deals.filter((d) => d.stage === 'Lost' && (d.lostAt || '') >= monthStart);
   const today = istToday();

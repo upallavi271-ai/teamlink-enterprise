@@ -109,9 +109,9 @@ async function charts(user, q = {}) {
 
   // the deal pipeline as it stands now: the open stages, by value
   const open = await DB.all(`SELECT "id", "stage", "value", "expectedClose" FROM "CrmDeal" WHERE ${o.sql} AND "stage" NOT IN ('Won', 'Lost')`, ...o.params);
-  const pipeline = SETTINGS.STAGES.filter((s) => !['Won', 'Lost'].includes(s)).map((s) => {
+  const pipeline = require('./pipelines').reportStages(open.map((d) => d.stage)).map((s) => { // eslint-disable-line global-require
     const ds = open.filter((d) => d.stage === s);
-    return { stage: s, count: ds.length, value: round2(ds.reduce((a, d) => a + (Number(d.value) || 0), 0)), probability: st.stageProbability[s] };
+    return { stage: s, count: ds.length, value: round2(ds.reduce((a, d) => a + (Number(d.value) || 0), 0)), probability: st.stageProbability[s] != null ? st.stageProbability[s] : require('./pipelines').probabilityFor(s) }; // eslint-disable-line global-require
   });
 
   // money by month, the last 12: booked (won, after the discount) / invoiced (gone out, with tax) / collected (the payment log)
