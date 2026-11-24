@@ -10,6 +10,8 @@ const { requireAuth } = require('../middleware/auth');
 const router = express.Router();
 router.use(requireAuth);
 const AREAS = ['people', 'bd', 'offers', 'onboarding', 'admin', 'integrations', 'privacy', 'status', 'idverify', 'sso', 'i18n'];
+// ATS wave 2 Z (2026-11-25): app catalogue, calendar, verification / assessment vendors, evidence, phone app
+AREAS.push('appsZ', 'calendarZ', 'vendorsZ', 'evidenceZ', 'mobileZ');
 const fs = require('fs');
 const path = require('path');
 

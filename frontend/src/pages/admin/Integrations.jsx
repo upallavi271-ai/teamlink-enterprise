@@ -236,6 +236,15 @@ export default function Integrations() {
     } catch (err) { setError('Could not load the sync history.'); }
   }
 
+  // ?tab=connections&channel=<id> (the ATS app catalogue's "Set up" links, ATS wave 2 Z): open that card's Configure window once
+  const [askedChannel, setAskedChannel] = useState(() => searchParams.get('channel') || '');
+  useEffect(() => {
+    if (!askedChannel || !data || !data.channels) return;
+    const c = data.channels.find((x) => x.id === askedChannel);
+    setAskedChannel('');
+    if (c) { setTab('connections'); openConfigure(c); }
+  }, [askedChannel, data]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // A secret field opens EMPTY — the server never sends the value, only a
   // masked hint, and blank means "keep what is stored".
   function openConfigure(c) {

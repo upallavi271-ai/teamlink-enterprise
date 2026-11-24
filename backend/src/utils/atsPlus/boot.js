@@ -7,6 +7,8 @@ const fs = require('fs');
 const path = require('path');
 
 const PIECES = [['bd', 'startWorker'], ['integrations', 'startWorker'], ['status', 'startSampler'], ['privacy', 'startRetention']];
+// ATS wave 2 Z: the vendors' result check (every 30 minutes; reads results, sends nothing to a person)
+PIECES.push(['vendorsZ', 'startWorker']);
 function start() {
   if (require('../sandbox').isSandbox()) return; // eslint-disable-line global-require
   PIECES.forEach(([file, fn]) => {
