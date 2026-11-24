@@ -202,6 +202,7 @@ router.delete('/meetings/:id', mustWrite, wrap(async (req, res) => send(res, awa
 // ---- AI clips (marketing/aiclips.js): a real-motion clip from Google Veo; paid, so the cost must be confirmed and a daily limit applies ------------------
 // ---- create from a prompt (marketing/autostudio.js): one sentence -> the plan of a video / picture post (pictures and the video are then made by the screen) ------------------
 router.post('/studio/plan', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/autostudio').plan(req.user, req.body || {}))));
+router.post('/studio/idea-assist', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/ideaAssist').ideaAssist(req.user, req.body || {})))); // "✨ AI Assist" on the idea box: the AI writes the idea from the title (fills the box only)
 
 // ---- campaign messages (marketing/messaging.js): the AI writes the WhatsApp / SMS words of a job campaign; templates and a campaign that is saved, NEVER sent from here --------------
 router.get('/campaigns/options', mustWrite, wrap(async (req, res) => send(res, await Msg.options(req.user, { q: String(req.query.q || '') }))));

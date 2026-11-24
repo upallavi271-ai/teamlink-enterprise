@@ -4,6 +4,7 @@ import { getState } from '../omniStore.js';
 import { Panel, Btn, Banner, Field, Pill, TinyBtn } from '../ui.jsx';
 import { designPoster, loadImage } from './designPoster.js';
 import AutoSendBox, { useAutoSend } from './AutoSendBox.jsx';
+import IdeaAssist from './IdeaAssist.jsx';
 
 // "✦ CREATE FROM YOUR CONTENT": a person types an idea (or only their own title, heading and content) and TeamLink makes the pictures and the video BY ITSELF.
 //   plan     the AI writes what is missing: headline, scene words, caption, hashtags (marketing/autostudio.js). What the person wrote themselves is always used exactly.
@@ -174,6 +175,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           ) : null}
           <Field label="YOUR IDEA OR CONCEPT" full hint="For example: A Diwali offer video for our software clients, 20% off all this week, friendly and festive. You can leave this empty if you fill in the title, heading and content below.">
             <textarea rows={3} maxLength={800} value={prompt} disabled={working} onChange={(e) => setPrompt(e.target.value)} placeholder={isVideo ? 'We are hiring freshers: staffing consultancy, join us, apply today' : 'A Republic Day greeting post for our clients, proud and simple'} style={{ width: '100%' }} />
+            <IdeaAssist kind={kind} title={title} heading={heading} content={content} idea={prompt} projectId={projectId} clientName={auto.cfg.on ? auto.cfg.clientName : ''} disabled={working} onIdea={setPrompt} />
           </Field>
           <div className="form-grid" style={{ marginTop: 6 }}>
             <Field label="TITLE (OPTIONAL)"><input value={title} maxLength={80} disabled={working} onChange={(e) => setTitle(e.target.value)} placeholder="Names it in your list" /></Field>
