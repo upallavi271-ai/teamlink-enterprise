@@ -321,6 +321,7 @@ app.use('/api/omni', require('./routes/omniShared')); // Omni-Channel shared API
 app.use('/api/omni-gs', require('./routes/greenStartEmbed')); // status + session cookie for the embedded Green Start app
 app.use('/api/public/mk-work', require('./routes/mkWorkPublic')); // AI Marketing "Our work": track record and portfolio (no login; marketing/projects.js)
 app.use('/api/public/mk-project', require('./routes/mkProjectPublic')); // AI Marketing client projects: the client's private page (signed token, no login; marketing/projects.js)
+if (require('./utils/sandbox').isSandbox()) app.use('/api/public/stfx-stub', require('./routes/staffingXPortal').stubRouter); // TEST SANDBOX ONLY: pretend VMS / webhook / Zoho Books for the contract-staffing connectors
 app.use('/api/public/mkt', require('./routes/mktBPublic').publicRouter); // market wave B: the profile-update link + a public job's screening questions (no login)
 app.use('/api/mcp', require('./routes/mktBPublic').mcpRouter); // market wave B: the read-only MCP server (OFF by default, own token)
 app.use('/api/public/feedback', require('./routes/feedbackPublic'));
@@ -343,6 +344,8 @@ app.use('/api/voice-service', require('./routes/voiceService'));
 // Client portal + candidate portal (outside logins) and 'Invite to portal'.
 app.use('/api/portal/client/concerns', require('./routes/atsExperience').portalRouter); // a client login raises / follows its concerns (escalation matrix); ahead of routes/portal.js
 app.use('/api/portal/client', require('./routes/clientDepth').portalRouter); // the client confirms a requirement (optional step) - ahead of routes/portal.js
+app.use('/api/portal/client/contract', require('./routes/staffingXPortal').clientRouter); // contract staffing: the client approves its contractors' timesheets (ATS wave 2 X) - ahead of routes/portal.js
+app.use('/api/portal/candidate/contract', require('./routes/staffingXPortal').candidateRouter); // contract staffing: a placed contractor sends their own timesheets - ahead of routes/portal.js
 app.use('/api/portal', require('./routes/portal'));
 // JOINING & DROP (2026-10-17): the joining record, the drop, the client's replacement decision, the journey, the client history (routes/joinDrop.js).
 app.use('/api/join-drop', require('./routes/joinDrop'));
@@ -460,6 +463,7 @@ app.use('/api/crm-api', require('./routes/crmApi'));
 app.use('/api/bde-agent', require('./routes/bdeAgent'));
 app.use('/api/call-lists', require('./routes/callLists')); // the call sheet split among recruiters, who call it from VICIdial
 app.use('/api/ats/data-verify', require('./routes/dataVerify')); // verify queue, stale data, switches, parsing quality (round 3, 2026-11-18)
+app.use('/api/ats/staffing', require('./routes/staffingX')); // ATS wave 2 X (2026-11-25): contractors, timesheets, shifts, pay & bill, billing check, VMS (utils/staffingX/*.js)
 app.use('/api/ats/mkt', require('./routes/mktB')); // market wave B (2026-11-21): hiring tools, talent pools, AI governance, agents (utils/mktb/*.js)
 app.use('/api/ats/data-quality', require('./routes/dataQuality')); // profile completeness, duplicates, stale profiles (utils/dataQuality.js)
 app.use('/api/privacy', require('./routes/privacy')); // DPDP: a candidate's data export, legal hold, erasure, consent review (utils/candidatePrivacy.js)
@@ -693,6 +697,7 @@ const server = app.listen(PORT, () => {
   setTimeout(() => require('./marketing/aiclips').resume().catch((e) => console.error('[omni-mk] clip resume:', e.message)), 15 * 1000).unref();
   // Timesheet daily tracking: 18:00 "not finished today - what happened?", 19:00 to whoever gave it - utils/taskDayUpdate.js (2026-11-10)
   require('./utils/taskDayUpdate').start();
+  require('./utils/staffingX/boot').start(); // contract staffing timers (VMS sync, Monday timesheet reminders): each OFF until its Admin switch is on; never in the sandbox
   require('./utils/mktb/agents').start(); // market wave B timers: each one does nothing until its Admin switch is ON; never in the sandbox
   // Market wave C (2026-11-21): connected mailboxes read every 5 minutes and job-alert emails every 6 hours - each only while its Admin switch is on; never in the sandbox.
   require('./utils/mkt/comms').startInboxSync();
