@@ -56,6 +56,7 @@ const { withoutSystemAccounts } = require('../utils/systemAccounts');
 const { activeOnly, hasColumn } = require('../utils/masters');
 // Employee ID: the next TL<nnn> and the checks on a changed one.
 const employeeCodes = require('../utils/employeeCode');
+const salaryOnCreate = require('../utils/salaryOnCreate'); // Add Employee: Salary status + Monthly CTC, saved as the first salary structure (2026-11-24)
 // Every export / import tells the Super Admin (in-app + throttled email).
 const { notifyDataIo } = require('../utils/dataIoNotify');
 // Manage Fields: which built-in fields HR has paused / made required.
@@ -1986,6 +1987,15 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
     if (pinHolder) return res.status(409).json({ error: `Biometric ID ${biometricPin} already belongs to ${pinHolder.name} (${pinHolder.employeeCode}).` });
   }
 
+  // SALARY STATUS (founder, 2026-11-24): Package (+ Monthly CTC) or Stipend (+ the stipend), optional. Checked HERE, before the login and the
+  // employee exist, so a missing CTC never leaves a half-made person behind. Salary is the payroll desk's data: only a caller who may edit
+  // Payroll & Compensation can set it (the form hides the fields for everybody else, this is the rule).
+  const salaryPlan = salaryOnCreate.planFrom(b);
+  if (salaryPlan.error) return res.status(400).json({ error: salaryPlan.error });
+  if (salaryPlan.plan && !(await can(req.user, 'hrms', 'hrms', 'Payroll & Compensation', 'edit'))) {
+    return res.status(403).json({ error: "Setting a salary is for the payroll desk (Payroll & Compensation). Leave Salary status empty; the payroll desk adds it afterwards." });
+  }
+
   if (await prisma.user.findFirst({ where: { email } })) {
     return res.status(409).json({ error: 'That email already has a login.' });
   }
@@ -2149,6 +2159,11 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
     require('../utils/bdeSeatHandover').soon(); // eslint-disable-line global-require -- a BDE seat makes them an ATS BDE (utils/bdeSeatHandover.js)
   }
 
+  // THE SALARY, saved as the person's first salary structure - the very record Payroll reads - so the monthly Calculate picks it up with
+  // nothing to enter twice (utils/salaryOnCreate.js). Never breaks the create: a failure is reported back in words.
+  let salary = null;
+  if (salaryPlan.plan) salary = await salaryOnCreate.createFirst({ employee, plan: salaryPlan.plan, actor: req.user });
+
   if (verification) {
     await prisma.emailVerification.update({ where: { id: verification.id }, data: { consumedAt: new Date() } });
   }
@@ -2185,6 +2200,7 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
     ...shapeEmployeeMgmtRow(fresh),
     credentials,
     offerLetter,
+    salary, // { ok, payMode, monthlyCtc | monthlyStipend, effectiveFrom } or { ok: false, message }; null when no salary was asked
     login: {
       id: user.id, email: user.email, role: user.role, atsRole: user.atsRole,
       products: { hrms: user.hrmsAccess, ats: user.atsAccess, accounts: user.accountsAccess },

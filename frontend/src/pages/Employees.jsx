@@ -22,6 +22,7 @@ import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message
 import useMayMessage from '../components/messaging/useMayMessage.js'; // the server says who may message many employees at once
 import ContactDialog from '../components/messaging/ContactDialog.jsx'; // WhatsApp to ONE employee (the company WhatsApp numbers)
 import { useAuth } from '../context/AuthContext.jsx';
+import { can as mayDo } from '../permissions';
 import Modal from '../components/Modal.jsx';
 import { atsRoleLabel, registerRoleLabels } from '../atsVocab';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
@@ -92,6 +93,8 @@ const EMPTY_NEW = {
   biometricPin: '',
   dateOfJoining: new Date().toISOString().slice(0, 10), employeeType: 'Full Time', employmentStatus: 'Active',
   password: '',
+  // Salary status (founder 2026-11-24): '' = not set now, 'Package' (+ monthlyCtc) or 'Stipend' (+ monthlyStipend). Saved as the first salary structure.
+  salaryMode: '', monthlyCtc: '', monthlyStipend: '',
 };
 
 // The email one-time code that gates Add Employee. `configured: false` is an
@@ -506,7 +509,11 @@ export default function Employees() {
         + ` Role ${atsRoleLabel(res.data.login.role)}${res.data.login.atsRole ? ` · ATS ${atsRoleLabel(res.data.login.atsRole)}` : ''}`
         + ` · scope ${res.data.login.scope}. Email ${res.data.emailChannel}.`
         // the offer letter made for a new joiner (or why not), verbatim from the server
-        + (res.data.offerLetter && res.data.offerLetter.message ? ` Offer letter: ${res.data.offerLetter.message}` : ''));
+        + (res.data.offerLetter && res.data.offerLetter.message ? ` Offer letter: ${res.data.offerLetter.message}` : '')
+        // the salary just set (or why not): it is now the person's salary structure, so the monthly payroll calculation reads it
+        + (res.data.salary ? (res.data.salary.ok
+          ? ` Salary: ${res.data.salary.payMode} ₹${Number(res.data.salary.monthlyCtc || res.data.salary.monthlyStipend).toLocaleString('en-IN')}/month from ${String(res.data.salary.effectiveFrom).slice(0, 7)} - payroll picks it up when the month is calculated.`
+          : ` Salary NOT saved: ${res.data.salary.message}`) : ''));
       // What actually happened to the sign-in email, verbatim from the server.
       // When there is no SMTP provider this says so and hands over the link;
       // it never implies the employee has been told.
@@ -1259,6 +1266,7 @@ export default function Employees() {
           otp={otp} setOtp={setOtp} emailReady={emailReady} sendOtp={sendOtp} verifyOtp={verifyOtp}
           onClose={() => { setAdding(null); setOtp(EMPTY_OTP); }} onSave={saveNew}
           error={error}
+          canSetSalary={!!me && mayDo(me, 'hrms', 'hrms', 'Payroll & Compensation', 'edit')}
         />
       )}
 
@@ -1532,7 +1540,7 @@ function DepartmentChecklist({ all: master, value, onChange }) {
 
 function AddEmployeeModal({
   form, setForm, options, employees, otp, setOtp, emailReady, sendOtp, verifyOtp, onClose, onSave,
-  error = '',
+  error = '', canSetSalary = false,
 }) {
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const FL = useFieldLayout();
@@ -1585,7 +1593,9 @@ function AddEmployeeModal({
   // the welcome mail goes out on its own. Nothing here waits on a code.
   // No Designation field any more (user, 2026-09-29): the server takes it from
   // the chosen Role (or "Employee"); HR can change it later on Edit.
-  const canSave = form.name.trim() && form.email.trim() && form.department;
+  // a Package needs its Monthly CTC, a Stipend its amount (Salary status itself is optional)
+  const salaryOk = !form.salaryMode || (form.salaryMode === 'Package' ? Number(form.monthlyCtc) > 0 : Number(form.monthlyStipend) > 0);
+  const canSave = form.name.trim() && form.email.trim() && form.department && salaryOk;
 
   return (
     <Modal
@@ -1800,6 +1810,40 @@ function AddEmployeeModal({
             </button>
           </div>
         </div>
+
+        {/* SALARY STATUS (founder, 2026-11-24): Package or Stipend. A Package asks for the Monthly CTC, a Stipend for the monthly amount. It is
+            saved as the employee's salary structure - the record Payroll reads - so the monthly Calculate picks it up with nothing to enter
+            twice. Only for somebody who may edit Payroll & Compensation; optional (blank = the payroll desk adds it later). */}
+        {canSetSalary && (
+          <>
+            <div className="field">
+              <label>Salary status <i style={{ fontWeight: 400 }}>(optional)</i></label>
+              <Combo value={form.salaryMode || ''} onChange={(e) => set({ salaryMode: e.target.value })} data-testid="add-salary-mode">
+                <option value="">Not set now</option>
+                <option value="Package">Package</option>
+                <option value="Stipend">Stipend</option>
+              </Combo>
+            </div>
+            {form.salaryMode === 'Package' && (
+              <div className="field">
+                <label>Monthly CTC (₹)</label>
+                <input type="number" min="0" step="1" inputMode="numeric" value={form.monthlyCtc} onChange={(e) => set({ monthlyCtc: e.target.value })} placeholder="e.g. 25000" data-testid="add-monthly-ctc" />
+              </div>
+            )}
+            {form.salaryMode === 'Stipend' && (
+              <div className="field">
+                <label>Monthly stipend (₹)</label>
+                <input type="number" min="0" step="1" inputMode="numeric" value={form.monthlyStipend} onChange={(e) => set({ monthlyStipend: e.target.value })} placeholder="e.g. 10000" data-testid="add-monthly-stipend" />
+              </div>
+            )}
+            {form.salaryMode && (
+              <div className="small-muted" style={{ gridColumn: '1 / -1', marginTop: -6 }}>
+                Saved as their salary structure, from their joining month. Payroll reads it for the monthly calculation, so it is not typed twice.
+                {form.salaryMode === 'Package' ? ' Basic, HRA and the rest are split from the CTC by the company rules; fine-tune them under Payroll > Salary Structure.' : ''}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <div className="small-muted" style={{ marginTop: 4 }}>
