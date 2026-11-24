@@ -19,6 +19,7 @@ const Msg = require('../marketing/messaging');
 const Eml = require('../marketing/emailmk');
 const Lead = require('../marketing/leadgen');
 const Jny = require('../marketing/journeys');
+const CS = require('../marketing/clientServices');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -339,5 +340,18 @@ router.put('/settings', mustAdmin, wrap(async (req, res) => {
   }
   return res.json({ ok: 'Saved.', settings: await Cfg.getSettings() });
 }));
+
+// ---- client plans, offers, delivery counters and the GBP Quality Audit (marketing/clientServices.js, 2026-11-24: the services document). Writers only; nothing here sends or posts anything. ----
+router.get('/services/catalog', mustWrite, wrap(async (req, res) => res.json({ ...CS.catalog(), canWrite: true })));
+router.get('/services/quote', mustWrite, wrap(async (req, res) => send(res, CS.quote(String(req.query.plan || ''), req.query.months))));
+router.post('/services/gbp/score', mustWrite, wrap(async (req, res) => res.json(CS.scoreGbp((req.body || {}).answers))));
+router.get('/services/gbp/audits', mustWrite, wrap(async (req, res) => send(res, await CS.listAudits(req.user, { planId: req.query.planId ? String(req.query.planId) : '', clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
+router.post('/services/gbp/audits', mustWrite, wrap(async (req, res) => send(res, await CS.saveAudit(req.user, req.body || {}))));
+router.get('/services/gbp/audits/:id', mustWrite, wrap(async (req, res) => send(res, await CS.getAudit(req.user, req.params.id))));
+router.get('/services/plans', mustWrite, wrap(async (req, res) => send(res, await CS.listPlans(req.user, { month: req.query.month, status: req.query.status ? String(req.query.status) : '' }))));
+router.post('/services/plans', mustWrite, wrap(async (req, res) => send(res, await CS.createPlan(req.user, req.body || {}))));
+router.get('/services/plans/:id', mustWrite, wrap(async (req, res) => send(res, await CS.getPlan(req.user, req.params.id, req.query.month))));
+router.put('/services/plans/:id', mustWrite, wrap(async (req, res) => send(res, await CS.updatePlan(req.user, req.params.id, req.body || {}))));
+router.post('/services/plans/:id/delivery', mustWrite, wrap(async (req, res) => send(res, await CS.setDelivery(req.user, req.params.id, req.body || {}))));
 
 module.exports = router;

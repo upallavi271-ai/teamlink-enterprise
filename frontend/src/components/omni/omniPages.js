@@ -54,6 +54,7 @@ export const PAGES = {
   mkmeeting: { label: 'Plans meeting', icon: '☎', title: 'Plans meeting: an automated, spoken presentation of the plans for a client' },
   mkimages: { label: 'AI Images', icon: '◩', title: 'AI Images' },
   mkvideos: { label: 'AI Video', icon: '▶', title: 'AI Video' },
+  mkservices: { label: 'Client plans', icon: '◈', title: 'Client plans: the Basic, Growth and Premium plans, what has been delivered, and the Google profile quality audit' },
   mkapprove: { label: 'Approvals', icon: '✔', title: 'AI Marketing approvals' },
   mkreports: { label: 'Reports', icon: '▤', title: 'AI Marketing reports' },
   mkprojects: { label: 'Client projects', icon: '❖', title: 'Client projects' },
@@ -73,7 +74,7 @@ export const SECTIONS = [
   { id: 'connections', label: 'Channel Connections', icon: '⚯', views: ['connections', 'fbchannel', 'igchannel', 'fbcatalogs', 'shopify'] },
   { id: 'reports', label: 'Reports', icon: '⌁', views: ['analytics'] },
   { id: 'settings', label: 'Settings & Audit Log', icon: '⚙', views: ['settings', 'waai', 'team', 'billing', 'superadmin', 'audit'] },
-  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkprojects', 'mkourwork', 'mkleads', 'mkmeeting', 'mkimages', 'mkvideos', 'mkapprove', 'mkreports', 'mkbrand', 'mkusage'] },
+  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkprojects', 'mkourwork', 'mkleads', 'mkmeeting', 'mkimages', 'mkvideos', 'mkservices', 'mkapprove', 'mkreports', 'mkbrand', 'mkusage'] },
 ];
 // AI MARKETING SUB-TABS: a tab that has more screens under it. The tab bar shows the parent only; opening the parent (or one of its screens) shows the row of sub-tabs under the bar,
 // the first one being the parent itself. A screen the login may not open is left out of the row.
