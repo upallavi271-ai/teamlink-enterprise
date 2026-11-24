@@ -144,7 +144,7 @@ export function SlaPage() {
         {h && <>
           <h3 style={{ fontSize: 15, marginTop: 14 }}>Month by month</h3>
           {h.months.map((m) => <div key={m.month} className="kv"><span className="k">{m.month}</span><span>{m.uptimePct === null ? 'not measured' : `${m.uptimePct}%`}{m.outageMinutes ? ` · ${m.outageMinutes} min down` : ''}{m.met === null ? '' : m.met ? ' · met' : ' · below target'}</span></div>)}
-          <div className="small-muted" style={{ marginTop: 6 }}>{h.committed ? `These targets were confirmed by the company founder on ${String(h.committed.at).slice(0, 10)}.` : 'These are the company's stated targets; a contract commitment is agreed with each client.'}</div>
+          <div className="small-muted" style={{ marginTop: 6 }}>{h.committed ? `These targets were confirmed by the company founder on ${String(h.committed.at).slice(0, 10)}.` : "These are the company's stated targets; a contract commitment is agreed with each client."}</div>
         </>}
       </>}
     </Shell>
