@@ -15,6 +15,8 @@ import { TicketList } from './CrmSupport.jsx'; // eslint-disable-line import/no-
 import CrmContactDialog, { ContactPanel } from './CrmContact.jsx'; // eslint-disable-line import/no-cycle
 import { ProductSellBox } from './CrmProducts.jsx'; // eslint-disable-line import/no-cycle
 import Conversation from './CrmConversation.jsx'; // eslint-disable-line import/no-cycle
+// wave D (2026-11-24): products, splits, team chat, history, contracts, quote versions, pay online, consent, territory (CrmPlus.jsx)
+import { plusOf, stagesOfDeal, pipelineOfDeal, fieldHidden, fieldReadOnly, DealProducts, DealTeam, Comments, DealHistory, FieldHistory, ContractsBox, QuotesPlus, PayBox, ConsentBox, TerritoryPick } from './CrmPlus.jsx'; // eslint-disable-line import/no-cycle
 
 export const CrmCtx = createContext(null);
 export const useCrm = () => useContext(CrmCtx);
@@ -312,6 +314,11 @@ function fieldsFor(kind, me) {
     { k: 'discountPercent', label: 'Discount %', type: 'number', hint: 'Over the CRM limit, a manager has to approve it before the deal can be won' },
     { k: 'expectedClose', label: 'Expected close', type: 'date' },
     { k: 'nextStep', label: 'Next step', hint: 'For example: send the proposal, meet the HR head' },
+    // wave D: which pipeline (new deals), the forecast category, and recurring billing (MRR / ARR, renewals)
+    ...(plusOf(me).pipelines.length > 1 ? [{ k: 'pipelineId', label: 'Pipeline', type: 'select', createOnly: true, options: plusOf(me).pipelines.map((p) => ({ value: p.id === 'default' ? '' : p.id, label: p.name })) }] : []),
+    { k: 'forecastCategory', label: 'Forecast category', type: 'select', options: plusOf(me).forecastCategories, hint: 'Empty: worked out from the probability' },
+    { k: 'billing', label: 'Billing', type: 'select', options: plusOf(me).billings, hint: 'Monthly / Quarterly / Yearly counts in MRR and gets a renewal' },
+    { k: 'termMonths', label: 'Term (months)', type: 'number', hint: 'Empty = 12' },
   ];
 }
 
@@ -324,7 +331,8 @@ export function RecordForm({ kind, row, preset, onClose, onSaved }) {
   const [dups, setDups] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const fields = fieldsFor(kind, me).filter((x) => editing || !x.editOnly);
+  // a field hidden from my CRM role is not on the form; a read-only one is shown but cannot be changed (CRM settings > Security)
+  const fields = fieldsFor(kind, me).filter((x) => (editing ? !x.createOnly : !x.editOnly) && !fieldHidden(me, kind, x.k));
   const needsAccounts = fields.some((x) => x.type === 'account');
   useEffect(() => { if (needsAccounts) api.get('/crm/accounts').then((r) => setAccounts(r.data.rows)).catch(() => setAccounts([])); }, [needsAccounts]);
   useEffect(() => {
@@ -350,7 +358,9 @@ export function RecordForm({ kind, row, preset, onClose, onSaved }) {
 
   const input = (x) => {
     const v = f[x.k] ?? '';
-    if (x.type === 'select') return <select value={v} onChange={(e) => set(x.k, e.target.value)}><option value="">—</option>{x.options.map((o) => <option key={o} value={o}>{o}</option>)}</select>;
+    const ro = fieldReadOnly(me, kind, x.k);
+    if (x.type === 'select') return <select value={v} disabled={ro} onChange={(e) => set(x.k, e.target.value)}>{!(x.options[0] && typeof x.options[0] === 'object') && <option value="">—</option>}{x.options.map((o) => (typeof o === 'object' ? <option key={o.value} value={o.value}>{o.label}</option> : <option key={o} value={o}>{o}</option>))}</select>;
+    if (ro) return <input type="text" value={v} disabled title="Read only for your CRM role" />;
     if (x.type === 'textarea') return <textarea rows={3} value={v} onChange={(e) => set(x.k, e.target.value)} />;
     if (x.type === 'account') {
       return (
@@ -884,6 +894,7 @@ function InvoiceBox({ deal, onChanged }) {
           </div>
           {inv.status !== 'Draft' && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 4 }}>🔒 Sent to the customer: the invoice itself can no longer be edited.</div>}
           <PaymentLog inv={inv} canEdit={me.canEdit} onChanged={() => { load(); if (onChanged) onChanged(); }} />
+          <PayBox inv={inv} />
         </div>
       )}
       {mailing && inv && <InvoiceEmailDialog inv={inv} onClose={() => setMailing(false)} onSent={() => { load(); if (onChanged) onChanged(); }} />}
@@ -1301,21 +1312,22 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
       ['📍', kind === 'deal' ? (d.account && d.account.city) : row.city],
     ].filter(([, v]) => v);
     const about = kind === 'lead'
-      ? [['Lead source', row.source], ['Stage', row.stage], ['Expected value', row.expectedValue ? `₹${Number(row.expectedValue).toLocaleString('en-IN')}` : null], ['Lost reason', row.lostReason], ['Industry', row.industry], ['Rating', row.rating && <Pill v={row.rating} />], ['Came from', [row.utmSource, row.utmMedium, row.utmCampaign].filter(Boolean).join(' / ')], ['Page', row.pageUrl]]
+      ? [['Territory', (plusOf(me).territories || []).length ? <TerritoryPick kind="lead" row={row} canEdit={d.canEdit} onChanged={changed} /> : null], ['Lead source', row.source], ['Stage', row.stage], ['Expected value', row.expectedValue ? `₹${Number(row.expectedValue).toLocaleString('en-IN')}` : null], ['Lost reason', row.lostReason], ['Industry', row.industry], ['Rating', row.rating && <Pill v={row.rating} />], ['Came from', [row.utmSource, row.utmMedium, row.utmCampaign].filter(Boolean).join(' / ')], ['Page', row.pageUrl]]
       : kind === 'deal'
         ? [['Account', d.account ? <RecLink kind="account" id={d.account.id}>{d.account.name}</RecLink> : '—'], ['Deal value', <b>{money(row.value)}</b>],
           ...(row.discountPercent ? [['Discount', `${row.discountPercent}%`], ['Final value', <b>{money(row.finalValue)}</b>]] : []),
           ...(row.approvalStatus && row.approvalStatus !== 'None' ? [['Discount approval', <Pill v={row.approvalStatus} />]] : []),
           ['Probability', `${row.probability}%`],
-          ['Expected close', dateOf(row.expectedClose)], ['Next step', row.nextStep], ...(row.stage === 'Lost' ? [['Lost because', row.lostReason]] : [])]
-        : [['Industry', row.industry], ['Website', row.website], ['Source', row.source], ['GSTIN', row.gstin], ['State', row.state], ['Pincode', row.pincode], ['Address', row.address],
+          ['Expected close', dateOf(row.expectedClose)], ['Next step', row.nextStep], ...(row.stage === 'Lost' ? [['Lost because', row.lostReason]] : []),
+          ...(plusOf(me).pipelines.length > 1 ? [['Pipeline', (pipelineOfDeal(me, row) || {}).name]] : []), ['Forecast', row.forecastCategory], ['Billing', row.billing && row.billing !== 'One-time' ? `${row.billing}${row.termMonths ? ` · ${row.termMonths} months` : ''}` : null]]
+        : [['Territory', (plusOf(me).territories || []).length ? <TerritoryPick kind="account" row={row} canEdit={d.canEdit} onChanged={changed} /> : null], ['Industry', row.industry], ['Website', row.website], ['Source', row.source], ['GSTIN', row.gstin], ['State', row.state], ['Pincode', row.pincode], ['Address', row.address],
           ['Tags', row.tags ? row.tags.split(',').map((t) => t.trim()).filter(Boolean).map((t, i) => <Pill key={i} v={t} />) : null], ['Type', row.kind === 'Client' ? 'Customer' : 'Prospect']];
     const info = [
       ...about,
       ['Next follow-up', nextTask ? <span style={{ color: nextTask.dueDate < today ? 'var(--red)' : undefined, fontWeight: nextTask.dueDate <= today ? 600 : undefined }}>{nextTask.dueDate === today ? 'Today' : dateOf(nextTask.dueDate)} · {nextTask.title}</span> : 'None set'],
       ['Last touched', lastAct ? `${dateTimeOf(lastAct.at)}${lastAct.byName ? ` · ${lastAct.byName}` : ''}` : 'Never'],
     ].filter(([, v]) => v);
-    const tabs = [['overview', 'Overview'], ...(kind === 'lead' ? [['products', 'Products & demo']] : []), ...(kind === 'lead' || kind === 'deal' ? [['conversation', 'Conversation']] : []), ['activities', `Activities (${(d.activities || []).length})`], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice']] : []), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ['notes', 'Notes']];
+    const tabs = [['overview', 'Overview'], ...(kind === 'lead' ? [['products', 'Products & demo']] : []), ...(kind === 'deal' ? [['lines', 'Products']] : []), ...(kind === 'lead' || kind === 'deal' ? [['conversation', 'Conversation']] : []), ['activities', `Activities (${(d.activities || []).length})`], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice & orders'], ['team', 'Team chat']] : [['comments', 'Comments']]), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ...(kind === 'lead' ? [['consent', 'Consent']] : []), ['history', 'History'], ['notes', 'Notes']];
     const kindPill = kind === 'lead' ? row.status : kind === 'deal' ? row.stage : row.kind;
     body = (
       <>
@@ -1372,7 +1384,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
         </div>
         {kind === 'deal' && (
           <div className="crm-stages" role="group" aria-label="Deal stage">
-            {me.lists.stages.map((st) => (
+            {stagesOfDeal(me, row).map((st) => (
               <button key={st} type="button" disabled={!d.canEdit || st === row.stage} className={`crm-stage${st === row.stage ? ' on' : ''}${st === 'Won' ? ' won' : ''}${st === 'Lost' ? ' lost' : ''}`} onClick={() => move(row, st)}>{st}</button>
             ))}
           </div>
@@ -1438,8 +1450,13 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
         {tab === 'conversation' && (kind === 'lead' || kind === 'deal') && <Conversation kind={kind} id={row.id} onChanged={changed} />}
         {tab === 'products' && kind === 'lead' && <ProductSellBox lead={row} canEdit={d.canEdit} onChanged={changed} />}
         {tab === 'followups' && <TaskList tasks={d.tasks || []} link={link} onChanged={changed} canEdit={d.canEdit} />}
-        {tab === 'proposals' && kind === 'deal' && <><ProposalBox dealId={row.id} onChanged={changed} /><DealFiles dealId={row.id} onChanged={changed} /></>}
-        {tab === 'invoice' && kind === 'deal' && <InvoiceBox deal={row} onChanged={changed} />}
+        {tab === 'proposals' && kind === 'deal' && <><QuotesPlus deal={row} onChanged={changed} /><ProposalBox dealId={row.id} onChanged={changed} /><DealFiles dealId={row.id} onChanged={changed} /></>}
+        {tab === 'invoice' && kind === 'deal' && <><InvoiceBox deal={row} onChanged={changed} /><ContractsBox deal={row} canEdit={d.canEdit} /></>}
+        {tab === 'lines' && kind === 'deal' && <DealProducts deal={row} onChanged={changed} />}
+        {tab === 'team' && kind === 'deal' && <><DealTeam deal={row} onChanged={changed} /><Comments kind="deal" id={row.id} live title="Deal room: the team chat on this deal" /></>}
+        {tab === 'comments' && kind !== 'deal' && <Comments kind={kind} id={row.id} />}
+        {tab === 'consent' && kind === 'lead' && <ConsentBox kind="lead" id={row.id} onChanged={changed} />}
+        {tab === 'history' && (kind === 'deal' ? <DealHistory deal={row} canEdit={d.canEdit} onChanged={changed} /> : <FieldHistory kind={kind} id={row.id} />)}
         {tab === 'support' && kind === 'account' && <TicketList accountId={row.id} compact />}
         {tab === 'notes' && (
           <div>

@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
-import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, shareInvoiceWhatsApp, InvoiceEmailDialog, InvoiceEditDialog, INVOICE_STATUSES, balanceOf } from './crmShared.jsx';
+import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, shareInvoiceWhatsApp, InvoiceEmailDialog, InvoiceEditDialog, INVOICE_STATUSES, balanceOf, download } from './crmShared.jsx';
 import MultiSelect, { csvToList } from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 
 export default function CrmInvoices({ embedded = false }) {
@@ -64,6 +64,13 @@ export default function CrmInvoices({ embedded = false }) {
       <div className="filter-row">
         <input type="text" placeholder="Search invoice, customer or deal" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 240 }} aria-label="Search invoices" />
         <MultiSelect label="Status" allLabel="All statuses" value={status} onChange={setStatus} options={['Overdue', ...INVOICE_STATUSES].map((s) => ({ value: s, label: s, count: (rows || []).filter((x) => (s === 'Overdue' ? x.overdue : x.status === s)).length }))} hideZero={false} />
+        {/* wave D: the sent invoices as a file for the books (Tally XML / Zoho Books CSV) - a download only, nothing is posted to Accounts */}
+        {me.rights && me.rights.export && (
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
+            <button type="button" className="btn btn-sm" title="Sales vouchers (party, sales and GST ledgers) to import into Tally" onClick={() => download('/crm/plus/invoices/export?format=tally', 'crm-invoices-tally.xml').catch(() => toast('The download did not work.'))}>Tally XML</button>
+            <button type="button" className="btn btn-sm" title="Zoho Books invoice import file" onClick={() => download('/crm/plus/invoices/export?format=zoho', 'crm-invoices-zoho-books.csv').catch(() => toast('The download did not work.'))}>Zoho Books CSV</button>
+          </span>
+        )}
       </div>
       {err && <div className="notice" role="alert">{err}</div>}
       {rows == null && !err && <div className="small-muted">Loading…</div>}

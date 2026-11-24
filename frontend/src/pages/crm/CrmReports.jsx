@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import CrmAutoSettings from './CrmAutoSettings.jsx';
+import CrmPlusSettings from './CrmPlusSettings.jsx'; // eslint-disable-line import/no-cycle
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, money, moneyShort, dateOf, RecLink, istToday } from './crmShared.jsx';
 
@@ -384,7 +385,8 @@ export function CrmSettings({ onClose, onSaved }) {
         <div className="field"><label>A proposal is valid for (days)</label><input type="number" min={1} max={365} value={f.proposalValidityDays} onChange={(e) => setF({ ...f, proposalValidityDays: e.target.value })} /></div>
         <div className="field"><label>A deal discount above this % needs a manager&#39;s approval</label><input type="number" min={0} max={100} value={f.discountApprovalLimit} onChange={(e) => setF({ ...f, discountApprovalLimit: e.target.value })} /></div>
       </div>
-      <div className="small-muted">"Other" is always kept in both lists. The deal stages stay as they are, so the board and the reports keep working. A new probability applies the next time a deal moves.</div>
+      <div className="small-muted">"Other" is always kept in both lists. The six core deal stages stay, so the reports keep working; more stages and more pipelines are set below. A new probability applies the next time a deal moves.</div>
+      <CrmPlusSettings />
     </Modal>
   );
 }

@@ -29,7 +29,9 @@ export default function CrmPage() {
   const [err, setErr] = useState('');
   const [toasts, setToasts] = useState([]);
   const seq = useRef(0);
-  const reloadMe = useCallback(() => api.get('/crm/me').then((r) => setMe(r.data)).catch((e) => setErr(errOf(e, 'The CRM could not be opened.'))), []);
+  // /crm/me + the wave-D config (pipelines, hidden fields, territories ...): a server without the wave-D routes still opens the CRM as before
+  const reloadMe = useCallback(() => Promise.all([api.get('/crm/me'), api.get('/crm/plus/config').catch(() => null)])
+    .then(([r, p]) => setMe({ ...r.data, plus: p ? p.data : null })).catch((e) => setErr(errOf(e, 'The CRM could not be opened.'))), []);
   useEffect(() => { reloadMe(); }, [reloadMe]);
   const toast = useCallback((text) => {
     seq.current += 1; const id = seq.current;

@@ -9,6 +9,9 @@ import { useCrm, errOf, money, moneyShort, dateOf, istToday, RecordForm, useMove
 import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 import CrmInvoices from './CrmInvoices.jsx';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
+// wave D (2026-11-24): several pipelines, days in stage, bulk edit, and the Approvals / Analysis / Contracts views (CrmPlus.jsx)
+import { plusOf, daysSince, BulkDealBar, ApprovalsView, AnalysisView, ContractsView } from './CrmPlus.jsx';
+const VIEWS = ['board', 'list', 'invoices', 'approvals', 'analysis', 'contracts'];
 
 export default function CrmDeals() {
   const { me, toast, openRecord, version } = useCrm();
@@ -19,7 +22,15 @@ export default function CrmDeals() {
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
   const [owner, setOwner] = useState('');
-  const [view, setView] = useState(sp.get('view') === 'invoices' ? 'invoices' : 'board'); // ?view=invoices: the old /crm/invoices address
+  const [view, setView] = useState(VIEWS.includes(sp.get('view')) ? sp.get('view') : 'board'); // ?view=invoices: the old /crm/invoices address
+  const pipelines = plusOf(me).pipelines;
+  const [pipe, setPipe] = useState('default'); // the board shows one pipeline at a time
+  const [picked, setPicked] = useState([]); // deals ticked in the list (bulk edit)
+  const [waiting, setWaiting] = useState(null); // how many approvals wait (the Approvals button)
+  useEffect(() => { api.get('/crm/plus/approvals').then((r) => setWaiting(r.data.items.length)).catch(() => setWaiting(null)); }, [version]);
+  const curPipe = pipelines.find((p) => p.id === pipe) || pipelines[0];
+  const inPipe = (d) => (d.pipelineId || 'default') === (curPipe ? curPipe.id : 'default');
+  const dealsView = view === 'board' || view === 'list';
   const [dragId, setDragId] = useState(null);
   const [over, setOver] = useState(null);
   const xf = useListXf('crmdeals'); // value, stage, expected close, added-on (components/ats/ListFilters.jsx)
@@ -54,12 +65,13 @@ export default function CrmDeals() {
         </div>
       )}
       {staleDays(d, null, me.lists.staleDays) > 0 && <div className="s late" title="Nothing logged for a while">💤 {staleDays(d, null, me.lists.staleDays)} days quiet</div>}
+      {d.stageSince && !['Won', 'Lost'].includes(d.stage) && <div className="s" title="Days on this stage">⏱ {daysSince(d.stageSince)} days in this stage</div>}
       {d.stage === 'Lost' && d.lostReason && <div className="s">{d.lostReason}</div>}
     </div>
   );
 
   const column = (s) => {
-    const ds = (rows || []).filter((d) => d.stage === s);
+    const ds = (rows || []).filter((d) => d.stage === s && inPipe(d));
     return (
       <div
         key={s}
@@ -87,27 +99,34 @@ export default function CrmDeals() {
             <button type="button" className={`btn btn-sm${view === 'board' ? ' btn-primary' : ''}`} onClick={() => setView('board')}>Board</button>
             <button type="button" className={`btn btn-sm${view === 'list' ? ' btn-primary' : ''}`} onClick={() => setView('list')}>List</button>
             <button type="button" className={`btn btn-sm${view === 'invoices' ? ' btn-primary' : ''}`} onClick={() => setView('invoices')}>Invoices</button>
+            <button type="button" className={`btn btn-sm${view === 'contracts' ? ' btn-primary' : ''}`} onClick={() => setView('contracts')}>Contracts</button>
+            <button type="button" className={`btn btn-sm${view === 'approvals' ? ' btn-primary' : ''}`} onClick={() => setView('approvals')}>Approvals{waiting ? ` (${waiting})` : ''}</button>
+            <button type="button" className={`btn btn-sm${view === 'analysis' ? ' btn-primary' : ''}`} onClick={() => setView('analysis')}>Analysis</button>
           </div>
-          {view !== 'invoices' && me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/deals?${new URLSearchParams(Object.entries({ q, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-deals-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
-          {view !== 'invoices' && me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Deal</button>}
+          {dealsView && me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/deals?${new URLSearchParams(Object.entries({ q, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-deals-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
+          {dealsView && me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Deal</button>}
         </div>
       </div>
-      {view !== 'invoices' && <ListFilterStrip list="crmdeals" xf={xf} total={rows ? rows.length : null} noun="deals" allTime={Object.keys(xf.values).length > 0 || !!(q || owner)} />}
-      {view !== 'invoices' && (
+      {dealsView && <ListFilterStrip list="crmdeals" xf={xf} total={rows ? rows.length : null} noun="deals" allTime={Object.keys(xf.values).length > 0 || !!(q || owner)} />}
+      {dealsView && (
         <div className="filter-row">
+          {view === 'board' && pipelines.length > 1 && <select value={curPipe.id} onChange={(e) => setPipe(e.target.value)} style={{ width: 'auto', fontWeight: 600 }} aria-label="Pipeline">{pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
           <input type="text" placeholder="Search deal or account" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 240 }} aria-label="Search deals" />
           {me.seesAll && <MultiSelect label="Owner" allLabel="Everyone" value={owner} onChange={setOwner} options={me.owners.map((o) => ({ value: o.id, label: o.name }))} />}
           {me.canEdit && view === 'board' && <span className="small-muted">Drag a deal to its new stage.</span>}
         </div>
       )}
       {view === 'invoices' && <CrmInvoices embedded />}
-      {err && view !== 'invoices' && <div className="notice" role="alert">{err}</div>}
-      {rows == null && !err && view !== 'invoices' && <div className="small-muted">Loading…</div>}
+      {view === 'approvals' && <ApprovalsView onCount={setWaiting} />}
+      {view === 'analysis' && <AnalysisView />}
+      {view === 'contracts' && <ContractsView />}
+      {err && dealsView && <div className="notice" role="alert">{err}</div>}
+      {rows == null && !err && dealsView && <div className="small-muted">Loading…</div>}
       {rows && view === 'board' && (
         <>
           {/* the open stages across the page; Won and Lost are a closed strip underneath, so they are never pushed off the right edge */}
           <div className="crm-board crm-board-open">
-            {me.lists.stages.filter((s) => !['Won', 'Lost'].includes(s)).map(column)}
+            {(curPipe ? curPipe.allStages : me.lists.stages).filter((s) => !['Won', 'Lost'].includes(s)).map(column)}
           </div>
           <div className="section-label" style={{ margin: '14px 0 6px' }}>Closed · last 30 days <span className="small-muted" style={{ fontWeight: 400 }}>(drop a deal here to win or lose it; older ones stay on their account)</span></div>
           <div className="crm-board crm-board-closed">
@@ -115,16 +134,19 @@ export default function CrmDeals() {
           </div>
         </>
       )}
+      {rows && view === 'list' && me.canEdit && picked.length > 0 && <BulkDealBar ids={picked} onDone={() => { setPicked([]); load(); }} onClear={() => setPicked([])} />}
       {rows && view === 'list' && (
         <div className="tbl-wrap">
           <table>
-            <thead><tr><th>Deal</th><th>Account</th><th>Stage</th><th style={{ textAlign: 'right' }}>Value</th><th>Probability</th><th>Expected close</th>{me.seesAll && <th>Owner</th>}</tr></thead>
+            <thead><tr>{me.canEdit && <th><input type="checkbox" style={{ width: 'auto' }} aria-label="Tick all" checked={rows.length > 0 && picked.length === rows.length} onChange={(e) => setPicked(e.target.checked ? rows.map((x) => x.id) : [])} /></th>}<th>Deal</th><th>Account</th><th>Stage</th><th style={{ textAlign: 'right' }}>Value</th><th>Probability</th><th>Expected close</th><th>In stage</th>{me.seesAll && <th>Owner</th>}</tr></thead>
             <tbody>
-              {!rows.length && <tr><td colSpan={7}><div className="empty"><h3>No deals yet</h3>Convert a lead, or add a deal with "+ Deal".</div></td></tr>}
+              {!rows.length && <tr><td colSpan={9}><div className="empty"><h3>No deals yet</h3>Convert a lead, or add a deal with "+ Deal".</div></td></tr>}
               {[...rows].sort((a, b) => (b.value || 0) - (a.value || 0)).map((d) => (
                 <tr key={d.id} className="row-link" onClick={() => setOpen({ kind: 'deal', id: d.id })}>
-                  <td><b>{d.title}</b></td><td>{d.accountName || '—'}</td><td>{d.stage}</td><td style={{ textAlign: 'right' }}>{money(d.value)}</td><td>{d.probability}%</td>
+                  {me.canEdit && <td onClick={(e) => e.stopPropagation()}><input type="checkbox" style={{ width: 'auto' }} checked={picked.includes(d.id)} onChange={(e) => setPicked((x) => (e.target.checked ? [...x, d.id] : x.filter((y) => y !== d.id)))} aria-label={`Tick ${d.title}`} /></td>}
+                  <td><b>{d.title}</b>{pipelines.length > 1 && d.pipelineId ? <div className="small-muted" style={{ fontSize: 11 }}>{(pipelines.find((p) => p.id === d.pipelineId) || {}).name}</div> : null}</td><td>{d.accountName || '—'}</td><td>{d.stage}</td><td style={{ textAlign: 'right' }}>{money(d.value)}</td><td>{d.probability}%</td>
                   <td style={{ color: d.expectedClose && d.expectedClose < today && !['Won', 'Lost'].includes(d.stage) ? 'var(--red)' : undefined }}>{d.expectedClose ? dateOf(d.expectedClose) : '—'}</td>
+                  <td className="small-muted">{d.stageSince && !['Won', 'Lost'].includes(d.stage) ? `${daysSince(d.stageSince)} d` : '—'}</td>
                   {me.seesAll && <td>{d.ownerName || '—'}</td>}
                 </tr>
               ))}
