@@ -54,6 +54,9 @@ router.use(async (req, res, next) => {
   if (!(await CRM.crmRoleFor(req.user))) return res.status(403).json({ error: 'The CRM is for the sales team. Ask an Admin to add you to the sales team (CRM settings).' });
   return next();
 });
+// wave D (2026-11-24, routes/crmPlus.js): pipelines, product lines, quotes, contracts, payment links, comments, approvals, territories,
+// sub-teams, field security, IP restriction, consent - all under /crm/plus; its first step also hides the fields a role may not see
+router.use(require('./crmPlus'));
 
 const send = (res, out) => res.status(out.status).json(out.body);
 const wrap = (fn) => async (req, res, next) => { try { return send(res, await fn(req)); } catch (e) { return next(e); } };

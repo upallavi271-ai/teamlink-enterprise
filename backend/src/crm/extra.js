@@ -312,7 +312,9 @@ async function exportCsv(user, kind, q = {}) {
     rows = rows.filter((x) => ids.has(x.id));
   }
   const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-  const csv = `﻿${[e.cols.map((c) => esc(c[1])).join(','), ...rows.map((x) => e.cols.map((c) => esc(x[c[0]])).join(','))].join('\r\n')}`;
+  const hidden = require('./collab').csvHidden(user, kind); // eslint-disable-line global-require
+  const cols = e.cols.filter((c) => !hidden.has(c[0])); // a field hidden from this person's CRM role is not in the file either
+  const csv = `﻿${[cols.map((c) => esc(c[1])).join(','), ...rows.map((x) => cols.map((c) => esc(x[c[0]])).join(','))].join('\r\n')}`;
   await S.audit(user, 'CRM data downloaded', 'Crm', kind, `${rows.length} rows`);
   await require('./analytics').logExport(user, `List: ${kind}`, 'csv', rows.length).catch(() => {}); // eslint-disable-line global-require
   return { status: 200, csv, name: `crm-${kind}-${S.istToday()}.csv`, rows: rows.length };
@@ -366,12 +368,16 @@ async function createProposal(user, dealId, body = {}) {
   const r = S.roleOf(user);
   const deal = await S.getRow('deal', dealId);
   if (!S.canEditRow(user, r, deal)) return S.fail(404, 'This deal is not there, or it is not yours.');
+  // a product quotation template (crm/catalog.js) is made there; the recruitment proposal goes on here
+  const quote = await require('./catalog').createQuote(user, deal, body); // eslint-disable-line global-require
+  if (quote) return quote;
   const c = cleanProposal(body);
   if (c.error) return S.fail(400, c.error);
   const ym = S.istToday().slice(2, 7).replace('-', '');
   const n = (await DB.one('SELECT COUNT(*) AS "n" FROM "CrmProposal" WHERE "number" LIKE ?', `TLP-${ym}-%`)).n + 1;
   const now = DB.nowIso();
-  const p = await S.insert('CrmProposal', { id: S.newId('prop'), number: `TLP-${ym}-${String(n).padStart(3, '0')}`, dealId: deal.id, accountId: deal.accountId, dataJson: JSON.stringify(c.data), status: 'Draft', createdById: user.id, createdByName: user.name || null, createdAt: now, updatedAt: now });
+  let p = await S.insert('CrmProposal', { id: S.newId('prop'), number: `TLP-${ym}-${String(n).padStart(3, '0')}`, dealId: deal.id, accountId: deal.accountId, dataJson: JSON.stringify(c.data), status: 'Draft', createdById: user.id, createdByName: user.name || null, createdAt: now, updatedAt: now });
+  p = (await require('./catalog').afterProposal(p, deal, body).catch(() => null)) || p; // eslint-disable-line global-require
   await S.audit(user, 'CRM proposal made', 'CrmProposal', p.id, `${p.number} for ${deal.title}`);
   return S.okBody({ ok: true, proposal: p });
 }
@@ -389,6 +395,8 @@ async function proposalOf(user, id, { edit, signed } = {}) {
 async function proposalPdf(user, id, { signed } = {}) {
   const x = await proposalOf(user, id, { signed });
   if (x.error) return x.error;
+  const alt = await require('./catalog').quotePdf(x); // eslint-disable-line global-require
+  if (alt) return alt; // a product quotation template (crm/catalog.js)
   const { p, data: d } = x;
   const PDFDocument = require('pdfkit'); // eslint-disable-line global-require
   const { LOGO } = require('../utils/agreementPdf'); // eslint-disable-line global-require
@@ -722,6 +730,8 @@ async function sendProposal(user, id, { to, message } = {}, req) {
   const x = await proposalOf(user, id, { edit: true });
   if (x.error) return x.error;
   const { p, deal, data: d } = x;
+  const blocked = await require('./catalog').sendBlock(p); // eslint-disable-line global-require
+  if (blocked) return blocked; // a quote waiting for (or refused) a manager's approval is not emailed
   const email = S.clip(to || d.toEmail, 200);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return S.fail(400, 'Write the client\'s email address.');
   const out = await proposalPdf(user, id);

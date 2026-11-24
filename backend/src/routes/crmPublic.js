@@ -25,6 +25,20 @@ router.get('/unsubscribe', async (req, res) => {
   }
 });
 
+// RAZORPAY tells us a payment link was paid (crm/payLink.js): signed with the webhook secret (X-Razorpay-Signature over the RAW body,
+// which index.js keeps as a Buffer for this path); the invoice gets its payment line and turns Paid / Partly paid by itself.
+router.post('/razorpay/webhook', async (req, res) => {
+  try {
+    const out = await require('../crm/payLink').webhook(Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body || {})), req.get('x-razorpay-signature')); // eslint-disable-line global-require
+    return res.status(out.status).json(out.body);
+  } catch (e) { return res.status(500).json({ error: 'failed' }); }
+});
+// The CRM's privacy notice (DPDP Act 2023): a page a form, mail or message can link to (crm/consent.js)
+router.get('/privacy-notice', async (req, res) => {
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  try { return res.send(await require('../crm/consent').noticePage()); } catch (e) { return res.status(500).send(page('Something went wrong', 'Please try again in a minute.')); } // eslint-disable-line global-require
+});
+
 // The invoice PDF a customer opens from the WhatsApp message (no login): the link is signed and expires after 30 days (crm/extra.js shareInvoice).
 router.get('/invoice/:token', async (req, res) => {
   const X = require('../crm/extra'); // eslint-disable-line global-require

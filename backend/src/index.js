@@ -170,6 +170,7 @@ app.use('/api/public/mk-project', express.json({ limit: '700kb' })); // the clie
 app.use('/api/followup-report/import', express.json({ limit: '2mb' })); // the follow-up import's choices: one per row of a sheet of up to 5,000 rows
 // Market wave C: a job board's signed application webhook needs the raw body for its HMAC (routes/mktPublic.js).
 app.use('/api/public/mkt/boards', express.raw({ type: () => true, limit: '2mb' }));
+app.use('/api/crm-public/razorpay', express.raw({ type: () => true, limit: '1mb' })); // the Razorpay webhook is checked against its raw bytes (crm/payLink.js)
 app.use(express.json());
 app.use('/api', require('./utils/mktb/gov').requestContext); // market wave B: an AI call knows who asked and from where (the AI governance log)
 // ATS plus webhooks / Slack / Teams (utils/atsPlus/integrations.js): after a 2xx answer of a watched route the event is sent - OFF until an Admin switches it on.

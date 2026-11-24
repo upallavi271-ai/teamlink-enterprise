@@ -31,6 +31,8 @@ router.post('/', express.json({ limit: '32kb' }), express.urlencoded({ extended:
     const ip = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
     if (limited(ip)) return res.status(429).json({ error: 'Too many tries. Please try again later.' });
     const out = await require('../crm/sales').capture(req.body || {}, req.get('x-api-key')); // eslint-disable-line global-require
+    // the form sent consent=1 (the person ticked "I agree" under the privacy notice): a DPDP consent record on the new lead (crm/consent.js)
+    if (out.status === 200 && out.body && out.body.id) await require('../crm/consent').fromWebsite(out.body, req.body || {}, ip).catch(() => null); // eslint-disable-line global-require
     return res.status(out.status).json(out.body);
   } catch (e) { return next(e); }
 });

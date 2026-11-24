@@ -70,10 +70,16 @@ async function crmRoleFor(user) {
 const seesAll = (r) => r === 'admin' || r === 'tl' || r === 'view' || r === 'bdeAll';
 const mayEdit = (r) => r === 'admin' || r === 'tl' || r === 'bde' || r === 'bdeAll';
 const mayAssign = (r) => r === 'admin' || r === 'tl';
-const canSeeRow = (user, r, row) => !!row && (seesAll(r) || row.ownerId === user.id);
+// a sub-team manager (CRM settings > Sub-teams, crm/collab.js) also READS the records of their team; changing stays their own (canEditRow)
+const teamIds = (user) => (user && user.id ? require('./plusHooks').managedIds(user.id) : []); // eslint-disable-line global-require
+const canSeeRow = (user, r, row) => !!row && (seesAll(r) || row.ownerId === user.id || teamIds(user).includes(row.ownerId));
 const canEditRow = (user, r, row) => !!row && mayEdit(r) && can(user, 'edit') && ((r !== 'bde' && r !== 'bdeAll') || row.ownerId === user.id);
 // SQL piece for a list: a BDE reads their own rows only
-const scopeSql = (user, r, alias = '') => (seesAll(r) ? { sql: '1=1', params: [] } : { sql: `${alias}"ownerId" = ?`, params: [user.id] });
+const scopeSql = (user, r, alias = '') => {
+  if (seesAll(r)) return { sql: '1=1', params: [] };
+  const ids = [user.id, ...teamIds(user)];
+  return ids.length === 1 ? { sql: `${alias}"ownerId" = ?`, params: [user.id] } : { sql: `${alias}"ownerId" IN (${ids.map(() => '?').join(', ')})`, params: ids };
+};
 
 // The people a record may belong to: the Sales managers and Salespeople on the CRM's own list who still work here.
 async function ownerOptions() {
@@ -100,7 +106,7 @@ const KINDS = {
   lead: { table: 'CrmLead', label: 'Lead', name: 'company', fields: { company: 's', contactName: 's', designation: 's', phone: 's', email: 's', industry: 's', city: 's', source: 's', status: 's', rating: 's', notes: 'L', expectedValue: 'n' } },
   account: { table: 'CrmAccount', label: 'Account', name: 'name', fields: { name: 's', industry: 's', city: 's', website: 's', phone: 's', email: 's', source: 's', gstin: 's', address: 'L', state: 's', pincode: 's', tags: 's', notes: 'L' } },
   contact: { table: 'CrmContact', label: 'Contact', name: 'name', fields: { accountId: 's', name: 's', designation: 's', role: 's', phone: 's', email: 's', notes: 'L' } },
-  deal: { table: 'CrmDeal', label: 'Deal', name: 'title', fields: { title: 's', accountId: 's', contactId: 's', value: 'n', discountPercent: 'n', probability: 'i', expectedClose: 'd', nextStep: 's', notes: 'L' } },
+  deal: { table: 'CrmDeal', label: 'Deal', name: 'title', fields: { title: 's', accountId: 's', contactId: 's', value: 'n', discountPercent: 'n', probability: 'i', expectedClose: 'd', nextStep: 's', notes: 'L', forecastCategory: 's', billing: 's', termMonths: 'i' } },
 };
 
 function cleanFields(kind, body, { partial }) {
@@ -388,8 +394,12 @@ async function create(user, kind, body = {}) {
     row.finalValue = finalValueOf(row);
     row.approvalStatus = await approvalFor(row, null);
   }
+  // wave D (crm/plusHooks.js): the deal's pipeline and its first stage, the forecast / billing fields
+  const pre = await require('./plusHooks').beforeCreate(user, kind, row, body); // eslint-disable-line global-require
+  if (pre && pre.error) return fail(400, pre.error);
   if (CODE_PREFIX[kind]) { const [code] = await nextCodes(kind, 1); if (code) row.code = code; }
-  const saved = await insert(KINDS[kind].table, row);
+  let saved = await insert(KINDS[kind].table, row);
+  saved = await require('./plusHooks').afterCreate(user, kind, saved, body); // eslint-disable-line global-require
   await audit(user, `CRM ${KINDS[kind].label.toLowerCase()} added`, KINDS[kind].table, saved.id, `${saved.code ? `${saved.code} · ` : ''}${saved[KINDS[kind].name]}`);
   // a new lead gets its first call as a follow-up straight away (crm/sales.js firstFollowUp); an Excel import does not come through here
   let firstFollowUp = null;
@@ -415,6 +425,9 @@ async function edit(user, kind, id, body = {}) {
   const c = cleanFields(kind, body, { partial: true });
   if (c.error) return fail(400, c.error);
   const data = { ...c.data };
+  // wave D (crm/plusHooks.js): hidden / read-only fields of this person's CRM role, the deal's forecast / billing fields, a value made of product lines
+  const pre = await require('./plusHooks').beforeEdit(user, kind, row, data, body); // eslint-disable-line global-require
+  if (pre && pre.error) return fail(pre.status || 400, pre.error);
   if (kind === 'lead' && data.status === 'Converted' && row.status !== 'Converted') return fail(400, 'Use "Convert" to turn a lead into an account and a deal.');
   if (kind === 'lead' && 'status' in data && data.status !== row.status && data.status !== 'Junk') delete data.status; // the stage moves on its own (crm/sales.js autoStage); only Junk is set by hand
   if (kind === 'lead' && data.source && !(await SETTINGS.load()).sources.includes(data.source)) data.source = 'Other';
@@ -446,6 +459,7 @@ async function edit(user, kind, id, body = {}) {
   }
   data.updatedAt = DB.nowIso();
   const saved = await update(KINDS[kind].table, row.id, data);
+  await require('./plusHooks').afterEdit(user, kind, row, saved); // eslint-disable-line global-require
   if (data.ownerId) await audit(user, `CRM ${KINDS[kind].label.toLowerCase()} given to another BDE`, KINDS[kind].table, row.id, `${row.ownerName || '-'} -> ${data.ownerName}`);
   return okBody({ ok: true, [kind]: saved });
 }
@@ -455,16 +469,20 @@ async function moveDeal(user, id, { stage, lostReason } = {}) {
   const r = roleOf(user);
   const row = await getRow('deal', id);
   if (!canEditRow(user, r, row)) return fail(row && canSeeRow(user, r, row) ? 403 : 404, 'You cannot move this deal.');
-  if (!STAGES.includes(stage)) return fail(400, 'Pick a stage from the pipeline.');
+  // the deal's own pipeline, the fields a stage needs and the checklist of the stage it leaves (crm/pipelines.js)
+  const PH = require('./plusHooks'); // eslint-disable-line global-require
+  const chk = await PH.checkMove(row, stage);
+  if (chk.error) return fail(chk.status || 400, chk.error, chk.extra);
   if (stage === row.stage) return okBody({ ok: true, deal: row });
   const reason = clip(lostReason, 300);
   if (stage === 'Lost' && !reason) return fail(400, 'Why was the deal lost? Please pick the reason.');
   if (stage === 'Won' && row.approvalStatus === 'Pending') return fail(409, `The ${row.discountPercent || 0}% discount on this deal is over the limit and needs a Sales manager's approval before it can be won.`);
   const now = DB.nowIso();
-  const data = { stage, probability: (await SETTINGS.load()).stageProbability[stage], updatedAt: now, wonAt: stage === 'Won' ? now : null, lostAt: stage === 'Lost' ? now : null, lostReason: stage === 'Lost' ? reason : null };
+  const data = { stage, probability: chk.probability != null ? chk.probability : (await SETTINGS.load()).stageProbability[stage], updatedAt: now, wonAt: stage === 'Won' ? now : null, lostAt: stage === 'Lost' ? now : null, lostReason: stage === 'Lost' ? reason : null };
   const saved = await update('CrmDeal', row.id, data);
   if (stage === 'Won' && row.accountId) await update('CrmAccount', row.accountId, { kind: 'Client', updatedAt: now });
   await insert('CrmActivity', { id: newId('act'), kind: 'note', subject: `Stage: ${row.stage} → ${stage}`, note: stage === 'Lost' ? `Lost: ${reason}` : null, at: now, dealId: row.id, accountId: row.accountId, byId: user.id, byName: user.name || null, createdAt: now });
+  await PH.afterMove(user, row, saved);
   await audit(user, stage === 'Won' ? 'CRM deal won' : stage === 'Lost' ? 'CRM deal lost' : 'CRM deal stage changed', 'CrmDeal', row.id, `${row.title}: ${row.stage} -> ${stage}`, reason || undefined);
   // Won -> the CRM raises its own invoice (never fail the Won if that errors). founder 2026-11-13.
   let invoice = null;
@@ -520,7 +538,8 @@ async function createInvoiceForDeal(user, deal, { byHand = false, issueDate } = 
   // our side as it is today, with the state worked out (from our GSTIN, else the state typed) and the SAC printed on the lines
   const ours = MONEY.partyState(st.invoiceFrom || {});
   const from = { ...(st.invoiceFrom || {}), stateCode: ours.code || '', sac: st.invoiceSac };
-  const lines = [{ description: deal.title || 'Services', sac: st.invoiceSac, qty: 1, rate: amount, amount }];
+  // the deal's product lines when it has them (crm/catalog.js), else one line for the deal
+  const lines = (await require('./plusHooks').invoiceLines(deal, amount, st)) || [{ description: deal.title || 'Services', sac: st.invoiceSac, qty: 1, rate: amount, amount }]; // eslint-disable-line global-require
   const row = await insert('CrmInvoice', {
     id: newId('inv'), code: code || null, dealId: deal.id, accountId: deal.accountId || null, accountName: account ? account.name : null,
     title: deal.title || 'Invoice', status: 'Draft', issueDate: issue, dueDate: due,
@@ -1082,5 +1101,5 @@ module.exports = {
   roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, taskCounts, snoozeTask, hasLoggedWork, NEEDS_LOGGED_WORK, backfillInvoices, invoiceForDeal, addPayment, deletePayment, PAYMENT_MODES, invoices, invoiceDetail, setInvoiceStatus, createInvoiceForDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
   STAGES, LEAD_STATUSES, RATINGS,
   // shared with crm/extra.js
-  openFollowUpsFor, resetCodeCounters, nextCodes, invoiceOut, invoiceFull, paymentsOf, ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,
+  openFollowUpsFor, resetCodeCounters, nextCodes, writePayment, settleInvoice, invoiceOut, invoiceFull, paymentsOf, ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,
 };
