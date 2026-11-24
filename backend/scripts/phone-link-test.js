@@ -300,6 +300,9 @@ const ist = (days) => new Date(Date.now() + 330 * 60000 + days * 86400000).toISO
   check('the candidate answered: "connected"', (await stepB('candidate-answered')).bridgeStatus === 'connected');
   check('the two calls are joined: "merged"', (await stepB('merged')).bridgeStatus === 'merged');
   check('a bridge event cannot go backwards ("dialing" after "merged" is ignored)', (await stepB('dialing')).bridgeStatus === 'merged');
+  const tr = await call('POST', '/phone-link/device/event', { callId: b1.body.callId, event: 'trace', bridge: true, trace: 'candidate call: disconnected cause=2/CALL_BARRED/' }, DK);
+  const trRow = await S.one('SELECT "bridgeTrace","bridgeStatus" FROM "BrowserCall" WHERE "id"=?', b1.body.callId);
+  check('the phone\'s step-by-step trace is kept on the call (for diagnosis), without changing the bridge status', tr.status === 200 && /CALL_BARRED/.test(trRow.bridgeTrace || '') && trRow.bridgeStatus === 'merged', trRow);
   check('the browser leg\'s own status is left to the phone system (not touched by the phone)', (await call('GET', `/browser-calling/calls/${b1.body.callId}`, null, tR)).body.call.status === 'initiated');
   await S.run('UPDATE "BrowserCall" SET "startAt"=? WHERE "id"=?', new Date(Date.now() - 180000).toISOString(), b1.body.callId);
   const be = await stepB('ended', { durationSec: 95 });

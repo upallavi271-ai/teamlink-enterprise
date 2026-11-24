@@ -40,7 +40,8 @@ final class Bridge {
         if (busy()) { report(callId, "failed", 0, "The phone is already on a TeamLink call."); return; }
         if (!TlInCallService.isDefaultDialer(app)) { report(callId, "failed", 0, "TeamLink Phone is not the phone's Phone app (open the app and tap \"Make TeamLink Phone the Phone app\")."); return; }
         id = callId; number = candidate; armedUntil = System.currentTimeMillis() + Math.max(20, seconds) * 1000L;
-        officeCall = null; candidateCall = null; candidateActiveAt = 0; merged = false; dialled = false;
+        officeCall = null; candidateCall = null; candidateActiveAt = 0; merged = false; dialled = false; waitingForHold = false;
+        trace("armed (app " + BuildInfo.VERSION + ", " + Build.MANUFACTURER + " " + Build.MODEL + ", Android " + Build.VERSION.RELEASE + ")");
         // a call that is already ringing (it came before TeamLink's message) is the office call
         main.post(new Runnable() { public void run() { TlInCallService s = TlInCallService.instance; if (s != null) s.answerRingingForBridge(); } });
         main.postDelayed(new Runnable() {
@@ -53,13 +54,34 @@ final class Bridge {
         officeCall = call;
         call.answer(0 /* VideoProfile.STATE_AUDIO_ONLY */);
         report(id, "bridge-answered", 0, null);
+        trace("office call ringing, answering (" + stateWord(call.getState()) + ")");
         call.registerCallback(new Call.Callback() {
             @Override public void onStateChanged(Call c, int state) {
-                if (state == Call.STATE_ACTIVE && !dialled) { dialled = true; muteAndDial(); }
+                trace("office call: " + stateWord(state) + (state == Call.STATE_DISCONNECTED ? " cause=" + cause(c) : ""));
+                if (state == Call.STATE_ACTIVE && !dialled) { dialled = true; holdThenDial(); }
+                if (state == Call.STATE_HOLDING && waitingForHold) { waitingForHold = false; muteAndDial(); }
                 if (state == Call.STATE_DISCONNECTED) endAll("office");
             }
         });
-        if (call.getState() == Call.STATE_ACTIVE && !dialled) { dialled = true; muteAndDial(); }
+        if (call.getState() == Call.STATE_ACTIVE && !dialled) { dialled = true; holdThenDial(); }
+    }
+
+    private static volatile boolean waitingForHold;
+    /** GSM: put the office call on hold first, then dial the candidate (some phones refuse a 2nd call while one is active). */
+    private static void holdThenDial() {
+        TlInCallService s = TlInCallService.instance;
+        if (s != null) s.setMuted(true);
+        try {
+            if (officeCall.getDetails().can(Call.Details.CAPABILITY_HOLD)) {
+                waitingForHold = true;
+                trace("holding the office call");
+                officeCall.hold();
+                main.postDelayed(new Runnable() { public void run() { if (waitingForHold) { waitingForHold = false; trace("hold did not confirm in 3 s, dialling anyway"); muteAndDial(); } } }, 3000);
+                return;
+            }
+            trace("office call cannot be held (no CAPABILITY_HOLD), dialling anyway");
+        } catch (Exception e) { trace("hold error: " + e.getMessage()); }
+        muteAndDial();
     }
 
     private static void muteAndDial() {
@@ -67,8 +89,10 @@ final class Bridge {
         if (s != null) s.setMuted(true);
         try {
             TelecomManager tc = (TelecomManager) app.getSystemService(Context.TELECOM_SERVICE);
+            trace("dialling the candidate " + LinkService.mask(number));
             tc.placeCall(Uri.fromParts("tel", number, null), new Bundle());
         } catch (Exception e) {
+            trace("placeCall error: " + e);
             report(id, "failed", 0, "Could not dial the candidate: " + e.getMessage());
             endAll("dial");
         }
@@ -78,8 +102,10 @@ final class Bridge {
     static void onCandidateCall(final Call call) {
         candidateCall = call;
         report(id, "dialing", 0, null);
+        trace("candidate call added: " + stateWord(call.getState()));
         call.registerCallback(new Call.Callback() {
             @Override public void onStateChanged(Call c, int state) {
+                trace("candidate call: " + stateWord(state) + (state == Call.STATE_DISCONNECTED ? " cause=" + cause(c) : ""));
                 if (state == Call.STATE_ACTIVE && candidateActiveAt == 0) {
                     candidateActiveAt = System.currentTimeMillis();
                     report(id, "candidate-answered", 0, null);
@@ -100,7 +126,8 @@ final class Bridge {
                 Call parent = candidateCall.getParent() != null ? candidateCall.getParent() : officeCall.getParent();
                 if (parent != null) parent.mergeConference(); else candidateCall.mergeConference();
             }
-        } catch (Exception ignored) { }
+        } catch (Exception e) { trace("merge attempt " + attempt + " error: " + e.getMessage()); }
+        trace("merge attempt " + attempt + " sent (office " + stateWord(officeCall.getState()) + ", candidate " + stateWord(candidateCall.getState()) + ", conferenceable " + candidateCall.getConferenceableCalls().size() + ")");
         main.postDelayed(new Runnable() {
             public void run() {
                 if (merged) return;
@@ -122,6 +149,7 @@ final class Bridge {
 
     private static synchronized void endAll(String why) {
         if (id == null) return;
+        trace("ending both calls (" + why + ")");
         final String callId = id;
         long talk = candidateActiveAt > 0 ? (System.currentTimeMillis() - candidateActiveAt) / 1000 : 0;
         Call a = officeCall, b = candidateCall;
@@ -132,6 +160,33 @@ final class Bridge {
         if (s != null) { try { s.setMuted(false); } catch (Exception ignored) { } }
         report(callId, "ended", talk, null);
         new Prefs(app).setLastCall(talk > 0 ? "Last bridge: talked " + talk + " s" : "Last bridge: the candidate did not answer");
+    }
+
+    static String stateWord(int s) {
+        switch (s) {
+            case Call.STATE_NEW: return "new"; case Call.STATE_DIALING: return "dialing"; case Call.STATE_RINGING: return "ringing";
+            case Call.STATE_HOLDING: return "holding"; case Call.STATE_ACTIVE: return "active"; case Call.STATE_DISCONNECTED: return "disconnected";
+            case Call.STATE_CONNECTING: return "connecting"; case Call.STATE_DISCONNECTING: return "disconnecting"; case Call.STATE_SELECT_PHONE_ACCOUNT: return "pick-SIM";
+            default: return "state" + s;
+        }
+    }
+    static String cause(Call c) {
+        try { android.telecom.DisconnectCause d = c.getDetails().getDisconnectCause(); return d == null ? "?" : (d.getCode() + "/" + d.getReason() + "/" + d.getLabel()); } catch (Exception e) { return "?"; }
+    }
+    /** One line of what the phone saw, sent to TeamLink (kept on the call for diagnosis). Fire and forget. */
+    static void trace(final String text) {
+        final String callId = id;
+        if (callId == null || app == null) return;
+        final Prefs prefs = new Prefs(app);
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    JSONObject b = new JSONObject();
+                    b.put("callId", callId); b.put("event", "trace"); b.put("bridge", true); b.put("trace", text);
+                    Api.post(prefs.server(), "/api/phone-link/device/event", prefs.token(), b, 15000);
+                } catch (Exception ignored) { }
+            }
+        }).start();
     }
 
     static void reset() { id = null; number = null; armedUntil = 0; officeCall = null; candidateCall = null; candidateActiveAt = 0; merged = false; dialled = false; }

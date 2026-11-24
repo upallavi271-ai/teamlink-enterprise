@@ -40,6 +40,7 @@ public class TlInCallService extends InCallService {
         super.onCallAdded(call);
         synchronized (calls) { calls.add(call); }
         boolean conference = call.getDetails() != null && call.getDetails().hasProperty(Call.Details.PROPERTY_CONFERENCE);
+        if (Bridge.id != null) Bridge.trace("call added: " + Bridge.stateWord(call.getState()) + (conference ? " (conference)" : "") + (Bridge.isCandidate(call) ? " (candidate)" : ""));
         if (conference && Bridge.id != null) { Bridge.onMerged(); return; }
         if (call.getState() == Call.STATE_RINGING && Bridge.armed()) { Bridge.onOfficeCall(call); return; }
         if (Bridge.id != null && Bridge.officeCall != null && Bridge.candidateCall == null && Bridge.isCandidate(call)) { Bridge.onCandidateCall(call); return; }

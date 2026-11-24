@@ -79,6 +79,7 @@ const ALTERS = [
   'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeStatus" TEXT',
   'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeTalkSec" INTEGER',
   'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeNote" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeTrace" TEXT',
 ];
 
 // 2026-11-24 (founder: "16 sims - edu 4, team 4, medical 4, mfg 4"): a port can be given to a recruiter before its SIM's number is known

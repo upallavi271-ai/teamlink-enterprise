@@ -272,13 +272,17 @@ async function poll(d, waitMs, state) {
   return out;
 }
 
-const BRIDGE_EVENTS = ['bridge-answered', 'candidate-answered', 'merged'];
+const BRIDGE_EVENTS = ['bridge-answered', 'candidate-answered', 'merged', 'trace'];
 const PHONE_EVENTS = ['dialing', 'ended', 'failed', ...BRIDGE_EVENTS];
 const BRIDGE_NEXT = { 'bridge-answered': ['answered', ['armed', 'arming']], dialing: ['dialing', ['answered', 'armed']], 'candidate-answered': ['connected', ['dialing', 'answered']], merged: ['merged', ['connected', 'dialing', 'answered']] };
 /** What the phone says about a bridge: only the bridge fields change; the browser leg's own status stays Asterisk's. */
 async function bridgeEvent(d, r, ev, b) {
   await touch(d, b && b.state);
   const now = S.nowIso();
+  // what the phone saw, step by step (call states, the network's disconnect reason): kept on the row (last ~3000 characters) for diagnosis
+  const line = oneLine(b && b.trace).slice(0, 300);
+  if (line) await run('UPDATE "BrowserCall" SET "bridgeTrace"=substr(COALESCE("bridgeTrace",\'\') || ? , -3000) WHERE "id"=?', `${now.slice(11, 19)} ${line}\n`, r.id);
+  if (ev === 'trace') return { call: r };
   if (BRIDGE_NEXT[ev]) {
     const [to, from] = BRIDGE_NEXT[ev];
     await run(`UPDATE "BrowserCall" SET "bridgeStatus"=?, "updatedAt"=? WHERE "id"=? AND "bridgeStatus" IN (${from.map(() => '?').join(',')})`, to, now, r.id, ...from);
