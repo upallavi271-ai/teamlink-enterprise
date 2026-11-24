@@ -171,7 +171,7 @@ async function deliverTo(hook, body, event, attempt = 1) {
   return r;
 }
 const wantsEvent = (h, event) => h.events === '*' || String(h.events || '').split(',').includes(event);
-// one CRM event to every address that wants it (called by crm/events.js; never throws)
+// one CRM event to every address that wants it (called by crm/eventsA.js; never throws)
 async function deliverEvent(event, { kind, record, before, via } = {}) {
   const sw = await W.switches();
   if (!sw.webhooksOn) return 0;
@@ -242,7 +242,7 @@ async function postChat(tool, text, link) {
   await logDelivery(null, `${tool}`, 'chat', r, 1);
   return r;
 }
-// a CRM event to Slack / Teams when the event is ticked for that tool (called by crm/events.js; imports are not posted one by one)
+// a CRM event to Slack / Teams when the event is ticked for that tool (called by crm/eventsA.js; imports are not posted one by one)
 async function chatEvent(event, { kind, record, before, via } = {}) {
   const sw = await W.switches();
   if (!sw.chatOn || via === 'import') return 0;

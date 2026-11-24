@@ -2847,7 +2847,7 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
 
   // Slack / Microsoft Teams (crm/connect.js, CRM wave A): one test line posted to the channel, answered now.
   if (channel.id === 'slack' || channel.id === 'teams') {
-    const probe = await require('../crm/connect').postChat(channel.id, `TeamLink test message from ${req.user.name || 'TeamLink'}`, ''); // eslint-disable-line global-require
+    const probe = await require('../crm/connectA').postChat(channel.id, `TeamLink test message from ${req.user.name || 'TeamLink'}`, ''); // eslint-disable-line global-require
     const result = probe.ok ? `Posted to ${channel.name} (HTTP ${probe.status}).` : `Failed — ${probe.error || `HTTP ${probe.status}`}`;
     const nextRow = await prisma.integration.update({
       where: { id: channel.id },

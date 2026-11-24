@@ -67,7 +67,7 @@ const KIND = { leads: 'lead', accounts: 'account', contacts: 'contact', deals: '
 const kindOf = (req) => KIND[req.params.kind];
 
 // CRM wave A (2026-11-24): own rules, approvals, webhooks, Slack / Teams, API keys, report builder, own dashboard, leaderboard, trends (routes/crmWave.js)
-router.use(require('./crmWave'));
+router.use('/a', require('./crmWaveA')); // all under /api/crm/a/... (a path of its own, beside wave D's /api/crm/plus)
 router.get('/me', wrap((req) => CRM.me(req.user)));
 router.get('/dashboard', wrap((req) => CRM.dashboard(req.user, { mine: String(req.query.mine || '') === '1' })));
 router.post('/duplicates', wrap(async (req) => ({ status: 200, body: { duplicates: await CRM.duplicatesOf(req.body || {}, { exceptLeadId: req.body && req.body.exceptLeadId }) } })));

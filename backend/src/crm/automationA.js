@@ -403,7 +403,7 @@ async function setField(rule, kind, rec, field, raw, ctx) {
   if (String(rec[field] == null ? '' : rec[field]) === String(data[field] == null ? '' : data[field])) return `${field} was ${data[field]} already`;
   const saved = await S.update(TABLE[kind], rec.id, { ...data, updatedAt: now() });
   await note(homeOf(kind, rec), rec, `Rule "${rule.name}" set ${field} to ${data[field]}`);
-  require('./events').emit(`${kind}.updated`, { kind, record: saved, before: rec, depth: (ctx.depth || 0) + 1, via: 'rule' }); // eslint-disable-line global-require
+  require('./eventsA').emit(`${kind}.updated`, { kind, record: saved, before: rec, depth: (ctx.depth || 0) + 1, via: 'rule' }); // eslint-disable-line global-require
   return `${field} set to ${data[field]}`;
 }
 
@@ -428,7 +428,7 @@ async function doAction(rule, a, kind, rec, ctx) {
       const saved = await S.update(TABLE[kind], rec.id, { ownerId: own.id, ownerName: own.name, updatedAt: now() });
       await note(home, rec, `Rule "${rule.name}" gave it to ${own.name}`);
       await notifyUsers([own.id], { title: `${nameOf(kind, rec)} is yours now`, message: `Given to you by the rule "${rule.name}".`, open: openOf(home) }).catch(() => {});
-      require('./events').emit(`${kind}.updated`, { kind, record: saved, before: rec, depth: (ctx.depth || 0) + 1, via: 'rule' }); // eslint-disable-line global-require
+      require('./eventsA').emit(`${kind}.updated`, { kind, record: saved, before: rec, depth: (ctx.depth || 0) + 1, via: 'rule' }); // eslint-disable-line global-require
       return `given to ${own.name}`;
     }
     case 'create_task': {
@@ -476,13 +476,13 @@ async function doAction(rule, a, kind, rec, ctx) {
       return `mail sent to ${sent} of ${to.length}`;
     }
     case 'webhook': {
-      const C = require('./connect'); // eslint-disable-line global-require
+      const C = require('./connectA'); // eslint-disable-line global-require
       const n = await C.deliverEvent('rule.fired', { kind, record: rec, via: `rule:${rule.name}` });
       return sw.webhooksOn ? `webhook to ${n} address(es)` : 'webhooks are switched off';
     }
     case 'chat': {
       if (!sw.chatOn) return 'Slack / Teams posts are switched off';
-      const C = require('./connect'); // eslint-disable-line global-require
+      const C = require('./connectA'); // eslint-disable-line global-require
       const tools = a.tool === 'both' ? ['slack', 'teams'] : [a.tool];
       const said = [];
       for (const tool of tools) {
@@ -538,7 +538,7 @@ async function proceed(rule, run, ctx) {
       const ap = await W.insert('CrmApproval', { id: newId('apr'), ruleId: rule.id, ruleName: rule.name, runId: cur.id, kind: run.kind, entityId: rec.id, entityName: nameOf(run.kind, rec), title: fill(a.title, run.kind, rec).slice(0, 200), stepsJson: JSON.stringify(a.steps.map((s) => ({ ...s, decision: null, byId: null, byName: null, at: null, note: null }))), step: 0, status: 'Pending', gate: a.holdWon ? 'won' : null, createdAt: t });
       await tellApprovers(ap);
       await note(homeOf(run.kind, rec), rec, `Approval asked: ${ap.title} (${a.steps.length} step${a.steps.length === 1 ? '' : 's'})`);
-      require('./events').emit('approval.requested', { kind: 'approval', record: ap, depth: 1 }); // eslint-disable-line global-require
+      require('./eventsA').emit('approval.requested', { kind: 'approval', record: ap, depth: 1 }); // eslint-disable-line global-require
       return logRun(cur, `asked for approval "${ap.title}"`, { status: 'approval', step: i + 1 });
     }
     let said;
@@ -560,7 +560,7 @@ async function start(rule, { event, kind, record, before, anchor, depth } = {}) 
   return proceed(rule, run, { event, before, depth });
 }
 
-// a CRM event (crm/events.js): every rule that is on and listens to it, whose conditions are true
+// a CRM event (crm/eventsA.js): every rule that is on and listens to it, whose conditions are true
 async function onEvent(event, p = {}) {
   const sw = await W.switches();
   if (!sw.rulesOn || !p.record || !p.record.id) return 0;
@@ -689,7 +689,7 @@ async function decide(user, id, { decision, note: text } = {}) {
   await S.audit(user, `CRM approval ${decision === 'approve' ? 'step approved' : 'rejected'}`, 'CrmApproval', ap.id, `${ap.title}: step ${ap.step + 1} of ${steps.length}`, text || undefined);
   if (status === 'Pending') await tellApprovers(saved);
   else {
-    require('./events').emit('approval.decided', { kind: 'approval', record: saved, depth: 1 }); // eslint-disable-line global-require
+    require('./eventsA').emit('approval.decided', { kind: 'approval', record: saved, depth: 1 }); // eslint-disable-line global-require
     if (rec && rec.ownerId) await notifyUsers([rec.ownerId], { title: `${ap.title}: ${status.toLowerCase()}`, message: ap.entityName || '', open: openOf(homeOf(ap.kind, rec)), exceptUserId: user.id }).catch(() => {});
     const run = ap.runId ? await W.one('SELECT * FROM "CrmRuleRun" WHERE "id" = ?', ap.runId) : null;
     if (run && run.status === 'approval') {

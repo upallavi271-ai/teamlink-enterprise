@@ -11,7 +11,7 @@
 const express = require('express');
 const { rateLimit } = require('../utils/publicRateLimit');
 const S = require('../crm/service');
-const C = require('../crm/connect');
+const C = require('../crm/connectA');
 const DB = require('../crm/schema');
 
 const router = express.Router();

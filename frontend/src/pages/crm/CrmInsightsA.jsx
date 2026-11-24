@@ -112,31 +112,31 @@ export function ReportBuilder() {
   const [shared, setShared] = useState(false);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState('build'); // build | saved | schedules
-  const loadSaved = () => api.get('/crm/builder/reports').then((r) => setSaved(r.data.reports)).catch(() => setSaved([]));
-  useEffect(() => { api.get('/crm/builder/meta').then((r) => setMeta(r.data)).catch((e) => setErr(errOf(e, 'The report builder could not be opened.'))); loadSaved(); }, []);
+  const loadSaved = () => api.get('/crm/a/builder/reports').then((r) => setSaved(r.data.reports)).catch(() => setSaved([]));
+  useEffect(() => { api.get('/crm/a/builder/meta').then((r) => setMeta(r.data)).catch((e) => setErr(errOf(e, 'The report builder could not be opened.'))); loadSaved(); }, []);
   const src = meta && meta.sources.find((s) => s.key === spec.source);
   const fieldsOf = (t) => (src ? src.fields.filter((f) => !t || t.includes(f.type)) : []);
   const set = (patch) => setSpec((s) => ({ ...s, ...patch }));
   const body = () => ({ ...spec, groupBy: spec.groupBy || null, dateField: spec.dateField || null, measure: spec.measure.fn === 'count' ? { fn: 'count' } : spec.measure });
   async function run() {
     setBusy(true);
-    try { const r = await api.post('/crm/builder/preview', body()); setOut(r.data); setErr(''); } catch (e) { setOut(null); setErr(errOf(e, 'The report could not be run.')); } finally { setBusy(false); }
+    try { const r = await api.post('/crm/a/builder/preview', body()); setOut(r.data); setErr(''); } catch (e) { setOut(null); setErr(errOf(e, 'The report could not be run.')); } finally { setBusy(false); }
   }
   async function save(asNew) {
     if (!name.trim()) { toast('Give the report a name first.'); return; }
     try {
-      const r = cur && !asNew ? await api.put(`/crm/builder/reports/${cur.id}`, { name, spec: body(), shared }) : await api.post('/crm/builder/reports', { name, spec: body(), shared });
+      const r = cur && !asNew ? await api.put(`/crm/a/builder/reports/${cur.id}`, { name, spec: body(), shared }) : await api.post('/crm/a/builder/reports', { name, spec: body(), shared });
       setCur(r.data.report); toast(`Saved: ${r.data.report.name}.`); loadSaved();
     } catch (e) { toast(errOf(e, 'The report could not be saved.')); }
   }
   function open(rep) {
     const s = { ...EMPTY, ...rep.spec, groupBy: rep.spec.groupBy || '', dateField: rep.spec.dateField || '', measure: rep.spec.measure && rep.spec.measure.fn ? { fn: rep.spec.measure.fn, field: rep.spec.measure.field || '' } : { fn: 'count', field: '' } };
     setSpec(s); setCur(rep); setName(rep.name); setShared(rep.shared); setView('build');
-    api.get(`/crm/builder/reports/${rep.id}/run`).then((r) => setOut(r.data)).catch((e) => setErr(errOf(e, 'The report could not be run.')));
+    api.get(`/crm/a/builder/reports/${rep.id}/run`).then((r) => setOut(r.data)).catch((e) => setErr(errOf(e, 'The report could not be run.')));
   }
   async function remove(rep) {
     if (!window.confirm(`Remove the report "${rep.name}"? Its schedules go too.`)) return;
-    try { await api.delete(`/crm/builder/reports/${rep.id}`); toast('Removed.'); if (cur && cur.id === rep.id) { setCur(null); setName(''); } loadSaved(); } catch (e) { toast(errOf(e, 'It could not be removed.')); }
+    try { await api.delete(`/crm/a/builder/reports/${rep.id}`); toast('Removed.'); if (cur && cur.id === rep.id) { setCur(null); setName(''); } loadSaved(); } catch (e) { toast(errOf(e, 'It could not be removed.')); }
   }
   if (err && !meta) return <div className="notice" role="alert">{err}</div>;
   if (!meta) return <div className="small-muted">Loading…</div>;
@@ -159,7 +159,7 @@ export function ReportBuilder() {
                   <td>{r.mine ? 'Me' : r.ownerName}</td>
                   <td>{r.shared ? 'With the team' : 'Only me'}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    {me.rights && me.rights.export && <button type="button" className="btn btn-sm" onClick={() => download(`/crm/builder/reports/${r.id}/xlsx`, `${r.name}.xlsx`).catch(() => toast('The download did not work.'))}>Excel</button>}
+                    {me.rights && me.rights.export && <button type="button" className="btn btn-sm" onClick={() => download(`/crm/a/builder/reports/${r.id}/xlsx`, `${r.name}.xlsx`).catch(() => toast('The download did not work.'))}>Excel</button>}
                     {r.canEdit && <button type="button" className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => remove(r)}>Remove</button>}
                   </td>
                 </tr>
@@ -212,7 +212,7 @@ export function ReportBuilder() {
             {canShare && <label className="crm-right"><input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} /> Share with the sales team</label>}
             <button type="button" className="btn btn-sm" onClick={() => save(false)}>{cur ? 'Save' : 'Save report'}</button>
             {cur && <button type="button" className="btn btn-sm" onClick={() => save(true)}>Save as new</button>}
-            {cur && me.rights && me.rights.export && <button type="button" className="btn btn-sm" onClick={() => download(`/crm/builder/reports/${cur.id}/xlsx`, `${cur.name}.xlsx`).catch(() => toast('The download did not work.'))}>Excel</button>}
+            {cur && me.rights && me.rights.export && <button type="button" className="btn btn-sm" onClick={() => download(`/crm/a/builder/reports/${cur.id}/xlsx`, `${cur.name}.xlsx`).catch(() => toast('The download did not work.'))}>Excel</button>}
           </div>
           {err && <div className="notice" role="alert">{err}</div>}
           <Result out={out} />
@@ -227,13 +227,13 @@ function Schedules({ saved }) {
   const { me, toast } = useCrm();
   const [d, setD] = useState(null);
   const [f, setF] = useState({ reportId: '', frequency: 'weekly', day: 1, time: '09:00', recipients: [me.userId] });
-  const load = () => api.get('/crm/builder/schedules').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The schedules could not be read.') }));
+  const load = () => api.get('/crm/a/builder/schedules').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The schedules could not be read.') }));
   useEffect(() => { load(); }, []);
   if (!d) return <div className="small-muted">Loading…</div>;
   if (d.error) return <div className="notice">{d.error}</div>;
   const people = [{ id: me.userId, name: `${me.name} (me)` }, ...d.people.filter((p) => p.id !== me.userId)];
   async function add() {
-    try { await api.post('/crm/builder/schedules', f); toast('Scheduled.'); load(); } catch (e) { toast(errOf(e, 'It could not be scheduled.')); }
+    try { await api.post('/crm/a/builder/schedules', f); toast('Scheduled.'); load(); } catch (e) { toast(errOf(e, 'It could not be scheduled.')); }
   }
   return (
     <>
@@ -248,8 +248,8 @@ function Schedules({ saved }) {
                 <td><b>{s.name}</b></td><td>{s.words}{s.nextAt ? <div className="small-muted" style={{ fontSize: 11.5 }}>next {dateTimeOf(s.nextAt)}</div> : null}</td>
                 <td>{s.recipients.length} people</td><td>{s.lastSentAt ? `${dateTimeOf(s.lastSentAt)} · ${s.lastResult || ''}` : '—'}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
-                  <button type="button" className="btn btn-sm" onClick={() => api.post(`/crm/builder/schedules/${s.id}/send-now`).then((r) => toast(r.data.message)).catch((e) => toast(errOf(e, 'It did not go.')))}>Send me a copy now</button>
-                  <button type="button" className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => api.delete(`/crm/builder/schedules/${s.id}`).then(() => { toast('Removed.'); load(); }).catch((e) => toast(errOf(e, 'It could not be removed.')))}>Remove</button>
+                  <button type="button" className="btn btn-sm" onClick={() => api.post(`/crm/a/builder/schedules/${s.id}/send-now`).then((r) => toast(r.data.message)).catch((e) => toast(errOf(e, 'It did not go.')))}>Send me a copy now</button>
+                  <button type="button" className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => api.delete(`/crm/a/builder/schedules/${s.id}`).then(() => { toast('Removed.'); load(); }).catch((e) => toast(errOf(e, 'It could not be removed.')))}>Remove</button>
                 </td>
               </tr>
             ))}
@@ -284,16 +284,16 @@ export function MyDashboard() {
   const [edit, setEdit] = useState(null); // the widgets being arranged
   const [reports, setReports] = useState([]);
   const [drag, setDrag] = useState(null);
-  const load = () => api.get('/crm/my-dashboard').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'Your dashboard could not be read.') }));
+  const load = () => api.get('/crm/a/my-dashboard').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'Your dashboard could not be read.') }));
   useEffect(() => { load(); }, [version]); // eslint-disable-line react-hooks/exhaustive-deps
   function startEdit() {
-    api.get('/crm/builder/reports').then((r) => setReports(r.data.reports)).catch(() => setReports([]));
+    api.get('/crm/a/builder/reports').then((r) => setReports(r.data.reports)).catch(() => setReports([]));
     setEdit(d.widgets.map((w) => ({ type: w.type, key: w.key, reportId: w.reportId, size: w.size, chart: w.chart || null, title: w.title })));
   }
   async function save(team) {
-    try { await api.put('/crm/my-dashboard', { widgets: edit, team: !!team }); toast(team ? 'Saved as the team\'s dashboard.' : 'Your dashboard is saved.'); setEdit(null); load(); } catch (e) { toast(errOf(e, 'It could not be saved.')); }
+    try { await api.put('/crm/a/my-dashboard', { widgets: edit, team: !!team }); toast(team ? 'Saved as the team\'s dashboard.' : 'Your dashboard is saved.'); setEdit(null); load(); } catch (e) { toast(errOf(e, 'It could not be saved.')); }
   }
-  async function reset() { try { await api.put('/crm/my-dashboard', { reset: true }); setEdit(null); load(); } catch (e) { toast(errOf(e, 'It could not be reset.')); } }
+  async function reset() { try { await api.put('/crm/a/my-dashboard', { reset: true }); setEdit(null); load(); } catch (e) { toast(errOf(e, 'It could not be reset.')); } }
   if (!d) return <div className="small-muted">Loading…</div>;
   if (d.error) return <div className="notice">{d.error}</div>;
   const move = (from, to) => { if (from === to || from == null) return; const n = [...edit]; const [x] = n.splice(from, 1); n.splice(to, 0, x); setEdit(n); };
@@ -354,7 +354,7 @@ export function Leaderboard() {
   const { me } = useCrm();
   const [period, setPeriod] = useState('month');
   const [d, setD] = useState(null);
-  useEffect(() => { setD(null); api.get('/crm/leaderboard', { params: { period } }).then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The leaderboard could not be read.') })); }, [period]);
+  useEffect(() => { setD(null); api.get('/crm/a/leaderboard', { params: { period } }).then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The leaderboard could not be read.') })); }, [period]);
   return (
     <div className="card">
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
@@ -406,8 +406,8 @@ export function Trends() {
   const [measure, setMeasure] = useState('value');
   useEffect(() => {
     setT(null); setC(null);
-    api.get('/crm/trends', { params: { weeks, owner: owner || undefined } }).then((r) => setT(r.data)).catch((e) => setT({ error: errOf(e, 'The trend could not be read.') }));
-    api.get('/crm/cohorts', { params: { months: 6, owner: owner || undefined } }).then((r) => setC(r.data)).catch((e) => setC({ error: errOf(e, 'The cohorts could not be read.') }));
+    api.get('/crm/a/trends', { params: { weeks, owner: owner || undefined } }).then((r) => setT(r.data)).catch((e) => setT({ error: errOf(e, 'The trend could not be read.') }));
+    api.get('/crm/a/cohorts', { params: { months: 6, owner: owner || undefined } }).then((r) => setC(r.data)).catch((e) => setC({ error: errOf(e, 'The cohorts could not be read.') }));
   }, [weeks, owner]);
   const rows = useMemo(() => (t && t.series ? t.series.map((s) => ({ group: dateOf(s.day), value: s[measure], records: s.count })) : []), [t, measure]);
   return (

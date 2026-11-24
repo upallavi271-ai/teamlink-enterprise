@@ -15,8 +15,8 @@ import { TeamTargets, ForecastFunnel, CrmSettings } from './CrmReports.jsx';
 import { TicketList } from './CrmSupport.jsx';
 import DashboardCharts from './CrmCharts.jsx';
 import ReportTables from './CrmReportTables.jsx';
-import { ReportBuilder, MyDashboard, Leaderboard, Trends } from './CrmInsights.jsx'; // wave A: build reports, own dashboard, leaderboard, trends
-import CrmAutomation, { Approvals } from './CrmAutomation.jsx'; // wave A: rules, approvals, webhooks, Slack / Teams, API & AI, apps, switches
+import { ReportBuilder, MyDashboard, Leaderboard, Trends } from './CrmInsightsA.jsx'; // wave A: build reports, own dashboard, leaderboard, trends
+import CrmAutomation, { Approvals } from './CrmAutomationA.jsx'; // wave A: rules, approvals, webhooks, Slack / Teams, API & AI, apps, switches
 
 // EVERYTHING OPENS HERE (founder 2026-11-02: "ey buttons meedha click chesina, cards meedha click chesina, akkade display
 // avvali, vere modules loki vellakudadhu"): a card, a flow step or "View all" opens its list in a window on this page, and a
@@ -408,7 +408,7 @@ export default function CrmDashboard() {
   const [settings, setSettings] = useState(false);
   // a salesperson named as an approver in a rule sees an Approvals tab while something waits for them (managers have it inside Automation)
   const [myApprovals, setMyApprovals] = useState(0);
-  useEffect(() => { if (!me.canAssign) api.get('/crm/automation/approvals').then((r) => setMyApprovals(r.data.waitingForMe || 0)).catch(() => {}); }, [me.canAssign]);
+  useEffect(() => { if (!me.canAssign) api.get('/crm/a/automation/approvals').then((r) => setMyApprovals(r.data.waitingForMe || 0)).catch(() => {}); }, [me.canAssign]);
   return (
     <div className="page crm-page">
       <div className="page-head">

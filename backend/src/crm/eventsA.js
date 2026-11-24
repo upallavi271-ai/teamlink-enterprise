@@ -17,10 +17,10 @@ function emit(event, payload = {}) {
   if (recent.length > 50) recent.length = 50;
   setImmediate(async () => {
     try {
-      const C = require('./connect'); // eslint-disable-line global-require
+      const C = require('./connectA'); // eslint-disable-line global-require
       await C.deliverEvent(event, p).catch(() => 0);
       await C.chatEvent(event, p).catch(() => 0);
-      if (p.depth < 1) await require('./automation').onEvent(event, p).catch((e) => console.error('[crm] rules:', e.message)); // eslint-disable-line global-require, no-console
+      if (p.depth < 1) await require('./automationA').onEvent(event, p).catch((e) => console.error('[crm] rules:', e.message)); // eslint-disable-line global-require, no-console
       for (const fn of listeners) await Promise.resolve(fn(event, p)).catch(() => {}); // eslint-disable-line no-await-in-loop
     } catch { /* an event never breaks the CRM */ }
   });

@@ -52,14 +52,14 @@ function Rules() {
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(null); // a rule being edited ({} = new)
   const [runsOf, setRunsOf] = useState(null);
-  const load = () => api.get('/crm/automation/rules').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The rules could not be read.') }));
-  useEffect(() => { api.get('/crm/automation/meta').then((r) => setMeta(r.data)).catch(() => setMeta(null)); load(); }, []);
+  const load = () => api.get('/crm/a/automation/rules').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The rules could not be read.') }));
+  useEffect(() => { api.get('/crm/a/automation/meta').then((r) => setMeta(r.data)).catch(() => setMeta(null)); load(); }, []);
   if (!d || !meta) return <div className="small-muted">Loading…</div>;
   if (d.error) return <div className="notice">{d.error}</div>;
   const trig = (k) => (meta.triggers.find((t) => t.key === k) || {}).label || k;
-  async function flip(r) { try { await api.put(`/crm/automation/rules/${r.id}`, { on: !r.on }); load(); } catch (e) { toast(errOf(e, 'It could not be changed.')); } }
-  async function remove(r) { if (!window.confirm(`Remove the rule "${r.name}"? Anything it is waiting on stops.`)) return; try { await api.delete(`/crm/automation/rules/${r.id}`); toast('Removed.'); load(); } catch (e) { toast(errOf(e, 'It could not be removed.')); } }
-  async function tick() { try { const r = await api.post('/crm/automation/tick'); toast(r.data.off ? 'Rules are switched off.' : `Done: ${r.data.resumed} waiting step(s) went on, ${r.data.dated} date rule(s) ran.`); load(); } catch (e) { toast(errOf(e, 'It did not run.')); } }
+  async function flip(r) { try { await api.put(`/crm/a/automation/rules/${r.id}`, { on: !r.on }); load(); } catch (e) { toast(errOf(e, 'It could not be changed.')); } }
+  async function remove(r) { if (!window.confirm(`Remove the rule "${r.name}"? Anything it is waiting on stops.`)) return; try { await api.delete(`/crm/a/automation/rules/${r.id}`); toast('Removed.'); load(); } catch (e) { toast(errOf(e, 'It could not be removed.')); } }
+  async function tick() { try { const r = await api.post('/crm/a/automation/tick'); toast(r.data.off ? 'Rules are switched off.' : `Done: ${r.data.resumed} waiting step(s) went on, ${r.data.dated} date rule(s) ran.`); load(); } catch (e) { toast(errOf(e, 'It did not run.')); } }
   return (
     <>
       <OffNote on={d.on} what="Running the rules" />
@@ -96,7 +96,7 @@ function Rules() {
 
 function RunsModal({ rule, onClose }) {
   const [rows, setRows] = useState(null);
-  useEffect(() => { api.get('/crm/automation/runs', { params: { ruleId: rule.id } }).then((r) => setRows(r.data.runs)).catch(() => setRows([])); }, [rule.id]);
+  useEffect(() => { api.get('/crm/a/automation/runs', { params: { ruleId: rule.id } }).then((r) => setRows(r.data.runs)).catch(() => setRows([])); }, [rule.id]);
   return (
     <Modal title={`What "${rule.name}" did`} size="wide" onClose={onClose}>
       {!rows && <div className="small-muted">Loading…</div>}
@@ -229,7 +229,7 @@ function RuleEditor({ meta, rule, onClose, onSaved }) {
     setBusy(true);
     try {
       const body = { ...f, graph: { layout: 'flow', steps: f.actions.map((a, i) => ({ i, type: a.type })) } };
-      if (rule.id) await api.put(`/crm/automation/rules/${rule.id}`, body); else await api.post('/crm/automation/rules', body);
+      if (rule.id) await api.put(`/crm/a/automation/rules/${rule.id}`, body); else await api.post('/crm/a/automation/rules', body);
       toast('Rule saved.'); onSaved();
     } catch (e) { toast(errOf(e, 'The rule could not be saved.')); } finally { setBusy(false); }
   }
@@ -296,7 +296,7 @@ function RuleEditor({ meta, rule, onClose, onSaved }) {
         <div className="card" style={{ marginTop: 12, padding: 10 }}>
           <div className="section-label" style={{ marginTop: 0 }}>Try it on a record (the saved rule; nothing is changed)</div>
           <input type="text" value={tryQ} onChange={(e) => setTryQ(e.target.value)} placeholder={`Type a ${kind} name`} aria-label="Find a record to try on" />
-          {tryList.map((x) => <button key={x.id} type="button" className="btn btn-sm" style={{ margin: '4px 4px 0 0' }} onClick={() => api.post(`/crm/automation/rules/${rule.id}/try`, { recordId: x.id }).then((r) => setTried(r.data)).catch((e) => toast(errOf(e, 'It could not be tried.')))}>{x.company || x.title || x.name}</button>)}
+          {tryList.map((x) => <button key={x.id} type="button" className="btn btn-sm" style={{ margin: '4px 4px 0 0' }} onClick={() => api.post(`/crm/a/automation/rules/${rule.id}/try`, { recordId: x.id }).then((r) => setTried(r.data)).catch((e) => toast(errOf(e, 'It could not be tried.')))}>{x.company || x.title || x.name}</button>)}
           {tried && (
             <div style={{ marginTop: 8, fontSize: 13 }}>
               <b>{tried.record.name}: {tried.pass ? 'the rule would run' : 'the rule would NOT run'}</b>
@@ -316,12 +316,12 @@ export function Approvals() {
   const { toast } = useCrm();
   const [all, setAll] = useState(false);
   const [d, setD] = useState(null);
-  const load = () => api.get('/crm/automation/approvals', { params: { status: all ? 'all' : '' } }).then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The approvals could not be read.') }));
+  const load = () => api.get('/crm/a/automation/approvals', { params: { status: all ? 'all' : '' } }).then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The approvals could not be read.') }));
   useEffect(() => { load(); }, [all]); // eslint-disable-line react-hooks/exhaustive-deps
   async function decide(a, decision) {
     const note = window.prompt(decision === 'approve' ? 'Approve. A note (optional):' : 'Reject. Why?') ;
     if (note === null) return;
-    try { await api.post(`/crm/automation/approvals/${a.id}`, { decision, note }); toast(decision === 'approve' ? 'Approved.' : 'Rejected.'); load(); } catch (e) { toast(errOf(e, 'It could not be saved.')); }
+    try { await api.post(`/crm/a/automation/approvals/${a.id}`, { decision, note }); toast(decision === 'approve' ? 'Approved.' : 'Rejected.'); load(); } catch (e) { toast(errOf(e, 'It could not be saved.')); }
   }
   if (!d) return <div className="small-muted">Loading…</div>;
   if (d.error) return <div className="notice">{d.error}</div>;
@@ -352,14 +352,14 @@ function Webhooks() {
   const [d, setD] = useState(null);
   const [f, setF] = useState({ url: '', label: '', events: ['deal.won'], includeContact: false });
   const [secret, setSecret] = useState(null);
-  const load = () => api.get('/crm/wave/webhooks').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The webhooks could not be read.') }));
+  const load = () => api.get('/crm/a/wave/webhooks').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The webhooks could not be read.') }));
   useEffect(() => { load(); }, []);
   if (!d) return <div className="small-muted">Loading…</div>;
   if (d.error) return <div className="notice">{d.error}</div>;
   async function add() {
-    try { const r = await api.post('/crm/wave/webhooks', f); setSecret(r.data.secret); setF({ url: '', label: '', events: ['deal.won'], includeContact: false }); load(); } catch (e) { toast(errOf(e, 'It could not be added.')); }
+    try { const r = await api.post('/crm/a/wave/webhooks', f); setSecret(r.data.secret); setF({ url: '', label: '', events: ['deal.won'], includeContact: false }); load(); } catch (e) { toast(errOf(e, 'It could not be added.')); }
   }
-  const edit = (h, patch) => api.put(`/crm/wave/webhooks/${h.id}`, patch).then(load).catch((e) => toast(errOf(e, 'It could not be changed.')));
+  const edit = (h, patch) => api.put(`/crm/a/wave/webhooks/${h.id}`, patch).then(load).catch((e) => toast(errOf(e, 'It could not be changed.')));
   return (
     <>
       <OffNote on={d.on} what="Sending webhooks" />
@@ -377,8 +377,8 @@ function Webhooks() {
                 <td style={{ fontSize: 12 }}>{h.lastStatus || '—'}{h.lastAt ? <div className="small-muted">{dateTimeOf(h.lastAt)}</div> : null}</td>
                 <td><input type="checkbox" checked={h.on} onChange={(e) => edit(h, { on: e.target.checked })} aria-label="On" /></td>
                 <td style={{ whiteSpace: 'nowrap' }}>
-                  <button type="button" className="btn btn-sm" onClick={() => api.post(`/crm/wave/webhooks/${h.id}/test`).then((r) => { toast(r.data.message); load(); }).catch((e) => toast(errOf(e, 'The test did not go.')))}>Test</button>
-                  <button type="button" className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => window.confirm('Remove this webhook?') && api.delete(`/crm/wave/webhooks/${h.id}`).then(load)}>Remove</button>
+                  <button type="button" className="btn btn-sm" onClick={() => api.post(`/crm/a/wave/webhooks/${h.id}/test`).then((r) => { toast(r.data.message); load(); }).catch((e) => toast(errOf(e, 'The test did not go.')))}>Test</button>
+                  <button type="button" className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => window.confirm('Remove this webhook?') && api.delete(`/crm/a/wave/webhooks/${h.id}`).then(load)}>Remove</button>
                 </td>
               </tr>
             ))}
@@ -407,11 +407,11 @@ function Webhooks() {
 function Chat() {
   const { toast } = useCrm();
   const [d, setD] = useState(null);
-  const load = () => api.get('/crm/wave/chat').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'This could not be read.') }));
+  const load = () => api.get('/crm/a/wave/chat').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'This could not be read.') }));
   useEffect(() => { load(); }, []);
   if (!d) return <div className="small-muted">Loading…</div>;
   if (d.error) return <div className="notice">{d.error}</div>;
-  const save = (k, list) => api.put('/crm/wave/switches', { [k]: list }).then(() => { toast('Saved.'); load(); }).catch((e) => toast(errOf(e, 'It could not be saved.')));
+  const save = (k, list) => api.put('/crm/a/wave/switches', { [k]: list }).then(() => { toast('Saved.'); load(); }).catch((e) => toast(errOf(e, 'It could not be saved.')));
   return (
     <>
       <OffNote on={d.on} what="Posting to Slack and Teams" />
@@ -420,7 +420,7 @@ function Chat() {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <b>{tool === 'slack' ? 'Slack' : 'Microsoft Teams'}</b>
             <span className={`status ${d[tool].set ? 'active' : 'review'}`}>{d[tool].set ? 'Channel URL saved' : 'Not set up'}</span>
-            <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} disabled={!d[tool].set} onClick={() => api.post('/crm/wave/chat/test', { tool }).then((r) => toast(r.data.message)).catch((e) => toast(errOf(e, 'It did not go.')))}>Send a test</button>
+            <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} disabled={!d[tool].set} onClick={() => api.post('/crm/a/wave/chat/test', { tool }).then((r) => toast(r.data.message)).catch((e) => toast(errOf(e, 'It did not go.')))}>Send a test</button>
           </div>
           {!d[tool].set && <div className="small-muted" style={{ fontSize: 12 }}>Paste the channel&apos;s incoming-webhook URL in Administration &gt; Integrations &gt; {tool === 'slack' ? 'Slack' : 'Microsoft Teams'}.</div>}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
@@ -442,15 +442,15 @@ function ApiAi() {
   const [f, setF] = useState({ label: 'Zapier', userId: me.userId, scope: 'read', ips: '' });
   const [shown, setShown] = useState(null);
   const load = () => {
-    api.get('/crm/wave/api-keys').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The keys could not be read.') }));
-    api.get('/crm/wave/mcp').then((r) => setMcp(r.data)).catch(() => setMcp(null));
-    api.get('/crm/wave/calendar-feed').then((r) => setFeed(r.data)).catch(() => setFeed(null));
+    api.get('/crm/a/wave/api-keys').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The keys could not be read.') }));
+    api.get('/crm/a/wave/mcp').then((r) => setMcp(r.data)).catch(() => setMcp(null));
+    api.get('/crm/a/wave/calendar-feed').then((r) => setFeed(r.data)).catch(() => setFeed(null));
   };
   useEffect(() => { load(); }, []);
   if (!d) return <div className="small-muted">Loading…</div>;
   if (d.error) return <div className="notice">{d.error}</div>;
-  async function make() { try { const r = await api.post('/crm/wave/api-keys', f); setShown({ what: 'API key', value: r.data.key }); load(); } catch (e) { toast(errOf(e, 'The key could not be made.')); } }
-  async function makeMcp() { try { const r = await api.post('/crm/wave/mcp/tokens', { label: 'CRM AI tool' }); setShown({ what: 'MCP token', value: r.data.token }); load(); } catch (e) { toast(errOf(e, 'The token could not be made.')); } }
+  async function make() { try { const r = await api.post('/crm/a/wave/api-keys', f); setShown({ what: 'API key', value: r.data.key }); load(); } catch (e) { toast(errOf(e, 'The key could not be made.')); } }
+  async function makeMcp() { try { const r = await api.post('/crm/a/wave/mcp/tokens', { label: 'CRM AI tool' }); setShown({ what: 'MCP token', value: r.data.token }); load(); } catch (e) { toast(errOf(e, 'The token could not be made.')); } }
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   return (
     <>
@@ -466,7 +466,7 @@ function ApiAi() {
               <tr key={k.id} style={k.revokedAt ? { opacity: 0.5 } : undefined}>
                 <td><b>{k.label}</b> <span className="small-muted">{k.prefix}…</span></td><td>{k.userName}</td><td>{k.scope === 'write' ? 'Read and write' : 'Read'}{k.ips ? <div className="small-muted" style={{ fontSize: 11.5 }}>from {k.ips}</div> : null}</td>
                 <td style={{ fontSize: 12 }}>{k.lastUsedAt ? `${dateTimeOf(k.lastUsedAt)} (${k.uses})` : '—'}</td>
-                <td>{k.revokedAt ? 'Revoked' : <button type="button" className="btn btn-sm" onClick={() => window.confirm('Revoke this key? Systems using it stop at once.') && api.delete(`/crm/wave/api-keys/${k.id}`).then(load)}>Revoke</button>}</td>
+                <td>{k.revokedAt ? 'Revoked' : <button type="button" className="btn btn-sm" onClick={() => window.confirm('Revoke this key? Systems using it stop at once.') && api.delete(`/crm/a/wave/api-keys/${k.id}`).then(load)}>Revoke</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -489,14 +489,14 @@ function ApiAi() {
           <div className="small-muted" style={{ fontSize: 12 }}>Point Claude Desktop or another MCP client at <code>{origin}{mcp.endpoint}</code> with your token. It reads only what you may see; phone numbers and emails are never given out.</div>
           <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <button type="button" className="btn btn-sm" disabled={!mcp.serverOn} onClick={makeMcp}>Make my MCP token</button>
-            {(mcp.tokens || []).filter((t) => !t.revokedAt).map((t) => <span key={t.id} className="status review">{t.label} <button type="button" className="btn btn-sm" style={{ border: 'none', padding: '0 4px' }} onClick={() => api.delete(`/crm/wave/mcp/tokens/${t.id}`).then(load)} aria-label={`Revoke ${t.label}`}>✕</button></span>)}
+            {(mcp.tokens || []).filter((t) => !t.revokedAt).map((t) => <span key={t.id} className="status review">{t.label} <button type="button" className="btn btn-sm" style={{ border: 'none', padding: '0 4px' }} onClick={() => api.delete(`/crm/a/wave/mcp/tokens/${t.id}`).then(load)} aria-label={`Revoke ${t.label}`}>✕</button></span>)}
           </div>
         </div>
       ) : <div className="small-muted">The MCP details could not be read.</div>}
       <div className="section-label">Google / Outlook</div>
       <div className="crm-card">
         {feed && <div style={{ fontSize: 13 }}>Your follow-ups as a calendar: {feed.on ? <><code style={{ wordBreak: 'break-all' }}>{feed.url.startsWith('http') ? feed.url : `${origin}${feed.url}`}</code> <button type="button" className="btn btn-sm" onClick={() => navigator.clipboard && navigator.clipboard.writeText(feed.url.startsWith('http') ? feed.url : `${origin}${feed.url}`).then(() => toast('Link copied.'))}>Copy</button><div className="small-muted" style={{ fontSize: 12 }}>Google Calendar: Other calendars &gt; From URL. Outlook: Add calendar &gt; Subscribe from web. Keep the link private.</div></> : <span className="small-muted">switched off (Switches: &quot;Calendar feed&quot;).</span>}</div>}
-        {me.rights && me.rights.export && <button type="button" className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => download('/crm/wave/contacts.vcf', `crm-contacts-${istToday()}.vcf`).catch(() => toast('The download did not work.'))}>Download contacts (vCard, for Google / Outlook contacts)</button>}
+        {me.rights && me.rights.export && <button type="button" className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => download('/crm/a/wave/contacts.vcf', `crm-contacts-${istToday()}.vcf`).catch(() => toast('The download did not work.'))}>Download contacts (vCard, for Google / Outlook contacts)</button>}
         <div className="small-muted" style={{ fontSize: 11.5, marginTop: 6 }}>Meeting invites already open in Google and Outlook (.ics). Two-way mail and calendar sync need the founder&apos;s Google / Microsoft app keys.</div>
       </div>
     </>
@@ -506,7 +506,7 @@ function ApiAi() {
 // ---- apps ---------------------------------------------------------------------------------------------------------------------
 function Apps({ onOpen }) {
   const [d, setD] = useState(null);
-  useEffect(() => { api.get('/crm/wave/apps').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The apps could not be read.') })); }, []);
+  useEffect(() => { api.get('/crm/a/wave/apps').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The apps could not be read.') })); }, []);
   if (!d) return <div className="small-muted">Loading…</div>;
   if (d.error) return <div className="notice">{d.error}</div>;
   const cls = (s) => (s === 'On' ? 'active' : /Needs/.test(s) ? 'hold' : 'review');
@@ -540,14 +540,14 @@ const SWITCHES = [
 function Switches() {
   const { toast } = useCrm();
   const [d, setD] = useState(null);
-  const load = () => api.get('/crm/wave/switches').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The switches could not be read.') }));
+  const load = () => api.get('/crm/a/wave/switches').then((r) => setD(r.data)).catch((e) => setD({ error: errOf(e, 'The switches could not be read.') }));
   useEffect(() => { load(); }, []);
   if (!d) return <div className="small-muted">Loading…</div>;
   if (d.error) return <div className="notice">{d.error}</div>;
   async function flip(k) {
     const on = !d.switches[k];
     if (on && !window.confirm(`Turn on "${SWITCHES.find((s) => s[0] === k)[1]}"?`)) return;
-    try { await api.put('/crm/wave/switches', { [k]: on }); toast(on ? 'Turned on.' : 'Turned off.'); load(); } catch (e) { toast(errOf(e, 'It could not be changed.')); }
+    try { await api.put('/crm/a/wave/switches', { [k]: on }); toast(on ? 'Turned on.' : 'Turned off.'); load(); } catch (e) { toast(errOf(e, 'It could not be changed.')); }
   }
   return (
     <>

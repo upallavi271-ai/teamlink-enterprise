@@ -174,8 +174,8 @@ async function update(table, id, data) {
   await DB.run(`UPDATE "${table}" SET ${cols.map((c) => `"${c}" = ?`).join(', ')} WHERE "id" = ?`, ...cols.map((c) => data[c]), id);
   return DB.one(`SELECT * FROM "${table}" WHERE "id" = ?`, id);
 }
-// CRM events (wave A, crm/events.js): rules, webhooks, Slack / Teams hear about every change, after the answer has gone
-const emit = (event, payload) => { try { require('./events').emit(event, payload); } catch { /* never breaks the CRM */ } }; // eslint-disable-line global-require
+// CRM events (wave A, crm/eventsA.js): rules, webhooks, Slack / Teams hear about every change, after the answer has gone
+const emit = (event, payload) => { try { require('./eventsA').emit(event, payload); } catch { /* never breaks the CRM */ } }; // eslint-disable-line global-require
 const audit = (user, action, entity, entityId, toValue, reason) => logAudit({ userId: user.id, actorName: user.name || null, action, entity, entityId, toValue: toValue ? String(toValue).slice(0, 300) : undefined, reason }).catch(() => {});
 
 // ---- human-readable codes (founder 2026-11-13): L-0001 lead, D-0001 deal, C-0001 customer -------------
@@ -482,7 +482,7 @@ async function moveDeal(user, id, { stage, lostReason } = {}) {
   if (stage === 'Lost' && !reason) return fail(400, 'Why was the deal lost? Please pick the reason.');
   if (stage === 'Won' && row.approvalStatus === 'Pending') return fail(409, `The ${row.discountPercent || 0}% discount on this deal is over the limit and needs a Sales manager's approval before it can be won.`);
   // an approval a rule asked for (crm/automation.js, several steps) that must be finished before the deal is won
-  if (stage === 'Won') { const gate = await require('./automation').wonGate(row.id).catch(() => null); if (gate) return fail(409, gate); } // eslint-disable-line global-require
+  if (stage === 'Won') { const gate = await require('./automationA').wonGate(row.id).catch(() => null); if (gate) return fail(409, gate); } // eslint-disable-line global-require
   const now = DB.nowIso();
   const data = { stage, probability: chk.probability != null ? chk.probability : (await SETTINGS.load()).stageProbability[stage], updatedAt: now, wonAt: stage === 'Won' ? now : null, lostAt: stage === 'Lost' ? now : null, lostReason: stage === 'Lost' ? reason : null };
   const saved = await update('CrmDeal', row.id, data);

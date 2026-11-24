@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// CRM WAVE A ROUTES (2026-11-24), mounted INSIDE /api/crm (routes/crm.js: after the CRM access check, so only the CRM team reaches them).
+// CRM WAVE A ROUTES (2026-11-24), mounted INSIDE /api/crm at /a (every path below is /api/crm/a/...) (routes/crm.js: after the CRM access check, so only the CRM team reaches them).
 // The screens are tabs of CRM > Dashboard (Automation, Report builder, My dashboard, Leaderboard, Trends) - no new sidebar item.
 //
 //   GET/PUT  /crm/wave/switches                     the Admin switches (everything that reaches outside or works by itself starts OFF)
@@ -19,10 +19,10 @@
 //   GET      /crm/leaderboard?period=   GET /crm/trends?weeks=&owner=   GET /crm/cohorts?months=&owner=   POST /crm/trends/snapshot
 // ---------------------------------------------------------------------------
 const express = require('express');
-const AUTO = require('../crm/automation');
-const C = require('../crm/connect');
+const AUTO = require('../crm/automationA');
+const C = require('../crm/connectA');
 const RB = require('../crm/reportBuilder');
-const IN = require('../crm/insights');
+const IN = require('../crm/insightsA');
 const S = require('../crm/service');
 
 const router = express.Router();
