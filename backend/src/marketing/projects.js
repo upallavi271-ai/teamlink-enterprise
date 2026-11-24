@@ -96,8 +96,16 @@ const STAGES = {
   waiting: "Waiting for the client's request", new: 'New request', accepted: 'Accepted', making: 'Being made', sent: 'Sent to the client', approved: 'Approved by the client',
   rejected: 'Rejected by the client', posted: 'Posted', declined: 'Declined',
 };
+// 2026-11-24 (founder: "we posted on the client's page, but it still says Being made"): a video made for a project is often sent to the client with "Ask client to approve" on its own card and posted with its own Post
+// button, never through the project's options. The stage now follows those: posted (a post of one of its items went out), approved / sent / rejected (the client's answer on one of its items).
 function stageOf(r, counts) {
   const made = (counts ? S.num(counts.images) + S.num(counts.videos) : 0);
+  if (counts && S.num(counts.posted) > 0 && ['working', 'approved', 'awaiting_client', 'posted'].includes(r.status)) return 'posted';
+  if (r.status === 'working' && counts && counts.rv) {
+    if (S.num(counts.rv.approved) > 0) return 'approved';
+    if (S.num(counts.rv.changes) > 0 && !S.num(counts.rv.sent)) return 'rejected';
+    if (S.num(counts.rv.sent) > 0) return 'sent';
+  }
   if (r.status === 'invited') return 'waiting';
   if (r.status === 'request') return 'new';
   if (r.status === 'working') return r.clientAnswer === 'rejected' ? 'rejected' : (made > 0 ? 'making' : 'accepted');
@@ -111,6 +119,15 @@ async function countsFor(ids) { // -> Map projectId -> { images, videos }
     const rows = await S.q(`SELECT projectId, CASE WHEN mime LIKE 'video/%' THEN 'video' ELSE 'image' END AS k, COUNT(*) AS n FROM "OmniMkImage" WHERE projectId IS NOT NULL AND deletedAt IS NULL AND (style IS NULL OR style <> 'clip') GROUP BY projectId, k`);
     rows.forEach((x) => { const c = out.get(x.projectId); if (c) c[x.k === 'video' ? 'videos' : 'images'] = S.num(x.n); });
   } catch { /* the pictures table is not made yet: no counts */ }
+  const marks = ids.map(() => '?').join(',');
+  try { // what the client answered on the project's items (the "Ask client to approve" links of the pictures and videos)
+    const rv = await S.q(`SELECT i.projectId AS pid, v.status AS st, COUNT(*) AS n FROM "OmniMkClientReview" v JOIN "OmniMkImage" i ON i.id = v.itemId WHERE i.projectId IN (${marks}) AND v.deletedAt IS NULL AND v.kind = 'image' GROUP BY i.projectId, v.status`, ...ids);
+    rv.forEach((x) => { const c = out.get(x.pid); if (c) { c.rv = c.rv || { sent: 0, approved: 0, changes: 0 }; if (c.rv[x.st] !== undefined) c.rv[x.st] += S.num(x.n); } });
+  } catch { /* no client reviews yet */ }
+  try { // posts that really went out for the project's items (the Post button of a picture or video)
+    const po = await S.q(`SELECT i.projectId AS pid, COUNT(*) AS n, MAX(p.at) AS at FROM "OmniMkItemPost" p JOIN "OmniMkImage" i ON i.id = p.itemId WHERE p.ok = 1 AND i.projectId IN (${marks}) GROUP BY i.projectId`, ...ids);
+    po.forEach((x) => { const c = out.get(x.pid); if (c) { c.posted = S.num(x.n); c.postedAt = x.at; } });
+  } catch { /* nothing posted yet */ }
   return out;
 }
 // STARTER CONTENT (2026-11-23): the moment a client project exists (or its brief changes) TeamLink writes the content for it from the brief: the hook, the useful points, the call to action,
@@ -138,6 +155,17 @@ const captionWithTags = (r) => {
   return tags.length ? base + '\n\n' + tags.join(' ') : base;
 };
 const draftOf = (r) => { const d = parse(r.draftPlan, null); return d && d.headline ? { headline: d.headline, caption: d.caption, hashtags: d.hashtags || [], cta: d.cta, scenes: (d.scenes || []).map((x) => x.caption), kindOfClient: d.profile || '' } : null; };
+// a project whose video / picture was posted by its own Post button is finished: its status becomes 'posted' (once; the timeline says so)
+async function syncPosted(r, c) {
+  if (!c || !S.num(c.posted) || !['working', 'approved', 'awaiting_client'].includes(r.status)) return r;
+  const at = Number(c.postedAt) || Date.now();
+  try {
+    await S.run(`UPDATE "${T}" SET status = 'posted', postedAt = ?, postedByName = COALESCE(postedByName, ?), updatedAt = ? WHERE id = ? AND status IN ('working', 'approved', 'awaiting_client')`, at, 'Post button', Date.now(), r.id);
+    await event(r.id, 'posted', 'TeamLink', "Posted on the client's page (the Post button of its video / picture)");
+    return { ...r, status: 'posted', postedAt: at };
+  } catch { return r; }
+}
+const tabOf = (r, counts) => ({ new: 'request', waiting: 'invited', accepted: 'working', making: 'working', rejected: 'working', sent: 'awaiting_client', approved: 'approved', posted: 'posted', declined: 'declined' })[stageOf(r, counts)] || r.status;
 const short = (r, counts) => ({
   draft: draftOf(r),
   stage: stageOf(r, counts), stageLabel: STAGES[stageOf(r, counts)] || r.status, counts: { images: counts ? S.num(counts.images) : 0, videos: counts ? S.num(counts.videos) : 0 },
@@ -268,11 +296,12 @@ async function invite(u, b = {}) {
 async function list(u, { status = '', q = '' } = {}) {
   await ensure();
   if (!mayWrite(u)) return { error: 'Your login cannot open client projects.', status: 403 };
-  const rows = (await S.q(`SELECT * FROM "${T}" WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 600`)).filter((r) => visible(u, r));
+  const raw = (await S.q(`SELECT * FROM "${T}" WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 600`)).filter((r) => visible(u, r));
+  const cmap = await countsFor(raw.map((r) => r.id));
+  const rows = []; for (const r of raw) rows.push(await syncPosted(r, cmap.get(r.id))); // eslint-disable-line no-await-in-loop
   const needle = String(q || '').trim().toLowerCase();
-  const counts = { all: 0 }; rows.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; counts.all += 1; });
-  const shown = rows.filter((r) => (!status || r.status === status) && (!needle || `${r.title} ${r.clientName} ${r.occasion}`.toLowerCase().includes(needle)));
-  const cmap = await countsFor(shown.map((r) => r.id));
+  const counts = { all: 0 }; rows.forEach((r) => { const k = tabOf(r, cmap.get(r.id)); counts[k] = (counts[k] || 0) + 1; counts.all += 1; });
+  const shown = rows.filter((r) => (!status || tabOf(r, cmap.get(r.id)) === status) && (!needle || `${r.title} ${r.clientName} ${r.occasion}`.toLowerCase().includes(needle)));
   return { projects: shown.map((r) => short(r, cmap.get(r.id))), counts, canWrite: true };
 }
 async function getVisible(u, id) {
@@ -302,6 +331,7 @@ async function get(u, id) {
   const events = (await S.q(`SELECT * FROM "${TE}" WHERE projectId = ? ORDER BY at ASC`, r.id)).map((e) => ({ id: e.id, at: S.iso(e.at), kind: e.kind, byName: e.byName || '', text: e.text || '' }));
   const made = (await S.q('SELECT id, title, mime, aspect, status, style FROM "OmniMkImage" WHERE projectId = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT 60', r.id).catch(() => [])).map((x) => ({ id: x.id, title: x.title, kind: /^video\//.test(x.mime || '') ? 'video' : 'image', aspect: x.aspect || '1:1', status: x.status, style: x.style || '' }));
   const cur = S.num(r.round);
+  r = await syncPosted(r, (await countsFor([r.id])).get(r.id));
   // everything sent to this client for the pictures / videos of the project: when, to which number, and what the client answered
   let sent = [];
   try { const ids = [...new Set([...made.map((x) => x.id), ...opts.map((o) => o.itemId)])]; const kinds = new Map(made.map((x) => [x.id, x.kind])); sent = (await require('./clientReview').forItems(ids)).map((x) => ({ ...x, kind: kinds.get(x.itemId) || 'image' })); } catch { sent = []; } // eslint-disable-line global-require
