@@ -382,7 +382,8 @@ router.post('/visibility/pagespeed', mustWrite, wrap(async (req, res) => {
   if (b.checkId) { const a = await Site.attachPageSpeed(req.user, String(b.checkId), Page.compact(out)); out.attached = !a.error; }
   return res.json(out);
 }));
-router.post('/visibility/site-check', mustWrite, wrap(async (req, res) => (siteOk(req.user.id) ? send(res, await Site.check(req.user, req.body || {})) : res.status(429).json({ error: 'That is 20 website checks in the last hour. Try again later.' }))));
+// a check of several pages (b.pages 2 to 10) reads up to ten pages of the site, so it counts as 2 of the 20 an hour
+router.post('/visibility/site-check', mustWrite, wrap(async (req, res) => (siteOk(req.user.id, Number((req.body || {}).pages) > 1 ? 2 : 1) ? send(res, await Site.check(req.user, req.body || {})) : res.status(429).json({ error: 'That is 20 website checks in the last hour (a check of several pages counts as 2). Try again later.' }))));
 router.get('/visibility/site-checks', mustWrite, wrap(async (req, res) => send(res, await Site.list(req.user, { clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
 router.get('/visibility/site-checks/:id', mustWrite, wrap(async (req, res) => send(res, await Site.get(req.user, req.params.id))));
 // competitor snapshot: the client's website and up to 3 competitors' websites side by side (competitors.js)

@@ -91,40 +91,72 @@ function CompetitorsTab({ toast }) {
   );
 }
 
+// the pages behind a website check of several pages: one line per page with its own score and what to fix there, what is the same on several pages, what could not be read
+const CROSS = { dupTitle: 'Same title', dupDescription: 'Same description', dupH1: 'Same main heading', thin: 'Short pages', pageError: 'Pages that do not open' };
+function PagesPanels({ rep }) {
+  const c = rep.crawl; const tone = (s) => (s >= 85 ? '#15803d' : s >= 60 ? '#b45309' : '#b91c1c');
+  return (
+    <div style={{ marginTop: 12 }}>
+      {c.timeUp ? <Banner tone="warn">Time ran out: {c.notReadInTime} page{c.notReadInTime === 1 ? ' was' : 's were'} not read. The score uses the {c.read} page{c.read === 1 ? '' : 's'} that {c.read === 1 ? 'was' : 'were'} read. Run the check again, or choose fewer pages.</Banner> : null}
+      <Panel title={`Pages checked (${c.read})`} sub={`Found ${c.found + 1} pages on the website (${c.fromSitemap} in the sitemap, ${c.fromLinks} linked from the home page); the pages that matter most to a visitor are read first, at most 2 from one section.${c.skippedByRobots ? ` ${c.skippedByRobots} page${c.skippedByRobots === 1 ? '' : 's'} left alone because the site's robots.txt asks robots not to read ${c.skippedByRobots === 1 ? 'it' : 'them'}.` : ''}`}>
+        <table className="mk-table">
+          <thead><tr><th>Page</th><th>Score</th><th>Words</th><th>To fix on this page</th></tr></thead>
+          <tbody>{rep.pages.map((p) => (
+            <tr key={p.path}>
+              <td style={{ fontSize: 12.5 }}><b>{p.path}</b><br /><span style={{ color: 'var(--muted)' }}>{p.title || 'no title'}</span></td>
+              <td><b style={{ color: tone(p.score) }}>{p.score}</b><small style={{ color: 'var(--muted)' }}> / 100</small></td>
+              <td style={{ fontSize: 12.5 }}>{p.words}</td>
+              <td style={{ fontSize: 12.5 }}>{p.issues.length ? <details><summary style={{ cursor: 'pointer' }}>{p.issues.length} thing{p.issues.length === 1 ? '' : 's'}</summary><ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>{p.issues.map((i) => <li key={i.key}>{i.gap}. <span style={{ color: 'var(--muted)' }}>{i.fix}</span></li>)}</ul></details> : 'Nothing to fix'}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>The page score covers the 10 checks that belong to a single page (title, description, main heading, heading order, canonical link, language, mobile-screen tag, indexable, picture text, server answer). The website score above also counts the site-wide and answer-engine items.</div>
+      </Panel>
+      {rep.cross && rep.cross.length ? (
+        <Panel title="Found across the pages" style={{ marginTop: 12 }}>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.5 }}>{rep.cross.map((x, i) => <li key={`${x.key}-${i}`}><b>{x.gap}</b> <Tag>{CROSS[x.key] || 'Pages'}</Tag>{x.detail ? <span style={{ color: 'var(--muted)' }}> “{x.detail}”</span> : null}<br />{x.fix}<small style={{ display: 'block', color: 'var(--muted)' }}>Pages: {x.pages.join(', ')}</small></li>)}</ul>
+        </Panel>
+      ) : null}
+    </div>
+  );
+}
+
 function SiteTab({ toast, keySet }) {
   const [url, setUrl] = useState(''); const [client, setClient] = useState(''); const [save, setSave] = useState(false); const [busy, setBusy] = useState(false); const [rep, setRep] = useState(null); const [past, setPast] = useState([]);
-  const [ps, setPs] = useState(null); const [psBusy, setPsBusy] = useState(false); const [savedId, setSavedId] = useState('');
+  const [ps, setPs] = useState(null); const [psBusy, setPsBusy] = useState(false); const [savedId, setSavedId] = useState(''); const [pages, setPages] = useState('10');
   const runSpeed = async () => { setPsBusy(true); setPs(null); try { setPs(await omni.post('/gs/marketing/visibility/pagespeed', { url: rep.url, checkId: savedId || undefined }, { timeout: 90000 })); } catch (e) { toast(errOf(e, 'PageSpeed could not be run.')); } finally { setPsBusy(false); } };
   const loadPast = useCallback(() => (client.trim() ? omni.get('/gs/marketing/visibility/site-checks', { clientName: client.trim() }).then((d) => setPast(d.items || [])).catch(() => setPast([])) : Promise.resolve(setPast([]))), [client]);
   useEffect(() => { loadPast(); }, [loadPast]);
-  const run = async () => { setBusy(true); setRep(null); try { const r = await omni.post('/gs/marketing/visibility/site-check', { url, clientName: client, save: save && !!client.trim() }, { timeout: 60000 }); setRep(r.report); setPs(null); setSavedId(r.id || ''); if (r.id) { toast('Check saved'); loadPast(); } } catch (e) { toast(errOf(e, 'The website could not be checked.')); } finally { setBusy(false); } };
+  const run = async () => { setBusy(true); setRep(null); try { const r = await omni.post('/gs/marketing/visibility/site-check', { url, clientName: client, save: save && !!client.trim(), pages: Number(pages) }, { timeout: 90000 }); setRep(r.report); setPs(null); setSavedId(r.id || ''); if (r.id) { toast('Check saved'); loadPast(); } } catch (e) { toast(errOf(e, 'The website could not be checked.')); } finally { setBusy(false); } };
   return (
     <div>
-      <Banner>It reads the page once, like a visitor would, and checks 23 things. It is TeamLink's own check of what is on the page: it does not measure rankings or traffic and promises none.</Banner>
+      <Banner>It reads the home page, and up to 9 more pages of the same website if you choose, like a visitor would, and checks 23 things. It is TeamLink's own check of what is on the pages: it does not measure rankings or traffic and promises none.</Banner>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end', margin: '10px 0' }}>
         <Field label="WEBSITE ADDRESS"><input value={url} placeholder="www.example.com" onChange={(e) => setUrl(e.target.value)} style={{ minWidth: 260 }} /></Field>
+        <Field label="PAGES TO CHECK"><select value={pages} onChange={(e) => setPages(e.target.value)}><option value="1">Home page only (about 10 seconds)</option><option value="5">Up to 5 pages</option><option value="10">Up to 10 pages</option></select></Field>
         <Field label="CLIENT (TO SAVE IT)"><input value={client} maxLength={120} onChange={(e) => setClient(e.target.value)} /></Field>
         <label style={{ fontSize: 12.5, display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={save} disabled={!client.trim()} onChange={(e) => setSave(e.target.checked)} />Save this check for the client</label>
         <Btn primary disabled={busy || !url.trim()} onClick={run}>{busy ? 'Checking…' : 'Check the website'}</Btn>
       </div>
-      {busy ? <div style={{ fontSize: 13 }}>Checking the website. It takes about 10 to 25 seconds: please wait here.</div> : null}
+      {busy ? <div style={{ fontSize: 13 }}>{Number(pages) > 1 ? 'Reading the pages of the website. It takes about 15 to 50 seconds: please wait here.' : 'Checking the website. It takes about 10 to 25 seconds: please wait here.'}</div> : null}
       {rep ? (
         <div className="grid" style={{ gridTemplateColumns: 'minmax(0,2fr) minmax(0,3fr)', gap: 14, alignItems: 'start' }}>
           <Panel title="Website score">
             <div style={{ fontSize: 42, fontWeight: 900, color: '#0f766e', lineHeight: 1 }}>{rep.score}<small style={{ fontSize: 18, color: 'var(--muted)' }}> / 100</small></div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', margin: '4px 0 8px' }}>{rep.url} · answered in {rep.responseMs} ms</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', margin: '4px 0 8px' }}>{rep.url} · home page answered in {rep.responseMs} ms{rep.crawl ? ` · ${rep.crawl.read} pages read` : ''}</div>
             {rep.areas.map((a) => <div key={a.key} style={{ fontSize: 13, margin: '3px 0' }}><b>{a.key}</b> {a.got} of {a.marks} <span style={{ color: 'var(--muted)' }}>{a.label}</span></div>)}
-            <div style={{ fontSize: 12, marginTop: 8 }}>Title: {rep.facts.title || 'none'}<br />Main heading: {rep.facts.h1.join(' | ') || 'none'}<br />Pictures: {rep.facts.images} ({rep.facts.imagesNoAlt} without text)<br />Schema found: {rep.facts.schemaTypes.join(', ') || 'none'}</div>
+            <div style={{ fontSize: 12, marginTop: 8 }}>{rep.crawl ? 'Home page title' : 'Title'}: {rep.facts.title || 'none'}<br />Main heading: {rep.facts.h1.join(' | ') || 'none'}<br />Pictures: {rep.facts.images} ({rep.facts.imagesNoAlt} without text)<br />Schema found: {rep.facts.schemaTypes.join(', ') || 'none'}</div>
             {rep.links && rep.links.bad ? <div style={{ fontSize: 12, marginTop: 6, color: '#b91c1c' }}>Broken links: {rep.links.list.join('; ')}</div> : null}
             <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 8 }}>{rep.disclaimer}</div>
           </Panel>
           <Panel title="Do these first">
-            {rep.actions.length ? <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.5 }}>{rep.actions.slice(0, 12).map((a) => <li key={a.key}><b>{a.gap}</b> <Tag>{a.area}</Tag> <small style={{ color: 'var(--muted)' }}>(+{a.lost} marks)</small><br />{a.fix}</li>)}</ol> : <div style={{ fontSize: 13 }}>Everything checked is in place. Keep the content fresh.</div>}
+            {rep.actions.length ? <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.5 }}>{rep.actions.slice(0, 12).map((a) => <li key={a.key}><b>{a.gap}</b> <Tag>{a.area}</Tag> <small style={{ color: 'var(--muted)' }}>(+{a.lost} marks)</small><br />{a.fix}{a.pages && a.pages.length ? <small style={{ display: 'block', color: 'var(--muted)' }}>Pages: {a.pages.join(', ')}</small> : null}</li>)}</ol> : <div style={{ fontSize: 13 }}>Everything checked is in place. Keep the content fresh.</div>}
           </Panel>
         </div>
       ) : null}
+      {rep && rep.crawl ? <PagesPanels rep={rep} /> : null}
       {rep ? <SpeedPanel ps={ps} busy={psBusy} onRun={runSpeed} saved={!!savedId} keySet={keySet} /> : null}
-      {past.length ? <Panel title={`Earlier checks: ${client.trim()}`} style={{ marginTop: 12 }}><table className="mk-table"><tbody>{past.slice(0, 8).map((x) => <tr key={x.id}><td style={{ fontSize: 12.5 }}>{fmtDate(x.createdAt)}</td><td>{x.url}</td><td><b>{x.score}/100</b></td></tr>)}</tbody></table></Panel> : null}
+      {past.length ? <Panel title={`Earlier checks: ${client.trim()}`} style={{ marginTop: 12 }}><table className="mk-table"><tbody>{past.slice(0, 8).map((x) => <tr key={x.id}><td style={{ fontSize: 12.5 }}>{fmtDate(x.createdAt)}</td><td>{x.url} <small style={{ color: 'var(--muted)' }}>({x.pages > 1 ? `${x.pages} pages` : 'home page'})</small></td><td><b>{x.score}/100</b></td></tr>)}</tbody></table></Panel> : null}
     </div>
   );
 }

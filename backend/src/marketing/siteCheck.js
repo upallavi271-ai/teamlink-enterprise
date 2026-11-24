@@ -18,7 +18,7 @@ const DDL = [
   `CREATE INDEX IF NOT EXISTS "${T}_client" ON "${T}"("clientName", "createdAt")`,
 ];
 let okAt = 0;
-async function ensure() { if (okAt && Date.now() - okAt < 600000) return true; try { for (const sql of DDL) await S.run(sql); okAt = Date.now(); return true; } catch (e) { console.error('[omni-mk] site check schema:', e.message); return false; } } // eslint-disable-line no-await-in-loop, no-console
+async function ensure() { if (okAt && Date.now() - okAt < 600000) return true; try { for (const sql of DDL) await S.run(sql); try { await S.run(`ALTER TABLE "${T}" ADD COLUMN "pages" INTEGER NOT NULL DEFAULT 1`); } catch { /* the column is already there */ } okAt = Date.now(); return true; } catch (e) { console.error('[omni-mk] site check schema:', e.message); return false; } } // eslint-disable-line no-await-in-loop, no-console
 
 // ---- reading a page with plain code ------------------------------------------------------------------------------------------------------------------------------------
 const ent = (s) => String(s).replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'");
@@ -153,21 +153,25 @@ async function runCheck(input, opts = {}) {
 }
 
 // ---- saved checks, per client ------------------------------------------------------------------------------------------------------------------------------------------
+// b.pages: 1 (default) = the home page only; 2 to 10 = the home page and more pages of the same website (siteCrawl.js)
+const pagesAsked = (b) => Math.max(1, Math.min(10, Math.round(Number(b && b.pages)) || 1));
 async function check(u, b = {}, opts = {}) {
-  const r = await runCheck(b.url, opts); if (r.error) return r;
+  const n = pagesAsked(b);
+  const r = n > 1 ? await require('./siteCrawl').run(b.url, n, opts) : await runCheck(b.url, opts); if (r.error) return r; // eslint-disable-line global-require
   if (!b.save) return r;
   if (!(await ensure())) return { error: 'The checks could not be saved.', status: 500 };
   const clientName = S.clip(b.clientName, 120); if (!clientName) return { error: 'Write the client name to save the check.', status: 400 };
   const dept = S.clip(b.department, 60) || null; if (dept && !A.mayDepartment(u, dept)) return { error: 'That department is not yours.', status: 403 };
   const id = S.newId('sck');
-  await S.run(`INSERT INTO "${T}" (id, clientName, planId, url, score, report, department, createdById, createdByName, createdAt) VALUES (?,?,?,?,?,?,?,?,?,?)`, id, clientName, b.planId ? S.clip(b.planId, 60) : null, r.report.url, r.report.score, JSON.stringify(r.report), dept, u.id, S.clip(u.name, 80), Date.now());
-  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: website check saved', entity: T, entityId: id, toValue: `${clientName}: ${r.report.url} ${r.report.score}/100` });
+  const read = r.report.crawl ? r.report.crawl.read : 1;
+  await S.run(`INSERT INTO "${T}" (id, clientName, planId, url, score, report, department, createdById, createdByName, createdAt, pages) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, id, clientName, b.planId ? S.clip(b.planId, 60) : null, r.report.url, r.report.score, JSON.stringify(r.report), dept, u.id, S.clip(u.name, 80), Date.now(), read);
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: website check saved', entity: T, entityId: id, toValue: `${clientName}: ${r.report.url} ${r.report.score}/100${read > 1 ? ` (${read} pages)` : ''}` });
   return { ...r, id };
 }
 async function list(u, o = {}) {
   if (!(await ensure())) return { error: 'The checks could not be opened.', status: 500 };
-  const rows = (await S.q(`SELECT id, clientName, planId, url, score, department, createdByName, createdAt FROM "${T}" ORDER BY createdAt DESC LIMIT 300`)).filter((r) => A.mayDepartment(u, r.department || '')).filter((r) => !o.clientName || r.clientName.toLowerCase() === String(o.clientName).toLowerCase());
-  return { items: rows.map((r) => ({ id: r.id, clientName: r.clientName, planId: r.planId || null, url: r.url, score: S.num(r.score), createdByName: r.createdByName || '', createdAt: S.iso(r.createdAt) })) };
+  const rows = (await S.q(`SELECT id, clientName, planId, url, score, pages, department, createdByName, createdAt FROM "${T}" ORDER BY createdAt DESC LIMIT 300`)).filter((r) => A.mayDepartment(u, r.department || '')).filter((r) => !o.clientName || r.clientName.toLowerCase() === String(o.clientName).toLowerCase());
+  return { items: rows.map((r) => ({ id: r.id, clientName: r.clientName, planId: r.planId || null, url: r.url, score: S.num(r.score), pages: S.num(r.pages) || 1, createdByName: r.createdByName || '', createdAt: S.iso(r.createdAt) })) };
 }
 async function get1(u, id) {
   if (!(await ensure())) return { error: 'The checks could not be opened.', status: 500 };
@@ -184,4 +188,4 @@ async function attachPageSpeed(u, id, ps) {
 }
 async function latestFor(u, clientName) { const l = await list(u, { clientName }); return l.items && l.items[0] ? l.items[0] : null; }
 
-module.exports = { ensure, scanHtml, analyze, runCheck, check, list, get: get1, latestFor, attachPageSpeed, cleanUrl, CHECKS, DISCLAIMER };
+module.exports = { ensure, scanHtml, analyze, runCheck, check, list, get: get1, latestFor, attachPageSpeed, cleanUrl, CHECKS, DISCLAIMER, MAX_PAGES: 10, FR, AREAS, rawGet: get, readCapped, fetchPage, extras }; // the last six are shared with siteCrawl.js (several pages)
