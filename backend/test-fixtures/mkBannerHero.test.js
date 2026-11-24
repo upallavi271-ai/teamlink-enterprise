@@ -33,6 +33,10 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
   const pr = (await P.create(admin, { clientName: 'Dr Rao Skin Clinic', contactName: 'Dr Rao', contactPhone: '+919000000007', occasion: 'Skin care', brief: 'We are a dermatology clinic. Videos and posts for patients.', deliverable: 'both', accept: true })).project;
   const pl = await AS.plan(admin, { projectId: pr.id, kind: 'post', scenes: 2, prompt: 'Skin care tips for monsoon, for patients of our clinic' });
   assert.ok(pl.plan && /skin/i.test(pl.plan.audience), JSON.stringify(pl.plan && pl.plan.audience)); console.log('PASS  the plan carries who the post is for (read from the client)');
+  assert.ok(/dermatolog|skin/i.test(pl.plan.heroArt) && /dermatologist/i.test(pl.plan.scenes[0].search)); console.log('PASS  a post for a skin clinic gets skin-clinic hero artwork words and skin-clinic photo words');
+  const dr = (await P.create(admin, { clientName: 'Rao Hospital', contactName: 'Dr Rao', contactPhone: '+919000000008', occasion: 'Dental care', brief: 'We are a dental clinic. Posts for families about teeth.', deliverable: 'both', accept: true })).project;
+  const dp = await AS.plan(admin, { projectId: dr.id, kind: 'post', scenes: 2, prompt: 'A healthy smile starts with daily care for our patients' });
+  assert.ok(/dental/i.test(dp.plan.heroArt) && /dentist|teeth/i.test(dp.plan.scenes[0].search)); console.log('PASS  a dental clinic post gets dentist photos and dental artwork, not any clinic');
   try { fs.rmSync(work, { recursive: true, force: true }); } catch { /* db open */ }
   setTimeout(() => process.exit(0), 200);
 })().catch((e) => { console.error(e); setTimeout(() => process.exit(1), 200); });

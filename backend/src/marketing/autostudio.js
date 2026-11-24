@@ -150,7 +150,10 @@ async function plan(u, b = {}) {
   // who the post is for (a line of the banner): the client's kind of customers, or the brand's own audience
   const kindOfClient = project ? BC.profileOf(`${who} ${project.occasion || ''} ${project.brief || ''}`) : null;
   const audience = project ? (kindOfClient && kindOfClient.id !== 'general' ? kindOfClient.who : '') : S.clip(brand.audience, 120);
-  return { plan: { ...p, kind, language, date: day, dateLabel: dateLabel(day), who, audience }, flags, demo: !!r.demo, provider: r.provider || '', fromBrief, ...(note ? { note } : {}) };
+  // a health client's picture words and hero artwork follow its kind (a dentist's post gets dentist photos, not any clinic): the writer's own words only when there is no kind
+  const heroArt = kindOfClient && kindOfClient.id !== 'general' ? kindOfClient.art : '';
+  if (kind === 'post' && kindOfClient && kindOfClient.id !== 'general') p.scenes.forEach((s, i) => { s.search = kindOfClient.search[i % kindOfClient.search.length]; });
+  return { plan: { ...p, kind, language, date: day, dateLabel: dateLabel(day), who, audience, heroArt }, flags, demo: !!r.demo, provider: r.provider || '', fromBrief, ...(note ? { note } : {}) };
 }
 
 module.exports = { plan, dateLabel, clean, partsOf, applyMine }; // clean: exported for the tests (a model answer that is incomplete or too long is repaired, never trusted)

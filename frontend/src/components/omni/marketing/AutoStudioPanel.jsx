@@ -174,7 +174,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
         if (!id && !isVideo && banners) {
           let hero = null;
           if (heroAi) { // the hero artwork: a clean, modern, text-free picture of the subject, in a wide frame (the banner's picture area is wide)
-            try { hero = await makeAiPicture({ imagePrompt: 'Professional digital marketing hero artwork for ' + (r.plan.who || 'a business') + ': ' + (r.plan.scenes[i].imagePrompt || r.plan.scenes[i].caption) + '. Clean modern infographic style, glowing blue and gold accents, soft depth of field, polished 3D look. No text, no letters, no logos, no watermark.' }, '16:9'); } catch (e) { // eslint-disable-line no-await-in-loop
+            try { hero = await makeAiPicture({ imagePrompt: 'Professional digital marketing hero artwork for ' + (r.plan.who || 'a business') + ': ' + (r.plan.heroArt ? r.plan.heroArt + ', for the post: ' + r.plan.headline : (r.plan.scenes[i].imagePrompt || r.plan.scenes[i].caption)) + '. Clean modern infographic style, glowing blue and gold accents, soft depth of field, polished 3D look. No text, no letters, no logos, no watermark.' }, '16:9'); } catch (e) { // eslint-disable-line no-await-in-loop
               if (e.message === 'stopped') throw e;
               hero = null; if (AI_REFUSED.test(errOf(e, e.message || ''))) { heroAi = false; setNote('The picture AI said no (limit or billing), so the hero pictures are free stock photos instead.'); }
             }
