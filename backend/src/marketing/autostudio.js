@@ -128,13 +128,13 @@ async function plan(u, b = {}) {
     if (stored) { r = { result: stored, provider: 'standard', demo: false }; note = "This is the starter content TeamLink wrote from the client's brief. Change any words below if you like."; } else {
     const given = [mine.title ? `Title: ${mine.title}` : '', mine.heading ? `Heading: ${mine.heading}` : '', mine.cta ? `Call to action: ${mine.cta}` : '', mine.content ? `Content the person wrote (use it as it is, do not change a word): ${mine.content}` : ''].filter(Boolean).join('\n');
     // quickMs: the web server (nginx) gives up at 60 seconds, so the AI writer gets 40: the one small model here is shared with the WhatsApp assistant and can be busy for minutes
-    r = await AI.generate({ user: u, module: 'studio', task: kind, system: systemFor(brand, who, kind, n, language, day, project), prompt: `Request: ${prompt}${given ? `\n${given}` : ''}`, json: true, demo: () => (fromBrief ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n }) : demoPlan(prompt, who, kind, n, day)), department: S.clip(b.department, 60) || undefined, quickMs: 40000 });
+    r = await AI.generate({ user: u, module: 'studio', task: kind, system: systemFor(brand, who, kind, n, language, day, project), prompt: `Request: ${prompt}${given ? `\n${given}` : ''}`, json: true, demo: () => (fromBrief ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n }) : (project && String(project.brief || '').trim().length >= 10 ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n, focus: idea.length >= 8 ? idea : prompt }) : demoPlan(prompt, who, kind, n, day))), department: S.clip(b.department, 60) || undefined, quickMs: 40000 });
     }
   } catch (e) {
     // a person's own limit (429) or a refused login (403) is shown as it is; anything else (the AI busy, off, or unreadable) must never stop a post: make the plain plan from the person's own words
     if (e.status === 429 || e.status === 403) return { error: e.message, status: e.status, code: e.code };
     // from a client's brief the free writer makes real, useful content (briefContent.js); from a bare idea it can only use the person's own words
-    r = { result: fromBrief ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n }) : plainPlan(prompt, who, kind, n, day), provider: 'standard', demo: false };
+    r = { result: fromBrief ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n }) : (project && String(project.brief || '').trim().length >= 10 ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n, focus: idea.length >= 8 ? idea : prompt }) : plainPlan(prompt, who, kind, n, day)), provider: 'standard', demo: false };
     note = fromBrief ? "TeamLink wrote the video from the client's brief with its own free writer. Change any words below if you like." : 'The AI writer is busy right now, so TeamLink made the post from your own words. Change the post words below if you like.';
   }
   const p = applyMine(clean(r.result, { n, who, prompt, kind, day }), mine, n);

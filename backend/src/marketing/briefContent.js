@@ -82,6 +82,48 @@ function profileOf(text) {
 // the sentences of the brief, cleaned: what the client said, in their order
 const sentences = (brief) => (String(brief || '').replace(/\r/g, '').match(/[^.!?\n]+[.!?]*/g) || []).map((x) => clip(x, 160)).filter((x) => x.length >= 8);
 
+// TOPICS (2026-11-24): a client often LISTS what they do in the brief (a skin doctor: acne, pigmentation, hair fall ...). Each listed thing becomes its own video idea, and a video on that
+// topic carries tips about THAT topic, not generic ones. General education only (see the health rules above).
+const TOPICS = [
+  { re: /acne|pimple/i, hook: 'Clear skin: what really helps with acne', search: ['acne skin care', 'washing face', 'dermatologist consultation'], tips: ['Wash your face twice a day with a gentle cleanser', 'Do not squeeze or pick pimples: it can leave marks and scars', 'Use an oil-free moisturiser and sunscreen', 'Avoid harsh scrubs, and do not change products again and again', 'Acne that is painful, leaves marks or stays for months should be seen by a skin doctor'] },
+  { re: /pigment|dark spot|melasma/i, hook: 'Dark spots and pigmentation: what to know', search: ['sunscreen skin care', 'woman face skin', 'dermatologist skin check'], tips: ['The sun is the biggest cause of dark spots: use sunscreen every day and reapply outdoors', 'Do not try home remedies or strong creams without advice: some make spots worse', 'A patch that appears suddenly, grows or changes colour should be checked by a doctor', 'Be patient: care takes weeks, and results are different for every person', 'A doctor finds the cause first, then chooses the right care'] },
+  { re: /hair|dandruff|scalp|bald/i, hook: 'Hair fall and dandruff: simple care that helps', search: ['hair care', 'woman hair', 'scalp care doctor'], tips: ['Some hair fall every day is normal; sudden or patchy hair fall is a reason to check', 'Eat enough protein, iron and vitamins, and avoid crash diets', 'Wash gently, avoid tight hairstyles and limit heat styling', 'For dandruff, use the shampoo your doctor advises, regularly', 'Hair fall with scalp pain, itching or bald patches needs a skin doctor'] },
+  { re: /eczema|allerg|itch|dermatitis/i, hook: 'Eczema and skin allergies: calm, care, comfort', search: ['moisturiser skin care', 'dry skin hand', 'doctor patient consultation'], tips: ['Moisturise dry skin several times a day, especially after a bath', 'Use mild, fragrance-free soap and avoid very hot water', 'Notice what triggers the itching: soaps, dust, some fabrics or foods', 'Do not scratch: keep nails short and wear soft cotton', 'Allergies that keep coming back or cover large areas need a doctor'] },
+  { re: /fung|ringworm|tinea/i, hook: 'Fungal skin infections: keep dry, keep clean', search: ['hygiene hand washing', 'clean cotton clothes', 'dermatologist clinic'], tips: ['Keep skin dry, especially skin folds, feet and the groin', 'Wear clean, loose cotton clothes and do not share towels', 'Do not put steroid creams on a rash without a doctor: they can make a fungus worse', 'Wash clothes and bedsheets regularly in hot water', 'A patch that spreads or does not go away needs a doctor'] },
+  { re: /wrinkle|ageing|aging|anti-?ag/i, hook: 'Healthy skin as you age', search: ['skin care woman', 'sunscreen', 'healthy glowing skin'], tips: ['Sun protection every day is the best way to slow the ageing of skin', 'Moisturise, sleep well and drink enough water', 'Do not smoke: it speeds up wrinkles', 'Be careful with "instant" anti-ageing products: ask a doctor what suits your skin', 'For any procedure, choose a qualified skin doctor'] },
+  { re: /rash/i, hook: 'Skin rashes: when to wait and when to see a doctor', search: ['skin rash doctor', 'doctor examining skin', 'clinic consultation'], tips: ['A rash with fever, swelling of the lips or face, or trouble breathing is an emergency: go to a hospital at once', 'Do not put random creams on a rash: ask first', 'Keep the area clean and avoid scratching', 'Note when it started and what you ate or used, and tell the doctor', 'A rash that spreads, blisters or lasts more than a few days needs a doctor'] },
+];
+const topicFor = (text) => TOPICS.find((t) => t.re.test(String(text || ''))) || null;
+const GENERIC_WORDS = /^(including|services|we offer|what we do|our services|and|the|treatments?|problems?|conditions?)$/i;
+// what the client listed in the brief: lines, "- items", bullets, commas after a colon -> short phrases
+function topicsOf(brief) {
+  const raw = String(brief || '').replace(/\r/g, '\n');
+  const chunks = raw.split(/\n|\s-\s|•|;|:/);
+  const items = chunks.length > 2 ? chunks.slice(1) : chunks; // before the first marker is the intro sentence ("A dermatologist helps ..., including:")
+  const out = [];
+  items.forEach((chunk) => chunk.split(',').forEach((x) => {
+    const t = x.replace(/^[\s\-•*\d.)]+/, '').replace(/[.\s]+$/, '').trim();
+    if (t.length >= 3 && t.length <= 40 && t.split(/\s+/).length <= 6 && !GENERIC_WORDS.test(t) && !out.some((y) => y.toLowerCase() === t.toLowerCase())) out.push(t);
+  }));
+  return out.slice(0, 12);
+}
+// Video IDEAS read from the brief, ready to click: one per thing the client listed (health clients: "simple care tips and when to see a doctor"), plus the overview of the whole brief.
+function ideasFor({ who, occasion, brief }) {
+  const p = profileOf(`${who} ${occasion} ${brief}`);
+  const health = HEALTH.has(p.id);
+  const listed = topicsOf(brief).filter((t) => topicFor(t) || t.split(/\s+/).length <= 3);
+  const ideas = [];
+  const seen = new Set();
+  listed.forEach((t) => {
+    if (ideas.length >= 6) return;
+    const known = topicFor(t);
+    if (known) { if (seen.has(known)) return; seen.add(known); }
+    ideas.push({ label: clip(t, 40), heading: clip(known ? known.hook : t, 70), idea: health ? `${t}: simple care tips and when to see a doctor, for ${clip(who, 50)}` : `${t}: how ${clip(who, 50)} can help you` });
+  });
+  if (p.hook && ideas.length < 6) ideas.push({ label: 'General tips', heading: p.hook, idea: `${p.hook}: a few simple, useful points for ${p.who}` });
+  return ideas;
+}
+
 // WHAT IS SAID (2026-11-23): the voice-over of a video is a person explaining, so each scene gets a spoken line (`say`), longer and warmer than the words on the screen.
 // Scene 1 greets and names the topic, the middle scenes give one point each in order, the last one invites the viewer. English only: the lines are built from English words.
 const stop = (t) => clip(t, 200).replace(/[.!?\s]+$/, '');
@@ -98,9 +140,11 @@ function sayFor(scenes, { who, cta, health }) {
 }
 
 // A complete plan with no AI service. n = number of scenes (3 to 6). Scene 1 = the hook, the last scene = the call to action, the ones between = useful points.
-function buildPlan({ who, occasion, brief, n }) {
+function buildPlan({ who, occasion, brief, n, focus }) {
   const text = `${who} ${occasion} ${brief}`;
-  const p = profileOf(text);
+  const p0 = profileOf(text);
+  const topic = focus ? topicFor(focus) : null; // a video on ONE topic: that topic's own tips and photo words
+  const p = topic && HEALTH.has(p0.id) ? { ...p0, hook: topic.hook, tips: topic.tips, search: topic.search.concat(p0.search) } : (focus ? { ...p0, hook: clip(String(focus).split(':')[0], 70) || p0.hook } : p0);
   const count = Math.max(3, Math.min(6, n || 4));
   const mine = sentences(brief);
   const heading = p.hook || clip(occasion, 60) || clip(mine[0], 60) || `Welcome to ${clip(who, 40)}`;
@@ -137,4 +181,4 @@ function guide(text) {
   return lines.join('\n');
 }
 
-module.exports = { profileOf, buildPlan, guide, sayFor, PROFILES };
+module.exports = { profileOf, buildPlan, guide, sayFor, ideasFor, topicsOf, topicFor, PROFILES };

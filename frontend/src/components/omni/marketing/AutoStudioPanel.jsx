@@ -59,7 +59,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
     omni.get('/gs/marketing/meta').then((m) => setCan((c) => ({ ...c, ai: !!(m.ai && m.ai.image && m.ai.image.ready && !m.ai.image.demo), aiFree: !!(m.ai && m.ai.image && m.ai.image.ready && m.ai.image.provider === 'cloudflare') }))).catch(() => {});
     const useBrand = () => Promise.all([omni.get('/gs/marketing/brand'), omni.get('/gs/marketing/brand/logo').catch(() => ({ logo: null }))]).then(([b, l]) => ({ colors: b.brand.colors, brandName: b.brand.brandName, footer: [b.brand.website, b.brand.contact].filter(Boolean).join('  ·  '), logoUrl: l.logo ? l.logo.dataUrl : '' }));
     const go = projectId
-      ? omni.get(`/gs/marketing/projects/${projectId}`).then(async (x) => { setBrief({ clientName: x.project.clientName, occasion: x.project.occasion, text: x.project.brief || '', draft: x.project.draft || null }); const base = await useBrand().catch(() => ({ colors: null, brandName: '', footer: '', logoUrl: '' })); const p = x.project; return { colors: { ...(base.colors || {}), ...(p.colors && p.colors.primary ? { primary: p.colors.primary } : {}), ...(p.colors && p.colors.secondary ? { secondary: p.colors.secondary } : {}) }, brandName: p.clientName, footer: [(p.handles || '').split('\n')[0], p.contactPhone].filter(Boolean).join('  ·  '), logoUrl: x.logo || '' }; }).catch(() => useBrand())
+      ? omni.get(`/gs/marketing/projects/${projectId}`).then(async (x) => { setBrief({ clientName: x.project.clientName, occasion: x.project.occasion, text: x.project.brief || '', draft: x.project.draft || null, ideas: x.ideas || [] }); const base = await useBrand().catch(() => ({ colors: null, brandName: '', footer: '', logoUrl: '' })); const p = x.project; return { colors: { ...(base.colors || {}), ...(p.colors && p.colors.primary ? { primary: p.colors.primary } : {}), ...(p.colors && p.colors.secondary ? { secondary: p.colors.secondary } : {}) }, brandName: p.clientName, footer: [(p.handles || '').split('\n')[0], p.contactPhone].filter(Boolean).join('  ·  '), logoUrl: x.logo || '' }; }).catch(() => useBrand())
       : useBrand();
     go.then(async (k) => { let logo = null; if (k.logoUrl) { try { logo = await loadImage(k.logoUrl); } catch { logo = null; } } setKit({ colors: k.colors, logo, brandName: k.brandName, footer: k.footer }); }).catch(() => {});
   }, [projectId]);
@@ -152,6 +152,15 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           {brief && brief.text.trim() ? (
             <div style={{ background: '#eef6ff', border: '1px solid #c7ddf7', borderRadius: 10, padding: '9px 12px', margin: '0 0 10px', fontSize: 12 }}>
               <b>The client's brief ({brief.clientName}{brief.occasion ? `, ${brief.occasion}` : ''}):</b> {brief.text.length > 260 ? `${brief.text.slice(0, 260)}…` : brief.text}
+              {brief.ideas && brief.ideas.length ? (
+                <div style={{ marginTop: 8 }}>
+                  <b>Ideas read from the brief</b> <span style={{ color: 'var(--muted)' }}>(press one to use it, or leave them all and make the overview):</span>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}>
+                    <TinyBtn disabled={working} onClick={() => { setPrompt(''); setHeading(''); }}>Everything in the brief</TinyBtn>
+                    {brief.ideas.map((x) => <TinyBtn key={x.label} disabled={working} onClick={() => { setPrompt(x.idea); setHeading(x.heading); }} title={x.idea}>{x.label}</TinyBtn>)}
+                  </div>
+                </div>
+              ) : null}
               {brief.draft ? (
                 <div style={{ marginTop: 6, padding: '6px 9px', background: '#fff', border: '1px solid #c7ddf7', borderRadius: 8 }}>
                   <b>Starter content, already written for this project:</b> “{brief.draft.headline}”

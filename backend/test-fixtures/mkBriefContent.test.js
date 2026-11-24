@@ -9,6 +9,7 @@ fs.copyFileSync(path.join(BACK, 'prisma', 'sandbox.db'), tmp);
 process.env.DATABASE_URL = `file:${tmp.split(path.sep).join('/')}`;
 process.env.TEAMLINK_SANDBOX = '1'; process.env.TEST_MODE = '1'; process.env.UPLOAD_DIR = path.join(work, 'uploads');
 
+const S = require('../src/outreach/store');
 const P = require('../src/marketing/projects');
 const AS = require('../src/marketing/autostudio');
 const BC = require('../src/marketing/briefContent');
@@ -54,6 +55,22 @@ let pass = 0; const ok = (n) => { pass += 1; console.log(`PASS  ${n}`); };
   assert.ok(r.plan.scenes.slice(1, -1).every((s) => /^(Here is|Next|Another|And one|Please also)/.test(s.say) && !/\.\s[a-z]/.test(s.say))); ok('the middle lines read like speech, one point each, with proper sentences');
   const typed = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 3, content: 'Free skin check this Sunday\nBring your old reports\nCall to book' });
   assert.ok(typed.plan.scenes[0].say.includes('Free skin check this Sunday')); ok('the typed words are what is said, as they were written');
+
+  // 2d. IDEAS READ FROM THE BRIEF (what the client listed becomes clickable ideas) and a video on ONE topic
+  const listBrief = 'A dermatologist helps diagnose and treat various skin and hair problems, including: - Acne and pimples - Pigmentation and dark spots - Hair fall and dandruff - Eczema and skin allergies - Fungal infections - Wrinkles and ageing skin - Skin rashes and infection';
+  assert.deepEqual(BC.topicsOf(listBrief).slice(0, 3), ['Acne and pimples', 'Pigmentation and dark spots', 'Hair fall and dandruff']); ok('what the client listed in the brief is read as separate items (the intro sentence is skipped)');
+  const ideas = BC.ideasFor({ who: 'teamlink opc', occasion: 'Dermatologist', brief: listBrief });
+  assert.ok(ideas.length >= 5 && ideas.every((i) => i.label && i.idea && i.heading) && /Acne/.test(ideas[0].idea) && /see a doctor/.test(ideas[0].idea)); ok('every listed thing becomes a ready video idea');
+  const hair = BC.buildPlan({ who: 'teamlink opc', occasion: 'Dermatologist', brief: listBrief, n: 4, focus: ideas.find((i) => /Hair/.test(i.label)).idea });
+  assert.ok(/hair/i.test(hair.headline) && hair.scenes.slice(1, -1).every((x) => /hair|protein|wash|dandruff|scalp|shampoo/i.test(x.caption)) && /hair|scalp/i.test(hair.scenes[1].search)); ok('a video on one topic has that topic\'s own tips and photo words, not generic ones');
+  const lb = await mk({ clientName: 'Listing Skin Clinic', occasion: 'Dermatologist', brief: listBrief });
+  const gd = await P.get(admin, lb.id);
+  assert.ok(gd.ideas.length >= 5 && gd.project.draft && gd.project.draft.headline); ok('opening a project returns the ideas and its starter content');
+  await S.run('UPDATE "OmniMkProject" SET draftPlan = NULL WHERE id = ?', lb.id);
+  const gd2 = await P.get(admin, lb.id);
+  assert.ok(gd2.project.draft && gd2.project.draft.headline); ok('an older project with no starter content gets it the first time its page is opened');
+  const typedIdea = await AS.plan(admin, { projectId: lb.id, kind: 'video', scenes: 4, prompt: ideas.find((i) => /Eczema/.test(i.label)).idea, heading: 'Eczema and skin allergies' });
+  assert.ok(!typedIdea.fromBrief && /moistur|soap|scratch|itch|allerg/i.test(typedIdea.plan.scenes.map((x) => x.caption).join(' '))); ok('a clicked idea makes a video about THAT topic');
 
   // 3. what a person types still wins
   const r2 = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 4, prompt: 'Free skin check camp this Sunday at our clinic', heading: 'Free skin check camp' });

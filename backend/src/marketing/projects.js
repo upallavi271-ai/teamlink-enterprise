@@ -276,7 +276,9 @@ async function itemInfo(r) { // a picture / video row as the team sees it
 }
 async function get(u, id) {
   const g = await getVisible(u, id); if (g.error) return g;
-  const { r } = g;
+  let { r } = g;
+  // a project made before starter content existed (or whose brief was written another way): its starter content is written the first time the page is opened
+  if (!r.draftPlan && String(r.brief || '').trim().length >= 10 && !['posted', 'declined'].includes(r.status)) { await makeDraft(r.id, 'TeamLink'); r = (await S.q(`SELECT * FROM "${T}" WHERE id = ?`, r.id))[0] || r; }
   const Img = require('./images'); // eslint-disable-line global-require
   await Img.ensure();
   const opts = await optionRows(r.id);
@@ -291,7 +293,9 @@ async function get(u, id) {
   // everything sent to this client for the pictures / videos of the project: when, to which number, and what the client answered
   let sent = [];
   try { const ids = [...new Set([...made.map((x) => x.id), ...opts.map((o) => o.itemId)])]; const kinds = new Map(made.map((x) => [x.id, x.kind])); sent = (await require('./clientReview').forItems(ids)).map((x) => ({ ...x, kind: kinds.get(x.itemId) || 'image' })); } catch { sent = []; } // eslint-disable-line global-require
-  return { sent, project: short(r, (await countsFor([r.id])).get(r.id)), logo: r.logoData || null, options: withItem.map((o) => ({ ...o, stage: o.round === cur + 1 ? 'staged' : o.round === cur ? 'presented' : 'earlier' })), events, made, clientAccountIds: await rememberedFor(r) };
+  let ideas = [];
+  try { ideas = require('./briefContent').ideasFor({ who: r.clientName, occasion: r.occasion || '', brief: r.brief || '' }); } catch { ideas = []; } // eslint-disable-line global-require -- video ideas read from the brief, one per thing the client listed
+  return { ideas, sent, project: short(r, (await countsFor([r.id])).get(r.id)), logo: r.logoData || null, options: withItem.map((o) => ({ ...o, stage: o.round === cur + 1 ? 'staged' : o.round === cur ? 'presented' : 'earlier' })), events, made, clientAccountIds: await rememberedFor(r) };
 }
 async function update(u, id, b = {}) {
   const g = await getVisible(u, id); if (g.error) return g;
