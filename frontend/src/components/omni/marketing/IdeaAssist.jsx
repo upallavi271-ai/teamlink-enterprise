@@ -13,7 +13,7 @@ export default function IdeaAssist({ kind = 'video', title = '', heading = '', c
   const run = async () => {
     setNote(''); setBad(false);
     const typed = [title, heading, content, idea].some((v) => String(v || '').trim().length >= 2);
-    if (!typed && !projectId) { setNote('Type a title below (or a few words in the box) first, so the AI knows the topic.'); setBad(true); return; }
+    if (!typed && !projectId) { setNote('Write a title or content above (or a few words in the box) first, so the AI knows the topic.'); setBad(true); return; }
     setBusy(true);
     try {
       const r = await omni.post('/gs/marketing/studio/idea-assist', { kind, title, heading, content, idea, ...(projectId ? { projectId } : {}), ...(clientName ? { clientName } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
@@ -25,8 +25,8 @@ export default function IdeaAssist({ kind = 'video', title = '', heading = '', c
   };
   return (
     <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
-      <Btn small disabled={busy || disabled} onClick={run} title="The AI writes the idea from your title. You can change it before you press Create.">{busy ? 'Writing…' : '✨ AI Assist'}</Btn>
-      {note ? <span role="status" style={{ fontSize: 12, color: bad ? '#b45309' : '#166534', fontWeight: 600 }}>{note}</span> : <span style={{ fontSize: 12, color: 'var(--muted)' }}>Type a title below, then press AI Assist: it writes the idea for you.</span>}
+      <Btn small disabled={busy || disabled} onClick={run} title="The AI writes the topic and the points from your title and content. You can change them before you press Create.">{busy ? 'Writing…' : '✨ AI Assist'}</Btn>
+      {note ? <span role="status" style={{ fontSize: 12, color: bad ? '#b45309' : '#166534', fontWeight: 600 }}>{note}</span> : <span style={{ fontSize: 12, color: 'var(--muted)' }}>Write a title or content above, then press AI Assist: it writes the topic and the points for you.</span>}
     </div>
   );
 }

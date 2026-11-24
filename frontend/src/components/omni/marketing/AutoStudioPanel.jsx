@@ -59,7 +59,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const urls = useRef([]);
   useEffect(() => () => { stop.current = true; urls.current.forEach((u) => URL.revokeObjectURL(u)); }, []);
   useEffect(() => {
-    omni.get('/gs/marketing/stock/meta').then((m) => setCan((c) => ({ ...c, stock: !!m.ready }))).catch(() => {});
+    omni.get('/gs/marketing/stock/meta').then((m) => setCan((c) => ({ ...c, stock: !!m.ready, stockChecked: true }))).catch(() => {});
     omni.get('/gs/marketing/meta').then((m) => setCan((c) => ({ ...c, ai: !!(m.ai && m.ai.image && m.ai.image.ready && !m.ai.image.demo), aiFree: !!(m.ai && m.ai.image && m.ai.image.ready && m.ai.image.provider === 'cloudflare') }))).catch(() => {});
     const useBrand = () => Promise.all([omni.get('/gs/marketing/brand'), omni.get('/gs/marketing/brand/logo').catch(() => ({ logo: null }))]).then(([b, l]) => ({ colors: b.brand.colors, brandName: b.brand.brandName, footer: [b.brand.website, b.brand.contact].filter(Boolean).join('  ·  '), logoUrl: l.logo ? l.logo.dataUrl : '' }));
     const go = projectId
@@ -143,7 +143,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
             if (AI_REFUSED.test(errOf(e, e.message || ''))) { useAi = false; setNote('The AI picture service said no (it is not set up, or it needs billing). The pictures are designed here instead: free, with your words, logo and colours.'); } else throw e;
           }
         }
-        if (!id && isVideo && r.plan.explain && footage && can.stock) { // real moving footage from the free stock source, kept in this browser only
+        if (!id && isVideo && footage && can.stock) { // real moving footage from the free stock source, kept in this browser only: for EVERY video now, not only the explainers (owner, 24 Nov: "it keeps pictures as the video, it should be real clips"); a scene whose clip cannot be found stays a designed picture
           try { const cb = await omni.blob('/gs/marketing/stock/clipfile', { q: r.plan.scenes[i].search || r.plan.scenes[i].caption, shape: shapeOf(aspect), n: i }); const cu = URL.createObjectURL(cb); urls.current.push(cu); id = { stock: true, url: cu }; } catch { id = null; } // eslint-disable-line no-await-in-loop
         }
         if (!id && !isVideo && banners) {
@@ -167,7 +167,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   };
 
   const text = plan ? `${plan.caption}${plan.hashtags.length ? `\n\n${plan.hashtags.join(' ')}` : ''}` : '';
-  const ownWords = prompt.trim().length >= 8 || (title.trim() + heading.trim() + content.trim()).length >= 8;
+  const ownWords = prompt.trim().length >= 8; // the idea is REQUIRED (owner, 24 Nov 2026): a title, heading or content alone no longer starts it: ✨ AI Assist writes the idea from them
   const fromBrief = !ownWords && !!(brief && brief.text.trim().length >= 10); // nothing typed, a client brief exists: TeamLink writes the video from the brief
   const mine = ownWords || fromBrief;
 
@@ -207,16 +207,19 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
               <div style={{ marginTop: 4, color: 'var(--muted)' }}>Leave the idea below empty and press <b>Create</b>: TeamLink reads this brief and writes the {isVideo ? 'video' : 'post'} for the client's own customers, with useful points, real photos and a call to action, free. Type your own words only if you want to change it.</div>
             </div>
           ) : null}
-          <Field label="YOUR IDEA OR CONCEPT" full hint="For example: A Diwali offer video for our software clients, 20% off all this week, friendly and festive. You can leave this empty if you fill in the title, heading and content below.">
-            <textarea rows={3} maxLength={800} value={prompt} disabled={working} onChange={(e) => setPrompt(e.target.value)} placeholder={isVideo ? 'We are hiring freshers: staffing consultancy, join us, apply today' : 'A Republic Day greeting post for our clients, proud and simple'} style={{ width: '100%' }} />
-            <IdeaAssist kind={kind} title={title} heading={heading} content={content} idea={prompt} projectId={projectId} clientName={auto.cfg.on ? auto.cfg.clientName : ''} disabled={working} onIdea={setPrompt} />
-          </Field>
           <div className="form-grid" style={{ marginTop: 6 }}>
             <Field label="TITLE (OPTIONAL)"><input value={title} maxLength={80} disabled={working} onChange={(e) => setTitle(e.target.value)} placeholder="Names it in your list" /></Field>
             <Field label="HEADING (OPTIONAL)"><input value={heading} maxLength={80} disabled={working} onChange={(e) => setHeading(e.target.value)} placeholder="The big line on the first picture" /></Field>
-            <Field label="CONTENT (OPTIONAL)" full hint="Your own words, one line for each picture. They are used exactly as you write them.">
+            <Field label="CONTENT (OPTIONAL)" full hint="Your own words, one line for each picture. They are used exactly as you write them. Then press AI Assist under the idea box: it writes the idea from them.">
               <textarea rows={3} maxLength={1200} value={content} disabled={working} onChange={(e) => setContent(e.target.value)} placeholder={'Freshers welcome\nStaffing consultancy you can trust\nSend your CV today'} style={{ width: '100%' }} />
             </Field>
+          </div>
+          {/* 2026-11-24 (owner): the content box is above, the idea box below and REQUIRED; ✨ AI Assist writes the idea (topic and points, several lines) from the title and content */}
+          <Field label="YOUR IDEA OR CONCEPT (REQUIRED)" full hint="The topic and the main points of the video or post: the more clearly you write them, the better it is made. Write your own, or press AI Assist: it writes them from your title and content above. Then read it and change anything.">
+            <textarea rows={7} maxLength={800} value={prompt} disabled={working} onChange={(e) => setPrompt(e.target.value)} placeholder={isVideo ? 'Topic: We are hiring freshers for our staffing consultancy\nPoints:\n- Freshers welcome\n- A staffing consultancy you can trust\n- Send your CV today' : 'Topic: A Republic Day greeting post for our clients\nPoints:\n- Proud and simple\n- Warm wishes from our team'} style={{ width: '100%' }} />
+            <IdeaAssist kind={kind} title={title} heading={heading} content={content} idea={prompt} projectId={projectId} clientName={auto.cfg.on ? auto.cfg.clientName : ''} disabled={working} onIdea={setPrompt} />
+          </Field>
+          <div className="form-grid" style={{ marginTop: 6 }}>
             <Field label="CALL TO ACTION (OPTIONAL)"><input value={cta} maxLength={30} disabled={working} onChange={(e) => setCta(e.target.value)} placeholder="Apply now" /></Field>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 6 }}>
@@ -242,7 +245,8 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
               {can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>Pictures: <select value={look} disabled={working} onChange={(e) => setLook(e.target.value)}><option value="designed">Designed by TeamLink (free)</option><option value="ai">{can.aiFree ? 'Made by the AI picture service (free daily allowance)' : 'Made by the AI picture service (may need billing; designed instead if it says no)'}</option></select></label> : <span style={{ color: 'var(--muted)' }}>Pictures are designed by TeamLink (free). A real AI-made picture needs the free Cloudflare picture service: an Admin adds it in Administration &gt; Integrations.</span>}
             </div>
           ) : null}
-          {!mine && !working ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>{projectId ? 'This client project has no brief yet. ' : ''}Write your idea in a sentence, or fill in the title, heading and content.</div> : null}
+          {isVideo && can.stockChecked && !can.stock && !working ? <div style={{ fontSize: 11.5, color: '#92400e', marginTop: 6, lineHeight: 1.5 }}>Real video clips are off: the free stock-footage key is not set, so the video is made from designed pictures. An Admin adds the free Pixabay or Pexels key in Administration &gt; Integrations, and then every video uses real clips.</div> : null}
+          {!mine && !working ?<div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>{projectId ? 'This client project has no brief yet. ' : ''}The idea box is required: write the topic and the points, or write a title or content above and press ✨ AI Assist.</div> : null}
           {projectId ? <div style={{ fontSize: 11, color: '#1d4fa8', marginTop: 6 }}>Made for the client project: their logo and colours are used.</div> : null}
           {note ? <div style={{ fontSize: 11.5, color: '#92400e', marginTop: 8, lineHeight: 1.5 }}>{note}</div> : null}
 

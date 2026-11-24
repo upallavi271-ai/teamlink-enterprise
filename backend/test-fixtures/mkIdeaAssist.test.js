@@ -27,7 +27,7 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
   await setLimits({ aiDailyPerUser: 200, aiMonthlyCap: 0 });
 
   // 1. it needs a topic: a title, or a few words in the box
-  let r = await ideaAssist(admin, { kind: 'video' }); assert.equal(r.status, 400); assert.ok(/title first/i.test(r.error), r.error);
+  let r = await ideaAssist(admin, { kind: 'video' }); assert.equal(r.status, 400); assert.ok(/title or some content first/i.test(r.error), r.error);
   r = await ideaAssist(admin, { kind: 'post', title: ' ', idea: 'ab' }); assert.equal(r.status, 400);
   console.log('PASS it asks for a title (or a few words) first');
 
@@ -47,18 +47,36 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
   await Cfg.saveBrand({ ...(await Cfg.getBrand()), brandName: 'TeamLink Digital', tone: 'Friendly', avoidWords: ['cheap'], language: 'English' }, admin);
   r = await ideaAssist(admin, { kind: 'video', title: 'Hiring freshers', heading: 'We are hiring', content: 'Freshers welcome', clientName: 'Rao Hospital' });
   assert.ok(r.idea && !r.demo && r.provider === 'stub', JSON.stringify(r));
-  assert.equal(r.idea, 'A friendly hiring post for freshers. Staffing consultancy, join us, apply today.', 'markdown, quotes and line breaks are removed');
+  assert.equal(r.idea, 'A friendly hiring post for freshers.\nStaffing consultancy, join us, apply today.', 'markdown and surrounding quotes are removed, the line break stays');
   const q = seen[0];
-  for (const t of ['Title: Hiring freshers', 'Heading: We are hiring', 'Content the person wrote: Freshers welcome', 'It is for: Rao Hospital', 'They want: a short video']) assert.ok(q.prompt.includes(t), `the prompt lacks "${t}": ${q.prompt}`);
+  for (const t of ['Title: Hiring freshers', 'Heading: We are hiring', 'Content the person wrote:\nFreshers welcome', 'It is for: Rao Hospital', 'They want: a short video']) assert.ok(q.prompt.includes(t), `the prompt lacks "${t}": ${q.prompt}`);
+  for (const t of ['Topic:', 'Points:', 'Mood:', 'Call to action:', 'BASE the topic and the points on that content', '5 to 8 short lines']) assert.ok(q.system.includes(t), `the instructions lack "${t}": ${q.system}`);
   assert.ok(q.system.includes('a short video') && q.system.includes('Never use these words: cheap') && /NEVER invent prices/.test(q.system), q.system);
   assert.ok(!q.prompt.includes('already wrote'), 'nothing was typed in the box, so no earlier text is sent');
   assert.equal(q.lim.timeoutMs, 40000, 'the AI gets 40 seconds, under the web server limit');
   r = await ideaAssist(admin, { kind: 'post', title: 'Republic Day' }); assert.ok(seen[1].prompt.includes('They want: a picture post') && seen[1].system.includes('a picture post'), seen[1].prompt);
   console.log('PASS model path: video and picture post, the prompt carries the title, heading, content and client; markdown and quotes are removed; the 40 second limit is set');
 
+  // 4b. SEVERAL lines (owner, 24 Nov): the topic and the points, built from the CONTENT the person wrote; bullets of any kind become "- ", markdown and stray quotes go, line breaks stay
+  const longContent = `${'Scene 1: Is your skin troubling you? Acne, pigmentation or hair fall. '.repeat(10)}\nScene 2: A dermatologist explains the cause.\nLAST-LINE-OF-CONTENT-MARKER`;
+  answer = { idea: '**Topic:** A skin care explainer video for people troubled by acne.\n**Points:**\n• Acne has simple causes\n* Pigmentation can be treated\n1. See a dermatologist early\nMood: calm and caring\n\n\nCall to action: Book a visit' };
+  const sk = { id: 'u-multi', name: 'Multi Tester', role: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN' };
+  r = await ideaAssist(sk, { kind: 'video', title: 'Skin care', content: longContent });
+  assert.equal(r.idea, 'Topic: A skin care explainer video for people troubled by acne.\nPoints:\n- Acne has simple causes\n- Pigmentation can be treated\n- See a dermatologist early\nMood: calm and caring\nCall to action: Book a visit', r.idea);
+  assert.ok(r.idea.split('\n').length >= 6, 'several lines, not one');
+  assert.ok(seen[seen.length - 1].prompt.includes('LAST-LINE-OF-CONTENT-MARKER') && seen[seen.length - 1].prompt.includes('Scene 2: A dermatologist explains the cause.\nLAST-LINE'), 'the whole content (up to 1200 characters, line by line) is sent, not just its first 300');
+  answer = { idea: ['Topic: A short video about walk-in interviews.', 'Points:', '- Bring your CV', '- Come to our office'] }; r = await ideaAssist(sk, { kind: 'video', title: 'Walk-in' });
+  assert.equal(r.idea, 'Topic: A short video about walk-in interviews.\nPoints:\n- Bring your CV\n- Come to our office', 'a list of lines is accepted');
+  answer = { idea: { topic: 'A post about resume tips for job seekers', points: ['Keep it to one page', 'Use clear headings'], mood: 'helpful and simple', cta: 'Send your CV today' } }; r = await ideaAssist(sk, { kind: 'post', title: 'Resume tips' });
+  assert.equal(r.idea, 'Topic: A post about resume tips for job seekers\nPoints:\n- Keep it to one page\n- Use clear headings\nMood: helpful and simple\nCall to action: Send your CV today', 'an answer given as topic / points / mood / cta is laid out the same way');
+  answer = { idea: `Topic: ${'A long topic sentence. '.repeat(8)}\nPoints:\n${Array.from({ length: 12 }, (_, i) => `- Point number ${i + 1} ${'with some detail '.repeat(3)}`).join('\n')}\nMood: calm` };
+  r = await ideaAssist(sk, { kind: 'video', title: 'Long answer' });
+  assert.ok(r.idea.length <= 780 && r.idea.startsWith('Topic:') && !r.idea.endsWith('Mood: calm') && /\n- Point number \d+ with some detail with some detail with some detail$/.test(r.idea), `too long answers are cut at a whole line: ${r.idea.length} ${JSON.stringify(r.idea.slice(-60))}`);
+  console.log('PASS several lines: topic, points, mood and call to action, built from the whole content; bullets are normalised, a list or object answer is laid out the same, a too-long answer is cut at a whole line');
+
   // 5. what is already in the box is kept and improved (a title is not needed then)
   r = await ideaAssist(admin, { kind: 'video', idea: 'Walk-in drive on Saturday for nurses' });
-  assert.ok(r.idea && seen[2].prompt.includes('already wrote this in the idea box (keep its facts, improve and complete it):\nWalk-in drive on Saturday for nurses'), seen[2].prompt);
+  assert.ok(r.idea && seen[seen.length - 1].prompt.includes('already wrote this in the idea box (keep its facts, improve and complete it in the layout above):\nWalk-in drive on Saturday for nurses'), seen[2].prompt);
   console.log('PASS the words already in the box are sent to be kept and improved');
 
   // 6. a client project: its client and brief are used, and the client is who it is for; no title needed
@@ -66,7 +84,7 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
   assert.ok(made.project, JSON.stringify(made));
   r = await ideaAssist(admin, { kind: 'post', projectId: made.project.id });
   assert.ok(r.idea, JSON.stringify(r));
-  const pq = seen[3];
+  const pq = seen[seen.length - 1];
   for (const t of ['Client project: Sunrise Dental, Free check-up camp', "The client's brief: A free dental check-up camp on Sunday", 'It is for: Sunrise Dental']) assert.ok(pq.prompt.includes(t), `the prompt lacks "${t}": ${pq.prompt}`);
   assert.ok(!/About the company/.test(pq.system), 'the client, not our company, is the brand');
   r = await ideaAssist(admin, { kind: 'post', projectId: 'prj-does-not-exist' }); assert.equal(r.status, 400, 'an unknown project is just "no topic"');

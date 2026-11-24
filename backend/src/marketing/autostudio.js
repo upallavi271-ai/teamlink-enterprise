@@ -12,6 +12,7 @@ const A = require('../outreach/access');
 const AI = require('./ai');
 const Cfg = require('./settings');
 const BC = require('./briefContent');
+const SP = require('./scriptParse'); // a pasted script is read scene by scene; no quotation marks on the pictures or in the voice-over
 
 const mayWrite = (u) => A.has('mayAiMarketing')(u);
 const LANGS = ['English', 'Telugu', 'Hindi'];
@@ -98,7 +99,8 @@ function applyMine(p, mine, n) {
   if (mine.title) out.title = mine.title;
   if (mine.heading) out.headline = mine.heading;
   if (mine.cta) out.cta = mine.cta;
-  partsOf(mine.content, n).forEach((t, i) => { if (out.scenes[i]) { out.scenes[i].caption = t; out.scenes[i].say = ''; } }); // the person's own words are said as they wrote them (the spoken line is made from them again)
+  const script = SP.parseScript(mine.content); // a pasted script (Scene 1 / Visual: / Voiceover:) is read scene by scene: the voice-over is said, the visual finds the footage, no labels or quotation marks are shown
+  if (script) { out.scenes = script; delete out.explain; } else partsOf(mine.content, n).forEach((t, i) => { if (out.scenes[i]) { out.scenes[i].caption = SP.plain(t); out.scenes[i].say = ''; } }); // the person's own words are said as they wrote them (the spoken line is made from them again)
   return out;
 }
 
@@ -140,7 +142,7 @@ async function plan(u, b = {}) {
     r = { result: fromBrief ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n }) : (project && String(project.brief || '').trim().length >= 10 ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n, focus: idea.length >= 8 ? idea : prompt }) : plainPlan(prompt, who, kind, n, day)), provider: 'standard', demo: false };
     note = fromBrief ? "TeamLink wrote the video from the client's brief with its own free writer. Change any words below if you like." : 'The AI writer is busy right now, so TeamLink made the post from your own words. Change the post words below if you like.';
   }
-  const p = applyMine(clean(r.result, { n, who, prompt, kind, day }), mine, n);
+  const p = SP.tidyScenes(applyMine(clean(r.result, { n, who, prompt, kind, day }), mine, n));
   // the spoken line of every scene (the voice-over of a video is a person explaining): the writer's own, else made from the scene words (English words only get the English lines)
   if (kind === 'video' && p.scenes.some((s) => !s.say)) { const said = BC.sayFor(p.scenes, { who, cta: p.cta, health: !!project && BC.profileOf(`${who} ${project.occasion} ${project.brief}`).id !== 'general' }); p.scenes.forEach((s, i) => { if (!s.say) s.say = said[i]; }); }
   const text = `${p.title} ${p.headline} ${p.tagline} ${p.caption} ${p.scenes.map((s) => s.caption).join(' ')}`;
