@@ -109,16 +109,41 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   };
 
   // a PROFESSIONAL BANNER for one picture of a post (the server designs it: marketing/banner.js showcase layout; the hero picture is a free stock photo, or the AI picture when one was made)
+  // the short points of the post words (one tip a line: "Brush twice a day"), without emoji, bullets, hashtags or phone numbers; at most 6, each cut at a word
+  const tipsOf = (p) => {
+    const key = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/ +/g, ' ').trim();
+    const skip = new Set([key(p.headline), key(p.tagline)]);
+    const out = [];
+    String(p.caption || '').split(/\n+/).forEach((raw) => {
+      let t = raw.replace(/\p{Extended_Pictographic}|️|‍/gu, ' ').replace(/^[\s\-•*·\d.)]+/, '').replace(/#\S+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!t || /\d{6,}/.test(t) || /^(contact|call|book|follow)\b/i.test(t)) return;
+      const clause = t.split(/[:;]|[.!?]\s/)[0].trim();
+      t = clause.length >= 6 ? clause : t;
+      if (t.length > 40) { const cut = t.slice(0, 40); t = cut.slice(0, Math.max(cut.lastIndexOf(' '), 20)); }
+      t = t.replace(/[\s,.!?-]+$/, '');
+      if (t.length >= 4 && !skip.has(key(t)) && !out.some((x) => key(x) === key(t))) out.push(t);
+    });
+    return out.slice(0, 6);
+  };
+  // the line under the headline: the first sentence of the post words that is not the headline itself ("Your smile deserves a little care every day")
+  const subOf = (p) => {
+    const first = String(p.caption || '').split(/\n+/)[0].replace(/\p{Extended_Pictographic}|️|‍/gu, ' ').replace(/#\S+/g, ' ').replace(/\s+/g, ' ').trim();
+    const head = String(p.headline || '').replace(/\s+/g, ' ').trim();
+    let rest = first.toLowerCase().startsWith(head.toLowerCase()) ? first.slice(head.length) : first;
+    rest = rest.replace(/^[\s.!?:,;-]+/, '').trim();
+    const one = rest.split(/(?<=[.!?])\s/)[0] || '';
+    return one.length >= 12 && one.length <= 100 ? one : '';
+  };
   const makeBanner = async (p, i, total, heroId) => {
     const sc = p.scenes[i];
-    const words = String((i === 0 ? p.headline : sc.caption) || p.headline || '').split(/\s+/).filter(Boolean);
+    const words = String((i === 0 ? p.headline : sc.caption) || p.headline || '').replace(/\p{Extended_Pictographic}|\uFE0F|\u200D/gu, ' ').split(/\s+/).filter(Boolean);
     const cut = words.length >= 3 ? Math.ceil(words.length / 2) : words.length;
     const site = String(kit.footer || '').split('·')[0].trim();
     const body = {
       size: ['1:1', '4:5', '9:16', '16:9'].includes(aspect) ? aspect : '1:1', layout: 'showcase', title: String(p.title + ' · ' + (i + 1)).slice(0, 80),
-      companyName: kit.brandName || undefined, headline: words.slice(0, cut).join(' '), headline2: words.slice(cut).join(' '), sub: i === 0 ? (p.tagline || '') : '',
-      services: i === 0 ? p.scenes.map((x) => x.caption).filter((x) => x && x !== p.headline).slice(0, 6) : [], servicesTitle: i === 0 ? 'What we cover' : '',
-      audienceTitle: p.audience ? 'Who it is for:' : '', audience: p.audience || '', chip: site && !/\s/.test(site) ? site : '',
+      companyName: kit.brandName || undefined, headline: words.slice(0, cut).join(' '), headline2: words.slice(cut).join(' '), sub: i === 0 ? subOf(p) : '',
+      services: i === 0 ? (tipsOf(p).length >= 2 ? tipsOf(p) : []) : [], servicesTitle: i === 0 && tipsOf(p).length >= 2 ? 'Simple tips' : '',
+      audienceTitle: p.audience ? 'Who it is for:' : '', audience: p.audience || '', chip: site && !/\s/.test(site) ? (/\.[a-z]{2,}(\/.*)?$/i.test(site) ? site : '@' + site.replace(/^@/, '')) : '',
       ...(heroId ? { photoItemId: heroId } : { heroSearch: sc.search || sc.caption, heroN: i }), ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}),
     };
     const r = await omni.post('/gs/marketing/banners', body);

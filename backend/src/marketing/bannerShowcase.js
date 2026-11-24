@@ -35,7 +35,7 @@ const ICONS = {
   chat: '<path d="M4 5h16a1 1 0 011 1v10a1 1 0 01-1 1H9l-5 4V6a1 1 0 011-1z"/><path d="M8 10h8M8 13h5"/>',
 };
 // which icon for a service name (the words the team types)
-const RULES = [[/pigment|dark spot|wrinkle|ageing|aging|sunscreen|sun /i, 'sun'], [/eczema|allerg|itch|fung|infect/i, 'shield'], [/skin|acne|pimple|rash|derm/i, 'drop'], [/hair|dandruff|scalp/i, 'leaf'], [/doctor|clinic|hospital|medical|dental|teeth|patient|consult/i, 'cross'], [/heart|cardio/i, 'heart'], [/social|facebook|instagram|share/i, 'social'], [/seo|search/i, 'search'], [/aeo|answer|question/i, 'question'], [/geo|generative|\bai\b|artificial|chatbot|automation/i, 'chip'], [/google|business profile|map|local/i, 'pin'],
+const RULES = [[/brush|floss|clean|hygiene|wash|rinse/i, 'drop'], [/dentist|doctor|visit|check.?up|consult|screening/i, 'cross'], [/sugar|food|diet|eat|water|drink|fruit|vegetable/i, 'leaf'], [/sleep|rest|exercise|walk|yoga|stress/i, 'heart'], [/pigment|dark spot|wrinkle|ageing|aging|sunscreen|sun /i, 'sun'], [/eczema|allerg|itch|fung|infect/i, 'shield'], [/skin|acne|pimple|rash|derm/i, 'drop'], [/hair|dandruff|scalp/i, 'leaf'], [/doctor|clinic|hospital|medical|dental|teeth|patient|consult/i, 'cross'], [/heart|cardio/i, 'heart'], [/social|facebook|instagram|share/i, 'social'], [/seo|search/i, 'search'], [/aeo|answer|question/i, 'question'], [/geo|generative|\bai\b|artificial|chatbot|automation/i, 'chip'], [/google|business profile|map|local/i, 'pin'],
   [/linkedin/i, 'linkedin'], [/content|video|reel|creative|design/i, 'play'], [/email|mail|newsletter/i, 'mail'], [/whatsapp|sms|message|chat/i, 'chat'], [/lead|ads?\b|campaign|promotion/i, 'mega'],
   [/analytics|report|growth|performance/i, 'chart'], [/target|audience/i, 'target'], [/web|site|domain/i, 'globe'], [/hire|recruit|job|staff|talent/i, 'users'], [/call|phone/i, 'phone'], [/brand|trust|secure/i, 'shield']];
 const iconFor = (t, i) => { const r = RULES.find(([re]) => re.test(t)); return r ? r[1] : ['star', 'bolt', 'check', 'briefcase'][i % 4]; };
@@ -106,8 +106,8 @@ async function makeShowcase(spec, H) {
   const usedBelow = svcH + planH + audH + gap * ([svcH, planH, audH].filter(Boolean).length + 1);
   const topY = bandH + Math.round(10 * u);
   // the head area (headline + hero): wide = its own height, tall = what is left
-  const headH = wide ? Math.min(h - topY - usedBelow, Math.round(400 * u)) : Math.max(Math.round(380 * u), h - topY - usedBelow);
-  const textW = wide ? Math.round(w * 0.56) : w - 2 * m;
+  const headH = wide ? (svcRows || plans.length ? Math.min(h - topY - usedBelow, Math.round(400 * u)) : h - topY - usedBelow) : Math.max(Math.round(380 * u), h - topY - usedBelow);
+  const textW = wide ? Math.round(w * 0.52) : w - 2 * m;
 
   // ---- headline (white + accent) and sub-line ----
   const headline = String(spec.headline || '').trim() || 'Your headline';
