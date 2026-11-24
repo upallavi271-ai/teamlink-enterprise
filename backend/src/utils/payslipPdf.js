@@ -90,6 +90,12 @@ function renderPayslip(p, out) {
 
   const top = y;
 
+  // Calculated but not approved yet (2026-11-24): said at the very top, above the frame, so nobody takes the figures for final.
+  if (p.provisional) {
+    doc.font(F.bold).fontSize(9).fillColor('#b45309')
+      .text('PROVISIONAL PAYSLIP - calculated, not yet approved. The figures can still change until payroll is approved.', X, 23, { width: W, align: 'center', lineBreak: false, ellipsis: true });
+  }
+
   // --- Header: logo | Company + address ------------------------------------
   const logoW = 0.326 * W;
   const rightX = X + logoW;
@@ -220,7 +226,9 @@ function renderPayslip(p, out) {
   }
   // Footer
   doc.font(F.regular).fontSize(10.5).fillColor(BLUE)
-    .text('This is a computer generated payslip, needs no signature', X, y + 14, { width: W, align: 'center' });
+    .text(p.provisional
+      ? 'Provisional: this becomes your payslip once payroll is approved. Check with HR if anything looks wrong.'
+      : 'This is a computer generated payslip, needs no signature', X, y + 14, { width: W, align: 'center' });
 
   doc.end();
   return doc;

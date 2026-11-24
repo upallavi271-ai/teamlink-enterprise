@@ -32,11 +32,12 @@ export default function PayslipPhoneList({ payslips, monthHeading, inr, totalDed
       {shown.map((p) => (
         <div className="psphone-card" key={p.id}>
           <div className="psphone-top">
-            <b>{monthHeading(p.month)}</b>
+            <b>{monthHeading(p.month)}{p.provisional && <> <span className="ps-prov" data-testid="payslip-provisional">Provisional</span></>}</b>
             <span className="psphone-net">{inr(p.netPay)}</span>
           </div>
           <div className="psphone-sub">
             Net pay · Gross {inr(p.gross)} · Deductions {inr(totalDed(p))}{p.lopDays ? ` · ${p.lopDays} LOP day${Number(p.lopDays) === 1 ? '' : 's'}` : ''}
+            {p.provisional && <><br />Calculated, not yet approved. The figures can still change.</>}
           </div>
           <div className="psphone-btns">
             <button type="button" className="btn btn-primary" disabled={busy === p.id} onClick={() => download(p)}>

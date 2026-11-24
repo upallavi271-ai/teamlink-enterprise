@@ -46,7 +46,7 @@ export async function downloadPayslipPdf(slip) {
   const url = URL.createObjectURL(res.data);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `Payslip-${(slip.employee?.employeeCode || slip.employee?.name || 'employee').replace(/[^A-Za-z0-9_-]+/g, '-')}-${slip.month}.pdf`;
+  a.download = `Payslip-${(slip.employee?.employeeCode || slip.employee?.name || 'employee').replace(/[^A-Za-z0-9_-]+/g, '-')}-${slip.month}${slip.provisional ? '-provisional' : ''}.pdf`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -204,7 +204,8 @@ export default function PayslipView({ payslipId, onClose }) {
     if (!node) return;
     const w = window.open('', '_blank', 'width=900,height=1000');
     if (!w) { setError('Allow pop-ups for this site to print.'); return; }
-    const html = node.innerHTML.replace(/src="([^"]+)"/g, (m, src) => `src="${new URL(src, window.location.href).href}"`);
+    const note = slip.provisional ? '<p style="font:bold 13px Arial,sans-serif;color:#8a5a00;margin:0 0 8px">PROVISIONAL PAYSLIP - calculated, not yet approved. The figures can still change until payroll is approved.</p>' : '';
+    const html = note + node.innerHTML.replace(/src="([^"]+)"/g, (m, src) => `src="${new URL(src, window.location.href).href}"`);
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${slip.periodTitle || 'Payslip'} — ${slip.employee.name}</title>
 <style>@page{size:A4 portrait;margin:12mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}</style>
 </head><body>${html}<script>window.onload=function(){window.focus();window.print();}</script></body></html>`);
@@ -226,6 +227,11 @@ export default function PayslipView({ payslipId, onClose }) {
     >
       {error && <div className="error-text">{error}</div>}
       {!slip && !error && <div className="small-muted">Loading payslip…</div>}
+      {slip && slip.provisional && (
+        <div className="ps-prov-note" data-testid="payslip-provisional-note">
+          <b>Provisional.</b> This month is calculated but not approved yet, so the figures can still change. It becomes your payslip once payroll is approved.
+        </div>
+      )}
       {slip && slip.editInfo && (
         <div className="small-muted" style={{ marginBottom: 8 }} data-testid="payslip-edit-info">
           <span style={{ background: '#fff4d6', color: '#8a5a00', borderRadius: 8, padding: '1px 8px', fontWeight: 700, fontSize: 11 }}>Edited</span>{' '}

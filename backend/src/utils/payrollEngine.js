@@ -583,8 +583,10 @@ async function incentivesFor(employeeIds, month) {
 }
 
 // ---- Payslip, generated from the run (the existing payslip layout reads it) --
-async function writePayslip(entry) {
-  const fields = {
+// The payslip's figures for one payroll record. ONE place: the issued payslip (writePayslip, at approval) and the provisional one an
+// employee sees right after Calculate (utils/payslipProvisional.js, never stored) are both made from it, so they cannot disagree.
+function slipFieldsOf(entry) {
+  return {
     basic: entry.basic, hra: entry.hra, allowances: entry.bonus + entry.specialAllowance + (entry.conveyance || 0) + (entry.arrears || 0),
     incentive: entry.incentive || 0, // its own line on the payslip (in gross)
     // Payroll import (2026-10-06): Conveyance / Arrears lines and the sheet breakup.
@@ -598,8 +600,12 @@ async function writePayslip(entry) {
     gross: entry.grossPay, lateCut: 0, lateDays: 0, payMode: entry.payMode,
     workingDays: entry.workingDays, lopDeduction: entry.lopDeduction,
     esiEmployee: entry.esiEmployee, esiEmployer: entry.esiEmployer, tds: entry.tds, otherDeductions: entry.otherDeductions,
-    payrollEntryId: entry.id, generatedAt: new Date(),
+    payrollEntryId: entry.id,
   };
+}
+
+async function writePayslip(entry) {
+  const fields = { ...slipFieldsOf(entry), generatedAt: new Date() };
   const slip = await prisma.payslip.upsert({
     where: { employeeId_month: { employeeId: entry.employeeId, month: entry.month } },
     update: fields,
@@ -701,5 +707,5 @@ module.exports = {
   getPolicy, isMonth, monthParts, payrollWorkingDays, overlapProblem, readSnapshot,
   leaversIn, awlContext, // read-only helpers reused by utils/payrollLopBreakdown.js (the LOP dates screen)
   attendanceDefaults, attendanceInputs, computeEntry, computeRegisterEntry, registerFor, calculateMonth, engineRowFor, refreshMonthRun,
-  writePayslip, transition, historyOf, incentivesFor,
+  writePayslip, slipFieldsOf, transition, historyOf, incentivesFor,
 };

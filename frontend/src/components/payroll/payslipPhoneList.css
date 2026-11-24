@@ -26,3 +26,6 @@
 .pssheet-more{margin-top:10px}
 .pssheet-more summary{cursor:pointer;font-weight:600;min-height:40px;display:flex;align-items:center}
 .pssheet-foot{text-align:center;color:var(--ink-soft);font-size:12px;margin-top:14px}
+/* a month that is calculated but not approved yet (2026-11-24) */
+.ps-prov{display:inline-block;background:#fff4d6;color:#8a5a00;border-radius:8px;padding:1px 8px;font-weight:700;font-size:11px;line-height:1.5;white-space:nowrap;vertical-align:middle}
+.ps-prov-note{background:#fff4d6;color:#7a4e00;border-radius:8px;padding:8px 10px;font-size:12.5px;line-height:1.45;margin-bottom:10px}

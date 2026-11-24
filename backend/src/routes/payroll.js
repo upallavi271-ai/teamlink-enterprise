@@ -35,6 +35,7 @@ const PE = require('../utils/payrollEngine');
 const PEdit = require('../utils/payrollEdit'); // payroll edit and recalculate (2026-10-13)
 const PC = require('../utils/payrollCycle'); // payroll cycle (16th to 15th) - the dates behind a payroll month
 const ANL = require('../utils/absentNoLeave');
+const PROV = require('../utils/payslipProvisional'); // a person's own calculated-not-yet-approved month, marked provisional (2026-11-24)
 
 const router = express.Router();
 router.use(requireAuth);
@@ -87,11 +88,16 @@ router.get('/', async (req, res) => {
   // A payslip is the most personal HRMS record there is: your own, or — for
   // the payroll desk and the view-only oversight roles — the ones inside
   // your scope (payslipReach above).
-  const where = { ...reachWhere(await payslipReach(req)) };
+  const reach = await payslipReach(req);
+  const where = { ...reachWhere(reach) };
   if (req.query.employeeId) where.employeeId = req.query.employeeId;
   if (req.query.month) where.month = req.query.month;
   const payslips = await prisma.payslip.findMany({ where, include: { employee: true }, orderBy: { month: 'desc' } });
-  res.json(payslips);
+  // Calculated but not approved yet: the person's OWN month shows straight away, marked `provisional` (utils/payslipProvisional.js).
+  // Never other people's: the register of everybody's payslips stays the approved ones.
+  const own = reach.ownId && (!req.query.employeeId || req.query.employeeId === reach.ownId)
+    ? await PROV.ownFor(reach.ownId, { month: req.query.month || null }) : [];
+  res.json(own.length ? PROV.newestFirst([...own, ...payslips]) : payslips);
 });
 
 // ---- Salary structures ----
@@ -573,7 +579,8 @@ async function payslipPayload(slip) {
   // its own earning line, already inside the run's gross.
   const incentive = Math.max(0, Number(slip.incentive) || 0);
   // Payroll edit (2026-10-13): added earning / deduction rows keep their own names on the payslip.
-  const editLines = slip.payrollEntryId ? await PEdit.payslipLines(slip.id) : null;
+  // (a provisional payslip carries its rows with it: nothing is stored for it)
+  const editLines = slip._lines !== undefined ? slip._lines : (slip.payrollEntryId ? await PEdit.payslipLines(slip.id) : null);
   const earnings = [
     ...(isStipend
       ? [{ label: 'Stipend', amount: gross - incentive }]
@@ -616,6 +623,8 @@ async function payslipPayload(slip) {
     periodLine: `Pay period ${cyc.fullRangeText}`,
     payMode: slip.payMode || 'Package',
     generatedAt: slip.generatedAt,
+    // true while the month is calculated but not approved: the screen and the PDF say so, the figures can still change
+    provisional: !!slip.provisional,
     company: {
       name: (company && (company.legalName || company.name)) || 'TeamLink Consultants',
       address: companyAddress(company),
@@ -654,7 +663,14 @@ async function payslipPayload(slip) {
 }
 
 async function slipForReader(req, res) {
-  const slip = await prisma.payslip.findUnique({ where: { id: req.params.id }, include: { employee: true } });
+  let slip;
+  if (PROV.isProvisionalId(req.params.id)) {
+    // a calculated month ("draft-<record id>"); approved since the list was opened -> the issued payslip of that month
+    const found = await PROV.byId(req.params.id);
+    slip = found ? (found.slip || found.issued) : null;
+  } else {
+    slip = await prisma.payslip.findUnique({ where: { id: req.params.id }, include: { employee: true } });
+  }
   if (!slip) { res.status(404).json({ error: 'Payslip not found' }); return null; }
   const reach = await payslipReach(req);
   if (!reachAllows(reach, slip.employee)) {
@@ -697,9 +713,9 @@ router.get('/payslips/:id/pdf', async (req, res) => {
   const payload = await payslipPayload(slip);
   const safe = (s) => String(s || '').replace(/[^A-Za-z0-9_-]+/g, '-');
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="Payslip-${safe(payload.employee.employeeCode || payload.employee.name)}-${payload.month}.pdf"`);
+  res.setHeader('Content-Disposition', `attachment; filename="Payslip-${safe(payload.employee.employeeCode || payload.employee.name)}-${payload.month}${payload.provisional ? '-provisional' : ''}.pdf"`);
   res.setHeader('Cache-Control', 'no-store');
-  await logAudit({ userId: req.user.id, action: 'Payslip downloaded', entity: 'Payslip', entityId: slip.id, toValue: payload.month });
+  await logAudit({ userId: req.user.id, action: 'Payslip downloaded', entity: 'Payslip', entityId: slip.id, toValue: payload.provisional ? `${payload.month} (provisional)` : payload.month });
   renderPayslip(payload, res);
   return undefined;
 });

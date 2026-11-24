@@ -907,7 +907,7 @@ function PayslipsTab({ seesOthers }) {
           inr={inr}
           totalDed={totalDed}
           onView={setViewing}
-          onDownload={(p) => downloadPayslipPdf({ id: p.id, month: p.month, employee: p.employee })}
+          onDownload={(p) => downloadPayslipPdf({ id: p.id, month: p.month, employee: p.employee, provisional: p.provisional })}
         />
       ) : filtered.length === 0 ? <ListEmpty lf={lf} noun="payslips" /> : (
         <div className="tbl-wrap">
@@ -916,7 +916,7 @@ function PayslipsTab({ seesOthers }) {
             <tbody>
               {page.slice.map((p) => (
                 <tr key={p.id}>
-                  <td>{monthHeading(p.month)}</td>
+                  <td>{monthHeading(p.month)}{p.provisional && <> <span className="ps-prov" data-testid="payslip-provisional" title="Calculated, not yet approved. The figures can still change.">Provisional</span></>}</td>
                   <td><b>{p.employee?.employeeCode || '—'}</b></td>
                   <td>{p.employee?.name}<EmployeeStatusTag employee={p.employee} /></td>
                   <td className="cell-muted">{p.payMode || 'Package'}</td>
@@ -928,7 +928,7 @@ function PayslipsTab({ seesOthers }) {
                     <button className="btn btn-sm" onClick={() => setViewing(p.id)}>View</button>{' '}
                     <button
                       className="btn btn-sm"
-                      onClick={() => { setError(''); downloadPayslipPdf({ id: p.id, month: p.month, employee: p.employee }).catch(() => setError('Could not download the payslip.')); }}
+                      onClick={() => { setError(''); downloadPayslipPdf({ id: p.id, month: p.month, employee: p.employee, provisional: p.provisional }).catch(() => setError('Could not download the payslip.')); }}
                     >
                       PDF
                     </button>
