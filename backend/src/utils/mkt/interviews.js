@@ -190,6 +190,14 @@ async function makeNotes(rec, names) {
     const arr = (v) => (Array.isArray(v) ? v.map((s) => txt(s, 300)).filter(Boolean).slice(0, 8) : []);
     notes = { summary: txt(ai.value.summary, 1500), strengths: arr(ai.value.strengths), concerns: arr(ai.value.concerns), questionsAsked: arr(ai.value.questionsAsked), nextSteps: arr(ai.value.nextSteps), source: `AI (${ai.provider})` };
   } else notes = codeNotes(t);
+  // ATS wave 2 Y (07.11): the notes mapped to the round's scorecard questions (utils/atsY/notetaker.js; AI masked, code lines when down)
+  try {
+    const app = await prisma.application.findUnique({ where: { id: rec.applicationId }, include: { requirement: true } });
+    if (app && app.requirement) {
+      const m = await require('../atsY/notetaker').mapToKit(t, await kitFor(app.requirement, Number(rec.round) || 1), names); // eslint-disable-line global-require
+      if (m.rows.length) { notes.byQuestion = m.rows; notes.byQuestionSource = m.source; }
+    }
+  } catch { /* the notes stand without the mapping */ }
   notes.madeAt = nowIso();
   await x('UPDATE "MktRecording" SET "notes" = ? WHERE "id" = ?', JSON.stringify(notes), rec.id);
   return { notes };

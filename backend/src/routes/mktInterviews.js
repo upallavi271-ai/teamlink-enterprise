@@ -257,7 +257,8 @@ async function readUpload(req, res, { audioOnly = false } = {}) {
 router.get('/interviews/:id/recordings', wrap(async (req, res) => {
   const app = await loadApp(req, res); if (!app) return;
   if (isBde(req.user)) return res.json({ rows: [], hidden: true });
-  res.json({ rows: await IV.recordingsOf(app.id), canAdd: app.viaPanel || await mayFeedback(req.user), maxMb: REC_MAX / 1048576, speech: !!(process.env.AI_VOICE_WHISPER_URL || process.env.AI_VOICE_STT_URL) && !C.isSandbox() });
+  const sp = await require('../utils/atsY/speech').status().catch(() => ({ ready: false })); // eslint-disable-line global-require
+  res.json({ rows: await IV.recordingsOf(app.id), canAdd: app.viaPanel || await mayFeedback(req.user), maxMb: REC_MAX / 1048576, speech: !!sp.ready, speechEngine: sp.engine || null, speechWhy: sp.why || null });
 }));
 router.post('/interviews/:id/recordings', wrap(async (req, res) => {
   const app = await loadApp(req, res); if (!app) return;
@@ -266,7 +267,7 @@ router.post('/interviews/:id/recordings', wrap(async (req, res) => {
   if (/multipart\/form-data/i.test(String(req.headers['content-type'] || ''))) {
     const up = await readUpload(req, res); if (!up) return;
     if (!up.stored) return res.status(400).json({ error: 'Choose the recording file.' });
-    row = { kind: 'file', round: roundOf(up.fields.round, app), title: up.fields.title || up.stored.billName, fileStored: up.stored.billFile, fileName: up.stored.billName, fileMime: up.stored.billMime, fileSize: up.stored.billSize, transcript: up.fields.transcript };
+    row = { kind: 'file', round: roundOf(up.fields.round, app), title: up.fields.title || up.stored.billName, fileStored: up.stored.billFile, fileName: up.stored.billName, fileMime: up.stored.billMime, fileSize: up.stored.billSize, transcript: up.fields.transcript, buffer: String(up.fields.later || '') === '1' ? null : up.buffer };
   } else {
     const b = req.body || {};
     let u; try { u = new URL(String(b.url || '')); } catch { u = null; }
@@ -275,7 +276,17 @@ router.post('/interviews/:id/recordings', wrap(async (req, res) => {
   }
   const id = await IV.addRecording(app.id, row, req.user);
   await logAudit({ userId: req.user.id, action: `Interview recording added (${row.kind})`, entity: 'Application', entityId: app.id, toValue: String(row.title).slice(0, 120) });
-  return res.status(201).json({ ok: true, id, rows: await IV.recordingsOf(app.id) });
+  // ATS wave 2 Y (07.11): an uploaded file is turned into text NOW (the Groq Whisper path of the call recordings) and the notes are written
+  let auto = null;
+  if (row.kind === 'file' && !row.transcript && row.buffer) {
+    const t = await C.transcribe(row.buffer, 'en', { mime: row.fileMime, fileName: row.fileName });
+    if (t.text) {
+      await IV.setTranscript(id, t.text, t.source);
+      const n = await IV.makeNotes(await IV.recordingRow(id), [app.candidate && app.candidate.name]).catch(() => ({}));
+      auto = { transcribed: true, source: t.source, notes: !!(n && n.notes) };
+    } else auto = { transcribed: false, why: t.error };
+  }
+  return res.status(201).json({ ok: true, id, auto, rows: await IV.recordingsOf(app.id) });
 }));
 async function loadRec(req, res) {
   const rec = await IV.recordingRow(req.params.rid);
@@ -305,7 +316,7 @@ router.post('/recordings/:rid/transcript', wrap(async (req, res) => {
   if (text) { await IV.setTranscript(l.rec.id, text, 'Typed / pasted'); return res.json({ ok: true, source: 'Typed / pasted', rows: await IV.recordingsOf(l.app.id) }); }
   const p = attachments.resolveStored(l.rec.fileStored);
   if (!p) return res.status(400).json({ error: 'This is a link, not a file on TeamLink: paste the transcript (most meeting tools give one).' });
-  const t = await C.transcribe(fs.readFileSync(p), (req.body || {}).lang || 'en');
+  const t = await C.transcribe(fs.readFileSync(p), (req.body || {}).lang || 'en', { mime: l.rec.fileMime, fileName: l.rec.fileName });
   if (t.error) return res.status(409).json({ error: t.error, needsTranscript: true });
   await IV.setTranscript(l.rec.id, t.text, t.source);
   return res.json({ ok: true, source: t.source, rows: await IV.recordingsOf(l.app.id) });
@@ -316,6 +327,28 @@ router.post('/recordings/:rid/notes', wrap(async (req, res) => {
   if (out.error) return res.status(out.status).json({ error: out.error });
   return res.json({ ok: true, notes: out.notes, rows: await IV.recordingsOf(l.app.id) });
 }));
+// ATS wave 2 Y (07.11): the notes' lines per kit question go onto MY scorecard of that round as the question's note; with
+// { ratings: true } a suggested rating fills only a question I have not rated. Nothing is rated for anyone else.
+router.post('/recordings/:rid/notes/apply', wrap(async (req, res) => {
+  const l = await loadRec(req, res); if (!l) return;
+  if (isBde(req.user) || !(l.app.viaPanel || await mayFeedback(req.user))) return res.status(403).json(DENIED);
+  const notes = C.json(l.rec.notes, null);
+  const rows = (notes && Array.isArray(notes.byQuestion) ? notes.byQuestion : []).filter((r) => r.evidence || r.suggestedRating);
+  if (!rows.length) return res.status(400).json({ error: 'Make the notes first: no line of the transcript answers a kit question yet.' });
+  const round = Number(l.rec.round) || 1;
+  const cur = (await IV.scoresOf(l.app.id, round)).find((s) => s.userId === req.user.id);
+  const answers = rows.map((r) => {
+    const had = cur && cur.answers.find((a) => a.i === r.i);
+    const rating = had && had.rating != null ? had.rating : ((req.body || {}).ratings && r.suggestedRating ? r.suggestedRating : null);
+    const note = had && had.note ? had.note : (r.evidence ? `From the recording: ${r.evidence}`.slice(0, 600) : null);
+    return { i: r.i, rating, note };
+  });
+  (cur ? cur.answers : []).forEach((a) => { if (!answers.some((b) => b.i === a.i)) answers.push({ i: a.i, rating: a.rating, note: a.note }); });
+  const out = await IV.saveScore(l.app, round, { answers, recommendation: cur ? cur.recommendation : null, summary: (cur && cur.summary) || (notes && notes.summary) || null }, req.user, 'notes');
+  if (out.error) return res.status(out.status).json({ error: out.error });
+  await logAudit({ userId: req.user.id, action: `Scorecard filled from the interview notes - round ${round}`, entity: 'Application', entityId: l.app.id });
+  return res.json({ ok: true, score: out.score });
+}));
 // voice feedback: the browser records it (and writes the words when the phone can); the server keeps the sound, tries its own
 // speech engine when no words came, and the words become this person's scorecard summary for the round.
 router.post('/interviews/:id/voice-feedback', wrap(async (req, res) => {
@@ -324,7 +357,7 @@ router.post('/interviews/:id/voice-feedback', wrap(async (req, res) => {
   const up = await readUpload(req, res, { audioOnly: true }); if (!up) return;
   const round = roundOf(up.fields.round, app);
   let transcript = C.txt(up.fields.transcript, 20000); let source = transcript ? 'Browser speech recognition' : null;
-  if (!transcript && up.buffer) { const t = await C.transcribe(up.buffer, up.fields.lang || 'en'); if (t.text) { transcript = t.text; source = t.source; } }
+  if (!transcript && up.buffer) { const t = await C.transcribe(up.buffer, up.fields.lang || 'en', { mime: up.stored && up.stored.billMime, fileName: up.stored && up.stored.billName }); if (t.text) { transcript = t.text; source = t.source; } }
   if (!up.stored && !transcript) return res.status(400).json({ error: 'Record your feedback first.' });
   const id = await IV.addRecording(app.id, { kind: 'voice', round, title: `Voice feedback - ${C.who(req.user)}`, ...(up.stored ? { fileStored: up.stored.billFile, fileName: up.stored.billName, fileMime: up.stored.billMime, fileSize: up.stored.billSize } : {}), transcript, transcriptSource: source }, req.user);
   if (transcript) {
@@ -332,7 +365,7 @@ router.post('/interviews/:id/voice-feedback', wrap(async (req, res) => {
     await IV.saveScore(app, round, { answers: cur ? cur.answers : [], recommendation: cur ? cur.recommendation : (IV.RECS.includes(up.fields.recommendation) ? up.fields.recommendation : null), summary: transcript }, req.user, 'voice');
   }
   await logAudit({ userId: req.user.id, action: `Voice feedback - round ${round}`, entity: 'Application', entityId: app.id, toValue: (transcript || '(sound only)').slice(0, 120) });
-  return res.status(201).json({ ok: true, id, transcript, source: source || (up.stored ? 'Sound saved; no words yet (no speech engine on this server). Type a line or paste the words.' : null) });
+  return res.status(201).json({ ok: true, id, transcript, source: source || (up.stored ? 'Sound saved; no words yet (no speech-to-text is set up: the Groq key in Administration > Integrations > Fast AI). Type a line or paste the words.' : null) });
 }));
 router.get('/interviews/:id/feedback-summary', wrap(async (req, res) => {
   const app = await loadApp(req, res); if (!app) return;
