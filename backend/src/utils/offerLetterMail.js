@@ -408,16 +408,22 @@ function renderHtml(m, { logoSrc = null, withCover = true } = {}) {
   });
   flush();
   const details = m.details.map((r) => `<p style="margin:0 0 6px 0;line-height:1.5"><b>${esc(termLabel(r.label))}</b> ${hRuns(r.value)}</p>`).join('');
-  const cover = withCover && (logoSrc || m.coverNote)
-    ? `<div style="font-size:14px;line-height:1.6;color:#222;padding:0 4px 18px 4px">${logoSrc ? `<img src="${esc(logoSrc)}" alt="${esc(m.company.name)}" height="36" style="display:block;height:36px;width:auto;border:0;margin:0 0 14px 0">` : ''}${m.coverNote ? para(m.coverNote) : ''}</div>`
+  const cover = withCover && m.coverNote
+    ? `<div style="font-size:14px;line-height:1.6;color:#222;padding:0 4px 18px 4px">${para(m.coverNote)}</div>`
     : '';
+  const contactLine = [m.company.phone, m.company.email].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
+  const letterhead = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #999;margin:0 0 22px 0"><tr>
+  <td style="vertical-align:middle;padding:0 0 10px 0">${logoSrc ? `<img src="${esc(logoSrc)}" alt="${esc(m.company.name)}" height="42" style="display:block;height:42px;width:auto;border:0">` : `<div style="font-size:20px;font-weight:700">${esc(m.company.name)}</div>`}</td>
+  <td style="vertical-align:middle;text-align:right;padding:0 0 10px 0;font-size:12px;line-height:1.5;color:#444"><div style="font-weight:700;color:#000;font-size:13px">${esc(m.company.name)}</div>${m.company.address ? `<div>${esc(m.company.address)}</div>` : ''}${contactLine ? `<div>${contactLine}</div>` : ''}</td>
+</tr></table>`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(m.subjectLine)}</title></head>
 <body style="margin:0;padding:0;background:#f3f4f6;font-family:${font};color:#000">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6"><tr><td align="center" style="padding:22px 12px">
 <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px"><tr><td>
 ${cover}
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #d9dce1"><tr><td style="padding:44px 48px 40px 48px;font-family:${font};font-size:15px;color:#000">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #d9dce1"><tr><td style="padding:36px 48px 40px 48px;font-family:${font};font-size:15px;color:#000">
+${letterhead}
 <div style="text-align:center;font-size:24px;font-weight:700;margin:0 0 26px 0">${esc(m.title.toUpperCase())}</div>
 <div style="text-align:right;font-weight:700;margin:0 0 18px 0">Date: ${esc(m.dateLong)}</div>
 <div style="margin:0 0 18px 0;line-height:1.5"><b>To,</b><br><b>${esc(m.to.name)}</b>${m.to.place ? `<br>${esc(m.to.place)}` : ''}</div>
@@ -440,7 +446,7 @@ ${m.footerNote ? `<div style="margin-top:26px;font-size:11px;color:#666;text-ali
 function renderText(m) {
   const lines = [];
   if (m.coverNote) lines.push(m.coverNote, '', '------------------------------------------------------------', '');
-  lines.push(m.title.toUpperCase(), '', `Date: ${m.dateLong}`, '', 'To,', m.to.name, ...(m.to.place ? [m.to.place] : []), '', unmark(m.intro), '');
+  lines.push(m.company.name, ...(m.company.address ? [m.company.address] : []), '', m.title.toUpperCase(), '', `Date: ${m.dateLong}`, '', 'To,', m.to.name, ...(m.to.place ? [m.to.place] : []), '', unmark(m.intro), '');
   m.details.forEach((r) => lines.push(`${termLabel(r.label)} ${unmark(r.value)}`));
   if (m.details.length) lines.push('');
   if (m.terms.length && m.termsHeading) lines.push(m.termsHeading);
@@ -475,9 +481,10 @@ async function renderPdf(m) {
   const t = (v) => pdfText(v);
   const SIZE = 10.5;
   const GAP = 3; // about the reference's 1.25 line spacing
+  const logo = await logoPng();
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
-      size: 'A4', margins: { top: 64, bottom: 60, left: 66, right: 66 }, bufferPages: true,
+      size: 'A4', margins: { top: 48, bottom: 56, left: 66, right: 66 }, bufferPages: true,
       info: { Title: t(`${m.title} - ${m.to.name}`), Author: t(m.company.name), Subject: t(m.subjectLine) },
     });
     const chunks = [];
@@ -520,9 +527,22 @@ async function renderPdf(m) {
       doc.moveDown(0.35);
     };
 
+    // LETTERHEAD (2026-11-24: "where is my company logo"): the company logo on the left, the company's details on the right, a thin line
+    // below. The reference letters are plain text made for printing on letterhead paper, so the logo is added here; the body is theirs.
+    const headY = doc.y;
+    if (logo) { try { doc.image(logo, L, headY, { height: 40 }); } catch { /* the name below stands in */ } } else { doc.font('Helvetica-Bold').fontSize(16).fillColor('#000').text(t(m.company.name), L, headY, { width: W / 2 }); }
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#000').text(t(m.company.name), L + W / 2, headY, { width: W / 2, align: 'right' });
+    doc.font('Helvetica').fontSize(8.5).fillColor('#444444');
+    if (m.company.address) doc.text(t(m.company.address), L + W / 2, doc.y, { width: W / 2, align: 'right' });
+    const headContact = [m.company.phone, m.company.email].filter(Boolean).join('  |  ');
+    if (headContact) doc.text(t(headContact), L + W / 2, doc.y, { width: W / 2, align: 'right' });
+    const headRule = Math.max(doc.y, headY + 44) + 6;
+    doc.moveTo(L, headRule).lineTo(L + W, headRule).lineWidth(0.8).strokeColor('#999999').stroke();
+    doc.y = headRule + 20; doc.x = L;
+
     // title, date, addressee
     doc.font('Helvetica-Bold').fontSize(17).fillColor('#000').text(t(m.title.toUpperCase()), L, doc.y, { width: W, align: 'center' });
-    doc.moveDown(1.3);
+    doc.moveDown(1.1);
     font(true).text(t(`Date: ${m.dateLong}`), L, doc.y, { width: W, align: 'right' });
     doc.moveDown(1.1);
     font(true).text('To,', L, doc.y, { width: W, lineGap: GAP });

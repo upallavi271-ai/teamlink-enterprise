@@ -335,6 +335,24 @@ router.get('/me/config', (req, res) => {
   });
 });
 
+// My Profile -> "Your relieving letter and service certificate": for an employee who has resigned (or whose letters HR has already
+// issued). The two letters are the ones HR makes on the resignation screen (utils/exitLetters.js); until then the card says when.
+const EXIT_LETTER_TYPES = ['Relieving Letter', 'Service Certificate'];
+async function myExitLetters(employee) {
+  const exitDate = require('../utils/exitDate'); // eslint-disable-line global-require
+  const [rec, docs] = await Promise.all([
+    prisma.employeeRecord.findFirst({ where: { employeeId: employee.id, type: 'RESIGNATION', status: { in: ['Pending Approval', 'Notice Period', 'Accepted', 'Relieved'] } }, orderBy: { createdAt: 'desc' } }),
+    prisma.employeeDocument.findMany({ where: { employeeId: employee.id, docType: { in: EXIT_LETTER_TYPES } }, orderBy: { uploadedAt: 'desc' }, select: { id: true, docType: true, fileName: true } }),
+  ]);
+  if (!rec && !docs.length) return null;
+  const detail = rec ? await prisma.resignationDetail.findUnique({ where: { recordId: rec.id } }) : null;
+  const lwd = rec ? exitDate.dateOf(rec, detail) : null;
+  const letters = EXIT_LETTER_TYPES.map((label) => { const d = docs.find((x) => x.docType === label); return { label, docId: d ? d.id : null, fileName: d ? d.fileName : null }; });
+  const dmy = lwd ? `${lwd.slice(8, 10)}-${lwd.slice(5, 7)}-${lwd.slice(0, 4)}` : null;
+  const note = letters.some((l) => l.docId) ? null : (dmy ? `HR issues your relieving letter and service certificate on your last working day, ${dmy}. They will appear here.` : 'HR issues your relieving letter and service certificate on your last working day. They will appear here.');
+  return { lastWorkingDate: lwd, letters, note };
+}
+
 router.get('/me', async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { userId: req.user.id }, include: { reportingManager: true } });
   if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
@@ -385,6 +403,7 @@ router.get('/me', async (req, res) => {
     channels: { sms: await empVerify.smsChannel() },
     // My Profile -> "Your offer letter": ready, or the plain words for what is still missing
     offerLetter: require('../utils/offerLetterMail').selfDownloadGate(employee, completionPct(employee)), // eslint-disable-line global-require
+    exitLetters: await myExitLetters(employee).catch(() => null),
   });
 });
 

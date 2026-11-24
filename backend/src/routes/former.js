@@ -5,8 +5,8 @@
 // Everything is read from the SIGNED-IN person's own employee id; an id in the URL can never reach another
 // person's letter, and attendance / leave exports take no employee id at all.
 //
-//   GET /me                       { person, letters[] (Offer Letter / Joining Letter only), message }
-//   GET /letters/:docId/file      own offer / joining letter download
+//   GET /me                       { person, letters[] (Offer / Joining / Relieving Letter, Service Certificate only), message }
+//   GET /letters/:docId/file      own offer / joining / relieving letter and service certificate download
 //   GET /attendance/export        own attendance, day by day, joining date to last working day (?from ?to ?format=xlsx|csv)
 //   GET /leaves/export            own leave requests (?format=xlsx|csv)
 //   (Admin side, not for former employees)

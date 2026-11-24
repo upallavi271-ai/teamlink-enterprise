@@ -29,9 +29,12 @@ const no = [
 ];
 no.forEach(([m, p]) => check(`refused: ${m} ${p || '(empty)'}`, FA.pathAllowed(m, p) === false));
 
-console.log('Which files count as a letter: Offer Letter and Joining Letter only');
+console.log('Which files count as a letter: Offer, Joining, Relieving Letter and Service Certificate only');
 check('Offer Letter', FA.isLetter({ docType: 'Offer Letter' }));
 check('Joining Letter', FA.isLetter({ docType: 'Joining Letter' }));
+check('Relieving Letter (the exit letter HR issues)', FA.isLetter({ docType: 'Relieving Letter' }));
+check('Service Certificate (the exit letter HR issues)', FA.isLetter({ docType: 'Service Certificate' }));
+check('the access message names the exit letters too', /relieving letter/.test(FA.MESSAGE) && /service certificate/.test(FA.MESSAGE), FA.MESSAGE);
 check('Experience Certificate is not offered', !FA.isLetter({ docType: 'Experience Certificate' }));
 check('"Other Documents" named like a letter is not offered', !FA.isLetter({ docType: 'Other Documents', docName: 'Warning letter', fileName: 'warning-letter.pdf' }));
 check('Aadhaar / PAN / Bank / Photo are not offered', ['Aadhaar', 'PAN', 'Bank Document', 'Photo', 'Passport'].every((t) => !FA.isLetter({ docType: t })));

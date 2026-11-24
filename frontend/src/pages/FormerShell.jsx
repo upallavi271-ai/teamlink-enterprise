@@ -103,9 +103,9 @@ export default function FormerShell() {
         </section>
 
         <section style={card}>
-          <h2 style={h2}>Offer letter and joining letter</h2>
+          <h2 style={h2}>Your letters</h2>
           {letters === null && <p style={sub}>Loading…</p>}
-          {letters && !letters.length && <p style={sub}>No offer letter or joining letter is on file for you. Please ask HR.</p>}
+          {letters && !letters.length && <p style={sub}>No letter is on file for you yet (offer letter, joining letter, relieving letter or service certificate). Please ask HR.</p>}
           {letters && letters.length > 0 && (
             <div>
               {letters.map((l) => (

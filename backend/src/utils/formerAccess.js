@@ -38,10 +38,11 @@ const LIMITS = [
   { months: 24, label: '2 years after the last working day' },
   { months: 36, label: '3 years after the last working day' },
 ];
-const MESSAGE = 'Your access has ended. You can only download your attendance, leave records, offer letter and joining letter.';
+const MESSAGE = 'Your access has ended. You can only download your attendance, leave records, offer letter, joining letter, relieving letter and service certificate.';
 const ENDED_MESSAGE = 'Your access has ended. Please contact HR if you think this is a mistake.';
-// Only these two kinds of file, by the type HR filed them under. No guessing from the file's name (a "letter" could be a warning).
-const LETTER_TYPES = ['Offer Letter', 'Joining Letter'];
+// Only these kinds of file, by the type HR filed them under. No guessing from the file's name (a "letter" could be a warning).
+// Relieving Letter and Service Certificate (utils/exitLetters.js, 2026-11-24): the exit letters HR issues from the resignation screen.
+const LETTER_TYPES = ['Offer Letter', 'Joining Letter', 'Relieving Letter', 'Service Certificate'];
 const iso = (v) => { try { return v ? new Date(v).toISOString().slice(0, 10) : null; } catch { return null; } };
 
 function clean(v) {

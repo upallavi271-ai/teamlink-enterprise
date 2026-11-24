@@ -58,6 +58,23 @@ export default function MyProfile() {
   // "Your offer letter": the PDF, from the employee's own login (the server checks: profile 100% + joining date reached)
   const [olBusy, setOlBusy] = useState(false);
   const [olError, setOlError] = useState('');
+  // the relieving letter / service certificate HR issued: the file route checks it is this employee's own
+  const [xlBusy, setXlBusy] = useState('');
+  const [xlError, setXlError] = useState('');
+  async function downloadExitLetter(l) {
+    setXlBusy(l.docId); setXlError('');
+    try {
+      const res = await api.get(`/employees/${employee.id}/documents/${l.docId}/file`, { params: { disposition: 'attachment' }, responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = l.fileName || `${l.label}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch { setXlError('That letter could not be downloaded. Please try again.'); } finally { setXlBusy(''); }
+  }
   async function downloadOfferLetter() {
     setOlBusy(true); setOlError('');
     try {
@@ -236,6 +253,20 @@ export default function MyProfile() {
             <div className="small-muted">{employee.offerLetter.why}</div>
           )}
           {olError && <div className="error-text" style={{ marginTop: 8 }}>{olError}</div>}
+        </div>
+      )}
+
+      {employee.exitLetters && (
+        <div className="card section">
+          <h3>Your relieving letter and service certificate</h3>
+          {employee.exitLetters.note && <div className="small-muted">{employee.exitLetters.note}</div>}
+          {employee.exitLetters.letters.filter((l) => l.docId).map((l) => (
+            <div key={l.label} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+              <b>{l.label}</b>
+              <button type="button" className="btn btn-sm btn-primary" disabled={xlBusy === l.docId} onClick={() => downloadExitLetter(l)}>{xlBusy === l.docId ? 'Preparing…' : 'Download'}</button>
+            </div>
+          ))}
+          {xlError && <div className="error-text" style={{ marginTop: 8 }}>{xlError}</div>}
         </div>
       )}
 
