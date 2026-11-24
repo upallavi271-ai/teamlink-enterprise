@@ -7,13 +7,18 @@ import { openBlank, sendTo, closeBlank } from './vicidialPopup.js';
 // The SIP password is fetched per session from the server (POST /browser-calling/session), kept only in memory, never stored.
 // Status words come from what really happens: SIP progress in this browser, then the server's row (written from Asterisk events).
 const Ctx = createContext(null);
-export const useBrowserCall = () => useContext(Ctx) || { available: false, state: { phase: 'idle' }, lines: [], call: () => {}, pickAndCall: () => {}, testCall: () => {}, chooseLine: () => {}, hangup: () => {}, toggleMute: () => {}, toggleHold: () => {} };
+export const useBrowserCall = () => useContext(Ctx) || { available: false, state: { phase: 'idle' }, lines: [], mySim: null, call: () => {}, pickAndCall: () => {}, testCall: () => {}, chooseLine: () => {}, hangup: () => {}, toggleMute: () => {}, toggleHold: () => {}, answer: () => {}, decline: () => {} };
 
 const errOf = (e, d) => (e && e.response && e.response.data && e.response.data.error) || d;
 // PHONE LINES (2026-11-23): which line the call goes out on ("Call using"). The server lists the lines this login may use (GET /status) and decides
 // the line of each call; the browser only sends the header value the server handed back. The last choice is remembered on this computer.
 const LINE_KEY = 'tl_browser_call_line';
 const savedLine = () => { try { return localStorage.getItem(LINE_KEY) || ''; } catch { return ''; } };
+// ONE SIM PER RECRUITER (2026-11-25): a person with a SIM port keeps the softphone registered while TeamLink is open, so a candidate calling
+// that SIM back rings here. Only ONE tab of this browser registers (BroadcastChannel "tl-softphone": the tab that claimed first stays the
+// "phone" until it closes; the others stand by and take over when it goes), so two tabs never both ring.
+const TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const tokenOf = (inv) => { try { return String(inv.remoteIdentity.uri.user || '').toLowerCase(); } catch { return ''; } };
 
 export default function BrowserCallProvider({ children }) {
   const [info, setInfo] = useState(null); // GET /status
@@ -21,7 +26,29 @@ export default function BrowserCallProvider({ children }) {
   const [seconds, setSeconds] = useState(0);
   const [linePick, setLinePick] = useState(savedLine);
   const ua = useRef(null); const reg = useRef(null); const sess = useRef(null); const audioEl = useRef(null); const poll = useRef(null); const tick = useRef(null);
-  const creds = useRef(null); const tone = useRef(null);
+  const creds = useRef(null); const tone = useRef(null); const ringer = useRef(null); const phoneWanted = useRef(false);
+  // a tab that is NOT the registered "phone" made a call (its registration replaced the phone tab's): after the call it lets go and tells
+  // the phone tab to register again, so calls back to the SIM keep ringing there
+  const handBack = () => {
+    if (!phoneWanted.current || leader.current) return;
+    setTimeout(() => {
+      if (sess.current) return;
+      if (ua.current) { try { ua.current.stop(); } catch { /* gone */ } ua.current = null; reg.current = null; }
+      try { const c = new BroadcastChannel('tl-softphone'); c.postMessage({ t: 'kick', id: TAB_ID }); c.close(); } catch { /* no channel */ }
+    }, 1500);
+  };
+  const incomingRef = useRef(() => {}); const leader = useRef(false); const [phoneState, setPhoneState] = useState('off'); // off | standby | connecting | ready | error
+  // the incoming-call ring: two short tones, every 3 s (WebAudio, nothing downloaded)
+  const stopRing = () => { try { if (ringer.current) { clearInterval(ringer.current.iv); ringer.current.ctx.close(); } } catch { /* done */ } ringer.current = null; };
+  const startRing = () => {
+    if (ringer.current) return;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)(); const gain = ctx.createGain(); gain.gain.value = 0; gain.connect(ctx.destination);
+      [440, 480].forEach((f) => { const o = ctx.createOscillator(); o.frequency.value = f; o.connect(gain); o.start(); });
+      const beat = () => { const t = ctx.currentTime; gain.gain.setValueAtTime(0.08, t); gain.gain.setValueAtTime(0, t + 0.4); gain.gain.setValueAtTime(0.08, t + 0.6); gain.gain.setValueAtTime(0, t + 1.0); };
+      beat(); ringer.current = { ctx, iv: setInterval(beat, 3000) };
+    } catch { /* no audio context */ }
+  };
   const stopTone = () => { try { if (tone.current) { tone.current.osc.stop(); tone.current.ctx.close(); } } catch { /* done */ } tone.current = null; };
   const startTone = () => {
     if (tone.current) return;
@@ -37,7 +64,7 @@ export default function BrowserCallProvider({ children }) {
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => () => { try { if (ua.current) ua.current.stop(); } catch { /* closing */ } clearInterval(poll.current); clearInterval(tick.current); }, []);
 
-  const stopTimers = () => { clearInterval(poll.current); clearInterval(tick.current); stopTone(); };
+  const stopTimers = () => { clearInterval(poll.current); clearInterval(tick.current); stopTone(); stopRing(); };
   const finish = useCallback((phase, extra = {}) => {
     stopTimers();
     setState((s) => ({ ...s, phase, muted: false, held: false, ...extra }));
@@ -45,15 +72,16 @@ export default function BrowserCallProvider({ children }) {
 
   // sessionPath: the CRM asks its own door (POST /crm/b/calls/session, CRM wave B) - a salesperson may have no ATS login
   const ensureUa = useCallback(async (sessionPath = '/browser-calling/session') => {
-    if (ua.current && ua.current.isConnected() && reg.current && creds.current && Date.parse(creds.current.expiresAt) > Date.now() + 60000) return;
+    if (ua.current && ua.current.isConnected() && reg.current && reg.current.state === 'Registered' && creds.current && Date.parse(creds.current.expiresAt) > Date.now() + 60000) return;
     if (ua.current) { try { await ua.current.stop(); } catch { /* old */ } ua.current = null; }
     const { data } = await api.post(sessionPath);
     creds.current = { expiresAt: data.expiresAt };
     const uri = UserAgent.makeURI(`sip:${data.extension}@${data.domain}`);
     const agent = new UserAgent({
       uri, displayName: data.displayName, authorizationUsername: data.authUser, authorizationPassword: data.password,
-      transportOptions: { server: data.wssUrl }, logLevel: 'error',
+      transportOptions: { server: data.wssUrl, keepAliveInterval: 30 }, logLevel: 'error',
       sessionDescriptionHandlerFactoryOptions: { peerConnectionConfiguration: { iceServers: data.iceServers || [] } },
+      delegate: { onInvite: (invitation) => incomingRef.current(invitation) }, // a candidate calling the person's SIM back (browsercall/sims.js)
     });
     await agent.start();
     const registerer = new Registerer(agent);
@@ -111,6 +139,7 @@ export default function BrowserCallProvider({ children }) {
         sess.current = null;
         setState((x) => (x.phase === 'connected' ? { ...x, phase: 'ended' } : (x.phase === 'failed' ? x : { ...x, phase: 'failed', error: x.error || 'The call did not connect.' })));
         stopTimers();
+        handBack();
         // the server row (from Asterisk) has the true result: read it once more
         setTimeout(() => api.get(`/browser-calling/calls/${placed.callId}`).then((r) => setState((x) => ({ ...x, record: r.data.call }))).catch(() => {}), 1500);
       }
@@ -166,7 +195,7 @@ export default function BrowserCallProvider({ children }) {
   const hangup = useCallback(() => {
     const s = sess.current;
     if (!s) { setState({ phase: 'idle' }); return; }
-    try { if (s.state === SessionState.Established) s.bye(); else s.cancel(); } catch { /* already over */ }
+    try { if (s.state === SessionState.Established) s.bye(); else if (typeof s.reject === 'function') s.reject(); else s.cancel(); } catch { /* already over */ }
   }, []);
 
   const toggleMute = useCallback(() => {
@@ -190,6 +219,92 @@ export default function BrowserCallProvider({ children }) {
   }, [state.held]);
 
   const dismiss = useCallback(() => setState({ phase: 'idle' }), []);
-  const value = useMemo(() => ({ available: !!(info && info.canCall), info, state, seconds, lines, line: curLine, chooseLine, call, callCrm, pickAndCall, testCall, refresh, hangup, toggleMute, toggleHold, dismiss, viciOutcome }), [refresh, info, state, seconds, lines, curLine, chooseLine, call, callCrm, pickAndCall, testCall, hangup, toggleMute, toggleHold, dismiss, viciOutcome]);
+
+  // ---------------------------------------------------------------- INCOMING: a candidate calls the person's SIM back
+  // The phone system puts the call's token in the caller ID (never the number); the server says who it is (scope-checked, number masked).
+  const mySim = (info && info.canCall && info.sim) || null;
+  const onIncoming = useCallback((invitation) => {
+    if (sess.current) { try { invitation.reject({ statusCode: 486 }); } catch { /* gone */ } return; } // already on a call: busy (the call shows as missed)
+    const token = tokenOf(invitation);
+    sess.current = invitation;
+    setSeconds(0);
+    startRing();
+    setState({ phase: 'incoming', direction: 'inbound', name: 'Incoming call', number: '', token, lineName: mySim ? `your SIM ${mySim.number}` : 'your SIM' });
+    let tries = 0;
+    const who = () => api.get(`/browser-calling/incoming/${encodeURIComponent(token)}`).then((r) => {
+      const d = r.data;
+      setState((x) => (x.token !== token ? x : { ...x, callId: d.callId, maskedNumber: d.number, name: d.candidate ? d.candidate.name : 'Unknown caller', candidateId: d.candidate ? d.candidate.id : null, requirement: d.candidate ? d.candidate.requirement : null, lineName: d.lineName || x.lineName }));
+    }).catch(() => { tries += 1; if (tries < 4) setTimeout(who, 700); else setState((x) => (x.token !== token ? x : { ...x, name: 'Unknown caller' })); });
+    if (/^in\d+$/.test(token)) who(); else setState((x) => ({ ...x, name: 'Unknown caller' }));
+    let answeredAt = null;
+    invitation.stateChange.addListener((st) => {
+      if (st === SessionState.Established) {
+        stopRing(); answeredAt = Date.now(); attachAudio(invitation);
+        setState((x) => ({ ...x, phase: 'connected' }));
+        clearInterval(tick.current); tick.current = setInterval(() => setSeconds(Math.round((Date.now() - answeredAt) / 1000)), 500);
+      } else if (st === SessionState.Terminated) {
+        sess.current = null; stopTimers();
+        setState((x) => (x.phase === 'connected' ? { ...x, phase: 'ended' } : { ...x, phase: 'missed', error: x.declined ? 'You declined the call. It is in the call history as missed.' : 'The caller hung up before it was answered. It is in the call history as missed.' }));
+        setTimeout(() => setState((x) => { if (x.callId) api.get(`/browser-calling/calls/${x.callId}`).then((r) => setState((y) => ({ ...y, record: r.data.call }))).catch(() => {}); return x; }), 1500);
+      }
+    });
+  }, [mySim]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { incomingRef.current = onIncoming; }, [onIncoming]);
+  // the browser smoke test (scripts/sim-per-recruiter-browser.js) rings this tab with a fake session: window.__tlSoftphone.incoming(fake)
+  useEffect(() => { window.__tlSoftphone = { incoming: (inv) => incomingRef.current(inv), state: () => ({ leader: leader.current, phone: phoneState }) }; return () => { delete window.__tlSoftphone; }; }, [phoneState]);
+
+  const answer = useCallback(async () => {
+    const s = sess.current;
+    if (!s || state.phase !== 'incoming') return;
+    stopRing();
+    try { await s.accept({ sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } } }); } catch (e) { setState((x) => ({ ...x, note: (e && e.message) || 'Could not answer (is the microphone allowed?).' })); }
+  }, [state.phase]);
+  const decline = useCallback(() => {
+    const s = sess.current;
+    if (!s) return;
+    stopRing();
+    setState((x) => ({ ...x, declined: true }));
+    try { s.reject({ statusCode: 486 }); } catch { /* gone */ }
+  }, []);
+
+  // ---------------------------------------------------------------- stay registered while TeamLink is open (a person with a SIM)
+  const wantPhone = !!(mySim && info && info.wssConfigured);
+  useEffect(() => {
+    phoneWanted.current = wantPhone;
+    if (!wantPhone) { setPhoneState('off'); return undefined; }
+    let alive = true; let lastLeaderSeen = 0; let backoff = 30000; let nextTry = 0;
+    const bc = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('tl-softphone') : null;
+    const post = (m) => { try { if (bc) bc.postMessage({ ...m, id: TAB_ID }); } catch { /* closed */ } };
+    const keep = async () => {
+      if (!alive || !leader.current || Date.now() < nextTry) return;
+      if (ua.current && ua.current.isConnected() && reg.current && reg.current.state === 'Registered' && creds.current && Date.parse(creds.current.expiresAt) > Date.now() + 120000) { setPhoneState('ready'); return; }
+      if (sess.current) return; // never re-register in the middle of a call
+      setPhoneState('connecting');
+      try { await ensureUa(); if (alive) { setPhoneState('ready'); backoff = 30000; } } catch { if (alive) { setPhoneState('error'); nextTry = Date.now() + backoff; backoff = Math.min(backoff * 2, 600000); } }
+    };
+    const claim = () => { if (!alive || leader.current) return; leader.current = true; post({ t: 'leader' }); keep(); };
+    const stepDown = () => { if (!leader.current) return; leader.current = false; setPhoneState('standby'); if (!sess.current && reg.current) { try { reg.current.unregister().catch(() => {}); } catch { /* gone */ } } };
+    if (bc) {
+      bc.onmessage = (ev) => {
+        const m = ev.data || {};
+        if (m.id === TAB_ID) return;
+        if (m.t === 'who' && leader.current) post({ t: 'leader' });
+        if (m.t === 'leader') { lastLeaderSeen = Date.now(); if (leader.current && String(m.id) < TAB_ID) stepDown(); else if (leader.current) post({ t: 'leader' }); }
+        if (m.t === 'kick' && leader.current && !sess.current) { if (ua.current) { try { ua.current.stop(); } catch { /* gone */ } ua.current = null; reg.current = null; } nextTry = 0; keep(); }
+        if (m.t === 'bye') { lastLeaderSeen = 0; setTimeout(() => { if (!lastLeaderSeen) claim(); }, Math.round(Math.random() * 400)); }
+      };
+      setPhoneState('standby');
+      post({ t: 'who' });
+      setTimeout(() => { if (!lastLeaderSeen) claim(); }, 700);
+    } else claim();
+    const beat = setInterval(() => {
+      if (leader.current) { post({ t: 'leader' }); keep(); } else if (Date.now() - lastLeaderSeen > 9000) claim();
+    }, 3000);
+    const bye = () => { if (leader.current) post({ t: 'bye' }); };
+    window.addEventListener('pagehide', bye);
+    return () => { alive = false; bye(); clearInterval(beat); window.removeEventListener('pagehide', bye); leader.current = false; try { if (bc) bc.close(); } catch { /* closed */ } };
+  }, [wantPhone, ensureUa]);
+
+  const value = useMemo(() => ({ available: !!(info && info.canCall), info, state, seconds, lines, line: curLine, mySim, phoneState, chooseLine, call, callCrm, pickAndCall, testCall, refresh, hangup, toggleMute, toggleHold, dismiss, viciOutcome, answer, decline }), [refresh, info, state, seconds, lines, curLine, mySim, phoneState, chooseLine, call, callCrm, pickAndCall, testCall, hangup, toggleMute, toggleHold, dismiss, viciOutcome, answer, decline]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

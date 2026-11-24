@@ -355,7 +355,12 @@ router.get('/incoming/:token', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------- SIM NUMBERS (Admin): one Synway port per person
-async function simsView() { return { ...(await SIMS.adminView()), pbx: L.isPbx(), lastWrite: L.lastWrite() }; }
+async function simsView() {
+  // the people a port can be given to: active ATS logins of a kind that calls candidates (never BDE / BDE TL / Manager)
+  const users = await prisma.user.findMany({ where: { status: 'Active', atsAccess: true }, orderBy: { name: 'asc' }, take: 2000 });
+  const people = users.map((u) => { let k = 'none'; try { k = kindOf(u); } catch { k = 'none'; } return { userId: u.id, name: u.name, role: KIND_WORD[k] || k, kind: k }; }).filter((p) => SIMS.SIM_KINDS.includes(p.kind));
+  return { ...(await SIMS.adminView()), people, pbx: L.isPbx(), lastWrite: L.lastWrite() };
+}
 const simLabel = (x) => `port ${SIMS.pad2(x.port)} · ${SIMS.mask(x.simNumber)}`;
 router.get('/admin/sims', async (req, res) => {
   if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');

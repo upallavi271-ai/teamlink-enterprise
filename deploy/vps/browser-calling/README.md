@@ -39,6 +39,39 @@ Click-to-call on a phone line records the same way from `[tl-c2c-answer]` (Dial 
     stores the MP3 in `<UPLOAD_DIR>/call-recordings/`, transcribes (AI_VOICE_WHISPER_URL if set, else Groq whisper-large-v3 with the Fast AI Groq key),
     summarises through Fast AI (phone numbers and e-mails masked first) and deletes the WAV. Audio + transcript are deleted after "Keep recordings" days (default 180).
 
+## One SIM number per recruiter (Synway ports) - 25 Nov 2026
+An Admin lists the Synway GSM ports in Omni-Channel > AI Voice > Browser calling > SIM numbers (port, SIM number, operator, on/off, given to one person,
+dial prefix, incoming matched by SIM number or port tag). The backend writes, next to `extensions_tl_lines.conf`:
+- `/etc/asterisk/extensions_tl_sims.conf`: `[tl-from-gateway]` (one extension per SIM number form / tag -> `Goto(tl-sim-ring,p<NN>,1)`; anything else -> `other`)
+  and `[tl-sim-ring]` (rings the person's browser extension for 30 s with the same silent MixMonitor, sends AMI `UserEvent(TLInbound, ...)`; only calls from
+  the endpoint `teamlink-gw` are rung, calls from any other line hang up as before).
+- while "Port prefix routing" is ON, one extension `p<NN>` per port in `[tl-line-route]` (extensions_tl_lines.conf): `Dial(PJSIP/<prefix>${ARG1}@teamlink-gw,45)`,
+  used only when `${CHANNEL(endpoint)}` is that person's own extension (anyone else falls back to `default`). OFF (the default) = the file is exactly as before.
+`[browser-out]` does not change (it already passes the `X-TL-Line` value the server picks: `p01` for a person on port 1 with routing ON).
+
+Install once (backups first: `cp /etc/asterisk/extensions.conf /root/extensions.conf.bak-$(date +%Y%m%d-%H%M%S)`):
+19. `touch /etc/asterisk/extensions_tl_sims.conf && chgrp asterisk /etc/asterisk/extensions_tl_sims.conf && chmod 640 /etc/asterisk/extensions_tl_sims.conf`
+20. At the END of extensions.conf (after `#include extensions_tl_lines.conf`): `#include extensions_tl_sims.conf`
+21. In extensions.conf replace the whole `[from-provider]` context (today: `exten => _X.,1,Hangup()` and `exten => s,1,Hangup()`) with exactly:
+```
+[from-provider]
+exten => _X.,1,Goto(tl-from-gateway,${EXTEN},1)
+exten => _+X.,1,Goto(tl-from-gateway,${EXTEN},1)
+exten => _[a-z].,1,Goto(tl-from-gateway,${EXTEN},1)
+exten => s,1,Goto(tl-from-gateway,s,1)
+```
+   The AI phone calls are not affected: they are originated legs handed to Stasis, they never enter `[from-provider]`.
+22. `asterisk -rx "dialplan reload"`. Then in TeamLink save any SIM port once (or switch Port prefix routing off and on) so the backend writes the files,
+    and check: `asterisk -rx "dialplan show tl-from-gateway"`, `asterisk -rx "dialplan show tl-sim-ring"`.
+23. Nothing new in pjsip: the browser extensions already accept calls (webrtc-tpl); the softphone of a person with a SIM now stays registered while TeamLink is open
+    (one tab per browser), with a WebSocket keep-alive every 30 s (nginx `proxy_read_timeout 3600s` stays as it is).
+24. On the Synway: (a) IP->GSM routing: one rule per port, called-number prefix `<prefix>` (default `01#` ... `16#`) -> that port, strip the prefix before dialling;
+    (b) GSM->IP routing: calls from each port go to the SIP trunk (teamlink-gw) with the called number set to that port's SIM number (or the tag, e.g. `port01`).
+    Only then switch "Port prefix routing" ON in TeamLink. Use "Check a called number" on the SIM numbers screen to test the matching.
+Rollback: put the old `[from-provider]` back (two `Hangup()` lines), remove `#include extensions_tl_sims.conf`, switch Port prefix routing OFF, `dialplan reload`.
+
+Optional backend .env: BROWSER_CALL_SIMS_DIALPLAN_FILE (default: extensions_tl_sims.conf next to BROWSER_CALL_LINES_DIALPLAN_FILE).
+
 Optional backend .env: BROWSER_CALL_REC_DIR (default /var/spool/asterisk/monitor/teamlink), FFMPEG_PATH, BROWSER_CALL_LINES_PJSIP_FILE, BROWSER_CALL_LINES_DIALPLAN_FILE (the two paths above), BROWSER_CALL_PUBLIC_IP (72.61.233.104),
 BROWSER_CALL_REGISTER_PORT (5160). Click-to-call on a line from the Call window uses the AI_VOICE_AMI_* manager login (the same as the SIP line).
 

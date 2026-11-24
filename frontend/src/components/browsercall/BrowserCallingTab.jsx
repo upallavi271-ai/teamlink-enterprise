@@ -2,6 +2,22 @@ import { useCallback, useEffect, useState } from 'react';
 import api from '../../api';
 import { mmss, statusWord, PlayButton, CallSummary } from './CallHistory.jsx';
 import PhoneLinesSection from './PhoneLinesSection.jsx';
+import SimNumbersSection from './SimNumbersSection.jsx';
+import { useBrowserCall } from './CallProvider.jsx';
+
+const PHONE_WORD = { ready: 'ready: calls back to your SIM ring in this browser', standby: 'another TeamLink tab of this browser takes the calls', connecting: 'connecting…', error: 'could not connect to the phone system (it tries again)', off: 'not connected' };
+// the person's own SIM (read-only): their number, and whether this browser is ready to ring
+function MySimCard() {
+  const { mySim, phoneState } = useBrowserCall();
+  if (!mySim) return null;
+  return (
+    <div className="card section" style={{ marginBottom: 12 }} data-testid="my-sim-card">
+      <div className="section-label">Your SIM</div>
+      <div>{mySim.routing ? 'Your calling number' : 'Your SIM number'}: <b>{mySim.number}</b>{mySim.operator ? ` (${mySim.operator})` : ''} · port {mySim.portLabel}</div>
+      <div className="small-muted">Candidates who call this number back ring here while TeamLink is open: {PHONE_WORD[phoneState] || phoneState}.{mySim.routing ? '' : ' Until an Admin switches on port routing, your outgoing calls may still show another office SIM.'}</div>
+    </div>
+  );
+}
 
 const ist = (d) => new Date(d.getTime() + 330 * 60000).toISOString().slice(0, 10);
 const errOf = (e, d) => (e && e.response && e.response.data && e.response.data.error) || d;
@@ -22,7 +38,7 @@ export default function BrowserCallingTab() {
   const csv = () => {
     if (!rep) return;
     const head = ['Start (IST)', 'Recruiter', 'Candidate', 'Number', 'Line', 'Status', 'Ring sec', 'Talk sec', 'Duration sec', 'Recorded', 'Summary', 'Reason'];
-    const lines = rep.calls.map((c) => [c.startAt, c.userName, c.candidateName, c.number, c.lineName || 'Office Synway (SIM)', statusWord(c.status), c.ringSec, c.talkSec, c.durationSec, c.hasRecording ? 'Yes' : 'No', c.summaryText, c.hangupReason].map((v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(','));
+    const lines = rep.calls.map((c) => [c.startAt, c.userName, c.candidateName, c.number, c.lineName || 'Office Synway (SIM)', statusWord(c.status, c.direction), c.ringSec, c.talkSec, c.durationSec, c.hasRecording ? 'Yes' : 'No', c.summaryText, c.hangupReason].map((v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(','));
     const url = URL.createObjectURL(new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv' }));
     const a = document.createElement('a'); a.href = url; a.download = `browser-calls-${from}-${to}.csv`; a.click(); URL.revokeObjectURL(url);
   };
@@ -53,6 +69,8 @@ export default function BrowserCallingTab() {
           {msg && <div className="small-muted">{msg}</div>}
         </div>
       )}
+      <MySimCard />
+      {cfg && <SimNumbersSection />}
       {cfg && <PhoneLinesSection testNumbers={String(cfg.testNumbers || '').split(/[\s,;]+/).map((x) => x.replace(/\D/g, '').slice(-10)).filter((x) => x.length === 10)} />}
       <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap', marginBottom: 10 }}>
         <label className="field"><span>From</span><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
@@ -62,6 +80,23 @@ export default function BrowserCallingTab() {
       {err && <div className="notice red">{err}</div>}
       {rep && (
         <>
+          {rep.missed && (rep.missed.length > 0 || rep.missedScope !== 'own') && (
+            <div data-testid="missed-calls">
+              <div className="section-label">Missed calls to recruiters&apos; SIMs{rep.missedScope === 'team' ? ' (your team)' : rep.missedScope === 'all' ? ' (everyone)' : ''}</div>
+              <table className="table">
+                <thead><tr><th>When</th><th>Recruiter</th><th>Caller</th><th>SIM</th><th>Why</th></tr></thead>
+                <tbody>
+                  {rep.missed.length === 0 && <tr><td colSpan={5} className="small-muted">No missed calls in these dates.</td></tr>}
+                  {rep.missed.map((m) => (
+                    <tr key={m.id}>
+                      <td style={{ whiteSpace: 'nowrap' }}>{new Date(m.startAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</td><td>{m.userName}</td>
+                      <td>{m.candidateName || 'Unknown caller'} <span className="small-muted">{m.number}</span></td><td>{m.lineName}</td><td className="small-muted">{String(m.reason || '').replace(/^Missed - called back the recruiter's number ?/, '').replace(/^\((.*)\)$/, '$1') || 'Missed'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <div className="section-label">Recruiter-wise</div>
           <table className="table">
             <thead><tr><th>Recruiter</th><th>Total</th><th>Connected</th><th>Failed</th><th>Missed</th><th>Total talk time</th><th>Recorded</th></tr></thead>
@@ -91,7 +126,7 @@ export default function BrowserCallingTab() {
               <tbody>{rep.calls.map((c) => (
                 <tr key={c.id}>
                   <td style={{ whiteSpace: 'nowrap' }}>{new Date(c.startAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</td><td>{c.userName}</td><td>{c.candidateName || c.candidateId}</td><td>{c.lineName || 'Office Synway (SIM)'}</td>
-                  <td>{mmss(c.ringSec)}</td><td>{mmss(c.talkSec)}</td><td>{statusWord(c.status)}{c.hangupReason && c.status !== 'completed' ? <div className="small-muted">{c.hangupReason}</div> : null}</td>
+                  <td>{mmss(c.ringSec)}</td><td>{mmss(c.talkSec)}</td><td>{statusWord(c.status, c.direction)}{c.hangupReason && c.status !== 'completed' ? <div className="small-muted">{c.hangupReason}</div> : null}</td>
                   <td><PlayButton call={c} /></td><td style={{ minWidth: 220 }}><CallSummary call={c} /></td>
                 </tr>
               ))}</tbody>

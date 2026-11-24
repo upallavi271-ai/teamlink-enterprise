@@ -2,7 +2,39 @@ import { useState } from 'react';
 import { useBrowserCall } from './CallProvider.jsx';
 import { openFromClick, popupHost } from './vicidialPopup.js';
 
-const WORD = { starting: 'Starting…', calling: 'Calling…', ringing: 'Ringing…', connected: 'Connected', failed: 'Failed', ended: 'Ended' };
+const WORD = { starting: 'Starting…', calling: 'Calling…', ringing: 'Ringing…', connected: 'Connected', failed: 'Failed', ended: 'Ended', missed: 'Missed' };
+
+// ONE SIM PER RECRUITER: the person's own SIM, read-only. "Your calling number" only while the Admin's port routing is on (otherwise the
+// office gateway may still pick another SIM for the call, so it says so).
+export function MyCallingNumber({ lineName }) {
+  const { mySim, line } = useBrowserCall();
+  if (!mySim) return null;
+  const onSynway = lineName ? /^Office Synway/.test(lineName) : !!(line && line.builtIn);
+  if (!onSynway) return null;
+  return (
+    <div className="small-muted" style={{ fontSize: 12, marginTop: 2 }} data-testid="my-sim-number">
+      {mySim.routing ? <>Your calling number: <b>{mySim.number}</b></> : <>Your SIM: <b>{mySim.number}</b> · calls back to it ring here (outgoing calls may still show another office SIM until an Admin switches on port routing)</>}
+    </div>
+  );
+}
+
+// A candidate calling the person's SIM back: who it is (looked up by the server, scope-checked; the number only masked), Answer / Decline.
+function IncomingPanel({ state, box }) {
+  const { answer, decline } = useBrowserCall();
+  return (
+    <div role="alertdialog" aria-label="Incoming call" style={{ ...box, borderColor: '#067647', boxShadow: '0 0 0 3px rgba(6,118,71,.18), 0 6px 24px rgba(0,0,0,.18)' }} data-testid="incoming-call">
+      <div className="small-muted" style={{ fontSize: 12 }}>Incoming call · on {state.lineName || 'your SIM'}</div>
+      <div style={{ fontWeight: 600, fontSize: 15, marginTop: 2 }} data-testid="incoming-name">{state.name || 'Incoming call'}</div>
+      {state.requirement && <div className="small-muted" data-testid="incoming-requirement">{state.requirement}</div>}
+      <div className="small-muted" data-testid="incoming-number">{state.maskedNumber || ''}</div>
+      {state.note && <div className="small-muted" style={{ color: '#b42318' }}>{state.note}</div>}
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+        <button type="button" className="btn btn-sm" style={{ background: '#067647', color: '#fff' }} onClick={answer}>Answer</button>
+        <button type="button" className="btn btn-sm" style={{ background: '#b42318', color: '#fff' }} onClick={decline}>Decline</button>
+      </div>
+    </div>
+  );
+}
 const mmss = (n) => `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
 
 // "Call using": the phone lines this login may call on (the office Synway first). The choice is remembered on this computer.
@@ -74,6 +106,7 @@ export default function CallBar() {
       <div role="dialog" aria-label="Pick the line" style={box} data-testid="call-bar">
         <div style={{ fontWeight: 600 }}>{state.name || 'Candidate'}</div>
         <LineSelect />
+        <MyCallingNumber />
         <div style={{ display: 'flex', gap: 6 }}>
           <button type="button" className="btn btn-sm btn-primary" onClick={() => call({ candidateId: state.candidateId, applicationId: state.applicationId, name: state.name, outreachTaskId: state.outreachTaskId })}>{'☎'} Call</button>
           <button type="button" className="btn btn-sm" onClick={dismiss}>Cancel</button>
@@ -82,19 +115,22 @@ export default function CallBar() {
     );
   }
   if (state.phase === 'vici') return <ViciPanel state={state} box={box} dismiss={dismiss} />;
+  if (state.phase === 'incoming') return <IncomingPanel state={state} box={box} />;
+  const inbound = state.direction === 'inbound';
   const live = ['starting', 'calling', 'ringing', 'connected'].includes(state.phase);
   const rec = state.record;
-  const why = state.phase === 'failed' ? (state.error || (rec && rec.hangupReason)) : (state.phase === 'ended' && rec && rec.talkSec != null ? `Talk time ${mmss(rec.talkSec)}` : '');
+  const why = ['failed', 'missed'].includes(state.phase) ? (state.error || (rec && rec.hangupReason)) : (state.phase === 'ended' && rec && rec.talkSec != null ? `Talk time ${mmss(rec.talkSec)}` : '');
   return (
     <div role="status" style={box} data-testid="call-bar">
       <div style={{ fontWeight: 600 }}>{state.name || 'Candidate'}</div>
-      <div className="small-muted">{state.number ? `${state.number.slice(0, 2)}XXXXXX${state.number.slice(-2)}` : ''}{state.lineName ? ` · on ${state.lineName}` : ''}</div>
+      <div className="small-muted">{inbound ? `Incoming · ${state.maskedNumber || ''}` : (state.number ? `${state.number.slice(0, 2)}XXXXXX${state.number.slice(-2)}` : '')}{state.lineName ? ` · on ${state.lineName}` : ''}</div>
+      {!inbound && <MyCallingNumber lineName={state.lineName} />}
       <div style={{ margin: '6px 0', fontSize: 15 }}>
-        <b style={{ color: state.phase === 'failed' ? '#b42318' : state.phase === 'connected' ? '#067647' : undefined }}>{WORD[state.phase]}</b>
+        <b style={{ color: ['failed', 'missed'].includes(state.phase) ? '#b42318' : state.phase === 'connected' ? '#067647' : undefined }}>{WORD[state.phase]}</b>
         {state.phase === 'connected' && <span style={{ marginLeft: 8 }}>{mmss(seconds)}{state.held ? ' · On hold' : ''}{state.muted ? ' · Muted' : ''}</span>}
       </div>
       {why && <div className="small-muted" style={{ marginBottom: 6 }}>{why}</div>}
-      {!live && <LineSelect />}
+      {!live && !inbound && <LineSelect />}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {state.phase === 'connected' && (
           <>
