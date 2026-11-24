@@ -175,6 +175,9 @@ async function call(user, { kind, id, to } = {}) {
   const own = await require('../utils/messageChannels').ownContact(user); // eslint-disable-line global-require
   const number = clip(to || x.phone, 40);
   if (!number) return S.fail(400, 'This record has no phone number. Type one in the number box.');
+  // a number on the Do-Not-Disturb registry is not called (crm/plus/dataCare.js: the uploaded DND list, and the provider check once its key is saved)
+  const dnd = await require('./plus/dataCare').callBlock(number).catch(() => null); // eslint-disable-line global-require
+  if (dnd) return dnd;
   if (!own.phone) return S.fail(409, 'Your own phone number is not on your employee profile, so TeamLink does not know which phone to ring first. Add it on your profile.', { needsMyPhone: true });
   const cfg = await gw.callConfig().catch(() => ({ configured: false, reason: 'Cloud Telephony is not connected.' }));
   if (!cfg.configured) return S.fail(409, cfg.reason || 'Cloud Telephony is not connected.', { notConfigured: true });
