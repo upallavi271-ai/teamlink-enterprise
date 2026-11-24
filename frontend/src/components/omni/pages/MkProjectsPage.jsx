@@ -92,6 +92,7 @@ function RequestModal({ meta, project, accountIds = [], onClose, onDone, toast }
   // the client's connected Facebook / Instagram / X accounts: the ones ticked here are where Post goes for this client's projects
   const [accts, setAccts] = useState({ allowed: false, accounts: [] });
   const [postIds, setPostIds] = useState(accountIds);
+  const [showAllAcc, setShowAllAcc] = useState(false);
   useEffect(() => { omni.get('/gs/marketing/projects/accounts').then(setAccts).catch(() => setAccts({ allowed: false, accounts: [] })); }, []);
   const names = useMemo(() => people.map((c) => c.name), [people]);
   const pickClient = (name) => { const c = find(name); setF((x) => ({ ...x, clientName: name, contactName: c ? (c.contactName || x.contactName) : x.contactName, contactEmail: c ? (c.contactEmail || x.contactEmail) : x.contactEmail, contactPhone: c ? (c.contactPhone || x.contactPhone) : x.contactPhone })); };
@@ -133,18 +134,33 @@ function RequestModal({ meta, project, accountIds = [], onClose, onDone, toast }
         </Field>
         <Field label="THEY WANT"><select value={f.deliverable} onChange={(e) => setF({ ...f, deliverable: e.target.value })}>{meta.deliverables.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}</select></Field>
         <Field label="NEEDED BY"><input type="date" value={f.dueDate} onChange={(e) => setF({ ...f, dueDate: e.target.value })} /></Field>
-        {accts.accounts.length ? (
-          <Field label="POST ON THESE ACCOUNTS OF THE CLIENT" full hint="Tick the client's Facebook / Instagram pages once. When the client approves, the Post button posts straight on these accounts (you still press it).">
-            <div>
-              {accts.accounts.map((a) => (
-                <label key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '3px 0' }}>
-                  <input type="checkbox" checked={postIds.includes(a.id)} disabled={a.status === 'Expired'} onChange={() => setPostIds((s) => (s.includes(a.id) ? s.filter((x) => x !== a.id) : [...s, a.id]))} />
-                  <span><b>{a.name}</b> · {a.platform === 'instagram' ? 'Instagram' : a.platform === 'x' ? 'X' : 'Facebook'}{a.status !== 'Connected' ? ` · ${a.status}` : ''}</span>
-                </label>
-              ))}
-            </div>
-          </Field>
-        ) : null}
+        {accts.accounts.length ? (() => {
+          // the connected accounts that look like THIS client's pages (their name / the pages typed below), the rest are the company's own and other clients' pages
+          const norm = (t) => String(t || '').toLowerCase().replace(/https?:\/\/(www\.)?(m\.)?(facebook|instagram|fb)\.com\//g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+          const GENERIC = ['clinic', 'clinics', 'hospital', 'hospitals', 'official', 'page', 'pages', 'india', 'private', 'limited', 'consultancy', 'consultants', 'services', 'solutions'];
+          const toks = [...new Set(norm(f.clientName + ' ' + f.handles).split(' ').filter((w) => w.length >= 4 && !GENERIC.includes(w)))];
+          const looks = (a) => { const t = norm(a.name + ' ' + (a.username || '') + ' ' + (a.parentName || '')); return toks.some((w) => t.includes(w)); };
+          const mine = accts.accounts.filter((a) => looks(a) || postIds.includes(a.id)); const others = accts.accounts.filter((x) => !mine.includes(x));
+          const row = (a) => (
+            <label key={a.id} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12.5, padding: '4px 0', cursor: 'pointer' }}>
+              <input type="checkbox" style={{ width: 'auto', flex: 'none', margin: 0 }} checked={postIds.includes(a.id)} disabled={a.status === 'Expired'} onChange={() => setPostIds((x) => (x.includes(a.id) ? x.filter((y) => y !== a.id) : [...x, a.id]))} />
+              <span style={{ textAlign: 'left' }}><b>{a.name}</b> · {a.platform === 'instagram' ? 'Instagram' : a.platform === 'x' ? 'X' : 'Facebook'}{a.parentName ? ' · ' + a.parentName : ''}{a.status !== 'Connected' ? ' · ' + a.status : ''}</span>
+            </label>
+          );
+          return (
+            <Field label="POST ON THE CLIENT'S OWN ACCOUNTS" full hint="Only accounts that are connected to TeamLink can be posted on: the client makes TeamLink's Facebook login an admin of their Page (or gives access), then the page shows here. Tick the client's pages once; the Post button then posts straight on them.">
+              <div style={{ textAlign: 'left' }}>
+                {mine.length ? mine.map(row) : <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 10px' }}>No connected account matches this client yet{f.clientName.trim() ? ' (' + f.clientName.trim() + ')' : ''}. Write the client's pages in "To be posted on" below, then ask the client to give TeamLink access to those pages: it appears here once connected.</div>}
+                {others.length ? (
+                  <div style={{ marginTop: 8 }}>
+                    <button type="button" className="tiny-btn" onClick={() => setShowAllAcc(!showAllAcc)}>{showAllAcc ? 'Hide' : 'Show'} the other {others.length} connected account{others.length === 1 ? '' : 's'} (the company's own and other clients')</button>
+                    {showAllAcc ? <div style={{ marginTop: 6 }}>{others.map(row)}</div> : null}
+                  </div>
+                ) : null}
+              </div>
+            </Field>
+          );
+        })() : null}
         <Field label="TO BE POSTED ON" full>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12 }}>{meta.platforms.map((p) => <label key={p.key} style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={f.platforms.includes(p.key)} onChange={() => toggle(p.key)} />{p.label}</label>)}</div>
         </Field>
