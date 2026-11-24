@@ -2,7 +2,7 @@
 // AI MARKETING > CLIENT PLANS (2026-11-24). TeamLink Consultants' "AI-Powered Digital Marketing Services & Business Proposal" (the owner's Word document) turned into what the team can use:
 //   1 PLANS      Basic 3,999 / Growth 7,999 / Premium 14,999 a month with the monthly quantities of the document (posts, Reels, stories, Google Business Profile posts, SEO blogs),
 //                and the subscription offers (3 months 5% off, 6 months 10% off, 9 months 15% off, 12 months for the price of 11). quote() gives the exact price table of the document.
-//   2 CLIENTS    a client on a plan (start date, months, what was agreed) and, month by month, how much of each quantity has been DELIVERED (counted by the team) against the plan.
+//   2 CLIENTS    a client on a plan (start date, months, what was agreed) and, month by month, how much of each quantity has been DELIVERED (posts, Reels and stories counted from approved work + what the team adds by hand) against the plan.
 //   3 GBP AUDIT  the "TeamLink GBP Quality Audit": a score out of 100 with the document's marks (name and category 15, address and contact 15, opening hours 10, description 10,
 //                services and products 10, photos 10, reviews and responses 15, posts and activity 10, website and links 5), the findings and the actions to take, saved per client.
 // HONEST BY DESIGN (the document's own rules): the audit is TeamLink's OWN score, not a Google score or ranking; it only uses what the team ticks (nothing is read from Google, nothing is
@@ -173,9 +173,29 @@ function rowOut(r) {
   return { id: r.id, clientName: r.clientName, contactName: r.contactName || '', contactPhone: r.contactPhone || '', industry: r.industry || '', plan: r.plan, planLabel: (PLANS[r.plan] || {}).label || r.plan, months, startDate: start, endDate: end, daysLeft: left,
     renewal: r.status !== 'active' ? 'ended' : left < 0 ? 'overdue' : left <= 30 ? 'soon' : 'running', pricePaid: S.num(r.pricePaid), notes: r.notes || '', status: r.status, department: r.department || '', createdByName: r.createdByName || '', createdAt: S.iso(r.createdAt) };
 }
-function progress(planKey, rows) { // what is delivered against what the plan promises, per item
-  const p = PLANS[planKey]; const done = Object.fromEntries(rows.map((r) => [r.item, S.num(r.count)]));
-  return ITEMS.filter((i) => p && p.quotas[i.key] > 0).map((i) => { const q = p.quotas[i.key]; const d = done[i.key] || 0; return { item: i.key, label: i.label, quota: q, done: d, left: Math.max(0, q - d), over: Math.max(0, d - q), pct: Math.min(100, Math.round((d / q) * 100)) }; });
+// ---- what is delivered, counted from the real work (2026-11-24) ------------------------------------------------------------------------------------------------------------
+// A picture or a finished video that is APPROVED in the month, in a Client project whose client name is this plan's client name, counts by itself:
+//   a picture that is not 9:16 -> a post / creative; a 9:16 picture -> a story; a 9:16 video -> a Reel; any other video -> a post. A raw stock clip, a draft, a picture waiting for approval,
+//   a deleted one and another client's work are never counted. The team's + and - buttons ADD to this (work made outside TeamLink, for example in Canva). GBP posts and SEO blogs are not made
+//   here, so they stay counted by hand. Nothing is invented: the counted items are listed so anybody can check them.
+const AUTO_ITEMS = ['posts', 'reels', 'stories'];
+function monthRange(month) { // the month in India time: [from, to) in milliseconds
+  const [y, m] = String(month).split('-').map(Number); const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+  return [Date.parse(`${month}-01T00:00:00+05:30`), Date.parse(`${next}-01T00:00:00+05:30`)];
+}
+function kindOfItem(r) { const video = /^video\//i.test(String(r.mime || '')); const tall = String(r.aspect || '') === '9:16'; return video ? (tall ? 'reels' : 'posts') : (tall ? 'stories' : 'posts'); }
+async function autoCounts(clientName, month) {
+  const out = { posts: 0, reels: 0, stories: 0, items: [] }; const name = String(clientName || '').trim().toLowerCase(); if (!name || !okMonth(month)) return out;
+  const [from, to] = monthRange(month);
+  try {
+    const rows = await S.q(`SELECT i.id, i.title, i.mime, i.aspect, i.decidedAt FROM "OmniMkImage" i JOIN "OmniMkProject" p ON p.id = i.projectId WHERE i.deletedAt IS NULL AND i.status = 'approved' AND (i.style IS NULL OR i.style <> 'clip') AND LOWER(TRIM(p.clientName)) = ? AND i.decidedAt >= ? AND i.decidedAt < ? ORDER BY i.decidedAt`, name, from, to);
+    for (const r of rows) { const k = kindOfItem(r); out[k] += 1; if (out.items.length < 40) out.items.push({ id: r.id, title: S.clip(r.title, 80), kind: k, at: S.iso(r.decidedAt) }); }
+  } catch { /* the pictures or the projects table is not made yet: nothing is counted from work */ }
+  return out;
+}
+function progress(planKey, rows, auto) { // what is delivered against what the plan promises, per item: counted from approved work + added by hand
+  const p = PLANS[planKey]; const hand = Object.fromEntries(rows.map((r) => [r.item, S.num(r.count)])); const a = auto || {};
+  return ITEMS.filter((i) => p && p.quotas[i.key] > 0).map((i) => { const q = p.quotas[i.key]; const man = hand[i.key] || 0; const au = AUTO_ITEMS.includes(i.key) ? S.num(a[i.key]) : 0; const d = man + au; return { item: i.key, label: i.label, quota: q, done: d, left: Math.max(0, q - d), over: Math.max(0, d - q), pct: Math.min(100, Math.round((d / q) * 100)), manual: man, auto: au, counted: AUTO_ITEMS.includes(i.key) ? 'work' : 'hand' }; });
 }
 function cleanPlanBody(b, old) {
   const o = old || {}; const out = {};
@@ -216,14 +236,20 @@ async function listPlans(u, o = {}) {
   const rows = (await S.q(`SELECT * FROM "${TP}" ORDER BY createdAt DESC LIMIT 500`)).filter((r) => mayDept(u, r.department)).filter((r) => !o.status || r.status === o.status);
   const month = okMonth(o.month) ? o.month : istMonth();
   const items = [];
-  for (const r of rows) { const p = rowOut(r); const pr = progress(r.plan, await deliveryRows(r.id, month)); const quota = pr.reduce((a, x) => a + x.quota, 0); const done = pr.reduce((a, x) => a + Math.min(x.done, x.quota), 0); items.push({ ...p, month, deliveredPct: quota ? Math.round((done / quota) * 100) : 0, progress: pr }); } // eslint-disable-line no-await-in-loop
+  for (const r of rows) { const p = rowOut(r); const au = await autoCounts(r.clientName, month); const pr = progress(r.plan, await deliveryRows(r.id, month), au); const quota = pr.reduce((a, x) => a + x.quota, 0); const done = pr.reduce((a, x) => a + Math.min(x.done, x.quota), 0); items.push({ ...p, month, deliveredPct: quota ? Math.round((done / quota) * 100) : 0, progress: pr, autoItems: au.items }); } // eslint-disable-line no-await-in-loop
   return { items, month, canWrite: A.has('mayAiMarketing')(u) };
 }
 async function getPlan(u, id, month) {
   if (!(await ensure())) return { error: 'The plans could not be opened.', status: 500 };
   const r = await mine(u, id); if (!r) return { error: 'That client plan was not found.', status: 404 };
   const m = okMonth(month) ? month : istMonth();
-  return { plan: { ...rowOut(r), month: m, progress: progress(r.plan, await deliveryRows(id, m)), quote: quote(r.plan, S.num(r.months)), quotas: PLANS[r.plan].quotas } };
+  const au = await autoCounts(r.clientName, m);
+  return { plan: { ...rowOut(r), month: m, progress: progress(r.plan, await deliveryRows(id, m), au), autoItems: au.items, quote: quote(r.plan, S.num(r.months)), quotas: PLANS[r.plan].quotas } };
+}
+// every plan that is running, for the daily reminders (no department filter: the reminder goes to whoever started the plan)
+async function activePlans() {
+  if (!(await ensure())) return [];
+  return (await S.q(`SELECT * FROM "${TP}" WHERE status = 'active' ORDER BY createdAt LIMIT 1000`)).map((r) => ({ raw: r, view: rowOut(r) }));
 }
 // the team counts what it has delivered: set (count) or add (delta, + or -) for one item in one month. Never below 0.
 async function setDelivery(u, id, b = {}) {
@@ -265,4 +291,4 @@ async function listAudits(u, o = {}) {
   return { items: rows.map((r) => { const a = auditOut(r); delete a.answers; return a; }) };
 }
 
-module.exports = { ensure, PLANS, ITEMS, TERMS, GBP_AREAS, CHECKS, catalog, quote, scoreGbp, createPlan, updatePlan, listPlans, getPlan, setDelivery, saveAudit, getAudit, listAudits, istMonth };
+module.exports = { ensure, PLANS, ITEMS, TERMS, GBP_AREAS, CHECKS, catalog, quote, scoreGbp, createPlan, updatePlan, listPlans, getPlan, setDelivery, saveAudit, getAudit, listAudits, istMonth, istDay, autoCounts, monthRange, activePlans, mayDept, AUTO_ITEMS };

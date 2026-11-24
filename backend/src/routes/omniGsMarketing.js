@@ -29,6 +29,7 @@ const Ov = require('../marketing/openverse');
 const Mrep = require('../marketing/monthlyReport');
 const Page = require('../marketing/pagespeed');
 const Comp = require('../marketing/competitors');
+const PlanRem = require('../marketing/planReminders');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -357,7 +358,9 @@ router.post('/services/gbp/score', mustWrite, wrap(async (req, res) => res.json(
 router.get('/services/gbp/audits', mustWrite, wrap(async (req, res) => send(res, await CS.listAudits(req.user, { planId: req.query.planId ? String(req.query.planId) : '', clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
 router.post('/services/gbp/audits', mustWrite, wrap(async (req, res) => send(res, await CS.saveAudit(req.user, req.body || {}))));
 router.get('/services/gbp/audits/:id', mustWrite, wrap(async (req, res) => send(res, await CS.getAudit(req.user, req.params.id))));
-router.get('/services/plans', mustWrite, wrap(async (req, res) => send(res, await CS.listPlans(req.user, { month: req.query.month, status: req.query.status ? String(req.query.status) : '' }))));
+// what needs a person today: plans ending in 30 days or already ended, monthly reports still empty near month end (marketing/planReminders.js; the same facts are sent once as bells)
+router.get('/services/attention', mustWrite, wrap(async (req, res) => res.json({ items: await PlanRem.due(req.user) })));
+router.get('/services/plans', mustWrite,wrap(async (req, res) => send(res, await CS.listPlans(req.user, { month: req.query.month, status: req.query.status ? String(req.query.status) : '' }))));
 router.post('/services/plans', mustWrite, wrap(async (req, res) => send(res, await CS.createPlan(req.user, req.body || {}))));
 router.get('/services/plans/:id', mustWrite, wrap(async (req, res) => send(res, await CS.getPlan(req.user, req.params.id, req.query.month))));
 router.put('/services/plans/:id', mustWrite, wrap(async (req, res) => send(res, await CS.updatePlan(req.user, req.params.id, req.body || {}))));

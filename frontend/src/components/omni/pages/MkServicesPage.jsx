@@ -24,6 +24,7 @@ export default function MkServicesPage() {
   return (
     <div>
       <PageHead eyebrow="AI Marketing" title="Client plans" lead="The Basic, Growth and Premium plans, what has been delivered for each client this month, and the Google profile quality audit." />
+      <Attention onOpen={() => setTab('clients')} />
       <Tabs value={tab} onChange={setTab} tabs={[['plans', 'Plans and offers'], ['clients', 'Clients on a plan'], ['audit', 'Google profile audit']]} />
       <div style={{ marginTop: 14 }}>
         {tab === 'plans' ? <PlansTab cat={cat} /> : null}
@@ -76,6 +77,26 @@ function PlansTab({ cat }) {
   );
 }
 
+// what needs a person today (plans ending within 30 days or already ended, monthly reports still empty near the month end). The same facts also arrive once as bells.
+const LEVEL = { overdue: ['error', 'Ended'], soon: ['warn', 'Soon'], notice: ['draft', 'Coming up'] };
+function Attention({ onOpen }) {
+  const [items, setItems] = useState(null);
+  useEffect(() => { let live = true; omni.get('/gs/marketing/services/attention').then((d) => { if (live) setItems(d.items || []); }).catch(() => { if (live) setItems([]); }); return () => { live = false; }; }, []);
+  if (!items || !items.length) return null;
+  return (
+    <Panel title={`Needs attention (${items.length})`} sub="Plans that are ending or have ended, and monthly reports still empty near the month end. Each one also arrives once as a bell." style={{ marginBottom: 14 }} right={<TinyBtn onClick={onOpen}>Open clients on a plan</TinyBtn>}>
+      {items.map((it) => {
+        const [tone, words] = LEVEL[it.level] || LEVEL.notice;
+        return (
+          <div key={`${it.planId}-${it.kind}`} style={{ display: 'flex', gap: 10, alignItems: 'baseline', margin: '6px 0', fontSize: 13, flexWrap: 'wrap' }}>
+            <Pill tone={tone} dot>{words}</Pill><b>{it.title}</b><span style={{ color: 'var(--muted)' }}>{it.message}</span>
+          </div>
+        );
+      })}
+    </Panel>
+  );
+}
+
 function ClientsTab({ cat, toast, onAudit }) {
   const [month, setMonth] = useState(new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 7));
   const [rows, setRows] = useState(null); const [err, setErr] = useState(''); const [form, setForm] = useState(null); const [busy, setBusy] = useState(false); const [rep, setRep] = useState(null);
@@ -114,14 +135,20 @@ function ClientsTab({ cat, toast, onAudit }) {
         return (
           <Panel key={r.id} title={`${r.clientName} · ${r.planLabel}`} sub={`${r.months} month(s) from ${fmtDate(r.startDate)} to ${fmtDate(r.endDate)} · paid ${rs(r.pricePaid)}${r.industry ? ` · ${r.industry}` : ''}`} style={{ marginBottom: 12 }}
             right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn><TinyBtn onClick={() => setRep(r)}>Monthly report</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Delivered in {month}: {r.deliveredPct}% of the plan. Counted by the team.</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Delivered in {month}: {r.deliveredPct}% of the plan. Posts, Reels and stories are counted by themselves from the work approved for {r.clientName} in Client projects; the + and − buttons add work made outside TeamLink. GBP posts and blogs are counted by hand.</div>
             {r.progress.map((p) => (
               <div key={p.item} style={{ display: 'grid', gridTemplateColumns: 'minmax(150px,1.2fr) 3fr auto', gap: 10, alignItems: 'center', margin: '5px 0', fontSize: 13 }}>
-                <span>{p.label}</span>
+                <span>{p.label}{p.counted === 'work' ? <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)' }}>{p.auto} from approved work · {p.manual} added by hand</span> : <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)' }}>counted by hand</span>}</span>
                 <div style={{ background: '#e2e8f0', borderRadius: 6, height: 12, overflow: 'hidden' }}><div style={{ width: `${p.pct}%`, height: '100%', background: p.done >= p.quota ? '#15803d' : '#0f766e' }} /></div>
-                <span style={{ display: 'flex', gap: 6, alignItems: 'center', whiteSpace: 'nowrap' }}><TinyBtn aria-label={`one less ${p.label}`} disabled={p.done <= 0} onClick={() => count(r, p.item, -1)}>−</TinyBtn><b>{p.done}</b> of {p.quota}<TinyBtn aria-label={`one more ${p.label}`} onClick={() => count(r, p.item, 1)}>＋</TinyBtn>{p.over ? <Tag title="More than the plan">+{p.over} extra</Tag> : null}</span>
+                <span style={{ display: 'flex', gap: 6, alignItems: 'center', whiteSpace: 'nowrap' }}><TinyBtn aria-label={`one less ${p.label}`} disabled={p.manual <= 0} title={p.manual <= 0 ? 'Nothing was added by hand to take away' : undefined} onClick={() => count(r, p.item, -1)}>−</TinyBtn><b>{p.done}</b> of {p.quota}<TinyBtn aria-label={`one more ${p.label}`} onClick={() => count(r, p.item, 1)}>＋</TinyBtn>{p.over ? <Tag title="More than the plan">+{p.over} extra</Tag> : null}</span>
               </div>
             ))}
+            {(r.autoItems || []).length ? (
+              <details style={{ marginTop: 6 }}>
+                <summary style={{ cursor: 'pointer', fontSize: 12.5 }}>Work counted by itself in {month} ({r.progress.reduce((a, p) => a + (p.auto || 0), 0)}{r.autoItems.length < r.progress.reduce((a, p) => a + (p.auto || 0), 0) ? `, the first ${r.autoItems.length} listed` : ''})</summary>
+                <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.5 }}>{r.autoItems.map((a) => <li key={a.id}>{a.title || 'Untitled'} <Tag>{a.kind === 'reels' ? 'Reel' : a.kind === 'stories' ? 'Story' : 'Post'}</Tag> <span style={{ color: 'var(--muted)' }}>approved {fmtDate(a.at)}</span></li>)}</ul>
+              </details>
+            ) : null}
           </Panel>
         );
       })}

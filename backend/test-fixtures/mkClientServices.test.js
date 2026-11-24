@@ -51,7 +51,7 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
   assert.ok(made.plan, JSON.stringify(made)); let p = made.plan;
   assert.deepEqual([p.planLabel, p.months, p.pricePaid, p.endDate, p.status], ['Growth', 6, 43195, '2027-05-01', 'active']);
   assert.deepEqual(p.progress.map((x) => [x.item, x.quota, x.done]), [['posts', 12, 0], ['reels', 4, 0], ['stories', 8, 0], ['gbpPosts', 8, 0]], 'Growth has no SEO blogs');
-  p = (await CS.setDelivery(admin, p.id, { month: '2026-11', item: 'posts', delta: 3 })).plan; assert.deepEqual(p.progress[0], { item: 'posts', label: 'Social media posts / creatives', quota: 12, done: 3, left: 9, over: 0, pct: 25 });
+  p = (await CS.setDelivery(admin, p.id, { month: '2026-11', item: 'posts', delta: 3 })).plan; assert.deepEqual(p.progress[0], { item: 'posts', label: 'Social media posts / creatives', quota: 12, done: 3, left: 9, over: 0, pct: 25, manual: 3, auto: 0, counted: 'work' }); assert.equal(p.progress[3].counted, 'hand', 'GBP posts are counted by hand only');
   p = (await CS.setDelivery(admin, p.id, { month: '2026-11', item: 'posts', count: 14 })).plan; assert.deepEqual([p.progress[0].done, p.progress[0].left, p.progress[0].over, p.progress[0].pct], [14, 0, 2, 100], 'more than the plan is shown as over, never hidden');
   p = (await CS.setDelivery(admin, p.id, { month: '2026-11', item: 'reels', delta: 2 })).plan;
   assert.ok((await CS.setDelivery(admin, p.id, { month: '2026-11', item: 'reels', delta: -5 })).error, 'never below 0');
