@@ -283,7 +283,7 @@ function Summary({ applicationId }) {
 
 function Scheduling({ applicationId }) {
   const [slots, setSlots] = useState(null); const [reps, setReps] = useState(null); const [sb, setSb] = useState(null); const [made, setMade] = useState(null);
-  const [feed, setFeed] = useState(null); const [cal, setCal] = useState(null); const [picked, setPicked] = useState([]); const [err, setErr] = useState(''); const [msg, setMsg] = useState('');
+  const [feed, setFeed] = useState(null); const [cal, setCal] = useState(null); const [picked, setPicked] = useState([]); const [err, setErr] = useState(''); const [msg, setMsg] = useState(''); const [links, setLinks] = useState(null); // links: 14.05 (ATS wave 2 Z)
   const loadSb = useCallback(() => api.get(`/ats/mkt/interviews/${applicationId}/self-book`).then((r) => setSb(r.data)).catch(() => setSb(null)), [applicationId]);
   useEffect(() => { loadSb(); api.get('/ats/mkt/calendar/connections').then((r) => setCal(r.data)).catch(() => null); }, [loadSb]);
   const run = async (fn) => { setErr(''); setMsg(''); try { await fn(); } catch (e) { setErr(errOf(e)); } };
@@ -323,7 +323,10 @@ function Scheduling({ applicationId }) {
         <button type="button" className="btn btn-sm" onClick={ics}>Download .ics</button>
         <button type="button" className="btn btn-sm" onClick={() => run(async () => { const r = await api.get('/ats/mkt/calendar/feed'); setFeed(r.data); })}>My calendar feed</button>
         <button type="button" className="btn btn-sm" onClick={() => run(async () => { const r = await api.post(`/ats/mkt/interviews/${applicationId}/calendar-push`, {}); setMsg(r.data.message); })}>Put in my Google / Outlook calendar</button>
+        {/* 14.05 (ATS wave 2 Z): add it by hand to any Google / Outlook calendar - no account connection needed */}
+        <button type="button" className="btn btn-sm" data-testid="cal-links" onClick={() => run(async () => { const r = await api.get(`/ats-plus/integrations/calendar-links/${applicationId}`); setLinks(r.data); })}>Add to Google / Outlook</button>
       </div>
+      {links && <div className="ivt-row"><a className="btn btn-sm" href={links.google} target="_blank" rel="noreferrer">Google Calendar</a><a className="btn btn-sm" href={links.outlook} target="_blank" rel="noreferrer">Outlook</a></div>}
       {feed && <div className="notice"><div>Add this address in Google Calendar (Other calendars &gt; From URL) or Outlook (Add calendar &gt; Subscribe from web):</div><code className="ivt-code">{feed.url}</code><div className="small-muted">{feed.note}</div><button type="button" className="btn btn-sm btn-ghost" onClick={() => run(async () => { const r = await api.post('/ats/mkt/calendar/feed/reset', {}); setFeed({ ...feed, url: r.data.url }); })}>Reset the address</button></div>}
       {cal && Object.entries(cal.rows).map(([p, c]) => (
         <div key={p} className="kv"><span className="k">{c.label}</span>

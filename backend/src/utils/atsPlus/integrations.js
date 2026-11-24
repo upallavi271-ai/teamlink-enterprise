@@ -290,8 +290,9 @@ async function setResult(order, b, by) {
 const router = express.Router();
 router.get('/integrations/overview', S.internal, S.wrap(async (req, res) => {
   const set = await hookSettings();
-  const g = await S.settings.get('workspace', {});
-  res.json({ webhooks: set, scopes: SCOPES, events: EVENTS, google: { clientId: g.googleClientId || '', hasSecret: !!g.googleSecretEnc, calendarLinks: true }, microsoft: { tenantId: g.msTenantId || '', clientId: g.msClientId || '', hasSecret: !!g.msSecretEnc, calendarLinks: true }, canEdit: S.isAdmin(req.user) && !req.viewAs, docs: '/api/docs' });
+  const W = require('./calendarZ'); // eslint-disable-line global-require
+  const gk = await W.workspaceKeys('google'); const mk = await W.workspaceKeys('microsoft');
+  res.json({ webhooks: set, scopes: SCOPES, events: EVENTS, google: { clientId: gk.clientId || '', hasSecret: !!gk.secret, calendarLinks: true }, microsoft: { tenantId: mk.tenant === 'common' && !mk.clientId ? '' : mk.tenant, clientId: mk.clientId || '', hasSecret: !!mk.secret, calendarLinks: true }, canEdit: S.isAdmin(req.user) && !req.viewAs, docs: '/api/docs' });
 }));
 router.put('/integrations/webhook-settings', S.adminOnly, S.wrap(async (req, res) => {
   const b = req.body || {}; const cur = await hookSettings();
@@ -301,13 +302,22 @@ router.put('/integrations/webhook-settings', S.adminOnly, S.wrap(async (req, res
   res.json(next);
 }));
 router.put('/integrations/workspace', S.adminOnly, S.wrap(async (req, res) => {
-  const b = req.body || {}; const cur = await S.settings.get('workspace', {});
-  const next = { ...cur };
-  ['googleClientId', 'msTenantId', 'msClientId'].forEach((k) => { if (k in b) next[k] = String(b[k] || '').trim().slice(0, 200); });
-  if (b.googleSecret) { const e = enc(String(b.googleSecret)); if (!e) return res.status(400).json({ error: 'Set the encryption key on the server first (secrets are never stored in plain text).' }); next.googleSecretEnc = e; }
-  if (b.msSecret) { const e = enc(String(b.msSecret)); if (!e) return res.status(400).json({ error: 'Set the encryption key on the server first (secrets are never stored in plain text).' }); next.msSecretEnc = e; }
-  await S.settings.set('workspace', next, req.user);
-  await logAudit({ userId: req.user.id, action: 'Google / Microsoft 365 app details saved', entity: 'AtsPlusSetting', entityId: 'workspace' });
+  // ATS wave 2 Z: the keys go to the ONE credential store (Administration > Integrations > "Google Workspace / Microsoft 365 (ATS)",
+  // utils/integrationStore.js, secrets encrypted); the calendar connection (utils/mkt/interviews.js appKeys) reads them from there.
+  const b = req.body || {};
+  const ST = require('../integrationStore'); // eslint-disable-line global-require
+  const incoming = {};
+  if ('googleClientId' in b) incoming['Google client ID'] = String(b.googleClientId || '').trim().slice(0, 200);
+  if ('msClientId' in b) incoming['Microsoft app (client) ID'] = String(b.msClientId || '').trim().slice(0, 200);
+  if ('msTenantId' in b) incoming['Microsoft tenant ID (common = any)'] = String(b.msTenantId || '').trim().slice(0, 200);
+  if (b.googleSecret) incoming['Google client secret'] = String(b.googleSecret);
+  if (b.msSecret) incoming['Microsoft client secret'] = String(b.msSecret);
+  let written;
+  try { written = await ST.writeValues('ats-workspace', incoming); } catch (e) { if (e && e.code === 'NO_SECRET_KEY') return res.status(400).json({ error: 'Set the encryption key on the server first (secrets are never stored in plain text).' }); throw e; }
+  await ST.integrationRow('ats-workspace');
+  await prisma.integration.update({ where: { id: 'ats-workspace' }, data: { values: JSON.stringify(written.values), ...(written.filled ? { enabled: true, connected: true, state: 'Connected', connectedAt: new Date(), error: null } : {}) } });
+  await ST.recordEvent('ats-workspace', { action: 'Connected', by: req.user.name, result: 'App details saved (encrypted at rest)' });
+  await logAudit({ userId: req.user.id, action: 'Google / Microsoft 365 app details saved', entity: 'Integration', entityId: 'ats-workspace' });
   res.json({ ok: true });
 }));
 // API keys

@@ -448,13 +448,13 @@ function icsOf(events, calName = 'TeamLink interviews') {
 // every URL can be pointed at a stub for tests (MKT_*_URL env).
 const PROVIDERS = {
   google: {
-    label: 'Google Calendar', scope: 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.freebusy openid email',
+    label: 'Google Calendar', scope: 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.freebusy https://www.googleapis.com/auth/contacts.readonly openid email', // contacts: 14.05 (ATS wave 2 Z)
     auth: () => process.env.MKT_GOOGLE_AUTH_URL || 'https://accounts.google.com/o/oauth2/v2/auth',
     token: () => process.env.MKT_GOOGLE_TOKEN_URL || 'https://oauth2.googleapis.com/token',
     api: () => process.env.MKT_GOOGLE_API_URL || 'https://www.googleapis.com/calendar/v3',
   },
   microsoft: {
-    label: 'Microsoft Outlook / Teams calendar', scope: 'offline_access Calendars.ReadWrite User.Read',
+    label: 'Microsoft Outlook / Teams calendar', scope: 'offline_access Calendars.ReadWrite Contacts.Read User.Read', // Contacts.Read: 14.05 (ATS wave 2 Z)
     auth: (tenant) => process.env.MKT_MS_AUTH_URL || `https://login.microsoftonline.com/${tenant || 'common'}/oauth2/v2.0/authorize`,
     token: (tenant) => process.env.MKT_MS_TOKEN_URL || `https://login.microsoftonline.com/${tenant || 'common'}/oauth2/v2.0/token`,
     api: () => process.env.MKT_MS_API_URL || 'https://graph.microsoft.com/v1.0',
@@ -463,14 +463,18 @@ const PROVIDERS = {
 async function appKeys(provider) {
   const s = await C.settings();
   const a = (s.calendarApp && s.calendarApp[provider]) || {};
-  return { clientId: a.clientId || '', secret: a.secretEnc ? C.dec(a.secretEnc) : '', tenant: a.tenant || 'common', saved: !!(a.clientId && a.secretEnc) };
+  const own = { clientId: a.clientId || '', secret: a.secretEnc ? C.dec(a.secretEnc) : '', tenant: a.tenant || 'common', saved: !!(a.clientId && a.secretEnc) };
+  if (own.saved) return own;
+  // ATS wave 2 Z: the one place for the founder's Google / Microsoft app = Administration > Integrations (utils/atsPlus/calendarZ.js)
+  const w = await require('../atsPlus/calendarZ').workspaceKeys(provider).catch(() => null); // eslint-disable-line global-require
+  return w && w.saved ? { clientId: w.clientId, secret: w.secret, tenant: w.tenant, saved: true } : own;
 }
 const redirectUri = (req, provider) => `${C.publicBase(req)}/api/public/mkt/cal-oauth/${provider}/callback`;
 async function connectStart(req, provider) {
   const P = PROVIDERS[provider];
   if (!P) return { status: 404, error: 'Unknown calendar.' };
   const k = await appKeys(provider);
-  if (!k.saved) return { status: 409, error: `${P.label} is not set up yet: an Admin adds the app's Client ID and secret (Administration > Step timing and alerts > Add-on switches > Calendar apps). Needs founder credentials.`, needsFounder: true };
+  if (!k.saved) return { status: 409, error: `${P.label} is not set up yet: an Admin adds the app's Client ID and secret (Administration > Integrations > Google Workspace / Microsoft 365 (ATS), or Step timing and alerts > Add-on switches > Calendar apps). Needs founder credentials.`, needsFounder: true };
   await C.ensure();
   const state = C.randToken(18);
   await x('INSERT INTO "MktCalLink" ("userId","provider","state") VALUES (?,?,?) ON CONFLICT("userId","provider") DO UPDATE SET "state" = excluded."state"', req.user.id, provider, state);
@@ -581,5 +585,5 @@ module.exports = {
   SCALES, QTYPES, RECS, defaultKit, kitFor, listKits, saveKit, removeKit, suggestKit, scoresOf, saveScore,
   recordingsOf, recordingRow, addRecording, addReview, setTranscript, makeNotes, codeNotes, feedbackSummary,
   suggestSlots, replacements, jobSettings, setJobSetting, createSelfBook, selfBookRow, selfBooksOf, pickSelfBook, declineSelfBook,
-  feedToken, userOfFeed, feedEvents, icsOf, PROVIDERS, appKeys, connectStart, connectCallback, connections, disconnect, calendarBusy, pushToCalendars,
+  feedToken, userOfFeed, feedEvents, icsOf, PROVIDERS, appKeys, connectStart, connectCallback, connections, disconnect, calendarBusy, pushToCalendars, accessToken,
 };

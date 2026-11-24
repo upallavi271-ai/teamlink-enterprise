@@ -556,6 +556,7 @@ require('./utils/atsY/notetaker').start();
 require('./utils/atsY/jobWatch').start();
 app.use('/api/ats', require('./utils/scheduledReminders').autoSyncMiddleware); // keeps the reminder plan in line with a booking / move / cancel / joining change
 app.use('/api/ats', require('./utils/messageSchedules').eventMiddleware); // the stop rules / ATS triggers of the scheduled messages after a booking / move / cancel / documents / joining
+app.use('/api/ats', require('./utils/atsPlus/calendarZ').autoPushMiddleware); // 07.01 (ATS wave 2 Z): a booked / moved / cancelled interview follows in the connected Google / Outlook calendars - only while the Admin switch calendarPush is ON
 app.use('/api/ats', require('./routes/atsFlowConfig'));
 app.use('/api/ats', atsExtrasRoutes);
 // Interviews & Joining (Interview Feedback, Offers, Joining, Internal Hiring)

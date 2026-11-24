@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../../api';
 import TabStrip from '../../ui/TabStrip.jsx';
 import { Notice, Section, Table, useLoad, useAction, Field, Switch, when, row } from '../kit.jsx';
+import { MyCalendarsZ, ContactsZ } from './WorkspaceZ.jsx'; // 07.01 / 14.05: my calendar, the booking switch, contacts (ATS wave 2 Z)
 
 // ---------------------------------------------------------------------------
 // ATS settings -> Integrations (14.01 / 14.04 / 14.05 / 14.06 / 14.09 / 14.10 / 14.15 / 15.01 / 15.14). Backend: utils/atsPlus/integrations.js,
@@ -172,6 +173,7 @@ function Workspace() {
         <Field label="Microsoft client secret" hint={data.microsoft.hasSecret ? 'Saved (encrypted).' : ''}><input type="password" value={f.msSecret} onChange={(e) => setF({ ...f, msSecret: e.target.value })} autoComplete="new-password" /></Field>
       </div>}
       {data && data.canEdit && <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => run(() => api.put('/ats-plus/integrations/workspace', f), 'Saved.')}>Save</button>}
+      {data && <div className="small-muted" style={{ marginTop: 6 }}>Kept in Administration &gt; Integrations &gt; Google Workspace / Microsoft 365 (ATS), secrets encrypted.</div>}
     </Section>
   );
 }
@@ -197,7 +199,7 @@ export default function IntegrationsTab() {
       {tab === 'sso' && <Sso />}
       {tab === 'vendors' && <Vendors />}
       {tab === 'boards' && <Boards />}
-      {tab === 'workspace' && <Workspace />}
+      {tab === 'workspace' && <><Workspace /><MyCalendarsZ /><ContactsZ /></>}
       {tab === 'idv' && <IdCheck />}
     </>
   );
