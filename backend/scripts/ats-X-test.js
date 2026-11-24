@@ -208,6 +208,8 @@ const START = W1;
   check('with the switch ON: one bell per missing week, to the recruiter', rem.status === 200 && rem.body.sent >= 1 && (await notes(REC.id)) > nr, rem.body);
   check('the same week is not reminded twice', (await call('POST', `${X}/timesheets/remind`, null, tA)).body.already === true);
   await call('PUT', `${X}/settings`, { key: 'timesheets.reminders', value: false }, tA);
+  const sysList = await require('../src/utils/staffingX/contracts').list({ id: null, name: 'Timesheet reminders', role: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN' });
+  check('the Monday reminder timer (a system login) reaches every contractor', [app1.id, app2.id, app3.id].every((id) => sysList.some((c) => c.applicationId === id)));
 
   section('11.17 shift scheduling');
   const D = addDays(monday, 1);
@@ -409,6 +411,8 @@ const START = W1;
   let slog = (await call('GET', '/public/stfx-stub/_log')).body.subs;
   const sent = slog.find((s) => s.id === (sub.body && sub.body.externalId));
   check('the BDE sends the candidate: the VMS keeps it as Submitted, without contact details', sub.status === 201 && sub.body.status === 'Submitted' && sent && sent.body.proposedBillRate === 420 && !sent.body.candidate.email && !sent.body.candidate.phone, { sub: sub.body, sent });
+  const cands = await call('GET', `${X}/vms/jobs/${ids.beeline}/candidates`, null, tB);
+  check('the send box lists the people on the VMS job who may be sent, marking who was sent', cands.status === 200 && cands.body.maxBillRate === 450 && cands.body.rows.some((r) => r.applicationId === a4.id && r.sent) && cands.body.rows.some((r) => r.applicationId === a5.id && !r.sent) && !cands.body.rows.some((r) => r.applicationId === a6.id), cands.body);
   check('the same candidate is not sent twice', (await call('POST', `${X}/vms/submit/${a4.id}`, { billRate: 420 }, tB)).status === 409);
   const sub2 = await call('POST', `${X}/vms/submit/${a5.id}`, { billRate: 410, withContact: true }, tT);
   slog = (await call('GET', '/public/stfx-stub/_log')).body.subs;
