@@ -76,12 +76,12 @@ router.get('/proposal/:token/pdf', async (req, res) => {
     return res.send(out.pdf);
   } catch (e) { return bad(res); }
 });
-const answerPage = (p, token, doneWords) => {
+const answerPage = (p, token, doneWords, esign = false) => {
   const head = `Proposal ${esc(p.number)}${p.company ? ` for ${esc(p.company)}` : ''}`;
   if (doneWords) return page(head, doneWords);
   if (['Accepted', 'Declined'].includes(p.status)) return page(head, `This proposal is already marked <b>${esc(p.status)}</b>. To change it, please reply to our email.`);
   const pdf = `/api/crm-public/proposal/${esc(token)}/pdf`;
-  return page(head, `${p.toName ? `Dear ${esc(p.toName)}, ` : ''}please read the proposal and tell us what you decide.<br><br><a href="${pdf}" target="_blank" rel="noopener" style="color:#2563eb">Open the proposal (PDF)</a><form method="post" action="/api/crm-public/proposal/${esc(token)}" style="margin-top:18px;display:flex;gap:10px;justify-content:center"><button name="decision" value="accept" style="background:#16a34a;color:#fff;border:0;border-radius:8px;padding:11px 20px;font-size:15px;cursor:pointer">Accept</button><button name="decision" value="decline" style="background:#fff;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:11px 20px;font-size:15px;cursor:pointer">Decline</button></form>`);
+  return page(head, `${p.toName ? `Dear ${esc(p.toName)}, ` : ''}please read the proposal and tell us what you decide.<br><br><a href="${pdf}" target="_blank" rel="noopener" style="color:#2563eb">Open the proposal (PDF)</a><form method="post" action="/api/crm-public/proposal/${esc(token)}" style="margin-top:18px;display:flex;gap:10px;justify-content:center"><button name="decision" value="accept" style="background:#16a34a;color:#fff;border:0;border-radius:8px;padding:11px 20px;font-size:15px;cursor:pointer">Accept</button><button name="decision" value="decline" style="background:#fff;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:11px 20px;font-size:15px;cursor:pointer">Decline</button></form>${esign ? `<form method="post" action="/api/crm-public/proposal/${esc(token)}/esign" style="margin-top:12px"><button style="background:#1d4ed8;color:#fff;border:0;border-radius:8px;padding:11px 20px;font-size:15px;cursor:pointer">Accept and sign with Aadhaar eSign</button><div style="font-size:12px;color:#64748b;margin-top:6px">Signed through eMudhra with your Aadhaar OTP. The signed copy is kept with the proposal.</div></form>` : ''}`);
 };
 router.get('/proposal/:token', async (req, res) => {
   const X = require('../crm/extra'); // eslint-disable-line global-require
@@ -92,7 +92,24 @@ router.get('/proposal/:token', async (req, res) => {
   res.set('X-Robots-Tag', 'noindex');
   if (!p) return bad(res);
   await require('../crm/b/mail').docViewed('proposal', id, req, { what: `proposal ${p.number}` }).catch(() => null); // eslint-disable-line global-require
-  return res.send(answerPage(p, req.params.token));
+  return res.send(answerPage(p, req.params.token, null, p.status === 'Sent' && await require('../crm/esign').available())); // eslint-disable-line global-require
+});
+// Aadhaar eSign of a proposal (CRM wave A 15.07, crm/esign.js): only when the eMudhra connection is set up; eMudhra's reply is verified with its own API
+router.post('/proposal/:token/esign', async (req, res) => {
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  res.set('Cache-Control', 'private, no-store');
+  try {
+    const out = await require('../crm/esign').start(req.params.token, req); // eslint-disable-line global-require
+    if (out.html) return res.send(out.html);
+    return res.status(out.status).send(page('Aadhaar eSign', out.words));
+  } catch (e) { return res.status(500).send(page('Something went wrong', 'Please try again in a minute, or press Accept on the proposal page.')); }
+});
+router.post('/proposal-esign/return/:ref/:kind', express.urlencoded({ extended: false, limit: '30mb' }), async (req, res) => {
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  try {
+    const out = await require('../crm/esign').finish(String(req.params.ref || ''), String(req.params.kind || ''), req.body || {}, req.ip || ''); // eslint-disable-line global-require
+    return res.status(out.status).send(page('Proposal', out.words));
+  } catch (e) { return res.status(500).send(page('Something went wrong', 'The signing could not be recorded. Please contact us.')); }
 });
 router.post('/proposal/:token', express.urlencoded({ extended: false, limit: '2kb' }), async (req, res) => {
   const X = require('../crm/extra'); // eslint-disable-line global-require

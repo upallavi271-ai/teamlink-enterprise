@@ -497,6 +497,31 @@ const mails = () => { try { return fs.readFileSync(MAIL, 'utf8').split('\n').fil
   const vc = await call('GET', '/crm/wave/contacts.vcf', null, tk.M);
   check('the manager downloads the contacts as vCard', vc.status === 200 && /BEGIN:VCARD/.test(vc.text) && /FN:Ravi Kumar/.test(vc.text) && new RegExp(`ORG:ZZ A Vcard ${process.pid}`).test(vc.text), vc.text && vc.text.slice(0, 300));
 
+  console.log("15.07 a proposal signed with Aadhaar eSign (eMudhra; the account is the founder's own - here a stub key, nothing reaches eMudhra)");
+  const pd = await mkAccDeal(tk.A, 90000);
+  const pr = (await call('POST', `/crm/deals/${pd.id}/proposals`, { roles: [{ title: 'Java developer', openings: 2, ctc: 600000 }], feePercent: 8.33, company: 'ZZ A eSign Co', toName: 'Ravi', toEmail: 'ravi@example.test', fromName: 'Vasu' }, tk.A)).body.proposal;
+  await prisma.$executeRawUnsafe(`UPDATE "CrmProposal" SET "status" = 'Sent', "sentAt" = ?, "sentTo" = ? WHERE "id" = ?`, new Date().toISOString(), 'ravi@example.test', pr.id);
+  const ptBody = `${pr.id}.${Math.floor(Date.now() / 1000) + 86400}`;
+  const ptok = `${Buffer.from(ptBody).toString('base64url')}.${crypto.createHmac('sha256', env.JWT_SECRET).update(`crm-proposal-link:${ptBody}`).digest('base64url').slice(0, 24)}`;
+  const pg0 = await fetch(`http://localhost:${PORT}/api/crm-public/proposal/${ptok}`).then((r) => r.text());
+  check('eMudhra not set up: the page has Accept / Decline only', /value="accept"/.test(pg0) && !/Aadhaar eSign/.test(pg0), pg0.slice(0, 300));
+  const { publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const es = await call('PUT', '/admin/integrations/esign/configure', { values: { Environment: 'Sandbox', 'Gateway URL': 'https://testgateway.emsigner.com/eMsecure/V3_0/Index', 'Status / download API base URL': 'https://testgateway.emsigner.com/api', 'Auth token': 'zz-stub-token', 'eMudhra public certificate (PEM)': publicKey.export({ type: 'spki', format: 'pem' }), 'POST field names (Parameter 1,2,3)': 'Parameter1,Parameter2,Parameter3' } }, tk.X);
+  check('setup: a stub eMudhra connection', es.status === 200, es.body);
+  const pg1 = await fetch(`http://localhost:${PORT}/api/crm-public/proposal/${ptok}`).then((r) => r.text());
+  check('set up: the page offers "Accept and sign with Aadhaar eSign"', /Accept and sign with Aadhaar eSign/.test(pg1) && new RegExp(`/proposal/${ptok.replace(/[.]/g, '\.')}/esign`).test(pg1));
+  const gw = await fetch(`http://localhost:${PORT}/api/crm-public/proposal/${ptok}/esign`, { method: 'POST' }).then(async (r) => ({ status: r.status, text: await r.text() }));
+  const ref = (await prisma.appSetting.findFirst({ where: { key: { startsWith: 'emudhraSession:' }, value: { contains: pr.id } } }) || {}).key;
+  check('the button builds the encrypted gateway form (posted by the browser to eMudhra)', gw.status === 200 && /action="https:\/\/testgateway\.emsigner\.com/.test(gw.text) && /name="Parameter1"/.test(gw.text) && /name="Parameter3"/.test(gw.text) && !!ref, gw.text.slice(0, 300));
+  const r0 = ref.replace('emudhraSession:', '');
+  const fake = await fetch(`http://localhost:${PORT}/api/crm-public/proposal-esign/return/${r0}/success`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'ReturnStatus=Success&Transactionnumber=TXN12345' }).then(async (r) => ({ status: r.status, text: await r.text() }));
+  const prAfter = await DB.one('SELECT "status" FROM "CrmProposal" WHERE "id" = ?', pr.id);
+  check('a posted "Success" is never trusted: eMudhra is asked, cannot confirm, nothing changes', fake.status === 200 && /could not be confirmed with eMudhra/.test(fake.text) && prAfter.status === 'Sent', [fake, prAfter]);
+  check('the same reply again is refused (session closed)', (await fetch(`http://localhost:${PORT}/api/crm-public/proposal-esign/return/${r0}/success`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'ReturnStatus=Success&Transactionnumber=TXN12345' })).status === 409);
+  check('an unknown reply is refused', (await fetch(`http://localhost:${PORT}/api/crm-public/proposal-esign/return/TLNOPE123/success`, { method: 'POST' })).status === 400);
+  const ESN = require('../src/crm/esign');
+  check('the connector reads its set-up from Administration > Integrations', (await ESN.available()) === true);
+
   console.log('15.08 apps catalogue');
   const apps = await call('GET', '/crm/wave/apps', null, tk.M);
   const st = (k) => (apps.body.apps.find((a) => a.key === k) || {}).status;
