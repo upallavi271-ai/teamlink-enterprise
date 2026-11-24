@@ -78,7 +78,7 @@ function PlansTab({ cat }) {
 
 function ClientsTab({ cat, toast, onAudit }) {
   const [month, setMonth] = useState(new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 7));
-  const [rows, setRows] = useState(null); const [err, setErr] = useState(''); const [form, setForm] = useState(null); const [busy, setBusy] = useState(false);
+  const [rows, setRows] = useState(null); const [err, setErr] = useState(''); const [form, setForm] = useState(null); const [busy, setBusy] = useState(false); const [rep, setRep] = useState(null);
   const load = useCallback(() => omni.get('/gs/marketing/services/plans', { month }).then((d) => { setRows(d.items); setErr(''); }).catch((e) => setErr(errOf(e, 'The clients could not be read.'))), [month]);
   useEffect(() => { load(); }, [load]);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -106,13 +106,14 @@ function ClientsTab({ cat, toast, onAudit }) {
           <Banner>The price is kept as it was at the start. Healthcare clients: medical content is reviewed by a doctor or a qualified medical reviewer before it is published.</Banner>
         </Panel>
       ) : null}
+      {rep ? <ReportPanel plan={rep} month={month} toast={toast} onClose={() => setRep(null)} /> : null}
       {err ? <Banner tone="error">{err}</Banner> : null}
       {rows && !rows.length ? <Empty title="No client on a plan yet">Add the first one: the plan, how many months were paid for, and the start date. Then count what is delivered each month.</Empty> : null}
       {(rows || []).map((r) => {
         const [tone, words] = RENEW[r.renewal] || RENEW.running;
         return (
           <Panel key={r.id} title={`${r.clientName} · ${r.planLabel}`} sub={`${r.months} month(s) from ${fmtDate(r.startDate)} to ${fmtDate(r.endDate)} · paid ${rs(r.pricePaid)}${r.industry ? ` · ${r.industry}` : ''}`} style={{ marginBottom: 12 }}
-            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
+            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn><TinyBtn onClick={() => setRep(r)}>Monthly report</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Delivered in {month}: {r.deliveredPct}% of the plan. Counted by the team.</div>
             {r.progress.map((p) => (
               <div key={p.item} style={{ display: 'grid', gridTemplateColumns: 'minmax(150px,1.2fr) 3fr auto', gap: 10, alignItems: 'center', margin: '5px 0', fontSize: 13 }}>
@@ -181,5 +182,35 @@ function AuditTab({ cat, toast, pick }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// the monthly client report of one client: type or import the real numbers, read a Search Console CSV, save, preview, print or copy. A number left empty shows "Not provided" in the report; nothing is invented.
+function ReportPanel({ plan, month, toast, onClose }) {
+  const [d, setD] = useState(null); const [m, setM] = useState({}); const [notes, setNotes] = useState(''); const [csv, setCsv] = useState(''); const [busy, setBusy] = useState(false);
+  const take = (x) => { setD(x); setM(x.metrics || {}); setNotes(x.notes || ''); };
+  useEffect(() => { omni.get(`/gs/marketing/services/plans/${plan.id}/report`, { month }).then(take).catch((e) => toast(errOf(e, 'The report could not be opened.'))); }, [plan.id, month]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setV = (g, k, v) => setM({ ...m, [g]: { ...(m[g] || {}), [k]: v } });
+  const readCsv = async () => { try { const r = await omni.post(`/gs/marketing/services/plans/${plan.id}/report/csv`, { text: csv }); setM({ ...m, seo: r.seo }); toast(`Search Console file read: ${r.seo.rowsRead} rows`); } catch (e) { toast(errOf(e, 'The file could not be read.')); } };
+  const save = async () => { setBusy(true); try { take(await omni.put(`/gs/marketing/services/plans/${plan.id}/report`, { month, metrics: m, notes })); toast('Report saved'); } catch (e) { toast(errOf(e, 'It could not be saved.')); } finally { setBusy(false); } };
+  const print = () => { if (!d) return; const w = window.open('', '_blank'); if (!w) { toast('Allow pop-ups to print, or copy the text.'); return; } w.document.write(d.report.html); w.document.close(); w.focus(); setTimeout(() => w.print(), 300); };
+  const copyText = () => { try { navigator.clipboard.writeText(d.report.text).then(() => toast('Report text copied'), () => toast('Select the text and copy it.')); } catch { toast('Select the text and copy it.'); } };
+  if (!d) return <div className="card panel" style={{ marginBottom: 12 }}>Opening the report…</div>;
+  return (
+    <Panel title={`Monthly report: ${plan.clientName} · ${month}`} sub="Type only numbers you can see in the real source (Instagram, Facebook, Google Business Profile, the website). Leave a box empty if you do not have it: the report says Not provided." style={{ marginBottom: 12 }} right={<span style={{ display: 'flex', gap: 6 }}><Btn primary disabled={busy} onClick={save}>Save and make the report</Btn><TinyBtn onClick={onClose}>Close</TinyBtn></span>}>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 12 }}>
+        {Object.entries(d.fields).map(([g, def]) => (
+          <div key={g}><b style={{ fontSize: 12.5 }}>{def.label}</b>
+            {def.items.map(([k, label]) => <Field key={k} label={label.toUpperCase()}><input inputMode="decimal" value={m[g] && m[g][k] != null ? m[g][k] : ''} onChange={(e) => setV(g, k, e.target.value)} /></Field>)}
+          </div>
+        ))}
+      </div>
+      <Field label="GOOGLE SEARCH CONSOLE EXPORT (PASTE THE CSV OF QUERIES OR PAGES)" full><textarea rows={4} value={csv} onChange={(e) => setCsv(e.target.value)} style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} placeholder={'Top queries,Clicks,Impressions,CTR,Position\nbest hospital in …,120,4000,3%,8.2'} /></Field>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0' }}><TinyBtn disabled={!csv.trim()} onClick={readCsv}>Read the file</TinyBtn>{m.seo ? <Tag green>{m.seo.clicks} clicks · {m.seo.impressions} impressions read</Tag> : null}</div>
+      <Field label="NOTE FROM THE TEAM" full><textarea rows={3} maxLength={1500} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: '100%' }} /></Field>
+      <iframe title="Monthly report preview" srcDoc={d.report.html} sandbox="" style={{ width: '100%', height: 520, border: '1px solid #e2e8f0', borderRadius: 8, marginTop: 8 }} />
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}><Btn onClick={print}>Print or save as PDF</Btn><Btn onClick={copyText}>Copy as text</Btn></div>
+      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 4 }}>The preview shows what is saved: press "Save and make the report" after changing a number. The report is not sent anywhere.</div>
+    </Panel>
   );
 }

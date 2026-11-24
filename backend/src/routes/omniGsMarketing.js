@@ -20,6 +20,13 @@ const Eml = require('../marketing/emailmk');
 const Lead = require('../marketing/leadgen');
 const Jny = require('../marketing/journeys');
 const CS = require('../marketing/clientServices');
+const Site = require('../marketing/siteCheck');
+const Geo = require('../marketing/geoTools');
+const Rev = require('../marketing/reviewReply');
+const Guard = require('../marketing/contentGuard');
+const Packs = require('../marketing/industryPacks');
+const Ov = require('../marketing/openverse');
+const Mrep = require('../marketing/monthlyReport');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -353,5 +360,27 @@ router.post('/services/plans', mustWrite, wrap(async (req, res) => send(res, awa
 router.get('/services/plans/:id', mustWrite, wrap(async (req, res) => send(res, await CS.getPlan(req.user, req.params.id, req.query.month))));
 router.put('/services/plans/:id', mustWrite, wrap(async (req, res) => send(res, await CS.updatePlan(req.user, req.params.id, req.body || {}))));
 router.post('/services/plans/:id/delivery', mustWrite, wrap(async (req, res) => send(res, await CS.setDelivery(req.user, req.params.id, req.body || {}))));
+// the monthly client report: the numbers the team types or imports (nothing invented), the printable page, the Search Console CSV reader
+router.get('/services/plans/:id/report', mustWrite, wrap(async (req, res) => send(res, await Mrep.build(req.user, req.params.id, req.query.month))));
+router.put('/services/plans/:id/report', mustWrite, wrap(async (req, res) => send(res, await Mrep.save(req.user, req.params.id, req.body || {}))));
+router.post('/services/plans/:id/report/csv', mustWrite, wrap(async (req, res) => send(res, Mrep.parseSearchConsole((req.body || {}).text))));
+
+// ---- SEO & visibility (2026-11-24: the services document): website check (SEO, AEO, GEO), schema and FAQ tools, industry packs, review reply drafts, the wording check with the medical reviewer's sign-off, free photos (Openverse). Writers only. Nothing is posted. ----
+const siteHits = new Map(); // a website check calls the client's site about a dozen times: 20 an hour per person
+const siteOk = (id) => { const now = Date.now(); const list = (siteHits.get(id) || []).filter((t) => now - t < 3600000); if (list.length >= 20) { siteHits.set(id, list); return false; } list.push(now); siteHits.set(id, list); return true; };
+router.get('/visibility/meta', mustWrite, wrap(async (req, res) => res.json({ industries: Packs.INDUSTRIES, fields: Mrep.FIELDS })));
+router.post('/visibility/site-check', mustWrite, wrap(async (req, res) => (siteOk(req.user.id) ? send(res, await Site.check(req.user, req.body || {})) : res.status(429).json({ error: 'That is 20 website checks in the last hour. Try again later.' }))));
+router.get('/visibility/site-checks', mustWrite, wrap(async (req, res) => send(res, await Site.list(req.user, { clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
+router.get('/visibility/site-checks/:id', mustWrite, wrap(async (req, res) => send(res, await Site.get(req.user, req.params.id))));
+router.post('/visibility/schema/business', mustWrite, wrap(async (req, res) => send(res, Geo.businessSchema(req.body || {}))));
+router.post('/visibility/schema/faq', mustWrite, wrap(async (req, res) => send(res, Geo.faqSchema((req.body || {}).faq))));
+router.post('/visibility/describe', mustWrite, wrap(async (req, res) => send(res, Geo.describe(req.body || {}))));
+router.post('/visibility/nap', mustWrite, wrap(async (req, res) => send(res, Geo.napCheck((req.body || {}).places))));
+router.post('/visibility/pack', mustWrite, wrap(async (req, res) => send(res, Packs.buildPack((req.body || {}).industry, req.body || {}))));
+router.post('/visibility/review-reply', mustWrite, wrap(async (req, res) => send(res, Rev.draft(req.body || {}))));
+router.post('/visibility/wording-check', mustWrite, wrap(async (req, res) => send(res, Guard.check((req.body || {}).text, { industry: (req.body || {}).industry, healthcare: (req.body || {}).healthcare === true }))));
+router.post('/visibility/signoff', mustWrite, wrap(async (req, res) => send(res, await Guard.signoff(req.user, req.body || {}))));
+router.get('/visibility/signoffs', mustWrite, wrap(async (req, res) => send(res, await Guard.signoffs(req.user, { clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
+router.get('/visibility/photos', mustWrite, wrap(async (req, res) => send(res, await Ov.search(req.query.q, { page: req.query.page, shape: req.query.shape }))));
 
 module.exports = router;
