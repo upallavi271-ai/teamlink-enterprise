@@ -43,7 +43,7 @@ function parseScript(content) {
   if (blocks.length < 2) return null;
   const scenes = blocks.map((b) => {
     const say = plain(b.say); const text = plain(b.text); const visual = plain(b.visual);
-    const caption = cut(text || firstSentence(say) || plain(b.head.replace(/^\s*(?:scene|shot|slide)\s*\d+\s*[-–—:.]?\s*/i, '').replace(/\([^)]*\)/g, '')), 60);
+    const caption = cut(text || firstSentence(say) || plain(b.head.replace(/^\s*(?:scene|shot|slide)\s*\d+\s*[-–—:.]?\s*/i, '').replace(/\([^)]*\)/g, '')), 80); // 80 = the studio's own limit for a scene title: a title is not cut in the middle of a sentence ("...connects freshers with growing" live 24 Nov)
     return { caption, say: say.slice(0, 420), imagePrompt: (visual || caption || 'A friendly scene').slice(0, 400), search: searchFrom(visual) || searchFrom(caption) || 'office team' };
   }).filter((s) => s.say || s.caption).slice(0, 8);
   return scenes.length >= 2 ? scenes : null;

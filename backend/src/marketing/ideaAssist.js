@@ -11,6 +11,7 @@ const S = require('../outreach/store');
 const A = require('../outreach/access');
 const AI = require('./ai');
 const Cfg = require('./settings');
+const SP = require('./scriptParse');
 
 const mayWrite = (u) => A.has('mayAiMarketing')(u);
 const WHAT = { video: 'a short video', post: 'a picture post' };
@@ -49,6 +50,29 @@ function tidy(raw) {
   return text.trim();
 }
 
+// The one small model on this server often ignores the layout and answers in ONE paragraph (live 24 Nov: "At TeamLink, we connect freshers... Send your CV today."). The owner wants several lines (the
+// topic and the points), so a paragraph is laid out here: the first sentence is the topic, the other sentences are the points; when there are too few, the points come from the person's own
+// content (the voice-over lines of a pasted script, else its lines). Nothing is invented: every word is the model's or the person's.
+const hasLayout = (t) => /^Topic:/im.test(t) && /^Points:/im.test(t) && (t.match(/^- /gm) || []).length >= 2;
+const stripLabels = (t) => t.replace(/^(?:Topic|Points|Mood|Call to action)\s*:\s*/gim, '');
+const sentences = (t) => (String(t).replace(/\s+/g, ' ').match(/[^.!?]+[.!?]*/g) || []).map((s) => s.trim()).filter((s) => s.length > 3);
+const noStop = (s) => s.replace(/[.!?\s]+$/, '').slice(0, 110);
+function structure(text, content) {
+  if (hasLayout(text)) return text;
+  const sents = sentences(stripLabels(text).replace(/\n+/g, ' '));
+  if (!sents.length) return text;
+  const topic = noStop(sents[0]);
+  const pts = sents.slice(1, 6).map(noStop);
+  if (pts.length < 3 && content) { // too few points: the person's own content gives the rest (a script's titles or voice-over lines, else its lines), each once
+    const script = SP.parseScript(content);
+    const own = (script ? script.map((s) => s.caption || s.say) : String(content).split('\n').map((l) => SP.plain(l))).map(noStop).filter((l) => l.length > 3);
+    const seen = new Set(pts.concat(topic).map((p) => p.toLowerCase()));
+    for (const o of own) { if (pts.length >= 5) break; if (!seen.has(o.toLowerCase())) { pts.push(o); seen.add(o.toLowerCase()); } }
+  }
+  if (pts.length < 2) return text;
+  return [`Topic: ${topic}`, 'Points:', ...pts.map((p) => `- ${p}`)].join('\n');
+}
+
 // b: { kind: 'video' | 'post', title, heading, content, idea (what is in the box now), clientName (the client chosen for sending), projectId, department }
 async function ideaAssist(u, b = {}) {
   if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not use it to create.', status: 403 };
@@ -70,6 +94,15 @@ async function ideaAssist(u, b = {}) {
     `- three to five short key points the ${thing} should say or show, one per line, each starting with "- "`,
     'Mood: the look and feel in a few words.',
     'Call to action: the one thing the viewer should do (write this line only if it is given or obvious; otherwise leave it out).',
+    'Example of the layout, about a different topic (copy the layout, never its words):',
+    'Topic: A short video about a weekend cake sale at a neighbourhood bakery, for families nearby.',
+    'Points:',
+    '- Fresh cakes baked every morning',
+    '- Three flavours to choose from',
+    '- Come in this Saturday and Sunday',
+    'Mood: warm and cheerful',
+    'Call to action: Visit the bakery this weekend',
+    'Do NOT answer with one paragraph: always use the lines Topic:, Points:, Mood:, as in the example.',
     `If the person wrote CONTENT (the scenes, lines or voice-over), BASE the topic and the points on that content: keep its messages and its order, do not contradict it and do not copy it word for word. With no content, build it from the title.`,
     'NEVER invent prices, discounts, offers, dates, phone numbers, addresses, awards, statistics or other facts: if something is not given, leave it out.',
     !project && brand.about ? `About the company: ${brand.about}` : '', !project && brand.audience ? `The company talks to: ${brand.audience}.` : '',
@@ -90,10 +123,10 @@ async function ideaAssist(u, b = {}) {
     if (e.code === 'timeout') return { error: 'The AI is slow right now. Try again in a moment, or write the idea yourself.', status: 504, code: 'timeout' };
     return { error: e.message, status: e.status || 503, code: e.code };
   }
-  const text = tidy(textOf(r.result));
+  const text = tidy(structure(tidy(textOf(r.result)), content));
   if (text.length < 15) return { error: 'The AI did not write anything useful. Try again, or write the idea yourself.', status: 502, code: 'empty' };
   const flags = (brand.avoidWords || []).filter((w) => new RegExp(`(^|[^\\p{L}\\p{N}])${String(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu').test(text));
   return { idea: text, demo: !!r.demo, provider: r.provider || '', flags };
 }
 
-module.exports = { ideaAssist, tidy, textOf };
+module.exports = { ideaAssist, tidy, textOf, structure };

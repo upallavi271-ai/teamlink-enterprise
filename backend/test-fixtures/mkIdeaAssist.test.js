@@ -47,7 +47,7 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
   await Cfg.saveBrand({ ...(await Cfg.getBrand()), brandName: 'TeamLink Digital', tone: 'Friendly', avoidWords: ['cheap'], language: 'English' }, admin);
   r = await ideaAssist(admin, { kind: 'video', title: 'Hiring freshers', heading: 'We are hiring', content: 'Freshers welcome', clientName: 'Rao Hospital' });
   assert.ok(r.idea && !r.demo && r.provider === 'stub', JSON.stringify(r));
-  assert.equal(r.idea, 'A friendly hiring post for freshers.\nStaffing consultancy, join us, apply today.', 'markdown and surrounding quotes are removed, the line break stays');
+  assert.equal(r.idea, 'Topic: A friendly hiring post for freshers\nPoints:\n- Staffing consultancy, join us, apply today\n- Freshers welcome', 'markdown and quotes are removed; a paragraph answer is laid out as Topic / Points, the missing point comes from the content the person wrote');
   const q = seen[0];
   for (const t of ['Title: Hiring freshers', 'Heading: We are hiring', 'Content the person wrote:\nFreshers welcome', 'It is for: Rao Hospital', 'They want: a short video']) assert.ok(q.prompt.includes(t), `the prompt lacks "${t}": ${q.prompt}`);
   for (const t of ['Topic:', 'Points:', 'Mood:', 'Call to action:', 'BASE the topic and the points on that content', '5 to 8 short lines']) assert.ok(q.system.includes(t), `the instructions lack "${t}": ${q.system}`);
@@ -72,6 +72,20 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
   answer = { idea: `Topic: ${'A long topic sentence. '.repeat(8)}\nPoints:\n${Array.from({ length: 12 }, (_, i) => `- Point number ${i + 1} ${'with some detail '.repeat(3)}`).join('\n')}\nMood: calm` };
   r = await ideaAssist(sk, { kind: 'video', title: 'Long answer' });
   assert.ok(r.idea.length <= 780 && r.idea.startsWith('Topic:') && !r.idea.endsWith('Mood: calm') && /\n- Point number \d+ with some detail with some detail with some detail$/.test(r.idea), `too long answers are cut at a whole line: ${r.idea.length} ${JSON.stringify(r.idea.slice(-60))}`);
+  // 4c. the model answered in ONE PARAGRAPH (what the live server's small model did on 24 Nov): it is laid out as Topic / Points, never handed back as one line
+  answer = { idea: 'At TeamLink, we connect freshers with growing companies. We offer training and a supportive environment. Our goal is to help you grow in your career. Send your CV today.' };
+  const sk2 = { id: 'u-multi2', name: 'Layout Tester', role: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN' }; // a person of their own: the one-minute counter of the calls above does not count
+  r = await ideaAssist(sk2, { kind: 'video', title: 'Hiring freshers', content: 'Freshers welcome\nSend your CV today' });
+  assert.equal(r.idea, 'Topic: At TeamLink, we connect freshers with growing companies\nPoints:\n- We offer training and a supportive environment\n- Our goal is to help you grow in your career\n- Send your CV today', r.idea);
+  assert.ok(r.idea.split('\n').length >= 5, 'a paragraph becomes several lines');
+  answer = { idea: 'A friendly hiring video for freshers.' }; // one sentence only: the points come from the voice-over lines of the pasted script
+  r = await ideaAssist(sk2, { kind: 'video', title: 'Hiring freshers', content: '**Scene 1 – Intro**\nVisual: a recruiter in an office\nVoiceover: "Are you a fresher looking for your first job?"\n**Scene 2 – Offer**\nVisual: graduates in training\nVoiceover: "We connect freshers with growing companies."\n**Scene 3 – Action**\nVisual: a CV on a laptop\nText on screen: Send your CV today' });
+  assert.equal(r.idea, 'Topic: A friendly hiring video for freshers\nPoints:\n- Are you a fresher looking for your first job\n- We connect freshers with growing companies\n- Send your CV today', r.idea);
+  answer = { idea: 'Topic: Already laid out\nPoints:\n- One\n- Two\nMood: calm' }; r = await ideaAssist(sk2, { kind: 'video', title: 'Hiring freshers' });
+  assert.equal(r.idea, 'Topic: Already laid out\nPoints:\n- One\n- Two\nMood: calm', 'an answer that already has the layout is left exactly as it is');
+  assert.ok(/Do NOT answer with one paragraph/.test(seen[seen.length - 1].system) && /Example of the layout/.test(seen[seen.length - 1].system), 'the model is shown the layout with an example and told not to answer in one paragraph');
+  console.log('PASS a one-paragraph answer is laid out as Topic / Points (from its own sentences, else from the content); a laid-out answer is left alone; the model gets an example');
+
   console.log('PASS several lines: topic, points, mood and call to action, built from the whole content; bullets are normalised, a list or object answer is laid out the same, a too-long answer is cut at a whole line');
 
   // 5. what is already in the box is kept and improved (a title is not needed then)
