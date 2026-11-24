@@ -1,0 +1,40 @@
+/* HR audit checks: read-only page. Uses the app's own colour variables. */
+.hra .hra-head-actions { display: flex; align-items: center; gap: 10px; }
+.hra .hra-h2 { font-size: 16px; margin: 22px 0 10px; }
+.hra .hra-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
+.hra .hra-kpi { background: var(--paper-raised, #fff); border: 1px solid var(--line, #d9dfdc); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.hra .hra-kpi b { font-size: 24px; line-height: 1.1; color: var(--ink, #22333b); }
+.hra .hra-kpi span { font-size: 12.5px; color: var(--ink-soft, #55626a); }
+.hra .hra-note { margin: 10px 0; max-width: 980px; line-height: 1.5; }
+.hra .hra-dept { margin-top: 8px; max-width: 640px; }
+.hra .hra-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.hra .hra-chip { border: 1px solid var(--line, #d9dfdc); background: var(--paper-raised, #fff); color: var(--ink, #22333b); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; }
+.hra .hra-chip.on { background: var(--brand, #4a6f64); border-color: var(--brand, #4a6f64); color: #fff; }
+.hra .hra-only { font-size: 12.5px; color: var(--ink-soft, #55626a); display: inline-flex; gap: 6px; align-items: center; margin-left: 6px; }
+.hra .hra-group { margin-bottom: 16px; }
+.hra .hra-group h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft, #55626a); margin: 0 0 6px; }
+.hra .hra-check { background: var(--paper-raised, #fff); border: 1px solid var(--line, #d9dfdc); border-radius: 10px; margin-bottom: 6px; overflow: hidden; }
+.hra .hra-check.open { border-color: var(--brand, #4a6f64); }
+.hra .hra-row { width: 100%; display: grid; grid-template-columns: 72px 1fr auto 120px; gap: 12px; align-items: center; text-align: left; background: none; border: 0; padding: 10px 12px; cursor: pointer; color: inherit; font: inherit; }
+.hra .hra-row:hover { background: var(--brand-tint, #eef3f1); }
+.hra .hra-title { font-weight: 600; font-size: 13.5px; }
+.hra .hra-q { font-size: 11.5px; white-space: nowrap; }
+.hra .hra-sev { font-size: 11px; font-weight: 700; text-align: center; border-radius: 6px; padding: 3px 0; }
+.hra .hra-sev-high { background: #f8d7d3; color: #8a1f14; }
+.hra .hra-sev-medium { background: #fbebc8; color: #7a5200; }
+.hra .hra-sev-low { background: #e1e8e5; color: #3f554d; }
+.hra .hra-count { font-size: 12.5px; font-weight: 700; text-align: center; border-radius: 999px; padding: 4px 10px; }
+.hra .hra-count-ok { background: #dcf0e1; color: #14662f; }
+.hra .hra-count-high { background: #f8d7d3; color: #8a1f14; }
+.hra .hra-count-med { background: #fbebc8; color: #7a5200; }
+.hra .hra-count-low { background: #e1e8e5; color: #3f554d; }
+.hra .hra-count-err { background: #eee; color: #666; }
+.hra .hra-detail { border-top: 1px solid var(--line, #d9dfdc); padding: 10px 12px 12px; background: var(--paper, #f5f7f6); }
+.hra .hra-detail-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; margin-bottom: 8px; }
+.hra .hra-detail-actions { display: flex; gap: 6px; }
+.hra .hra-clear { color: #14662f; font-weight: 600; padding: 6px 0; }
+@media (max-width: 760px) {
+  .hra .hra-row { grid-template-columns: 62px 1fr; }
+  .hra .hra-q { display: none; }
+  .hra .hra-count { grid-column: 2; justify-self: start; }
+}

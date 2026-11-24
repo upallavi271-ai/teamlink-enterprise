@@ -334,6 +334,9 @@ export const ADMIN_ITEMS = [
   // ORGANIZATION CHART (founder 2026-11-17): the whole company as a tree, Super Admin down to every employee, with a Message button on each person (pages/admin/OrgChart.jsx)
   leaf('🌳', '/admin/org-chart', 'Organization Chart', [['administration', 'Organization Structure', 'view']]),
   leaf('📜', '/admin/audit', 'Audit Logs', [['administration', 'Audit Logs', 'view']]),
+  // HR AUDIT CHECKS (founder 2026-11-24): read-only lists of what looks wrong (duplicates, left-but-active logins, pay after exit ...) and the headline HR
+  // numbers. HR / Admin / Super Admin only; the server (routes/hrAudit.js) still decides by company-wide scope.
+  { ...leaf('🧐', '/admin/hr-audit', 'HR audit checks', null), when: (u) => !!u && !u.viewAs && [u.role, u.hrmsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR'].includes(r)) },
   // The credentials vault is a Company Setup tab. A person granted the vault who does NOT reach Company Setup (no Company Setup view)
   // gets this one entry inside Administration instead, so the grant is reachable; the Super Admin never sees it here.
   { ...leaf('🔒', '/admin/credentials', 'Credentials vault', null), when: (u) => !!u && !!(u.credentialsVault && u.credentialsVault.open) && !can(u, null, 'administration', 'Company Setup', 'view') },

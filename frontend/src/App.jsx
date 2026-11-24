@@ -78,6 +78,7 @@ import RoleCatalog from './pages/admin/RoleCatalog.jsx';
 import Integrations from './pages/admin/Integrations.jsx';
 import Notifications from './pages/admin/Notifications.jsx';
 import AuditLogs from './pages/admin/AuditLogs.jsx';
+import HrAuditChecks from './pages/admin/HrAuditChecks.jsx';
 import SystemSafety from './pages/admin/SystemSafety.jsx';
 import CredentialsVault from './pages/admin/CredentialsVault.jsx';
 import FitSettings from './components/resume/FitSettings.jsx'; // fit_: Admin → Fit settings
@@ -435,6 +436,7 @@ export default function App() {
         <Route path="open/chat/:kind/:id" element={<OpenChat />} />
         <Route path="admin/notifications" element={<Notifications />} />
         <Route path="admin/audit" element={<AuditLogs />} />
+        <Route path="admin/hr-audit" element={<HrAuditChecks />} />
         <Route path="admin/system" element={<SystemSafety />} />
         <Route path="admin/fit" element={<FitSettings />} />
         <Route path="admin/master-lists" element={<MasterLists />} />

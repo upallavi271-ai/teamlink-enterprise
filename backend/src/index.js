@@ -49,6 +49,7 @@ const invoiceRoutes = require('./routes/invoices');
 const bankRoutes = require('./routes/bank');
 const publicRoutes = require('./routes/public');
 const performanceRoutes = require('./routes/performance');
+const hrAuditRoutes = require('./routes/hrAudit'); // HR audit checks: read-only lists of what looks wrong (HR / Admin only)
 const lmsRoutes = require('./routes/lms');
 const projectRoutes = require('./routes/projects');
 const surveyRoutes = require('./routes/surveys');
@@ -415,6 +416,7 @@ app.use('/api/portal-admin', require('./routes/portalAdmin'));
 app.use('/api/public/mkt', require('./routes/mktPublic'));
 app.use('/api/public', publicRoutes);
 app.use('/api/performance', performanceRoutes);
+app.use('/api/hr-audit', hrAuditRoutes);
 // HRMS → Performance & Development → Recruiter joinings + the Super Admin popup (routes/recruiterJoinings.js).
 app.use('/api/recruiter-joinings', require('./routes/recruiterJoinings'));
 // Payroll -> Incentives: department-wise rules, awards, approval (routes/incentives.js).
