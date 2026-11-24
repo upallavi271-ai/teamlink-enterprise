@@ -12,7 +12,34 @@ export const FORMATS = {
   '9:16': { label: 'Reel / Story (9:16)', w: 720, h: 1280 },
   '16:9': { label: 'LinkedIn / YouTube (16:9)', w: 1280, h: 720 },
 };
-export const MOTIONS = { mixed: 'Mixed (zoom in, pan, zoom out)', in: 'Zoom in', out: 'Zoom out', pan: 'Pan sideways' };
+export const MOTIONS = { mixed: 'Mixed (zoom in, pan, zoom out)', in: 'Zoom in', out: 'Zoom out', pan: 'Pan sideways', tour: 'Dashboard tour (glide across a screenshot, best with 6 seconds or more)' };
+
+// DASHBOARD TOUR (2026-11-24): the free "camera" for a screenshot of a dashboard or any busy screen. It looks at the whole screen, glides into the top left (the numbers),
+// sweeps to the top right, drops to the lower part (charts, lists) and pulls back, each move eased in and out, with a short rest at every stop. Pure maths on the picture: no model, no cost.
+// Each stop is [share of the scene when the camera is there, zoom (1 = the whole picture), centre x, centre y] (centre as a share of the picture, 0..1).
+const TOUR = [
+  [0.00, 1.00, 0.50, 0.50], [0.10, 1.00, 0.50, 0.50],
+  [0.34, 1.60, 0.27, 0.30], [0.42, 1.60, 0.27, 0.30],
+  [0.58, 1.60, 0.73, 0.32], [0.64, 1.60, 0.73, 0.32],
+  [0.78, 1.50, 0.50, 0.72], [0.83, 1.50, 0.50, 0.72],
+  [1.00, 1.00, 0.50, 0.50],
+];
+const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+// where the camera is at p (0..1 through the scene); an odd picture is mirrored, so two dashboards in a row do not move the same way
+export function tourAt(p, idx = 0) {
+  const t = Math.min(1, Math.max(0, Number.isFinite(p) ? p : 0));
+  let i = 1; while (i < TOUR.length - 1 && t > TOUR[i][0]) i++;
+  const a = TOUR[i - 1]; const b = TOUR[i];
+  const k = b[0] === a[0] ? 1 : easeInOut((t - a[0]) / (b[0] - a[0]));
+  const cx = a[2] + (b[2] - a[2]) * k;
+  return { z: a[1] + (b[1] - a[1]) * k, cx: idx % 2 ? 1 - cx : cx, cy: a[3] + (b[3] - a[3]) * k };
+}
+// where to draw a picture of iw x ih on a W x H frame for that camera (the camera never leaves the picture)
+export function tourRect(W, H, iw, ih, cam) {
+  const base = Math.max(W / iw, H / ih) * cam.z; const w = iw * base; const h = ih * base;
+  const x = Math.min(0, Math.max(W - w, W / 2 - cam.cx * w)); const y = Math.min(0, Math.max(H - h, H / 2 - cam.cy * h));
+  return { x, y, w, h };
+}
 const FADE = 0.6;
 const INTRO = 2.6;
 const OUTRO = 3.2;
@@ -94,14 +121,19 @@ function drawPic(ctx, W, H, lt, s, d) {
   if (img) {
     const p = lt / s.dur;
     const mode = d.motion && d.motion !== 'mixed' ? d.motion : ['in', 'pan', 'out', 'pan'][s.idx % 4];
-    const dir = s.idx % 2 ? -1 : 1;
-    let z = 1.0 + 0.09 * p; let dx = 0;
-    if (mode === 'out') z = 1.1 - 0.1 * p;
-    else if (mode === 'pan') { z = 1.12; dx = dir * (p - 0.5) * W * 0.06; }
-    else dx = dir * (p - 0.5) * W * 0.02;
-    const base = Math.max(W / img.width, H / img.height) * z;
-    const w = img.width * base; const h = img.height * base;
-    ctx.drawImage(img, (W - w) / 2 + dx, (H - h) / 2, w, h);
+    if (mode === 'tour') {
+      const r = tourRect(W, H, img.width, img.height, tourAt(p, s.idx));
+      ctx.drawImage(img, r.x, r.y, r.w, r.h);
+    } else {
+      const dir = s.idx % 2 ? -1 : 1;
+      let z = 1.0 + 0.09 * p; let dx = 0;
+      if (mode === 'out') z = 1.1 - 0.1 * p;
+      else if (mode === 'pan') { z = 1.12; dx = dir * (p - 0.5) * W * 0.06; }
+      else dx = dir * (p - 0.5) * W * 0.02;
+      const base = Math.max(W / img.width, H / img.height) * z;
+      const w = img.width * base; const h = img.height * base;
+      ctx.drawImage(img, (W - w) / 2 + dx, (H - h) / 2, w, h);
+    }
   }
   overlay(ctx, W, H, lt, pic, d);
 }
