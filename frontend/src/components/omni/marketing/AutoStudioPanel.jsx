@@ -210,12 +210,12 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           <div className="form-grid" style={{ marginTop: 6 }}>
             <Field label="TITLE (OPTIONAL)"><input value={title} maxLength={80} disabled={working} onChange={(e) => setTitle(e.target.value)} placeholder="Names it in your list" /></Field>
             <Field label="HEADING (OPTIONAL)"><input value={heading} maxLength={80} disabled={working} onChange={(e) => setHeading(e.target.value)} placeholder="The big line on the first picture" /></Field>
-            <Field label="CONTENT (OPTIONAL)" full hint="Your own words, one line for each picture. They are used exactly as you write them. Then press AI Assist under the idea box: it writes the idea from them.">
+            <Field label="CONTENT" full hint="Your own words, one line for each picture. They are used exactly as you write them. Then press AI Assist under the idea box: it writes the idea from them.">
               <textarea rows={3} maxLength={1200} value={content} disabled={working} onChange={(e) => setContent(e.target.value)} placeholder={'Freshers welcome\nStaffing consultancy you can trust\nSend your CV today'} style={{ width: '100%' }} />
             </Field>
           </div>
           {/* 2026-11-24 (owner): the content box is above, the idea box below and REQUIRED; ✨ AI Assist writes the idea (topic and points, several lines) from the title and content */}
-          <Field label="YOUR IDEA OR CONCEPT (REQUIRED)" full hint="The topic and the main points of the video or post: the more clearly you write them, the better it is made. Write your own, or press AI Assist: it writes them from your title and content above. Then read it and change anything.">
+          <Field label="YOUR IDEA OR CONCEPT" full hint="The topic and the main points of the video or post: the more clearly you write them, the better it is made. Write your own, or press AI Assist: it writes them from your title and content above. Then read it and change anything.">
             <textarea rows={7} maxLength={800} value={prompt} disabled={working} onChange={(e) => setPrompt(e.target.value)} placeholder={isVideo ? 'Topic: We are hiring freshers for our staffing consultancy\nPoints:\n- Freshers welcome\n- A staffing consultancy you can trust\n- Send your CV today' : 'Topic: A Republic Day greeting post for our clients\nPoints:\n- Proud and simple\n- Warm wishes from our team'} style={{ width: '100%' }} />
             <IdeaAssist kind={kind} title={title} heading={heading} content={content} idea={prompt} projectId={projectId} clientName={auto.cfg.on ? auto.cfg.clientName : ''} disabled={working} onIdea={setPrompt} />
           </Field>
