@@ -370,7 +370,7 @@ export default function KpiReport({ onRangeChange, preset = null, onOpenSummary 
             <ScrollTable maxHeight="60vh">
               <table>
                 <thead>
-                  <tr><th>Name</th><th>Employee ID</th><th>Department</th><th>Date</th><th>In</th><th>Out</th><th title="First check-in to last check-out, minus the breaks in between">Total working time</th><th>Check-in method</th><th>Punches by source</th><th>Result</th><th>Why</th></tr>
+                  <tr><th>Name</th><th>Employee ID</th><th>Department</th><th>Date</th><th>In</th><th>Out</th><th title="First check-in to last check-out">Total working time</th><th>Check-in method</th><th>Punches by source</th><th>Result</th><th>Why</th></tr>
                 </thead>
                 <tbody>
                   {page.slice.map((x) => [(
@@ -381,7 +381,7 @@ export default function KpiReport({ onRangeChange, preset = null, onOpenSummary 
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtDay(x.date)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{t12(x.checkIn)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{t12(x.checkOut)}</td>
-                      <td style={{ whiteSpace: 'nowrap' }} title={x.workedMinutes != null ? `First in to last out ${workText(x.spanMinutes)}${x.breakMinutes > 0 ? `, minus breaks ${workText(x.breakMinutes)}` : ''}` : 'Needs both a check-in and a check-out'}>{x.workedMinutes != null ? <b>{workText(x.workedMinutes)}</b> : '—'}{x.breakMinutes > 0 && <div className="small-muted" style={{ fontSize: 11 }}>break {workText(x.breakMinutes)}</div>}</td>
+                      <td style={{ whiteSpace: 'nowrap' }} title={x.workedMinutes != null ? 'First check-in to last check-out' : 'Needs both a check-in and a check-out'}>{x.workedMinutes != null ? <b>{workText(x.workedMinutes)}</b> : '—'}</td>
                       <td className="cell-muted">{x.howText || x.how || '—'}</td>
                       <td><SourceChips counts={x.sourceCounts} />{(x.punchList || []).length > 0 && <div><PunchToggle open={openRow === `${x.employeeId}|${x.date}`} count={x.punchList.length} onClick={() => setOpenRow(openRow === `${x.employeeId}|${x.date}` ? null : `${x.employeeId}|${x.date}`)} /></div>}</td>
                       <td><span className={`att-kr-pill tone-${CARDS.find((k) => k.key === x.tile)?.tone || 'grey'}`}>{NAME[x.tile] || x.kpiLabel}{x.session ? ` · ${x.session === 'First half' ? '1st half' : '2nd half'}` : ''}</span>{(x.notes || []).map((nk) => <span key={nk} className="att-kr-pill tone-orange">{NOTE_NAME[nk]}</span>)}{x.halfLeave ? <HalfLeaveChip state={x.halfLeave} half={x.halfLeaveHalf} by={x.halfLeaveBy} /> : null}{x.latePermissionText ? <span className={`att-kr-pill tone-${x.lateExcused ? 'green' : 'orange'}`}>{x.latePermissionText}</span> : null}{x.awlText ? <span className="att-kr-pill tone-red" title="No leave applied: payroll counts extra loss of pay">{x.awlText}</span> : null}{x.workedOnOff ? <span className="att-kr-pill tone-blue" title={`Came in on a ${x.workedOnOff}`}>Worked on {x.workedOnOff.startsWith('holiday') ? 'holiday' : 'week off'}</span> : null}</td>
