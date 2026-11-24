@@ -367,7 +367,7 @@ async function pushConfig() {
 }
 function pushStatus(c) {
   const zoho = !!(c.zoho.org && c.zoho.clientId && c.zoho.secret && c.zoho.refresh);
-  return { webhook: !!c.url, zoho, ready: !!c.url || zoho, kind: c.kind, state: !!c.url || zoho ? 'Implemented - set up' : 'Implemented - needs founder credentials (Administration > Integrations > Accounting push)' };
+  return { webhook: !!c.url, zoho, ready: !!c.url || zoho, kind: c.kind, state: !!c.url || zoho ? 'Set up' : 'Not set up: needs founder credentials (Administration > Integrations > Accounting push)' };
 }
 async function zohoPush(c, body) {
   const accounts = c.zoho.dc === 'stub' ? `${H.stubBase()}/zoho` : `https://accounts.zoho.${c.zoho.dc}`;

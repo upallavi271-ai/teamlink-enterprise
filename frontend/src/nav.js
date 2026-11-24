@@ -182,6 +182,8 @@ export const CLIENTS_REQ_TABS = [
   leaf('💼', '/requirements', 'Requirements', [['requirements', 'Requirement List', 'view']]),
   // Agreements list: a tab here, not a second tab strip (ClientsTabs retired 2026-10-03).
   leaf('📝', '/agreements', 'Agreements', [['clients', 'Agreement Lifecycle', 'view']]),
+  // CONTRACT STAFF (ATS wave 2 X, 2026-11-25): placed contractors - timesheets, shifts, pay & bill, billing files, VMS (components/staffingX)
+  leaf('🧾', '/ats/contract-staff', 'Contract staff', [['requirements', 'Requirement List', 'view']]),
 ];
 export const REPORTS_TEAM_TABS = [
   // ATS Reports; a login without it (a recruiter) gets "My Results" instead.
@@ -241,7 +243,7 @@ export const ATS_ITEMS = [
 // Which module a URL belongs to, so its entry stays lit on every tab and on
 // the detail pages.
 export const MODULE_PATHS = {
-  'clients-req': /^\/(clients|requirements|agreements)(\/|$)/,
+  'clients-req': /^\/(clients|requirements|agreements|ats\/contract-staff)(\/|$)/,
   'reports-team': /^\/(reports\/(ats|my-results|job-portal)|ats\/(team|settings|followups))(\/|$)/,
 };
 export function moduleOfPath(pathname) {

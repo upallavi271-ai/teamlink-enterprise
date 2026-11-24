@@ -140,6 +140,7 @@ router.post('/vms/test', act, admin, wrap(async (req, res) => res.json(await V.t
 router.post('/vms/pull', act, vmsDesk, wrap(async (req, res) => send(res, await V.pullJobs(req.user))));
 router.post('/vms/jobs/:id/import', act, vmsDesk, wrap(async (req, res) => send(res, await V.importJob(req.user, req.params.id, { clientId: req.body && req.body.clientId }), 201)));
 router.post('/vms/jobs/:id/dismiss', act, vmsDesk, wrap(async (req, res) => send(res, await V.dismissJob(req.user, req.params.id))));
+router.get('/vms/jobs/:id/candidates', vmsDesk, wrap(async (req, res) => send(res, await V.candidatesFor(req.user, req.params.id))));
 router.post('/vms/submit/:applicationId', act, vmsDesk, wrap(async (req, res) => send(res, await V.submit(req.user, req.params.applicationId, req.body || {}), 201)));
 router.post('/vms/sync', act, vmsDesk, wrap(async (req, res) => send(res, await V.syncStatuses(req.user))));
 

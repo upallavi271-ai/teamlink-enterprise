@@ -14,7 +14,8 @@ import { can } from '../../permissions';
 import RequestJobModal from '../../components/jobs/RequestJobModal.jsx';
 import OwnResults from '../../components/OwnResults.jsx';
 import ClientOffers from './ClientOffers.jsx';
-import ClientJoinDrop from './ClientJoinDrop.jsx'; // Joinings and drops: who joined, who dropped, the replacement answer
+import ClientJoinDrop from './ClientJoinDrop.jsx';
+import { ClientTimesheetsX } from '../../components/staffingX/PortalContractX.jsx'; // contract staff: approve the contractors' weeks (ATS wave 2 X) // Joinings and drops: who joined, who dropped, the replacement answer
 import Combo from '../../components/Combo.jsx';
 import { ViewAgreementButton } from '../../components/agreements/SignedAgreementFiles.jsx'; // the one shared "View agreement" button
 import ClientConcerns from './ClientConcerns.jsx'; // raise a concern / escalation and follow it (routes/atsExperience.js, 2026-11-17)
@@ -107,6 +108,10 @@ export default function ClientPortal() {
   useEffect(() => { if (data && !data.limited && !data.permissions?.decide) setShow('all'); }, [data]);
   const loadJd = useCallback(() => { api.get('/portal/client/join-drop').then((r) => setJdWaiting(r.data.counts?.waiting || 0)).catch(() => setJdWaiting(0)); }, []);
   useEffect(() => { if (data && !data.limited) loadJd(); }, [data, loadJd]);
+  // contract staff (ATS wave 2 X): the Timesheets tab appears only when the company has contractors with us
+  const [stx, setStx] = useState(null);
+  const loadStx = useCallback(() => { api.get('/portal/client/contract/summary').then((r) => setStx(r.data)).catch(() => setStx(null)); }, []);
+  useEffect(() => { if (data) loadStx(); }, [data, loadStx]);
   // the number on the "Creative work" tab: how many options wait for this client's choice (the server answers 403 to a login without that tick)
   useEffect(() => { if (data && !data.limited && (!data.portalCaps || data.portalCaps.includes('CREATIVE'))) api.get('/portal/client/creative').then((r) => setCreativeWaiting(r.data.waiting || 0)).catch(() => setCreativeWaiting(0)); }, [data]);
 
@@ -285,6 +290,7 @@ export default function ClientPortal() {
           { id: 'interviews', label: 'Interviews', count: interviews.length },
           { id: 'hires', label: 'Selected & Joined', count: hires.length },
           { id: 'joindrop', label: 'Joinings and drops', count: jdWaiting || undefined },
+          stx && stx.contractors > 0 ? { id: 'timesheets', label: 'Timesheets', count: stx.waiting || undefined } : null,
           capOn('CREATIVE') ? { id: 'creative', label: 'Creative work', count: creativeWaiting || undefined } : null,
           agreement || capOn('AGREEMENT') ? { id: 'agreement', label: 'Agreement' } : null,
           invoices ? { id: 'invoices', label: 'Invoices', count: invoices.length } : null,
@@ -501,6 +507,7 @@ export default function ClientPortal() {
       )}
 
       {tab === 'joindrop' && <ClientJoinDrop onChanged={loadJd} />}
+      {tab === 'timesheets' && stx && <ClientTimesheetsX onChanged={loadStx} />}
       {tab === 'concerns' && <ClientConcerns />}
       {tab === 'creative' && capOn('CREATIVE') && <ClientCreative userName={user && user.name} onCount={setCreativeWaiting} />}
       {tab === 'hires' && (data.offers || []).length > 0 && (

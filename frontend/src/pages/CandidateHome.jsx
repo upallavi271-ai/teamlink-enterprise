@@ -6,6 +6,7 @@ import {
   Chip, Tabs, Stat, InterviewLine, fmtDate, openFile,
 } from './portal/portalUi.jsx';
 import Combo from '../components/Combo.jsx';
+import { CandidateContractX } from '../components/staffingX/PortalContractX.jsx'; // contract staff: my timesheets and shifts (ATS wave 2 X)
 
 // ---------------------------------------------------------------------------
 // THE CANDIDATE PORTAL (user notes #4, point 3) — where a signed-in candidate
@@ -55,6 +56,8 @@ export default function CandidateHome() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [tab, setTab] = useState('applications');
+  const [hasContract, setHasContract] = useState(false); // a placed contractor gets "My timesheets"
+  useEffect(() => { api.get('/portal/candidate/contract').then((r) => setHasContract((r.data.contracts || []).length > 0)).catch(() => setHasContract(false)); }, []);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -172,6 +175,7 @@ export default function CandidateHome() {
           { id: 'interviews', label: 'Interviews', count: interviews.length },
           { id: 'profile', label: 'My Profile' },
           { id: 'jobs', label: 'Open Jobs', count: openJobs.length },
+          hasContract ? { id: 'timesheets', label: 'My timesheets' } : null,
         ]}
       />
 
@@ -233,6 +237,8 @@ export default function CandidateHome() {
           />
         )
       )}
+
+      {tab === 'timesheets' && hasContract && <CandidateContractX />}
 
       {tab === 'interviews' && (
         interviews.length ? (

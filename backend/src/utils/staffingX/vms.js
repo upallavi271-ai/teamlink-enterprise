@@ -90,7 +90,7 @@ function status(c) {
   if (a && a.auth.startsWith('oauth') && (!c.clientId || !c.secret)) missing.push('the client ID and secret');
   if (a && (a.auth === 'token' || a.auth === 'bearer' || a.auth === 'oauth+appkey') && !c.token) missing.push(a.auth === 'oauth+appkey' ? 'the application key' : 'the API token');
   if (a && /\{supplier\}/.test((c.paths.jobs || a.jobs)) && !c.supplier) missing.push('the supplier ID');
-  return { system: c && c.system, name: a ? a.name : null, ready: !missing.length, missing, systems: Object.entries(ADAPTERS).map(([k, x]) => ({ key: k, name: x.name })), state: missing.length ? `Implemented - needs founder credentials (Administration > Integrations > VMS: ${missing.join(', ')})` : 'Implemented - set up' };
+  return { system: c && c.system, name: a ? a.name : null, ready: !missing.length, missing, systems: Object.entries(ADAPTERS).map(([k, x]) => ({ key: k, name: x.name })), state: missing.length ? `Not set up: needs founder credentials (Administration > Integrations > VMS: ${missing.join(', ')})` : 'Set up' };
 }
 
 let tokenCache = null; // { key, token, until }
@@ -222,6 +222,15 @@ async function submit(user, applicationId, { billRate, availableFrom = null, wit
   await require('../audit').logAudit({ userId: user.id, action: extId ? 'Candidate sent to the VMS' : 'Sending to the VMS failed', entity: 'Application', entityId: app.id, toValue: `${a.name} job ${j.externalId}${extId ? ` as ${extId}` : `: ${err || 'no id'}`}${withContact ? ' (with contact details)' : ''}`.slice(0, 300) }); // eslint-disable-line global-require
   return extId ? { ok: true, externalId: String(extId), status: plain(vst) } : { error: `Not sent: ${err || 'the VMS gave no submission id.'}`, status: 502 };
 }
+// the people on the VMS job's requirement who may be sent now (in this login's scope)
+async function candidatesFor(user, id) {
+  const j = (await S.q('SELECT * FROM "StfVmsJob" WHERE "id" = ?', String(id || '')))[0];
+  if (!j || !j.requirementId) return { error: 'File the VMS job as a requirement first.', status: 404 };
+  const scope = require('../scope'); // eslint-disable-line global-require
+  const apps = await prisma.application.findMany({ where: { AND: [scope.applicationWhere(user), { requirementId: j.requirementId }, { stage: { in: SEND_STAGES } }] }, select: { id: true, stage: true, candidate: { select: { name: true } } }, take: 200 });
+  const sent = new Set((await S.q('SELECT "applicationId" FROM "StfVmsSub" WHERE "vmsJobId" = ? AND "externalId" IS NOT NULL', j.id)).map((r) => r.applicationId));
+  return { maxBillRate: j.maxBillRate == null ? null : Number(j.maxBillRate), rows: apps.map((a) => ({ applicationId: a.id, name: a.candidate.name, stage: a.stage, sent: sent.has(a.id) })) };
+}
 async function submissions(user, { applicationId = null } = {}) {
   const scope = require('../scope'); // eslint-disable-line global-require
   const rows = await S.q(`SELECT s.*, j."title", j."externalId" AS "jobExternalId" FROM "StfVmsSub" s JOIN "StfVmsJob" j ON j."id" = s."vmsJobId"${applicationId ? ' WHERE s."applicationId" = ?' : ''} ORDER BY s."sentAt" DESC LIMIT 500`, ...(applicationId ? [applicationId] : []));
@@ -278,4 +287,4 @@ function start() {
   if (timer.unref) timer.unref();
 }
 
-module.exports = { CHANNEL, F, ADAPTERS, plain, config, status, pullJobs, jobs, importJob, dismissJob, submit, submissions, syncStatuses, testConnection, log, start, SEND_STAGES };
+module.exports = { CHANNEL, F, ADAPTERS, plain, config, status, pullJobs, jobs, importJob, dismissJob, submit, submissions, candidatesFor, syncStatuses, testConnection, log, start, SEND_STAGES };

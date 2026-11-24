@@ -17,6 +17,7 @@ const SAY = {
   '/clients': 'The companies we hire for: contacts, agreement, requirements and how each one is doing.',
   '/requirements': 'The jobs we are filling: who works on each one, and how many people are at each step.',
   '/agreements': 'Client agreements: drafts, sent, signed, and the ones that need renewing.',
+  '/ats/contract-staff': 'Placed contractors and temp staff: timesheets, shifts, pay and bill, billing files and the VMS of the client.',
   '/reports/ats': 'Numbers for hiring: requirements, candidates, interviews, joinings and money.',
   '/reports/my-results': 'Your own numbers: what you sent, interviews, selections and joinings.',
   '/ats/team': 'The team: who has how much work, assignments, tasks and follow-ups.',
@@ -27,7 +28,7 @@ const SAY = {
 // Under "More" (rarely opened).
 const MORE = ['/ats/handover', '/ats/data-quality'];
 const BARS = [
-  { label: 'Clients & Requirements', tabs: CLIENTS_REQ_TABS, on: ['/clients', '/requirements', '/agreements'] },
+  { label: 'Clients & Requirements', tabs: CLIENTS_REQ_TABS, on: ['/clients', '/requirements', '/agreements', '/ats/contract-staff'] },
   {
     label: 'Reports & Team',
     tabs: REPORTS_TEAM_TABS,
