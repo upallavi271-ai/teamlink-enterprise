@@ -33,6 +33,8 @@ import FacebookSetup from './FacebookSetup.jsx'; // eslint-disable-line no-unuse
 // Social Media (2026-10-30): Facebook / Instagram / Threads tabs, many accounts each.
 import SocialMedia from './SocialMedia.jsx';
 import AiMarketingPlatform from './AiMarketingPlatform.jsx';
+// ViciDial (office dialer) click to dial (2026-11-24): server, API user, encrypted password, On/Off, each person's agent ID. Admin only (the card hides itself otherwise).
+import VicidialCard from '../../components/browsercall/VicidialCard.jsx';
 import { useAuth } from '../../context/AuthContext';
 import Combo from '../../components/Combo.jsx';
 
@@ -374,6 +376,8 @@ export default function Integrations() {
           (r) => `Worker: ${r.data.sent} sent, ${r.data.retried} retrying, ${r.data.failed} failed, ${r.data.held} held with no provider.`,
         )}
       />}
+
+      {tab === 'connections' && <VicidialCard />}
 
       {tab === 'connections' && bioChannel && (
         <BiometricPanel onConfigure={() => openConfigure(bioChannel)} onChanged={load} />

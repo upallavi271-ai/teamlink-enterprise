@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { UserAgent, Registerer, Inviter, SessionState, Web } from 'sip.js';
 import api from '../../api';
+import { openBlank, sendTo, closeBlank } from './vicidialPopup.js';
 
 // MANUAL BROWSER CALLING (SIP.js over WSS -> Asterisk -> Synway SIM). One softphone for the whole app.
 // The SIP password is fetched per session from the server (POST /browser-calling/session), kept only in memory, never stored.
@@ -75,7 +76,9 @@ export default function BrowserCallProvider({ children }) {
   };
 
   const lines = useMemo(() => (info && info.lines) || [], [info]);
-  const curLine = lines.find((l) => l.id === linePick) || lines[0] || null;
+  // a line that is listed but not usable (ViciDial before it is switched on / without an agent ID) is never the one in use
+  const usable = (l) => l && l.ready !== false;
+  const curLine = lines.find((l) => l.id === linePick && usable(l)) || lines.find(usable) || null;
   const chooseLine = useCallback((id) => { setLinePick(id); try { localStorage.setItem(LINE_KEY, id); } catch { /* kept for this visit only */ } }, []);
 
   // one call, whatever asked for it: `placeIt` asks the server for the row (and the line), then the browser sends the INVITE
@@ -122,13 +125,38 @@ export default function BrowserCallProvider({ children }) {
     }).catch((e) => { sess.current = null; finish('failed', { error: e.message || 'The call could not be sent.' }); });
   }, [ensureUa, finish]);
 
+  // VICIDIAL click to dial: the server checks and answers with the one dial link; this browser opens it in a small popup (opened inside the
+  // click, pointed at the link when the answer comes) and closes it after ~4 s. The recruiter talks on the ViciDial agent screen, then says how it went.
+  const viciCall = useCallback(async ({ candidateId, applicationId, name }) => {
+    if (sess.current) { setState((s) => ({ ...s, note: 'A call is already in progress.' })); return; }
+    const w = openBlank();
+    setState({ phase: 'starting', name, candidateId, vici: true, lineName: 'ViciDial' });
+    let placed;
+    try { placed = (await api.post('/browser-calling/vicidial/dial', { candidateId, applicationId })).data; } catch (e) {
+      closeBlank(w);
+      setState({ phase: 'failed', name, candidateId, vici: true, lineName: 'ViciDial', error: errOf(e, 'Could not ask ViciDial to dial.') });
+      return;
+    }
+    const opened = sendTo(w, placed.dialUrl, placed.closeAfterMs || 4000);
+    setState({ phase: 'vici', vici: true, name: placed.candidate.name, candidateId, callId: placed.callId, number: placed.number, lineName: 'ViciDial', blocked: !opened, dialUrl: opened ? null : placed.dialUrl, closeAfterMs: placed.closeAfterMs || 4000 });
+  }, []);
+  const viciOutcome = useCallback(async ({ outcome, note }) => {
+    const id = state.callId;
+    if (!id) return;
+    try {
+      const r = await api.post(`/browser-calling/vicidial/calls/${encodeURIComponent(id)}/outcome`, { outcome, note });
+      setState((x) => ({ ...x, saved: true, dialUrl: null, blocked: false, record: r.data.call, error: null }));
+    } catch (e) { setState((x) => ({ ...x, error: errOf(e, 'Could not save how the call went.') })); }
+  }, [state.callId]);
+
   // a candidate call on the chosen line (or the one given)
   const call = useCallback(({ candidateId, applicationId, name, lineId, outreachTaskId }) => {
     const ln = lineId || (curLine && curLine.id) || undefined;
+    if (ln === 'vicidial' && !outreachTaskId) return viciCall({ candidateId, applicationId, name });
     return run({ candidateId: candidateId || (outreachTaskId ? `task:${outreachTaskId}` : undefined), name }, async () => (await api.post('/browser-calling/calls', { candidateId, applicationId, lineId: ln, outreachTaskId })).data);
-  }, [run, curLine]);
+  }, [run, curLine, viciCall]);
   // CRM wave B: a lead / deal / customer of the CRM on the office line (POST /crm/b/calls; the row is kept as crm:<kind>:<id>)
-  const callCrm = useCallback(({ kind, id, name, lineId, to }) => run({ candidateId: `crm:${kind}:${id}`, name }, async () => (await api.post('/crm/b/calls', { kind, id, to, lineId: lineId || (curLine && curLine.id) || undefined })).data, { sessionPath: '/crm/b/calls/session' }), [run, curLine]);
+  const callCrm = useCallback(({ kind, id, name, lineId, to }) => run({ candidateId: `crm:${kind}:${id}`, name }, async () => (await api.post('/crm/b/calls', { kind, id, to, lineId: lineId || (curLine && !curLine.vicidial ? curLine.id : undefined) || undefined })).data, { sessionPath: '/crm/b/calls/session' }), [run, curLine]);
   // "pick the line first": the call bar shows "Call using" and the Call button
   const pickAndCall = useCallback((args) => { if (!sess.current) setState({ phase: 'choose', ...args }); }, []);
   // Admin: a test call on one line to one of the Test numbers (Phone lines > Test call)
@@ -162,6 +190,6 @@ export default function BrowserCallProvider({ children }) {
   }, [state.held]);
 
   const dismiss = useCallback(() => setState({ phase: 'idle' }), []);
-  const value = useMemo(() => ({ available: !!(info && info.canCall), info, state, seconds, lines, line: curLine, chooseLine, call, callCrm, pickAndCall, testCall, refresh, hangup, toggleMute, toggleHold, dismiss }), [refresh, info, state, seconds, lines, curLine, chooseLine, call, callCrm, pickAndCall, testCall, hangup, toggleMute, toggleHold, dismiss]);
+  const value = useMemo(() => ({ available: !!(info && info.canCall), info, state, seconds, lines, line: curLine, chooseLine, call, callCrm, pickAndCall, testCall, refresh, hangup, toggleMute, toggleHold, dismiss, viciOutcome }), [refresh, info, state, seconds, lines, curLine, chooseLine, call, callCrm, pickAndCall, testCall, hangup, toggleMute, toggleHold, dismiss, viciOutcome]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

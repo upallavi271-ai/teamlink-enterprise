@@ -5,6 +5,7 @@ import { Modal } from '../proto.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import ChannelStrip from './ChannelStrip.jsx';
 import CallLinePicker, { useCallLines } from './CallLinePicker.jsx';
+import { openBlank, sendTo, closeBlank, openFromClick, popupHost } from '../browsercall/vicidialPopup.js';
 import { useContactRule } from './useMayMessage.js';
 import {
   smsInfo, CHANNEL_ICON, canManageTemplates, useTokens, useUsable, useChannels, purposesFor, templateFor,
@@ -108,7 +109,23 @@ export default function ContactDialog({
   const gw = CL.gw;
   const [gwNote, setGwNote] = useState(null); // { ok, text }
   const [gwBusy, setGwBusy] = useState(false);
+  // VICIDIAL (click to dial): the popup is opened inside this click, then pointed at the dial link the server hands back (see vicidialPopup.js)
+  const isVici = CL.line === 'vicidial';
+  const [vici, setVici] = useState(null); // { callId, dialUrl (only while the popup was blocked), closeAfterMs }
+  async function viciThrough() {
+    if (audience !== 'candidates') { setGwNote({ ok: false, text: 'ViciDial calls from TeamLink are for candidates only.' }); return; }
+    const w = openBlank();
+    setGwBusy(true); setGwNote(null);
+    try {
+      const r = await api.post('/browser-calling/vicidial/dial', { candidateId: personId, applicationId: applicationId || undefined });
+      const opened = sendTo(w, r.data.dialUrl, r.data.closeAfterMs || 4000);
+      setVici({ callId: r.data.callId, dialUrl: opened ? null : r.data.dialUrl, closeAfterMs: r.data.closeAfterMs || 4000 });
+      setDialed(true);
+      setGwNote({ ok: true, text: opened ? 'Sent to ViciDial. Talk on the ViciDial agent screen as usual (recorded in ViciDial), then save how it went below.' : '' });
+    } catch (e) { closeBlank(w); setGwNote({ ok: false, text: e.response?.data?.error || 'Could not ask ViciDial to dial.' }); } finally { setGwBusy(false); }
+  }
   async function callThrough() {
+    if (isVici) { viciThrough(); return; }
     setGwBusy(true); setGwNote(null);
     try {
       const r = await api.post('/messaging/call', { audience, id: personId, applicationId: applicationId || undefined, line: CL.line || undefined });
@@ -266,6 +283,11 @@ export default function ContactDialog({
       if (audience === 'candidates') {
         await api.post(`/candidates/${personId}/contact`, { method: 'Call', purpose: (cur && cur.label) || 'Call', callResult: outcome, notes: callNote, applicationId: applicationId || undefined });
         if (nextDate && applicationId) await api.post('/followups', { applicationId, dueDate: nextDate, contactMode: 'Call', notes: callNote || undefined }).catch(() => {});
+        // a ViciDial dial from this window: its call row gets the same result (Answered -> Connected, Not Answered / Switched Off -> No answer ...)
+        if (vici && vici.callId) {
+          const VO = { Answered: 'Connected', 'Not Answered': 'No answer', 'Switched Off': 'No answer', Busy: 'Busy', 'Wrong Number': 'Wrong number' };
+          if (VO[outcome]) await api.post(`/browser-calling/vicidial/calls/${encodeURIComponent(vici.callId)}/outcome`, { outcome: VO[outcome], note: callNote || undefined }).catch(() => {});
+        }
       } else {
         await api.post('/messaging/device-log', { audience, id: personId, channel: 'Call', purpose: `Call: ${outcome}${callNote ? ` - ${callNote}` : ''}` });
       }
@@ -340,9 +362,15 @@ export default function ContactDialog({
                   <CallLinePicker CL={CL} />
                   {gw && gw.configured && (
                     <>
-                      <button type="button" className="btn btn-primary" style={{ marginTop: 6, fontSize: 15 }} disabled={gwBusy} onClick={callThrough}>{gwBusy ? 'Starting…' : '📞 Call through TeamLink'}</button>
-                      <div className="small-muted" style={{ marginTop: 4 }}>Your own phone rings first. Pick up, and TeamLink connects {name}. The result is saved on the history.{gw.recording ? ' This call is recorded: tell them.' : ''}</div>
-                      {gwNote && <div className={`msg-box ${gwNote.ok ? 'green' : 'red'}`} style={{ marginTop: 6 }}>{gwNote.text}</div>}
+                      <button type="button" className="btn btn-primary" style={{ marginTop: 6, fontSize: 15 }} disabled={gwBusy} onClick={callThrough}>{gwBusy ? 'Starting…' : (isVici ? '📞 Call on ViciDial' : '📞 Call through TeamLink')}</button>
+                      <div className="small-muted" style={{ marginTop: 4 }}>{isVici ? `ViciDial dials ${name} on your ViciDial agent screen (be logged in there). Recorded in ViciDial.` : <>Your own phone rings first. Pick up, and TeamLink connects {name}. The result is saved on the history.{gw.recording ? ' This call is recorded: tell them.' : ''}</>}</div>
+                      {vici && vici.dialUrl && (
+                        <div className="msg-box orange" style={{ marginTop: 6, textAlign: 'left' }} data-testid="vici-blocked">
+                          <b>Allow pop-ups for {popupHost()}</b>, so ViciDial can be asked to dial. For now, click once:{' '}
+                          <a href={vici.dialUrl} onClick={(e) => { e.preventDefault(); if (openFromClick(vici.dialUrl, vici.closeAfterMs)) { setVici((v) => ({ ...v, dialUrl: null })); setGwNote({ ok: true, text: 'Sent to ViciDial. Talk on the ViciDial agent screen, then save how it went below.' }); } }}>Dial on ViciDial</a>
+                        </div>
+                      )}
+                      {gwNote && gwNote.text && <div className={`msg-box ${gwNote.ok ? 'green' : 'red'}`} style={{ marginTop: 6 }}>{gwNote.text}</div>}
                     </>
                   )}
                   <a className={`btn${gw && gw.configured ? '' : ' btn-primary'}`} style={{ display: 'inline-block', marginTop: 6, fontSize: gw && gw.configured ? 13 : 15 }} href={`tel:+${intl(num)}`} onClick={() => setDialed(true)}>{gw && gw.configured ? 'Or call from my own phone' : '📞 Call now'}</a>

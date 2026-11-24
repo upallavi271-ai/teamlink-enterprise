@@ -15,6 +15,8 @@ const CFG = require('../browsercall/config');
 const prov = require('../browsercall/provision');
 const events = require('../browsercall/events');
 const L = require('../browsercall/lines');
+const VD = require('../browsercall/vicidial');
+const secrets = require('../utils/secrets');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -43,7 +45,9 @@ router.get('/status', async (req, res) => {
     const w = await who(req.user);
     const st = events.getStatus();
     // the lines this login may call on ("Call using" in the call bar); the built-in office Synway first
-    const lines = w.ok ? (await L.usableBy(req.user)).map((l) => ({ id: l.id, name: l.name, type: l.type, typeLabel: l.typeLabel, builtIn: !!l.builtIn })) : [];
+    const lines = w.ok ? (await L.usableBy(req.user)).map((l) => ({ id: l.id, name: l.name, type: l.type, typeLabel: l.typeLabel, builtIn: !!l.builtIn, ready: true })) : [];
+    // VICIDIAL click to dial (browsercall/vicidial.js): always listed; pickable only when the Admin switched it on and this person has an agent ID
+    if (w.ok) { const vr = await VD.readyFor(req.user, kindOf(req.user)).catch(() => ({ ok: false, reason: 'ViciDial is not connected yet.' })); lines.push({ id: VD.LINE_ID, name: VD.LINE_NAME, type: 'vicidial-click', typeLabel: 'ViciDial agent screen', builtIn: false, vicidial: true, ready: !!vr.ok, reason: vr.ok ? null : vr.reason }); }
     res.json({ canCall: w.ok, reason: w.ok ? null : w.reason, mode: w.s.mode, testMode: w.s.mode === 'Test', pbx: { eventsConnected: st.connected, error: isAdmin(req.user) ? st.error : undefined }, wssConfigured: !!CFG.ENV.wssUrl, isAdmin: isAdmin(req.user), lines, defaultLine: lines.length ? lines[0].id : null });
   } catch (e) { fail(res, 500, 'Could not read the browser calling status.'); }
 });
@@ -133,6 +137,7 @@ const shape = (r, viewer) => {
     ringSec: r.answerAt ? secsBetween(r.startAt, r.answerAt) : secsBetween(r.startAt, r.endAt),
     recordingStatus: r.recordingStatus || null, recordingSec: r.recordingSec || null, recordingNote: r.recordingNote || null, hasRecording: !!r.recordingPath,
     hasTranscript: !!r.transcript, transcriptNote: r.transcript ? null : (r.transcriptSource || null),
+    vicidial: r.lineId === VD.LINE_ID, outcomeNote: r.lineId === VD.LINE_ID ? (r.hangupReason || null) : undefined,
     mayListen: listen, summary: listen ? summary : null, summaryText: listen ? (r.summaryText || null) : null, summarySource: listen ? (r.summarySource || null) : null,
   };
 };
@@ -215,6 +220,100 @@ router.get('/report', async (req, res) => {
     const byLine = await S.all(`SELECT COALESCE("lineName", 'Office Synway (SIM)') AS "lineName", COUNT(*) AS total, SUM("answerAt" IS NOT NULL) AS connected, COALESCE(SUM("talkSec"),0) AS "talkSec" FROM "BrowserCall" WHERE ${where} GROUP BY 1 ORDER BY total DESC`, ...p);
     res.json({ from: f, to: t, recruiters: byUser, lines: byLine, candidates: byCand.filter((r) => r.candidateId !== TEST_CALL).map((r) => ({ ...r, name: nm.get(r.candidateId) || null })), calls: rows.map((r) => ({ ...shape(r, req.user), candidateName: r.candidateId === TEST_CALL ? 'Test call' : (nm.get(r.candidateId) || null) })) });
   } catch (e) { console.error('[browser-call] report:', e.message); fail(res, 500, 'Could not build the report.'); }
+});
+
+// ---------------------------------------------------------------------------- VICIDIAL click to dial (browsercall/vicidial.js)
+// The server checks the person may call this candidate (the same rules as a browser call: role, scope, contact rule, Test mode test numbers),
+// writes the call row ("ViciDial", recorded in ViciDial, nothing recorded here) and hands back the ONE dial link; the BROWSER opens it in a small
+// popup (the office ViciDial is on the office LAN, which this server cannot reach - this server never contacts it). The link carries the API
+// password, so it is only in this one answer (no-store) and never in a log line or an audit row.
+const KIND_WORD = { admin: 'Admin', tl: 'Team Leader', recruiter: 'Recruiter', hr: 'HR', bdetl: 'BDE TL', bde: 'BDE', view: 'Manager (view only)', marketing: 'Marketing', none: '—' };
+async function viciAdminView() {
+  const settings = await VD.load();
+  const s = await CFG.load();
+  const map = await VD.agentsMap();
+  const users = await prisma.user.findMany({ where: { status: 'Active', atsAccess: true }, orderBy: { name: 'asc' }, take: 2000 });
+  const people = users.map((u) => {
+    let k = 'none'; try { k = kindOf(u); } catch { k = 'none'; }
+    const may = !VD.REFUSED_KINDS.includes(k) && (k === 'admin' || s.kinds.includes(k));
+    const a = map.get(u.id);
+    return { userId: u.id, name: u.name, email: u.email, role: KIND_WORD[k] || k, mayCall: may, agentUser: a ? a.agentUser : null };
+  }).filter((p) => p.mayCall || p.agentUser);
+  return { settings, people, missing: VD.missingFor(settings), browserCallingMode: s.mode, secretsReady: secrets.secretsConfigured() };
+}
+router.get('/vicidial/admin', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try { res.set('Cache-Control', 'no-store'); return res.json(await viciAdminView()); } catch (e) { console.error('[vicidial] admin:', e.message); return fail(res, 500, 'Could not load the ViciDial settings.'); }
+});
+router.put('/vicidial/admin', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try {
+    const before = await VD.load();
+    const b = req.body || {};
+    const out = await VD.save({ server: b.server, apiUser: b.apiUser, apiPass: b.apiPass, clearPassword: !!b.clearPassword, phoneCode: b.phoneCode, enabled: b.enabled }, req.user);
+    if (out.error) return fail(res, out.status || 400, out.error);
+    const st = out.settings;
+    const changed = [
+      before.enabled !== st.enabled && `switched ${st.enabled ? 'On' : 'Off'}`, before.server !== st.server && `server ${st.server || '(empty)'}`,
+      before.apiUser !== st.apiUser && `API user ${st.apiUser || '(empty)'}`, (b.apiPass || b.clearPassword) && (b.clearPassword ? 'API password removed' : 'API password changed'),
+      before.phoneCode !== st.phoneCode && `phone code ${st.phoneCode}`,
+    ].filter(Boolean);
+    await logAudit({ userId: req.user.id, action: 'ViciDial settings saved', entity: 'Integration', entityId: 'vicidial', toValue: changed.join(' · ') || 'no change' });
+    res.set('Cache-Control', 'no-store');
+    return res.json(await viciAdminView());
+  } catch (e) { console.error('[vicidial] save:', e.message); return fail(res, 500, 'Could not save the ViciDial settings.'); }
+});
+router.put('/vicidial/admin/agents/:userId', async (req, res) => {
+  if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
+  try {
+    const before = await VD.agentFor(req.params.userId);
+    const out = await VD.setAgent(req.params.userId, req.body && req.body.agentUser, req.user);
+    if (out.error) return fail(res, out.status || 400, out.error);
+    await logAudit({ userId: req.user.id, action: out.agentUser ? 'ViciDial agent ID set' : 'ViciDial agent ID removed', entity: 'User', entityId: out.user.id, fromValue: before || null, toValue: `${out.user.name}: ${out.agentUser || 'not set'}` });
+    return res.json({ userId: out.user.id, agentUser: out.agentUser });
+  } catch (e) { console.error('[vicidial] agent:', e.message); return fail(res, 500, 'Could not save the agent ID.'); }
+});
+
+router.post('/vicidial/dial', async (req, res) => {
+  try {
+    const w = await who(req.user);
+    if (!w.ok) return fail(res, w.code, w.reason);
+    const vr = await VD.readyFor(req.user, kindOf(req.user));
+    if (!vr.ok) return fail(res, vr.off || vr.noAgent ? 409 : 403, vr.reason, { code: vr.off ? 'VICIDIAL_OFF' : (vr.noAgent ? 'NO_AGENT_ID' : 'ROLE') });
+    // the number comes from the candidate record this login may see - never from the browser
+    const cand = await prisma.candidate.findFirst({ where: { id: clip(req.body && req.body.candidateId, 60), ...scope.candidateWhere(req.user) }, select: { id: true, name: true, phone: true } });
+    if (!cand) return fail(res, 404, 'Candidate not found.');
+    const n = core.normalizeMobile(cand.phone);
+    if (!n.ok) return fail(res, 400, n.reason);
+    if (n.cc !== '91') return fail(res, 400, 'Only Indian mobile numbers can be called from here.');
+    if (w.s.mode === 'Test' && !w.s.testNumbers.includes(n.national)) return fail(res, 403, "Test mode: only the Admin's test phone numbers can be called.", { code: 'TEST_MODE' });
+    const sandbox = require('../utils/sandbox'); // eslint-disable-line global-require
+    if (sandbox.isSandbox() && !['127.0.0.1', 'localhost', '::1'].includes(VD.hostOf(vr.settings.server))) return fail(res, 409, 'TEST MODE: this computer is a test copy and does not hand out a dial link to a real ViciDial server.', { code: 'SANDBOX' });
+    const link = await VD.dialUrl({ agentUser: vr.agent, number: n.national });
+    if (link.error) return fail(res, 409, link.error);
+    const id = crypto.randomUUID(); const token = crypto.randomBytes(12).toString('hex'); const now = S.nowIso();
+    await S.run('INSERT INTO "BrowserCall" ("id","token","candidateId","applicationId","userId","userName","toNumber","extension","direction","mode","status","startAt","createdAt","updatedAt","lineId","lineName","recordingStatus","recordingNote","processedAt") VALUES (?,?,?,?,?,?,?,?,\'outbound\',?,\'requested\',?,?,?,?,?,\'none\',?,?)',
+      id, token, cand.id, clip(req.body && req.body.applicationId, 60) || null, req.user.id, clip(req.user.name, 80), n.national, clip(`vici:${vr.agent}`, 60), w.s.mode, now, now, now, VD.LINE_ID, VD.LINE_NAME, 'Recorded in ViciDial', now);
+    await logAudit({ userId: req.user.id, action: 'ViciDial dial requested', entity: 'Candidate', entityId: cand.id, toValue: `agent ${vr.agent} -> ${core.maskMobile(n.national)} (${VD.hostOf(vr.settings.server)})` });
+    res.set('Cache-Control', 'no-store');
+    return res.json({ callId: id, number: n.national, candidate: { id: cand.id, name: cand.name }, line: { id: VD.LINE_ID, name: VD.LINE_NAME }, agentUser: vr.agent, dialUrl: link.url, closeAfterMs: 4000, recording: 'Recorded in ViciDial' });
+  } catch (e) { console.error('[vicidial] dial:', VD.maskUrl(e.message)); return fail(res, 500, 'Could not ask ViciDial to dial.'); }
+});
+// how the call went (the recruiter says it after talking on the ViciDial agent screen): only the person who asked for it, or an Admin
+router.post('/vicidial/calls/:id/outcome', async (req, res) => {
+  try {
+    const r = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', clip(req.params.id, 60));
+    if (!r || r.lineId !== VD.LINE_ID || (r.userId !== req.user.id && !isAdmin(req.user))) return fail(res, 404, 'Call not found.');
+    const outcome = String((req.body && req.body.outcome) || '');
+    const status = VD.OUTCOMES[outcome];
+    if (!status) return fail(res, 400, `Pick how the call went: ${Object.keys(VD.OUTCOMES).join(', ')}.`);
+    const note = String((req.body && req.body.note) || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 240);
+    const now = S.nowIso();
+    await S.run('UPDATE "BrowserCall" SET "status"=?, "hangupReason"=?, "endAt"=COALESCE("endAt", ?), "updatedAt"=? WHERE "id"=?', status, `${outcome}${note ? ` · ${note}` : ''}`, now, now, r.id);
+    await logAudit({ userId: req.user.id, action: 'ViciDial call outcome saved', entity: 'Candidate', entityId: r.candidateId, toValue: `${outcome}${note ? ` · ${note.slice(0, 120)}` : ''}` });
+    const row = await S.one('SELECT * FROM "BrowserCall" WHERE "id"=?', r.id);
+    return res.json({ call: shape(row, req.user) });
+  } catch (e) { console.error('[vicidial] outcome:', e.message); return fail(res, 500, 'Could not save how the call went.'); }
 });
 
 // Admin: settings

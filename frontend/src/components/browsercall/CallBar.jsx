@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useBrowserCall } from './CallProvider.jsx';
+import { openFromClick, popupHost } from './vicidialPopup.js';
 
 const WORD = { starting: 'Starting…', calling: 'Calling…', ringing: 'Ringing…', connected: 'Connected', failed: 'Failed', ended: 'Ended' };
 const mmss = (n) => `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
@@ -7,13 +9,58 @@ const mmss = (n) => `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n %
 export function LineSelect({ disabled = false }) {
   const { lines, line, chooseLine } = useBrowserCall();
   if (!lines || lines.length === 0) return null;
+  // a line that is listed but not usable yet (ViciDial before an Admin switches it on, or without your agent ID) is shown greyed with the reason
+  const notReady = lines.filter((l) => l.ready === false && l.reason);
   return (
     <label className="field" style={{ margin: '4px 0 8px', display: 'block' }}>
       <span>Call using</span>
-      <select aria-label="Call using" value={line ? line.id : ''} disabled={disabled || lines.length < 2} onChange={(e) => chooseLine(e.target.value)} style={{ width: '100%' }}>
-        {lines.map((l) => <option key={l.id} value={l.id}>{l.name}{l.builtIn ? '' : ` · ${l.typeLabel}`}</option>)}
+      <select aria-label="Call using" value={line ? line.id : ''} disabled={disabled || lines.filter((l) => l.ready !== false).length < 2} onChange={(e) => chooseLine(e.target.value)} style={{ width: '100%' }}>
+        {lines.map((l) => <option key={l.id} value={l.id} disabled={l.ready === false}>{l.vicidial ? `ViciDial${l.ready === false ? ' (not connected yet)' : ' · on your ViciDial agent screen'}` : `${l.name}${l.builtIn ? '' : ` · ${l.typeLabel}`}`}</option>)}
       </select>
+      {notReady.map((l) => <span key={l.id} className="small-muted" style={{ display: 'block', fontSize: 11.5, marginTop: 3 }} data-testid={`line-reason-${l.id}`}>{l.name}: {l.reason}</span>)}
+      {line && line.vicidial && <span className="small-muted" style={{ display: 'block', fontSize: 11.5, marginTop: 3 }}>ViciDial dials on your ViciDial agent screen: be logged in there. Recorded in ViciDial.</span>}
     </label>
+  );
+}
+
+const OUTCOMES = ['Connected', 'No answer', 'Busy', 'Wrong number'];
+// After a ViciDial dial: the popup went to ViciDial (or the pop-up was blocked: one click on the link), then how the call went.
+function ViciPanel({ state, box, dismiss }) {
+  const { viciOutcome } = useBrowserCall();
+  const [pick, setPick] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [clicked, setClicked] = useState(false);
+  const save = async () => { setBusy(true); await viciOutcome({ outcome: pick, note }); setBusy(false); };
+  return (
+    <div role="status" style={box} data-testid="call-bar">
+      <div style={{ fontWeight: 600 }}>{state.name || 'Candidate'}</div>
+      <div className="small-muted">{state.number ? `${state.number.slice(0, 2)}XXXXXX${state.number.slice(-2)}` : ''} · on ViciDial</div>
+      {state.blocked && !clicked ? (
+        <div className="notice" style={{ margin: '6px 0' }} data-testid="vici-blocked">
+          <b>Allow pop-ups for {popupHost()}</b>, so ViciDial can be asked to dial. For now, click once:{' '}
+          <a href={state.dialUrl || '#'} onClick={(e) => { e.preventDefault(); if (state.dialUrl && openFromClick(state.dialUrl, state.closeAfterMs || 4000)) setClicked(true); }}>Dial on ViciDial</a>
+        </div>
+      ) : (
+        <div style={{ margin: '6px 0' }} data-testid="vici-sent">
+          <b style={{ color: '#067647' }}>{state.saved ? 'Saved' : 'Sent to ViciDial'}</b>
+          <div className="small-muted">{state.saved ? `On the call history: ${(state.record && state.record.outcomeNote) || pick}.` : 'Talk on the ViciDial agent screen as usual. The call is recorded in ViciDial. Then say how it went:'}</div>
+        </div>
+      )}
+      {!state.saved && (
+        <>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', margin: '4px 0' }}>
+            {OUTCOMES.map((o) => <button key={o} type="button" className={`btn btn-sm${pick === o ? ' btn-primary' : ''}`} onClick={() => setPick(o)}>{o}</button>)}
+          </div>
+          <input aria-label="Note" placeholder="Note (optional)" value={note} maxLength={240} onChange={(e) => setNote(e.target.value)} style={{ width: '100%', margin: '4px 0' }} />
+        </>
+      )}
+      {state.error && <div className="small-muted" style={{ color: '#b42318', marginBottom: 4 }}>{state.error}</div>}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {!state.saved && <button type="button" className="btn btn-sm btn-primary" disabled={!pick || busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>}
+        <button type="button" className="btn btn-sm" onClick={dismiss}>Close</button>
+      </div>
+    </div>
   );
 }
 
@@ -34,6 +81,7 @@ export default function CallBar() {
       </div>
     );
   }
+  if (state.phase === 'vici') return <ViciPanel state={state} box={box} dismiss={dismiss} />;
   const live = ['starting', 'calling', 'ringing', 'connected'].includes(state.phase);
   const rec = state.record;
   const why = state.phase === 'failed' ? (state.error || (rec && rec.hangupReason)) : (state.phase === 'ended' && rec && rec.talkSec != null ? `Talk time ${mmss(rec.talkSec)}` : '');

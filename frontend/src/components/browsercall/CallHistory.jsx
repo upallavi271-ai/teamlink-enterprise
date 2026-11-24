@@ -3,7 +3,7 @@ import api from '../../api';
 import { useBrowserCall } from './CallProvider.jsx';
 
 export const mmss = (n) => (n == null ? '—' : `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`);
-export const statusWord = (s) => ({ completed: 'Connected', connected: 'Connected', failed: 'Failed', busy: 'Busy', missed: 'No answer', cancelled: 'Cancelled', calling: 'Calling', ringing: 'Ringing', initiated: 'Starting' }[s] || s);
+export const statusWord = (s) => ({ completed: 'Connected', connected: 'Connected', failed: 'Failed', busy: 'Busy', missed: 'No answer', cancelled: 'Cancelled', calling: 'Calling', ringing: 'Ringing', initiated: 'Starting', requested: 'Asked ViciDial to dial' }[s] || s);
 const at = (v) => (v ? new Date(v).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
 const errOf = (e, d) => (e && e.response && e.response.data && e.response.data.error) || d;
 const REC_WORD = { pending: 'Recording is being prepared…', processing: 'Recording is being prepared…', missing: 'No recording came from the phone system', failed: 'The recording could not be prepared', off: 'Not recorded (recording was off)', deleted: 'Recording deleted (kept for a limited time)' };
@@ -68,7 +68,7 @@ export default function CallHistory({ candidateId }) {
   useEffect(() => {
     if (!available || !candidateId) return;
     api.get(`/browser-calling/candidates/${candidateId}/calls`).then((r) => { setRows(r.data.rows || []); setErr(''); }).catch((e) => setErr(errOf(e, 'Could not load the call history.')));
-  }, [available, candidateId, state.phase === 'ended' || state.phase === 'failed']); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [available, candidateId, state.phase === 'ended' || state.phase === 'failed', state.phase === 'vici' ? state.callId : null, !!state.saved]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!available) return null;
   return (
     <div className="card section" data-testid="call-history">
@@ -82,10 +82,10 @@ export default function CallHistory({ candidateId }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{at(r.startAt)}</td><td>{r.userName || '—'}</td><td>{r.lineName || 'Office Synway (SIM)'}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{at(r.startAt)}</td><td>{r.userName || '—'}</td><td data-testid={r.vicidial ? 'vici-line' : undefined}>{r.vicidial ? `ViciDial · requested by ${r.userName || '—'}` : (r.lineName || 'Office Synway (SIM)')}</td>
                   <td>{mmss(r.ringSec)}</td><td data-testid="talk-time">{mmss(r.talkSec)}</td>
-                  <td>{statusWord(r.status)}{r.hangupReason && r.status !== 'completed' ? <div className="small-muted">{r.hangupReason}</div> : null}</td>
-                  <td><PlayButton call={r} /></td>
+                  <td>{r.vicidial && r.outcomeNote ? r.outcomeNote : statusWord(r.status)}{!r.vicidial && r.hangupReason && r.status !== 'completed' ? <div className="small-muted">{r.hangupReason}</div> : null}</td>
+                  <td>{r.vicidial ? <span className="small-muted">Recorded in ViciDial</span> : <PlayButton call={r} />}</td>
                   <td style={{ minWidth: 220 }}><CallSummary call={r} /></td>
                 </tr>
               ))}

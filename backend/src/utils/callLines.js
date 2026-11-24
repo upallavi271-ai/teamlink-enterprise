@@ -93,6 +93,9 @@ const LINES = [
     id: 'vicidial', label: 'ViciDial', supports: ['Calls'], placeholderFor: 'vicidial',
     async ready() { return { ok: false, reason: NOT_SET('ViciDial') }; },
     async start() { return { ok: false, notConfigured: true, error: NOT_SET('ViciDial') }; },
+    // CLICK TO DIAL (browsercall/vicidial.js, 2026-11-24): once an Admin switches on Integrations > ViciDial (office dialer), this entry is that, for the person
+    // with a ViciDial agent ID. The dial itself goes from the BROWSER (POST /browser-calling/vicidial/dial, then a popup to the office ViciDial).
+    vicidialClick: true,
   },
   {
     id: 'ip', label: 'IP address (SIP)', supports: ['Calls'], placeholderFor: 'ip',
@@ -137,6 +140,10 @@ async function list(user) {
   const typeSet = {};
   for (const t of ['dinstar', 'vicidial', 'ip']) typeSet[t] = pls.some((l) => l.type === t) || await anyOfType(t); // eslint-disable-line no-await-in-loop
   for (const l of LINES) {
+    if (l.vicidialClick) { // eslint-disable-next-line no-await-in-loop
+      const v = await viciClick(user);
+      if (v) { out.push(v); continue; }
+    }
     if (l.placeholderFor && typeSet[l.placeholderFor]) continue; // the real line(s) of that kind take its place
     // eslint-disable-next-line no-await-in-loop
     const r = await l.ready();
@@ -145,6 +152,17 @@ async function list(user) {
   for (const pl of pls) out.push(phoneEntry(pl));
   const first = out.find((x) => x.ready);
   return { lines: out, default: first ? first.id : 'api' };
+}
+
+// the ViciDial click-to-dial entry when an Admin switched it on (null = off: the old placeholder behaviour stays)
+async function viciClick(user) {
+  if (!user) return null;
+  try {
+    const VD = require('../browsercall/vicidial'); // eslint-disable-line global-require
+    const r = await VD.readyFor(user, require('../outreach/access').kind(user)); // eslint-disable-line global-require
+    if (r.off) return null;
+    return { id: 'vicidial', label: 'ViciDial', text: 'ViciDial (call)', supports: ['Calls'], ready: !!r.ok, reason: r.ok ? null : r.reason, note: r.ok ? 'ViciDial dials on your ViciDial agent screen (be logged in there). Recorded in ViciDial.' : null, recording: false, from: null, vicidial: true };
+  } catch { return null; }
 }
 
 async function startOnPhoneLine(lineId, args) {
@@ -182,6 +200,7 @@ async function c2cRow(line, args) {
  *  "line:<id>" = a Phone line (needs args.user: the role must be allowed on it). */
 async function startCall(lineId, args) {
   if (String(lineId || '').startsWith(PHONE) || (String(lineId || '').toLowerCase() === 'dinstar' && await anyDinstar())) return startOnPhoneLine(lineId, args || {});
+  if (String(lineId || '').toLowerCase() === 'vicidial') return { ok: false, notConfigured: true, error: 'ViciDial dials from your browser: pick ViciDial and press Call in the call window or the call bar.', line: 'vicidial' };
   const l = byId(lineId) || byId('api');
   const r = await l.ready();
   if (!r.ok) return { ok: false, notConfigured: true, error: r.reason, line: l.id };
