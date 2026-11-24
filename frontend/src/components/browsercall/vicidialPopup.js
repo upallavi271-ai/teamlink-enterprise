@@ -20,7 +20,7 @@ export function openBlank() {
 /** Point the popup at the dial link and close it after `ms`. Answers false when there is no usable popup (blocked / closed). */
 export function sendTo(w, url, ms = 4000) {
   if (!w || w.closed) return false;
-  try { w.opener = null; } catch { /* not ours any more */ }
+  // (w.opener is NOT cut: Chromium then no longer lets this page close the popup. ViciDial's answer is plain text, it runs no script.)
   try { w.location.replace(url); } catch { try { w.location.href = url; } catch { return false; } }
   setTimeout(() => { try { w.close(); } catch { /* the person closed it */ } }, ms);
   return true;
