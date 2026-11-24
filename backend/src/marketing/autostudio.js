@@ -145,7 +145,10 @@ async function plan(u, b = {}) {
   if (kind === 'video' && p.scenes.some((s) => !s.say)) { const said = BC.sayFor(p.scenes, { who, cta: p.cta, health: !!project && BC.profileOf(`${who} ${project.occasion} ${project.brief}`).id !== 'general' }); p.scenes.forEach((s, i) => { if (!s.say) s.say = said[i]; }); }
   const text = `${p.title} ${p.headline} ${p.tagline} ${p.caption} ${p.scenes.map((s) => s.caption).join(' ')}`;
   const flags = (brand.avoidWords || []).filter((w) => new RegExp(`(^|[^\\p{L}\\p{N}])${String(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu').test(text));
-  return { plan: { ...p, kind, language, date: day, dateLabel: dateLabel(day), who }, flags, demo: !!r.demo, provider: r.provider || '', fromBrief, ...(note ? { note } : {}) };
+  // who the post is for (a line of the banner): the client's kind of customers, or the brand's own audience
+  const kindOfClient = project ? BC.profileOf(`${who} ${project.occasion || ''} ${project.brief || ''}`) : null;
+  const audience = project ? (kindOfClient && kindOfClient.id !== 'general' ? kindOfClient.who : '') : S.clip(brand.audience, 120);
+  return { plan: { ...p, kind, language, date: day, dateLabel: dateLabel(day), who, audience }, flags, demo: !!r.demo, provider: r.provider || '', fromBrief, ...(note ? { note } : {}) };
 }
 
 module.exports = { plan, dateLabel, clean, partsOf, applyMine }; // clean: exported for the tests (a model answer that is incomplete or too long is repaired, never trusted)

@@ -551,6 +551,15 @@ async function createBanner(u, b = {}) {
     if (!f) return { error: 'The picture file is not on the server any more.', status: 404 };
     photo = fs.readFileSync(f.path);
   }
+  // no picture chosen but some words to find one: a free stock photo (Pixabay / Pexels) becomes the hero picture of the banner ("Create from your content" posts)
+  if (!photo && b.heroSearch) {
+    try {
+      const Stock = require('./stockclips'); // eslint-disable-line global-require
+      const sz = B.SIZES[size] || {};
+      const ph = await Stock.photo(u, { q: S.clip(b.heroSearch, 80), shape: sz.w > sz.h * 1.2 ? 'landscape' : 'portrait', n: Math.max(0, Math.min(19, Math.floor(Number(b.heroN)) || 0)) });
+      if (ph && ph.buf) photo = ph.buf;
+    } catch { photo = null; }
+  }
   const colors = (look && look.colors && look.colors.primary ? { primary: look.colors.primary, secondary: look.colors.secondary || undefined, accent: brand.colors.accent } : brand.colors) || {};
   let made;
   try {

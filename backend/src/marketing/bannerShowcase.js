@@ -27,10 +27,15 @@ const ICONS = {
   briefcase: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M3 13h18"/>',
   shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5L16 9.5"/>',
   bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  heart: '<path d="M12 21s-7-4.4-9-9a5 5 0 019-3 5 5 0 019 3c-2 4.6-9 9-9 9z"/>',
+  drop: '<path d="M12 3s6 6.5 6 11a6 6 0 01-12 0c0-4.5 6-11 6-11z"/><path d="M9.5 15a2.5 2.5 0 002.5 2.5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+  leaf: '<path d="M5 19c0-8 5-14 15-15 0 10-6 15-14 15z"/><path d="M5 19c3-5 6-8 10-10"/>',
+  cross: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/>',
   chat: '<path d="M4 5h16a1 1 0 011 1v10a1 1 0 01-1 1H9l-5 4V6a1 1 0 011-1z"/><path d="M8 10h8M8 13h5"/>',
 };
 // which icon for a service name (the words the team types)
-const RULES = [[/social|facebook|instagram|share/i, 'social'], [/seo|search/i, 'search'], [/aeo|answer|question/i, 'question'], [/geo|generative|\bai\b|artificial|chatbot|automation/i, 'chip'], [/google|business profile|map|local/i, 'pin'],
+const RULES = [[/pigment|dark spot|wrinkle|ageing|aging|sunscreen|sun /i, 'sun'], [/eczema|allerg|itch|fung|infect/i, 'shield'], [/skin|acne|pimple|rash|derm/i, 'drop'], [/hair|dandruff|scalp/i, 'leaf'], [/doctor|clinic|hospital|medical|dental|teeth|patient|consult/i, 'cross'], [/heart|cardio/i, 'heart'], [/social|facebook|instagram|share/i, 'social'], [/seo|search/i, 'search'], [/aeo|answer|question/i, 'question'], [/geo|generative|\bai\b|artificial|chatbot|automation/i, 'chip'], [/google|business profile|map|local/i, 'pin'],
   [/linkedin/i, 'linkedin'], [/content|video|reel|creative|design/i, 'play'], [/email|mail|newsletter/i, 'mail'], [/whatsapp|sms|message|chat/i, 'chat'], [/lead|ads?\b|campaign|promotion/i, 'mega'],
   [/analytics|report|growth|performance/i, 'chart'], [/target|audience/i, 'target'], [/web|site|domain/i, 'globe'], [/hire|recruit|job|staff|talent/i, 'users'], [/call|phone/i, 'phone'], [/brand|trust|secure/i, 'shield']];
 const iconFor = (t, i) => { const r = RULES.find(([re]) => re.test(t)); return r ? r[1] : ['star', 'bolt', 'check', 'briefcase'][i % 4]; };
@@ -110,11 +115,17 @@ async function makeShowcase(spec, H) {
   let y = topY + Math.round(14 * u);
   const subRoom = spec.sub ? Math.round(headH * 0.2) : 0;
   const h1Room = Math.round((headH - subRoom) * (head2 ? 0.5 : 0.8));
-  const h1 = await fit(headline.toUpperCase(), { max: Math.round((wide ? 128 : 112) * u * (wide ? 1 : 1.3)), min: 30, width: textW, maxH: h1Room, color: '#ffffff', bold: true });
-  put(h1.buf, m, y); y += h1.h + Math.round(12 * u);
+  // one line each: the biggest size at which the line fits the width AND its share of the height
+  const oneLine = async (text, color) => {
+    let size = Math.round((wide ? 128 : 112) * u * (wide ? 1 : 1.3)); let t = await H.textPng(text, { size, color, bold: true, width: 6000 });
+    while ((t.w > textW || t.h > h1Room) && size > 24) { size = Math.max(24, Math.floor(size * 0.92)); t = await H.textPng(text, { size, color, bold: true, width: 6000 }); } // eslint-disable-line no-await-in-loop
+    return t;
+  };
+  const h1 = await oneLine(headline.toUpperCase(), '#ffffff');
+  put(h1.buf, m, y); y += h1.h + Math.round(30 * u);
   if (head2) {
-    const h2 = await fit(head2.toUpperCase(), { max: Math.round((wide ? 128 : 112) * u * (wide ? 1 : 1.3)), min: 30, width: textW, maxH: h1Room, color: accent, bold: true });
-    put(h2.buf, m, y); y += h2.h + Math.round(10 * u);
+    const h2 = await oneLine(head2.toUpperCase(), accent);
+    put(h2.buf, m, y); y += h2.h + Math.round(24 * u);
   }
   if (spec.sub) {
     const sb = await fit(String(spec.sub).trim(), { max: Math.round(46 * u * (wide ? 1 : 1.3)), min: 18, width: textW, maxH: Math.max(40, topY + headH - y), color: '#ffffff', bold: true });
@@ -190,7 +201,7 @@ async function makeShowcase(spec, H) {
     put(await sharp(Buffer.from(iconSvg('users', Math.round(84 * u * (wide ? 1 : 1.2)), '#ffffff', 1.6))).png().toBuffer(), m, y + Math.round(30 * u));
     const aw = w - textLeft - m - chipW - (chipW ? gap : 0);
     let ay = y + Math.round(26 * u);
-    if (spec.audienceTitle) { const at = await fit(String(spec.audienceTitle).trim(), { max: Math.round(34 * u * (wide ? 1 : 1.3)), min: 14, width: aw, maxH: Math.round(48 * u * 1.3), color: accent, bold: true }); put(at.buf, textLeft, ay); ay += at.h + 4; }
+    if (spec.audienceTitle) { const at = await fit(String(spec.audienceTitle).trim(), { max: Math.round(34 * u * (wide ? 1 : 1.3)), min: 14, width: aw, maxH: Math.round(48 * u * 1.3), color: accent, bold: true }); put(at.buf, textLeft, ay); ay += at.h + Math.round(26 * u * (wide ? 1 : 1.3)); }
     if (spec.audience) { const ad = await fit(String(spec.audience).trim(), { max: Math.round(30 * u * (wide ? 1 : 1.3)), min: 13, width: aw, maxH: Math.max(30, h - ay - Math.round(34 * u)), color: '#ffffff', bold: false }); put(ad.buf, textLeft, ay); }
     if (spec.chip) {
       const ch = Math.round(76 * u * (wide ? 1 : 1.2)); const cx = w - m - chipW; const cy = y + Math.round(((h - y) - ch) / 2) - Math.round(10 * u);

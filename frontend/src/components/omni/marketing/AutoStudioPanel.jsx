@@ -39,6 +39,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const [aspect, setAspect] = useState(isVideo ? '9:16' : '1:1');
   const [look, setLook] = useState('designed'); // 'designed' (free) | 'ai' (paid picture AI)
   const [photos, setPhotos] = useState(true);
+  const [banners, setBanners] = useState(true); // posts: a professional banner (logo band, two-tone headline, hero picture, icons, who it is for, website), not a plain poster
   const [footage, setFootage] = useState(true); // explainer videos: real stock VIDEO footage behind the words (free), not still pictures
   const [phase, setPhase] = useState(''); // '' | 'plan' | 'pics' | 'done'
   const [step, setStep] = useState({ i: 0, n: 0 });
@@ -106,6 +107,25 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
     return r.item.id;
   };
 
+  // a PROFESSIONAL BANNER for one picture of a post (the server designs it: marketing/banner.js showcase layout; the hero picture is a free stock photo, or the AI picture when one was made)
+  const makeBanner = async (p, i, total, heroId) => {
+    const sc = p.scenes[i];
+    const words = String((i === 0 ? p.headline : sc.caption) || p.headline || '').split(/\s+/).filter(Boolean);
+    const cut = words.length >= 3 ? Math.ceil(words.length / 2) : words.length;
+    const site = String(kit.footer || '').split('·')[0].trim();
+    const body = {
+      size: ['1:1', '4:5', '9:16', '16:9'].includes(aspect) ? aspect : '1:1', layout: 'showcase', title: String(p.title + ' · ' + (i + 1)).slice(0, 80),
+      companyName: kit.brandName || undefined, headline: words.slice(0, cut).join(' '), headline2: words.slice(cut).join(' '), sub: i === 0 ? (p.tagline || '') : '',
+      services: i === 0 ? p.scenes.map((x) => x.caption).filter((x) => x && x !== p.headline).slice(0, 6) : [], servicesTitle: i === 0 ? 'What we cover' : '',
+      audienceTitle: p.audience ? 'Who it is for:' : '', audience: p.audience || '', chip: site && !/\s/.test(site) ? site : '',
+      ...(heroId ? { photoItemId: heroId } : { heroSearch: sc.search || sc.caption, heroN: i }), ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}),
+    };
+    const r = await omni.post('/gs/marketing/banners', body);
+    const t = await omni.blob('/gs/marketing/images/' + r.item.id + '/file').catch(() => null);
+    if (t) { const u = URL.createObjectURL(t); urls.current.push(u); setThumbs((x) => [...x, u]); }
+    return r.item.id;
+  };
+
   const create = async () => {
     stop.current = false; setErr(''); setNote(''); setPlan(null); setFlags([]); setThumbs([]); setPhase('plan');
     try {
@@ -125,6 +145,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
         if (!id && isVideo && r.plan.explain && footage && can.stock) { // real moving footage from the free stock source, kept in this browser only
           try { const cb = await omni.blob('/gs/marketing/stock/clipfile', { q: r.plan.scenes[i].search || r.plan.scenes[i].caption, shape: shapeOf(aspect), n: i }); const cu = URL.createObjectURL(cb); urls.current.push(cu); id = { stock: true, url: cu }; } catch { id = null; } // eslint-disable-line no-await-in-loop
         }
+        if (!id && !isVideo && banners) { try { id = await makeBanner(r.plan, i, r.plan.scenes.length, null); } catch (e) { id = null; if (e.response && e.response.status === 403) throw e; } } // a banner that cannot be designed falls back to the plain picture below
         if (!id) { id = await makeDesigned(r.plan, i, r.plan.scenes.length); anyDesigned = true; } // eslint-disable-line no-await-in-loop
         ids.push(id);
         if (stop.current) throw new Error('stopped');
@@ -205,6 +226,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           </div>
           {more ? (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 12, alignItems: 'center' }}>
+              {!isVideo ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={banners} disabled={working} onChange={(e) => setBanners(e.target.checked)} />Professional banner (logo, two-colour headline, picture, icons, who it is for, website)</label> : null}
               {isVideo ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={footage} disabled={working || !can.stock} onChange={(e) => setFootage(e.target.checked)} />Real video footage behind the words (free stock clips, like a real video)</label> : null}
               <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={photos} disabled={working || !can.stock} onChange={(e) => setPhotos(e.target.checked)} />Free stock photos behind the words {can.stock ? '' : <span style={{ color: 'var(--muted)' }}>(not set up: an Admin adds a free Pixabay key in Administration &gt; Integrations; brand colours are used)</span>}</label>
               {can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>Pictures: <select value={look} disabled={working} onChange={(e) => setLook(e.target.value)}><option value="designed">Designed by TeamLink (free)</option><option value="ai">{can.aiFree ? 'Made by the AI picture service (free daily allowance)' : 'Made by the AI picture service (may need billing; designed instead if it says no)'}</option></select></label> : <span style={{ color: 'var(--muted)' }}>Pictures are designed by TeamLink (free). A real AI-made picture needs the free Cloudflare picture service: an Admin adds it in Administration &gt; Integrations.</span>}
