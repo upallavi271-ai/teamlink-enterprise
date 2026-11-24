@@ -255,6 +255,11 @@ const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return 
   const ids = (cl.body && cl.body.lines || []).map((l) => l.id);
   check('Call window: API first, then every active phone line as line:<id>', cl.status === 200 && ids[0] === 'api' && ids.includes(`line:${v.id}`) && ids.includes(`line:${d.id}`) && !ids.includes(`line:${t.id}`), ids);
   check('Call window: Dinstar no longer says "not connected" (its placeholder is replaced by the Dinstar line)', !ids.includes('dinstar') && cl.body.lines.some((l) => l.id === `line:${d.id}` && /^Dinstar: /.test(l.text)), cl.body.lines.map((l) => l.text));
+  // IP address and ViciDial are ALWAYS options (founder 2026-11-24): their own lines, or "not connected yet" until one is added - never both
+  const kindIn = (t) => cl.body.lines.some((l) => l.phoneLine && l.type === t);
+  check('Call window: "IP address" is always an option (its line, or not connected yet)', (ids.includes('ip') || kindIn('ip')) && !(ids.includes('ip') && kindIn('ip')), cl.body.lines.map((l) => l.text));
+  check('Call window: "ViciDial" is always an option (its line, or not connected yet)', (ids.includes('vicidial') || kindIn('vicidial')) && !(ids.includes('vicidial') && kindIn('vicidial')), cl.body.lines.map((l) => l.text));
+  { const ph = cl.body.lines.find((l) => l.id === 'ip'); check('a not-connected IP address option says where an Admin adds it, and cannot be picked', !ph || (!ph.ready && /Phone lines/.test(ph.reason)), ph); }
   check('Call window: a phone line is not ready on a server without the Asterisk manager login, with the reason', cl.body.lines.filter((l) => l.phoneLine).every((l) => !l.ready && /cannot place click-to-call/.test(l.reason)));
   const clR = await call('GET', '/messaging/call-lines', null, tR);
   check('Call window: a recruiter does not see the Admin-only line', clR.status === 200 && !clR.body.lines.some((l) => l.id === `line:${adminOnly.body.line.id}`) && clR.body.lines.some((l) => l.id === `line:${v.id}`), clR.body.lines && clR.body.lines.map((l) => l.id));

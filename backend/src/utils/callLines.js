@@ -71,7 +71,7 @@ async function originateOn(target, { agent, to }) {
   }
 }
 
-const NOT_SET = (name) => `${name} is not connected yet. An Admin sets it up in Administration > Integrations; until then calls go on the API line.`;
+const NOT_SET = (name) => `${name} is not connected yet. An Admin adds it in Omni-Channel > AI Voice > Browser calling > Phone lines; until then calls go on the other lines.`;
 
 const LINES = [
   {
@@ -80,12 +80,24 @@ const LINES = [
     start: (args) => gw.startCall(args),
   },
   {
-    id: 'dinstar', label: 'Dinstar', supports: ['Calls', 'Messages'],
+    id: 'dinstar', label: 'Dinstar', supports: ['Calls', 'Messages'], placeholderFor: 'dinstar',
     async ready() { return { ok: false, reason: NOT_SET('Dinstar') }; },
     async start() { return { ok: false, notConfigured: true, error: NOT_SET('Dinstar') }; },
   },
   {
     id: 'sip', label: 'SIP', supports: ['Calls'], ready: sipReady, start: sipStart,
+  },
+  // ViciDial and IP address are always in the list too (founder 2026-11-24: "IP address must also be an option in manual calling"):
+  // shown as "not connected yet" until an Admin adds a line of that kind under Phone lines, which then takes the placeholder's place.
+  {
+    id: 'vicidial', label: 'ViciDial', supports: ['Calls'], placeholderFor: 'vicidial',
+    async ready() { return { ok: false, reason: NOT_SET('ViciDial') }; },
+    async start() { return { ok: false, notConfigured: true, error: NOT_SET('ViciDial') }; },
+  },
+  {
+    id: 'ip', label: 'IP address (SIP)', supports: ['Calls'], placeholderFor: 'ip',
+    async ready() { return { ok: false, reason: NOT_SET('An IP address line') }; },
+    async start() { return { ok: false, notConfigured: true, error: NOT_SET('An IP address line') }; },
   },
 ];
 
@@ -102,9 +114,11 @@ async function phoneLines(user) {
     return (await PL.usableBy(user)).filter((l) => !l.builtIn);
   } catch { return []; }
 }
-async function anyDinstar() {
-  try { return (await require('../browsercall/lines').rows()).some((r) => r.active && r.type === 'dinstar'); } catch { return false; } // eslint-disable-line global-require
+async function anyDinstar() { return anyOfType('dinstar'); }
+async function anyOfType(type) {
+  try { return (await require('../browsercall/lines').rows()).some((r) => r.active && r.type === type); } catch { return false; } // eslint-disable-line global-require
 }
+const TYPE_WORD = { dinstar: 'Dinstar: ', vicidial: 'ViciDial: ', ip: 'IP address: ' };
 function phoneLineReady(pl) {
   const { problems } = sipSettings();
   if (problems.length) return { ok: false, reason: `${pl.name} is set up, but this server cannot place click-to-call calls yet: ${problems[0]}` };
@@ -112,7 +126,7 @@ function phoneLineReady(pl) {
 }
 const phoneEntry = (pl) => {
   const r = phoneLineReady(pl);
-  return { id: `${PHONE}${pl.id}`, label: pl.name, text: `${pl.type === 'dinstar' ? 'Dinstar: ' : ''}${pl.name} (call)`, supports: ['Calls'], ready: !!r.ok, reason: r.ok ? null : r.reason, note: r.note || null, recording: false, from: r.from || null, phoneLine: true, type: pl.type };
+  return { id: `${PHONE}${pl.id}`, label: pl.name, text: `${TYPE_WORD[pl.type] || ''}${pl.name} (call)`, supports: ['Calls'], ready: !!r.ok, reason: r.ok ? null : r.reason, note: r.note || null, recording: false, from: r.from || null, phoneLine: true, type: pl.type };
 };
 
 /** The list the dropdown shows: [{ id, label, text, supports, ready, reason }], and which one is the default (the first that is ready, else api).
@@ -120,9 +134,10 @@ const phoneEntry = (pl) => {
 async function list(user) {
   const out = [];
   const pls = await phoneLines(user);
-  const dinstarSet = pls.some((l) => l.type === 'dinstar') || await anyDinstar();
+  const typeSet = {};
+  for (const t of ['dinstar', 'vicidial', 'ip']) typeSet[t] = pls.some((l) => l.type === t) || await anyOfType(t); // eslint-disable-line no-await-in-loop
   for (const l of LINES) {
-    if (l.id === 'dinstar' && dinstarSet) continue; // the real Dinstar line(s) take its place
+    if (l.placeholderFor && typeSet[l.placeholderFor]) continue; // the real line(s) of that kind take its place
     // eslint-disable-next-line no-await-in-loop
     const r = await l.ready();
     out.push({ id: l.id, label: l.label, text: wordsOf(l), supports: l.supports, ready: !!r.ok, reason: r.ok ? null : r.reason, note: r.note || null, recording: !!r.recording, from: r.from || null });
