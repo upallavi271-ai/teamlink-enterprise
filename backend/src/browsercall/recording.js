@@ -214,7 +214,7 @@ async function activity(row, line) {
   const prisma = require('../db'); // eslint-disable-line global-require
   const cand = await prisma.candidate.findUnique({ where: { id: row.candidateId }, select: { id: true, name: true } }).catch(() => null);
   if (!cand) return;
-  const text = `Call by ${row.userName || 'a recruiter'}, ${mmss(row.talkSec)} talk${line ? ` - ${line}` : ''}`;
+  const text = `${row.direction === 'inbound' ? `Incoming call to ${row.userName || 'a recruiter'} (their SIM)` : `Call by ${row.userName || 'a recruiter'}`}, ${mmss(row.talkSec)} talk${line ? ` - ${line}` : ''}`;
   await prisma.candidateMessage.create({ data: {
     candidateId: cand.id, applicationId: row.applicationId || null, channel: 'Call', template: 'BROWSER_CALL', templateLabel: 'Browser call', trigger: 'Manual',
     recipient: row.toNumber || '', status: 'SENT', statusDetail: clip(text, 500), providerRef: row.id, sentAt: new Date(row.answerAt || row.startAt), attempts: 1, lastAttemptAt: new Date(),

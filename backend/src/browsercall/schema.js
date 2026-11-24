@@ -38,6 +38,17 @@ const DDL = [
     "maxCalls" INTEGER NOT NULL DEFAULT 4, "kinds" TEXT, "active" INTEGER NOT NULL DEFAULT 1,
     "createdById" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL)`,
   'CREATE UNIQUE INDEX IF NOT EXISTS "BrowserCallLine_short" ON "BrowserCallLine"("shortId")',
+  // ONE SIM NUMBER PER RECRUITER (2026-11-25, browsercall/sims.js): the Synway GSM ports in use, each given to at most one person (and a person
+  // has at most one). dialPrefix = what the gateway's IP->GSM rule picks the port by; matchBy number|tag = how an incoming call finds its port.
+  `CREATE TABLE IF NOT EXISTS "BrowserCallSim" (
+    "id" TEXT NOT NULL PRIMARY KEY, "port" INTEGER NOT NULL, "simNumber" TEXT NOT NULL, "operator" TEXT, "active" INTEGER NOT NULL DEFAULT 1,
+    "userId" TEXT, "dialPrefix" TEXT NOT NULL, "matchBy" TEXT NOT NULL DEFAULT 'number', "tag" TEXT NOT NULL, "note" TEXT,
+    "createdById" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL)`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS "BrowserCallSim_port" ON "BrowserCallSim"("port")',
+  'CREATE UNIQUE INDEX IF NOT EXISTS "BrowserCallSim_number" ON "BrowserCallSim"("simNumber")',
+  'CREATE UNIQUE INDEX IF NOT EXISTS "BrowserCallSim_tag" ON "BrowserCallSim"("tag")',
+  'CREATE UNIQUE INDEX IF NOT EXISTS "BrowserCallSim_user" ON "BrowserCallSim"("userId") WHERE "userId" IS NOT NULL',
+  'CREATE INDEX IF NOT EXISTS "BrowserCall_dir" ON "BrowserCall"("direction", "status", "startAt")',
 ];
 // columns added later to existing tables (guarded: "duplicate column" means it is already there)
 const ALTERS = [

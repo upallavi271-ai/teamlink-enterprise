@@ -294,6 +294,8 @@ function renderDialplan(list, opts = {}) {
       ` same => n(full),NoOp(All ${r.maxCalls} calls of this line are in use)`,
       ' same => n,Hangup(34)');
   }
+  // ONE SIM PER RECRUITER (browsercall/sims.js): while "Port prefix routing" is ON, one extension p<NN> per Synway port with a person on it
+  if (Array.isArray(opts.simRoute) && opts.simRoute.length) out.push(...opts.simRoute);
   // CLICK-TO-CALL on a phone line (Call window, utils/callLines.js): Dial(...,U(tl-c2c-answer^<token>)) runs this on the candidate's leg the
   // moment they answer: it tells TeamLink (AMI UserEvent) and, when recording is on, starts the same silent MixMonitor.
   out.push('', '[tl-c2c-answer]', 'exten => s,1,UserEvent(TLCall,Token: ${ARG1},Answered: 1)'); // eslint-disable-line no-template-curly-in-string
@@ -322,7 +324,10 @@ async function writeConfig() {
   try {
     await put(ENV.linesPjsipFile, renderPjsip(list));
     const s = await CFG.load();
-    await put(ENV.linesDialplanFile, renderDialplan(list, { record: s.record }));
+    const SIMS = require('./sims'); // eslint-disable-line global-require
+    const sims = await SIMS.renderAll({ record: s.record });
+    await put(ENV.linesDialplanFile, renderDialplan(list, { record: s.record, simRoute: sims.routeLines }));
+    await put(SIMS.simsFile(), sims.inbound); // [tl-from-gateway]: who an incoming SIM call rings
   } catch (e) {
     lastWrite = { pbx: true, written: false, reloaded: false, at: S.nowIso(), error: `Could not write the phone system files: ${clip(e.message, 160)}` };
     return lastWrite;
