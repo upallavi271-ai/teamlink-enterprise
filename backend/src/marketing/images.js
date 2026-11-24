@@ -87,7 +87,11 @@ const IMAGEN_ASPECTS = ['1:1', '3:4', '4:3', '9:16', '16:9'];
 // ---- the services and their keys (Administration > Integrations) ----------------------------------------------------------------------
 // Two picture services. Cloudflare Workers AI (free daily allowance, card 'ai-cloudflare') is used when it is set; otherwise Google Gemini ('ai-gemini').
 const CF_CHANNEL = 'ai-cloudflare';
-const CF_DEFAULT_MODEL = '@cf/black-forest-labs/flux-1-schnell';
+// 2026-11-24 (owner: "the AI picture is not looking good, can we use another free open-source model"): the default is now FLUX.2 [klein] 4B (open, Apache-2.0, newer and sharper than FLUX.1 schnell,
+// real sizes for 4:5 / 9:16 / 16:9 instead of a square that is cropped; about 104 of the free 10,000 daily neurons for a 1024 x 1024 picture, so roughly 90 pictures a day). If it fails for a model reason
+// (not the free allowance, not the token) the picture is made with FLUX.1 schnell at 8 steps instead (it was 4), and klein is not tried again for 30 minutes. An Admin can still type any model in "Image model".
+const CF_DEFAULT_MODEL = '@cf/black-forest-labs/flux-2-klein-4b';
+const CF_FALLBACK_MODEL = '@cf/black-forest-labs/flux-1-schnell';
 const CF_API = 'https://api.cloudflare.com/client/v4';
 async function readCard(id) {
   try { return await require('../utils/integrationStore').readConfig(id); } catch { return { values: {}, missingKey: false }; } // eslint-disable-line global-require
@@ -176,7 +180,8 @@ async function cfCall(url, token, body, ms = 120000) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), ms);
   try {
-    const r = await fetch(url, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, signal: ctl.signal });
+    const form = typeof FormData !== 'undefined' && body instanceof FormData; // FLUX.2 takes multipart form data (the boundary header is set by fetch itself)
+    const r = await fetch(url, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, ...(body && !form ? { 'Content-Type': 'application/json' } : {}) }, body: body ? (form ? body : JSON.stringify(body)) : undefined, signal: ctl.signal });
     const type = String((r.headers && r.headers.get && r.headers.get('content-type')) || '');
     if (r.ok && /^image\//i.test(type)) return { image: Buffer.from(await r.arrayBuffer()), mime: type.split(';')[0] };
     const text = await r.text();
@@ -211,15 +216,35 @@ async function cfTest() {
     return found ? { ok: true, model: `${c.model} (Cloudflare Workers AI, free daily allowance)` } : { ok: false, model: c.model, error: `the token and account work, but the model "${c.model}" was not found on Workers AI. Leave "Image model" empty for ${CF_DEFAULT_MODEL}.` };
   } catch (e) { return { ok: false, model: c.model, error: e.message }; }
 }
-async function cfOne(c, prompt, aspect) {
+const isKlein = (m) => /flux-2-klein/i.test(m);
+const isSchnell = (m) => /flux-1-schnell/i.test(m);
+let kleinFailedAt = 0; // when FLUX.2 last failed for a model reason on this server: it is not tried again for 30 minutes (the picture is made with schnell meanwhile)
+const sniffMime = (buf) => (buf[0] === 0x89 && buf[1] === 0x50 ? 'image/png' : (buf[0] === 0x52 && buf[1] === 0x49 ? 'image/webp' : 'image/jpeg'));
+async function cfRun(c, model, prompt, aspect) {
   const [w, h] = CF_SIZES[aspect] || CF_SIZES['1:1'];
-  // FLUX schnell takes only the words and the number of steps (always square); other models take the size
-  const body = /flux-1-schnell/i.test(c.model) ? { prompt: prompt.slice(0, 2000), steps: 4 } : { prompt: prompt.slice(0, 2000), width: w, height: h };
-  const r = await cfCall(`${CF_API}/accounts/${c.account}/ai/run/${c.model}`, c.key, body);
-  if (r.image) return { buf: r.image, mime: r.mime };
+  let body;
+  if (isKlein(model)) { body = new FormData(); body.append('prompt', prompt.slice(0, 2000)); body.append('width', String(w)); body.append('height', String(h)); } // FLUX.2: multipart form data, real sizes, a fixed 4-step run
+  else if (isSchnell(model)) body = { prompt: prompt.slice(0, 2000), steps: 8 }; // FLUX.1 schnell: the words and the steps (always square; 8 is its maximum, it was 4); the picture is cut to the asked shape afterwards
+  else body = { prompt: prompt.slice(0, 2000), width: w, height: h };
+  const r = await cfCall(`${CF_API}/accounts/${c.account}/ai/run/${model}`, c.key, body);
+  if (r.image) return { buf: r.image, mime: r.mime, model };
   const b64 = r.result && (r.result.image || r.result.images && r.result.images[0]);
   if (!b64) throw new AI.AiMkError('Cloudflare sent no picture back. Change the description and try again.', 422, 'refused');
-  return { buf: Buffer.from(String(b64), 'base64'), mime: 'image/jpeg' };
+  const buf = Buffer.from(String(b64), 'base64');
+  return { buf, mime: sniffMime(buf), model };
+}
+async function cfOne(c, prompt, aspect) {
+  if (isKlein(c.model)) {
+    if (Date.now() - kleinFailedAt > 30 * 60000) {
+      try { return await cfRun(c, c.model, prompt, aspect); } catch (e) {
+        // the free daily allowance, a refused token or "too many" are the person's to see; a failure of the model itself (bad input, unavailable, no picture) falls back to FLUX.1 schnell
+        if (e.code === 'provider_daily' || e.status === 429 || e.status === 403 || e.code === 'unreachable') throw e;
+        kleinFailedAt = Date.now();
+      }
+    }
+    return cfRun(c, CF_FALLBACK_MODEL, prompt, aspect);
+  }
+  return cfRun(c, c.model, prompt, aspect);
 }
 // the picture made ready: cut to the asked size (a square model still gives a 4:5 or 16:9 picture) and the brand logo put small in a corner
 async function finishPic(buf, aspect, logo) {
@@ -366,6 +391,28 @@ function promptFor(b, brand, withLogo) {
     'Real-looking, respectful, diverse Indian people where people appear. No celebrities, no real brands other than the given logo, no watermarks.',
   ].filter(Boolean).join('\n');
 }
+// The words for the FLUX models (Cloudflare). FLUX likes ONE descriptive paragraph in plain English, not a list of instructions, and it draws a "do not put any words" as words more often than
+// not: so the picture is described positively (the subject, then the camera and light, then the composition), and a clean image is asked for instead of "no text". Owner, 24 Nov: "it is not looking good".
+const FLUX_LOOK = {
+  photo: 'professional advertising photograph, shot on a full-frame camera with a 50mm lens, shallow depth of field, soft natural window light, sharp focus, rich natural colours, fine detail, candid and authentic',
+  illustration: 'polished modern vector illustration, clean confident shapes, smooth gradients, a harmonious colour palette, crisp edges, professional graphic design',
+  graphic: 'bold contemporary social media graphic, simple geometric shapes, strong visual hierarchy, flat colours, crisp edges, generous clean space',
+  poster: 'minimal modern poster composition, one clear focal point, balanced negative space, high contrast, professional layout',
+  '3d': 'soft glossy 3D render, rounded friendly shapes, studio lighting, subtle shadows, smooth materials, high detail',
+};
+const FLUX_SHAPE = { '1:1': 'square', '4:5': 'vertical portrait', '3:4': 'vertical portrait', '9:16': 'tall vertical story', '16:9': 'wide horizontal banner' };
+function fluxPrompt(b, brand) {
+  const colors = (brand && brand.colors) || {};
+  return [
+    `${String(b.prompt || '').replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '')}.`,
+    `${FLUX_LOOK[b.style] || FLUX_LOOK.photo}.`,
+    `Composition for a ${FLUX_SHAPE[b.aspect] || 'square'} frame: the subject is clear and well placed, the background is clean and uncluttered, with room around the subject.`,
+    b.useColors && colors.primary ? `Colour palette: ${colors.primary}, ${colors.secondary || colors.primary} and ${colors.accent || colors.primary}.` : '',
+    b.headline ? `The picture carries the headline "${b.headline}" in large, clean, easy to read letters, spelled exactly, and no other words.` : 'A clean image: no lettering, no logos, no watermarks.',
+    'Where people appear they look natural, friendly and respectful, and they are Indian.',
+    'Professional marketing quality, sharp, well lit, high detail.',
+  ].filter(Boolean).join(' ');
+}
 // Making pictures takes Google 10-40 seconds each, longer than the live web server waits for an answer (about 60 s). So create() checks the request
 // and the limits at once, then makes the pictures in the BACKGROUND and answers { job } straight away; the screen asks GET /images/jobs/:id until
 // the job is done. One job at a time per person (a second press while one runs is refused, so nothing is made twice). opts.wait = finish first
@@ -413,7 +460,7 @@ async function create(u, b = {}, opts = {}) {
   const logo = logoRow ? (() => { const m = /^data:([^;]+);base64,(.+)$/.exec(logoRow.dataUrl); return m ? { mime: m[1], b64: m[2] } : null; })() : null;
   // only a Gemini picture model is SENT the logo (it draws it in); for Cloudflare, Imagen and the sandbox it is put on the finished picture here
   const modelGetsLogo = !!logo && !st.demo && c.provider === 'gemini' && !isImagen(c.model);
-  const text = promptFor({ ...b, prompt, headline }, brand, modelGetsLogo);
+  const text = c.provider === 'cloudflare' ? fluxPrompt({ prompt, style, aspect, headline, useColors: b.useColors }, brand) : promptFor({ ...b, prompt, headline }, brand, modelGetsLogo);
   const dept = S.clip(b.department, 60) || (A.departmentsOf(u).length === 1 ? A.departmentsOf(u)[0] : S.clip(u.department, 60));
   const title = S.clip(b.title, 80) || S.clip(prompt.replace(/\s+/g, ' ').split(' ').slice(0, 7).join(' '), 80);
   const job = { id: S.newId('job'), userId: u.id, status: 'running', n, startedAt: Date.now() };
@@ -738,5 +785,6 @@ async function decide(u, id, approve, note) {
 
 module.exports = {
   ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, createBanner, bannerMeta, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
+  cloudflareImage: { cfOne, fluxPrompt, DEFAULT_MODEL: CF_DEFAULT_MODEL, FALLBACK_MODEL: CF_FALLBACK_MODEL, resetKlein: () => { kleinFailedAt = 0; } }, // exported for the tests
   approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng, holdForClient, backToDraft, clientDecision, publicPathOf: publicPath, publicJpegPath, isVideoRow: isVideo,
 };
