@@ -369,7 +369,7 @@ async function attrition(user, { candidateId = null } = {}) {
 // ATS wave 2 Y (2026-11-25): the connector is built (utils/atsY/people.js): the graph from our own data works now; the outside search,
 // contact finding and enrichment wait for the founder's provider account + the Admin switch "outsideLookups".
 const profileGraph = {
-  status() { return { configured: false, state: 'Built: own-data graph working; outside look-ups need a provider account from the founder', note: 'The candidate profile graph (same employer, worked together, same college, referrals, who in TeamLink knows them) and contact finding from our own records work now. Searching outside profiles, verified contact finding and enrichment use the "People & company data provider" card in Administration > Integrations once the founder adds the key of a licensed provider, and only while an Admin has "Outside look-ups" on.' }; },
+  status() { return { configured: false, state: 'Needs founder (provider account) for outside look-ups; the own-data graph and contact finding work now', note: 'The candidate profile graph (same employer, worked together, same college, referrals, who in TeamLink knows them) and contact finding from our own records work now. Searching outside profiles, verified contact finding and enrichment use the "People & company data provider" card in Administration > Integrations once the founder adds the key of a licensed provider, and only while an Admin has "Outside look-ups" on.' }; },
   async find(user, filters) { return require('../atsY/people').searchOutside(user, filters || {}); }, // eslint-disable-line global-require
 };
 
