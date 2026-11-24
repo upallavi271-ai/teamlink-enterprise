@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import TabStrip from '../ui/TabStrip.jsx';
 import './interviewTools.css';
+import { KitMapY, NotetakerY } from '../atsY/InterviewAiY.jsx'; // ATS wave 2 Y (07.11): notes per scorecard question, the meeting notetaker
 
 // ---------------------------------------------------------------------------
 // INTERVIEW TOOLS (market wave 2026-11-21) - inside the interview's panel in Interview Calendar (server: routes/mktInterviews.js).
@@ -199,7 +200,7 @@ function Recordings({ applicationId, round }) {
   if (!d) return <div className="small-muted">Loading…</div>;
   if (d.hidden) return <div className="small-muted">The BDE team does not open interview recordings.</div>;
   const run = async (fn) => { setErr(''); setMsg(''); setBusy(true); try { await fn(); } catch (e) { setErr(errOf(e)); } setBusy(false); };
-  const upload = (file) => run(async () => { const fd = new FormData(); fd.append('file', file); fd.append('round', String(round || 1)); fd.append('title', file.name); await api.post(`/ats/mkt/interviews/${applicationId}/recordings`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }); await load(); setMsg('Recording added.'); });
+  const upload = (file) => run(async () => { const fd = new FormData(); fd.append('file', file); fd.append('round', String(round || 1)); fd.append('title', file.name); const up = await api.post(`/ats/mkt/interviews/${applicationId}/recordings`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }); await load(); const a = up.data && up.data.auto; setMsg(a && a.transcribed ? `Recording added, turned into text (${a.source})${a.notes ? ' and the notes are written' : ''}.` : `Recording added.${a && a.why ? ` ${a.why}` : ''}`); });
   const addLink = () => run(async () => { await api.post(`/ats/mkt/interviews/${applicationId}/recordings`, { url: link, round }); setLink(''); await load(); });
   return (
     <div className="ivt-body">
@@ -210,10 +211,11 @@ function Recordings({ applicationId, round }) {
           <button type="button" className="btn btn-sm" disabled={!link || busy} onClick={addLink}>Add link</button>
         </div>
       )}
-      <div className="small-muted">Up to {d.maxMb} MB. {d.speech ? 'Files can be turned into text by TeamLink\'s speech engine.' : 'This server has no speech engine: paste the transcript (Meet / Zoom / Teams give one).'}</div>
+      <div className="small-muted">Up to {d.maxMb} MB. {d.speech ? `An uploaded file is turned into text and its notes written at once (${d.speechEngine || 'speech to text'}).` : (d.speechWhy || 'No speech to text is set up: paste the transcript (Meet / Zoom / Teams give one).')}</div>
       {d.rows.length === 0 && <div className="small-muted">No recordings yet.</div>}
       {d.rows.map((r) => <RecordingRow key={r.id} r={r} onChanged={load} speech={d.speech} />)}
       {d.canAdd && <VoiceFeedback applicationId={applicationId} round={round} onDone={load} />}
+      {d.canAdd && <NotetakerY applicationId={applicationId} round={round} onDone={load} />}
       {msg && <div className="notice">{msg}</div>}{err && <div className="error-text">{err}</div>}
     </div>
   );
@@ -257,6 +259,7 @@ function RecordingRow({ r, onChanged, speech }) {
           {[['Strengths', r.notes.strengths], ['Concerns', r.notes.concerns], ['Questions asked', r.notes.questionsAsked], ['Next steps', r.notes.nextSteps]].filter(([, l]) => l && l.length).map(([k, l]) => <div key={k}><b>{k}</b><ul>{l.map((x, i) => <li key={i}>{x}</li>)}</ul></div>)}
         </div>
       )}
+      {r.notes && <KitMapY r={r} />}
       {err && <div className="error-text">{err}</div>}
     </div>
   );

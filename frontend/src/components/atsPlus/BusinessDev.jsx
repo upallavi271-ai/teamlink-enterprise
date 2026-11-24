@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import ProspectingY from '../atsY/ProspectingY.jsx'; // 06.05 prospecting (ATS wave 2 Y)
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import TabStrip from '../ui/TabStrip.jsx';
@@ -16,6 +17,7 @@ const TABS = [
   { key: 'pipeline', label: 'Pipeline', hint: 'Target companies by stage, with value and score' },
   { key: 'signals', label: 'Client signals', hint: 'Which existing clients are hiring more, and which went quiet' },
   { key: 'campaigns', label: 'Outreach mails', hint: 'Mail sequences to prospects (OFF until an Admin switches them on)' },
+  { key: 'find', label: 'Find companies', hint: 'New client companies and their hiring contacts, from our own data and the company-data provider (OFF until an Admin switches it on)' },
 ];
 const inr = (n) => (n ? `₹${Number(n).toLocaleString('en-IN')}` : '—');
 const BAND = { Hot: 'var(--red, #c0392b)', Warm: 'var(--amber, #b7791f)', Cold: 'var(--muted, #6b7280)' };
@@ -204,6 +206,7 @@ export default function BusinessDev() {
         {tab === 'pipeline' && <Pipeline meta={meta} />}
         {tab === 'signals' && <Signals />}
         {tab === 'campaigns' && <Campaigns meta={meta} />}
+        {tab === 'find' && <ProspectingY meta={meta} />}
       </>}
     </div>
   );

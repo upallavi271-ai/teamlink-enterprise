@@ -33,6 +33,7 @@ import { LocationCandidatesPanel } from '../components/jobs/RequirementReach.jsx
 import { JobLifecycleBar } from '../components/jobs/JobLifecycle.jsx';
 import JobPostingSites from '../components/jobs/JobPostingSites.jsx';
 import PostingStatusPanel from '../components/jobs/PostingStatusPanel.jsx'; // Save & Post: what happened on each site, right after saving
+import MoreBoardsY from '../components/atsY/MoreBoardsY.jsx'; // foundit posting + LinkedIn RSC (ATS wave 2 Y)
 import HistoryTab from '../components/ats/HistoryTab.jsx'; // History tab: shared / selected / joined / dropped with dates
 import DistributeTab from '../components/jobdist/DistributeTab.jsx'; // job distribution: the "Distribute" tab (Posting Kit, tracked links, Posted tracker)
 import JobPostingCard from '../components/jobpublish/JobPostingCard.jsx'; // job publishing engine: status per site + Post this job
@@ -800,6 +801,7 @@ export default function RequirementDetail() {
             ? <div style={{ marginTop: 8 }}><JobPostingSites requirementId={r.id} version={r.updatedAt} postingText={postingText} onChanged={load} /></div>
             : null}
           {!r.internal && <PartnerShare requirementId={r.id} onChanged={load} />}
+          {!r.internal && !isClientLogin && <MoreBoardsY requirementId={r.id} internal={r.internal} />}
         </div>
         {/* Two buttons: "Job description" (view, preview the post, generate)
             and "Share" (LinkedIn / Facebook / WhatsApp / X, each one saved). */}

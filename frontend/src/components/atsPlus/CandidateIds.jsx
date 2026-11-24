@@ -2,6 +2,7 @@ import { useState } from 'react';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import { Notice, Table, useLoad, useAction, when, row } from './kit.jsx';
+import IdDocMatchY from '../atsY/IdDocMatchY.jsx'; // 15.14: the ID document read against the profile (ATS wave 2 Y)
 
 // ---------------------------------------------------------------------------
 // THE CANDIDATE'S "IDs & consent" (market wave IN-07 / IN-08 / 15.09): Aadhaar (last 4 digits only), PAN and bank account (encrypted,
@@ -34,6 +35,7 @@ function Body({ c }) {
         <button type="button" className="btn btn-sm btn-primary" disabled={busy || !f.value} onClick={() => run(() => api.post(`/ats-plus/privacy/candidates/${c.id}/ids`, f), 'Saved (masked).').then(() => setF({ ...f, value: '', ifsc: '' }))}>Save</button>
       </div>
       <IdentityCheck c={c} />
+      <IdDocMatchY c={c} />
       <b>Consent log</b>
       {cons.data && <Table rows={cons.data.rows} empty="No consent recorded in the log yet."
         cols={[{ key: 'createdAt', label: 'When', render: (r) => when(r.createdAt) }, { key: 'status', label: 'Consent' }, { key: 'noticeVersion', label: 'Notice' }, { key: 'channel', label: 'How' }, { key: 'createdByName', label: 'By' }, { key: 'reason', label: 'Words', render: (r) => r.reason || '—' }]} />}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import TabStrip from '../ui/TabStrip.jsx';
+import SourcingAdminY from '../atsY/SourcingAdminY.jsx'; // ATS wave 2 Y: the sourcing / AI switches and connectors
 import Combo from '../Combo.jsx';
 import {
   M, Card, Chips, Flash, Empty, useGet, useRun, day, when,
@@ -26,7 +27,8 @@ const TABS = [
   { key: 'posting', label: 'Posting rules', hint: 'Where each kind of job is posted', more: true },
   { key: 'fields', label: 'Field parsing', hint: 'Read custom fields from resumes', more: true },
   { key: 'ocr', label: 'Scanned resumes', hint: 'Resumes waiting to be read with OCR', more: true },
-  { key: 'mcp', label: 'MCP (AI tools)', hint: 'Read-only access for outside AI tools', more: true },
+  { key: 'mcp', label: 'MCP (AI tools)', hint: 'Access for outside AI tools (read; writing only when switched on)', more: true },
+  { key: 'sourcingY', label: 'Sourcing & AI connectors', hint: 'Notetaker, outside look-ups, job-change bells, prospecting, MCP write tools, LinkedIn RSC: the switches and the accounts', more: true },
 ];
 
 function Switches() {
@@ -366,7 +368,7 @@ function Mcp() {
   const { busy, msg, run } = useRun();
   const d = m.data;
   return (
-    <Card title="MCP server (read-only access for AI tools)" testid="mkb-mcp" note="An AI tool (Claude Desktop, an IDE agent) can search people and read requirements with a token, seeing only what the token's own login may see. It can never change anything; contact details are never returned. Turn it on under Overview.">
+    <Card title="MCP server (read-only access for AI tools)" testid="mkb-mcp" note="An AI tool (Claude Desktop, an IDE agent) can search people and read requirements with a token, seeing only what the token's own login may see; contact details are never returned. It can add a note, add a follow-up or move a step only when an Admin turns on the MCP write tools (Sourcing & AI connectors), and only where the token's own login may. Turn it on under Overview.">
       {d && (
         <>
           <Chips items={[{ key: 's', label: 'Status', value: d.on ? 'ON' : 'OFF' }, { key: 'e', label: 'Address', value: `${window.location.origin}/api${d.endpoint.replace(/^\/api/, '')}` }]} />
@@ -401,6 +403,7 @@ export default function AiGovernance() {
       {tab === 'fields' && <FieldParsing />}
       {tab === 'ocr' && <Ocr />}
       {tab === 'mcp' && <Mcp />}
+      {tab === 'sourcingY' && <SourcingAdminY />}
     </div>
   );
 }

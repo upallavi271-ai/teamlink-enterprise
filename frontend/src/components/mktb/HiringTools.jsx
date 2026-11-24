@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import TabStrip from '../ui/TabStrip.jsx';
+import { OutsideSearchY, JobChangesY } from '../atsY/SourcingToolsY.jsx'; // ATS wave 2 Y: Resdex + outside profiles, every job change seen
 import { JobPickerCombo } from '../JobPicker.jsx';
 import {
   M, Card, Chips, Flash, FlagAi, Empty, useGet, useRun, day, when,
@@ -26,6 +27,7 @@ const TOOLS = [
   { key: 'placements', label: 'Placements', hint: 'Placement approval and temp-to-perm conversions', more: true },
   { key: 'risk', label: 'Risk after joining', hint: 'Joined people who may leave inside the guarantee', more: true },
   { key: 'records', label: 'Records to refresh', hint: 'Stale profiles, job changes, documents expiring', more: true },
+  { key: 'outside', label: 'Outside search', hint: 'Naukri Resdex and outside profiles, brought onto a requirement', more: true },
 ];
 
 function PeopleRows({ rows, pick, onPick }) {
@@ -418,7 +420,8 @@ export default function HiringTools() {
       {tool === 'bulk' && <BulkReview />}
       {tool === 'placements' && <Placements />}
       {tool === 'risk' && <Risk />}
-      {tool === 'records' && <Records />}
+      {tool === 'records' && <><JobChangesY /><Records /></>}
+      {tool === 'outside' && <OutsideSearchY />}
     </div>
   );
 }

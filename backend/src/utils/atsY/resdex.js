@@ -22,7 +22,11 @@ const C = require('./core');
 
 const LABEL = 'Naukri Resdex';
 const { q, x, nowIso, newId, txt } = C;
-async function config() { return C.provider('naukri-resdex', ['API base URL', 'API key'], LABEL); }
+async function config() {
+  const s = await C.provider('naukri-resdex', ['API base URL', 'API key'], LABEL);
+  if (!s.ready && !s.configured) s.hint = 'Naukri publishes no Resdex API. Ask your Naukri account manager for Resdex API / partner access on your Resdex plan, then add the API address, key and secret in Administration > Integrations > Naukri Resdex.';
+  return s;
+}
 function headersFor(cfg, raw) {
   const h = { authorization: `Bearer ${String(cfg.values['API key']).trim()}` };
   const sec = String(cfg.values['Secret key'] || '').trim();

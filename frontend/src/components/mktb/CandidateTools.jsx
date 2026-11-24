@@ -3,6 +3,7 @@ import api from '../../api';
 import {
   M, Card, Chips, Flash, FlagAi, Empty, useGet, useRun, day, when, downloadPdf,
 } from './kit.jsx';
+import CandidateSourcingY from '../atsY/CandidateSourcingY.jsx'; // ATS wave 2 Y: who knows whom, contact finding, outside enrichment, job changes, RSC
 
 // ---------------------------------------------------------------------------
 // CANDIDATE PAGE > More > Hiring tools (market wave B): the client resume PDF (03.15 / 09.12), submission notes + packet per
@@ -198,6 +199,7 @@ export default function CandidateTools({ candidateId, onChanged = () => {} }) {
       {!d.may.bde && d.may.edit && <Enrich c={c} onChanged={changed} />}
       {!d.may.bde && d.may.edit && <CustomFields c={c} />}
       {d.may.edit && <Pools c={c} inPools={d.pools} />}
+      <CandidateSourcingY c={c} may={d.may} onChanged={changed} />
       {d.reviews.length > 0 && (
         <Card title="Profile reviews">
           <ul className="mkb-list">{d.reviews.map((r) => <li key={r.id}><span className={`mkb-score ${r.verdict === 'Not a fit' ? 'bad' : 'good'}`}>{`${r.verdict} ${r.score}%`}</span><span className="mkb-grow">{r.summary}</span><span className="small-muted">{`${r.byName} · ${day(r.at)}`}</span></li>)}</ul>
