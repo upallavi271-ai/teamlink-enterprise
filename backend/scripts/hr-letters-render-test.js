@@ -10,9 +10,10 @@ const fs = require('fs');
 
 const SRC = process.argv[2] || path.resolve(__dirname, '..', 'src');
 const OUT = process.argv[3] || fs.mkdtempSync(path.join(require('os').tmpdir(), 'hr-letters-'));
-const state = { settings: {}, docs: [], fnf: { status: 'Processed' }, detail: { resignationDate: '2026-10-01', approvedLastWorkingDate: '2026-11-14', designation: 'Team Leader' } };
+const state = { company: { name: 'TeamLink Consultants', legalName: null, email: 'hello@teamlink.test', phone: '+91 9032321414', address: 'Hyderabad, India', hq: '' }, settings: {}, docs: [], fnf: { status: 'Processed' }, detail: { resignationDate: '2026-10-01', approvedLastWorkingDate: '2026-11-14', designation: 'Team Leader' } };
 const prisma = {
-  company: { findFirst: async () => ({ legalName: 'Teamlink Consultants [OPC] Pvt. Ltd.', address: 'Corporate Office, Hyderabad, Telangana', phone: '+91 40 0000 0000', email: 'hr@example.test' }) },
+  // the LIVE company record as it was (2026-11-24): the short name, no legal name, the demo email, a real phone
+  company: { findFirst: async () => state.company },
   appSetting: {
     findUnique: async ({ where }) => (state.settings[where.key] ? { value: state.settings[where.key], updatedByName: 'Test HR', updatedAt: new Date() } : null),
     upsert: async ({ where, create }) => { state.settings[where.key] = create.value; return {}; },
@@ -119,6 +120,26 @@ const parasText = (model) => model.paras.map((p) => p.map((r) => r.t).join('')).
   check('settings: signatory saved and tidied, title falls back to HR Department', s2.signatoryName === 'Priya Sharma' && s2.signatoryTitle === 'HR Department', s2);
   const docTypes = require(path.join(SRC, 'utils/employeeDocTypes.js')).DOC_TYPES;
   check('document types offer Service Certificate and Relieving Letter', docTypes.includes('Service Certificate') && docTypes.includes('Relieving Letter') && docTypes[docTypes.length - 1] === 'Other Documents');
+
+  // ---- the company as the letters print it (the live record had the demo email and no legal name)
+  const CC = require(path.join(SRC, 'utils/companyContact.js'));
+  const live = await O.buildModel(app, s0.template);
+  const liveHtml = O.renderHtml(live, { logoSrc: null });
+  check('letters: the demo email hello@teamlink.test is NOT printed (letterhead, email text, html)', !/teamlink\.test/i.test(liveHtml + O.renderText(live) + JSON.stringify(live.company)), live.company);
+  check('letters: the real phone still is', live.company.phone === '+91 9032321414' && /\+91 9032321414/.test(liveHtml), live.company);
+  check('letters: the company signs with the legal name used on the reference letters', live.company.name === 'Teamlink Consultants [OPC] Pvt. Ltd.' && live.signatory.company === 'Teamlink Consultants [OPC] Pvt. Ltd.' && /For Teamlink Consultants \[OPC\] Pvt\. Ltd\./.test(O.renderText(live)), [live.company.name, live.signatory.company]);
+  check('letters: the opening paragraph names the legal name too', /at Teamlink Consultants \[OPC\] Pvt\. Ltd\., based at/.test(live.intro.replace(/[]/g, '')), live.intro);
+  state.company = { ...state.company, email: 'hr@tmlink.in' };
+  const realMail = await O.buildModel(app, s0.template);
+  check('letters: a real company email is printed once it is saved in Company Setup', realMail.company.email === 'hr@tmlink.in' && /hr@tmlink\.in/.test(O.renderHtml(realMail)), realMail.company);
+  state.company = { ...state.company, legalName: 'Acme Staffing Pvt. Ltd.' };
+  check('letters: a legal name saved on the company record wins', (await O.buildModel(app, s0.template)).company.name === 'Acme Staffing Pvt. Ltd.');
+  state.company = { name: 'Acme Traders', legalName: null, email: null, phone: null, address: null };
+  const other = await O.buildModel(app, s0.template);
+  check('letters: another company keeps its own name; nothing invented for a missing phone / email / address', other.company.name === 'Acme Traders' && other.company.phone === '' && other.company.email === '' && other.company.address === '', other.company);
+  check('contact rules: demo and reserved addresses refused, real ones kept', ['hello@teamlink.test', 'a@example.com', 'x@y.example', 'bad', '', null].every((v) => CC.realEmail(v) === null) && CC.realEmail(' hr@tmlink.in ') === 'hr@tmlink.in');
+  check('contact rules: demo and made-up phones refused, real ones kept', ['+91 40 1234 5678', '12345', '', null, '+91 00000000'].every((v) => CC.realPhone(v) === null) && CC.realPhone('+91 9032321414') === '+91 9032321414');
+  state.company = { name: 'TeamLink Consultants', legalName: null, email: 'hello@teamlink.test', phone: '+91 9032321414', address: 'Hyderabad, India', hq: '' };
 
   console.log(fails ? `\n${fails} FAILED` : `\nALL PASSED (PDFs in ${OUT})`);
   process.exitCode = fails ? 1 : 0;

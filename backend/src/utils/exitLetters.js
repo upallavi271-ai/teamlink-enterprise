@@ -70,10 +70,9 @@ async function saveSettings(body, user) {
 }
 
 async function companyOf() {
+  // the legal name as on the founder's letters, and no demo phone / email (utils/companyContact.js)
   const c = await prisma.company.findFirst().catch(() => null);
-  const name = (c && (c.legalName || c.name)) || process.env.COMPANY_LEGAL_NAME || 'TeamLink Consultants';
-  const address = [c && c.address, c && c.hq].filter(Boolean)[0] || '';
-  return { name, address, phone: (c && c.phone) || '', email: (c && c.email) || '' };
+  return require('./companyContact').forLetter(c); // eslint-disable-line global-require
 }
 
 // --- the facts of one exit -----------------------------------------------------------------------------------------------

@@ -241,10 +241,9 @@ const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0,
 const inr = (v) => (Number(v) > 0 ? `₹ ${Math.round(Number(v)).toLocaleString('en-IN')} per annum` : '');
 
 async function companyOf() {
+  // the legal name as on the founder's letters, and no demo phone / email (utils/companyContact.js)
   const c = await prisma.company.findFirst().catch(() => null);
-  const name = (c && (c.legalName || c.name)) || process.env.COMPANY_LEGAL_NAME || 'TeamLink Consultants';
-  const addr = [c && c.address, c && c.hq && c.hq !== (c && c.address) ? c.hq : null].filter(Boolean)[0] || '';
-  return { name, address: addr, phone: (c && c.phone) || '', email: (c && c.email) || '' };
+  return require('./companyContact').forLetter(c); // eslint-disable-line global-require
 }
 
 const APP_INCLUDE = { candidate: true, requirement: { include: { client: { select: { name: true } } } } };
