@@ -256,7 +256,8 @@ async function merge(user, body = {}) {
     if (!keep.accountId && other.accountId) data.accountId = other.accountId;
   }
   await P.run('UPDATE "CrmRecordFile" SET "recordId" = ? WHERE "kind" = ? AND "recordId" = ?', keep.id, kind, other.id);
-  await P.run('UPDATE "CrmConsent" SET "recordId" = ? WHERE "kind" = ? AND "recordId" = ?', keep.id, kind, other.id);
+  await P.run('UPDATE "CrmChannelConsent" SET "recordId" = ? WHERE "kind" = ? AND "recordId" = ?', keep.id, kind, other.id);
+  await P.run('UPDATE "CrmConsent" SET "recordId" = ? WHERE "kind" = ? AND "recordId" = ?', keep.id, kind, other.id).catch(() => null); // wave D's consent notices (crm/consent.js)
   if (kind === 'lead') await P.run('DELETE FROM "CrmAutoStep" WHERE "recordId" = ?', other.id).catch(() => null);
   const saved = await S.update(TABLE[kind], keep.id, data);
   await toBin(user, kind, other, { why: `Merged into ${keep[NAME[kind]]}${keep.code ? ` (${keep.code})` : ''}` });
@@ -451,7 +452,7 @@ async function consentOf(email, phone) {
     const v = ch === 'email' ? email : phone;
     if (!v || (ch !== 'email' && v.length < 10)) { out[ch] = { channel: ch, word: CH_WORD[ch], value: null, status: 'No address' }; continue; } // eslint-disable-line no-continue
     // eslint-disable-next-line no-await-in-loop
-    const hist = await P.all('SELECT * FROM "CrmConsent" WHERE "value" = ? AND "channel" = ? ORDER BY "at" DESC LIMIT 20', v, ch);
+    const hist = await P.all('SELECT * FROM "CrmChannelConsent" WHERE "value" = ? AND "channel" = ? ORDER BY "at" DESC LIMIT 20', v, ch);
     // eslint-disable-next-line no-await-in-loop
     const opt = await P.one('SELECT * FROM "CrmOptOut" WHERE "value" = ? AND "channel" = ?', v, ch);
     const last = hist[0];
@@ -480,13 +481,13 @@ async function consentSet(user, kind, id, body = {}) {
   const purpose = PURPOSES.includes(body.purpose) ? body.purpose : (status === 'given' ? 'Sales follow-up' : null);
   const source = CONSENT_SOURCES.includes(body.source) ? body.source : 'Other';
   const now = P.nowIso();
-  await insertRow('CrmConsent', { id: P.newId('cons'), value: v, channel: ch, status, purpose, source, note: clip(body.note, 300) || null, kind, recordId: p.row.id, byId: user.id, byName: user.name || null, at: now });
+  await insertRow('CrmChannelConsent', { id: P.newId('cons'), value: v, channel: ch, status, purpose, source, note: clip(body.note, 300) || null, kind, recordId: p.row.id, byId: user.id, byName: user.name || null, at: now });
   const CMP = require('../campaigns'); // eslint-disable-line global-require
   if (status === 'withdrawn') await CMP.optOut(ch, v, { reason: `Consent withdrawn (${source})`, byId: user.id });
   else await P.run('DELETE FROM "CrmOptOut" WHERE "value" = ? AND "channel" = ?', v, ch); // given again: messages on this channel may go again
   const link = kind === 'contact' ? { contactId: p.row.id, accountId: p.row.accountId || null } : { [`${kind}Id`]: p.row.id };
   await S.insert('CrmActivity', { id: S.newId('act'), kind: 'note', subject: `Consent ${status} for ${CH_WORD[ch]}`, note: [purpose, source, clip(body.note, 300)].filter(Boolean).join(' · ') || null, at: now, ...link, byId: user.id, byName: user.name || null, createdAt: now });
-  await S.audit(user, `CRM consent ${status}`, 'CrmConsent', p.row.id, `${CH_WORD[ch]}: ${v}`);
+  await S.audit(user, `CRM consent ${status}`, 'CrmChannelConsent', p.row.id, `${CH_WORD[ch]}: ${v}`);
   return consentGet(user, kind, id);
 }
 
@@ -510,7 +511,7 @@ async function findPerson({ email, phone }) {
   const activities = await P.all(`SELECT * FROM "CrmActivity" WHERE ${inIds('leadId', leadIds)} OR ${inIds('contactId', contactIds)}`, ...leadIds, ...contactIds);
   const tasks = await P.all(`SELECT * FROM "CrmTask" WHERE ${inIds('leadId', leadIds)}`, ...leadIds);
   const vals = [email, phone].filter(Boolean);
-  const consent = vals.length ? await P.all(`SELECT * FROM "CrmConsent" WHERE "value" IN (${vals.map(() => '?').join(',')})`, ...vals) : [];
+  const consent = vals.length ? await P.all(`SELECT * FROM "CrmChannelConsent" WHERE "value" IN (${vals.map(() => '?').join(',')})`, ...vals) : [];
   const optOuts = vals.length ? await P.all(`SELECT * FROM "CrmOptOut" WHERE "value" IN (${vals.map(() => '?').join(',')})`, ...vals) : [];
   const campaignMessages = await P.all(`SELECT * FROM "CrmCampaignRecipient" WHERE ${email ? 'LOWER("toAddr") = ?' : '0'} OR ${phone ? 'SUBSTR("toAddr", -10) = ?' : '0'} OR ${inIds('recordId', [...leadIds, ...contactIds])}`, ...args, ...leadIds, ...contactIds).catch(() => []);
   const tickets = contactIds.length ? await P.all(`SELECT * FROM "CrmTicket" WHERE ${inIds('contactId', contactIds)}`, ...contactIds).catch(() => []) : [];
@@ -576,7 +577,7 @@ async function dsrErase(user, id, { confirm } = {}) {
     files.forEach((x) => { try { require('../../utils/attachments').remove(x.stored); } catch { /* gone */ } }); // eslint-disable-line global-require
     await P.run('DELETE FROM "CrmRecordFile" WHERE "kind" = ? AND "recordId" = ?', fl[0], fl[1]);
   }
-  await P.run(`DELETE FROM "CrmConsent" WHERE "value" IN (${[key.email, key.phone].filter(Boolean).map(() => '?').join(',')})`, ...[key.email, key.phone].filter(Boolean));
+  await P.run(`DELETE FROM "CrmChannelConsent" WHERE "value" IN (${[key.email, key.phone].filter(Boolean).map(() => '?').join(',')})`, ...[key.email, key.phone].filter(Boolean));
   // and from the recycle bin: a deleted copy of them goes for good
   const binRows = await P.all('SELECT * FROM "CrmRecycle" WHERE "restoredAt" IS NULL AND ("rowJson" LIKE ? OR "rowJson" LIKE ?)', key.email ? `%${key.email}%` : '__none__', key.phone ? `%${key.phone}%` : '__none__');
   for (const b of binRows) await purgeBinRow(b);
@@ -679,7 +680,7 @@ async function dndClear(user, phone) {
 async function privacySummary(user) {
   if (!mayAdmin(user)) return S.fail(403, 'Only a Sales manager or an Admin.');
   const enc = await P.one('SELECT COUNT(*) AS "n" FROM "CrmFieldDef" WHERE "sensitive" = 1 AND "active" = 1');
-  const cons = await P.one('SELECT COUNT(DISTINCT "value" || "channel") AS "n" FROM "CrmConsent"');
+  const cons = await P.one('SELECT COUNT(DISTINCT "value" || "channel") AS "n" FROM "CrmChannelConsent"');
   const opts = await P.one('SELECT COUNT(*) AS "n" FROM "CrmOptOut"');
   const open = await P.one('SELECT COUNT(*) AS "n" FROM "CrmDataRequest" WHERE "status" = \'Open\'');
   const binN = await P.one('SELECT COUNT(*) AS "n" FROM "CrmRecycle" WHERE "restoredAt" IS NULL');

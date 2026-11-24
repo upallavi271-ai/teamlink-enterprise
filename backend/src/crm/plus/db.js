@@ -11,7 +11,7 @@
 //   CrmDealContact     the people on a deal with their role (decision maker, influencer, billing contact ...)
 //   CrmAccountTeam     the account team: people who work an account with its owner (they may read it)
 //   CrmRecycle         a deleted lead / account / contact / deal with what went with it, to restore (the recycle bin)
-//   CrmConsent         consent given / withdrawn per person and channel (email, SMS, WhatsApp, call), with the purpose and where it came from
+//   CrmChannelConsent  consent given / withdrawn per person and channel (email, SMS, WhatsApp, call), with the purpose and where it came from
 //   CrmDataRequest     a data-subject request (export or erase one person's data) and what was done
 //   CrmDnd             numbers on the Do-Not-Disturb list (uploaded from the NCPR / provider, or found by the provider check)
 //   CrmAssignRule      who gets a new lead: by source, city, state, industry, product, or any field
@@ -68,11 +68,11 @@ const DDL = [
     "ownerId" TEXT, "deletedById" TEXT, "deletedByName" TEXT, "deletedAt" TEXT NOT NULL, "restoredAt" TEXT, "why" TEXT
   )`,
   'CREATE INDEX IF NOT EXISTS "CrmRecycle_at" ON "CrmRecycle"("restoredAt", "deletedAt")',
-  `CREATE TABLE IF NOT EXISTS "CrmConsent" (
+  `CREATE TABLE IF NOT EXISTS "CrmChannelConsent" (
     "id" TEXT NOT NULL PRIMARY KEY, "value" TEXT NOT NULL, "channel" TEXT NOT NULL, "status" TEXT NOT NULL, "purpose" TEXT, "source" TEXT, "note" TEXT,
     "kind" TEXT, "recordId" TEXT, "byId" TEXT, "byName" TEXT, "at" TEXT NOT NULL
   )`,
-  'CREATE INDEX IF NOT EXISTS "CrmConsent_value" ON "CrmConsent"("value", "channel", "at")',
+  'CREATE INDEX IF NOT EXISTS "CrmChannelConsent_value" ON "CrmChannelConsent"("value", "channel", "at")',
   `CREATE TABLE IF NOT EXISTS "CrmDataRequest" (
     "id" TEXT NOT NULL PRIMARY KEY, "type" TEXT NOT NULL, "person" TEXT NOT NULL, "status" TEXT NOT NULL DEFAULT 'Open', "note" TEXT, "detail" TEXT,
     "byId" TEXT, "byName" TEXT, "createdAt" TEXT NOT NULL, "doneAt" TEXT, "dueBy" TEXT
