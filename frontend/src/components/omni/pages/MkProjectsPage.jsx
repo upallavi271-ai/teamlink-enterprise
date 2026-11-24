@@ -79,7 +79,7 @@ function ShareBox({ url, phone, email, text, subject, toast, caption, projectId,
 }
 
 // ---- log a request the client sent by email / WhatsApp / phone ----------------------------------------------------------------------------------------------
-function RequestModal({ meta, project, onClose, onDone, toast }) {
+function RequestModal({ meta, project, accountIds = [], onClose, onDone, toast }) {
   const edit = !!project;
   const { people, find } = useClientPeople(); // the clients already worked for, with the details typed last time
   const [f, setF] = useState(() => (project ? { clientName: project.clientName, contactName: project.contactName, contactPhone: project.contactPhone, contactEmail: project.contactEmail, source: project.source, occasion: project.occasion, brief: project.brief, deliverable: project.deliverable, platforms: project.platforms, handles: project.handles, dueDate: project.dueDate, colors: project.colors || {}, accept: false }
@@ -89,6 +89,10 @@ function RequestModal({ meta, project, onClose, onDone, toast }) {
   const [err, setErr] = useState('');
   const [aiBusy, setAiBusy] = useState(false); // the AI is writing THE BRIEF
   const [aiNote, setAiNote] = useState('');
+  // the client's connected Facebook / Instagram / X accounts: the ones ticked here are where Post goes for this client's projects
+  const [accts, setAccts] = useState({ allowed: false, accounts: [] });
+  const [postIds, setPostIds] = useState(accountIds);
+  useEffect(() => { omni.get('/gs/marketing/projects/accounts').then(setAccts).catch(() => setAccts({ allowed: false, accounts: [] })); }, []);
   const names = useMemo(() => people.map((c) => c.name), [people]);
   const pickClient = (name) => { const c = find(name); setF((x) => ({ ...x, clientName: name, contactName: c ? (c.contactName || x.contactName) : x.contactName, contactEmail: c ? (c.contactEmail || x.contactEmail) : x.contactEmail, contactPhone: c ? (c.contactPhone || x.contactPhone) : x.contactPhone })); };
   const toggle = (k) => setF((x) => ({ ...x, platforms: x.platforms.includes(k) ? x.platforms.filter((p) => p !== k) : [...x.platforms, k] }));
@@ -104,7 +108,7 @@ function RequestModal({ meta, project, onClose, onDone, toast }) {
   const save = async () => {
     setBusy(true); setErr('');
     try {
-      const body = { ...f, colors: f.colors && (f.colors.primary || f.colors.secondary) ? f.colors : null };
+      const body = { ...f, colors: f.colors && (f.colors.primary || f.colors.secondary) ? f.colors : null, ...(accts.accounts.length ? { postAccountIds: postIds } : {}) };
       if (logo !== undefined) body.logoDataUrl = logo;
       const r = edit ? await omni.put(`/gs/marketing/projects/${project.id}`, body) : await omni.post('/gs/marketing/projects', body);
       toast(edit ? 'Saved' : (f.accept ? 'Project started' : 'Request logged')); onDone(r.project);
@@ -129,6 +133,18 @@ function RequestModal({ meta, project, onClose, onDone, toast }) {
         </Field>
         <Field label="THEY WANT"><select value={f.deliverable} onChange={(e) => setF({ ...f, deliverable: e.target.value })}>{meta.deliverables.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}</select></Field>
         <Field label="NEEDED BY"><input type="date" value={f.dueDate} onChange={(e) => setF({ ...f, dueDate: e.target.value })} /></Field>
+        {accts.accounts.length ? (
+          <Field label="POST ON THESE ACCOUNTS OF THE CLIENT" full hint="Tick the client's Facebook / Instagram pages once. When the client approves, the Post button posts straight on these accounts (you still press it).">
+            <div>
+              {accts.accounts.map((a) => (
+                <label key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '3px 0' }}>
+                  <input type="checkbox" checked={postIds.includes(a.id)} disabled={a.status === 'Expired'} onChange={() => setPostIds((s) => (s.includes(a.id) ? s.filter((x) => x !== a.id) : [...s, a.id]))} />
+                  <span><b>{a.name}</b> · {a.platform === 'instagram' ? 'Instagram' : a.platform === 'x' ? 'X' : 'Facebook'}{a.status !== 'Connected' ? ` · ${a.status}` : ''}</span>
+                </label>
+              ))}
+            </div>
+          </Field>
+        ) : null}
         <Field label="TO BE POSTED ON" full>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12 }}>{meta.platforms.map((p) => <label key={p.key} style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={f.platforms.includes(p.key)} onChange={() => toggle(p.key)} />{p.label}</label>)}</div>
         </Field>
@@ -407,7 +423,7 @@ ${(x.project.draft.hashtags || []).join(' ')}`.trim() : ''));
                     const asked = p.platforms.includes(key);
                     return (
                       <div key={key} style={{ width: 168 }}>
-                        <button type="button" disabled={!accts.allowed || !list.length || !!ok || !!busy} onClick={() => { setPostFor(key); setPostSel(list.length === 1 ? [list[0].id] : []); setPostErr([]); }}
+                        <button type="button" disabled={!accts.allowed || !list.length || !!ok || !!busy} onClick={() => { setPostFor(key); const mine = (d.clientAccountIds || []).filter((x) => list.some((a) => a.id === x)); setPostSel(list.length === 1 ? [list[0].id] : mine); setPostErr([]); }}
                           style={{ width: '100%', border: 'none', borderRadius: 10, padding: '10px 12px', fontWeight: 800, fontSize: 12.5, cursor: (!accts.allowed || !list.length || ok) ? 'default' : 'pointer', background: ok ? '#e8f7ef' : color, color: ok ? '#087844' : '#fff', opacity: (!accts.allowed || !list.length) && !ok ? 0.5 : 1, display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center' }}>
                           <span aria-hidden="true" style={{ fontSize: 15 }}>{icon}</span>{ok ? `${label}: posted ✓` : bad ? `Try ${label} again` : `Post to ${label}`}
                         </button>
@@ -498,7 +514,7 @@ ${(x.project.draft.hashtags || []).join(' ')}`.trim() : ''));
           </GsModal>
         );
       })() : null}
-      {modal === 'edit' ? <RequestModal meta={meta} project={p} onClose={() => setModal('')} onDone={() => { setModal(''); onChanged(); load(); }} toast={toast} /> : null}
+      {modal === 'edit' ? <RequestModal meta={meta} project={p} accountIds={d.clientAccountIds || []} onClose={() => setModal('')} onDone={() => { setModal(''); onChanged(); load(); }} toast={toast} /> : null}
       {modal === 'pick' ? <PickModal project={p} taken={staged.map((s) => s.itemId)} onClose={() => setModal('')} onPick={async (ids) => { setModal(''); await saveStaged([...staged, ...ids.map((itemId) => ({ itemId, label: '' }))].map((s, i) => ({ ...s, label: s.label || `Option ${String.fromCharCode(65 + i)}` }))); }} /> : null}
       {modal === 'send' ? (
         <GsModal title="Send the options to the client" sub={`${staged.length} option${staged.length === 1 ? '' : 's'}. Each goes to the client as the real video or picture (WhatsApp and email) with Approve and Reject buttons. Their answer comes back here: Approved or Rejected, with the reason.`} width={520} onClose={() => setModal('')} foot={<><Btn onClick={() => setModal('')}>Cancel</Btn><Btn primary disabled={!!busy} onClick={async () => { const r = await act('send', { days: sendF.days, message: sendF.message, caption, ...(accts.allowed && autoSel ? { autoAccountIds: autoSel, remember } : {}) }, 'Sent'); if (r) { setModal(''); setAutoSel(null); setRemember(false); } }}>{busy === 'send' ? 'Sending…' : 'Show them to the client'}</Btn></>}>

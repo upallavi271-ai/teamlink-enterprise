@@ -245,6 +245,7 @@ async function create(u, b = {}) {
   await event(id, 'request', u.name, `Request logged (${(SOURCES.find((s) => s.key === v.source) || {}).label || 'Other'}): ${v.occasion}`);
   if (accept) await event(id, 'accepted', u.name, 'Accepted: the team starts work');
   await makeDraft(id, u.name);
+  if (Array.isArray(b.postAccountIds)) { try { const row = (await S.q(`SELECT * FROM "${T}" WHERE id = ?`, id))[0]; if (row) await setClientAccounts(u, row, b.postAccountIds); } catch { /* the accounts can still be ticked in the Send box */ } }
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client project started', entity: T, entityId: id, toValue: `${v.clientName}: ${v.occasion}; ${v.source}${accept ? '; accepted' : ''}` });
   return { project: (await shortRow(id)) };
 }
@@ -320,6 +321,7 @@ async function update(u, id, b = {}) {
     v.clientName, v.contactName || null, v.contactEmail || null, v.contactPhone || null, v.source, v.occasion || null, v.brief || null, v.deliverable, JSON.stringify(v.platforms), v.handles || null, v.caption || null, v.dueDate || null, v.logoData, v.colors ? JSON.stringify(v.colors) : null,
     b.title !== undefined ? (S.clip(b.title, 120) || r.title) : r.title, Date.now(), r.id);
   if ((v.brief || '') !== (r.brief || '') || (v.occasion || '') !== (r.occasion || '')) await makeDraft(r.id, u.name); // the brief changed: the starter content follows it
+  if (Array.isArray(b.postAccountIds)) { try { await setClientAccounts(u, { ...r, clientName: v.clientName }, b.postAccountIds); } catch { /* the accounts can still be ticked in the Send box */ } }
   return { project: (await shortRow(r.id)) };
 }
 
@@ -770,6 +772,17 @@ async function setAutopost(u, id, b = {}, base = '') {
 // (it is what runs): an Admin must allow it in AI usage, only Facebook / Instagram / X, only an https site address, and suggestions from the client stop it (the team reads them, then presses Post).
 // Remembered in the AppSetting 'omni.mk.clientAccounts', by client id (else the lower-case company name). Nothing is posted until the client approves.
 const clientKeyOf = (r) => (r.clientId ? `c:${r.clientId}` : `n:${String(r.clientName || '').trim().toLowerCase()}`);
+// THE CLIENT'S ACCOUNTS CHOSEN WHEN THE CLIENT IS MADE (2026-11-24, founder: "when I create the client I say which accounts: then Post goes straight to their account"): the accounts ticked in the request form are
+// kept for the client (the same store as "remember these accounts"), so every project of that client opens with them ticked and the Post button posts on them. Only accounts that are really connected are kept.
+async function setClientAccounts(u, r, ids) {
+  const list = (await accounts(u).catch(() => ({ accounts: [] }))).accounts || [];
+  const picked = [...new Set((Array.isArray(ids) ? ids : []).map(String))].filter((x) => list.some((a) => a.id === x)).slice(0, 12);
+  const key = clientKeyOf(r);
+  const m = await Cfg.getClientAccounts();
+  if (picked.length) m[key] = { accountIds: picked, by: S.clip(u.name, 80), at: new Date().toISOString() }; else delete m[key];
+  await Cfg.saveClientAccounts(m);
+  return picked;
+}
 async function rememberedFor(r) { const m = await Cfg.getClientAccounts(); const x = m[clientKeyOf(r)]; return x && Array.isArray(x.accountIds) ? x.accountIds : []; }
 // b.autoAccountIds: the accounts ticked in the Send box (absent = untouched: the remembered ones; an empty list = none for this project); b.remember === true keeps the ticked accounts for the client (an empty list forgets them)
 async function armPosting(u, r, b, base) {
@@ -1167,7 +1180,7 @@ async function portalStart(u) {
 }
 
 module.exports = {
-  portalList, portalStart, makeDraft, captionWithTags,
+  portalList, portalStart, makeDraft, captionWithTags, setClientAccounts,
   ensure, SOURCES, DELIVERABLES, PLATFORM_KEYS, PLATFORM_LABEL, create, invite, briefAssist, list, get, update, accept, decline, setOptions, send, cancelPresentation, extend, scheduled, posted, heldIds,
   publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, clientApprove, clientReject, clientRejectReason, publicReject, plainWhy, deliverHeld, sendApproval, tokenOf, idOfToken, mayWrite, tell, tellClient, notifyStatus,
   setShowcase, trackRecord, showcaseItems, publicWork, publicWorkFile, accounts, setAutopost, postNow, postTo, autoRun, autoSweep, startAutoPost,
