@@ -245,3 +245,23 @@ main:has(> .crm-page){max-width:1680px;margin:0}
 .crm-reply .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .crm-sort{background:none;border:0;padding:0;font:inherit;font-weight:inherit;color:inherit;cursor:pointer;white-space:nowrap}
 .crm-pager{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;margin-top:8px;font-size:12.5px}
+
+/* wave A (2026-11-24): my dashboard widgets, the rule flow builder */
+.crm-mydash{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.crm-mydash>.crm-card{min-width:0;grid-column:span 1}
+.crm-mydash>.w-half{grid-column:span 2}
+.crm-mydash>.w-full{grid-column:1 / -1}
+@media (max-width:900px){.crm-mydash{grid-template-columns:repeat(2,minmax(0,1fr))}.crm-mydash>.w-half,.crm-mydash>.w-full{grid-column:1 / -1}}
+@media (max-width:560px){.crm-mydash{grid-template-columns:minmax(0,1fr)}.crm-mydash>.crm-card{grid-column:1 / -1}}
+.crm-flow{display:flex;flex-direction:column;gap:0}
+.crm-flow-card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--paper-raised);box-shadow:var(--shadow-sm);min-width:0}
+.crm-flow-card.when{border-left:4px solid #2a78d6}
+.crm-flow-card.if{border-left:4px solid #eda100}
+.crm-flow-card.step{border-left:4px solid #1baf7a}
+.crm-flow-card.step.pause{border-left-color:#6250d6}
+.crm-flow-head{font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--ink-soft);margin-bottom:6px}
+.crm-flow-arrow{text-align:center;color:var(--ink-soft);line-height:20px}
+.crm-flow-palette{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px}
+.crm-flow-palette .btn{cursor:grab}
+.crm-flow-drop{height:18px;display:flex;align-items:center;justify-content:center;color:var(--ink-soft);font-size:12px;border-radius:6px}
+.crm-flow-drop.on{height:30px;border:2px dashed var(--brand, var(--navy));margin:3px 0;background:var(--line-soft)}
