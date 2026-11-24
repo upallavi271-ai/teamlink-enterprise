@@ -41,7 +41,7 @@ function tidy(raw) {
   const out = String(raw).replace(/\r/g, '').replace(/\*\*|__/g, '').split('\n')
     .map((l) => l.replace(/^\s*#+\s*/, '').replace(/^\s*(?:[•·▪●◦*–—]|\d+[.)])\s+/, '- ').replace(/[ \t]+/g, ' ').trim())
     .map((l) => l.replace(/^["'“‘]+|["'”’]+$/g, '').trim()).filter(Boolean);
-  let text = out.join('\n');
+  let text = out.join('\n').replace(/^(Points:)[ \t]*-[ \t]+/im, '$1\n- '); // the model often puts the first point on the "Points:" line
   if (text.length > MAX) { // cut at the last whole line that fits (never in the middle of a point)
     const keep = []; let n = 0;
     for (const l of out) { if (n + l.length + 1 > MAX) break; keep.push(l); n += l.length + 1; }
@@ -71,6 +71,19 @@ function structure(text, content) {
   }
   if (pts.length < 2) return text;
   return [`Topic: ${topic}`, 'Points:', ...pts.map((p) => `- ${p}`)].join('\n');
+}
+
+// When the AI cannot answer in time (the one small model is shared with the WhatsApp assistant: live 24 Nov it took 20 seconds, 40 seconds, or refused), the person still gets a DRAFT made only
+// from their own words: the topic from the title (or the first content line) and the points from their content lines (a pasted script's titles). Said in words, never passed off as AI. Needs
+// at least two points of their own: with just a title there is nothing to lay out and the plain "AI is slow" message stays.
+function fromOwnWords({ title, heading, content, who, thing }) {
+  const script = SP.parseScript(content);
+  const own = (script ? script.map((s) => s.caption || s.say) : String(content || '').split('\n').map((l) => SP.plain(l))).map(noStop).filter((l) => l.length > 3);
+  const head = noStop(SP.plain(title || heading || ''));
+  const topicText = head || own[0] || '';
+  const pts = own.filter((l) => l.toLowerCase() !== topicText.toLowerCase()).slice(0, 5);
+  if (!topicText || pts.length < 2) return null;
+  return [`Topic: A ${thing} about ${topicText}${who && who !== 'our company' ? `, for ${who}` : ''}`, 'Points:', ...pts.map((p) => `- ${p}`)].join('\n');
 }
 
 // b: { kind: 'video' | 'post', title, heading, content, idea (what is in the box now), clientName (the client chosen for sending), projectId, department }
@@ -120,6 +133,10 @@ async function ideaAssist(u, b = {}) {
     // quickMs: nginx gives up at 60 seconds and the one small model is shared with the WhatsApp assistant (it was live 20 to 50 seconds and sometimes refused while busy), so the AI gets 40 seconds and a miss is said in words, never a gateway error
     r = await AI.generate({ user: u, module: 'studio', task: 'idea', system, prompt, json: true, quickMs: 40000, demo: () => ({ idea: `SAMPLE (test mode, not written by AI)\nTopic: ${what} about ${topic || 'the client\'s brief'} for ${who}.\nPoints:\n- One clear message\n- A friendly, simple tone\n- A clear next step for the viewer` }), department: S.clip(b.department, 60) || undefined });
   } catch (e) {
+    if ((e.code === 'timeout' || e.code === 'failed' || e.code === 'unavailable' || e.code === 'unreadable') && e.status !== 403 && e.status !== 429) { // a limit or a refused login is shown as it is; a slow or failed AI gives a draft from the person's own words
+      const draft = fromOwnWords({ title, heading, content, who, thing });
+      if (draft) return { idea: tidy(draft), demo: false, provider: 'own words', flags: [], fallback: true, note: 'The AI is busy right now, so TeamLink laid out your own words (the title and the lines of your content) as the topic and the points. Read it, change anything, or press AI Assist again for the AI to write it.' };
+    }
     if (e.code === 'timeout') return { error: 'The AI is slow right now. Try again in a moment, or write the idea yourself.', status: 504, code: 'timeout' };
     return { error: e.message, status: e.status || 503, code: e.code };
   }

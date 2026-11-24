@@ -84,6 +84,23 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
   answer = { idea: 'Topic: Already laid out\nPoints:\n- One\n- Two\nMood: calm' }; r = await ideaAssist(sk2, { kind: 'video', title: 'Hiring freshers' });
   assert.equal(r.idea, 'Topic: Already laid out\nPoints:\n- One\n- Two\nMood: calm', 'an answer that already has the layout is left exactly as it is');
   assert.ok(/Do NOT answer with one paragraph/.test(seen[seen.length - 1].system) && /Example of the layout/.test(seen[seen.length - 1].system), 'the model is shown the layout with an example and told not to answer in one paragraph');
+  // 4d. "Points: - first" on one line (what the live model wrote) gets its first point on its own line
+  answer = { idea: 'Topic: A hiring video for freshers.\nPoints: - Freshers welcome\n- Staffing consultancy you can trust\n- Send your CV today\nMood: Warm' }; r = await ideaAssist(sk2, { kind: 'video', title: 'Hiring freshers' });
+  assert.equal(r.idea, 'Topic: A hiring video for freshers.\nPoints:\n- Freshers welcome\n- Staffing consultancy you can trust\n- Send your CV today\nMood: Warm', r.idea);
+  // 4e. the AI is too slow or fails: a DRAFT from the person's own words (never an empty box), said in words; only with at least two points of their own
+  const fb = { id: 'u-fallback', name: 'Fallback Tester', role: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN' };
+  answer = () => { throw new AI.AiMkError('timed out', 504, 'timeout'); };
+  r = await ideaAssist(fb, { kind: 'video', title: 'Hiring freshers', content: 'Freshers welcome\nStaffing consultancy you can trust\nSend your CV today', clientName: 'Rao Hospital' });
+  assert.ok(!r.error && r.fallback === true && !r.demo && r.provider === 'own words', JSON.stringify(r));
+  assert.equal(r.idea, 'Topic: A video about Hiring freshers, for Rao Hospital\nPoints:\n- Freshers welcome\n- Staffing consultancy you can trust\n- Send your CV today');
+  assert.ok(/AI is busy right now/.test(r.note) && /your own words/.test(r.note), r.note);
+  answer = () => { throw new AI.AiMkError('The AI model did not answer.', 503, 'failed'); };
+  r = await ideaAssist(fb, { kind: 'post', content: '**Scene 1 – Intro**\nVisual: a recruiter\nVoiceover: "Are you a fresher looking for your first job?"\n**Scene 2 – Offer**\nVisual: training\nVoiceover: "We connect freshers with companies."\n**Scene 3 – Act**\nText on screen: Send your CV today\nVoiceover: "Send it today."' });
+  assert.ok(r.fallback && r.idea.startsWith('Topic: A post about Are you a fresher looking for your first job') && r.idea.includes('- We connect freshers with companies') && r.idea.includes('- Send your CV today') && !/["*]/.test(r.idea), r.idea);
+  r = await ideaAssist(fb, { kind: 'video', title: 'Hiring freshers' }); assert.equal(r.status, 503, 'with only a title there is nothing to lay out: the plain error stays'); assert.ok(!r.fallback && /did not answer/.test(r.error));
+  r = await ideaAssist(fb, { kind: 'video', title: 'Hiring freshers', content: 'One line only' }); assert.ok(r.error && !r.fallback, 'one line of content is not enough for a draft');
+  answer = { idea: 'Topic: Restored\nPoints:\n- One\n- Two' };
+  console.log('PASS a slow or failed AI gives a draft from the person\'s own words (title + content lines, a script\'s titles), said in words; a title alone keeps the plain error; "Points: - first" is fixed');
   console.log('PASS a one-paragraph answer is laid out as Topic / Points (from its own sentences, else from the content); a laid-out answer is left alone; the model gets an example');
 
   console.log('PASS several lines: topic, points, mood and call to action, built from the whole content; bullets are normalised, a list or object answer is laid out the same, a too-long answer is cut at a whole line');

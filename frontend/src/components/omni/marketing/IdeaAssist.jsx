@@ -18,6 +18,7 @@ export default function IdeaAssist({ kind = 'video', title = '', heading = '', c
     try {
       const r = await omni.post('/gs/marketing/studio/idea-assist', { kind, title, heading, content, idea, ...(projectId ? { projectId } : {}), ...(clientName ? { clientName } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
       onIdea(r.idea);
+      if (r.note) { setNote(r.note); setBad(true); return; } // the AI was busy: the server laid out the person's own words instead, and says so
       const words = r.flags && r.flags.length ? ` It uses "${r.flags.join('", "')}", which your brand avoids: change it.` : '';
       setNote(r.demo ? 'Sample text (test mode, not written by AI). Read it and change it.' : `${String(idea || '').trim() ? 'Improved' : 'Written'}. Read it, change anything, then press Create.${words}`);
       setBad(!!words);
@@ -26,7 +27,7 @@ export default function IdeaAssist({ kind = 'video', title = '', heading = '', c
   return (
     <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
       <Btn small disabled={busy || disabled} onClick={run} title="The AI writes the topic and the points from your title and content. You can change them before you press Create.">{busy ? 'Writing…' : '✨ AI Assist'}</Btn>
-      {note ? <span role="status" style={{ fontSize: 12, color: bad ? '#b45309' : '#166534', fontWeight: 600 }}>{note}</span> : <span style={{ fontSize: 12, color: 'var(--muted)' }}>Write a title or content above, then press AI Assist: it writes the topic and the points for you.</span>}
+      {busy ? <span role="status" style={{ fontSize: 12, color: '#1d4fa8', fontWeight: 600 }}>The AI is writing the topic and the points. It can take up to 40 seconds: please wait here.</span> : note ? <span role="status" style={{ fontSize: 12, color: bad ? '#b45309' : '#166534', fontWeight: 600 }}>{note}</span> : <span style={{ fontSize: 12, color: 'var(--muted)' }}>Write a title or content above, then press AI Assist: it writes the topic and the points for you.</span>}
     </div>
   );
 }
