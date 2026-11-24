@@ -66,7 +66,7 @@ const PROVIDERS = [
     async photos(text, shape, key) {
       const orient = shape === 'portrait' ? '&orientation=vertical' : shape === 'landscape' ? '&orientation=horizontal' : '';
       const j = await this.get(`/api/?q=${encodeURIComponent(text)}&image_type=photo&safesearch=true&per_page=20&order=popular&min_width=700${orient}`, key);
-      return (j.hits || []).map((x) => ({ link: String(x.largeImageURL || x.webformatURL || ''), author: S.clip(x.user || 'Pixabay contributor', 80), pageUrl: String(x.pageURL || '') })).filter((x) => x.link);
+      return (j.hits || []).map((x) => ({ link: String(x.largeImageURL || x.webformatURL || ''), alt: String(x.webformatURL || ''), author: S.clip(x.user || 'Pixabay contributor', 80), pageUrl: String(x.pageURL || '') })).filter((x) => x.link);
     },
   },
 ];
@@ -251,8 +251,12 @@ async function photo(u, q = {}) {
   if (!list.length) return { error: `No ${c.p.name} photo was found for "${text}". Try other words.`, status: 404, code: 'none' };
   for (let i = 0; i < Math.min(3, list.length); i += 1) {
     const pick = list[(n + i) % list.length];
-    let got; try { got = await fetchBytes(c.p, pick.link, PHOTO_MAX); } catch (e) { if (i === 2) throw e; continue; } // eslint-disable-line no-await-in-loop
-    if (!got.buf) continue; // eslint-disable-line no-continue
+    // the big file first; when the source refuses it (429 / 403: a standard key may only take the 640 px file), the smaller one
+    let got = null; let lastErr = null;
+    for (const link of [pick.link, pick.alt].filter((x, k, arr) => x && arr.indexOf(x) === k && hostOk(c.p, x))) {
+      try { got = await fetchBytes(c.p, link, PHOTO_MAX); if (got && got.buf) break; } catch (e) { lastErr = e; got = null; } // eslint-disable-line no-await-in-loop
+    }
+    if (!got || !got.buf) { if (i === 2 && lastErr) throw lastErr; continue; } // eslint-disable-line no-continue
     const mime = looksImage(got.buf);
     if (!mime) continue; // eslint-disable-line no-continue
     const data = { buf: got.buf, mime, author: pick.author, pageUrl: pick.pageUrl, source: c.p.name };

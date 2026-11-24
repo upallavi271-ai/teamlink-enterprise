@@ -137,11 +137,12 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const makeBanner = async (p, i, total, heroId) => {
     const sc = p.scenes[i];
     const words = String((i === 0 ? p.headline : sc.caption) || p.headline || '').replace(/\p{Extended_Pictographic}|\uFE0F|\u200D/gu, ' ').split(/\s+/).filter(Boolean);
+    const extra = words.length > 8 ? words.splice(8).join(' ') : ''; // a long sentence: the first eight words are the headline, the rest goes under it
     const cut = words.length >= 3 ? Math.ceil(words.length / 2) : words.length;
     const site = String(kit.footer || '').split('·')[0].trim();
     const body = {
       size: ['1:1', '4:5', '9:16', '16:9'].includes(aspect) ? aspect : '1:1', layout: 'showcase', title: String(p.title + ' · ' + (i + 1)).slice(0, 80),
-      companyName: kit.brandName || undefined, headline: words.slice(0, cut).join(' '), headline2: words.slice(cut).join(' '), sub: i === 0 ? subOf(p) : '',
+      companyName: kit.brandName || undefined, headline: words.slice(0, cut).join(' '), headline2: words.slice(cut).join(' '), sub: i === 0 ? (subOf(p) || extra) : extra,
       services: i === 0 ? (tipsOf(p).length >= 2 ? tipsOf(p) : []) : [], servicesTitle: i === 0 && tipsOf(p).length >= 2 ? 'Simple tips' : '',
       audienceTitle: p.audience ? 'Who it is for:' : '', audience: p.audience || '', chip: site && !/\s/.test(site) ? (/\.[a-z]{2,}(\/.*)?$/i.test(site) ? site : '@' + site.replace(/^@/, '')) : '',
       ...(heroId ? { photoItemId: heroId } : { heroSearch: sc.search || sc.caption, heroN: i }), ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}),

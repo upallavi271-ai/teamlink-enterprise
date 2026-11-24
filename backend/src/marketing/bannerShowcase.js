@@ -144,8 +144,17 @@ async function makeShowcase(spec, H) {
     const d = Math.min(hw * 0.5, hh * 0.78); const cx = hx + hw / 2 - d / 2; const cy = hy + hh / 2 - d / 2;
     put(svg(d + 80, d + 80, `<defs><filter id="g"><feGaussianBlur stdDeviation="${d * 0.07}"/></filter></defs><rect x="40" y="40" width="${d}" height="${d}" rx="${d * 0.2}" fill="#38bdf8" fill-opacity="0.6" filter="url(#g)"/>
       <rect x="40" y="40" width="${d}" height="${d}" rx="${d * 0.2}" fill="#0b2a5b" stroke="#7dd3fc" stroke-width="4"/>${[0.25, 0.5, 0.75].map((f) => `<path d="M${40 + d * f} 40 v-${d * 0.12} M${40 + d * f} ${40 + d} v${d * 0.12} M40 ${40 + d * f} h-${d * 0.12} M${40 + d} ${40 + d * f} h${d * 0.12}" stroke="#7dd3fc" stroke-width="5"/>`).join('')}`), cx - 40, cy - 40);
-    const bt = await fit(String(spec.badge || 'AI').toUpperCase(), { max: Math.round(d * 0.4), min: 20, width: Math.round(d * 0.8), maxH: Math.round(d * 0.6), color: '#ffffff', bold: true, align: 'center' });
-    put(bt.buf, cx + (d - bt.w) / 2, cy + (d - bt.h) / 2);
+    const subject = [spec.headline, spec.headline2, spec.sub, ...services].join(' ');
+    const techWords = /\bai\b|artificial|software|digital|tech|data|automation|cyber|cloud|app\b/i.test(subject);
+    if (spec.badge || techWords) {
+      const bt = await fit(String(spec.badge || 'AI').toUpperCase(), { max: Math.round(d * 0.4), min: 20, width: Math.round(d * 0.8), maxH: Math.round(d * 0.6), color: '#ffffff', bold: true, align: 'center' });
+      put(bt.buf, cx + (d - bt.w) / 2, cy + (d - bt.h) / 2);
+    } else {
+      const isz = Math.round(d * 0.62); // the icon of what the post is about
+      const headWords = [spec.headline, spec.headline2].join(' '); // the icon follows the HEADLINE (a heart for a heart post); the other words only when the headline names nothing
+      const iconKey = RULES.some(([re]) => re.test(headWords)) ? iconFor(headWords, 0) : iconFor(subject, 0);
+      put(await sharp(Buffer.from(iconSvg(iconKey, isz, '#ffffff', 1.5))).png().toBuffer(), cx + (d - isz) / 2, cy + (d - isz) / 2);
+    }
   }
   y = topY + headH + gap;
 
