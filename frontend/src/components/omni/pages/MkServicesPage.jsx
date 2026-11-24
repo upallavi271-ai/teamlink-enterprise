@@ -43,7 +43,7 @@ function PlansTab({ cat }) {
         {cat.plans.map((p) => (
           <Panel key={p.key} title={`${p.label}: ${rs(p.price)} a month`} sub={p.suited}>
             <ul style={{ margin: '0 0 8px', paddingLeft: 18, fontSize: 13 }}>
-              {cat.items.filter((i) => p.quotas[i.key] > 0).map((i) => <li key={i.key}><b>{p.quotas[i.key]}</b> {i.label.toLowerCase()} a month</li>)}
+              {cat.items.filter((i) => p.quotas[i.key] > 0).map((i) => <li key={i.key}><b>{p.quotas[i.key]}</b> {i.label} a month</li>)}
             </ul>
             <details><summary style={{ cursor: 'pointer', fontSize: 12.5, color: 'var(--muted)' }}>Everything in {p.label}</summary>
               <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.5 }}>{p.includes.map((t) => <li key={t}>{t}</li>)}</ul>
