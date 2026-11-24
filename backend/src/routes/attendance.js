@@ -1061,6 +1061,7 @@ const TILE_KEYS = ['present', 'absent', 'halfDay', 'onLeave', 'offDay', 'noData'
 const TILE_LABEL = { present: 'Present', absent: 'Absent', halfDay: 'Half day', onLeave: 'On leave', offDay: 'Week off / Holiday', noData: 'No device data', notYet: 'Not checked in yet' };
 const dayKpi = require('../utils/attendanceDays');
 const PSRC = require('../utils/punchSources'); // where each punch came from: Web check-in / Biometric device / Biometric import / Pulse import / Typed by HR
+const WORKED = require('../utils/workedTime'); // Total working time of a day (first in to last out minus the breaks), shown on the Dashboard list
 const PIV = require('../utils/punchIntervals'); // the Punch log's Time interval: every time, HR's manual times included, the in-between punches paired out -> back
 const halfLeave = require('../utils/halfDayLeave');
 // The tile filter: ?tile=present|absent|halfDay|onLeave|offDay|noData|notYet and, inside
@@ -1102,7 +1103,7 @@ router.get('/kpi-report', requirePerm(null, 'hrms', 'Attendance & Time', 'export
         noteText: dayKpi.NOTE_TILES.includes(bk) ? dayKpi.notesOf(d, bk).map((k) => dayKpi.NOTE_LABEL[k]).join(' · ') : '',
         employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department || '',
         date: d.date, weekday: weekdayOf(d.date), checkIn: d.checkIn || null, checkOut: d.checkOut || null,
-        hours: d.hours ?? null, kpi: d.kpi || bk, kpiLabel: dayKpi.KPI_LABEL[d.kpi] || BUCKET_LABEL[bk] || '', status: d.status, reason: d.reason || '',
+        hours: d.hours ?? null, ...WORKED.fieldsOf(d), kpi: d.kpi || bk, kpiLabel: dayKpi.KPI_LABEL[d.kpi] || BUCKET_LABEL[bk] || '', status: d.status, reason: d.reason || '',
         session: d.kpi === 'halfDay' ? (d.session || null) : null,
         leaveKind: dayKpi.leaveKindOf(d), late: !!(d.late || d.lateExcused), lateDay: dayKpi.isLateDay(d), colour: d.colour || '',
         // LATE COMING: where the person's request for this late day stands (approved ones are excused, not a policy late).
@@ -1191,8 +1192,8 @@ router.get('/kpi-report', requirePerm(null, 'hrms', 'Attendance & Time', 'export
   const format = String(req.query.format || '').toLowerCase();
   if (format === 'csv' || format === 'xlsx') {
     const t12 = (t) => (t ? dayKpi.clock(toMinutes(String(t).slice(0, 5))) : '');
-    const headers = ['Name', 'Employee ID', 'Department', 'Date', 'Day', 'In time', 'Out time', 'Check-in method', 'Hours', 'Result', 'Note', 'Half', 'Half day leave', 'Half day leave approved by', 'Late', 'Late coming', 'Worked on week off / holiday', 'Reason'];
-    const data = list.map((x) => [x.name, x.employeeCode, x.department, x.date, x.weekday, t12(x.checkIn), t12(x.checkOut), x.howText || '', x.hours ?? '',
+    const headers = ['Name', 'Employee ID', 'Department', 'Date', 'Day', 'In time', 'Out time', 'Total working time', 'Check-in method', 'Hours', 'Result', 'Note', 'Half', 'Half day leave', 'Half day leave approved by', 'Late', 'Late coming', 'Worked on week off / holiday', 'Reason'];
+    const data = list.map((x) => [x.name, x.employeeCode, x.department, x.date, x.weekday, t12(x.checkIn), t12(x.checkOut), x.workedText || '', x.howText || '', x.hours ?? '',
       TILE_LABEL[x.tile] || x.kpiLabel, x.noteText || '', x.session === 'First half' ? '1st half' : x.session === 'Second half' ? '2nd half' : '', x.halfLeaveText ? `${x.halfLeaveText.replace('Half day leave: ', '')}${x.halfLeaveHalf ? ` (${x.halfLeaveHalf})` : ''}` : '', x.halfLeaveBy || '', x.lateDay ? 'Yes' : '', x.lateDay ? (x.latePermissionText || 'Not explained') : '', x.workedOnOff ? 'Yes' : '', x.reason]);
     const tagKey = tile ? (note ? dayKpi.NOTE_LABEL[note] : TILE_LABEL[tile]) : (kpi ? dayKpi.KPI_LABEL[kpi] : '');
     const tag = `${tagKey ? `${tagKey.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-` : ''}${from === to ? from : `${from}_to_${to}`}`;
