@@ -99,7 +99,7 @@ function Attention({ onOpen }) {
 
 function ClientsTab({ cat, toast, onAudit }) {
   const [month, setMonth] = useState(new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 7));
-  const [rows, setRows] = useState(null); const [err, setErr] = useState(''); const [form, setForm] = useState(null); const [busy, setBusy] = useState(false); const [rep, setRep] = useState(null);
+  const [rows, setRows] = useState(null); const [err, setErr] = useState(''); const [form, setForm] = useState(null); const [busy, setBusy] = useState(false); const [rep, setRep] = useState(null); const [onb, setOnb] = useState(null);
   const load = useCallback(() => omni.get('/gs/marketing/services/plans', { month }).then((d) => { setRows(d.items); setErr(''); }).catch((e) => setErr(errOf(e, 'The clients could not be read.'))), [month]);
   useEffect(() => { load(); }, [load]);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -127,6 +127,7 @@ function ClientsTab({ cat, toast, onAudit }) {
           <Banner>The price is kept as it was at the start. Healthcare clients: medical content is reviewed by a doctor or a qualified medical reviewer before it is published.</Banner>
         </Panel>
       ) : null}
+      {onb ? <OnboardingPanel key={onb.id} plan={onb} toast={toast} onClose={() => setOnb(null)} /> : null}
       {rep ? <ReportPanel plan={rep} month={month} toast={toast} onClose={() => setRep(null)} /> : null}
       {err ? <Banner tone="error">{err}</Banner> : null}
       {rows && !rows.length ? <Empty title="No client on a plan yet">Add the first one: the plan, how many months were paid for, and the start date. Then count what is delivered each month.</Empty> : null}
@@ -134,7 +135,7 @@ function ClientsTab({ cat, toast, onAudit }) {
         const [tone, words] = RENEW[r.renewal] || RENEW.running;
         return (
           <Panel key={r.id} title={`${r.clientName} · ${r.planLabel}`} sub={`${r.months} month(s) from ${fmtDate(r.startDate)} to ${fmtDate(r.endDate)} · paid ${rs(r.pricePaid)}${r.industry ? ` · ${r.industry}` : ''}`} style={{ marginBottom: 12 }}
-            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn><TinyBtn onClick={() => setRep(r)}>Monthly report</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
+            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => setOnb(r)}>Onboarding</TinyBtn><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn><TinyBtn onClick={() => setRep(r)}>Monthly report</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Delivered in {month}: {r.deliveredPct}% of the plan. Posts, Reels and stories are counted by themselves from the work approved for {r.clientName} in Client projects; the + and − buttons add work made outside TeamLink. SEO blogs are counted when a post is marked Published in SEO and visibility > Blog planner. GBP posts are counted by hand.</div>
             {r.progress.map((p) => (
               <div key={p.item} style={{ display: 'grid', gridTemplateColumns: 'minmax(150px,1.2fr) 3fr auto', gap: 10, alignItems: 'center', margin: '5px 0', fontSize: 13 }}>
@@ -209,6 +210,40 @@ function AuditTab({ cat, toast, pick }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ONBOARDING of one client (marketing/onboarding.js): what to collect, claim and verify when a client starts. The team ticks a step and may write a note; the steps of the TeamLink tools tick themselves when the work is saved.
+function OnboardingPanel({ plan, toast, onClose }) {
+  const [d, setD] = useState(null);
+  useEffect(() => { omni.get(`/gs/marketing/services/plans/${plan.id}/onboarding`).then((x) => setD(x.onboarding)).catch((e) => toast(errOf(e, 'The checklist could not be opened.'))); }, [plan.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const put = async (key, body) => { try { const x = await omni.put(`/gs/marketing/services/plans/${plan.id}/onboarding/${key}`, body); setD(x.onboarding); } catch (e) { toast(errOf(e, 'It could not be saved.')); } };
+  if (!d) return <div className="card panel" style={{ marginBottom: 12 }}>Opening the checklist…</div>;
+  const s = d.summary;
+  return (
+    <Panel title={`Onboarding: ${d.clientName}`} sub={`${s.done} of ${s.total} steps done · must-do steps ${s.coreDone} of ${s.coreTotal}${s.ready ? ' · ready to start' : ''} · ${d.industryLabel}`} style={{ marginBottom: 12 }} right={<span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>{s.ready ? <Pill tone="live" dot>Ready to start</Pill> : <Pill tone="warn" dot>{s.coreLeft} must-do open</Pill>}<TinyBtn onClick={onClose}>Close</TinyBtn></span>}>
+      <div style={{ background: '#e2e8f0', borderRadius: 6, height: 10, overflow: 'hidden', marginBottom: 8 }}><div style={{ width: `${s.pct}%`, height: '100%', background: s.ready ? '#15803d' : '#0f766e' }} /></div>
+      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>{d.note}</div>
+      {d.groups.map((g) => (
+        <div key={g.key} style={{ marginTop: 10 }}>
+          <b style={{ fontSize: 13 }}>{g.label}</b>
+          {g.items.map((i) => (
+            <div key={i.key} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 8, margin: '7px 0', fontSize: 13, alignItems: 'start' }}>
+              <input type="checkbox" aria-label={i.text} checked={i.done} disabled={!!i.auto} onChange={(e) => put(i.key, { done: e.target.checked })} style={{ marginTop: 3 }} />
+              <div>
+                <span style={i.done ? { textDecoration: 'line-through', color: 'var(--muted)' } : undefined}>{i.text}</span> {i.core ? <Tag title="A must-do step: the client is ready to start when all of these are done">Must do</Tag> : null} <Tag>{i.whoWords}</Tag>
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>{i.hint}</div>
+                {i.auto ? <div style={{ fontSize: 12, color: i.done ? '#15803d' : '#8a6410' }}>{i.evidence} This step ticks by itself.</div>
+                  : <>
+                    {i.done && i.doneBy ? <div style={{ fontSize: 12, color: '#15803d' }}>Done by {i.doneBy}{i.doneAt ? ` on ${fmtDate(i.doneAt)}` : ''}.</div> : null}
+                    <input key={`${i.key}-${i.note}`} aria-label={`Note on: ${i.text}`} defaultValue={i.note} maxLength={300} placeholder="Note (who, when, what is left)" style={{ width: '100%', maxWidth: 420, marginTop: 3, fontSize: 12 }} onBlur={(e) => { if (e.target.value !== i.note) put(i.key, { note: e.target.value }); }} />
+                  </>}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </Panel>
   );
 }
 

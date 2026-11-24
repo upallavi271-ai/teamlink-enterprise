@@ -31,6 +31,7 @@ const Page = require('../marketing/pagespeed');
 const Comp = require('../marketing/competitors');
 const PlanRem = require('../marketing/planReminders');
 const Blog = require('../marketing/blogPlanner');
+const Onb = require('../marketing/onboarding');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -366,6 +367,9 @@ router.post('/services/plans', mustWrite, wrap(async (req, res) => send(res, awa
 router.get('/services/plans/:id', mustWrite, wrap(async (req, res) => send(res, await CS.getPlan(req.user, req.params.id, req.query.month))));
 router.put('/services/plans/:id', mustWrite, wrap(async (req, res) => send(res, await CS.updatePlan(req.user, req.params.id, req.body || {}))));
 router.post('/services/plans/:id/delivery', mustWrite, wrap(async (req, res) => send(res, await CS.setDelivery(req.user, req.params.id, req.body || {}))));
+// onboarding of a new client (marketing/onboarding.js): the checklist of what to collect, claim and verify; the steps of the TeamLink tools tick themselves
+router.get('/services/plans/:id/onboarding', mustWrite, wrap(async (req, res) => send(res, await Onb.get(req.user, req.params.id))));
+router.put('/services/plans/:id/onboarding/:key', mustWrite, wrap(async (req, res) => send(res, await Onb.setStep(req.user, req.params.id, req.params.key, req.body || {}))));
 // the monthly client report: the numbers the team types or imports (nothing invented), the printable page, the Search Console CSV reader
 router.get('/services/plans/:id/report', mustWrite, wrap(async (req, res) => send(res, await Mrep.build(req.user, req.params.id, req.query.month))));
 router.put('/services/plans/:id/report', mustWrite, wrap(async (req, res) => send(res, await Mrep.save(req.user, req.params.id, req.body || {}))));

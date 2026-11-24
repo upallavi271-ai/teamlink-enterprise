@@ -1,13 +1,15 @@
 // ---------------------------------------------------------------------------
 // AI MARKETING > CLIENT PLANS > REMINDERS (2026-11-24). Nobody should have to remember when a client's plan ends or that the month's report is still to be made:
 //   * RENEWAL  a bell to whoever started the plan when it ends in 30, 14 and 7 days, on its last day, and once when it has ended and is still running;
-//   * REPORT   a bell in the last 3 days of the month for a plan that has no numbers saved in its monthly report yet.
+//   * REPORT   a bell in the last 3 days of the month for a plan that has no numbers saved in its monthly report yet;
+//   * ONBOARDING  a bell 7 days and 14 days after the plan started if must-do steps of its onboarding checklist (onboarding.js) are still open (nothing after 60 days).
 // Each reminder goes ONCE (table OmniMkPlanReminder): a plan that is first seen with 10 days left gets one bell, not two. The same facts are shown on the Client plans screen ("Needs attention", due()), so they
 // are seen even when nobody looks at the bell. The bell goes to the person who started the plan (the Admins if that person is no longer active). A plan the team has ended is never reminded.
 // A daily job (start(), every 6 hours, India time days; never in the sandbox). Nothing is sent outside TeamLink: no email, no WhatsApp, nothing to the client.
 // ---------------------------------------------------------------------------
 const S = require('../outreach/store');
 const CS = require('./clientServices');
+const Onb = require('./onboarding');
 
 const T = 'OmniMkPlanReminder';
 const DDL = [
@@ -40,11 +42,21 @@ async function reportSaved(planId, month) { // numbers saved in the monthly repo
 }
 function reportOf(view, month) { return { kind: 'report', keys: [month], level: 'notice', title: `Monthly report due: ${view.clientName}`, message: `The report for ${monthWords(month)} of ${view.clientName} has no numbers saved yet. Open AI Marketing > Client plans > Monthly report, type or import the real numbers, and save.` }; }
 
-// what needs attention, for the screen (no side effect): [{ planId, clientName, kind, level, title, message }]
+// ONBOARDING (onboarding.js): a plan that started 7 to 60 days ago and still has must-do steps open: a bell at 7 days and at 14 days
+async function onboardingEvent(raw, view, today, skip) {
+  if ((skip || []).includes('onboarding')) return null;
+  const days = dayDiff(today, view.startDate); if (days < 7 || days > 60) return null;
+  const sum = await Onb.summarize(raw); if (!sum.coreLeft) return null;
+  return { kind: 'onboarding', keys: days >= 14 ? ['7', '14'] : ['7'], level: days >= 14 ? 'soon' : 'notice', days, title: `Onboarding not finished: ${view.clientName}`,
+    message: `${sum.coreLeft} of the ${sum.coreTotal} must-do steps are still open, ${plural(days, 'day')} after the ${view.planLabel} plan started. Open AI Marketing > Client plans > Onboarding.` };
+}
+
+// what needs attention, for the screen (no side effect): [{ planId, clientName, kind, level, title, message }]; opts.skip: kinds to leave out (a test answers it)
 async function due(u, opts = {}) {
   const today = CS.istDay(opts.now || Date.now()); const out = [];
   for (const { raw, view } of await CS.activePlans()) {
     if (u && !CS.mayDept(u, raw.department)) continue;
+    const onb = await onboardingEvent(raw, view, today, opts.skip); if (onb) out.push({ planId: raw.id, clientName: view.clientName, kind: 'onboarding', level: onb.level, days: onb.days, title: onb.title, message: onb.message }); // eslint-disable-line no-await-in-loop
     const ren = renewalOf(view, today); if (ren) out.push({ planId: raw.id, clientName: view.clientName, kind: 'renew', level: ren.level, days: ren.days, title: ren.title, message: ren.message });
     const month = reportMonth(today, 7);
     if (month && runsIn(view, month) && !(await reportSaved(raw.id, month))) { const r = reportOf(view, month); out.push({ planId: raw.id, clientName: view.clientName, kind: 'report', level: r.level, month, title: r.title, message: r.message }); } // eslint-disable-line no-await-in-loop
@@ -59,7 +71,7 @@ async function recipients(raw) { // whoever started the plan, if still active; e
     return (await prisma.user.findMany({ where: { status: 'Active', OR: [{ role: { in: ['SUPER_ADMIN', 'ADMIN'] } }, { atsRole: { in: ['SUPER_ADMIN', 'ADMIN'] } }] }, select: { id: true }, take: 10 })).map((a) => a.id);
   } catch { return []; }
 }
-// opts: { now, notify, recipients (a test answers these two), force (run in the sandbox) }
+// opts: { now, notify, recipients (a test answers these two), force (run in the sandbox), skip (kinds to leave out, for a test) }
 async function sweep(opts = {}) {
   const out = { plans: 0, sent: 0, skipped: 0, noRecipient: 0 };
   if (!opts.force && require('../utils/sandbox').isSandbox()) return { ...out, sandbox: true }; // eslint-disable-line global-require
@@ -68,6 +80,7 @@ async function sweep(opts = {}) {
   for (const { raw, view } of await CS.activePlans()) { // eslint-disable-line no-await-in-loop
     out.plans += 1; const events = [];
     const ren = renewalOf(view, today); if (ren) events.push(ren);
+    const onb = await onboardingEvent(raw, view, today, opts.skip); if (onb) events.push(onb); // eslint-disable-line no-await-in-loop
     const month = reportMonth(today, 3); if (month && runsIn(view, month) && !(await reportSaved(raw.id, month))) events.push(reportOf(view, month)); // eslint-disable-line no-await-in-loop
     for (const ev of events) {
       const sent = new Set((await S.q(`SELECT stepKey FROM "${T}" WHERE planId = ? AND kind = ?`, raw.id, ev.kind)).map((r) => r.stepKey)); // eslint-disable-line no-await-in-loop
@@ -87,4 +100,4 @@ function start() {
   setTimeout(() => sweep().catch(() => {}), 90 * 1000).unref();
   timer = setInterval(() => { sweep().catch(() => {}); }, 6 * 3600 * 1000); if (timer.unref) timer.unref();
 }
-module.exports = { ensure, due, sweep, start, renewalOf, reportMonth, recipients, STEPS };
+module.exports = { ensure, due, sweep, start, renewalOf, reportMonth, recipients, onboardingEvent, STEPS };

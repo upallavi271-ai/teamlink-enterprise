@@ -75,16 +75,16 @@ const ist = (s) => Date.parse(`${s}+05:30`);
   assert.equal(PR.start(), undefined, 'the daily job does not start in the sandbox');
   const C = (await CS.createPlan(admin, { clientName: 'Orphan Co', plan: 'basic', months: 1, startDate: '2026-11-01' })).plan; // ends 2026-12-01
   const now1 = ist('2026-11-20T10:00:00');
-  let s = await PR.sweep({ notify, now: now1, force: true, recipients: async () => [] });
+  let s = await PR.sweep({ notify, now: now1, force: true, skip: ['onboarding'], recipients: async () => [] }); // the onboarding bells have their own test (mkOnboarding.test.js)
   assert.deepEqual([s.sent, s.noRecipient], [0, 1]); assert.equal(sent.length, 0);
   assert.equal((await S.q('SELECT stepKey FROM "OmniMkPlanReminder" WHERE planId = ?', C.id)).length, 0, 'nobody was told, so it is not marked as sent');
-  s = await PR.sweep({ notify, now: now1, force: true, recipients: async () => ['u1'] });
+  s = await PR.sweep({ notify, now: now1, force: true, skip: ['onboarding'], recipients: async () => ['u1'] });
   assert.deepEqual([s.sent, s.noRecipient], [1, 0]); assert.deepEqual(tell().map((x) => [x.to, x.title]), [[['u1'], 'Client plan ends in 11 days: Orphan Co']]);
   await CS.updatePlan(admin, C.id, { status: 'ended' });
   console.log('PASS sandbox + recipients: nothing is sent in the sandbox, the daily job stays off there, no recipient = not marked as sent, tried again at the next sweep');
 
   // ---- 4. the reminders over a month: each once, the right words ------------------------------------------------------------------------------------------------------
-  const pr = { notify, recipients: async () => [admin.id], force: true };
+  const pr = { notify, recipients: async () => [admin.id], force: true, skip: ['onboarding'] };
   const A = (await CS.createPlan(admin, { clientName: 'Renew Test Co', plan: 'basic', months: 1, startDate: '2026-11-01' })).plan; assert.equal(A.endDate, '2026-12-01');
   s = await PR.sweep({ ...pr, now: ist('2026-11-20T10:00:00') }); assert.equal(s.sent, 1); let t = tell(); assert.equal(t.length, 1);
   assert.equal(t[0].title, 'Client plan ends in 11 days: Renew Test Co'); assert.ok(/Basic plan of Renew Test Co/.test(t[0].message) && /2026/.test(t[0].message) && /renew/i.test(t[0].message)); assert.deepEqual(t[0].to, [admin.id]);
@@ -92,7 +92,7 @@ const ist = (s) => Date.parse(`${s}+05:30`);
   s = await PR.sweep({ ...pr, now: ist('2026-11-20T16:00:00') }); assert.deepEqual([s.sent, s.skipped], [0, 1]); assert.equal(tell().length, 0, 'the same day again: no second bell');
   s = await PR.sweep({ ...pr, now: ist('2026-11-24T10:00:00') }); t = tell(); assert.deepEqual(t.map((x) => x.title), ['Client plan ends in 7 days: Renew Test Co']);
   // the screen: what needs attention on 24 Nov (7 days left, and the report window of the last 7 days is open)
-  const dueOn = (day, u = admin) => PR.due(u, { now: ist(`${day}T11:00:00`) });
+  const dueOn = (day, u = admin) => PR.due(u, { now: ist(`${day}T11:00:00`), skip: ['onboarding'] });
   const rowsNow = async () => Number((await S.q('SELECT COUNT(*) AS n FROM "OmniMkPlanReminder"'))[0].n); const rowsBefore = await rowsNow();
   let d = await dueOn('2026-11-24'); assert.deepEqual(d.map((x) => [x.kind, x.clientName, x.level]), [['renew', 'Renew Test Co', 'soon'], ['report', 'Auto Count Hospital', 'notice'], ['report', 'Renew Test Co', 'notice']], JSON.stringify(d));
   assert.equal((await dueOn('2026-11-23')).filter((x) => x.kind === 'report').length, 0, 'before the last 7 days of the month there is no report line');
@@ -117,7 +117,7 @@ const ist = (s) => Date.parse(`${s}+05:30`);
   assert.ok(/ended 3 days ago/.test(t.find((x) => /ended:/.test(x.title)).message));
   s = await PR.sweep({ ...pr, now: ist('2026-12-06T10:00:00') }); assert.equal(s.sent, 0, 'ended: said once');
   await CS.updatePlan(admin, A.id, { status: 'ended' }); s = await PR.sweep({ ...pr, now: ist('2026-12-20T10:00:00') }); assert.equal(tell().filter((x) => /Renew Test Co/.test(x.title)).length, 0, 'a plan the team ended is never reminded');
-  assert.equal((await PR.due(admin, { now: ist('2026-12-20T10:00:00') })).filter((x) => x.clientName === 'Renew Test Co').length, 0);
+  assert.equal((await PR.due(admin, { now: ist('2026-12-20T10:00:00'), skip: ['onboarding'] })).filter((x) => x.clientName === 'Renew Test Co').length, 0);
   console.log('PASS reminders: each step once, a late-seen plan gets one bell, the empty report is reminded and a saved one is not, ended plans are quiet, other departments are not shown, the screen only reads');
 
   // ---- 5. who is told ------------------------------------------------------------------------------------------------------------------------------------------------------
