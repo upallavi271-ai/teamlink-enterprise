@@ -348,7 +348,9 @@ async function ingestRaw(raw, { source = 'imap', mailbox = '', team = false } = 
   if (p.auto) return log('automatic mail');
   const rec = await C.recordByEmail(p.from);
   let act = null;
-  if (rec) {
+  // the automatic follow-through reads the shared inbox too and writes "Replied on mail" on a lead (crm/autopilot.js onReply): not twice
+  const dup = rec && rec.kind === 'lead' ? await B.one('SELECT 1 AS x FROM "CrmActivity" WHERE "leadId" = ? AND "subject" LIKE \'Replied on mail%\' AND "at" >= ? AND SUBSTR(COALESCE("note", \'\'), 1, 80) = SUBSTR(?, 1, 80)', rec.id, new Date(Date.now() - 30 * 60000).toISOString(), clip(p.text, 1000) || '') : null;
+  if (rec && !dup) {
     act = await C.systemActivity(rec.links, { kind: 'email', subject: `Replied on Email: ${clip(p.subject, 150) || '(no subject)'}`, note: clip(p.text, 3800), at: p.date.toISOString(), byName: p.fromName || p.from });
     if (rec.ownerId) await C.notify([rec.ownerId], `${rec.name || p.from} wrote: ${clip(p.subject, 120) || ''}`, `Open: /crm/${rec.kind === 'contact' ? 'accounts' : `${rec.kind}s`}?open=${rec.kind}:${rec.id}`, `crm-b-mail|${messageId}`);
   }
