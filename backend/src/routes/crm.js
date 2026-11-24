@@ -58,6 +58,9 @@ router.use(async (req, res, next) => {
 // sub-teams, field security, IP restriction, consent - all under /crm/plus; its first step also hides the fields a role may not see
 router.use(require('./crmPlus'));
 
+// CRM wave B (2026-11-24): email, phone / SMS / chat, marketing, customer portal - routes/crmB.js, crm/b/*.js
+router.use('/b', require('./crmB'));
+
 const send = (res, out) => res.status(out.status).json(out.body);
 const wrap = (fn) => async (req, res, next) => { try { return send(res, await fn(req)); } catch (e) { return next(e); } };
 const KIND = { leads: 'lead', accounts: 'account', contacts: 'contact', deals: 'deal' };

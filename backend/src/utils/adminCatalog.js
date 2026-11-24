@@ -142,6 +142,17 @@ const INTEGRATION_CATALOG = [
   { id: 'email-inbox', name: 'Shared Inbox (IMAP)', group: 'Email', glyph: '\u{1F4E5}',
     desc: 'Pull candidate replies and client mail into the requirement timeline.',
     fields: [['IMAP host', ''], ['Port', '993'], ['Mailbox address', ''], ['Password / app key', '']] },
+  // CRM wave B (2026-11-24, crm/b/mail.js + crm/b/marketing.js): each salesperson connects their own Gmail / Outlook in CRM > Follow-ups > Inbox > Mailboxes;
+  // the mail they send and get from customers is written on the CRM records. Needs the company's own Google Cloud / Microsoft Entra app (OAuth client).
+  { id: 'crm-gmail', name: 'Gmail (CRM mail)', group: 'Email', glyph: '📧',
+    desc: 'CRM: read the Gmail of each salesperson (read-only) so mail with customers lands on their CRM records. Make an OAuth client (Web application) in Google Cloud Console with the Gmail API on; add the redirect address shown in CRM > Dashboard > Settings (Gmail redirect).',
+    fields: [['Client ID', '....apps.googleusercontent.com'], ['Client secret', '']], hints: ['Client ID'] },
+  { id: 'crm-outlook', name: 'Outlook / Microsoft 365 (CRM mail)', group: 'Email', glyph: '📨',
+    desc: 'CRM: read the Outlook mailbox of each salesperson (Mail.Read) so mail with customers lands on their CRM records. Register an app in Microsoft Entra ID with the redirect address shown in CRM > Dashboard > Settings (Outlook redirect).',
+    fields: [['Client ID', ''], ['Client secret', ''], ['Tenant ID (Microsoft only)', 'common or your tenant id']], hints: ['Tenant ID (Microsoft only)'] },
+  { id: 'crm-ads', name: 'CRM ad leads (Facebook / Google)', group: 'Email', glyph: '📢',
+    desc: 'CRM: Facebook / Instagram lead ads and Google Ads lead forms become CRM leads (switch "Ad leads" in CRM settings). Facebook: subscribe the Page to leadgen with the webhook address in CRM settings and a Page access token (leads_retrieval). Google Ads: lead form > webhook, the same address and the key below.',
+    fields: [['Facebook Page access token', ''], ['Facebook App secret', ''], ['Webhook verify token (any text)', 'type any text'], ['Google Ads webhook key (any text)', 'type any text']], hints: ['Webhook verify token (any text)', 'Google Ads webhook key (any text)'] },
   // REAL (utils/callGateway.js): Exotel click-to-call. The agent's own phone rings first, then
   // the person is connected; the result (answered / no answer / duration / recording link)
   // comes back to /api/webhooks/call/exotel and lands in the call log.
@@ -317,7 +328,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['social', 'email', 'email-inbox', 'ai-claude', 'ai-fast', 'webhooks','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['social', 'email', 'email-inbox', 'crm-gmail', 'crm-outlook', 'crm-ads', 'ai-claude', 'ai-fast', 'webhooks','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 

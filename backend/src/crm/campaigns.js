@@ -48,9 +48,11 @@ function cleanAudience(a = {}) {
     status: S.clip(a.status, 40), source: S.clip(a.source, 60), rating: S.clip(a.rating, 10), city: S.clip(a.city, 60), industry: S.clip(a.industry, 60),
     role: S.clip(a.role, 40), accountKind: ['Prospect', 'Client'].includes(a.accountKind) ? a.accountKind : null,
     owner: S.clip(a.owner, 60),
+    segmentId: S.clip(a.segmentId, 60), // CRM wave B: a saved, self-updating segment (crm/b/marketing.js) instead of the filters
   };
 }
 async function audienceRows(user, aud) {
+  if (aud && aud.segmentId) return require('./b/marketing').segmentAudience(user, aud.segmentId); // eslint-disable-line global-require
   const r = S.roleOf(user);
   const where = []; const params = [];
   const ownerCol = 'x."ownerId"';
@@ -96,7 +98,9 @@ function merge(text, x, sender) {
 }
 function unsubscribeLine(email) {
   const base = (process.env.PUBLIC_API_URL || process.env.FRONTEND_URL || process.env.APP_BASE_URL || '').replace(/\/$/, '');
-  return base ? `\n\n--\nNot interested? Unsubscribe: ${base}/api/crm-public/unsubscribe?t=${tokenFor(email)}` : '\n\n--\nNot interested? Reply "unsubscribe" and we will not write again.';
+  // CRM wave B: the preference centre (crm/b/marketing.js) next to the unsubscribe link - which topics, which channels, or nothing
+  const prefs = base ? `\nChoose what you get from us: ${require('./b/marketing').prefsLink(email)}` : ''; // eslint-disable-line global-require
+  return base ? `\n\n--\nNot interested? Unsubscribe: ${base}/api/crm-public/unsubscribe?t=${tokenFor(email)}${prefs}` :'\n\n--\nNot interested? Reply "unsubscribe" and we will not write again.';
 }
 
 function cleanCampaign(body) {
@@ -145,7 +149,9 @@ async function detail(user, id) {
 // ---- sending -----------------------------------------------------------------------------------------------------------------
 async function deliver(c, x, sender) {
   if (c.channel === 'email') {
-    return require('../utils/mailer').sendMail({ to: x.toAddr, subject: merge(c.subject, x, sender), text: merge(c.body, x, sender) + unsubscribeLine(x.toAddr) }); // eslint-disable-line global-require
+    const text = merge(c.body, x, sender) + unsubscribeLine(x.toAddr);
+    const html = x.id ? await require('./b/mail').campaignHtml(c, x, text).catch(() => null) : null; // eslint-disable-line global-require -- opens / clicks when tracking is on (crm/b/mail.js)
+    return require('../utils/mailer').sendMail({ to: x.toAddr, subject: merge(c.subject, x, sender), text, ...(html ? { html } : {}) }); // eslint-disable-line global-require
   }
   const text = merge(c.body, x, sender);
   return require('../channels/send').sendWhatsApp({ // eslint-disable-line global-require
@@ -212,7 +218,7 @@ async function sendNow(user, id) {
     const raw = c.channel === 'email' ? x.email : x.phone;
     const addr = c.channel === 'email' ? String(raw || '').trim().toLowerCase() : S.phone10(raw);
     let status = 'queued'; let error = null;
-    if (!addr || (c.channel === 'whatsapp' && addr.length < 10)) { status = 'skipped'; error = c.channel === 'email' ? 'no email' : 'no mobile number'; } else if (seen.has(addr)) { status = 'skipped'; error = 'same address twice'; } else if (await optedOut(c.channel, addr)) { status = 'skipped'; error = 'opted out'; } // eslint-disable-line no-await-in-loop
+    if (!addr || (c.channel === 'whatsapp' && addr.length < 10)) { status = 'skipped'; error = c.channel === 'email' ? 'no email' : 'no mobile number'; } else if (seen.has(addr)) { status = 'skipped'; error = 'same address twice'; } else if (await optedOut(c.channel, addr)) { status = 'skipped'; error = 'opted out'; } else if (await require('./b/marketing').prefBlocks(c.channel, addr, c.topic).catch(() => false)) { status = 'skipped'; error = 'not for this topic / channel (their preferences)'; } // eslint-disable-line no-await-in-loop, global-require
     if (addr) seen.add(addr);
     // eslint-disable-next-line no-await-in-loop
     await DB.run('INSERT INTO "CrmCampaignRecipient" ("id", "campaignId", "kind", "recordId", "name", "company", "toAddr", "status", "error") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', S.newId('rcp'), c.id, aud.kind === 'contacts' ? 'contact' : 'lead', x.id, x.name || null, x.company || null, addr || null, status, error);

@@ -68,6 +68,7 @@ router.get('/proposal/:token/pdf', async (req, res) => {
   try {
     const out = await X.proposalPdf(null, id, { signed: true });
     if (!out.pdf) return bad(res);
+    await require('../crm/b/mail').docViewed('proposal', id, req, {}).catch(() => null); // eslint-disable-line global-require -- CRM wave B: "the customer opened the proposal" on the deal
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `inline; filename="${out.name}"`);
     res.set('Cache-Control', 'private, no-store');
@@ -90,6 +91,7 @@ router.get('/proposal/:token', async (req, res) => {
   res.set('Cache-Control', 'private, no-store');
   res.set('X-Robots-Tag', 'noindex');
   if (!p) return bad(res);
+  await require('../crm/b/mail').docViewed('proposal', id, req, { what: `proposal ${p.number}` }).catch(() => null); // eslint-disable-line global-require
   return res.send(answerPage(p, req.params.token));
 });
 router.post('/proposal/:token', express.urlencoded({ extended: false, limit: '2kb' }), async (req, res) => {

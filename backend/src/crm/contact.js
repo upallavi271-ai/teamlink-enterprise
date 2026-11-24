@@ -118,12 +118,16 @@ async function send(user, { kind, id, channel, to, subject, text } = {}) {
     const subj = clip(subject, 200);
     if (!subj) return S.fail(400, 'Write the subject.');
     const own = await require('../utils/messageChannels').ownContact(user); // eslint-disable-line global-require
+    // CRM wave B (crm/b/mail.js): the person's signature under the mail, and the tracked HTML copy when "Email open and click tracking" is on
+    const prep = await require('./b/mail').prepareEmail(user, { kind, id: x.row.id, to: addr, subject: subj, text: body }).catch(() => ({ text: body, html: null, token: null })); // eslint-disable-line global-require
     result = await require('../utils/messaging').send('Email', { // eslint-disable-line global-require
-      to: addr, subject: subj, text: body, senderEmail: own.email || undefined, senderName: own.name || user.name, actorUserId: user.id,
+      to: addr, subject: subj, text: prep.text, ...(prep.html ? { html: prep.html } : {}), senderEmail: own.email || undefined, senderName: own.name || user.name, actorUserId: user.id,
       meta: { audience: 'crm', personName: x.name, senderUserId: user.id, senderName: user.name, purpose: 'CRM email' },
     });
+    if (!result.ok) await require('./b/mail').afterEmail(prep.token, null, false).catch(() => null); // eslint-disable-line global-require
     if (!result.ok) return S.fail(result.notConfigured ? 409 : (result.invalid || result.creditsBlocked ? 400 : 502), result.notConfigured ? `Email is not connected: ${result.error}` : `The email was not sent: ${result.error || 'the mail server refused it.'}`, { notConfigured: !!result.notConfigured });
-    const logged = await logSent(user, kind, id, { kind: 'email', subject: `Email sent: ${subj}`, note: `To ${addr}\n\n${body}` }, result.providerRef, 'Sent', 'Accepted by the mail server');
+    const logged = await logSent(user, kind, id, { kind: 'email', subject: `Email sent: ${subj}`, note: `To ${addr}\n\n${prep.text}` }, result.providerRef, 'Sent', prep.token ? 'Accepted by the mail server · opens are tracked' : 'Accepted by the mail server');
+    await require('./b/mail').afterEmail(prep.token, logged.actId, true).catch(() => null); // eslint-disable-line global-require
     return S.okBody({ ok: true, channel, to: addr, via: 'Email (SMTP)', deduped: !!result.deduped, sentAt: new Date().toISOString(), openFollowUps: logged.openFollowUps });
   }
   // WhatsApp

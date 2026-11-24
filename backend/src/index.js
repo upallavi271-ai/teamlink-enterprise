@@ -143,6 +143,9 @@ app.use(require('./routes/omniWaFromOmni'));
 // CORS: open only for the public paths third parties use; everything else = CORS_ORIGINS / this site / localhost in dev.
 // A lead from the company's website (a form on another site, with the API key): its own open CORS, so it comes before the app's (routes/crmWebsite.js).
 app.use('/api/crm/leads/public', require('./routes/crmWebsite'));
+// CRM wave B (2026-11-24): the website chat bubble / visit tracker (open CORS), landing pages, events, surveys, the preference centre, email
+// open / click tracking and the provider webhooks - all no-login, each proves itself (routes/crmBPublic.js)
+app.use('/api/crm-public/b', require('./routes/crmBPublic'));
 // Market wave C (2026-11-21): the LinkedIn sourcing browser extension's door - its own open CORS, the per-person key is the login (routes/mktPublic.js).
 app.use('/api/public/mkt/ext', require('./routes/mktPublic').ext);
 app.use(require('./utils/webSecurity').corsMiddleware());
@@ -456,6 +459,7 @@ app.use('/api/ats/mkt', require('./routes/mktB')); // market wave B (2026-11-21)
 app.use('/api/ats/data-quality', require('./routes/dataQuality')); // profile completeness, duplicates, stale profiles (utils/dataQuality.js)
 app.use('/api/privacy', require('./routes/privacy')); // DPDP: a candidate's data export, legal hold, erasure, consent review (utils/candidatePrivacy.js)
 app.use('/api/crm-public', require('./routes/crmPublic')); // the campaign email unsubscribe link (no login)
+app.use('/api/crm-portal', require('./routes/crmPortal')); // CRM wave B: the customer / partner portal's own login and data (page /crm-portal)
 // CREDENTIALS VAULT (founder 2026-11-21): every company login in one place, encrypted; Super Admin only unless granted (utils/credentialVault.js).
 app.use('/api/credentials-vault', require('./routes/credentialVault'));
 app.use('/api/admin', adminRoutes);
