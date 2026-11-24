@@ -13,7 +13,8 @@
 // before with the fixed script: the brain can only make a call better, never stop one.
 //
 // Uses the existing Claude channel (Administration > Integrations > AI Assistant, utils/aiAgent.js): no new provider,
-// the key never leaves the server. AI_CALL_BRAIN=off switches it off; AI_CALL_BRAIN_MODEL picks the model (default
+// the key never leaves the server. SINCE 2026-11-24 an OpenAI key saved in Integrations > "AI Calling brain (OpenAI)" (utils/openaiCalling.js)
+// is used INSTEAD, with the same question, JSON shape and checks; with no OpenAI key nothing is different. AI_CALL_BRAIN=off switches it off; AI_CALL_BRAIN_MODEL picks the model (default
 // Claude Haiku 5.5: fast enough for a phone call); AI_CALL_BRAIN_MS is the time it may take (default 2500 ms).
 // ---------------------------------------------------------------------------
 const S = require('./scripts');
@@ -101,8 +102,16 @@ function safeLeadIn(text, { facts, heard }) {
 }
 
 let cfgCache = { at: 0, cfg: null };
+// after Integrations > "AI Calling brain (OpenAI)" or the Claude channel is saved / disconnected (routes/admin.js)
+function resetChannel() { cfgCache = { at: 0, cfg: null }; }
 async function channel() {
   if (process.env.AI_CALL_BRAIN === 'off') return null;
+  // 2026-11-24 (founder): when an OpenAI key is saved in Integrations > "AI Calling brain (OpenAI)" the brain asks OpenAI (utils/openaiCalling.js).
+  // No key saved (or OpenAI just refused it): the Claude channel below, exactly as before.
+  try {
+    const O = require('../utils/openaiCalling'); // eslint-disable-line global-require
+    if (await O.configured()) return { kind: 'openai', O };
+  } catch { /* the Claude channel below */ }
   if (Date.now() - cfgCache.at < 60000) return cfgCache.cfg;
   let cfg = null;
   try {
@@ -135,20 +144,29 @@ async function think(d, text) {
   const started = Date.now();
   let timer;
   try {
-    const call = ch.client.messages.create({
-      model: MODEL,
-      max_tokens: 600,
-      thinking: { type: 'disabled' },
-      output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
-      system: SYSTEM,
-      messages: [{ role: 'user', content: user }],
-    });
-    const res = await Promise.race([call, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('brain too slow')), LIMIT_MS); })]);
-    if (!res || res.stop_reason === 'refusal' || res.stop_reason === 'max_tokens') return null;
-    const block = (res.content || []).find((b) => b.type === 'text');
-    if (!block) return null;
-    const j = JSON.parse(block.text);
-    if (!INTENTS.includes(j.intent)) return null;
+    let j;
+    if (ch.kind === 'openai') {
+      // the same question, the same JSON shape, the same checks below; OpenAI is the one answering
+      j = await Promise.race([
+        ch.O.chatJson({ system: SYSTEM, user, schema: SCHEMA, name: 'call_brain', maxTokens: 600, timeoutMs: LIMIT_MS }),
+        new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('brain too slow')), LIMIT_MS + 300); }),
+      ]);
+    } else {
+      const call = ch.client.messages.create({
+        model: MODEL,
+        max_tokens: 600,
+        thinking: { type: 'disabled' },
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+        system: SYSTEM,
+        messages: [{ role: 'user', content: user }],
+      });
+      const res = await Promise.race([call, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('brain too slow')), LIMIT_MS); })]);
+      if (!res || res.stop_reason === 'refusal' || res.stop_reason === 'max_tokens') return null;
+      const block = (res.content || []).find((b) => b.type === 'text');
+      if (!block) return null;
+      j = JSON.parse(block.text);
+    }
+    if (!j || !INTENTS.includes(j.intent)) return null;
     return {
       intent: j.intent,
       language: S.LANGS.includes(j.language) ? j.language : null,
@@ -169,4 +187,4 @@ async function think(d, text) {
   } finally { clearTimeout(timer); }
 }
 
-module.exports = { think, available, safeLeadIn, factsOf, SCHEMA, MODEL };
+module.exports = { think, available, safeLeadIn, factsOf, resetChannel, SCHEMA, MODEL };

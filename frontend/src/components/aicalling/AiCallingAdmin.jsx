@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import Combo from '../Combo.jsx';
+import AiBrainOpenAI from './AiBrainOpenAI.jsx';
 import { errorOf, when } from './aiCallingShared.js';
 
 // Administration > Integrations > AI Calling : the Exotel AI Calling settings.
@@ -233,6 +234,9 @@ export default function AiCallingAdmin() {
           {field('voice')}
         </div>
       </Section>
+
+      {/* 2026-11-24 (founder): the OpenAI key for the AI brain of calls. Its own Integrations channel, saved and tested separately from the Exotel / Synway form above. */}
+      <AiBrainOpenAI />
 
       <Section title="6. Who can place AI calls" hint="Tick the roles. Roles that cannot see candidate phone numbers (the client managers) can never place calls, whatever is ticked.">
         <div className="field"><label>One call at a time</label><CheckList options={cfg.roleWords.map((r) => [r, ROLE_WORDS[r] || r])} value={v.callRoles} onChange={(x) => set('callRoles', x)} /></div>

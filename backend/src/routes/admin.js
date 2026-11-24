@@ -2411,7 +2411,8 @@ router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'I
     await mailWorker.requeueHeldMessages();
     mailWorker.kick();
   }
-  if (channel.id === 'ai-claude') aiAgent.resetClient();
+  if (channel.id === 'ai-claude') { aiAgent.resetClient(); require('../calling/brain').resetChannel(); } // eslint-disable-line global-require
+  if (channel.id === 'ai-calling-openai') { require('../utils/openaiCalling').resetCache(); require('../calling/brain').resetChannel(); } // eslint-disable-line global-require
   if (channel.id === 'ai-fast') require('../utils/fastAi').resetCache(); // eslint-disable-line global-require
   if (channel.id === 'webhooks') require('../utils/webhooks').resetCache(); // eslint-disable-line global-require
   if (channel.id === 'sms' || channel.id === 'whatsapp') {
@@ -2662,7 +2663,8 @@ router.post('/integrations/:id/disconnect', requirePerm(null, 'administration', 
   // A live channel really stops: the cached connection is dropped and anything
   // queued goes back to "recorded, not transmitted", which is true again.
   if (channel.id === 'email') { mailer.resetTransport(); await mailWorker.runOnce({}); }
-  if (channel.id === 'ai-claude') aiAgent.resetClient();
+  if (channel.id === 'ai-claude') { aiAgent.resetClient(); require('../calling/brain').resetChannel(); } // eslint-disable-line global-require
+  if (channel.id === 'ai-calling-openai') { require('../utils/openaiCalling').resetCache(); require('../calling/brain').resetChannel(); } // eslint-disable-line global-require
   if (channel.id === 'ai-fast') require('../utils/fastAi').resetCache(); // eslint-disable-line global-require
   if (channel.id === 'webhooks') require('../utils/webhooks').resetCache(); // eslint-disable-line global-require
   await recordEvent(channel.id, { action: 'Disconnected', by: req.user.name, result: 'OK' });
@@ -2866,6 +2868,20 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
       where: { id: channel.id },
       data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: probe.ok ? null : result.slice(0, 480), ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }) },
     });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result });
+  }
+
+  // AI Calling brain (utils/openaiCalling.js): one tiny question to OpenAI with the saved key and model.
+  if (channel.id === 'ai-calling-openai') {
+    const probe = await require('../utils/openaiCalling').testConnection(); // eslint-disable-line global-require
+    require('../calling/brain').resetChannel(); // eslint-disable-line global-require
+    const result = probe.ok ? probe.message : `Failed — ${probe.message}`;
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: probe.ok ? null : result.slice(0, 480), ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }) },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
     await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
     return res.json({ ...shapeIntegration(channel, nextRow), result });
   }

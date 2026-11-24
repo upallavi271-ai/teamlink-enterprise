@@ -161,6 +161,12 @@ const INTEGRATION_CATALOG = [
     fields: [['Provider (Exotel)', 'Exotel'], ['Account SID', 'Exotel → Settings → API Settings'], ['API key', ''], ['API token', ''],
       ['Region (Mumbai or Singapore)', 'Mumbai'], ['Caller ID (your ExoPhone number)', '0XXXXXXXXXX'], ['Record calls (Yes or No)', 'No'],
       ['Call-result webhook secret (any text you choose)', 'type any text']] },
+  // REAL (2026-11-24, founder: "ai calling kosam open ai api key connect cheyali"). The brain of AI phone calls (calling/brain.js) answers with OpenAI
+  // when a key is saved here (utils/openaiCalling.js). Empty = the calls use the Claude channel (AI group) exactly as before. The key is encrypted at
+  // rest, only this server calls OpenAI, and there is no fallback to an OPENAI_API_KEY in .env.
+  { id: 'ai-calling-openai', name: 'AI Calling brain (OpenAI)', group: 'Calling', glyph: '\u{1F916}',
+    desc: 'Lets AI phone calls think with OpenAI. Paste an OpenAI API key (platform.openai.com > API keys; the account needs credit). With a key saved, each answer a candidate gives is understood by OpenAI and the call replies in a natural way. The call flow, the honesty rules and the fixed script do not change, and if OpenAI is slow or fails the call simply goes on with the script. Leave it empty and AI calls keep using the Claude channel (AI group). Press Test connection after saving.',
+    fields: [['OpenAI API key', 'sk-...'], ['Model', 'gpt-4.1-mini']], hints: ['Model'] },
   { id: 'click-to-call', name: 'Click-to-Call Widget', group: 'Calling', glyph: '\u{1F4F2}',
     desc: 'Dial a candidate or client contact straight from any list or profile page.',
     fields: [['Agent extension prefix', ''], ['Default country code', '+91']] },
@@ -348,7 +354,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['crm-calendar', 'zoom', 'social', 'email', 'email-inbox', 'crm-gmail', 'crm-outlook', 'crm-ads', 'ai-claude', 'ai-fast', 'webhooks', 'slack', 'teams','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['crm-calendar', 'zoom', 'social', 'email', 'email-inbox', 'crm-gmail', 'crm-outlook', 'crm-ads', 'ai-claude', 'ai-fast', 'ai-calling-openai', 'webhooks', 'slack', 'teams','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // CRM wave C (2026-11-24): the CRM's outside keys - lead ads, India portals, company data, DND check (crm/plus/channels.js)
 INTEGRATION_CATALOG.push(...require('../crm/plus/channels').CHANNELS); // eslint-disable-line global-require
 LIVE_CHANNELS.push(...require('../crm/plus/channels').LIVE); // eslint-disable-line global-require
