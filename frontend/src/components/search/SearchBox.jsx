@@ -44,7 +44,7 @@ function bindSlash() {
   });
 }
 
-export default function SearchBox({ variant = 'compact', placeholder = 'Search TeamLink', autoFocus = false }) {
+export default function SearchBox({ variant = 'compact', placeholder = 'Search TeamLink', autoFocus = false, crmOnly = false }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const openHistory = useHistoryOpener();
@@ -76,6 +76,7 @@ export default function SearchBox({ variant = 'compact', placeholder = 'Search T
   useEffect(() => {
     const term = q.trim();
     if (term.length < 2) { if (ctl.current) ctl.current.abort(); setData(null); setError(''); setBusy(false); return undefined; }
+    if (crmOnly) { setData({ groups: [], total: 0 }); setError(''); setBusy(false); return undefined; }
     setBusy(true);
     const t = setTimeout(() => {
       if (ctl.current) ctl.current.abort();
@@ -115,7 +116,7 @@ export default function SearchBox({ variant = 'compact', placeholder = 'Search T
 
   const openAll = useCallback((text) => {
     const t = (text || term).trim();
-    if (!t) return;
+    if (!t || crmOnly) return;
     saveRecent(t);
     setOpen(false);
     navigate(`/ats/search?q=${encodeURIComponent(t)}`);
@@ -165,7 +166,7 @@ export default function SearchBox({ variant = 'compact', placeholder = 'Search T
           {term.length >= 2 && error && <div className="sr-note sr-err">{error}</div>}
           {term.length >= 2 && data && !error && total === 0 && !busy && <div className="sr-note">Nothing in your scope matches “{term}”.</div>}
           {term.length >= 2 && !error && <GroupRows groups={groups} compact active={active} onOpen={openRow} idPrefix={`srb-opt-${variant}`} onHover={setActive} />}
-          {term.length >= 2 && data && <button type="button" className="sr-all" onMouseDown={(e) => { e.preventDefault(); openAll(); }}>See all results for “{term}” →</button>}
+          {term.length >= 2 && data && !crmOnly && <button type="button" className="sr-all" onMouseDown={(e) => { e.preventDefault(); openAll(); }}>See all results for “{term}” →</button>}
         </div>
       )}
     </div>

@@ -21,6 +21,7 @@ import { plusOf, stagesOfDeal, pipelineOfDeal, fieldHidden, fieldReadOnly, DealP
 import { AiPredict, MoodChip, FillFromText, VisitButton, RecordCalls, RepeatPicker, RepeatLine, VideoButton } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
 // CRM wave C (2026-11-24): custom fields / layouts / tags / currency / units on the forms, the More and Privacy tabs, Merge
 import { usePlusSetup, applyLayout, CustomInput, TagInput, getNumberLocale, foreignMoney } from './crmPlusC.jsx';
+import { t as tr, useLang } from '../../i18n.jsx'; // the CRM's words in Telugu / Hindi (crmPlusC.jsx adds them)
 import { RecordMore, RecordPrivacy, MergeDialog } from './CrmRecordMore.jsx'; // eslint-disable-line import/no-cycle
 
 export const CrmCtx = createContext(null);
@@ -1298,6 +1299,7 @@ export function AskAi() {
 // ---- one record ---------------------------------------------------------------------------------------------
 export function RecordPanel({ kind, id, onClose, onChanged }) {
   const { me, toast, openRecord } = useCrm();
+  useLang(); // the tab names follow the app's language
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [editing, setEditing] = useState(null); // { kind, row, preset }
@@ -1437,7 +1439,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
           </div>
         </div>
         <div className="tabs" role="tablist" style={{ marginBottom: 12 }}>
-          {tabs.map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>{l}</div>)}
+          {tabs.map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>{tr(l.replace(/ \(\d+\)$/, ''))}{(/ \(\d+\)$/.exec(l) || [''])[0]}</div>)}
         </div>
         {tab === 'overview' && (
           <>
@@ -1523,7 +1525,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
   }
   return (
     <>
-      <Modal title={kind === 'lead' ? 'Lead record' : kind === 'deal' ? 'Deal record' : 'Customer record'} size="xwide" onClose={onClose}>{body}</Modal>
+      <Modal title={tr(kind === 'lead' ? 'Lead record' : kind === 'deal' ? 'Deal record' : 'Customer record')} size="xwide" onClose={onClose}>{body}</Modal>
       {editing && <RecordForm kind={editing.kind} row={editing.row} preset={editing.preset} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); changed(); }} />}
       {merging && row && <MergeDialog kind={kind} keep={row} onClose={() => setMerging(false)} onMerged={() => { setMerging(false); changed(); }} />}
       {converting && row && <ConvertLead lead={row} onClose={() => setConverting(false)} onDone={(out) => { setConverting(false); changed(); if (out.deal) openRecord('deal', out.deal.id); }} />}

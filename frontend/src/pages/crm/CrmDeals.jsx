@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
+import { t } from '../../i18n.jsx'; // the CRM's words in Telugu / Hindi
 import { useCrm, errOf, money, moneyShort, dateOf, istToday, RecordForm, useMoveDeal, staleDays, download } from './crmShared.jsx';
 import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 import CrmInvoices from './CrmInvoices.jsx';
@@ -91,7 +92,7 @@ export default function CrmDeals() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Deals</h1>
+          <h1>{t('Deals')}</h1>
           <div className="page-sub">{rows ? `${openDeals.length} open · ${money(openDeals.reduce((a, d) => a + (d.value || 0), 0))} in the pipeline` : 'The sales pipeline'}</div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', maxWidth: '100%' }}>

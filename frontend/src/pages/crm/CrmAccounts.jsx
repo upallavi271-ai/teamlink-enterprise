@@ -15,6 +15,7 @@ import { plusOf } from './CrmPlus.jsx'; // territories (wave D)
 // CRM wave C: record types of your own, customer health, data care (bin, duplicates, import, mass changes, data requests), a contact's More window
 import { MoreRecords, CustomerHealth, DataCare } from './CrmDataCare.jsx'; // eslint-disable-line import/no-cycle
 import { ContactMore } from './CrmRecordMore.jsx'; // eslint-disable-line import/no-cycle
+import { t, useLang } from '../../i18n.jsx';
 
 
 export default function CrmAccounts() {
@@ -24,6 +25,7 @@ export default function CrmAccounts() {
   const setOpen = (o) => openRecord(o.kind, o.id);
   const [tab, setTab] = useState(['contacts', 'tickets', 'portal', 'records', 'health', 'datacare'].includes(sp.get('tab')) ? sp.get('tab') : 'accounts');
   const [tag, setTag] = useState('');
+  useLang();
   const [moreContact, setMoreContact] = useState(null);
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
@@ -55,7 +57,7 @@ export default function CrmAccounts() {
   return (
     <div className="page">
       <div className="page-head">
-        <div><h1>Accounts &amp; Contacts</h1><div className="page-sub">The companies we sell to and the people we talk to</div></div>
+        <div><h1>{t('Accounts & Contacts')}</h1><div className="page-sub">The companies we sell to and the people we talk to</div></div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/${['tickets', 'portal'].includes(tab) ? 'accounts' : tab}?${new URLSearchParams(Object.entries({ q, kind, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-${['tickets', 'portal'].includes(tab) ? 'accounts' : tab}-${istToday()}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
           {me.canCreate && (<>
@@ -65,11 +67,11 @@ export default function CrmAccounts() {
         </div>
       </div>
       <div className="tabs" role="tablist">
-        <div role="tab" tabIndex={0} aria-selected={tab === 'accounts'} className={`tab${tab === 'accounts' ? ' active' : ''}`} onClick={() => setTab('accounts')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('accounts'); }}>Accounts</div>
-        <div role="tab" tabIndex={0} aria-selected={tab === 'contacts'} className={`tab${tab === 'contacts' ? ' active' : ''}`} onClick={() => setTab('contacts')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('contacts'); }}>Contacts</div>
-        <div role="tab" tabIndex={0} aria-selected={tab === 'tickets'} className={`tab${tab === 'tickets' ? ' active' : ''}`} onClick={() => setTab('tickets')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('tickets'); }}>Support tickets</div>
+        <div role="tab" tabIndex={0} aria-selected={tab === 'accounts'} className={`tab${tab === 'accounts' ? ' active' : ''}`} onClick={() => setTab('accounts')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('accounts'); }}>{t('Accounts')}</div>
+        <div role="tab" tabIndex={0} aria-selected={tab === 'contacts'} className={`tab${tab === 'contacts' ? ' active' : ''}`} onClick={() => setTab('contacts')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('contacts'); }}>{t('Contacts')}</div>
+        <div role="tab" tabIndex={0} aria-selected={tab === 'tickets'} className={`tab${tab === 'tickets' ? ' active' : ''}`} onClick={() => setTab('tickets')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('tickets'); }}>{t('Support tickets')}</div>
         <div role="tab" tabIndex={0} aria-selected={tab === 'portal'} className={`tab${tab === 'portal' ? ' active' : ''}`} onClick={() => setTab('portal')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('portal'); }}>Customer portal</div>
-        {[['records', 'More records'], ['health', 'Customer health'], ['datacare', 'Data care']].map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>{l}</div>)}
+        {[['records', 'More records'], ['health', 'Customer health'], ['datacare', 'Data care']].map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>{t(l)}</div>)}
       </div>
       {tab === 'tickets' && <TicketList />}
       {tab === 'portal' && <CrmPortalAdmin />}

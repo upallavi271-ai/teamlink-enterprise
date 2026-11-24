@@ -14,6 +14,8 @@ import { useCrm, errOf, money, moneyShort, dateOf, dateTimeOf, TaskList, ACT_ICO
 import { TeamTargets, ForecastFunnel, CrmSettings } from './CrmReports.jsx';
 import { AiForecastCard, AnomalyCard } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
 import { Adoption } from './CrmDataCare.jsx'; // eslint-disable-line import/no-cycle
+import { t, useLang } from '../../i18n.jsx';
+import SearchBox from '../../components/search/SearchBox.jsx';
 import { TicketList } from './CrmSupport.jsx';
 import DashboardCharts from './CrmCharts.jsx';
 import ReportTables from './CrmReportTables.jsx';
@@ -411,14 +413,16 @@ export default function CrmDashboard() {
   // a salesperson named as an approver in a rule sees an Approvals tab while something waits for them (managers have it inside Automation)
   const [myApprovals, setMyApprovals] = useState(0);
   useEffect(() => { if (!me.canAssign) api.get('/crm/a/automation/approvals').then((r) => setMyApprovals(r.data.waitingForMe || 0)).catch(() => {}); }, [me.canAssign]);
+  useLang();
   return (
     <div className="page crm-page">
       <div className="page-head">
         <div>
-          <h1>Sales Dashboard</h1>
+          <h1>{t('Sales Dashboard')}</h1>
           <div className="page-sub">Welcome back, {String(me.name || '').split(' ')[0] || 'there'} · {mine ? 'my sales' : 'whole sales team'} · {dateOf(istToday())}</div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 220 }}><SearchBox variant="compact" placeholder="Search leads, accounts, deals" crmOnly /></div>
           {me.seesAll && (
             <label style={{ display: 'flex', gap: 6, alignItems: 'center', margin: 0, fontWeight: 500 }}>
               <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} style={{ width: 'auto' }} /> Only mine

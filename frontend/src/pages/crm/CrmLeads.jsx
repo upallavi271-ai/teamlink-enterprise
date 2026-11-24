@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
+import { t } from '../../i18n.jsx'; // the CRM's words in Telugu / Hindi
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, Pill, DateField, QuickLog, RecordForm, download } from './crmShared.jsx';
 import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
@@ -166,7 +167,7 @@ export default function CrmLeads() {
   return (
     <div className="page">
       <div className="page-head">
-        <div><h1>Leads</h1><div className="page-sub">Companies to sell to, before they become a deal · campaigns to reach many at once</div></div>
+        <div><h1>{t('Leads')}</h1><div className="page-sub">Companies to sell to, before they become a deal · campaigns to reach many at once</div></div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/leads?${new URLSearchParams(Object.entries({ q, status, stage, from, to, source, rating, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-leads-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
           {me.rights && me.rights.import && <button type="button" className="btn" onClick={() => setImporting(true)}>Import Excel</button>}
