@@ -128,9 +128,9 @@ export default function MkImagesPage() {
       </Panel>
 
       {view ? (
-        <GsModal title={view.title} sub={`${STYLE_WORDS[view.style] || view.style} · ${view.aspect}${view.model ? ` · ${view.model}` : ''}`} width={720} onClose={() => setView(null)}
+        <GsModal title={view.title} sub={`${STYLE_WORDS[view.style] || view.style} · ${view.aspect}${view.model ? ` · ${view.model}` : ''}`} width={1100} onClose={() => setView(null)}
           foot={<><Btn onClick={() => download(view)}>⬇ Download</Btn>{view.publicPath ? <Btn onClick={() => copyLink(view)}>🔗 Copy public link</Btn> : null}<Btn primary onClick={() => setView(null)}>Close</Btn></>}>
-          <MkImg id={view.id} alt={view.title} style={{ maxHeight: '60vh', objectFit: 'contain', background: '#111' }} />
+          <MkImg id={view.id} alt={view.title} style={{ width: '100%', maxHeight: '78vh', objectFit: 'contain', background: '#111' }} />
           <div style={{ fontSize: 11, marginTop: 8 }}><b>Asked for:</b> {view.prompt}{view.headline ? <> · <b>Headline:</b> “{view.headline}”</> : null}</div>
         </GsModal>
       ) : null}
