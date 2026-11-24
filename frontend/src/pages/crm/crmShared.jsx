@@ -19,13 +19,16 @@ import Conversation from './CrmConversation.jsx'; // eslint-disable-line import/
 // wave D (2026-11-24): products, splits, team chat, history, contracts, quote versions, pay online, consent, territory (CrmPlus.jsx)
 import { plusOf, stagesOfDeal, pipelineOfDeal, fieldHidden, fieldReadOnly, DealProducts, DealTeam, Comments, DealHistory, FieldHistory, ContractsBox, QuotesPlus, PayBox, ConsentBox, TerritoryPick } from './CrmPlus.jsx'; // eslint-disable-line import/no-cycle
 import { AiPredict, MoodChip, FillFromText, VisitButton, RecordCalls, RepeatPicker, RepeatLine, VideoButton } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
+// CRM wave C (2026-11-24): custom fields / layouts / tags / currency / units on the forms, the More and Privacy tabs, Merge
+import { usePlusSetup, applyLayout, CustomInput, TagInput, getNumberLocale, foreignMoney } from './crmPlusC.jsx';
+import { RecordMore, RecordPrivacy, MergeDialog } from './CrmRecordMore.jsx'; // eslint-disable-line import/no-cycle
 
 export const CrmCtx = createContext(null);
 export const useCrm = () => useContext(CrmCtx);
 
 export const errOf = (e, fb) => (e && e.response && e.response.data && e.response.data.error) || fb;
 // ₹ in Indian grouping; short form in lakhs / crores for the board and the cards
-export const money = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
+export const money = (n) => `₹${Math.round(Number(n) || 0).toLocaleString(getNumberLocale())}`; // the number format: CRM settings > Customise (Indian by default)
 export const moneyShort = (n) => {
   const v = Number(n) || 0;
   if (v >= 1e7) return `₹${(v / 1e7).toFixed(v >= 1e8 ? 0 : 1)} Cr`;
@@ -334,8 +337,19 @@ export function RecordForm({ kind, row, preset, onClose, onSaved }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   // a field hidden from my CRM role is not on the form; a read-only one is shown but cannot be changed (CRM settings > Security)
-  const fields = fieldsFor(kind, me).filter((x) => (editing ? !x.createOnly : !x.editOnly) && !fieldHidden(me, kind, x.k));
-  const needsAccounts = fields.some((x) => x.type === 'account');
+  const setup = usePlusSetup();
+  // CRM wave C: tags, parent company, currency, business unit, the custom fields - laid out by the layout (CRM settings > Customise)
+  const waveFields = [
+    ...(kind !== 'account' ? [{ k: 'tags', label: 'Tags', hint: 'Comma-separated, e.g. VIP, Expo 2026' }] : []),
+    ...(kind === 'account' ? [{ k: 'parentId', label: 'Parent company', type: 'parent', hint: 'When this is a subsidiary or branch of another account' }] : []),
+    ...(kind === 'deal' && setup && setup.currencies && setup.currencies.length ? [{ k: 'currency', label: 'Currency', type: 'currency' }, ...(f.currency && f.currency !== 'INR' ? [{ k: 'amountForeign', label: `Deal value (${f.currency})`, type: 'number', hint: 'The value in ₹ is worked out at the rate of the day and kept with the deal' }] : [])] : []),
+    ...(kind !== 'contact' && setup && setup.unitsOn && setup.units.length ? [{ k: 'unitId', label: 'Business unit', type: 'unit' }] : []),
+  ];
+  const sections = applyLayout(kind, [...fieldsFor(kind, me).filter((x) => (editing ? !x.createOnly : !x.editOnly) && !fieldHidden(me, kind, x.k)), ...waveFields], setup, me.role);
+  const fields = sections.flatMap((x) => x.fields);
+  // an edited record's custom values as this person may see them (a sensitive one decrypted for its owner)
+  useEffect(() => { if (editing && kind) api.get(`/crm/plusc/record/${kind}/${row.id}`).then((r) => setF((x) => ({ ...x, custom: { ...(r.data.custom || {}), ...(x.custom || {}) } }))).catch(() => null); }, [editing, kind]); // eslint-disable-line react-hooks/exhaustive-deps
+  const needsAccounts = fields.some((x) => x.type === 'account' || x.type === 'parent');
   useEffect(() => { if (needsAccounts) api.get('/crm/accounts').then((r) => setAccounts(r.data.rows)).catch(() => setAccounts([])); }, [needsAccounts]);
   useEffect(() => {
     if (kind !== 'deal' || !f.accountId) { setContacts([]); return; }
@@ -345,7 +359,7 @@ export function RecordForm({ kind, row, preset, onClose, onSaved }) {
 
   async function save(force) {
     setBusy(true); setErr('');
-    const body = {}; fields.forEach((x) => { body[x.k] = f[x.k] ?? ''; });
+    const body = {}; fields.forEach((x) => { if (x.custom) { body.custom = { ...(body.custom || {}), [x.k]: (f.custom || {})[x.k] ?? '' }; } else if (!(x.k === 'value' && f.currency && f.currency !== 'INR')) body[x.k] = f[x.k] ?? ''; });
     if (me.canAssign) body.ownerId = f.ownerId || undefined;
     if (force) body.force = true;
     try {
@@ -359,8 +373,15 @@ export function RecordForm({ kind, row, preset, onClose, onSaved }) {
   }
 
   const input = (x) => {
+    if (x.custom) return <CustomInput d={x.custom} value={(f.custom || {})[x.k]} readOnly={x.readOnly} onChange={(v) => { setF((y) => ({ ...y, custom: { ...(y.custom || {}), [x.k]: v } })); setErr(''); }} />;
     const v = f[x.k] ?? '';
     const ro = fieldReadOnly(me, kind, x.k);
+    if (x.readOnly) return <input type="text" value={v} disabled aria-label={x.label} />;
+    if (x.k === 'tags') return <TagInput value={v} onChange={(t) => set('tags', t)} kind={kind} />;
+    if (x.type === 'parent') return <select value={v} onChange={(e) => set(x.k, e.target.value)} disabled={accounts == null}><option value="">— no parent —</option>{(accounts || []).filter((a) => !row || a.id !== row.id).map((a) => <option key={a.id} value={a.id}>{a.name}{a.city ? ` · ${a.city}` : ''}</option>)}</select>;
+    if (x.type === 'currency') return <select value={v || 'INR'} onChange={(e) => set(x.k, e.target.value)}><option value="INR">₹ Indian rupee</option>{setup.currencies.map((c) => <option key={c.code} value={c.code}>{c.code} · {c.symbol.trim()} (₹{c.rate})</option>)}</select>;
+    if (x.type === 'unit') return <select value={v} onChange={(e) => set(x.k, e.target.value)}><option value="">—</option>{setup.units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>;
+    if (x.k === 'value' && f.currency && f.currency !== 'INR') return <input type="text" disabled value={f.amountForeign ? `about ₹${Math.round(Number(f.amountForeign) * ((setup.currencies.find((c) => c.code === f.currency) || {}).rate || 0)).toLocaleString('en-IN')}` : ''} aria-label="Deal value in rupees" />;
     if (x.type === 'select') return <select value={v} disabled={ro} onChange={(e) => set(x.k, e.target.value)}>{!(x.options[0] && typeof x.options[0] === 'object') && <option value="">—</option>}{x.options.map((o) => (typeof o === 'object' ? <option key={o.value} value={o.value}>{o.label}</option> : <option key={o} value={o}>{o}</option>))}</select>;
     if (ro) return <input type="text" value={v} disabled title="Read only for your CRM role" />;
     if (x.type === 'textarea') return <textarea rows={3} value={v} onChange={(e) => set(x.k, e.target.value)} />;
@@ -390,13 +411,16 @@ export function RecordForm({ kind, row, preset, onClose, onSaved }) {
       )}
     >
       <div className="grid-2">
-        {fields.map((x) => (
-          <div key={x.k} className="field" style={x.wide ? { gridColumn: '1 / -1' } : undefined}>
-            <label>{x.label}</label>
-            {input(x)}
-            {x.hint && <div className="small-muted" style={{ marginTop: 3 }}>{x.hint}</div>}
-          </div>
-        ))}
+        {sections.map((sec) => [
+          sec.name ? <div key={`sec-${sec.name}`} className="section-label" style={{ gridColumn: '1 / -1', margin: '6px 0 0' }}>{sec.name}</div> : null,
+          ...sec.fields.map((x) => (
+            <div key={x.k} className="field" style={x.wide ? { gridColumn: '1 / -1' } : undefined}>
+              <label>{x.label}</label>
+              {input(x)}
+              {x.hint && <div className="small-muted" style={{ marginTop: 3 }}>{x.hint}</div>}
+            </div>
+          )),
+        ])}
         {me.canAssign && (
           <div className="field">
             <label>Owner (salesperson)</label>
@@ -1278,6 +1302,8 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
   const [err, setErr] = useState('');
   const [editing, setEditing] = useState(null); // { kind, row, preset }
   const [converting, setConverting] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const plusSetup = usePlusSetup();
   const load = () => api.get(`/crm/${kind}s/${id}`).then((r) => setD(r.data)).catch((e) => setErr(errOf(e, 'This record could not be opened.')));
   useEffect(() => { setD(null); setErr(''); load(); }, [kind, id]); // eslint-disable-line react-hooks/exhaustive-deps
   const changed = () => { load(); if (onChanged) onChanged(); };
@@ -1321,7 +1347,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
     const about = kind === 'lead'
       ? [['Territory', (plusOf(me).territories || []).length ? <TerritoryPick kind="lead" row={row} canEdit={d.canEdit} onChanged={changed} /> : null], ['Lead source', row.source], ['Stage', row.stage], ['Expected value', row.expectedValue ? `₹${Number(row.expectedValue).toLocaleString('en-IN')}` : null], ['Lost reason', row.lostReason], ['Industry', row.industry], ['Rating', row.rating && <Pill v={row.rating} />], ['Came from', [row.utmSource, row.utmMedium, row.utmCampaign].filter(Boolean).join(' / ')], ['Page', row.pageUrl]]
       : kind === 'deal'
-        ? [['Account', d.account ? <RecLink kind="account" id={d.account.id}>{d.account.name}</RecLink> : '—'], ['Deal value', <b>{money(row.value)}</b>],
+        ? [['Account', d.account ? <RecLink kind="account" id={d.account.id}>{d.account.name}</RecLink> : '—'], ['Deal value', <b>{money(row.value)}{foreignMoney(row, plusSetup) ? <span className="small-muted" style={{ fontWeight: 500 }}> · {foreignMoney(row, plusSetup)}</span> : null}</b>],
           ...(row.discountPercent ? [['Discount', `${row.discountPercent}%`], ['Final value', <b>{money(row.finalValue)}</b>]] : []),
           ...(row.approvalStatus && row.approvalStatus !== 'None' ? [['Discount approval', <Pill v={row.approvalStatus} />]] : []),
           ['Probability', `${row.probability}%`],
@@ -1334,7 +1360,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
       ['Next follow-up', nextTask ? <span style={{ color: nextTask.dueDate < today ? 'var(--red)' : undefined, fontWeight: nextTask.dueDate <= today ? 600 : undefined }}>{nextTask.dueDate === today ? 'Today' : dateOf(nextTask.dueDate)} · {nextTask.title}</span> : 'None set'],
       ['Last touched', lastAct ? `${dateTimeOf(lastAct.at)}${lastAct.byName ? ` · ${lastAct.byName}` : ''}` : 'Never'],
     ].filter(([, v]) => v);
-    const tabs = [['overview', 'Overview'], ...(kind === 'lead' ? [['products', 'Products & demo']] : []), ...(kind === 'deal' ? [['lines', 'Products']] : []), ...(kind === 'lead' || kind === 'deal' ? [['conversation', 'Conversation']] : []), ['activities', `Activities (${(d.activities || []).length})`], ['calls', 'Calls'], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice & orders'], ['team', 'Team chat']] : [['comments', 'Comments']]), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ...(kind === 'lead' ? [['consent', 'Consent']] : []), ['engage', 'Web & engagement'], ['history', 'History'], ['notes', 'Notes']];
+    const tabs = [['overview', 'Overview'], ['more', 'More'], ['privacy', 'Privacy'], ...(kind === 'lead' ? [['products', 'Products & demo']] : []), ...(kind === 'deal' ? [['lines', 'Products']] : []), ...(kind === 'lead' || kind === 'deal' ? [['conversation', 'Conversation']] : []), ['activities', `Activities (${(d.activities || []).length})`], ['calls', 'Calls'], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice & orders'], ['team', 'Team chat']] : [['comments', 'Comments']]), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ...(kind === 'lead' ? [['consent', 'Consent']] : []), ['engage', 'Web & engagement'], ['history', 'History'], ['notes', 'Notes']];
     const kindPill = kind === 'lead' ? row.status : kind === 'deal' ? row.stage : row.kind;
     body = (
       <>
@@ -1346,6 +1372,8 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
               {row.code && <span className="small-muted" style={{ fontWeight: 700, fontFamily: 'monospace' }}>{row.code}</span>}
               <Pill v={kindPill} />
               {kind === 'deal' && stale > 0 && <span className="status overdue" title={`Nothing logged for ${stale} days`}>💤 {stale} days quiet</span>}
+              {kind !== 'account' && row.tags && row.tags.split(',').map((t) => t.trim()).filter(Boolean).map((t) => <span key={t} className="status review" style={{ fontWeight: 600 }}>#{t}</span>)}
+              {d.onTeam && <span className="status pending" title="You are on this account's team: you can read it">Account team · read only</span>}
             </div>
             <div className="small-muted" style={{ marginTop: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
               Assigned to:{' '}
@@ -1362,6 +1390,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
             {d.canEdit && <button type="button" className="btn btn-sm" onClick={() => setEditing({ kind, row })}>Edit</button>}
             {d.canEdit && <FillFromText kind={kind} id={row.id} onApplied={changed} />}
             {d.canEdit && <VisitButton kind={kind} id={row.id} name={name} onChanged={changed} />}
+            {d.canEdit && (kind === 'lead' || kind === 'account') && (me.canAssign || (me.rights && me.rights.delete)) && <button type="button" className="btn btn-sm" title="This is the same company or person as another record: make the two one" onClick={() => setMerging(true)}>Merge…</button>}
             {kind === 'deal' && row.approvalStatus === 'Pending' && me.canAssign && (
               <>
                 <button type="button" className="btn btn-primary btn-sm" title={`Approve the ${row.discountPercent || 0}% discount`} onClick={() => decideDiscount('approve')}>Approve discount</button>
@@ -1458,6 +1487,8 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
         )}
         {tab === 'conversation' && (kind === 'lead' || kind === 'deal') && <Conversation kind={kind} id={row.id} onChanged={changed} />}
         {tab === 'calls' && <RecordCalls kind={kind} id={row.id} canEdit={d.canEdit} onChanged={changed} />}
+        {tab === 'more' && <RecordMore kind={kind} id={row.id} onChanged={changed} />}
+        {tab === 'privacy' && <RecordPrivacy kind={kind} id={row.id} />}
         {tab === 'products' && kind === 'lead' && <ProductSellBox lead={row} canEdit={d.canEdit} onChanged={changed} />}
         {tab === 'followups' && <TaskList tasks={d.tasks || []} link={link} onChanged={changed} canEdit={d.canEdit} />}
         {tab === 'proposals' && kind === 'deal' && <><QuotesPlus deal={row} onChanged={changed} /><ProposalBox dealId={row.id} onChanged={changed} /><DealFiles dealId={row.id} onChanged={changed} /></>}
@@ -1494,6 +1525,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
     <>
       <Modal title={kind === 'lead' ? 'Lead record' : kind === 'deal' ? 'Deal record' : 'Customer record'} size="xwide" onClose={onClose}>{body}</Modal>
       {editing && <RecordForm kind={editing.kind} row={editing.row} preset={editing.preset} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); changed(); }} />}
+      {merging && row && <MergeDialog kind={kind} keep={row} onClose={() => setMerging(false)} onMerged={() => { setMerging(false); changed(); }} />}
       {converting && row && <ConvertLead lead={row} onClose={() => setConverting(false)} onDone={(out) => { setConverting(false); changed(); if (out.deal) openRecord('deal', out.deal.id); }} />}
       {dialog}
     </>
