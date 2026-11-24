@@ -64,6 +64,8 @@ const REG = require('../utils/payrollRegister'); // pay-register columns of the 
 const { notifyDataIo } = require('../utils/dataIoNotify');
 // Payroll edit and recalculate (user spec 2026-10-13, item 5): utils/payrollEdit.js
 const PEdit = require('../utils/payrollEdit');
+// Everybody on the list (founder 2026-11-24): the people with no record for the month, and why (utils/payrollMissing.js).
+const { missingFor } = require('../utils/payrollMissing');
 const { ipOf } = require('../utils/clientIp');
 
 function sendTable(res, format, filename, headers, rows, sheet) {
@@ -173,13 +175,18 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       prisma.payrollSyncLog.findMany({ where: { month } }),
     ]);
     const editStates = await PEdit.readStates(entries.map((e) => e.id));
+    // Everybody on the list: payable employees with NO record this month (no salary structure yet, a structure added since the last
+    // Calculate, joins later ...) - shown under the table with the reason. Not asked for while a status filter is on.
+    const missing = req.query.status ? [] : await missingFor({
+      month, employeeWhere: payrollEmployeeWhere(req), department: req.query.department ? String(req.query.department) : null, haveIds: entries.map((e) => e.employeeId),
+    });
     const logOf = new Map();
     logs.forEach((l) => { logOf.set(`${l.kind}|${l.employeePayrollRunId}`, l); });
     const sum = (k) => entries.reduce((n, e) => n + (Number(e[k]) || 0), 0);
     const byStatus = {};
     entries.forEach((e) => { byStatus[e.status] = (byStatus[e.status] || 0) + 1; });
     res.json({
-      month, period: monthLabel(month), cycle: await PC.cycleFor(month), run, access: await accessOf(req), byStatus,
+      month, period: monthLabel(month), cycle: await PC.cycleFor(month), run, access: await accessOf(req), byStatus, missing,
       totals: {
         employees: entries.length, grossPay: sum('grossPay'), lopDeduction: sum('lopDeduction'), earnedGross: sum('earnedGross'),
         totalDeductions: sum('totalDeductions'), netPay: sum('netPay'), pfEmployer: sum('pfEmployer'), esiEmployer: sum('esiEmployer'),

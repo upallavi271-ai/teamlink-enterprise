@@ -279,6 +279,9 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
 
   const a = data?.access || {};
   const entries = data?.entries || [];
+  // EVERYBODY ON THE LIST (founder 2026-11-24): payable employees with no record for the month, with the reason
+  const missing = data?.missing || [];
+  const readyIds = missing.filter((x) => x.canCalculate).map((x) => x.employeeId);
   const chosen = entries.filter((e) => selected[e.id]);
   const idsOr = (status) => {
     const pick = chosen.filter((e) => e.status === status);
@@ -306,6 +309,14 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
     try {
       const r = await api.post('/payroll/calculate', { month });
       setMessage(`Calculated ${monthHeading(month)}: ${r.data.created} new record(s), ${r.data.updated} recalculated, ${r.data.locked.length} already submitted (left as they are)${(r.data.edited || []).length ? `, ${r.data.edited.length} edited by hand (left as edited)` : ''}, ${r.data.skipped.length} skipped (no structure effective this month).`);
+    } catch (err) { setError(errText(err, 'Could not calculate.')); } finally { setBusy(''); load(); onChanged(); setAttKey((k) => k + 1); }
+  }
+  // Calculate just these people (the list of people with no record, under the table) - the same Calculate, limited to them.
+  async function calcSome(ids) {
+    setBusy('Calculate'); setMessage(''); setError('');
+    try {
+      const r = await api.post('/payroll/calculate', { month, employeeIds: ids });
+      setMessage(`Calculated ${ids.length === 1 ? '1 person' : `${ids.length} people`} for ${monthHeading(month)}: ${r.data.created} new record(s)${r.data.skipped.length ? `, ${r.data.skipped.length} could not be calculated (see the reason in the list)` : ''}.`);
     } catch (err) { setError(errText(err, 'Could not calculate.')); } finally { setBusy(''); load(); onChanged(); setAttKey((k) => k + 1); }
   }
   async function reject() {
@@ -355,6 +366,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
           {['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'SYNCED_TO_ACCOUNTS', 'PAID'].map((s) => (
             <span key={s} className={`prb-chip ${count(s) ? '' : 'zero'}`}><span className={`status ${STATUS_CLS[s]}`}>{STATUS_LABEL[s]}</span> {count(s)}</span>
           ))}
+          {missing.length > 0 && <span className="prb-chip" title="People on the payroll who have no salary record for this month yet - listed under the table"><span className="status pending">No record</span> {missing.length}</span>}
           {data && (
             <span className="prb-tot">
               Net to pay {inr0(data.totals.netPay)}
@@ -436,6 +448,34 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
           </div>
         )}
         {data && page.total > 0 && <Pager page={page} noun="records" />}
+        {data && missing.length > 0 && (
+          <div className="prb-missing" data-testid="prb-missing">
+            <div className="prb-missing-head">
+              <div>
+                <b>{missing.length} {missing.length === 1 ? 'person has' : 'people have'} no salary record for {monthHeading(month)}</b>
+                <div className="prb-note">Everybody on the payroll is listed here until their record is made. Nobody is paid until a salary structure is set.</div>
+              </div>
+              {a.prepare && readyIds.length > 0 && <button className="btn btn-sm btn-primary" disabled={!!busy} onClick={() => calcSome(readyIds)}>{busy === 'Calculate' ? 'Calculating…' : `Calculate the ${readyIds.length} ready`}</button>}
+            </div>
+            <div className="tbl-wrap">
+              <table className="prb-table">
+                <thead><tr><th>Code</th><th>Name</th><th>Department</th><th>Joined</th><th>Why there is no record</th><th /></tr></thead>
+                <tbody>
+                  {missing.map((x) => (
+                    <tr key={x.employeeId} className={x.code === 'NOT_JOINED' ? 'prb-missing-later' : ''}>
+                      <td><b>{x.employeeCode}</b></td>
+                      <td>{x.name}</td>
+                      <td className="cell-muted">{x.department || '—'}</td>
+                      <td className="cell-muted">{x.dateOfJoining ? new Date(`${x.dateOfJoining}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
+                      <td style={{ whiteSpace: 'normal', minWidth: 260 }}><span className={`prb-why ${x.code === 'NOT_CALCULATED' ? 'ready' : x.code === 'NOT_JOINED' ? 'later' : 'todo'}`}>{x.code === 'NOT_CALCULATED' ? 'Ready' : x.code === 'NOT_JOINED' ? 'Not yet' : 'Needs salary'}</span> {x.reason}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{a.prepare && x.canCalculate && <button className="btn btn-sm" disabled={!!busy} onClick={() => calcSome([x.employeeId])}>Calculate</button>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </Panel>
       <ChangesInRun month={month} reloadKey={reloadKey + changesKey + (data ? data.entries.length : 0)} />
       <AttendancePanel month={month} canEdit={!!a.prepare} reloadKey={attKey} onChanged={() => {}} />

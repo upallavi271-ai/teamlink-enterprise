@@ -41,3 +41,11 @@
 .jl-card .l { font-size: 11.5px; color: var(--ink-soft); }
 .jl-card.bad { border-color: var(--red); }
 .jl-card.good { border-color: var(--teal); }
+/* EVERYBODY ON THE LIST (founder 2026-11-24): the people with no salary record for the month */
+.prb-missing { border-top: 1px solid var(--line-soft); margin-top: 12px; padding: 12px 0 4px; }
+.prb-missing-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; padding: 0 18px 8px; }
+.prb-missing-later td { opacity: .7; }
+.prb-why { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; margin-right: 6px; vertical-align: 1px; }
+.prb-why.ready { background: #e2f3e8; color: #1c6b3c; }
+.prb-why.todo { background: #fdeccd; color: #8a5a00; }
+.prb-why.later { background: #e8ecf1; color: #4a5566; }
