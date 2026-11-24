@@ -35,6 +35,7 @@ import Combo from '../../components/Combo.jsx';
 import FilterBar from '../../components/ats/FilterBar.jsx';
 import { configFor, useListXf } from '../../components/ats/ListFilters.jsx';
 import { clientAliasText } from '../../components/searchMatch.js'; // old client names find a row (matching only)
+import { t as trZ } from '../../i18n.jsx'; // ATS headings in Telugu / Hindi (ATS wave 2 Z, 13.06)
 
 // ---------------------------------------------------------------------------
 // RECRUITER & BDE — the operational control centre for Recruiter / TL / BDE
@@ -1334,7 +1335,7 @@ export default function Team() {
       {!selfMode && <ReassignWork />}
       <div className="ak-page-head tv4-head">
         <div>
-          <h1>{selfMode ? 'My Workload' : 'Team'}</h1>
+          <h1>{trZ(selfMode ? 'My Workload' : 'Team')}</h1>
           <p>{selfMode ? 'Your requirements, your numbers and your tasks — all in one place.' : 'Manage your team, track performance, workload and stay on top of activities.'}</p>
         </div>
         <div className="ak-page-tools">

@@ -78,6 +78,7 @@ import { VerifyButton, VerifyPanel } from '../components/candidate/VerifyQueue.j
 import { DupChip } from '../components/duplicates/DupChip.jsx';
 import ScreenChip, { SCREEN_OPTIONS } from '../components/candidates-v4/ScreenChip.jsx'; // the auto-screen result (2026-11-23)
 import StatusChip from '../components/ui/StatusChip.jsx';
+import { t as tr } from '../i18n.jsx'; // ATS headings in Telugu / Hindi (ATS wave 2 Z, 13.06)
 import EmptyState from '../components/ui/EmptyState.jsx';
 import { nextActionsFor, ReturnDialog } from '../components/Candidate360.jsx';
 import '../components/CandidatePipeline.css';
@@ -1545,7 +1546,7 @@ export default function Candidates() {
     <div className={`cpl cv4${main === 'pipeline' ? ' cv4-pipe' : ''}`}>
       <header className="ak-page-head cv4-head">
         <div className="cv4-titles">
-          <h1>Candidates &amp; Pipeline</h1>
+          <h1>{tr('Candidates & Pipeline')}</h1>
           <p>
             <span className="cv4-scope">
               {main === 'duplicates' ? <span className="small-muted">People who look like someone already on file</span> : main === 'sources' ? <span className="small-muted">Where people came from, and when</span> : main === 'tools' ? <span className="small-muted">Search, pools, reviews and agents</span> : main === 'contacts' ? <span className="small-muted">Company contact lists and requirement messages</span> : main !== 'job-portal'
@@ -1567,7 +1568,7 @@ export default function Candidates() {
         </div>
         <div className="ak-page-tools cv4-tools">
           {can(user, 'ats', 'candidates', 'Add Candidate', 'create') && (
-            <button type="button" className="btn btn-primary cv4-add" onClick={() => { setError(''); setDupe(null); setShowForm(true); }}>+ Add candidate</button>
+            <button type="button" className="btn btn-primary cv4-add" onClick={() => { setError(''); setDupe(null); setShowForm(true); }}>{tr('+ Add candidate')}</button>
           )}
           {listOn && (
             <AtsDataTools
@@ -2268,11 +2269,11 @@ export default function Candidates() {
                       {col.sort
                         ? (
                           <button type="button" className={`cpl-th${sort.key === col.sort ? ' is-on' : ''}`} onClick={() => sortBy(col.sort)}>
-                            {col.label}
+                            {tr(col.label)}
                             <span aria-hidden="true">{sort.key === col.sort ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ' ↕'}</span>
                           </button>
                         )
-                        : col.label}
+                        : tr(col.label)}
                       {col.tip && <Help text={col.tip} />}
                     </th>
                   ))}

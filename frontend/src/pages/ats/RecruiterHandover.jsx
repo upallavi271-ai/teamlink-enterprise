@@ -4,6 +4,7 @@ import api from '../../api';
 import Combo from '../../components/Combo.jsx';
 import { useLocalListFilters } from '../../components/ui/LocalListFilters.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
+import { t as tr } from '../../i18n.jsx'; // ATS headings in Telugu / Hindi (ATS wave 2 Z, 13.06)
 
 // ---------------------------------------------------------------------------
 // RECRUITER HANDOVER (founder 2026-11-10): Reports & Team -> Handover. A recruiter leaves or moves: pick them, tick their candidates,
@@ -93,7 +94,7 @@ export default function RecruiterHandover() {
     <div>
       <div className="page-head">
         <div>
-          <h1>Recruiter handover</h1>
+          <h1>{tr('Recruiter handover')}</h1>
           <div className="small-muted">When a recruiter leaves or moves, hand their candidates to another recruiter. Steps, interviews, notes and history stay as they are. Their earlier work and their joinings keep their name.</div>
         </div>
       </div>

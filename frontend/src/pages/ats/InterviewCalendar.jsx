@@ -1,3 +1,4 @@
+import { t as tr } from '../../i18n.jsx'; // ATS headings in Telugu / Hindi (ATS wave 2 Z, 13.06)
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useSearchParams } from 'react-router-dom';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
@@ -917,7 +918,7 @@ export default function InterviewCalendar() {
       {/* HEADER — title, the calendar's date range, Day / Week / Month, Book. */}
       <div className="ak-page-head iv4-head">
         <div>
-          <h1>Interview Calendar</h1>
+          <h1>{tr('Interview Calendar')}</h1>
           <p>Every interview: who, when, and what is left to do after it.</p>
         </div>
         <div className="ak-page-tools">

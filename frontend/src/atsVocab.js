@@ -1,3 +1,4 @@
+import { t as tr } from './i18n.jsx'; // the status words in Telugu / Hindi when chosen (ATS wave 2 Z, 13.06)
 // ESM mirror of backend/src/utils/atsVocab.js — the ATS vocabulary taken
 // WORKFLOW STAGE GROUPS (2026-09-29): WORKFLOW_STAGE_GROUPS / WORKFLOW_FLOW /
 // inWorkflowGroup / stageLabelFor at the END of this file mirror the backend
@@ -64,7 +65,7 @@ export const STAGE_LABELS = {
 };
 
 export function stageLabel(code) {
-  return STAGE_LABELS[code] || code || '—';
+  return code && STAGE_LABELS[code] ? tr(STAGE_LABELS[code]) : (code || '—'); // Telugu / Hindi when chosen (ATS wave 2 Z, 13.06)
 }
 
 // ADMIN-RENAMED STAGES (Company Setup -> Pipeline & checks, founder ATS audit 2026-11-17): the server's list
@@ -159,7 +160,7 @@ export const requirementIsLive = (status) => REQUIREMENT_LIVE_STATUSES.includes(
 // WHAT PEOPLE SEE (user, 2026-10-13): a job is Open or Closed, nothing else. Every stored code except CLOSED reads Open.
 // REQUIREMENT_STATUS_LABELS above is the INTERNAL naming (state machine, logs) and is never drawn.
 export function requirementStatusLabel(code) {
-  return code === 'CLOSED' ? 'Closed' : 'Open';
+  return tr(code === 'CLOSED' ? 'Closed' : 'Open');
 }
 export const requirementStatusUser = requirementStatusLabel;
 // §30: Open and the live states green; On Hold / Draft / Agreement Check
@@ -194,7 +195,7 @@ export const normalizeAgreementStatus = (code) =>
 export const agreementIsSigned = (code) => ['SIGNED', 'ACTIVE'].includes(normalizeAgreementStatus(code));
 export const agreementIsActive = (code) => normalizeAgreementStatus(code) === 'ACTIVE';
 export function agreementStatusLabel(code) {
-  return AGREEMENT_STATUS_LABELS[code] || code || '—';
+  return AGREEMENT_STATUS_LABELS[code] ? tr(AGREEMENT_STATUS_LABELS[code]) : (code || '—');
 }
 export const PORTAL_SYNC_STATUSES = ['Not Synced', 'Pending', 'Synced', 'Failed'];
 
@@ -246,7 +247,7 @@ export const INTERVIEW_STATUS_LABELS = {
 };
 
 export function interviewStatusLabel(code) {
-  return INTERVIEW_STATUS_LABELS[code] || code || '—';
+  return INTERVIEW_STATUS_LABELS[code] ? tr(INTERVIEW_STATUS_LABELS[code]) : (code || '—');
 }
 
 // Only one forward move is allowed from each status — no skipping.

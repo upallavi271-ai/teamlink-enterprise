@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import './atskit.css';
+import { t as tr } from '../../i18n.jsx'; // the ATS screens' words in Telugu / Hindi (ATS wave 2 Z, 13.06)
 
 // ---------------------------------------------------------------------------
 // ATS KIT (2026-10-08) — the presentation pieces the redesigned ATS screens
@@ -20,6 +21,7 @@ import './atskit.css';
 // ---------------------------------------------------------------------------
 
 const IN = new Intl.NumberFormat('en-IN');
+const T = (x) => (typeof x === 'string' ? tr(x) : x); // Telugu / Hindi when chosen (ATS wave 2 Z, 13.06)
 export const fmtNum = (v) => {
   if (v === null || v === undefined || v === '') return '—';
   if (typeof v === 'number') return Number.isFinite(v) ? IN.format(v) : '—';
@@ -89,14 +91,14 @@ export function KpiTile({
     <>
       <span className={`ak-kpi-ic ak-t-${t}`}><Icon name={icon} size={20} /></span>
       <span className="ak-kpi-body">
-        <span className="ak-kpi-label">{label}</span>
+        <span className="ak-kpi-label">{T(label)}</span>
         <span className="ak-kpi-value">{loading ? <span className="ak-skel" role="status" aria-label="Loading" /> : fmtNum(value)}</span>
         {hasDelta ? (
           <span className={`ak-kpi-delta ${good === null ? 'flat' : good ? 'up' : 'down'}`}>
             {d > 0 ? '↑' : d < 0 ? '↓' : '•'} {Math.abs(Math.round(d))}%
             {deltaLabel && <span className="ak-kpi-dlabel"> {deltaLabel}</span>}
           </span>
-        ) : sub ? <span className="ak-kpi-sub">{sub}</span> : null}
+        ) : sub ? <span className="ak-kpi-sub">{T(sub)}</span> : null}
       </span>
     </>
   );
@@ -112,8 +114,8 @@ export function Panel({ title, sub, icon, iconTone, action, children, className 
   let act = null;
   if (action && action.label) {
     act = action.to
-      ? <Link className="ak-panel-link" to={action.to}>{action.label} <span aria-hidden="true">→</span></Link>
-      : <button type="button" className="ak-panel-link" onClick={action.onClick}>{action.label} <span aria-hidden="true">→</span></button>;
+      ? <Link className="ak-panel-link" to={action.to}>{T(action.label)} <span aria-hidden="true">→</span></Link>
+      : <button type="button" className="ak-panel-link" onClick={action.onClick}>{T(action.label)} <span aria-hidden="true">→</span></button>;
   } else if (action) act = action;
   return (
     <section className={`ak-panel ${className}`}>
@@ -122,8 +124,8 @@ export function Panel({ title, sub, icon, iconTone, action, children, className 
           <div className="ak-panel-title">
             {icon && <span className={`ak-panel-ic ak-tx-${toneOf(iconTone || 'blue')}`}><Icon name={icon} size={17} /></span>}
             <span>
-              <h3>{title}</h3>
-              {sub && <span className="ak-panel-sub">{sub}</span>}
+              <h3>{T(title)}</h3>
+              {sub && <span className="ak-panel-sub">{T(sub)}</span>}
             </span>
           </div>
           <div className="ak-panel-actions">{extra}{act}</div>
@@ -149,7 +151,7 @@ export function StageStrip({ steps = [], compact = false }) {
           <>
             <span className={`ak-stage-ic ak-t-${t}`}><Icon name={s.icon || 'user'} size={18} /></span>
             <span className="ak-stage-txt">
-              <span className="ak-stage-label">{s.label}</span>
+              <span className="ak-stage-label">{T(s.label)}</span>
               <span className="ak-stage-value">{s.loading ? <span className="ak-skel" role="status" aria-label="Loading" /> : fmtNum(s.value)}</span>
               {s.sub && <span className="ak-stage-sub">{s.sub}</span>}
             </span>
@@ -171,19 +173,19 @@ export function StageStrip({ steps = [], compact = false }) {
 //   items: [{ key, count, label, sub, tone, action: { label, onClick | to } }]
 export function AttentionList({ items = [], empty = 'Nothing needs attention right now.' }) {
   const shown = items.filter(Boolean);
-  if (!shown.length) return <div className="ak-empty">{empty}</div>;
+  if (!shown.length) return <div className="ak-empty">{T(empty)}</div>;
   return (
     <ul className="ak-attn">
       {shown.map((it) => (
         <li key={it.key || it.label}>
           <span className={`ak-attn-n ak-t-${toneOf(it.tone || 'red')}`}>{fmtNum(it.count)}</span>
           <span className="ak-attn-txt">
-            <span className="ak-attn-label">{it.label}</span>
+            <span className="ak-attn-label">{T(it.label)}</span>
             {it.sub && <span className="ak-attn-sub">{it.sub}</span>}
           </span>
           {it.action && (it.action.to
-            ? <Link className="ak-btn-sm" to={it.action.to}>{it.action.label} →</Link>
-            : <button type="button" className="ak-btn-sm" onClick={it.action.onClick}>{it.action.label} →</button>)}
+            ? <Link className="ak-btn-sm" to={it.action.to}>{T(it.action.label)} →</Link>
+            : <button type="button" className="ak-btn-sm" onClick={it.action.onClick}>{T(it.action.label)} →</button>)}
         </li>
       ))}
     </ul>
@@ -194,7 +196,7 @@ export function AttentionList({ items = [], empty = 'Nothing needs attention rig
 //   rows: [{ key, label, value, onClick, tone }]; share shown when showShare
 export function BarList({ rows = [], showShare = true, empty = 'No data available', format = fmtNum }) {
   const list = rows.filter((r) => r && Number(r.value) > 0);
-  if (!list.length) return <div className="ak-empty">{empty}</div>;
+  if (!list.length) return <div className="ak-empty">{T(empty)}</div>;
   const max = Math.max(...list.map((r) => Number(r.value)));
   const total = list.reduce((n, r) => n + Number(r.value), 0);
   return (
@@ -229,8 +231,8 @@ export function QuickActions({ items = [] }) {
           <>
             <span className={`ak-quick-ic ak-t-${toneOf(it.tone || TONES[i % TONES.length])}`}><Icon name={it.icon} size={17} /></span>
             <span className="ak-quick-txt">
-              <span className="ak-quick-label">{it.label}</span>
-              {it.sub && <span className="ak-quick-sub">{it.sub}</span>}
+              <span className="ak-quick-label">{T(it.label)}</span>
+              {it.sub && <span className="ak-quick-sub">{T(it.sub)}</span>}
             </span>
             <span className="ak-quick-go" aria-hidden="true">›</span>
           </>

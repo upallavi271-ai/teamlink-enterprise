@@ -1,5 +1,6 @@
 import { cloneElement, isValidElement, useCallback, useEffect, useState } from 'react';
 import api from '../../api';
+import { t as tr } from '../../i18n.jsx'; // Telugu / Hindi when chosen (ATS wave 2 Z, 13.06)
 
 // ---------------------------------------------------------------------------
 // Small shared pieces of the ATS PLUS screens (market wave, 2026-11-21): one way to load, show a message, draw a table and a switch,
@@ -53,7 +54,7 @@ export function Section({ title, note, children, right }) {
   return (
     <section className="card section" style={{ padding: 16, marginBottom: 14 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0, fontSize: 15 }}>{title}</h3>
+        <h3 style={{ margin: 0, fontSize: 15 }}>{typeof title === 'string' ? tr(title) : title}</h3>
         <span style={{ flex: 1 }} />
         {right}
       </div>
@@ -68,9 +69,9 @@ export function Table({ cols, rows, empty = 'Nothing here yet.', rowKey = (r, i)
   return (
     <div className="tbl-wrap" style={{ overflowX: 'auto' }}>
       <table>
-        <thead><tr>{cols.map((c) => <th key={c.key}>{c.label}</th>)}</tr></thead>
+        <thead><tr>{cols.map((c) => <th key={c.key}>{typeof c.label === 'string' ? tr(c.label) : c.label}</th>)}</tr></thead>
         <tbody>
-          {(!rows || rows.length === 0) && <tr><td colSpan={cols.length} className="cell-muted">{empty}</td></tr>}
+          {(!rows || rows.length === 0) && <tr><td colSpan={cols.length} className="cell-muted">{tr(empty)}</td></tr>}
           {(rows || []).map((r, i) => <tr key={rowKey(r, i)}>{cols.map((c) => <td key={c.key}>{c.render ? c.render(r) : (r[c.key] ?? '—')}</td>)}</tr>)}
         </tbody>
       </table>

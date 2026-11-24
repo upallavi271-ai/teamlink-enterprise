@@ -28,6 +28,7 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useState } from 'react';
 import api from '../api';
+import { t as tr } from '../i18n.jsx'; // Telugu / Hindi when chosen (ATS wave 2 Z, 13.06)
 import { useAuth } from '../context/AuthContext.jsx';
 import AtsImportDialog from './AtsImportDialog.jsx';
 import { Modal } from './proto.jsx';
@@ -164,46 +165,46 @@ export default function AtsDataTools({
     <div className="atsio">
       {want('import') && directKinds.length > 0 && (
         <button type="button" className="btn btn-sm" onClick={() => openImport('import')} title={mayResumes ? 'Bulk upload (Excel list) or upload resume files' : 'Add many records at once from an Excel file'}>
-          <span aria-hidden="true">⬆</span> Import
+          <span aria-hidden="true">⬆</span> {tr('Import')}
         </button>
       )}
       {want('import') && requestKinds.length > 0 && (
         <button type="button" className="btn btn-sm" onClick={() => (directKinds.length ? setDialog('request') : openImport('request'))} title="Upload an Excel file — an Admin or Manager approves it before it is added">
-          <span aria-hidden="true">⬆</span> Import (needs approval)
+          <span aria-hidden="true">⬆</span> {tr('Import (needs approval)')}
         </button>
       )}
       {want('import') && mayResumes && !directKinds.length && !requestKinds.length && (
         <button type="button" className="btn btn-sm" onClick={() => setDialog('resumes')} title="Upload resume files (PDF / DOCX)">
-          <span aria-hidden="true">⬆</span> Import
+          <span aria-hidden="true">⬆</span> {tr('Import')}
         </button>
       )}
       {want('import') && !directKinds.length && !requestKinds.length && !mayResumes && (
         <button type="button" className="btn btn-sm atsio-off" aria-disabled="true" onClick={() => off(whyNoImport)} title={whyNoImport}>
-          <span aria-hidden="true">⬆</span> Import
+          <span aria-hidden="true">⬆</span> {tr('Import')}
         </button>
       )}
       {want('export') && mayExport && (
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setMsg(null); setDialog('export'); }} title="Download this list as Excel, CSV or PDF">
-          <span aria-hidden="true">⬇</span> {busy ? 'Exporting…' : 'Export'}
+          <span aria-hidden="true">⬇</span> {tr(busy ? 'Exporting…' : 'Export')}
         </button>
       )}
       {want('export') && !mayExport && (
         <button type="button" className="btn btn-sm atsio-off" aria-disabled="true" onClick={() => off(whyNoExport)} title={whyNoExport}>
-          <span aria-hidden="true">⬇</span> Export
+          <span aria-hidden="true">⬇</span> {tr('Export')}
         </button>
       )}
       {!want('template') ? null : templateKinds.length > 0 ? (
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => (templateKinds.length === 1 ? downloadTemplate(templateKinds[0]) : setDialog('template'))} title="Download the sample Excel sheet for this screen's import: column names and example rows">
-          <span aria-hidden="true">⬇</span> Template
+          <span aria-hidden="true">⬇</span> {tr('Template')}
         </button>
       ) : (
         <button type="button" className="btn btn-sm atsio-off" aria-disabled="true" onClick={() => off('There is no template here: nothing is imported on this screen.')} title="Nothing is imported on this screen, so there is no template.">
-          <span aria-hidden="true">⬇</span> Template
+          <span aria-hidden="true">⬇</span> {tr('Template')}
         </button>
       )}
       {want('history') && !(historyInExport && mayExport) && (
         <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDialog('history')} title="Past imports and exports — undo an import within 24 hours">
-          {approver ? 'Approvals & history' : 'History'}
+          {tr(approver ? 'Approvals & history' : 'History')}
         </button>
       )}
       {msg && dialog !== 'export' && (

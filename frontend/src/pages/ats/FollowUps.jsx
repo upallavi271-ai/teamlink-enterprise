@@ -21,6 +21,7 @@ import HierarchyFilter, { EMPTY_HIERARCHY, toParams, hierarchyChips, useHierarch
 import FilterChips from '../../components/FilterChips.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
+import { t as tr } from '../../i18n.jsx'; // ATS headings in Telugu / Hindi (ATS wave 2 Z, 13.06)
 // The per-step rules table moved to Administration → Step timing (pages/admin/AtsAlertSettings.jsx).
 
 // ---------------------------------------------------------------------------
@@ -243,7 +244,7 @@ export default function FollowUps({ embedded = false }) {
       {/* The Shell already draws the breadcrumb — no second one here. */}
       <div className="page-head">
         <div>
-          {!embedded && <h1>Follow-ups</h1>}
+          {!embedded && <h1>{tr('Follow-ups')}</h1>}
           <div className="page-sub">
             Who to contact, why, and by when.
             {data.scope ? <>{' · '}<b className="scope-tag">Your area: {data.scope}</b></> : null}

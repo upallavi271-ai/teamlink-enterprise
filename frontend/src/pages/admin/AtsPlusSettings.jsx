@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import TabStrip from '../../components/ui/TabStrip.jsx';
+import { t as tr } from '../../i18n.jsx'; // ATS headings in Telugu / Hindi (ATS wave 2 Z, 13.06)
 
 // ---------------------------------------------------------------------------
 // ADMINISTRATION -> COMPANY SETUP -> ATS SETTINGS (market wave, founder 2026-11-21). The ATS settings that the market benchmark
@@ -28,7 +29,7 @@ export default function AtsPlusSettings() {
   const Panel = P[tab];
   return (
     <div>
-      <div className="page-head"><div><h1>ATS settings</h1><div className="page-sub">Organisation, forms, onboarding, integrations and privacy for the ATS</div></div></div>
+      <div className="page-head"><div><h1>{tr('ATS settings')}</h1><div className="page-sub">{tr('Organisation, forms, onboarding, integrations and privacy for the ATS')}</div></div></div>
       <TabStrip label="ATS settings" tabs={TABS} value={tab} onChange={(k) => setParams({ tab: k })} />
       <Suspense fallback={<div className="small-muted">Loading…</div>}><Panel /></Suspense>
     </div>

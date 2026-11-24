@@ -3,13 +3,14 @@
 // the Workflow tab of ATS Reports; not a sidebar module.
 import { Link } from 'react-router-dom';
 import WorkflowDiagram from '../../components/workflow/WorkflowDiagram.jsx';
+import { t as tr } from '../../i18n.jsx'; // ATS headings in Telugu / Hindi (ATS wave 2 Z, 13.06)
 
 export default function AtsWorkflow() {
   return (
     <div>
       <div className="page-head">
         <div>
-          <h1>Workflow</h1>
+          <h1>{tr('Workflow')}</h1>
           <div className="page-sub">
             Requirement → Job Portal screening → Send to ATS → client or internal hiring → joining →
             guarantee → Accounts → invoice → payment. Every box counts the candidates at that step right

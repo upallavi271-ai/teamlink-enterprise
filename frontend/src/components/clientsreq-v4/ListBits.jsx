@@ -1,4 +1,5 @@
 import './crq4.css';
+import { t as tr } from '../../i18n.jsx'; // Telugu / Hindi when chosen (ATS wave 2 Z, 13.06)
 
 // ---------------------------------------------------------------------------
 // Small presentation pieces of the Clients & Requirements v4 screens.
@@ -11,8 +12,8 @@ export function CrqHead({ title = 'Clients & Requirements', sub, scope, tools })
   return (
     <header className="ak-page-head crq4-head">
       <div className="crq4-head-txt">
-        <h1>{title}</h1>
-        {sub && <p>{sub}</p>}
+        <h1>{typeof title === 'string' ? tr(title) : title}</h1>
+        {sub && <p>{typeof sub === 'string' ? tr(sub) : sub}</p>}
         {scope && <div className="crq4-head-scope">{scope}</div>}
       </div>
       {tools && <div className="ak-page-tools crq4-tools">{tools}</div>}

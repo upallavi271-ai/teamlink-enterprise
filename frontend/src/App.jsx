@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Shell from './components/Shell.jsx';
+import './atsI18nZ.js'; // the ATS screens' words in Telugu / Hindi (13.06, ATS wave 2 Z)
 import BrowserCallProvider from './components/browsercall/CallProvider.jsx'; // manual browser calling: one softphone for the whole app
 import CallBar from './components/browsercall/CallBar.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';

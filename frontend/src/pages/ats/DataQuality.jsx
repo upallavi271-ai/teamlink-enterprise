@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocalListFilters } from '../../components/ui/LocalListFilters.jsx';
 import api from '../../api';
+import { t as tr } from '../../i18n.jsx'; // ATS headings in Telugu / Hindi (ATS wave 2 Z, 13.06)
 
 // DATA QUALITY (backend utils/dataQuality.js): how complete the candidate database is, what is missing most, duplicates and how
 // right the duplicate finder is, stale profiles, consent not recorded. TL and above.
@@ -29,7 +30,7 @@ export default function DataQuality() {
     <div>
       <div className="page-head">
         <div>
-          <h1>Data quality</h1>
+          <h1>{tr('Data quality')}</h1>
           <div className="page-sub">How complete and clean the candidate database is. Each profile is scored on the details a recruiter needs.</div>
         </div>
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => load(true)}>{busy ? 'Counting…' : 'Count again'}</button>

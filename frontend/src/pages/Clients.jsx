@@ -12,6 +12,7 @@ import {
   ListToolbar, ListFooter, FacetSelect, useLocalFacets,
 } from '../components/ui/ListPageHeader.jsx';
 import BranchSwitchZ, { useWorkingBranch } from '../components/atsPlus/BranchSwitchZ.jsx'; // 05.11 the working branch (ATS wave 2 Z)
+import { t as trZ } from '../i18n.jsx'; // the header buttons in Telugu / Hindi (ATS wave 2 Z, 13.06)
 import Combo from '../components/Combo.jsx';
 import '../components/jobs/jobs.css';
 import ClientDuplicatesButton from '../components/ClientDuplicatesButton.jsx';
@@ -591,7 +592,7 @@ export default function Clients() {
             {/* 2026-11-03: the BDE desk's Excel follow-up sheets, line by line into each client's Follow-ups (the server checks) */}
             {['bde', 'admin'].includes(role) ? <FollowUpImportButton onDone={(m) => setFlash(m)} /> : null}
             {a.add ? (
-              <button type="button" className="btn btn-primary" onClick={() => { setFlash(''); setAdding(true); }}>+ Add client</button>
+              <button type="button" className="btn btn-primary" onClick={() => { setFlash(''); setAdding(true); }}>{trZ('+ Add client')}</button>
             ) : null}
           </>
         )}
@@ -780,7 +781,7 @@ export default function Clients() {
                 const cls = [NUM_COLS.includes(k) ? 'clrel-num' : MONEY_COLS.includes(k) ? 'clrole-money' : '', sk ? 'jobsws-sort' : ''].filter(Boolean).join(' ') || undefined;
                 return (
                   <th key={k} className={cls} onClick={sk ? () => sortByCol(sk) : undefined} title={sk ? `Sort by ${labelFor(k, role)}` : undefined}>
-                    {labelFor(k, role)}
+                    {trZ(labelFor(k, role))}
                     {COL_TIPS[k] && <Help text={COL_TIPS[k]} />}
                     {sk && currentSort === sk && <span className="arrow">{sortRev ? '▲' : '▼'}</span>}
                   </th>

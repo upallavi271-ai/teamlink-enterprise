@@ -72,6 +72,7 @@ import Combo from '../components/Combo.jsx';
 import { rowClickProps } from '../utils/rowClick.js';
 import IntakeAssistant from '../components/mktb/IntakeAssistant.jsx'; // market wave B 02.13: a call note / e-mail -> a requirement draft
 import BranchSwitchZ, { useWorkingBranch } from '../components/atsPlus/BranchSwitchZ.jsx'; // 05.11 the working branch (ATS wave 2 Z)
+import { t as trZ } from '../i18n.jsx'; // the header buttons in Telugu / Hindi (ATS wave 2 Z, 13.06)
 
 const JOB_TIPS = [
   'Each row is one requirement: a client (or our company) wants people for it.',
@@ -1112,9 +1113,9 @@ export default function Requirements() {
             <AtsDataTools module="requirements" kinds={['requirements']} onImported={load} body={exportBody} />
             <button type="button" className={`btn${filters.fresh === '1' ? ' btn-primary' : ''}`} title="Requirements posted in the last 7 days, newest first. Click again to see everything." onClick={() => { if (filters.fresh === '1') removeFilter({ fresh: '' }); else { setSort('created'); setDir('desc'); const vs = ((data && data.views) || []).map((v) => v.key); setView(vs.includes('all') ? 'all' : (vs.includes('open') ? 'open' : view)); setDraftFilter({ fresh: '1' }); } }}>🆕 New</button>
             {canRaiseRequirement(user)
-              ? <button type="button" className="btn btn-primary" onClick={() => openForm()} title={isHrUser ? "TeamLink's own opening (internal hiring)" : undefined}>{isHrUser ? '+ New internal opening' : '+ Add Requirement'}</button>
-              : mayRequestJob ? <button type="button" className="btn btn-primary" onClick={() => setShowRequest(true)}>+ Request requirement</button> : null}
-            {canRaiseRequirement(user) && !isHrUser && <button type="button" className="btn" title="Paste a call note or the client's e-mail: a requirement draft for the Add requirement form" onClick={() => setIntakeOpen(true)}>Draft from a note</button>}
+              ? <button type="button" className="btn btn-primary" onClick={() => openForm()} title={isHrUser ? "TeamLink's own opening (internal hiring)" : undefined}>{trZ(isHrUser ? '+ New internal opening' : '+ Add Requirement')}</button>
+              : mayRequestJob ? <button type="button" className="btn btn-primary" onClick={() => setShowRequest(true)}>{trZ('+ Request requirement')}</button> : null}
+            {canRaiseRequirement(user) && !isHrUser && <button type="button" className="btn" title="Paste a call note or the client's e-mail: a requirement draft for the Add requirement form" onClick={() => setIntakeOpen(true)}>{trZ('Draft from a note')}</button>}
             {mayAskJob && <button type="button" className="btn btn-sm" title="Requirements are created by the client manager (BDE) team. Tell them which requirement you need." onClick={() => setShowAsk(true)}>Ask the client manager to add a requirement</button>}
             <SavedViews storageKey="req" current={savedState} onApply={applySaved} presets={presets} label="Saved filters" />
           </>
@@ -1328,7 +1329,7 @@ export default function Requirements() {
                                   style={{ width: 'auto', marginRight: 8, verticalAlign: 'middle' }}
                                 />
                               )}
-                              {c.label}
+                              {trZ(c.label)}
                               {COL_TIPS[c.key] && <Help text={COL_TIPS[c.key]} />}
                               {c.sort && sort === c.sort && <span className="arrow">{dir === 'desc' ? '▼' : '▲'}</span>}
                             </>

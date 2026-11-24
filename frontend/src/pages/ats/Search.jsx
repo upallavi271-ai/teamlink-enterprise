@@ -7,6 +7,7 @@ import { GroupRows, fmtN } from '../../components/search/SearchResults.jsx';
 import { useHistoryOpener } from '../../components/search/historyOpen.jsx';
 import { personOptions, useAtsWorkers } from '../../components/PeopleFilter.jsx';
 import '../../components/search/search.css';
+import { t as tr } from '../../i18n.jsx'; // ATS headings in Telugu / Hindi (ATS wave 2 Z, 13.06)
 
 // ---------------------------------------------------------------------------
 // THE FULL RESULTS PAGE of the one search (Enter in either search box), and a browse-by-filter screen.
@@ -137,7 +138,7 @@ export default function Search() {
     <div className="srp">
       <div className="page-head">
         <div>
-          <h1>Search</h1>
+          <h1>{tr('Search')}</h1>
           <div className="page-sub">Candidates, recruiters, TLs, clients, requirements, interviews, offers, joinings, invoices, agreements, follow-ups, documents. Every result opens its complete history, right here beside the results. Use the filters on their own to browse.</div>
         </div>
         {data && data.canExport && total > 0 && <ExportMenu url="/ats/history/search/export" params={exportParams} formats={['xlsx', 'csv']} label="Download Excel" />}

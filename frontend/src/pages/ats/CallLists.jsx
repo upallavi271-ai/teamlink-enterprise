@@ -6,6 +6,7 @@ import { Modal } from '../../components/proto.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
+import { t as tr } from '../../i18n.jsx'; // ATS headings in Telugu / Hindi (ATS wave 2 Z, 13.06)
 
 // ---------------------------------------------------------------------------
 // CALL LISTS (founder 2026-11-17): the recruiters get data as sheets; a manager splits a sheet among recruiters; each recruiter calls the contacts of their own block from VICIdial.
@@ -271,7 +272,7 @@ export default function CallLists() {
     <div>
       <div className="page-head">
         <div>
-          <h1>Call lists</h1>
+          <h1>{tr('Call lists')}</h1>
           <div className="small-muted">A sheet of contacts is split among recruiters. Each recruiter calls their own block from VICIdial and says how every call went.</div>
         </div>
         {data && data.canManage && <button type="button" className="btn btn-primary" onClick={() => setUpload(true)}>⬆ Upload a call sheet</button>}

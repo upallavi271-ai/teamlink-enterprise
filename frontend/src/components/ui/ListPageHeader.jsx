@@ -44,7 +44,7 @@ export default function ListPageHeader({
     <div className={`page-head lph-head ${className}`}>
       <div className="lph-titles">
         <h1>{typeof title === 'string' ? tr(title) : title}</h1>
-        {question && <div className="lph-question">{question}</div>}
+        {question && <div className="lph-question">{typeof question === 'string' ? tr(question) : question}</div>}
         {sub && <div className="page-sub lph-sub">{sub}</div>}
       </div>
       <div className="lph-actions">
@@ -97,7 +97,7 @@ export function ListToolbar({
           <input
             type="search"
             className="lph-search"
-            placeholder={placeholder}
+            placeholder={tr(placeholder)}
             value={search || ''}
             onChange={(e) => onSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && onSearchSubmit) { e.preventDefault(); onSearchSubmit(); } }}
@@ -113,14 +113,14 @@ export function ListToolbar({
             aria-expanded={open}
             onClick={() => setOpen((o) => !o)}
           >
-            {`Filters${filterCount ? ` (${filterCount})` : ''}`} <span aria-hidden="true">{open ? '▴' : '▾'}</span>
+            {`${tr('Filters')}${filterCount ? ` (${filterCount})` : ''}`} <span aria-hidden="true">{open ? '▴' : '▾'}</span>
           </button>
         )}
         {sortOptions && sortOptions.length > 1 && (
           <label className="lph-sort">
-            <span>Sort</span>
+            <span>{tr('Sort')}</span>
             <Combo value={sort} onChange={(e) => onSort(e.target.value)}>
-              {sortOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              {sortOptions.map(([k, l]) => <option key={k} value={k}>{typeof l === 'string' ? tr(l) : l}</option>)}
             </Combo>
             {sortExtra}
           </label>
@@ -134,8 +134,8 @@ export function ListToolbar({
           <div className="lph-panel-grid">{panel}</div>
           <div className="lph-panel-foot">
             {panelFooter}
-            {onClearAll && filterCount > 0 && <button type="button" className="btn btn-sm btn-ghost" onClick={onClearAll}>Clear all</button>}
-            <button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>Done</button>
+            {onClearAll && filterCount > 0 && <button type="button" className="btn btn-sm btn-ghost" onClick={onClearAll}>{tr('Clear all')}</button>}
+            <button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>{tr('Done')}</button>
           </div>
         </div>
       )}
@@ -152,7 +152,7 @@ export function ListFooter({
   const f = (n) => Number(n || 0).toLocaleString('en-IN');
   return (
     <div className="lph-foot">
-      <span>{`Showing ${f(from)} to ${f(to)} of ${f(total)}${noun ? ` ${noun}` : ''}`}</span>
+      <span>{tr('Showing {from} to {to} of {total}', { from: f(from), to: f(to), total: f(total) })}{noun ? ` ${tr(noun)}` : ''}</span>
       {children}
     </div>
   );
@@ -176,7 +176,7 @@ export function FacetSelect({
     <label className="lph-facet" title={title || label}>
       <span className="lph-facet-lbl">{label}</span>
       <Combo value={value || ''} onChange={(e) => onChange(e.target.value)} style={style}>
-        <option value="">{`${allLabel || 'Any'}${overall !== null && Number.isFinite(overall) ? ` (${overall.toLocaleString('en-IN')})` : ''}`}</option>
+        <option value="">{`${tr(allLabel || 'Any')}${overall !== null && Number.isFinite(overall) ? ` (${overall.toLocaleString('en-IN')})` : ''}`}</option>
         {list.map((o) => (
           <option key={o.value} value={o.value}>{`${o.label}${o.count !== undefined && o.count !== null ? ` (${Number(o.count).toLocaleString('en-IN')})` : ''}`}</option>
         ))}

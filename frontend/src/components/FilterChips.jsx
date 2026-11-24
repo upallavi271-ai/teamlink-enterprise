@@ -1,3 +1,4 @@
+import { t as tr } from '../i18n.jsx'; // Telugu / Hindi when chosen (ATS wave 2 Z, 13.06)
 import './HierarchyFilter.css';
 
 // ---------------------------------------------------------------------------
@@ -18,12 +19,12 @@ export default function FilterChips({ filters = [], onClearAll, label = 'Filters
   if (!list.length) return null;
   return (
     <div className={`filter-chips${className ? ` ${className}` : ''}`} role="group" aria-label="Active filters">
-      <span className="filter-chips-lead">{label}</span>
+      <span className="filter-chips-lead">{tr(label)}</span>
       {list.map((f, i) => (
         <span key={f.key || `${f.label}-${i}`} className="filter-chips-item">
           {i > 0 && <span className="filter-chips-sep" aria-hidden="true">|</span>}
           <span className="filter-chips-chip">
-            <span className="filter-chips-k">{f.label}</span>
+            <span className="filter-chips-k">{typeof f.label === 'string' ? tr(f.label) : f.label}</span>
             <span className="filter-chips-eq"> = </span>
             {f.onOpen
               ? <button type="button" className="filter-chips-v filter-chips-open" onClick={f.onOpen} title={`Change ${f.label}`}>{String(f.value)}</button>
@@ -37,7 +38,7 @@ export default function FilterChips({ filters = [], onClearAll, label = 'Filters
         </span>
       ))}
       {onClearAll && (
-        <button type="button" className="filter-chips-clear" onClick={onClearAll}>Clear All</button>
+        <button type="button" className="filter-chips-clear" onClick={onClearAll}>{tr('Clear all')}</button>
       )}
     </div>
   );

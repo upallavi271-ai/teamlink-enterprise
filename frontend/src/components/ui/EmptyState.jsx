@@ -1,3 +1,4 @@
+import { t as tr } from '../../i18n.jsx'; // Telugu / Hindi when chosen (ATS wave 2 Z, 13.06)
 import './ui.css';
 
 // ---------------------------------------------------------------------------
@@ -12,8 +13,8 @@ export default function EmptyState({ icon = '🗂️', title, hint, action, comp
   return (
     <div className={`empty-st${compact ? ' compact' : ''}`}>
       <div className="empty-st-icon" aria-hidden="true">{icon}</div>
-      <div className="empty-st-title">{title}</div>
-      {hint && <div className="empty-st-hint">{hint}</div>}
+      <div className="empty-st-title">{typeof title === 'string' ? tr(title) : title}</div>
+      {hint && <div className="empty-st-hint">{typeof hint === 'string' ? tr(hint) : hint}</div>}
       {action && <div className="empty-st-action">{action}</div>}
     </div>
   );

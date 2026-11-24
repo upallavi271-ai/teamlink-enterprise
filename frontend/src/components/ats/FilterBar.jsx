@@ -1,3 +1,4 @@
+import { t as tr } from '../../i18n.jsx'; // Telugu / Hindi when chosen (ATS wave 2 Z, 13.06)
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import MultiSelect from './MultiSelect.jsx';
@@ -71,7 +72,7 @@ function Range({ f, values, onChange, facets, loading }) {
   return (
     <>
       <span className="lph-facet fbar-range" title={f.title || f.label}>
-        <span className="lph-facet-lbl">{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
+        <span className="lph-facet-lbl">{tr(f.label)}{f.unit ? ` (${f.unit})` : ''}</span>
         <span className="lph-pair">
           <input type="number" min="0" step={f.step || 1} placeholder="Min" aria-label={`${f.label} minimum`} value={values[kMin] || ''} onChange={(e) => onChange({ [kMin]: e.target.value })} />
           <input type="number" min="0" step={f.step || 1} placeholder="Max" aria-label={`${f.label} maximum`} value={values[kMax] || ''} onChange={(e) => onChange({ [kMax]: e.target.value })} />
@@ -108,7 +109,7 @@ function DateRangeField({ f, values, onChange }) {
   };
   return (
     <span className="lph-facet fbar-dates" title={f.title || f.label}>
-      <span className="lph-facet-lbl">{f.label}</span>
+      <span className="lph-facet-lbl">{tr(f.label)}</span>
       <span className="lph-pair">
         <select aria-label={`${f.label}: quick pick`} value={picked} onChange={(e) => pick(e.target.value)}>
           {PRESETS.filter(([k]) => k !== 'custom' || picked === 'custom').map(([k, l]) => <option key={k} value={k}>{k === '' ? 'Any time' : l}</option>)}
@@ -136,7 +137,7 @@ function Control({
   if (f.type === 'multi' || f.type === 'select' || f.type === 'multimode') {
     return (
       <span className={f.type === 'multimode' ? 'fbar-multimode' : 'fbar-cell'}>
-        <MultiSelect openToken={openToken} label={f.label} allLabel={f.allLabel || 'Any'} plural={f.plural || ''} value={values[key] || ''} onChange={(v) => onChange({ [key]: v })} options={opts} loading={loading} title={f.title || f.label} />
+        <MultiSelect openToken={openToken} label={tr(f.label)} allLabel={tr(f.allLabel || 'Any')} plural={f.plural || ''} value={values[key] || ''} onChange={(v) => onChange({ [key]: v })} options={opts} loading={loading} title={f.title || f.label} />
         {f.type === 'multimode' && csvOf(values[key]).length > 1 && (
           <span className="fbar-mode" role="group" aria-label={`${f.label}: match any or all`}>
             {['any', 'all'].map((m) => (
@@ -154,7 +155,7 @@ function Control({
     const k = f.keys;
     return (
       <span className="lph-facet fbar-period" title={f.title || f.label}>
-        <span className="lph-facet-lbl">{f.label}</span>
+        <span className="lph-facet-lbl">{tr(f.label)}</span>
         <span className="lph-pair">
           <select value={values[k.range] || ''} aria-label={f.label} onChange={(e) => onChange({ [k.range]: e.target.value, ...(e.target.value === 'custom' ? {} : { [k.from]: '', [k.to]: '' }) })}>
             <option value="">{f.allLabel || 'Now (no period)'}</option>
@@ -174,7 +175,7 @@ function Control({
   if (f.type === 'yesno') {
     return (
       <label className="lph-facet" title={f.title || f.label}>
-        <span className="lph-facet-lbl">{f.label}</span>
+        <span className="lph-facet-lbl">{tr(f.label)}</span>
         <select value={values[key] || ''} onChange={(e) => onChange({ [key]: e.target.value })}>
           <option value="">{f.allLabel || 'Either'}</option>
           <option value="yes">{f.yesLabel || 'Yes'}</option>
@@ -185,7 +186,7 @@ function Control({
   }
   return (
     <label className="lph-facet" title={f.title || f.label}>
-      <span className="lph-facet-lbl">{f.label}</span>
+      <span className="lph-facet-lbl">{tr(f.label)}</span>
       <input type="text" placeholder={f.placeholder || ''} value={values[key] || ''} onChange={(e) => onChange({ [key]: e.target.value })} />
     </label>
   );
@@ -260,10 +261,10 @@ export default function FilterBar({
         {primary.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} openToken={openFor.id === f.id ? openFor.n : 0} />)}
         {hasMore && (
           <button type="button" className={`mf-toggle fbar-more${open ? ' on' : ''}`} onClick={toggle} aria-expanded={open}>
-            More filters{moreN ? ` (${moreN})` : ''} {open ? '▴' : '▾'}
+            {tr('More filters')}{moreN ? ` (${moreN})` : ''} {open ? '▴' : '▾'}
           </button>
         )}
-        {showClear && <button type="button" className="mf-clear" onClick={onClear}>Clear all</button>}
+        {showClear && <button type="button" className="mf-clear" onClick={onClear}>{tr('Clear all')}</button>}
         {saved}
         {total !== null && total !== undefined && <span className="small-muted fbar-count" role="status">{`${nf(total)} ${noun}`}{allTime ? ' · Showing all time' : ''}</span>}
       </div>
@@ -272,9 +273,9 @@ export default function FilterBar({
           <div className="fbar-backdrop" onClick={() => setOpen(false)} aria-hidden="true" />
           <div className="fbar-panel" role="dialog" aria-label="More filters">
             <div className="fbar-panel-head">
-              <b>More filters</b>
+              <b>{tr('More filters')}</b>
               <span>
-                {showClear && <button type="button" className="link-btn" onClick={onClear}>Clear all</button>}
+                {showClear && <button type="button" className="link-btn" onClick={onClear}>{tr('Clear all')}</button>}
                 <button type="button" className="btn btn-sm fbar-close" onClick={() => setOpen(false)}>{`Show ${total !== null && total !== undefined ? nf(total) : ''} ${noun}`.replace(/\s+/g, ' ')}</button>
               </span>
             </div>
