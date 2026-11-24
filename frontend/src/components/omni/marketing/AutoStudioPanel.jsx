@@ -39,6 +39,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const [aspect, setAspect] = useState(isVideo ? '9:16' : '1:1');
   const [look, setLook] = useState('designed'); // 'designed' (free) | 'ai' (paid picture AI)
   const [photos, setPhotos] = useState(true);
+  const [aiHero, setAiHero] = useState(true); // banners: the hero picture is made by the picture AI (when one is connected), like a designed poster's artwork; a free stock photo otherwise
   const [banners, setBanners] = useState(true); // posts: a professional banner (logo band, two-tone headline, hero picture, icons, who it is for, website), not a plain poster
   const [footage, setFootage] = useState(true); // explainer videos: real stock VIDEO footage behind the words (free), not still pictures
   const [phase, setPhase] = useState(''); // '' | 'plan' | 'pics' | 'done'
@@ -69,10 +70,10 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const working = phase === 'plan' || phase === 'pics';
 
   // an AI picture for one scene: start the job, then ask every 3 seconds until it is done (the same way the AI Images page does). A "too many in a minute" answer waits and tries again.
-  const makeAiPicture = async (scene) => {
+  const makeAiPicture = async (scene, asp = aspect) => {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       let r;
-      try { r = await omni.post('/gs/marketing/images', { prompt: scene.imagePrompt, headline: '', style: 'photo', aspect, count: 1, useColors: true, withLogo: !isVideo, ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) }); } catch (e) {
+      try { r = await omni.post('/gs/marketing/images', { prompt: scene.imagePrompt, headline: '', style: 'photo', aspect: asp, count: 1, useColors: true, withLogo: !isVideo, ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) }); } catch (e) {
         const st = e.response && e.response.status;
         if (st === 429 && /minute|wait/i.test(errOf(e, ''))) { await sleep(15000); if (stop.current) throw new Error('stopped'); continue; } // eslint-disable-line no-continue, no-await-in-loop
         throw e;
@@ -132,7 +133,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
       const r = await omni.post('/gs/marketing/studio/plan', { prompt, title, heading, content, cta, kind, scenes, date, ...(projectId && brief && brief.draft && !fresh ? { useDraft: true } : {}), ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
       setPlan(r.plan); setFlags(r.flags || []);
       if (r.note) setNote(r.note); // the AI writer was busy: the server made the post from the person's own words
-      setPhase('pics'); const ids = []; let useAi = look === 'ai' && can.ai; let anyDesigned = false;
+      setPhase('pics'); const ids = []; let useAi = look === 'ai' && can.ai; let heroAi = aiHero && can.ai && !isVideo && banners; let anyDesigned = false;
       for (let i = 0; i < r.plan.scenes.length; i += 1) {
         setStep({ i: i + 1, n: r.plan.scenes.length });
         let id = null;
@@ -145,7 +146,15 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
         if (!id && isVideo && r.plan.explain && footage && can.stock) { // real moving footage from the free stock source, kept in this browser only
           try { const cb = await omni.blob('/gs/marketing/stock/clipfile', { q: r.plan.scenes[i].search || r.plan.scenes[i].caption, shape: shapeOf(aspect), n: i }); const cu = URL.createObjectURL(cb); urls.current.push(cu); id = { stock: true, url: cu }; } catch { id = null; } // eslint-disable-line no-await-in-loop
         }
-        if (!id && !isVideo && banners) { try { id = await makeBanner(r.plan, i, r.plan.scenes.length, null); } catch (e) { id = null; if (e.response && e.response.status === 403) throw e; } } // a banner that cannot be designed falls back to the plain picture below
+        if (!id && !isVideo && banners) {
+          let hero = null;
+          if (heroAi) { // the hero artwork: a clean, modern, text-free picture of the subject, in a wide frame (the banner's picture area is wide)
+            try { hero = await makeAiPicture({ imagePrompt: 'Professional digital marketing hero artwork for ' + (r.plan.who || 'a business') + ': ' + (r.plan.scenes[i].imagePrompt || r.plan.scenes[i].caption) + '. Clean modern infographic style, glowing blue and gold accents, soft depth of field, polished 3D look. No text, no letters, no logos, no watermark.' }, '16:9'); } catch (e) { // eslint-disable-line no-await-in-loop
+              if (e.message === 'stopped') throw e;
+              hero = null; if (AI_REFUSED.test(errOf(e, e.message || ''))) { heroAi = false; setNote('The picture AI said no (limit or billing), so the hero pictures are free stock photos instead.'); }
+            }
+          }
+          try { id = await makeBanner(r.plan, i, r.plan.scenes.length, hero); } catch (e) { id = null; if (e.response && e.response.status === 403) throw e; } } // a banner that cannot be designed falls back to the plain picture below
         if (!id) { id = await makeDesigned(r.plan, i, r.plan.scenes.length); anyDesigned = true; } // eslint-disable-line no-await-in-loop
         ids.push(id);
         if (stop.current) throw new Error('stopped');
@@ -226,6 +235,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           </div>
           {more ? (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 12, alignItems: 'center' }}>
+              {!isVideo && can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={aiHero} disabled={working || !banners} onChange={(e) => setAiHero(e.target.checked)} />Hero picture made by AI (a few a day) instead of a stock photo</label> : null}
               {!isVideo ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={banners} disabled={working} onChange={(e) => setBanners(e.target.checked)} />Professional banner (logo, two-colour headline, picture, icons, who it is for, website)</label> : null}
               {isVideo ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={footage} disabled={working || !can.stock} onChange={(e) => setFootage(e.target.checked)} />Real video footage behind the words (free stock clips, like a real video)</label> : null}
               <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={photos} disabled={working || !can.stock} onChange={(e) => setPhotos(e.target.checked)} />Free stock photos behind the words {can.stock ? '' : <span style={{ color: 'var(--muted)' }}>(not set up: an Admin adds a free Pixabay key in Administration &gt; Integrations; brand colours are used)</span>}</label>
