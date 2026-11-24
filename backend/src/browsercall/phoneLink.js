@@ -148,7 +148,9 @@ async function pair(b, ip) {
   const code = String((b && b.code) || '').replace(/\D/g, '');
   const row = code.length === 6 ? await one('SELECT * FROM "PhoneLinkPairCode" WHERE "codeHash"=? AND "expiresAt">?', sha(code), S.nowIso()) : null;
   if (!row) { t.push(now); tries.set(key, t); return { status: 400, error: 'That code is wrong or has expired. Ask the Admin for a new one.' }; }
-  await run('DELETE FROM "PhoneLinkPairCode" WHERE "codeHash"=?', row.codeHash);
+  // claim the code atomically: several taps on Pair at once must give ONE phone, not one each (seen live 2026-11-24: 6 rows)
+  const claimed = await run('DELETE FROM "PhoneLinkPairCode" WHERE "codeHash"=?', row.codeHash);
+  if (Number(claimed) !== 1) return { status: 409, error: 'This code was just used. If the phone shows Paired, you are done; otherwise ask the Admin for a new code.' };
   const token = crypto.randomBytes(32).toString('hex');
   const id = crypto.randomUUID(); const ts = S.nowIso();
   await run('INSERT INTO "PhoneLinkDevice" ("id","name","number","userIds","tokenHash","model","appVersion","paused","lastSeenAt","pairedById","pairedAt","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?)',

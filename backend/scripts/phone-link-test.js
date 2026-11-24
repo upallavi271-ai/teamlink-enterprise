@@ -126,6 +126,14 @@ const ist = (days) => new Date(Date.now() + 330 * 60000 + days * 86400000).toISO
   check('the device key is not stored (only its hash)', devRow.length === 1 && !JSON.stringify(devRow).includes(DK));
   check('a wrong device key is refused (401, UNPAIRED)', (await call('POST', '/phone-link/device/poll', { wait: 0 }, 'f'.repeat(64))).status === 401);
 
+  // ---- several taps on Pair at once give ONE phone (seen live 2026-11-24: 6 rows)
+  const pc2 = await call('POST', '/browser-calling/phone/admin/pair-code', { name: 'Burst', number: '9032321415', userIds: [] }, tA);
+  const burst = await Promise.all([1, 2, 3, 4, 5, 6].map(() => call('POST', '/phone-link/pair', { code: pc2.body.code })));
+  const okN = burst.filter((x) => x.status === 200).length;
+  const burstRows = await S.all('SELECT "id" FROM "PhoneLinkDevice" WHERE "number"=\'9032321415\' AND "revokedAt" IS NULL');
+  check('six taps on Pair at once: exactly one phone is paired', okN === 1 && burstRows.length === 1, { okN, rows: burstRows.length, codes: burst.map((x) => x.status) });
+  await call('DELETE', `/browser-calling/phone/admin/devices/${burstRows[0] && burstRows[0].id}`, null, tA);
+
   // ---- status, lines
   const st0 = await call('POST', '/phone-link/device/poll', { wait: 0, state: { battery: 81, simReady: true, appPaused: false, missing: [], appVersion: '1.0' } }, DK);
   check('the phone polls: nothing to do yet', st0.status === 200 && !st0.body.call && st0.body.number === '9032321414' && st0.body.paused === false, st0.body);
