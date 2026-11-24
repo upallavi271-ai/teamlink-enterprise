@@ -153,7 +153,7 @@ export default function BrowserCallProvider({ children }) {
   const call = useCallback(({ candidateId, applicationId, name, lineId, outreachTaskId }) => {
     const ln = lineId || (curLine && curLine.id) || undefined;
     if (ln === 'vicidial' && !outreachTaskId) return viciCall({ candidateId, applicationId, name });
-    return run({ candidateId: candidateId || (outreachTaskId ? `task:${outreachTaskId}` : undefined), name }, async () => (await api.post('/browser-calling/calls', { candidateId, applicationId, lineId: ln, outreachTaskId })).data);
+    return run({ candidateId: candidateId || (outreachTaskId ? `task:${outreachTaskId}` : undefined), name }, async () => (await api.post('/browser-calling/calls', { candidateId, applicationId, lineId: ln === 'vicidial' ? undefined : ln, outreachTaskId })).data);
   }, [run, curLine, viciCall]);
   // CRM wave B: a lead / deal / customer of the CRM on the office line (POST /crm/b/calls; the row is kept as crm:<kind>:<id>)
   const callCrm = useCallback(({ kind, id, name, lineId, to }) => run({ candidateId: `crm:${kind}:${id}`, name }, async () => (await api.post('/crm/b/calls', { kind, id, to, lineId: lineId || (curLine && !curLine.vicidial ? curLine.id : undefined) || undefined })).data, { sessionPath: '/crm/b/calls/session' }), [run, curLine]);
