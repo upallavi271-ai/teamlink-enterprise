@@ -504,6 +504,7 @@ async function produce(u, x) {
     await AI.logUsage({ user: u, module: 'images', task: 'create', provider, model: c.model, ok: false, inChars: text.length, ms: Date.now() - t0, error: e.message });
     return { error: e.message, status: e.status || 502, code: e.code };
   }
+  if (c.provider === 'cloudflare' && pics.some((p) => p.model && p.model !== c.model)) note = `${note ? `${note} ` : ''}FLUX.2 was not available just now, so FLUX.1 schnell made ${pics.length > 1 ? 'these pictures' : 'this picture'}.`; // said in words, and the model of each picture is recorded
   // Gemini drew the logo and the size itself; for the others the picture is cut to the size and the logo is put on here
   const finish = !modelGetsLogo && (provider !== 'gemini' || isImagen(c.model));
   if (finish) {
@@ -522,8 +523,8 @@ async function produce(u, x) {
     fs.writeFileSync(path.join(dir(), file), buf);
     const ts = Date.now();
     await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?)`, // eslint-disable-line no-await-in-loop
-      id, title, prompt, headline || null, style, aspect, st.demo ? 'sample' : c.model, p.withLogo ? 1 : 0, file, mime, buf.length, st.demo ? 1 : 0, dept || null, u.id, S.clip(u.name, 80), ts, ts);
-    await AI.logUsage({ user: u, module: 'images', task: 'create', provider, model: st.demo ? 'sample' : c.model, ok: true, inChars: text.length, outChars: buf.length, ms: Date.now() - t0, department: dept, itemId: id }); // eslint-disable-line no-await-in-loop
+      id, title, prompt, headline || null, style, aspect, st.demo ? 'sample' : (p.model || c.model), p.withLogo ? 1 : 0, file, mime, buf.length, st.demo ? 1 : 0, dept || null, u.id, S.clip(u.name, 80), ts, ts); // p.model: the model that REALLY made it (FLUX.2 klein, or schnell when klein was not available)
+    await AI.logUsage({ user: u, module: 'images', task: 'create', provider, model: st.demo ? 'sample' : (p.model || c.model), ok: true, inChars: text.length, outChars: buf.length, ms: Date.now() - t0, department: dept, itemId: id }); // eslint-disable-line no-await-in-loop
     made.push(id);
   }
   await tagProject(made, x.projectId);
