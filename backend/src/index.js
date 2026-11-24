@@ -146,6 +146,8 @@ app.use('/api/crm/leads/public', require('./routes/crmWebsite'));
 // CRM wave B (2026-11-24): the website chat bubble / visit tracker (open CORS), landing pages, events, surveys, the preference centre, email
 // open / click tracking and the provider webhooks - all no-login, each proves itself (routes/crmBPublic.js)
 app.use('/api/crm-public/b', require('./routes/crmBPublic'));
+// CRM wave C (2026-11-24): leads from email, the chat box, Facebook / LinkedIn / Google lead forms, IndiaMART, JustDial - no login, the capture key (routes/crmCapture.js)
+app.use('/api/crm/capture', require('./routes/crmCapture'));
 // Market wave C (2026-11-21): the LinkedIn sourcing browser extension's door - its own open CORS, the per-person key is the login (routes/mktPublic.js).
 app.use('/api/public/mkt/ext', require('./routes/mktPublic').ext);
 app.use(require('./utils/webSecurity').corsMiddleware());

@@ -196,7 +196,9 @@ async function capture(body = {}, headerKey = '') {
     });
     return S.okBody({ ok: true, duplicate: true });
   }
-  const own = v.autoAssign ? await takeTurn() : null;
+  // the lead rules (crm/plus/leadIn.js, off by default) first, then the plain round robin when it is on
+  const ruled = await require('./plus/leadIn').ownerFor({ ...c.data, source: 'Website', ...utm }, { extra: { products: body.products || body.product || body.interest } }).catch(() => null); // eslint-disable-line global-require
+  const own = ruled || (v.autoAssign ? await takeTurn() : null);
   const saved = await S.insert('CrmLead', {
     id: S.newId('lead'), ...c.data, ...utm, source: 'Website', status: 'New', stage: (await SETTINGS.load()).leadStages[0].name, ownerId: own ? own.id : null, ownerName: own ? own.name : null, createdById: null, createdAt: now, updatedAt: now,
   });
