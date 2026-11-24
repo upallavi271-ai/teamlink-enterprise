@@ -217,7 +217,7 @@ async function portalJobLive(requirementId) {
 // The portal records a board as a lower-case name (naukri, linkedin …); the
 // ATS reports on the names its own tagged links use (routes/public.js).
 const BOARD_NAMES = {
-  naukri: 'Naukri', indeed: 'Indeed', shine: 'Shine', linkedin: 'LinkedIn',
+  naukri: 'Naukri', indeed: 'Indeed', shine: 'Shine', linkedin: 'LinkedIn', foundit: 'foundit', // foundit: ATS wave 2 Y (10.09)
   facebook: 'Facebook', whatsapp: 'WhatsApp', x: 'X',
   // the other tags the ATS's own links carry; every one maps to a clean source (utils/candidateSource.js)
   website: 'TeamLink Website', google: 'Google Jobs', teamlinkwebsite: 'TeamLink Website',
@@ -354,6 +354,10 @@ async function ingestOne(payload) {
   // entry hook instead (utils/candidateDupHook.js). Never fatal.
   if (!createdCandidate) {
     try { await require('./candidateDupes').noteAlreadyInAts({ candidate, email, phone, portalApplicationId: app.id }); } catch { /* optional */ } // eslint-disable-line global-require
+    // ATS wave 2 Y (03.13): a person on file who applies again with another employer / title -> a job change for the recruiter to apply
+    if (c.currentCompany || c.title) {
+      try { await require('./atsY/jobWatch').record(candidate, { company: c.currentCompany || candidate.currentCompany, title: c.title || candidate.currentDesignation }, `A new application (${board || 'Job Portal'})`, null); } catch { /* optional */ } // eslint-disable-line global-require
+    }
   }
 
   const existing = await prisma.application.findUnique({
