@@ -549,6 +549,11 @@ app.use('/api/ats/scheduled-messages', require('./routes/messageSchedules'));
 // email check, AI drafts, tracking, sequences, call notes, mailbox; careers site, alerts, boards, extension key, SMS campaigns (routes/mktInterviews.js, routes/mktComms.js).
 app.use('/api/ats/mkt', require('./routes/mktInterviews'));
 app.use('/api/ats/mkt', require('./routes/mktComms'));
+// ATS wave 2 builder Y (2026-11-25): notetaker, Resdex, foundit, LinkedIn RSC, profile graph, contact finding, enrichment, job changes,
+// prospecting, ID document match (routes/atsWave2Y.js, utils/atsY/*.js). Its two timers do nothing in the sandbox / tests or while switched off.
+app.use('/api/ats/y', require('./routes/atsWave2Y'));
+require('./utils/atsY/notetaker').start();
+require('./utils/atsY/jobWatch').start();
 app.use('/api/ats', require('./utils/scheduledReminders').autoSyncMiddleware); // keeps the reminder plan in line with a booking / move / cancel / joining change
 app.use('/api/ats', require('./utils/messageSchedules').eventMiddleware); // the stop rules / ATS triggers of the scheduled messages after a booking / move / cancel / documents / joining
 app.use('/api/ats', require('./routes/atsFlowConfig'));
