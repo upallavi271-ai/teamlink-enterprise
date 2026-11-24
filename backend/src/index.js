@@ -451,6 +451,8 @@ app.use('/api/ai-calling', require('./routes/aiCalling'));
 app.use('/api/kavya', require('./routes/kavya'));
 // THE SALES CRM (2026-11-02): leads, accounts & contacts, deals pipeline, activities, follow-ups, dashboard (routes/crm.js, crm/*).
 app.use('/api/crm', require('./routes/crm'));
+// THE CRM API FOR OUTSIDE SYSTEMS (CRM wave A, 2026-11-24): its own keys, off until an Admin turns it on; + the private calendar feed (routes/crmApi.js)
+app.use('/api/crm-api', require('./routes/crmApi'));
 // THE BDE AGENT (2026-11-18): quick, accurate answers for BDE / BDE TL logins only, from their own scoped data (utils/bdeAgent.js).
 app.use('/api/bde-agent', require('./routes/bdeAgent'));
 app.use('/api/call-lists', require('./routes/callLists')); // the call sheet split among recruiters, who call it from VICIdial

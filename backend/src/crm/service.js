@@ -174,6 +174,8 @@ async function update(table, id, data) {
   await DB.run(`UPDATE "${table}" SET ${cols.map((c) => `"${c}" = ?`).join(', ')} WHERE "id" = ?`, ...cols.map((c) => data[c]), id);
   return DB.one(`SELECT * FROM "${table}" WHERE "id" = ?`, id);
 }
+// CRM events (wave A, crm/events.js): rules, webhooks, Slack / Teams hear about every change, after the answer has gone
+const emit = (event, payload) => { try { require('./events').emit(event, payload); } catch { /* never breaks the CRM */ } }; // eslint-disable-line global-require
 const audit = (user, action, entity, entityId, toValue, reason) => logAudit({ userId: user.id, actorName: user.name || null, action, entity, entityId, toValue: toValue ? String(toValue).slice(0, 300) : undefined, reason }).catch(() => {});
 
 // ---- human-readable codes (founder 2026-11-13): L-0001 lead, D-0001 deal, C-0001 customer -------------
@@ -401,6 +403,7 @@ async function create(user, kind, body = {}) {
   let saved = await insert(KINDS[kind].table, row);
   saved = await require('./plusHooks').afterCreate(user, kind, saved, body); // eslint-disable-line global-require
   await audit(user, `CRM ${KINDS[kind].label.toLowerCase()} added`, KINDS[kind].table, saved.id, `${saved.code ? `${saved.code} · ` : ''}${saved[KINDS[kind].name]}`);
+  emit(`${kind}.created`, { kind, record: saved, user, depth: body._depth });
   // a new lead gets its first call as a follow-up straight away (crm/sales.js firstFollowUp); an Excel import does not come through here
   let firstFollowUp = null;
   if (kind === 'lead') firstFollowUp = await require('./sales').firstFollowUp(saved).catch(() => null); // eslint-disable-line global-require
@@ -461,6 +464,7 @@ async function edit(user, kind, id, body = {}) {
   const saved = await update(KINDS[kind].table, row.id, data);
   await require('./plusHooks').afterEdit(user, kind, row, saved); // eslint-disable-line global-require
   if (data.ownerId) await audit(user, `CRM ${KINDS[kind].label.toLowerCase()} given to another BDE`, KINDS[kind].table, row.id, `${row.ownerName || '-'} -> ${data.ownerName}`);
+  emit(`${kind}.updated`, { kind, record: saved, before: row, user, depth: body._depth });
   return okBody({ ok: true, [kind]: saved });
 }
 
@@ -477,6 +481,8 @@ async function moveDeal(user, id, { stage, lostReason } = {}) {
   const reason = clip(lostReason, 300);
   if (stage === 'Lost' && !reason) return fail(400, 'Why was the deal lost? Please pick the reason.');
   if (stage === 'Won' && row.approvalStatus === 'Pending') return fail(409, `The ${row.discountPercent || 0}% discount on this deal is over the limit and needs a Sales manager's approval before it can be won.`);
+  // an approval a rule asked for (crm/automation.js, several steps) that must be finished before the deal is won
+  if (stage === 'Won') { const gate = await require('./automation').wonGate(row.id).catch(() => null); if (gate) return fail(409, gate); } // eslint-disable-line global-require
   const now = DB.nowIso();
   const data = { stage, probability: chk.probability != null ? chk.probability : (await SETTINGS.load()).stageProbability[stage], updatedAt: now, wonAt: stage === 'Won' ? now : null, lostAt: stage === 'Lost' ? now : null, lostReason: stage === 'Lost' ? reason : null };
   const saved = await update('CrmDeal', row.id, data);
@@ -484,6 +490,8 @@ async function moveDeal(user, id, { stage, lostReason } = {}) {
   await insert('CrmActivity', { id: newId('act'), kind: 'note', subject: `Stage: ${row.stage} → ${stage}`, note: stage === 'Lost' ? `Lost: ${reason}` : null, at: now, dealId: row.id, accountId: row.accountId, byId: user.id, byName: user.name || null, createdAt: now });
   await PH.afterMove(user, row, saved);
   await audit(user, stage === 'Won' ? 'CRM deal won' : stage === 'Lost' ? 'CRM deal lost' : 'CRM deal stage changed', 'CrmDeal', row.id, `${row.title}: ${row.stage} -> ${stage}`, reason || undefined);
+  emit('deal.stage_changed', { kind: 'deal', record: saved, before: row, user });
+  if (stage === 'Won' || stage === 'Lost') emit(stage === 'Won' ? 'deal.won' : 'deal.lost', { kind: 'deal', record: saved, before: row, user });
   // Won -> the CRM raises its own invoice (never fail the Won if that errors). founder 2026-11-13.
   let invoice = null;
   if (stage === 'Won') { try { invoice = await createInvoiceForDeal(user, saved); } catch (e) { console.error('[crm] invoice on Won:', e.message); } } // eslint-disable-line no-console
@@ -549,6 +557,7 @@ async function createInvoiceForDeal(user, deal, { byHand = false, issueDate } = 
   });
   await insert('CrmActivity', { id: newId('act'), kind: 'note', subject: `Invoice ${code || ''} raised${byHand ? ' by hand' : ' on Won'}`, note: `${total}`, at: now, dealId: deal.id, accountId: deal.accountId, byId: user.id, byName: user.name || null, createdAt: now });
   await audit(user, 'CRM invoice raised', 'CrmInvoice', row.id, `${code || row.id}: ${total}`);
+  emit('invoice.created', { kind: 'invoice', record: row, user });
   return row;
 }
 // A deal that is already Won but has no invoice yet: raise it by hand (a "Create invoice" button).
@@ -643,7 +652,9 @@ async function settleInvoice(row) {
     if (settled > 0 && settled >= cents(row.total)) { data.status = 'Paid'; data.paidAt = `${pays[pays.length - 1].paidOn}T00:00:00.000Z`; } else if (settled > 0) { data.status = 'Partly paid'; data.paidAt = null; } else { data.paidAt = null; if (row.status === 'Paid' || row.status === 'Partly paid') data.status = 'Sent'; }
     if (data.status && data.status !== 'Draft' && !row.sentAt) data.sentAt = DB.nowIso();
   }
-  return update('CrmInvoice', row.id, data);
+  const saved = await update('CrmInvoice', row.id, data);
+  if (data.status === 'Paid' && row.status !== 'Paid') emit('invoice.paid', { kind: 'invoice', record: saved, before: row });
+  return saved;
 }
 async function writePayment(user, row, { amount, paidOn, mode, reference, note, tdsAmount = 0, tdsPercent = null, tdsRef = null }) {
   const now = DB.nowIso();
@@ -763,6 +774,8 @@ async function convertLead(user, id, body = {}) {
   await DB.run('UPDATE "CrmActivity" SET "accountId" = COALESCE("accountId", ?), "dealId" = COALESCE("dealId", ?) WHERE "leadId" = ?', account.id, deal ? deal.id : null, lead.id);
   await DB.run('UPDATE "CrmTask" SET "accountId" = COALESCE("accountId", ?), "dealId" = COALESCE("dealId", ?) WHERE "leadId" = ?', account.id, deal ? deal.id : null, lead.id);
   await audit(user, 'CRM lead converted', 'CrmLead', lead.id, `${lead.company} -> account${contact ? ' + contact' : ''}${deal ? ' + deal' : ''}`);
+  emit('lead.converted', { kind: 'lead', record: { ...lead, status: 'Converted', convertedAt: now, accountId: account.id, contactId: contact ? contact.id : null, dealId: deal ? deal.id : null }, before: lead, user });
+  if (deal) emit('deal.created', { kind: 'deal', record: deal, user, via: 'convert' });
   return okBody({ ok: true, account, contact, deal });
 }
 
@@ -831,6 +844,7 @@ async function addActivity(user, body = {}) {
     task = t.task;
   }
   const openFollowUps = kind !== 'note' ? await openFollowUpsFor(link.kind, link.row.id, task && task.id) : [];
+  emit('activity.logged', { kind: 'activity', record: activity, user, depth: body._depth });
   return okBody({ ok: true, activity, task, openFollowUps });
 }
 
@@ -885,6 +899,7 @@ async function finishTask(user, id, input) {
       ownerId: row.ownerId, ownerName: row.ownerName, createdById: user.id, createdAt: now, updatedAt: now,
     });
   }
+  emit('task.done', { kind: 'task', record: task, before: row, user });
   return okBody({ ok: true, task, next, activity });
 }
 

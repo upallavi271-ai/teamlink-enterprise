@@ -66,6 +66,7 @@ async function autoStage(leadId, ev = {}) {
   const now = DB.nowIso();
   await S.update('CrmLead', row.id, { stage: to, status, lostReason: to === 'Lost' ? why : null, updatedAt: now });
   await S.insert('CrmActivity', { id: S.newId('act'), kind: 'note', subject: `Stage: ${from} → ${to}`, note: `Moved automatically: ${why}${to === 'Lost' ? '. Reopen the lead if this was a mistake.' : ''}`, at: now, leadId: row.id, accountId: row.accountId || null, byId: null, byName: 'TeamLink', createdAt: now });
+  require('./events').emitFor('lead.stage_changed', 'lead', row.id, { before: row }); // eslint-disable-line global-require
   return to;
 }
 // Put a Lost lead back to work (the only "undo" of an automatic Lost): Contacted when something has been done on it, else New.
@@ -199,6 +200,7 @@ async function capture(body = {}, headerKey = '') {
   const saved = await S.insert('CrmLead', {
     id: S.newId('lead'), ...c.data, ...utm, source: 'Website', status: 'New', stage: (await SETTINGS.load()).leadStages[0].name, ownerId: own ? own.id : null, ownerName: own ? own.name : null, createdById: null, createdAt: now, updatedAt: now,
   });
+  require('./events').emit('lead.created', { kind: 'lead', record: saved, via: 'website' }); // eslint-disable-line global-require
   // the website form may say which product (products / product / interest = "HRMS,ATS"); else it is guessed from the message, and the demo goes by itself
   setImmediate(() => require('./productDeals').onNewLead(saved, { products: body.products || body.product || body.interest, text: [message, body.service, body.subject].filter(Boolean).join(' ') }).catch(() => null)); // eslint-disable-line global-require
   // a lead who wrote about our marketing work (not the HR products) is offered the plans demo on WhatsApp (marketing/meetingOffer.js; off until an Admin switches it on)

@@ -283,7 +283,8 @@ async function importLeads(user, buf, { fileName, ownerId, dryRun, source, map }
   const now = DB.nowIso();
   for (const x of ready) {
     // eslint-disable-next-line no-await-in-loop
-    await S.insert('CrmLead', { id: S.newId('lead'), ...x, status: 'New', ownerId: own.id, ownerName: own.name, createdById: user.id, createdAt: now, updatedAt: now });
+    const added = await S.insert('CrmLead', { id: S.newId('lead'), ...x, status: 'New', ownerId: own.id, ownerName: own.name, createdById: user.id, createdAt: now, updatedAt: now });
+    require('./events').emit('lead.created', { kind: 'lead', record: added, user, via: 'import' }); // eslint-disable-line global-require
   }
   await S.audit(user, 'CRM leads imported', 'CrmLead', String(fileName || 'file').slice(0, 80), `${ready.length} added, ${skipped.length} skipped (${skipped.filter((x) => /Already in TeamLink|of this file/.test(x.reason)).length} duplicates), owner ${own.name}`);
   return S.okBody({ ok: true, created: ready.length, skipped, owner: own.name });

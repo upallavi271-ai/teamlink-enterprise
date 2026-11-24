@@ -2845,6 +2845,19 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     return res.json({ ...shapeIntegration(channel, nextRow), result });
   }
 
+  // Slack / Microsoft Teams (crm/connect.js, CRM wave A): one test line posted to the channel, answered now.
+  if (channel.id === 'slack' || channel.id === 'teams') {
+    const probe = await require('../crm/connect').postChat(channel.id, `TeamLink test message from ${req.user.name || 'TeamLink'}`, ''); // eslint-disable-line global-require
+    const result = probe.ok ? `Posted to ${channel.name} (HTTP ${probe.status}).` : `Failed — ${probe.error || `HTTP ${probe.status}`}`;
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: probe.ok ? null : result.slice(0, 480), ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }) },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result });
+  }
+
   // Webhooks (utils/webhooks.js): one signed "ping" to the Endpoint URL, answered now.
   if (channel.id === 'webhooks') {
     const probe = await require('../utils/webhooks').test(); // eslint-disable-line global-require

@@ -254,6 +254,16 @@ const INTEGRATION_CATALOG = [
     desc: 'Tell your own systems when something happens: candidate.created, application.stage_changed, candidate.joined, requirement.status_changed, invoice.created (or * for all). Each POST is signed: X-TeamLink-Signature = sha256 HMAC of the body with the signing secret. Failed deliveries are retried after 1, 5, 15 and 60 minutes. No phone, e-mail or salary is sent.',
     fields: [['Endpoint URL', 'https://your-system.example.com/teamlink'], ['Signing secret', ''], ['Events (comma separated)', 'candidate.joined, application.stage_changed']],
     hints: ['Endpoint URL', 'Events (comma separated)'] },
+  // REAL (CRM wave A, 2026-11-24, crm/connect.js): CRM events (deal won, new lead ...) posted to a channel. The URL is the secret (encrypted);
+  // which events go is picked in CRM > Dashboard > Automation > Slack & Teams, and nothing is posted until an Admin turns that on.
+  { id: 'slack', name: 'Slack', group: 'Messaging', glyph: '\u{1F4AC}',
+    desc: 'CRM events (deal won, new lead ...) posted to a Slack channel. Slack: api.slack.com/apps > Create app > Incoming Webhooks > Add to a channel > copy the URL here. Pick the events in CRM > Dashboard > Automation.',
+    fields: [['Incoming webhook URL (secret)', 'https://hooks.slack.com/services/...'], ['Channel name (shown only)', '#sales']],
+    hints: ['Channel name (shown only)'] },
+  { id: 'teams', name: 'Microsoft Teams', group: 'Messaging', glyph: '\u{1F465}',
+    desc: 'CRM events posted to a Teams channel. Teams: the channel > Workflows > "Post to a channel when a webhook request is received" (or Connectors > Incoming Webhook) > copy the URL here. Pick the events in CRM > Dashboard > Automation.',
+    fields: [['Incoming webhook URL (secret)', 'https://....webhook.office.com/... or a Workflows URL'], ['Channel name (shown only)', 'Sales']],
+    hints: ['Channel name (shown only)'] },
   { id: 'api', name: 'REST API Access', group: 'Developer', glyph: '\u{1F511}',
     desc: 'Issue API keys for external systems to read and write platform data.',
     fields: [['Key label', ''], ['Allowed IP range', ''], ['Scope (read / write)', 'read']] },
@@ -328,7 +338,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['social', 'email', 'email-inbox', 'crm-gmail', 'crm-outlook', 'crm-ads', 'ai-claude', 'ai-fast', 'webhooks','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['social', 'email', 'email-inbox', 'crm-gmail', 'crm-outlook', 'crm-ads', 'ai-claude', 'ai-fast', 'webhooks', 'slack', 'teams','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 
