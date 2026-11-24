@@ -57,6 +57,9 @@ router.use(async (req, res, next) => {
 // wave D (2026-11-24, routes/crmPlus.js): pipelines, product lines, quotes, contracts, payment links, comments, approvals, territories,
 // sub-teams, field security, IP restriction, consent - all under /crm/plus; its first step also hides the fields a role may not see
 router.use(require('./crmPlus'));
+// CRM wave C (routes/crmPlusC.js, under /crm/plusc): every CRM request counts for the adoption report
+const PLUSC = require('./crmPlusC');
+router.use(PLUSC.track);
 
 // CRM wave B (2026-11-24): email, phone / SMS / chat, marketing, customer portal - routes/crmB.js, crm/b/*.js
 router.use('/b', require('./crmB'));
@@ -258,6 +261,9 @@ router.get('/deal-files/:fid', async (req, res, next) => {
     return res.sendFile(out.path);
   } catch (e) { return next(e); }
 });
+
+// CRM wave C: custom fields, layouts, rules, record types, tags, files, team, merge, bulk, bin, consent, data requests, DND, lead routing / capture (routes/crmPlusC.js, /crm/plusc)
+router.use(PLUSC.router);
 
 router.get('/:kind(leads|accounts|contacts|deals)', wrap(async (req) => ({ status: 200, body: { rows: await CRM.list(req.user, kindOf(req), req.query || {}) } })));
 router.post('/:kind(leads|accounts|contacts|deals)', wrap((req) => CRM.create(req.user, kindOf(req), req.body || {})));

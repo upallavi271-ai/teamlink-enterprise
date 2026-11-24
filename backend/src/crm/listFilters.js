@@ -55,26 +55,41 @@ function ymdRange(where, params, col, from, to) {
   if (to && YMD.test(String(to))) { where.push(`${col} <= ?`); params.push(String(to)); }
 }
 
+// CRM wave C (crm/plus): a tag (csv: any of them), a business unit (csv), a parent company, a deal currency - on every list
+function plusTerms(q, where, params, a = 'x.', kind = '') {
+  const tags = csv(q.tag).map((t) => t.toLowerCase().replace(/\s+/g, ' '));
+  if (tags.length) {
+    where.push(`(${tags.map(() => `(',' || LOWER(REPLACE(COALESCE(${a}"tags", ''), ', ', ',')) || ',') LIKE ?`).join(' OR ')})`);
+    params.push(...tags.map((t) => `%,${t},%`));
+  }
+  if (kind !== 'contact') inList(where, params, `${a}"unitId"`, q.unit);
+  if (kind === 'account' && q.parentId) { where.push(`${a}"parentId" = ?`); params.push(String(q.parentId).slice(0, 60)); }
+  if (kind === 'deal') inList(where, params, `COALESCE(${a}"currency", 'INR')`, q.currency);
+}
 function lead(q, where, params, a = 'x.') {
   likeAny(where, params, `${a}"city"`, q.city);
   likeAny(where, params, `${a}"industry"`, q.industry);
   dayRange(where, params, `${a}"createdAt"`, q.cFrom, q.cTo);
+  plusTerms(q, where, params, a, 'lead');
 }
 function account(q, where, params, a = 'x.') {
   likeAny(where, params, `${a}"city"`, q.city);
   likeAny(where, params, `${a}"industry"`, q.industry);
   inList(where, params, `${a}"source"`, q.source);
   dayRange(where, params, `${a}"createdAt"`, q.cFrom, q.cTo);
+  plusTerms(q, where, params, a, 'account');
 }
 function contact(q, where, params, a = 'x.') {
   inList(where, params, `${a}"role"`, q.role);
   dayRange(where, params, `${a}"createdAt"`, q.cFrom, q.cTo);
+  plusTerms(q, where, params, a, 'contact');
 }
 function deal(q, where, params, a = 'x.') {
   range(where, params, `${a}"value"`, q.valueMin, q.valueMax);
   inList(where, params, `${a}"stage"`, q.stage);
   ymdRange(where, params, `${a}"expectedClose"`, q.closeFrom, q.closeTo);
   dayRange(where, params, `${a}"createdAt"`, q.cFrom, q.cTo);
+  plusTerms(q, where, params, a, 'deal');
 }
 function invoice(q, where, params, a = 'x.') {
   if (q.q) {
@@ -94,5 +109,5 @@ function campaign(q, where, params) {
 }
 
 module.exports = {
-  any, cap, lead, account, contact, deal, invoice, campaign, csv, num, YMD,
+  any, cap, lead, account, contact, deal, invoice, campaign, csv, num, YMD, plusTerms,
 };

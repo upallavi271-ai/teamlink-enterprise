@@ -349,6 +349,9 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
 const LIVE_CHANNELS = ['crm-calendar', 'zoom', 'social', 'email', 'email-inbox', 'crm-gmail', 'crm-outlook', 'crm-ads', 'ai-claude', 'ai-fast', 'webhooks', 'slack', 'teams','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+// CRM wave C (2026-11-24): the CRM's outside keys - lead ads, India portals, company data, DND check (crm/plus/channels.js)
+INTEGRATION_CATALOG.push(...require('../crm/plus/channels').CHANNELS); // eslint-disable-line global-require
+LIVE_CHANNELS.push(...require('../crm/plus/channels').LIVE); // eslint-disable-line global-require
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 

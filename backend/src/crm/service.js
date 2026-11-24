@@ -286,6 +286,8 @@ async function list(user, kind, q = {}) {
     return q.status || anyF ? rows : rows.filter((l) => !['Won', 'Lost'].includes(l.stage)); // the open leads: a won or lost one stays on the board
   }
   if (kind === 'account') {
+    // a salesperson also sees the accounts they are on the team of (crm/plus/records.js), read only
+    if (!seesAll(r)) { where[0] = '(x."ownerId" = ? OR x."id" IN (SELECT t."accountId" FROM "CrmAccountTeam" t WHERE t."userId" = ?))'; params.splice(0, params.length, user.id, user.id); }
     FL.account(q, where, params);
     inCsv(where, params, 'x."kind"', q.kind, ['Prospect', 'Client']);
     if (text) { where.push('(x."name" LIKE ? OR x."city" LIKE ? OR x."industry" LIKE ?)'); params.push(...Array(3).fill(`%${text}%`)); }
@@ -328,8 +330,10 @@ async function timelineOf(col, ids) {
 async function detail(user, kind, id) {
   const r = roleOf(user);
   const row = await getRow(kind, id);
-  if (!canSeeRow(user, r, row)) return fail(404, `This ${KINDS[kind].label.toLowerCase()} is not there, or it is not yours.`);
-  const out = { [kind]: row, canEdit: canEditRow(user, r, row) };
+  // the account team (crm/plus/records.js) may open the account, read only
+  const onTeam = kind === 'account' && row && !canSeeRow(user, r, row) ? await require('./plus/records').onTeam(user, row.id).catch(() => false) : false; // eslint-disable-line global-require
+  if (!canSeeRow(user, r, row) && !onTeam) return fail(404, `This ${KINDS[kind].label.toLowerCase()} is not there, or it is not yours.`);
+  const out = { [kind]: row, canEdit: canEditRow(user, r, row), ...(onTeam ? { onTeam: true } : {}) };
   if (kind === 'lead') {
     const SALES = require('./sales'); // eslint-disable-line global-require
     const dealRow = row.dealId ? await getRow('deal', row.dealId) : null;
@@ -359,11 +363,18 @@ async function create(user, kind, body = {}) {
   if (!mayEdit(r) || !can(user, 'create')) return fail(403, 'Your CRM rights do not allow adding records. Ask a Sales manager.');
   const c = cleanFields(kind, body, { partial: false });
   if (c.error) return fail(400, c.error);
+  // CRM wave C (crm/plus/fields.js): custom fields, validation rules, tags, parent company, currency, business unit
+  const plus = await require('./plus/fields').beforeSave(user, kind, body, c.data, null); // eslint-disable-line global-require
+  if (plus.error) return fail(400, plus.error);
+  Object.assign(c.data, plus.data);
   let own = await pickOwner(user, r, clip(body.ownerId, 60));
   if (!own) return fail(400, 'Pick the owner from the sales team list.');
   // round robin for a "+ Lead" (CRM settings, off by default): a Sales manager / Admin who leaves the owner empty gives it to the next salesperson in turn
   let byTurn = false;
-  if (kind === 'lead' && !clip(body.ownerId, 60) && mayAssign(r) && (await SETTINGS.load()).autoAssignManual) {
+  // the lead rules (CRM settings > Customise > Lead routing, off by default) come before the plain round robin
+  const ruled = kind === 'lead' && !clip(body.ownerId, 60) && mayAssign(r) ? await require('./plus/leadIn').ownerFor({ ...c.data, ...body }, { extra: { products: body.products } }).catch(() => null) : null; // eslint-disable-line global-require
+  if (ruled) { own = { id: ruled.id, name: ruled.name }; byTurn = true; }
+  if (!ruled && kind === 'lead' && !clip(body.ownerId, 60) && mayAssign(r) && (await SETTINGS.load()).autoAssignManual) {
     const t = await require('./sales').takeTurn().catch(() => null); // eslint-disable-line global-require
     if (t) { own = { id: t.id, name: t.name }; byTurn = true; }
   }
@@ -427,7 +438,9 @@ async function edit(user, kind, id, body = {}) {
   if (!canEditRow(user, r, row)) return fail(row && canSeeRow(user, r, row) ? 403 : 404, row && canSeeRow(user, r, row) ? 'You can read this record but not change it.' : 'This record is not there, or it is not yours.');
   const c = cleanFields(kind, body, { partial: true });
   if (c.error) return fail(400, c.error);
-  const data = { ...c.data };
+  const plus = await require('./plus/fields').beforeSave(user, kind, body, c.data, row); // eslint-disable-line global-require
+  if (plus.error) return fail(400, plus.error);
+  const data = { ...c.data, ...plus.data };
   // wave D (crm/plusHooks.js): hidden / read-only fields of this person's CRM role, the deal's forecast / billing fields, a value made of product lines
   const pre = await require('./plusHooks').beforeEdit(user, kind, row, data, body); // eslint-disable-line global-require
   if (pre && pre.error) return fail(pre.status || 400, pre.error);
@@ -544,8 +557,12 @@ async function createInvoiceForDeal(user, deal, { byHand = false, issueDate } = 
   const code = await MONEY.nextInvoiceCode(issue);
   const billTo = account ? { name: account.name, gstin: account.gstin || '', address: account.address || '', state: account.state || '', pincode: account.pincode || '', email: account.email || '', phone: account.phone || '' } : {};
   // our side as it is today, with the state worked out (from our GSTIN, else the state typed) and the SAC printed on the lines
-  const ours = MONEY.partyState(st.invoiceFrom || {});
-  const from = { ...(st.invoiceFrom || {}), stateCode: ours.code || '', sac: st.invoiceSac };
+  // a deal of a business unit (crm/plus/admin.js) is invoiced from that unit's name, GSTIN and address
+  await require('./plus/db').config().catch(() => null); // eslint-disable-line global-require
+  const unitFrom = require('./plus/admin').unitFrom(deal.unitId); // eslint-disable-line global-require
+  const fromBase = unitFrom ? { ...(st.invoiceFrom || {}), ...unitFrom } : (st.invoiceFrom || {});
+  const ours = MONEY.partyState(fromBase);
+  const from = { ...fromBase, stateCode: ours.code || '', sac: st.invoiceSac };
   // the deal's product lines when it has them (crm/catalog.js), else one line for the deal
   const lines = (await require('./plusHooks').invoiceLines(deal, amount, st)) || [{ description: deal.title || 'Services', sac: st.invoiceSac, qty: 1, rate: amount, amount }]; // eslint-disable-line global-require
   const row = await insert('CrmInvoice', {
@@ -1075,8 +1092,10 @@ async function remove(user, kind, id) {
   if (kind === 'account') {
     const n = await DB.one('SELECT COUNT(*) AS "n" FROM "CrmDeal" WHERE "accountId" = ?', row.id);
     if (n && n.n) return fail(400, 'This account still has deals. Delete or move its deals first.');
-    await DB.run('UPDATE "CrmContact" SET "accountId" = NULL WHERE "accountId" = ?', row.id);
   }
+  // the recycle bin (crm/plus/dataCare.js): what is about to go is kept, so it can be put back
+  if (['lead', 'account', 'contact', 'deal'].includes(kind)) await require('./plus/dataCare').toBin(user, kind, row); // eslint-disable-line global-require
+  if (kind === 'account') await DB.run('UPDATE "CrmContact" SET "accountId" = NULL WHERE "accountId" = ?', row.id);
   if (kind === 'deal') await DB.run('UPDATE "CrmLead" SET "dealId" = NULL WHERE "dealId" = ?', row.id);
   // a lead deleted from its record (founder 2026-11-17) takes its own timeline and follow-ups with it; what was carried over to an
   // account or a deal at conversion stays there

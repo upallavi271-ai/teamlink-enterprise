@@ -294,7 +294,7 @@ async function importLeads(user, buf, { fileName, ownerId, dryRun, source, map }
 const EXPORTS = {
   leads: { sql: 'SELECT * FROM "CrmLead"', cols: [['company', 'Company'], ['contactName', 'Contact'], ['designation', 'Designation'], ['phone', 'Phone'], ['email', 'Email'], ['industry', 'Industry'], ['city', 'City'], ['source', 'Source'], ['rating', 'Rating'], ['status', 'Status'], ['ownerName', 'Owner'], ['createdAt', 'Added'], ['notes', 'Notes']] },
   deals: { sql: 'SELECT x.*, a."name" AS "accountName" FROM "CrmDeal" x LEFT JOIN "CrmAccount" a ON a."id" = x."accountId"', alias: 'x.', cols: [['title', 'Deal'], ['accountName', 'Account'], ['stage', 'Stage'], ['value', 'Value (₹)'], ['probability', 'Probability %'], ['expectedClose', 'Expected close'], ['nextStep', 'Next step'], ['lostReason', 'Lost reason'], ['wonAt', 'Won on'], ['ownerName', 'Owner'], ['createdAt', 'Added']] },
-  accounts: { sql: 'SELECT * FROM "CrmAccount"', cols: [['name', 'Company'], ['kind', 'Type'], ['industry', 'Industry'], ['city', 'City'], ['website', 'Website'], ['phone', 'Phone'], ['email', 'Email'], ['source', 'Source'], ['ownerName', 'Owner'], ['createdAt', 'Added']] },
+  accounts: { sql: 'SELECT * FROM "CrmAccount"', cols: [['name', 'Company'], ['kind', 'Type'], ['industry', 'Industry'], ['city', 'City'], ['website', 'Website'], ['phone', 'Phone'], ['email', 'Email'], ['source', 'Source'], ['gstin', 'GSTIN'], ['state', 'State'], ['pincode', 'Pincode'], ['address', 'Address'], ['notes', 'Notes'], ['ownerName', 'Owner'], ['createdAt', 'Added']] },
   contacts: { sql: 'SELECT x.*, a."name" AS "accountName" FROM "CrmContact" x LEFT JOIN "CrmAccount" a ON a."id" = x."accountId"', alias: 'x.', cols: [['name', 'Name'], ['designation', 'Designation'], ['role', 'Role'], ['accountName', 'Company'], ['phone', 'Phone'], ['email', 'Email'], ['ownerName', 'Owner']] },
   activities: { sql: 'SELECT x.*, COALESCE(d."title", l."company", a."name") AS "record" FROM "CrmActivity" x LEFT JOIN "CrmDeal" d ON d."id" = x."dealId" LEFT JOIN "CrmLead" l ON l."id" = x."leadId" LEFT JOIN "CrmAccount" a ON a."id" = x."accountId"', alias: 'x.', ownerCol: 'byId', cols: [['at', 'When'], ['kind', 'Type'], ['subject', 'Subject'], ['note', 'What happened'], ['record', 'Lead / deal / account'], ['byName', 'By']] },
   tasks: { sql: 'SELECT x.*, COALESCE(d."title", l."company", a."name") AS "record" FROM "CrmTask" x LEFT JOIN "CrmDeal" d ON d."id" = x."dealId" LEFT JOIN "CrmLead" l ON l."id" = x."leadId" LEFT JOIN "CrmAccount" a ON a."id" = x."accountId"', alias: 'x.', cols: [['title', 'Follow-up'], ['dueDate', 'Due'], ['dueTime', 'Time'], ['status', 'Status'], ['record', 'Lead / deal / account'], ['ownerName', 'Owner'], ['doneAt', 'Done on']] },
@@ -314,7 +314,14 @@ async function exportCsv(user, kind, q = {}) {
   }
   const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
   const hidden = require('./collab').csvHidden(user, kind); // eslint-disable-line global-require
-  const cols = e.cols.filter((c) => !hidden.has(c[0])); // a field hidden from this person's CRM role is not in the file either
+  let cols = e.cols.filter((c) => !hidden.has(c[0])); // a field hidden from this person's CRM role is not in the file either
+  // CRM wave C: tags and the custom fields as more columns (a sensitive one stays out of a download)
+  if (KIND_OF[kind]) {
+    const PF = require('./plus/fields'); // eslint-disable-line global-require
+    const defs = (await PF.defs(KIND_OF[kind])).filter((d) => !d.sensitive);
+    rows = rows.map((x) => { let c = {}; try { c = x.customJson ? JSON.parse(x.customJson) : {}; } catch { c = {}; } return { ...x, ...Object.fromEntries(defs.map((d) => [`__${d.key}`, PF.display(d, c[d.key])])) }; });
+    cols = [...cols, ...(cols.some((c) => c[0] === 'tags') ? [] : [['tags', 'Tags']]), ...defs.map((d) => [`__${d.key}`, d.label])];
+  }
   const csv = `﻿${[cols.map((c) => esc(c[1])).join(','), ...rows.map((x) => cols.map((c) => esc(x[c[0]])).join(','))].join('\r\n')}`;
   await S.audit(user, 'CRM data downloaded', 'Crm', kind, `${rows.length} rows`);
   await require('./analytics').logExport(user, `List: ${kind}`, 'csv', rows.length).catch(() => {}); // eslint-disable-line global-require
@@ -409,8 +416,10 @@ async function proposalPdf(user, id, { signed } = {}) {
     const doc = new PDFDocument({ size: 'A4', margin: 50, info: { Title: `Proposal ${p.number}`, Author: 'TeamLink Consultants' } });
     const chunks = [];
     doc.on('data', (c) => chunks.push(c)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject);
-    const W = doc.page.width - 100; const NAVY = '#1b2a4a'; const MUTED = '#5b6474';
-    if (fs.existsSync(LOGO)) { try { doc.image(LOGO, 50, 40, { height: 28 }); } catch { /* optional */ } }
+    // the CRM's own logo and colour when set (CRM settings > Customise > Branding, crm/plus/admin.js), else TeamLink's
+    const BR = require('./plus/admin').brandSync(); // eslint-disable-line global-require
+    const W = doc.page.width - 100; const NAVY = BR.color || '#1b2a4a'; const MUTED = '#5b6474';
+    if (BR.logoPath && fs.existsSync(BR.logoPath)) { try { doc.image(BR.logoPath, 50, 40, { height: 28 }); } catch { /* optional */ } } else if (fs.existsSync(LOGO)) { try { doc.image(LOGO, 50, 40, { height: 28 }); } catch { /* optional */ } }
     doc.font('Helvetica').fontSize(9).fillColor(MUTED).text(`Proposal ${p.number}`, 50, 44, { width: W, align: 'right' }).text(date(p.createdAt), { width: W, align: 'right' });
     doc.moveDown(2.2);
     doc.font('Helvetica-Bold').fontSize(18).fillColor(NAVY).text('Recruitment Services Proposal', 50);
@@ -490,8 +499,10 @@ async function invoicePdf(user, id, { signed } = {}) {
     const doc = new PDFDocument({ size: 'A4', margin: 50, info: { Title: `Invoice ${inv.code || inv.id}`, Author: from.name || 'TeamLink Consultants' } });
     const chunks = [];
     doc.on('data', (c) => chunks.push(c)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject);
-    const W = doc.page.width - 100; const NAVY = '#1b2a4a'; const MUTED = '#5b6474';
-    if (fs.existsSync(LOGO)) { try { doc.image(LOGO, 50, 40, { height: 28 }); } catch { /* optional */ } }
+    // the CRM's own logo and colour when set (CRM settings > Customise > Branding, crm/plus/admin.js), else TeamLink's
+    const BR = require('./plus/admin').brandSync(); // eslint-disable-line global-require
+    const W = doc.page.width - 100; const NAVY = BR.color || '#1b2a4a'; const MUTED = '#5b6474';
+    if (BR.logoPath && fs.existsSync(BR.logoPath)) { try { doc.image(BR.logoPath, 50, 40, { height: 28 }); } catch { /* optional */ } } else if (fs.existsSync(LOGO)) { try { doc.image(LOGO, 50, 40, { height: 28 }); } catch { /* optional */ } }
     doc.font('Helvetica-Bold').fontSize(20).fillColor(NAVY).text(from.gstin ? 'TAX INVOICE' : 'INVOICE', 50, 40, { width: W, align: 'right' });
     doc.font('Helvetica').fontSize(9.5).fillColor(MUTED).text(inv.code || '', { width: W, align: 'right' }).text(`Date: ${date(inv.issueDate)}`, { width: W, align: 'right' }).text(`Due: ${date(inv.dueDate)}`, { width: W, align: 'right' });
     doc.moveDown(2);
@@ -770,6 +781,8 @@ function periodRange(period) {
   const y = ist.getUTCFullYear(); const m = ist.getUTCMonth();
   const off = 5.5 * 3600 * 1000;
   const at = (yy, mm) => new Date(Date.UTC(yy, mm, 1) - off).toISOString();
+  const fy = require('./plus/admin').fiscalRange(period, at, y, m); // eslint-disable-line global-require
+  if (fy) return fy; // the financial year / quarter (crm/plus/admin.js)
   if (period === 'last_month') return { from: at(y, m - 1), to: at(y, m), prevFrom: at(y, m - 2), prevTo: at(y, m - 1), label: 'Last month', months: [addMonths(monthNow(), -1)] };
   if (period === 'quarter') { const q = Math.floor(m / 3) * 3; return { from: at(y, q), to: at(y, q + 3), prevFrom: at(y, q - 3), prevTo: at(y, q), label: 'This quarter', months: [0, 1, 2].map((i) => new Date(Date.UTC(y, q + i, 1)).toISOString().slice(0, 7)) }; }
   if (period === 'year') return { from: at(y, 0), to: at(y + 1, 0), prevFrom: at(y - 1, 0), prevTo: at(y, 0), label: 'This year', months: Array.from({ length: 12 }, (_, i) => `${y}-${String(i + 1).padStart(2, '0')}`) };
