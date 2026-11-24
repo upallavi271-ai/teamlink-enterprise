@@ -301,6 +301,7 @@ async function requirementFor(board, ref) {
 // one application from a board -> the ATS (the same door as the Job Portal's: utils/jobPortalBridge.ingestApplication)
 async function ingestBoardApp(board, a) {
   await C.ensure();
+  if (board === 'linkedin') a = require('../atsY/boards').fromApplyConnect(a); // eslint-disable-line global-require, no-param-reassign -- LinkedIn Apply Connect's own shape (ATS wave 2 Y, 10.10)
   const ext = txt(a.id || a.applicationId || a.application_id, 120);
   if (!ext) return { error: 'application id missing' };
   const had = (await q('SELECT * FROM "MktBoardApp" WHERE "board" = ? AND "externalId" = ?', board, ext))[0];

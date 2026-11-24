@@ -91,7 +91,9 @@ function make({ id, label, fields, need, setup, reviewNote, feed = false }) {
   async function send(cfg, body) {
     const v = cfg.values;
     const url = String(v[F.url] || '').trim();
-    if (!/^https:\/\//i.test(url)) return { ok: false, error: `The ${label} Job endpoint URL must start with https:// (Administration → Integrations).` };
+    // a loopback stub only in the test sandbox (ATS wave 2 Y, 2026-11-25: the partner boards are stub-tested end to end)
+    const stub = require('../sandbox').isSandbox() && /^http:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(url); // eslint-disable-line global-require
+    if (!/^https:\/\//i.test(url) && !stub) return { ok: false, error: `The ${label} Job endpoint URL must start with https:// (Administration → Integrations).` };
     const raw = JSON.stringify(body);
     const headers = { authorization: `Bearer ${String(v[F.key]).trim()}` };
     if (String(v[F.secret] || '').trim()) {
@@ -152,4 +154,4 @@ const shine = make({
   reviewNote: 'Waiting for Shine to confirm it is live.',
 });
 
-module.exports = { naukri, shine, METHOD };
+module.exports = { naukri, shine, METHOD, make };
