@@ -3,6 +3,8 @@ import { useBrowserCall } from './CallProvider.jsx';
 import { openFromClick, popupHost } from './vicidialPopup.js';
 
 const WORD = { starting: 'Starting…', calling: 'Calling…', ringing: 'Ringing…', connected: 'Connected', failed: 'Failed', ended: 'Ended', missed: 'Missed' };
+// TALK IN TEAMLINK through the Android phone: the browser is first connected to the PHONE; these say where the candidate's side is
+const BRIDGE_WORD = { arming: 'Asking the phone…', armed: 'Calling the phone…', answered: 'Phone picked up · dialling the candidate…', dialing: 'Ringing the candidate…', connected: 'Candidate answered · joining…', merged: 'Connected to the candidate', ended: 'Ended', failed: 'Could not connect the candidate' };
 
 // ONE SIM PER RECRUITER: the person's own SIM, read-only. "Your calling number" only while the Admin's port routing is on (otherwise the
 // office gateway may still pick another SIM for the call, so it says so).
@@ -70,10 +72,10 @@ export function LineSelect({ disabled = false }) {
     <label className="field" style={{ margin: '4px 0 8px', display: 'block' }}>
       <span>Call using</span>
       <select aria-label="Call using" value={line ? line.id : ''} disabled={disabled || lines.filter((l) => l.ready !== false).length < 2} onChange={(e) => chooseLine(e.target.value)} style={{ width: '100%' }}>
-        {lines.map((l) => <option key={l.id} value={l.id} disabled={l.ready === false}>{l.vicidial ? `ViciDial${l.ready === false ? ' (not connected yet)' : ' · on your ViciDial agent screen'}` : (l.phone ? `${l.name} · Android phone (${l.phoneStatusWord || (l.ready ? 'Connected' : 'not connected')})` : `${l.name}${l.builtIn ? '' : ` · ${l.typeLabel}`}`)}</option>)}
+        {lines.map((l) => <option key={l.id} value={l.id} disabled={l.ready === false}>{l.vicidial ? `ViciDial${l.ready === false ? ' (not connected yet)' : ' · on your ViciDial agent screen'}` : (l.phone ? `${l.name} · ${l.bridge ? 'talk in TeamLink' : 'Android phone'} (${l.phoneStatusWord || (l.ready ? 'Connected' : 'not connected')})` : `${l.name}${l.builtIn ? '' : ` · ${l.typeLabel}`}`)}</option>)}
       </select>
       {notReady.map((l) => <span key={l.id} className="small-muted" style={{ display: 'block', fontSize: 11.5, marginTop: 3 }} data-testid={`line-reason-${l.id}`}>{l.name}: {l.reason}</span>)}
-      {line && line.phone && <span className="small-muted" style={{ display: 'block', fontSize: 11.5, marginTop: 3 }} data-testid="phone-line-note">The phone {line.name.replace(/^Mobile /, '')} dials from its own SIM: talk on that phone (or its Bluetooth headset). Not recorded.</span>}
+      {line && line.phone && <span className="small-muted" style={{ display: 'block', fontSize: 11.5, marginTop: 3 }} data-testid="phone-line-note">{line.bridge ? `The candidate sees ${line.name.replace(/^Mobile /, '')}. You talk here in TeamLink (headset); the phone joins the call by itself. Recorded like office calls.` : `The phone ${line.name.replace(/^Mobile /, '')} dials from its own SIM: talk on that phone (or its Bluetooth headset). Not recorded.`}</span>}
       {line && line.vicidial && <span className="small-muted" style={{ display: 'block', fontSize: 11.5, marginTop: 3 }}>ViciDial dials on your ViciDial agent screen: be logged in there. Recorded in ViciDial.</span>}
     </label>
   );
@@ -211,10 +213,12 @@ export default function CallBar() {
       <div className="small-muted">{inbound ? `Incoming · ${state.maskedNumber || ''}` : (state.number ? `${state.number.slice(0, 2)}XXXXXX${state.number.slice(-2)}` : '')}{state.lineName ? ` · on ${state.lineName}` : ''}</div>
       {!inbound && <MyCallingNumber lineName={state.lineName} />}
       <div style={{ margin: '6px 0', fontSize: 15 }}>
-        <b style={{ color: ['failed', 'missed'].includes(state.phase) ? '#b42318' : state.phase === 'connected' ? '#067647' : undefined }}>{WORD[state.phase]}</b>
+        <b style={{ color: ['failed', 'missed'].includes(state.phase) || (rec && rec.bridgeStatus === 'failed') ? '#b42318' : (state.phase === 'connected' && (!rec || !rec.bridge || rec.bridgeStatus === 'merged')) ? '#067647' : undefined }} data-testid="call-word">{rec && rec.bridge && live && rec.bridgeStatus ? (BRIDGE_WORD[rec.bridgeStatus] || WORD[state.phase]) : WORD[state.phase]}</b>
         {state.phase === 'connected' && <span style={{ marginLeft: 8 }}>{mmss(seconds)}{state.held ? ' · On hold' : ''}{state.muted ? ' · Muted' : ''}</span>}
       </div>
       {why && <div className="small-muted" style={{ marginBottom: 6 }}>{why}</div>}
+      {rec && rec.bridge && rec.bridgeNote && <div className="small-muted" style={{ marginBottom: 6, color: rec.bridgeStatus === 'failed' ? '#b42318' : undefined }} data-testid="bridge-note">{rec.bridgeNote}</div>}
+      {rec && rec.bridge && !live && rec.bridgeTalkSec > 0 && <div className="small-muted" style={{ marginBottom: 6 }}>Talked with the candidate {mmss(rec.bridgeTalkSec)}</div>}
       {!live && !inbound && <LineSelect />}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {state.phase === 'connected' && (

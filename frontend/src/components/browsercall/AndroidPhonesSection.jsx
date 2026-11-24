@@ -35,6 +35,7 @@ export default function AndroidPhonesSection() {
     setMsg('');
     try { const r = await api.post('/browser-calling/phone/admin/pair-code', form); setCode(r.data); setForm(null); } catch (e) { setMsg(errOf(e, 'Could not make the code.')); }
   };
+  const setBridge = async (d, on) => { try { const r = await api.put(`/browser-calling/phone/admin/devices/${d.id}`, { bridge: on }); setData(r.data); setMsg(on ? 'Talk in TeamLink is on for this phone.' : 'Talk in TeamLink is off: recruiters talk on the phone itself.'); if (bc.refresh) bc.refresh(); } catch (e) { setMsg(errOf(e, 'Could not save.')); } };
   const saveUsers = async () => { try { const r = await api.put(`/browser-calling/phone/admin/devices/${edit.id}`, { userIds: edit.userIds, name: edit.name }); setData(r.data); setEdit(null); setMsg('Saved.'); if (bc.refresh) bc.refresh(); } catch (e) { setMsg(errOf(e, 'Could not save.')); } };
   const unpair = async (d) => {
     if (!window.confirm(`Unpair ${d.name} (${d.number})? The phone app stops taking calls at once; pairing again needs a new code.`)) return; // eslint-disable-line no-alert
@@ -48,13 +49,17 @@ export default function AndroidPhonesSection() {
         Install the <a href="/downloads/teamlink-phone.apk" download>TeamLink Phone app</a> on the phone (allow &quot;Install unknown apps&quot; once), then pair it with a code from here. Calls on the phone are not recorded.
       </div>
       <table className="table">
-        <thead><tr><th>Phone</th><th>Status</th><th>Given to</th><th>Last in touch</th><th /></tr></thead>
+        <thead><tr><th>Phone</th><th>Status</th><th>Talk in TeamLink</th><th>Given to</th><th>Last in touch</th><th /></tr></thead>
         <tbody>
-          {data.devices.length === 0 && <tr><td colSpan={5} className="small-muted">No phone paired yet.</td></tr>}
+          {data.devices.length === 0 && <tr><td colSpan={6} className="small-muted">No phone paired yet.</td></tr>}
           {data.devices.map((d) => (
             <tr key={d.id} data-testid={`phone-row-${d.number}`}>
               <td><b>{d.name}</b><div className="small-muted">{d.number}{d.model ? ` · ${d.model}` : ''}{d.appVersion ? ` · app ${d.appVersion}` : ''}</div></td>
               <td><b style={{ color: TONE[d.status] }} data-testid="phone-admin-status">{d.statusWord}</b>{d.statusWhy && <div className="small-muted">{d.statusWhy}</div>}{d.battery != null && <div className="small-muted">Battery {d.battery}%</div>}</td>
+              <td data-testid="phone-bridge">
+                <div style={{ display: 'flex', gap: 4 }}>{[true, false].map((on) => <button key={String(on)} type="button" className={`btn btn-sm${d.bridge === on ? ' btn-primary' : ''}`} onClick={() => setBridge(d, on)}>{on ? 'On' : 'Off'}</button>)}</div>
+                <div className="small-muted" style={{ fontSize: 11.5 }}>{d.bridge ? 'The office line calls the phone, the phone answers by itself, dials the candidate and joins the calls: talk in TeamLink. Set TeamLink Phone as the phone\'s Phone app. Two calls are billed.' : 'Recruiters talk on the phone itself.'}</div>
+              </td>
               <td>{d.userNames.length ? d.userNames.join(', ') : <span className="small-muted">Nobody (Admins only)</span>}</td>
               <td className="small-muted">{when(d.lastSeenAt)}</td>
               <td style={{ whiteSpace: 'nowrap' }}>

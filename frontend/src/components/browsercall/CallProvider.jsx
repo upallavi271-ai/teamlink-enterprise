@@ -224,6 +224,7 @@ export default function BrowserCallProvider({ children }) {
     const ln = lineId || (curLine && curLine.id) || undefined;
     if (ln === 'vicidial' && !outreachTaskId) return viciCall({ candidateId, applicationId, name });
     const pl = lines.find((l) => l.id === ln && l.phone);
+    if (pl && pl.bridge && !outreachTaskId) return run({ candidateId, name }, async () => (await api.post('/browser-calling/phone/bridge-calls', { candidateId, applicationId, lineId: pl.id })).data);
     if (pl && !outreachTaskId) return phoneCall({ candidateId, applicationId, name, lineId: pl.id, lineName: pl.name });
     return run({ candidateId: candidateId || (outreachTaskId ? `task:${outreachTaskId}` : undefined), name }, async () => (await api.post('/browser-calling/calls', { candidateId, applicationId, lineId: ln === 'vicidial' ? undefined : ln, outreachTaskId })).data);
   }, [run, curLine, viciCall, phoneCall, lines]);

@@ -277,6 +277,59 @@ const ist = (days) => new Date(Date.now() + 330 * 60000 + days * 86400000).toISO
   check('report: a recruiter of another team does not', !rR3.body.calls.some((c) => c.id === c1.body.callId));
   check('report: the Admin sees them, line "Mobile 9032321414" in the line totals', rA.body.calls.some((c) => c.id === c1.body.callId) && rA.body.lines.some((l) => l.lineName === 'Mobile 9032321414'));
 
+  // ---- 8b) TALK IN TEAMLINK (bridge): the browser calls the phone on the office line, the phone answers, dials the candidate, merges
+  await require('../src/browsercall/provision').extensionFor(rec.id); // the recruiter's browser extension (made when they open TeamLink)
+  const nb = await call('POST', '/browser-calling/phone/bridge-calls', { candidateId: cand.id, applicationId: app.id, lineId: LINE }, tR);
+  check('bridge refused while the phone is not set to "Talk in TeamLink"', nb.status === 409 && nb.body.code === 'NOT_BRIDGE', nb.body);
+  check('a recruiter cannot switch "Talk in TeamLink" on', (await call('PUT', `/browser-calling/phone/admin/devices/${devId}`, { bridge: true }, tR)).status === 403);
+  const bOn = await call('PUT', `/browser-calling/phone/admin/devices/${devId}`, { bridge: true }, tA);
+  check('Admin switches "Talk in TeamLink" on for the phone', bOn.status === 200 && bOn.body.devices[0].bridge === true, bOn.body.devices && bOn.body.devices[0]);
+  const lB = (await call('GET', '/browser-calling/status', null, tR)).body.lines.find((l) => l.phone);
+  check('Call using shows the phone as "talk in TeamLink"', lB && lB.bridge === true && lB.typeLabel === 'talk in TeamLink' && lB.ready === true, lB);
+  const b1 = await call('POST', '/browser-calling/phone/bridge-calls', { candidateId: cand.id, applicationId: app.id, lineId: LINE }, tR);
+  check('bridge call: the browser is told to dial the PHONE on the office line, with a call token; the candidate number never reaches the browser', b1.status === 200 && b1.body.number === '9032321414' && /^[a-f0-9]{24}$/.test(b1.body.token) && b1.body.bridge === true && !JSON.stringify(b1.body).includes(phone), b1.body);
+  const rb0 = (await call('GET', `/browser-calling/calls/${b1.body.callId}`, null, tR)).body.call;
+  check('the call row: the candidate\'s number, an office-line call (recorded like office calls), bridge arming', rb0.number === phone && rb0.lineId === 'default' && rb0.bridge === true && rb0.bridgeStatus === 'arming' && rb0.lineName === 'Mobile 9032321414 (talk in TeamLink)' && rb0.recordingStatus !== 'none', rb0);
+  check('one call at a time: a second bridge while this one runs is refused', (await call('POST', '/browser-calling/phone/bridge-calls', { candidateId: candB.id, lineId: LINE }, tT)).body.code === 'PHONE_BUSY');
+  check('...and a phone call while it runs is refused too', (await call('POST', '/browser-calling/phone/calls', { candidateId: candB.id, lineId: LINE }, tT)).status === 409);
+  const pb = await call('POST', '/phone-link/device/poll', { wait: 0 }, DK);
+  check('the phone hears "a bridge is coming": the call id and the candidate number to dial, answer within 60 s', pb.body.bridge && pb.body.bridge.id === b1.body.callId && pb.body.bridge.number === phone && pb.body.bridge.answerWithinSec === 60 && !JSON.stringify(pb.body).includes(cand.name), pb.body);
+  const stepB = async (ev, extra = {}) => { await call('POST', '/phone-link/device/event', { callId: b1.body.callId, event: ev, bridge: true, ...extra }, DK); return (await call('GET', `/browser-calling/calls/${b1.body.callId}`, null, tR)).body.call; };
+  check('the phone answered the office call: "answered"', (await stepB('bridge-answered')).bridgeStatus === 'answered');
+  check('it dials the candidate: "dialing"', (await stepB('dialing')).bridgeStatus === 'dialing');
+  check('the candidate answered: "connected"', (await stepB('candidate-answered')).bridgeStatus === 'connected');
+  check('the two calls are joined: "merged"', (await stepB('merged')).bridgeStatus === 'merged');
+  check('a bridge event cannot go backwards ("dialing" after "merged" is ignored)', (await stepB('dialing')).bridgeStatus === 'merged');
+  check('the browser leg\'s own status is left to the phone system (not touched by the phone)', (await call('GET', `/browser-calling/calls/${b1.body.callId}`, null, tR)).body.call.status === 'initiated');
+  await S.run('UPDATE "BrowserCall" SET "startAt"=? WHERE "id"=?', new Date(Date.now() - 180000).toISOString(), b1.body.callId);
+  const be = await stepB('ended', { durationSec: 95 });
+  check('ended: the candidate\'s talk time from the phone (95 s), bridge ended', be.bridgeStatus === 'ended' && be.bridgeTalkSec === 95, be);
+  const legEnds = (id) => S.run('UPDATE "BrowserCall" SET "status"=\'completed\', "endAt"=? WHERE "id"=?', new Date().toISOString(), id); // the browser leg ends (Asterisk's Hangup event)
+  await legEnds(b1.body.callId);
+  // a bridge the candidate did not answer, then one the phone never picked up
+  const b2 = await call('POST', '/browser-calling/phone/bridge-calls', { candidateId: cand.id, lineId: LINE }, tR);
+  await call('POST', '/phone-link/device/poll', { wait: 0 }, DK);
+  for (const ev of ['bridge-answered', 'dialing']) await call('POST', '/phone-link/device/event', { callId: b2.body.callId, event: ev, bridge: true }, DK); // eslint-disable-line no-await-in-loop
+  await call('POST', '/phone-link/device/event', { callId: b2.body.callId, event: 'ended', bridge: true, durationSec: 0 }, DK);
+  const rb2 = (await call('GET', `/browser-calling/calls/${b2.body.callId}`, null, tR)).body.call;
+  await legEnds(b2.body.callId);
+  check('candidate did not answer: ended, 0 talk time, said plainly', b2.status === 200 && rb2.bridgeStatus === 'ended' && rb2.bridgeTalkSec === 0 && /did not answer/.test(rb2.bridgeNote || ''), rb2);
+  const b3 = await call('POST', '/browser-calling/phone/bridge-calls', { candidateId: cand.id, lineId: LINE }, tR);
+  await call('POST', '/phone-link/device/event', { callId: b3.body.callId, event: 'failed', bridge: true, reason: 'The SIM did not join the two calls (conference call is not available on this SIM / network).' }, DK);
+  const rb3 = (await call('GET', `/browser-calling/calls/${b3.body.callId}`, null, tR)).body.call;
+  await legEnds(b3.body.callId);
+  check('the SIM cannot merge: failed with the phone\'s reason', rb3.bridgeStatus === 'failed' && /conference/.test(rb3.bridgeNote), rb3);
+  const b4 = await call('POST', '/browser-calling/phone/bridge-calls', { candidateId: cand.id, lineId: LINE }, tR);
+  await S.run('UPDATE "BrowserCall" SET "startAt"=? WHERE "id"=?', new Date(Date.now() - 90000).toISOString(), b4.body.callId);
+  await call('GET', '/browser-calling/phone/mine', null, tR);
+  await call('POST', '/phone-link/device/poll', { wait: 0 }, DK);
+  const rb4 = (await call('GET', `/browser-calling/calls/${b4.body.callId}`, null, tR)).body.call;
+  check('a bridge the phone never answered fails after ~75 s, saying why', b4.status === 200 && rb4.bridgeStatus === 'failed' && /did not answer the office line call/.test(rb4.bridgeNote), rb4);
+  check('the phone\'s own number cannot be the candidate', (await prisma.candidate.update({ where: { id: candB.id }, data: { phone: '9032321414' } }).then(() => call('POST', '/browser-calling/phone/bridge-calls', { candidateId: candB.id, lineId: LINE }, tR))).status !== 200);
+  await prisma.candidate.update({ where: { id: candB.id }, data: { phone: phoneB } });
+  const bOff = await call('PUT', `/browser-calling/phone/admin/devices/${devId}`, { bridge: false }, tA);
+  check('Admin switches "Talk in TeamLink" off again', bOff.body.devices[0].bridge === false);
+
   // ---- 9) Admin edits who may call, then unpairs
   const ed = await call('PUT', `/browser-calling/phone/admin/devices/${devId}`, { userIds: [rec2.id] }, tA);
   check('Admin gives the phone to another recruiter', ed.status === 200 && ed.body.devices[0].userIds.join() === rec2.id);

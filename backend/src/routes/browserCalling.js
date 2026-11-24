@@ -51,7 +51,7 @@ router.get('/status', async (req, res) => {
     // VICIDIAL click to dial (browsercall/vicidial.js): always listed; pickable only when the Admin switched it on and this person has an agent ID
     if (w.ok) { const vr = await VD.readyFor(req.user, kindOf(req.user)).catch(() => ({ ok: false, reason: 'ViciDial is not connected yet.' })); lines.push({ id: VD.LINE_ID, name: VD.LINE_NAME, type: 'vicidial-click', typeLabel: 'ViciDial agent screen', builtIn: false, vicidial: true, ready: !!vr.ok, reason: vr.ok ? null : vr.reason }); }
     // ANDROID PHONE LINK (browsercall/phoneLink.js): the paired phones this person may use; pickable only while the phone is Connected
-    if (w.ok) (await PL.usableBy(req.user, isAdmin(req.user)).catch(() => [])).forEach((d) => { const p = PL.shape(d); lines.push({ id: p.lineId, name: `Mobile ${p.number}`, type: 'android-phone', typeLabel: 'Android phone', builtIn: false, phone: true, deviceId: p.id, phoneStatus: p.status, phoneStatusWord: p.statusWord, ready: p.status === 'connected', reason: p.status === 'connected' ? null : `${p.statusWord}${p.statusWhy ? `: ${p.statusWhy}` : ''}` }); });
+    if (w.ok) (await PL.usableBy(req.user, isAdmin(req.user)).catch(() => [])).forEach((d) => { const p = PL.shape(d); lines.push({ id: p.lineId, name: `Mobile ${p.number}`, type: p.bridge ? 'android-bridge' : 'android-phone', typeLabel: p.bridge ? 'talk in TeamLink' : 'Android phone', builtIn: false, phone: true, bridge: p.bridge, deviceId: p.id, phoneStatus: p.status, phoneStatusWord: p.statusWord, ready: p.status === 'connected', reason: p.status === 'connected' ? null : `${p.statusWord}${p.statusWhy ? `: ${p.statusWhy}` : ''}` }); });
     const sim = w.ok && SIMS.SIM_KINDS.includes(kindOf(req.user)) ? await SIMS.mineFor(req.user).catch(() => null) : null;
     res.json({ canCall: w.ok, reason: w.ok ? null : w.reason, mode: w.s.mode, testMode: w.s.mode === 'Test', pbx: { eventsConnected: st.connected, error: isAdmin(req.user) ? st.error : undefined }, wssConfigured: !!CFG.ENV.wssUrl, isAdmin: isAdmin(req.user), lines, defaultLine: lines.length ? lines[0].id : null, sim });
   } catch (e) { fail(res, 500, 'Could not read the browser calling status.'); }
@@ -146,6 +146,7 @@ const shape = (r, viewer) => {
     recordingStatus: r.recordingStatus || null, recordingSec: r.recordingSec || null, recordingNote: r.recordingNote || null, hasRecording: !!r.recordingPath,
     hasTranscript: !!r.transcript, transcriptNote: r.transcript ? null : (r.transcriptSource || null),
     vicidial: r.lineId === VD.LINE_ID, outcomeNote: r.lineId === VD.LINE_ID ? (r.hangupReason || null) : undefined,
+    bridge: !!r.bridgeDeviceId, bridgeStatus: r.bridgeStatus || null, bridgeTalkSec: r.bridgeTalkSec == null ? null : r.bridgeTalkSec, bridgeNote: r.bridgeNote || null,
     phone: r.direction === 'phone', remarks: r.remarks || null, nextAction: r.nextAction || null, followUpAt: r.followUpAt || null, outcome: r.outcome || null,
     mayListen: listen, summary: listen ? summary : null, summaryText: listen ? (r.summaryText || null) : null, summarySource: listen ? (r.summarySource || null) : null,
   };
@@ -623,6 +624,35 @@ router.post('/phone/calls', async (req, res) => {
     return res.json({ callId: out.id, number: n.national, candidate: { id: cand.id, name: cand.name }, line: { id: `${PL.PREFIX}${d.id}`, name: `Mobile ${d.number}` } });
   } catch (e) { console.error('[phone-link] call:', e.message); return fail(res, 500, 'Could not send the call to the phone.'); }
 });
+// TALK IN TEAMLINK through the Android phone: an ordinary browser call (recorded, on the office Synway line) to the PHONE's number; the phone
+// answers it by itself, dials the candidate from its own SIM and merges the two (browsercall/phoneLink.js). The browser then sends the INVITE.
+router.post('/phone/bridge-calls', async (req, res) => {
+  try {
+    const w = await who(req.user);
+    if (!w.ok) return fail(res, w.code, w.reason);
+    const lineId = clip(req.body && req.body.lineId, 80);
+    const devId = lineId.startsWith(PL.PREFIX) ? lineId.slice(PL.PREFIX.length) : '';
+    const d = (await PL.usableBy(req.user, isAdmin(req.user))).find((x) => x.id === devId);
+    if (!d) return fail(res, 404, 'No Android phone is given to you. Ask an Admin to give you the phone in Browser calling > Android phones.', { code: 'NO_PHONE' });
+    const cand = await prisma.candidate.findFirst({ where: { id: clip(req.body && req.body.candidateId, 60), ...scope.candidateWhere(req.user) }, select: { id: true, name: true, phone: true } });
+    if (!cand) return fail(res, 404, 'Candidate not found.');
+    const n = core.normalizeMobile(cand.phone);
+    if (!n.ok) return fail(res, 400, n.reason);
+    if (n.cc !== '91') return fail(res, 400, 'Only Indian mobile numbers can be called from here.');
+    if (w.s.mode === 'Test' && !w.s.testNumbers.includes(n.national)) return fail(res, 403, "Test mode: only the Admin's test phone numbers can be called.", { code: 'TEST_MODE' });
+    if (n.national === d.number) return fail(res, 400, 'That is the phone\'s own number.');
+    const ready = await PL.bridgeReady(d);
+    if (ready.error) return fail(res, ready.status || 409, ready.error, { code: ready.code });
+    const placed = await place(req.user, w, { candidateId: cand.id, applicationId: clip(req.body && req.body.applicationId, 60) || null, number: d.number, lineId: 'default' });
+    if (placed.error) return fail(res, placed.code, placed.error, placed.extra || {});
+    const lineName = `Mobile ${d.number} (talk in TeamLink)`;
+    await PL.armBridge(placed.id, d, n.national, lineName);
+    await logAudit({ userId: req.user.id, action: 'Phone bridge call started', entity: 'Candidate', entityId: cand.id, toValue: `${core.maskMobile(n.national)} from Mobile ${d.number} via the office line` });
+    // the browser dials the PHONE (placed.number) on the office line; the candidate's number never reaches the browser
+    return res.json({ callId: placed.id, token: placed.token, number: d.number, candidate: { id: cand.id, name: cand.name }, line: { id: placed.line.id, name: lineName, header: placed.line.header }, bridge: true });
+  } catch (e) { console.error('[phone-link] bridge:', e.message); return fail(res, 500, 'Could not start the call.'); }
+});
+
 router.post('/phone/calls/:id/hangup', async (req, res) => {
   try {
     const out = await PL.hangup(req.user, isAdmin(req.user), req.params.id);

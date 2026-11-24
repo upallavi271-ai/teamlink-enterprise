@@ -109,6 +109,10 @@ public class LinkService extends Service {
                 status(j.optBoolean("paused") ? "Disconnected in TeamLink (press Connect there)." : (prefs.paused() ? "Switched off on this phone." : "Connected. Waiting for calls from TeamLink."));
                 JSONArray hang = j.optJSONArray("hangup");
                 if (hang != null && hang.length() > 0) endCurrentCall();
+                final JSONObject bridge = j.optJSONObject("bridge");
+                if (bridge != null) {
+                    main.post(new Runnable() { public void run() { Bridge.arm(LinkService.this, bridge.optString("id"), bridge.optString("number"), bridge.optInt("answerWithinSec", 60)); } });
+                }
                 JSONObject call = j.optJSONObject("call");
                 if (call != null) dial(call.optString("id"), call.optString("number"), call.optString("name"));
             } catch (InterruptedException ie) {

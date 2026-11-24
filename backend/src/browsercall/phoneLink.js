@@ -18,6 +18,15 @@
 //   failed     -> the phone could not dial (no SIM, no permission, phone offline / did not take it in time)
 //   cancelled  -> the recruiter cancelled before the phone dialled
 // No recording (no RECORD_AUDIO permission in the app; Android 10+ blocks call recording anyway). No auto-dial: one call per Call press.
+//
+// TALK IN TEAMLINK ("bridge", founder 2026-11-24: "ring, talk, both sides - everything in the ATS, like the Synway; only the number is the phone's").
+// Android never lets an app carry a GSM call's voice over the internet, so the phone joins two GSM calls instead:
+//   1. the recruiter's browser calls the PHONE on the office Synway line (an ordinary browser call: recorded, transcribed, timed by Asterisk);
+//   2. the app (set as the phone's default Phone app, so no dialer screen rings) answers that call by itself - only while TeamLink armed it;
+//   3. it dials the candidate from its own SIM (the candidate sees the phone's number) and, when the candidate answers, merges the two calls
+//      (an operator conference). The phone's own microphone is muted; the recruiter and the candidate talk through the browser.
+//   Either side hanging up ends both. Two calls are billed (office SIM -> phone, phone -> candidate). Needs the operator's conference call.
+//   The candidate's real talk time comes from the phone (bridgeTalkSec); the browser leg's times come from Asterisk as for every call.
 // The call rows are ordinary BrowserCall rows (direction 'phone', lineId 'phone:<device id>'), so the candidate's call history, the reports and
 // the scope rules already cover them. Tables are self-provisioned (raw SQL, CREATE TABLE IF NOT EXISTS). ADDITIVE ONLY.
 // ---------------------------------------------------------------------------
@@ -46,7 +55,13 @@ const DDL = [
 ];
 let READY = null;
 function ensure() {
-  if (!READY) READY = (async () => { await S.ensure(); for (const s of DDL) await S.run(s); })().catch((e) => { READY = null; throw e; }); // eslint-disable-line no-await-in-loop
+  if (!READY) {
+    READY = (async () => {
+      await S.ensure();
+      for (const s of DDL) await S.run(s); // eslint-disable-line no-await-in-loop
+      try { await S.run('ALTER TABLE "PhoneLinkDevice" ADD COLUMN "bridge" INTEGER NOT NULL DEFAULT 0'); } catch (e) { if (!/duplicate column/i.test(String(e && e.message))) throw e; }
+    })().catch((e) => { READY = null; throw e; });
+  }
   return READY;
 }
 async function all(sql, ...p) { await ensure(); return S.all(sql, ...p); }
@@ -77,7 +92,7 @@ function shape(d, extra = {}) {
   return {
     id: d.id, lineId: `${PREFIX}${d.id}`, name: d.name, number: d.number, userIds: ids(d.userIds), model: d.model || null, appVersion: d.appVersion || null,
     paused: !!d.paused, lastSeenAt: d.lastSeenAt || null, status: s.code, statusWord: s.word, statusWhy: s.why, battery: st.battery == null ? null : st.battery,
-    pairedAt: d.pairedAt, ...extra,
+    pairedAt: d.pairedAt, bridge: !!d.bridge, ...extra,
   };
 }
 
@@ -128,7 +143,8 @@ async function update(id, b) {
   const name = b.name !== undefined ? (oneLine(b.name).slice(0, 60) || d.name) : d.name;
   let userIds = d.userIds;
   if (b.userIds !== undefined) { const u = await cleanUserIds(b.userIds); if (u.error) return { status: 400, error: u.error }; userIds = JSON.stringify(u.ids); }
-  await run('UPDATE "PhoneLinkDevice" SET "name"=?, "userIds"=?, "updatedAt"=? WHERE "id"=?', name, userIds, S.nowIso(), d.id);
+  const bridge = b.bridge !== undefined ? (b.bridge ? 1 : 0) : (d.bridge ? 1 : 0);
+  await run('UPDATE "PhoneLinkDevice" SET "name"=?, "userIds"=?, "bridge"=?, "updatedAt"=? WHERE "id"=?', name, userIds, bridge, S.nowIso(), d.id);
   return { device: await byId(d.id), before: d };
 }
 async function unpair(id) {
@@ -186,6 +202,32 @@ async function expire() {
   await run('UPDATE "BrowserCall" SET "status"=\'failed\', "endAt"=?, "hangupReason"=\'The phone took the call but never said it dialled.\', "updatedAt"=? WHERE "direction"=\'phone\' AND "status"=\'initiated\' AND "startAt"<?', now, now, new Date(Date.now() - 90000).toISOString());
   await run('UPDATE "BrowserCall" SET "status"=\'failed\', "endAt"=?, "hangupReason"=\'Closed: the phone never said the call ended.\', "updatedAt"=? WHERE "direction"=\'phone\' AND "status"=\'calling\' AND "startAt"<?', now, now, new Date(Date.now() - 3 * 3600000).toISOString());
 }
+async function expireBridges() {
+  const now = S.nowIso();
+  await run(`UPDATE "BrowserCall" SET "bridgeStatus"='failed', "bridgeNote"=?, "updatedAt"=? WHERE "bridgeStatus" IN ('arming','armed') AND "startAt"<?`,
+    "The phone did not answer the office line call in time (offline, or TeamLink Phone is not the phone's Phone app).", now, new Date(Date.now() - 75000).toISOString());
+  await run(`UPDATE "BrowserCall" SET "bridgeStatus"='ended', "updatedAt"=? WHERE "bridgeStatus" IN ('answered','dialing','connected','merged') AND "status" IN ('completed','failed','missed','busy','cancelled') AND "updatedAt"<?`, now, new Date(Date.now() - 120000).toISOString());
+}
+/** Is the phone busy with a bridge call (one call at a time on one SIM)? */
+async function bridgeBusy(deviceId) {
+  return one(`SELECT "id","userName" FROM "BrowserCall" WHERE "bridgeDeviceId"=? AND "bridgeStatus" IN ('arming','armed','answered','dialing','connected','merged') AND "status" NOT IN ('completed','failed','missed','busy','cancelled') AND "startAt">?`, deviceId, new Date(Date.now() - 3 * 3600000).toISOString());
+}
+/** The browser call row of a bridge exists (routes/browserCalling.js place()); mark it as a bridge and tell the phone to expect it. */
+async function armBridge(rowId, d, candidateNumber, lineName) {
+  await run(`UPDATE "BrowserCall" SET "toNumber"=?, "lineName"=?, "bridgeDeviceId"=?, "bridgeStatus"='arming', "updatedAt"=? WHERE "id"=?`, candidateNumber, lineName, d.id, S.nowIso(), rowId);
+  wake(d.id);
+}
+/** May this bridge go now: the phone is connected, set to bridge, and free. */
+async function bridgeReady(d) {
+  const st = statusOf(d);
+  if (st.code !== 'connected') return { status: 409, error: `The phone ${d.number} is ${st.word.toLowerCase()}: ${st.why || ''}`.trim(), code: `PHONE_${st.code.toUpperCase()}` };
+  if (!d.bridge) return { status: 409, error: 'This phone is not set to "Talk in TeamLink". An Admin switches it on in Android phones.', code: 'NOT_BRIDGE' };
+  await expireBridges();
+  const b = (await bridgeBusy(d.id)) || (await one(`SELECT "id","userName" FROM "BrowserCall" WHERE "lineId"=? AND "status" IN ('requested','initiated','calling')`, `${PREFIX}${d.id}`));
+  if (b) return { status: 409, error: `The phone ${d.number} is on another call${b.userName ? ` (${b.userName})` : ''}. Try again when it ends.`, code: 'PHONE_BUSY' };
+  return { ok: true };
+}
+
 async function failOpen(deviceId, why) {
   const now = S.nowIso();
   await run(`UPDATE "BrowserCall" SET "status"='failed', "endAt"=?, "hangupReason"=?, "updatedAt"=? WHERE "lineId"=? AND "status" IN ('requested','initiated')`, now, why, now, `${PREFIX}${deviceId}`);
@@ -197,6 +239,12 @@ async function nextFor(d) {
   const hang = await all(`SELECT "id" FROM "BrowserCall" WHERE "lineId"=? AND "status"='calling' AND "hangupReason"='hangup-requested'`, `${PREFIX}${d.id}`);
   if (hang.length) return { hangup: hang.map((h) => h.id) };
   if (d.paused) return {};
+  await expireBridges();
+  const br = await one(`SELECT * FROM "BrowserCall" WHERE "bridgeDeviceId"=? AND "bridgeStatus"='arming' ORDER BY "startAt" LIMIT 1`, d.id);
+  if (br) {
+    const took = await S.run(`UPDATE "BrowserCall" SET "bridgeStatus"='armed', "updatedAt"=? WHERE "id"=? AND "bridgeStatus"='arming'`, S.nowIso(), br.id);
+    if (took) return { bridge: { id: br.id, number: br.toNumber, name: firstName(br.userName), answerWithinSec: 60 } };
+  }
   const q = await one(`SELECT * FROM "BrowserCall" WHERE "lineId"=? AND "status"='requested' ORDER BY "startAt" LIMIT 1`, `${PREFIX}${d.id}`);
   if (!q) return {};
   const took = await S.run(`UPDATE "BrowserCall" SET "status"='initiated', "updatedAt"=? WHERE "id"=? AND "status"='requested'`, S.nowIso(), q.id);
@@ -224,11 +272,34 @@ async function poll(d, waitMs, state) {
   return out;
 }
 
-const PHONE_EVENTS = ['dialing', 'ended', 'failed'];
+const BRIDGE_EVENTS = ['bridge-answered', 'candidate-answered', 'merged'];
+const PHONE_EVENTS = ['dialing', 'ended', 'failed', ...BRIDGE_EVENTS];
+const BRIDGE_NEXT = { 'bridge-answered': ['answered', ['armed', 'arming']], dialing: ['dialing', ['answered', 'armed']], 'candidate-answered': ['connected', ['dialing', 'answered']], merged: ['merged', ['connected', 'dialing', 'answered']] };
+/** What the phone says about a bridge: only the bridge fields change; the browser leg's own status stays Asterisk's. */
+async function bridgeEvent(d, r, ev, b) {
+  await touch(d, b && b.state);
+  const now = S.nowIso();
+  if (BRIDGE_NEXT[ev]) {
+    const [to, from] = BRIDGE_NEXT[ev];
+    await run(`UPDATE "BrowserCall" SET "bridgeStatus"=?, "updatedAt"=? WHERE "id"=? AND "bridgeStatus" IN (${from.map(() => '?').join(',')})`, to, now, r.id, ...from);
+  } else if (ev === 'failed') {
+    const why = oneLine(b && b.reason).slice(0, 200) || 'The phone could not connect the candidate.';
+    await run(`UPDATE "BrowserCall" SET "bridgeStatus"='failed', "bridgeNote"=?, "updatedAt"=? WHERE "id"=? AND "bridgeStatus" NOT IN ('ended','failed')`, `Phone: ${why}`, now, r.id);
+  } else if (ev === 'ended') {
+    const max = Math.max(0, Math.round((Date.now() - Date.parse(r.startAt)) / 1000));
+    let talk = Math.round(Number(b && b.durationSec));
+    talk = Number.isFinite(talk) && talk > 0 ? Math.min(talk, max) : 0;
+    const note = talk > 0 ? null : (r.bridgeStatus === 'dialing' || r.bridgeStatus === 'answered' ? 'The candidate did not answer / was busy.' : null);
+    await run(`UPDATE "BrowserCall" SET "bridgeStatus"='ended', "bridgeTalkSec"=?, "bridgeNote"=COALESCE("bridgeNote", ?), "updatedAt"=? WHERE "id"=? AND "bridgeStatus" NOT IN ('ended','failed')`, talk, note, now, r.id);
+  }
+  return { call: await one('SELECT * FROM "BrowserCall" WHERE "id"=?', r.id) };
+}
 /** The phone says what happened to a call it took. */
 async function event(d, b) {
   const ev = String((b && b.event) || '');
   if (!PHONE_EVENTS.includes(ev)) return { status: 400, error: `event must be one of ${PHONE_EVENTS.join(', ')}` };
+  const br = BRIDGE_EVENTS.includes(ev) || (b && b.bridge) ? await one('SELECT * FROM "BrowserCall" WHERE "id"=? AND "bridgeDeviceId"=?', clip(b && b.callId, 60), d.id) : null;
+  if (br) return bridgeEvent(d, br, ev, b);
   const r = await one('SELECT * FROM "BrowserCall" WHERE "id"=? AND "lineId"=?', clip(b && b.callId, 60), `${PREFIX}${d.id}`);
   if (!r) return { status: 404, error: 'Call not found for this phone.' };
   const now = S.nowIso();
@@ -262,7 +333,7 @@ async function usableBy(user, isAdmin) {
 async function queueCall(user, d, { candidateId, applicationId, number, mode }) {
   const st = statusOf(d);
   if (st.code !== 'connected') return { status: 409, error: `The phone ${d.number} is ${st.word.toLowerCase()}: ${st.why || ''}`.trim(), code: 'PHONE_' + st.code.toUpperCase() };
-  const busyPhone = await one(`SELECT "id","userName" FROM "BrowserCall" WHERE "lineId"=? AND "status" IN ('requested','initiated','calling')`, `${PREFIX}${d.id}`);
+  const busyPhone = (await one(`SELECT "id","userName" FROM "BrowserCall" WHERE "lineId"=? AND "status" IN ('requested','initiated','calling')`, `${PREFIX}${d.id}`)) || (await bridgeBusy(d.id));
   if (busyPhone) return { status: 409, error: `The phone ${d.number} is on another call${busyPhone.userName ? ` (${busyPhone.userName})` : ''}. Try again when it ends.`, code: 'PHONE_BUSY' };
   const mine = await one(`SELECT "id" FROM "BrowserCall" WHERE "userId"=? AND "direction"='phone' AND "status" IN ('requested','initiated','calling')`, user.id);
   if (mine) return { status: 409, error: 'You already have a phone call in progress.' };
@@ -335,4 +406,5 @@ module.exports = {
   PREFIX, NEXT, OUTCOME: Object.keys(OUTCOME), LIVE, ensure, statusOf, shape, ids,
   makePairCode, devices, byId, update, unpair, pair, deviceByToken, poll, event, touch,
   usableBy, queueCall, hangup, setLink, saveOutcome, expire, mayUse, _waiters: waiters,
+  armBridge, bridgeReady, bridgeBusy, expireBridges, BRIDGE_EVENTS,
 };

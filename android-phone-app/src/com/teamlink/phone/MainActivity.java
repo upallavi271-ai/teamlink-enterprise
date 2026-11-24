@@ -99,6 +99,13 @@ public class MainActivity extends Activity {
             }
         }
 
+        if (Build.VERSION.SDK_INT >= 23 && !TlInCallService.isDefaultDialer(this)) {
+            box.addView(text("For \"Talk in TeamLink\" (recruiters talk in TeamLink, this phone only lends its number), make this app the phone's Phone app:", 13));
+            box.addView(button("Make TeamLink Phone the Phone app", new View.OnClickListener() { public void onClick(View v) { askDialerRole(); } }));
+        } else if (Build.VERSION.SDK_INT >= 23) {
+            box.addView(text("TeamLink Phone is the Phone app: \"Talk in TeamLink\" calls are answered and joined here by themselves.", 13, Color.rgb(6, 118, 71)));
+        }
+
         if (!prefs.paired()) {
             box.addView(text("Pair with TeamLink", 17));
             final EditText server = edit(prefs.server(), "TeamLink address", InputType.TYPE_TEXT_VARIATION_URI);
@@ -178,6 +185,18 @@ public class MainActivity extends Activity {
         requestPermissions(ask.toArray(new String[0]), REQ);
     }
     @Override public void onRequestPermissionsResult(int req, String[] perms, int[] res) { build(); if (prefs.paired()) LinkService.start(this); }
+    private void askDialerRole() {
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                android.app.role.RoleManager rm = (android.app.role.RoleManager) getSystemService(ROLE_SERVICE);
+                startActivityForResult(rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_DIALER), 21);
+            } else {
+                startActivityForResult(new Intent(android.telecom.TelecomManager.ACTION_CHANGE_DEFAULT_DIALER)
+                    .putExtra(android.telecom.TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, getPackageName()), 21);
+            }
+        } catch (Exception e) { toast("Open Settings > Apps > Default apps > Phone app, and pick TeamLink Phone."); }
+    }
+    @Override protected void onActivityResult(int req, int res, Intent data) { build(); }
     private void askBattery() {
         try {
             Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);

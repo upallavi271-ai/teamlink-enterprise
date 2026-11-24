@@ -73,6 +73,12 @@ const ALTERS = [
   'ALTER TABLE "BrowserCall" ADD COLUMN "nextAction" TEXT',
   'ALTER TABLE "BrowserCall" ADD COLUMN "followUpAt" TEXT',
   'ALTER TABLE "BrowserCall" ADD COLUMN "outcome" TEXT',
+  // BRIDGE through the Android phone (2026-11-24, browsercall/phoneLink.js): the browser calls the phone on the office line, the phone answers by
+  // itself, dials the candidate from its own SIM and merges the two calls. bridgeStatus: arming | armed | answered | dialing | connected | merged | ended | failed
+  'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeDeviceId" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeStatus" TEXT',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeTalkSec" INTEGER',
+  'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeNote" TEXT',
 ];
 
 // 2026-11-24 (founder: "16 sims - edu 4, team 4, medical 4, mfg 4"): a port can be given to a recruiter before its SIM's number is known
