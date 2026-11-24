@@ -104,7 +104,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     {
       const { ctx, page } = await open('/crm/accounts?tab=portal');
       check('Accounts & Contacts > Customer portal: logins, help articles, partners, surveys', await page.locator('button[role=tab]', { hasText: 'Surveys (NPS / CSAT)' }).waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false));
-      check('it says the portal is switched off', await page.locator('text=is switched').first().isVisible().catch(() => false));
+      check('it says the portal is switched off', await page.locator('text=is switched').first().waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false));
       await page.locator('button[role=tab]', { hasText: 'Help articles' }).click();
       check('Help articles: "+ Article"', await page.locator('button', { hasText: '+ Article' }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false));
       await ctx.close();
