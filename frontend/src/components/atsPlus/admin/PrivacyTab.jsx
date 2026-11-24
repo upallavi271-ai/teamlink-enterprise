@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../../api';
 import TabStrip from '../../ui/TabStrip.jsx';
 import { Notice, Section, Table, useLoad, useAction, Field, Switch, dmy, when, row } from '../kit.jsx';
+import EvidenceZ from './EvidenceZ.jsx'; // 15.11 / IN-14 / 15.16: stated vs seen, documents, founder confirmation, monthly SLA (ATS wave 2 Z)
 
 // ---------------------------------------------------------------------------
 // ATS settings -> Privacy & security (15.09 / IN-06 DPDP, IN-07 / IN-08 IDs, 13.10 retention, 15.11 residency, 15.12 / 15.16 status + SLA).
@@ -16,6 +17,7 @@ const TABS = [
   { key: 'ids', label: 'Aadhaar & PAN', hint: 'Masking, the Aadhaar sweep and who opened a full number' },
   { key: 'where', label: 'Where data is stored', more: true, hint: 'Data residency and backups' },
   { key: 'status', label: 'Status & SLA pages', more: true, hint: 'The public status, trust and SLA pages' },
+  { key: 'evidence', label: 'Region & SLA evidence', more: true, hint: 'What the server sees, the documents that prove the region and the SLA, the founder confirmation' },
 ];
 
 function NoticePanel() {
@@ -210,6 +212,7 @@ export default function PrivacyTab() {
       {tab === 'ids' && <Ids />}
       {tab === 'where' && <Where />}
       {tab === 'status' && <StatusSla />}
+      {tab === 'evidence' && <EvidenceZ />}
     </>
   );
 }

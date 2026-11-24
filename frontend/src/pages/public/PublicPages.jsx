@@ -128,7 +128,8 @@ export function TrustPage() {
 }
 export function SlaPage() {
   const [d, setD] = useState(null); const [e, setE] = useState('');
-  useEffect(() => { api.get('/public/sla').then((r) => setD(r.data)).catch((x) => setE(say(x, 'The page is not available.'))); }, []);
+  const [h, setH] = useState(null); // 15.16 (ATS wave 2 Z): month by month, and whether the founder has committed to it
+  useEffect(() => { api.get('/public/sla').then((r) => setD(r.data)).catch((x) => setE(say(x, 'The page is not available.'))); api.get('/public/sla-history').then((r) => setH(r.data)).catch(() => setH(null)); }, []);
   return (
     <Shell title="Uptime and support">
       {e && <div className="notice red">{e}</div>}
@@ -140,6 +141,11 @@ export function SlaPage() {
         {Object.entries(d.response).map(([k, v]) => <div key={k} className="kv"><span className="k">First answer, {k === 'P1' ? 'system down (P1)' : k === 'P2' ? 'a feature not working (P2)' : 'a question (P3)'}</span><span>{v}</span></div>)}
         {(d.supportEmail || d.supportPhone) && <div className="kv"><span className="k">Contact</span><span>{[d.supportEmail, d.supportPhone].filter(Boolean).join(' · ')}</span></div>}
         {d.credits && <p>{d.credits}</p>}
+        {h && <>
+          <h3 style={{ fontSize: 15, marginTop: 14 }}>Month by month</h3>
+          {h.months.map((m) => <div key={m.month} className="kv"><span className="k">{m.month}</span><span>{m.uptimePct === null ? 'not measured' : `${m.uptimePct}%`}{m.outageMinutes ? ` · ${m.outageMinutes} min down` : ''}{m.met === null ? '' : m.met ? ' · met' : ' · below target'}</span></div>)}
+          <div className="small-muted" style={{ marginTop: 6 }}>{h.committed ? `These targets were confirmed by the company founder on ${String(h.committed.at).slice(0, 10)}.` : 'These are the company's stated targets; a contract commitment is agreed with each client.'}</div>
+        </>}
       </>}
     </Shell>
   );
