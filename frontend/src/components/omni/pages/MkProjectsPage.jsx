@@ -251,7 +251,9 @@ function Detail({ id, meta, onBack, onChanged }) {
   const [remember, setRemember] = useState(false);
 
   const load = useCallback(() => omni.get(`/gs/marketing/projects/${id}`).then((x) => {
-    setD(x); setCaption(x.project.caption || '');
+    setD(x); setCaption(x.project.caption || (x.project.draft ? `${x.project.draft.caption}
+
+${(x.project.draft.hashtags || []).join(' ')}`.trim() : ''));
     setStaged(x.options.filter((o) => o.stage === 'staged').map((o) => ({ itemId: o.itemId, label: o.label, item: o.item })));
     if (x.project.status === 'working') omni.get('/gs/marketing/projects/accounts').then(setAccts).catch(() => setAccts({ allowed: false, accounts: [] })); // the Send box lists the client's accounts
     if (['approved', 'posted'].includes(x.project.status)) {

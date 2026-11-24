@@ -83,6 +83,14 @@ let pass = 0; const ok = (n) => { pass += 1; console.log(`PASS  ${n}`); };
   const nonSkin = await AS.plan(admin, { projectId: (await mk({ clientName: 'Bright Smile Dental', occasion: 'Dental care', brief: 'We are a dental clinic. We want videos about brushing and check-ups for families.' })).id, kind: 'video', scenes: 4 });
   assert.ok(!nonSkin.plan.explain && nonSkin.plan.scenes.length === 4); ok('other kinds of client keep the tips video until their own topics are written');
 
+  // 2f. WHAT IS POSTED: the caption, or the starter content's caption, and the writer's hashtags when the words have none
+  const rowP = (await S.q('SELECT * FROM "OmniMkProject" WHERE id = ?', p.id))[0];
+  const posted1 = P.captionWithTags({ ...rowP, caption: '' });
+  assert.ok(posted1.length > 20 && /#\w+/.test(posted1)); ok('with no caption written, the post carries the starter content words and hashtags');
+  const own = P.captionWithTags({ ...rowP, caption: 'Our own words' });
+  assert.ok(/^Our own words\n\n#\w+/.test(own) && (own.match(/#/g) || []).length <= 8); ok('a caption without hashtags gets the writer\'s hashtags added (at most 8)');
+  assert.equal(P.captionWithTags({ ...rowP, caption: 'Already tagged #Dental' }), 'Already tagged #Dental'); ok('a caption that already has hashtags is left exactly as written');
+
   // 3. what a person types still wins
   const r2 = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 4, prompt: 'Free skin check camp this Sunday at our clinic', heading: 'Free skin check camp' });
   assert.ok(!r2.fromBrief && r2.plan.headline === 'Free skin check camp'); ok('the person\'s own idea and heading still win over the brief');

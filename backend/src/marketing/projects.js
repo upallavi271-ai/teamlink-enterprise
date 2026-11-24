@@ -128,6 +128,15 @@ async function makeDraft(id, byName) {
     return plan;
   } catch { return null; }
 }
+// THE WORDS THAT ARE POSTED (2026-11-24): the project's caption, or - when nobody wrote one - the starter content's caption; and the hashtags the TeamLink writer made are added when the words have none,
+// so a post never goes out bare. Up to 8 hashtags.
+const captionWithTags = (r) => {
+  const d = parse(r.draftPlan, null);
+  const base = String(r.caption || '').trim() || String((d && d.caption) || '').trim();
+  if (!base || /(^|\s)#\p{L}/u.test(base)) return base;
+  const tags = ((d && d.hashtags) || []).filter((x) => /^#\p{L}[\p{L}\p{N}_]*$/u.test(x)).slice(0, 8);
+  return tags.length ? base + '\n\n' + tags.join(' ') : base;
+};
 const draftOf = (r) => { const d = parse(r.draftPlan, null); return d && d.headline ? { headline: d.headline, caption: d.caption, hashtags: d.hashtags || [], cta: d.cta, scenes: (d.scenes || []).map((x) => x.caption), kindOfClient: d.profile || '' } : null; };
 const short = (r, counts) => ({
   draft: draftOf(r),
@@ -804,7 +813,7 @@ async function autoRun(id, { by = null, force = false } = {}) {
     const prev = parse(r.autoResult, []).filter((x) => x.ok); // a retry posts only the accounts that did not work
     const todo = targets.filter((t) => !prev.some((x) => x.accountId === t.accountId));
     await S.run(`UPDATE "${T}" SET autoState = 'posting', updatedAt = ? WHERE id = ?`, Date.now(), r.id);
-    const results = todo.length ? await require('./publisher').publish(todo, media, r.caption || '') : []; // eslint-disable-line global-require
+    const results = todo.length ? await require('./publisher').publish(todo, media, captionWithTags(r)) : []; // eslint-disable-line global-require
     const all = [...prev, ...results];
     const okAll = targets.every((t) => all.some((x) => x.accountId === t.accountId && x.ok));
     const now = Date.now();
@@ -867,7 +876,7 @@ async function postTo(u, id, b = {}, base = '') {
     const mo = await mediaOf(r, site);
     if (mo.error) return mo;
     await event(r.id, 'post_click', u.name, `Posting on ${platform === 'x' ? 'X' : platform === 'instagram' ? 'Instagram' : 'Facebook'}`);
-    const results = await require('./publisher').publish(targets, mo.media, r.caption || ''); // eslint-disable-line global-require
+    const results = await require('./publisher').publish(targets, mo.media, captionWithTags(r)); // eslint-disable-line global-require
     const all = [...parse(r.autoResult, []).filter((x) => !results.some((n) => n.accountId === x.accountId)), ...results];
     const now = Date.now();
     await S.run(`UPDATE "${T}" SET autoResult = ?, autoBase = ?, updatedAt = ? WHERE id = ?`, JSON.stringify(all), site || r.autoBase || null, now, r.id);
@@ -1158,7 +1167,7 @@ async function portalStart(u) {
 }
 
 module.exports = {
-  portalList, portalStart, makeDraft,
+  portalList, portalStart, makeDraft, captionWithTags,
   ensure, SOURCES, DELIVERABLES, PLATFORM_KEYS, PLATFORM_LABEL, create, invite, briefAssist, list, get, update, accept, decline, setOptions, send, cancelPresentation, extend, scheduled, posted, heldIds,
   publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, clientApprove, clientReject, clientRejectReason, publicReject, plainWhy, deliverHeld, sendApproval, tokenOf, idOfToken, mayWrite, tell, tellClient, notifyStatus,
   setShowcase, trackRecord, showcaseItems, publicWork, publicWorkFile, accounts, setAutopost, postNow, postTo, autoRun, autoSweep, startAutoPost,
