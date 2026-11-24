@@ -67,9 +67,26 @@ const LINE_SORTS = [
 // The reconciliation table has its own State tabs, so its bar leaves State out.
 const RECON_FIELDS = LINE_FIELDS.filter((f) => f.key !== 'state');
 
+// A month picker for statement lines: 'All months' or one month that the lines cover. The totals strip under it then reads
+// "this month: N lines, money in, money out".
+const monthKey = (t) => String(t.date || '').slice(0, 7);
+const monthName = (k) => { const [y, m] = String(k).split('-'); return `${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m) - 1] || m} ${y}`; };
+function MonthPick({ rows, month, setMonth }) {
+  const months = [...new Set((rows || []).map(monthKey).filter((k) => /^\d{4}-\d{2}$/.test(k)))].sort().reverse();
+  return (
+    <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: '6px 0' }}>
+      Month
+      <select value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Show one month of the statement" style={{ padding: '4px 8px' }}>
+        <option value="">All months</option>
+        {months.map((k) => <option key={k} value={k}>{monthName(k)}</option>)}
+      </select>
+    </label>
+  );
+}
+
 // What the search / filters found, in full (every page, not just the one on screen): how many statement
 // lines, and the money in and out across them.
-function LineTotals({ rows, filtered }) {
+function LineTotals({ rows, filtered, month }) {
   const list = rows || [];
   const cr = list.filter((t) => t.type === 'Credit');
   const dr = list.filter((t) => t.type === 'Debit');
@@ -80,12 +97,12 @@ function LineTotals({ rows, filtered }) {
   const other = list.length - rec.length - unm.length;
   return (
     <div className="notice" style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0' }} data-testid="bank-line-totals">
-      <span><b>{list.length}</b> statement line{list.length === 1 ? '' : 's'}{filtered ? ' found' : ''}</span>
+      <span>{month ? <b>{monthName(month)}: </b> : null}<b>{list.length}</b> statement line{list.length === 1 ? '' : 's'}{filtered ? ' found' : ''}</span>
       <span>Reconciled: <b>{rec.length}</b> ({money2(sum(rec))})</span>
       <span>Unmatched: <b>{unm.length}</b> ({money2(sum(unm))})</span>
       {other > 0 && <span>Other (review / matched / ignored): <b>{other}</b></span>}
-      <span>Deposits: <b style={{ color: 'var(--teal)' }}>{money2(sum(cr))}</b> ({cr.length})</span>
-      <span>Withdrawals: <b style={{ color: 'var(--red)' }}>{money2(sum(dr))}</b> ({dr.length})</span>
+      <span>Money in (deposits): <b style={{ color: 'var(--teal)' }}>{money2(sum(cr))}</b> ({cr.length})</span>
+      <span>Money out (withdrawals): <b style={{ color: 'var(--red)' }}>{money2(sum(dr))}</b> ({dr.length})</span>
       <span>Net: <b>{money2(sum(cr) - sum(dr))}</b></span>
     </div>
   );
@@ -654,8 +671,10 @@ function AccountView({
     else if (pill === 'rev') list = list.filter((t) => t.plan);
     else if (pill === 'nr') list = list.filter((t) => t.needsReview);
   }
+  const [month, setMonth] = useState('');
+  if (month) list = list.filter((t) => monthKey(t) === month);
   const lf = useListFilters(list, LINE_FIELDS, { sorts: LINE_SORTS, keep: 'bank.lines' });
-  const pg = usePaged(lf.rows, 50, 'bank.lines', `${lf.sig}|${accountId}|${tab}|${pill}`);
+  const pg = usePaged(lf.rows, 50, 'bank.lines', `${lf.sig}|${accountId}|${tab}|${pill}|${month}`);
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
   const s = account.stat;
 
@@ -729,8 +748,9 @@ function AccountView({
         </div>
       )}
 
+      <MonthPick rows={transactions} month={month} setMonth={setMonth} />
       <ListFilterBar lf={lf} storageKey="bank-lines" noun="lines" />
-      <LineTotals rows={lf.rows} filtered={lf.activeCount > 0} />
+      <LineTotals rows={lf.rows} filtered={lf.activeCount > 0 || !!month} month={month} />
       <div className="tbl-wrap">
         <table>
           <thead>
@@ -887,7 +907,8 @@ function Recon({
   clientNames, groups, marks, markById, imports, setView, setDialog, act, call, busy, picked, setPicked,
   state, setState, group, setGroup, openKeys, setOpenKeys, clientFilter, setClientFilter, canManage,
 }) {
-  const lf = useListFilters(transactions, RECON_FIELDS, { keep: 'bank.recon' });
+  const [month, setMonth] = useState('');
+  const lf = useListFilters(month ? transactions.filter((t) => monthKey(t) === month) : transactions, RECON_FIELDS, { keep: 'bank.recon' });
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
 
   // The State tab, then Search / Type / Date range on top of it.
@@ -1126,8 +1147,9 @@ function Recon({
         </div>
       )}
 
+      <MonthPick rows={transactions} month={month} setMonth={setMonth} />
       <ListFilterBar lf={lf} storageKey="bank-recon" noun="lines" />
-      <LineTotals rows={stateRows} filtered={narrowed || state !== 'All'} />
+      <LineTotals rows={stateRows} filtered={narrowed || state !== 'All' || !!month} month={month} />
       <div className="tabbar">
         {STATES.map((s) => (
           <button key={s} className={`tab-btn ${state === s ? 'active' : ''}`} onClick={() => setState(s)}>
