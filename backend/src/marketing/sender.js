@@ -10,13 +10,25 @@
 // ---------------------------------------------------------------------------
 const WN = require('../utils/waNumbers');
 
-// the numbers a login can choose from for a client message: the default company number first, then the others it may use (switched-off ones are left out)
+// THE DIGITAL MARKETING NUMBER (2026-11-24, founder: "where it says digital marketing, the digital marketing number must show"): AI Marketing is the digital marketing service, so its messages to a client
+// leave from the company's "Digital Marketing" WhatsApp number (the active number whose name has "digital marketing", a connected one first), not from the general company default. With no such number
+// the default company number is used exactly as before. Everybody who may use AI Marketing may send from it.
+const isMarketingNumber = (r) => /digital\s*marketing/i.test(String((r && r.label) || ''));
+async function marketingRow() {
+  const rows = (await WN.listRows().catch(() => [])).filter((r) => r && r.active && isMarketingNumber(r));
+  return rows.find((r) => r.statusCode === 'connected') || rows[0] || null;
+}
+// the number used when none is picked: the Digital Marketing number, else the company default
+async function primaryRow() { return (await marketingRow()) || (await WN.defaultRow().catch(() => null)); }
+
+// the numbers a login can choose from for a client message: the Digital Marketing number first (the default here), then the company default and the others it may use (switched-off ones are left out)
 async function numbersFor(u) {
   if (!(await WN.hasNumbers().catch(() => false))) return { numbers: [], defaultId: null, legacy: true };
-  const d = await WN.defaultRow().catch(() => null);
+  const d = await primaryRow();
+  const co = await WN.defaultRow().catch(() => null);
   const mine = u ? await WN.authorisedRows(u).catch(() => []) : [];
   const map = new Map();
-  [d, ...mine].filter((r) => r && r.active).forEach((r) => map.set(r.id, r));
+  [d, co, ...mine].filter((r) => r && r.active).forEach((r) => map.set(r.id, r));
   const numbers = [...map.values()].map((r) => ({ id: r.id, label: r.label, number: r.displayNumber, isDefault: !!(d && r.id === d.id) }))
     .sort((a, b) => (Number(b.isDefault) - Number(a.isDefault)) || String(a.label).localeCompare(String(b.label)));
   return { numbers, defaultId: d && d.active ? d.id : null };
@@ -26,12 +38,13 @@ async function numbersFor(u) {
 // opts.trusted: the number was already allowed when a person chose it (the 24-hour reminder repeats it), so only "found" and "switched on" are checked
 async function pick(u, wanted, { trusted = false } = {}) {
   if (!(await WN.hasNumbers().catch(() => false))) return { legacy: true, numberId: null };
-  const d = await WN.defaultRow().catch(() => null);
+  const d = await primaryRow();
+  const co = await WN.defaultRow().catch(() => null);
   const id = String(wanted || '').trim() || (d && d.id) || '';
   if (!id) return { numberId: null };
   const row = await WN.getRow(id).catch(() => null);
   if (!row) return { error: 'That WhatsApp number was not found. Pick one from the list.', status: 400 };
-  const allowed = trusted || !!(d && row.id === d.id) || !!(u && await WN.mayUse(u, row.id).catch(() => false));
+  const allowed = trusted || !!(d && row.id === d.id) || !!(co && row.id === co.id) || !!(u && await WN.mayUse(u, row.id).catch(() => false));
   if (!allowed) return { error: 'You are not allowed to send from that number. Pick another one.', status: 403 };
   if (!row.active) return { error: `The WhatsApp number "${row.label}" is switched off. Pick another one.`, status: 409 };
   return { numberId: row.id };
@@ -70,4 +83,4 @@ async function send(params) {
   return res;
 }
 
-module.exports = { numbersFor, pick, opts, fromWords, send, alternative };
+module.exports = { numbersFor, pick, opts, fromWords, send, alternative, marketingRow, isMarketingNumber };
