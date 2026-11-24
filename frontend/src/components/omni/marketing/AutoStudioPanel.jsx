@@ -95,8 +95,9 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
     }
     const last = i === total - 1; const first = i === 0;
     const heading = first ? p.headline : (p.scenes[i].caption || p.headline);
+    const bullets = p.scenes[i].bullets && p.scenes[i].bullets.length ? p.scenes[i].bullets : null; // an explainer scene: its title and rows (designPoster draws them)
     const line = first ? (p.scenes[i].caption && p.scenes[i].caption !== p.headline ? p.scenes[i].caption : '') : '';
-    const blob = await designPoster({ aspect, bg, colors: kit.colors, logo: kit.logo, heading, line, cta: last ? p.cta : '', footer: last ? (kit.footer || kit.brandName) : kit.brandName, index: i, total });
+    const blob = await designPoster({ aspect, bg, colors: kit.colors, logo: kit.logo, heading: bullets ? (p.scenes[i].caption || heading) : heading, line: bullets ? '' : line, bullets, cta: last ? p.cta : '', footer: last ? (kit.footer || kit.brandName) : kit.brandName, index: i, total });
     const q = new URLSearchParams({ title: `${p.title} · ${i + 1}`.slice(0, 80), ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
     const r = await omni.post(`/gs/marketing/images/upload?${q.toString()}`, blob, { headers: { 'Content-Type': 'image/jpeg' } });
     const u = URL.createObjectURL(blob); urls.current.push(u); setThumbs((t) => [...t, u]);

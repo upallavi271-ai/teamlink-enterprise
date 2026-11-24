@@ -56,9 +56,32 @@ export function designPoster(o) {
     topY += lh + 24 + Math.round(H * 0.02);
   }
   if (o.total > 1) { ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.font = `700 ${Math.round(W * 0.028)}px ${FONT}`; ctx.textAlign = 'right'; ctx.fillText(`${(o.index || 0) + 1} / ${o.total}`, W - pad, topY - Math.round(H * 0.012)); ctx.textAlign = 'left'; }
+  // 3b EXPLAINER scene: the title on top and up to four rows (a coloured label + a short line each); the lower part of the picture is left free for the presenter
+  if (o.bullets && o.bullets.length) {
+    const tFit = fit(ctx, o.heading, '800', Math.round(W * 0.085), Math.round(W * 0.05), maxW, 3);
+    const tLH = Math.round(tFit.size * 1.15); let yy = topY;
+    ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#fff'; ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 14; ctx.font = `800 ${tFit.size}px ${FONT}`;
+    tFit.lines.forEach((l) => { yy += tLH; ctx.fillText(l, pad, yy - Math.round(tLH * 0.2)); });
+    ctx.shadowBlur = 0; yy += Math.round(H * 0.025);
+    const rows = o.bullets.slice(0, 4); const areaBottom = H * (portrait ? 0.7 : 0.78);
+    const rowH = Math.min(Math.round(H * (portrait ? 0.105 : 0.14)), Math.round((areaBottom - yy) / rows.length) - 14);
+    rows.forEach((b, k) => {
+      const ry = yy + k * (rowH + 14);
+      ctx.fillStyle = 'rgba(255,255,255,0.93)'; pill(ctx, pad, ry, maxW, rowH, 22); ctx.fill();
+      ctx.fillStyle = acc; pill(ctx, pad + 12, ry + 12, Math.round(W * 0.2), rowH - 24, (rowH - 24) / 2); ctx.fill();
+      ctx.fillStyle = '#10211a'; ctx.font = `800 ${Math.round(W * 0.028)}px ${FONT}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; ctx.fillText(String(b.label || '').slice(0, 10), pad + 12 + Math.round(W * 0.1), ry + rowH / 2 + 1);
+      ctx.textAlign = 'left'; ctx.fillStyle = '#17302a';
+      const bx = pad + 12 + Math.round(W * 0.2) + 20; const bw = maxW - (bx - pad) - 16;
+      const bf = fit(ctx, b.text, '700', Math.round(W * 0.044), Math.round(W * 0.028), bw, 2);
+      const blh = Math.round(bf.size * 1.2); const by0 = ry + rowH / 2 - ((bf.lines.length - 1) * blh) / 2;
+      ctx.font = `700 ${bf.size}px ${FONT}`; bf.lines.forEach((l, li) => ctx.fillText(l, bx, by0 + li * blh));
+      ctx.textBaseline = 'alphabetic';
+    });
+  }
   // 4 the words, in the middle of what is left
-  const hasLine = !!String(o.line || '').trim();
-  const hFit = fit(ctx, o.heading, '800', Math.round(W * (wide ? 0.07 : 0.095)), Math.round(W * 0.04), maxW, wide ? 3 : 5);
+  const explainer = !!(o.bullets && o.bullets.length);
+  const hasLine = !explainer && !!String(o.line || '').trim();
+  const hFit = explainer ? { size: 0, lines: [] } : fit(ctx, o.heading, '800', Math.round(W * (wide ? 0.07 : 0.095)), Math.round(W * 0.04), maxW, wide ? 3 : 5);
   const lFit = hasLine ? fit(ctx, o.line, '500', Math.round(W * 0.052), Math.round(W * 0.032), maxW, wide ? 3 : 6) : { size: 0, lines: [] };
   const hLH = Math.round(hFit.size * 1.18); const lLH = Math.round(lFit.size * 1.4); const gap = hasLine ? Math.round(H * 0.03) : 0;
   const block = hFit.lines.length * hLH + gap + lFit.lines.length * lLH;

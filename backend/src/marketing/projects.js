@@ -120,7 +120,9 @@ async function makeDraft(id, byName) {
   try {
     const r = (await S.q(`SELECT clientName, occasion, brief FROM "${T}" WHERE id = ?`, id))[0];
     if (!r || String(r.brief || '').trim().length < 10) return null;
-    const plan = require('./briefContent').buildPlan({ who: r.clientName, occasion: r.occasion || '', brief: r.brief, n: 4 }); // eslint-disable-line global-require
+    const BC = require('./briefContent'); // eslint-disable-line global-require
+    const args = { who: r.clientName, occasion: r.occasion || '', brief: r.brief, n: 4 };
+    const plan = BC.canExplain(`${r.clientName} ${r.occasion || ''} ${r.brief}`) ? BC.buildExplainer(args) : BC.buildPlan(args); // a skin client's starter content is the explainer itself
     await S.run(`UPDATE "${T}" SET draftPlan = ? WHERE id = ?`, JSON.stringify({ ...plan, madeAt: Date.now() }), id);
     await event(id, 'draft', byName || 'TeamLink', 'Starter content written from the brief (open AI Video to make the video from it)');
     return plan;

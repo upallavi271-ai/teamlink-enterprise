@@ -18,7 +18,7 @@ let pass = 0; const ok = (n) => { pass += 1; console.log(`PASS  ${n}`); };
 
 (async () => {
   const real = await require('../src/db').user.findFirst({ select: { id: true } }); if (real) admin.id = real.id;
-  const mk = async (b) => { const r = await P.create(admin, { clientName: 'Dr Rao Skin Clinic', contactName: 'Dr Rao', contactPhone: '+919000000002', contactEmail: 'rao@clientcheck.in', occasion: 'Skin care awareness', brief: 'We are a dermatology clinic. We want videos that help our patients look after their skin.', deliverable: 'video', accept: true, ...b }); assert.ok(r.project, JSON.stringify(r)); return r.project; };
+  const mk = async (b) => { const r = await P.create(admin, { clientName: 'Dr Rao Dental Clinic', contactName: 'Dr Rao', contactPhone: '+919000000002', contactEmail: 'rao@clientcheck.in', occasion: 'Dental care', brief: 'We are a dental clinic. We want videos that help our patients look after their teeth.', deliverable: 'video', accept: true, ...b }); assert.ok(r.project, JSON.stringify(r)); return r.project; };
 
   // 1. the profile comes from the words of the brief
   assert.equal(BC.profileOf('dermatologist skin hair clinic').id, 'skin');
@@ -31,27 +31,27 @@ let pass = 0; const ok = (n) => { pass += 1; console.log(`PASS  ${n}`); };
   assert.ok(r.plan && r.fromBrief === true, JSON.stringify(r).slice(0, 300)); ok('with no idea typed, a client project writes the video from its brief');
   assert.equal(r.plan.scenes.length, 5); assert.ok(r.plan.scenes.every((s) => s.caption && s.imagePrompt && s.search)); ok('every scene has its words, a picture description and photo search words');
   const words = r.plan.scenes.map((s) => s.caption).join(' ');
-  assert.ok(/sunscreen|moistur|dermatolog|skin/i.test(words) && !/sample caption|test writer/i.test(r.plan.caption)); ok('the points are useful to the client\'s own patients (skin care), not an advertisement');
+  assert.ok(/brush|teeth|dentist|floss|smile|sugar|cavit/i.test(words) && !/sample caption|test writer/i.test(r.plan.caption)); ok('the points are useful to the client\'s own patients (dental care), not an advertisement');
   assert.ok(/not a substitute for a doctor/i.test(r.plan.caption) && !/cure|guarantee|100%|before and after/i.test(`${words} ${r.plan.caption}`)); ok('a health client gets the "see a doctor" line and no cure / guarantee wording');
   assert.ok(!/(?:₹|rs\.?\s?\d|\b\d{10}\b|https?:\/\/)/i.test(`${words} ${r.plan.caption}`)); ok('nothing is invented: no price, phone number or link');
-  assert.ok(/skin|derm|clinic|doctor/i.test(r.plan.scenes[1].search) || /skin|derm|clinic|doctor|sunscreen/i.test(r.plan.scenes.map((s) => s.search).join(' '))); ok('the stock-photo search words match the client');
-  assert.equal(r.plan.who, 'Dr Rao Skin Clinic'); assert.ok(r.plan.hashtags.length >= 1); ok('the client is the brand; hashtags are made');
+  assert.ok(/dent|tooth|teeth|smil|clinic/i.test(r.plan.scenes.map((s) => s.search).join(' '))); ok('the stock-photo search words match the client');
+  assert.equal(r.plan.who, 'Dr Rao Dental Clinic'); assert.ok(r.plan.hashtags.length >= 1); ok('the client is the brand; hashtags are made');
 
   // 2b. STARTER CONTENT is written the moment the project is made, shown on the project, and used when asked
   assert.ok(p.draft && p.draft.headline && p.draft.scenes.length === 4 && p.draft.caption && p.draft.hashtags.length, JSON.stringify(p.draft)); ok('the starter content is written as soon as the project is created');
-  assert.ok(/skin|sunscreen|dermatolog/i.test(p.draft.scenes.join(' '))); ok('it is about the client (skin care for a skin clinic)');
+  assert.ok(/brush|teeth|dentist|floss|smile|sugar|cavit|dental/i.test(p.draft.scenes.join(' '))); ok('it is about the client (dental care for a dental clinic)');
   const used = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 4, useDraft: true });
   assert.ok(used.fromBrief && used.plan.headline === p.draft.headline && used.plan.scenes[1].caption === p.draft.scenes[1]); ok('the video is made from that same starter content when asked (what the team read is what is made)');
   const other = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 5, useDraft: true });
   assert.equal(other.plan.scenes.length, 5); ok('a different number of scenes is written fresh, never cut or stretched');
-  const edited = await P.update(admin, p.id, { clientName: 'Dr Rao Dental Care', occasion: 'Dental care month', brief: 'We are a dental clinic. Please make videos about brushing and check-ups for families.', contactName: 'Dr Rao', contactPhone: '+919000000002', source: p.source, deliverable: 'video' });
-  assert.ok(edited.project && /dental|brush|smile|teeth|check/i.test(edited.project.draft.scenes.join(' ')), JSON.stringify(edited).slice(0, 300)); ok('when the brief changes, the starter content follows it');
+  const edited = await P.update(admin, p.id, { clientName: 'Dr Rao Skin Care', occasion: 'Skin care month', brief: 'We are a dermatology clinic. Please make videos about sunscreen and moisturising for families.', contactName: 'Dr Rao', contactPhone: '+919000000002', source: p.source, deliverable: 'video' });
+  assert.ok(edited.project && /skin/i.test(edited.project.draft.headline + edited.project.draft.scenes.join(' ')), JSON.stringify(edited).slice(0, 300)); ok('when the brief changes, the starter content follows it');
 
   // 2c. A PERSON EXPLAINING: every scene has a spoken line, warmer and longer than the words on screen
   assert.ok(r.plan.scenes.every((s) => s.say && s.say.length > s.caption.length - 5), JSON.stringify(r.plan.scenes.map((s) => s.say))); ok('every scene has a spoken line for the voice-over');
-  assert.ok(/Dr Rao Skin Clinic/.test(r.plan.scenes[0].say) && /^(Hello|Namaste)/.test(r.plan.scenes[0].say)); ok('the first line greets and names the client');
+  assert.ok(/Dr Rao Dental Clinic/.test(r.plan.scenes[0].say) && /^(Hello|Namaste)/.test(r.plan.scenes[0].say)); ok('the first line greets and names the client');
   const lastSay = r.plan.scenes[r.plan.scenes.length - 1].say;
-  assert.ok(/speak to your doctor/i.test(lastSay) && /Book a consultation/.test(lastSay)); ok('the last line invites the viewer (and, for a doctor, says to see a doctor)');
+  assert.ok(/speak to your doctor/i.test(lastSay) && /Book a check-up/.test(lastSay)); ok('the last line invites the viewer (and, for a doctor, says to see a doctor)');
   assert.ok(r.plan.scenes.slice(1, -1).every((s) => /^(Here is|Next|Another|And one|Please also)/.test(s.say) && !/\.\s[a-z]/.test(s.say))); ok('the middle lines read like speech, one point each, with proper sentences');
   const typed = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 3, content: 'Free skin check this Sunday\nBring your old reports\nCall to book' });
   assert.ok(typed.plan.scenes[0].say.includes('Free skin check this Sunday')); ok('the typed words are what is said, as they were written');
@@ -70,7 +70,18 @@ let pass = 0; const ok = (n) => { pass += 1; console.log(`PASS  ${n}`); };
   const gd2 = await P.get(admin, lb.id);
   assert.ok(gd2.project.draft && gd2.project.draft.headline); ok('an older project with no starter content gets it the first time its page is opened');
   const typedIdea = await AS.plan(admin, { projectId: lb.id, kind: 'video', scenes: 4, prompt: ideas.find((i) => /Eczema/.test(i.label)).idea, heading: 'Eczema and skin allergies' });
-  assert.ok(!typedIdea.fromBrief && /moistur|soap|scratch|itch|allerg/i.test(typedIdea.plan.scenes.map((x) => x.caption).join(' '))); ok('a clicked idea makes a video about THAT topic');
+  assert.ok(!typedIdea.fromBrief && /moistur|soap|scratch|itch|allerg/i.test(JSON.stringify(typedIdea.plan.scenes))); ok('a clicked idea makes a video about THAT topic');
+
+  // 2e. EXPLAINER: a skin client's video explains each problem (signs, home care, how the doctor helps)
+  const ov = await AS.plan(admin, { projectId: lb.id, kind: 'video', scenes: 6 });
+  assert.ok(ov.plan.explain === true && ov.plan.scenes.length === 6, JSON.stringify(ov.plan.scenes.map((x) => x.caption))); ok('with no idea typed, a skin client gets an explainer (greeting, one scene per problem, call to action)');
+  assert.ok(ov.plan.scenes.slice(1, -1).every((x) => x.bullets.length === 3 && x.bullets[0].label === 'Signs' && x.say.length > 120)); ok('each problem scene has three rows (signs, at home, doctor) and a spoken explanation');
+  const deep = await AS.plan(admin, { projectId: lb.id, kind: 'video', scenes: 4, prompt: ideas.find((i) => /Acne/.test(i.label)).idea });
+  assert.ok(deep.plan.explain && deep.plan.scenes.length === 5 && /what you may see/i.test(deep.plan.scenes[1].caption) && /doctor/i.test(deep.plan.scenes[3].caption)); ok('one clicked problem becomes a deep dive: greeting, what you may see, what helps, how the doctor helps, call to action');
+  assert.ok(!/cure|guarantee|100%|permanent|before and after/i.test(JSON.stringify(deep.plan.scenes) + JSON.stringify(ov.plan.scenes))); ok('the explainer never promises a cure or a result');
+  assert.ok(ov.plan.scenes.every((x) => x.bullets.every((b) => b.text.length <= 70))); ok('every row is short enough for the picture');
+  const nonSkin = await AS.plan(admin, { projectId: (await mk({ clientName: 'Bright Smile Dental', occasion: 'Dental care', brief: 'We are a dental clinic. We want videos about brushing and check-ups for families.' })).id, kind: 'video', scenes: 4 });
+  assert.ok(!nonSkin.plan.explain && nonSkin.plan.scenes.length === 4); ok('other kinds of client keep the tips video until their own topics are written');
 
   // 3. what a person types still wins
   const r2 = await AS.plan(admin, { projectId: p.id, kind: 'video', scenes: 4, prompt: 'Free skin check camp this Sunday at our clinic', heading: 'Free skin check camp' });

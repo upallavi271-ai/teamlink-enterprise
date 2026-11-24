@@ -54,7 +54,7 @@ export default function MkVideosPage() {
   const [pick, setPick] = useState([]); // [{ id, kind: 'image' | 'clip', caption }] in video order
   const [imgs, setImgs] = useState({}); // id -> HTMLImageElement
   const [vids, setVids] = useState({}); // id -> HTMLVideoElement (clips)
-  const [f, setF] = useState({ title: '', format: '9:16', secPer: 3, clipSec: 6, motion: 'mixed', keepSound: true, voice: '', headline: '', tagline: '', cta: '', footer1: '', footer2: '', useLogo: true });
+  const [f, setF] = useState({ title: '', format: '9:16', secPer: 3, clipSec: 6, motion: 'mixed', keepSound: true, voice: '', presenter: false, headline: '', tagline: '', cta: '', footer1: '', footer2: '', useLogo: true });
   const [mode, setMode] = useState(''); // '' | 'preview' | 'record'
   const [prog, setProg] = useState(0);
   const [made, setMade] = useState(null); // { blob, url, type }
@@ -109,7 +109,7 @@ export default function MkVideosPage() {
       const base = brand.colors || { primary: '#0f766e', secondary: '#134e4a', accent: '#f59e0b' };
       return proj ? { ...brand, brandName: proj.clientName, colors: { ...base, primary: (proj.colors && proj.colors.primary) || base.primary, secondary: (proj.colors && proj.colors.secondary) || base.secondary } } : { ...brand, colors: base };
     })(),
-    logo: f.useLogo ? logo : null, headline: f.headline, tagline: f.tagline, cta: f.cta, footer: [f.footer1, f.footer2], motion: f.motion, sound: f.keepSound,
+    presenter: !!f.presenter, logo: f.useLogo ? logo : null, headline: f.headline, tagline: f.tagline, cta: f.cta, footer: [f.footer1, f.footer2], motion: f.motion, sound: f.keepSound,
     pics: pick.map((p) => ({ caption: p.caption, kind: p.kind, len: p.kind === 'clip' && vids[p.id] ? vids[p.id].duration : undefined })),
     images: pick.map((p) => (p.kind === 'image' ? imgs[p.id] || null : null)),
     videos: pick.map((p) => (p.kind === 'clip' ? vids[p.id] || null : null)),
@@ -124,8 +124,8 @@ export default function MkVideosPage() {
     // a designed picture already carries its own words, so the video does not write the scene text over it a second time
     // the voice-over is ON: a person explains the video scene by scene (the spoken line of each scene), and the line is also shown under the picture as a subtitle
     const lang = ({ English: 'en', Telugu: 'te', Hindi: 'hi' })[plan.language] || 'en';
-    setF((cur) => ({ ...cur, title: plan.title || cur.title, headline: plan.headline || cur.headline, tagline: plan.tagline || cur.tagline, cta: plan.cta || cur.cta, format: '9:16', secPer: 3, voice: cur.voice || lang }));
-    setPick(ids.map((id, i) => { const sc = plan.scenes[i] || {}; const say = sc.say || sc.caption || ''; return { id, kind: 'image', say, caption: designed ? subtitleOf(say) : (sc.caption || '') }; }));
+    setF((cur) => ({ ...cur, title: plan.title || cur.title, headline: plan.headline || cur.headline, tagline: plan.tagline || cur.tagline, cta: plan.cta || cur.cta, format: '9:16', secPer: 3, voice: cur.voice || lang, presenter: !!plan.explain }));
+    setPick(ids.map((id, i) => { const sc = plan.scenes[i] || {}; const say = sc.say || sc.caption || ''; return { id, kind: 'image', say, caption: plan.explain ? '' : (designed ? subtitleOf(say) : (sc.caption || '')) }; })); // an explainer scene already shows its title and rows on the picture: no subtitle band over them
     setAutoGo(true);
   };
   useEffect(() => {

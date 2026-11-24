@@ -124,6 +124,47 @@ function ideasFor({ who, occasion, brief }) {
   return ideas;
 }
 
+// EXPLAINER VIDEOS (2026-11-24): "a doctor explaining": for a skin client the video does not show a few tips over photos, it EXPLAINS each problem the client treats: what you may see (signs), what
+// helps at home, how a doctor helps. One topic = a deep dive (greeting, signs, home care, how the doctor helps, call to action); no topic = an overview (greeting, one scene per problem the client
+// listed, call to action). Every scene has the picture words (title + three short rows) and the spoken explanation (say). General education only: it never promises a cure or a result, and says
+// "see a doctor" for anything serious. Nothing about the client is invented (no prices, years, awards, treatments they did not list).
+const TOPIC_EXTRA = [
+  { name: 'Acne and pimples', signs: 'Red or painful bumps, blackheads and whiteheads, mostly on the face, chest and back', treat: 'Your doctor looks at the type and the cause of your acne, then may suggest creams, medicines or other treatments that suit you' },
+  { name: 'Pigmentation and dark spots', signs: 'Dark patches or spots on the face or body, often after sun, acne or hormone changes', treat: 'Your doctor finds the cause first, then may suggest sun protection, creams or other treatments' },
+  { name: 'Hair fall and dandruff', signs: 'Thinning hair, more hair on the comb, bald patches, or flakes and itching on the scalp', treat: 'Your doctor checks the cause, which can be food, stress, hormones or infection, and then plans the care' },
+  { name: 'Eczema and skin allergies', signs: 'Dry, itchy, red skin that may crack or ooze, and keeps coming back', treat: 'Your doctor finds your triggers and may suggest moisturisers and medicines to calm the skin' },
+  { name: 'Fungal infections', signs: 'Itchy, round or ring-shaped red patches, often in skin folds, with peeling', treat: 'Your doctor confirms that it is a fungus and gives the right medicine for the right time' },
+  { name: 'Wrinkles and ageing skin', signs: 'Fine lines, dry or loose skin and dull colour, mostly on the face, neck and hands', treat: 'Your doctor explains what is safe for your skin type and plans simple care that fits you' },
+  { name: 'Skin rashes', signs: 'Red, itchy or bumpy skin that may burn, blister or spread', treat: 'Your doctor finds what caused the rash, such as an allergy or an infection, and treats that cause' },
+];
+TOPICS.forEach((t, i) => Object.assign(t, TOPIC_EXTRA[i]));
+const lower = (t) => { const x = stop(t); return x.charAt(0).toLowerCase() + x.slice(1); };
+// can the explainer be made for this client? (a skin client: its topics are written)
+const canExplain = (text) => profileOf(text).id === 'skin';
+// the first few words of a longer sentence, for a row on the picture
+const short = (t, n) => { const whole = stop(t); const first = whole.split(/[:;,]/)[0].trim(); const x = first.length >= 14 ? first : whole; if (x.length <= n) return x; const cut = x.slice(0, n); return cut.slice(0, Math.max(cut.lastIndexOf(' '), 20)); };
+function buildExplainer({ who, occasion, brief, n, focus }) {
+  const w = clip(who, 50);
+  const one = focus ? topicFor(focus) : null;
+  const listed = topicsOf(brief).map((t) => topicFor(t)).filter((t, i, a) => t && a.indexOf(t) === i);
+  const chosen = one ? [one] : (listed.length ? listed : TOPICS.slice(0, 4)).slice(0, 4);
+  const search = (t, i) => t.search[i % t.search.length];
+  const scenes = [];
+  if (one) {
+    scenes.push({ caption: one.hook, bullets: [], say: SAY_OPEN[w.length % SAY_OPEN.length].replace('{who}', w) + ' Today we will talk about ' + one.name.toLowerCase() + '. Please watch till the end.', imagePrompt: one.hook, search: search(one, 0) });
+    scenes.push({ caption: one.name + ': what you may see', bullets: one.signs.split(/,| and /).map((x) => ({ label: 'Signs', text: short(x.trim(), 60) })).filter((x) => x.text.length > 2).slice(0, 3), say: 'First, what you may see. ' + stop(one.signs) + '.', imagePrompt: one.name + ' signs', search: search(one, 1) });
+    scenes.push({ caption: 'What helps at home', bullets: one.tips.slice(0, 3).map((x) => ({ label: 'At home', text: short(x, 66) })), say: 'At home, ' + lower(one.tips[0]) + '. Also, ' + lower(one.tips[1]) + '. And ' + lower(one.tips[2]) + '.', imagePrompt: one.name + ' care', search: search(one, 2) });
+    scenes.push({ caption: 'How a skin doctor helps', bullets: [{ label: 'Doctor', text: 'Examines your skin' }, { label: 'Doctor', text: 'Finds the cause' }, { label: 'Doctor', text: 'Chooses the right care' }], say: stop(one.treat) + '. ' + stop(one.tips[4]) + '.', imagePrompt: 'doctor consultation', search: 'dermatologist consultation' });
+  } else {
+    scenes.push({ caption: 'Skin and hair problems we help with', bullets: chosen.map((t) => ({ label: 'We help', text: t.name })).slice(0, 4), say: SAY_OPEN[w.length % SAY_OPEN.length].replace('{who}', w) + ' Let us talk about ' + chosen.length + ' common skin and hair problems, what you may see, and how a doctor can help.', imagePrompt: 'dermatologist clinic', search: 'dermatologist clinic' });
+    chosen.forEach((t, i) => scenes.push({ caption: t.name, bullets: [{ label: 'Signs', text: short(t.signs, 62) }, { label: 'At home', text: short(t.tips[0], 62) }, { label: 'Doctor', text: 'Finds the cause, then treats it' }], say: t.name + '. You may see: ' + lower(t.signs) + '. At home, ' + lower(t.tips[0]) + '. ' + stop(t.treat) + '.', imagePrompt: t.name, search: search(t, 0) }));
+  }
+  scenes.push({ caption: w + ': ' + 'Book a consultation', bullets: [], say: 'This is general information, so please speak to your doctor about your own skin. Book a consultation with ' + w + '. We are happy to help.', imagePrompt: 'friendly closing scene', search: 'doctor patient consultation' });
+  const headline = one ? one.hook : 'Healthy skin and hair: what to know';
+  const caption = [headline + '.', ...scenes.slice(1, -1).map((s) => '• ' + s.caption + (s.bullets && s.bullets[0] ? ': ' + s.bullets[0].text : '')), 'This is general information, not a substitute for a doctor\'s advice.', 'Book a consultation: contact ' + w + '.'].join('\n').slice(0, 1800);
+  return { title: clip(w + ': ' + headline, 80), headline: clip(headline, 80), tagline: clip(w, 100), cta: 'Book a consultation', caption, hashtags: ['#SkinCare', '#Dermatology', '#SkinHealth'], scenes, profile: 'skin', explain: true };
+}
+
 // WHAT IS SAID (2026-11-23): the voice-over of a video is a person explaining, so each scene gets a spoken line (`say`), longer and warmer than the words on the screen.
 // Scene 1 greets and names the topic, the middle scenes give one point each in order, the last one invites the viewer. English only: the lines are built from English words.
 const stop = (t) => clip(t, 200).replace(/[.!?\s]+$/, '');
@@ -181,4 +222,4 @@ function guide(text) {
   return lines.join('\n');
 }
 
-module.exports = { profileOf, buildPlan, guide, sayFor, ideasFor, topicsOf, topicFor, PROFILES };
+module.exports = { profileOf, buildPlan, buildExplainer, canExplain, guide, sayFor, ideasFor, topicsOf, topicFor, PROFILES };

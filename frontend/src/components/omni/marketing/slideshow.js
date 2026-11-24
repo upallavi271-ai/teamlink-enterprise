@@ -134,11 +134,43 @@ function drawOutro(ctx, W, H, lt, d) {
   let y = py + pillH + m * 0.05;
   (d.footer || []).filter(Boolean).slice(0, 2).forEach((line) => { y += textBlock(ctx, line, W / 2, y, W * 0.84, Math.round(m * 0.036), 'rgba(255,255,255,0.92)', 1, 600) + m * 0.01; });
 }
+
+// ---- the PRESENTER (2026-11-24): a friendly illustrated doctor in the corner whose mouth moves with the voice (the loudness of the spoken sentence, 25 times a second), blinks and nods a little.
+// It is drawn here, free: no paid avatar service. Shown only on the scenes that have a spoken sentence.
+function drawPresenter(ctx, W, H, lt, d, idx) {
+  const v = d.voices && d.voices[idx]; if (!v) return;
+  const env = v.env; const open = env && env.length ? env[Math.min(env.length - 1, Math.floor(lt * ENV_FPS))] || 0 : 0;
+  const m = Math.min(W, H); const R = m * 0.115; const cx = W - R * 1.25; const cy = H - R * 2.15 - (d.pics[idx] && d.pics[idx].caption ? m * 0.12 : 0);
+  const nod = Math.sin(lt * 2.2) * R * 0.025;
+  ctx.save(); ctx.translate(cx, cy + nod);
+  // shoulders and white coat
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(0, R * 1.55, R * 1.25, R * 0.8, 0, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = '#0f766e'; ctx.beginPath(); ctx.moveTo(-R * 0.28, R * 0.95); ctx.lineTo(0, R * 1.45); ctx.lineTo(R * 0.28, R * 0.95); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#334155'; ctx.lineWidth = Math.max(2, R * 0.045); ctx.beginPath(); ctx.arc(-R * 0.5, R * 1.25, R * 0.3, 0.2, Math.PI - 0.2); ctx.stroke(); // stethoscope
+  // neck, face, hair, ears
+  ctx.fillStyle = '#e8b896'; ctx.fillRect(-R * 0.2, R * 0.7, R * 0.4, R * 0.4);
+  ctx.fillStyle = '#2b1d16'; ctx.beginPath(); ctx.ellipse(0, -R * 0.12, R * 0.98, R * 1.02, 0, Math.PI, 0); ctx.fill();
+  ctx.fillStyle = '#f1c7a5'; ctx.beginPath(); ctx.ellipse(-R * 0.93, R * 0.1, R * 0.12, R * 0.2, 0, 0, Math.PI * 2); ctx.ellipse(R * 0.93, R * 0.1, R * 0.12, R * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#f5cfae'; ctx.beginPath(); ctx.ellipse(0, R * 0.12, R * 0.86, R * 0.98, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#2b1d16'; ctx.beginPath(); ctx.ellipse(0, -R * 0.55, R * 0.9, R * 0.5, 0, Math.PI, 0); ctx.fill();
+  // eyes (they blink about every 3 seconds), brows
+  const blink = (lt % 3.1) > 3.0 ? 0.12 : 1;
+  ctx.fillStyle = '#ffffff'; [-1, 1].forEach((sx) => { ctx.beginPath(); ctx.ellipse(sx * R * 0.34, -R * 0.02, R * 0.17, R * 0.13 * blink, 0, 0, Math.PI * 2); ctx.fill(); });
+  ctx.fillStyle = '#1f2937'; [-1, 1].forEach((sx) => { ctx.beginPath(); ctx.ellipse(sx * R * 0.34, -R * 0.02, R * 0.075, R * 0.075 * blink, 0, 0, Math.PI * 2); ctx.fill(); });
+  ctx.strokeStyle = '#2b1d16'; ctx.lineWidth = Math.max(2, R * 0.05); ctx.lineCap = 'round';
+  [-1, 1].forEach((sx) => { ctx.beginPath(); ctx.moveTo(sx * R * 0.18, -R * 0.26); ctx.quadraticCurveTo(sx * R * 0.36, -R * 0.36, sx * R * 0.54, -R * 0.26); ctx.stroke(); });
+  // nose and the mouth: closed = a gentle smile, open = an oval as tall as the voice is loud
+  ctx.strokeStyle = '#d9a283'; ctx.lineWidth = Math.max(2, R * 0.04); ctx.beginPath(); ctx.moveTo(0, R * 0.05); ctx.quadraticCurveTo(R * 0.07, R * 0.22, -R * 0.03, R * 0.27); ctx.stroke();
+  const my = R * 0.5; const mw = R * 0.34;
+  if (open < 0.06) { ctx.strokeStyle = '#8a3b3b'; ctx.lineWidth = Math.max(2, R * 0.05); ctx.beginPath(); ctx.moveTo(-mw, my); ctx.quadraticCurveTo(0, my + R * 0.16, mw, my); ctx.stroke(); }
+  else { const mh = R * (0.07 + 0.3 * Math.min(1, open)); ctx.fillStyle = '#7a2330'; ctx.beginPath(); ctx.ellipse(0, my + mh * 0.4, mw * (0.8 + 0.2 * Math.min(1, open)), mh, 0, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(0, my + mh * 0.05, mw * 0.62, mh * 0.28, 0, 0, Math.PI); ctx.fill(); }
+  ctx.restore();
+}
 function drawScene(ctx, W, H, s, lt, d) {
   if (s.type === 'intro') drawIntro(ctx, W, H, lt, d);
   else if (s.type === 'outro') drawOutro(ctx, W, H, lt, d);
   else if (s.type === 'clip') drawClip(ctx, W, H, lt, s, d);
-  else drawPic(ctx, W, H, lt, s, d);
+  else { drawPic(ctx, W, H, lt, s, d); if (d.presenter) drawPresenter(ctx, W, H, lt, d, s.idx); }
 }
 export function sceneIndex(tl, t) {
   const i = tl.scenes.findIndex((s) => t >= s.start && t < s.start + s.dur);
@@ -172,7 +204,18 @@ function ensureAC() {
 export async function decodeVoices(buffers) {
   const c = ensureAC();
   if (!c) throw new Error('This browser cannot play sound.');
-  return Promise.all(buffers.map((b) => (b ? c.decodeAudioData(b.slice(0)) : null)));
+  const list = await Promise.all(buffers.map((b) => (b ? c.decodeAudioData(b.slice(0)) : null)));
+  list.forEach((ab) => { if (ab) ab.env = envelopeOf(ab); }); // how loud the voice is, 25 times a second: the presenter's mouth follows it
+  return list;
+}
+const ENV_FPS = 25;
+function envelopeOf(ab) {
+  const data = ab.getChannelData(0); const step = Math.max(1, Math.floor(ab.sampleRate / ENV_FPS)); const n = Math.ceil(data.length / step);
+  const env = new Float32Array(n); let peak = 0.0001;
+  for (let i = 0; i < n; i += 1) { let sum = 0; const from = i * step; const to = Math.min(data.length, from + step); for (let j = from; j < to; j += 1) sum += data[j] * data[j]; env[i] = Math.sqrt(sum / Math.max(1, to - from)); if (env[i] > peak) peak = env[i]; }
+  for (let i = 0; i < n; i += 1) env[i] = Math.min(1, env[i] / (peak * 0.75)); // 0 = silent, 1 = the loudest part
+  for (let i = 1; i < n; i += 1) env[i] = env[i] * 0.65 + env[i - 1] * 0.35; // a little smoothing so the mouth does not flutter
+  return env;
 }
 
 // ---- the clips' sound: one shared AudioContext; each clip's element is wired ONCE (the browser allows only one source per element) ----------------

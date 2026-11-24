@@ -76,11 +76,11 @@ const searchOf = (s) => {
 function clean(raw, { n, who, prompt, kind, day }) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const fallback = demoPlan(prompt, who, kind, n, day);
-  const scenes = (Array.isArray(r.scenes) ? r.scenes : []).map((s) => ({ caption: S.clip(s && s.caption, 80), imagePrompt: S.clip(s && s.imagePrompt, 400), search: searchOf(s), say: S.clip(s && s.say, 260) })).filter((s) => s.imagePrompt.length >= 8).slice(0, n);
-  while (scenes.length < n) scenes.push(fallback.scenes[scenes.length]);
+  const scenes = (Array.isArray(r.scenes) ? r.scenes : []).map((s) => ({ caption: S.clip(s && s.caption, 80), imagePrompt: S.clip(s && s.imagePrompt, 400), search: searchOf(s), say: S.clip(s && s.say, 420), ...(s && Array.isArray(s.bullets) ? { bullets: s.bullets.slice(0, 4).map((b) => ({ label: S.clip(b && b.label, 14), text: S.clip(b && b.text, 70) })).filter((b) => b.text) } : {}) })).filter((s) => s.imagePrompt.length >= 8).slice(0, r.explain ? 8 : n);
+  while (!r.explain && scenes.length < n) scenes.push(fallback.scenes[scenes.length]); // an explainer has as many scenes as it has things to explain
   return {
     title: S.clip(r.title, 80) || fallback.title, headline: S.clip(r.headline, 80) || fallback.headline, tagline: S.clip(r.tagline, 100) || fallback.tagline, cta: S.clip(r.cta, 30) || fallback.cta,
-    caption: String(r.caption || '').replace(/\r/g, '').trim().slice(0, 1800) || fallback.caption, hashtags: hashtagsOf(r.hashtags).length ? hashtagsOf(r.hashtags) : hashtagsOf(fallback.hashtags), scenes,
+    caption: String(r.caption || '').replace(/\r/g, '').trim().slice(0, 1800) || fallback.caption, hashtags: hashtagsOf(r.hashtags).length ? hashtagsOf(r.hashtags) : hashtagsOf(fallback.hashtags), scenes, ...(r.explain ? { explain: true } : {}),
   };
 }
 // What the person wrote themselves always wins over the AI: their title, heading, call to action and content are used exactly (cut only to their size); the content is spread over the scenes,
@@ -124,8 +124,11 @@ async function plan(u, b = {}) {
   let note = '';
   // the project's own starter content (written when the project was made, shown on its page): used as it is when its scene count fits, so what the team read is what becomes the video
   const stored = fromBrief && b.useDraft === true && project && project.draftPlan ? (() => { try { const d = JSON.parse(project.draftPlan); return d && Array.isArray(d.scenes) && d.scenes.length === n ? d : null; } catch { return null; } })() : null;
+  // EXPLAINER (briefContent.js): a skin client's video explains each problem (signs, home care, how the doctor helps) with a talking presenter; written by TeamLink itself, free and instant
+  const focusTopic = !fromBrief && idea.length >= 8 && project ? BC.topicFor(idea) : null;
+  const explainable = kind === 'video' && !!project && String(project.brief || '').trim().length >= 10 && BC.canExplain(`${who} ${project.occasion} ${project.brief}`) && (fromBrief || !!focusTopic) && !mine.content;
   try {
-    if (stored) { r = { result: stored, provider: 'standard', demo: false }; note = "This is the starter content TeamLink wrote from the client's brief. Change any words below if you like."; } else {
+    if (explainable) { r = { result: BC.buildExplainer({ who, occasion: project.occasion, brief: project.brief, n, focus: focusTopic ? idea : '' }), provider: 'standard', demo: false }; note = 'TeamLink wrote an explainer from the client\'s brief: each problem, what you may see, what helps, how the doctor helps. Change any words below if you like.'; } else if (stored) { r = { result: stored, provider: 'standard', demo: false }; note = "This is the starter content TeamLink wrote from the client's brief. Change any words below if you like."; } else {
     const given = [mine.title ? `Title: ${mine.title}` : '', mine.heading ? `Heading: ${mine.heading}` : '', mine.cta ? `Call to action: ${mine.cta}` : '', mine.content ? `Content the person wrote (use it as it is, do not change a word): ${mine.content}` : ''].filter(Boolean).join('\n');
     // quickMs: the web server (nginx) gives up at 60 seconds, so the AI writer gets 40: the one small model here is shared with the WhatsApp assistant and can be busy for minutes
     r = await AI.generate({ user: u, module: 'studio', task: kind, system: systemFor(brand, who, kind, n, language, day, project), prompt: `Request: ${prompt}${given ? `\n${given}` : ''}`, json: true, demo: () => (fromBrief ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n }) : (project && String(project.brief || '').trim().length >= 10 ? BC.buildPlan({ who, occasion: project.occasion, brief: project.brief, n, focus: idea.length >= 8 ? idea : prompt }) : demoPlan(prompt, who, kind, n, day))), department: S.clip(b.department, 60) || undefined, quickMs: 40000 });
