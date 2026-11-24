@@ -39,7 +39,9 @@ function periodRange({ period, from, to } = {}) {
   const y = ist.getUTCFullYear(); const m = ist.getUTCMonth();
   const at = (yy, mm) => new Date(Date.UTC(yy, mm, 1) - OFF).toISOString();
   let r;
-  if (period === 'last_month') r = { from: at(y, m - 1), to: at(y, m), label: 'Last month', key: period };
+  const fy = require('./plus/admin').fiscalRange(period, at, y, m); // eslint-disable-line global-require
+  if (fy) r = { from: fy.from, to: fy.to, label: fy.label, key: period }; // the financial year / quarter (CRM settings > Customise > Year & holidays)
+  else if (period === 'last_month') r = { from: at(y, m - 1), to: at(y, m), label: 'Last month', key: period };
   else if (period === 'quarter') { const q = Math.floor(m / 3) * 3; r = { from: at(y, q), to: at(y, q + 3), label: 'This quarter', key: period }; } else if (period === 'year') r = { from: at(y, 0), to: at(y + 1, 0), label: 'This year', key: period };
   else r = { from: at(y, m), to: at(y, m + 1), label: 'This month', key: 'month' };
   return { ...r, dFrom: istYmd(r.from), dTo: istYmd(r.to) };
