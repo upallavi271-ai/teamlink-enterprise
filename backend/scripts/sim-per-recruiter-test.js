@@ -329,6 +329,13 @@ const has = (text, lines) => { const t = text.split('\n'); let i = -1; for (cons
   check('report: missed-call numbers are masked and a candidate outside the viewer\'s scope has no name', repT.body.missed.every((x) => !/\d{10}/.test(x.number || '')) && !repT.body.missed.some((x) => x.candidateName === candOut.name));
   check('report: missed calls are listed with the reason', repR.body.missed.some((x) => /called back the recruiter's number/.test(x.reason || '')));
 
+  // ---- a person who may no longer hold a SIM (became a BDE): their port leaves the files, their calls back are not recorded as theirs
+  await prisma.user.update({ where: { id: rec2.id }, data: { atsRole: 'BDE', atsDepartment: 'BDE', atsScopeDepartments: 'BDE' } });
+  await call('PUT', '/browser-calling/admin/sims-settings', { missedTask: true }, tA);
+  check('a SIM holder who became a BDE: their port leaves [tl-from-gateway] and [tl-line-route]', !read(SIMS_FILE).includes('exten => port02,') && !read(env.BROWSER_CALL_LINES_DIALPLAN_FILE).includes('exten => p02,'));
+  const c6r = await ring({ port: '02', ext: rec2Ext, from: phoneB });
+  check('...and a TLInbound for them makes no row', !(await S.one('SELECT "id" FROM "BrowserCall" WHERE "token"=?', c6r.token)));
+
   // ---- remove
   const del = await call('DELETE', `/browser-calling/admin/sims/${p3.id}`, null, tA);
   check('Admin removes port 3: it leaves the list and the files', del.status === 200 && !del.body.sims.some((x) => x.port === 3) && !read(SIMS_FILE).includes('exten => p03'));

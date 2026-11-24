@@ -297,7 +297,8 @@ function renderInbound(list, ext, opts = {}) {
 
 /** Everything the two generated files need from the SIM list (lines.writeConfig calls this). */
 async function renderAll(opts = {}) {
-  const list = await rows();
+  // a port whose person may no longer hold a SIM (left, or became a BDE / Manager) is treated as having nobody on it
+  const list = await Promise.all((await rows()).map(async (r) => (r.userId && (await mayHold(r.userId)).error ? { ...r, userId: null } : r)));
   const ext = await extensionsByUser();
   const st = await settings();
   const names = await namesOf(list.map((r) => r.userId));
@@ -348,7 +349,7 @@ async function onInboundStart(e) {
   if (!ext || ext.extension !== extension) return null; // the dialplan rang an extension that is not this person's: not trusted
   const { resolveIdentity } = require('../utils/identity'); // eslint-disable-line global-require
   let user = null; try { user = await resolveIdentity(userId); } catch { user = null; }
-  if (!user) return null;
+  if (!user || !SIM_KINDS.includes(kindOf(user))) return null;
   const n = core().normalizeMobile(e.CallerIDNum);
   const number = n.ok ? n.national || String(e.CallerIDNum).replace(/\D/g, '').slice(-10) : '';
   const cand = n.ok ? await candidateForCaller(user, number).catch(() => null) : null;
