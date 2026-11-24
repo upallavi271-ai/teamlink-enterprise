@@ -71,7 +71,7 @@ async function catalogue() {
   const V = require('./vendorsZ'); // eslint-disable-line global-require
   for (const [kind, id, name, what] of [['bgv', 'ats-bgv', 'Background verification vendor', 'Order education / employment / address / criminal / identity checks; the result fills the BGV card.'], ['assessment', 'ats-assessment', 'Assessment vendor', 'Send a coding or skills test; the score comes back on the record.']]) {
     const c = await safe(() => V.vendorConfig(kind), { ready: false }); // eslint-disable-line no-await-in-loop
-    const n = (await S.items.list('vendor-order', {}, { limit: 20000 })).filter((o) => o.kind === kind).length; // eslint-disable-line no-await-in-loop
+    const n = (await S.items.list('vendor-order', {}, { limit: 20000 })).filter((o) => o.vkind === kind).length; // eslint-disable-line no-await-in-loop
     add({ id, name, category: 'Hiring checks', what, status: c.ready ? (n ? 'Connected' : 'Ready') : 'Not set up', needsFounder: !c.ready, setUpLink: INTEG(id), detail: c.ready ? `${c.vendor} · ${n} order(s)` : null });
   }
   const idv = await S.settings.get('idVerify', { sendEnabled: false });

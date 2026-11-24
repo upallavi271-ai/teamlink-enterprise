@@ -52,7 +52,11 @@ function testSaml(p, origin) {
     const left = Math.floor((new Date(x.validTo).getTime() - Date.now()) / 86400000);
     add('IdP certificate', left > 0, `${x.subject.split('\n').find((l) => l.startsWith('CN=')) || x.subject.split('\n')[0]}; valid until ${new Date(x.validTo).toISOString().slice(0, 10)} (${left} days)`);
     add('Certificate not ending soon', left > 30, left > 30 ? 'more than 30 days left' : 'ask the IdP for the new certificate now');
-  } catch (e) { add('IdP certificate', false, 'not a readable X.509 certificate'); }
+  } catch (e) {
+    // a bare public key (some IdPs / a stub give one) still checks signatures, but carries no expiry date
+    let key = false; try { crypto.createPublicKey(String(p.idpCert || '')); key = true; } catch { key = false; }
+    add('IdP certificate', key, key ? 'a public key, not a certificate: signatures can be checked, but there is no expiry date to watch' : 'not a readable X.509 certificate');
+  }
   add('Our entity ID', !!p.spEntityId, p.spEntityId);
   add('Our ACS address (give it to the IdP)', true, `${origin}/api/sso/saml/acs`);
   return checks;

@@ -103,9 +103,9 @@ function mapResult(kind, b) {
 
 // ------------------------------------------------------------------ result -> the record
 async function applyResult(order, raw, by) {
-  const m = mapResult(order.kind, raw);
+  const m = mapResult(order.vkind, raw);
   const patch = { status: m.done ? 'DONE' : 'IN_PROGRESS', result: { ...m, at: new Date().toISOString(), by }, lastCheckAt: new Date().toISOString() };
-  if (order.kind === 'bgv' && Object.keys(m.checks).length) {
+  if (order.vkind === 'bgv' && Object.keys(m.checks).length) {
     const before = await OB().bgvOf(order.refId);
     const cur = Object.fromEntries(((before && before.checks) || []).map((c) => [c.key, c.status]));
     const checks = { ...cur, ...m.checks };
@@ -113,7 +113,7 @@ async function applyResult(order, raw, by) {
     if (!v.error) await OB().saveBgv(order.refId, v.value, `${order.vendor} (vendor)`);
   }
   const out = await S.items.update(order.id, patch);
-  if (m.done && order.status !== 'DONE') await logAudit({ userId: null, actorName: by, action: `${KINDS[order.kind].label} result: ${m.verdict}`, entity: 'Application', entityId: order.refId, toValue: `${order.vendor}${m.score !== undefined && m.score !== null ? ` · score ${m.score}${m.maxScore ? `/${m.maxScore}` : ''}` : ''}` });
+  if (m.done && order.status !== 'DONE') await logAudit({ userId: null, actorName: by, action: `${KINDS[order.vkind].label} result: ${m.verdict}`, entity: 'Application', entityId: order.refId, toValue: `${order.vendor}${m.score !== undefined && m.score !== null ? ` · score ${m.score}${m.maxScore ? `/${m.maxScore}` : ''}` : ''}` });
   return out;
 }
 
@@ -126,10 +126,10 @@ async function placeOrder(req, kind, b) {
   const checks = kind === 'bgv' ? ((Array.isArray(b.checks) ? b.checks.map((x) => String(x).toLowerCase()).filter((x) => CHECKS.includes(x)) : []).length ? b.checks.map((x) => String(x).toLowerCase()).filter((x) => CHECKS.includes(x)) : (cfg.checks.length ? cfg.checks : CHECKS)) : null;
   const testId = kind === 'assessment' ? String(b.testId || cfg.testId || '').trim().slice(0, 80) : null;
   if (kind === 'assessment' && !testId) return { status: 400, error: 'Which test? Type the vendor\'s test ID (or set a default one in Administration > Integrations).' };
-  const open = (await S.items.list('vendor-order', { refType: 'Application', refId: app.id, status: ['ORDERED', 'IN_PROGRESS'] })).find((o) => o.kind === kind);
+  const open = (await S.items.list('vendor-order', { refType: 'Application', refId: app.id, status: ['ORDERED', 'IN_PROGRESS'] })).find((o) => o.vkind === kind);
   if (open) return { status: 409, error: `A ${KINDS[kind].label.toLowerCase()} is already running for this person (${open.vendor}).` };
   const token = crypto.randomBytes(18).toString('base64url');
-  const order = await S.items.create('vendor-order', { refType: 'Application', refId: app.id, ownerId: req.user.id, status: 'ORDERED', title: `${KINDS[kind].label}: ${app.candidate.name}`, kind, vendor: cfg.vendor, checks, testId, candidateId: app.candidateId, tokenHash: sha(token), consent: kind === 'bgv' ? { by: req.user.name, at: new Date().toISOString(), note: String(b.consentNote || '').slice(0, 200) || null } : null }, req.user);
+  const order = await S.items.create('vendor-order', { refType: 'Application', refId: app.id, ownerId: req.user.id, status: 'ORDERED', title: `${KINDS[kind].label}: ${app.candidate.name}`, vkind: kind, vendor: cfg.vendor, checks, testId, candidateId: app.candidateId, tokenHash: sha(token), consent: kind === 'bgv' ? { by: req.user.name, at: new Date().toISOString(), note: String(b.consentNote || '').slice(0, 200) || null } : null }, req.user);
   const base = require('../offerLink').publicBase(req); // eslint-disable-line global-require
   const callbackUrl = `${base}/api/public/vendorsz/callback/${order.id}/${token}`;
   const r = await call(cfg, 'POST', '/orders', { reference: order.id, callbackUrl, candidate: app.candidate, job: app.requirement.title, ...(checks ? { checks } : {}), ...(testId ? { testId } : {}) });
@@ -143,10 +143,10 @@ async function placeOrder(req, kind, b) {
   await logAudit({ userId: req.user.id, action: `${KINDS[kind].label} ordered from ${cfg.vendor}`, entity: 'Application', entityId: app.id, toValue: `${r.note}${checks ? ` · ${checks.join(', ')}` : ''}${testId ? ` · test ${testId}` : ''}${kind === 'bgv' ? ' · consent confirmed' : ''}` });
   return { status: r.ok ? 201 : 502, order: shape(saved), note: r.note, ...(r.ok ? {} : { error: `The order did not reach ${cfg.vendor}: ${r.note}` }) };
 }
-const shape = (o) => (o ? { id: o.id, kind: o.kind, vendor: o.vendor, applicationId: o.refId, title: o.title, status: o.status, checks: o.checks, testId: o.testId, externalId: o.externalId || null, result: o.result || null, testUrl: o.testUrl || null, note: o.note || null, consent: o.consent || null, at: o.createdAt, lastCheckAt: o.lastCheckAt || null } : null);
+const shape = (o) => (o ? { id: o.id, kind: o.vkind, vendor: o.vendor, applicationId: o.refId, title: o.title, status: o.status, checks: o.checks, testId: o.testId, externalId: o.externalId || null, result: o.result || null, testUrl: o.testUrl || null, note: o.note || null, consent: o.consent || null, at: o.createdAt, lastCheckAt: o.lastCheckAt || null } : null);
 
 async function checkNow(order) {
-  const cfg = await vendorConfig(order.kind);
+  const cfg = await vendorConfig(order.vkind);
   if (!cfg.ready || !order.externalId) return { status: 409, error: 'The vendor is not set up, or the order has no vendor id yet.' };
   const r = await call(cfg, 'GET', `/orders/${encodeURIComponent(order.externalId)}`);
   if (!r.ok) return { status: 502, error: r.note };
@@ -197,7 +197,7 @@ publicRouter.post('/callback/:id/:token', rateLimit({ bucket: 'vendor-callback',
   const o = await S.items.get(req.params.id, 'vendor-order');
   if (!o || o.tokenHash !== sha(req.params.token)) return res.status(404).json({ error: 'Unknown order.' });
   const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
-  const cfg = await vendorConfig(o.kind);
+  const cfg = await vendorConfig(o.vkind);
   if (cfg.secret) {
     const sent = String(req.get('x-signature') || req.get('x-teamlink-signature') || req.get('x-hub-signature-256') || '').replace(/^sha256=/i, '').trim();
     const want = crypto.createHmac('sha256', cfg.secret).update(raw).digest('hex');
