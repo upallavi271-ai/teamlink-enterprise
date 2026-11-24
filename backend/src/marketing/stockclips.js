@@ -263,6 +263,45 @@ async function photo(u, q = {}) {
   return { error: 'The photo could not be downloaded. Try again or use other words.', status: 502 };
 }
 
+// ---- a free stock CLIP as bytes (2026-11-24): the moving background of one scene of an explainer video ("Create from your content"). Like photo(): the browser sends only words and a shape, the
+// server asks the source (Pixabay first), downloads ONE short clip from the source's own https address (12 MB at most, a real MP4 only) and hands the bytes back. NOTHING is saved: the clip is only
+// drawn behind the words while the video is made. Cached for 10 minutes (a few clips at a time); 40 a person in 10 minutes.
+const CLIP_MAX = 12 * 1024 * 1024;
+const clipCache = new Map(); const clipRate = new Map();
+const clipTooMany = (userId) => { const now = Date.now(); const l = (clipRate.get(userId) || []).filter((t) => now - t < 600000); if (l.length >= 40) { clipRate.set(userId, l); return true; } l.push(now); clipRate.set(userId, l); return false; };
+const looksMp4 = (buf) => buf.length > 12 && buf.slice(4, 8).toString('latin1') === 'ftyp';
+async function clipBytes(u, q = {}) {
+  if (!mayWrite(u)) return { error: 'Your login cannot search for clips.', status: 403 };
+  const st = await status();
+  if (!st.ready) return { error: st.reason, status: 503, code: 'not_ready' };
+  const text = String(q.q || '').split(/\s+/).join(' ').trim().slice(0, 80);
+  if (text.length < 2) return { error: 'Say what the footage should show, for example "nurse hospital".', status: 400 };
+  const shape = ORIENT[String(q.shape || '').toLowerCase()] || '';
+  const n = Math.max(0, Math.min(19, Math.floor(Number(q.n)) || 0));
+  const c = await active();
+  const ck = c.p.id + '|' + text.toLowerCase() + '|' + shape + '|' + n;
+  const hit = clipCache.get(ck);
+  if (hit && Date.now() - hit.at < 600000) return hit.data;
+  if (clipTooMany(u.id)) return { error: 'Too many clip searches in a few minutes. Wait a little.', status: 429 };
+  let got = await c.p.search(text, shape, 1, c.key);
+  let items = got.items.filter((x) => x.files.length && x.seconds >= 3 && x.seconds <= MAX_SECONDS);
+  if (!items.length && shape) { got = await c.p.search(text, '', 1, c.key); items = got.items.filter((x) => x.files.length && x.seconds >= 3 && x.seconds <= MAX_SECONDS); } // no clip of that shape: any shape (it is cropped to fill the frame)
+  if (!items.length) return { error: 'No ' + c.p.name + ' clip was found for "' + text + '". Try other words.', status: 404, code: 'none' };
+  for (let i = 0; i < Math.min(3, items.length); i += 1) {
+    const pick = items[(n + i) % items.length];
+    const files = ranked(pick).filter((f) => hostOk(c.p, f.link)).slice(0, 2);
+    for (const f of files) {
+      let r; try { r = await fetchBytes(c.p, f.link, CLIP_MAX); } catch { r = null; } // eslint-disable-line no-await-in-loop
+      if (!r || !r.buf || !looksMp4(r.buf)) continue; // eslint-disable-line no-continue
+      const data = { buf: r.buf, mime: 'video/mp4', author: pick.author, pageUrl: pick.pageUrl, source: c.p.name, seconds: pick.seconds };
+      clipCache.set(ck, { at: Date.now(), data });
+      if (clipCache.size > 6) clipCache.delete(clipCache.keys().next().value);
+      return data;
+    }
+  }
+  return { error: 'The clip could not be downloaded. Try again or use other words.', status: 502 };
+}
+
 // a source / download problem is returned as plain words and a status, never thrown into the route
 const safe = (fn) => async (...a) => {
   try { return await fn(...a); } catch (e) {
@@ -271,4 +310,4 @@ const safe = (fn) => async (...a) => {
     return { error: 'Stock clips could not be reached just now. Try again in a minute.', status: 502 };
   }
 };
-module.exports = { status, meta, search: safe(search), importClip: safe(importClip), photo: safe(photo), testKey, PROVIDERS };
+module.exports = { status, meta, search: safe(search), importClip: safe(importClip), photo: safe(photo), clipBytes: safe(clipBytes), testKey, PROVIDERS };

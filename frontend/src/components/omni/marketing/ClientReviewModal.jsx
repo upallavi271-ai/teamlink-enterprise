@@ -23,6 +23,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   const [again, setAgain] = useState(false); // "make a new link" pressed
   const [fresh, setFresh] = useState(null); // the review just made
   const [ways, setWays] = useState(null); // is the company WhatsApp / email connected, and from which number
+  const [email, setEmail] = useState(null); // the client's email typed in the send box (null = the one saved on the link)
   const [phone, setPhone] = useState(null); // the client's WhatsApp number typed in the send box (null = the one saved on the link)
   const [withFile, setWithFile] = useState(false); // also send the picture / video itself
   const [sendNote, setSendNote] = useState(null); // what the last "Send from TeamLink" did
@@ -81,7 +82,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   const tellIt = async (r, way) => {
     setBusy(`tell${way}`); setErr(''); setSendNote(null);
     try {
-      const res = await omni.post(`/gs/marketing/client-reviews/${r.id}/tell`, { ways: [way], picture: way === 'whatsapp' && withFile && kind === 'image', ...(way === 'whatsapp' && numberId ? { numberId } : {}), ...(phone != null && String(phone).trim() ? { phone: String(phone).trim() } : {}) });
+      const res = await omni.post(`/gs/marketing/client-reviews/${r.id}/tell`, { ways: [way], ...(way === 'email' && email != null && String(email).trim() ? { email: String(email).trim() } : {}), picture: way === 'whatsapp' && withFile && kind === 'image', ...(way === 'whatsapp' && numberId ? { numberId } : {}), ...(phone != null && String(phone).trim() ? { phone: String(phone).trim() } : {}) });
       setSendNote(res.ok); toast(res.ok); if (phone != null) load();
     } catch (e) { setErr(errOf(e, 'It could not be sent.')); } finally { setBusy(''); }
   };
@@ -93,6 +94,8 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
       <input readOnly value={url(r)} onFocus={(e) => e.target.select()} aria-label="The private link" style={{ width: '100%', boxSizing: 'border-box', margin: '6px 0', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', font: 'inherit', fontSize: 11 }} />
       <div style={{ margin: '8px 0 4px', fontSize: 10, fontWeight: 800, color: '#166534' }}>CLIENT'S WHATSAPP NUMBER</div>
       <input value={phone != null ? phone : (r.contactPhone || '')} maxLength={30} inputMode="tel" placeholder="+91…" onChange={(e) => setPhone(e.target.value)} aria-label="The client's WhatsApp number" style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', font: 'inherit', fontSize: 12 }} />
+      <div style={{ margin: '8px 0 4px', fontSize: 10, fontWeight: 800, color: '#166534' }}>CLIENT'S EMAIL (FOR "SEND EMAIL")</div>
+      <input value={email != null ? email : (r.contactEmail || '')} maxLength={160} inputMode="email" placeholder="client@company.com" onChange={(e) => setEmail(e.target.value)} aria-label="The client's email address" style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', font: 'inherit', fontSize: 12 }} />
       <SenderPick value={numberId} onChange={setNumberId} disabled={!!busy} />
       {kind === 'image' ? (
         <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 11.5, margin: '8px 0 2px' }}>
@@ -102,7 +105,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
       ) : null}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
         <Btn small primary disabled={!!busy || (ways && !ways.whatsapp.ready)} onClick={() => tellIt(r, 'whatsapp')} title={ways && !ways.whatsapp.ready ? `WhatsApp is not connected: ${ways.whatsapp.reason || 'ask an Admin'}` : 'TeamLink sends it from the company WhatsApp number'}>{busy === 'tellwhatsapp' ? 'Sending…' : 'Send on WhatsApp from TeamLink'}</Btn>
-        <Btn small disabled={!!busy || !(r.contactEmail) || (ways && !ways.email.ready)} onClick={() => tellIt(r, 'email')} title={r.contactEmail ? 'TeamLink sends it from the company mailbox' : 'This link has no email address'}>{busy === 'tellemail' ? 'Sending…' : 'Send email from TeamLink'}</Btn>
+        <Btn small disabled={!!busy || !(String(email != null ? email : (r.contactEmail || '')).trim()) || (ways && !ways.email.ready)} onClick={() => tellIt(r, 'email')} title={(email != null ? email : r.contactEmail) ? 'TeamLink sends it from the company mailbox, with the video attached and Approve / Reject links' : 'Type the client\'s email address first'}>{busy === 'tellemail' ? 'Sending…' : 'Send email from TeamLink'}</Btn>
         <Btn small onClick={() => copy(r)}>⧉ Copy link</Btn>
       </div>
       {sendNote ? <div className="mk-note ok" style={{ marginTop: 8 }}>{sendNote}</div> : null}

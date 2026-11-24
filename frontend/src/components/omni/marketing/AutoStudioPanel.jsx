@@ -39,6 +39,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const [aspect, setAspect] = useState(isVideo ? '9:16' : '1:1');
   const [look, setLook] = useState('designed'); // 'designed' (free) | 'ai' (paid picture AI)
   const [photos, setPhotos] = useState(true);
+  const [footage, setFootage] = useState(true); // explainer videos: real stock VIDEO footage behind the words (free), not still pictures
   const [phase, setPhase] = useState(''); // '' | 'plan' | 'pics' | 'done'
   const [step, setStep] = useState({ i: 0, n: 0 });
   const [plan, setPlan] = useState(null);
@@ -121,6 +122,9 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
             if (AI_REFUSED.test(errOf(e, e.message || ''))) { useAi = false; setNote('The AI picture service said no (it is not set up, or it needs billing). The pictures are designed here instead: free, with your words, logo and colours.'); } else throw e;
           }
         }
+        if (!id && isVideo && r.plan.explain && footage && can.stock) { // real moving footage from the free stock source, kept in this browser only
+          try { const cb = await omni.blob('/gs/marketing/stock/clipfile', { q: r.plan.scenes[i].search || r.plan.scenes[i].caption, shape: shapeOf(aspect), n: i }); const cu = URL.createObjectURL(cb); urls.current.push(cu); id = { stock: true, url: cu }; } catch { id = null; } // eslint-disable-line no-await-in-loop
+        }
         if (!id) { id = await makeDesigned(r.plan, i, r.plan.scenes.length); anyDesigned = true; } // eslint-disable-line no-await-in-loop
         ids.push(id);
         if (stop.current) throw new Error('stopped');
@@ -201,6 +205,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           </div>
           {more ? (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 12, alignItems: 'center' }}>
+              {isVideo ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={footage} disabled={working || !can.stock} onChange={(e) => setFootage(e.target.checked)} />Real video footage behind the words (free stock clips, like a real video)</label> : null}
               <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={photos} disabled={working || !can.stock} onChange={(e) => setPhotos(e.target.checked)} />Free stock photos behind the words {can.stock ? '' : <span style={{ color: 'var(--muted)' }}>(not set up: an Admin adds a free Pixabay key in Administration &gt; Integrations; brand colours are used)</span>}</label>
               {can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>Pictures: <select value={look} disabled={working} onChange={(e) => setLook(e.target.value)}><option value="designed">Designed by TeamLink (free)</option><option value="ai">{can.aiFree ? 'Made by the AI picture service (free daily allowance)' : 'Made by the AI picture service (may need billing; designed instead if it says no)'}</option></select></label> : <span style={{ color: 'var(--muted)' }}>Pictures are designed by TeamLink (free). A real AI-made picture needs the free Cloudflare picture service: an Admin adds it in Administration &gt; Integrations.</span>}
             </div>

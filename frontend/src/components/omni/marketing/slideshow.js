@@ -28,7 +28,7 @@ export function recordType(withAudio = false) {
 
 // items: [{ kind: 'image' | 'clip', len }] -> the scenes with their start and length (a clip plays for at most clipSec, and never past its own end)
 export function timeline(items, secPer, clipSec = 6) {
-  const scenes = [{ type: 'intro', dur: INTRO }, ...items.map((p, i) => ({ type: p.kind === 'clip' ? 'clip' : 'pic', idx: i, dur: p.kind === 'clip' ? Math.max(1, Math.min(clipSec, p.len || clipSec)) : Math.max(secPer, p.voiceSec ? p.voiceSec + 0.6 : 0) })), { type: 'outro', dur: OUTRO }];
+  const scenes = [{ type: 'intro', dur: INTRO }, ...items.map((p, i) => ({ type: p.kind === 'clip' ? 'clip' : 'pic', idx: i, dur: p.kind === 'clip' ? (p.voiceSec ? Math.max(3, p.voiceSec + 0.9) : Math.max(1, Math.min(clipSec, p.len || clipSec))) : Math.max(secPer, p.voiceSec ? p.voiceSec + 0.6 : 0) })), { type: 'outro', dur: OUTRO }];
   let t = 0;
   scenes.forEach((s) => { s.start = t; t += s.dur; });
   return { scenes, total: t };
@@ -105,6 +105,40 @@ function drawPic(ctx, W, H, lt, s, d) {
   }
   overlay(ctx, W, H, lt, pic, d);
 }
+
+// ---- EXPLAINER over REAL FOOTAGE (2026-11-24): a free stock clip plays behind the words (looped while the voice speaks); the title slides in at the top and the rows come in one by one, timed to the voice ----
+function overlayExplain(ctx, W, H, lt, pic, d) {
+  const { colors } = d.brand; const m = Math.min(W, H);
+  const gt = ctx.createLinearGradient(0, 0, 0, H * 0.34); gt.addColorStop(0, 'rgba(0,0,0,0.62)'); gt.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = gt; ctx.fillRect(0, 0, W, H * 0.34);
+  const gb = ctx.createLinearGradient(0, H * 0.4, 0, H); gb.addColorStop(0, 'rgba(0,0,0,0)'); gb.addColorStop(1, 'rgba(0,0,0,0.78)'); ctx.fillStyle = gb; ctx.fillRect(0, H * 0.4, W, H * 0.6);
+  const k = ease(lt / 0.6);
+  if (pic.title) {
+    ctx.save(); ctx.globalAlpha *= k; ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = m * 0.02;
+    ctx.fillStyle = colors.accent; ctx.fillRect(m * 0.06, m * 0.07 + (1 - k) * 24, m * 0.012, m * 0.1);
+    textBlock(ctx, pic.title, m * 0.095, m * 0.07 + (1 - k) * 24, W - m * 0.17, Math.round(m * 0.066), '#ffffff', 3, 800, 'left');
+    ctx.restore();
+  }
+  const rows = (pic.rows || []).slice(0, 4);
+  const total = Math.max(3, pic.voiceSec || 6);
+  const rh = m * 0.118; const gap = m * 0.018; const x0 = m * 0.06; const rw = W - m * 0.12;
+  const startY = H - m * 0.1 - rows.length * (rh + gap);
+  rows.forEach((r, i) => {
+    const t0 = 0.7 + (i * (total - 1.4)) / Math.max(1, rows.length);
+    const kk = ease((lt - t0) / 0.5); if (kk <= 0) return;
+    const y = startY + i * (rh + gap) + (1 - kk) * 34;
+    ctx.save(); ctx.globalAlpha *= kk;
+    ctx.fillStyle = 'rgba(255,255,255,0.95)'; roundRect(ctx, x0, y, rw, rh, rh * 0.2); ctx.fill();
+    const lw = m * 0.2; ctx.fillStyle = colors.accent; roundRect(ctx, x0 + m * 0.014, y + m * 0.014, lw, rh - m * 0.028, (rh - m * 0.028) / 2); ctx.fill();
+    ctx.fillStyle = '#10211a'; ctx.font = '800 ' + Math.round(m * 0.03) + 'px "Segoe UI", Roboto, Helvetica, Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(r.label || '').slice(0, 10), x0 + m * 0.014 + lw / 2, y + rh / 2 + 1);
+    ctx.textBaseline = 'top'; ctx.fillStyle = '#17302a';
+    const tx = x0 + m * 0.014 + lw + m * 0.025; const tw = rw - (tx - x0) - m * 0.02;
+    ctx.font = '700 ' + Math.round(m * 0.036) + 'px "Segoe UI", Roboto, Helvetica, Arial, sans-serif'; const lines = wrap(ctx, r.text, tw, 2);
+    const th = lines.length * m * 0.036 * 1.2; ctx.textAlign = 'left';
+    lines.forEach((l, li) => ctx.fillText(l, tx, y + (rh - th) / 2 + li * m * 0.036 * 1.2));
+    ctx.restore();
+  });
+  if (d.logo) logoAt(ctx, d.logo, W - m * 0.04 - m * 0.13, m * 0.04, m * 0.13, m * 0.09, true);
+}
 // real footage: the clip's own video element (played while this scene runs), covering the frame
 function drawClip(ctx, W, H, lt, s, d) {
   const v = d.videos && d.videos[s.idx]; const pic = d.pics[s.idx];
@@ -114,7 +148,7 @@ function drawClip(ctx, W, H, lt, s, d) {
     const w = v.videoWidth * base; const h = v.videoHeight * base;
     ctx.drawImage(v, (W - w) / 2, (H - h) / 2, w, h);
   }
-  overlay(ctx, W, H, lt, pic, d);
+  if (pic.rows && pic.rows.length) overlayExplain(ctx, W, H, lt, pic, d); else overlay(ctx, W, H, lt, pic, d);
 }
 function drawOutro(ctx, W, H, lt, d) {
   const { colors } = d.brand; const m = Math.min(W, H);
@@ -275,7 +309,7 @@ export function play(canvas, d, { secPer, clipSec = 6, record = false, onProgres
     if (prev && prev.type === 'clip') { const pv = d.videos[prev.idx]; if (pv) { try { pv.pause(); } catch { /* ignore */ } } }
     const s = tl.scenes[i];
     if (s.type === 'clip') { const v = d.videos[s.idx]; if (v) { try { v.currentTime = 0; const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); } catch { /* ignore */ } } }
-    if (s.type === 'pic' && voices[s.idx] && AC) { // this scene's sentence
+    if ((s.type === 'pic' || s.type === 'clip') && voices[s.idx] && AC) { // this scene's sentence
       try { const src = AC.createBufferSource(); src.buffer = voices[s.idx]; src.connect(record && dest ? dest : AC.destination); src.start(0); voiceSrc.push(src); } catch { /* the video goes on without it */ }
     }
     lastI = i;

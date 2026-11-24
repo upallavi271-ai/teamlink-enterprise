@@ -287,6 +287,13 @@ router.get('/stock/photo', mustWrite, wrap(async (req, res) => {
   res.set({ 'Content-Type': out.mime, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=600', 'X-Photo-Credit': encodeURIComponent(`${out.author} · ${out.source}`) });
   return res.send(out.buf);
 }));
+// one free stock clip as video bytes (the moving background of an explainer scene); nothing is saved
+router.get('/stock/clipfile', mustWrite, wrap(async (req, res) => {
+  const out = await Stock.clipBytes(req.user, req.query || {});
+  if (out.error) return res.status(out.status || 400).json({ error: out.error, code: out.code || undefined });
+  res.set({ 'Content-Type': out.mime, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=600', 'X-Clip-Credit': encodeURIComponent(out.author + ' · ' + out.source) });
+  return res.send(out.buf);
+}));
 router.get('/clip-ai/meta', mustWrite, wrap(async (req, res) => res.json(await Clips.meta(req.user))));
 router.post('/clip-ai', mustWrite, wrap(async (req, res) => send(res, await Clips.create(req.user, req.body || {}))));
 router.get('/clip-ai/jobs/:id', mustWrite, wrap(async (req, res) => send(res, await Clips.getJob(req.user, req.params.id))));

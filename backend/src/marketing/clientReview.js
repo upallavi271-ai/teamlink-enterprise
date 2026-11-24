@@ -236,6 +236,10 @@ async function tell(u, id, b = {}, base = '') {
   const typed = S.clip(b.phone, 30);
   if (typed && !core.normalizeMobile(typed).ok) return { error: 'That WhatsApp number does not look right. Check it and try again.', status: 400 }; // checked BEFORE it is saved: a wrong number never replaces the good one
   if (typed && typed !== (r.contactPhone || '')) { await S.run(`UPDATE "${TABLE}" SET contactPhone = ?, updatedAt = ? WHERE id = ?`, typed, Date.now(), r.id); r = { ...r, contactPhone: typed }; }
+  // the client's email typed in the send box (like the number): checked BEFORE it is saved, then kept on the link so the email button works
+  const typedMail = S.clip(b.email, 160);
+  if (typedMail && !core.validEmail(typedMail)) return { error: 'That email address does not look right. Check it and try again.', status: 400 };
+  if (typedMail && typedMail !== (r.contactEmail || '')) { await S.run(`UPDATE "${TABLE}" SET contactEmail = ?, updatedAt = ? WHERE id = ?`, typedMail, Date.now(), r.id); r = { ...r, contactEmail: typedMail }; }
   const item = await moduleOf(r.kind).rawRow(r.itemId);
   const word = r.kind === 'image' ? (item && /^video\//.test(item.mime || '') ? 'video' : 'picture') : 'message';
   const link = `${site}/client-review/${tokenOf(r.id)}`;

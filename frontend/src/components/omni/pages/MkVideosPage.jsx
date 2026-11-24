@@ -93,9 +93,10 @@ export default function MkVideosPage() {
 
   // the picked pictures and clips as drawable media (fetched with the login, shown from blob addresses)
   useEffect(() => {
-    pick.forEach(({ id, kind }) => {
+    pick.forEach(({ id, kind, url }) => {
       const have = kind === 'clip' ? vids[id] : imgs[id];
       if (have) return;
+      if (url) { loadVid(url).then((v) => { v.loop = true; v.muted = true; setVids((x) => ({ ...x, [id]: v })); }).catch(() => toast('A footage clip could not be loaded')); return; } // a free stock clip kept in this browser only (explainer footage): nothing on the server
       omni.blob(`/gs/marketing/images/${id}/file`).then((b) => { const u = URL.createObjectURL(b); urls.current.push(u); return kind === 'clip' ? loadVid(u) : loadImg(u); })
         .then((m) => (kind === 'clip' ? setVids((x) => ({ ...x, [id]: m })) : setImgs((x) => ({ ...x, [id]: m }))))
         .catch(() => toast(kind === 'clip' ? 'A clip could not be loaded: use an MP4 made with H.264' : 'A picture could not be loaded'));
@@ -110,7 +111,7 @@ export default function MkVideosPage() {
       return proj ? { ...brand, brandName: proj.clientName, colors: { ...base, primary: (proj.colors && proj.colors.primary) || base.primary, secondary: (proj.colors && proj.colors.secondary) || base.secondary } } : { ...brand, colors: base };
     })(),
     presenter: !!f.presenter, logo: f.useLogo ? logo : null, headline: f.headline, tagline: f.tagline, cta: f.cta, footer: [f.footer1, f.footer2], motion: f.motion, sound: f.keepSound,
-    pics: pick.map((p) => ({ caption: p.caption, kind: p.kind, len: p.kind === 'clip' && vids[p.id] ? vids[p.id].duration : undefined })),
+    pics: pick.map((p) => ({ caption: p.caption, title: p.title, rows: p.rows, kind: p.kind, len: p.kind === 'clip' && vids[p.id] ? vids[p.id].duration : undefined })),
     images: pick.map((p) => (p.kind === 'image' ? imgs[p.id] || null : null)),
     videos: pick.map((p) => (p.kind === 'clip' ? vids[p.id] || null : null)),
   }), [brand, proj, logo, f, pick, imgs, vids]);
@@ -124,8 +125,12 @@ export default function MkVideosPage() {
     // a designed picture already carries its own words, so the video does not write the scene text over it a second time
     // the voice-over is ON: a person explains the video scene by scene (the spoken line of each scene), and the line is also shown under the picture as a subtitle
     const lang = ({ English: 'en', Telugu: 'te', Hindi: 'hi' })[plan.language] || 'en';
-    setF((cur) => ({ ...cur, title: plan.title || cur.title, headline: plan.headline || cur.headline, tagline: plan.tagline || cur.tagline, cta: plan.cta || cur.cta, format: '9:16', secPer: 3, voice: cur.voice || lang, presenter: !!plan.explain }));
-    setPick(ids.map((id, i) => { const sc = plan.scenes[i] || {}; const say = sc.say || sc.caption || ''; return { id, kind: 'image', say, caption: plan.explain ? '' : (designed ? subtitleOf(say) : (sc.caption || '')) }; })); // an explainer scene already shows its title and rows on the picture: no subtitle band over them
+    setF((cur) => ({ ...cur, title: plan.title || cur.title, headline: plan.headline || cur.headline, tagline: plan.tagline || cur.tagline, cta: plan.cta || cur.cta, format: '9:16', secPer: 3, voice: cur.voice || lang, presenter: !!plan.explain && !ids.some((x) => x && typeof x === 'object'), keepSound: false }));
+    setPick(ids.map((id, i) => {
+      const sc = plan.scenes[i] || {}; const say = sc.say || sc.caption || '';
+      if (id && typeof id === 'object') return { id: `stk-${i}-${Date.now()}`, kind: 'clip', stock: true, url: id.url, say, title: sc.caption, rows: sc.bullets || [], caption: '' }; // real footage behind the words
+      return { id, kind: 'image', say, caption: plan.explain ? '' : (designed ? subtitleOf(say) : (sc.caption || '')) };
+    })); // an explainer scene already shows its title and rows on the picture: no subtitle band over them
     setAutoGo(true);
   };
   useEffect(() => {
@@ -151,7 +156,7 @@ export default function MkVideosPage() {
   // the voice-over: each scene's words are spoken by the server's free voice (marketing/meetingVoice.js speakAny); the scene lasts as long as the sentence
   const withVoices = async () => {
     if (!f.voice) return { d: data, seconds: tl.total };
-    const bufs = await Promise.all(pick.map((p) => (p.kind === 'image' && String(p.say || p.caption || '').trim().length > 1
+    const bufs = await Promise.all(pick.map((p) => ((p.kind === 'image' || p.stock) && String(p.say || p.caption || '').trim().length > 1
       ? omni.post('/gs/marketing/video/voice', { lang: f.voice, text: p.say || p.caption }, { responseType: 'arraybuffer', timeout: 60000 }).catch((e) => { throw new Error(errOf(e, 'The voice could not be made.')); })
       : null)));
     const voices = await decodeVoices(bufs);
