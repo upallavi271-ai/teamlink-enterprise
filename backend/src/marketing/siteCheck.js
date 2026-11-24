@@ -174,6 +174,14 @@ async function get1(u, id) {
   const r = (await S.q(`SELECT * FROM "${T}" WHERE id = ?`, id))[0]; if (!r || !A.mayDepartment(u, r.department || '')) return { error: 'That check was not found.', status: 404 };
   return { id: r.id, clientName: r.clientName, createdAt: S.iso(r.createdAt), report: S.parse(r.report, null) };
 }
+// a Google PageSpeed run (the small version from marketing/pagespeed.js) kept with the saved check, so the monthly report can show it
+async function attachPageSpeed(u, id, ps) {
+  if (!(await ensure())) return { error: 'The check could not be opened.', status: 500 };
+  const r = (await S.q(`SELECT * FROM "${T}" WHERE id = ?`, id))[0]; if (!r || !A.mayDepartment(u, r.department || '')) return { error: 'That check was not found.', status: 404 };
+  const rep = S.parse(r.report, null) || {}; rep.pagespeed = ps; await S.run(`UPDATE "${T}" SET report = ? WHERE id = ?`, JSON.stringify(rep), id);
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: PageSpeed result kept with a website check', entity: T, entityId: id, toValue: r.clientName });
+  return { ok: true };
+}
 async function latestFor(u, clientName) { const l = await list(u, { clientName }); return l.items && l.items[0] ? l.items[0] : null; }
 
-module.exports = { ensure, scanHtml, analyze, runCheck, check, list, get: get1, latestFor, cleanUrl, CHECKS, DISCLAIMER };
+module.exports = { ensure, scanHtml, analyze, runCheck, check, list, get: get1, latestFor, attachPageSpeed, cleanUrl, CHECKS, DISCLAIMER };

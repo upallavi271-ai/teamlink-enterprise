@@ -21,7 +21,7 @@ export default function MkVisibilityPage() {
   useEffect(() => { omni.get('/gs/marketing/visibility/meta').then(setMeta).catch((e) => setErr(errOf(e, 'The tools could not be opened.'))); }, []);
   if (err && !meta) return <Banner tone="error">{err}</Banner>;
   if (!meta) return <div className="card panel">Loading…</div>;
-  const p = { toast, industries: meta.industries };
+  const p = { toast, industries: meta.industries, keySet: !!(meta.pagespeed && meta.pagespeed.keySet) };
   return (
     <div>
       <PageHead eyebrow="AI Marketing" title="SEO and visibility" lead="Check a client's website, make the FAQ and business data for search and AI answers, write careful review replies, check the wording, and find free photos. Nothing is posted: the client approves first." />
@@ -34,11 +34,13 @@ export default function MkVisibilityPage() {
   );
 }
 
-function SiteTab({ toast }) {
+function SiteTab({ toast, keySet }) {
   const [url, setUrl] = useState(''); const [client, setClient] = useState(''); const [save, setSave] = useState(false); const [busy, setBusy] = useState(false); const [rep, setRep] = useState(null); const [past, setPast] = useState([]);
+  const [ps, setPs] = useState(null); const [psBusy, setPsBusy] = useState(false); const [savedId, setSavedId] = useState('');
+  const runSpeed = async () => { setPsBusy(true); setPs(null); try { setPs(await omni.post('/gs/marketing/visibility/pagespeed', { url: rep.url, checkId: savedId || undefined }, { timeout: 90000 })); } catch (e) { toast(errOf(e, 'PageSpeed could not be run.')); } finally { setPsBusy(false); } };
   const loadPast = useCallback(() => (client.trim() ? omni.get('/gs/marketing/visibility/site-checks', { clientName: client.trim() }).then((d) => setPast(d.items || [])).catch(() => setPast([])) : Promise.resolve(setPast([]))), [client]);
   useEffect(() => { loadPast(); }, [loadPast]);
-  const run = async () => { setBusy(true); setRep(null); try { const r = await omni.post('/gs/marketing/visibility/site-check', { url, clientName: client, save: save && !!client.trim() }, { timeout: 60000 }); setRep(r.report); if (r.id) { toast('Check saved'); loadPast(); } } catch (e) { toast(errOf(e, 'The website could not be checked.')); } finally { setBusy(false); } };
+  const run = async () => { setBusy(true); setRep(null); try { const r = await omni.post('/gs/marketing/visibility/site-check', { url, clientName: client, save: save && !!client.trim() }, { timeout: 60000 }); setRep(r.report); setPs(null); setSavedId(r.id || ''); if (r.id) { toast('Check saved'); loadPast(); } } catch (e) { toast(errOf(e, 'The website could not be checked.')); } finally { setBusy(false); } };
   return (
     <div>
       <Banner>It reads the page once, like a visitor would, and checks 22 things. It is TeamLink's own check of what is on the page: it does not measure rankings or traffic and promises none.</Banner>
@@ -64,6 +66,7 @@ function SiteTab({ toast }) {
           </Panel>
         </div>
       ) : null}
+      {rep ? <SpeedPanel ps={ps} busy={psBusy} onRun={runSpeed} saved={!!savedId} keySet={keySet} /> : null}
       {past.length ? <Panel title={`Earlier checks: ${client.trim()}`} style={{ marginTop: 12 }}><table className="mk-table"><tbody>{past.slice(0, 8).map((x) => <tr key={x.id}><td style={{ fontSize: 12.5 }}>{fmtDate(x.createdAt)}</td><td>{x.url}</td><td><b>{x.score}/100</b></td></tr>)}</tbody></table></Panel> : null}
     </div>
   );
@@ -256,5 +259,36 @@ function PhotosTab({ toast }) {
         </>
       ) : null}
     </div>
+  );
+}
+
+// Google PageSpeed (Lighthouse) for the checked page: phone and desktop together. The numbers are Google's lab measurement of this one page at this moment, not a ranking.
+const BAND = { good: ['live', 'Good'], work: ['warn', 'Needs work'], poor: ['error', 'Poor'], 'n/a': ['draft', 'n/a'] };
+const scoreTone = (n) => (n == null ? 'draft' : n >= 90 ? 'live' : n >= 50 ? 'warn' : 'error');
+function SpeedRun({ title, r }) {
+  if (!r) return null;
+  if (r.error) return <Panel title={title}><Banner tone="error">{r.error}</Banner></Panel>;
+  return (
+    <Panel title={title}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>{r.scores.map((s) => <span key={s.key} style={{ textAlign: 'center' }}><div style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.1, color: s.score == null ? 'var(--muted)' : s.score >= 90 ? '#15803d' : s.score >= 50 ? '#b45309' : '#b91c1c' }}>{s.score == null ? '—' : s.score}</div><Pill tone={scoreTone(s.score)}>{s.label}</Pill></span>)}</div>
+      <table className="mk-table"><tbody>{r.metrics.map((m) => <tr key={m.key}><td style={{ fontSize: 12.5 }}>{m.label}</td><td><b>{m.display}</b></td><td><Pill tone={BAND[m.rating][0]}>{BAND[m.rating][1]}</Pill></td></tr>)}</tbody></table>
+      {r.opportunities.length ? <><b style={{ fontSize: 12.5 }}>What costs the most time</b><ul style={{ margin: '4px 0 6px', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.45 }}>{r.opportunities.map((o) => <li key={o.id}>{o.title}{o.display ? ` (${o.display})` : ''}</li>)}</ul></> : null}
+      {r.issues.length ? <><b style={{ fontSize: 12.5 }}>Other things Google flags</b><ul style={{ margin: '4px 0 6px', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.45 }}>{r.issues.slice(0, 6).map((o, i) => <li key={i}><Tag>{o.category}</Tag> {o.title}{o.display ? ` (${o.display})` : ''}</li>)}</ul></> : null}
+      {r.field ? <div style={{ fontSize: 12.5 }}><b>What real visitors' browsers saw{r.field.overall ? `: ${r.field.overall}` : ''}</b>{r.field.metrics.length ? ` · ${r.field.metrics.map((m) => `${m.label} ${m.value} (${m.category})`).join(' · ')}` : ''}</div> : <div style={{ fontSize: 12, color: 'var(--muted)' }}>Google has no real-visitor data for this site (too few visits).</div>}
+    </Panel>
+  );
+}
+function SpeedPanel({ ps, busy, onRun, saved, keySet }) {
+  return (
+    <Panel title="Google PageSpeed" sub="Phone and desktop, measured by Google with Lighthouse (open source). Free." style={{ marginTop: 12 }} right={<Btn primary disabled={busy} onClick={onRun}>{busy ? 'Measuring…' : ps ? 'Run it again' : 'Run Google PageSpeed'}</Btn>}>
+      {busy ? <div style={{ fontSize: 13 }}>Google is measuring the page on a phone and on a desktop. It takes 20 to 50 seconds: please wait here.</div> : null}
+      {!ps && !busy ? <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Measures how fast the page loads and how good it is on a phone. {keySet ? '' : 'It works without a key at low volume; if Google says its free allowance is used up, an Admin adds a free key in Administration > Integrations > Website speed.'}</div> : null}
+      {ps ? (
+        <div>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 12 }}><SpeedRun title="On a phone" r={ps.mobile} /><SpeedRun title="On a desktop" r={ps.desktop} /></div>
+          <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>{ps.note} {ps.attached ? 'Kept with the saved check: it will show in the monthly report.' : saved ? '' : 'Save the check for a client to keep this result for the monthly report.'}</div>
+        </div>
+      ) : null}
+    </Panel>
   );
 }

@@ -2834,6 +2834,19 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     return res.json({ ...shapeIntegration(channel, nextRow), result: probe.result });
   }
 
+  // Website speed (Google PageSpeed): one real run on a tiny public page with the saved key (marketing/pagespeed.js).
+  if (channel.id === 'google-pagespeed') {
+    const probe = await require('../marketing/pagespeed').testKey();
+    const result = probe.ok ? probe.text : `Failed — ${probe.text}`;
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: probe.ok ? null : result.slice(0, 480), ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }) },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result });
+  }
+
   // Stock video clips (Pixabay / Pexels): one free search with the saved key (marketing/stockclips.js).
   if (channel.id === 'stock-pexels' || channel.id === 'stock-pixabay') {
     const probe = await require('../marketing/stockclips').testKey(channel.id);

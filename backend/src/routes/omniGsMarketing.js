@@ -27,6 +27,7 @@ const Guard = require('../marketing/contentGuard');
 const Packs = require('../marketing/industryPacks');
 const Ov = require('../marketing/openverse');
 const Mrep = require('../marketing/monthlyReport');
+const Page = require('../marketing/pagespeed');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -368,7 +369,15 @@ router.post('/services/plans/:id/report/csv', mustWrite, wrap(async (req, res) =
 // ---- SEO & visibility (2026-11-24: the services document): website check (SEO, AEO, GEO), schema and FAQ tools, industry packs, review reply drafts, the wording check with the medical reviewer's sign-off, free photos (Openverse). Writers only. Nothing is posted. ----
 const siteHits = new Map(); // a website check calls the client's site about a dozen times: 20 an hour per person
 const siteOk = (id) => { const now = Date.now(); const list = (siteHits.get(id) || []).filter((t) => now - t < 3600000); if (list.length >= 20) { siteHits.set(id, list); return false; } list.push(now); siteHits.set(id, list); return true; };
-router.get('/visibility/meta', mustWrite, wrap(async (req, res) => res.json({ industries: Packs.INDUSTRIES, fields: Mrep.FIELDS })));
+router.get('/visibility/meta', mustWrite, wrap(async (req, res) => res.json({ industries: Packs.INDUSTRIES, fields: Mrep.FIELDS, pagespeed: await Page.status() })));
+const speedHits = new Map(); // Google PageSpeed: two calls per run, 10 runs an hour per person
+const speedOk = (id) => { const now = Date.now(); const list = (speedHits.get(id) || []).filter((t) => now - t < 3600000); if (list.length >= 10) { speedHits.set(id, list); return false; } list.push(now); speedHits.set(id, list); return true; };
+router.post('/visibility/pagespeed', mustWrite, wrap(async (req, res) => {
+  if (!speedOk(req.user.id)) return res.status(429).json({ error: 'That is 10 PageSpeed runs in the last hour. Try again later.' });
+  const b = req.body || {}; const out = await Page.run(b.url); if (out.error) return send(res, out);
+  if (b.checkId) { const a = await Site.attachPageSpeed(req.user, String(b.checkId), Page.compact(out)); out.attached = !a.error; }
+  return res.json(out);
+}));
 router.post('/visibility/site-check', mustWrite, wrap(async (req, res) => (siteOk(req.user.id) ? send(res, await Site.check(req.user, req.body || {})) : res.status(429).json({ error: 'That is 20 website checks in the last hour. Try again later.' }))));
 router.get('/visibility/site-checks', mustWrite, wrap(async (req, res) => send(res, await Site.list(req.user, { clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
 router.get('/visibility/site-checks/:id', mustWrite, wrap(async (req, res) => send(res, await Site.get(req.user, req.params.id))));

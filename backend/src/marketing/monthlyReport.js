@@ -72,7 +72,10 @@ function sections({ plan, month, metrics, notes, audit, site }) {
   for (const [g, def] of Object.entries(FIELDS)) sec.push({ key: g, title: def.label, kind: 'table', rows: def.items.map(([k, label]) => ({ label, value: fmt(m[g] && m[g][k], k), given: !!(m[g] && m[g][k] != null) })) });
   const seo = m.seo; sec.splice(2, 0, { key: 'seo', title: 'Search performance (Google Search Console)', kind: 'seo', given: !!seo, rows: seo ? [{ label: 'Search clicks', value: fmt(seo.clicks) }, { label: 'Search impressions', value: fmt(seo.impressions) }, { label: 'Click-through rate', value: seo.ctr == null ? NP : `${seo.ctr}%` }, { label: 'Average search position', value: seo.position == null ? NP : String(seo.position) }] : [], top: seo ? (seo.rows || []).slice(0, 10) : [], source: seo ? seo.source : '' });
   if (audit) { sec.push({ key: 'audit', title: 'Google Business Profile quality audit (TeamLink\'s own score)', kind: 'score', score: audit.score, band: audit.band, when: audit.createdAt, note: "TeamLink's own audit score, not an official Google score or ranking." }); (audit.actions || []).slice(0, 3).forEach((a) => improve.push(`Google profile, ${a.area.toLowerCase()}: ${a.fix}`)); }
-  if (site) { sec.push({ key: 'site', title: 'Website check (what is on the page)', kind: 'score', score: site.score, band: site.areas.map((a) => `${a.key} ${a.got}/${a.marks}`).join(' · '), when: site.checkedAt, url: site.url, note: 'TeamLink\'s own check of the page. It does not measure rankings or traffic.' }); site.actions.slice(0, 3).forEach((a) => improve.push(`Website, ${a.area}: ${a.fix}`)); }
+  if (site) {
+    const perf = (s) => { const x = s && s.scores && s.scores.find((c) => c.key === 'performance'); return x && x.score != null ? x.score : null; };
+    const ps = site.pagespeed ? ` · Google PageSpeed performance: phone ${perf(site.pagespeed.mobile) == null ? NP.toLowerCase() : perf(site.pagespeed.mobile)}, desktop ${perf(site.pagespeed.desktop) == null ? NP.toLowerCase() : perf(site.pagespeed.desktop)} (out of 100)` : '';
+    sec.push({ key: 'site', title: 'Website check (what is on the page)', kind: 'score', score: site.score, band: site.areas.map((a) => `${a.key} ${a.got}/${a.marks}`).join(' · ') + ps, when: site.checkedAt, url: site.url, note: 'TeamLink\'s own check of the page. It does not measure rankings or traffic.' }); site.actions.slice(0, 3).forEach((a) => improve.push(`Website, ${a.area}: ${a.fix}`)); }
   return { sections: sec, improve: improve.slice(0, 8), notes: S.clip(notes, 1500) };
 }
 function html(plan, month, parts) {
@@ -114,7 +117,7 @@ async function build(u, planId, month) {
   const p = await CS.getPlan(u, planId, m); if (p.error) return p; const plan = p.plan;
   const row = await rowFor(planId, m); const metrics = cleanMetrics(S.parse(row && row.metrics, {})); const notes = row ? row.notes || '' : '';
   let audit = null; const al = await CS.listAudits(u, { planId }); if (al.items && al.items[0]) { const a = await CS.getAudit(u, al.items[0].id); if (a.audit) audit = { score: a.audit.score, band: a.audit.report.band, createdAt: a.audit.createdAt, actions: a.audit.report.actions.filter((x) => !x.unchecked) }; }
-  let site = null; const sl = await Site.latestFor(u, plan.clientName); if (sl) { const g = await Site.get(u, sl.id); if (g.report) site = { score: g.report.score, areas: g.report.areas, actions: g.report.actions, url: g.report.url, checkedAt: g.report.checkedAt }; }
+  let site = null; const sl = await Site.latestFor(u, plan.clientName); if (sl) { const g = await Site.get(u, sl.id); if (g.report) site = { score: g.report.score, areas: g.report.areas, actions: g.report.actions, url: g.report.url, checkedAt: g.report.checkedAt, pagespeed: g.report.pagespeed || null }; }
   const parts = sections({ plan, month: m, metrics, notes, audit, site });
   return { month: m, plan: { id: plan.id, clientName: plan.clientName, planLabel: plan.planLabel }, metrics, notes, fields: FIELDS, report: { html: html(plan, m, parts), text: text(plan, m, parts), improve: parts.improve }, saved: !!row, updatedAt: row ? S.iso(row.updatedAt) : null };
 }
