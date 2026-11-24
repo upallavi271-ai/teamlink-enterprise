@@ -176,21 +176,26 @@ function rowOut(r) {
 // ---- what is delivered, counted from the real work (2026-11-24) ------------------------------------------------------------------------------------------------------------
 // A picture or a finished video that is APPROVED in the month, in a Client project whose client name is this plan's client name, counts by itself:
 //   a picture that is not 9:16 -> a post / creative; a 9:16 picture -> a story; a 9:16 video -> a Reel; any other video -> a post. A raw stock clip, a draft, a picture waiting for approval,
-//   a deleted one and another client's work are never counted. The team's + and - buttons ADD to this (work made outside TeamLink, for example in Canva). GBP posts and SEO blogs are not made
-//   here, so they stay counted by hand. Nothing is invented: the counted items are listed so anybody can check them.
-const AUTO_ITEMS = ['posts', 'reels', 'stories'];
+//   a deleted one and another client's work are never counted. The team's + and - buttons ADD to this (work made outside TeamLink, for example in Canva). SEO blogs: a post of the client's plan in
+//   SEO & visibility > Blog planner that the team marked PUBLISHED in the month counts as a blog (marketing/blogPlanner.js). GBP posts are not made here, so they stay counted by hand.
+//   Nothing is invented: the counted items are listed so anybody can check them.
+const AUTO_ITEMS = ['posts', 'reels', 'stories', 'blogs'];
 function monthRange(month) { // the month in India time: [from, to) in milliseconds
   const [y, m] = String(month).split('-').map(Number); const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
   return [Date.parse(`${month}-01T00:00:00+05:30`), Date.parse(`${next}-01T00:00:00+05:30`)];
 }
 function kindOfItem(r) { const video = /^video\//i.test(String(r.mime || '')); const tall = String(r.aspect || '') === '9:16'; return video ? (tall ? 'reels' : 'posts') : (tall ? 'stories' : 'posts'); }
 async function autoCounts(clientName, month) {
-  const out = { posts: 0, reels: 0, stories: 0, items: [] }; const name = String(clientName || '').trim().toLowerCase(); if (!name || !okMonth(month)) return out;
+  const out = { posts: 0, reels: 0, stories: 0, blogs: 0, items: [] }; const name = String(clientName || '').trim().toLowerCase(); if (!name || !okMonth(month)) return out;
   const [from, to] = monthRange(month);
   try {
     const rows = await S.q(`SELECT i.id, i.title, i.mime, i.aspect, i.decidedAt FROM "OmniMkImage" i JOIN "OmniMkProject" p ON p.id = i.projectId WHERE i.deletedAt IS NULL AND i.status = 'approved' AND (i.style IS NULL OR i.style <> 'clip') AND LOWER(TRIM(p.clientName)) = ? AND i.decidedAt >= ? AND i.decidedAt < ? ORDER BY i.decidedAt`, name, from, to);
     for (const r of rows) { const k = kindOfItem(r); out[k] += 1; if (out.items.length < 40) out.items.push({ id: r.id, title: S.clip(r.title, 80), kind: k, at: S.iso(r.decidedAt) }); }
   } catch { /* the pictures or the projects table is not made yet: nothing is counted from work */ }
+  try { // SEO blogs: the posts marked Published in the Blog planner in this month
+    for (const r of await S.q('SELECT id, items FROM "OmniMkBlogPlan" WHERE LOWER(TRIM(clientName)) = ?', name)) for (const it of (S.parse(r.items, []) || [])) { const at = Number(it && it.publishedAt); if (it && it.status === 'published' && at >= from && at < to) { out.blogs += 1; out.items.push({ id: `${r.id}-${it.n}`, title: S.clip(it.title, 80), kind: 'blogs', at: S.iso(at) }); } }
+  } catch { /* no blog plan was ever saved */ }
+  out.items.sort((a, b) => String(a.at).localeCompare(String(b.at))); out.items = out.items.slice(0, 40);
   return out;
 }
 function progress(planKey, rows, auto) { // what is delivered against what the plan promises, per item: counted from approved work + added by hand

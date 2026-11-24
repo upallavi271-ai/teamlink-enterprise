@@ -24,10 +24,10 @@ export default function MkVisibilityPage() {
   const p = { toast, industries: meta.industries, keySet: !!(meta.pagespeed && meta.pagespeed.keySet) };
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="SEO and visibility" lead="Check a client's website, make the FAQ and business data for search and AI answers, write careful review replies, check the wording, and find free photos. Nothing is posted: the client approves first." />
-      <Tabs value={tab} onChange={setTab} tabs={[['site', 'Website check'], ['competitors', 'Competitors'], ['schema', 'FAQ and schema'], ['reviews', 'Review replies'], ['wording', 'Wording check'], ['packs', 'Industry packs'], ['photos', 'Free photos']]} />
+      <PageHead eyebrow="AI Marketing" title="SEO and visibility" lead="Check a client's website, plan the month's blog posts, make the FAQ and business data for search and AI answers, write careful review replies, check the wording, and find free photos. Nothing is posted: the client approves first." />
+      <Tabs value={tab} onChange={setTab} tabs={[['site', 'Website check'], ['competitors', 'Competitors'], ['blog', 'Blog planner'], ['schema', 'FAQ and schema'], ['reviews', 'Review replies'], ['wording', 'Wording check'], ['packs', 'Industry packs'], ['photos', 'Free photos']]} />
       <div style={{ marginTop: 14 }}>
-        {tab === 'site' ? <SiteTab {...p} /> : null}{tab === 'competitors' ? <CompetitorsTab {...p} /> : null}{tab === 'schema' ? <SchemaTab {...p} /> : null}{tab === 'reviews' ? <ReviewsTab {...p} /> : null}
+        {tab === 'site' ? <SiteTab {...p} /> : null}{tab === 'competitors' ? <CompetitorsTab {...p} /> : null}{tab === 'blog' ? <BlogTab {...p} /> : null}{tab === 'schema' ? <SchemaTab {...p} /> : null}{tab === 'reviews' ? <ReviewsTab {...p} /> : null}
         {tab === 'wording' ? <WordingTab {...p} /> : null}{tab === 'packs' ? <PacksTab {...p} /> : null}{tab === 'photos' ? <PhotosTab {...p} /> : null}
       </div>
     </div>
@@ -120,6 +120,94 @@ function PagesPanels({ rep }) {
     </div>
   );
 }
+
+// BLOG PLANNER: a month's plan of blog briefs for a client, made from the client's facts, its Search Console queries and its website check (no AI, no network). A post marked Published counts as an SEO blog on the client's plan.
+const GUESS = [[/hospital/, 'hospital'], [/clinic|dental|dentist|diagnostic|\blab\b|pharmacy|scan/, 'clinic'], [/doctor|physician|surgeon|\bdr\b|specialist|consultant/, 'doctor'], [/\bit\b|software|tech|\bweb\b|digital|app\b/, 'it'], [/manufactur|factory|industrial|fabricat|plant\b/, 'manufacturing'], [/school|college|institute|universit|academy|educat|training|coaching/, 'education']];
+const guessKind = (t) => { const s = String(t || '').toLowerCase(); const g = GUESS.find(([re]) => re.test(s)); return g ? g[1] : 'other'; };
+const SOURCE = { searchConsole: ['live', 'From Search Console'], siteCheck: ['warn', 'From the website check'], customers: ['draft', 'Customer question'] };
+const thisMonth = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 7);
+function BlogTab({ toast, industries }) {
+  const [plans, setPlans] = useState([]); const [planId, setPlanId] = useState(''); const [save, setSave] = useState(false); const [busy, setBusy] = useState(false); const [res, setRes] = useState(null); const [savedId, setSavedId] = useState(''); const [past, setPast] = useState([]);
+  const [f, setF] = useState({ industry: 'other', name: '', city: '', services: '', specialty: '', phone: '', website: '', count: '4', month: thisMonth() });
+  useEffect(() => { omni.get('/gs/marketing/services/plans', { status: 'active' }).then((d) => setPlans(d.items || [])).catch(() => setPlans([])); }, []);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const pick = (id) => { setPlanId(id); const p = plans.find((x) => x.id === id); if (!p) return; const q = (p.progress || []).find((x) => x.item === 'blogs'); setF({ ...f, name: p.clientName, industry: guessKind(p.industry), count: String(q && q.quota > 0 ? q.quota : 4) }); setSave(true); };
+  const loadPast = useCallback(() => (f.name.trim() ? omni.get('/gs/marketing/visibility/blog-plans', { clientName: f.name.trim() }).then((d) => setPast(d.items || [])).catch(() => setPast([])) : Promise.resolve(setPast([]))), [f.name]);
+  useEffect(() => { loadPast(); }, [loadPast]);
+  const run = async () => { setBusy(true); setRes(null); setSavedId(''); try { const r = await omni.post('/gs/marketing/visibility/blog-plan', { planId: planId || undefined, clientName: f.name, month: f.month, industry: f.industry, name: f.name, city: f.city, services: f.services, specialty: f.specialty, phone: f.phone, website: f.website, count: Number(f.count), save: save && !!f.name.trim() }); setRes(r.plan); setSavedId(r.id || ''); if (r.id) { toast('Plan saved'); loadPast(); } } catch (e) { toast(errOf(e, 'The plan could not be made.')); } finally { setBusy(false); } };
+  const open = async (id) => { try { const d = await omni.get(`/gs/marketing/visibility/blog-plans/${id}`); setRes(d.plan); setSavedId(d.plan.id); } catch (e) { toast(errOf(e, 'The plan could not be opened.')); } };
+  const move = async (n, body) => { try { const d = await omni.put(`/gs/marketing/visibility/blog-plans/${savedId}/items/${n}`, body); setRes(d.plan); loadPast(); } catch (e) { toast(errOf(e, 'It could not be changed.')); } };
+  const copy = (text, done) => { try { navigator.clipboard.writeText(text).then(() => toast(done), () => toast('Select the text and copy it.')); } catch { toast('Select the text and copy it.'); } };
+  const ready = f.name.trim() && f.services.trim();
+  return (
+    <div>
+      <Banner>It plans a month of blog posts for a client: a working title, the phrase to write for, an outline, the questions to answer, the page title and description, and the facts only the client can give. It uses the facts you type, the Search Console queries saved in the client's monthly report and the client's latest website check. It does not write the posts, and it cannot show how many people search a phrase.</Banner>
+      <Panel title="Who it is for" sub="Pick a client on a plan to fill the form (Premium plans include 4 blogs a month), or type any business." style={{ marginTop: 10 }} right={<Btn primary disabled={busy || !ready} onClick={run}>{busy ? 'Planning…' : 'Plan the blogs'}</Btn>}>
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 10 }}>
+          <Field label="CLIENT ON A PLAN (OPTIONAL)"><select value={planId} onChange={(e) => pick(e.target.value)}><option value="">None: I will type the business</option>{plans.map((p) => <option key={p.id} value={p.id}>{p.clientName} · {p.planLabel}</option>)}</select></Field>
+          <Field label="KIND OF BUSINESS"><IndustrySelect value={f.industry} onChange={set('industry')} industries={industries} /></Field>
+          <Field label="BUSINESS NAME"><input value={f.name} maxLength={120} onChange={set('name')} /></Field>
+          <Field label="CITY (FOR LOCAL SEARCH)"><input value={f.city} maxLength={80} onChange={set('city')} /></Field>
+          <Field label="SERVICES OR PRODUCTS (SEPARATE WITH COMMAS)" full><input value={f.services} maxLength={400} placeholder="heart check-ups, ECG, cardiac rehab" onChange={set('services')} /></Field>
+          <Field label="MAIN SPECIALTY (OPTIONAL)"><input value={f.specialty} maxLength={80} onChange={set('specialty')} /></Field>
+          <Field label="PHONE (FOR THE ENDING)"><input value={f.phone} maxLength={30} onChange={set('phone')} /></Field>
+          <Field label="MONTH"><input type="month" value={f.month} onChange={(e) => e.target.value && setF({ ...f, month: e.target.value })} /></Field>
+          <Field label="HOW MANY BLOGS"><select value={f.count} onChange={set('count')}>{Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={String(i + 1)}>{i + 1}</option>)}</select></Field>
+        </div>
+        <label style={{ fontSize: 12.5, display: 'flex', gap: 5, alignItems: 'center', marginTop: 8 }}><input type="checkbox" checked={save} disabled={!f.name.trim()} onChange={(e) => setSave(e.target.checked)} />Save this plan for the client, so each post can be tracked and the published ones are counted on the client's plan</label>
+      </Panel>
+      {res ? (
+        <div style={{ marginTop: 12 }}>
+          <Panel title={`Plan for ${res.clientName || res.name} · ${res.month}`} sub={`${res.made} of ${res.asked} blog${res.asked === 1 ? '' : 's'} planned · ${res.industryLabel}${res.sources && res.sources.searchConsole ? ` · ${res.sources.searchConsole} Search Console quer${res.sources.searchConsole === 1 ? 'y' : 'ies'} used` : ''}${res.sources && res.sources.siteCheck ? ' · the website check used' : ''}${savedId ? ` · ${res.briefs.filter((b) => b.status === 'published').length} published, ${res.briefs.filter((b) => b.status === 'writing').length} being written` : ''}`}
+            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>{savedId ? <Pill tone="live" dot>Saved for the client</Pill> : null}<TinyBtn onClick={() => copy(res.briefs.map((b) => b.text).join('\n\n'), 'Plan copied')}>Copy the whole plan</TinyBtn></span>}>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.55 }}>{res.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+            <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>{res.disclaimer}</div>
+          </Panel>
+          {res.briefs.map((b) => {
+            const [tone, words] = SOURCE[b.source] || SOURCE.customers;
+            return (
+              <Panel key={b.n} title={`${b.n}. ${b.title}`} style={{ marginTop: 10 }} right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}</Pill><Tag>{b.angle}</Tag>{b.review ? <Tag title={b.review}>Doctor review needed</Tag> : null}<TinyBtn onClick={() => copy(b.text, 'Brief copied')}>Copy this brief</TinyBtn></span>}>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 6 }}>{b.why}</div>
+                {savedId ? (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', margin: '6px 0 10px' }}>
+                    <select aria-label={`Status of post ${b.n}`} value={b.status} onChange={(e) => move(b.n, { status: e.target.value })}>{Object.entries(ST).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+                    <input key={`t-${b.n}-${b.title}`} aria-label={`Working title of post ${b.n}`} defaultValue={b.title} maxLength={140} style={{ minWidth: 260 }} onBlur={(e) => { if (e.target.value.trim() && e.target.value !== b.title) move(b.n, { title: e.target.value }); }} />
+                    <input key={`u-${b.n}-${b.url}`} aria-label={`Web address of post ${b.n}`} defaultValue={b.url} placeholder="https:// address of the live post" style={{ minWidth: 240 }} onBlur={(e) => { if (e.target.value !== b.url) move(b.n, { url: e.target.value }); }} />
+                    <input key={`n-${b.n}-${b.note}`} aria-label={`Note on post ${b.n}`} defaultValue={b.note} maxLength={300} placeholder="Note (who approved, what is left)" style={{ minWidth: 220 }} onBlur={(e) => { if (e.target.value !== b.note) move(b.n, { note: e.target.value }); }} />
+                  </div>
+                ) : null}
+                <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 14, fontSize: 13 }}>
+                  <div>
+                    <b>Phrase to write for:</b> {b.phrase}{b.also.length ? <span style={{ color: 'var(--muted)' }}> (also: {b.also.join('; ')})</span> : null}
+                    <div style={{ margin: '8px 0 2px' }}><b>Outline</b> <span style={{ color: 'var(--muted)' }}>· {b.words}</span></div>
+                    <ol style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>{b.outline.map((h, i) => <li key={i}>{h}</li>)}</ol>
+                    <div style={{ margin: '8px 0 2px' }}><b>Questions to answer</b></div>
+                    <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>{b.faq.map((q, i) => <li key={i}>{q}</li>)}</ul>
+                  </div>
+                  <div>
+                    <div><b>Page title</b> <span style={{ color: 'var(--muted)' }}>({b.metaTitle.length} characters)</span><br />{b.metaTitle}</div>
+                    <div style={{ marginTop: 6 }}><b>Page description</b> <span style={{ color: 'var(--muted)' }}>({b.metaDescription.length} characters)</span><br />{b.metaDescription}</div>
+                    <div style={{ marginTop: 6 }}><b>Web address:</b> /blog/{b.slug}</div>
+                    <div style={{ marginTop: 6 }}><b>Link to:</b> {b.links.join('; ')}</div>
+                    <div style={{ marginTop: 6 }}><b>End with:</b> {b.cta}. <span style={{ color: 'var(--muted)' }}>Add structured data: {b.schema.join(' + ')}.</span></div>
+                    <div style={{ marginTop: 6 }}><b>Facts the client must give:</b><ul style={{ margin: '2px 0 0', paddingLeft: 18, lineHeight: 1.5 }}>{b.needs.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
+                    {b.review ? <div style={{ marginTop: 6, color: '#8a6410' }}><b>Before publishing:</b> {b.review}</div> : null}
+                  </div>
+                </div>
+              </Panel>
+            );
+          })}
+        </div>
+      ) : null}
+      {past.length ? (
+        <Panel title={`Saved plans: ${f.name.trim()}`} style={{ marginTop: 12 }}>
+          <table className="mk-table"><tbody>{past.slice(0, 12).map((x) => <tr key={x.id}><td style={{ fontSize: 12.5 }}>{x.month}</td><td>{x.count} posts</td><td style={{ fontSize: 12.5 }}>{x.published} published · {x.writing} being written</td><td><TinyBtn onClick={() => open(x.id)}>Open</TinyBtn></td></tr>)}</tbody></table>
+        </Panel>
+      ) : null}
+    </div>
+  );
+}
+const ST = { idea: 'Idea', writing: 'Being written', published: 'Published' };
 
 function SiteTab({ toast, keySet }) {
   const [url, setUrl] = useState(''); const [client, setClient] = useState(''); const [save, setSave] = useState(false); const [busy, setBusy] = useState(false); const [rep, setRep] = useState(null); const [past, setPast] = useState([]);

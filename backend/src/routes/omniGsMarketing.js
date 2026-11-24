@@ -30,6 +30,7 @@ const Mrep = require('../marketing/monthlyReport');
 const Page = require('../marketing/pagespeed');
 const Comp = require('../marketing/competitors');
 const PlanRem = require('../marketing/planReminders');
+const Blog = require('../marketing/blogPlanner');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -394,6 +395,11 @@ router.post('/visibility/competitors', mustWrite, wrap(async (req, res) => {
 }));
 router.get('/visibility/competitor-snapshots', mustWrite, wrap(async (req, res) => send(res, await Comp.list(req.user, { clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
 router.get('/visibility/competitor-snapshots/:id', mustWrite, wrap(async (req, res) => send(res, await Comp.get(req.user, req.params.id))));
+// blog planner: a month's plan of blog briefs for a client (blogPlanner.js); no network, nothing is posted. A post marked Published counts as an SEO blog on the client's plan.
+router.post('/visibility/blog-plan', mustWrite, wrap(async (req, res) => send(res, await Blog.plan(req.user, req.body || {}))));
+router.get('/visibility/blog-plans', mustWrite, wrap(async (req, res) => send(res, await Blog.list(req.user, { clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
+router.get('/visibility/blog-plans/:id', mustWrite, wrap(async (req, res) => send(res, await Blog.get(req.user, req.params.id))));
+router.put('/visibility/blog-plans/:id/items/:n', mustWrite, wrap(async (req, res) => send(res, await Blog.setItem(req.user, req.params.id, req.params.n, req.body || {}))));
 router.post('/visibility/schema/business', mustWrite, wrap(async (req, res) => send(res, Geo.businessSchema(req.body || {}))));
 router.post('/visibility/schema/faq', mustWrite, wrap(async (req, res) => send(res, Geo.faqSchema((req.body || {}).faq))));
 router.post('/visibility/describe', mustWrite, wrap(async (req, res) => send(res, Geo.describe(req.body || {}))));
