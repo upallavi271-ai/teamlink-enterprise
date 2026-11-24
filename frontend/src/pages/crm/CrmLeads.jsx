@@ -9,6 +9,7 @@ import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, Pill, DateField, QuickLog, RecordForm, download } from './crmShared.jsx';
 import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 import CrmCampaigns from './CrmCampaigns.jsx';
+import CrmMarketing from './b/CrmMarketing.jsx'; // CRM wave B: segments, journeys, landing pages, events, campaign results, social, website, ads
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import CrmLeadBoard from './CrmLeadBoard.jsx';
 import { ProductCatalog } from './CrmProducts.jsx';
@@ -101,7 +102,7 @@ export default function CrmLeads() {
   const { me, toast, openRecord, version } = useCrm();
   const [sp, setSp] = useSearchParams();
   const setOpen = (o) => openRecord(o.kind, o.id);
-  const [view, setView] = useState(['campaigns', 'products'].includes(sp.get('tab')) ? sp.get('tab') : 'leads');
+  const [view, setView] = useState(['campaigns', 'products', 'marketing'].includes(sp.get('tab')) ? sp.get('tab') : 'leads');
   const [adding, setAdding] = useState(sp.get('add') === '1');
   const [importing, setImporting] = useState(false);
   const [rows, setRows] = useState(null);
@@ -161,9 +162,10 @@ export default function CrmLeads() {
         </div>
       </div>
       <div className="tabs" role="tablist">
-        {[['leads', 'Leads'], ['campaigns', 'Campaigns'], ['products', 'Our products']].map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={view === k} className={`tab${view === k ? ' active' : ''}`} onClick={() => setView(k)} onKeyDown={(e) => { if (e.key === 'Enter') setView(k); }}>{l}</div>)}
+        {[['leads', 'Leads'], ['campaigns', 'Campaigns'], ['marketing', 'Marketing'], ['products', 'Our products']].map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={view === k} className={`tab${view === k ? ' active' : ''}`} onClick={() => setView(k)} onKeyDown={(e) => { if (e.key === 'Enter') setView(k); }}>{l}</div>)}
       </div>
       {view === 'campaigns' && <CrmCampaigns />}
+      {view === 'marketing' && <CrmMarketing />}
       {view === 'products' && <ProductCatalog />}
       {view === 'leads' && (<>
       <ListFilterStrip list="crmleads" xf={xf} total={paging ? paging.total : null} noun="leads" allTime={Object.keys(xf.values).length > 0 || !!(q || stage || from || to || source || rating || owner)} />

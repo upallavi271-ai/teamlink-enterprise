@@ -11,8 +11,9 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, istToday, addDays, MarkDonePrompt } from './crmShared.jsx'; // eslint-disable-line import/no-cycle
+import { TemplatePicker, SendLater, SmsPanel, OfficeCall } from './b/MailTools.jsx'; // CRM wave B: templates, send later, SMS, the office line
 
-const TABS = [['Email', '✉️ Email'], ['WhatsApp', '💬 WhatsApp'], ['Call', '📞 Call']];
+const TABS = [['Email', '✉️ Email'], ['WhatsApp', '💬 WhatsApp'], ['SMS', '📱 SMS'], ['Call', '📞 Call']];
 const digitsOf = (v) => String(v || '').replace(/\D/g, '');
 const intl = (v) => { const d = digitsOf(v); if (d.length === 10) return `91${d}`; if (d.length === 11 && d.startsWith('0')) return `91${d.slice(1)}`; return d; };
 
@@ -140,6 +141,11 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, i
             <AiDraft record={record} onText={(s, t) => { if (s) setSubject(s); setMailText(t); }} />
             <button type="button" className="btn" title="Writes the company meeting link into the message" onClick={() => { if (!me.meetingLink) { setErr('The company meeting link is not set yet. A Sales manager sets it once in CRM > Dashboard > Settings (Meeting link).'); return; } setErr(''); setMailText((t) => withLink(t, me.meetingLink)); }}>📹 Add meeting link</button>
           </div>
+          {me.canEdit && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
+            <TemplatePicker record={record} channel="email" subject={subject} text={mailText} onFill={(s, t) => { if (s) setSubject(s); setMailText(t); }} />
+            {mailReady && <SendLater record={record} channel="Email" to={to.Email} subject={subject} text={mailText} onDone={finish} />}
+          </div>}
+          <div className="small-muted" style={{ marginTop: 6, fontSize: 11.5 }}>Your signature (Follow-ups → Inbox → My mail settings) is added under the mail.</div>
         </>
       )}
 
@@ -167,12 +173,19 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, i
             <button type="button" className="btn" title="Writes the company meeting link into the message" onClick={() => { if (!me.meetingLink) { setErr('The company meeting link is not set yet. A Sales manager sets it once in CRM > Dashboard > Settings (Meeting link).'); return; } setErr(''); setWaText((t) => (t.includes(me.meetingLink) ? t : `${t.replace(/\s+$/, '')} Join the meeting here: ${me.meetingLink}`)); }}>📹 Add meeting link</button>
             <a className={`btn${waReady ? '' : ' btn-primary'}`} href={waLink} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (!digitsOf(to.WhatsApp)) { e.preventDefault(); setErr('Write the number first.'); return; } opened('WhatsApp'); }} aria-disabled={!digitsOf(to.WhatsApp)}>Open in WhatsApp</a>
           </div>
+          {me.canEdit && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
+            <TemplatePicker record={record} channel="whatsapp" text={waText} onFill={(s, t) => setWaText(t)} />
+            {waReady && <SendLater record={record} channel="WhatsApp" to={to.WhatsApp} text={waText} onDone={finish} />}
+          </div>}
           <div className="small-muted" style={{ marginTop: 6, fontSize: 11.5 }}>"Open in WhatsApp" uses your own WhatsApp: TeamLink cannot see whether you pressed Send, and says so on the timeline.</div>
         </>
       )}
 
+      {ch === 'SMS' && ready && me.canEdit && <SmsPanel record={record} phone={to.Call || whereTo.phone || ''} onDone={finish} />}
+
       {ch === 'Call' && ready && (
         <>
+          {me.canEdit && <OfficeCall record={record} to={to.Call} onDone={finish} />}
           {gwReady
             ? (rd.call.myPhone
               ? <div className="small-muted" style={{ marginBottom: 8, fontSize: 12.5 }}>Calls go through {rd.call.provider}: <b>your own phone rings first</b>, then {record.name || 'the customer'} is connected.{rd.call.recording ? ' The call is recorded.' : ''}</div>

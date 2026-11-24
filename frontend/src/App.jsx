@@ -108,6 +108,7 @@ import InterviewPrepPage from './pages/InterviewPrepPage.jsx'; // the candidate'
 import PublicForm from './components/omni/crm/PublicForm.jsx'; // Omni-Channel Web Forms: the public capture form (no login)
 import ClientReviewPage from './components/omni/marketing/ClientReviewPage.jsx'; // AI Marketing: the client's approval page (private link, no login)
 import OurWorkPage from './components/omni/marketing/OurWorkPage.jsx'; // AI Marketing: the public "Our work" page (track record and portfolio, no login)
+import CrmPortal from './pages/CrmPortal.jsx'; // CRM wave B: the customer / partner portal, its own login (routes/crmPortal.js)
 import PlansMeetingPage from './components/omni/marketing/PlansMeetingPage.jsx'; // AI Marketing: the automated, spoken plans meeting a client opens from a WhatsApp link (private link or none, no login)
 import ClientProjectPage from './components/omni/marketing/ClientProjectPage.jsx'; // AI Marketing: the client's project page: request form, progress, options to choose from (private link, no login)
 import AgreementView from './pages/AgreementView.jsx';
@@ -257,6 +258,7 @@ export default function App() {
       <Route path="/client-review/:token" element={<ClientReviewPage />} />
       <Route path="/client-project/:token" element={<ClientProjectPage />} />
       <Route path="/our-work" element={<OurWorkPage />} />
+      <Route path="/crm-portal" element={<CrmPortal />} />
       <Route path="/plans-meeting" element={<PlansMeetingPage />} />
       <Route path="/plans-meeting/:token" element={<PlansMeetingPage />} />
       <Route path="/m/:shortId" element={<PlansMeetingPage />} />

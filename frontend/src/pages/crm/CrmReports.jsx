@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import CrmAutoSettings from './CrmAutoSettings.jsx';
 import CrmPlusSettings from './CrmPlusSettings.jsx'; // eslint-disable-line import/no-cycle
+import CrmBSettings from './b/CrmBSettings.jsx'; // CRM wave B: the email / phone / marketing / portal switches and addresses
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, money, moneyShort, dateOf, RecLink, istToday } from './crmShared.jsx';
 
@@ -387,6 +388,7 @@ export function CrmSettings({ onClose, onSaved }) {
       </div>
       <div className="small-muted">"Other" is always kept in both lists. The six core deal stages stay, so the reports keep working; more stages and more pipelines are set below. A new probability applies the next time a deal moves.</div>
       <CrmPlusSettings />
+      <CrmBSettings />
     </Modal>
   );
 }

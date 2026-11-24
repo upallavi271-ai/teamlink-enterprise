@@ -8,6 +8,7 @@ import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, moneyShort, istToday, Pill, RecordForm, download } from './crmShared.jsx';
 import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 import { TicketList } from './CrmSupport.jsx';
+import CrmPortalAdmin from './b/CrmPortalAdmin.jsx'; // CRM wave B: portal logins, help articles, partners, surveys
 import CrmContactDialog from './CrmContact.jsx';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import { plusOf } from './CrmPlus.jsx'; // territories (wave D)
@@ -18,7 +19,7 @@ export default function CrmAccounts() {
   const [sp] = useSearchParams();
   const { openRecord, version } = useCrm();
   const setOpen = (o) => openRecord(o.kind, o.id);
-  const [tab, setTab] = useState(['contacts', 'tickets'].includes(sp.get('tab')) ? sp.get('tab') : 'accounts');
+  const [tab, setTab] = useState(['contacts', 'tickets', 'portal'].includes(sp.get('tab')) ? sp.get('tab') : 'accounts');
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
@@ -39,7 +40,7 @@ export default function CrmAccounts() {
   const tick = (id, on) => setPicked((x) => (on ? [...new Set([...x, id])] : x.filter((y) => y !== id)));
   const xf = useListXf(tab === 'contacts' ? 'crmcontacts' : 'crmaccounts'); // added-on, city, industry, source / role (components/ats/ListFilters.jsx)
   const load = () => {
-    if (tab === 'tickets') return Promise.resolve();
+    if (tab === 'tickets' || tab === 'portal') return Promise.resolve();
     setRows(null);
     const params = tab === 'accounts' ? { q: q || undefined, kind: kind || undefined, owner: owner || undefined, ...xf.params } : { q: q || undefined, ...xf.params };
     return api.get(`/crm/${tab}`, { params }).then((r) => { setRows(r.data.rows); setErr(''); }).catch((e) => setErr(errOf(e, 'This list could not be read.')));
@@ -51,7 +52,7 @@ export default function CrmAccounts() {
       <div className="page-head">
         <div><h1>Accounts &amp; Contacts</h1><div className="page-sub">The companies we sell to and the people we talk to</div></div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/${tab === 'tickets' ? 'accounts' : tab}?${new URLSearchParams(Object.entries({ q, kind, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-${tab === 'tickets' ? 'accounts' : tab}-${istToday()}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
+          {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/${['tickets', 'portal'].includes(tab) ? 'accounts' : tab}?${new URLSearchParams(Object.entries({ q, kind, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-${['tickets', 'portal'].includes(tab) ? 'accounts' : tab}-${istToday()}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
           {me.canCreate && (<>
             <button type="button" className="btn" onClick={() => setAdding('contact')}>+ Contact</button>
             <button type="button" className="btn btn-primary" onClick={() => setAdding('account')}>+ Account</button>
@@ -62,9 +63,11 @@ export default function CrmAccounts() {
         <div role="tab" tabIndex={0} aria-selected={tab === 'accounts'} className={`tab${tab === 'accounts' ? ' active' : ''}`} onClick={() => setTab('accounts')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('accounts'); }}>Accounts</div>
         <div role="tab" tabIndex={0} aria-selected={tab === 'contacts'} className={`tab${tab === 'contacts' ? ' active' : ''}`} onClick={() => setTab('contacts')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('contacts'); }}>Contacts</div>
         <div role="tab" tabIndex={0} aria-selected={tab === 'tickets'} className={`tab${tab === 'tickets' ? ' active' : ''}`} onClick={() => setTab('tickets')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('tickets'); }}>Support tickets</div>
+        <div role="tab" tabIndex={0} aria-selected={tab === 'portal'} className={`tab${tab === 'portal' ? ' active' : ''}`} onClick={() => setTab('portal')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('portal'); }}>Customer portal</div>
       </div>
       {tab === 'tickets' && <TicketList />}
-      {tab !== 'tickets' && (<>
+      {tab === 'portal' && <CrmPortalAdmin />}
+      {tab !== 'tickets' && tab !== 'portal' && (<>
       <ListFilterStrip key={tab} list={tab === 'contacts' ? 'crmcontacts' : 'crmaccounts'} xf={xf} total={rows ? rows.length : null} noun={tab} allTime={Object.keys(xf.values).length > 0 || !!(q || kind || owner)} />
       <div className="filter-row">
         <input type="text" placeholder={tab === 'accounts' ? 'Search company, city, industry' : 'Search name, phone, email, company'} value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 260 }} aria-label="Search" />

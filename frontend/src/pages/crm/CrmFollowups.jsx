@@ -10,8 +10,11 @@ import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, daysLate, RecLink, PriorityPill, DateField, InviteButton, MeetingInvitePrompt, meetingWhen, recordOfTask } from './crmShared.jsx';
 import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 import FollowupCalendar from './CrmCalendar.jsx'; // eslint-disable-line import/no-cycle
+import CrmInbox from './b/CrmInbox.jsx'; // CRM wave B: every conversation in one inbox, website chat, the team mailbox
+import CrmDialer from './b/CrmDialer.jsx'; // CRM wave B: the power dialer
 
-const TABS = [['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Completed'], ['calendar', 'Calendar']];
+const TABS = [['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Completed'], ['calendar', 'Calendar'], ['inbox', 'Inbox'], ['dialer', 'Dialer']];
+const NOT_LIST = ['calendar', 'inbox', 'dialer']; // tabs that are not the follow-up list
 export const REMIND_WORDS = { 0: 'At the time', 15: '15 minutes before', 60: '1 hour before', 1440: '1 day before' };
 
 // "Done": what came of it, what happened, and optionally the next follow-up (used here and in TaskList)
@@ -176,7 +179,7 @@ function RescheduleDialog({ task, onClose, onDone }) {
 export default function CrmFollowups() {
   const { me, toast, version, changed } = useCrm();
   const xf = useListXf('crmtasks'); // search (components/ats/ListFilters.jsx)
-  const [tab, setTab] = useState('action'); // Needs action = due today + overdue
+  const [tab, setTab] = useState(() => (['inbox', 'dialer'].includes(new URLSearchParams(window.location.search).get('tab')) ? new URLSearchParams(window.location.search).get('tab') : 'action')); // Needs action = due today + overdue
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [owner, setOwner] = useState('');
@@ -194,7 +197,7 @@ export default function CrmFollowups() {
     .then((r) => { if (current()) { setRows(r.data.tasks); setErr(''); } }).catch((e) => { if (current()) setErr(errOf(e, 'The follow-ups could not be read.')); });
   const load = () => fetchRows();
   useEffect(() => { loadCounts(); }, [owner, version]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (tab === 'calendar') return undefined; let alive = true; setRows(null); fetchRows(() => alive); return () => { alive = false; }; }, [tab, from, to, owner, priority, type, xf.key, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (NOT_LIST.includes(tab)) return undefined; let alive = true; setRows(null); fetchRows(() => alive); return () => { alive = false; }; }, [tab, from, to, owner, priority, type, xf.key, version]); // eslint-disable-line react-hooks/exhaustive-deps
   const refresh = () => { load(); loadCounts(); };
   async function cancel(t) {
     try { await api.post(`/crm/tasks/${t.id}/cancel`); toast('Cancelled.'); refresh(); } catch (e) { toast(errOf(e, 'This could not be cancelled.')); }
@@ -225,17 +228,19 @@ export default function CrmFollowups() {
           );
         })}
       </div>
-      {tab !== 'calendar' && <ListFilterStrip list="crmtasks" xf={xf} noun="follow-ups" total={rows ? rows.length : null} allTime={Object.keys(xf.values).length > 0 || !!(from || to || owner || priority || type)} />}
-      <div className="filter-row">
-        {tab !== 'calendar' && <DateField value={from} onChange={setFrom} aria-label="From" style={{ width: 150 }} />}
-        {tab !== 'calendar' && <DateField value={to} onChange={setTo} aria-label="To" style={{ width: 150 }} />}
+      {!NOT_LIST.includes(tab) && <ListFilterStrip list="crmtasks" xf={xf} noun="follow-ups" total={rows ? rows.length : null} allTime={Object.keys(xf.values).length > 0 || !!(from || to || owner || priority || type)} />}
+      {!['inbox', 'dialer'].includes(tab) && <div className="filter-row">
+        {!NOT_LIST.includes(tab) && <DateField value={from} onChange={setFrom} aria-label="From" style={{ width: 150 }} />}
+        {!NOT_LIST.includes(tab) && <DateField value={to} onChange={setTo} aria-label="To" style={{ width: 150 }} />}
         <MultiSelect label="Priority" allLabel="Any priority" value={priority} onChange={setPriority} options={me.lists.priorities.map((p) => ({ value: p, label: p }))} />
         <MultiSelect label="Type" allLabel="Any type" value={type} onChange={setType} options={me.lists.taskTypes.map((p) => ({ value: p, label: p }))} />
         {me.seesAll && <MultiSelect label="Owner" allLabel="Everyone" value={owner} onChange={setOwner} options={me.owners.map((o) => ({ value: o.id, label: o.name }))} />}
-      </div>
+      </div>}
       {tab === 'calendar' && <FollowupCalendar owner={owner} type={type} priority={priority} />}
-      {tab !== 'calendar' && err && <div className="notice" role="alert">{err}</div>}
-      {tab !== 'calendar' && <div className="tbl-wrap">
+      {tab === 'inbox' && <CrmInbox />}
+      {tab === 'dialer' && <CrmDialer />}
+      {!NOT_LIST.includes(tab) && err && <div className="notice" role="alert">{err}</div>}
+      {!NOT_LIST.includes(tab) && <div className="tbl-wrap">
         <table>
           <thead><tr>{canTick && <th style={{ width: 28 }} aria-label="Done" />}<th>Due</th><th>Priority</th><th>Type</th><th>Follow-up</th><th>For</th>{me.seesAll && <th>Owner</th>}<th>Reminder</th><th>{tab === 'done' ? 'What came of it' : ''}</th></tr></thead>
           <tbody>

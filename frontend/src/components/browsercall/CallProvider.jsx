@@ -42,10 +42,11 @@ export default function BrowserCallProvider({ children }) {
     setState((s) => ({ ...s, phase, muted: false, held: false, ...extra }));
   }, []);
 
-  const ensureUa = useCallback(async () => {
+  // sessionPath: the CRM asks its own door (POST /crm/b/calls/session, CRM wave B) - a salesperson may have no ATS login
+  const ensureUa = useCallback(async (sessionPath = '/browser-calling/session') => {
     if (ua.current && ua.current.isConnected() && reg.current && creds.current && Date.parse(creds.current.expiresAt) > Date.now() + 60000) return;
     if (ua.current) { try { await ua.current.stop(); } catch { /* old */ } ua.current = null; }
-    const { data } = await api.post('/browser-calling/session');
+    const { data } = await api.post(sessionPath);
     creds.current = { expiresAt: data.expiresAt };
     const uri = UserAgent.makeURI(`sip:${data.extension}@${data.domain}`);
     const agent = new UserAgent({
@@ -78,7 +79,7 @@ export default function BrowserCallProvider({ children }) {
   const chooseLine = useCallback((id) => { setLinePick(id); try { localStorage.setItem(LINE_KEY, id); } catch { /* kept for this visit only */ } }, []);
 
   // one call, whatever asked for it: `placeIt` asks the server for the row (and the line), then the browser sends the INVITE
-  const run = useCallback(async ({ candidateId, name }, placeIt) => {
+  const run = useCallback(async ({ candidateId, name }, placeIt, { sessionPath } = {}) => {
     if (sess.current) { setState((s) => ({ ...s, note: 'A call is already in progress.' })); return; }
     setState({ phase: 'starting', name, candidateId });
     try {
@@ -86,7 +87,7 @@ export default function BrowserCallProvider({ children }) {
     } catch { setState({ phase: 'failed', name, candidateId, error: 'The microphone is blocked. Allow the microphone for this site and try again.' }); return; }
     let placed;
     try {
-      await ensureUa();
+      await ensureUa(sessionPath);
       placed = await placeIt();
     } catch (e) { setState({ phase: 'failed', name, candidateId, error: errOf(e, e.message || 'Could not start the call.') }); return; }
     const target = UserAgent.makeURI(`sip:${placed.number}@${creds.current.domain}`);
@@ -126,6 +127,8 @@ export default function BrowserCallProvider({ children }) {
     const ln = lineId || (curLine && curLine.id) || undefined;
     return run({ candidateId: candidateId || (outreachTaskId ? `task:${outreachTaskId}` : undefined), name }, async () => (await api.post('/browser-calling/calls', { candidateId, applicationId, lineId: ln, outreachTaskId })).data);
   }, [run, curLine]);
+  // CRM wave B: a lead / deal / customer of the CRM on the office line (POST /crm/b/calls; the row is kept as crm:<kind>:<id>)
+  const callCrm = useCallback(({ kind, id, name, lineId, to }) => run({ candidateId: `crm:${kind}:${id}`, name }, async () => (await api.post('/crm/b/calls', { kind, id, to, lineId: lineId || (curLine && curLine.id) || undefined })).data, { sessionPath: '/crm/b/calls/session' }), [run, curLine]);
   // "pick the line first": the call bar shows "Call using" and the Call button
   const pickAndCall = useCallback((args) => { if (!sess.current) setState({ phase: 'choose', ...args }); }, []);
   // Admin: a test call on one line to one of the Test numbers (Phone lines > Test call)
@@ -159,6 +162,6 @@ export default function BrowserCallProvider({ children }) {
   }, [state.held]);
 
   const dismiss = useCallback(() => setState({ phase: 'idle' }), []);
-  const value = useMemo(() => ({ available: !!(info && info.canCall), info, state, seconds, lines, line: curLine, chooseLine, call, pickAndCall, testCall, refresh, hangup, toggleMute, toggleHold, dismiss }), [refresh, info, state, seconds, lines, curLine, chooseLine, call, pickAndCall, testCall, hangup, toggleMute, toggleHold, dismiss]);
+  const value = useMemo(() => ({ available: !!(info && info.canCall), info, state, seconds, lines, line: curLine, chooseLine, call, callCrm, pickAndCall, testCall, refresh, hangup, toggleMute, toggleHold, dismiss }), [refresh, info, state, seconds, lines, curLine, chooseLine, call, callCrm, pickAndCall, testCall, hangup, toggleMute, toggleHold, dismiss]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

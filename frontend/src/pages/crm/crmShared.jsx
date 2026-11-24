@@ -11,6 +11,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { DoneDialog, REMIND_WORDS } from './CrmFollowups.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
+import RecordEngage from './b/RecordEngage.jsx'; // eslint-disable-line import/no-cycle -- CRM wave B: email opens, office-line calls, pages viewed, surveys, portal
 import { TicketList } from './CrmSupport.jsx'; // eslint-disable-line import/no-cycle
 import CrmContactDialog, { ContactPanel } from './CrmContact.jsx'; // eslint-disable-line import/no-cycle
 import { ProductSellBox } from './CrmProducts.jsx'; // eslint-disable-line import/no-cycle
@@ -1327,7 +1328,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
       ['Next follow-up', nextTask ? <span style={{ color: nextTask.dueDate < today ? 'var(--red)' : undefined, fontWeight: nextTask.dueDate <= today ? 600 : undefined }}>{nextTask.dueDate === today ? 'Today' : dateOf(nextTask.dueDate)} · {nextTask.title}</span> : 'None set'],
       ['Last touched', lastAct ? `${dateTimeOf(lastAct.at)}${lastAct.byName ? ` · ${lastAct.byName}` : ''}` : 'Never'],
     ].filter(([, v]) => v);
-    const tabs = [['overview', 'Overview'], ...(kind === 'lead' ? [['products', 'Products & demo']] : []), ...(kind === 'deal' ? [['lines', 'Products']] : []), ...(kind === 'lead' || kind === 'deal' ? [['conversation', 'Conversation']] : []), ['activities', `Activities (${(d.activities || []).length})`], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice & orders'], ['team', 'Team chat']] : [['comments', 'Comments']]), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ...(kind === 'lead' ? [['consent', 'Consent']] : []), ['history', 'History'], ['notes', 'Notes']];
+    const tabs = [['overview', 'Overview'], ...(kind === 'lead' ? [['products', 'Products & demo']] : []), ...(kind === 'deal' ? [['lines', 'Products']] : []), ...(kind === 'lead' || kind === 'deal' ? [['conversation', 'Conversation']] : []), ['activities', `Activities (${(d.activities || []).length})`], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice & orders'], ['team', 'Team chat']] : [['comments', 'Comments']]), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ...(kind === 'lead' ? [['consent', 'Consent']] : []), ['engage', 'Web & engagement'], ['history', 'History'], ['notes', 'Notes']];
     const kindPill = kind === 'lead' ? row.status : kind === 'deal' ? row.stage : row.kind;
     body = (
       <>
@@ -1458,6 +1459,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
         {tab === 'consent' && kind === 'lead' && <ConsentBox kind="lead" id={row.id} onChanged={changed} />}
         {tab === 'history' && (kind === 'deal' ? <DealHistory deal={row} canEdit={d.canEdit} onChanged={changed} /> : <FieldHistory kind={kind} id={row.id} />)}
         {tab === 'support' && kind === 'account' && <TicketList accountId={row.id} compact />}
+        {tab === 'engage' && <RecordEngage kind={kind} row={row} d={d} />}
         {tab === 'notes' && (
           <div>
             {notes == null ? (
