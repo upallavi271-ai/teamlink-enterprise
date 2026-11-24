@@ -5,6 +5,7 @@
 //
 //   Requirements   daysOpenMin daysOpenMax  openLeftMin openLeftMax  ctcMin ctcMax (lakh, overlaps the job's band)
 //                  industry (csv, client industry)  posted=yes|no  workMode (csv)
+//   Both           branch (05.11, wave 2 Z: the working branch picked in the Branch switch; only that branch's clients / jobs)
 //   Clients        priority (csv)  agreementStatus (csv)  industry (csv)  reqMin reqMax  hasJoinings=yes|no  createdFrom createdTo
 //   Interviews     ivFrom ivTo  ivStatus ivRound ivMode (csv)  ivInterviewer  ivClient  ivRecruiter
 //   Follow-ups     fuDue=today|overdue|week|none  fuType (csv, how it was done)  fuPriority (csv)  fuOwner (csv user ids)
@@ -39,9 +40,19 @@ function bandOf(text) {
   return nums.length ? [Math.min(...nums), Math.max(...nums)] : null;
 }
 
+// ---- 05.11 the working branch (utils/atsPlus/people.js branchScope: a job follows its client's branch unless set itself) ---------
+async function branchIds(q, user, key) {
+  const b = String(q.branch || '').trim().slice(0, 60);
+  if (!b) return null;
+  const sc = await require('./atsPlus/people').branchScope(user, b); // eslint-disable-line global-require
+  return sc[key] || [];
+}
+
 // ---- Requirements -------------------------------------------------------------------------------------------------
 async function requirementTerms(q, user) {
   const and = [];
+  const inBranch = await branchIds(q, user, 'requirementIds');
+  if (inBranch) and.push(idTerm(inBranch));
   const dMin = num(q.daysOpenMin); const dMax = num(q.daysOpenMax);
   if (dMin !== null) and.push({ createdAt: { lte: new Date(Date.now() - dMin * DAY) } });
   if (dMax !== null) and.push({ createdAt: { gt: new Date(Date.now() - (dMax + 1) * DAY) } });
@@ -83,6 +94,8 @@ async function requirementTerms(q, user) {
 // ---- Clients -------------------------------------------------------------------------------------------------------
 async function clientTerms(q, user) {
   const and = [];
+  const inBranch = await branchIds(q, user, 'clientIds');
+  if (inBranch) and.push(idTerm(inBranch));
   // eslint-disable-next-line global-require
   const level = require('./clientRedact').clientLevelFor(user);
   const mayOverview = ['full', 'basics', 'names'].includes(level);

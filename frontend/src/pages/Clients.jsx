@@ -11,6 +11,7 @@ import AtsDataTools from '../components/AtsDataTools.jsx';
 import {
   ListToolbar, ListFooter, FacetSelect, useLocalFacets,
 } from '../components/ui/ListPageHeader.jsx';
+import BranchSwitchZ, { useWorkingBranch } from '../components/atsPlus/BranchSwitchZ.jsx'; // 05.11 the working branch (ATS wave 2 Z)
 import Combo from '../components/Combo.jsx';
 import '../components/jobs/jobs.css';
 import ClientDuplicatesButton from '../components/ClientDuplicatesButton.jsx';
@@ -237,13 +238,14 @@ export default function Clients() {
 
   // Archived clients come too (?archived=1) — hidden below unless the
   // Status filter asks for them.
+  const [workBranch] = useWorkingBranch(); // 05.11: only this branch's clients (empty = all branches)
   function load() {
-    api.get('/clients', { params: { archived: 1, ...xf.params } })
+    api.get('/clients', { params: { archived: 1, ...xf.params, ...(workBranch ? { branch: workBranch } : {}) } })
       .then((res) => { setClients(res.data); setLoadError(''); })
       .catch((err) => setLoadError(err.response?.data?.error || 'Could not load clients. Please try again.'))
       .finally(() => setLoaded(true));
   }
-  useEffect(() => { if (allowed) load(); }, [allowed, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (allowed) load(); }, [allowed, xf.key, workBranch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Columns: only what this role may see (§4); defaults are the spec's list.
   const allowedCols = meta?.columns || [];
@@ -698,6 +700,7 @@ export default function Clients() {
               /clients/meta gives this role) sit in ONE panel; chips + Clear all.
               Search, Status, Signed? and Location are on the filter card above. */}
           <ListFilterStrip list="clients" xf={xf} user={user} noun="clients" />
+          <BranchSwitchZ what="clients" />
           <ListToolbar
             filterCount={Object.entries(filters).filter(([k, v]) => !['search', 'status', 'signed', 'location'].includes(k) && v).length}
             panel={(meta?.filters || []).some((k) => ['industry', 'agreement', 'expiring', 'hasOpen', 'outstanding', 'overdue', 'unassigned'].includes(k)) ? (

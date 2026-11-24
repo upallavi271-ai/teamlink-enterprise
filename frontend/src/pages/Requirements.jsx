@@ -71,6 +71,7 @@ import {
 import Combo from '../components/Combo.jsx';
 import { rowClickProps } from '../utils/rowClick.js';
 import IntakeAssistant from '../components/mktb/IntakeAssistant.jsx'; // market wave B 02.13: a call note / e-mail -> a requirement draft
+import BranchSwitchZ, { useWorkingBranch } from '../components/atsPlus/BranchSwitchZ.jsx'; // 05.11 the working branch (ATS wave 2 Z)
 
 const JOB_TIPS = [
   'Each row is one requirement: a client (or our company) wants people for it.',
@@ -450,6 +451,7 @@ export default function Requirements() {
   }, [newDone, clientsReady, mayRequestJob]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const xf = useListXf('requirements', user); // days open, openings left, CTC, industry, posted, work mode (components/ats/ListFilters.jsx)
+  const [workBranch] = useWorkingBranch(); // 05.11: only this branch's jobs (empty = all branches)
   const params = useMemo(() => {
     const p = { ...(canFilter.hierarchy ? toRequirementParams(h, tree.data) : {}) };
     Object.entries(filters).forEach(([k, v]) => { if (v && k !== 'bde') p[k] = v; });
@@ -460,8 +462,9 @@ export default function Requirements() {
     if (postWaitOn) p.postWait = '1';
     if (postedOn) p.postedOn = postedOn;
     Object.assign(p, xf.params);
+    if (workBranch) p.branch = workBranch;
     return p;
-  }, [filters, h, tree.data, postWaitOn, postedOn, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filters, h, tree.data, postWaitOn, postedOn, xf.key, workBranch]); // eslint-disable-line react-hooks/exhaustive-deps
   const paramKey = JSON.stringify(params);
 
   useEffect(() => { setPage(1); }, [paramKey, view, sort, dir, size, showClosed]);
@@ -1224,6 +1227,7 @@ export default function Requirements() {
               />
               {/* [ Filters (n) ] [ Sort ] [ quick views ] — chips + Clear all below.
                   Search is on the filter card; Columns ⚙ in the Filters panel footer. */}
+              <BranchSwitchZ what="jobs" />
               <ListFilterStrip list="requirements" xf={xf} user={user} total={data && data.total != null ? data.total : null} noun="requirements" />
               <ListToolbar
                 filterCount={panelCount}
