@@ -4,7 +4,7 @@
  * 15.13 installable app, 07.01 / 14.05 calendar push + Google / Microsoft 365, 14.09 / IN-15 BGV vendor, 14.10 assessment vendor,
  * 14.15 / IN-03 job-board multiposting + responses, 15.01 SSO test, 15.11 / IN-14 / 15.16 region and SLA evidence.
  * SANDBOX ONLY: a private server on a COPY of the sandbox database + one local stub for every outside party (Google OAuth / Calendar /
- * People, an OIDC IdP, a BGV vendor, a test vendor, foundit, Naukri responses). Nothing leaves the machine.
+ * People, an OIDC IdP, a BGV vendor, a test vendor, Naukri applications). Nothing leaves the machine.
  *   TEST_SOURCE_DB=<sandbox.db> TEST_PORT=4612 node scripts/ats-Z-test.js        (ONLY=05.11,14.03 runs some sections)
  */
 const fs = require('fs');
@@ -101,7 +101,6 @@ const section = (id, title) => { if (want(id)) console.log(`\n== ${id} ${title}`
       if (p === '/bgv/orders/BGV-77') return json({ status: 'completed', checks: [{ type: 'education', status: 'verified' }, { type: 'employment', status: 'clear' }, { type: 'criminal court record', status: 'record_found' }], reportUrl: 'https://vendor.example/r/77' });
       if (p === '/test/orders' && rq.method === 'POST') return json({ id: 'T-5', status: 'invited', testUrl: 'https://vendor.example/t/5' });
       if (p === '/test/orders/T-5') return json({ status: 'completed', score: 78, maxScore: 100, passed: true });
-      if (p === '/foundit/jobs') return json({ id: 'FD-1', status: 'live', url: 'https://foundit.example/j/1' });
       if (p === '/naukri/responses') return json({ data: [{ id: `nk1-${RUN}`, name: `Zeta Applicant ${RUN}`, phone: NK.phone, email: `zeta.${RUN}@zt-test.in`, jobReference: R.id, skills: 'Kubernetes, Docker', appliedAt: new Date().toISOString() }, { id: `nk2-${RUN}`, name: `Lost Applicant ${RUN}`, phone: NK.phone2, jobReference: 'NO-SUCH-JOB' }] });
       return json({ error: 'not found' }, 404);
     });
@@ -161,7 +160,7 @@ const section = (id, title) => { if (want(id)) console.log(`\n== ${id} ${title}`
     const has = (w) => ATS_TE[w] || base.includes(`'${w}':`) || base.includes(` ${w}:`);
     const missing = words.filter((w) => !has(w));
     check('every step, interview status and agreement status word has a Telugu and Hindi translation', words.length > 25 && missing.length === 0, missing);
-    check('the status words are drawn through t() (stageLabel, interview / requirement / agreement status)', /export function stageLabel\(code\) \{\n\s+return code && STAGE_LABELS\[code\] \? tr\(/.test(v) && /requirementStatusLabel\(code\) \{\n\s+return tr\(/.test(v) && /interviewStatusLabel\(code\) \{\n\s+return INTERVIEW_STATUS_LABELS\[code\] \? tr\(/.test(v));
+    check('the status words are drawn through t() (stageLabel, interview / requirement / agreement status)', /export function stageLabel\(code\) \{\s+return code && STAGE_LABELS\[code\] \? tr\(/.test(v) && /requirementStatusLabel\(code\) \{\s+return tr\(/.test(v) && /interviewStatusLabel\(code\) \{\s+return INTERVIEW_STATUS_LABELS\[code\] \? tr\(/.test(v));
     const rd = (f) => fs.readFileSync(path.join(FRONT, 'src', f), 'utf8');
     check('the shared ATS pieces translate: list header (Filters, Sort, Clear all, Showing), filter bar, chips, ATS kit panels / tiles, settings sections, import / export',
       rd('components/ui/ListPageHeader.jsx').includes("tr('Filters')") && rd('components/ui/ListPageHeader.jsx').includes("tr('Showing {from} to {to} of {total}'") && rd('components/ats/FilterBar.jsx').includes("tr('More filters')")
@@ -180,7 +179,7 @@ const section = (id, title) => { if (want(id)) console.log(`\n== ${id} ${title}`
     const a = await call('GET', '/ats-plus/apps', null, tSA);
     const ids = (a.body.apps || []).map((x) => x.id);
     check('the catalogue lists 20+ built-in apps across categories', a.status === 200 && a.body.total >= 20 && a.body.categories.length >= 6, { total: a.body.total, cats: a.body.categories });
-    check('it has the job boards, calendar, checks, API, SSO and the phone app', ['naukri', 'shine', 'foundit', 'indeed', 'linkedin', 'ats-board-pull', 'ats-workspace', 'ats-bgv', 'ats-assessment', 'open-api', 'webhooks', 'sso', 'phone-app', 'whatsapp'].every((x) => ids.includes(x)), ids);
+    check('it has the job boards, calendar, checks, API, SSO and the phone app', ['naukri', 'shine', 'foundit', 'indeed', 'linkedin', 'board-apps', 'ats-workspace', 'ats-bgv', 'ats-assessment', 'open-api', 'webhooks', 'sso', 'phone-app', 'whatsapp'].every((x) => ids.includes(x)), ids);
     const OK = ['Connected', 'Ready', 'Switched off', 'Not set up', 'Built in'];
     check('every app has a live status word and an Admin gets a Set up link', a.body.apps.every((x) => OK.includes(x.status) && x.setUpLink && x.what), a.body.apps.filter((x) => !OK.includes(x.status) || !x.setUpLink).map((x) => x.id));
     check('the BGV vendor starts "Not set up" and says it needs a founder account', a.body.apps.find((x) => x.id === 'ats-bgv').status === 'Not set up' && a.body.apps.find((x) => x.id === 'ats-bgv').needsFounder === true);
@@ -320,46 +319,29 @@ const section = (id, title) => { if (want(id)) console.log(`\n== ${id} ${title}`
   });
 
   // ================================================================ 14.15 / IN-03 multiposting + responses
-  await run('14.15', 'Job-board multiposting incl. foundit, and responses back (stub) - also IN-03', async () => {
-    const JC = require('../src/utils/jobConnectors');
+  await run('14.15', 'Job-board multiposting incl. India, applications back (stub) - also IN-03', async () => {
+    // posting: Save & Post sends ONE job to every ticked board (Naukri / Shine / Indeed / LinkedIn); foundit is posted from the
+    // requirement's Job boards card (ATS wave 2 Y). Applications come back through the boards' webhook / pull (market wave C).
     const ch = await call('GET', '/requirements/posting-sources', null, tSA);
-    const fd0 = (ch.body.sources || []).find((x) => x.id === 'foundit');
-    check('foundit is a Save & Post source next to Naukri / Shine / Indeed / LinkedIn (needs its partner account)', ch.status === 200 && fd0 && fd0.ready === false && ['naukri', 'shine', 'indeed', 'linkedin'].every((id) => ch.body.sources.some((x) => x.id === id)), ch.body.sources && ch.body.sources.map((x) => `${x.id}:${x.ready}`));
-    const cf = await configure('foundit', { 'Recruiter account email': 'hr@zt-test.in', 'API key': 'zt-foundit-key', 'Job endpoint URL': `${SB}/foundit/jobs` });
-    check('the foundit partner keys are saved', cf.status === 200, cf.body);
-    await prisma.requirement.update({ where: { id: R.id }, data: { postingSources: 'foundit' } });
-    process.env.ALLOW_PRIVATE_FETCH = '1'; // the stub board is on this machine (only in this test process)
-    await JC.syncAll(R.id, { trigger: 'post', actorName: 'ats-Z-test', only: ['foundit'] });
-    delete process.env.ALLOW_PRIVATE_FETCH;
-    const row = await prisma.requirementPosting.findFirst({ where: { requirementId: R.id, source: 'foundit' } });
-    const sent = calls.find((x) => x.path === '/foundit/jobs');
-    check('Save & Post sends the ONE job to foundit (our job id as the reference) and it is Posted with the board\'s id', row && row.status === 'Posted' && row.externalJobId === 'FD-1' && sent && JSON.parse(sent.body).reference === R.id && sent.headers.authorization === 'Bearer zt-foundit-key', { row, sent: sent && sent.body.slice(0, 200) });
-    const before = await call('GET', '/ats-plus/board-responses', null, tSA);
-    check('responses before the partner keys: every board says not set up, nothing read', before.status === 200 && before.body.boards.every((b) => !b.setUp) && before.body.autoRead === false, before.body.boards);
-    await configure('ats-board-pull', { 'Naukri responses URL': `${SB}/naukri/responses`, 'Naukri responses API key': 'zt-naukri-key' });
-    check('a recruiter cannot start the read (Admin)', (await call('POST', '/ats-plus/board-responses/read', {}, tREC)).status === 403);
-    const rd = await call('POST', '/ats-plus/board-responses/read', {}, tSA);
+    check('Save & Post offers Naukri, Shine, Indeed and LinkedIn, each saying what it needs (partner accounts)', ch.status === 200 && ['naukri', 'shine', 'indeed', 'linkedin'].every((id) => ch.body.sources.some((x) => x.id === id && (x.ready || x.hint || x.line))), ch.body.sources && ch.body.sources.map((x) => `${x.id}:${x.ready}`));
+    const a0 = await call('GET', '/ats-plus/apps', null, tSA);
+    const app0 = (id) => a0.body.apps.find((x) => x.id === id) || {};
+    check('the catalogue lists every board incl. foundit, Naukri Resdex, LinkedIn RSC and the applications-in, each with its real status', ['naukri', 'shine', 'foundit', 'indeed', 'linkedin', 'naukri-resdex', 'linkedin-rsc', 'board-apps'].every((id) => app0(id).status) && app0('board-apps').status === 'Not set up' && app0('board-apps').needsFounder === true, a0.body.apps.filter((x) => x.category === 'Job boards').map((x) => `${x.id}:${x.status}`));
+    check('a recruiter cannot set up or pull a board (Admin)', (await call('POST', '/ats/mkt/boards/naukri/pull', {}, tREC)).status === 403);
+    const before = await call('POST', '/ats/mkt/boards/naukri/pull', {}, tSA);
+    check('pulling before the partner details says it needs the founder\'s partner account', before.status === 409 && before.body.needsFounder === true, before.body);
+    const sv = await call('PUT', '/ats/mkt/boards/naukri', { pullUrl: `${SB}/naukri/responses`, apiKey: 'zt-naukri-key' }, tSA);
+    check('the Naukri applications address and key are saved (key encrypted)', sv.status === 200, sv.body);
+    const pl = await call('POST', '/ats/mkt/boards/naukri/pull', {}, tSA);
     const nk = calls.find((x) => x.path === '/naukri/responses');
-    check('Read now reads Naukri\'s applicants with the key (2 new)', rd.status === 200 && rd.body.added === 2 && nk.headers.authorization === 'Bearer zt-naukri-key', rd.body);
-    const again = await call('POST', '/ats-plus/board-responses/read', {}, tSA);
-    check('reading again adds nobody twice', again.body.added === 0, again.body);
-    const lr = await call('GET', '/ats-plus/board-responses', null, tREC);
-    const mine = lr.body.rows.find((x) => x.name === `Zeta Applicant ${RUN}`);
-    const lost = lr.body.rows.find((x) => x.name === `Lost Applicant ${RUN}`);
-    check('the recruiter sees the applicant on the job they applied for, with the phone', mine && mine.requirementId === R.id && mine.phone === NK.phone && lost && !lost.requirementId, lr.body.rows.slice(0, 3));
-    const lb = await call('GET', '/ats-plus/board-responses', null, tBDE);
-    check('the BDE sees the list without phone / e-mail', lb.status === 200 && lb.body.contactHidden === true && lb.body.rows.every((x) => x.phone === null && x.email === null));
-    check('a Manager (view only) cannot add one', (await call('POST', `/ats-plus/board-responses/${mine.id}/add`, { skills: 'Kubernetes' }, tMGR)).status === 403);
-    check('an applicant for a job not in TeamLink cannot be added to it', (await call('POST', `/ats-plus/board-responses/${lost.id}/add`, { skills: 'x' }, tREC)).status === 400);
-    const add = await call('POST', `/ats-plus/board-responses/${mine.id}/add`, { skills: 'Kubernetes, Docker', currentSalary: '6 LPA', expectedSalary: '8 LPA', overrideReason: 'Applied on Naukri for this job' }, tREC);
-    const c = add.body.candidateId ? await prisma.candidate.findUnique({ where: { id: add.body.candidateId } }) : null;
+    const c = await prisma.candidate.findFirst({ where: { phone: { contains: NK.phone.slice(-10) } } });
     const ap = c ? await prisma.application.findFirst({ where: { candidateId: c.id, requirementId: R.id } }) : null;
-    check('Add to ATS: a candidate with source Naukri, on the job (the normal add route)', add.status === 201 && c && c.source === 'Naukri' && !!ap, { add: add.body, source: c && c.source, app: !!ap });
-    check('the same response cannot be added twice', (await call('POST', `/ats-plus/board-responses/${mine.id}/add`, { skills: 'x' }, tREC)).status === 404);
-    const dm = await call('POST', `/ats-plus/board-responses/${lost.id}/dismiss`, { reason: 'Not our job' }, tREC);
-    check('a response is dismissed', dm.status === 200);
-    const a = await call('GET', '/ats-plus/apps', null, tSA);
-    check('the catalogue shows foundit Connected and the responses Ready (hourly read OFF)', a.body.apps.find((x) => x.id === 'foundit').status === 'Connected' && a.body.apps.find((x) => x.id === 'ats-board-pull').status === 'Ready', a.body.apps.filter((x) => ['foundit', 'ats-board-pull'].includes(x.id)));
+    check('a pull reads Naukri\'s applications with the key, and the applicant lands on the job they applied for', pl.status === 200 && nk && nk.headers.authorization === 'Bearer zt-naukri-key' && c && !!ap, { pl: pl.body, cand: !!c, app: !!ap });
+    const pl2 = await call('POST', '/ats/mkt/boards/naukri/pull', {}, tSA);
+    const n = await prisma.candidate.count({ where: { phone: { contains: NK.phone.slice(-10) } } });
+    check('pulling again makes nobody twice', pl2.status === 200 && n === 1, { n, pl2: pl2.body });
+    const a1 = await call('GET', '/ats-plus/apps', null, tSA);
+    check('the catalogue now shows the applications-in as Connected', (a1.body.apps.find((x) => x.id === 'board-apps') || {}).status === 'Connected', a1.body.apps.find((x) => x.id === 'board-apps'));
   });
 
   // ================================================================ 15.01 SSO

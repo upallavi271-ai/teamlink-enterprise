@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * BROWSER SMOKE of ATS wave 2 Z (Edge, headless): the branch switch on Requirements / Clients (05.11), the ATS in Telugu and Hindi (13.06),
- * the App catalogue and its Set up link (14.03), the job-board Responses (14.15), Google / Microsoft 365 calendars + contacts (07.01 / 14.05),
+ * the App catalogue and its Set up link (14.03), the boards in the catalogue (14.15), Google / Microsoft 365 calendars + contacts (07.01 / 14.05),
  * the vendor connectors (14.09 / 14.10), the Phone app card (15.13), the Region & SLA evidence (15.11 / 15.16), the catalogue at phone width.
  * A private sandbox server (copy of the sandbox database) + `vite preview` of the built frontend in front of it + Edge.
  *   (cd frontend && npx vite build)   then   TEST_SOURCE_DB=<sandbox.db> TEST_PORT=4652 node scripts/ats-Z-browser.js   (screenshots: docs/ats-wave2-Z/)
@@ -131,12 +131,12 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
       check('14.03 Set up opens Administration > Integrations with that card\'s Configure window', modal && page.url().includes('channel=ats-bgv'), page.url());
       await ctx.close();
     }
-    // ---- 14.15 responses, 07.01 / 14.05 workspace, 14.09 vendors
+    // ---- 14.15 boards, 07.01 / 14.05 workspace, 14.09 vendors
     {
-      const { ctx, page } = await open('/admin/ats-settings?tab=integrations&sub=boards');
-      const r = await page.locator('h3', { hasText: 'Responses from Naukri, Shine and foundit' }).first().waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false);
-      await page.locator('button', { hasText: 'Read now' }).first().waitFor({ state: 'visible', timeout: 60000 }).catch(() => null);
-      check('14.15 Job boards tab: the Responses list with Read now and the hourly switch (OFF)', r && (await page.locator('button', { hasText: 'Read now' }).count()) === 1, null);
+      const { ctx, page } = await open('/admin/ats-settings?tab=integrations');
+      await seen(page, '[data-testid="app-card"][data-app="board-apps"]');
+      const boards = await page.locator('[data-testid="app-card"][data-app="board-apps"], [data-testid="app-card"][data-app="foundit"], [data-testid="app-card"][data-app="naukri"]').count();
+      check('14.15 the catalogue shows the boards (Naukri, foundit) and the applications-in, each with its status', boards === 3, boards);
       await page.goto(`http://localhost:${WEB}/admin/ats-settings?tab=integrations&sub=workspace`, { waitUntil: 'commit' });
       const cals = await page.locator('h3', { hasText: 'Calendars' }).first().waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false);
       const sw = await page.locator('[data-testid="calendar-switch"]').innerText().catch(() => '');

@@ -34,16 +34,31 @@ async function catalogue() {
   const add = (a) => apps.push({ needsFounder: false, detail: null, ...a, tone: TONE[a.status] || 'grey' });
   const JC = require('../jobConnectors'); // eslint-disable-line global-require
   // ---- job boards and sourcing
-  for (const [id, name, founder] of [['naukri', 'Naukri', true], ['shine', 'Shine', true], ['foundit', 'foundit (Monster India)', true], ['indeed', 'Indeed', true], ['linkedin', 'LinkedIn Jobs', true], ['google-jobs', 'Google for Jobs', false]]) {
+  for (const [id, name, founder] of [['naukri', 'Naukri', true], ['shine', 'Shine', true], ['indeed', 'Indeed', true], ['linkedin', 'LinkedIn Jobs', true], ['google-jobs', 'Google for Jobs', false]]) {
     // eslint-disable-next-line no-await-in-loop
     const b = await safe(() => JC.boardStatus(id), null);
     const word = b ? b.word : 'Not connected';
     const status = word === 'Connected' ? 'Connected' : (b && b.ready) ? 'Ready' : word === 'Waiting for approval' ? 'Ready' : 'Not set up';
     add({ id, name, category: 'Job boards', what: `Save & Post sends each requirement to ${name}${founder ? ' (partner account)' : ''}; one job, every ticked board.`, status: id === 'google-jobs' && status === 'Not set up' ? 'Built in' : status, needsFounder: founder && status === 'Not set up', setUpLink: INTEG(id), detail: b ? (b.jobs && b.jobs.posted ? `${b.jobs.posted} posted` : b.wordWhy || null) : null });
   }
-  const pull = await channelState('ats-board-pull');
-  const pullSet = await S.settings.get('boardPullZ', { autoRead: false });
-  add({ id: 'ats-board-pull', name: 'Job-board responses', category: 'Job boards', what: 'Applicants on Naukri / Shine / foundit read back into the ATS.', status: pull.status === 'Not set up' ? 'Not set up' : (pullSet.autoRead ? 'Connected' : 'Ready'), needsFounder: pull.status === 'Not set up', setUpLink: INTEG('ats-board-pull'), detail: pullSet.autoRead ? 'read every hour' : 'hourly read OFF' });
+  // the other builders' outside accounts (ATS wave 2 X / Y): foundit posting, Naukri Resdex, LinkedIn RSC, the VMS, the meeting bot, people data
+  for (const [id, name, what, cat] of [
+    ['foundit', 'foundit (formerly Monster India)', 'Post, edit and take down requirements on foundit from the requirement\'s Job boards card (partner account).', 'Job boards'],
+    ['naukri-resdex', 'Naukri Resdex (CV database search)', 'Search Naukri\'s CV database from Candidates > Hiring tools and bring a profile in with its CV.', 'Job boards'],
+    ['linkedin-rsc', 'LinkedIn Recruiter System Connect / Apply Connect', 'TeamLink\'s candidates and steps inside LinkedIn Recruiter; Easy Apply applications straight into the job (LinkedIn partners only).', 'Job boards'],
+    ['vms', 'VMS (SAP Fieldglass / Beeline / Workday VNDLY)', 'Requirements and submissions with the client\'s vendor management system.', 'Job boards'],
+    ['ats-meeting-bot', 'AI interview notetaker (meeting bot)', 'A notetaker joins a Meet / Zoom / Teams interview and gives back the transcript and notes.', 'AI'],
+    ['people-data', 'People & company data provider', 'Outside profile search, verified contacts and enrichment, new client companies.', 'AI'],
+  ]) {
+    const st = await channelState(id); // eslint-disable-line no-await-in-loop
+    add({ id, name, category: cat, what, status: st.status, needsFounder: st.status === 'Not set up', setUpLink: INTEG(id), detail: st.detail });
+  }
+  // applications IN from the boards (market wave C, utils/mkt/portal.js): a signed webhook or a pull per board
+  const mk = await safe(() => require('../mkt/core').settings(), { raw: {} }); // eslint-disable-line global-require
+  const bset = (mk.raw && mk.raw.boards) || {};
+  const bReady = Object.values(bset).filter((b) => b && (b.webhookSecretEnc || (b.pullUrl && b.apiKeyEnc)));
+  const bOk = bReady.filter((b) => b.lastResult && !b.lastResult.error).length;
+  add({ id: 'board-apps', name: 'Applications from the boards (Naukri / Shine / foundit / LinkedIn)', category: 'Job boards', what: 'People who apply on a board come straight into the job in the ATS (a signed webhook, or a pull of the board\'s applications).', status: !bReady.length ? 'Not set up' : (bOk ? 'Connected' : 'Ready'), needsFounder: !bReady.length, setUpLink: '/admin/integrations?tab=jobportals&sub=boardapps', detail: bReady.length ? `${bReady.length} board(s) set up` : null });
   add({ id: 'career-site', name: 'Career page and Job Portal', category: 'Job boards', what: 'Your own jobs page and the candidate Job Portal.', status: 'Built in', setUpLink: '/admin/integrations?tab=jobportal' });
   add({ id: 'linkedin-capture', name: 'LinkedIn profile capture (browser extension)', category: 'Job boards', what: 'Save a LinkedIn profile into the ATS with one click (each recruiter makes their own key).', status: 'Built in', setUpLink: '/candidates' });
   // ---- calendar, mail, meetings
