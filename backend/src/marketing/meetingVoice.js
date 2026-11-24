@@ -52,8 +52,10 @@ async function speak(lang, text) {
   return render(lang, t);
 }
 // the same voice for ANY words typed by a signed-in team member (the video maker's voice-over, 2026-11-21). Short text only; the allow-list above still guards the PUBLIC address.
+// the words as they are spoken: runs of white space become one space. (A lost backslash once turned this into /s+/ and every letter "s" was dropped from the voice: "this is" was said "thi i".)
+const cleanText = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 320);
 async function speakAny(lang, text) {
-  const t = String(text || '').replace(/s+/g, ' ').trim().slice(0, 320);
+  const t = cleanText(text);
   if (!NAME[lang] || !t) return { error: 'Write the words to be spoken.', status: 400 };
   return render(lang, t);
 }
@@ -96,4 +98,4 @@ async function prewarm(max = 14) {
   }
 }
 
-module.exports = { status, speak, speakAny, ready, prewarm, ALLOW, _kept: kept };
+module.exports = { status, speak, speakAny, ready, prewarm, ALLOW, cleanText, _kept: kept };
