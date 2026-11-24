@@ -248,6 +248,7 @@ export default function Integrations() {
   // A secret field opens EMPTY — the server never sends the value, only a
   // masked hint, and blank means "keep what is stored".
   function openConfigure(c) {
+    setError(''); setNotice(''); // a message from an earlier action must not greet the person inside this box
     if (c.id === 'social') api.get('/admin/integrations/social/facebook/redirect-uri').then((r) => setFbUri(r.data)).catch(() => setFbUri(null));
     setConfiguring({
       channel: c,
@@ -371,8 +372,24 @@ export default function Integrations() {
           : 'The connection side of every channel — switch one on, add its credentials, test it or disconnect it. What actually syncs from the TeamLink Job Portal is on the Job Portal tab.'}
       </div>}
 
-      {error && <div className="error-text">{error}</div>}
-      {notice && <div className="notice" style={{ marginBottom: 12 }}>{notice}</div>}
+      {/* 2026-11-24: the result of Save / Test / Connect used to appear here, at the very top of a page about 19,000 px tall, while the card is far below: "nothing happened".
+          The message now sticks to the top of the screen while it is shown (and has a close button); an error of Save & Connect is also shown inside the box (below). */}
+      {(error || notice) && (
+        <div role="status" style={{ position: 'sticky', top: 64, zIndex: 25, marginBottom: 12 }}>
+          {error && (
+            <div className="notice red" style={{ boxShadow: '0 2px 10px rgba(0,0,0,.15)', background: '#fdecea' }}>
+              <span style={{ flex: 1 }}>{error}</span>
+              <button type="button" className="btn btn-sm btn-ghost" aria-label="Close this message" onClick={() => { setError(''); setNotice(''); }}>✕</button>
+            </div>
+          )}
+          {notice && (
+            <div className="notice" style={{ boxShadow: '0 2px 10px rgba(0,0,0,.15)', background: '#eef4ff', marginTop: error ? 6 : 0 }}>
+              <span style={{ flex: 1 }}>{notice}</span>
+              <button type="button" className="btn btn-sm btn-ghost" aria-label="Close this message" onClick={() => { setError(''); setNotice(''); }}>✕</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {tab === 'connections' && mail && <EmailPanel
         mail={mail}
@@ -477,6 +494,7 @@ export default function Integrations() {
             <button className="btn btn-primary" onClick={saveConfigure}>Save &amp; Connect</button>
           </>}
         >
+          {error && <div className="notice red" role="alert" style={{ marginBottom: 10, background: '#fdecea' }}>{error}</div>}
           <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>{configuring.channel.desc}</div>
           {configuring.channel.id === 'social' && (
             <div style={{ border: '1px solid #cfe0ff', background: '#f5f9ff', borderRadius: 8, padding: 12, marginBottom: 12 }}>
