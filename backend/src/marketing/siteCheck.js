@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // AI MARKETING > SEO & VISIBILITY > WEBSITE CHECK (2026-11-24). The "website SEO audit", "AEO readiness" and "GEO readiness" of the services document, from a web address:
-//   the page is fetched once (through utils/safeFetch.js: public addresses only, redirects checked, size and time limits), read with plain code (no library, no paid service, no AI), and 20 checks
+//   the page is fetched once (through utils/safeFetch.js: public addresses only, redirects checked, size and time limits), read with plain code (no library, no paid service, no AI), and 23 checks
 //   are made, 50 marks for SEO (title, description, headings, canonical, language, mobile tag, indexable, image text, sitemap, robots, broken links, speed), 25 for AEO (a FAQ section, question
 //   headings, FAQ schema, answer-friendly structure) and 25 for GEO (organisation / business schema, its details, name-address-phone on the page, social profiles, about and contact pages).
 // HONEST BY DESIGN: this is TeamLink's OWN score of what is ON the page. It does not measure rankings, traffic or what an AI assistant says; it promises none. "Speed" is only how fast the

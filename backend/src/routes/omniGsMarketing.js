@@ -28,6 +28,7 @@ const Packs = require('../marketing/industryPacks');
 const Ov = require('../marketing/openverse');
 const Mrep = require('../marketing/monthlyReport');
 const Page = require('../marketing/pagespeed');
+const Comp = require('../marketing/competitors');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -368,7 +369,7 @@ router.post('/services/plans/:id/report/csv', mustWrite, wrap(async (req, res) =
 
 // ---- SEO & visibility (2026-11-24: the services document): website check (SEO, AEO, GEO), schema and FAQ tools, industry packs, review reply drafts, the wording check with the medical reviewer's sign-off, free photos (Openverse). Writers only. Nothing is posted. ----
 const siteHits = new Map(); // a website check calls the client's site about a dozen times: 20 an hour per person
-const siteOk = (id) => { const now = Date.now(); const list = (siteHits.get(id) || []).filter((t) => now - t < 3600000); if (list.length >= 20) { siteHits.set(id, list); return false; } list.push(now); siteHits.set(id, list); return true; };
+const siteOk = (id, n = 1) => { const now = Date.now(); const list = (siteHits.get(id) || []).filter((t) => now - t < 3600000); if (list.length + n > 20) { siteHits.set(id, list); return false; } for (let i = 0; i < n; i += 1) list.push(now); siteHits.set(id, list); return true; }; // a competitor snapshot costs one check per website
 router.get('/visibility/meta', mustWrite, wrap(async (req, res) => res.json({ industries: Packs.INDUSTRIES, fields: Mrep.FIELDS, pagespeed: await Page.status() })));
 const speedHits = new Map(); // Google PageSpeed: two calls per run, 10 runs an hour per person
 const speedOk = (id) => { const now = Date.now(); const list = (speedHits.get(id) || []).filter((t) => now - t < 3600000); if (list.length >= 10) { speedHits.set(id, list); return false; } list.push(now); speedHits.set(id, list); return true; };
@@ -381,6 +382,14 @@ router.post('/visibility/pagespeed', mustWrite, wrap(async (req, res) => {
 router.post('/visibility/site-check', mustWrite, wrap(async (req, res) => (siteOk(req.user.id) ? send(res, await Site.check(req.user, req.body || {})) : res.status(429).json({ error: 'That is 20 website checks in the last hour. Try again later.' }))));
 router.get('/visibility/site-checks', mustWrite, wrap(async (req, res) => send(res, await Site.list(req.user, { clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
 router.get('/visibility/site-checks/:id', mustWrite, wrap(async (req, res) => send(res, await Site.get(req.user, req.params.id))));
+// competitor snapshot: the client's website and up to 3 competitors' websites side by side (competitors.js)
+router.post('/visibility/competitors', mustWrite, wrap(async (req, res) => {
+  const b = req.body || {}; const n = 1 + (Array.isArray(b.competitors) ? b.competitors.filter((c) => c && String(c.url || '').trim()).length : 0);
+  if (!siteOk(req.user.id, Math.min(n, Comp.MAX_COMPETITORS + 1))) return res.status(429).json({ error: 'That would be more than 20 website checks in an hour. Try again later.' });
+  return send(res, await Comp.snapshot(req.user, b));
+}));
+router.get('/visibility/competitor-snapshots', mustWrite, wrap(async (req, res) => send(res, await Comp.list(req.user, { clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
+router.get('/visibility/competitor-snapshots/:id', mustWrite, wrap(async (req, res) => send(res, await Comp.get(req.user, req.params.id))));
 router.post('/visibility/schema/business', mustWrite, wrap(async (req, res) => send(res, Geo.businessSchema(req.body || {}))));
 router.post('/visibility/schema/faq', mustWrite, wrap(async (req, res) => send(res, Geo.faqSchema((req.body || {}).faq))));
 router.post('/visibility/describe', mustWrite, wrap(async (req, res) => send(res, Geo.describe(req.body || {}))));

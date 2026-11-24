@@ -25,11 +25,68 @@ export default function MkVisibilityPage() {
   return (
     <div>
       <PageHead eyebrow="AI Marketing" title="SEO and visibility" lead="Check a client's website, make the FAQ and business data for search and AI answers, write careful review replies, check the wording, and find free photos. Nothing is posted: the client approves first." />
-      <Tabs value={tab} onChange={setTab} tabs={[['site', 'Website check'], ['schema', 'FAQ and schema'], ['reviews', 'Review replies'], ['wording', 'Wording check'], ['packs', 'Industry packs'], ['photos', 'Free photos']]} />
+      <Tabs value={tab} onChange={setTab} tabs={[['site', 'Website check'], ['competitors', 'Competitors'], ['schema', 'FAQ and schema'], ['reviews', 'Review replies'], ['wording', 'Wording check'], ['packs', 'Industry packs'], ['photos', 'Free photos']]} />
       <div style={{ marginTop: 14 }}>
-        {tab === 'site' ? <SiteTab {...p} /> : null}{tab === 'schema' ? <SchemaTab {...p} /> : null}{tab === 'reviews' ? <ReviewsTab {...p} /> : null}
+        {tab === 'site' ? <SiteTab {...p} /> : null}{tab === 'competitors' ? <CompetitorsTab {...p} /> : null}{tab === 'schema' ? <SchemaTab {...p} /> : null}{tab === 'reviews' ? <ReviewsTab {...p} /> : null}
         {tab === 'wording' ? <WordingTab {...p} /> : null}{tab === 'packs' ? <PacksTab {...p} /> : null}{tab === 'photos' ? <PhotosTab {...p} /> : null}
       </div>
+    </div>
+  );
+}
+
+// COMPETITORS: the client's website and up to 3 competitors' websites side by side (the same checks as the website check), with the Google numbers the team types from each public profile.
+const MARK = { yes: ['✓', '#15803d'], partly: ['½', '#b45309'], no: ['✗', '#b91c1c'] };
+const blankBiz = () => ({ name: '', url: '', rating: '', reviews: '', photos: '' });
+function BizRow({ label, b, onChange, onRemove }) {
+  const f = (k, ph, w) => <input value={b[k]} placeholder={ph} aria-label={`${label} ${ph}`} inputMode={['rating', 'reviews', 'photos'].includes(k) ? 'decimal' : undefined} onChange={(e) => onChange({ ...b, [k]: e.target.value })} style={{ width: w, minWidth: 0 }} />;
+  return (<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '6px 0' }}><b style={{ width: 92, fontSize: 12.5 }}>{label}</b>{f('name', 'Name', 140)}{f('url', 'Website', 210)}{f('rating', 'Rating', 64)}{f('reviews', 'Reviews', 74)}{f('photos', 'Photos', 66)}{onRemove ? <TinyBtn onClick={onRemove} aria-label={`Remove ${label}`}>✕</TinyBtn> : null}</div>);
+}
+function CompetitorsTab({ toast }) {
+  const [me, setMe] = useState(blankBiz()); const [comps, setComps] = useState([blankBiz(), blankBiz()]); const [save, setSave] = useState(false); const [busy, setBusy] = useState(false); const [res, setRes] = useState(null); const [savedId, setSavedId] = useState(''); const [past, setPast] = useState([]);
+  const loadPast = useCallback(() => (me.name.trim() ? omni.get('/gs/marketing/visibility/competitor-snapshots', { clientName: me.name.trim() }).then((d) => setPast(d.items || [])).catch(() => setPast([])) : Promise.resolve(setPast([]))), [me.name]);
+  useEffect(() => { loadPast(); }, [loadPast]);
+  const body = () => { const g = (b) => ({ rating: b.rating, reviews: b.reviews, photos: b.photos }); return { client: { name: me.name, url: me.url, google: g(me) }, competitors: comps.filter((c) => c.url.trim()).map((c) => ({ name: c.name, url: c.url, google: g(c) })), clientName: me.name, save: save && !!me.name.trim() }; };
+  const run = async () => { setBusy(true); setRes(null); setSavedId(''); try { const r = await omni.post('/gs/marketing/visibility/competitors', body(), { timeout: 90000 }); setRes(r.snapshot); setSavedId(r.id || ''); if (r.id) { toast('Snapshot saved'); loadPast(); } } catch (e) { toast(errOf(e, 'The websites could not be compared.')); } finally { setBusy(false); } };
+  const copy = () => { try { navigator.clipboard.writeText(res.summary.join('\n')).then(() => toast('Summary copied'), () => toast('Select the text and copy it.')); } catch { toast('Select the text and copy it.'); } };
+  const ready = me.url.trim() && comps.some((c) => c.url.trim());
+  return (
+    <div>
+      <Banner>Each website is read once, like a visitor would, with the same checks as the website check. The Google numbers are typed by you from each public profile: nothing is read from Google. It compares what is on each homepage, not rankings or customers.</Banner>
+      <Panel title="Who to compare" sub="The first row is the client. Rating, reviews and photos are optional; leave them empty if you do not have them." style={{ marginTop: 10 }}>
+        <div style={{ display: 'flex', gap: 6, fontSize: 11.5, color: 'var(--muted)', marginLeft: 98, flexWrap: 'wrap' }}><span style={{ width: 140 }}>NAME</span><span style={{ width: 210 }}>WEBSITE</span><span style={{ width: 64 }}>RATING</span><span style={{ width: 74 }}>REVIEWS</span><span style={{ width: 66 }}>PHOTOS</span></div>
+        <BizRow label="Client" b={me} onChange={setMe} />
+        {comps.map((c, i) => <BizRow key={i} label={`Competitor ${i + 1}`} b={c} onChange={(v) => setComps(comps.map((x, j) => (j === i ? v : x)))} onRemove={comps.length > 1 ? () => setComps(comps.filter((_, j) => j !== i)) : null} />)}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+          {comps.length < 3 ? <TinyBtn onClick={() => setComps([...comps, blankBiz()])}>＋ Add a competitor</TinyBtn> : null}
+          <label style={{ fontSize: 12.5, display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={save} disabled={!me.name.trim()} onChange={(e) => setSave(e.target.checked)} />Save this snapshot for the client (use the same name as in Client plans)</label>
+          <Btn primary disabled={busy || !ready} onClick={run}>{busy ? 'Reading…' : 'Compare the websites'}</Btn>
+        </div>
+        {busy ? <div style={{ fontSize: 13, marginTop: 6 }}>Reading the websites. It takes about 20 to 60 seconds: please wait here.</div> : null}
+      </Panel>
+      {res ? (
+        <div style={{ marginTop: 12 }}>
+          {res.failed.length ? <Banner tone="error">Could not be checked: {res.failed.map((f) => `${f.name} (${f.error})`).join('; ')}</Banner> : null}
+          <Panel title="Who is ahead" right={savedId ? <Pill tone="live" dot>Saved for the client</Pill> : null}>
+            <table className="mk-table"><thead><tr><th>BUSINESS</th><th>WEBSITE SCORE</th><th>SEO</th><th>AEO</th><th>GEO</th></tr></thead>
+              <tbody>{res.ranking.map((r) => <tr key={r.name} style={r.isClient ? { fontWeight: 800 } : undefined}><td>{r.name}{r.isClient ? ' (client)' : ''}</td><td>{r.score} / 100</td>{r.areas.map((a) => <td key={a.key}>{a.got} of {a.marks}</td>)}</tr>)}</tbody></table>
+          </Panel>
+          <Panel title="Summary" style={{ marginTop: 10 }} right={<TinyBtn onClick={copy}>Copy the summary</TinyBtn>}><ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.55 }}>{res.summary.map((l, i) => <li key={i}>{l}</li>)}</ul></Panel>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 12, marginTop: 10 }}>
+            <Panel title="Where competitors are ahead">{res.ahead.length ? <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.5 }}>{res.ahead.slice(0, 10).map((a) => <li key={a.key}><b>{a.gap}</b> <Tag>{a.area}</Tag> <small style={{ color: 'var(--muted)' }}>(better at {a.who.join(', ')}; +{a.lost} marks)</small><br />{a.fix}</li>)}</ol> : <div style={{ fontSize: 13 }}>No competitor is ahead on any check.</div>}</Panel>
+            <Panel title="Where the client is ahead">{res.strengths.length ? <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.5 }}>{res.strengths.slice(0, 10).map((s) => <li key={s.key}>It {s.text} <small style={{ color: 'var(--muted)' }}>(behind: {s.behind.join(', ')})</small></li>)}</ul> : <div style={{ fontSize: 13 }}>No check where the client is clearly ahead.</div>}</Panel>
+          </div>
+          {res.google.length ? (
+            <Panel title="Google profile numbers (typed by the team)" style={{ marginTop: 10 }}>
+              <table className="mk-table"><thead><tr><th />{res.google[0].values.map((v) => <th key={v.name}>{v.name}</th>)}</tr></thead><tbody>{res.google.map((g) => <tr key={g.key}><td>{g.label}</td>{g.values.map((v) => <td key={v.name}>{v.value == null ? <span style={{ color: 'var(--muted)' }}>not given</span> : v.value}</td>)}</tr>)}</tbody></table>
+            </Panel>
+          ) : null}
+          <details style={{ marginTop: 10 }}><summary style={{ cursor: 'pointer', fontSize: 12.5, color: 'var(--muted)' }}>All {res.matrix.length} checks side by side</summary>
+            <div style={{ overflowX: 'auto' }}><table className="mk-table"><thead><tr><th>CHECK</th>{res.matrixOrder.map((n) => <th key={n}>{n}</th>)}</tr></thead>
+              <tbody>{res.matrix.map((m) => <tr key={m.key}><td style={{ fontSize: 12.5 }}><Tag>{m.area}</Tag> {m.key} <small style={{ color: 'var(--muted)' }}>({m.marks})</small></td>{m.results.map((r, i) => <td key={i} style={{ color: MARK[r][1], fontWeight: 800 }} aria-label={r}>{MARK[r][0]}</td>)}</tr>)}</tbody></table></div>
+          </details>
+        </div>
+      ) : null}
+      {past.length ? <Panel title={`Earlier snapshots: ${me.name.trim()}`} style={{ marginTop: 12 }}><table className="mk-table"><tbody>{past.slice(0, 8).map((x) => <tr key={x.id}><td style={{ fontSize: 12.5 }}>{fmtDate(x.createdAt)}</td><td>client {x.clientScore == null ? '' : `${x.clientScore}/100`}</td><td style={{ fontSize: 12 }}>vs {x.competitors.join(', ')}</td></tr>)}</tbody></table></Panel> : null}
     </div>
   );
 }
@@ -43,7 +100,7 @@ function SiteTab({ toast, keySet }) {
   const run = async () => { setBusy(true); setRep(null); try { const r = await omni.post('/gs/marketing/visibility/site-check', { url, clientName: client, save: save && !!client.trim() }, { timeout: 60000 }); setRep(r.report); setPs(null); setSavedId(r.id || ''); if (r.id) { toast('Check saved'); loadPast(); } } catch (e) { toast(errOf(e, 'The website could not be checked.')); } finally { setBusy(false); } };
   return (
     <div>
-      <Banner>It reads the page once, like a visitor would, and checks 22 things. It is TeamLink's own check of what is on the page: it does not measure rankings or traffic and promises none.</Banner>
+      <Banner>It reads the page once, like a visitor would, and checks 23 things. It is TeamLink's own check of what is on the page: it does not measure rankings or traffic and promises none.</Banner>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end', margin: '10px 0' }}>
         <Field label="WEBSITE ADDRESS"><input value={url} placeholder="www.example.com" onChange={(e) => setUrl(e.target.value)} style={{ minWidth: 260 }} /></Field>
         <Field label="CLIENT (TO SAVE IT)"><input value={client} maxLength={120} onChange={(e) => setClient(e.target.value)} /></Field>

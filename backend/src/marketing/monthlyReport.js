@@ -9,6 +9,7 @@
 const S = require('../outreach/store');
 const CS = require('./clientServices');
 const Site = require('./siteCheck');
+const Comp = require('./competitors');
 const { logAudit } = require('../utils/audit');
 
 const T = 'OmniMkMonthlyMetrics';
@@ -64,7 +65,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':
 const NP = 'Not provided';
 const fmt = (v, k) => (v == null ? NP : k === 'rating' ? `${v} / 5` : Number(v).toLocaleString('en-IN'));
 const monthWords = (m) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-function sections({ plan, month, metrics, notes, audit, site }) {
+function sections({ plan, month, metrics, notes, audit, site, comp }) {
   const m = metrics || {}; const sec = []; const improve = [];
   const prog = plan.progress || []; const done = prog.reduce((a, x) => a + Math.min(x.done, x.quota), 0); const quota = prog.reduce((a, x) => a + x.quota, 0);
   sec.push({ key: 'delivery', title: `What TeamLink delivered in ${monthWords(month)}`, kind: 'bars', rows: prog.map((x) => ({ label: x.label, done: x.done, quota: x.quota, pct: x.pct, over: x.over })), summary: `${done} of ${quota} items of the ${plan.planLabel} plan (${quota ? Math.round((done / quota) * 100) : 0}%). Counted by the TeamLink team.` });
@@ -76,7 +77,11 @@ function sections({ plan, month, metrics, notes, audit, site }) {
     const perf = (s) => { const x = s && s.scores && s.scores.find((c) => c.key === 'performance'); return x && x.score != null ? x.score : null; };
     const ps = site.pagespeed ? ` · Google PageSpeed performance: phone ${perf(site.pagespeed.mobile) == null ? NP.toLowerCase() : perf(site.pagespeed.mobile)}, desktop ${perf(site.pagespeed.desktop) == null ? NP.toLowerCase() : perf(site.pagespeed.desktop)} (out of 100)` : '';
     sec.push({ key: 'site', title: 'Website check (what is on the page)', kind: 'score', score: site.score, band: site.areas.map((a) => `${a.key} ${a.got}/${a.marks}`).join(' · ') + ps, when: site.checkedAt, url: site.url, note: 'TeamLink\'s own check of the page. It does not measure rankings or traffic.' }); site.actions.slice(0, 3).forEach((a) => improve.push(`Website, ${a.area}: ${a.fix}`)); }
-  return { sections: sec, improve: improve.slice(0, 8), notes: S.clip(notes, 1500) };
+  if (comp && comp.ranking) { // the newest saved competitor snapshot (competitors.js): the websites side by side, the Google numbers the team typed, and where competitors are ahead
+    sec.push({ key: 'competitors', title: 'Competitor comparison (what is on each homepage)', kind: 'competitors', rows: comp.ranking.map((r) => ({ name: r.name, score: r.score, isClient: !!r.isClient })), google: (comp.google || []).map((g) => ({ label: g.label, values: g.values })), lines: (comp.summary || []).slice(0, 4), when: comp.createdAt || comp.comparedAt, note: 'TeamLink\'s own comparison of the websites. The Google numbers were typed by the team from each public profile. It does not show rankings or traffic.' });
+    (comp.ahead || []).slice(0, 3).forEach((a) => improve.push(`Compared with competitors, ${a.area}: ${a.fix} (better at ${a.who.join(', ')})`));
+  }
+  return { sections: sec, improve: improve.slice(0, 12), notes: S.clip(notes, 1500) };
 }
 function html(plan, month, parts) {
   const css = 'body{font:14px/1.5 "Segoe UI",Roboto,Arial,sans-serif;color:#0f2a3d;margin:0;background:#fff}.wrap{max-width:820px;margin:0 auto;padding:28px}h1{font-size:24px;margin:0 0 4px}h2{font-size:16px;margin:22px 0 8px;border-bottom:2px solid #0f766e;padding-bottom:4px}table{border-collapse:collapse;width:100%}td,th{padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:left;font-size:13px}.np{color:#94a3b8}.bar{background:#e2e8f0;border-radius:6px;height:10px;overflow:hidden;min-width:120px}.bar i{display:block;height:100%;background:#0f766e}.big{font-size:34px;font-weight:800;color:#0f766e}.muted{color:#64748b;font-size:12px}ul{margin:6px 0 0;padding-left:20px}@media print{.wrap{padding:0}}';
@@ -89,6 +94,11 @@ function html(plan, month, parts) {
       else out.push(`<table>${s.rows.map((r) => `<tr><td>${esc(r.label)}</td><td class="${r.value === NP ? 'np' : ''}">${esc(r.value)}</td></tr>`).join('')}</table>`);
       if (s.kind === 'seo' && s.top && s.top.length) out.push(`<p class="muted">Top results by clicks</p><table><tr><th>Query or page</th><th>Clicks</th><th>Impressions</th></tr>${s.top.map((r) => `<tr><td>${esc(r.label)}</td><td>${fmt(r.clicks)}</td><td>${fmt(r.impressions)}</td></tr>`).join('')}</table>`);
     } else if (s.kind === 'score') out.push(`<div class="big">${s.score}<span class="muted"> / 100</span></div><div>${esc(s.band || '')}</div>${s.url ? `<div class="muted">${esc(s.url)}</div>` : ''}<div class="muted">${esc(s.note)}</div>`);
+    else if (s.kind === 'competitors') {
+      out.push(`<table><tr><th>Business</th><th>Website score</th></tr>${s.rows.map((r) => `<tr><td>${r.isClient ? '<b>' : ''}${esc(r.name)}${r.isClient ? ' (this client)</b>' : ''}</td><td>${r.score} / 100</td></tr>`).join('')}</table>`);
+      for (const g of s.google) out.push(`<p class="muted">${esc(g.label)}: ${g.values.map((v) => `${esc(v.name)} ${v.value == null ? NP.toLowerCase() : esc(v.value)}`).join(' · ')}</p>`);
+      out.push(`<ul>${s.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul><div class="muted">${esc(s.note)}</div>`);
+    }
   }
   out.push('<h2>What we will improve next</h2>'); out.push(parts.improve.length ? `<ul>${parts.improve.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p class="np">Nothing is listed yet. Run the profile audit and the website check to fill this.</p>');
   if (parts.notes) out.push(`<h2>Note from the team</h2><p>${esc(parts.notes).replace(/\n/g, '<br>')}</p>`);
@@ -102,6 +112,7 @@ function text(plan, month, parts) {
     if (s.kind === 'bars') { L.push(s.summary); s.rows.forEach((r) => L.push(`- ${r.label}: ${r.done} of ${r.quota}`)); }
     else if (s.kind === 'table' || s.kind === 'seo') { if (s.kind === 'seo' && !s.given) L.push(`${NP}.`); else s.rows.forEach((r) => L.push(`- ${r.label}: ${r.value}`)); }
     else if (s.kind === 'score') L.push(`Score ${s.score}/100. ${s.note}`);
+    else if (s.kind === 'competitors') { s.rows.forEach((r) => L.push(`- ${r.name}${r.isClient ? ' (this client)' : ''}: ${r.score}/100`)); s.lines.forEach((l) => L.push(`- ${l}`)); }
     L.push('');
   }
   L.push('WHAT WE WILL IMPROVE NEXT'); (parts.improve.length ? parts.improve : ['Nothing is listed yet.']).forEach((x) => L.push(`- ${x}`));
@@ -118,7 +129,8 @@ async function build(u, planId, month) {
   const row = await rowFor(planId, m); const metrics = cleanMetrics(S.parse(row && row.metrics, {})); const notes = row ? row.notes || '' : '';
   let audit = null; const al = await CS.listAudits(u, { planId }); if (al.items && al.items[0]) { const a = await CS.getAudit(u, al.items[0].id); if (a.audit) audit = { score: a.audit.score, band: a.audit.report.band, createdAt: a.audit.createdAt, actions: a.audit.report.actions.filter((x) => !x.unchecked) }; }
   let site = null; const sl = await Site.latestFor(u, plan.clientName); if (sl) { const g = await Site.get(u, sl.id); if (g.report) site = { score: g.report.score, areas: g.report.areas, actions: g.report.actions, url: g.report.url, checkedAt: g.report.checkedAt, pagespeed: g.report.pagespeed || null }; }
-  const parts = sections({ plan, month: m, metrics, notes, audit, site });
+  const comp = await Comp.latestFor(u, plan.clientName).catch(() => null);
+  const parts = sections({ plan, month: m, metrics, notes, audit, site, comp });
   return { month: m, plan: { id: plan.id, clientName: plan.clientName, planLabel: plan.planLabel }, metrics, notes, fields: FIELDS, report: { html: html(plan, m, parts), text: text(plan, m, parts), improve: parts.improve }, saved: !!row, updatedAt: row ? S.iso(row.updatedAt) : null };
 }
 async function save(u, planId, b = {}) {
