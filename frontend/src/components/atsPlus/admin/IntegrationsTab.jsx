@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../../api';
 import TabStrip from '../../ui/TabStrip.jsx';
 import { Notice, Section, Table, useLoad, useAction, Field, Switch, when, row } from '../kit.jsx';
 import { MyCalendarsZ, ContactsZ } from './WorkspaceZ.jsx'; // 07.01 / 14.05: my calendar, the booking switch, contacts (ATS wave 2 Z)
+import AppCatalogueZ from './AppCatalogueZ.jsx'; // 14.03: the app catalogue (ATS wave 2 Z)
 
 // ---------------------------------------------------------------------------
 // ATS settings -> Integrations (14.01 / 14.04 / 14.05 / 14.06 / 14.09 / 14.10 / 14.15 / 15.01 / 15.14). Backend: utils/atsPlus/integrations.js,
 // sso.js, idverify.js. Everything that sends something out starts OFF.
 // ---------------------------------------------------------------------------
 const TABS = [
+  { key: 'apps', label: 'App catalogue', hint: 'Every app that comes with the ATS, its live status and where to set it up' },
   { key: 'api', label: 'API & Zapier / n8n', hint: 'API keys, the API documentation, webhooks and recipes' },
-  { key: 'chat', label: 'Slack / Teams', hint: 'Short messages to a Slack or Teams channel when something happens' },
+  { key: 'chat', label: 'Slack / Teams', more: true, hint: 'Short messages to a Slack or Teams channel when something happens' },
   { key: 'sso', label: 'Single sign-on', hint: 'Sign in with Google, Microsoft, Okta or any OIDC / SAML provider' },
   { key: 'vendors', label: 'Checks & tests', hint: 'Background-check and assessment vendors' },
   { key: 'boards', label: 'Job boards', hint: 'Every job board and its status' },
@@ -204,11 +207,15 @@ function IdCheck() {
 }
 
 export default function IntegrationsTab() {
-  const [tab, setTab] = useState('api');
+  // ?sub=<tab> opens a sub-tab directly (the app catalogue's Set up links, ATS wave 2 Z)
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(() => (TABS.some((x) => x.key === params.get('sub')) ? params.get('sub') : 'apps'));
+  useEffect(() => { const s = params.get('sub'); if (s && TABS.some((x) => x.key === s)) setTab(s); }, [params]);
   const ov = useLoad('/ats-plus/integrations/overview');
   return (
     <>
       <TabStrip label="Integrations" tabs={TABS} value={tab} onChange={setTab} small />
+      {tab === 'apps' && <AppCatalogueZ />}
       {tab === 'api' && <><ApiKeys ov={ov.data} /><Hooks chat={false} /></>}
       {tab === 'chat' && <Hooks chat />}
       {tab === 'sso' && <Sso />}
