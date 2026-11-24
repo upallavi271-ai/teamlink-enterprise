@@ -361,7 +361,7 @@ async function simsView() {
   const people = users.map((u) => { let k = 'none'; try { k = kindOf(u); } catch { k = 'none'; } return { userId: u.id, name: u.name, role: KIND_WORD[k] || k, kind: k }; }).filter((p) => SIMS.SIM_KINDS.includes(p.kind));
   return { ...(await SIMS.adminView()), people, pbx: L.isPbx(), lastWrite: L.lastWrite() };
 }
-const simLabel = (x) => `port ${SIMS.pad2(x.port)} · ${SIMS.mask(x.simNumber)}`;
+const simLabel = (x) => `port ${SIMS.pad2(x.port)} · ${x.simNumber ? SIMS.mask(x.simNumber) : 'number not known yet'}`;
 router.get('/admin/sims', async (req, res) => {
   if (!isAdmin(req.user)) return fail(res, 403, 'Admin only.');
   try { return res.json(await simsView()); } catch (e) { console.error('[browser-call] sims:', e.message); return fail(res, 500, 'Could not load the SIM numbers.'); }

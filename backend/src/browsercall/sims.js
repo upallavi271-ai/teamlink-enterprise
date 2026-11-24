@@ -80,16 +80,19 @@ function validate(b, old) {
   if (!Number.isInteger(port) || port < 1 || port > PORT_MAX) return { error: `The port must be a number from 1 to ${PORT_MAX} (the GSM port of the Synway).` };
   out.port = port;
   const rawNum = b.simNumber !== undefined ? b.simNumber : (old && old.simNumber);
-  const n = core().normalizeMobile(rawNum);
-  if (!n.ok || n.cc !== '91') return { error: 'Type the SIM\'s 10-digit Indian mobile number (like 9876543210).' };
-  out.simNumber = n.national;
+  if (rawNum == null || String(rawNum).trim() === '') out.simNumber = null; // not known yet (2026-11-24): the port is matched by its tag
+  else {
+    const n = core().normalizeMobile(rawNum);
+    if (!n.ok || n.cc !== '91') return { error: 'Type the SIM\'s 10-digit Indian mobile number (like 9876543210), or leave it empty if it is not known yet.' };
+    out.simNumber = n.national;
+  }
   const op = oneLine(b.operator !== undefined ? b.operator : (old && old.operator) || '').slice(0, 30);
   if (op && !/^[A-Za-z0-9 .&-]{1,30}$/.test(op)) return { error: 'The operator may use letters, digits, spaces and . & - only.' };
   out.operator = op || null;
   const prefix = oneLine(b.dialPrefix !== undefined && b.dialPrefix !== null && b.dialPrefix !== '' ? b.dialPrefix : ((old && old.port === port && old.dialPrefix) || `${pad2(port)}#`));
   if (!/^[0-9*#]{1,8}$/.test(prefix)) return { error: 'The dial prefix may only be digits, * or # (1 to 8), for example 01#.' };
   out.dialPrefix = prefix;
-  const matchBy = String(b.matchBy !== undefined ? b.matchBy : (old && old.matchBy) || 'number');
+  const matchBy = out.simNumber ? String(b.matchBy !== undefined ? b.matchBy : (old && old.matchBy) || 'number') : 'tag';
   if (!MATCH[matchBy]) return { error: 'Say how an incoming call is matched: by the SIM number or by a port tag.' };
   out.matchBy = matchBy;
   const tag = oneLine(b.tag !== undefined && b.tag !== null && b.tag !== '' ? b.tag : ((old && old.port === port && old.tag) || `port${pad2(port)}`)).toLowerCase();
@@ -103,7 +106,7 @@ function validate(b, old) {
 async function clash(d, id) {
   const other = (sql, v) => S.one(`SELECT "id","port" FROM "BrowserCallSim" WHERE ${sql} AND "id"<>?`, v, id || '');
   if (await other('"port"=?', d.port)) return `Port ${d.port} is already in the list. Edit that row instead.`;
-  const sn = await other('"simNumber"=?', d.simNumber);
+  const sn = d.simNumber ? await other('"simNumber"=?', d.simNumber) : null;
   if (sn) return `That SIM number is already on port ${sn.port}.`;
   const tg = await other('"tag"=?', d.tag);
   if (tg) return `The tag "${d.tag}" is already used by port ${tg.port}.`;
@@ -198,7 +201,7 @@ async function mineFor(user) {
   const r = await ofUser(user && user.id);
   if (!r || !r.active) return null;
   const st = await settings();
-  return { port: r.port, portLabel: pad2(r.port), number: r.simNumber, operator: r.operator || '', routing: st.prefixRouting };
+  return { port: r.port, portLabel: pad2(r.port), number: r.simNumber || `port ${pad2(r.port)}`, operator: r.operator || '', routing: st.prefixRouting };
 }
 /** The route of a call on the built-in office Synway: the person's port while prefix routing is ON, else "default" (today). */
 async function routeFor(user, line) {

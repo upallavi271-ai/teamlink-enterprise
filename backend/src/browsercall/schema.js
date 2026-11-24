@@ -41,7 +41,7 @@ const DDL = [
   // ONE SIM NUMBER PER RECRUITER (2026-11-25, browsercall/sims.js): the Synway GSM ports in use, each given to at most one person (and a person
   // has at most one). dialPrefix = what the gateway's IP->GSM rule picks the port by; matchBy number|tag = how an incoming call finds its port.
   `CREATE TABLE IF NOT EXISTS "BrowserCallSim" (
-    "id" TEXT NOT NULL PRIMARY KEY, "port" INTEGER NOT NULL, "simNumber" TEXT NOT NULL, "operator" TEXT, "active" INTEGER NOT NULL DEFAULT 1,
+    "id" TEXT NOT NULL PRIMARY KEY, "port" INTEGER NOT NULL, "simNumber" TEXT, "operator" TEXT, "active" INTEGER NOT NULL DEFAULT 1,
     "userId" TEXT, "dialPrefix" TEXT NOT NULL, "matchBy" TEXT NOT NULL DEFAULT 'number', "tag" TEXT NOT NULL, "note" TEXT,
     "createdById" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL)`,
   'CREATE UNIQUE INDEX IF NOT EXISTS "BrowserCallSim_port" ON "BrowserCallSim"("port")',
@@ -70,11 +70,31 @@ const ALTERS = [
   'ALTER TABLE "BrowserCall" ADD COLUMN "processTries" INTEGER',
 ];
 
+// 2026-11-24 (founder: "16 sims - edu 4, team 4, medical 4, mfg 4"): a port can be given to a recruiter before its SIM's number is known
+// (it is matched by its port tag then). Tables made before this have "simNumber" NOT NULL: rebuild that one table once, rows kept.
+async function simNumberOptional() {
+  const cols = await prisma.$queryRawUnsafe('PRAGMA table_info("BrowserCallSim")');
+  const c = cols.find((x) => x.name === 'simNumber');
+  if (!c || !Number(c.notnull)) return;
+  const make = DDL.find((s) => s.includes('CREATE TABLE IF NOT EXISTS "BrowserCallSim"')).replace('"BrowserCallSim" (', '"BrowserCallSim_new" (');
+  const idx = DDL.filter((s) => s.includes('INDEX IF NOT EXISTS "BrowserCallSim_'));
+  const list = '"id","port","simNumber","operator","active","userId","dialPrefix","matchBy","tag","note","createdById","createdAt","updatedAt"';
+  await prisma.$transaction([
+    prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "BrowserCallSim_new"'),
+    prisma.$executeRawUnsafe(make),
+    prisma.$executeRawUnsafe(`INSERT INTO "BrowserCallSim_new" (${list}) SELECT ${list} FROM "BrowserCallSim"`),
+    prisma.$executeRawUnsafe('DROP TABLE "BrowserCallSim"'),
+    prisma.$executeRawUnsafe('ALTER TABLE "BrowserCallSim_new" RENAME TO "BrowserCallSim"'),
+    ...idx.map((s) => prisma.$executeRawUnsafe(s)),
+  ]);
+}
+
 let ready = null;
 function ensure() {
   if (!ready) {
     ready = (async () => {
       for (const sql of DDL) await prisma.$executeRawUnsafe(sql); // eslint-disable-line no-await-in-loop
+      await simNumberOptional();
       for (const sql of ALTERS) {
         // eslint-disable-next-line no-await-in-loop
         try { await prisma.$executeRawUnsafe(sql); } catch (e) { if (!/duplicate column/i.test(String(e && e.message))) throw e; }

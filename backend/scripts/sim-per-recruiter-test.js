@@ -125,6 +125,14 @@ const has = (text, lines) => { const t = text.split('\n'); let i = -1; for (cons
   check('refused: a dial prefix with letters', await bad({ port: 1, simNumber: SIM1, dialPrefix: '0a#' }) === 400);
   check('refused: a port tag that starts with a digit', await bad({ port: 1, simNumber: SIM1, matchBy: 'tag', tag: '1port' }) === 400);
   check('refused: an unknown match kind', await bad({ port: 1, simNumber: SIM1, matchBy: 'imsi' }) === 400);
+  // ---- 2026-11-24: a port can be given before its SIM number is known (matched by its port tag)
+  const n14 = await call('POST', '/browser-calling/admin/sims', { port: 14, simNumber: '', operator: 'Airtel', matchBy: 'number' }, tA);
+  const n15 = await call('POST', '/browser-calling/admin/sims', { port: 15, operator: 'Airtel' }, tA);
+  const s14 = n14.body && n14.body.sims && n14.body.sims.find((x) => x.port === 14);
+  check('a port without its SIM number is saved, matched by its port tag', n14.status === 201 && n15.status === 201 && s14 && s14.simNumber === null && s14.matchBy === 'tag' && s14.tag === 'port14' && s14.dialPrefix === '14#', n14.body);
+  const r14 = await call('GET', '/browser-calling/admin/sims/route?called=port14', null, tA);
+  check('...a call to "port14" finds port 14', r14.status === 200 && r14.body.port === 14, r14.body);
+  for (const x of (n15.body.sims || []).filter((y) => y.port >= 14)) await call('DELETE', `/browser-calling/admin/sims/${x.id}`, null, tA);
   const c1 = await call('POST', '/browser-calling/admin/sims', { port: 1, simNumber: `+91 ${SIM1}`, operator: 'Jio' }, tA);
   const p1 = c1.body && c1.body.sims && c1.body.sims.find((x) => x.port === 1);
   check('Admin adds port 1: number kept as 10 digits, defaults prefix "01#", tag "port01", matched by SIM number, on', c1.status === 201 && p1 && p1.simNumber === SIM1 && p1.dialPrefix === '01#' && p1.tag === 'port01' && p1.matchBy === 'number' && p1.active === true && p1.operator === 'Jio', c1.body);
@@ -342,6 +350,21 @@ const has = (text, lines) => { const t = text.split('\n'); let i = -1; for (cons
   check('a recruiter cannot remove a port', (await call('DELETE', `/browser-calling/admin/sims/${p2.id}`, null, tR)).status === 403);
   const take = await call('PUT', `/browser-calling/admin/sims/${p1.id}`, { userId: '' }, tA);
   check('Admin takes port 1 back: the recruiter has no SIM, calls go on "default"', take.status === 200 && (await call('GET', '/browser-calling/status', null, tR)).body.sim === null);
+
+  // ---- a table made before 2026-11-24 ("simNumber" NOT NULL) is rebuilt once, its rows kept
+  await prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "BrowserCallSimOld"');
+  await prisma.$executeRawUnsafe('CREATE TABLE "BrowserCallSimOld" AS SELECT * FROM "BrowserCallSim"');
+  const nBefore = (await prisma.$queryRawUnsafe('SELECT COUNT(*) AS n FROM "BrowserCallSim"'))[0].n;
+  await prisma.$executeRawUnsafe('DROP TABLE "BrowserCallSim"');
+  await prisma.$executeRawUnsafe(`CREATE TABLE "BrowserCallSim" ("id" TEXT NOT NULL PRIMARY KEY, "port" INTEGER NOT NULL, "simNumber" TEXT NOT NULL, "operator" TEXT, "active" INTEGER NOT NULL DEFAULT 1, "userId" TEXT, "dialPrefix" TEXT NOT NULL, "matchBy" TEXT NOT NULL DEFAULT 'number', "tag" TEXT NOT NULL, "note" TEXT, "createdById" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL)`);
+  await prisma.$executeRawUnsafe('INSERT INTO "BrowserCallSim" SELECT * FROM "BrowserCallSimOld"');
+  await prisma.$executeRawUnsafe('DROP TABLE "BrowserCallSimOld"');
+  delete require.cache[require.resolve('../src/browsercall/schema')];
+  await require('../src/browsercall/schema').ensure();
+  const col = (await prisma.$queryRawUnsafe('PRAGMA table_info("BrowserCallSim")')).find((x) => x.name === 'simNumber');
+  const nAfter = (await prisma.$queryRawUnsafe('SELECT COUNT(*) AS n FROM "BrowserCallSim"'))[0].n;
+  const idx = (await prisma.$queryRawUnsafe('PRAGMA index_list("BrowserCallSim")')).map((x) => x.name);
+  check('an old SIM table is rebuilt: SIM number optional, rows and unique indexes kept', Number(col.notnull) === 0 && Number(nAfter) === Number(nBefore) && Number(nBefore) > 0 && ['BrowserCallSim_port', 'BrowserCallSim_number', 'BrowserCallSim_tag', 'BrowserCallSim_user'].every((x) => idx.includes(x)), { col, nBefore, nAfter, idx });
 
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);

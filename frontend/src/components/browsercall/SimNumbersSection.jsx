@@ -31,7 +31,7 @@ export default function SimNumbersSection() {
   };
   const put = async (s, patch) => { try { done(await api.put(`/browser-calling/admin/sims/${s.id}`, patch)); } catch (e) { setMsg(errOf(e, 'Could not save.')); } };
   const remove = async (s) => {
-    if (!window.confirm(`Remove port ${s.portLabel} (${s.simNumber}) from the list? Calls to it then hang up, and ${s.userName || 'nobody'} goes back to the normal office line.`)) return; // eslint-disable-line no-alert
+    if (!window.confirm(`Remove port ${s.portLabel}${s.simNumber ? ` (${s.simNumber})` : ''} from the list? Calls to it then hang up, and ${s.userName || 'nobody'} goes back to the normal office line.`)) return; // eslint-disable-line no-alert
     try { done(await api.delete(`/browser-calling/admin/sims/${s.id}`)); } catch (e) { setMsg(errOf(e, 'Could not remove it.')); }
   };
   const setting = async (patch) => { try { done(await api.put('/browser-calling/admin/sims-settings', patch)); } catch (e) { setMsg(errOf(e, 'Could not save.')); } };
@@ -73,7 +73,7 @@ export default function SimNumbersSection() {
           {data.sims.map((s) => (
             <tr key={s.id} style={s.active ? undefined : { opacity: 0.55 }} data-testid={`sim-row-${s.portLabel}`}>
               <td><b>{s.portLabel}</b>{!s.active && <div className="small-muted">Switched off</div>}</td>
-              <td>{s.simNumber}</td>
+              <td>{s.simNumber || <span className="small-muted">not known yet</span>}</td>
               <td>{s.operator || '—'}</td>
               <td>
                 <select aria-label={`Port ${s.portLabel} given to`} value={s.userId || ''} onChange={(e) => put(s, { userId: e.target.value })}>
@@ -109,7 +109,7 @@ export default function SimNumbersSection() {
           <div className="section-label" style={{ marginTop: 0 }}>{form.id ? `Edit port ${pad2(form.port)}` : 'Add a SIM port'}</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
             <label className="field"><span>Port (1-{data.portMax})</span><input type="number" min={1} max={data.portMax} value={form.port} onChange={(e) => set({ port: e.target.value })} aria-label="Port" /></label>
-            <label className="field"><span>SIM number</span><input value={form.simNumber} onChange={(e) => set({ simNumber: e.target.value })} placeholder="9876543210" aria-label="SIM number" /></label>
+            <label className="field"><span>SIM number</span><input value={form.simNumber} onChange={(e) => set({ simNumber: e.target.value })} placeholder="9876543210 (empty if not known)" aria-label="SIM number" /></label>
             <label className="field"><span>Operator</span>
               <select value={form.operator || ''} onChange={(e) => set({ operator: e.target.value })} aria-label="Operator">{data.operators.map((o) => <option key={o} value={o}>{o}</option>)}</select>
             </label>
@@ -121,9 +121,9 @@ export default function SimNumbersSection() {
             </label>
             <label className="field"><span>Dial prefix</span><input value={form.dialPrefix} maxLength={8} onChange={(e) => set({ dialPrefix: e.target.value.trim() })} placeholder={`${pad2(form.port || 1)}#`} aria-label="Dial prefix" /></label>
             <label className="field"><span>Incoming matched by</span>
-              <select value={form.matchBy} onChange={(e) => set({ matchBy: e.target.value })} aria-label="Incoming matched by">{data.matchKinds.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select>
+              <select value={form.simNumber ? form.matchBy : 'tag'} disabled={!form.simNumber} onChange={(e) => set({ matchBy: e.target.value })} aria-label="Incoming matched by">{data.matchKinds.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select>
             </label>
-            {form.matchBy === 'tag' && <label className="field"><span>Port tag</span><input value={form.tag} maxLength={20} onChange={(e) => set({ tag: e.target.value.trim().toLowerCase() })} placeholder={`port${pad2(form.port || 1)}`} aria-label="Port tag" /></label>}
+            {(form.matchBy === 'tag' || !form.simNumber) && <label className="field"><span>Port tag</span><input value={form.tag} maxLength={20} onChange={(e) => set({ tag: e.target.value.trim().toLowerCase() })} placeholder={`port${pad2(form.port || 1)}`} aria-label="Port tag" /></label>}
           </div>
           <div className="small-muted" style={{ margin: '4px 0 8px' }}>Dial prefix: what the gateway&apos;s IP to GSM rule looks for to pick this port (empty = {pad2(form.port || 1)}#). Incoming: the gateway puts this port&apos;s SIM number (or the tag) in the called number of a call it sends to us.</div>
           <label style={{ display: 'block', fontSize: 13, marginBottom: 8 }}><input type="checkbox" checked={!!form.active} onChange={(e) => set({ active: e.target.checked })} /> On</label>
