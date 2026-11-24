@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { GroupRows } from './SearchResults.jsx';
 import { useHistoryOpener } from './historyOpen.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import './search.css';
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,10 @@ export default function SearchBox({ variant = 'compact', placeholder = 'Search T
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const openHistory = useHistoryOpener();
+  // CRM records (leads, accounts, contacts, deals) join the results for a login on the CRM team (GET /api/crm/plusc/search, scoped by the CRM's own rules)
+  const { user } = useAuth() || {};
+  const crm = !!(user && user.crmRole);
+  const [crmData, setCrmData] = useState(null);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -85,6 +90,13 @@ export default function SearchBox({ variant = 'compact', placeholder = 'Search T
     }, DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [q]);
+  useEffect(() => {
+    const term = q.trim();
+    if (!crm || term.length < 2) { setCrmData(null); return undefined; }
+    let live = true;
+    const t = setTimeout(() => api.get('/crm/plusc/search', { params: { q: term } }).then((r) => { if (live) setCrmData(r.data); }).catch(() => { if (live) setCrmData(null); }), DEBOUNCE_MS);
+    return () => { live = false; clearTimeout(t); };
+  }, [q, crm]);
 
   useEffect(() => { setOpen(false); setActive(-1); }, [pathname]);
   useEffect(() => {
@@ -95,7 +107,7 @@ export default function SearchBox({ variant = 'compact', placeholder = 'Search T
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('touchstart', onDown); };
   }, [open]);
 
-  const groups = useMemo(() => (data ? data.groups || [] : []), [data]);
+  const groups = useMemo(() => [...(data ? data.groups || [] : []), ...(crmData ? crmData.groups || [] : [])], [data, crmData]);
   const flat = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
   useEffect(() => { setActive(-1); }, [data]);
   const term = q.trim();
@@ -121,7 +133,7 @@ export default function SearchBox({ variant = 'compact', placeholder = 'Search T
       if (open && active >= 0 && flat[active]) openRow(flat[active], groups.find((g) => g.rows.includes(flat[active]))); else openAll();
     }
   };
-  const total = data ? data.total : 0;
+  const total = (data ? data.total : 0) + (crmData ? crmData.total : 0);
   return (
     <div className={`gsearch gsx srb srb-${variant}`} ref={wrap} role="search">
       <input

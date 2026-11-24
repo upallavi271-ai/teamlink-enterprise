@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import { useCrm, errOf, dateOf, istToday, addDays } from './crmShared.jsx';
+import { usePlusSetup } from './crmPlusC.jsx'; // the company holidays (CRM settings > Customise > Year & brand)
 
 export const TYPE_COLOR = { Call: '#1baf7a', Meeting: '#2a78d6', WhatsApp: '#008300', Visit: '#eb6834', Email: '#6250d6', Other: '#52514e' };
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -34,6 +35,8 @@ export default function FollowupCalendar({ owner, type, priority }) {
   const [over, setOver] = useState(null); // the cell a follow-up is dragged over
   const [dragging, setDragging] = useState(null);
   const [tick, setTick] = useState(0);
+  const plus = usePlusSetup();
+  const holidays = new Map(((plus && plus.fiscal && plus.fiscal.holidays) || []).map((h) => [h.date, h.name]));
   const range = useMemo(() => {
     if (view === 'week') { const f = mondayOf(anchor); return { from: f, to: addDays(f, 6) }; }
     const first = `${anchor.slice(0, 7)}-01`;
@@ -100,6 +103,7 @@ export default function FollowupCalendar({ owner, type, priority }) {
             return (
               <div key={d} className={`crm-cal-day${inMonth ? '' : ' out'}${d === today ? ' today' : ''}${over === d ? ' drop' : ''}`} {...dropProps(d, d, undefined)}>
                 <span className="n">{Number(d.slice(8, 10))}</span>
+                {holidays.has(d) && <span className="small-muted" style={{ fontSize: 10.5, display: 'block', color: '#b45309' }} title="Holiday">🎉 {holidays.get(d)}</span>}
                 {list.slice(0, 4).map((t) => <Chip key={t.id} t={t} onOpen={open} onDragStart={setDragging} />)}
                 {list.length > 4 && <button type="button" className="crm-linkbtn crm-cal-more" onClick={() => { setAnchor(d); setView('week'); }}>+{list.length - 4} more</button>}
               </div>
@@ -111,7 +115,7 @@ export default function FollowupCalendar({ owner, type, priority }) {
         <div className="crm-cal-week-wrap">
           <div className="crm-cal-week" role="grid" aria-label={title}>
             <div className="h" />
-            {days.map((d, i) => <div key={d} className={`h${d === today ? ' today' : ''}`}>{DOW[i]} {Number(d.slice(8, 10))}</div>)}
+            {days.map((d, i) => <div key={d} className={`h${d === today ? ' today' : ''}`} title={holidays.get(d) || undefined}>{DOW[i]} {Number(d.slice(8, 10))}{holidays.has(d) ? ' 🎉' : ''}</div>)}
             <div className="t">No time</div>
             {days.map((d) => (
               <div key={d} className={`crm-cal-slot${over === `${d}-x` ? ' drop' : ''}`} {...dropProps(`${d}-x`, d, undefined)}>

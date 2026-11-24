@@ -114,6 +114,7 @@ export default function CrmLeads() {
   const [rating, setRating] = useState('');
   const [owner, setOwner] = useState('');
   const [stage, setStage] = useState('');
+  const [tag, setTag] = useState(''); // CRM wave C: leads with a tag
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [layout, setLayout] = useState('table'); // table | board (the board shows won and lost leads too)
@@ -126,10 +127,10 @@ export default function CrmLeads() {
   const [paging, setPaging] = useState(null); // { total, page, pages }
   const xf = useListXf('crmleads'); // added-on date range, city, industry (components/ats/ListFilters.jsx)
   const seq = useRef(0);
-  const load = () => { seq.current += 1; const mine = seq.current; return api.get('/crm/leads', { params: { q: q || undefined, status: (layout === 'board' ? 'all' : status) || undefined, stage: stage || undefined, from: from || undefined, to: to || undefined, source: source || undefined, rating: rating || undefined, owner: owner || undefined, ...xf.params, ...(layout === 'table' ? { page, pageSize: 50, sort, dir } : {}) } })
+  const load = () => { seq.current += 1; const mine = seq.current; return api.get('/crm/leads', { params: { q: q || undefined, status: (layout === 'board' ? 'all' : status) || undefined, stage: stage || undefined, from: from || undefined, to: to || undefined, source: source || undefined, rating: rating || undefined, owner: owner || undefined, tag: tag || undefined, ...xf.params, ...(layout === 'table' ? { page, pageSize: 50, sort, dir } : {}) } })
     .then((r) => { if (mine !== seq.current) return; setRows(r.data.rows); setPaging(layout === 'table' && r.data.total != null ? { total: r.data.total, page: r.data.page, pages: r.data.pages } : null); setErr(''); setPicked(new Set()); }).catch((e) => { if (mine === seq.current) setErr(errOf(e, 'The leads could not be read.')); }); };
   // a changed filter or sort goes back to page 1 first (and loads from there)
-  const fkey = JSON.stringify([q, status, stage, from, to, layout, source, rating, owner, sort, dir, xf.key]);
+  const fkey = JSON.stringify([q, status, stage, from, to, layout, source, rating, owner, tag, sort, dir, xf.key]);
   const lastKey = useRef(fkey);
   useEffect(() => {
     if (lastKey.current !== fkey) { lastKey.current = fkey; if (page !== 1) { setPage(1); return undefined; } }
@@ -141,6 +142,16 @@ export default function CrmLeads() {
   const today = istToday();
   const toggle = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allPicked = rows && rows.length > 0 && rows.every((l) => picked.has(l.id));
+  // CRM wave C (crm/plus/dataCare.js bulk): a tag on the ticked leads; delete them to the recycle bin
+  function tagPicked() {
+    const t = window.prompt('Tag to add to the ticked leads'); // eslint-disable-line no-alert
+    if (!t) return;
+    api.post('/crm/plusc/bulk', { kind: 'lead', ids: [...picked], action: 'tagAdd', tags: t }).then((r) => { toast(`${r.data.changed} tagged.`); setPicked(new Set()); load(); }).catch((e) => toast(errOf(e, 'This could not be done.')));
+  }
+  function deletePicked() {
+    if (!window.confirm(`Delete ${picked.size} leads? They go to the recycle bin (Accounts & Contacts > Data care), where they can be put back.`)) return; // eslint-disable-line no-alert
+    api.post('/crm/plusc/bulk', { kind: 'lead', ids: [...picked], action: 'delete' }).then((r) => { toast(`${r.data.changed} deleted (in the recycle bin).`); setPicked(new Set()); load(); }).catch((e) => toast(errOf(e, 'This could not be done.')));
+  }
   async function bulk(change) {
     try {
       const r = await api.post('/crm/leads/bulk', { ids: [...picked], ...change });
@@ -180,6 +191,7 @@ export default function CrmLeads() {
         <MultiSelect label="Rating" allLabel="Any rating" value={rating} onChange={setRating} options={me.lists.ratings.map((s) => ({ value: s, label: s }))} />
         <MultiSelect label="Source" allLabel="Any source" value={source} onChange={setSource} options={me.lists.sources.map((s) => ({ value: s, label: s }))} />
         {me.seesAll && <MultiSelect label="Owner" allLabel="Everyone" value={owner} onChange={setOwner} options={me.owners.map((o) => ({ value: o.id, label: o.name }))} />}
+        <input type="text" placeholder="Tag" value={tag} onChange={(e) => setTag(e.target.value)} style={{ width: 110 }} aria-label="Tag filter" title="Leads with this tag (several: comma-separated)" />
       </div>
       {err && <div className="notice" role="alert">{err}</div>}
       {rows && (
@@ -195,6 +207,8 @@ export default function CrmLeads() {
               {me.canAssign && <select defaultValue="" onChange={(e) => { if (e.target.value) bulk({ ownerId: e.target.value }); e.target.value = ''; }} aria-label="Give to"><option value="">Give to…</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
               <button type="button" className="btn btn-sm" onClick={() => bulk({ status: 'Junk' })} title="Stages move on their own; the one thing set by hand is Junk">Mark junk</button>
               <select defaultValue="" onChange={(e) => { if (e.target.value) bulk({ rating: e.target.value }); e.target.value = ''; }} aria-label="Set rating"><option value="">Set rating…</option>{me.lists.ratings.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+              <button type="button" className="btn btn-sm" title="Add a tag to the ticked leads" onClick={() => tagPicked()}>+ Tag</button>
+              {(me.canAssign || (me.rights && me.rights.delete)) && <button type="button" className="btn btn-sm" style={{ color: 'var(--red)', borderColor: 'var(--red)' }} onClick={() => deletePicked()}>Delete</button>}
               <button type="button" className="btn btn-sm" onClick={() => setPicked(new Set())}>Clear</button>
             </span>
           )}

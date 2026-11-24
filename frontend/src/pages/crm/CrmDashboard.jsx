@@ -13,6 +13,7 @@ import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, money, moneyShort, dateOf, dateTimeOf, TaskList, ACT_ICON, RecLink, RecordForm, Pill, DateField, download, istToday, ActNote } from './crmShared.jsx';
 import { TeamTargets, ForecastFunnel, CrmSettings } from './CrmReports.jsx';
 import { AiForecastCard, AnomalyCard } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
+import { Adoption } from './CrmDataCare.jsx'; // eslint-disable-line import/no-cycle
 import { TicketList } from './CrmSupport.jsx';
 import DashboardCharts from './CrmCharts.jsx';
 import ReportTables from './CrmReportTables.jsx';
@@ -430,7 +431,7 @@ export default function CrmDashboard() {
           )}
           {['overview', 'reports'].includes(tab) && (
             <select value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Period" style={{ width: 'auto' }}>
-              <option value="month">This month</option><option value="last_month">Last month</option><option value="quarter">This quarter</option><option value="year">This year</option>
+              <option value="month">This month</option><option value="last_month">Last month</option><option value="quarter">This quarter</option><option value="year">This year</option><option value="fquarter">This financial quarter</option><option value="fyear">This financial year</option><option value="last_fyear">Last financial year</option>
             </select>
           )}
           {me.canAssign && <button type="button" className="btn" onClick={() => setSettings(true)} title="Sales team, sources, lost reasons, stage probabilities">⚙ Settings</button>}
@@ -442,7 +443,7 @@ export default function CrmDashboard() {
         </div>
       </div>
       <div className="tabs" role="tablist">
-        {[['overview', 'Overview'], ['mydash', 'My dashboard'], ['activities', 'Activities'], ...(!me.seesAll || (me.rights && me.rights.reports) ? [['team', me.seesAll ? 'Team & targets' : 'My month & target']] : []), ['leaderboard', 'Leaderboard'], ...(me.rights && me.rights.reports ? [['forecast', 'Forecast & funnel']] : []), ...(!me.seesAll || (me.rights && me.rights.reports) ? [['trends', 'Trends'], ['reports', 'Reports']] : []), ['builder', 'Report builder'], ...(me.canAssign ? [['automation', 'Automation']] : []), ...(!me.canAssign && myApprovals ? [['approvals', `Approvals (${myApprovals})`]] : [])].map(([k, l]) => (
+        {[['overview', 'Overview'], ['mydash', 'My dashboard'], ['activities', 'Activities'], ...(!me.seesAll || (me.rights && me.rights.reports) ? [['team', me.seesAll ? 'Team & targets' : 'My month & target']] : []), ['leaderboard', 'Leaderboard'], ...(me.rights && me.rights.reports ? [['forecast', 'Forecast & funnel']] : []), ...(!me.seesAll || (me.rights && me.rights.reports) ? [['trends', 'Trends'], ['reports', 'Reports']] : []), ['builder', 'Report builder'], ...(me.canAssign ? [['automation', 'Automation']] : []), ...(!me.canAssign && myApprovals ? [['approvals', `Approvals (${myApprovals})`]] : []), ...(me.seesAll && me.rights && me.rights.reports ? [['adoption', 'Adoption']] : [])].map(([k, l]) => (
           <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>{l}</div>
         ))}
       </div>
@@ -459,6 +460,7 @@ export default function CrmDashboard() {
       {tab === 'builder' && <ReportBuilder />}
       {tab === 'automation' && me.canAssign && <CrmAutomation />}
       {tab === 'approvals' && !me.canAssign && <Approvals />}
+      {tab === 'adoption' && <Adoption />}
       {adding && <RecordForm kind={adding} preset={adding === 'deal' ? {} : { source: '' }} onClose={() => setAdding(null)} onSaved={(row) => { const k = adding; setAdding(null); openRecord(k, row.id); }} />}
       {settings && <CrmSettings onClose={() => setSettings(false)} onSaved={() => { setSettings(false); reloadMe(); }} />}
     </div>

@@ -12,6 +12,9 @@ import CrmPortalAdmin from './b/CrmPortalAdmin.jsx'; // CRM wave B: portal login
 import CrmContactDialog from './CrmContact.jsx';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import { plusOf } from './CrmPlus.jsx'; // territories (wave D)
+// CRM wave C: record types of your own, customer health, data care (bin, duplicates, import, mass changes, data requests), a contact's More window
+import { MoreRecords, CustomerHealth, DataCare } from './CrmDataCare.jsx'; // eslint-disable-line import/no-cycle
+import { ContactMore } from './CrmRecordMore.jsx'; // eslint-disable-line import/no-cycle
 
 
 export default function CrmAccounts() {
@@ -19,7 +22,9 @@ export default function CrmAccounts() {
   const [sp] = useSearchParams();
   const { openRecord, version } = useCrm();
   const setOpen = (o) => openRecord(o.kind, o.id);
-  const [tab, setTab] = useState(['contacts', 'tickets', 'portal'].includes(sp.get('tab')) ? sp.get('tab') : 'accounts');
+  const [tab, setTab] = useState(['contacts', 'tickets', 'portal', 'records', 'health', 'datacare'].includes(sp.get('tab')) ? sp.get('tab') : 'accounts');
+  const [tag, setTag] = useState('');
+  const [moreContact, setMoreContact] = useState(null);
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
@@ -35,17 +40,17 @@ export default function CrmAccounts() {
   const territories = plusOf(me).territories || [];
   useEffect(() => { setPicked([]); }, [tab]);
   async function give() {
-    try { const r = await api.post('/crm/plus/bulk-owner', { kind: tab === 'accounts' ? 'account' : 'contact', ids: picked, ownerId: giveTo }); toast(`${r.data.changed} given${r.data.failed.length ? `, ${r.data.failed.length} not` : ''}.`); setPicked([]); load(); } catch (e) { toast(errOf(e, 'They could not be given.')); }
+    try { const r = await api.post('/crm/plusc/bulk-owner', { kind: tab === 'accounts' ? 'account' : 'contact', ids: picked, ownerId: giveTo }); toast(`${r.data.changed} given${r.data.failed.length ? `, ${r.data.failed.length} not` : ''}.`); setPicked([]); load(); } catch (e) { toast(errOf(e, 'They could not be given.')); }
   }
   const tick = (id, on) => setPicked((x) => (on ? [...new Set([...x, id])] : x.filter((y) => y !== id)));
   const xf = useListXf(tab === 'contacts' ? 'crmcontacts' : 'crmaccounts'); // added-on, city, industry, source / role (components/ats/ListFilters.jsx)
   const load = () => {
-    if (tab === 'tickets' || tab === 'portal') return Promise.resolve();
+    if (!['accounts', 'contacts'].includes(tab)) return Promise.resolve();
     setRows(null);
-    const params = tab === 'accounts' ? { q: q || undefined, kind: kind || undefined, owner: owner || undefined, ...xf.params } : { q: q || undefined, ...xf.params };
+    const params = tab === 'accounts' ? { q: q || undefined, kind: kind || undefined, owner: owner || undefined, tag: tag || undefined, ...xf.params } : { q: q || undefined, tag: tag || undefined, ...xf.params };
     return api.get(`/crm/${tab}`, { params }).then((r) => { setRows(r.data.rows); setErr(''); }).catch((e) => setErr(errOf(e, 'This list could not be read.')));
   };
-  useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [tab, q, kind, owner, version, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const t = setTimeout(load, q || tag ? 300 : 0); return () => clearTimeout(t); }, [tab, q, kind, owner, tag, version, xf.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="page">
@@ -64,16 +69,21 @@ export default function CrmAccounts() {
         <div role="tab" tabIndex={0} aria-selected={tab === 'contacts'} className={`tab${tab === 'contacts' ? ' active' : ''}`} onClick={() => setTab('contacts')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('contacts'); }}>Contacts</div>
         <div role="tab" tabIndex={0} aria-selected={tab === 'tickets'} className={`tab${tab === 'tickets' ? ' active' : ''}`} onClick={() => setTab('tickets')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('tickets'); }}>Support tickets</div>
         <div role="tab" tabIndex={0} aria-selected={tab === 'portal'} className={`tab${tab === 'portal' ? ' active' : ''}`} onClick={() => setTab('portal')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('portal'); }}>Customer portal</div>
+        {[['records', 'More records'], ['health', 'Customer health'], ['datacare', 'Data care']].map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>{l}</div>)}
       </div>
       {tab === 'tickets' && <TicketList />}
       {tab === 'portal' && <CrmPortalAdmin />}
-      {tab !== 'tickets' && tab !== 'portal' && (<>
+      {tab === 'records' && <MoreRecords />}
+      {tab === 'health' && <CustomerHealth />}
+      {tab === 'datacare' && <DataCare />}
+      {['accounts', 'contacts'].includes(tab) && (<>
       <ListFilterStrip key={tab} list={tab === 'contacts' ? 'crmcontacts' : 'crmaccounts'} xf={xf} total={rows ? rows.length : null} noun={tab} allTime={Object.keys(xf.values).length > 0 || !!(q || kind || owner)} />
       <div className="filter-row">
         <input type="text" placeholder={tab === 'accounts' ? 'Search company, city, industry' : 'Search name, phone, email, company'} value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 260 }} aria-label="Search" />
         {tab === 'accounts' && <MultiSelect label="Type" allLabel="Prospects and customers" value={kind} onChange={setKind} options={[{ value: 'Prospect', label: 'Prospects' }, { value: 'Client', label: 'Customers' }]} />}
         {tab === 'accounts' && me.seesAll && <MultiSelect label="Owner" allLabel="Everyone" value={owner} onChange={setOwner} options={me.owners.map((o) => ({ value: o.id, label: o.name }))} />}
         {tab === 'accounts' && territories.length > 0 && <select value={territory} onChange={(e) => setTerritory(e.target.value)} style={{ width: 'auto' }} aria-label="Territory"><option value="">Every territory</option>{territories.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}<option value="none">No territory</option></select>}
+        <input type="text" placeholder="Tag" value={tag} onChange={(e) => setTag(e.target.value)} style={{ width: 120 }} aria-label="Tag filter" title="Records with this tag (several: comma-separated)" />
       </div>
       {me.canAssign && picked.length > 0 && (
         <div className="card" style={{ padding: 10, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -106,7 +116,7 @@ export default function CrmAccounts() {
           </table>
         ) : (
           <table>
-            <thead><tr>{me.canAssign && <th aria-label="Tick" />}<th>Name</th><th>Company</th><th>Role</th><th>Phone</th><th>Email</th></tr></thead>
+            <thead><tr>{me.canAssign && <th aria-label="Tick" />}<th>Name</th><th>Company</th><th>Role</th><th>Phone</th><th>Email</th><th /></tr></thead>
             <tbody>
               {rows == null && !err && <tr><td colSpan={5} className="small-muted">Loading…</td></tr>}
               {rows && !rows.length && <tr><td colSpan={5}><div className="empty"><h3>No contacts here</h3>Add the people you talk to at each company.</div></td></tr>}
@@ -118,6 +128,7 @@ export default function CrmAccounts() {
                   <td>{c.role || '—'}</td>
                   <td>{c.phone ? <a href={`tel:${c.phone}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setReach({ record: { kind: 'contact', id: c.id, name: c.name }, channel: 'Call' }); }}>{c.phone}</a> : '—'}</td>
                   <td>{c.email ? <a href={`mailto:${c.email}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setReach({ record: { kind: 'contact', id: c.id, name: c.name }, channel: 'Email' }); }}>{c.email}</a> : '—'}</td>
+                  <td><button type="button" className="btn btn-sm" onClick={(e) => { e.stopPropagation(); setMoreContact(c); }} title="Tags, files, consent">More</button></td>
                 </tr>
               ))}
             </tbody>
@@ -127,6 +138,7 @@ export default function CrmAccounts() {
       </>)}
       {(adding === 'account' || adding === 'contact') && <RecordForm kind={adding} onClose={() => setAdding(null)} onSaved={(row) => { const k = adding; setAdding(null); if (k === 'account') { setTab('accounts'); load(); setOpen({ kind: 'account', id: row.id }); } else { setTab('contacts'); load(); } }} />}
       {reach && <CrmContactDialog record={reach.record} channel={reach.channel} onClose={() => setReach(null)} onDone={load} />}
+      {moreContact && <ContactMore contact={moreContact} onClose={() => setMoreContact(null)} onChanged={load} />}
       {editContact && <RecordForm kind="contact" row={editContact} onClose={() => setEditContact(null)} onSaved={() => { setEditContact(null); load(); }} />}
     </div>
   );
