@@ -149,6 +149,7 @@ export function AuthProvider({ children }) {
     if (signedIn) endSession(signedIn);
     localStorage.removeItem('tl_token');
     clearKeptState(); // the lists' kept search / filters / page (utils/useKeptState.js)
+    try { window.dispatchEvent(new Event('tl-signed-out')); } catch { /* old browser */ } // the CRM's offline copy is wiped (pages/crm/crmOffline.js)
     setUser(null);
   }
 

@@ -10,11 +10,12 @@ import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, daysLate, RecLink, PriorityPill, DateField, InviteButton, MeetingInvitePrompt, meetingWhen, recordOfTask } from './crmShared.jsx';
 import MultiSelect from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 import FollowupCalendar from './CrmCalendar.jsx'; // eslint-disable-line import/no-cycle
+import { VisitsTab, CalendarSyncCard, InstallAppCard, RepeatLine, VideoButton } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
 import CrmInbox from './b/CrmInbox.jsx'; // CRM wave B: every conversation in one inbox, website chat, the team mailbox
 import CrmDialer from './b/CrmDialer.jsx'; // CRM wave B: the power dialer
 
-const TABS = [['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Completed'], ['calendar', 'Calendar'], ['inbox', 'Inbox'], ['dialer', 'Dialer']];
-const NOT_LIST = ['calendar', 'inbox', 'dialer']; // tabs that are not the follow-up list
+const TABS = [['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Completed'], ['calendar', 'Calendar'], ['inbox', 'Inbox'], ['dialer', 'Dialer'], ['visits', 'Visits']];
+const NOT_LIST = ['calendar', 'inbox', 'dialer', 'visits']; // tabs that are not the follow-up list
 export const REMIND_WORDS = { 0: 'At the time', 15: '15 minutes before', 60: '1 hour before', 1440: '1 day before' };
 
 // "Done": what came of it, what happened, and optionally the next follow-up (used here and in TaskList)
@@ -179,7 +180,7 @@ function RescheduleDialog({ task, onClose, onDone }) {
 export default function CrmFollowups() {
   const { me, toast, version, changed } = useCrm();
   const xf = useListXf('crmtasks'); // search (components/ats/ListFilters.jsx)
-  const [tab, setTab] = useState(() => (['inbox', 'dialer'].includes(new URLSearchParams(window.location.search).get('tab')) ? new URLSearchParams(window.location.search).get('tab') : 'action')); // Needs action = due today + overdue
+  const [tab, setTab] = useState(() => (TABS.some(([k]) => k === new URLSearchParams(window.location.search).get('tab')) ? new URLSearchParams(window.location.search).get('tab') : 'action')); // Needs action = due today + overdue
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [owner, setOwner] = useState('');
@@ -216,6 +217,7 @@ export default function CrmFollowups() {
         <div><h1>Follow-ups</h1><div className="page-sub">What needs doing: calls, meetings, visits and messages that are due today or late come first, with their reminders.</div></div>
         {me.canEdit && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Follow-up</button>}
       </div>
+      <InstallAppCard />
       <div className="tabs" role="tablist">
         {TABS.map(([k, l]) => {
           const n = k === 'action' ? (counts ? counts.needsAction : null) : (k === 'upcoming' && counts ? counts.upcoming : null);
@@ -228,6 +230,8 @@ export default function CrmFollowups() {
           );
         })}
       </div>
+      {tab === 'visits' && <VisitsTab />}
+      {tab !== 'visits' && <>
       {!NOT_LIST.includes(tab) && <ListFilterStrip list="crmtasks" xf={xf} noun="follow-ups" total={rows ? rows.length : null} allTime={Object.keys(xf.values).length > 0 || !!(from || to || owner || priority || type)} />}
       {!['inbox', 'dialer'].includes(tab) && <div className="filter-row">
         {!NOT_LIST.includes(tab) && <DateField value={from} onChange={setFrom} aria-label="From" style={{ width: 150 }} />}
@@ -236,6 +240,7 @@ export default function CrmFollowups() {
         <MultiSelect label="Type" allLabel="Any type" value={type} onChange={setType} options={me.lists.taskTypes.map((p) => ({ value: p, label: p }))} />
         {me.seesAll && <MultiSelect label="Owner" allLabel="Everyone" value={owner} onChange={setOwner} options={me.owners.map((o) => ({ value: o.id, label: o.name }))} />}
       </div>}
+      {tab === 'calendar' && <CalendarSyncCard />}
       {tab === 'calendar' && <FollowupCalendar owner={owner} type={type} priority={priority} />}
       {tab === 'inbox' && <CrmInbox />}
       {tab === 'dialer' && <CrmDialer />}
@@ -257,7 +262,7 @@ export default function CrmFollowups() {
                   </td>
                   <td><PriorityPill v={t.priority} /></td>
                   <td>{t.type || 'Call'}</td>
-                  <td>{t.title}</td>
+                  <td>{t.title}<RepeatLine task={t} canEdit={me.canEdit} onChanged={refresh} /></td>
                   <td>{t.recordName ? <RecLink kind={t.recordKind} id={t.recordId}>{t.recordName}</RecLink> : '—'}</td>
                   {me.seesAll && <td>{t.ownerName || '—'}</td>}
                   <td className="small-muted" style={{ fontSize: 12 }}>
@@ -269,6 +274,7 @@ export default function CrmFollowups() {
                     {tab === 'done' ? <span className="small-muted">{[t.outcome, t.doneNote].filter(Boolean).join(' · ') || '—'}</span> : (me.canEdit && (
                       <span style={{ display: 'flex', gap: 6 }}>
                         {t.type === 'Meeting' && <InviteButton task={t} />}
+                        <VideoButton task={t} onChanged={refresh} />
                         <select value="" onChange={(e) => { const v = e.target.value; if (v === 'pick') setMoving(t); else if (v) snooze(t, Number(v)); }} aria-label={`Snooze or move "${t.title}"`} style={{ width: 'auto', padding: '2px 6px', fontSize: 12.5 }}>
                           <option value="">Snooze…</option><option value="1">Tomorrow</option><option value="3">In 3 days</option><option value="7">Next week</option><option value="pick">Pick a date…</option>
                         </select>
@@ -282,6 +288,7 @@ export default function CrmFollowups() {
           </tbody>
         </table>
       </div>}
+      </>}
       {doing && <DoneDialog task={doing} onClose={() => setDoing(null)} onDone={() => { setDoing(null); refresh(); if (changed) changed(); }} />}
       {moving && <RescheduleDialog task={moving} onClose={() => setMoving(null)} onDone={() => { setMoving(null); refresh(); }} />}
       {adding && <NewFollowUp onClose={() => setAdding(false)} onAdded={() => { setAdding(false); refresh(); if (changed) changed(); }} />}

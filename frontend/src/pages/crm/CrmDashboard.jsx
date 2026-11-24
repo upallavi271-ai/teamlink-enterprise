@@ -12,6 +12,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, money, moneyShort, dateOf, dateTimeOf, TaskList, ACT_ICON, RecLink, RecordForm, Pill, DateField, download, istToday, ActNote } from './crmShared.jsx';
 import { TeamTargets, ForecastFunnel, CrmSettings } from './CrmReports.jsx';
+import { AiForecastCard, AnomalyCard } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
 import { TicketList } from './CrmSupport.jsx';
 import DashboardCharts from './CrmCharts.jsx';
 import ReportTables from './CrmReportTables.jsx';
@@ -445,7 +446,9 @@ export default function CrmDashboard() {
           <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>{l}</div>
         ))}
       </div>
+      {tab === 'overview' && <AnomalyCard />}
       {tab === 'overview' && <Overview mine={mine} period={period} owner={mine ? '' : owner} onTab={setTab} />}
+      {(tab === 'forecast' || (tab === 'team' && !me.seesAll)) && <AiForecastCard />}
       {tab === 'reports' && <ReportTables mine={mine} period={period} owner={mine ? '' : owner} />}
       {tab === 'activities' && <Activities mine={mine} />}
       {tab === 'team' && <TeamTargets />}

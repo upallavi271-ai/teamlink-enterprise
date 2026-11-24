@@ -174,6 +174,16 @@ const INTEGRATION_CATALOG = [
     desc: 'Create real Google Meet / Microsoft Teams links for interviews ("Create meeting link"). Google: Client ID, secret and a refresh token. Microsoft: Tenant ID, Client ID, secret and the organizer mailbox.',
     fields: [['Provider (Google / Outlook)', 'Google or Outlook'], ['Client ID', ''], ['Client secret', ''], ['Default calendar', 'primary'],
       ['Refresh token (Google)', 'Google only'], ['Tenant ID (Microsoft)', 'Microsoft only'], ['Organizer email (Microsoft)', 'Microsoft only, e.g. interviews@yourcompany.com']] },
+  // REAL (2026-11-24, CRM wave E). Each salesperson joins THEIR OWN Google / Microsoft calendar from CRM > Follow-ups > Calendar (OAuth 2.0);
+  // follow-ups go there and moves come back (crm/calendarSync.js). Off until an Admin turns on "Calendar sync" in CRM settings.
+  { id: 'crm-calendar', name: 'CRM calendar sync (Google / Microsoft)', group: 'Scheduling', glyph: '\u{1F5D3}',
+    desc: 'Lets each salesperson join their own Google Calendar or Outlook calendar to the CRM: follow-ups appear there, a meeting moved there moves in the CRM, and their other events show as busy in the CRM calendar. Google Cloud Console → APIs & Services → Credentials → OAuth client (Web), Calendar API on; Microsoft Entra → App registrations (Calendars.ReadWrite, User.Read, offline_access). Add the redirect address shown in CRM settings to the app. Nobody is invited and no mail is sent by the provider.',
+    fields: [['Google Client ID', '....apps.googleusercontent.com'], ['Google Client secret', ''], ['Microsoft Client ID', 'Application (client) ID'], ['Microsoft Client secret', ''], ['Microsoft tenant (common = any)', 'common']] },
+  // REAL (2026-11-24, CRM wave E). A Zoom meeting for a CRM Meeting follow-up (crm/workPlus.js): a Server-to-Server OAuth app in the Zoom App
+  // Marketplace (scope meeting:write). Nobody is invited by Zoom; the link goes into the CRM invite.
+  { id: 'zoom', name: 'Zoom (meetings from the CRM)', group: 'Calling', glyph: '\u{1F4F9}',
+    desc: 'Makes a Zoom meeting for a CRM Meeting follow-up ("Create video meeting"). Zoom App Marketplace → Develop → Server-to-Server OAuth app → copy the Account ID, Client ID and Client secret; give it the meeting:write scope and activate it.',
+    fields: [['Account ID', ''], ['Client ID', ''], ['Client secret', ''], ['Host email (empty = the app owner)', 'sales@yourcompany.com']] },
   { id: 'jobportal', name: 'TeamLink Job Portal', group: 'Job Boards', glyph: '\u{1F517}',
     desc: 'The candidate-facing TeamLink Job Portal — syncs candidates, applications, requirements and requirement status.',
     fields: [['Portal URL / origin', 'file:// or https://'], ['Bridge key', 'tl_job_portal_state_v1'], ['Sync frequency', 'On demand']] },
@@ -338,7 +348,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['social', 'email', 'email-inbox', 'crm-gmail', 'crm-outlook', 'crm-ads', 'ai-claude', 'ai-fast', 'webhooks', 'slack', 'teams','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['crm-calendar', 'zoom', 'social', 'email', 'email-inbox', 'crm-gmail', 'crm-outlook', 'crm-ads', 'ai-claude', 'ai-fast', 'webhooks', 'slack', 'teams','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 

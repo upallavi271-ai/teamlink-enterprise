@@ -12,6 +12,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, istToday, addDays, MarkDonePrompt } from './crmShared.jsx'; // eslint-disable-line import/no-cycle
 import { TemplatePicker, SendLater, SmsPanel, OfficeCall } from './b/MailTools.jsx'; // CRM wave B: templates, send later, SMS, the office line
+import { DictateButton } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
 
 const TABS = [['Email', '✉️ Email'], ['WhatsApp', '💬 WhatsApp'], ['SMS', '📱 SMS'], ['Call', '📞 Call']];
 const digitsOf = (v) => String(v || '').replace(/\D/g, '');
@@ -62,7 +63,7 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, i
     api.get('/crm/contact/draft', { params: body }).then((r) => {
       const d = r.data; setDraft(d);
       setTo({ Email: d.to.email || '', WhatsApp: d.to.phone || '', Call: d.to.phone || '' });
-      const inv = invite ? inviteWords(invite.when, me.meetingLink) : null; // a meeting invite: the date, the time and the company link written in
+      const inv = invite ? inviteWords(invite.when, invite.link || me.meetingLink) : null; // a meeting invite: the date, the time and the company link written in
       setSubject((initialDraft && initialDraft.subject) || (inv ? inv.subject : d.email.subject));
       setMailText((initialDraft && initialDraft.text) || (inv ? d.email.text.replace('\n\n\n\n', `\n\n${inv.mail}\n\n`) : d.email.text));
       setWaText(inv ? `${d.whatsapp.text}${inv.wa}` : d.whatsapp.text);
@@ -194,10 +195,10 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, i
           <div className="field"><label>Number</label><input style={{ fontSize: 22, fontWeight: 700, letterSpacing: 0.5 }} value={to.Call} onChange={(e) => setToFor('Call', e.target.value)} placeholder="98765 43210" aria-label="Number to call" /></div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
             {gwReady && rd.call.myPhone && <button type="button" className="btn btn-primary" disabled={busy === 'Call' || !digitsOf(to.Call)} onClick={startCall}>{busy === 'Call' ? 'Starting…' : '📞 Call now (my phone rings first)'}</button>}
-            <a className={`btn${gwReady && rd.call.myPhone ? '' : ' btn-primary'}`} href={`tel:+${intl(to.Call)}`} onClick={(e) => { if (!digitsOf(to.Call)) { e.preventDefault(); setErr('Write the number first.'); return; } setHow({ via: 'phone' }); }} aria-disabled={!digitsOf(to.Call)}>{gwReady && rd.call.myPhone ? 'Use my phone\'s dialler' : '📞 Call from my phone'}</a>
+            <a className={`btn${gwReady && rd.call.myPhone ? '' : ' btn-primary'}`} href={`tel:+${intl(to.Call)}`} onClick={(e) => { if (!digitsOf(to.Call)) { e.preventDefault(); setErr('Write the number first.'); return; } setHow({ via: 'phone', startedAt: Date.now() }); }} aria-disabled={!digitsOf(to.Call)}>{gwReady && rd.call.myPhone ? 'Use my phone\'s dialler' : '📞 Call from my phone'}</a>
             {!how && <button type="button" className="btn" onClick={() => setHow({ via: 'phone' })}>I already called: save how it went</button>}
           </div>
-          {how && <HowDidItGo record={record} body={body} via={how.via} onSaved={(items, oc) => { toast('Saved on the timeline.'); finish(); setHow(null); setSentNote('Saved.'); if (items && items.length) setAsk({ items, outcome: oc }); }} />}
+          {how && <HowDidItGo record={record} body={body} via={how.via} startedAt={how.startedAt} onSaved={(items, oc) => { toast('Saved on the timeline.'); finish(); setHow(null); setSentNote('Saved.'); if (items && items.length) setAsk({ items, outcome: oc }); }} />}
         </>
       )}
       {!me.canEdit && <div className="small-muted">Your role can read the CRM but not contact from it.</div>}
@@ -231,22 +232,36 @@ function AiDraft({ record, onText }) {
 }
 
 // after a call: what came of it, a line about it, the next follow-up - written on the record's timeline
-function HowDidItGo({ record, body, via, onSaved }) {
+function HowDidItGo({ record, body, via, startedAt, onSaved }) {
   const { me, toast } = useCrm();
   const [outcome, setOutcome] = useState('');
   const [note, setNote] = useState('');
   const [next, setNext] = useState('');
   const [busy, setBusy] = useState(false);
+  // CRM wave E (14.05): the call's length is measured by the screen - from leaving for the phone's dialler to coming back - and can be corrected
+  const [secs, setSecs] = useState(null);
+  useEffect(() => {
+    if (via !== 'phone' || !startedAt) return undefined;
+    let left = null;
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') { if (left == null) left = Date.now(); return; }
+      if (left != null) { const s = Math.round((Date.now() - left) / 1000); setSecs(s); if (s < 20) setOutcome((o) => o || 'No answer'); left = null; }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [via, startedAt]);
   const today = istToday();
   async function save() {
     if (!outcome && !note.trim()) { toast('Pick what came of it or write a line about it.'); return; }
     setBusy(true);
     try {
-      const saved = await api.post('/crm/activities', {
-        kind: 'call', [`${record.kind}Id`]: record.id, subject: `Call outcome${outcome ? `: ${outcome}` : ''}${via === 'phone' ? ' (from the phone)' : ''}`,
-        note: note.trim() || undefined, outcome: outcome || undefined,
-        followUp: next ? { dueDate: next, title: `Follow up: ${record.name || 'call'}` } : undefined,
-      });
+      const followUp = next ? { dueDate: next, title: `Follow up: ${record.name || 'call'}` } : undefined;
+      const saved = via === 'phone'
+        ? await api.post('/crm/pluse/phone-call', { kind: record.kind, id: record.id, outcome: outcome || undefined, note: note.trim() || undefined, durationSec: secs || undefined, followUp })
+        : await api.post('/crm/activities', {
+          kind: 'call', [`${record.kind}Id`]: record.id, subject: `Call outcome${outcome ? `: ${outcome}` : ''}`,
+          note: note.trim() || undefined, outcome: outcome || undefined, followUp,
+        });
       onSaved((saved.data && saved.data.openFollowUps) || [], outcome);
     } catch (e) { toast(errOf(e, 'This could not be saved.')); setBusy(false); }
   }
@@ -256,7 +271,14 @@ function HowDidItGo({ record, body, via, onSaved }) {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
         {me.lists.outcomes.map((o) => <button key={o} type="button" className={`btn btn-sm${outcome === o ? ' btn-primary' : ''}`} aria-pressed={outcome === o} onClick={() => setOutcome(outcome === o ? '' : o)}>{o}</button>)}
       </div>
-      <div className="field"><label>What happened?</label><textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Spoke to the owner, wants a quote by Friday" /></div>
+      {via === 'phone' && (
+        <div className="small-muted" style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, fontSize: 12.5 }}>
+          <span>Call length:</span>
+          <input type="number" min={0} max={240} value={secs == null ? '' : Math.round(secs / 60)} onChange={(e) => setSecs(e.target.value === '' ? null : Number(e.target.value) * 60)} placeholder="min" aria-label="Call length in minutes" style={{ width: 70 }} />
+          <span>{secs == null ? 'minutes (measured when you come back from the dialler)' : `minutes${secs < 60 ? ` (${secs} sec measured)` : ' (measured)'}`}</span>
+        </div>
+      )}
+      <div className="field"><label>What happened?</label><textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Spoke to the owner, wants a quote by Friday" /><div style={{ marginTop: 4 }}><DictateButton onText={(t) => setNote((x) => `${x}${x ? ' ' : ''}${t}`)} /></div></div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8, alignItems: 'center' }}>
         <span className="small-muted">Next follow-up:</span>
         {[['Tomorrow', 1], ['In 3 days', 3], ['Next week', 7]].map(([l, n]) => <button key={l} type="button" className={`btn btn-sm${next === addDays(today, n) ? ' btn-primary' : ''}`} onClick={() => setNext(next === addDays(today, n) ? '' : addDays(today, n))}>{l}</button>)}

@@ -13,6 +13,7 @@ import CrmMarketing from './b/CrmMarketing.jsx'; // CRM wave B: segments, journe
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import CrmLeadBoard from './CrmLeadBoard.jsx';
 import { ProductCatalog } from './CrmProducts.jsx';
+import { AddLeadFromText } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
 
 function ImportLeads({ onClose, onDone }) {
   const { me, toast } = useCrm();
@@ -158,6 +159,7 @@ export default function CrmLeads() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/leads?${new URLSearchParams(Object.entries({ q, status, stage, from, to, source, rating, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-leads-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
           {me.rights && me.rights.import && <button type="button" className="btn" onClick={() => setImporting(true)}>Import Excel</button>}
+          {me.canCreate && <AddLeadFromText onSaved={(row) => { load(); setOpen({ kind: 'lead', id: row.id }); }} />}
           {me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Lead</button>}
         </div>
       </div>

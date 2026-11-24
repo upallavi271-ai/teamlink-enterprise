@@ -9,6 +9,7 @@ import api from '../../api';
 import CrmAutoSettings from './CrmAutoSettings.jsx';
 import CrmPlusSettings from './CrmPlusSettings.jsx'; // eslint-disable-line import/no-cycle
 import CrmBSettings from './b/CrmBSettings.jsx'; // CRM wave B: the email / phone / marketing / portal switches and addresses
+import { PlusSettings } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, money, moneyShort, dateOf, RecLink, istToday } from './crmShared.jsx';
 
@@ -375,6 +376,7 @@ export function CrmSettings({ onClose, onSaved }) {
       <label style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '0 0 10px', fontWeight: 500 }}><input type="checkbox" checked={firstCall} onChange={(e) => setFirstCall(e.target.checked)} style={{ width: 'auto' }} /> Make a &quot;First call&quot; follow-up two hours after a new lead is added (typed in or from the website form, not an Excel import)</label>
       <WebsiteForm />
       <CrmAutoSettings />
+      <PlusSettings />
       <div className="section-label">Probability of each stage (%)</div>
       <div className="grid-3">
         {L.stages.filter((s) => s !== 'Won' && s !== 'Lost').map((s) => (

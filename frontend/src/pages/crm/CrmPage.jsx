@@ -19,6 +19,8 @@ import CrmLeads from './CrmLeads.jsx';
 import CrmDeals from './CrmDeals.jsx';
 import CrmAccounts from './CrmAccounts.jsx';
 import CrmFollowups from './CrmFollowups.jsx';
+import { OfflineBar } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
+import { setOfflineAllowed } from './crmOffline.js';
 import './crm.css';
 
 const PAGES = { dashboard: CrmDashboard, leads: CrmLeads, followups: CrmFollowups, deals: CrmDeals, accounts: CrmAccounts };
@@ -33,6 +35,8 @@ export default function CrmPage() {
   const reloadMe = useCallback(() => Promise.all([api.get('/crm/me'), api.get('/crm/plus/config').catch(() => null)])
     .then(([r, p]) => setMe({ ...r.data, plus: p ? p.data : null })).catch((e) => setErr(errOf(e, 'The CRM could not be opened.'))), []);
   useEffect(() => { reloadMe(); }, [reloadMe]);
+  // the offline copy (CRM wave E): this login uses the CRM; the Admin may switch the copy off (CRM settings)
+  useEffect(() => { if (me) api.get('/crm/pluse/plus-settings').then((r) => setOfflineAllowed(r.data.settings.offlineCopy !== false)).catch(() => {}); }, [me && me.userId]); // eslint-disable-line react-hooks/exhaustive-deps
   const toast = useCallback((text) => {
     seq.current += 1; const id = seq.current;
     setToasts((t) => [...t, { id, text }]);
@@ -53,7 +57,9 @@ export default function CrmPage() {
     openRecord(k, i);
     const n = new URLSearchParams(sp); n.delete('open'); setSp(n, { replace: true });
   }, [sp]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setStack([]); }, [page]);
+  // another CRM page closes the open records - but not on the first load, or a ?open= link (a bell notice, the app's shortcut) closed at once
+  const lastPage = useRef(page);
+  useEffect(() => { if (lastPage.current === page) return; lastPage.current = page; setStack([]); }, [page]);
   const ctx = useMemo(() => ({ me, toast, reloadMe, openRecord, version, changed }), [me, toast, reloadMe, openRecord, version, changed]);
 
   const Page = PAGES[page];
@@ -64,6 +70,7 @@ export default function CrmPage() {
   return (
     <CrmCtx.Provider value={ctx}>
       <div className="crm-page">
+        <OfflineBar />
         <Page />
         {stack.map((r) => <RecordPanel key={`${r.kind}:${r.id}`} kind={r.kind} id={r.id} onClose={() => setStack((s) => s.filter((x) => x !== r))} onChanged={changed} />)}
         <AskAi />

@@ -18,6 +18,7 @@ import { ProductSellBox } from './CrmProducts.jsx'; // eslint-disable-line impor
 import Conversation from './CrmConversation.jsx'; // eslint-disable-line import/no-cycle
 // wave D (2026-11-24): products, splits, team chat, history, contracts, quote versions, pay online, consent, territory (CrmPlus.jsx)
 import { plusOf, stagesOfDeal, pipelineOfDeal, fieldHidden, fieldReadOnly, DealProducts, DealTeam, Comments, DealHistory, FieldHistory, ContractsBox, QuotesPlus, PayBox, ConsentBox, TerritoryPick } from './CrmPlus.jsx'; // eslint-disable-line import/no-cycle
+import { AiPredict, MoodChip, FillFromText, VisitButton, RecordCalls, RepeatPicker, RepeatLine, VideoButton } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
 
 export const CrmCtx = createContext(null);
 export const useCrm = () => useContext(CrmCtx);
@@ -128,7 +129,7 @@ export function InviteButton({ task, record }) {
   return (
     <>
       <button type="button" className="btn btn-sm" title="Opens the email with the date, time and the company meeting link written in; you press Send" onClick={(e) => { e.stopPropagation(); setOpen(true); }}>📅 Send invite</button>
-      {open && <CrmContactDialog record={rec} channel="Email" invite={{ when: meetingWhen(task.dueDate, task.dueTime) }} onClose={() => setOpen(false)} />}
+      {open && <CrmContactDialog record={rec} channel="Email" invite={{ when: meetingWhen(task.dueDate, task.dueTime), link: task.meetingUrl || undefined }} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -512,12 +513,13 @@ export function TaskList({ tasks, link, onChanged, showRecord, canEdit = true })
   const [inApp, setInApp] = useState(true);
   const [wa, setWa] = useState(false);
   const [sms, setSms] = useState(false);
+  const [repeat, setRepeat] = useState({ rule: '', until: '' });
   const [doing, setDoing] = useState(null);
   const [busy, setBusy] = useState(false);
   const today = istToday();
   async function add() {
     setBusy(true);
-    try { await api.post('/crm/tasks', { title, dueDate: due, dueTime: time || undefined, type, priority, remindBefore: Number(before), notifyApp: inApp, notifyWhatsapp: wa, notifySms: sms, ...link }); setTitle(''); setTime(''); toast('Follow-up added.'); onChanged(); } catch (e) { toast(errOf(e, 'The follow-up could not be added.')); } finally { setBusy(false); }
+    try { await api.post('/crm/tasks', { title, dueDate: due, dueTime: time || undefined, type, priority, remindBefore: Number(before), notifyApp: inApp, notifyWhatsapp: wa, notifySms: sms, repeat: repeat.rule || undefined, repeatUntil: repeat.until || undefined, ...link }); setTitle(''); setTime(''); setRepeat({ rule: '', until: '' }); toast('Follow-up added.'); onChanged(); } catch (e) { toast(errOf(e, 'The follow-up could not be added.')); } finally { setBusy(false); }
   }
   return (
     <div>
@@ -537,6 +539,7 @@ export function TaskList({ tasks, link, onChanged, showRecord, canEdit = true })
             <label><input type="checkbox" checked={inApp} onChange={(e) => setInApp(e.target.checked)} style={{ width: 'auto' }} /> In app</label>
             <label><input type="checkbox" checked={wa} onChange={(e) => setWa(e.target.checked)} style={{ width: 'auto' }} /> WhatsApp</label>
             <label><input type="checkbox" checked={sms} onChange={(e) => setSms(e.target.checked)} style={{ width: 'auto' }} /> SMS</label>
+            <RepeatPicker value={repeat.rule} until={repeat.until} onChange={(rule, until) => setRepeat({ rule, until })} />
           </div>
         </div>
       )}
@@ -553,7 +556,8 @@ export function TaskList({ tasks, link, onChanged, showRecord, canEdit = true })
                 <span style={{ textDecoration: t.status === 'Done' ? 'line-through' : undefined }}>{t.title}</span>
                 {t.type && t.type !== 'Call' && <span className="small-muted"> · {t.type}</span>}
                 {t.status === 'Open' && (t.priority === 'High' || t.priority === 'Low') && <> <PriorityPill v={t.priority} /></>}
-                {t.status === 'Open' && t.type === 'Meeting' && canEdit && <> <InviteButton task={t} record={link ? { kind: Object.keys(link)[0].replace('Id', ''), id: Object.values(link)[0], name: '' } : recordOfTask(t)} /></>}
+                {t.status === 'Open' && t.type === 'Meeting' && canEdit && <> <InviteButton task={t} record={link ? { kind: Object.keys(link)[0].replace('Id', ''), id: Object.values(link)[0], name: '' } : recordOfTask(t)} /> <VideoButton task={t} onChanged={onChanged} /></>}
+                <RepeatLine task={t} canEdit={canEdit} onChanged={onChanged} />
               </div>
               <div className="small-muted" style={{ fontSize: 11.5 }}>
                 <span style={{ color: late ? 'var(--red)' : undefined, fontWeight: late ? 600 : undefined }}>{t.dueDate === today ? 'Today' : dateOf(t.dueDate)}{t.dueTime ? ` ${t.dueTime}` : ''}{late ? ` · ${daysLate(t.dueDate)} day${daysLate(t.dueDate) === 1 ? '' : 's'} late` : ''}</span>
@@ -1212,6 +1216,8 @@ function AiInsight({ kind, id, refresh, onChanged }) {
           <details style={{ marginTop: 4 }}><summary className="small-muted" style={{ fontSize: 11.5, cursor: 'pointer' }}>Why this score</summary>{d.reasons.map((r) => <div key={r.why} className="small-muted" style={{ fontSize: 12 }}>{r.pts > 0 ? `+${r.pts}` : r.pts || ''} {r.why}</div>)}</details>
         </div>
       </div>
+      <AiPredict kind={kind} id={id} refresh={refresh} />
+      <MoodChip kind={kind} id={id} refresh={refresh} />
       {meeting && <MeetingAgent kind={kind} id={id} onClose={() => setMeeting(false)} onChanged={onChanged} onEmail={(draft) => { setMeeting(false); setCompose(draft); }} />}
       {compose && <CrmContactDialog record={{ kind, id }} channel="Email" initialDraft={compose} onClose={() => setCompose(null)} onDone={onChanged} />}
       {out && (
@@ -1328,7 +1334,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
       ['Next follow-up', nextTask ? <span style={{ color: nextTask.dueDate < today ? 'var(--red)' : undefined, fontWeight: nextTask.dueDate <= today ? 600 : undefined }}>{nextTask.dueDate === today ? 'Today' : dateOf(nextTask.dueDate)} · {nextTask.title}</span> : 'None set'],
       ['Last touched', lastAct ? `${dateTimeOf(lastAct.at)}${lastAct.byName ? ` · ${lastAct.byName}` : ''}` : 'Never'],
     ].filter(([, v]) => v);
-    const tabs = [['overview', 'Overview'], ...(kind === 'lead' ? [['products', 'Products & demo']] : []), ...(kind === 'deal' ? [['lines', 'Products']] : []), ...(kind === 'lead' || kind === 'deal' ? [['conversation', 'Conversation']] : []), ['activities', `Activities (${(d.activities || []).length})`], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice & orders'], ['team', 'Team chat']] : [['comments', 'Comments']]), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ...(kind === 'lead' ? [['consent', 'Consent']] : []), ['engage', 'Web & engagement'], ['history', 'History'], ['notes', 'Notes']];
+    const tabs = [['overview', 'Overview'], ...(kind === 'lead' ? [['products', 'Products & demo']] : []), ...(kind === 'deal' ? [['lines', 'Products']] : []), ...(kind === 'lead' || kind === 'deal' ? [['conversation', 'Conversation']] : []), ['activities', `Activities (${(d.activities || []).length})`], ['calls', 'Calls'], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice & orders'], ['team', 'Team chat']] : [['comments', 'Comments']]), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ...(kind === 'lead' ? [['consent', 'Consent']] : []), ['engage', 'Web & engagement'], ['history', 'History'], ['notes', 'Notes']];
     const kindPill = kind === 'lead' ? row.status : kind === 'deal' ? row.stage : row.kind;
     body = (
       <>
@@ -1354,6 +1360,8 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <QuickContact phone={contactLine && contactLine.phone ? contactLine.phone : row.phone} email={contactLine && contactLine.email ? contactLine.email : row.email} record={d.canEdit ? { kind, id: row.id, name: row.contactName || row.name || row.company || row.title } : null} onDone={changed} />
             {d.canEdit && <button type="button" className="btn btn-sm" onClick={() => setEditing({ kind, row })}>Edit</button>}
+            {d.canEdit && <FillFromText kind={kind} id={row.id} onApplied={changed} />}
+            {d.canEdit && <VisitButton kind={kind} id={row.id} name={name} onChanged={changed} />}
             {kind === 'deal' && row.approvalStatus === 'Pending' && me.canAssign && (
               <>
                 <button type="button" className="btn btn-primary btn-sm" title={`Approve the ${row.discountPercent || 0}% discount`} onClick={() => decideDiscount('approve')}>Approve discount</button>
@@ -1449,6 +1457,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
           </>
         )}
         {tab === 'conversation' && (kind === 'lead' || kind === 'deal') && <Conversation kind={kind} id={row.id} onChanged={changed} />}
+        {tab === 'calls' && <RecordCalls kind={kind} id={row.id} canEdit={d.canEdit} onChanged={changed} />}
         {tab === 'products' && kind === 'lead' && <ProductSellBox lead={row} canEdit={d.canEdit} onChanged={changed} />}
         {tab === 'followups' && <TaskList tasks={d.tasks || []} link={link} onChanged={changed} canEdit={d.canEdit} />}
         {tab === 'proposals' && kind === 'deal' && <><QuotesPlus deal={row} onChanged={changed} /><ProposalBox dealId={row.id} onChanged={changed} /><DealFiles dealId={row.id} onChanged={changed} /></>}

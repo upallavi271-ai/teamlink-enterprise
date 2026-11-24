@@ -1,0 +1,35 @@
+/* CRM wave E (2026-11-24): the learned score, mood, forecast, visits, calendar, offline bar. Phone width first: everything wraps. */
+.crmx-predict{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px dashed var(--line);margin-top:8px;padding-top:8px}
+.crmx-predict-num{font-size:26px;font-weight:800;min-width:64px;text-align:center}
+.crmx-reasons{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.crmx-reasons span{font-size:11.5px;padding:2px 7px;border-radius:10px;background:var(--line-soft)}
+.crmx-up{color:var(--teal)}
+.crmx-down{color:var(--red)}
+.crmx-mood{margin-top:6px}
+.crmx-mood summary{cursor:pointer;list-style:none;font-size:12.5px}
+.crmx-mood summary::-webkit-details-marker{display:none}
+.crmx-mood-chip{display:inline-block;padding:2px 9px;border-radius:10px;font-weight:600;background:var(--line-soft)}
+.crmx-mood-chip.positive{background:rgba(13,148,136,.12);color:var(--teal)}
+.crmx-mood-chip.negative{background:rgba(220,38,38,.1);color:var(--red)}
+.crmx-repeat{font-size:11.5px;color:var(--ink-soft);display:inline-block;margin-left:4px}
+.crmx-card-pick{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.crmx-forecast{padding:12px;margin-bottom:12px}
+.crmx-fc-months{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:8px}
+.crmx-fc-month{border:1px solid var(--line);border-radius:8px;padding:8px;min-width:0}
+.crmx-fc-big{font-size:19px;font-weight:800;overflow-wrap:anywhere}
+.crmx-fc-bars{display:flex;gap:6px;align-items:flex-end;height:90px;margin:6px 0 8px}
+.crmx-fc-bars>div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:0}
+.crmx-fc-bars span{display:block;width:70%;max-width:34px;background:var(--brand, var(--navy));border-radius:4px 4px 0 0;min-height:2px}
+.crmx-fc-bars .f span{background:repeating-linear-gradient(45deg,var(--teal),var(--teal) 4px,rgba(13,148,136,.55) 4px,rgba(13,148,136,.55) 8px)}
+.crmx-fc-bars i{font-style:normal;font-size:10.5px;color:var(--ink-soft);margin-top:2px}
+.crmx-anomaly{padding:10px 12px;margin-bottom:12px;border-left:4px solid var(--amber)}
+.crmx-cal{padding:10px 12px;margin-bottom:10px}
+.crmx-install{display:flex;gap:10px;align-items:center;padding:10px 12px;margin-bottom:10px;flex-wrap:wrap}
+.crmx-install>span{font-size:22px}
+.crmx-offline{position:sticky;top:0;z-index:30;background:#fff7e6;border:1px solid #f5c26b;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.crmx-offline.off{background:#fdecec;border-color:#f3a5a5}
+@media(max-width:640px){
+  .crmx-fc-months{grid-template-columns:1fr}
+  .crmx-predict-num{font-size:22px;min-width:52px}
+  .crm-rec-head .btn-sm{padding:5px 8px}
+}

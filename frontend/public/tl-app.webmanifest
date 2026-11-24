@@ -2,7 +2,7 @@
   "id": "/mobile",
   "name": "TeamLink Enterprise",
   "short_name": "TeamLink",
-  "description": "TeamLink on your phone: check in, approvals, follow-ups and alerts.",
+  "description": "TeamLink on your phone: check in, approvals, CRM follow-ups and leads, and alerts.",
   "lang": "en",
   "start_url": "/?source=app",
   "scope": "/",
@@ -17,6 +17,8 @@
   ],
   "shortcuts": [
     { "name": "Check in / out", "short_name": "Check in", "url": "/attendance?source=app", "icons": [{ "src": "/tl-app-icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
-    { "name": "Notifications", "short_name": "Alerts", "url": "/admin/notifications?source=app", "icons": [{ "src": "/tl-app-icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+    { "name": "Notifications", "short_name": "Alerts", "url": "/admin/notifications?source=app", "icons": [{ "src": "/tl-app-icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "CRM follow-ups", "short_name": "Follow-ups", "url": "/crm/followups?source=app", "icons": [{ "src": "/tl-app-icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Add a CRM lead", "short_name": "New lead", "url": "/crm/leads?add=1&source=app", "icons": [{ "src": "/tl-app-icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
   ]
 }

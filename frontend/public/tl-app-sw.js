@@ -9,9 +9,16 @@
  * old screen), and it touches only page loads (navigations): scripts, styles, images and /api calls go straight to the network as if this
  * worker did not exist. It updates itself the moment a new copy is published.
  *
+ *   3. THE CRM WITH NO SIGNAL (CRM wave E, 2026-11-24): a /crm page and the script / style files it loads are KEPT after each normal load, and
+ *                     used ONLY when the network cannot be reached at all - so a salesperson in a basement can still open the CRM and read
+ *                     the lists the screen saved (frontend/src/pages/crm/crmOffline.js). With a network it is always the live site: network
+ *                     first, the kept copy is never preferred. Nothing from /api is kept here.
+ *
  * Its address (/tl-app-sw.js) is not the Job Portal's (/teamlink-sw.js): the two never replace each other.
  */
 const CACHE = 'tl-app-offline-v1';
+const SHELL = 'tl-app-crm-shell-v1'; // the CRM page + its /assets/ files, for no-signal use only
+const SHELL_MAX = 160;
 const OFFLINE = '/tl-app-offline.html';
 
 self.addEventListener('install', (event) => {
@@ -22,17 +29,44 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    try { for (const k of await caches.keys()) { if (k !== CACHE && k.startsWith('tl-app-')) await caches.delete(k); } } catch (e) { /* nothing to clean */ }
+    try { for (const k of await caches.keys()) { if (k !== CACHE && k !== SHELL && k.startsWith('tl-app-')) await caches.delete(k); } } catch (e) { /* nothing to clean */ }
     await self.clients.claim();
   })());
 });
 
+const keep = async (key, res) => {
+  try {
+    const c = await caches.open(SHELL);
+    await c.put(key, res);
+    const keys = await c.keys();
+    for (const k of keys.slice(0, Math.max(0, keys.length - SHELL_MAX))) await c.delete(k);
+  } catch (e) { /* storage full or blocked: the live site still works */ }
+};
+const fromCrm = async (event) => {
+  try { const c = event.clientId ? await self.clients.get(event.clientId) : null; return !!c && new URL(c.url).pathname.startsWith('/crm'); } catch (e) { return false; }
+};
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.mode !== 'navigate') return; // not a page load: the browser handles it itself
-  event.respondWith(
-    fetch(req).catch(async () => (await caches.match(OFFLINE)) || Response.error()),
-  );
+  let url = null;
+  try { url = new URL(req.url); } catch (e) { return; }
+  if (req.mode === 'navigate') {
+    if (url.origin === self.location.origin && url.pathname.startsWith('/crm')) {
+      // the CRM: the live page, kept for later; with no network at all, the kept page (then the offline page)
+      event.respondWith(fetch(req).then((res) => { if (res.ok) event.waitUntil(keep('/crm-shell', res.clone())); return res; })
+        .catch(async () => (await caches.match('/crm-shell')) || (await caches.match(OFFLINE)) || Response.error()));
+      return;
+    }
+    event.respondWith(fetch(req).catch(async () => (await caches.match(OFFLINE)) || Response.error()));
+    return;
+  }
+  // the hashed script / style files a CRM page loads: always fetched fresh; kept only to open the CRM with no signal
+  if (req.method === 'GET' && url.origin === self.location.origin && url.pathname.startsWith('/assets/')) {
+    event.respondWith(fetch(req).then((res) => {
+      if (res.ok) { const copy = res.clone(); event.waitUntil(fromCrm(event).then((crm) => (crm ? keep(req, copy) : null))); }
+      return res;
+    }).catch(async () => (await caches.match(req)) || Response.error()));
+  }
 });
 
 // ---- phone alerts ---------------------------------------------------------

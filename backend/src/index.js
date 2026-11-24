@@ -450,6 +450,7 @@ app.use('/api/ai-calling', require('./routes/aiCalling'));
 // KAVYA (2026-11-12): the Telugu / Hindi / English AI caller on this server - hand ATS candidates to it and read the results (routes/kavya.js, calling/kavya/*).
 app.use('/api/kavya', require('./routes/kavya'));
 // THE SALES CRM (2026-11-02): leads, accounts & contacts, deals pipeline, activities, follow-ups, dashboard (routes/crm.js, crm/*).
+app.use('/api/crm/pluse', require('./routes/crmPlusE')); // CRM wave E: AI, mobile, calendar, visits, repeating follow-ups (routes/crmPlusE.js)
 app.use('/api/crm', require('./routes/crm'));
 // THE CRM API FOR OUTSIDE SYSTEMS (CRM wave A, 2026-11-24): its own keys, off until an Admin turns it on; + the private calendar feed (routes/crmApi.js)
 app.use('/api/crm-api', require('./routes/crmApi'));

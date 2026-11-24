@@ -808,7 +808,8 @@ async function addTaskRow(user, r, link, body) {
   const own = await pickOwner(user, r, clip(body.ownerId, 60) || link.row.ownerId);
   const now = DB.nowIso();
   const lk = linksOf(link.kind, link.row);
-  const task = await insert('CrmTask', { id: newId('task'), title, dueDate, dueTime, ...(await require('./sales').taskExtras(body)), status: 'Open', leadId: lk.leadId || null, accountId: lk.accountId || null, dealId: lk.dealId || null, ownerId: (own || { id: user.id }).id, ownerName: (own || { name: user.name }).name || null, createdById: user.id, createdAt: now, updatedAt: now });
+  await require('./plusE').ensure(); // wave E: a follow-up may repeat (crm/workPlus.js)
+  const task = await insert('CrmTask', { id: newId('task'), title, dueDate, dueTime, ...(await require('./sales').taskExtras(body)), ...require('./workPlus').extras(body), status: 'Open', leadId: lk.leadId || null, accountId: lk.accountId || null, dealId: lk.dealId || null, ownerId: (own || { id: user.id }).id, ownerName: (own || { name: user.name }).name || null, createdById: user.id, createdAt: now, updatedAt: now });
   return { task };
 }
 
@@ -899,8 +900,9 @@ async function finishTask(user, id, input) {
       ownerId: row.ownerId, ownerName: row.ownerName, createdById: user.id, createdAt: now, updatedAt: now,
     });
   }
+  const repeated = await require('./workPlus').afterDone(row.id).catch(() => null); // wave E: the next one of a repeating follow-up
   emit('task.done', { kind: 'task', record: task, before: row, user });
-  return okBody({ ok: true, task, next, activity });
+  return okBody({ ok: true, task, next, activity, repeated });
 }
 
 // Follow-ups in my scope: overdue, today, upcoming (7 days), or done (last 30 days). mine=1: only mine.
