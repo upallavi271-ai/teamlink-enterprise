@@ -94,8 +94,8 @@ export default function CrmDeals() {
           <h1>Deals</h1>
           <div className="page-sub">{rows ? `${openDeals.length} open · ${money(openDeals.reduce((a, d) => a + (d.value || 0), 0))} in the pipeline` : 'The sales pipeline'}</div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div className="btn-group" role="group" aria-label="View">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', maxWidth: '100%' }}>
+          <div className="btn-group" role="group" aria-label="View" style={{ flexWrap: 'wrap' }}>
             <button type="button" className={`btn btn-sm${view === 'board' ? ' btn-primary' : ''}`} onClick={() => setView('board')}>Board</button>
             <button type="button" className={`btn btn-sm${view === 'list' ? ' btn-primary' : ''}`} onClick={() => setView('list')}>List</button>
             <button type="button" className={`btn btn-sm${view === 'invoices' ? ' btn-primary' : ''}`} onClick={() => setView('invoices')}>Invoices</button>
