@@ -355,6 +355,9 @@ LIVE_CHANNELS.push(...require('../crm/plus/channels').LIVE); // eslint-disable-l
 // ATS wave 2 X (2026-11-25): the VMS connector and the contract-billing accounting push (utils/staffingX/channels.js)
 INTEGRATION_CATALOG.push(...require('./staffingX/channels').CHANNELS); // eslint-disable-line global-require
 LIVE_CHANNELS.push(...require('./staffingX/channels').LIVE); // eslint-disable-line global-require
+// ATS wave 2 builder Y (2026-11-25): meeting bot, Naukri Resdex, foundit, LinkedIn RSC, people & company data (utils/atsY/catalog.js)
+INTEGRATION_CATALOG.push(...require('./atsY/catalog').CATALOG); // eslint-disable-line global-require
+LIVE_CHANNELS.push(...require('./atsY/catalog').CATALOG.map((c) => c.id)); // eslint-disable-line global-require
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 

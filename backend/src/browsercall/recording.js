@@ -97,7 +97,9 @@ function pcm16kFromWav(buf) {
   const w = R.wavToPcm(buf);
   return { pcm: R.resample(w.pcm, w.rate, 16000), rate: 16000 };
 }
-async function transcribe(wavBuf, mp3Path) {
+// opts (ATS wave 2 Y, 2026-11-25): { mime, fileName } of a recording that is neither WAV nor MP3 (an interview's webm / m4a / ogg / mp4 voice
+// note or upload), so Groq reads it by its own format. Only the Groq path takes such a file; the Whisper server needs a WAV.
+async function transcribe(wavBuf, mp3Path, opts = {}) {
   if (sandbox()) {
     if (process.env.BROWSER_CALL_FAKE_STT) return { text: String(process.env.BROWSER_CALL_FAKE_STT), source: 'Test transcriber (sandbox)' };
     return { text: '', reason: 'Transcript not available: this is a test copy, the recording is not sent anywhere.' };
@@ -112,7 +114,8 @@ async function transcribe(wavBuf, mp3Path) {
       const data = file ? fs.readFileSync(file) : wavBuf;
       const ask = async (what) => {
         const body = new FormData();
-        body.append('file', new Blob([data], { type: file ? 'audio/mpeg' : 'audio/wav' }), file ? 'call.mp3' : 'call.wav');
+        const other = !file && opts && opts.mime && !/wav/i.test(opts.mime);
+        body.append('file', new Blob([data], { type: file ? 'audio/mpeg' : (other ? opts.mime : 'audio/wav') }), file ? 'call.mp3' : (other ? (opts.fileName || 'recording.webm') : 'call.wav'));
         body.append('model', 'whisper-large-v3');
         body.append('response_format', 'verbose_json');
         body.append('temperature', '0');
@@ -140,7 +143,7 @@ async function transcribe(wavBuf, mp3Path) {
       errors.push('Groq Whisper: heard nothing');
     } catch (e) { errors.push(`Groq Whisper: ${clip(String(e.message).replace(key, '•••'), 80)}`); }
   }
-  if (process.env.AI_VOICE_WHISPER_URL && wavBuf) {
+  if (process.env.AI_VOICE_WHISPER_URL && wavBuf && !(opts && opts.mime && !/wav/i.test(opts.mime))) {
     try {
       const R = require('../calling/voice/engines'); // eslint-disable-line global-require
       const wh = R.whisperHttp({ url: process.env.AI_VOICE_WHISPER_URL, key: process.env.AI_VOICE_KEY || '' });

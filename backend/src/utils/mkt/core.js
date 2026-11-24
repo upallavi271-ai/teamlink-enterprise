@@ -187,14 +187,18 @@ async function aiText(system, user, { maxTokens = 700, timeoutMs = 20000 } = {})
 // The app's own engines (calling/voice/engines.js through the gateway). Long recordings are cut into 20-second pieces.
 // -> { text, source } | { error }
 const SPEECH_MAX = 25 * 1024 * 1024;
-async function transcribe(buf, lang = 'en') {
+// ATS wave 2 Y (2026-11-25): FIRST the Groq Whisper path the browser-call recordings use (utils/atsY/speech.js -> browsercall/recording.js),
+// so interviews need no AI_VOICE_WHISPER_URL and no new account; the engines below stay as the second try. meta = { mime, fileName }.
+async function transcribe(buf, lang = 'en', meta = {}) {
   const NAME = { en: 'English', te: 'Telugu', hi: 'Hindi' };
   if (!Buffer.isBuffer(buf) || buf.length < 1500) return { error: 'The recording is empty.' };
-  if (isSandbox()) return { error: 'Speech to text does not run in the test sandbox. Paste the transcript instead.' };
+  const first = await require('../atsY/speech').transcribeMedia(buf, meta || {}).catch((e) => ({ error: e.message })); // eslint-disable-line global-require
+  if (first && first.text) return { text: first.text, source: first.source };
+  if (isSandbox()) return { error: (first && first.error) || 'Speech to text does not run in the test sandbox. Paste the transcript instead.' };
   let E;
   try { E = require('../../calling/voice/gateway').engines(); } catch { E = null; } // eslint-disable-line global-require
   if (!E || !E.stt || !(process.env.AI_VOICE_WHISPER_URL || process.env.AI_VOICE_STT_URL)) {
-    return { error: 'This server has no speech-to-text engine switched on (AI_VOICE_WHISPER_URL). Paste the transcript instead.' };
+    return { error: (first && first.error) || 'This server has no speech-to-text set up (a Groq key in Administration > Integrations > Fast AI). Paste the transcript instead.' };
   }
   try {
     const R = require('../../calling/voice/engines'); // eslint-disable-line global-require
