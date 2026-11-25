@@ -32,6 +32,7 @@ const Comp = require('../marketing/competitors');
 const PlanRem = require('../marketing/planReminders');
 const Blog = require('../marketing/blogPlanner');
 const Onb = require('../marketing/onboarding');
+const Revision = require('../marketing/revision');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -53,7 +54,7 @@ router.get('/meta', wrap(async (req, res) => {
     channels: C.CHANNELS, goals: C.GOALS, tones: St.VOICES, languages: Cfg.LANGUAGES,
     ai: await AI.status(),
     canWrite: A.has('mayAiMarketing')(u), canApproveAny: A.has('mayAiApprove')(u) || A.isAdmin(u), isAdmin: A.isAdmin(u),
-    limits: { aiDailyPerUser: set.aiDailyPerUser, aiMonthlyCap: set.aiMonthlyCap, selfApprove: set.selfApprove, clientRequired: set.clientRequired, clientFor: set.clientFor, autoPostAllowed: set.autoPostAllowed, clientNotify: set.clientNotify },
+    limits: { aiDailyPerUser: set.aiDailyPerUser, aiMonthlyCap: set.aiMonthlyCap, selfApprove: set.selfApprove, clientRequired: set.clientRequired, clientFor: set.clientFor, autoPostAllowed: set.autoPostAllowed, autoRevise: set.autoRevise, clientNotify: set.clientNotify },
   });
 }));
 
@@ -149,6 +150,7 @@ router.get('/images/meta', wrap(async (req, res) => res.json(await Img.meta(req.
 router.get('/images', wrap(async (req, res) => {
   const out = await Img.list(req.user, { status: String(req.query.status || ''), kind: ['image', 'video'].includes(req.query.kind) ? req.query.kind : '' });
   out.items = await CR.attach('image', out.items);
+  out.items = await Revision.attach(out.items); // the latest automatic revision of each picture: status, version, the client's words (marketing/revision.js)
   const used = await require('../marketing/mediaUse').countsFor(out.items.map((x) => x.id)).catch(() => ({})); // how many campaigns carried each item and to how many people
   out.items = out.items.map((x) => ({ ...x, uses: used[x.id] || { campaigns: 0, recipients: 0 } }));
   res.json(out);
@@ -182,6 +184,15 @@ router.get('/images/:id/file', wrap(async (req, res) => {
   if (req.query.download === '1') res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(f.name)}"`);
   return res.sendFile(f.path);
 }));
+// the changes a client asked for on one picture and what TeamLink did (marketing/revision.js): the history, any version of the picture (0 = the original, kept for good), and Try again
+router.get('/images/:id/revisions', wrap(async (req, res) => send(res, await Revision.history(req.user, req.params.id))));
+router.get('/images/:id/versions/:n/file', wrap(async (req, res) => {
+  const f = await Img.versionFile(req.user, req.params.id, req.params.n);
+  if (!f) return res.status(404).json({ error: 'This version was not found.' });
+  res.setHeader('Content-Type', f.mime); res.setHeader('Cache-Control', 'private, max-age=600');
+  return res.sendFile(f.path);
+}));
+router.post('/revisions/:id/retry', mustWrite, wrap(async (req, res) => send(res, await Revision.retryJob(req.user, req.params.id, siteOf(req)))));
 router.put('/images/:id', mustWrite, wrap(async (req, res) => send(res, await Img.update(req.user, req.params.id, req.body || {}))));
 router.delete('/images/:id', mustWrite, wrap(async (req, res) => send(res, await Img.remove(req.user, req.params.id))));
 router.post('/images/:id/submit', mustWrite, wrap(async (req, res) => send(res, await Img.submit(req.user, req.params.id))));

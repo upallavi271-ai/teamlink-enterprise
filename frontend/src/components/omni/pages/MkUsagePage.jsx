@@ -11,11 +11,11 @@ export default function MkUsagePage() {
   const { toast } = useOmni();
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
-  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'], autoPostAllowed: false, accessLogin: '', accessBusinessId: '', autoMake: 'off', clientNotify: { auto: true, whatsapp: true, email: true }, waTemplates: {} });
+  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'], autoPostAllowed: false, autoRevise: true, accessLogin: '', accessBusinessId: '', autoMake: 'off', clientNotify: { auto: true, whatsapp: true, email: true }, waTemplates: {} });
   const [busy, setBusy] = useState(false);
   const [ways, setWays] = useState(null); // is WhatsApp / email connected (what the "tell the client" switch can really use)
   const [roles, setRoles] = useState(null); // the Admin's table: who sees what in AI Marketing (a non-Admin gets a refusal and sees nothing here)
-  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'], autoPostAllowed: !!x.settings.autoPostAllowed, accessLogin: x.settings.accessLogin || '', accessBusinessId: x.settings.accessBusinessId || '', autoMake: x.settings.autoMake || 'off', clientNotify: x.settings.clientNotify || { auto: true, whatsapp: true, email: true }, waTemplates: x.settings.waTemplates || {} }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
+  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'], autoPostAllowed: !!x.settings.autoPostAllowed, autoRevise: x.settings.autoRevise !== false, accessLogin: x.settings.accessLogin || '', accessBusinessId: x.settings.accessBusinessId || '', autoMake: x.settings.autoMake || 'off', clientNotify: x.settings.clientNotify || { auto: true, whatsapp: true, email: true }, waTemplates: x.settings.waTemplates || {} }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
   useEffect(() => { load(); omni.get('/gs/marketing/projects/notify').then(setWays).catch(() => setWays(null)); omni.get('/gs/marketing/roles').then((x) => setRoles(x.roles)).catch(() => setRoles(null)); }, [load]);
   if (err && !d) return <Banner tone="error">{err}</Banner>;
   if (!d) return <div className="card panel">Loading…</div>;
@@ -70,6 +70,10 @@ export default function MkUsagePage() {
           <div className="form-grid">
             <Field label="ONLY A CLIENT CAN APPROVE" full>
               <select value={lim.clientRequired ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, clientRequired: e.target.value === 'yes' })}><option value="no">Off: my team approves</option><option value="yes">On: only the client approves</option></select>
+            </Field>
+            <Field label="WHEN A CLIENT ASKS FOR CHANGES ON A BANNER" full>
+              <select value={lim.autoRevise ? 'auto' : 'person'} onChange={(e) => setLim({ ...lim, autoRevise: e.target.value === 'auto' })}><option value="auto">TeamLink changes it by itself and sends it to the client again (up to 3 rounds)</option><option value="person">A person changes it: the sender is told what the client wrote</option></select>
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 3 }}>It understands the usual requests (the website link on one line or under the headline, remove or change a line, "change X to Y", a colour). If it does not understand, nothing is sent and the sender is told.</div>
             </Field>
             {lim.clientRequired ? (
               <Field label="THE CLIENT MUST APPROVE" full>

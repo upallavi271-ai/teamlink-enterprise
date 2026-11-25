@@ -55,7 +55,7 @@ export default function ClientReviewPage({ token: tokenProp = '', embedded = fal
     setBusy(true);
     try { const res = await api.post(`/public/mk-review/${encodeURIComponent(token)}/decision`, { decision, name: name.trim(), comment: comment.trim() }); setDone(res.data.ok || 'Thank you.'); load(); if (onChanged) onChanged(); } catch (e) { setErr(errOf(e, 'It could not be sent. Please try again.')); } finally { setBusy(false); }
   };
-  const fileUrl = `/api/public/mk-review/${encodeURIComponent(token)}/file`;
+  const fileUrl = `/api/public/mk-review/${encodeURIComponent(token)}/file${item && item.version > 1 ? `?v=${item.version}` : ''}`; // the same link shows the newest version after the changes the client asked for
 
   return (
     <div style={page}>
@@ -67,7 +67,7 @@ export default function ClientReviewPage({ token: tokenProp = '', embedded = fal
         </div>
       </div>
       <div style={{ ...card, marginTop: -34 }}>
-        <h2 style={{ fontSize: 18, margin: '0 0 6px', color: '#1c2a24', fontFamily: 'inherit' }}>{r.itemTitle}</h2>
+        <h2 style={{ fontSize: 18, margin: '0 0 6px', color: '#1c2a24', fontFamily: 'inherit' }}>{r.itemTitle}{item && item.version > 1 ? <span style={{ fontSize: 13, color: '#15803d', marginLeft: 8 }}>Version {item.version} (with your changes)</span> : null}</h2>
         {r.message ? <p style={{ margin: '0 0 12px', lineHeight: 1.6, background: '#f4f6f5', borderRadius: 10, padding: '10px 12px' }}>{r.message}</p> : null}
 
         {!item ? <p style={{ lineHeight: 1.6 }}>This content was removed by the sender. Please ask for a new link.</p> : null}

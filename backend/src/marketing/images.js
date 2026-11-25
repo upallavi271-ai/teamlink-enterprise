@@ -37,7 +37,8 @@ async function ensure() {
   if (okAt && Date.now() - okAt < 600000) return true;
   try {
     for (const sql of DDL) await S.run(sql); // eslint-disable-line no-await-in-loop
-    try { await S.run(`ALTER TABLE "${TABLE}" ADD COLUMN "projectId" TEXT`); } catch { /* the column is already there */ } // 2026-11-14: made for a client project (marketing/projects.js)
+    try { await S.run(`ALTER TABLE "${TABLE}" ADD COLUMN "projectId" TEXT`); } catch { /* the column is already there */ }
+    try { await S.run(`ALTER TABLE "${TABLE}" ADD COLUMN "spec" TEXT`); } catch { /* the column is already there */ } // 2026-11-25: the look of a designed banner, so it can be changed and made again (reviseBanner) // 2026-11-14: made for a client project (marketing/projects.js)
     // raw clips no longer wait for anybody's approval: the ones already waiting (or saved as drafts) become ready (idempotent)
     try { const now = Date.now(); await S.run(`UPDATE "${TABLE}" SET status = 'approved', decidedAt = ?, decidedByName = ?, updatedAt = ? WHERE style = 'clip' AND status IN ('draft', 'waiting', 'changes') AND deletedAt IS NULL`, now, RAW_OK, now); } catch { /* the table is not ready yet */ }
     await AI.ensure(); okAt = Date.now(); return true;
@@ -347,6 +348,7 @@ const GATED_WORDS = (r) => `Your company requires the CLIENT to approve ${isVide
 function view(u, r, set) {
   return {
     needsClient: gated(set, r), canClient: mayWrite(u) && mine(u, r) && r.style !== 'clip', projectId: r.projectId || '',
+    version: (Number((S.parse(r.spec, {}) || {}).rev) || 0) + 1, // 1 = the original; each change a client asked for makes the next version (marketing/revision.js)
     id: r.id, title: r.title, prompt: r.prompt, headline: r.headline || '', style: r.style || '', aspect: r.aspect || '1:1', model: r.model || '', withLogo: S.num(r.withLogo) === 1,
     mime: r.mime, kind: isVideo(r) ? 'video' : 'image',
     bytes: S.num(r.bytes), demo: S.num(r.demo) === 1, status: r.status, note: r.note || '', department: r.department || '', createdByName: r.createdByName || '', mine: r.createdById === u.id,
@@ -578,54 +580,148 @@ async function saveVideo(u, buf0, mime, q = {}) {
 // Free (no AI service). b: { size, layout, headline, sub, cta, badge, footer, photoItemId (an approved / own picture to put in it), title, projectId, department }. From here it is an ordinary item:
 // draft -> approval (team or client) -> approved: stored, public link, picked in a campaign (Green Start Communication > Campaigns), sent, and counted (marketing/mediaUse.js).
 async function bannerMeta() { const B = require('./banner'); return { sizes: Object.entries(B.SIZES).map(([k, v]) => ({ key: k, label: v.label, w: v.w, h: v.h })), layouts: Object.entries(B.LAYOUTS).map(([k, v]) => ({ key: k, label: v })) }; } // eslint-disable-line global-require
-async function createBanner(u, b = {}) {
-  await ensure();
-  if (!mayWrite(u)) return { error: 'Your login can look at banners but not make them.', status: 403 };
+// the words of a banner that are an INSTRUCTION to a designer ("Create a premium, professional corporate marketing banner for ...") are not words for the banner: they are left out of the sub-line
+const looksLikePrompt = (t) => /^\s*(please\s+)?(create|make|design|generate|build|prepare|draw|write|produce)\b[^.]{0,80}\b(banner|poster|post|image|picture|design|creative|flyer|graphic|ad)\b/i.test(String(t || ''));
+// The look of a banner, kept with the picture (column "spec") so it can be changed and made again: what the team typed, the picture chosen, the colours. A client who asks for changes gets them
+// by the revise module (marketing/revise.js) editing THIS and drawing it again.
+async function bannerSpecOf(b, brand, look) {
   const B = require('./banner'); // eslint-disable-line global-require
-  const headline = S.clip(b.headline, 90);
-  if (headline.length < 3) return { error: 'Write the banner headline (a few words).', status: 400 };
-  const size = B.SIZES[b.size] ? b.size : '16:9';
+  const list = (v, n, k) => (Array.isArray(v) ? v : []).slice(0, n).map((x) => S.clip(x, k)).filter(Boolean);
+  const plans = (Array.isArray(b.plans) ? b.plans : []).slice(0, 3).map((p) => ({ name: S.clip(p && p.name, 24), price: S.clip(p && p.price, 20), unit: S.clip(p && p.unit, 16) })).filter((p) => p.name || p.price);
   const layout = B.LAYOUTS[b.layout] ? b.layout : '';
+  const hex = (v) => (/^#[0-9a-f]{6}$/i.test(String(v || '')) ? String(v) : undefined); const col = b.colors && typeof b.colors === 'object' ? { primary: hex(b.colors.primary), secondary: hex(b.colors.secondary), accent: hex(b.colors.accent) } : {};
+  const warnings = []; let sub = S.clip(b.sub, 160);
+  if (sub && looksLikePrompt(sub)) { warnings.push(`The sub-line looked like an instruction to a designer ("${S.clip(sub, 50)}…"), so it was left out of the banner.`); sub = ''; }
+  return {
+    spec: {
+      size: B.SIZES[b.size] ? b.size : '16:9', layout, headline: S.clip(b.headline, 90), headline2: S.clip(b.headline2, 60), sub, services: list(b.services, 8, 40), servicesTitle: S.clip(b.servicesTitle, 50), plans, audienceTitle: S.clip(b.audienceTitle, 40), audience: S.clip(b.audience, 200),
+      chip: S.clip(b.chip, 40), chipPos: b.chipPos === 'under-headline' ? 'under-headline' : 'bottom', badge: S.clip(b.badge, 18), tagline: S.clip(b.tagline, 60) || (look ? '' : brand.tagline), companyName: S.clip(b.companyName, 60) || (look ? look.clientName : brand.brandName),
+      cta: b.cta !== undefined ? S.clip(b.cta, 28) : (look ? '' : S.clip(brand.cta, 28)), footer: b.footer !== undefined ? S.clip(b.footer, 90) : (look ? '' : S.clip([brand.website, brand.contact].filter(Boolean).join('   |   '), 90)),
+      photoItemId: S.clip(b.photoItemId, 60), heroSearch: S.clip(b.heroSearch, 80), heroN: Math.max(0, Math.min(19, Math.floor(Number(b.heroN)) || 0)), projectId: S.clip(b.projectId, 60), colors: col, rev: 0, handled: [],
+    }, warnings,
+  };
+}
+// draw a banner from its spec -> { made: { buf, w, h } } or { error, status }
+async function renderBanner(u, spec) {
+  const B = require('./banner'); // eslint-disable-line global-require
   const brand = await Cfg.getBrand();
-  const look = await projectLook(b.projectId);
+  const look = await projectLook(spec.projectId);
   const logoRow = look ? (look.logoData ? { dataUrl: look.logoData } : null) : await Cfg.getLogo();
   const dec = (d) => { const m = /^data:image\/(?:png|jpeg|webp);base64,(.+)$/.exec(String(d || '')); return m ? Buffer.from(m[1], 'base64') : null; };
-  let photo = null;
-  if (b.photoItemId) {
-    const got = await getRow(u, String(b.photoItemId));
+  let photo = null; let fresh = false; // fresh: a photo taken now (the chosen picture, or a new stock search), to be kept beside the banner so a change later uses the SAME photo
+  if (spec.heroFile) { try { const hp = path.join(dir(), path.basename(String(spec.heroFile))); if (fs.existsSync(hp)) photo = fs.readFileSync(hp); } catch { photo = null; } }
+  if (!photo && spec.photoItemId) {
+    const got = await getRow(u, String(spec.photoItemId));
     if (!got) return { error: 'The picture for the banner was not found.', status: 404 };
     if (isVideo(got.r)) return { error: 'A banner can use a picture, not a video.', status: 400 };
     const f = rawFile(got.r);
     if (!f) return { error: 'The picture file is not on the server any more.', status: 404 };
-    photo = fs.readFileSync(f.path);
+    photo = fs.readFileSync(f.path); fresh = true;
   }
   // no picture chosen but some words to find one: a free stock photo (Pixabay / Pexels) becomes the hero picture of the banner ("Create from your content" posts)
-  if (!photo && b.heroSearch) {
+  if (!photo && spec.heroSearch) {
     try {
       const Stock = require('./stockclips'); // eslint-disable-line global-require
-      const sz = B.SIZES[size] || {};
-      const ph = await Stock.photo(u, { q: S.clip(b.heroSearch, 80), shape: sz.w > sz.h * 1.2 ? 'landscape' : 'portrait', n: Math.max(0, Math.min(19, Math.floor(Number(b.heroN)) || 0)) });
-      if (ph && ph.buf) photo = ph.buf;
+      const sz = B.SIZES[spec.size] || {};
+      const ph = await Stock.photo(u, { q: S.clip(spec.heroSearch, 80), shape: sz.w > sz.h * 1.2 ? 'landscape' : 'portrait', n: Math.max(0, Math.min(19, Math.floor(Number(spec.heroN)) || 0)) });
+      if (ph && ph.buf) { photo = ph.buf; fresh = true; }
     } catch { photo = null; }
   }
-  const colors = (look && look.colors && look.colors.primary ? { primary: look.colors.primary, secondary: look.colors.secondary || undefined, accent: brand.colors.accent } : brand.colors) || {};
-  let made;
+  const base = (look && look.colors && look.colors.primary ? { primary: look.colors.primary, secondary: look.colors.secondary || undefined, accent: brand.colors.accent } : brand.colors) || {};
+  const colors = { ...base, ...Object.fromEntries(Object.entries(spec.colors || {}).filter(([, v]) => v)) };
   try {
-    const list = (v, n, k) => (Array.isArray(v) ? v : []).slice(0, n).map((x) => S.clip(x, k)).filter(Boolean);
-    const plans = (Array.isArray(b.plans) ? b.plans : []).slice(0, 3).map((p) => ({ name: S.clip(p && p.name, 24), price: S.clip(p && p.price, 20), unit: S.clip(p && p.unit, 16) })).filter((p) => p.name || p.price);
-    made = await B.makeBanner({ headline2: S.clip(b.headline2, 60), services: list(b.services, 8, 40), servicesTitle: S.clip(b.servicesTitle, 50), plans, audienceTitle: S.clip(b.audienceTitle, 40), audience: S.clip(b.audience, 200), chip: S.clip(b.chip, 40), tagline: S.clip(b.tagline, 60) || (look ? '' : brand.tagline), companyName: S.clip(b.companyName, 60) || (look ? look.clientName : brand.brandName), size, layout: layout || (photo ? 'overlay' : 'bold'), headline, sub: b.sub, cta: b.cta !== undefined ? b.cta : (look ? '' : brand.cta), badge: b.badge, footer: b.footer !== undefined ? b.footer : (look ? '' : [brand.website, brand.contact].filter(Boolean).join('   |   ')), colors, logo: logoRow ? dec(logoRow.dataUrl) : null, photo, brandName: look ? look.clientName : brand.brandName });
+    const made = await B.makeBanner({ headline2: spec.headline2, services: spec.services, servicesTitle: spec.servicesTitle, plans: spec.plans, audienceTitle: spec.audienceTitle, audience: spec.audience, chip: spec.chip, chipPos: spec.chipPos, tagline: spec.tagline, companyName: spec.companyName, size: spec.size, layout: spec.layout || (photo ? 'overlay' : 'bold'), headline: spec.headline, sub: spec.sub, cta: spec.cta, badge: spec.badge, footer: spec.footer, colors, logo: logoRow ? dec(logoRow.dataUrl) : null, photo, brandName: look ? look.clientName : brand.brandName });
+    return { made, withLogo: !!logoRow, photo: fresh ? photo : null };
   } catch (e) { return { error: 'The banner could not be designed: ' + e.message, status: 500 }; }
+}
+async function createBanner(u, b = {}) {
+  await ensure();
+  if (!mayWrite(u)) return { error: 'Your login can look at banners but not make them.', status: 403 };
+  const headline = S.clip(b.headline, 90);
+  if (headline.length < 3) return { error: 'Write the banner headline (a few words).', status: 400 };
+  const brand = await Cfg.getBrand();
+  const look = await projectLook(b.projectId);
+  const { spec, warnings } = await bannerSpecOf(b, brand, look);
+  const out = await renderBanner(u, spec); if (out.error) return out;
+  const { made } = out; const size = spec.size; const layout = spec.layout;
   const dept = S.clip(b.department, 60) || (A.departmentsOf(u).length === 1 ? A.departmentsOf(u)[0] : S.clip(u.department, 60));
   fs.mkdirSync(dir(), { recursive: true });
   const id = S.newId('ban'); const file = id + '.png'; const ts = Date.now();
   fs.writeFileSync(path.join(dir(), file), made.buf);
+  if (out.photo) { try { fs.writeFileSync(path.join(dir(), `${id}.hero`), out.photo); spec.heroFile = `${id}.hero`; } catch { /* the photo could not be kept: a change later looks for it again */ } } // the exact photo used, so a change asked for later keeps it
   const title = S.clip(b.title, 80) || ('Banner: ' + headline);
-  await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?)`,
-    id, title, S.clip([headline, b.sub, b.cta, b.badge].filter(Boolean).join(' | '), 600), headline, 'banner', size, 'banner-designer', logoRow ? 1 : 0, file, 'image/png', made.buf.length, 0, dept || null, u.id, S.clip(u.name, 80), ts, ts);
+  await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt, spec) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?)`,
+    id, title, S.clip([headline, spec.sub, spec.cta, spec.badge].filter(Boolean).join(' | '), 600), headline, 'banner', size, 'banner-designer', out.withLogo ? 1 : 0, file, 'image/png', made.buf.length, 0, dept || null, u.id, S.clip(u.name, 80), ts, ts, JSON.stringify(spec));
   await tagProject([id], b.projectId);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: banner made', entity: TABLE, entityId: id, toValue: title + '; ' + size + '; ' + (layout || 'auto') });
   const set = await Cfg.getSettings();
-  return { item: view(u, await row(id), set) };
+  return { item: view(u, await row(id), set), warnings };
+}
+// ---- VERSIONS (2026-11-25): a picture changed after a client's request keeps EVERY earlier version. <id>.v0.<ext> is the ORIGINAL (never overwritten, never deleted), <id>.v1.<ext> the picture before the second change,
+// and so on; <id>.<ext> is always the LATEST. The version number is spec.rev (0 = the original).
+const versionOf = (r) => Number((S.parse(r.spec, {}) || {}).rev) || 0;
+const versionPath = (r, k) => { const ext = path.extname(r.file); return path.join(dir(), `${path.basename(r.file, ext)}.v${k}${ext}`); };
+// copy the picture that is about to be replaced to its version name; false when it could not be kept (then nothing is changed: the original must stay available)
+function keepVersion(r) {
+  try { const src = path.join(dir(), path.basename(r.file)); const keep = versionPath(r, versionOf(r)); if (!fs.existsSync(src)) return false; if (!fs.existsSync(keep)) fs.copyFileSync(src, keep); return fs.existsSync(keep); } catch { return false; }
+}
+// version k (0 = the original, the highest = the latest) of a picture the person may see -> { path, mime, name } | null
+async function versionFile(u, id, n) {
+  const g = await getRow(u, id); if (!g) return null;
+  const r = g.r; const rev = versionOf(r); const k = Math.floor(Number(n)); if (!(k >= 0 && k <= rev)) return null;
+  const p = k === rev ? path.join(dir(), path.basename(r.file)) : versionPath(r, k);
+  return fs.existsSync(p) ? { path: p, mime: r.mime, name: `${r.title || 'picture'}-v${k + 1}.${EXT[r.mime] || 'png'}` } : null;
+}
+const sameItemAfter = (u, r, g) => view(u, r, g.set);
+// Draw a banner again from a changed spec and keep it as THE SAME item: the earlier picture is kept as a version, the item goes back to Draft, and a note says what was changed.
+// Used when a client asks for changes (marketing/revise.js, marketing/revision.js). -> { item, spec, before, after } or { error }
+async function reviseBanner(u, id, spec, note, check) {
+  await ensure();
+  const g = await getRow(u, id); if (!g) return { error: 'This picture was not found.', status: 404 };
+  const r = g.r; if (r.style !== 'banner') return { error: 'Only a banner designed in TeamLink can be changed this way.', status: 400 };
+  const out = await renderBanner(u, spec); if (out.error) return out;
+  const file = path.join(dir(), path.basename(r.file)); const before = fs.existsSync(file) ? fs.readFileSync(file) : null;
+  if (check) { const v = await check(before, out.made.buf); if (!v.ok) return { error: v.reason, status: 422, code: 'invalid' }; } // the new picture must pass the checks BEFORE it replaces anything
+  if (!keepVersion(r)) return { error: 'The earlier version could not be kept, so nothing was changed.', status: 500 };
+  fs.writeFileSync(file, out.made.buf);
+  const prev = versionOf(r); const now = Date.now(); const next = { ...spec, rev: prev + 1 };
+  if (out.photo) { try { const hf = `${path.basename(r.file, path.extname(r.file))}.hero`; fs.writeFileSync(path.join(dir(), hf), out.photo); next.heroFile = hf; } catch { /* the photo could not be kept */ } } // a NEW photo (another stock picture was asked for): keep it for the next change
+  await S.run(`UPDATE "${TABLE}" SET prompt = ?, headline = ?, bytes = ?, spec = ?, status = 'draft', note = ?, decidedAt = NULL, decidedById = NULL, decidedByName = NULL, updatedAt = ? WHERE id = ?`,
+    S.clip([spec.headline, spec.sub, spec.cta, spec.badge].filter(Boolean).join(' | '), 600), spec.headline, out.made.buf.length, JSON.stringify(next), S.clip(note, 300) || null, now, r.id);
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: banner changed and made again', entity: TABLE, entityId: r.id, toValue: `${r.title}; version ${prev + 2}${note ? `: ${S.clip(note, 200)}` : ''}` });
+  return { item: sameItemAfter(u, await row(r.id), g), spec: next, before, after: out.made.buf };
+}
+// An AI picture (not a banner) changed with the picture AI and the picture ITSELF as the reference (Gemini picture editing): only what the client asked for is to change. Same size and format as the
+// original; the original stays as version 0. It counts as one AI picture against the limits. opts.editFn lets a test answer instead of Google. -> { item, spec, before, after } or { error, code }
+async function editPicture(u, id, instruction, opts = {}) {
+  await ensure();
+  const g = await getRow(u, id); if (!g) return { error: 'This picture was not found.', status: 404 };
+  const r = g.r;
+  if (['banner', 'clip', 'upload', 'video'].includes(r.style) || isVideo(r)) return { error: 'This kind of picture cannot be changed with the AI picture model.', status: 400, code: 'unsupported' };
+  const text = `Edit the attached picture. Change ONLY what is asked here: ${S.clip(instruction, 600)}\nKeep everything else exactly as it is: the same layout, colours, people, photographs, logo, wording and spelling, and the same shape. Do not add, remove or move anything that was not asked for. Do not redraw the logo. Any wording on the picture must stay spelled exactly as it is.`;
+  const c = await config(); const st = await status();
+  if (!opts.editFn) {
+    if (!st.ready || st.demo) return { error: 'The AI picture model is not available here (not connected, or the test sandbox).', status: 503, code: 'not_ready' };
+    if (c.provider !== 'gemini' || isImagen(c.model)) return { error: `Changing a picture with the picture itself as the reference needs the Google Gemini picture connection; this server uses ${c.provider === 'cloudflare' ? 'Cloudflare' : 'Imagen'}.`, status: 501, code: 'unsupported' };
+    const used = S.num(((await S.q('SELECT COUNT(*) AS n FROM "OmniMkAiUsage" WHERE userId = ? AND module = ? AND at >= ? AND ok = 1', u.id, 'images', AI.dayStart(Date.now())))[0] || {}).n);
+    if (used + 1 > c.perDay) return { error: `That would pass the ${c.perDay} pictures a day (${used} made).`, status: 429, code: 'limit' };
+  }
+  const f = rawFile(r); if (!f) return { error: 'The picture file is not on the server any more.', status: 404 };
+  const sharp = require('sharp'); // eslint-disable-line global-require
+  const orig = fs.readFileSync(f.path); const meta = await sharp(orig).metadata(); const t0 = Date.now(); let pic;
+  try {
+    if (opts.editFn) pic = await opts.editFn(text, orig);
+    else { const ref = (await sharp(orig).rotate().resize({ width: 1536, height: 1536, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer()).toString('base64'); const outp = await geminiOne(c, text, r.aspect || '1:1', { mime: 'image/jpeg', b64: ref }); pic = Buffer.from(outp[0].b64, 'base64'); }
+  } catch (e) { await AI.logUsage({ user: u, module: 'images', task: 'edit', provider: 'gemini', model: c.model, ok: false, inChars: text.length, ms: Date.now() - t0, error: e.message }); return { error: e.message || 'The picture could not be changed.', status: e.status || 502, code: e.code || 'failed' }; }
+  let buf; try { const sh = sharp(pic).resize({ width: meta.width, height: meta.height, fit: 'cover' }); buf = r.mime === 'image/png' ? await sh.png().toBuffer() : await sh.jpeg({ quality: 90 }).toBuffer(); } catch { return { error: 'The AI sent something that is not a picture.', status: 502, code: 'corrupt' }; }
+  if (opts.check) { const v = await opts.check(orig, buf); if (!v.ok) return { error: v.reason, status: 422, code: 'invalid' }; } // the new picture must pass the checks BEFORE it replaces anything
+  if (!keepVersion(r)) return { error: 'The earlier version could not be kept, so nothing was changed.', status: 500 };
+  const file = path.join(dir(), path.basename(r.file)); fs.writeFileSync(file, buf);
+  const old = S.parse(r.spec, {}) || {}; const next = { ...old, rev: versionOf(r) + 1, edits: [...(old.edits || []).slice(-4), S.clip(instruction, 300)], handled: old.handled || [] };
+  await S.run(`UPDATE "${TABLE}" SET bytes = ?, spec = ?, status = 'draft', note = ?, decidedAt = NULL, decidedById = NULL, decidedByName = NULL, updatedAt = ? WHERE id = ?`, buf.length, JSON.stringify(next), S.clip(`Changed with the AI picture model after the client's request: ${instruction}`, 300), Date.now(), r.id);
+  await AI.logUsage({ user: u, module: 'images', task: 'edit', provider: 'gemini', model: c.model, ok: true, inChars: text.length, ms: Date.now() - t0 });
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: picture changed by the AI picture model after a client request', entity: TABLE, entityId: r.id, toValue: `${r.title}; version ${next.rev + 1}: ${S.clip(instruction, 200)}` });
+  return { item: sameItemAfter(u, await row(r.id), g), spec: next, before: orig, after: buf };
 }
 
 // ---- a person's own picture (phone, Canva, the Gemini app ...) uploaded into AI Images: from then on it is approved and used like an AI picture ---------
@@ -784,8 +880,13 @@ async function decide(u, id, approve, note) {
   return { ok: approve ? 'Approved. It can now be used in the Content Calendar.' : 'Sent back with your note.', item: view(u, await row(r.id), set) };
 }
 
+// small writes for the automatic changes after a client's request (marketing/clientReview.js autoRevise): the note on the card, and the banner's spec (which client answers were already handled)
+async function setNote(id, note) { await ensure(); await S.run(`UPDATE "${TABLE}" SET note = ?, updatedAt = ? WHERE id = ?`, S.clip(note, 300) || null, Date.now(), id); }
+async function saveSpec(id, spec) { await ensure(); await S.run(`UPDATE "${TABLE}" SET spec = ?, updatedAt = ? WHERE id = ?`, JSON.stringify(spec), Date.now(), id); }
+
 module.exports = {
-  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, createBanner, bannerMeta, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
+  setNote, saveSpec,
+  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, createBanner, reviseBanner, editPicture, versionFile, versionOf, renderBanner, looksLikePrompt, bannerMeta, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
   cloudflareImage: { cfOne, fluxPrompt, DEFAULT_MODEL: CF_DEFAULT_MODEL, FALLBACK_MODEL: CF_FALLBACK_MODEL, resetKlein: () => { kleinFailedAt = 0; } }, // exported for the tests
   approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng, holdForClient, backToDraft, clientDecision, publicPathOf: publicPath, publicJpegPath, isVideoRow: isVideo,
 };

@@ -55,6 +55,19 @@ async function makeShowcase(spec, H) {
   const u = w / 1920; // one design unit for sizes
   const layers = [];
   const put = (input, left, top) => layers.push({ input, left: Math.max(0, Math.round(left)), top: Math.max(0, Math.round(top)) });
+  // the website chip is ALWAYS one line (2026-11-25: a client asked for the link "in one line"): the pill grows to the address, and the text only shrinks when even the widest pill is too small.
+  // spec.chipPos 'under-headline' puts it right under the headline lines; anything else leaves it in the "who it is for" strip at the bottom.
+  const chipText = String(spec.chip || '').trim(); const chipUnder = !!chipText && spec.chipPos === 'under-headline';
+  const chipMake = async (ch, maxPill) => {
+    let size = Math.round(ch * 0.42); let t = await textPng(chipText, { size, color: onAccent, bold: true, width: 6000 }); const room = maxPill - Math.round(ch * 1.5);
+    while (t.w > room && size > 14) { size = Math.max(14, Math.floor(size * 0.92)); t = await textPng(chipText, { size, color: onAccent, bold: true, width: 6000 }); } // eslint-disable-line no-await-in-loop
+    return { t, pill: Math.min(maxPill, t.w + Math.round(ch * 1.5)) };
+  };
+  const chipPut = async (c, ch, pill, cx, cy) => {
+    put(svg(pill, ch, `<rect width="${pill}" height="${ch}" rx="${ch / 2}" fill="${accent}"/>`), cx, cy);
+    put(await sharp(Buffer.from(iconSvg('globe', Math.round(ch * 0.5), onAccent, 1.8))).png().toBuffer(), cx + Math.round(ch * 0.4), cy + ch * 0.25);
+    put(c.t.buf, cx + Math.round(ch * 1.0), cy + (ch - c.t.h) / 2);
+  };
 
   // ---- background: deep gradient, glow, a faint circuit pattern ----
   const rnd = (n) => { const x = Math.sin(n * 91.7) * 10000; return x - Math.floor(x); };
@@ -95,7 +108,7 @@ async function makeShowcase(spec, H) {
   // ---- how tall everything else is ----
   const services = (Array.isArray(spec.services) ? spec.services : []).map((t) => String(t || '').trim()).filter(Boolean).slice(0, 8);
   const plans = (Array.isArray(spec.plans) ? spec.plans : []).filter((p) => p && (p.name || p.price)).slice(0, 3);
-  const hasAud = !!(spec.audience || spec.chip);
+  const hasAud = !!(spec.audience || (chipText && !chipUnder));
   const perRow = wide ? Math.min(services.length, 7) : Math.min(services.length, 4);
   const svcRows = perRow ? Math.ceil(services.length / perRow) : 0;
   const iconD = Math.round((wide ? 84 : 110) * u * (wide ? 1 : 1)); const labelH = Math.round(iconD * 0.62);
@@ -126,6 +139,10 @@ async function makeShowcase(spec, H) {
   if (head2) {
     const h2 = await oneLine(head2.toUpperCase(), accent);
     put(h2.buf, m, y); y += h2.h + Math.round(24 * u);
+  }
+  if (chipUnder) { // the website link right under the headline, on one line
+    const ch = Math.round((wide ? 62 : 74) * u * (wide ? 1 : 1.2)); const cm = await chipMake(ch, textW);
+    await chipPut(cm, ch, cm.pill, m, y); y += ch + Math.round(22 * u);
   }
   if (spec.sub) {
     const sb = await fit(String(spec.sub).trim(), { max: Math.round(46 * u * (wide ? 1 : 1.3)), min: 18, width: textW, maxH: Math.max(40, topY + headH - y), color: '#ffffff', bold: true });
@@ -205,20 +222,15 @@ async function makeShowcase(spec, H) {
   // ---- who it is for + the website chip ----
   if (hasAud) {
     put(svg(w, h - y, `<rect x="0" y="0" width="${w}" height="${h - y}" fill="#02101f" fill-opacity="0.35"/><rect x="0" y="0" width="${w}" height="2" fill="#7dd3fc" fill-opacity="0.35"/>`), 0, y);
-    const chipW = spec.chip ? Math.round(w * (wide ? 0.2 : 0.36)) : 0;
+    const chOne = Math.round(76 * u * (wide ? 1 : 1.2)); const chipBottom = chipText && !chipUnder ? await chipMake(chOne, Math.round(w * (wide ? 0.4 : 0.62))) : null;
+    const chipW = chipBottom ? Math.max(Math.round(w * (wide ? 0.2 : 0.36)), chipBottom.pill) : 0;
     const textLeft = m + Math.round(110 * u * (wide ? 1 : 1.2));
     put(await sharp(Buffer.from(iconSvg('users', Math.round(84 * u * (wide ? 1 : 1.2)), '#ffffff', 1.6))).png().toBuffer(), m, y + Math.round(30 * u));
     const aw = w - textLeft - m - chipW - (chipW ? gap : 0);
     let ay = y + Math.round(26 * u);
     if (spec.audienceTitle) { const at = await fit(String(spec.audienceTitle).trim(), { max: Math.round(34 * u * (wide ? 1 : 1.3)), min: 14, width: aw, maxH: Math.round(48 * u * 1.3), color: accent, bold: true }); put(at.buf, textLeft, ay); ay += at.h + Math.round(26 * u * (wide ? 1 : 1.3)); }
     if (spec.audience) { const ad = await fit(String(spec.audience).trim(), { max: Math.round(30 * u * (wide ? 1 : 1.3)), min: 13, width: aw, maxH: Math.max(30, h - ay - Math.round(34 * u)), color: '#ffffff', bold: false }); put(ad.buf, textLeft, ay); }
-    if (spec.chip) {
-      const ch = Math.round(76 * u * (wide ? 1 : 1.2)); const cx = w - m - chipW; const cy = y + Math.round(((h - y) - ch) / 2) - Math.round(10 * u);
-      put(svg(chipW, ch, `<rect width="${chipW}" height="${ch}" rx="${ch / 2}" fill="${accent}"/>`), cx, cy);
-      put(await sharp(Buffer.from(iconSvg('globe', Math.round(ch * 0.5), onAccent, 1.8))).png().toBuffer(), cx + Math.round(ch * 0.4), cy + ch * 0.25);
-      const ct = await fit(String(spec.chip).trim(), { max: Math.round(ch * 0.42), min: 14, width: Math.round(chipW - ch * 1.15), maxH: Math.round(ch * 0.7), color: onAccent, bold: true });
-      put(ct.buf, cx + Math.round(ch * 1.0), cy + (ch - ct.h) / 2);
-    }
+    if (chipBottom) { const cx = w - m - chipW; const cy = y + Math.round(((h - y) - chOne) / 2) - Math.round(10 * u); await chipPut(chipBottom, chOne, chipW, cx, cy); }
   }
   const buf = await sharp({ create: { width: w, height: h, channels: 4, background: deep } }).composite(layers).png({ compressionLevel: 9 }).toBuffer();
   return { buf, w, h };

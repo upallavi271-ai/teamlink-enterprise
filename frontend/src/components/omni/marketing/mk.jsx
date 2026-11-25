@@ -84,7 +84,7 @@ export function TextsEditor({ chans, texts, subject, onTexts, onSubject, flagsOf
 // an AI picture shown in the app: fetched with the login (an <img src> cannot carry it) and shown from a blob address that is freed afterwards
 // video = true for an AI Video slideshow (shown with the player's controls; `muted` thumbnails in pickers)
 // lazy: the file is fetched only when the tile scrolls into view (a page with many video clips must not download every clip at once)
-export function MkImg({ id, alt, style, onClick, video, controls = true, lazy = false }) {
+export function MkImg({ id, alt, style, onClick, video, controls = true, lazy = false, ver = 0, version = null }) {
   const [src, setSrc] = useState('');
   const [bad, setBad] = useState(false);
   const [seen, setSeen] = useState(!lazy || typeof IntersectionObserver === 'undefined');
@@ -99,9 +99,11 @@ export function MkImg({ id, alt, style, onClick, video, controls = true, lazy = 
     if (!seen) return undefined;
     let url = ''; let on = true;
     setSrc(''); setBad(false);
-    omni.blob(`/gs/marketing/images/${id}/file`).then((b) => { if (!on) return; url = URL.createObjectURL(b); setSrc(url); }).catch(() => { if (on) setBad(true); });
+    // ver: the picture's version, so a changed picture (same id) is fetched again; version: show that older version (0 = the original) instead of the latest
+    const path = version != null ? `/gs/marketing/images/${id}/versions/${version}/file` : `/gs/marketing/images/${id}/file`;
+    omni.blob(ver ? `${path}?v=${ver}` : path).then((b) => { if (!on) return; url = URL.createObjectURL(b); setSrc(url); }).catch(() => { if (on) setBad(true); });
     return () => { on = false; if (url) URL.revokeObjectURL(url); };
-  }, [id, seen]);
+  }, [id, seen, ver, version]);
   const box = { background: '#f1f5f2', borderRadius: 10, display: 'block', width: '100%', objectFit: 'cover', ...style };
   if (bad) return <div style={{ ...box, display: 'grid', placeItems: 'center', fontSize: 10, color: 'var(--muted)', minHeight: 80 }}>Picture not found</div>;
   if (!src) return <div ref={holder} style={{ ...box, minHeight: 80 }} aria-busy="true" />;

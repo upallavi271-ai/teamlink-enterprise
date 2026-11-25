@@ -33,6 +33,7 @@ async function ensure() {
     for (const sql of DDL) await S.run(sql); // eslint-disable-line no-await-in-loop
     // 2026-11-14: mode 'confirm' = the client confirms an item the team already approved (the answer is a badge); 'decide' = the CLIENT is the approver: the item waits for them
     try { await S.run(`ALTER TABLE "${TABLE}" ADD COLUMN "mode" TEXT NOT NULL DEFAULT 'confirm'`); } catch { /* the column is already there */ }
+    try { await S.run(`ALTER TABLE "${TABLE}" ADD COLUMN "site" TEXT`); } catch { /* the column is already there */ } // 2026-11-25: the site address the link was sent from, so a change made later by itself can send the link again without a person's browser (revision.js)
     await AI.ensure(); okAt = Date.now(); return true;
   } catch (e) { console.error('[omni-mk] client review schema:', e.message); return false; } // eslint-disable-line no-console
 }
@@ -229,6 +230,7 @@ async function tell(u, id, b = {}, base = '') {
   const P = require('./projects'); // eslint-disable-line global-require
   const site = P.siteFor(base);
   if (!site) return { error: 'The link needs the site\'s https address: open this page on the live site and try again.', status: 400 };
+  if (site !== r.site) { await S.run(`UPDATE "${TABLE}" SET site = ? WHERE id = ?`, site, r.id); r = { ...r, site }; } // kept: an automatic change later sends the link again from here
   const ways = (Array.isArray(b.ways) ? b.ways : []).map(String).filter((w, i, a) => ['whatsapp', 'email'].includes(w) && a.indexOf(w) === i);
   if (!ways.length) return { error: 'Pick WhatsApp or Email.', status: 400 };
   const core = require('../utils/messagingCore'); // eslint-disable-line global-require
@@ -315,7 +317,7 @@ async function publicView(token) {
   const out = { review: { ...short(r, item ? snapshotOf(r.kind, item) : null, now), message: r.message || '', itemTitle: r.itemTitle, kind: r.kind }, brand: { name: brand.brandName || 'TeamLink', colors: brand.colors, tagline: brand.tagline || '' } };
   if (!item) return { ...out, item: null };
   if (r.kind === 'image') {
-    out.item = { type: /^video\//.test(item.mime) ? 'video' : 'image', title: item.title, aspect: item.aspect || '1:1', headline: item.headline || '' };
+    out.item = { type: /^video\//.test(item.mime) ? 'video' : 'image', title: item.title, aspect: item.aspect || '1:1', headline: item.headline || '', version: (Number((parse(item.spec, {}) || {}).rev) || 0) + 1 };
   } else {
     const C = require('./content'); // eslint-disable-line global-require
     const keys = parse(item.channels, []);
@@ -349,6 +351,7 @@ async function publicDecide(token, b = {}, ip = '') {
   if (r.mode === 'decide') {
     try { const d = await moduleOf(r.kind).clientDecision(r.itemId, approve, name, r.clientName, comment); applied = !!(d && d.applied); } catch (e) { console.error('[omni-mk] client decision:', e.message); } // eslint-disable-line no-console
   }
+  if (!approve && r.mode === 'decide') kick(r.id); // the banner is changed and sent again by itself (autoRevise below); a placeholder reason ("reason asked on WhatsApp") waits for the real words
   if (r.createdById) {
     await notifyUsers([r.createdById], { title: `Client ${approve ? 'approved' : 'asked for changes on'} "${S.clip(r.itemTitle, 60)}"`, message: `${name} (${S.clip(r.clientName, 60)}) ${approve ? 'approved it' : 'asked for changes'}${comment ? `: ${S.clip(comment, 200)}` : ''}.${applied ? (approve ? (r.kind === 'content' ? ' It is now Approved and in the Content Library.' : ' It is now Approved and can be used in the Content Calendar.') : ' It is back with you to change.') : ''} Open Omni-Channel > AI Marketing > Approvals.` });
   }
@@ -376,6 +379,7 @@ async function setReasonByReply(reviewId, text) {
   if (!r || !why) return { note: 'nothing to update' };
   await S.run(`UPDATE "${TABLE}" SET comment = ?, updatedAt = ? WHERE id = ?`, why, Date.now(), r.id);
   if (r.createdById) await notifyUsers([r.createdById], { title: 'Why the client rejected "' + S.clip(r.itemTitle, 60) + '"', message: S.clip(why, 280) });
+  if (r.status === 'changes' && r.mode === 'decide') kick(r.id); // the real words are in now: change the banner and send it again by itself
   return { note: 'reason recorded' };
 }
 async function deliverHeld(reviewId, fromPhone, numberId) {
@@ -390,4 +394,23 @@ async function deliverHeld(reviewId, fromPhone, numberId) {
   return { note: w.ok ? 'delivered' : 'delivery failed: ' + (w.error || '') };
 }
 
-module.exports = { forItems, ensure, attach, create, contacts, sendToClient, list, revoke, extend, tell, publicView, publicFile, publicDecide, answerByButton, setReasonByReply, deliverHeld, tokenOf, idOfToken, snapshotOf, heldIds };
+// ---- "the client asked for changes": TeamLink changes the picture and sends it again by itself (2026-11-25, marketing/revision.js) ----------------------------------------------------------------------
+// A client answer that asks for changes starts a background job (revision.js run) that reads the words, changes the banner / picture, checks the result, saves it as a NEW version, opens THIS SAME review
+// again (the client's link stays the same and now shows the newest version) and sends it. kick() starts the job; it never stops the client's answer from being saved. Not in the test sandbox unless a test asks.
+function kick(reviewId) {
+  if (require('../utils/sandbox').isSandbox() && !kick.force) return; // eslint-disable-line global-require
+  setImmediate(() => { require('./revision').run(reviewId).catch((e) => console.error('[omni-mk] revision after a client request:', e.message)); }); // eslint-disable-line no-console, global-require
+}
+// The SAME link, open again for the next answer and showing the newest version (the earlier answer stays in the revision history and the audit log). user: the sender (the item goes back to "waiting for the client").
+async function reopen(reviewId, { message = '', user = null } = {}) {
+  await ensure();
+  const r = await row(reviewId); if (!r || r.deletedAt || r.status === 'revoked') return { error: 'The client link is not open to change.', status: 409 };
+  const item = await moduleOf(r.kind).rawRow(r.itemId); if (!item || item.deletedAt) return { error: 'The picture was not found.', status: 404 };
+  const now = Date.now();
+  await S.run(`UPDATE "${TABLE}" SET status = 'sent', comment = NULL, decidedAt = NULL, decidedByName = NULL, decidedIp = NULL, snapshot = ?, message = ?, expiresAt = ?, viewedAt = NULL, updatedAt = ? WHERE id = ?`, snapshotOf(r.kind, item), S.clip(message, 400) || null, now + 14 * DAY, now, r.id);
+  if (user) { const held = await moduleOf(r.kind).holdForClient(user, item); if (held && held.error) return held; }
+  await logAudit({ userId: r.createdById, actorName: 'TeamLink', action: 'Omni-Channel AI Marketing: client link opened again with the changed version', entity: TABLE, entityId: r.id, toValue: `${r.itemTitle} for ${r.clientName}` });
+  return { ok: true };
+}
+
+module.exports = { kick, reopen, rowOf: row, forItems, ensure, attach, create, contacts, sendToClient, list, revoke, extend, tell, publicView, publicFile, publicDecide, answerByButton, setReasonByReply, deliverHeld, tokenOf, idOfToken, snapshotOf, heldIds };

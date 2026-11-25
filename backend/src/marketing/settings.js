@@ -57,6 +57,7 @@ async function getSettings() {
     accessLogin: clip(s.accessLogin, 120),
     accessBusinessId: String(s.accessBusinessId || '').replace(/\D/g, '').slice(0, 30),
     autoMake: ['options', 'send'].includes(s.autoMake) ? s.autoMake : 'off',
+    autoRevise: s.autoRevise !== false, // 2026-11-25: a client asked for changes on a banner -> TeamLink changes it and sends it again by itself (marketing/clientReview.js autoRevise); ON unless an Admin switches it off
     clientNotify: { auto: !s.clientNotify || s.clientNotify.auto !== false, whatsapp: !s.clientNotify || s.clientNotify.whatsapp !== false, email: !s.clientNotify || s.clientNotify.email !== false, chat: !s.clientNotify || s.clientNotify.chat !== false, remind: !s.clientNotify || s.clientNotify.remind !== false },
     waTemplates: (WT.clean(s.waTemplates || {}).value) || {},
   };
@@ -77,6 +78,7 @@ function cleanSettings(b, cur) {
     next.accessBusinessId = digits;
   }
   if (b.autoMake !== undefined) next.autoMake = ['options', 'send'].includes(b.autoMake) ? b.autoMake : 'off';
+  if (b.autoRevise !== undefined) next.autoRevise = b.autoRevise === true;
   if (b.clientNotify !== undefined && b.clientNotify && typeof b.clientNotify === 'object') {
     const cur0 = { ...DEFAULT_NOTIFY, ...(cur.clientNotify || {}) };
     next.clientNotify = { auto: b.clientNotify.auto !== undefined ? b.clientNotify.auto === true : cur0.auto, whatsapp: b.clientNotify.whatsapp !== undefined ? b.clientNotify.whatsapp === true : cur0.whatsapp, email: b.clientNotify.email !== undefined ? b.clientNotify.email === true : cur0.email, chat: b.clientNotify.chat !== undefined ? b.clientNotify.chat === true : cur0.chat, remind: b.clientNotify.remind !== undefined ? b.clientNotify.remind === true : cur0.remind };
