@@ -10,16 +10,26 @@ const when = (iso) => { try { return new Date(iso).toLocaleString('en-IN', { dat
 
 // The picture the client is asked about. If it does not load (the site was busy or restarting for a moment, a weak connection) it is asked for again by itself, up to 3 times, and then a visible box says so with
 // "Try again" and "Open the picture": the client never sees a blank gap where the picture should be. Always a link to open it in full size.
+// The first thing tried when the picture does not show straight from its address (some phone browsers and in-app browsers refuse to, though the same bytes are fine) is to fetch it and show it from memory.
 function ReviewPicture({ src, alt }) {
-  const [n, setN] = useState(0); const [failed, setFailed] = useState(false);
-  useEffect(() => { setN(0); setFailed(false); }, [src]);
-  const url = n ? `${src}${src.includes('?') ? '&' : '?'}r=${n}` : src;
-  const onError = () => { if (n < 3) setTimeout(() => setN((x) => x + 1), 1500 * (n + 1)); else setFailed(true); };
+  const [n, setN] = useState(0); const [failed, setFailed] = useState(false); const [blob, setBlob] = useState('');
+  const tried = useRef(false);
+  useEffect(() => { setN(0); setFailed(false); setBlob(''); tried.current = false; }, [src]);
+  useEffect(() => () => { if (blob) { try { URL.revokeObjectURL(blob); } catch { /* nothing to free */ } } }, [blob]);
+  const url = blob || (n ? `${src}${src.includes('?') ? '&' : '?'}r=${n}` : src);
+  const asBlob = async () => { // -> true when the picture was fetched and is shown from memory
+    try { const res = await fetch(src, { cache: 'no-store' }); if (!res.ok) return false; const b = await res.blob(); if (!b.size || !/^image\//.test(b.type)) return false; setBlob(URL.createObjectURL(b)); return true; } catch { return false; }
+  };
+  const onError = async () => {
+    if (blob) { setFailed(true); return; } // even from memory it is not a picture the browser can show
+    if (!tried.current) { tried.current = true; if (await asBlob()) return; }
+    if (n < 3) setTimeout(() => setN((x) => x + 1), 1500 * (n + 1)); else setFailed(true);
+  };
   return (
     <div data-testid="review-picture">
       {failed ? (
         <div role="alert" style={{ background: '#fdf1e3', color: '#7a4a07', borderRadius: 10, padding: '14px 14px', lineHeight: 1.6 }}>
-          The picture could not be shown just now. <button type="button" onClick={() => { setFailed(false); setN((x) => x + 1); }} style={{ border: '1px solid #d98a2b', background: '#fff', color: '#7a4a07', borderRadius: 8, padding: '4px 10px', fontWeight: 700, cursor: 'pointer' }}>Try again</button>{' '}
+          The picture could not be shown just now. <button type="button" onClick={() => { setFailed(false); setBlob(''); setN((x) => x + 1); }} style={{ border: '1px solid #d98a2b', background: '#fff', color: '#7a4a07', borderRadius: 8, padding: '4px 10px', fontWeight: 700, cursor: 'pointer' }}>Try again</button>{' '}
           or <a href={src} target="_blank" rel="noopener noreferrer" style={{ color: '#7a4a07', fontWeight: 700 }}>open the picture</a>.
         </div>
       ) : <img src={url} alt={alt} onError={onError} style={{ width: '100%', borderRadius: 10, background: '#eef1ef', display: 'block' }} />}
