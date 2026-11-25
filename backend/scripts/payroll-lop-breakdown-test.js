@@ -11,6 +11,7 @@
 //      absent, half day, unpaid leave, pending leave, paid leave beyond the allowance, late beyond the free allowance, missing
 //      check-in, before joining, holiday / sandwich, absent-without-leave - and the dates add up to the engine's own number.
 //      + the LATE COMING group rule (every 3 late = 1 LOP, Payroll policy): off / on / starting a later month, and its save route.
+//      + LEAVE NOT APPROVED (Payroll policy: one free leave day a month, a leave day not approved = 2 LOP, approved beyond the free day = 1): off / on / a later start month, its save route.
 //   B  EVERY EMPLOYEE OF THE RUN: for every payroll record of the chosen months, the listed dates add up to exactly what the
 //      engine's attendanceDefaults() gives, and (for a record taken from attendance and never edited) to the stored LOP days.
 //      Records HR typed or somebody edited are reported separately, with the difference and the reason. Read-only.
@@ -308,6 +309,64 @@ async function fixtures() {
   await setLate(made.restoreLate ? JSON.parse(made.restoreLate.value) : null);
   made.lateTouched = false;
 
+  // 13c LEAVE NOT APPROVED (founder 2026-11-25): one leave day a month free (approved or not), approved leave beyond it 1 LOP, a leave day not
+  // approved (waiting, or rejected while absent) 2 LOP, absent with no leave applied as it was. Off = the old arithmetic.
+  made.unTouched = true;
+  made.restoreUn = await prisma.appSetting.findUnique({ where: { key: PCs.UNAPPROVED_KEY } });
+  const setUn = async (value) => {
+    await prisma.appSetting.deleteMany({ where: { key: PCs.UNAPPROVED_KEY } });
+    if (value) await prisma.appSetting.create({ data: { key: PCs.UNAPPROVED_KEY, value: JSON.stringify(value) } });
+    PCs.clearCache();
+  };
+  const D1 = WORKDAYS[2]; const D2 = WORKDAYS[3]; const D3 = WORKDAYS[4];
+  const mkLeave = (e, from, to, status, extra = {}) => prisma.leaveRequest.create({
+    data: { employeeId: e.id, type: 'Casual', fromDate: from, toDate: to || from, days: 1, status, reason: 'ZZLOP', decidedBy: status === 'Pending' ? null : 'ZZLOP Approver', decidedAt: status === 'Pending' ? null : new Date(), ...extra },
+  });
+  const unCases = []; // { label, e, off, on }
+  const unCase = async (label, skip, build, off, on) => {
+    const e = await newEmp(label.replace(/[^A-Za-z0-9]/g, '').slice(0, 14)); // eslint-disable-line no-await-in-loop
+    await worked(e, WORKDAYS.filter((d) => !skip.includes(d))); // eslint-disable-line no-await-in-loop
+    await build(e); // eslint-disable-line no-await-in-loop
+    unCases.push({ label, e, off, on });
+  };
+  await unCase('approved 1 day', [D1], (e) => mkLeave(e, D1, null, 'Approved'), 0, 0);
+  await unCase('approved 2 days', [D1, D2], async (e) => { await mkLeave(e, D1, null, 'Approved'); await mkLeave(e, D2, null, 'Approved'); }, 1, 1);
+  await unCase('waiting 1 day', [D1], (e) => mkLeave(e, D1, null, 'Pending'), 1, 0);
+  await unCase('waiting 2 days', [D1, D2], async (e) => { await mkLeave(e, D1, null, 'Pending'); await mkLeave(e, D2, null, 'Pending'); }, 2, 2);
+  await unCase('waiting 3 days', [D1, D2, D3], async (e) => { await mkLeave(e, D1, null, 'Pending'); await mkLeave(e, D2, null, 'Pending'); await mkLeave(e, D3, null, 'Pending'); }, 3, 4);
+  await unCase('approved then waiting', [D1, D2], async (e) => { await mkLeave(e, D1, null, 'Approved'); await mkLeave(e, D2, null, 'Pending'); }, 1, 2);
+  await unCase('waiting then approved', [D1, D2], async (e) => { await mkLeave(e, D1, null, 'Pending'); await mkLeave(e, D2, null, 'Approved'); }, 1, 1);
+  await unCase('rejected leave, absent', [D1], (e) => mkLeave(e, D1, null, 'Rejected'), 1, 2);
+  await unCase('absent, no leave applied', [D1], async () => {}, 1, 1);
+  await unCase('waiting half day', [D1], async (e) => { await prisma.attendance.deleteMany({ where: { employeeId: e.id, date: D1 } }); await prisma.attendance.create({ data: { employeeId: e.id, date: D1, status: 'Present', checkIn: '09:00', checkOut: '14:00' } }); await mkLeave(e, D1, null, 'Pending', { days: 0.5, reason: '[Half day: Second Half] ZZLOP' }); }, 0.5, 0);
+  await unCase('correction waiting', [D1], (e) => prisma.attendanceRegularization.create({ data: { employeeId: e.id, date: D1, requestedCheckIn: '09:00', requestedCheckOut: '18:00', reason: 'ZZLOP', status: 'Pending' } }), 1, 1);
+  const S_SAT = '2026-03-14'; const S_MON = '2026-03-16';
+  await unCase('waiting sandwich', [S_SAT, S_MON], async (e) => { await mkLeave(e, S_SAT, null, 'Pending'); await mkLeave(e, S_MON, null, 'Pending'); }, 3, 4);
+  await setUn(null);
+  for (const c of unCases) { // eslint-disable-line no-restricted-syntax
+    r = await breakdownOf(c.e); // eslint-disable-line no-await-in-loop
+    ok(near(r.auto.daysLop, c.off) && near(r.b.listedLop, r.auto.daysLop) && r.b.policy.unapprovedRule === null, `leave rule OFF: ${c.label} = ${c.off} LOP (the old arithmetic), dates add up`, `engine ${r.auto.daysLop} dates ${r.b.listedLop}`);
+  }
+  await setUn({ days: 2, effectiveFrom: '2026-03' });
+  for (const c of unCases) { // eslint-disable-line no-restricted-syntax
+    r = await breakdownOf(c.e); // eslint-disable-line no-await-in-loop
+    ok(near(r.auto.daysLop, c.on) && near(r.b.listedLop, r.auto.daysLop) && r.b.policy.unapprovedRule && r.b.policy.unapprovedRule.days === 2, `leave rule ON: ${c.label} = ${c.on} LOP, dates add up`, `engine ${r.auto.daysLop} dates ${r.b.listedLop}`);
+  }
+  const rej = unCases.find((c) => c.label === 'rejected leave, absent');
+  r = await breakdownOf(rej.e);
+  ok(codesOn(r.b, D1).includes('rejected-leave') && near(lopOn(r.b, D1), 2), 'leave rule ON: a rejected leave day shows the extra LOP with its reason');
+  const w1 = unCases.find((c) => c.label === 'waiting 1 day');
+  r = await breakdownOf(w1.e);
+  ok(r.b.dates.length === 0 && r.b.notCounted.some((d) => d.date === D1 && d.notes.some((nt) => nt.kind === 'free-day')), 'leave rule ON: the one waiting day is the free leave day, listed under "not counted" and said so');
+  const w3 = unCases.find((c) => c.label === 'waiting 3 days');
+  r = await breakdownOf(w3.e);
+  ok(JSON.stringify(r.b.dates.map((d) => d.date)) === JSON.stringify([D2, D3]) && r.b.dates.every((d) => near(d.lop, 2) && d.reasons.some((x) => x.code === 'pending' && /not approved/.test(x.text))), 'leave rule ON: waiting day 1 is free, days 2 and 3 cost 2 LOP each and say "not approved"');
+  await setUn({ days: 2, effectiveFrom: '2026-04' });
+  r = await breakdownOf(w3.e);
+  ok(near(r.auto.daysLop, 3) && r.b.policy.unapprovedRule === null, 'leave rule starting April: March keeps the old arithmetic (3 waiting days = 3 LOP)');
+  await setUn(made.restoreUn ? JSON.parse(made.restoreUn.value) : null);
+  made.unTouched = false;
+
   // 14 empty state
   const eFull = await newEmp('FullAttendance');
   await worked(eFull, WORKDAYS);
@@ -425,6 +484,24 @@ async function routes() {
   if (before) await prisma.appSetting.create({ data: { key: before.key, value: before.value } });
   require('../src/utils/payrollCycle').clearCache();
   made.lateTouched = false;
+  // the leave-not-approved rule is saved with the other payroll cycle settings (Super Admin / Admin only)
+  made.unTouched = true;
+  const beforeUn = await prisma.appSetting.findUnique({ where: { key: 'payroll.unapprovedLeave' } });
+  r = await send(admin, 'PUT', '/payroll/cycle', { unapproved: { days: 2, effectiveFrom: '2026-12' } });
+  ok(r.status === 200 && r.body.settings.unapproved.days === 2 && r.body.settings.unapproved.effectiveFrom === '2026-12' && r.body.settings.saved.unapproved === true, 'PUT /payroll/cycle saves "a leave not approved = 2 LOP from 2026-12"', JSON.stringify(r.body));
+  r = await http(admin, '/payroll/cycle');
+  ok(r.body.settings.unapproved.days === 2 && r.body.text && r.body.text.unapproved, 'the saved rule reads back, with its words');
+  r = await send(admin, 'PUT', '/payroll/cycle', { unapproved: { days: 0.5, effectiveFrom: '2026-12' } });
+  ok(r.status === 400, 'under 1 LOP day is refused', `got ${r.status}`);
+  r = await send(admin, 'PUT', '/payroll/cycle', { unapproved: { days: 2, effectiveFrom: 'next month' } });
+  ok(r.status === 400, 'a start month that is not YYYY-MM is refused', `got ${r.status}`);
+  r = await send(uA, 'PUT', '/payroll/cycle', { unapproved: { days: 3, effectiveFrom: '2026-12' } });
+  ok(r.status === 403, 'an employee cannot change it: 403', `got ${r.status}`);
+  r = await send(admin, 'PUT', '/payroll/cycle', { unapproved: { off: true } });
+  ok(r.status === 200 && r.body.settings.saved.unapproved === false && !r.body.settings.unapproved.days, 'Switch off removes the rule (the old arithmetic applies again)', JSON.stringify(r.body));
+  if (beforeUn) await prisma.appSetting.create({ data: { key: beforeUn.key, value: beforeUn.value } });
+  require('../src/utils/payrollCycle').clearCache();
+  made.unTouched = false;
   // a payslip of an older month that has no per-employee record still opens, from its own figures
   await prisma.employeePayrollRun.delete({ where: { id: B.run.id } });
   r = await http(admin, `/payroll/payslips/${B.slip.id}/lop-breakdown`);
@@ -432,6 +509,11 @@ async function routes() {
 }
 
 async function cleanup() {
+  if (made.unTouched) { // the leave-not-approved rule was being tested when something failed: back to what it was
+    await prisma.appSetting.deleteMany({ where: { key: 'payroll.unapprovedLeave' } });
+    if (made.restoreUn) await prisma.appSetting.create({ data: { key: made.restoreUn.key, value: made.restoreUn.value } });
+    require('../src/utils/payrollCycle').clearCache();
+  }
   if (made.lateTouched) { // the late-coming rule was being tested when something failed: back to what it was
     await prisma.appSetting.deleteMany({ where: { key: 'payroll.lateRule' } });
     if (made.restoreLate) await prisma.appSetting.create({ data: { key: made.restoreLate.key, value: made.restoreLate.value } });

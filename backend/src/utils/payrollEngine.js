@@ -41,6 +41,7 @@ const { NOT_SYSTEM_EMPLOYEE } = require('./systemAccounts');
 const PC = require('./payrollCycle');
 const ANL = require('./absentNoLeave');
 const REG = require('./payrollRegister');
+const LR = require('./payrollLeaveRule'); // leave that is not approved (founder 2026-11-25)
 
 const STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'SYNCED_TO_ACCOUNTS', 'PAID'];
 const STATUS_LABEL = {
@@ -159,12 +160,13 @@ async function attendanceDefaults(employees, month, policy) {
   const cycle = PC.cycleOf(month, settings.cycle);
   const rule = PC.absentRuleFor(month, settings.absent);
   const lateRule = PC.lateRuleFor(month, settings.late);
+  const unRule = PC.unapprovedRuleFor(month, settings.unapproved);
   const { from, to } = cycle;
   const leavers = await leaversIn(employees, cycle);
   const { days } = await D.loadDays(prisma, { employees, from, to, cfg: policy, lastDayOf: leavers.size ? leavers : null });
   const workingDays = payrollWorkingDays(month, policy, cycle);
   const offs = D.weeklyOffs(policy);
-  const awlCtx = rule.active ? await awlContext(employees, cycle) : null;
+  const awlCtx = (rule.active || unRule.active) ? await awlContext(employees, cycle) : null; // (rejected leave dates serve both rules)
   const unmarkedUnpaid = policy.unmarkedDaysUnpaid !== false;
   const out = new Map();
   employees.forEach((e) => {
@@ -184,7 +186,19 @@ async function attendanceDefaults(employees, month, policy) {
     // LATE COMING: the old rule (free allowance, then half a day each) until the founder's group rule is on for this payroll month
     // ("3 late = 1 LOP, 4 = 1, 5 = 1, 6 = 2"): floor(late arrivals / N) x LOP days.
     const lateLop = lateRule.active ? Math.floor(s.lateArrivals / lateRule.every) * lateRule.days : 0.5 * excessLate;
-    const lop = s.absentDays + s.pendingDays + (unmarkedUnpaid ? s.missingCheckIn : 0) + unpaidLeave + notJoined + afterExit + lateLop + awl.extraLop;
+    // LEAVE THAT IS NOT APPROVED (Payroll policy, founder 2026-11-25): from its payroll month one leave day a month is free, approved or not;
+    // an approved leave beyond it is 1 LOP, a leave day not approved (waiting at payroll time, or rejected while absent) is `days` LOP (2).
+    let pendingTerm = s.pendingDays;
+    let leaveTerm = unpaidLeave;
+    let rejectedExtra = 0;
+    let ul = null;
+    if (unRule.active) {
+      ul = LR.allocate(rows, { paidLeave: Number(policy.paidLeaveDaysPerMonth || 0), days: unRule.days, rejected: awlCtx ? (awlCtx.rejected.get(e.id) || null) : null, unmarkedUnpaid });
+      pendingTerm = Math.round((s.pendingDays - ul.leavePendingDays + ul.pendingLop) * 100) / 100; // a correction waiting stays 1 a day
+      leaveTerm = ul.leaveCost;
+      rejectedExtra = ul.rejectedExtra;
+    }
+    const lop = s.absentDays + pendingTerm + (unmarkedUnpaid ? s.missingCheckIn : 0) + leaveTerm + notJoined + afterExit + lateLop + awl.extraLop + rejectedExtra;
     const present = s.presentDays + (unmarkedUnpaid ? 0 : s.missingCheckIn);
     out.set(e.id, {
       workingDays,
@@ -198,7 +212,7 @@ async function attendanceDefaults(employees, month, policy) {
         absentNoLeaveDays: awl.days, absentNoLeaveDates: awl.dates, absentNoLeaveHalfDays: awl.halfDays, absentNoLeaveLop: awl.lop,
         present: s.present, late: s.late, halfDay: s.halfDay, absent: s.absent, onLeave: s.onLeave,
         missingCheckIn: s.missingCheckIn, missingCheckOut: s.missingCheckOut, lateArrivals: s.lateArrivals,
-        excessLate, lateLop, lateRule: lateRule.active ? lateRule : null, unpaidLeave, notJoined,
+        excessLate, lateLop, lateRule: lateRule.active ? lateRule : null, unapprovedRule: unRule.active ? unRule : null, unapprovedLop: ul ? { pending: ul.pendingLop, leave: ul.leaveCost, rejected: ul.rejectedExtra } : null, unpaidLeave, notJoined,
         presentDays: s.presentDays, leaveDays: s.leaveDays, absentDays: s.absentDays, pendingDays: s.pendingDays,
         earlyLogouts: s.earlyLogouts, halfDayHalfLeave: s.halfDayHalfLeave, underReview: s.halfDayUnderReview + s.leaveUnderReview,
         sandwichDays: s.sandwichDays, unpaidLeaveTypeDays: s.unpaidLeaveDays,
@@ -449,7 +463,7 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
   const result = {
     month, period: monthLabel(month), workingDays, rows, skipped, locked, edited, totals,
     cycle: { key: cycle.key, label: cycle.label, from: cycle.from, to: cycle.to, days: cycle.days, rangeText: cycle.rangeText, heading: cycle.heading, custom: cycle.custom },
-    overlap: overlap || null, absentRule: PC.absentRuleFor(month, settings.absent), lateRule: PC.lateRuleFor(month, settings.late),
+    overlap: overlap || null, absentRule: PC.absentRuleFor(month, settings.absent), lateRule: PC.lateRuleFor(month, settings.late), unapprovedRule: PC.unapprovedRuleFor(month, settings.unapproved),
   };
   if (dryRun) return result;
 

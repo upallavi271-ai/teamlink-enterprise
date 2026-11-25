@@ -26,6 +26,10 @@
 //        days           LOP days for each full group (1): 3 late = 1 LOP, 4 = 1, 5 = 1, 6 = 2
 //        effectiveFrom  first payroll month the rule applies to; nothing saved = the old rule
 //                       (free late arrivals of the Attendance policy, then half a day each)
+//   payroll.unapprovedLeave  { days, effectiveFrom }             (founder 2026-11-25)
+//        days           LOP days for each leave day that is NOT approved (2, like absent with no leave applied); one leave day a
+//                       month is free whether approved or not; approved leave beyond it = 1 LOP (utils/payrollLeaveRule.js)
+//        effectiveFrom  first payroll month the rule applies to; nothing saved = the old arithmetic
 //   payroll.absentNoLeave    { days, halfDayDays, effectiveFrom }
 //        days           LOP days for a working day ABSENT with NO leave applied (2)
 //        halfDayDays    LOP days for a half day with no leave applied (1)
@@ -38,6 +42,7 @@ const prisma = require('../db');
 const CYCLE_KEY = 'payroll.cycle';
 const ABSENT_KEY = 'payroll.absentNoLeave';
 const LATE_KEY = 'payroll.lateRule';
+const UNAPPROVED_KEY = 'payroll.unapprovedLeave';
 const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const pad = (n) => String(n).padStart(2, '0');
@@ -66,6 +71,7 @@ const dayMonYear = (date) => `${dayMon(date)} ${date.slice(0, 4)}`;
 const CALENDAR = Object.freeze({ startDay: 1, effectiveFrom: null });
 const NO_ABSENT_RULE = Object.freeze({ days: null, halfDayDays: 1, effectiveFrom: null });
 const NO_LATE_RULE = Object.freeze({ every: null, days: 1, effectiveFrom: null });
+const NO_UNAPPROVED_RULE = Object.freeze({ days: null, effectiveFrom: null });
 
 function normaliseCycle(raw) {
   const startDay = Number(raw && raw.startDay);
@@ -94,6 +100,14 @@ function normaliseLate(raw) {
   return { every, days, effectiveFrom: eff };
 }
 
+// LOP days for a leave day that is not approved: 1 to 5, in halves, from a payroll month
+function normaliseUnapproved(raw) {
+  const days = Number(raw && raw.days);
+  const eff = raw && isMonth(raw.effectiveFrom) ? raw.effectiveFrom : null;
+  if (!eff || !Number.isFinite(days) || days < 1 || days > 5 || (days * 2) % 1) return { ...NO_UNAPPROVED_RULE };
+  return { days, effectiveFrom: eff };
+}
+
 let cache = null;
 let cacheAt = 0;
 const TTL_MS = 3000;
@@ -103,13 +117,14 @@ const parse = (row) => { try { return row && row.value ? JSON.parse(row.value) :
 async function getSettings({ fresh = false } = {}) {
   if (!fresh && cache && Date.now() - cacheAt < TTL_MS) return cache;
   let rows = [];
-  try { rows = await prisma.appSetting.findMany({ where: { key: { in: [CYCLE_KEY, ABSENT_KEY, LATE_KEY] } } }); } catch { rows = []; }
+  try { rows = await prisma.appSetting.findMany({ where: { key: { in: [CYCLE_KEY, ABSENT_KEY, LATE_KEY, UNAPPROVED_KEY] } } }); } catch { rows = []; }
   const byKey = new Map(rows.map((r) => [r.key, r]));
   cache = {
     cycle: normaliseCycle(parse(byKey.get(CYCLE_KEY))),
     absent: normaliseAbsent(parse(byKey.get(ABSENT_KEY))),
     late: normaliseLate(parse(byKey.get(LATE_KEY))),
-    saved: { cycle: !!byKey.get(CYCLE_KEY), absent: !!byKey.get(ABSENT_KEY), late: !!byKey.get(LATE_KEY) },
+    unapproved: normaliseUnapproved(parse(byKey.get(UNAPPROVED_KEY))),
+    saved: { cycle: !!byKey.get(CYCLE_KEY), absent: !!byKey.get(ABSENT_KEY), late: !!byKey.get(LATE_KEY), unapproved: !!byKey.get(UNAPPROVED_KEY) },
     updatedBy: byKey.get(CYCLE_KEY) ? byKey.get(CYCLE_KEY).updatedByName : null,
   };
   cacheAt = Date.now();
@@ -118,7 +133,7 @@ async function getSettings({ fresh = false } = {}) {
 const clearCache = () => { cache = null; };
 // The settings as last read, for the few synchronous builders (voucher payloads): every
 // async caller awaits getSettings() first. Nothing read yet = the calendar month.
-const lastKnown = () => cache || { cycle: { ...CALENDAR }, absent: { ...NO_ABSENT_RULE }, late: { ...NO_LATE_RULE }, saved: { cycle: false, absent: false, late: false } };
+const lastKnown = () => cache || { cycle: { ...CALENDAR }, absent: { ...NO_ABSENT_RULE }, late: { ...NO_LATE_RULE }, unapproved: { ...NO_UNAPPROVED_RULE }, saved: { cycle: false, absent: false, late: false, unapproved: false } };
 
 // ---- The pure core (settings in, answer out) --------------------------------
 // Is `month` on the cycle (not the calendar)?
@@ -194,6 +209,12 @@ function absentRuleFor(month, absent = NO_ABSENT_RULE) {
 function lateRuleFor(month, late = NO_LATE_RULE) {
   const active = !!(late && late.every && late.effectiveFrom && String(month) >= late.effectiveFrom);
   return { active, every: active ? Number(late.every) : null, days: active ? Number(late.days) : null, effectiveFrom: late ? late.effectiveFrom : null };
+}
+
+// The rule for leave that is not approved, for one payroll month: { active, days, effectiveFrom } (active only from its effective month).
+function unapprovedRuleFor(month, u = NO_UNAPPROVED_RULE) {
+  const active = !!(u && u.days && u.effectiveFrom && String(month) >= u.effectiveFrom);
+  return { active, days: active ? Number(u.days) : null, effectiveFrom: u ? u.effectiveFrom : null };
 }
 
 // ---- Async conveniences -----------------------------------------------------
@@ -278,9 +299,29 @@ async function saveLateRule({ every, days, effectiveFrom, off }, actor) {
   return { late: normaliseLate(value) };
 }
 
+// Leave-not-approved rule (founder 2026-11-25). { off: true } (or no "days") switches it off: the old arithmetic applies again.
+async function saveUnapprovedRule({ days, effectiveFrom, off }, actor) {
+  if (off || days === null || days === '' || days === undefined) {
+    await prisma.appSetting.deleteMany({ where: { key: UNAPPROVED_KEY } });
+    clearCache();
+    return { unapproved: { ...NO_UNAPPROVED_RULE }, off: true };
+  }
+  const d = Number(days);
+  if (!Number.isFinite(d) || d < 1 || d > 5 || (d * 2) % 1) return { error: 'A leave that is not approved must count between 1 and 5 LOP days, in halves.' };
+  if (!isMonth(effectiveFrom)) return { error: 'Pick the first payroll month this rule applies to (for example 2026-12).' };
+  const value = { days: d, effectiveFrom };
+  await prisma.appSetting.upsert({
+    where: { key: UNAPPROVED_KEY },
+    update: { value: JSON.stringify(value), updatedById: actor && actor.id || null, updatedByName: actor && actor.name || null },
+    create: { key: UNAPPROVED_KEY, value: JSON.stringify(value), updatedById: actor && actor.id || null, updatedByName: actor && actor.name || null },
+  });
+  clearCache();
+  return { unapproved: normaliseUnapproved(value) };
+}
+
 module.exports = {
-  CYCLE_KEY, ABSENT_KEY, LATE_KEY, CALENDAR, NO_ABSENT_RULE, NO_LATE_RULE, MON3, MONTH_NAMES,
+  CYCLE_KEY, ABSENT_KEY, LATE_KEY, UNAPPROVED_KEY, CALENDAR, NO_ABSENT_RULE, NO_LATE_RULE, NO_UNAPPROVED_RULE, MON3, MONTH_NAMES,
   isMonth, isDay, addMonths, addDays, daysBetween, daysInMonth, dayMon, dayMonYear,
-  normaliseCycle, normaliseAbsent, normaliseLate, getSettings, clearCache, cycleApplies, cycleOf, monthOfDate, monthList, overlapDays,
-  absentRuleFor, lateRuleFor, cycleSync, voucherDateSync, rangeTail, lastKnown, cycleFor, monthOf, absentRule, lateRule, voucherDate, headingFor, saveCycle, saveAbsentRule, saveLateRule,
+  normaliseCycle, normaliseAbsent, normaliseLate, normaliseUnapproved, getSettings, clearCache, cycleApplies, cycleOf, monthOfDate, monthList, overlapDays,
+  absentRuleFor, lateRuleFor, unapprovedRuleFor, cycleSync, voucherDateSync, rangeTail, lastKnown, cycleFor, monthOf, absentRule, lateRule, voucherDate, headingFor, saveCycle, saveAbsentRule, saveLateRule, saveUnapprovedRule,
 };

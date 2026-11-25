@@ -57,13 +57,14 @@ module.exports = function registerPayrollCycle(router, { payrollEmployeeWhere })
     const settings = await PC.getSettings({ fresh: true });
     const months = await monthRows(settings);
     res.json({
-      settings: { cycle: settings.cycle, absent: settings.absent, late: settings.late, saved: settings.saved },
+      settings: { cycle: settings.cycle, absent: settings.absent, late: settings.late, unapproved: settings.unapproved, saved: settings.saved },
       canEdit: isAdmin(req.user),
       months,
       current: months.find((m) => m.current) || null,
       text: {
         cycle: 'A payroll month runs from the start day of the previous month to the day before it, and is named after the month it ends in.',
         absent: 'A working day absent with no leave applied counts as extra loss-of-pay days, valued from the monthly salary.',
+        unapproved: 'A leave day that is applied but not approved counts as extra LOP days (2, like absent with no leave applied). One leave day a month is free, approved or not; an approved leave beyond it counts 1 LOP day.',
         late: 'Every N late arrivals in a payroll month count as LOP days (3 late = 1 LOP, 4 = 1, 5 = 1, 6 = 2). Late arrivals with an approved late-coming request are not counted.',
       },
     });
@@ -90,10 +91,15 @@ module.exports = function registerPayrollCycle(router, { payrollEmployeeWhere })
       if (r.error) return res.status(400).json({ error: r.error });
       out.late = r.late;
     }
+    if (body.unapproved) {
+      const r = await PC.saveUnapprovedRule(body.unapproved, actor);
+      if (r.error) return res.status(400).json({ error: r.error });
+      out.unapproved = r.unapproved;
+    }
     const after = await PC.getSettings({ fresh: true });
     await logAudit({
       userId: req.user.id, actorName: actor.name, action: 'Payroll cycle settings changed', entity: 'AppSetting', entityId: PC.CYCLE_KEY,
-      fromValue: JSON.stringify({ cycle: before.cycle, absent: before.absent, late: before.late }), toValue: JSON.stringify({ cycle: after.cycle, absent: after.absent, late: after.late }),
+      fromValue: JSON.stringify({ cycle: before.cycle, absent: before.absent, late: before.late, unapproved: before.unapproved }), toValue: JSON.stringify({ cycle: after.cycle, absent: after.absent, late: after.late, unapproved: after.unapproved }),
     });
     // What the owner should know: payrolls already beyond draft inside the new range keep their money.
     const notes = [];
@@ -107,7 +113,7 @@ module.exports = function registerPayrollCycle(router, { payrollEmployeeWhere })
         notes.push(`${first.label} (${first.rangeText}) overlaps ${gap} day(s) of ${prev.label} (${prev.rangeText}) that were already paid. Set "First period starts on" to ${PC.addDays(prev.to, 1)} so nothing is paid twice.`);
       }
     }
-    return res.json({ settings: { cycle: after.cycle, absent: after.absent, late: after.late, saved: after.saved }, notes });
+    return res.json({ settings: { cycle: after.cycle, absent: after.absent, late: after.late, unapproved: after.unapproved, saved: after.saved }, notes });
   });
 
   // ---- The check before locking: pending leaves + absent days --------------------------------

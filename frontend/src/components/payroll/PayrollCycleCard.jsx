@@ -41,7 +41,9 @@ export default function PayrollCycleCard({ isAdmin }) {
   const [lateEvery, setLateEvery] = useState(3);
   const [lateDays, setLateDays] = useState(1);
   const [lateFrom, setLateFrom] = useState('');
-  const [msg, setMsg] = useState({ cycle: '', absent: '', late: '' });
+  const [unDays, setUnDays] = useState(2);
+  const [unFrom, setUnFrom] = useState('');
+  const [msg, setMsg] = useState({ cycle: '', absent: '', late: '', un: '' });
   const [notes, setNotes] = useState([]);
   const [busy, setBusy] = useState('');
 
@@ -53,6 +55,7 @@ export default function PayrollCycleCard({ isAdmin }) {
     }
     if (s.saved.absent && s.absent.days) { setAwlDays(s.absent.days); setHalfDays(s.absent.halfDayDays); setAwlFrom(s.absent.effectiveFrom); }
     if (s.late && s.late.every) { setLateEvery(s.late.every); setLateDays(s.late.days); setLateFrom(s.late.effectiveFrom); } else if (data.current) setLateFrom((f) => f || data.current.key);
+    if (s.unapproved && s.unapproved.days) { setUnDays(s.unapproved.days); setUnFrom(s.unapproved.effectiveFrom); } else if (data.current) setUnFrom((f) => f || data.current.key);
   }, [data]);
 
   if (!data) return null;
@@ -62,6 +65,7 @@ export default function PayrollCycleCard({ isAdmin }) {
   const cycleOn = s.cycle.startDay > 1;
   const absentOn = !!s.absent.days;
   const lateOn = !!(s.late && s.late.every);
+  const unOn = !!(s.unapproved && s.unapproved.days);
 
   const upcoming = [];
   if (sd > 1) {
@@ -90,6 +94,15 @@ export default function PayrollCycleCard({ isAdmin }) {
     setBusy('');
   }
 
+  async function saveUnapproved(off) {
+    setBusy('un'); setMsg((m) => ({ ...m, un: '' }));
+    try {
+      await api.put('/payroll/cycle', { unapproved: off ? { off: true } : { days: Number(unDays), effectiveFrom: unFrom } });
+      setMsg((m) => ({ ...m, un: off ? 'Switched off. Payroll counts leave the old way again.' : `Saved. From the ${monthShort(unFrom)} payroll, a leave day that is not approved counts ${unDays} LOP days.` }));
+      await reloadPayrollCycle();
+    } catch (err) { setMsg((m) => ({ ...m, un: errText(err, 'Could not save.') })); }
+    setBusy('');
+  }
   async function saveLate(off) {
     setBusy('late'); setMsg((m) => ({ ...m, late: '' }));
     try {
@@ -102,7 +115,7 @@ export default function PayrollCycleCard({ isAdmin }) {
 
   return (
     <Panel style={{ marginTop: 14 }}>
-      <PanelHead title="Payroll cycle, absent days & late coming" />
+      <PanelHead title="Payroll cycle, absent days, late coming & leave" />
       <div style={{ padding: '6px 18px 16px' }} className="pc-card">
         <div className="pc-sentence">
           <b>Payroll month</b> runs from day{' '}
@@ -179,6 +192,26 @@ export default function PayrollCycleCard({ isAdmin }) {
         {canEdit && <button className="btn btn-primary btn-sm" disabled={busy === 'late' || !lateFrom} onClick={() => saveLate(false)}>Save late coming rule</button>}
         {canEdit && lateOn && <button className="btn btn-sm" style={{ marginLeft: 8 }} disabled={busy === 'late'} onClick={() => saveLate(true)}>Switch off</button>}
         {msg.late && <div className="pc-ok">{msg.late}</div>}
+
+        <div className="pc-sep" />
+        <div className="pc-sentence">
+          <b>Leave that is not approved</b>: a leave day that was applied but is not approved counts as{' '}
+          <input type="number" min="1" max="5" step="0.5" value={unDays} disabled={!canEdit} onChange={(e) => setUnDays(e.target.value)} aria-label="LOP days for a leave day that is not approved" /> LOP days.
+        </div>
+        <div className="pc-row">
+          <span>Starts with the</span>
+          <input type="month" value={unFrom} disabled={!canEdit} onChange={(e) => setUnFrom(e.target.value)} aria-label="First payroll month for the leave not approved rule" />
+          <span>payroll. Earlier months keep their numbers.</span>
+        </div>
+        <div className="pc-help">
+          One leave day a month is free, approved or not. An approved leave beyond it counts 1 LOP day. A leave day that is not approved (still waiting when the payroll is calculated, or rejected while the person was absent) counts the number above.
+          Absent with no leave applied is the rule above (absent without leave). Approve a waiting leave and calculate again to change it from {unDays} to 1.
+        </div>
+        {!unOn && <div className="pc-note">Not on yet: a waiting leave still counts 1 LOP day, and only approved leave uses the free leave day.</div>}
+        {unOn && <div className="pc-ok">On: from the {monthShort(s.unapproved.effectiveFrom)} payroll a leave day that is not approved counts {s.unapproved.days} LOP days.</div>}
+        {canEdit && <button className="btn btn-primary btn-sm" disabled={busy === 'un' || !unFrom} onClick={() => saveUnapproved(false)}>Save leave rule</button>}
+        {canEdit && unOn && <button className="btn btn-sm" style={{ marginLeft: 8 }} disabled={busy === 'un'} onClick={() => saveUnapproved(true)}>Switch off</button>}
+        {msg.un && <div className="pc-ok">{msg.un}</div>}
       </div>
     </Panel>
   );

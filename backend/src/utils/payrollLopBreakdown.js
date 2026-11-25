@@ -31,6 +31,7 @@ const E = require('./payrollEngine');
 const PC = require('./payrollCycle');
 const ANL = require('./absentNoLeave');
 const PEdit = require('./payrollEdit');
+const LR = require('./payrollLeaveRule'); // leave that is not approved (founder 2026-11-25)
 const { monthLabel } = require('./attendanceMath');
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -63,7 +64,7 @@ function explainRows(rows, ctx) {
     if (!byDate.has(date)) {
       byDate.set(date, {
         date, absent: 0, pending: 0, missingCheckIn: 0, awlExtra: 0, awlKind: null, lateCost: 0, lateNo: 0, leaveCost: 0, leaveFree: 0,
-        notJoined: 0, afterExit: 0,
+        notJoined: 0, afterExit: 0, rejectedExtra: 0, free: 0, pendingFraction: 0,
       });
     }
     return byDate.get(date);
@@ -115,9 +116,23 @@ function explainRows(rows, ctx) {
       }
     });
   }
+  // LEAVE NOT APPROVED (Payroll policy, founder 2026-11-25): from the one function the engine uses (utils/payrollLeaveRule.js), replacing the
+  // waiting-leave and paid-leave terms above: one free leave day a month (approved or not), approved leave beyond it 1 LOP, a leave day that is
+  // not approved (waiting, or rejected while absent) `days` LOP.
+  const un = ctx.unRule && ctx.unRule.active ? ctx.unRule : null;
+  if (un) {
+    const alloc = LR.allocate(rows, { paidLeave, days: un.days, rejected: ctx.rejectedSet || null, unmarkedUnpaid });
+    byDate.forEach((p) => { p.leaveCost = 0; p.leaveFree = 0; });
+    considered.forEach((d) => { if (d.counted && LR.isLeavePending(d)) part(d.date).pending = 0; }); // their waiting part is priced again below
+    alloc.byDate.forEach((a, date) => {
+      const p = part(date);
+      p.leaveCost = a.leaveCost; p.leaveFree = a.free; p.free = a.free; p.pendingFraction = a.pendingFraction;
+      p.pending = r2(p.pending + a.pendingLop); p.rejectedExtra = a.rejectedExtra;
+    });
+  }
   let sum = 0;
   byDate.forEach((p) => {
-    p.lop = r2(p.absent + p.pending + p.missingCheckIn + p.awlExtra + p.lateCost + p.leaveCost + p.notJoined + p.afterExit);
+    p.lop = r2(p.absent + p.pending + p.missingCheckIn + p.awlExtra + p.lateCost + p.leaveCost + p.notJoined + p.afterExit + p.rejectedExtra);
     sum += p.lop;
   });
   const listed = r2(sum);
@@ -129,10 +144,11 @@ function explainRows(rows, ctx) {
     awlExtra: r2([...byDate.values()].reduce((n, p) => n + p.awlExtra, 0)),
     lateArrivals: r2([...byDate.values()].reduce((n, p) => n + p.lateCost, 0)),
     leaveBeyondAllowance: r2([...byDate.values()].reduce((n, p) => n + p.leaveCost, 0)),
+    rejectedLeave: r2([...byDate.values()].reduce((n, p) => n + p.rejectedExtra, 0)),
     beforeJoining: [...byDate.values()].reduce((n, p) => n + p.notJoined, 0),
     afterLeaving: [...byDate.values()].reduce((n, p) => n + p.afterExit, 0),
   };
-  return { byDate, listed, total, capped: r2(listed - total), terms, freeLate, paidLeave, lateCount: lateRows.length, lateRule: lr };
+  return { byDate, listed, total, capped: r2(listed - total), terms, freeLate, paidLeave, lateCount: lateRows.length, lateRule: lr, unapprovedRule: un };
 }
 
 // ---- Words ------------------------------------------------------------------------------------------------------
@@ -157,6 +173,12 @@ function absentWhy(row) {
   }
 }
 
+function unapprovedWhy(row, p, ctx) {
+  return `${row.sandwichWaiting ? 'A weekly off or holiday between two leave days counts as leave (sandwich rule), and one of the two leaves is not approved. ' : 'A leave was applied but it is not approved by the time of payroll. '}`
+    + `Each such day counts ${ctx.unRule.days} LOP days (the same as absent with no leave applied).${p.free > 0 ? ` Part of it is the free leave day of the pay period (${ctx.paidLeave} a month), which is not cut.` : ''}`
+    + ' When the leave is approved and the payroll is calculated again, an approved leave costs 1 LOP day beyond the free day.';
+}
+
 function pendingWhy(row) {
   if (row.sandwichWaiting) return 'A weekly off or holiday between two leave days counts as leave (sandwich rule). One of the two leaves is still waiting for approval, so this day is unpaid until both are approved.';
   if (row.status === 'Informed') return 'An attendance correction was asked for but is still waiting for approval. The day stays unpaid until it is approved.';
@@ -170,7 +192,13 @@ function reasonsOf(row, p, ctx) {
   if (p.notJoined) out.push({ code: 'before-joining', days: 1, text: `A working day before the joining date${ctx.joinedOn ? ` (${ctx.joinedOn})` : ''}, so it is not paid in this pay period.` });
   if (p.afterExit) out.push({ code: 'after-leaving', days: 1, text: 'A working day after the last working day, so it is not paid.' });
   if (p.absent) out.push({ code: 'absent', days: p.absent, text: absentWhy(row) });
-  if (p.pending) out.push({ code: 'pending', days: p.pending, text: pendingWhy(row) });
+  if (p.pending) out.push({ code: 'pending', days: p.pending, text: ctx.unRule && ctx.unRule.active && LR.isLeavePending(row) ? unapprovedWhy(row, p, ctx) : pendingWhy(row) });
+  if (p.rejectedExtra) {
+    out.push({
+      code: 'rejected-leave', days: p.rejectedExtra,
+      text: `A leave was applied for this day but it was rejected (not approved) and the person was absent: it counts ${ctx.unRule.days} LOP days instead of 1 (this is the extra ${p.rejectedExtra}).`,
+    });
+  }
   if (p.missingCheckIn) {
     out.push({
       code: 'missing-check-in', days: 1,
@@ -206,9 +234,13 @@ function reasonsOf(row, p, ctx) {
 function notCountedNotes(row, p, ctx) {
   const notes = [];
   if (row.status === 'Holiday') notes.push({ kind: 'holiday', text: `Holiday${row.note ? ` (${row.note})` : ''}: not a working day.` });
-  if (row.sandwich) notes.push({ kind: 'sandwich', text: `${row.note || 'Sandwich leave'}. The sandwich rule treats it as leave, and that leave is paid.` });
+  if (row.sandwichWaiting) notes.push({ kind: 'sandwich', text: `${row.note || 'Sandwich leave'}. The sandwich rule treats it as leave.` });
+  else if (row.sandwich) notes.push({ kind: 'sandwich', text: `${row.note || 'Sandwich leave'}. The sandwich rule treats it as leave, and that leave is paid.` });
   else if (Number(row.leave) > 0 && p && p.leaveFree > 0) {
     notes.push({ kind: 'leave', text: `${row.status === 'Half Day + Half Leave' ? 'Worked one half and approved leave covers the other half.' : `Approved ${row.leaveType || ''} leave`.replace('  ', ' ')} Paid: it is within the ${ctx.paidLeave} paid leave day(s) of the pay period.`.trim() });
+  }
+  if (ctx.unRule && ctx.unRule.active && p && p.free > 0 && LR.isLeavePending(row)) {
+    notes.push({ kind: 'free-day', text: `This is the free leave day of the pay period (${ctx.paidLeave} a month): it is not cut, even though the leave is not approved.` });
   }
   if (row.lateExcused || row.lateState === 'approved') notes.push({ kind: 'late', text: 'Came late, but the late-coming request was approved, so it is not counted as a late arrival.' });
   else if (row.late && p && p.lateNo && !p.lateCost) {
@@ -309,9 +341,10 @@ async function forEntry(entry, { desk = true } = {}) {
   const { days } = await D.loadDays(prisma, { employees: [emp], from: cycle.from, to: cycle.to, cfg: policy, lastDayOf: leavers.size ? leavers : null });
   const rows = days(emp);
   const workingDays = E.payrollWorkingDays(month, policy, cycle);
-  const awlCtx = rule.active ? await E.awlContext([emp], cycle) : null;
+  const unRule = PC.unapprovedRuleFor(month, settings.unapproved);
+  const awlCtx = (rule.active || unRule.active) ? await E.awlContext([emp], cycle) : null;
   const joinedOn = emp.dateOfJoining ? new Date(emp.dateOfJoining).toISOString().slice(0, 10) : null;
-  const ctx = { policy, workingDays, rule, awlCtx, employeeId: emp.id, joinedOn, lateRule: PC.lateRuleFor(month, settings.late) };
+  const ctx = { policy, workingDays, rule, awlCtx, employeeId: emp.id, joinedOn, lateRule: PC.lateRuleFor(month, settings.late), unRule, rejectedSet: awlCtx ? (awlCtx.rejected.get(emp.id) || null) : null };
   const x = explainRows(rows, ctx);
   ctx.freeLate = x.freeLate; ctx.paidLeave = x.paidLeave;
   const req = await loadRequests(emp.id, cycle.from, cycle.to);
@@ -399,6 +432,7 @@ async function forEntry(entry, { desk = true } = {}) {
       weekendsPaid: !!policy.weekendsPaid, sandwichLeave: policy.sandwichLeave !== false,
       absentWithoutLeave: rule.active ? { days: rule.days, halfDayDays: rule.halfDayDays } : null,
       lateRule: ctx.lateRule.active ? { every: ctx.lateRule.every, days: ctx.lateRule.days } : null,
+      unapprovedRule: unRule.active ? { days: unRule.days } : null,
     },
     terms: x.terms,
     capped: x.capped,
