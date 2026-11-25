@@ -247,7 +247,7 @@ async function processCall(id) {
   } else {
     const raw = await findRaw(row.token);
     // TALK IN TEAMLINK: the file starts when the phone answered the office leg; the conversation starts when the phone joined the candidate in
-    const skip = row.bridgeMergedAt && row.answerAt ? Math.max(0, (Date.parse(row.bridgeMergedAt) - Date.parse(row.answerAt)) / 1000 - 0.3) : 0;
+    const skip = row.bridgeMergedAt && row.answerAt ? Math.max(0, (Date.parse(row.bridgeMergedAt) - Date.parse(row.answerAt)) / 1000 + 0.9) /* the merge completes about a second after the phone presses Merge (seen on a real call: the tail of the operator's hold message) */ : 0;
     if (!raw) {
       Object.assign(set, { recordingStatus: 'missing', recordingNote: 'No recording file came from the phone system (is the generated dialplan installed and recording on?).' });
     } else {
