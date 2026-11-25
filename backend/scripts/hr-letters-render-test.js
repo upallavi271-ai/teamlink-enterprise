@@ -47,7 +47,7 @@ const parasText = (model) => model.paras.map((p) => p.map((r) => r.t).join('')).
   // ---------------- offer letter
   const O = require(path.join(SRC, 'utils/offerLetterMail.js'));
   const s0 = await O.loadSettings();
-  check('offer: starting template has the 4 reference points and no heading', s0.template.terms.map((t) => t.title).join('|') === 'Date of Appointment|Trainee Period & Stipend|Confirmation & CTC Enhancement|Documents Required at Joining' && s0.template.termsHeading === '');
+  check('offer: starting template is Option 1: Date of Joining first, the documents point last, no heading', s0.template.terms[0].title === 'Date of Joining' && s0.template.terms[s0.template.terms.length - 1].title === 'Documents Required at Joining' && s0.template.termsHeading === '', s0.template.terms.map((x) => x.title));
   const legacyTpl = { ...O.DEFAULT_TEMPLATE };
   delete legacyTpl.termsHeading;
   state.settings['offer-letter-mail'] = JSON.stringify({ enabled: false, template: legacyTpl });
@@ -60,13 +60,13 @@ const parasText = (model) => model.paras.map((p) => p.map((r) => r.t).join('')).
   const m = await O.buildModel(app, s0.template);
   const html = O.renderHtml(m);
   const text = O.renderText(m);
-  check('offer: intro matches the reference sentence', /offer you the position of Internal HR in the Human Resources Department at Teamlink Consultants \[OPC\] Pvt\. Ltd\., based at our Corporate Office in Hyderabad, Telangana, under the following terms and conditions:/.test(m.intro.replace(/[\u0001\u0002]/g, '')), m.intro);
+  check('offer: intro is the Option 1 opening paragraph', /interviews you attended, we are pleased to offer you the position of Internal HR in the Human Resources Department at Teamlink Consultants \[OPC\] Pvt\. Ltd\., based at our Corporate Office in Hyderabad, Telangana\. This offer is made on the following terms and conditions:/.test(m.intro.replace(/[\u0001\u0002]/g, '')), m.intro);
   check('offer: the reference bold details are bold in the letter (name, designation, department, company)', ['<b>DIVYA SRI SIVATMIKA TONDAPU</b>', '<b>Internal HR</b>', '<b>Human Resources</b>', '<b>Teamlink Consultants [OPC] Pvt. Ltd.</b>', '<b>₹10,000/- per month</b>', '<b>24 Sep 2026</b>'].every((x) => html.includes(x)), html.match(/Further.{0,300}/));
   check('offer: stipend and CTC in figures and in words', /₹10,000\/- per month \(Rupees Ten Thousand only\)/.test(text) && /₹3,00,000\/- per annum \(Rupees Three Lakhs only\)/.test(text), text.match(/stipend.{0,90}/));
-  check('offer: Date of Appointment is the joining date, as a bullet, in the reference date style', /• Date of Appointment: 24 Sep 2026/.test(text), text.match(/Date of Appointment.{0,30}/));
-  check('offer: nothing was left out and no {{ }} printed', m.omitted.length === 0 && !/\{\{/.test(html + text), m.omitted);
+  check('offer: the joining date is the first point, as a bullet, in the date style 24 Sep 2026', /• Date of Joining: 24 Sep 2026/.test(text), text.match(/Date of Joining.{0,40}/));
+  check('offer: only the manager and working-hours points are left out (no manager on file, no hours typed); no {{ }} printed', m.omitted.every((x) => /no manager on file|working hours not written/.test(x)) && !/\{\{/.test(html + text), m.omitted);
   check('offer: reference layout: no heading, no reference number, To, / Acceptance of Offer / Signature of Candidate', !/Terms of employment/i.test(html) && !/Ref:/.test(html + text) && /<b>To,<\/b><br>/.test(html) && /Acceptance of Offer/.test(html) && /Signature of Candidate/.test(html) && /Date: 23 Nov 2026|Date: \d{1,2} [A-Z][a-z]{2} \d{4}/.test(html));
-  check('offer: three bullet points, then the documents heading with its five bullets', (text.match(/^• /gm) || []).length === 8 && /\nDocuments Required at Joining:\n• Relieving/.test(text), text);
+  check('offer: 13 bullet points, then the documents heading with its five bullets', (text.match(/^• /gm) || []).length === 18 && /\nDocuments Required at Joining:\n• Relieving/.test(text), text);
   const pdf = await O.renderPdf(m);
   check('offer: a real PDF', pdf.slice(0, 4).toString() === '%PDF' && pdf.length > 3000, pdf.length);
   fs.writeFileSync(path.join(OUT, 'offer-letter.pdf'), pdf);
@@ -75,7 +75,7 @@ const parasText = (model) => model.paras.map((p) => p.map((r) => r.t).join('')).
   const w = [await words(150000), await words(12500), await words(10000000), await words(100000)];
   check('offer: words for 1,50,000 / 12,500 / 1,00,00,000 / 1,00,000', w.join('|') === 'Rupees One Lakh Fifty Thousand only|Rupees Twelve Thousand Five Hundred only|Rupees One Crore only|Rupees One Lakh only', w);
   const noPay = await O.buildModel(app, { ...s0.template, showCtc: false });
-  check('offer: "do not print the salary" leaves both salary points out (and says why)', noPay.terms.length === 2 && noPay.omitted.length === 2, noPay.omitted);
+  check('offer: "do not print the salary" leaves the stipend and CTC points out (and says why)', noPay.omitted.some((x) => /Trainee Period/.test(x)) && noPay.omitted.some((x) => /Confirmation/.test(x)) && !noPay.terms.some((x) => /Trainee Period|Confirmation/.test(x.title)), noPay.omitted);
   const legacyModel = await O.buildModel(app, { ...s0.template, termsHeading: 'Terms of employment' });
   check('offer: an editor heading is printed when set', /Terms of employment/.test(O.renderHtml(legacyModel)) && /\nTerms of employment\n/.test(O.renderText(legacyModel)));
 

@@ -78,14 +78,11 @@ const DEFAULT_TEMPLATE = {
     '',
     'To accept, please reply to this email with the words "I accept the offer", or sign the attached letter and send it back to us. If you have any question, just reply to this email and we will help you.',
   ].join('\n'),
-  // The letter follows the founder's reference offer letter (Offer_Letter_Teamlink_Divyasri.docx, 2026-11-23): OFFER LETTER,
-  // the date, To / name / place, the opening paragraph, four numbered points, the welcome line, the signature and the acceptance.
+  // OPTION 1 (chosen 2026-11-25): the classic professional letter in TeamLink's brand look (logo, navy and cyan, footer).
+  // The wording is editable in Administration > Company Setup > Message templates > Offer letter. Working hours stay blank
+  // until HR types the real hours, so no invented hours go to a candidate.
   title: 'Offer Letter',
-  intro: [
-    'Dear {{name}},',
-    '',
-    'Further to your application and the subsequent interview, we are pleased to offer you the position of {{designation}} in the {{department}} Department at {{company}}, based at our Corporate Office in {{location}}, under the following terms and conditions:',
-  ].join('\n'),
+  intro: "Dear {{name}},\n\nFurther to your application and the interviews you attended, we are pleased to offer you the position of {{designation}} in the {{department}} Department at {{company}}, based at our Corporate Office in {{location}}. This offer is made on the following terms and conditions:",
   termsHeading: '', // a heading over the numbered points; empty = none (the reference letter has none)
   // TeamLink pays one flat salary per month to every new and experienced employee (founder 2026-11-18): no CTC break-up.
   // showCtc is the old name of the "print the salary" tick; it switches the salary lines off when false.
@@ -96,21 +93,24 @@ const DEFAULT_TEMPLATE = {
   workingHours: '', // the founder types the real hours once; until then the working-hours lines are left out
   details: [], // the reference letter has no details table; rows can still be added in the editor
   terms: [
-    { title: 'Date of Appointment', text: '{{joiningDate}}' },
-    { title: 'Trainee Period & Stipend', text: 'Initial designation will be {{designation}} on a temporary/probationary basis with a stipend of {{monthlySalary}} ({{monthlySalaryWords}}). Standard regular employee benefits will not apply during this trainee phase.' },
-    { title: 'Confirmation & CTC Enhancement', text: 'Upon successful evaluation and meeting required performance targets within {{probationMonths}} months, your employment will be confirmed as a permanent employee with an annual Cost to Company (CTC) of {{confirmedCtc}} ({{confirmedCtcWords}}).' },
-    {
-      title: 'Documents Required at Joining',
-      text: [
-        '• Relieving and Service Certificates from previous employers (if applicable).',
-        '• Last 6 months’ pay slips from previous organization.',
-        '• Photocopies of Academic Certificates.',
-        '• Two passport-sized photographs.',
-        '• Photocopies of Address & ID proofs (PAN Card & Aadhaar Card).',
-      ].join('\n'),
-    },
+    { title: "Date of Joining", text: "{{joiningDate}} ({{joiningDay}}), at our Corporate Office in {{location}}." },
+    { title: "Reporting To", text: "{{manager}}" },
+    { title: "Trainee Period & Stipend", text: "You will join as {{designation}} on a trainee (probationary) basis for {{probationMonths}} months, with a stipend of {{monthlySalary}} ({{monthlySalaryWords}}), paid monthly and subject to statutory deductions. Regular employee benefits do not apply during the trainee period." },
+    { title: "Confirmation & CTC", text: "On successful completion of the trainee period and satisfactory performance against the targets set by your reporting manager, you will be confirmed as a permanent employee with an annual Cost to Company (CTC) of {{confirmedCtc}} ({{confirmedCtcWords}})." },
+    { title: "Working Hours", text: "Your working hours are {{workingHours}}. Additional hours may be required from time to time, depending on business needs." },
+    { title: "Notice Period", text: "During the trainee period, either party may end the employment with 7 days’ written notice. After confirmation, the notice period is 30 days, or salary in lieu of notice." },
+    { title: "Confidentiality & Conduct", text: "You will keep all information of the company and its clients strictly confidential, during and after your employment, and follow the company’s policies and code of conduct." },
+    { title: "Probation Review", text: "Your work, attendance and conduct will be reviewed by your reporting manager every month during the trainee period. A written review is shared with you at the end of the period, before any confirmation." },
+    { title: "Leave & Holidays", text: "You are entitled to leave and public holidays as per the Company’s leave policy. HR will explain the policy and how leave is applied for when you join." },
+    { title: "Company Property", text: "Any company property issued to you, such as a laptop, access card or documents, remains the property of the Company. You must return all of it on or before your last working day." },
+    { title: "Policies & Conduct", text: "You will follow the Company’s policies, systems and code of conduct, including those on attendance, data protection, and workplace behaviour. Serious misconduct may lead to termination without notice." },
+    { title: "Verification", text: "This offer is subject to satisfactory verification of your educational qualifications, previous employment and identity documents. The details you have given us must be true and complete." },
+    { title: "Targets & Performance", text: "Your reporting manager will set your targets in writing at the start of the trainee period. Your confirmation depends on meeting these targets, so please ask for clarification on anything you are unsure about." },
+    { title: "Joining Formalities", text: "On your first day HR will complete your joining formalities with you: document verification, your company email and system access, and an introduction to your team and reporting manager." },
+    { title: "Personal Data", text: "The Company will keep your personal data only for employment, payroll and legal purposes, as permitted by law. You can ask HR to see or correct your records at any time." },
+    { title: "Documents Required at Joining", text: "Relieving and Service Certificates from previous employers (if applicable).\nLast 6 months’ pay slips from the previous organization.\nPhotocopies of Academic Certificates.\nTwo passport-sized photographs.\nPhotocopies of Address & ID proofs (PAN Card & Aadhaar Card)." },
   ],
-  closing: 'We welcome you to {{company}} for a long and fruitful association, and look forward to your valuable contributions towards the organization’s growth. We wish you the very best of luck!',
+  closing: "Please sign and return one copy of this letter to confirm your acceptance on or before {{joiningDate}}. Signing this letter confirms that you have read and understood the terms above.\n\nWe welcome you to {{company}} for a long and fruitful association, and look forward to your valuable contributions towards the organization’s growth. We wish you the very best!",
   signatoryName: '',
   signatoryTitle: 'HR Department',
   acceptanceLine: '', // the reference letter has only the signature line under "Acceptance of Offer"; words typed here print above it
@@ -294,7 +294,7 @@ function fill(text, vals) {
     if (v == null || String(v).trim() === '') { missing.push(k); return ''; }
     return String(v);
   });
-  return { text: out, missing };
+  return { text: out.replace(/(?<!\.)\.\.(?!\.)/g, '.'), missing };
 }
 // For a table row or a numbered term: kept only when EVERY detail it uses has a value.
 function fillLine(text, vals) {
@@ -389,10 +389,12 @@ const listLines = (text) => String(text || '').split('\n').map((l) => l.replace(
 const SIGN_LINE = '______________________';
 
 // --- the HTML (the mail itself, and the preview on screen) -----------------------------------------------------------------
+const LS = require('./letterStyle'); // the brand look: navy + cyan, Arial, header and footer (formatting brief, 2026-11-25)
+const navy = (inner) => `<b style="color:${LS.NAVY}">${inner}</b>`;
 const hRuns = (s) => esc(s).replace(BOLD_RE, '<b>$1</b>'); // esc leaves the bold marks alone
 const para = (text, mb = 12) => String(text || '').split(/\n{2,}/).map((p) => `<p style="margin:0 0 ${mb}px 0;line-height:1.5">${hRuns(p).replace(/\n/g, '<br>')}</p>`).join('');
 function renderHtml(m, { logoSrc = null, withCover = true } = {}) {
-  const font = "Calibri,Carlito,'Segoe UI',Arial,Helvetica,sans-serif";
+  const font = 'Arial,Helvetica,sans-serif';
   const ul = (items) => `<ul style="margin:0 0 10px 0;padding-left:24px">${items.map((i) => `<li style="margin:0 0 6px 0;line-height:1.5">${i}</li>`).join('')}</ul>`;
   // the points: one-line points share a bullet list; a point written on several lines is a bold heading and its own list
   const blocks = [];
@@ -401,20 +403,22 @@ function renderHtml(m, { logoSrc = null, withCover = true } = {}) {
   m.terms.forEach((t) => {
     if (t.text.includes('\n')) {
       flush();
-      if (t.title) blocks.push(`<p style="margin:12px 0 8px 0;line-height:1.5"><b>${esc(termLabel(t.title))}</b></p>`);
+      if (t.title) blocks.push(`<p style="margin:12px 0 8px 0;line-height:1.5">${navy(esc(termLabel(t.title)))}</p>`);
       blocks.push(ul(listLines(t.text).map(hRuns)));
-    } else run.push(`${t.title ? `<b>${esc(termLabel(t.title))}</b> ` : ''}${hRuns(t.text)}`);
+    } else run.push(`${t.title ? `${navy(esc(termLabel(t.title)))} ` : ''}${hRuns(t.text)}`);
   });
   flush();
-  const details = m.details.map((r) => `<p style="margin:0 0 6px 0;line-height:1.5"><b>${esc(termLabel(r.label))}</b> ${hRuns(r.value)}</p>`).join('');
+  const details = m.details.map((r) => `<p style="margin:0 0 6px 0;line-height:1.5">${navy(esc(termLabel(r.label)))} ${hRuns(r.value)}</p>`).join('');
   const cover = withCover && m.coverNote
     ? `<div style="font-size:14px;line-height:1.6;color:#222;padding:0 4px 18px 4px">${para(m.coverNote)}</div>`
     : '';
-  const contactLine = [m.company.phone, m.company.email].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
-  const letterhead = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #999;margin:0 0 22px 0"><tr>
-  <td style="vertical-align:middle;padding:0 0 10px 0">${logoSrc ? `<img src="${esc(logoSrc)}" alt="${esc(m.company.name)}" height="42" style="display:block;height:42px;width:auto;border:0">` : `<div style="font-size:20px;font-weight:700">${esc(m.company.name)}</div>`}</td>
-  <td style="vertical-align:middle;text-align:right;padding:0 0 10px 0;font-size:12px;line-height:1.5;color:#444"><div style="font-weight:700;color:#000;font-size:13px">${esc(m.company.name)}</div>${m.company.address ? `<div>${esc(m.company.address)}</div>` : ''}${contactLine ? `<div>${contactLine}</div>` : ''}</td>
+  const letterhead = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-bottom:2px solid ${LS.CYAN};margin:0 0 22px 0"><tr>
+  <td style="vertical-align:middle;padding:0 0 10px 0">${logoSrc ? `<img src="${esc(logoSrc)}" alt="${esc(m.company.name)}" height="42" style="display:block;height:42px;width:auto;border:0">` : `<div style="font-size:20px;font-weight:700;color:${LS.NAVY}">${esc(m.company.name)}</div>`}</td>
+  <td style="vertical-align:middle;text-align:right;padding:0 0 10px 0;line-height:1.5"><div style="font-weight:700;color:${LS.NAVY};font-size:13px">${esc(m.company.name)}</div>${m.company.tagline ? `<div style="font-weight:700;font-style:italic;color:${LS.CYAN};font-size:12px">${esc(m.company.tagline)}</div>` : ''}</td>
 </tr></table>`;
+  // footer: address, phone, email and website, under a cyan line
+  const contactFooter = [m.company.address, m.company.phone, m.company.email, m.company.website].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
+  const letterFooter = contactFooter ? `<div style="margin-top:30px;border-top:2px solid ${LS.CYAN};padding-top:10px;font-size:11px;color:${LS.MUTED};text-align:center;line-height:1.5">${contactFooter}</div>` : '';
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(m.subjectLine)}</title></head>
 <body style="margin:0;padding:0;background:#f3f4f6;font-family:${font};color:#000">
@@ -423,19 +427,20 @@ function renderHtml(m, { logoSrc = null, withCover = true } = {}) {
 ${cover}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #d9dce1"><tr><td style="padding:36px 48px 40px 48px;font-family:${font};font-size:15px;color:#000">
 ${letterhead}
-<div style="text-align:center;font-size:24px;font-weight:700;margin:0 0 26px 0">${esc(m.title.toUpperCase())}</div>
+<div style="text-align:center;font-size:24px;font-weight:700;color:${LS.NAVY};margin:0 0 26px 0">${esc(m.title.toUpperCase())}</div>
 <div style="text-align:right;font-weight:700;margin:0 0 18px 0">Date: ${esc(m.dateLong)}</div>
 <div style="margin:0 0 18px 0;line-height:1.5"><b>To,</b><br><b>${esc(m.to.name)}</b>${m.to.place ? `<br>${esc(m.to.place)}` : ''}</div>
 ${para(m.intro)}
 ${details}
-${m.termsHeading && m.terms.length ? `<p style="margin:6px 0 8px 0"><b>${esc(m.termsHeading)}</b></p>` : ''}
+${m.termsHeading && m.terms.length ? `<p style="margin:6px 0 8px 0">${navy(esc(m.termsHeading))}</p>` : ''}
 ${blocks.join('')}
 ${m.closing ? `<div style="margin:14px 0 30px 0">${para(m.closing, 0)}</div>` : ''}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-  <td width="50%" style="vertical-align:top;line-height:1.5;font-size:15px">Yours sincerely,<br><b>For ${esc(m.signatory.company)}</b><br><br><br>${SIGN_LINE}<br><b>${esc(m.signatory.name || 'Authorized Signatory')}</b>${m.signatory.title ? `<br>${esc(m.signatory.title)}` : ''}</td>
+  <td width="50%" style="vertical-align:top;line-height:1.5;font-size:15px">Yours sincerely,<br><b>For ${esc(m.signatory.company)}</b><br><br><br>${SIGN_LINE}<br><b>${esc(m.signatory.name || LS.SIGNATORY_FALLBACK)}</b>${m.signatory.title ? `<br>${esc(m.signatory.title)}` : ''}</td>
   <td width="50%" style="vertical-align:top;text-align:right;line-height:1.5;font-size:15px">Acceptance of Offer${m.acceptance.line ? `<br><span style="font-size:13px">${esc(m.acceptance.line)}</span>` : ''}<br><br><br>${SIGN_LINE}<br><b>Signature of Candidate</b><br>Date: ______________</td>
 </tr></table>
-${m.footerNote ? `<div style="margin-top:26px;font-size:11px;color:#666;text-align:center">${esc(m.footerNote)}</div>` : ''}
+${m.footerNote ? `<div style="margin-top:22px;font-size:11px;color:#666;text-align:center">${esc(m.footerNote)}</div>` : ''}
+${letterFooter}
 </td></tr></table>
 </td></tr></table>
 </td></tr></table>
@@ -445,7 +450,7 @@ ${m.footerNote ? `<div style="margin-top:26px;font-size:11px;color:#666;text-ali
 function renderText(m) {
   const lines = [];
   if (m.coverNote) lines.push(m.coverNote, '', '------------------------------------------------------------', '');
-  lines.push(m.company.name, ...(m.company.address ? [m.company.address] : []), '', m.title.toUpperCase(), '', `Date: ${m.dateLong}`, '', 'To,', m.to.name, ...(m.to.place ? [m.to.place] : []), '', unmark(m.intro), '');
+  lines.push(m.company.name, ...(m.company.tagline ? [m.company.tagline] : []), '', m.title.toUpperCase(), '', `Date: ${m.dateLong}`, '', 'To,', m.to.name, ...(m.to.place ? [m.to.place] : []), '', unmark(m.intro), '');
   m.details.forEach((r) => lines.push(`${termLabel(r.label)} ${unmark(r.value)}`));
   if (m.details.length) lines.push('');
   if (m.terms.length && m.termsHeading) lines.push(m.termsHeading);
@@ -454,9 +459,11 @@ function renderText(m) {
   });
   if (m.terms.length) lines.push('');
   if (m.closing) lines.push(unmark(m.closing), '');
-  lines.push('Yours sincerely,', `For ${m.signatory.company}`, '', SIGN_LINE, m.signatory.name || 'Authorized Signatory', ...(m.signatory.title ? [m.signatory.title] : []));
+  lines.push('Yours sincerely,', `For ${m.signatory.company}`, '', SIGN_LINE, m.signatory.name || LS.SIGNATORY_FALLBACK, ...(m.signatory.title ? [m.signatory.title] : []));
   lines.push('', 'Acceptance of Offer', ...(m.acceptance.line ? [m.acceptance.line] : []), '', SIGN_LINE, `Signature of Candidate (${m.acceptance.name})`, 'Date: ______________');
   if (m.footerNote) lines.push('', m.footerNote);
+  const foot = [m.company.address, m.company.phone, m.company.email, m.company.website].filter(Boolean).join(' | ');
+  if (foot) lines.push('', '--', foot);
   return lines.join('\n');
 }
 
@@ -478,12 +485,13 @@ async function renderPdf(m) {
   const PDFDocument = require('pdfkit'); // eslint-disable-line global-require
   const { pdfText } = require('./agreementPdf'); // eslint-disable-line global-require
   const t = (v) => pdfText(v);
+  const LSTYLE = require('./letterStyle'); // eslint-disable-line global-require
   const SIZE = 10.5;
   const GAP = 3; // about the reference's 1.25 line spacing
   const logo = await logoPng();
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
-      size: 'A4', margins: { top: 48, bottom: 56, left: 66, right: 66 }, bufferPages: true,
+      size: 'A4', margins: { top: 44, bottom: 62, left: 66, right: 66 }, bufferPages: true,
       info: { Title: t(`${m.title} - ${m.to.name}`), Author: t(m.company.name), Subject: t(m.subjectLine) },
     });
     const chunks = [];
@@ -492,7 +500,7 @@ async function renderPdf(m) {
     const W = doc.page.width - L - doc.page.margins.right;
     const bottomLimit = () => doc.page.height - doc.page.margins.bottom;
     const need = (h) => { if (doc.y + h > bottomLimit()) doc.addPage(); };
-    const font = (b) => doc.font(b ? 'Helvetica-Bold' : 'Helvetica').fontSize(SIZE).fillColor('#000');
+    const font = (b, c) => doc.font(b ? 'Helvetica-Bold' : 'Helvetica').fontSize(SIZE).fillColor(c || '#000');
     // one paragraph of plain and bold runs; pdfkit drops a space at the START of a continued run, so spaces stay at run ends
     const runsText = (runs, x, width, opts = {}) => {
       const rs = runs.map((r) => ({ ...r })).filter((r) => r.t !== '');
@@ -504,7 +512,7 @@ async function renderPdf(m) {
       rs.length = 0; rs.push(...kept);
       if (!rs.length) return;
       rs.forEach((r, i) => {
-        font(r.b);
+        font(r.b, r.c);
         const o = { width, lineGap: GAP, ...opts, continued: i < rs.length - 1 };
         if (i === 0) doc.text(t(r.t), x, doc.y, o); else doc.text(t(r.t), o);
       });
@@ -526,40 +534,30 @@ async function renderPdf(m) {
       doc.moveDown(0.35);
     };
 
-    // LETTERHEAD (2026-11-24: "where is my company logo"): the company logo on the left, the company's details on the right, a thin line
-    // below. The reference letters are plain text made for printing on letterhead paper, so the logo is added here; the body is theirs.
-    const headY = doc.y;
-    if (logo) { try { doc.image(logo, L, headY, { height: 40 }); } catch { /* the name below stands in */ } } else { doc.font('Helvetica-Bold').fontSize(16).fillColor('#000').text(t(m.company.name), L, headY, { width: W / 2 }); }
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#000').text(t(m.company.name), L + W / 2, headY, { width: W / 2, align: 'right' });
-    doc.font('Helvetica').fontSize(8.5).fillColor('#444444');
-    if (m.company.address) doc.text(t(m.company.address), L + W / 2, doc.y, { width: W / 2, align: 'right' });
-    const headContact = [m.company.phone, m.company.email].filter(Boolean).join('  |  ');
-    if (headContact) doc.text(t(headContact), L + W / 2, doc.y, { width: W / 2, align: 'right' });
-    const headRule = Math.max(doc.y, headY + 44) + 6;
-    doc.moveTo(L, headRule).lineTo(L + W, headRule).lineWidth(0.8).strokeColor('#999999').stroke();
-    doc.y = headRule + 20; doc.x = L;
+    // HEADER (formatting brief): the TeamLink logo, the company name and tagline, a cyan line - utils/letterStyle.js
+    LSTYLE.drawHeader(doc, { L, W, logo, company: m.company, t });
 
     // title, date, addressee
-    doc.font('Helvetica-Bold').fontSize(17).fillColor('#000').text(t(m.title.toUpperCase()), L, doc.y, { width: W, align: 'center' });
-    doc.moveDown(1.1);
+    doc.font('Helvetica-Bold').fontSize(17).fillColor(LSTYLE.NAVY).text(t(m.title.toUpperCase()), L, doc.y, { width: W, align: 'center' });
+    doc.moveDown(0.9);
     font(true).text(t(`Date: ${m.dateLong}`), L, doc.y, { width: W, align: 'right' });
-    doc.moveDown(1.1);
+    doc.moveDown(0.9);
     font(true).text('To,', L, doc.y, { width: W, lineGap: GAP });
     font(true).text(t(m.to.name), L, doc.y, { width: W, lineGap: GAP });
     if (m.to.place) font(false).text(t(m.to.place), L, doc.y, { width: W, lineGap: GAP });
-    doc.moveDown(1.1);
+    doc.moveDown(0.9);
 
     // body
     paragraphs(m.intro);
-    m.details.forEach((r) => { runsText([{ t: `${termLabel(r.label)} `, b: true }, ...runsOf(r.value)], L, W); doc.moveDown(0.3); });
+    m.details.forEach((r) => { runsText([{ t: `${termLabel(r.label)} `, b: true, c: LSTYLE.NAVY }, ...runsOf(r.value)], L, W); doc.moveDown(0.15); });
     if (m.details.length) doc.moveDown(0.4);
-    if (m.termsHeading && m.terms.length) { font(true).text(t(m.termsHeading), L, doc.y, { width: W }); doc.moveDown(0.5); }
+    if (m.termsHeading && m.terms.length) { font(true, LSTYLE.NAVY).text(t(m.termsHeading), L, doc.y, { width: W }); doc.moveDown(0.5); }
     m.terms.forEach((x) => {
       if (x.text.includes('\n')) {
         doc.moveDown(0.3);
-        if (x.title) { need(40); font(true).text(t(termLabel(x.title)), L, doc.y, { width: W, lineGap: GAP }); doc.moveDown(0.4); }
+        if (x.title) { need(40); font(true, LSTYLE.NAVY).text(t(termLabel(x.title)), L, doc.y, { width: W, lineGap: GAP }); doc.moveDown(0.4); }
         listLines(x.text).forEach((line) => bullet(runsOf(line)));
-      } else bullet([...(x.title ? [{ t: `${termLabel(x.title)} `, b: true }] : []), ...runsOf(x.text)]);
+      } else bullet([...(x.title ? [{ t: `${termLabel(x.title)} `, b: true, c: LSTYLE.NAVY }] : []), ...runsOf(x.text)]);
     });
     doc.moveDown(0.6);
 
@@ -580,7 +578,7 @@ async function renderPdf(m) {
     const rightHead = top + lineH + (m.acceptance.line ? doc.heightOfString(t(m.acceptance.line), { width: colW }) : 0);
     const signY = Math.max(leftHead, rightHead) + lineH * 2; // both signature lines on one row, as in the reference
     font(false).text(SIGN_LINE, L, signY, { width: colW });
-    font(true).text(t(m.signatory.name || 'Authorized Signatory'), L, doc.y, { width: colW });
+    font(true).text(t(m.signatory.name || LSTYLE.SIGNATORY_FALLBACK), L, doc.y, { width: colW });
     if (m.signatory.title) font(false).text(t(m.signatory.title), L, doc.y, { width: colW });
     const leftEnd = doc.y;
     // right: Acceptance of Offer / (words) / (space) / ____ / Signature of Candidate / Date
@@ -592,15 +590,8 @@ async function renderPdf(m) {
     font(false).text('Date: ______________', R, doc.y, { width: colW, align: 'right' });
     doc.y = Math.max(leftEnd, doc.y); doc.x = L;
 
-    // the small print (only when the editor has some) and page numbers (only when the letter runs past one page)
-    const range = doc.bufferedPageRange();
-    for (let i = range.start; i < range.start + range.count; i += 1) {
-      doc.switchToPage(i);
-      doc.page.margins.bottom = 0;
-      const fy = doc.page.height - 40;
-      if (m.footerNote) doc.font('Helvetica').fontSize(7.5).fillColor('#666').text(t(m.footerNote), L, fy, { width: W * 0.75, lineBreak: false });
-      if (range.count > 1) doc.font('Helvetica').fontSize(7.5).fillColor('#666').text(`Page ${i - range.start + 1} of ${range.count}`, L + W * 0.75, fy, { width: W * 0.25, align: 'right', lineBreak: false });
-    }
+    // FOOTER on every page: address, phone, email, website (and the editor's small print, and "Page x of y" past one page)
+    LSTYLE.drawFooters(doc, { L, W, company: m.company, smallPrint: m.footerNote, t });
     doc.end();
   });
 }

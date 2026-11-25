@@ -7,6 +7,9 @@
 // /company-contact). The name is the LEGAL name, as in the founder's own letters: "Teamlink Consultants [OPC] Pvt. Ltd.".
 // ---------------------------------------------------------------------------
 const REFERENCE_LEGAL_NAME = 'Teamlink Consultants [OPC] Pvt. Ltd.';
+// TeamLink's own company: its tagline and website print on its letters (another company on this system keeps neither unless COMPANY_WEBSITE is set)
+const TAGLINE = 'Connect. Hire. Grow.';
+const WEBSITE = 'tmlink.in';
 
 const clean = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 
@@ -35,10 +38,14 @@ function legalNameOf(c) {
   return clean(process.env.COMPANY_LEGAL_NAME) || short;
 }
 
-// -> { name, address, phone, email } for a letter's letterhead; a demo phone or email is null (and so is not printed)
+// -> { name, tagline, website, address, phone, email } for a letter's header and footer; a demo phone or email is null (and so is not printed)
 function forLetter(c) {
+  const name = legalNameOf(c);
+  const own = name === REFERENCE_LEGAL_NAME;
   return {
-    name: legalNameOf(c),
+    name,
+    tagline: own ? TAGLINE : '',
+    website: clean(process.env.COMPANY_WEBSITE) || (own ? WEBSITE : ''),
     address: clean(c && c.address) || clean(c && c.hq) || '',
     phone: realPhone(c && c.phone) || '',
     email: realEmail(c && c.email) || '',

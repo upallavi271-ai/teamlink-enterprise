@@ -22,8 +22,8 @@ const { logAudit } = require('./audit');
 const exitDate = require('./exitDate');
 
 const SETTINGS_KEY = 'exit-letters';
-const NAVY = '#1f2a44';
-const MUTED = '#5b6474';
+const LSTYLE = require('./letterStyle'); // the brand look shared with the offer letter (founder's formatting brief, 2026-11-25)
+const { NAVY } = LSTYLE;
 const LEFT = ['Relieved', 'Exited', 'Terminated'];
 
 const KINDS = {
@@ -165,23 +165,14 @@ async function renderPdf(m) {
   const t = (v) => pdfText(v);
   const logo = await logoPng();
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margins: { top: 48, bottom: 64, left: 64, right: 64 }, info: { Title: t(m.fileName.replace(/\.pdf$/, '')), Author: t(m.company.name) } });
+    const doc = new PDFDocument({ size: 'A4', margins: { top: 44, bottom: 62, left: 64, right: 64 }, bufferPages: true, info: { Title: t(m.fileName.replace(/\.pdf$/, '')), Author: t(m.company.name) } });
     const chunks = [];
     doc.on('data', (c) => chunks.push(c)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject);
     const L = doc.page.margins.left;
     const W = doc.page.width - L - doc.page.margins.right;
 
-    // letterhead
-    const top = doc.y;
-    if (logo) { try { doc.image(logo, L, top, { height: 36 }); } catch { /* optional */ } } else { doc.font('Helvetica-Bold').fontSize(18).fillColor(NAVY).text(t(m.company.name), L, top, { width: W / 2 }); }
-    doc.font('Helvetica-Bold').fontSize(10.5).fillColor(NAVY).text(t(m.company.name), L + W / 2, top, { width: W / 2, align: 'right' });
-    doc.font('Helvetica').fontSize(8.5).fillColor(MUTED);
-    if (m.company.address) doc.text(t(m.company.address), L + W / 2, doc.y, { width: W / 2, align: 'right' });
-    const contact = [m.company.phone, m.company.email].filter(Boolean).join('  |  ');
-    if (contact) doc.text(t(contact), L + W / 2, doc.y, { width: W / 2, align: 'right' });
-    const ruleY = Math.max(doc.y, top + 38) + 8;
-    doc.moveTo(L, ruleY).lineTo(L + W, ruleY).lineWidth(2).strokeColor(NAVY).stroke();
-    doc.y = ruleY + 26; doc.x = L;
+    // header: the TeamLink logo, the company name and tagline, a cyan line (utils/letterStyle.js)
+    LSTYLE.drawHeader(doc, { L, W, logo, company: m.company, t });
 
     // title
     doc.font('Helvetica-Bold').fontSize(16).fillColor(NAVY).text(t(m.title), L, doc.y, { width: W, align: 'center', characterSpacing: 0.8 });
@@ -228,14 +219,11 @@ async function renderPdf(m) {
     const sy = doc.y;
     doc.moveTo(L, sy).lineTo(L + 200, sy).lineWidth(0.8).strokeColor('#8b93a3').stroke();
     doc.y = sy + 5;
-    doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111').text(t(m.sign.name || 'Authorized Signatory'), L, doc.y, { width: W });
+    doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111').text(t(m.sign.name || LSTYLE.SIGNATORY_FALLBACK), L, doc.y, { width: W });
     doc.font('Helvetica').fontSize(10).fillColor('#333').text(t(m.sign.title), L, doc.y, { width: W });
 
-    // footer
-    doc.page.margins.bottom = 0;
-    const fy = doc.page.height - 44;
-    doc.moveTo(L, fy - 6).lineTo(L + W, fy - 6).lineWidth(0.5).strokeColor('#d5dbe5').stroke();
-    doc.font('Helvetica').fontSize(7.5).fillColor(MUTED).text(t(`${m.company.name}${m.company.address ? ` - ${m.company.address}` : ''}`), L, fy, { width: W, align: 'center', lineBreak: false });
+    // footer on every page: address, phone, email and website
+    LSTYLE.drawFooters(doc, { L, W, company: m.company, t });
     doc.end();
   });
 }
