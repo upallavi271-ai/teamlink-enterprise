@@ -25,6 +25,7 @@ const Ctx = require('./agentContext');
 const P = require('./agentPlanner');
 const Tools = require('./agentTools');
 const Blog = require('./blogPlanner');
+const Analytics = require('./agentAnalytics');
 const { logAudit } = require('../utils/audit');
 
 const R = 'OmniMkAgentRun'; const TK = 'OmniMkAgentTask'; const EV = 'OmniMkAgentEvent'; const MG = 'OmniMkAgentMsg';
@@ -426,7 +427,7 @@ async function liveStatuses(tasks) {
 async function resultsOf(runId) {
   return (await S.q(`SELECT at, byName, text FROM "${EV}" WHERE runId = ? AND kind = 'result' ORDER BY at`, runId)).map((e) => ({ at: S.iso(e.at), by: e.byName || '', ...(par(e.text, {}) || {}) }));
 }
-async function summarize(run, tasks) {
+async function summarize(run, tasks, perf) {
   const live = await liveStatuses(tasks); const count = (s) => tasks.filter((t) => t.status === s).length;
   const doneOf = (tool) => tasks.filter((t) => t.tool === tool && t.status === 'done');
   const drafts = doneOf('content.draft'); const pics = [...doneOf('image.banner'), ...doneOf('image.ai')];
@@ -434,7 +435,8 @@ async function summarize(run, tasks) {
   const stat = (kind, id) => { const s = live[kind].get(id); if (!s) return; if (s === 'approved') tally.approved += 1; else if (s === 'waiting') tally.waiting += 1; else if (s === 'changes') tally.changes += 1; else tally.draft += 1; };
   for (const t of drafts) stat('content', (par(t.output, {}).data || {}).itemId);
   for (const t of pics) stat('image', (par(t.output, {}).data || {}).itemId);
-  const site = doneOf('seo.sitecheck')[0]; const blog = doneOf('seo.blogplan')[0];
+  const site = doneOf('seo.audit')[0] || doneOf('seo.sitecheck')[0]; const blog = doneOf('seo.blogplan')[0]; const kw = doneOf('seo.keywords')[0]; const seoText = doneOf('seo.content')[0];
+  const waTotal = tasks.filter((t) => t.tool === 'manual.whatsapp').length; const waDone = doneOf('manual.whatsapp').length;
   const posted = doneOf('manual.post').length + doneOf('social.post').length; const postsTotal = tasks.filter((t) => t.tool === 'manual.post' || t.tool === 'social.post').length;
   const toClient = doneOf('client.review').length;
   const videos = doneOf('manual.video').length; const videosTotal = tasks.filter((t) => t.tool === 'manual.video').length;
@@ -442,7 +444,7 @@ async function summarize(run, tasks) {
   const outwardDone = tasks.filter((t) => Tools.isOutward(t.tool) && t.status === 'done').length;
   const numbers = {
     tasks: { total: tasks.length, done: count('done'), failed: count('failed'), waiting: count('waiting'), awaiting: count('awaiting_approval'), cancelled: count('cancelled'), skipped: count('skipped'), queued: count('queued'), running: count('running') },
-    made: { drafts: drafts.length, pictures: pics.length }, approval: tally, posted: { done: posted, of: postsTotal, byAgent: doneOf('social.post').length }, toClient, videos: { done: videosTotal ? videos : 0, of: videosTotal }, siteScore: site ? (par(site.output, {}).data || {}).score : null, blogBriefs: blog ? (par(blog.output, {}).data || {}).briefs : null, results, outward: outwardDone,
+    made: { drafts: drafts.length, pictures: pics.length }, approval: tally, posted: { done: posted, of: postsTotal, byAgent: doneOf('social.post').length }, toClient, whatsapp: { done: waDone, of: waTotal }, keywords: kw ? (par(kw.output, {}).data || {}).kept : null, seoTexts: seoText ? ((par(seoText.output, {}).data || {}).saved || []).length : null, performance: perf || null, videos: { done: videosTotal ? videos : 0, of: videosTotal }, siteScore: site ? (par(site.output, {}).data || {}).score : null, blogBriefs: blog ? (par(blog.output, {}).data || {}).briefs : null, results, outward: outwardDone,
   };
   const lines = [];
   lines.push(`${numbers.tasks.done} of ${plural(numbers.tasks.total, 'step')} done${numbers.tasks.failed ? `, ${numbers.tasks.failed} failed` : ''}${numbers.tasks.waiting ? `, ${numbers.tasks.waiting} waiting for a person` : ''}${numbers.tasks.cancelled ? `, ${numbers.tasks.cancelled} cancelled` : ''}${numbers.tasks.skipped ? `, ${numbers.tasks.skipped} skipped` : ''}.`);
@@ -451,10 +453,14 @@ async function summarize(run, tasks) {
   if (toClient) lines.push(`Sent to the client to approve: ${plural(toClient, 'picture')}, each after your approval of that step.`);
   if (postsTotal) lines.push(`Posted: ${posted} of ${postsTotal} posting steps${numbers.posted.byAgent ? ` (${numbers.posted.byAgent} by the agent after your approval of each post, the rest marked by the person who posted)` : ' (marked by the person who posted)'}.`);
   if (videosTotal) lines.push(`Videos made: ${videos} of ${videosTotal} (put together by a person in AI Video).`);
+  if (waTotal) lines.push(`WhatsApp messages sent: ${waDone} of ${waTotal} (a person sends them from Campaigns after approval: the agent never sends WhatsApp).`);
+  if (numbers.keywords != null) lines.push(`Keyword ideas kept in the SEO assistant: ${numbers.keywords} new (no search volumes: TeamLink has no source for them).`);
+  if (numbers.seoTexts) lines.push(`Texts for the website kept in the SEO assistant: ${plural(numbers.seoTexts, 'text')} (nothing was changed on the website).`);
   if (numbers.siteScore != null) lines.push(`Website check: ${numbers.siteScore}/100, TeamLink's own score of what is on the page (not rankings or traffic).`);
   if (numbers.blogBriefs != null) lines.push(`Blog plan: ${plural(numbers.blogBriefs, 'brief')} planned (nothing written or posted).`);
   if (results.length) lines.push(`Results typed in by the team: ${results.slice(-4).map((x) => `${x.label}: ${x.value}${x.by ? ` (${x.by})` : ''}`).join('; ')}.`);
   else if (run.intent !== 'seo') lines.push('No results typed in yet: enquiries are added by hand under "Add a result", and reach / engagement are not connected yet.');
+  Analytics.lines(perf, run).forEach((l) => lines.push(l)); // real numbers from the posting records, the clients' answers, the CRM and the saved audits
   lines.push(outwardDone ? `${plural(outwardDone, 'outward action')} went outside TeamLink, each with its own approval.` : 'Nothing was posted, sent, called or spent by the agent.');
   return { at: new Date().toISOString(), numbers, lines };
 }
@@ -569,10 +575,10 @@ async function markManual(u, taskId, b = {}) {
   if (!skip) {
     const open = par(t.deps, []).map((n) => byN.get(n)).filter((x) => x && x.status !== 'done');
     if (open.length) return { error: 'The step before it (asking the team to approve) is not finished yet.', status: 409 };
-    if (t.tool === 'manual.post') { // only APPROVED words and pictures are posted
+    if (t.tool === 'manual.post' || t.tool === 'manual.whatsapp') { // only APPROVED words (and pictures, for a post) are posted or sent
       const live = await liveStatuses(tasks.filter((x) => x.day === t.day));
-      const not = []; for (const x of tasks.filter((y) => y.day === t.day && y.status === 'done')) for (const ref of (par(x.output, {}) || {}).refs || []) { const s = live[ref.kind] && live[ref.kind].get(ref.id); if (s && s !== 'approved') not.push(`${ref.kind === 'content' ? 'the draft' : 'the picture'} is ${s === 'waiting' ? 'still waiting for approval' : s === 'changes' ? 'sent back with changes' : s}`); }
-      if (not.length) return { error: `It cannot be marked as posted yet: ${[...new Set(not)].join(' and ')}. Only approved content is posted.`, status: 409, code: 'not_approved' };
+      const not = []; for (const x of tasks.filter((y) => y.day === t.day && y.status === 'done')) for (const ref of (par(x.output, {}) || {}).refs || []) { if (t.tool === 'manual.whatsapp' && ref.kind !== 'content') continue; const s = live[ref.kind] && live[ref.kind].get(ref.id); if (s && s !== 'approved') not.push(`${ref.kind === 'content' ? 'the draft' : 'the picture'} is ${s === 'waiting' ? 'still waiting for approval' : s === 'changes' ? 'sent back with changes' : s}`); }
+      if (not.length) return { error: `It cannot be marked as ${t.tool === 'manual.whatsapp' ? 'sent' : 'posted'} yet: ${[...new Set(not)].join(' and ')}. Only approved content is ${t.tool === 'manual.whatsapp' ? 'sent' : 'posted'}.`, status: 409, code: 'not_approved' };
     }
     if (b.url && !urlOk(String(b.url))) return { error: 'The link must start with https://.', status: 400 };
   }
@@ -606,7 +612,9 @@ async function detail(u, id) {
   const messages = (await S.q(`SELECT * FROM "${MG}" WHERE runId = ? ORDER BY at, rowid`, id)).map((m) => ({ id: m.id, at: S.iso(m.at), role: m.role, text: m.text, data: par(m.data, null) }));
   const events = (await S.q(`SELECT * FROM "${EV}" WHERE runId = ? ORDER BY at DESC, rowid DESC LIMIT 200`, id)).map((x) => ({ id: x.id, at: S.iso(x.at), kind: x.kind, byName: x.byName || '', text: x.kind === 'result' ? '' : x.text || '', taskId: x.taskId || '' }));
   const pf = run.status === 'preview' ? await preflight(u, run.plan) : { blockers: [], warnings: [] };
-  const live2 = run.status === 'running' || run.status === 'attention' || run.status === 'done' ? await summarize(r, tasks) : null;
+  const started = run.status === 'running' || run.status === 'attention' || run.status === 'done';
+  const perf = started ? await Analytics.performance(u, r, tasks, { svc: runOpts.svc }) : null;
+  const live2 = started ? await summarize(r, tasks, perf) : null;
   return { run, tasks: views, messages, events, results: await resultsOf(id), preflight: pf, live: live2 };
 }
 async function listRuns(u, { status = '', business = '' } = {}) {
@@ -645,8 +653,8 @@ async function dashboard(u) {
   }
   const recent = (idsIn.length ? await S.q(`SELECT * FROM "${EV}" WHERE runId IN (${idsIn.map(() => '?').join(',')}) AND kind IN ('task_done','approved','finished','manual_done','cancelled','result','task_failed') ORDER BY at DESC LIMIT 15`, ...idsIn) : [])
     .map((e) => ({ at: S.iso(e.at), kind: e.kind, byName: e.byName || '', runGoal: (runById.get(e.runId) || {}).goal || '', text: e.kind === 'result' ? (() => { const x = par(e.text, {}) || {}; return `${x.label}: ${x.value}`; })() : e.text || '' }));
-  const performance = [];
-  for (const r of rows.filter((x) => ['running', 'attention', 'done'].includes(x.status)).slice(0, 8)) { const s = await summarize(r, tasks.filter((t) => t.runId === r.id)); performance.push({ runId: r.id, goal: r.goal, businessName: r.businessName, status: r.status, numbers: s.numbers, lines: s.lines }); } // eslint-disable-line no-await-in-loop
+  const performance = []; const leadsAll = await Analytics.leadsOf(u, runOpts.svc);
+  for (const r of rows.filter((x) => ['running', 'attention', 'done'].includes(x.status)).slice(0, 8)) { const mine = tasks.filter((t) => t.runId === r.id); const s = await summarize(r, mine, await Analytics.performance(u, r, mine, { svc: runOpts.svc, leads: leadsAll })); performance.push({ runId: r.id, goal: r.goal, businessName: r.businessName, status: r.status, numbers: s.numbers, lines: s.lines }); } // eslint-disable-line no-await-in-loop
   // estimated usage and cost: what the finished steps cost per their tool's real unit price (all free today)
   const byTool = new Map();
   for (const t of doneMonth) { const tool = Tools.TOOLS[t.tool]; if (!tool || tool.manual) continue; const x = byTool.get(t.tool) || { tool: t.tool, label: tool.label, kind: tool.cost.kind, unit: tool.cost.unit, rupees: tool.cost.rupees, note: tool.cost.note, count: 0 }; x.count += 1; byTool.set(t.tool, x); }

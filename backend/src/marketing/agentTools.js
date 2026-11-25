@@ -7,6 +7,7 @@
 //             is approved by a person step by step: they pick the accounts / confirm who the client is, and see exactly what goes out. WhatsApp bulk sending, calls and ad spend are still not tools.
 //   prepare   an outward tool describes what the approval dialog must show (ready, or why not, and the choices) from the LIVE state; approval(body) checks the person's choices and says in words what was approved.
 //   cost      what a call costs, honestly: kind 'free' (plain code) or 'free-tier' (a free allowance) or 'paid'; rupees per unit (0 for everything today). The dashboard adds these up.
+//   (Phase 3) the SEO assistant's audit, keywords and texts are tools here (seo.audit / seo.keywords / seo.content): they call marketing/seoSites, seoAudit, seoKeywords and seoContent, never copy them.
 //   manual    a step only a person can do (post by hand, make the video in the browser, talk to the website owner). The agent lists it, reminds, and records when the person marks it done.
 // Every tool can be replaced by a stand-in in tests (ctx.svc), and nothing real is touched there.
 // ---------------------------------------------------------------------------
@@ -16,9 +17,22 @@ class ToolError extends Error {
   constructor(message, code = 'failed', opts = {}) { super(message); this.name = 'ToolError'; this.code = code; this.retryable = !!opts.retryable; this.waiting = !!opts.waiting; }
 }
 const svcOf = (ctx) => ({
+  Sites: (ctx.svc && ctx.svc.Sites) || require('./seoSites'), Audit: (ctx.svc && ctx.svc.Audit) || require('./seoAudit'), Kw: (ctx.svc && ctx.svc.Kw) || require('./seoKeywords'), Content: (ctx.svc && ctx.svc.Content) || require('./seoContent'),
   Post: (ctx.svc && ctx.svc.Post) || require('./postItem'), CR: (ctx.svc && ctx.svc.CR) || require('./clientReview'), C: (ctx.svc && ctx.svc.C) || require('./content'), Img: (ctx.svc && ctx.svc.Img) || require('./images'), Site: (ctx.svc && ctx.svc.Site) || require('./siteCheck'), Blog: (ctx.svc && ctx.svc.Blog) || require('./blogPlanner'), // eslint-disable-line global-require
 });
 const clip = (s, n) => S.clip(s, n);
+// the facts the SEO assistant's copy writers take, from what is saved for the business (nothing else)
+const seoFacts = (biz) => ({ name: clip(biz.name, 140), city: clip((biz.locations || [])[0] || '', 140), areas: clip((biz.locations || []).join(', '), 400), services: clip((biz.services || []).join(', '), 400), audience: clip(biz.audience || '', 140) });
+// the client's SEO site (one per client): the existing one is used as it is, a missing one is started from the saved facts (audits off: nothing is scheduled by itself)
+async function seoSiteOf(ctx, input) {
+  const { Sites } = svcOf(ctx);
+  const list = await Sites.list(ctx.u); if (!list || list.error) throw fail(list, 'The SEO sites could not be opened.');
+  const found = (list.items || []).find((x) => String(x.clientName).trim().toLowerCase() === String(input.clientName || '').trim().toLowerCase());
+  if (found) return found;
+  const made = await Sites.save(ctx.u, { clientName: input.clientName, url: input.url, industry: input.industry, facts: input.facts || {}, schedule: 'off', pages: input.pages });
+  if (!made || made.error) throw fail(made, 'The SEO site could not be started.');
+  return made.site;
+}
 const SOCIAL = ['instagram', 'facebook', 'x'];
 const WORD = { instagram: 'Instagram', facebook: 'Facebook', x: 'X' };
 const STATUS_WORDS = { draft: 'still a draft', waiting: 'still waiting for approval', changes: 'sent back with changes', approved: 'approved' };
@@ -119,6 +133,58 @@ const TOOLS = {
       return { summary: `Blog plan saved: ${n} brief${n === 1 ? '' : 's'} (nothing is written or posted).`, refs: [{ kind: 'blogplan', id: r.id, label: 'Blog plan', page: 'mkvisibility' }], data: { itemId: r.id, briefs: n } };
     },
   },
+  // ---- the SEO assistant's own services (marketing/seo*.js): the agent calls them, it does not copy them ------------------------------------------------------------------------
+  'seo.audit': {
+    label: 'Audit the website (SEO assistant)', module: 'SEO assistant', page: 'mkseo', risk: 'internal', auto: true, cost: { kind: 'free', unit: 'audit', rupees: 0, note: 'reads the public pages once with plain code' },
+    does: (t, d, plan) => `Reads ${plan && plan.seo ? plan.seo.url : 'the website'} (up to ${plan && plan.seo ? plan.seo.pages : 5} public pages) with the SEO assistant and scores what is on the page (TeamLink's own score, not rankings or traffic). The findings are kept as recommendation tasks for the client, and what changed since the last audit is noted. Nothing on the website is changed.`,
+    build: (plan, d, biz) => ({ url: plan.seo.url, pages: plan.seo.pages, clientName: clip(biz.name, 120), industry: biz.industryKey || '', facts: seoFacts(biz) }),
+    async run(ctx, input) {
+      const { Audit, Sites } = svcOf(ctx);
+      const site = await seoSiteOf(ctx, input); const raw = await Sites.mine(ctx.u, site.id);
+      if (!raw) throw new ToolError('The SEO site of this client could not be opened.', 'no_site');
+      const r = await Audit.run(ctx.u, raw, ctx.fetchFn ? { fetchFn: ctx.fetchFn } : {});
+      if (!r || r.error) throw fail(r);
+      const top = ((r.report && r.report.actions) || []).slice(0, 5).map((a) => clip(typeof a === 'string' ? a : (a.text || a.fix || a.title || a.what || ''), 200)).filter(Boolean);
+      const open = (r.tasks && r.tasks.open) || 0;
+      return { summary: `Website audit saved: ${r.score}/100${r.prev != null ? ` (was ${r.prev})` : ''}; ${open} open recommendation${open === 1 ? '' : 's'} kept for ${site.clientName}.`, refs: [{ kind: 'sitecheck', id: r.checkId, label: `Website audit ${r.score}/100`, page: 'mkseo' }], data: { itemId: r.checkId, siteId: site.id, score: r.score, previous: r.prev, url: raw.url, open, top } };
+    },
+  },
+  'seo.keywords': {
+    label: 'Research and keep keyword ideas (SEO assistant)', module: 'SEO assistant', page: 'mkseo', risk: 'internal', auto: true, cost: { kind: 'free', unit: 'list', rupees: 0, note: 'plain code, no network' },
+    does: () => 'Builds keyword ideas from the saved services, city and kind of business (primary, local, secondary) and keeps the best few in the client\'s kept list. TeamLink has no free source for search volume or difficulty, so none is shown or invented.',
+    build: (plan, d, biz) => ({ url: plan.seo.url, pages: plan.seo.pages, clientName: clip(biz.name, 120), industry: biz.industryKey || '', facts: seoFacts(biz) }),
+    async run(ctx, input) {
+      const { Kw } = svcOf(ctx);
+      const site = await seoSiteOf(ctx, input);
+      const r = await Kw.research(ctx.u, { siteId: site.id });
+      if (!r || r.error) throw fail(r);
+      const pick = []; const take = { primary: 4, local: 3, secondary: 3 };
+      for (const g of ['primary', 'local', 'secondary']) ((r.groups || []).find((x) => x.key === g) || { items: [] }).items.slice(0, take[g]).forEach((i) => pick.push({ phrase: i.phrase, group: g, intent: i.intent, source: 'agent' }));
+      if (!pick.length) throw new ToolError('No keyword idea could be made from the saved facts. Add the services and the city under "Business" and retry.', 'no_ideas');
+      const kept = await Kw.save(ctx.u, site.id, { phrases: pick });
+      if (!kept || kept.error) throw fail(kept);
+      return { summary: `${kept.added} keyword idea${kept.added === 1 ? '' : 's'} kept for ${site.clientName}${kept.alreadyThere ? ` (${kept.alreadyThere} already there)` : ''}. No search volumes: TeamLink has no source for them.`, refs: [{ kind: 'keywords', id: site.id, label: 'Kept keywords', page: 'mkseo' }], data: { itemId: site.id, kept: kept.added, ideas: pick.length, top: pick.slice(0, 5).map((x) => x.phrase) } };
+    },
+  },
+  'seo.content': {
+    label: 'Write the home page texts (SEO assistant)', module: 'SEO assistant', page: 'mkseo', risk: 'internal', auto: true, cost: { kind: 'free', unit: 'text', rupees: 0, note: 'plain code, no AI model' },
+    does: () => 'Writes the home page title and description and the FAQ from the client\'s saved facts only (no invented prices, results or claims) and keeps them in the SEO assistant for the person who runs the website to use. Nothing is published or changed on the website.',
+    build: (plan, d, biz) => ({ url: plan.seo.url, pages: plan.seo.pages, clientName: clip(biz.name, 120), industry: biz.industryKey || '', facts: seoFacts(biz) }),
+    async run(ctx, input) {
+      const { Content } = svcOf(ctx);
+      const site = await seoSiteOf(ctx, input);
+      const saved = []; const errors = [];
+      for (const [kind, title] of [['meta', 'Home page title and description'], ['faq', 'FAQ for the website']]) {
+        const m = await Content.make(ctx.u, { siteId: site.id, kind, input: {} }); // eslint-disable-line no-await-in-loop
+        if (!m || m.error) { errors.push(`${title}: ${clip((m && m.error) || 'it could not be written', 160)}`); continue; } // eslint-disable-line no-continue
+        const k = await Content.saveItem(ctx.u, site.id, { kind, title, body: m.result }); // eslint-disable-line no-await-in-loop
+        if (!k || k.error) { errors.push(`${title}: ${clip((k && k.error) || 'it could not be kept', 160)}`); continue; } // eslint-disable-line no-continue
+        saved.push(title);
+      }
+      if (!saved.length) throw new ToolError(errors.join(' ') || 'Nothing could be written.', 'no_text');
+      return { summary: `${saved.join(' and ')} kept in the SEO assistant for ${site.clientName}.${errors.length ? ` Not written: ${errors.join(' ')}` : ''}`, refs: [{ kind: 'seotext', id: site.id, label: 'SEO texts', page: 'mkseo' }], data: { itemId: site.id, saved } };
+    },
+  },
   // ---- OUTWARD steps (Phase 2): each one waits for its own approval; the engine never runs them on the plan's approval alone ----------------------------------------------------
   'social.post': {
     label: 'Post it on the social accounts', module: 'Social media', page: 'mkimages', risk: 'outward', auto: true, scheduled: true, cost: { kind: 'free', unit: 'post', rupees: 0, note: 'posting through the Facebook / Instagram / X accounts an Admin connected is free' },
@@ -206,6 +272,8 @@ const TOOLS = {
   // ---- steps only a person can do -----------------------------------------------------------------------------------------------------------------------
   'manual.post': { label: 'Post it (by hand)', module: 'You', page: 'mkimages', risk: 'internal', auto: false, manual: true, cost: { kind: 'free', unit: 'post', rupees: 0, note: 'done by a person' },
     does: () => 'Waits for you. When the draft and picture are approved, post them yourself (AI Images > the approved picture > Post, or by hand), then mark this step done. The agent never posts by itself in this phase.', build: () => ({}) },
+  'manual.whatsapp': { label: 'Send the WhatsApp message (by a person)', module: 'You', page: 'campaigns', risk: 'internal', auto: false, manual: true, cost: { kind: 'free', unit: 'message', rupees: 0, note: 'sent by a person from Omni-Channel > Campaigns (its own credits and rules apply)' },
+    does: () => 'Waits for you. The agent never sends WhatsApp. When the message is approved, a person sends it from Omni-Channel > Campaigns (or Templates): that engine only reaches people who agreed to receive messages, applies the STOP list, quiet hours, credits and its own approval. Mark this step done once it was sent.', build: () => ({}) },
   'manual.video': { label: 'Make the video', module: 'You', page: 'mkvideos', risk: 'internal', auto: false, manual: true, cost: { kind: 'free', unit: 'video', rupees: 0, note: 'done by a person in AI Video (free slideshow video made in your browser)' },
     does: () => 'Waits for you. A video is put together in your browser on the AI Video screen: use the scenes of this plan, then mark this step done.', build: () => ({}) },
   'manual.note': { label: 'A step for a person', module: 'You', page: 'mkvisibility', risk: 'internal', auto: false, manual: true, cost: { kind: 'free', unit: 'step', rupees: 0, note: 'done by a person' }, does: (t) => (t && t.note) || 'Waits for you; mark it done when it is finished.', build: () => ({}) },

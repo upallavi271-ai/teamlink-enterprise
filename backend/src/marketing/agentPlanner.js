@@ -38,9 +38,9 @@ const EXAMPLES = [
   'Promote my recruitment consultancy', 'Increase enquiries for my digital marketing services', 'Create a 7-day Instagram campaign', 'Generate promotional videos for my business',
   'Plan a complete marketing strategy for my new product', "Improve my website's SEO",
 ];
-const PLATFORM_WORDS = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', x: 'X' };
-const PLATFORM_LIMIT = { instagram: 2200, facebook: 3000, linkedin: 3000, x: 280 };
-const TAGS_FOR = { instagram: 8, facebook: 3, linkedin: 3, x: 2 };
+const PLATFORM_WORDS = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', x: 'X', whatsapp: 'WhatsApp' }; // WhatsApp is a MESSAGE for people who agreed to receive messages, not a public post: the agent prepares it, a person sends it from Campaigns
+const PLATFORM_LIMIT = { instagram: 2200, facebook: 3000, linkedin: 3000, x: 280, whatsapp: 1024 };
+const TAGS_FOR = { instagram: 8, facebook: 3, linkedin: 3, x: 2, whatsapp: 0 };
 const NUMS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14 };
 
 function daysIn(t) {
@@ -55,6 +55,7 @@ function platformsIn(t) {
   if (/\binsta(gram)?\b|\big\b|\breels?\b/.test(t)) out.push('instagram');
   if (/\bfacebook\b|\bfb\b/.test(t)) out.push('facebook');
   if (/\blinked-?in\b/.test(t)) out.push('linkedin');
+  if (/\bwhats-?app\b/.test(t)) out.push('whatsapp');
   if (/\btwitter\b|\bx\.com\b|\bon x\b|\bx post/.test(t)) out.push('x');
   return out;
 }
@@ -92,9 +93,10 @@ const METRICS = {
   enquiries: { key: 'enquiries', label: 'Enquiries received', how: 'typed in by a person under "Add a result": TeamLink does not read enquiries by campaign yet', live: 'manual' },
   reach: { key: 'reach', label: 'Reach and engagement', how: 'comes from the social platform; not connected to the agent yet (a later phase)', live: false },
   siteScore: { key: 'siteScore', label: 'Website score (TeamLink\'s own, out of 100)', how: 'the saved website check; it measures what is on the page, not rankings or traffic', live: true },
+  leads: { key: 'leads', label: 'New CRM leads while the plan runs', how: 'counted from the CRM (all sources, including the WhatsApp assistant): TeamLink cannot tell which lead came from which post', live: true },
   blogs: { key: 'blogs', label: 'Blog briefs planned', how: 'counted from the saved blog plan', live: true },
 };
-const dayMetrics = (intent) => [METRICS.drafted, METRICS.approved, METRICS.posted, ...(intent === 'enquiries' || intent === 'promote' || intent === 'instagram' ? [METRICS.enquiries] : []), METRICS.reach];
+const dayMetrics = (intent) => [METRICS.drafted, METRICS.approved, METRICS.posted, ...(intent === 'enquiries' || intent === 'promote' || intent === 'instagram' ? [METRICS.enquiries, METRICS.leads] : []), METRICS.reach];
 
 // ---- dates -------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 const istDay = (ms) => new Date(ms + IST).toISOString().slice(0, 10);
@@ -208,11 +210,15 @@ const withCta = (lines, f, t) => (['service', 'question', 'why'].includes(t.kind
 function hashtagsFor(f, t, platform) {
   const base = [...f.tags, tagOf(f.name), t.service && tagOf(t.service), f.locs[0] && tagOf(f.locs[0]), f.ind && tagOf(f.ind.split(/[,;/]/)[0]), ...f.svcs.slice(0, 2).map(tagOf)];
   const bad = f.avoid.map((w) => w.toLowerCase());
-  return uniq(base).filter((x) => !bad.some((w) => w && x.toLowerCase().includes(w.replace(/\s+/g, '')))).slice(0, TAGS_FOR[platform] || 3);
+  return uniq(base).filter((x) => !bad.some((w) => w && x.toLowerCase().includes(w.replace(/\s+/g, '')))).slice(0, (TAGS_FOR[platform] != null ? TAGS_FOR[platform] : 3));
 }
 function captionFor(platform, c, f, t) {
   const tags = hashtagsFor(f, t, platform);
   let body = withCta(c.lines.filter(Boolean), f, t).join(platform === 'x' ? ' ' : '\n');
+  if (platform === 'whatsapp') { // a message to people who agreed to receive messages: the opt-out line is always there (the campaign engine refuses a promotion without it)
+    const foot = '\n\nReply STOP to opt out'; const room = PLATFORM_LIMIT.whatsapp - foot.length;
+    return { text: `${body.length > room ? `${body.slice(0, Math.max(0, room - 1)).trim()}…` : body}${foot}`, tags: [] };
+  }
   if (platform === 'x') {
     const tail = tags.length ? ` ${tags.join(' ')}` : '';
     const room = PLATFORM_LIMIT.x - tail.length;
@@ -262,11 +268,11 @@ function buildDays(intent, f, ctx, p, healthcare) {
     const texts = {}; const tagsAll = [];
     p.platforms.forEach((pl) => { const x = captionFor(pl, c, f, t); texts[pl] = x.text; x.tags.forEach((g) => tagsAll.push(g)); });
     const flags = flagsOf(texts[p.platforms[0]] || '', f.ind, healthcare);
-    const size = p.platforms.includes('instagram') || p.platforms.includes('facebook') ? (videos ? '9:16' : '1:1') : '16:9';
+    const size = p.platforms.includes('instagram') || p.platforms.includes('facebook') || p.platforms.includes('whatsapp') ? (videos ? '9:16' : '1:1') : '16:9';
     days.push({
       n: i + 1, kind: videos ? 'video' : 'post', date, time, atMs: atOf(date, time), label: `${dayWords(date)}, ${time} IST`,
       theme: t.kind, service: t.service || '', title: clip(videos ? `Video ${i + 1}: ${c.headline}` : `Day ${i + 1}: ${c.headline}`, 80), headline: clip(c.headline, 90), sub: clip(c.sub, 80),
-      contentType: videos ? 'Short video (Reel, 20 to 30 seconds)' : (p.platforms.length === 1 && p.platforms[0] === 'x' ? 'Text post with a picture' : 'Image post'),
+      contentType: videos ? 'Short video (Reel, 20 to 30 seconds)' : (p.platforms.length === 1 && p.platforms[0] === 'x' ? 'Text post with a picture' : p.platforms.length === 1 && p.platforms[0] === 'whatsapp' ? 'WhatsApp message with a picture' : 'Image post'),
       objective: c.objective, audience: f.aud || 'People who may need what you offer (no audience saved)', platforms: p.platforms.slice(), texts, hashtags: uniq(tagsAll),
       mediaPrompt: videos ? scenesFor(c, f, t, healthcare) : promptFor(c, f, ctx, healthcare), bannerSize: size,
       metrics: dayMetrics(intent), flags,
@@ -326,6 +332,7 @@ function build(goalText, ctxIn, given = {}, now = Date.now()) {
   const gaps = []; const assumptions = [];
   for (const k of [...def.essentials, ...def.optional]) if (!(Array.isArray(ctx[k]) ? ctx[k].length : ctx[k]) && CONSEQUENCE[k]) gaps.push(`${Ctx.FIELDS[k].label} not saved: ${CONSEQUENCE[k]}.`);
   if (healthcare) gaps.push('Healthcare business: a doctor or qualified medical reviewer must read every caption before it is approved. The wording check below is a starting checklist only.');
+  if (p.platforms.includes('whatsapp')) assumptions.push('WhatsApp: the message is prepared and approved here; TeamLink never sends it from the agent. A person sends it from Omni-Channel > Campaigns, whose own rules apply (only people who agreed to receive messages, the STOP list, quiet hours, credits and approval). Every message ends with the opt-out line.');
   if (f.language !== 'English') assumptions.push(`Captions are written in English; ${f.language} is saved for this business, so have them translated and read before approving.`);
   assumptions.push('Every caption is built only from the facts saved for this business. Nothing is added: no prices, years, awards, results or promises.');
   assumptions.push(`The posting time (${p.time} IST) is a suggestion: change it before approving.`);
@@ -346,7 +353,7 @@ function build(goalText, ctxIn, given = {}, now = Date.now()) {
     videos: `Prepare ${days.length} short promotional video${days.length === 1 ? '' : 's'} for ${f.name}: script, cover picture and caption for each.`,
     strategy: `A complete starting strategy for ${f.name}, with the first week ready to run.`,
   }[parsed.intent];
-  return { parsed, questions, plan: { ...base, title, objective, days, strategy: parsed.intent === 'strategy' ? strategyOf(f, ctx, p, days) : null, metrics: [METRICS.drafted, METRICS.approved, METRICS.posted, METRICS.enquiries, METRICS.reach] } };
+  return { parsed, questions, plan: { ...base, title, objective, days, strategy: parsed.intent === 'strategy' ? strategyOf(f, ctx, p, days) : null, metrics: [METRICS.drafted, METRICS.approved, METRICS.posted, METRICS.enquiries, METRICS.leads, METRICS.reach] } };
 }
 
 // ---- the executable steps ---------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -356,9 +363,11 @@ const SOCIAL = ['instagram', 'facebook', 'x']; // the platforms TeamLink can pos
 function taskSpecs(plan) {
   const specs = []; const add = (s) => { specs.push({ n: specs.length + 1, day: null, deps: [], ...s }); return specs.length; };
   if (plan.intent === 'seo') {
-    const a = add({ tool: 'seo.sitecheck', title: `Check the website ${plan.seo.url} (up to ${plan.seo.pages} pages)` });
+    const a = add({ tool: 'seo.audit', title: `Audit the website ${plan.seo.url} with the SEO assistant (up to ${plan.seo.pages} pages) and keep its recommendations` });
+    add({ tool: 'seo.keywords', deps: [a], title: 'Research keyword ideas and keep the best phrases (no search volumes: TeamLink has no source for them)' });
+    add({ tool: 'seo.content', deps: [a], title: 'Write the home page title, description and FAQ from the saved facts, ready for the website owner' });
     add({ tool: 'seo.blogplan', title: "Plan this month's blog posts (briefs only, nothing is written or posted)" });
-    add({ tool: 'manual.note', title: 'Go through the website check with the person who runs the website and agree the fixes', deps: [a], note: 'The agent does not change the live website.' });
+    add({ tool: 'manual.note', title: 'Go through the audit, the keywords and the texts with the person who runs the website and agree the fixes', deps: [a], note: 'The agent does not change the live website.' });
     return specs;
   }
   const mode = plan.params.creative; const hasPic = mode !== 'none';
@@ -372,11 +381,12 @@ function taskSpecs(plan) {
       ? add({ tool: 'client.review', day: d.n, deps: [draft, pic], title: `${label}: send the picture and caption to the client to approve (you confirm who it goes to)` })
       : add({ tool: 'approval.request', day: d.n, deps: [draft], title: `${label}: ask the team to approve` });
     if (d.kind === 'video') { add({ tool: 'manual.video', day: d.n, deps: [ask], title: `${label}: make the video in AI Video from the scenes` }); continue; } // eslint-disable-line no-continue
-    const social = d.platforms.filter((x) => SOCIAL.includes(x)); const rest = d.platforms.filter((x) => !SOCIAL.includes(x));
-    if (agentPosts && social.length) {
-      add({ tool: 'social.post', day: d.n, deps: [ask, pic], title: `${label}: post on ${listText(social.map((x) => PLATFORM_WORDS[x]))} at ${d.time} on ${d.date} (after you approve this post)` });
-      if (rest.length) add({ tool: 'manual.post', day: d.n, deps: [ask], title: `${label}: post on ${listText(rest.map((x) => PLATFORM_WORDS[x]))} at ${d.time}, after it is approved (by hand)` });
-    } else add({ tool: 'manual.post', day: d.n, deps: [ask], title: `${label}: post on ${listText(d.platforms.map((x) => PLATFORM_WORDS[x]))} at ${d.time}, after it is approved (by hand)` });
+    const social = d.platforms.filter((x) => SOCIAL.includes(x)); const wa = d.platforms.includes('whatsapp');
+    const viaAgent = agentPosts && social.length > 0;
+    const byHand = viaAgent ? d.platforms.filter((x) => !SOCIAL.includes(x) && x !== 'whatsapp') : d.platforms.filter((x) => x !== 'whatsapp'); // the platforms a person posts on
+    if (viaAgent) add({ tool: 'social.post', day: d.n, deps: [ask, pic], title: `${label}: post on ${listText(social.map((x) => PLATFORM_WORDS[x]))} at ${d.time} on ${d.date} (after you approve this post)` });
+    if (byHand.length) add({ tool: 'manual.post', day: d.n, deps: [ask], title: `${label}: post on ${listText(byHand.map((x) => PLATFORM_WORDS[x]))} at ${d.time}, after it is approved (by hand)` });
+    if (wa) add({ tool: 'manual.whatsapp', day: d.n, deps: [ask], title: `${label}: send the WhatsApp message to people who agreed to receive it (Campaigns), after it is approved` });
   }
   return specs.slice(0, MAX_TASKS);
 }

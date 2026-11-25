@@ -69,7 +69,7 @@ const base = { actorFor: async () => admin, notify, fetchFn };
   const hosp = P.build('Promote my clinic', { name: 'Care Clinic', industry: 'Dental clinic', services: ['Teeth cleaning'], audience: 'Families nearby', contactLine: 'Call 99999 11111', language: 'Telugu', skips: [] }, {}, NOW).plan;
   assert.ok(hosp.healthcare && hosp.gaps.some((g) => /doctor/.test(g)) && hosp.assumptions.some((a) => /Telugu/.test(a)), 'healthcare needs a medical reviewer; a non-English business is told captions are English');
   const seo = P.build("Improve my website's SEO", { name: 'Site Co', skips: [] }, {}, NOW); assert.deepEqual(seo.questions.filter((q) => q.required).map((q) => q.key), ['website']);
-  const seoPlan = P.build("Improve my website's SEO", { name: 'Site Co', website: 'https://agent.test', skips: [] }, {}, NOW).plan; assert.deepEqual(P.taskSpecs(seoPlan).map((t) => t.tool), ['seo.sitecheck', 'seo.blogplan', 'manual.note']);
+  const seoPlan = P.build("Improve my website's SEO", { name: 'Site Co', website: 'https://agent.test', skips: [] }, {}, NOW).plan; assert.deepEqual(P.taskSpecs(seoPlan).map((t) => t.tool), ['seo.audit', 'seo.keywords', 'seo.content', 'seo.blogplan', 'manual.note']);
   const strat = P.build('Plan a complete marketing strategy for my new product', ctx, {}, NOW).plan; assert.ok(strat.strategy && strat.strategy.length === 6 && strat.days.length === 7);
   const vids = P.build('Generate promotional videos for my business', ctx, {}, NOW).plan; assert.deepEqual([vids.days.length, vids.days[0].kind, vids.days[1].date], [3, 'video', '2026-11-28']); assert.ok(/Scene 1 \(hook\)/.test(vids.days[0].mediaPrompt));
   assert.ok(P.taskSpecs(vids).some((t) => t.tool === 'manual.video'));
@@ -209,9 +209,9 @@ const base = { actorFor: async () => admin, notify, fetchFn };
   // 12. SEO goal through the real website check (stand-in internet) and blog planner, the AI picture path, and the dashboard
   await Ctx.save(admin, 'c:seo-test-co', { name: 'SEO Test Co', website: 'agent.test', services: ['Heart check-ups'], industry: 'Hospital', locations: ['Pune'] });
   const s1 = await Agent.startRun(admin, { goal: "Improve my website's SEO", business: 'c:seo-test-co' }, { now: NOW });
-  assert.equal(s1.run.status, 'preview'); assert.deepEqual(s1.tasks.map((t) => t.tool), ['seo.sitecheck', 'seo.blogplan', 'manual.note']); assert.ok(/nothing on the website is changed|Nothing on the website is changed/i.test(JSON.stringify(s1.run.plan.assumptions)));
+  assert.equal(s1.run.status, 'preview'); assert.deepEqual(s1.tasks.map((t) => t.tool), ['seo.audit', 'seo.keywords', 'seo.content', 'seo.blogplan', 'manual.note']); assert.ok(/nothing on the website is changed|Nothing on the website is changed/i.test(JSON.stringify(s1.run.plan.assumptions)));
   await Agent.approve(admin, s1.run.id, base); await Agent.drain(); r = await Agent.detail(admin, s1.run.id);
-  assert.deepEqual(r.tasks.map((t) => t.status), ['done', 'done', 'waiting'], r.tasks.map((t) => t.error).join('; ')); assert.ok(/Website check saved: \d+\/100/.test(r.tasks[0].summary) && /Blog plan saved: \d+ briefs?/.test(r.tasks[1].summary)); assert.ok(Number.isInteger(r.live.numbers.siteScore) && r.live.numbers.blogBriefs > 0);
+  assert.deepEqual(r.tasks.map((t) => t.status), ['done', 'done', 'done', 'done', 'waiting'], r.tasks.map((t) => t.error).join('; ')); assert.ok(/Website audit saved: \d+\/100/.test(r.tasks[0].summary) && /Blog plan saved: \d+ briefs?/.test(r.tasks[3].summary)); assert.ok(Number.isInteger(r.live.numbers.siteScore) && r.live.numbers.blogBriefs > 0);
   assert.ok((await S.q(`SELECT 1 FROM "OmniMkSiteCheck" WHERE clientName = 'SEO Test Co'`)).length === 1, 'a real website check was saved for the client');
   const i1 = await Agent.startRun(admin, { goal: 'Promote TeamLink Consultants for 1 days', business: 'own', params: { creative: 'ai' } }, { now: NOW });
   assert.equal(i1.preflight.blockers.length, 0, i1.preflight.blockers.join()); await Agent.approve(admin, i1.run.id, base); await Agent.drain(); r = await Agent.detail(admin, i1.run.id);
@@ -318,6 +318,59 @@ const base = { actorFor: async () => admin, notify, fetchFn };
   // 17. the run is honest about what went outside
   const dash2 = await Agent.dashboard(admin); assert.ok(dash2.usage.month.every((u) => u.rupees === 0) && dash2.usage.month.some((u) => u.tool === 'social.post') && dash2.usage.month.some((u) => u.tool === 'client.review'), 'posts and client messages are counted in the usage list'); assert.ok(dash2.pendingApprovals.outward.length >= 1 && dash2.pendingApprovals.outward.every((x) => x.title));
   console.log('PASS the dashboard counts the posts and client messages and lists the steps still waiting for their own approval');
+
+  // 18. PHASE 3 SEO: the agent calls the SEO assistant (audit, keywords, texts); the same site is never started twice
+  const Sites = require(`${M}seoSites`); const Kw = require(`${M}seoKeywords`); const SeoText = require(`${M}seoContent`); const Tasks = require(`${M}seoTasks`);
+  const seoSite = (await Sites.list(admin)).items.find((x) => x.clientName === 'SEO Test Co'); assert.ok(seoSite, 'the SEO assistant now has a site for the client (started by the agent from the saved facts)'); assert.deepEqual([seoSite.schedule, seoSite.facts.services, seoSite.facts.city, seoSite.url], ['off', 'Heart check-ups', 'Pune', 'https://agent.test/'], 'audits stay off: nothing is scheduled by itself');
+  assert.equal((await Sites.list(admin)).items.filter((x) => x.clientName === 'SEO Test Co').length, 1);
+  const sd = await Agent.detail(admin, s1.run.id); const auditTask = sd.tasks.find((t) => t.tool === 'seo.audit');
+  assert.ok(/Website audit saved: \d+\/100; \d+ open recommendations? kept for SEO Test Co/.test(auditTask.summary) && auditTask.data.siteId === seoSite.id && auditTask.refs[0].page === 'mkseo', auditTask.summary);
+  assert.ok(((await Tasks.list(admin, { siteId: seoSite.id })).items || []).length > 0, 'the audit\'s findings are kept as recommendation tasks of the SEO assistant');
+  const kws = await Kw.list(admin, seoSite.id); assert.ok(kws.items.length >= 3 && kws.items.every((k) => k.source === 'agent' && k.volume === null && k.difficulty === null), 'keyword ideas were kept, with no search volume or difficulty invented'); assert.ok(sd.tasks.find((t) => t.tool === 'seo.keywords').data.top.length > 0);
+  const texts = await SeoText.list(admin, seoSite.id); assert.ok((texts.items || texts).length >= 1, 'the home page texts were kept'); assert.ok(/kept in the SEO assistant for SEO Test Co/.test(sd.tasks.find((t) => t.tool === 'seo.content').summary));
+  assert.ok(/Keyword ideas kept in the SEO assistant: \d+ new \(no search volumes/.test(sd.live.lines.join(' ')) && /Texts for the website kept in the SEO assistant: \d+ texts? \(nothing was changed on the website\)/.test(sd.live.lines.join(' ')), sd.live.lines.join(' | '));
+  // a second SEO goal for the same client: the same site is used, the audit has a score to compare with, the summary says so
+  const s2 = await Agent.startRun(admin, { goal: "Improve my website's SEO", business: 'c:seo-test-co' }, { ...base, now: NOW }); await Agent.approve(admin, s2.run.id, base); await Agent.drain();
+  assert.equal((await Sites.list(admin)).items.filter((x) => x.clientName === 'SEO Test Co').length, 1, 'no second SEO site'); const sd2 = await Agent.detail(admin, s2.run.id);
+  assert.deepEqual(sd2.tasks.map((t) => t.status), ['done', 'done', 'done', 'done', 'waiting'], sd2.tasks.map((t) => t.error).join('; ')); assert.ok(/\(was \d+\)/.test(sd2.tasks[0].summary), 'the second audit says what the score was before');
+  assert.ok(/Website score: \d+\/100 now, \d+\/100 before this plan/.test(sd2.live.lines.join(' ')), sd2.live.lines.join(' | '));
+  console.log('PASS the SEO assistant: the agent starts the client\'s SEO site once from the saved facts, audits it (findings kept as recommendations), keeps keyword ideas with no invented volumes and the home page texts, and a second goal compares with the earlier score');
+
+  // 19. PHASE 3 WhatsApp: a message is PREPARED and approved here; the agent never sends it
+  const wp = P.build('Promote TeamLink Consultants for 2 days on WhatsApp and Instagram', ctx, { publish: 'manual' }, NOW).plan; assert.deepEqual(wp.params.platforms, ['instagram', 'whatsapp']);
+  assert.ok(wp.days.every((d) => /\n\nReply STOP to opt out$/.test(d.texts.whatsapp) && d.texts.whatsapp.length <= 1024 && !/#/.test(d.texts.whatsapp) && /#/.test(d.texts.instagram)), 'every WhatsApp text ends with the opt-out line, has no hashtags and fits'); assert.ok(wp.assumptions.some((a) => /never sends it from the agent/.test(a)));
+  const wspec = P.taskSpecs({ ...wp, businessKey: 'own' }); assert.deepEqual(wspec.slice(2, 6).map((t) => t.tool), ['approval.request', 'manual.post', 'manual.whatsapp', 'content.draft'], 'a post by hand for Instagram and a WhatsApp send by a person'); assert.ok(/Instagram/.test(wspec[3].title) && !/WhatsApp/.test(wspec[3].title));
+  const longCtx = { ...ctx, services: ['x'.repeat(58), 'y'.repeat(58), 'z'.repeat(58), 'w'.repeat(58)], about: 'a'.repeat(390) }; assert.ok(P.build('Promote us for 3 days on whatsapp', longCtx, {}, NOW).plan.days.every((d) => d.texts.whatsapp.length <= 1024 && d.texts.whatsapp.endsWith('Reply STOP to opt out')), 'a long text is cut so the opt-out line still fits');
+  assert.deepEqual(Tools.catalog().filter((t) => /whatsapp/i.test(t.id) && t.risk === 'outward'), [], 'there is no tool that sends WhatsApp');
+  const wg = await Agent.startRun(admin, { goal: 'Promote TeamLink Consultants for 1 days on WhatsApp', business: 'own', params: { platforms: ['whatsapp'] } }, { ...base, now: NOW });
+  assert.equal(wg.run.plan.days[0].contentType, 'WhatsApp message with a picture'); assert.ok(wg.preflight.warnings.length >= 0 && wg.tasks.some((t) => t.tool === 'manual.whatsapp') && !wg.tasks.some((t) => t.tool === 'manual.post' || t.tool === 'social.post'));
+  await Agent.approve(admin, wg.run.id, base); await Agent.drain(); r = await Agent.detail(admin, wg.run.id);
+  const wdraft = r.tasks.find((t) => t.tool === 'content.draft'); const wrow = (await S.q('SELECT * FROM "OmniMkContent" WHERE id = ?', wdraft.refs[0].id))[0];
+  assert.deepEqual([wrow.status, JSON.parse(wrow.channels)], ['waiting', ['whatsapp']], 'the WhatsApp text is in AI Content, sent for approval'); assert.ok(/Reply STOP to opt out$/.test(JSON.parse(wrow.texts).whatsapp));
+  const wstep = r.tasks.find((t) => t.tool === 'manual.whatsapp'); assert.equal(wstep.status, 'waiting'); assert.ok(/never sends WhatsApp/.test(wstep.does));
+  m = await Agent.markManual(admin, wstep.id, { action: 'done' }); assert.equal(m.code, 'not_approved'); assert.ok(/marked as sent yet/.test(m.error) && /Only approved content is sent/.test(m.error), m.error);
+  assert.ok(!(await C.approve(admin, wdraft.refs[0].id)).error); m = await Agent.markManual(admin, wstep.id, { action: 'done', note: 'sent from Campaigns' }); assert.ok(!m.error, m.error);
+  r = await Agent.detail(admin, wg.run.id); assert.ok(/WhatsApp messages sent: 1 of 1 \(a person sends them from Campaigns after approval: the agent never sends WhatsApp\)/.test(r.live.lines.join(' ')), r.live.lines.join(' | ')); assert.equal(r.run.status, 'done', 'every step is done: the run is finished');
+  console.log('PASS WhatsApp: the message is written with the opt-out line (no hashtags, 1024 letters), saved in AI Content and sent for approval; a person\'s "sent" step needs the words approved; there is no tool that sends WhatsApp');
+
+  // 20. PHASE 3 performance: real counts from the posting records, the clients' answers, the CRM and the saved audits
+  await require(`${M}postItem`).ensure(); await require(`${M}clientReview`).ensure(); // (the posting and review tables are made when first used: the stand-ins above never made them)
+  const perfRun = pg.run.id; const pd0 = await Agent.detail(admin, perfRun); const perfPics = pd0.tasks.filter((t) => t.tool === 'image.banner').map((t) => t.refs[0].id); const startMs = Date.parse(pd0.run.startedAt);
+  await S.run(`INSERT INTO "OmniMkItemPost" (id, itemId, accountId, platform, accountName, ok, url, error, caption, byId, byName, at) VALUES ('ip-a', ?, 'fb1', 'facebook', 'Test Page', 1, 'https://social.test/a', NULL, 'x', 'u', 'U', ?)`, perfPics[0], startMs + 1000);
+  await S.run(`INSERT INTO "OmniMkItemPost" (id, itemId, accountId, platform, accountName, ok, url, error, caption, byId, byName, at) VALUES ('ip-b', ?, 'ig1', 'instagram', 'test_ig', 0, NULL, 'expired', 'x', 'u', 'U', ?)`, perfPics[0], startMs + 2000);
+  for (const [i, [id, st]] of [[perfPics[0], 'approved'], [perfPics[1], 'changes']].entries()) await S.run(`INSERT INTO "OmniMkClientReview" (id, kind, itemId, itemTitle, clientName, snapshot, status, createdAt, updatedAt, mode) VALUES (?, 'image', ?, 'x', 'C', 's', ?, ?, ?, 'decide')`, `rv-perf-${i}`, id, st, startMs + 3000, startMs + 3000);
+  const leadList = [{ createdAt: new Date(startMs - 86400000).toISOString(), band: 'Hot', source: 'Website' }, { createdAt: new Date(startMs + 5000).toISOString(), band: 'Hot', source: 'WhatsApp' }, { createdAt: new Date(startMs + 6000).toISOString(), band: 'Warm', source: 'Facebook Ads' }];
+  Agent.kick(perfRun, { svc: { ...postSvc, Lead: { overview: async () => ({ leads: leadList }) } } }); await Agent.drain();
+  r = await Agent.detail(admin, perfRun); const pl = r.live.lines.join(' | ');
+  assert.ok(/Posts recorded on the accounts for these pictures: 1 went public, 1 failed\./.test(pl), pl); assert.ok(/Clients' answers: 1 approved, 1 asked for changes, 0 still waiting \(of 2 pictures sent\)\./.test(pl), pl);
+  assert.ok(/New CRM leads since the plan started: 2 \(1 hot, 1 warm, 0 cold; 1 through the WhatsApp assistant\)\. They come from every source: TeamLink cannot tell which came from these posts\./.test(pl), pl);
+  assert.deepEqual([r.live.numbers.performance.posts.total, r.live.numbers.performance.clients.sent, r.live.numbers.performance.leads.total, r.live.numbers.performance.leads.bySource.length], [1, 2, 2, 2]); assert.equal(r.live.numbers.performance.posts.items[0].url, 'https://social.test/a');
+  Agent.kick(perfRun, { svc: { ...postSvc, Lead: { overview: async () => ({ error: 'Your login is not on the CRM list.' }) } } }); await Agent.drain(); r = await Agent.detail(admin, perfRun);
+  assert.ok(/CRM leads: not shown \(Your login is not on the CRM list\.\)/.test(r.live.lines.join(' ')) && !/New CRM leads since/.test(r.live.lines.join(' ')), 'a login that cannot read the CRM gets a reason, not a zero');
+  const dp = (await Agent.dashboard(admin)).performance.find((x) => x.runId === perfRun); assert.ok(dp && dp.lines.some((l) => /Posts recorded on the accounts/.test(l)), 'the dashboard shows the same real numbers');
+  assert.ok(P.METRICS.leads.live === true && /cannot tell which lead came from which post/.test(P.METRICS.leads.how), 'the leads metric is honest about attribution');
+  const noLeadsForSeo = (await Agent.detail(admin, s1.run.id)).live.numbers.performance; assert.equal(noLeadsForSeo.leads, null, 'an SEO goal does not claim leads');
+  console.log('PASS performance: posts recorded, clients\' answers, new CRM leads (by band and source, WhatsApp assistant counted, never claimed as caused by the plan) and the score before / after come from the records; a login that cannot read the CRM gets a reason');
 
   // 13. every tool is listed with its cost and risk: two outward tools, each behind its own approval
   const cat = Tools.catalog(); assert.ok(cat.length >= 8 && cat.every((t) => t.cost.word && ['internal', 'outward'].includes(t.risk))); assert.deepEqual(cat.filter((t) => t.risk === 'outward').map((t) => t.id).sort(), ['client.review', 'social.post'], 'only the two Phase 2 outward tools exist: bulk WhatsApp, calls and ad spend are not tools');

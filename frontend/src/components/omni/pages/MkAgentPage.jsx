@@ -170,6 +170,9 @@ function Preview({ d, act, id, busy, meta, onBack }) {
     counts['image.banner'] && `${plural(counts['image.banner'], 'banner')} designed in AI Images (free)`,
     counts['image.ai'] && `${plural(counts['image.ai'], 'picture')} made with the AI picture service (free tier, counts against your daily picture limit)`,
     counts['seo.sitecheck'] && `the website ${plan.seo ? plan.seo.url : ''} read once (up to ${plan.seo ? plan.seo.pages : 5} public pages) and scored`,
+    counts['seo.audit'] && `the website ${plan.seo ? plan.seo.url : ''} read once (up to ${plan.seo ? plan.seo.pages : 5} public pages) by the SEO assistant and scored; its findings kept as recommendations for the client`,
+    counts['seo.keywords'] && 'keyword ideas kept in the SEO assistant (no search volumes: TeamLink has no source for them)',
+    counts['seo.content'] && 'the home page title, description and FAQ written from the saved facts and kept in the SEO assistant (nothing is changed on the website)',
     counts['seo.blogplan'] && 'a blog plan saved (briefs only)',
     counts['social.post'] && `${plural(counts['social.post'], 'post')} prepared to go public: nothing is posted until you approve each one, pick its accounts and the picture is approved; it then goes out at its scheduled time`,
     counts['client.review'] && `${plural(counts['client.review'], 'picture')} prepared to send to the client on WhatsApp: nothing is sent until you approve each one and confirm who it goes to`,
@@ -193,6 +196,7 @@ function Preview({ d, act, id, busy, meta, onBack }) {
             <Btn disabled={busy || !changed || !form.platforms.length} onClick={() => act(() => omni.post(`${API}/runs/${id}/plan`, { params: form }), 'Plan made again.')}>Update the plan</Btn>
           </div>
         ) : null}
+        {!isSeo && form.platforms.includes('whatsapp') ? <p style={{ fontSize: 12, margin: '0 0 8px' }}><b>WhatsApp:</b> the agent prepares the message (with the opt-out line) and gets it approved. It never sends WhatsApp: a person sends it from Omni-Channel &gt; Campaigns, which only reaches people who agreed to receive messages and applies the STOP list, quiet hours and credits.</p> : null}
         {!isSeo ? <p style={{ fontSize: 11.5, color: 'var(--muted)', margin: '0 0 8px' }}>Changing the days, platforms, pictures or time builds the plan again and drops edits you made to single days.</p> : null}
         {plan.gaps.length ? <div style={{ margin: '8px 0' }}><b style={{ fontSize: 12.5 }}>What I did not know</b><ul style={{ margin: '4px 0', paddingLeft: 18, fontSize: 12.5 }}>{plan.gaps.map((g) => <li key={g}>{g}</li>)}</ul></div> : null}
         <details style={{ margin: '6px 0' }}><summary style={{ cursor: 'pointer', fontSize: 12.5 }}>How this plan was made ({plan.assumptions.length} notes)</summary><ul style={{ margin: '4px 0', paddingLeft: 18, fontSize: 12.5 }}>{plan.assumptions.map((g) => <li key={g}>{g}</li>)}</ul></details>
