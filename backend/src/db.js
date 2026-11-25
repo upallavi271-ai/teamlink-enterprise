@@ -141,6 +141,21 @@ prisma.$use(async (params, next) => {
   }
   return result;
 });
+// mkonly_: a company that buys ONLY digital marketing (Client.marketingOnly, made by AI Marketing > Client plans > Client login) is NOT an ATS client (founder 2026-11-25: "it must show only in
+// AI Marketing"). Every ordinary LIST read of Client (findMany / findFirst / count / aggregate / groupBy: the Clients list, pickers, dashboards, counts, reminders, duplicate checks) leaves it out.
+// A query that NAMES the field (marketingOnly: ...) sees what it asks for: that is how AI Marketing finds its own records. Reads by id (findUnique: the client login finds its own company) and
+// every write are untouched. Never throws.
+const CLIENT_LIST_READS = new Set(['findMany', 'findFirst', 'findFirstOrThrow', 'count', 'aggregate', 'groupBy']);
+prisma.$use(async (params, next) => {
+  if (params.model === 'Client' && CLIENT_LIST_READS.has(params.action)) {
+    try {
+      if (!params.args) params.args = {};
+      const w = params.args.where;
+      if (!(w && JSON.stringify(w).includes('"marketingOnly"'))) params.args.where = w ? { AND: [w, { marketingOnly: false }] } : { marketingOnly: false };
+    } catch { /* an unusual where: the query runs as it was written */ }
+  }
+  return next(params);
+});
 // memo_: a write made by the server itself (job, import, hook) raises the data version the short answer memo is keyed on (utils/responseMemo.js)
 prisma.$use(require('./utils/responseMemo').prismaHook());
 module.exports = prisma;

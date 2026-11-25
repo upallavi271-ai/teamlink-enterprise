@@ -184,6 +184,10 @@ model Client {
   riskFlag  String? @default("None") // None | Watch | High Risk
   riskNotes String?
 
+  // A company that buys ONLY digital marketing (founder 2026-11-25: "it must show only in AI Marketing, never as an ATS client"). It is made by AI Marketing > Client plans > Client login,
+  // exists so the client's login has a company, and is HIDDEN from every ATS read of Client (the middleware in src/db.js adds marketingOnly = false unless a query asks for the field).
+  marketingOnly Boolean @default(false)
+
   // Service agreement / e-sign flow. The document is generated from the client
   // record, sent for signature, confirmed either by the client's own login or
   // through the tokenised public signing link (see routes/public.js), and then

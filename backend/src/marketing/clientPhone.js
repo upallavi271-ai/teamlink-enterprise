@@ -297,10 +297,11 @@ async function announce(clientId, clientName, title, message) {
   try {
     const prisma = require('../db'); // eslint-disable-line global-require
     const CT = require('../utils/clientPortalTypes'); // eslint-disable-line global-require
-    let cid = clientId || '';
-    if (!cid && lower(clientName)) { const hit = await prisma.$queryRawUnsafe('SELECT id FROM "Client" WHERE LOWER(TRIM(name)) = ? LIMIT 1', lower(clientName)); cid = hit && hit[0] ? hit[0].id : ''; }
-    if (!cid) return 0;
-    const users = await prisma.user.findMany({ where: { clientId: cid, status: 'Active', OR: [{ role: 'CLIENT' }, { atsRole: 'CLIENT' }] } });
+    // the company by its id, or by its name: every record that carries the name (an AI Marketing-only record and an ATS client may share one), so the right login is always told
+    let cids = clientId ? [clientId] : [];
+    if (!cids.length && lower(clientName)) { const hit = await prisma.$queryRawUnsafe('SELECT id FROM "Client" WHERE LOWER(TRIM(name)) = ? LIMIT 10', lower(clientName)); cids = (hit || []).map((h) => h.id); }
+    if (!cids.length) return 0;
+    const users = await prisma.user.findMany({ where: { clientId: { in: cids }, status: 'Active', OR: [{ role: 'CLIENT' }, { atsRole: 'CLIENT' }] } });
     const ids = users.filter((x) => CT.hasCap(x, 'CREATIVE')).map((x) => x.id);
     if (!ids.length) return 0;
     await require('../utils/notify').notifyUsers(ids, { title, message, open: '/client-posts' }); // eslint-disable-line global-require

@@ -249,9 +249,9 @@ function OnboardingPanel({ plan, toast, onClose }) {
   );
 }
 
-// PHONE LOGIN of one client (routes/portalLogins.js, /portal/logins/marketing-plan): a client that buys only digital marketing is kept here, not in Clients, but a login needs a Clients record.
-// "Give phone login" finds the company's Clients record by its name (or makes a bare one: the name, a client ID, the contact; no agreement) and adds the "Social posts" login: the client
-// approves or rejects the posts on the phone app and sees their social accounts. The person gets a one-time set-your-password link by email; nobody ever sees or types a password.
+// CLIENT LOGIN of one client (routes/portalLogins.js, /portal/logins/marketing-plan): a client that buys only digital marketing is kept here, not in ATS Clients, but a login needs a company record.
+// "Give client login" finds the company's AI Marketing-only record by its name (or makes one: flagged marketingOnly, hidden from every ATS list) and adds the "Social posts" login: one login for the web
+// and the phone app, to see the dashboard, approve or reject the posts and see their social accounts. The person gets a one-time set-your-password link by email; nobody ever sees or types a password.
 function PhoneLoginPanel({ plan, toast, onClose }) {
   const [d, setD] = useState(null); const [err, setErr] = useState(''); const [f, setF] = useState({ name: '', email: '' }); const [busy, setBusy] = useState(false); const [done, setDone] = useState(null);
   const load = useCallback(() => api.get(`/portal/logins/marketing-plan/${plan.id}`).then((r) => { setD(r.data); setErr(''); if (!r.data.logins.length) setF((x) => ({ name: x.name || r.data.suggestedName || '', email: x.email || r.data.suggestedEmail || '' })); /* the contact is offered only for the FIRST login; later ones are typed */ }).catch((e) => setErr(errOf(e, 'The logins could not be read.'))), [plan.id]);
@@ -260,9 +260,10 @@ function PhoneLoginPanel({ plan, toast, onClose }) {
     setBusy(true); setDone(null);
     try { const r = await api.post(`/portal/logins/marketing-plan/${plan.id}/login`, { name: f.name, email: f.email }); setDone(r.data); setF({ name: '', email: '' }); toast('Client login added'); await load(); } catch (e) { setDone({ error: errOf(e, 'The login could not be added.') }); } finally { setBusy(false); }
   };
-  const resend = async (l) => {
+  // send a new link / switch a login off / switch it on again (the routes of Clients > Portal access: this company is not in Clients, so the buttons are here)
+  const act = async (l, what) => {
     setBusy(true); setDone(null);
-    try { const r = await api.post(`/portal/logins/client/${d.client.id}/users/${l.id}/resend`); setDone({ message: r.data.message || 'A new link was sent.', link: r.data.link }); await load(); } catch (e) { setDone({ error: errOf(e, 'The link could not be sent.') }); } finally { setBusy(false); }
+    try { const r = await api.post(`/portal/logins/client/${d.client.id}/users/${l.id}/${what}`, what === 'disable' ? { reason: 'Switched off from AI Marketing > Client plans' } : {}); setDone({ message: r.data.message || 'Done.', link: r.data.link }); await load(); } catch (e) { setDone({ error: errOf(e, 'That could not be done.') }); } finally { setBusy(false); }
   };
   const canGive = d && d.seatsLeft > 0 && f.name.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim());
   return (
@@ -272,15 +273,16 @@ function PhoneLoginPanel({ plan, toast, onClose }) {
       {d ? (
         <div>
           <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 8 }}>
-            {d.client ? <>Clients record: <b>{d.client.code || d.client.name}</b> (found by the company name). </> : <>No Clients record has the name <b>{d.company}</b> yet: a bare one is made when you press the button (the name and a client ID, no agreement). </>}
-            Posts reach the phone by the company name, so keep it the same as the name you type when you send a post for approval. {d.used} of {d.max} logins used.
+            {d.client ? <>AI Marketing company record: <b>{d.client.name}</b>. </> : <>There is no AI Marketing company record for <b>{d.company}</b> yet: one is made when you press the button. </>}
+            It is only for AI Marketing: it does not show in ATS Clients. Posts reach the client by the company name, so keep it the same as the name you type when you send a post for approval. {d.used} of {d.max} logins used.
           </div>
           {d.logins.length ? (
             <div style={{ margin: '6px 0 10px' }}>
               {d.logins.map((l) => (
                 <div key={l.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, margin: '4px 0' }}>
                   <b>{l.name}</b> <span style={{ color: 'var(--muted)' }}>{l.email}</span> <Pill tone={l.state.key === 'active' ? 'live' : l.state.key === 'off' ? 'draft' : 'warn'} dot>{l.state.label}</Pill>
-                  {!l.off && l.state.key !== 'active' ? <TinyBtn disabled={busy} onClick={() => resend(l)}>Send a new link</TinyBtn> : null}
+                  {!l.off && l.state.key !== 'active' ? <TinyBtn disabled={busy} onClick={() => act(l, 'resend')}>Send a new link</TinyBtn> : null}
+                  {l.off ? <TinyBtn disabled={busy} onClick={() => act(l, 'enable')}>Switch on again</TinyBtn> : <TinyBtn disabled={busy} onClick={() => { if (window.confirm(`Switch off ${l.name}? They will not be able to sign in any more.`)) act(l, 'disable'); }}>Switch off</TinyBtn>}
                 </div>
               ))}
             </div>
@@ -291,7 +293,7 @@ function PhoneLoginPanel({ plan, toast, onClose }) {
               <Field label="PERSON'S EMAIL (THE LINK GOES HERE)"><input type="email" value={f.email} maxLength={160} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
               <Btn primary disabled={busy || !canGive} onClick={give}>{busy ? 'Working…' : 'Give client login'}</Btn>
             </div>
-          ) : <Banner tone="warn">This company already has {d.max} logins, the most allowed. Switch one off in Clients first.</Banner>}
+          ) : <Banner tone="warn">This company already has {d.max} logins, the most allowed. Switch one off above first.</Banner>}
         </div>
       ) : null}
       {done && done.error ? <Banner tone="error">{done.error}</Banner> : null}

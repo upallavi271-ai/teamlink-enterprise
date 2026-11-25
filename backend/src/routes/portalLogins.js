@@ -87,13 +87,16 @@ async function baseRights(u) {
   return { view, request, approve };
 }
 
+// db.js hides Client.marketingOnly rows from every ordinary list read; a where that names the field (any value) asks to see them
+const ANY_CLIENT = { OR: [{ marketingOnly: true }, { marketingOnly: false }] };
+
 // The client, inside this login's scope, with what they may do on it.
 async function loadClient(req, res, clientId) {
   const u = req.user;
   const base = await baseRights(u);
   if (!base.view && !base.approve) { res.status(403).json({ error: 'Client logins are handled by the client manager (BDE) and the Admin.' }); return null; }
   const client = await prisma.client.findFirst({
-    where: { AND: [{ id: clientId }, clientWhere(u)] },
+    where: { AND: [{ id: clientId }, clientWhere(u), ANY_CLIENT] }, // ANY_CLIENT: an AI Marketing-only company (Client.marketingOnly) is reachable here too: its login is given and re-sent from AI Marketing > Client plans
     select: {
       id: true, name: true, clientType: true, ownerDepartment: true, bdeOwner: true, status: true,
       agreementStatus: true, agreementEnd: true, contactName: true, contactEmail: true,
@@ -314,12 +317,14 @@ router.post('/client/:clientId/users', wrap(async (req, res) => {
   return res.status(201).json({ requested: true, id: r.id, message: `Request sent. The Admin will approve it, then ${name} gets an invite email.` });
 }));
 
-// ---- AI Marketing > Client plans > "Give phone login" (2026-11-25) ---------------------------------------------------------------------------------------------------
-//   GET  /marketing-plan/:planId          the company's Clients record (if any), its logins and the seats left
-//   POST /marketing-plan/:planId/login    {name,email}: finds the company's Clients record by its name (or makes one, "saved for later" style: the name, a client ID, the contact; no
-//                                         agreement), then adds the "Social posts" login with the same rules and the same one-time set-password link as Add user.
-// Why: a client that buys ONLY digital marketing is kept in AI Marketing > Client plans (a name and a plan), but a login needs a Clients record. Admin-level only: the people who may add a
-// login directly (an Admin / approver); everyone else is told to ask. A Clients record that already carries the same name is reused, never doubled.
+// ---- AI Marketing > Client plans > "Client login" (2026-11-25) ---------------------------------------------------------------------------------------------------------
+//   GET  /marketing-plan/:planId          the company's AI Marketing record (if any), its logins and the seats left
+//   POST /marketing-plan/:planId/login    {name,email}: finds the company's AI Marketing-only record by its name (or makes one), then adds the "Social posts" login with the same rules and
+//                                         the same one-time set-password link as Add user.
+// Why: a client that buys ONLY digital marketing is kept in AI Marketing > Client plans (a name and a plan), but a login needs a company record (User.clientId). FOUNDER 2026-11-25: such a
+// client must show ONLY in AI Marketing, never as an ATS client. So the record is flagged Client.marketingOnly (db.js leaves it out of every ATS list, count, picker and reminder), takes no
+// ATS client ID, and an ATS client that happens to carry the same name is never touched (no login is put on it, no seat of it is used). Admin-level only: the people who may add a login
+// directly (an Admin / approver); everyone else is told to ask.
 async function planForLogin(req, res) {
   const u = req.user;
   await A.warm();
@@ -331,20 +336,20 @@ async function planForLogin(req, res) {
   if (!plan) { res.status(404).json({ error: 'That client plan was not found.' }); return null; }
   return plan;
 }
-// The Clients record that carries the plan's company name (the oldest one when there are several branches), inside this login's area. hidden = it exists but not in this login's area.
+// The AI Marketing-only record that carries the plan's company name (the oldest one), inside this login's area. hidden = it exists but not in this login's area.
 async function clientOfPlan(u, plan) {
   const want = String(plan.clientName || '').trim().toLowerCase();
-  const rows = await prisma.$queryRaw`SELECT id FROM Client WHERE lower(trim(name)) = ${want} AND (clientType IS NULL OR clientType != 'Internal') ORDER BY createdAt ASC`;
+  const rows = await prisma.$queryRaw`SELECT id FROM Client WHERE lower(trim(name)) = ${want} AND marketingOnly = 1 ORDER BY createdAt ASC`;
   if (!rows.length) return { client: null, hidden: false };
   const seen = await prisma.client.findMany({
-    where: { AND: [{ id: { in: rows.map((r) => r.id) } }, clientWhere(u)] },
+    where: { AND: [{ id: { in: rows.map((r) => r.id) } }, clientWhere(u), { marketingOnly: true }] },
     select: { id: true, name: true, clientCode: true, ownerDepartment: true, agreementStatus: true, agreementEnd: true, contactName: true, contactEmail: true, createdAt: true },
     orderBy: { createdAt: 'asc' },
   });
   const usable = seen.filter((c) => departmentOk(u, c))[0] || null;
   return { client: usable, hidden: !usable };
 }
-const HIDDEN_CLIENT = 'A client with this name already exists in another area. Ask the Admin to give the login.';
+const HIDDEN_CLIENT = 'This client already has an AI Marketing record in another area. Ask the Admin to give the login.';
 
 router.get('/marketing-plan/:planId', wrap(async (req, res) => {
   const plan = await planForLogin(req, res);
@@ -358,7 +363,7 @@ router.get('/marketing-plan/:planId', wrap(async (req, res) => {
   const gate = L.agreementGate(client || { agreementStatus: 'DRAFT' });
   return res.json({
     company: plan.clientName,
-    client: client ? { id: client.id, code: client.clientCode || '', name: client.name } : null,
+    client: client ? { id: client.id, name: client.name } : null,
     suggestedName: plan.contactName || (client && client.contactName) || '',
     suggestedEmail: (client && client.contactEmail) || '',
     max: settings.maxClientLogins,
@@ -379,28 +384,29 @@ router.post('/marketing-plan/:planId/login', wrap(async (req, res) => {
   if (!name) return res.status(400).json({ error: 'Enter the person\'s name.' });
   const found = await clientOfPlan(u, plan);
   if (found.hidden) return res.status(403).json({ error: HIDDEN_CLIENT });
-  // every rule of Add user (email, one login per email, seats) BEFORE a Clients record is made, so a refused login never leaves an empty record behind
+  // every rule of Add user (email, one login per email, seats) BEFORE a company record is made, so a refused login never leaves an empty record behind
   const no = await whyNot({ client: found.client || { id: '', agreementStatus: 'DRAFT' }, email, caps, forRequest: true });
   if (no) return res.status(409).json({ error: no });
   let client = found.client;
   let clientCreated = false;
   if (!client) {
     if (!departmentOk(u, { ownerDepartment: plan.department || null })) return res.status(403).json({ error: 'A client can be made only in your own department.' });
+    // an AI Marketing-only record: hidden from ATS (marketingOnly), no ATS client ID (so the ATS numbering is not used up), no agreement
     client = await prisma.client.create({
       data: {
-        name: String(plan.clientName).trim(), clientCode: await require('../utils/autoNumber').nextClientNumber(), // eslint-disable-line global-require
-        ownerDepartment: plan.department || null, contactName: plan.contactName || name, contactPhone: plan.contactPhone || null, contactEmail: email, agreementStatus: 'DRAFT',
+        name: String(plan.clientName).trim(), marketingOnly: true, ownerDepartment: plan.department || null,
+        contactName: plan.contactName || name, contactPhone: plan.contactPhone || null, contactEmail: email, agreementStatus: 'DRAFT',
       },
     });
-    require('../utils/clientLocations').forgetLabels(); // eslint-disable-line global-require
     clientCreated = true;
-    await logAudit({ userId: u.id, actorName: u.name, action: 'Client created', entity: 'Client', entityId: client.id, toValue: 'Made from AI Marketing > Client plans for a phone login (digital marketing only, no staffing agreement)' });
+    // the first words of this line are what the migration 20261125160000 looks for to flag records made before the column existed: keep them
+    await logAudit({ userId: u.id, actorName: u.name, action: 'Client created', entity: 'Client', entityId: client.id, toValue: 'Made from AI Marketing > Client plans for a client login (digital marketing only: not an ATS client)' });
   }
   const out = await addDirect({ client, u, name, email, caps, reason: `From AI Marketing > Client plans (${plan.clientName})`, req });
-  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client login given (web and phone)', entity: 'OmniMkClientPlan', entityId: plan.id, toValue: `${plan.clientName}: ${email}${clientCreated ? ` (Clients record ${client.clientCode} made)` : ''}` });
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client login given (web and phone)', entity: 'OmniMkClientPlan', entityId: plan.id, toValue: `${plan.clientName}: ${email}${clientCreated ? ' (AI Marketing company record made)' : ''}` });
   return res.status(201).json({
-    created: true, clientCreated, client: { id: client.id, code: client.clientCode || '', name: client.name },
-    message: `Client login added for ${name} (one login for the web and the phone app). ${out.invite.message}${clientCreated ? ` A Clients record (${client.clientCode}) was made for ${client.name}.` : ''}`,
+    created: true, clientCreated, client: { id: client.id, name: client.name },
+    message: `Client login added for ${name} (one login for the web and the phone app). ${out.invite.message}${clientCreated ? ` A company record for AI Marketing only was made for ${client.name}: it does not show in ATS Clients.` : ''}`,
     link: out.invite.link, expiresAt: out.invite.expiresAt,
   });
 }));
