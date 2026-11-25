@@ -146,7 +146,9 @@ export function OfficeCards({
   const n = (c, w) => `${c} ${w}${c === 1 ? '' : 's'}`;
   const show = (patch) => { setF({ ...f, ...patch }); if (onJump) onJump(); };
   const o = recon.outward; const p = recon.position;
-  const credit = p.payable < 0;
+  // Founder 2026-11-25: GST is paid to Government on money clients paid by bank transfer; cash receipts carry no GST payment.
+  const payNow = p.payableBank != null ? p.payableBank : p.payable;
+  const credit = payNow < 0;
   const items = [
     { k: 'count', l: 'Entries', v: kpi.count.toLocaleString('en-IN'), s: kpi.count ? `${kpi.withGstCount} with GST` : 'No bills in this view' },
     {
@@ -160,15 +162,22 @@ export function OfficeCards({
       tone: kpi.pending > 0.5 ? 'orange' : 'green', go: kpi.pendingCount ? () => show({ status: 'PENDING' }) : null,
     },
     {
-      k: 'gstin', l: 'GST received from clients', v: money(o.charged), s: `on ${n(o.invoices, 'invoice')}`, tone: 'gold',
+      k: 'gstin', l: 'GST charged to clients', v: money(o.charged), s: `on ${n(o.invoices, 'invoice')}`, tone: 'gold',
       t: 'GST we charged clients on the invoices of this period (from Invoices; only the period filter applies)',
     },
     { k: 'gstout', l: 'GST paid to vendors', v: money(kpi.gst), s: `on ${n(kpi.withGstCount, 'bill')}`, tone: 'gold', go: kpi.withGstCount ? () => show({ gst: 'with' }) : null },
     {
-      k: 'payable', l: credit ? 'GST credit carried forward' : 'GST payable to government', v: money(Math.abs(p.payable)), tone: credit ? 'green' : 'red',
-      s: `received ${money(o.charged)} − credit we can claim ${money(recon.inward.claimable)}`,
+      k: 'payable', l: credit ? 'GST credit carried forward' : 'GST payable to government', v: money(Math.abs(payNow)), tone: credit ? 'green' : 'red',
+      s: `GST on bank-transfer receipts ${money(o.bankGst || 0)} − credit we can claim ${money(recon.inward.claimable)}`,
+      t: 'Only money received by bank transfer (and other non-cash modes) carries GST to pay. Cash receipts are left out - see the Cash card.',
       x: recon.ourGstin ? `Our GSTIN ${recon.ourGstin}${recon.ourState ? ` · ${recon.ourState}` : ''}` : 'Our GSTIN: not set — add it in Business details',
       xBad: !recon.ourGstin,
+    },
+    {
+      k: 'cash', l: 'Received in cash', v: money(o.cashReceived || 0), tone: 'gold',
+      s: `GST inside it ${money(o.cashGst || 0)} · not counted in GST payable`,
+      x: `By bank transfer / other: ${money(o.bankReceived || 0)}${o.unitemised > 0.5 ? ` (${money(o.unitemised)} has no receipt detail, counted as bank)` : ''}`,
+      t: 'Money clients paid in cash on these invoices, and the GST inside it. Receipts with payment mode Cash are read as cash; every other mode is read as bank.',
     },
     { k: 'tds', l: 'TDS we cut', v: money(kpi.tds), s: kpi.tdsCount ? `on ${n(kpi.tdsCount, 'bill')}` : 'No TDS cut', t: 'TDS we held back from vendors and pay to the government for them' },
   ];

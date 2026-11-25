@@ -371,6 +371,24 @@ async function stampJoinDays(invoices) {
     inv.droppedInAts = !!left;
   });
 }
+// How each invoice's received money came in: CASH (payment mode Cash) or BANK (every other mode - transfer, UPI, cheque, card).
+// Money recorded on the invoice with no receipt row behind it (older imports) is counted as bank and flagged as `unitemised`.
+function stampModeSplit(invoices, payments) {
+  const by = new Map();
+  payments.forEach((p) => {
+    const e = by.get(p.invoiceId) || { cash: 0, bank: 0 };
+    if (/cash/i.test(String(p.method || ''))) e.cash += Number(p.amount || 0); else e.bank += Number(p.amount || 0);
+    by.set(p.invoiceId, e);
+  });
+  invoices.forEach((i) => {
+    const e = by.get(i.id) || { cash: 0, bank: 0 };
+    const itemised = e.cash + e.bank;
+    const rest = Math.max(0, Number(i.receivedAmount || 0) - itemised);
+    i.cashReceived = ROUND(Math.max(0, e.cash));
+    i.bankReceived = ROUND(Math.max(0, e.bank) + rest);
+    i.unitemisedReceived = ROUND(rest);
+  });
+}
 async function officeScope(query) {
   const range = officeRange(query.period);
   const [expenses, invoices, payments, vendorMap] = await Promise.all([
@@ -381,6 +399,7 @@ async function officeScope(query) {
   ]);
   await stampJoinDays(invoices);
   await CNU.decorateNet(invoices); // B9.9: billed figures after issued notes
+  stampModeSplit(invoices, payments);
   // A hand loan or the owner's own money is not a cost — it stays out of
   // profit and out of GST, exactly as the accounting application has it.
   // A REJECTED bill is out of the books as well (see APPROVAL above); it is
@@ -1571,6 +1590,17 @@ function officeFacts({
     cli.set(k, c);
   });
 
+  // GST on what clients have really paid, split by how it came in (founder 2026-11-25: GST is paid to Government on money
+  // received by bank transfer; money received in cash carries no GST payment).
+  const gstShare = (i, amt) => { const t = CNU.receivableOf(i); return t > 0 ? CNU.gstBilledOf(i) * Math.min(1, Math.max(0, amt) / t) : 0; };
+  const bankGst = ROUND(gstInv.reduce((s, i) => s + gstShare(i, i.bankReceived || 0), 0));
+  const cashGst = ROUND(gstInv.reduce((s, i) => s + gstShare(i, i.cashReceived || 0), 0));
+  const bankReceived = ROUND(gstInv.reduce((s, i) => s + (i.bankReceived || 0), 0));
+  const cashReceived = ROUND(gstInv.reduce((s, i) => s + (i.cashReceived || 0), 0));
+  const unitemised = ROUND(gstInv.reduce((s, i) => s + (i.unitemisedReceived || 0), 0));
+  const cashInvoices = gstInv.filter((i) => (i.cashReceived || 0) > 0.5)
+    .map((i) => ({ id: i.id, number: i.invoiceNumber || null, client: i.client?.name || null, candidate: i.candidate?.name || null, cash: i.cashReceived, gst: ROUND(gstShare(i, i.cashReceived)) }));
+
   const withGst = inPeriod.filter((r) => r.gst > 0.5);
   const claimRows = withGst.filter((r) => r.gstinOnFile);
   const riskRows = withGst.filter((r) => r.atRisk);
@@ -1613,6 +1643,7 @@ function officeFacts({
         charged,
         value: ROUND(taxable + charged),
         invoices: gstInv.length,
+        bankReceived, cashReceived, bankGst, cashGst, unitemised, cashInvoices,
         clients: [...cli.values()].sort((a, b) => b.value - a.value),
       },
       inward: {
@@ -1623,6 +1654,7 @@ function officeFacts({
         billed: ROUND(taxable + charged),
         bought: purchases,
         payable: ROUND(charged - claimable),
+        payableBank: ROUND(bankGst - claimable),
         ifFilled: ROUND(charged - gstPaid),
         saving: ROUND(atRisk),
       },
