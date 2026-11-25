@@ -3,7 +3,7 @@ import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Pill, Tag, Banner, Field, Tabs, Empty, Kpi, Kpis, fmtDate } from '../ui.jsx';
 import { CopyBox, Chips, TrendChart, sign } from './MkSeoParts.jsx';
-import { KeywordsTab, ContentTab, CompetitorsTab, DashboardExtras } from './MkSeoTools.jsx';
+import { KeywordsTab, ContentTab, CompetitorsTab, DashboardExtras, GoogleSetup } from './MkSeoTools.jsx';
 
 // AI MARKETING > SEO ASSISTANT (2026-11-25): the owner's AI SEO Assistant, built on what the SEO & visibility tools already measure.
 //   Dashboard        the health score of every client's website and its change, one site in full (trend, marks, technical findings, performance, progress feed), what to do first
@@ -52,7 +52,7 @@ export default function MkSeoPage() {
         {(!none && !adding && site && tab === 'keywords') ? <KeywordsTab key={`k${site.id}`} site={site} toast={toast} /> : null}
         {(!none && !adding && site && tab === 'content') ? <ContentTab key={`c${site.id}`} site={site} toast={toast} /> : null}
         {(!none && !adding && site && tab === 'competitors') ? <CompetitorsTab key={`p${site.id}`} site={site} toast={toast} /> : null}
-        {(adding || (!none && tab === 'site')) ? <SiteTab key={adding ? 'new' : siteId} site={adding ? null : site} industries={ov.industries || []} toast={toast} onSaved={saved} onRemoved={() => { setSiteId(''); setAdding(false); setOv(null); load(''); }} /> : null}
+        {(adding || (!none && tab === 'site')) ? <SiteTab key={adding ? 'new' : siteId} site={adding ? null : site} industries={ov.industries || []} toast={toast} onSaved={saved} onSynced={() => load(siteId)} onRemoved={() => { setSiteId(''); setAdding(false); setOv(null); load(''); }} /> : null}
       </div>
     </div>
   );
@@ -201,8 +201,8 @@ function TasksTab({ site, toast, onChanged }) {
 }
 
 // ---- SITE AND SCHEDULE ---------------------------------------------------------------------------------------------------------------------------------------------------
-function SiteTab({ site, industries, toast, onSaved, onRemoved }) {
-  const [f, setF] = useState(() => ({ clientName: site ? site.clientName : '', url: site ? site.url : '', industry: site ? site.industry : 'other', planId: site ? site.planId || '' : '', facts: site ? { ...blankFacts, ...site.facts } : { ...blankFacts }, competitors: site ? [...site.competitors, '', '', ''].slice(0, 3) : ['', '', ''], schedule: site ? site.schedule : 'off', pages: String(site ? site.pages : 5), alertDrop: String(site ? site.alertDrop : 5), department: site ? site.department : '' }));
+function SiteTab({ site, industries, toast, onSaved, onRemoved, onSynced }) {
+  const [f, setF] = useState(() => ({ clientName: site ? site.clientName : '', url: site ? site.url : '', industry: site ? site.industry : 'other', planId: site ? site.planId || '' : '', facts: site ? { ...blankFacts, ...site.facts } : { ...blankFacts }, competitors: site ? [...site.competitors, '', '', ''].slice(0, 3) : ['', '', ''], schedule: site ? site.schedule : 'off', pages: String(site ? site.pages : 5), alertDrop: String(site ? site.alertDrop : 5), department: site ? site.department : '', gsc: site ? site.gscProperty || '' : '', ga4: site ? site.ga4Property || '' : '' }));
   const [plans, setPlans] = useState([]); const [busy, setBusy] = useState(false); const [sure, setSure] = useState(false);
   useEffect(() => { if (!site) omni.get('/gs/marketing/seo/plans').then((d) => setPlans(d.items || [])).catch(() => setPlans([])); }, [site]);
   const set = (k, v) => setF((o) => ({ ...o, [k]: v })); const setFact = (k, v) => setF((o) => ({ ...o, facts: { ...o.facts, [k]: v } }));
@@ -213,7 +213,7 @@ function SiteTab({ site, industries, toast, onSaved, onRemoved }) {
   const save = async () => {
     setBusy(true);
     try {
-      const body = { clientName: f.clientName, url: f.url, industry: f.industry, planId: f.planId || undefined, facts: f.facts, competitors: f.competitors.filter((c) => c.trim()), schedule: f.schedule, pages: Number(f.pages), alertDrop: Number(f.alertDrop), department: f.department || undefined };
+      const body = { clientName: f.clientName, url: f.url, industry: f.industry, planId: f.planId || undefined, facts: f.facts, competitors: f.competitors.filter((c) => c.trim()), schedule: f.schedule, pages: Number(f.pages), alertDrop: Number(f.alertDrop), department: f.department || undefined, gscProperty: f.gsc, ga4Property: f.ga4 };
       const r = site ? await omni.put(`/gs/marketing/seo/sites/${site.id}`, body) : await omni.post('/gs/marketing/seo/sites', body);
       toast(site ? 'Saved' : 'Saved. Press "Audit now" for the first audit.'); await onSaved(r.site.id);
     } catch (e) { toast(errOf(e, 'It could not be saved.')); } finally { setBusy(false); }
@@ -245,6 +245,7 @@ function SiteTab({ site, industries, toast, onSaved, onRemoved }) {
         </div>
         <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>An audit reads the client's public pages like a visitor. The bell also rings for a serious new problem (the site asks search engines to stay away, loses https) or when the website cannot be reached twice in a row.</div>
       </Panel>
+      <GoogleSetup site={site} url={f.url} gsc={f.gsc} ga4={f.ga4} onGsc={(v) => set('gsc', v)} onGa4={(v) => set('ga4', v)} toast={toast} onSynced={onSynced} />
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 12 }}>
         <Btn primary disabled={busy || !ok} onClick={save}>{busy ? 'Saving…' : site ? 'Save' : 'Add this website'}</Btn>
         {site && !sure ? <Btn onClick={() => setSure(true)}>Remove this website</Btn> : null}

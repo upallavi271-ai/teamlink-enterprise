@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { Btn, TinyBtn, Panel, Pill, Tag, Banner, Field, Empty, fmtDate } from '../ui.jsx';
-import { CopyBox } from './MkSeoParts.jsx';
+import { CopyBox, Bars } from './MkSeoParts.jsx';
 
 // AI MARKETING > SEO ASSISTANT > KEYWORDS, CONTENT, COMPETITORS and the keyword / content panels of the dashboard (2026-11-25).
 // HONEST BY DESIGN: search volume and keyword difficulty are shown as "not available" (no data provider is connected: nothing is estimated); a position is what Search Console reported;
@@ -13,7 +13,7 @@ const tick = (set, k) => { const n = new Set(set); if (n.has(k)) n.delete(k); el
 // ---- KEYWORDS ----------------------------------------------------------------------------------------------------------------------------------------------------------
 export function KeywordsTab({ site, toast }) {
   const [res, setRes] = useState(null); const [busy, setBusy] = useState(false); const [chosen, setChosen] = useState(new Set()); const [track, setTrack] = useState(true); const [mine, setMine] = useState('');
-  const [list, setList] = useState(null); const [qv, setQv] = useState(null); const [csv, setCsv] = useState(''); const [day, setDay] = useState(''); const [label, setLabel] = useState(''); const [importing, setImporting] = useState(false);
+  const [list, setList] = useState(null); const [qv, setQv] = useState(null); const [reading, setReading] = useState(false); const [csv, setCsv] = useState(''); const [day, setDay] = useState(''); const [label, setLabel] = useState(''); const [importing, setImporting] = useState(false);
   const load = useCallback(async () => { try { const [l, q] = await Promise.all([omni.get(`/gs/marketing/seo/sites/${site.id}/keywords`), omni.get(`/gs/marketing/seo/sites/${site.id}/queries`)]); setList(l); setQv(q); } catch (e) { toast(errOf(e, 'The keywords could not be opened.')); } }, [site.id, toast]);
   useEffect(() => { load(); }, [load]);
   const research = async () => { setBusy(true); setRes(null); setChosen(new Set()); try { setRes(await omni.post('/gs/marketing/seo/keywords/research', { siteId: site.id })); } catch (e) { toast(errOf(e, 'The phrases could not be made.')); } finally { setBusy(false); } };
@@ -21,6 +21,7 @@ export function KeywordsTab({ site, toast }) {
   const keepChosen = () => keep(res.groups.flatMap((g) => g.items.filter((i) => chosen.has(i.phrase)).map((i) => ({ phrase: i.phrase, group: g.key, intent: i.intent }))));
   const flip = async (k) => { try { await omni.put(`/gs/marketing/seo/keywords/${k.id}`, { tracked: !k.tracked }); await load(); } catch (e) { toast(errOf(e, 'It could not be saved.')); } };
   const del = async (k) => { try { await omni.del(`/gs/marketing/seo/keywords/${k.id}`); await load(); } catch (e) { toast(errOf(e, 'It could not be removed.')); } };
+  const readGsc = async () => { setReading(true); try { const r = await omni.post(`/gs/marketing/seo/sites/${site.id}/google/sync`, { what: 'gsc' }, { timeout: 120000 }); toast(`Search Console read: ${r.gsc.queries} queries kept for ${r.gsc.period.end}`); await load(); } catch (e) { toast(errOf(e, 'Search Console could not be read.')); } finally { setReading(false); } };
   const doImport = async () => { setImporting(true); try { const r = await omni.post(`/gs/marketing/seo/sites/${site.id}/queries`, { text: csv, periodEnd: day || undefined, label: label || undefined }); toast(`${r.set.rows} queries saved for ${r.set.periodEnd}${r.set.truncated ? ' (the first 1,000 of the file)' : ''}`); setCsv(''); setLabel(''); await load(); } catch (e) { toast(errOf(e, 'The file could not be read.')); } finally { setImporting(false); } };
   return (
     <div>
@@ -62,7 +63,8 @@ export function KeywordsTab({ site, toast }) {
         )}
         {list ? <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>{list.note} Search volume and difficulty: not available (no provider).</div> : null}
       </Panel>
-      <Panel title="Search Console data" sub="The real queries people used, with clicks, impressions and average position. Paste the export of the Queries tab." style={{ marginTop: 12 }}>
+      <Panel title="Search Console data" sub="The real queries people used, with clicks, impressions and average position. Read them from Google, or paste the export of the Queries tab." right={site.gscProperty ? <Btn small primary disabled={reading} onClick={readGsc}>{reading ? 'Reading Google…' : 'Read Search Console now'}</Btn> : null} style={{ marginTop: 12 }}>
+        {!site.gscProperty ? <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 6 }}>To read Search Console directly, choose this client's property under Site and schedule (an Admin connects Google once). Until then, paste the export:</div> : null}
         <ol style={{ margin: '0 0 8px', paddingLeft: 18, fontSize: 12.5 }}><li>Open Google Search Console for the client's website, then Performance.</li><li>Pick the dates (for example the last 3 months) and open the Queries tab.</li><li>Press Export, then Download CSV, open the file and paste its text here.</li></ol>
         <textarea aria-label="Search Console export" rows={5} value={csv} placeholder="Top queries,Clicks,Impressions,CTR,Position" onChange={(e) => setCsv(e.target.value)} style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} />
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end', margin: '8px 0' }}>
@@ -196,10 +198,80 @@ export function CompetitorsTab({ site, toast }) {
   );
 }
 
+// ---- GOOGLE (phase 2): Search Console and Analytics 4, read-only, with the service account saved in Administration > Integrations -------------------------------------------------
+const chg = (v) => (v == null ? null : <span style={{ color: v > 0 ? '#15803d' : v < 0 ? '#b91c1c' : 'inherit', fontWeight: 700 }}> ({v === 0 ? 'no change' : `${v > 0 ? '+' : ''}${v}%`})</span>);
+export function GoogleSetup({ site, url, gsc, ga4, onGsc, onGa4, toast, onSynced }) {
+  const [st, setSt] = useState(null); const [props, setProps] = useState(null); const [busy, setBusy] = useState(false); const [syncing, setSyncing] = useState(false); const [out, setOut] = useState(null);
+  useEffect(() => { omni.get('/gs/marketing/seo/google/status').then(setSt).catch(() => setSt({ configured: false, problem: 'The Google state could not be read.' })); }, []);
+  const loadProps = async () => { setBusy(true); try { const r = await omni.get('/gs/marketing/seo/google/properties', { ...(site ? { siteId: site.id } : {}), ...(url && url.trim() ? { url: url.trim() } : {}) }); setProps(r); if (r.suggest && !gsc) onGsc(r.suggest); } catch (e) { toast(errOf(e, 'The properties could not be read.')); } finally { setBusy(false); } };
+  const sync = async () => { setSyncing(true); setOut(null); try { const r = await omni.post(`/gs/marketing/seo/sites/${site.id}/google/sync`, { what: 'both' }, { timeout: 120000 }); setOut(r); toast(`Google read: ${[r.gsc ? `Search Console ${r.gsc.totals.clicks} clicks` : '', r.ga4 ? `Analytics ${r.ga4.totals.now.sessions != null ? r.ga4.totals.now.sessions : 0} sessions` : ''].filter(Boolean).join(', ')}`); if (onSynced) onSynced(); } catch (e) { setOut({ error: errOf(e, 'Google could not be read.') }); } finally { setSyncing(false); } };
+  const copy = (t) => { try { navigator.clipboard.writeText(t).then(() => toast('Copied'), () => toast('Select the email and copy it.')); } catch { toast('Select the email and copy it.'); } };
+  return (
+    <Panel title="Google Search Console and Analytics" sub="Real search and visitor numbers, read-only, free. TeamLink never changes anything in the client's Google account." style={{ marginTop: 14 }}>
+      {!st ? <div style={{ fontSize: 13 }}>Checking…</div> : !st.configured ? (
+        <Banner tone="warn">Google is not connected yet. {st.problem || 'An Admin makes a Google service account and pastes its JSON key in Administration > Integrations > "Search Console and Analytics (Google)".'} Until then the keyword positions come from the pasted Search Console export.</Banner>
+      ) : (
+        <div style={{ fontSize: 13, margin: '4px 0 8px' }}>Connected as <b>{st.email}</b> <TinyBtn onClick={() => copy(st.email)}>Copy the email</TinyBtn><br />
+          <span style={{ color: 'var(--muted)' }}>Ask the client to add this email: in Search Console, Settings &gt; Users and permissions &gt; Add user (Restricted is enough); in Analytics, Admin &gt; Property access management &gt; Add (Viewer).</span></div>
+      )}
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'end' }}>
+        <Field label="SEARCH CONSOLE PROPERTY" hint="Looks like sc-domain:example.com or https://www.example.com/"><input value={gsc} placeholder="sc-domain:example.com" style={{ minWidth: 260 }} onChange={(e) => onGsc(e.target.value.trim())} /></Field>
+        {st && st.configured ? <Btn small disabled={busy} onClick={loadProps}>{busy ? 'Asking Google…' : 'Choose from the list'}</Btn> : null}
+        <Field label="ANALYTICS 4 PROPERTY NUMBER" hint="Analytics > Admin > Property settings > Property ID"><input value={ga4} placeholder="123456789" inputMode="numeric" style={{ width: 170 }} onChange={(e) => onGa4(e.target.value.trim())} /></Field>
+      </div>
+      {props ? (props.problem ? <div style={{ fontSize: 12.5, color: '#8a6410', marginTop: 6 }}>{props.problem}</div> : props.items.length ? (
+        <div style={{ marginTop: 6 }}><select aria-label="Search Console properties" value="" onChange={(e) => { if (e.target.value) onGsc(e.target.value); }}><option value="">Properties this service account can read ({props.items.length})</option>{props.items.map((p) => <option key={p.property} value={p.property}>{p.property}</option>)}</select>{props.suggest ? <small style={{ marginLeft: 8, color: 'var(--muted)' }}>Best fit for this website: {props.suggest}</small> : null}</div>
+      ) : <div style={{ fontSize: 12.5, color: '#8a6410', marginTop: 6 }}>The service account is not a user of any Search Console property yet: no client has added it.</div>) : null}
+      {site && st && st.configured ? (
+        <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Btn primary disabled={syncing || (!site.gscProperty && !site.ga4Property)} onClick={sync}>{syncing ? 'Reading Google…' : 'Read Google now'}</Btn>
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>{site.gscProperty || site.ga4Property ? 'Reads the saved properties (save any change first). A site on an automatic schedule is read again after every audit.' : 'Save a property first.'}</span>
+        </div>
+      ) : null}
+      {out && out.error ? <Banner tone="error">{out.error}</Banner> : null}
+      {out && !out.error && out.errors && out.errors.length ? <Banner tone="warn">{out.errors.map((e) => e.error).join(' ')}</Banner> : null}
+      {out && out.gsc ? <div style={{ fontSize: 12.5, marginTop: 6 }}>Search Console: {out.gsc.totals.clicks} clicks and {out.gsc.totals.impressions} impressions, {out.gsc.period.start} to {out.gsc.period.end}; {out.gsc.queries} queries kept for the keyword list.</div> : null}
+      {out && out.ga4 ? <div style={{ fontSize: 12.5 }}>Analytics: {out.ga4.totals.now.sessions} sessions, {out.ga4.totals.now.users} users, {out.ga4.period.start} to {out.ga4.period.end}.</div> : null}
+    </Panel>
+  );
+}
+// what Google answered last, on the dashboard
+function GoogleBox({ site, onOpen }) {
+  const g = site.google; if (!g) return null; const gs = g.gsc; const an = g.ga4;
+  const has = Boolean(g.gscProperty || g.ga4Property);
+  return (
+    <Panel title="Google data" sub="Read from Search Console and Analytics for the last 28 days, compared with the 28 days before. Not an estimate." right={<TinyBtn onClick={() => onOpen(site.id, 'site')}>Google settings</TinyBtn>} style={{ marginTop: 14 }}>
+      {!g.configured ? <div style={{ fontSize: 13, color: 'var(--muted)' }}>Google is not connected. An Admin pastes a service account key in Administration &gt; Integrations &gt; Search Console and Analytics (Google); then each client adds its email. Until then, use the Search Console export in the Keywords tab.</div>
+        : !has ? <div style={{ fontSize: 13, color: 'var(--muted)' }}>Connected as {g.email}. Choose this client's Search Console property and Analytics number under Site and schedule.</div> : (
+          <div className="grid" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 14, alignItems: 'start' }}>
+            <div style={{ fontSize: 13 }}>
+              <b>Search Console</b> <small style={{ color: 'var(--muted)' }}>{g.gscProperty}</small>
+              {gs ? (<div>
+                <div style={{ margin: '4px 0' }}>{gs.totals.clicks} clicks{chg(gs.change.clicks)} · {gs.totals.impressions} times seen{chg(gs.change.impressions)}<br />Average click rate {gs.totals.ctr != null ? `${gs.totals.ctr}%` : '—'} · average position {gs.totals.position != null ? gs.totals.position : '—'}</div>
+                <Bars series={gs.series} /><div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{gs.period.start} to {gs.period.end} (the newest days are not final, so the period ends 3 days ago). {gs.queries} queries kept for the keyword list. Read {fmtDate(g.gscAt)}.</div>
+              </div>) : g.gscProperty ? <div style={{ color: 'var(--muted)' }}>Not read yet. Press "Read Google now" under Site and schedule.</div> : <div style={{ color: 'var(--muted)' }}>No property chosen.</div>}
+              {g.gscError ? <div style={{ fontSize: 12, color: '#b91c1c', marginTop: 4 }}>Last problem: {g.gscError}</div> : null}
+            </div>
+            <div style={{ fontSize: 13 }}>
+              <b>Analytics 4</b> <small style={{ color: 'var(--muted)' }}>{g.ga4Property ? `property ${g.ga4Property}` : ''}</small>
+              {an ? (<div>
+                <div style={{ margin: '4px 0' }}>{an.totals.now.sessions} sessions{chg(an.change.sessions)} · {an.totals.now.users} users{chg(an.change.users)}<br />{an.totals.now.pageViews} page views{chg(an.change.pageViews)}<br />From search (Organic Search): {an.organic.now.sessions != null ? an.organic.now.sessions : 0} sessions{chg(an.change.organicSessions)}</div>
+                {an.topPages.length ? <div style={{ fontSize: 12 }}>Most viewed: {an.topPages.slice(0, 5).map((p) => `${p.path} (${p.views})`).join(', ')}</div> : null}
+                <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{an.period.start} to {an.period.end}. Read {fmtDate(g.ga4At)}.</div>
+              </div>) : g.ga4Property ? <div style={{ color: 'var(--muted)' }}>Not read yet. Press "Read Google now" under Site and schedule.</div> : <div style={{ color: 'var(--muted)' }}>No property number.</div>}
+              {g.ga4Error ? <div style={{ fontSize: 12, color: '#b91c1c', marginTop: 4 }}>Last problem: {g.ga4Error}</div> : null}
+            </div>
+          </div>)}
+    </Panel>
+  );
+}
+
 // ---- the keyword and content panels of the dashboard --------------------------------------------------------------------------------------------------------------------
 export function DashboardExtras({ site, onOpen }) {
   const k = site.keywords; const c = site.content;
   return (
+    <div>
+    <GoogleBox site={site} onOpen={onOpen} />
     <div className="grid" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 14, alignItems: 'start', marginTop: 14 }}>
       <Panel title="Keyword opportunities" sub="Real queries from Search Console and the phrases kept for this client." right={<TinyBtn onClick={() => onOpen(site.id, 'keywords')}>Keywords</TinyBtn>}>
         {k ? (
@@ -220,6 +292,7 @@ export function DashboardExtras({ site, onOpen }) {
           </div>
         ) : <div style={{ fontSize: 13, color: 'var(--muted)' }}>Nothing kept yet. Open the Content tab.</div>}
       </Panel>
+    </div>
     </div>
   );
 }

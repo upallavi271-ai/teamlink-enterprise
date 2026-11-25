@@ -2847,6 +2847,19 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     return res.json({ ...shapeIntegration(channel, nextRow), result });
   }
 
+  // Search Console and Analytics (Google service account): sign in with the saved key and list the Search Console properties it can see (marketing/seoGoogle.js). Read-only; the key is never shown.
+  if (channel.id === 'google-seo') {
+    const probe = await require('../marketing/seoGoogle').testConnection(); // eslint-disable-line global-require
+    const result = probe.ok ? probe.text : `Failed — ${probe.text}`;
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: probe.ok ? null : result.slice(0, 480), ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }) },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result });
+  }
+
   // Stock video clips (Pixabay / Pexels): one free search with the saved key (marketing/stockclips.js).
   if (channel.id === 'stock-pexels' || channel.id === 'stock-pixabay') {
     const probe = await require('../marketing/stockclips').testKey(channel.id);

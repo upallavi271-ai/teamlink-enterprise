@@ -21,7 +21,7 @@ const DDL = [
   `CREATE INDEX IF NOT EXISTS "${T}_client" ON "${T}"("clientName", "active")`,
 ];
 let okAt = 0;
-async function ensure() { if (okAt && Date.now() - okAt < 600000) return true; try { for (const sql of DDL) await S.run(sql); okAt = Date.now(); return true; } catch (e) { console.error('[omni-mk] seo site schema:', e.message); return false; } } // eslint-disable-line no-await-in-loop, no-console
+async function ensure() { if (okAt && Date.now() - okAt < 600000) return true; try { for (const sql of DDL) await S.run(sql); for (const col of ['gscProperty', 'ga4Property']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN "${col}" TEXT`); } catch { /* the column is already there */ } } okAt = Date.now(); return true; } catch (e) { console.error('[omni-mk] seo site schema:', e.message); return false; } } // eslint-disable-line no-await-in-loop, no-console
 
 const SCHEDULES = { off: 0, weekly: 7, monthly: 30 }; // days between two audits
 const DAY = 86400000;
@@ -30,7 +30,7 @@ const factsOut = (raw) => { const f = S.parse(raw, {}) || {}; const o = {}; for 
 function rowOut(r) {
   const pack = Packs.PACKS[r.industry] || Packs.PACKS.other;
   return { id: r.id, clientName: r.clientName, planId: r.planId || null, url: r.url, industry: r.industry || 'other', industryLabel: pack.label, healthcare: pack.healthcare, facts: factsOut(r.facts), competitors: S.parse(r.competitors, []) || [],
-    schedule: r.schedule || 'off', pages: S.num(r.pages) || 5, alertDrop: S.num(r.alertDrop) || 5, nextRunAt: S.num(r.nextRunAt) ? S.iso(r.nextRunAt) : null, lastRunAt: S.num(r.lastRunAt) ? S.iso(r.lastRunAt) : null,
+    gscProperty: r.gscProperty || '', ga4Property: r.ga4Property || '', schedule: r.schedule || 'off', pages: S.num(r.pages) || 5, alertDrop: S.num(r.alertDrop) || 5, nextRunAt: S.num(r.nextRunAt) ? S.iso(r.nextRunAt) : null, lastRunAt: S.num(r.lastRunAt) ? S.iso(r.lastRunAt) : null,
     lastScore: r.lastScore == null ? null : S.num(r.lastScore), lastCheckId: r.lastCheckId || null, fails: S.num(r.fails), active: S.num(r.active) === 1, department: r.department || '', createdByName: r.createdByName || '', createdAt: S.iso(r.createdAt), updatedAt: S.iso(r.updatedAt) };
 }
 async function mine(u, id) { if (!(await ensure())) return null; const r = (await S.q(`SELECT * FROM "${T}" WHERE id = ?`, S.clip(id, 60)))[0]; return r && A.mayDepartment(u, r.department || '') ? r : null; }
@@ -67,7 +67,15 @@ async function nextRun(u, clientName, schedule, now = Date.now()) {
   return base ? Math.max(base + days * DAY, now) : now;
 }
 
-// b: { id?, clientName, planId, url, industry, facts: {...}, competitors: [urls], schedule, pages, alertDrop, department }
+// the Google property of a site: a Search Console property is "sc-domain:example.com" or an address that ends in a slash; a GA4 property is the number from Analytics > Admin > Property settings. An empty box clears it.
+function googleProp(v, was, kind) {
+  if (v === undefined) return { value: was || null };
+  const t = clean(v, 200); if (!t) return { value: null };
+  if (kind === 'gsc') { if (/^sc-domain:[a-z0-9.-]+$/i.test(t) || /^https?:\/\/[^\s]+\/$/i.test(t)) return { value: t }; return { error: 'The Search Console property looks like sc-domain:example.com or https://www.example.com/ (with the slash at the end). Choose it from the list.', status: 400 }; }
+  const n = t.replace(/^properties\//i, ''); if (/^\d{4,15}$/.test(n)) return { value: n }; return { error: 'The Google Analytics property is a number (Analytics > Admin > Property settings > Property ID).', status: 400 };
+}
+
+// b: { id?, clientName, planId, url, industry, facts: {...}, competitors: [urls], schedule, pages, alertDrop, department, gscProperty, ga4Property }
 async function save(u, b = {}) {
   if (!(await ensure())) return { error: 'The SEO site could not be saved.', status: 500 };
   const old = b.id ? await mine(u, b.id) : null; if (b.id && !old) return { error: 'That SEO site was not found.', status: 404 };
@@ -79,17 +87,18 @@ async function save(u, b = {}) {
   const compIn = Array.isArray(b.competitors) ? b.competitors : S.parse(old && old.competitors, []); const comps = [];
   for (const c of compIn.slice(0, 3)) { if (!clean(c, 300)) continue; const r = Site.cleanUrl(c); if (r.error) return { error: `Competitor website: ${r.error}`, status: 400 }; if (!comps.includes(r.url)) comps.push(r.url); }
   const schedule = SCHEDULES[b.schedule] != null ? b.schedule : (old ? old.schedule : 'off'); const pages = Math.max(1, Math.min(10, Math.round(Number(b.pages != null ? b.pages : old && old.pages)) || 5)); const alertDrop = Math.max(1, Math.min(50, Math.round(Number(b.alertDrop != null ? b.alertDrop : old && old.alertDrop)) || 5));
+  const gsc = googleProp(b.gscProperty, old && old.gscProperty, 'gsc'); if (gsc.error) return gsc; const ga4 = googleProp(b.ga4Property, old && old.ga4Property, 'ga4'); if (ga4.error) return ga4;
   const planId = b.planId != null ? (clean(b.planId, 60) || null) : (old ? old.planId : null); let dept = b.department != null ? clean(b.department, 60) : (old ? old.department : '');
   if (planId && !old) { const p = (await CS.activePlans()).find((x) => x.raw.id === planId); if (!p) return { error: 'That client plan was not found.', status: 404 }; if (!dept) dept = p.raw.department || ''; }
   if (dept && !A.mayDepartment(u, dept)) return { error: 'That department is not yours.', status: 403 };
   const now = Date.now(); const changed = !old || old.schedule !== schedule || clean(old.clientName, 120).toLowerCase() !== clientName.toLowerCase(); const next = schedule === 'off' ? 0 : (changed || !S.num(old.nextRunAt)) ? await nextRun(u, clientName, schedule, now) : S.num(old.nextRunAt);
   if (old) {
-    await S.run(`UPDATE "${T}" SET clientName = ?, planId = ?, url = ?, industry = ?, facts = ?, competitors = ?, schedule = ?, pages = ?, alertDrop = ?, nextRunAt = ?, department = ?, updatedAt = ? WHERE id = ?`, clientName, planId, cu.url, industry, JSON.stringify(facts), JSON.stringify(comps), schedule, pages, alertDrop, next, dept || null, now, old.id);
+    await S.run(`UPDATE "${T}" SET clientName = ?, planId = ?, url = ?, industry = ?, facts = ?, competitors = ?, schedule = ?, pages = ?, alertDrop = ?, nextRunAt = ?, department = ?, gscProperty = ?, ga4Property = ?, updatedAt = ? WHERE id = ?`, clientName, planId, cu.url, industry, JSON.stringify(facts), JSON.stringify(comps), schedule, pages, alertDrop, next, dept || null, gsc.value, ga4.value, now, old.id);
     await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: SEO site updated', entity: T, entityId: old.id, toValue: `${clientName}: ${cu.url}, audits ${schedule}` });
     return { site: rowOut((await S.q(`SELECT * FROM "${T}" WHERE id = ?`, old.id))[0]) };
   }
   const id = S.newId('sst');
-  await S.run(`INSERT INTO "${T}" (id, clientName, planId, url, industry, facts, competitors, schedule, pages, alertDrop, nextRunAt, lastRunAt, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?)`, id, clientName, planId, cu.url, industry, JSON.stringify(facts), JSON.stringify(comps), schedule, pages, alertDrop, next, dept || null, u.id, S.clip(u.name, 80), now, now);
+  await S.run(`INSERT INTO "${T}" (id, clientName, planId, url, industry, facts, competitors, schedule, pages, alertDrop, nextRunAt, lastRunAt, department, gscProperty, ga4Property, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?)`, id, clientName, planId, cu.url, industry, JSON.stringify(facts), JSON.stringify(comps), schedule, pages, alertDrop, next, dept || null, gsc.value, ga4.value, u.id, S.clip(u.name, 80), now, now);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: SEO site added', entity: T, entityId: id, toValue: `${clientName}: ${cu.url}, audits ${schedule}` });
   return { site: rowOut((await S.q(`SELECT * FROM "${T}" WHERE id = ?`, id))[0]) };
 }

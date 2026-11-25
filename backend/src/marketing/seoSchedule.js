@@ -14,6 +14,7 @@
 const Sites = require('./seoSites');
 const Audit = require('./seoAudit');
 const Ev = require('./seoEvents');
+const Google = require('./seoGoogle');
 
 const sign = (n) => (n > 0 ? `+${n}` : String(n));
 async function recipients(raw) { // whoever started the site, if still active; else the active Admins
@@ -51,6 +52,15 @@ async function sweep(opts = {}) {
     }
     out.audited += 1;
     for (const a of alertsOf(site, r)) { await bell(raw, a); await Ev.add(raw.id, { kind: a.kind, level: a.kind === 'serious' ? 'bad' : 'warn', at: now, title: a.title.replace(/: .*$/, ''), message: a.message.slice(0, 500) }); }
+    // phase 2: the same visit reads Google (Search Console queries and totals, Analytics) for a site that has a property; a failure there never undoes the audit, and a fall in search clicks rings a bell
+    if (site.gscProperty || site.ga4Property) {
+      try {
+        const g = await Google.syncSite(opts.actor || { ...Audit.SYS, id: (await recipients(raw))[0] || Audit.SYS.id }, raw, 'both', { now, fetchFn: opts.googleFetch, key: opts.googleKey });
+        out.google = (out.google || 0) + 1;
+        for (const e of g.errors) await Ev.add(raw.id, { kind: 'google', level: 'warn', at: now, title: `Google ${e.api === 'gsc' ? 'Search Console' : 'Analytics'} could not be read`, message: e.error.slice(0, 500) });
+        for (const a of Google.alertsOf(site.clientName, g.gsc)) { await bell(raw, a); await Ev.add(raw.id, { kind: a.kind, level: 'warn', at: now, title: a.title.replace(/: .*$/, ''), message: a.message.slice(0, 500) }); }
+      } catch { /* Google is optional: the audit above is already saved */ }
+    }
   }
   return out;
 }

@@ -22,6 +22,20 @@ export function Chips({ impact, effort, area }) {
   return <span>{chip(label, color, 'i')}{effort ? chip(EFFORT[effort] || effort, '#1d4fa8', 'e') : null}{area ? chip(area, '#6b7280', 'a') : null}</span>;
 }
 
+// the clicks of each day, oldest to newest, as bars with the first and last date. series: [{ date, clicks }]
+export function Bars({ series, label = 'Clicks per day' }) {
+  const pts = (series || []).filter((p) => p && p.clicks != null); if (!pts.length) return null;
+  const W = 320; const H = 70; const max = Math.max(1, ...pts.map((p) => p.clicks)); const bw = (W - 8) / pts.length;
+  return (
+    <svg viewBox={`0 0 ${W} ${H + 14}`} role="img" aria-label={`${label}: ${pts.map((p) => p.clicks).join(', ')}`} style={{ width: '100%', maxWidth: 420, height: 'auto' }}>
+      <title>{`${label}: ${pts.map((p) => p.clicks).join(', ')}`}</title>
+      {pts.map((p, i) => { const h = (p.clicks / max) * (H - 4); return <rect key={p.date} x={4 + i * bw} y={H - h} width={Math.max(1, bw - 2)} height={h} fill="#0f766e" rx="1"><title>{`${p.date}: ${p.clicks}`}</title></rect>; })}
+      <text x="4" y={H + 11} fontSize="8" fill="#7f8b84">{String(pts[0].date)}</text>
+      <text x={W - 4} y={H + 11} fontSize="8" textAnchor="end" fill="#7f8b84">{String(pts[pts.length - 1].date)}</text>
+    </svg>
+  );
+}
+
 // the score of each saved audit, oldest to newest: a line with a dot per audit and the 0 to 100 scale. points: [{ at, score }]
 export function TrendChart({ points }) {
   const W = 320; const H = 96; const padL = 24; const padR = 8; const padT = 8; const padB = 16; const pts = (points || []).filter((p) => p && p.score != null);

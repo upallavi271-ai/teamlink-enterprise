@@ -330,6 +330,12 @@ const INTEGRATION_CATALOG = [
     desc: 'Measures a client\'s website on a phone and on a desktop (speed, accessibility, best practices, SEO) for AI Marketing > SEO & visibility > Website check, with Google\'s free PageSpeed Insights. It works without a key at low volume. If Google says its free allowance is used up, add a free key: Google Cloud Console > APIs & Services > enable "PageSpeed Insights API" > Credentials > Create API key (no card needed), and paste it here.',
     fields: [['PageSpeed API key', '']],
     hints: [] },
+  // REAL (2026-11-25). Google Search Console and Google Analytics 4 (read-only, free APIs) for AI Marketing > SEO assistant (marketing/googleAuth.js, seoGoogle.js), with a Google Cloud SERVICE ACCOUNT:
+  // the JSON key is pasted here once (encrypted, never shown again); each client adds the service account's EMAIL as a user of its Search Console property and its GA4 property. Test signs in and lists the properties.
+  { id: 'google-seo', name: 'Search Console and Analytics (Google · free)', group: 'AI', glyph: '\u{1F4C8}',
+    desc: 'Real search numbers for AI Marketing > SEO assistant: the queries people used, clicks, impressions and positions from Google Search Console, and visitors from Google Analytics 4. Read-only and free, no card needed. One-time setup: (1) Google Cloud Console > create a project > APIs & Services > Library > enable "Google Search Console API" and "Google Analytics Data API"; (2) IAM & Admin > Service accounts > Create service account (no roles needed) > Keys > Add key > Create new key > JSON, and paste the whole file below; (3) press Test connection: it shows the email of the service account. For each client: ask them to add that email as a user of their Search Console property (Settings > Users and permissions, Restricted is enough) and of their Analytics property (Admin > Property access management, Viewer). The key is stored encrypted and never shown again.',
+    fields: [['Service account credentials (JSON key)', '']],
+    hints: [] },
   { id: 'stock-pexels', name: 'Stock video clips (Pexels · free)', group: 'AI', glyph: '\u{1F39E}️',
     desc: 'The same free stock clips from Pexels, for anyone who already has a Pexels key (pexels.com/api). Pexels has paused NEW keys, so use the Pixabay card above if you do not have one, and do NOT paste a Pixabay key here. If both are filled in, Pixabay is used first.',
     fields: [['Pexels API key', ''], ['Clips per person per day', '30']],
@@ -360,7 +366,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['crm-calendar', 'zoom', 'social', 'email', 'email-inbox', 'crm-gmail', 'crm-outlook', 'crm-ads', 'ai-claude', 'ai-fast', 'ai-calling-openai', 'webhooks', 'slack', 'teams','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'google-pagespeed', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['crm-calendar', 'zoom', 'social', 'email', 'email-inbox', 'crm-gmail', 'crm-outlook', 'crm-ads', 'ai-claude', 'ai-fast', 'ai-calling-openai', 'webhooks', 'slack', 'teams','ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'google-pagespeed', 'google-seo', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // CRM wave C (2026-11-24): the CRM's outside keys - lead ads, India portals, company data, DND check (crm/plus/channels.js)
 INTEGRATION_CATALOG.push(...require('../crm/plus/channels').CHANNELS); // eslint-disable-line global-require
 LIVE_CHANNELS.push(...require('../crm/plus/channels').LIVE); // eslint-disable-line global-require

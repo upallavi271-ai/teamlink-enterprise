@@ -47,7 +47,7 @@ async function overview(u, o = {}) {
 
 // one site in full. s: the site (seoSites rowOut); h: its saved audits, newest first
 async function detail(u, s, h) {
-  const out = { id: s.id, clientName: s.clientName, url: s.url, planId: s.planId, department: s.department, facts: s.facts, competitors: s.competitors, industry: s.industry, industryLabel: s.industryLabel, healthcare: s.healthcare, schedule: s.schedule, nextRunAt: s.nextRunAt, lastRunAt: s.lastRunAt, pages: s.pages, alertDrop: s.alertDrop, factsGiven: Object.values(s.facts).filter(Boolean).length,
+  const out = { id: s.id, clientName: s.clientName, url: s.url, planId: s.planId, department: s.department, facts: s.facts, competitors: s.competitors, gscProperty: s.gscProperty, ga4Property: s.ga4Property, industry: s.industry, industryLabel: s.industryLabel, healthcare: s.healthcare, schedule: s.schedule, nextRunAt: s.nextRunAt, lastRunAt: s.lastRunAt, pages: s.pages, alertDrop: s.alertDrop, factsGiven: Object.values(s.facts).filter(Boolean).length,
     audits: h.length, trend: h.slice(0, 12).reverse(), report: null, tasks: await Tasks.counts(s.id), topTasks: [], byArea: [], performance: null, progress: null, events: await Ev.recent(s.id, 12) };
   const tl = await Tasks.list(u, { siteId: s.id }); const open = (tl.items || []).filter((t) => t.status === 'open');
   out.topTasks = open.slice(0, 6).map((t) => ({ id: t.id, title: t.title, impact: t.impact, effort: t.effort, area: t.area, hasFix: t.drafts.some((d) => d.kind !== 'needs') }));
@@ -63,7 +63,7 @@ async function detail(u, s, h) {
   }
   const first = h.length ? h[h.length - 1] : null;
   out.progress = first && h.length > 1 ? { firstScore: first.score, firstAt: first.at, latestScore: h[0].score, change: h[0].score - first.score, audits: h.length, fixed: out.tasks.verified, done: out.tasks.done } : null;
-  for (const part of ['./seoKeywords', './seoContent']) { try { const m = require(part); if (m.dashboardPart) Object.assign(out, await m.dashboardPart(u, s)); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') console.error('[omni-mk] seo dashboard part:', e.message); } } // eslint-disable-line global-require, no-console, no-await-in-loop
+  for (const part of ['./seoKeywords', './seoContent', './seoGoogle']) { try { const m = require(part); if (m.dashboardPart) Object.assign(out, await m.dashboardPart(u, s)); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') console.error('[omni-mk] seo dashboard part:', e.message); } } // eslint-disable-line global-require, no-console, no-await-in-loop
   return out;
 }
 

@@ -94,15 +94,24 @@ async function importQueries(u, siteId, b = {}) {
   if (!(await ensure())) return { error: 'The queries could not be saved.', status: 500 };
   const site = await Sites.mine(u, siteId); if (!site) return { error: 'That SEO site was not found.', status: 404 };
   const p = parseQueries(b.text); if (p.error) return p; const periodEnd = okDay(b.periodEnd) ? String(b.periodEnd) : new Date(Date.now() + 19800000).toISOString().slice(0, 10);
-  const label = S.clip(b.label, 80) || `Search Console to ${periodEnd}`; const id = S.newId('srs'); const clicks = p.rows.reduce((a, r) => a + r.clicks, 0); const imps = p.rows.reduce((a, r) => a + r.impressions, 0);
-  await S.run(`INSERT INTO "${TS}" (id, siteId, label, periodEnd, rows, clicks, impressions, source, importedById, importedByName, importedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, id, site.id, label, periodEnd, p.rows.length, clicks, imps, 'Google Search Console CSV', u.id, S.clip(u.name, 80), Date.now());
-  for (const r of p.rows) await S.run(`INSERT INTO "${TR}" (id, setId, siteId, query, queryKey, clicks, impressions, ctr, position) VALUES (?,?,?,?,?,?,?,?,?)`, S.newId('srk'), id, site.id, r.query, key(r.query), r.clicks, r.impressions, r.ctr, r.position); // eslint-disable-line no-await-in-loop
-  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: SEO keywords: Search Console queries imported', entity: TS, entityId: id, toValue: `${site.clientName}: ${p.rows.length} queries to ${periodEnd}` });
-  return { set: { id, label, periodEnd, rows: p.rows.length, clicks, impressions: imps, read: p.read, truncated: p.read > p.rows.length } };
+  const label = S.clip(b.label, 80) || `Search Console to ${periodEnd}`;
+  const set = await storeSnapshot(site, u, p.rows, { label, periodEnd, source: 'Google Search Console CSV' });
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: SEO keywords: Search Console queries imported', entity: TS, entityId: set.id, toValue: `${site.clientName}: ${p.rows.length} queries to ${periodEnd}` });
+  return { set: { ...set, read: p.read, truncated: p.read > p.rows.length } };
+}
+// one dated snapshot of real queries: from a pasted CSV or from the Search Console API (seoGoogle.js). rows: [{ query, clicks, impressions, ctr (percent), position }];
+// o: { label, periodEnd, source, clicks, impressions (the property's own totals, when the API gave them), replace: a snapshot of the same source and period is replaced, not doubled }
+async function storeSnapshot(site, u, rows, o) {
+  if (!(await ensure())) throw new Error('The queries could not be saved.');
+  if (o.replace) for (const old of await S.q(`SELECT id FROM "${TS}" WHERE siteId = ? AND periodEnd = ? AND source = ?`, site.id, o.periodEnd, o.source)) { await S.run(`DELETE FROM "${TR}" WHERE setId = ?`, old.id); await S.run(`DELETE FROM "${TS}" WHERE id = ?`, old.id); } // eslint-disable-line no-await-in-loop
+  const id = S.newId('srs'); const clicks = o.clicks != null ? o.clicks : rows.reduce((a, r) => a + r.clicks, 0); const imps = o.impressions != null ? o.impressions : rows.reduce((a, r) => a + r.impressions, 0);
+  await S.run(`INSERT INTO "${TS}" (id, siteId, label, periodEnd, rows, clicks, impressions, source, importedById, importedByName, importedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, id, site.id, o.label, o.periodEnd, rows.length, clicks, imps, o.source, u.id, S.clip(u.name, 80), Date.now());
+  for (const r of rows) await S.run(`INSERT INTO "${TR}" (id, setId, siteId, query, queryKey, clicks, impressions, ctr, position) VALUES (?,?,?,?,?,?,?,?,?)`, S.newId('srk'), id, site.id, r.query, key(r.query), r.clicks, r.impressions, r.ctr, r.position); // eslint-disable-line no-await-in-loop
+  return { id, label: o.label, periodEnd: o.periodEnd, rows: rows.length, clicks, impressions: imps, source: o.source };
 }
 async function sets(siteId, limit = 12) {
   if (!(await ensure())) return [];
-  return (await S.q(`SELECT * FROM "${TS}" WHERE siteId = ? ORDER BY periodEnd DESC, importedAt DESC LIMIT ?`, siteId, limit)).map((r) => ({ id: r.id, label: r.label, periodEnd: r.periodEnd, rows: S.num(r.rows), clicks: S.num(r.clicks), impressions: S.num(r.impressions), importedByName: r.importedByName || '', importedAt: S.iso(r.importedAt) }));
+  return (await S.q(`SELECT * FROM "${TS}" WHERE siteId = ? ORDER BY periodEnd DESC, importedAt DESC LIMIT ?`, siteId, limit)).map((r) => ({ id: r.id, label: r.label, periodEnd: r.periodEnd, source: r.source || '', rows: S.num(r.rows), clicks: S.num(r.clicks), impressions: S.num(r.impressions), importedByName: r.importedByName || '', importedAt: S.iso(r.importedAt) }));
 }
 // the REAL opportunities of the newest snapshot: queries at position 4 to 20 (close to the first page), the most seen first. saved: which are already on the client's list.
 async function opportunities(siteId, limit = 15) {
@@ -175,4 +184,4 @@ async function dashboardPart(u, site) {
   return { keywords: { saved: S.num(c.n), tracked: S.num(c.t), withPosition: (l.items || []).filter((k) => k.position != null).length, improved: tracked.filter((k) => k.change > 0).length, worse: tracked.filter((k) => k.change < 0).length, movers: tracked.filter((k) => k.change != null && k.change !== 0).sort((a, b) => Math.abs(b.change) - Math.abs(a.change)).slice(0, 5).map((k) => ({ phrase: k.phrase, position: k.position, previous: k.previous, change: k.change })), opportunities: opp.items, snapshot: ss[0] || null, provider: PROVIDER } };
 }
 
-module.exports = { ensure, generate, research, intentOf, parseQueries, importQueries, sets, opportunities, queryView, save, list, setTracked, remove, dashboardPart, PROVIDER, INTENTS };
+module.exports = { ensure, generate, research, intentOf, parseQueries, importQueries, storeSnapshot, sets, opportunities, queryView, save, list, setTracked, remove, dashboardPart, PROVIDER, INTENTS };

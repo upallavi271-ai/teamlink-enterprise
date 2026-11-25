@@ -44,6 +44,8 @@ const SeoDash = require('../marketing/seoDashboard');
 const SeoKw = require('../marketing/seoKeywords');
 const SeoContent = require('../marketing/seoContent');
 const SeoComp = require('../marketing/seoCompetitor');
+const SeoGoogle = require('../marketing/seoGoogle');
+const GoogleAuth = require('../marketing/googleAuth');
 const Plan = require('../marketing/itemPlan');
 const { logAudit } = require('../utils/audit');
 
@@ -519,6 +521,22 @@ router.post('/seo/competitor-topics', mustWrite, wrap(async (req, res) => {
   const b = req.body || {}; const n = 1 + (Array.isArray(b.competitors) ? b.competitors.filter((c) => c && String(c).trim()).length : 0);
   if (!siteOk(req.user.id, Math.min(Math.max(n, 2), SeoComp.MAX_COMPETITORS + 1))) return res.status(429).json({ error: 'That would be more than 20 website checks in an hour. Try again later.' });
   return send(res, await SeoComp.topics(req.user, b));
+}));
+// Google Search Console and Analytics 4 (marketing/seoGoogle.js, googleAuth.js): read-only, with the service account saved in Administration > Integrations. The key is never returned; a read is 2 to 7 calls to Google, so 12 an hour per person.
+const googleHits = new Map();
+const googleOk = (id) => { const now = Date.now(); const list = (googleHits.get(id) || []).filter((t) => now - t < 3600000); if (list.length >= 12) { googleHits.set(id, list); return false; } list.push(now); googleHits.set(id, list); return true; };
+router.get('/seo/google/status', mustWrite, wrap(async (req, res) => res.json(await GoogleAuth.status())));
+router.get('/seo/google/properties', mustWrite, wrap(async (req, res) => {
+  const st = await GoogleAuth.status(); if (!st.configured) return res.json({ configured: false, email: null, items: [], problem: st.problem || GoogleAuth.KEY_HELP });
+  if (!googleOk(req.user.id)) return res.status(429).json({ error: 'That is 12 reads of Google in the last hour. Try again later.' });
+  const r = await SeoGoogle.properties(); if (r.error) return res.json({ configured: true, email: st.email, items: [], problem: r.error });
+  const items = await SeoGoogle.visibleProperties(req.user, r.items, req.query.url ? String(req.query.url) : '');
+  let suggest = null; if (req.query.siteId) { const site = await SeoSites.mine(req.user, String(req.query.siteId)); if (site) suggest = SeoGoogle.suggestProperty(site.url, items); } else if (req.query.url) suggest = SeoGoogle.suggestProperty(String(req.query.url), items);
+  return res.json({ configured: true, email: st.email, items, suggest, problem: '' });
+}));
+router.post('/seo/sites/:id/google/sync', mustWrite, wrap(async (req, res) => {
+  if (!googleOk(req.user.id)) return res.status(429).json({ error: 'That is 12 reads of Google in the last hour. Try again later.' });
+  const r = await SeoGoogle.manualSync(req.user, req.params.id, String((req.body || {}).what || 'both')); return send(res, r);
 }));
 
 module.exports = router;
