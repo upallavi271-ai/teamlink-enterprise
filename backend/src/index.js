@@ -706,6 +706,7 @@ const server = app.listen(PORT, () => {
   require('./marketing/remind').start(); // ONE reminder 24 hours after a client was sent a link, if they have not answered (needs the saved "reminder" template; 9:00-20:00 India time; never in the sandbox)
   require('./marketing/planReminders').start(); // bells for client plans: ends in 30 / 14 / 7 days, ended, monthly report still empty at month end; each once, to whoever started the plan (never in the sandbox)
   require('./marketing/agent').start(); // the AI Agent: after a restart queued steps carry on and a step that was running is marked "interrupted: press Retry"; a bell when a "post it" step is due (never in the sandbox)
+  require('./marketing/seoSchedule').start(); // SEO assistant: audits by itself the client websites set to every week / every month (3 per sweep, every 6 hours) and rings a bell for a score drop, a serious new problem or a website that cannot be reached (never in the sandbox)
   // AI clips: finish every Veo clip Google already accepted before the last restart (marketing/aiclips.js); one that never reached Google is closed
   setTimeout(() => require('./marketing/aiclips').resume().catch((e) => console.error('[omni-mk] clip resume:', e.message)), 15 * 1000).unref();
   // Timesheet daily tracking: 18:00 "not finished today - what happened?", 19:00 to whoever gave it - utils/taskDayUpdate.js (2026-11-10)
