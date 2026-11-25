@@ -59,7 +59,12 @@ export default function SimNumbersSection() {
         {[true, false].map((on) => <button key={String(on)} type="button" className={`btn btn-sm${st.missedTask === on ? ' btn-primary' : ''}`} onClick={() => setting({ missedTask: on })}>{on ? 'On' : 'Off'}</button>)}
         <span className="small-muted">A missed call always shows in the bell and the candidate&apos;s call history; this also adds a follow-up due now.</span>
       </div>
-      <label className="small-muted" style={{ display: 'block', marginBottom: 8 }}>Calls to an unknown number or a SIM with nobody on it ring{' '}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }} data-testid="sim-inbound-last">
+        <b style={{ fontSize: 13 }}>Incoming calls</b>
+        {[true, false].map((on) => <button key={String(on)} type="button" className={`btn btn-sm${st.inboundLast === on ? ' btn-primary' : ''}`} onClick={() => setting({ inboundLast: on })}>{on ? 'On' : 'Off'}</button>)}
+        <span className="small-muted">{st.inboundLast ? 'On: a candidate who calls an office SIM back rings the recruiter who last called them (in TeamLink, for 25 s), then the backup person below. Recorded like other calls; a call nobody answers is a missed call with a bell notice.' : 'Off: calls to the office SIMs hang up, as before.'}</span>
+      </div>
+      <label className="small-muted" style={{ display: 'block', marginBottom: 8 }}>{st.inboundLast ? 'Backup person (when the recruiter does not answer, or nobody called that number):' : 'Calls to an unknown number or a SIM with nobody on it ring'}{' '}
         <select aria-label="Fallback person" value={st.fallbackUserId || ''} onChange={(e) => setting({ fallbackUserId: e.target.value })}>
           <option value="">nobody (hang up, as today)</option>
           {data.people.map((p) => <option key={p.userId} value={p.userId}>{p.name} · {p.role}</option>)}

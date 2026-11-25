@@ -39,6 +39,7 @@ async function onEvent(e) {
       await S.run('UPDATE "BrowserCall" SET "dialStatus"=COALESCE(?, "dialStatus"), "updatedAt"=? WHERE "id"=?', String(e.DialStatus || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 20) || null, S.nowIso(), row.id);
       return log(row.id, e.Uniqueid, name, e);
     }
+    if (String(e.Reassign || '') === '1') { const rid = await SIMS.onInboundReassign(e); return rid ? log(rid, e.Uniqueid, name, e) : undefined; }
     const id = await SIMS.onInboundStart(e);
     if (!id) return undefined;
     inbound.add(id); byUid.set(e.Uniqueid, id);

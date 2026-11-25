@@ -273,7 +273,7 @@ export default function BrowserCallProvider({ children }) {
     sess.current = invitation;
     setSeconds(0);
     startRing();
-    setState({ phase: 'incoming', direction: 'inbound', name: 'Incoming call', number: '', token, lineName: mySim ? `your SIM ${mySim.number}` : 'your SIM' });
+    setState({ phase: 'incoming', direction: 'inbound', name: 'Incoming call', number: '', token, lineName: mySim ? `your SIM ${mySim.number}` : 'the office line' });
     let tries = 0;
     const who = () => api.get(`/browser-calling/incoming/${encodeURIComponent(token)}`).then((r) => {
       const d = r.data;
@@ -312,7 +312,7 @@ export default function BrowserCallProvider({ children }) {
   }, []);
 
   // ---------------------------------------------------------------- stay registered while TeamLink is open (a person with a SIM)
-  const wantPhone = !!(mySim && info && info.wssConfigured);
+  const wantPhone = !!((mySim || (info && info.canCall && info.inbound)) && info && info.wssConfigured);
   useEffect(() => {
     phoneWanted.current = wantPhone;
     if (!wantPhone) { setPhoneState('off'); return undefined; }

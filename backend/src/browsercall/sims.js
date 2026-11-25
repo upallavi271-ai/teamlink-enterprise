@@ -38,17 +38,18 @@ const headerOfPort = (port) => `p${pad2(port)}`;
 const simsFile = () => process.env.BROWSER_CALL_SIMS_DIALPLAN_FILE || path.join(path.dirname(ENV.linesDialplanFile), 'extensions_tl_sims.conf');
 
 // ---------------------------------------------------------------------------- settings (BrowserCallSetting keys)
-const SET_DEFAULTS = { 'sim.prefixRouting': '0', 'sim.fallbackUserId': '', 'sim.missedTask': '0' };
+const SET_DEFAULTS = { 'sim.prefixRouting': '0', 'sim.fallbackUserId': '', 'sim.missedTask': '0', 'sim.inboundLast': '0' };
 async function settings() {
   const rows = await S.all('SELECT "key","value" FROM "BrowserCallSetting" WHERE "key" LIKE \'sim.%\'');
   const m = { ...SET_DEFAULTS };
   rows.forEach((r) => { m[r.key] = r.value; });
-  return { prefixRouting: m['sim.prefixRouting'] === '1', fallbackUserId: m['sim.fallbackUserId'] || null, missedTask: m['sim.missedTask'] === '1' };
+  return { prefixRouting: m['sim.prefixRouting'] === '1', fallbackUserId: m['sim.fallbackUserId'] || null, missedTask: m['sim.missedTask'] === '1', inboundLast: m['sim.inboundLast'] === '1' };
 }
 async function saveSettings(patch) {
   const put = (k, v) => S.run('INSERT INTO "BrowserCallSetting" ("key","value","updatedAt") VALUES (?,?,?) ON CONFLICT("key") DO UPDATE SET "value"=excluded."value","updatedAt"=excluded."updatedAt"', k, String(v), S.nowIso());
   if (patch.prefixRouting !== undefined) await put('sim.prefixRouting', patch.prefixRouting ? '1' : '0');
   if (patch.missedTask !== undefined) await put('sim.missedTask', patch.missedTask ? '1' : '0');
+  if (patch.inboundLast !== undefined) await put('sim.inboundLast', patch.inboundLast ? '1' : '0');
   if (patch.fallbackUserId !== undefined) {
     const id = clip(patch.fallbackUserId || '', 60);
     if (id) { const u = await mayHold(id); if (u.error) return { error: u.error }; }
@@ -235,6 +236,39 @@ async function routeInbound(called) {
   return { matched: !!r, port: r ? r.port : null, nobody: true };
 }
 
+// ---------------------------------------------------------------------------- IN: by the CALLER (founder 2026-11-25, option A)
+// "A candidate who calls an office SIM back rings the recruiter who last called them; if they do not answer, the backup person."
+// The office Synway shares its SIMs between all calls, so the SIM a candidate calls says nothing about who called them. The CALLER does:
+// Asterisk asks this server (http://127.0.0.1, CURL in [tl-sim-ring]) and gets "<extension>|<backup extension>" back.
+const LAST_DAYS = 30;
+/** The recruiter who most recently called this number (outgoing on any TeamLink line) and may still take calls: { userId, extension } or null. */
+async function lastRecruiterFor(fromRaw) {
+  const n = core().normalizeMobile(fromRaw);
+  if (!n.ok || !n.national) return null;
+  const since = new Date(Date.now() - LAST_DAYS * 86400000).toISOString();
+  const list = await S.all(`SELECT "userId" FROM "BrowserCall" WHERE "toNumber"=? AND "direction" IN ('outbound','phone','click-to-call') AND "userId" IS NOT NULL AND "candidateId"<>'test-call' AND "startAt">? ORDER BY "startAt" DESC LIMIT 10`, n.national, since);
+  const ext = await extensionsByUser();
+  const seen = new Set();
+  for (const r of list) {
+    if (seen.has(r.userId)) continue;
+    seen.add(r.userId);
+    if (!ext.get(r.userId)) continue;
+    if ((await mayHold(r.userId)).error) continue; // eslint-disable-line no-await-in-loop
+    return { userId: r.userId, extension: ext.get(r.userId) };
+  }
+  return null;
+}
+/** What [tl-sim-ring] asks: "<extension>|<backup>" (either may be empty). */
+async function inboundRoute(fromRaw) {
+  const st = await settings();
+  const ext = await extensionsByUser();
+  const last = st.inboundLast ? await lastRecruiterFor(fromRaw) : null;
+  let backup = st.fallbackUserId ? (ext.get(st.fallbackUserId) || '') : '';
+  if (backup && st.fallbackUserId && (await mayHold(st.fallbackUserId)).error) backup = '';
+  const first = last ? last.extension : '';
+  return `${first}|${backup && backup !== first ? backup : ''}`;
+}
+
 // ---------------------------------------------------------------------------- the generated dialplan
 const recLine = (recDir, tokenVar) => ` same => n,MixMonitor(${recDir}/\${FILTER(a-z0-9,\${${tokenVar}})}.wav,b)`;
 
@@ -282,7 +316,15 @@ function renderInbound(list, ext, opts = {}) {
     out.push(`exten => ${headerOfPort(r.port)},1,NoOp(TeamLink SIM port ${pad2(r.port)}${u && u.name ? ` - ${safeWords(u.name)}` : ''})`,
       ` same => n,Set(TLPORT=${pad2(r.port)})`, ` same => n,Set(TLEXT=${ext.get(r.userId)})`, ' same => n,Goto(ring,1)');
   }
-  if (fallbackExt) out.push('exten => other,1,NoOp(TeamLink: unknown number or a port with nobody on it - the Admin\'s fallback)', ' same => n,Set(TLPORT=00)', ` same => n,Set(TLEXT=${fallbackExt})`, ' same => n,Goto(ring,1)');
+  const localUrl = `http://127.0.0.1:${Number(opts.localPort || process.env.PORT || 4000)}/api/browser-calling-local/inbound-route`;
+  if (opts.inboundLast) {
+    out.push('exten => other,1,NoOp(TeamLink: ring the recruiter who last called this number, then the backup)',
+      ` same => n,Set(TLROUTE=\${CURL(${localUrl}?from=\${URIENCODE(\${CALLERID(num)})})})`,
+      ' same => n,Set(TLEXT=${CUT(TLROUTE,|,1)})', ' same => n,Set(TLBACK=${CUT(TLROUTE,|,2)})',
+      ' same => n,GotoIf($["${TLEXT}"!=""]?go)', ' same => n,GotoIf($["${TLBACK}"=""]?none)', ' same => n,Set(TLEXT=${TLBACK})', ' same => n,Set(TLBACK=)',
+      ' same => n(go),Set(TLPORT=00)', ' same => n,Goto(ringlast,1)',
+      ' same => n(none),NoOp(TeamLink: nobody to ring - hang up as before)', ' same => n,Hangup()');
+  } else if (fallbackExt) out.push('exten => other,1,NoOp(TeamLink: unknown number or a port with nobody on it - the Admin\'s fallback)', ' same => n,Set(TLPORT=00)', ` same => n,Set(TLEXT=${fallbackExt})`, ' same => n,Goto(ring,1)');
   else out.push('exten => other,1,NoOp(TeamLink: unknown number or a port with nobody on it - hang up as before)', ' same => n,Hangup()');
   out.push('exten => ring,1,GotoIf($["${CHANNEL(endpoint)}"!="teamlink-gw"]?nobody,1)',
     ' same => n,Set(TLTOKEN=in${FILTER(0-9,${UNIQUEID})})',
@@ -293,6 +335,22 @@ function renderInbound(list, ext, opts = {}) {
   out.push(' same => n,Dial(PJSIP/${TLEXT},30)',
     ' same => n,UserEvent(TLInbound,Token: ${TLTOKEN},Missed: 1,DialStatus: ${DIALSTATUS})',
     ' same => n,Hangup()',
+    ...(opts.inboundLast ? [
+      'exten => ringlast,1,GotoIf($["${CHANNEL(endpoint)}"!="teamlink-gw"]?nobody,1)',
+      ' same => n,Set(TLTOKEN=in${FILTER(0-9,${UNIQUEID})})',
+      ' same => n,UserEvent(TLInbound,Token: ${TLTOKEN},Port: 00,Ext: ${TLEXT})',
+      ' same => n,Set(CALLERID(name)=TeamLink)',
+      ' same => n,Set(CALLERID(num)=${TLTOKEN})',
+      ...(record ? [recLine(recDir, 'TLTOKEN')] : []),
+      ' same => n,Dial(PJSIP/${TLEXT},25)',
+      ' same => n,GotoIf($["${DIALSTATUS}"="ANSWER"]?done)',
+      ' same => n,GotoIf($["${TLBACK}"=""]?missed)',
+      ' same => n,UserEvent(TLInbound,Token: ${TLTOKEN},Reassign: 1,Ext: ${TLBACK})',
+      ' same => n,Dial(PJSIP/${TLBACK},25)',
+      ' same => n,GotoIf($["${DIALSTATUS}"="ANSWER"]?done)',
+      ' same => n(missed),UserEvent(TLInbound,Token: ${TLTOKEN},Missed: 1,DialStatus: ${DIALSTATUS})',
+      ' same => n(done),Hangup()',
+    ] : []),
     'exten => nobody,1,NoOp(TeamLink: not from the office Synway - hang up as before)',
     ' same => n,Hangup()');
   return `${out.join('\n')}\n`;
@@ -307,7 +365,7 @@ async function renderAll(opts = {}) {
   const names = await namesOf(list.map((r) => r.userId));
   return {
     routeLines: renderRouteExtensions(list, ext, { ...opts, prefixRouting: st.prefixRouting }),
-    inbound: renderInbound(list, ext, { ...opts, names, fallbackUserId: st.fallbackUserId }),
+    inbound: renderInbound(list, ext, { ...opts, names, fallbackUserId: st.fallbackUserId, inboundLast: st.inboundLast }),
   };
 }
 
@@ -346,7 +404,11 @@ async function onInboundStart(e) {
   const extension = String(e.Ext || '').replace(/\D/g, '').slice(0, 10);
   let userId = null; let port = null;
   if (portNo >= 1) { port = await S.one('SELECT * FROM "BrowserCallSim" WHERE "port"=?', portNo); userId = port && port.userId; }
-  else { userId = (await settings()).fallbackUserId; }
+  else {
+    // port 00: the recruiter who last called (option A) or the Admin's backup - whoever owns the extension the dialplan rang
+    const owner = extension ? await S.one('SELECT "userId" FROM "BrowserCallExtension" WHERE "extension"=? AND "active"=1', extension) : null;
+    userId = owner ? owner.userId : (await settings()).fallbackUserId;
+  }
   if (!userId) return null;
   const ext = await S.one('SELECT "extension" FROM "BrowserCallExtension" WHERE "userId"=?', userId);
   if (!ext || ext.extension !== extension) return null; // the dialplan rang an extension that is not this person's: not trusted
@@ -358,10 +420,27 @@ async function onInboundStart(e) {
   const cand = n.ok ? await candidateForCaller(user, number).catch(() => null) : null;
   const s = await CFG.load();
   const id = crypto.randomUUID(); const now = S.nowIso();
-  const lineName = port ? `Office Synway (SIM) · port ${pad2(port.port)}` : 'Office Synway (SIM) · fallback';
+  const lineName = port ? `Office Synway (SIM) · port ${pad2(port.port)}` : ((await settings()).inboundLast ? 'Office Synway (SIM) · incoming' : 'Office Synway (SIM) · fallback');
   await S.run('INSERT INTO "BrowserCall" ("id","token","asteriskUniqueId","asteriskLinkedId","candidateId","applicationId","userId","userName","toNumber","extension","direction","mode","status","startAt","createdAt","updatedAt","lineId","lineName","recordingStatus") VALUES (?,?,?,?,?,?,?,?,?,?,\'inbound\',?,\'ringing\',?,?,?,\'default\',?,?)',
     id, token, e.Uniqueid || null, e.Linkedid || e.Uniqueid || null, cand ? cand.id : 'unknown', cand ? cand.applicationId : null, userId, clip(user.name, 80), number || 'unknown', extension, s.mode, now, now, now, lineName, s.record ? 'pending' : 'off');
   return id;
+}
+
+/** UserEvent TLInbound with Reassign: 1 - the first person did not answer, the backup rings now: the row becomes theirs. */
+async function onInboundReassign(e) {
+  const token = String(e.Token || '').replace(/[^a-z0-9]/g, '').slice(0, 40);
+  const row = token ? await S.one('SELECT * FROM "BrowserCall" WHERE "token"=? AND "direction"=\'inbound\'', token) : null;
+  if (!row) return null;
+  const extension = String(e.Ext || '').replace(/\D/g, '').slice(0, 10);
+  const owner = extension ? await S.one('SELECT "userId" FROM "BrowserCallExtension" WHERE "extension"=? AND "active"=1', extension) : null;
+  if (!owner || (await mayHold(owner.userId)).error) return row.id;
+  const { resolveIdentity } = require('../utils/identity'); // eslint-disable-line global-require
+  let user = null; try { user = await resolveIdentity(owner.userId); } catch { user = null; }
+  if (!user) return row.id;
+  const cand = row.toNumber && row.toNumber !== 'unknown' ? await candidateForCaller(user, row.toNumber).catch(() => null) : null;
+  await S.run('UPDATE "BrowserCall" SET "userId"=?, "userName"=?, "extension"=?, "candidateId"=?, "applicationId"=?, "hangupReason"=?, "updatedAt"=? WHERE "id"=?',
+    owner.userId, clip(user.name, 80), extension, cand ? cand.id : 'unknown', cand ? cand.applicationId : null, `${clip(row.userName || 'The first recruiter', 60)} did not answer; rang the backup`, S.nowIso(), row.id);
+  return row.id;
 }
 
 /** An incoming call ended without an answer: the bell, the history row's words, and (Admin switch) a "Call back" follow-up. Never throws. */
@@ -394,4 +473,5 @@ module.exports = {
   settings, saveSettings, rows, byId, ofUser, mayHold, validate, create, update, assign, remove, adminView, shape,
   mineFor, routeFor, calledVariants, matchCalled, routeInbound, renderRouteExtensions, renderInbound, renderAll,
   candidateForCaller, onInboundStart, onMissed, missedReason, NOT_ANSWERED,
+  lastRecruiterFor, inboundRoute, onInboundReassign,
 };

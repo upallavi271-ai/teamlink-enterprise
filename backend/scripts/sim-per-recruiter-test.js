@@ -344,6 +344,46 @@ const has = (text, lines) => { const t = text.split('\n'); let i = -1; for (cons
   const c6r = await ring({ port: '02', ext: rec2Ext, from: phoneB });
   check('...and a TLInbound for them makes no row', !(await S.one('SELECT "id" FROM "BrowserCall" WHERE "token"=?', c6r.token)));
 
+  // ---- INCOMING, option A (founder 2026-11-25): a call back rings the recruiter who last called that number, then the backup person
+  check('Admin: "Incoming calls" starts Off, and Off keeps the old behaviour (no ringlast in the file)', (await call('GET', '/browser-calling/admin/sims', null, tA)).body.settings.inboundLast === false && !read(SIMS_FILE).includes('ringlast'));
+  check('a recruiter cannot switch incoming calls on', (await call('PUT', '/browser-calling/admin/sims-settings', { inboundLast: true }, tR)).status === 403);
+  const onIn = await call('PUT', '/browser-calling/admin/sims-settings', { inboundLast: true, fallbackUserId: tl.id }, tA);
+  const fileIn = read(SIMS_FILE);
+  check('Admin switches incoming On with the TL as backup: the dialplan asks TeamLink (127.0.0.1) who rings, rings them 25 s, then the backup', onIn.status === 200 && onIn.body.settings.inboundLast === true && fileIn.includes('/api/browser-calling-local/inbound-route?from=${URIENCODE(${CALLERID(num)})}') && fileIn.includes('exten => ringlast,1') && fileIn.includes('Reassign: 1,Ext: ${TLBACK}'), fileIn.slice(-1800));
+  const stIn = await call('GET', '/browser-calling/status', null, tR3);
+  check('every recruiter who may take a call back keeps the browser phone on ("inbound" in the status)', stIn.body.inbound === true, { inbound: stIn.body.inbound });
+  const phoneC = num(9, '6');
+  const candC = await prisma.candidate.create({ data: { name: `Sm CallBack ${RUN}`, phone: phoneC } });
+  await prisma.application.create({ data: { candidateId: candC.id, requirementId: reqF.id, ownerRecruiterId: rec3.id, stage: 'NEW' } });
+  const nowIso = new Date().toISOString();
+  await S.run('INSERT INTO "BrowserCall" ("id","token","candidateId","userId","userName","toNumber","extension","direction","status","startAt","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,\'outbound\',\'completed\',?,?,?)', `old-${RUN}`, `tok${RUN}a`, candC.id, rec.id, rec.name, phoneC, recExt, new Date(Date.now() - 86400000).toISOString(), nowIso, nowIso);
+  await S.run('INSERT INTO "BrowserCall" ("id","token","candidateId","userId","userName","toNumber","extension","direction","status","startAt","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,\'outbound\',\'completed\',?,?,?)', `new-${RUN}`, `tok${RUN}b`, candC.id, rec3.id, rec3.name, phoneC, rec3Ext, new Date(Date.now() - 3600000).toISOString(), nowIso, nowIso);
+  const local = (from, headers = {}) => fetch(`http://127.0.0.1:${PORT}/api/browser-calling-local/inbound-route?from=${encodeURIComponent(from)}`, { headers }).then(async (r) => ({ status: r.status, text: await r.text() }));
+  const rt1 = await local(`+91${phoneC}`);
+  check('who rings: the recruiter who called this number LAST (rec3, an hour ago - not rec, a day ago), then the backup TL', rt1.status === 200 && rt1.text === `${rec3Ext}|${tlExt}`, rt1);
+  const rt2 = await local('9000000001');
+  check('a number nobody called: only the backup rings', rt2.text === `|${tlExt}`, rt2);
+  check('the route refuses anything that came through the web proxy (X-Forwarded-For)', (await local(`+91${phoneC}`, { 'X-Forwarded-For': '1.2.3.4' })).status === 403);
+  const cIn = await ring({ port: '00', ext: rec3Ext, from: `+91${phoneC}` });
+  const rowIn = await S.one('SELECT * FROM "BrowserCall" WHERE "token"=?', cIn.token);
+  check('the incoming row belongs to that recruiter, matched to their candidate, line "Office Synway (SIM) · incoming"', rowIn && rowIn.userId === rec3.id && rowIn.candidateId === candC.id && rowIn.lineName === 'Office Synway (SIM) · incoming' && rowIn.direction === 'inbound', rowIn);
+  const popA = await call('GET', `/browser-calling/incoming/${cIn.token}`, null, tR3);
+  check('...their ringing popup shows the candidate; the backup cannot read it yet', popA.body.candidate && popA.body.candidate.name === candC.name && (await call('GET', `/browser-calling/incoming/${cIn.token}`, null, tT)).status === 404, popA.body);
+  await events.onEvent({ Event: 'UserEvent', UserEvent: 'TLInbound', Token: cIn.token, Reassign: '1', Ext: tlExt, Uniqueid: cIn.u, CallerIDNum: cIn.token });
+  const rowRe = await S.one('SELECT * FROM "BrowserCall" WHERE "token"=?', cIn.token);
+  check('no answer: the backup rings and the call becomes theirs ("... did not answer; rang the backup")', rowRe.userId === tl.id && rowRe.extension === tlExt && /did not answer; rang the backup/.test(rowRe.hangupReason || ''), rowRe);
+  check('...now the backup\'s popup can read it and the first recruiter\'s cannot', (await call('GET', `/browser-calling/incoming/${cIn.token}`, null, tT)).status === 200 && (await call('GET', `/browser-calling/incoming/${cIn.token}`, null, tR3)).status === 404);
+  await events.onEvent({ Event: 'UserEvent', UserEvent: 'TLInbound', Token: cIn.token, Missed: '1', DialStatus: 'NOANSWER', Uniqueid: cIn.u, CallerIDNum: cIn.token });
+  await hang(cIn.u);
+  const rowM = await S.one('SELECT * FROM "BrowserCall" WHERE "token"=?', cIn.token);
+  check('nobody answered: a missed call for the backup, with a bell notice', rowM.status === 'missed' && (await prisma.notification.count({ where: { userId: tl.id, title: 'Missed call' } })) >= 1, rowM);
+  await prisma.user.update({ where: { id: rec3.id }, data: { status: 'Inactive' } });
+  const rt3 = await local(`+91${phoneC}`);
+  check('the last caller has left (inactive): the one before them rings instead', rt3.text === `${recExt}|${tlExt}`, rt3);
+  await prisma.user.update({ where: { id: rec3.id }, data: { status: 'Active' } });
+  await call('PUT', '/browser-calling/admin/sims-settings', { inboundLast: false, fallbackUserId: '' }, tA);
+  check('Admin switches incoming Off again: back to the old file, the route answers nobody', !read(SIMS_FILE).includes('ringlast') && (await local(`+91${phoneC}`)).text === '|');
+
   // ---- remove
   const del = await call('DELETE', `/browser-calling/admin/sims/${p3.id}`, null, tA);
   check('Admin removes port 3: it leaves the list and the files', del.status === 200 && !del.body.sims.some((x) => x.port === 3) && !read(SIMS_FILE).includes('exten => p03'));

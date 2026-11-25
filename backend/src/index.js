@@ -446,6 +446,7 @@ app.use('/api/rcs', require('./routes/rcs')); // RCS messaging (rcssms.in): temp
 // Automatic stage messages: rules, scheduled list, approvals (routes/autoMessages.js).
 app.use('/api/auto-messages', require('./routes/autoMessages'));
 app.use('/api/conversations', require('./routes/conversations'));
+app.use('/api/browser-calling-local', require('./routes/browserCallingLocal')); // ONLY the phone system on this machine (127.0.0.1): who an incoming call rings
 app.use('/api/phone-link', require('./routes/phoneLinkDevice')); // the TeamLink Phone ANDROID APP (device key, no login): pair, poll, call events (browsercall/phoneLink.js)
 app.use('/api/browser-calling', require('./routes/browserCalling')); // MANUAL browser calling (SIP.js over WSS to Asterisk), separate from AI calling (browsercall/)
 app.use('/api/omni-wa', require('./routes/omniWa')); // Omni-Channel > WhatsApp: inbox with the AI agent, promotions, AI settings (omniwa/)

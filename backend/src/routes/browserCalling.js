@@ -53,7 +53,9 @@ router.get('/status', async (req, res) => {
     // ANDROID PHONE LINK (browsercall/phoneLink.js): the paired phones this person may use; pickable only while the phone is Connected
     if (w.ok) (await PL.usableBy(req.user, isAdmin(req.user)).catch(() => [])).forEach((d) => { const p = PL.shape(d); lines.push({ id: p.lineId, name: `Mobile ${p.number}`, type: p.bridge ? 'android-bridge' : 'android-phone', typeLabel: p.bridge ? 'talk in TeamLink' : 'Android phone', builtIn: false, phone: true, bridge: p.bridge, deviceId: p.id, phoneStatus: p.status, phoneStatusWord: p.statusWord, ready: p.status === 'connected', reason: p.status === 'connected' ? null : `${p.statusWord}${p.statusWhy ? `: ${p.statusWhy}` : ''}` }); });
     const sim = w.ok && SIMS.SIM_KINDS.includes(kindOf(req.user)) ? await SIMS.mineFor(req.user).catch(() => null) : null;
-    res.json({ canCall: w.ok, reason: w.ok ? null : w.reason, mode: w.s.mode, testMode: w.s.mode === 'Test', pbx: { eventsConnected: st.connected, error: isAdmin(req.user) ? st.error : undefined }, wssConfigured: !!CFG.ENV.wssUrl, isAdmin: isAdmin(req.user), lines, defaultLine: lines.length ? lines[0].id : null, sim });
+    // INCOMING (option A): everyone who may take a call back keeps the browser phone registered while TeamLink is open
+    const inbound = w.ok && SIMS.SIM_KINDS.includes(kindOf(req.user)) ? !!(await SIMS.settings().catch(() => ({}))).inboundLast : false;
+    res.json({ canCall: w.ok, reason: w.ok ? null : w.reason, mode: w.s.mode, testMode: w.s.mode === 'Test', pbx: { eventsConnected: st.connected, error: isAdmin(req.user) ? st.error : undefined }, wssConfigured: !!CFG.ENV.wssUrl, isAdmin: isAdmin(req.user), lines, defaultLine: lines.length ? lines[0].id : null, sim, inbound });
   } catch (e) { fail(res, 500, 'Could not read the browser calling status.'); }
 });
 
@@ -417,11 +419,11 @@ router.put('/admin/sims-settings', async (req, res) => {
   try {
     const b = req.body || {};
     const before = await SIMS.settings();
-    const out = await SIMS.saveSettings({ prefixRouting: b.prefixRouting, missedTask: b.missedTask, fallbackUserId: b.fallbackUserId });
+    const out = await SIMS.saveSettings({ prefixRouting: b.prefixRouting, missedTask: b.missedTask, fallbackUserId: b.fallbackUserId, inboundLast: b.inboundLast });
     if (out.error) return fail(res, 400, out.error);
     const st = out.settings;
     const cfg = await L.writeConfig();
-    const changed = [before.prefixRouting !== st.prefixRouting && `Port prefix routing ${st.prefixRouting ? 'ON' : 'OFF'}`, before.missedTask !== st.missedTask && `"Call back" task for a missed call ${st.missedTask ? 'on' : 'off'}`, before.fallbackUserId !== st.fallbackUserId && `fallback ${st.fallbackUserId ? 'set' : 'nobody'}`].filter(Boolean);
+    const changed = [before.prefixRouting !== st.prefixRouting && `Port prefix routing ${st.prefixRouting ? 'ON' : 'OFF'}`, before.missedTask !== st.missedTask && `"Call back" task for a missed call ${st.missedTask ? 'on' : 'off'}`, before.fallbackUserId !== st.fallbackUserId && `fallback ${st.fallbackUserId ? 'set' : 'nobody'}`, before.inboundLast !== st.inboundLast && `Incoming calls ring the last recruiter ${st.inboundLast ? 'ON' : 'OFF'}`].filter(Boolean);
     await logAudit({ userId: req.user.id, action: 'SIM number settings saved', entity: 'Integration', entityId: 'browser-calling-sims', toValue: changed.join(' · ') || 'no change' });
     return res.json({ ...(await simsView()), message: `Saved. ${applied(cfg)}` });
   } catch (e) { console.error('[browser-call] sim settings:', e.message); return fail(res, 500, 'Could not save.'); }
