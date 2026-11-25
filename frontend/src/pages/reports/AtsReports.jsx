@@ -161,6 +161,8 @@ const EMPTY = {
   range: 'all', from: '', to: '', department: '', team: '', tl: '', recruiter: '', clientId: '', requirementId: '',
   bde: '', stl: '', source: '', location: '', status: '', stage: '', interviewStatus: '', aiStatus: '', joiningStatus: '',
   people: '',
+  // NISH (IT staffing): Contract / Full Time / Contract to Hire, from the bar (never set on TeamLink)
+  jobType: '',
 };
 // Recruiter Performance (2026-10-05): former people (left in HRMS) keep their
 // old work and carry "· Former"; this picks one side.
@@ -511,9 +513,9 @@ function tileTone(label) {
 // ATS layout v3 §5 — the SAME filter bar as every page (PageFilterBar:
 // Department · Date range · Client · Recruiter / BDE), kept in the URL. These
 // four live there; the panel keeps the rest (Team, TL, Job, Source …).
-const BAR_KEYS = ['department', 'clientId', 'recruiter', 'bde'];
+const BAR_KEYS = ['department', 'clientId', 'recruiter', 'bde', 'jobType'];
 const PANEL_FACETS = FACETS.filter(([k]) => !BAR_KEYS.includes(k));
-const BAR_URL_KEYS = ['department', 'range', 'from', 'to', 'clientId', 'recruiterId', 'bdeId'];
+const BAR_URL_KEYS = ['department', 'range', 'from', 'to', 'clientId', 'recruiterId', 'bdeId', 'jobType'];
 const PF_RANGE = { today: 'today', week: 'this_week', month: 'this_month' };
 // The bar's value -> this report's filter keys. A person from the bar is the
 // report's own facet value ("u:<id>" / "n:<name>"), or a plain user id.
@@ -523,6 +525,7 @@ const personOf = (v) => String(v || '').split(',').filter(Boolean).map(personOf1
 function barFilters(pf) {
   const out = {
     department: pf.department || '', clientId: pf.clientId || '', recruiter: personOf(pf.recruiterId), bde: personOf(pf.bdeId),
+    jobType: pf.jobType || '',
     range: 'all', from: '', to: '',
   };
   if (PF_RANGE[pf.range]) out.range = PF_RANGE[pf.range];
@@ -807,7 +810,7 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
           multiDept
           multiClient
           multiPeople
-          show={{ dateRange: !compare, people: tab !== 'revenue' && !own }}
+          show={{ dateRange: !compare, people: tab !== 'revenue' && !own, jobType: true }}
         />
         {compare && <span className="small-muted">Compare is on — it shows {compare === 'quarter' ? 'this quarter and last quarter' : 'this month and last month'}.</span>}
       </div>

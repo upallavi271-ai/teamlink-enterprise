@@ -1,3 +1,4 @@
+import BRAND from '../brand.js'; // NISH (IT staffing): Hiring type in place of Department
 import { cloneElement, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ListFilterStrip, useListXf } from '../components/ats/ListFilters.jsx';
@@ -120,7 +121,7 @@ const plainWords = (s) => String(s || '')
 const COLUMNS = [
   { key: 'requirement', label: 'Req ID' },
   { key: 'client', label: 'Client' },
-  { key: 'department', label: 'Department' },
+  { key: 'department', label: BRAND.itStaffing ? 'Hiring type' : 'Department' },
   { key: 'position', label: 'Requirement title' },
   { key: 'location', label: 'Location' },
   { key: 'tl', label: 'Team lead' },
@@ -250,6 +251,8 @@ const EMPTY_FILTERS = {
   qualificationId: '', specialisationId: '', title: '',
   // ATS layout v3: the status chain people see (?dstatus=, display only).
   dstatus: '',
+  // NISH (IT staffing): Contract / Full Time / Contract to Hire (the bar's Hiring type; never set on TeamLink)
+  jobType: '',
 };
 
 // Only Open or Closed is ever shown (2026-10-13).
@@ -796,10 +799,13 @@ export default function Requirements() {
                   <ClientPausedBadge lifecycle={r.client?.lifecycle} />
                 </>
               )}
-            {deptInClient && r.department && <div className="jl-deptline"><DeptTag name={r.department} /></div>}
+            {deptInClient && !BRAND.itStaffing && r.department && <div className="jl-deptline"><DeptTag name={r.department} /></div>}
+            {deptInClient && BRAND.itStaffing && r.employmentType && <div className="jl-deptline"><span className="cell-muted">{r.employmentType}</span></div>}
           </td>
         );
-      case 'department': return <td key={c.key}>{r.department ? <DeptTag name={r.department} /> : <span className="cell-muted">—</span>}</td>;
+      case 'department': return BRAND.itStaffing
+        ? <td key={c.key}>{r.employmentType || <span className="cell-muted">—</span>}</td>
+        : <td key={c.key}>{r.department ? <DeptTag name={r.department} /> : <span className="cell-muted">—</span>}</td>;
       case 'position':
         return (
           <td key={c.key} className={`pos${checkKey === 'position' ? ' sticky-col' : ''}`}>
@@ -995,6 +1001,7 @@ export default function Requirements() {
     clientId: filters.clientId || '',
     recruiterId: idOf(h.recruiter),
     bdeId: idOf(filters.bde),
+    jobType: filters.jobType || '',
   };
   const setBar = (v) => {
     const range = v.range || '';
@@ -1005,7 +1012,7 @@ export default function Requirements() {
       ? { ...EMPTY_HIERARCHY, department: v.department || '', recruiter: toIds(v.recruiterId) }
       : { ...h, recruiter: toIds(v.recruiterId) };
     removeFilter({
-      clientId: v.clientId || '', bde: toIds(v.bdeId), from: d.from || '', to: d.to || '',
+      clientId: v.clientId || '', bde: toIds(v.bdeId), from: d.from || '', to: d.to || '', jobType: v.jobType || '',
     }, nextH);
   };
   const panel = (
@@ -1156,7 +1163,7 @@ export default function Requirements() {
           value={barValue}
           onChange={setBar}
           facetParams={facetParams}
-          show={{ department: canFilter.hierarchy, dateRange: true, client: !isHrUser, people: canFilter.hierarchy }}
+          show={{ department: canFilter.hierarchy, dateRange: true, client: !isHrUser, people: canFilter.hierarchy, jobType: true }}
           extraSet={activeCount > 0}
           onClear={clearFilters}
         >

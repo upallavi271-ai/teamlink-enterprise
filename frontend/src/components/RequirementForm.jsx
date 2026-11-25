@@ -31,6 +31,7 @@ import './jobs/postingChoices.css'; // Save & Post: the six sites and what each 
 import { useFillFromFile, FillEntryModal, FillBanner } from './ui/FillFromFile.jsx';
 import { jobFieldsToForm, JOB_FIELD_NAMES } from './ui/fillMaps.js';
 import { useActiveDepartments, keepActive } from '../utils/activeDepartments.js';
+import BRAND, { HIRING_TYPES } from '../brand.js'; // NISH (IT staffing): hiring type in place of departments
 import useClientLabel from './clients/useClientLabel.js'; // one company, many locations: "Name - Location" for same-name clients (2026-10-22)
 import {
   DEPTS, deptOptions, LOCS, PRIORITIES, REQUIREMENT_TYPES, EDUCATION_LEVELS, EMPLOYMENT_TYPES, WORK_MODES,
@@ -161,7 +162,7 @@ export function formProblems(form, { kind, internal, editing }) {
   const bad = (field, text) => { out.push(text); fields.push(field); };
   const blank = (v) => !String(v ?? '').trim();
   if (blank(form.title)) bad('title', 'Please add the requirement title.');
-  if (blank(form.department) && !(form.departments || []).length) bad('department', 'Please pick at least one department.');
+  if (!BRAND.itStaffing && blank(form.department) && !(form.departments || []).length) bad('department', 'Please pick at least one department.');
   const openings = Number(form.openings);
   if (!Number.isInteger(openings) || openings < 1 || openings > 999) bad('openings', 'Please enter how many people are needed (1 to 999).');
   if (!editing && !internal && !form.clientId) bad('clientId', 'Please pick the client (or choose a TeamLink requirement).');
@@ -821,6 +822,19 @@ export default function RequirementForm({
                   <input value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. Senior Java Developer" />
                   {miss('title') && <div className="rf-missing-note">Please add the requirement title.</div>}
                 </label>
+                {BRAND.itStaffing ? (
+                  // NISH (founder 2026-11-25): IT staffing hires by CONTRACT or FULL TIME, not by department. The hiring type is the
+                  // requirement's employment type; the department stays the company's own (the first one this login may use).
+                  <div className={`field${ff('employmentType')}${miss('employmentType')}`} data-testid="rf-hiring-type">
+                    <span>Hiring type{ft('employmentType')}<Help text="Contract: the person works for the client for a fixed period. Full Time: a permanent role on the client's rolls. Contract to Hire: starts on contract, then moves to the client's rolls." /></span>
+                    <div role="radiogroup" aria-label="Hiring type" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '4px 0' }}>
+                      {HIRING_TYPES.map((t) => (
+                        <button key={t} type="button" role="radio" aria-checked={form.employmentType === t} className={`btn btn-sm${form.employmentType === t ? ' btn-primary' : ''}`} onClick={() => set({ employmentType: t })}>{t}</button>
+                      ))}
+                    </div>
+                    {miss('employmentType') && <div className="rf-missing-note">Please pick Contract, Full Time or Contract to Hire.</div>}
+                  </div>
+                ) : (
                 <div className={`field${ff('department')}${miss('department')}`}>
                   <span>Departments{ft('department')}<Help text="Pick every department that can work on this requirement. The first one is the main one; its team lead is suggested first. Any department's team lead can still take the requirement." /></span>
                   <DeptChecklist
@@ -840,6 +854,7 @@ export default function RequirementForm({
                   />
                   {miss('department') && <div className="rf-missing-note">Please pick at least one department.</div>}
                 </div>
+                )}
                 <SpecPicker
                   wrapClass={null}
                   department={form.department}
@@ -949,10 +964,12 @@ export default function RequirementForm({
 
             <ReqSection {...secProps('place', 2 + o, 'Location & Employment Details', '', [], [])}>
               <div className="grid-2">
+                {!BRAND.itStaffing && (
                 <label className={`field${ff('employmentType')}${miss('employmentType')}`}>
                   <span>Employment type{ft('employmentType')}</span>
                   <ComboOther value={form.employmentType} options={EMPLOYMENT_TYPES} onChange={(v) => set({ employmentType: v })} customLabel={places.canAdd ? 'Add' : 'Use'} />
                 </label>
+                )}
                 <label className={`field${ff('workMode')}${miss('workMode')}`}>
                   <span>Work mode{ft('workMode')}</span>
                   <Combo value={form.workMode} onChange={(e) => set({ workMode: e.target.value })}>

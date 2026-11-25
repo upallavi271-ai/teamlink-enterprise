@@ -976,6 +976,8 @@ function searchHit(r, ctx) {
   return r.hay.includes(ctx.search) || phoneHit;
 }
 
+// NISH (IT staffing): does a requirement's employment type match ?jobType (a comma list of Contract / Full Time / Contract to Hire)?
+const HIRING_OK = (csv, employmentType) => { const AP = require('../utils/atsProfile'); const want = String(csv || '').split(',').map(AP.hiringTypeOf).filter(Boolean); return !want.length || want.includes(AP.hiringTypeOf(employmentType)); }; // eslint-disable-line global-require
 function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (ctx.search && !searchHit(r, ctx)) return false;
   if (q.location && !MP.multiHas(q.location, r.location)) return false;
@@ -1007,6 +1009,7 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   const apps = r.applications || [];
   const any = (pred) => apps.length > 0 && apps.some(pred);
   if (q.department && !any((a) => a.requirement && MP.multiHas(q.department, a.requirement.department))) return false;
+  if (q.jobType && !any((a) => a.requirement && HIRING_OK(q.jobType, a.requirement.employmentType))) return false; // NISH (IT staffing)
   // ?hiring=internal | client — the Client | Internal split of the actual
   // workflow (internal hiring is a filter here, not a separate module).
   if (q.hiring && !any((a) => a.requirement && hiringOk(q.hiring, !!a.requirement.internal))) return false;
@@ -1163,6 +1166,7 @@ async function buildPipelineRows(user, st, s, snap) {
         requirementTitle: r ? r.title : null,
         reqCode: r ? r.reqCode || null : null,
         requirementDepartment: r ? r.department || null : null,
+        requirementEmploymentType: r ? r.employmentType || null : null, // NISH: the hiring type filter
         internal,
         hiringLabel: internal ? 'Internal' : 'Client',
         clientId: r && !internal ? r.clientId : null,
@@ -1302,6 +1306,7 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   }
   if (!skipStage && !pipelineStageMatches(r, q)) return false;
   if (q.department && !MP.multiHas(q.department, r.requirementDepartment)) return false;
+  if (q.jobType && !HIRING_OK(q.jobType, r.requirementEmploymentType)) return false; // NISH (IT staffing)
   if (q.hiring && !hiringOk(q.hiring, !!r.internal)) return false;
   if (q.clientId && !MP.multiHas(q.clientId, r.clientId)) return false;
   if (q.requirementId && !MP.multiHas(q.requirementId, r.requirementId)) return false;

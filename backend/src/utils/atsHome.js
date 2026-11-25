@@ -209,7 +209,7 @@ const APP_SELECT = {
 };
 const REQ_SELECT = {
   id: true, title: true, reqCode: true, department: true, recruiterId: true, recruiterIds: true, tlId: true, bdeId: true,
-  internal: true, hiringType: true, clientId: true, status: true, positionCode: true, tl: true, priority: true,
+  internal: true, hiringType: true, clientId: true, status: true, positionCode: true, tl: true, priority: true, employmentType: true,
   openings: true, createdAt: true, updatedAt: true, location: true, recruiter: { select: { name: true } },
 };
 const WORLDS = new Map(); // scope key -> { key, stamp, at, w, building }
@@ -461,7 +461,11 @@ setTimeout(warmCompanyWorld, 500).unref?.();
 // worked out from the rows matching every OTHER filter (cascading), with
 // counts, never a zero option. People filters use the Recruiter & BDE
 // attribution (utils/workers.js), so they match the names on the rows.
-const FILTER_KEYS = ['department', 'clientId', 'tl', 'recruiter', 'bde', 'requirementId', 'hiring', 'priority', 'source'];
+// jobType (NISH, IT staffing: Contract / Full Time / Contract to Hire = the requirement's employmentType) is only ever sent by a screen built
+// with VITE_ATS_PROFILE=it-staffing; TeamLink's never sends it.
+const FILTER_KEYS = ['department', 'clientId', 'tl', 'recruiter', 'bde', 'requirementId', 'hiring', 'priority', 'source', 'jobType'];
+const AP = require('./atsProfile');
+const hiringTypeHit = (csv, employmentType) => MPH.parseMulti(csv).map(AP.hiringTypeOf).includes(AP.hiringTypeOf(employmentType) || '__none__');
 // Filters a role does not get: a recruiter never picks (or sees) other people.
 const HIDDEN_FILTERS = {
   recruiter: ['recruiter', 'tl', 'bde'],
@@ -497,6 +501,7 @@ function rowMatches(x, f, except = []) {
   const r = a.requirement || {};
   const on = (k) => !!f[k] && !except.includes(k);
   if (on('department') && !MPH.multiHas(f.department, r.department || '__none__')) return false;
+  if (on('jobType') && !hiringTypeHit(f.jobType, r.employmentType)) return false;
   if (on('clientId') && !MPH.multiHas(f.clientId, r.clientId)) return false;
   if (on('requirementId') && !MPH.multiHas(f.requirementId, a.requirementId)) return false;
   if (on('hiring') && x.internal !== (f.hiring === 'internal')) return false;
@@ -511,6 +516,7 @@ const PERSON_FIELD = { recruiter: 'recruiterId', tl: 'tlId', bde: 'bdeId' };
 function reqMatches(w, r, f, except = []) {
   const on = (k) => !!f[k] && !except.includes(k);
   if (on('department') && !MPH.multiHas(f.department, r.department || '__none__')) return false;
+  if (on('jobType') && !hiringTypeHit(f.jobType, r.employmentType)) return false;
   if (on('clientId') && !MPH.multiHas(f.clientId, r.clientId)) return false;
   if (on('requirementId') && !MPH.multiHas(f.requirementId, r.id)) return false;
   if (on('hiring') && (!!r.internal || r.hiringType === INTERNAL_HIRE) !== (f.hiring === 'internal')) return false;

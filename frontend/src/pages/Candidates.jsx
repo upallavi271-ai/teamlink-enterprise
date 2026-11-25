@@ -171,6 +171,8 @@ const EMPTY = {
 // ---------------------------------------------------------------------------
 const EMPTY_FILTERS = {
   search: '', clientId: '', requirementId: '', bde: '', location: '', source: '',
+  // NISH (IT staffing): Contract / Full Time / Contract to Hire, the bar's Hiring type (never set on TeamLink)
+  jobType: '',
   // The New button: only people / applications added in the last 7 days ('1').
   new: '',
   // Came on (the day the person came to us) and how far to trust that day (sheet / imported / applied / entered).
@@ -821,6 +823,7 @@ export default function Candidates() {
     range: dateRange.range,
     from: dateRange.from,
     to: dateRange.to,
+    jobType: filters.jobType || '',
   };
   function setPageFilters(v) {
     const n = v || {};
@@ -834,6 +837,7 @@ export default function Candidates() {
       bde: n.bdeId || '',
       appliedFrom: d.from || '',
       appliedTo: d.to || '',
+      jobType: n.jobType || '',
     }));
   }
   const pfOptions = {
@@ -1447,7 +1451,7 @@ export default function Candidates() {
           value={pfValue}
           onChange={setPageFilters}
           options={pfOptions}
-          show={{ department: true, dateRange: true, client: false, people: show.recruiter || show.bde }}
+          show={{ department: true, dateRange: true, client: false, people: show.recruiter || show.bde, jobType: true }}
         />
       </div>
       <HierarchyFilter multi value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />

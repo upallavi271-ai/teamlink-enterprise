@@ -8,6 +8,7 @@ import './PageFilterBar.css';
 import Combo from '../Combo.jsx';
 import MultiSelect, { csvToList, listToCsv } from '../ats/MultiSelect.jsx';
 import { PRESETS, presetDates, dateProblem } from '../../utils/dateRanges.js';
+import BRAND, { HIRING_TYPES } from '../../brand.js';
 
 // ---------------------------------------------------------------------------
 // THE SAME FILTERS ON EVERY PAGE (ATS layout v3, 2026-10-03):
@@ -35,14 +36,17 @@ import { PRESETS, presetDates, dateProblem } from '../../utils/dateRanges.js';
 //
 // show: { department, dateRange, client, people } — all true by default.
 // A RECRUITER never gets the people filter, and client options are names only.
-// URL keys: department, range, from, to, clientId, recruiterId, bdeId.
+// URL keys: department, range, from, to, clientId, recruiterId, bdeId (+ jobType).
+//
+// NISH (IT staffing, VITE_ATS_PROFILE=it-staffing, founder 2026-11-25): no Department picker (every job there is IT); a page whose server
+// takes ?jobType= passes show.jobType and gets "Hiring type" (Contract / Full Time / Contract to Hire) in its place. TeamLink: unchanged.
 // ---------------------------------------------------------------------------
 
 // The presets are the shared list (utils/dateRanges.js): the same words, in the same order, on every screen.
 export const DATE_RANGES = PRESETS;
-const KEYS = ['department', 'range', 'from', 'to', 'clientId', 'recruiterId', 'bdeId'];
+const KEYS = ['department', 'range', 'from', 'to', 'clientId', 'recruiterId', 'bdeId', 'jobType'];
 export const EMPTY_FILTERS = Object.freeze({
-  department: '', range: '', from: '', to: '', clientId: '', recruiterId: '', bdeId: '',
+  department: '', range: '', from: '', to: '', clientId: '', recruiterId: '', bdeId: '', jobType: '',
 });
 
 // The dates a range stands for, in IST days. {} for "any time".
@@ -55,7 +59,7 @@ export function rangeDates(range, from, to, now = new Date()) {
 export function filterParams(value) {
   const v = value || {};
   const out = {};
-  ['department', 'clientId', 'recruiterId', 'bdeId'].forEach((k) => { if (v[k]) out[k] = v[k]; });
+  ['department', 'clientId', 'recruiterId', 'bdeId', 'jobType'].forEach((k) => { if (v[k]) out[k] = v[k]; });
   if (v.range) {
     // an unfinished or backwards custom range is not sent (the bar says why); the list stays as it was
     if (v.range === 'custom' && dateProblem(v.from, v.to)) return out;
@@ -170,6 +174,9 @@ export default function PageFilterBar({
     department: true, dateRange: true, client: true, people: true, ...(show || {}),
   };
   if (isRecruiter) want.people = false;
+  // NISH: Hiring type in place of Department (only where the page's server takes it)
+  const wantHiring = BRAND.itStaffing && !!(show && show.jobType);
+  if (BRAND.itStaffing) want.department = false;
 
   const params = useMemo(() => {
     const p = { ...(facetParams || {}) };
@@ -199,7 +206,7 @@ export default function PageFilterBar({
     const [kind, id] = [v.slice(0, 3), v.slice(4)];
     return set(kind === 'rec' ? { recruiterId: id, bdeId: '' } : { bdeId: id, recruiterId: '' });
   };
-  const anySet = !!(value.department || value.range || value.clientId || value.recruiterId || value.bdeId || extraSet);
+  const anySet = !!(value.department || value.range || value.clientId || value.recruiterId || value.bdeId || value.jobType || extraSet);
   const peopleList = peopleOpts.filter((o) => Number(o.count) > 0 || o.value === personValue);
   const groups = [...new Set(peopleList.map((o) => o.group || ''))];
 
@@ -207,6 +214,9 @@ export default function PageFilterBar({
     <div className={`pfb ${className}`} role="search" aria-label="Filters for this page">
       {want.department && (
         <FacetSelect multi={multiDept} label="Department" value={value.department} onChange={(v) => set({ department: v })} options={deptOpts} allLabel="All departments" loading={loading} />
+      )}
+      {wantHiring && (
+        <MultiSelect label="Hiring type" allLabel="Contract and full time" hideZero={false} value={value.jobType || ''} onChange={(v) => set({ jobType: v })} options={HIRING_TYPES.map((t) => ({ value: t, label: t }))} />
       )}
       {want.dateRange && (
         <label className="lph-facet pfb-range">

@@ -626,7 +626,7 @@ export default function AtsHome() {
             {showDept && (
               <MultiSelect label="Department" allLabel={deptAllText} value={f.department || ''} onChange={(csv) => setF({ ...f, department: csv })} options={deptList.map((o) => ({ value: o.value, label: deptText(o) }))} />
             )}
-            <PageFilterBar multiClient multiPeople className="av4-pfb" value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} ranges={RANGES} extraSet={Object.keys(extra).length > 0} onClear={clearAll}>
+            <PageFilterBar multiClient multiPeople className="av4-pfb" value={f} onChange={setF} show={{ ...show, department: false, jobType: true }} options={barOptions} ranges={RANGES} extraSet={Object.keys(extra).length > 0} onClear={clearAll}>
               {tlOptions}
             </PageFilterBar>
             {data && data.mayExport && <DashboardExport url="/dashboard/ats/home/export" params={params} />}
@@ -697,7 +697,7 @@ export default function AtsHome() {
       )}
       {/* Row 2: date range, client, recruiter / BDE (+ chips from old links). */}
       <div className="ah-row2">
-        <PageFilterBar multiClient multiPeople value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} />
+        <PageFilterBar multiClient multiPeople value={f} onChange={setF} show={{ ...show, department: false, jobType: true }} options={barOptions} />
         {extraChips}
       </div>
       {error && <div className="notice red">{error}</div>}

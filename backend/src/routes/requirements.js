@@ -660,6 +660,8 @@ async function listWhere(req) {
   const and = where.AND;
 
   if (q.department) and.push(RD.deptArm(String(q.department).split(',')));
+  // NISH (IT staffing, utils/atsProfile.js): ?jobType=Contract,Full Time - the requirement's employment type
+  { const hw = require('../utils/atsProfile').requirementHiringWhere(q.jobType); if (hw) and.push(hw); } // eslint-disable-line global-require
   // spec D: Qualification / Specialization filters (master ids).
   // MANY VALUES per filter (founder 2026-11-20): OR inside one filter, AND across filters (utils/multiParam.js)
   const MP = require('../utils/multiParam'); // eslint-disable-line global-require

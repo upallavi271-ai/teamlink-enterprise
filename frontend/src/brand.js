@@ -20,6 +20,12 @@ export const BRAND = Object.freeze({
   product: String(env.VITE_BRAND_PRODUCT || '').trim() || (NAME ? 'Enterprise' : 'TeamLink.Enterprise'),
   // a separate company's copy offers the Job Portal only when it was built to have its own
   jobPortal: !NAME || /^(1|true|yes|on)$/i.test(String(env.VITE_BRAND_JOB_PORTAL || '').trim()),
+  // VITE_ATS_PROFILE=it-staffing (founder 2026-11-25, NISH): the ATS works by hiring type (Contract / Full Time / Contract to Hire) where
+  // TeamLink works by department. Unset (TeamLink) = false: every screen is exactly what it was. Backend twin: utils/atsProfile.js.
+  itStaffing: /^it[\s_-]*staffing$/i.test(String(env.VITE_ATS_PROFILE || '').trim()),
 });
+
+// The hiring types of an IT-staffing ATS (stored in the requirement's employmentType)
+export const HIRING_TYPES = ['Contract', 'Full Time', 'Contract to Hire'];
 
 export default BRAND;

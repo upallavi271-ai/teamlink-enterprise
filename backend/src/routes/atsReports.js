@@ -281,6 +281,8 @@ const FILTER_KEYS = [
   'status', 'stage', 'interviewStatus', 'aiStatus', 'joiningStatus', 'positionCode',
   // Recruiter Performance: people=active | former (left in HRMS) | '' (all).
   'people',
+  // NISH (IT staffing): Contract / Full Time / Contract to Hire = the requirement's employmentType (only an it-staffing screen sends it)
+  'jobType',
 ];
 // The person filters take the ATS-wide values ("id:<userId>" / "name:<name>",
 // utils/workers.js) as well as this report's own keys ("u:…" / "n:…").
@@ -321,6 +323,7 @@ function parseFilters(q = {}) {
 function reqConditions(f) {
   const and = [];
   if (f.departmentL && f.departmentL.length) and.push({ department: { in: f.departmentL } });
+  { const hw = require('../utils/atsProfile').requirementHiringWhere(f.jobType); if (hw) and.push(hw); } // eslint-disable-line global-require
   if (f.clientL && f.clientL.length) {
     const ids = f.clientL.filter((c) => c !== INTERNAL_CLIENT);
     const arms = [];
