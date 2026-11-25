@@ -44,7 +44,7 @@ function AiForm() {
   const [err, setErr] = useState('');
   useEffect(() => { api.get(`${BASE}/settings`).then((r) => { setC({ ...r.data.config, testNumbers: r.data.config.testNumbers.join(', ') }); setModel(r.data.model); }).catch((e) => setErr(errOf(e, 'The settings could not be read.'))); }, []);
   if (err && !c) return <Banner tone="warn">{err}</Banner>;
-  if (!c || !fu) return <div className="small-muted">Loading…</div>;
+  if (!c) return <div className="small-muted">Loading…</div>;
   const set = (k) => (e) => setC((x) => ({ ...x, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
   const save = async () => {
     setBusy(true); setErr('');
@@ -294,7 +294,7 @@ function Assistant() {
   }).catch((e) => setErr(errOf(e, 'The assistant could not be read.'))), []);
   useEffect(() => { load(); }, [load]);
   if (err && !c) return <Banner tone="warn">{err}</Banner>;
-  if (!c) return <div className="small-muted">Loading…</div>;
+  if (!c || !fu) return <div className="small-muted">Loading…</div>;
   const set = (k) => (e) => setC((x) => ({ ...x, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
   const setFu = (k) => (e) => setFuState((x) => ({ ...x, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
   const saveFu = async () => {
