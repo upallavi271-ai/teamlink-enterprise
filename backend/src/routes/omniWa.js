@@ -9,6 +9,7 @@
 //   POST /already-contacted { ids }              who else reached these candidates in the last 7 days
 //   GET  /stream                                 Server-Sent Events: "something changed", no names and no words
 //   Admin: GET|PUT /settings , GET /connection , GET|POST|PUT|DELETE /knowledge , GET /runs
+//   Admin, AI WhatsApp Marketing Assistant: GET|PUT /assistant , PUT /assistant/numbers/:numberId , POST /assistant/ask (what a customer would get; nothing is sent) , POST /knowledge/import
 // ---------------------------------------------------------------------------
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
@@ -139,6 +140,32 @@ router.get('/knowledge', adminOnly, wrap(async (req, res) => res.json({ entries:
 router.post('/knowledge', adminOnly, wrap(async (req, res) => send(res, await Cfg.kbSave(req.user, null, req.body || {}))));
 router.put('/knowledge/:id', adminOnly, wrap(async (req, res) => send(res, await Cfg.kbSave(req.user, req.params.id, req.body || {}))));
 router.delete('/knowledge/:id', adminOnly, wrap(async (req, res) => send(res, await Cfg.kbRemove(req.params.id))));
+// the AI WhatsApp Marketing Assistant (omniwa/assist.js): its switch, its words, which numbers are marketing numbers, a box to try a question, a pasted list of entries
+router.get('/assistant', adminOnly, wrap(async (req, res) => res.json(await require('../omniwa/assist').overview()))); // eslint-disable-line global-require
+router.put('/assistant', adminOnly, wrap(async (req, res) => {
+  const out = await require('../omniwa/assist').saveSettings(req.user, req.body || {}); // eslint-disable-line global-require
+  await logAudit({ userId: req.user.id, action: 'WhatsApp marketing assistant settings changed', entity: 'AppSetting', entityId: 'omni.wa.assist', fromValue: out.was.enabled ? 'On' : 'Off', toValue: out.settings.enabled ? 'On' : 'Off' }).catch(() => {});
+  return res.json({ settings: out.settings });
+}));
+router.put('/assistant/numbers/:numberId', adminOnly, wrap(async (req, res) => {
+  const row = await require('../utils/waNumbers').getRow(req.params.numberId).catch(() => null); // eslint-disable-line global-require
+  if (!row) return res.status(404).json({ error: 'This WhatsApp number is gone.' });
+  const on = (req.body || {}).on === true;
+  const out = await Cfg.setMarketingNumber(row.id, on);
+  await logAudit({ userId: req.user.id, action: on ? 'WhatsApp number marked as a marketing number' : 'WhatsApp number is no longer a marketing number', entity: 'WaNumber', entityId: row.id }).catch(() => {});
+  return res.json(out);
+}));
+router.post('/assistant/ask', adminOnly, wrap(async (req, res) => {
+  const q = String((req.body || {}).question || '').trim();
+  if (!q) return res.status(400).json({ error: 'Type a question first.' });
+  return res.json(await require('../omniwa/assist').testQuestion(q.slice(0, 500), (req.body || {}).numberId || null)); // eslint-disable-line global-require
+}));
+router.post('/knowledge/import', adminOnly, wrap(async (req, res) => {
+  const b = req.body || {};
+  const out = await Cfg.kbImportRows(req.user, String(b.text || '').slice(0, 200000), { numberId: b.numberId || null });
+  if (!out.error) await logAudit({ userId: req.user.id, action: 'WhatsApp knowledge entries imported', entity: 'OmniWaKnowledge', entityId: 'import', toValue: `${out.added} added, ${out.updated} updated` }).catch(() => {});
+  return out.error ? res.status(out.status || 400).json({ error: out.error, errors: out.errors || [] }) : res.json(out);
+}));
 const e164Of = (raw) => { const d = require('../utils/messageDelivery').digitsOf(raw); return d.length === 10 ? `91${d}` : d; }; // eslint-disable-line global-require
 router.get('/blocked', adminOnly, wrap(async (req, res) => {
   const e164 = e164Of(req.query.number);

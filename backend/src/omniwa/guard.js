@@ -86,4 +86,36 @@ function marketingProblem(reply, factsText) {
   return null;
 }
 
-module.exports = { jobClaim, isStop, wantsHuman, wantsCall, isAbusive, promiseProblem, marketingProblem, stripLinks, clipReply, insideHours };
+// THE MARKETING ASSISTANT'S CHECK (owner 2026-11-25: "never invents prices, offers or policies"). A reply the language model WROTE may contain only figures, phone numbers,
+// e-mail addresses and promises that the knowledge it was given (or the customer's own message) already contains. This is stricter than marketingProblem above: ANY number
+// counts, not only a rupee amount, so a made-up date, a made-up phone number or "within 2 days" is stopped too. A reply copied word for word from the knowledge base is not checked.
+const NUMBER = /\d[\d,]*(?:\.\d+)?/g;
+const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+const CLAIMS = [
+  ['a guarantee', /\bguarantee[sd]?\b/i], ['something free', /\bfree (?:of charge|trial|consultation|audit|demo|quote|estimate|shipping|delivery|setup|service|support)\b|\bfor free\b|\bcomplimentary\b/i],
+  ['a discount', /\bdiscounts?\b/i], ['an offer', /\b(?:special|limited|festive|launch|exclusive) offers?\b|\boffers? (?:valid|ends|expires)\b/i], ['cashback', /\bcash\s?back\b/i],
+  ['a refund', /\brefund(?:s|ed|able)?\b/i], ['a warranty', /\bwarrant(?:y|ies)\b/i], ['a money-back promise', /\bmoney[- ]back\b/i],
+  ['a limited-time claim', /\blimited[- ]time\b|\bhurry\b|\bonly today\b/i], ['a best-price claim', /\b(?:best|lowest|cheapest) (?:price|rate|cost)s?\b/i],
+];
+function factsProblem(reply, factsText, inputText = '') {
+  const known = `${factsText}\n${inputText}`.toLowerCase();
+  const knownNums = new Set((known.replace(/,/g, '').match(NUMBER) || []).map((x) => x.replace(/\.$/, '')));
+  const digitsOnly = known.replace(/\D/g, '');
+  let body = String(reply || '').replace(/^\s*\d{1,2}[.)]\s/gm, ''); // "1." and "2)" at the start of a line are list numbers, not facts
+  // a phone number written with spaces or hyphens ("98765 43210") is one number: it is known when its digits are in the facts
+  body = body.replace(/\+?\d[\d -]{6,}\d/g, (m) => { const d = m.replace(/\D/g, ''); return d.length >= 7 && digitsOnly.includes(d) ? ' ' : m; });
+  for (const raw of body.replace(/,(?=\d{3}\b)/g, '').match(NUMBER) || []) {
+    const n = raw.replace(/,/g, '').replace(/\.$/, '');
+    if (knownNums.has(n)) continue; // eslint-disable-line no-continue
+    if (n.replace(/\D/g, '').length >= 7 && digitsOnly.includes(n.replace(/\D/g, ''))) continue; // eslint-disable-line no-continue
+    return `A number that is not in the knowledge base: "${n}"`;
+  }
+  for (const m of body.match(EMAIL) || []) if (!known.includes(m.toLowerCase())) return `An e-mail address that is not in the knowledge base: "${m}"`;
+  for (const [label, re] of CLAIMS) {
+    const hit = re.exec(body);
+    if (hit && !re.test(known)) return `${label[0].toUpperCase()}${label.slice(1)} that the knowledge base does not state: "${hit[0]}"`;
+  }
+  return null;
+}
+
+module.exports = { factsProblem, jobClaim, isStop, wantsHuman, wantsCall, isAbusive, promiseProblem, marketingProblem, stripLinks, clipReply, insideHours };

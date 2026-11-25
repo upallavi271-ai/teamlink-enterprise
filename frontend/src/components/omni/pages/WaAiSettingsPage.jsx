@@ -3,12 +3,12 @@ import { Link } from 'react-router-dom';
 import api from '../../../api';
 import Combo from '../../Combo.jsx';
 import { useOmni } from '../omniContext.js';
-import { PageHead, Panel, Field, Btn, Banner, Pill, Tabs, GsModal, ConfirmModal, Empty, fmtDateTime } from '../ui.jsx';
+import { PageHead, Panel, Field, Btn, Banner, Pill, Tabs, GsModal, ConfirmModal, Empty, fmtDateTime, fmtDate } from '../ui.jsx';
 import { errOf } from '../omniApi.js';
 
 // ---------------------------------------------------------------------------
-// SETTINGS > WHATSAPP AI (Admin): the connection as it stands (tokens are typed in Administration > Integrations and are never shown), the AI settings, the knowledge base
-// and what the AI did. Server: /api/omni-wa/settings, /connection, /knowledge, /runs. The AI is OFF until an Admin switches it on.
+// SETTINGS > WHATSAPP AI (Admin): the connection as it stands (tokens are typed in Administration > Integrations and are never shown), the AI settings, the marketing assistant,
+// the knowledge base and what the AI did. Server: /api/omni-wa/settings, /assistant, /connection, /knowledge, /runs. The AI is OFF until an Admin switches it on.
 // ---------------------------------------------------------------------------
 const BASE = '/omni-wa';
 const OUTCOME = { replied: ['live', 'Replied'], not_interested: ['draft', 'Not interested'], handoff_tool: ['warn', 'Passed to a person'], handoff_asked: ['warn', 'Asked for a person'], handoff_abuse: ['red', 'Abusive message'], handoff_limit: ['warn', 'Reply limit reached'], after_hours: ['draft', 'After working hours'], blocked_by_guard: ['red', 'Draft stopped by the safety check'], model_error: ['red', 'AI failed'], send_failed: ['red', 'Could not send'], paused: ['warn', 'A person is answering'], lead: ['draft', 'New number'], error: ['red', 'Error'] };
@@ -145,6 +145,62 @@ function Questions() {
   );
 }
 
+// the kinds of knowledge (AI WhatsApp Marketing Assistant): it quotes a price only from a Pricing entry, hours only from Working hours, and so on
+const CATS = [['company', 'Company information'], ['services', 'Services'], ['products', 'Products'], ['pricing', 'Pricing'], ['hours', 'Working hours'], ['contact', 'Contact information'], ['policies', 'Policies'], ['faq', 'Questions and answers'], ['website', 'From our website']];
+const CAT_LABEL = Object.fromEntries(CATS);
+const NEW_KINDS = CATS.filter(([k]) => k !== 'website'); // the website import fills in its own kind
+const DAY_MS = 86400000;
+const STALE_DAYS = 90;
+const HINTS = {
+  pricing: 'Write the price exactly as it should be sent: what it is for, the amount, and GST or what it covers. It is sent word for word and never changed. 400 letters at most.',
+  hours: 'For example: We are open Monday to Saturday, 9:30 am to 6:30 pm. Closed on Sundays and public holidays.',
+  contact: 'Phone number, e-mail, address and any booking link. A link written here is sent as it is.',
+  policies: 'Refunds, cancellation, payment terms, anything the business has decided. Written exactly as it should be said.',
+};
+
+function KbImport({ numbers, onClose, onDone }) {
+  const [text, setText] = useState('');
+  const [numberId, setNumberId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [res, setRes] = useState(null);
+  const pick = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => setText(String(r.result || ''));
+    r.readAsText(f);
+  };
+  const go = async () => {
+    setBusy(true); setErr(''); setRes(null);
+    try { const r = await api.post(`${BASE}/knowledge/import`, { text, numberId }); setRes(r.data); onDone(); } catch (e) {
+      setErr(errOf(e, 'The list could not be imported.'));
+      if (e.response && e.response.data && e.response.data.errors) setRes({ errors: e.response.data.errors });
+    } finally { setBusy(false); }
+  };
+  return (
+    <GsModal title="Paste or upload a list" onClose={onClose} foot={<Btn primary onClick={go} disabled={busy || !text.trim()}>{busy ? 'Importing…' : 'Import'}</Btn>}>
+      {err && <Banner tone="warn">{err}</Banner>}
+      {res && res.ok && <Banner tone="ok">{res.added} added, {res.updated} updated.</Banner>}
+      <p className="small-muted">One entry on each line: <b>kind | question | answer</b>, for example <code>pricing | SEO plan | ₹10,000 per month + GST</code>. Kinds: company, services, products, pricing, hours, contact, policies, faq. A file with the columns category, question, answer (comma separated) works too. An entry with the same question is updated, not doubled.</p>
+      <Field label="Upload a file (.csv or .txt)"><input type="file" accept=".csv,.txt,.tsv,text/plain,text/csv" aria-label="Upload a list" onChange={pick} /></Field>
+      <Field label="The list"><textarea className="input" rows={9} aria-label="The list" value={text} onChange={(e) => setText(e.target.value)} placeholder="pricing | SEO plan | ₹10,000 per month + GST" /></Field>
+      <Field label="Which WhatsApp number?">
+        <Combo value={numberId} onChange={(e) => setNumberId(e.target.value)} emptyText="No such number">
+          <option value="">All numbers</option>
+          {numbers.map((n) => <option key={n.id} value={n.id}>{n.label}</option>)}
+        </Combo>
+      </Field>
+      {res && res.errors && res.errors.length > 0 && (
+        <div className="small-muted" style={{ marginTop: 8 }}>
+          <b>These lines were not imported:</b>
+          {res.errors.slice(0, 12).map((x, i) => <div key={`${x.line}-${i}`}>{x.line ? `Line ${x.line}: ` : ''}{x.reason}</div>)} {/* eslint-disable-line react/no-array-index-key */}
+        </div>
+      )}
+    </GsModal>
+  );
+}
+
 function Knowledge() {
   const { toast } = useOmni();
   const [numbers, setNumbers] = useState([]);
@@ -152,6 +208,8 @@ function Knowledge() {
   const [rows, setRows] = useState(null);
   const [edit, setEdit] = useState(null);
   const [gone, setGone] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [cat, setCat] = useState('all');
   const [err, setErr] = useState('');
   const load = useCallback(() => api.get(`${BASE}/knowledge`).then((r) => setRows(r.data.entries)).catch((e) => setErr(errOf(e, 'The entries could not be read.'))), []);
   useEffect(() => { load(); }, [load]);
@@ -163,21 +221,43 @@ function Knowledge() {
     } catch (e) { setErr(errOf(e, 'This could not be saved.')); }
   };
   const remove = async () => { await api.delete(`${BASE}/knowledge/${gone.id}`).catch(() => {}); setGone(null); load(); };
+  const counts = {};
+  for (const r of rows || []) counts[r.category] = (counts[r.category] || 0) + 1;
+  const shown = (rows || []).filter((r) => cat === 'all' || r.category === cat);
+  const isPrice = edit && edit.category === 'pricing';
+  const age = (r) => (r.confirmedAt ? Math.floor((Date.now() - r.confirmedAt) / DAY_MS) : null);
   return (
-    <Panel title="Knowledge base" sub="Questions about the company and the process. The AI answers only from these and the job details." right={<Btn primary small onClick={() => setEdit({ question: '', answer: '', active: true })}>New</Btn>}>
+    <Panel title="Knowledge base" sub="What the AI answers from. Give each entry a kind: the marketing assistant quotes a price only from a Pricing entry, and says plainly when nothing fits." right={<><Btn small onClick={() => setImporting(true)}>Paste or upload a list</Btn> <Btn primary small onClick={() => setEdit({ question: '', answer: '', active: true, category: cat !== 'all' && cat !== 'website' ? cat : 'faq' })}>New</Btn></>}>
       {err && !edit && <Banner tone="warn">{err}</Banner>}
-      {rows && rows.length === 0 && <Empty title="No entries yet">Add the questions candidates ask most. Without entries the AI passes those questions to a recruiter.</Empty>}
-      {(rows || []).map((r) => (
-        <div key={r.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--line, #e5e7eb)' }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><b style={{ flex: 1 }}>{r.question}</b><Pill>{(numbers.find((n) => n.id === r.numberId) || {}).label || 'All numbers'}</Pill>{!r.active && <Pill>Off</Pill>}<Btn small onClick={() => setEdit(r)}>Edit</Btn><Btn small danger onClick={() => setGone(r)}>Delete</Btn></div>
-          <div className="small-muted" style={{ whiteSpace: 'pre-wrap' }}>{r.answer}</div>
-        </div>
-      ))}
+      <Tabs tabs={[['all', 'All', (rows || []).length], ...CATS.filter(([k]) => counts[k]).map(([k, l]) => [k, l, counts[k]])]} value={cat} onChange={setCat} />
+      {rows && rows.length === 0 && <Empty title="No entries yet">Add what customers ask most: services, prices, working hours, contact details and policies. Without an entry the AI passes the question to your team.</Empty>}
+      {shown.map((r) => {
+        const days = r.category === 'pricing' ? age(r) : null;
+        return (
+          <div key={r.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--line, #e5e7eb)' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <b style={{ flex: 1 }}>{r.question}</b>
+              <Pill>{CAT_LABEL[r.category] || r.category}</Pill>
+              {r.legacy && !r.numberId && <Pill tone="warn">Recruitment AI only</Pill>}
+              <Pill>{(numbers.find((n) => n.id === r.numberId) || {}).label || 'All numbers'}</Pill>
+              {!r.active && <Pill>Off</Pill>}
+              <Btn small onClick={() => setEdit(r)}>Edit</Btn><Btn small danger onClick={() => setGone(r)}>Delete</Btn>
+            </div>
+            <div className="small-muted" style={{ whiteSpace: 'pre-wrap' }}>{r.answer}</div>
+            {r.category === 'pricing' && <div className="small-muted">{days === null ? 'Not confirmed yet.' : `Price confirmed ${fmtDate(r.confirmedAt)}.`}{days !== null && days > STALE_DAYS ? ` It is ${days} days old: check it is still right, then save it again.` : ''}</div>}
+          </div>
+        );
+      })}
       {edit && (
         <GsModal title={edit.id ? 'Edit entry' : 'New entry'} onClose={() => setEdit(null)} foot={<Btn primary onClick={save}>Save</Btn>}>
           {err && <Banner tone="warn">{err}</Banner>}
-          <Field label="Question"><input className="input" value={edit.question} onChange={(e) => setEdit({ ...edit, question: e.target.value })} /></Field>
-          <Field label="Answer"><textarea className="input" rows={5} value={edit.answer} onChange={(e) => setEdit({ ...edit, answer: e.target.value })} /></Field>
+          <Field label="Kind" hint={edit.legacy && !edit.numberId ? 'This entry was written before kinds existed and is read by the recruitment AI. Choose a kind to let the marketing assistant use it too.' : (HINTS[edit.category] || undefined)}>
+            <select className="input" aria-label="Kind" value={edit.category || 'faq'} onChange={(e) => setEdit({ ...edit, category: e.target.value })}>
+              {(edit.category === 'website' ? CATS : NEW_KINDS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </Field>
+          <Field label={isPrice ? 'Plan or service' : 'Question or title'}><input className="input" aria-label="Question or title" maxLength={isPrice ? 120 : 300} value={edit.question} onChange={(e) => setEdit({ ...edit, question: e.target.value })} /></Field>
+          <Field label={isPrice ? 'Price, exactly as it is sent' : 'Answer'}><textarea className="input" aria-label="Answer" rows={isPrice ? 3 : 5} maxLength={isPrice ? 400 : 1500} value={edit.answer} onChange={(e) => setEdit({ ...edit, answer: e.target.value })} /></Field>
           <Field label="Which WhatsApp number?">
             <Combo value={edit.numberId || ''} onChange={(e) => setEdit({ ...edit, numberId: e.target.value })} emptyText="No such number">
               <option value="">All numbers</option>
@@ -187,8 +267,83 @@ function Knowledge() {
           <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="checkbox" checked={edit.active !== false} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />In use</label>
         </GsModal>
       )}
+      {importing && <KbImport numbers={numbers} onClose={() => setImporting(false)} onDone={load} />}
       {gone && <ConfirmModal title="Delete this entry?" text={gone.question} yes="Delete" danger onYes={remove} onNo={() => setGone(null)} />}
     </Panel>
+  );
+}
+
+// the AI WhatsApp Marketing Assistant: its switch, its words, which numbers it answers on, and a box to try a question (nothing is sent)
+function Assistant() {
+  const { toast } = useOmni();
+  const [d, setD] = useState(null);
+  const [c, setC] = useState(null);
+  const [numbers, setNumbers] = useState([]);
+  const [marketing, setMarketing] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [q, setQ] = useState('');
+  const [tryNumber, setTryNumber] = useState('');
+  const [ans, setAns] = useState(null);
+  const load = useCallback(() => Promise.all([api.get(`${BASE}/assistant`), api.get(`${BASE}/connection`)]).then(([a, cn]) => {
+    setD(a.data); setC(a.data.settings); setMarketing(a.data.marketingNumbers); setNumbers(cn.data.numbers);
+  }).catch((e) => setErr(errOf(e, 'The assistant could not be read.'))), []);
+  useEffect(() => { load(); }, [load]);
+  if (err && !c) return <Banner tone="warn">{err}</Banner>;
+  if (!c) return <div className="small-muted">Loading…</div>;
+  const set = (k) => (e) => setC((x) => ({ ...x, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
+  const save = async () => {
+    setBusy(true); setErr('');
+    try { const r = await api.put(`${BASE}/assistant`, c); setC(r.data.settings); toast('Saved.'); } catch (e) { setErr(errOf(e, 'The assistant could not be saved.')); } finally { setBusy(false); }
+  };
+  const flip = async (n, on) => {
+    setErr('');
+    try { const r = await api.put(`${BASE}/assistant/numbers/${n.id}`, { on }); setMarketing(r.data.numbers); } catch (e) { setErr(errOf(e, 'This number could not be changed.')); }
+  };
+  const ask = async () => {
+    setErr(''); setAns(null);
+    try { const r = await api.post(`${BASE}/assistant/ask`, { question: q, numberId: tryNumber }); setAns(r.data); } catch (e) { setErr(errOf(e, 'The question could not be tried.')); }
+  };
+  return (
+    <>
+      <Panel title="AI WhatsApp Marketing Assistant" sub="On a marketing number it answers customers from the knowledge base, word for word. It never makes up a price, an offer or a policy: when nothing fits it says so and asks your team. It works without an AI model.">
+        {err && <Banner tone="warn">{err}</Banner>}
+        {d && !d.aiReady && <Banner tone="info">No AI model is ready right now. The assistant still answers from the knowledge base. A model, when ready, may only re-word entries and its words are checked.</Banner>}
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}><input type="checkbox" aria-label="The assistant answers on marketing numbers" checked={c.enabled} onChange={set('enabled')} /><b>The assistant answers on marketing numbers</b></label>
+        <Field label="Business name" hint="Used in the greeting and in the first reply, like: Acme's AI assistant: ..."><input className="input" aria-label="Business name" value={c.businessName} onChange={set('businessName')} /></Field>
+        <Field label="Greeting (optional)" hint="Sent when someone writes Hi. Empty = a greeting that names only the topics you have entries for."><textarea className="input" rows={2} aria-label="Greeting" maxLength={300} value={c.greeting} onChange={set('greeting')} /></Field>
+        <Field label="When nothing in the knowledge base fits (optional)" hint="Sent before the chat goes to your team. Empty = a plain sentence that says it will not guess."><textarea className="input" rows={2} aria-label="When nothing fits" maxLength={300} value={c.noAnswer} onChange={set('noAnswer')} /></Field>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}><input type="checkbox" checked={c.aiWording} onChange={set('aiWording')} /><span>When no entry matches clearly and a model is ready, it may re-word the closest entries</span></label>
+        <Btn primary onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Btn>
+      </Panel>
+      <Panel title="Marketing numbers" sub="The assistant answers on these numbers only. Everyone who writes to one gets an answer from the knowledge base. Other numbers keep the recruitment AI.">
+        {numbers.length === 0 && <p className="small-muted">No number in the list. Add WhatsApp numbers in Administration &gt; Integrations.</p>}
+        {numbers.map((n) => (
+          <label key={n.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}>
+            <input type="checkbox" aria-label={`${n.label} is a marketing number`} checked={marketing.includes(n.id)} onChange={(e) => flip(n, e.target.checked)} /><b>{n.label}</b><span className="small-muted">{n.display}</span>
+          </label>
+        ))}
+      </Panel>
+      <Panel title="Try a question" sub="See what a customer would get. Nothing is sent to anybody.">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input className="input" style={{ flex: 1, minWidth: 220 }} aria-label="A customer question" value={q} onChange={(e) => { setQ(e.target.value); setAns(null); }} placeholder="How much is the SEO plan?" />
+          <Combo value={tryNumber} onChange={(e) => setTryNumber(e.target.value)} emptyText="No such number">
+            <option value="">Entries for all numbers</option>
+            {numbers.map((n) => <option key={n.id} value={n.id}>{n.label}</option>)}
+          </Combo>
+          <Btn onClick={ask} disabled={!q.trim()}>Try</Btn>
+        </div>
+        {ans && (
+          <div style={{ marginTop: 10 }}>
+            <p>{ans.handover ? <Pill tone="warn">Not in the knowledge base: a team member would be asked</Pill> : <Pill tone="live">From the knowledge base{ans.category ? `: ${CAT_LABEL[ans.category] || ans.category}` : ''}</Pill>}</p>
+            <div style={{ whiteSpace: 'pre-wrap', padding: 10, background: 'var(--bg-soft, #f5f6f8)', borderRadius: 8 }}>{ans.text}</div>
+            {ans.why && <p className="small-muted">{ans.why}</p>}
+            {ans.entries && ans.entries.length > 0 && <p className="small-muted">Taken from: {ans.entries.map((e) => e.title).join(', ')}</p>}
+            {ans.closest && ans.closest.length > 0 && <p className="small-muted">Closest entries: {ans.closest.join(', ')}</p>}
+          </div>
+        )}
+      </Panel>
+    </>
   );
 }
 
@@ -261,8 +416,9 @@ export default function WaAiSettingsPage() {
   return (
     <>
       <PageHead title="WhatsApp AI" lead="The AI assistant that answers replies to your promotions." />
-      <Tabs tabs={[['ai', 'AI settings'], ['numbers', 'By number'], ['questions', 'Questions'], ['kb', 'Knowledge base'], ['runs', 'What the AI did'], ['blocked', 'Blocked numbers'], ['conn', 'Connection']]} value={tab} onChange={setTab} />
+      <Tabs tabs={[['ai', 'AI settings'], ['assist', 'Marketing assistant'], ['numbers', 'By number'], ['questions', 'Questions'], ['kb', 'Knowledge base'], ['runs', 'What the AI did'], ['blocked', 'Blocked numbers'], ['conn', 'Connection']]} value={tab} onChange={setTab} />
       {tab === 'ai' && <AiForm />}
+      {tab === 'assist' && <Assistant />}
       {tab === 'numbers' && <ByNumber />}
       {tab === 'questions' && <Questions />}
       {tab === 'kb' && <Knowledge />}

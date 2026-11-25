@@ -131,25 +131,36 @@ async function forNumber(cfg, numberId) {
 }
 
 // ---- knowledge base ------------------------------------------------------------------------------------------------------------------------------
+// What kind of knowledge an entry is (AI WhatsApp Marketing Assistant, owner 2026-11-25). The assistant answers a price question ONLY from a 'pricing' entry a person wrote, a
+// question about hours only from 'hours', and so on; 'website' is what the website import fills in. An old entry with no category is a plain question and answer.
+const KB_CATEGORIES = [['company', 'Company information'], ['services', 'Services'], ['products', 'Products'], ['pricing', 'Pricing'], ['hours', 'Working hours'], ['contact', 'Contact information'], ['policies', 'Policies'], ['faq', 'Questions and answers'], ['website', 'From our website']].map(([key, label]) => ({ key, label }));
+const catOf = (v) => { const k = String(v || '').trim().toLowerCase(); return KB_CATEGORIES.some((c) => c.key === k) ? k : 'faq'; };
+const PRICE_MAX = 400; // a price entry is one short message: it must never be cut in the middle of a figure
+const PRICE_TITLE_MAX = 120; // the name of the plan or service it is for
+
 async function kbList() {
   await ensure();
-  return (await S.q('SELECT id, question, answer, active, numberId, updatedByName, updatedAt FROM "OmniWaKnowledge" ORDER BY updatedAt DESC')).map((r) => ({ ...r, active: !!r.active, updatedAt: Number(r.updatedAt) }));
+  return (await S.q(`SELECT id, question, answer, active, numberId, COALESCE(category, 'faq') AS category, (category IS NULL) AS legacy, confirmedAt, updatedByName, updatedAt FROM "OmniWaKnowledge" ORDER BY updatedAt DESC`)).map((r) => ({ ...r, active: !!r.active, legacy: !!r.legacy, updatedAt: Number(r.updatedAt), confirmedAt: r.confirmedAt ? Number(r.confirmedAt) : null }));
 }
 async function kbSave(user, id, b = {}) {
   await ensure();
   const question = S.clip(String(b.question || '').trim(), 300);
   const answer = S.clip(String(b.answer || '').trim(), 1500);
   if (!question || !answer) return { error: 'Write the question and its answer.', status: 400 };
+  const category = b.category === undefined && id ? ((await S.q(`SELECT COALESCE(category, 'faq') AS c FROM "OmniWaKnowledge" WHERE id = ?`, String(id)))[0] || { c: 'faq' }).c : catOf(b.category);
+  if (category === 'pricing' && answer.length > PRICE_MAX) return { error: `A price entry is one short message (${PRICE_MAX} letters at most), so the assistant never sends half of it.`, status: 400 };
+  if (category === 'pricing' && question.length > PRICE_TITLE_MAX) return { error: `The name of a price entry (the plan or service) is ${PRICE_TITLE_MAX} letters at most.`, status: 400 };
   const now = Date.now();
   const active = b.active === false ? 0 : 1;
   const numberId = b.numberId ? String(b.numberId) : null; // empty = every number
+  const confirmedAt = category === 'pricing' ? now : null; // a person saving a price confirms it: the screen shows when, and flags an old one
   if (id) {
-    const n = await S.run('UPDATE "OmniWaKnowledge" SET question = ?, answer = ?, active = ?, numberId = ?, updatedByName = ?, updatedAt = ? WHERE id = ?', question, answer, active, numberId, user ? user.name : null, now, String(id));
+    const n = await S.run('UPDATE "OmniWaKnowledge" SET question = ?, answer = ?, active = ?, numberId = ?, category = ?, confirmedAt = ?, updatedByName = ?, updatedAt = ? WHERE id = ?', question, answer, active, numberId, category, confirmedAt, user ? user.name : null, now, String(id));
     if (!n) return { error: 'This entry is gone.', status: 404 };
     return { ok: true, id: String(id) };
   }
   const newId = S.newId('wak');
-  await S.run('INSERT INTO "OmniWaKnowledge" (id, question, answer, active, numberId, updatedByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?)', newId, question, answer, active, numberId, user ? user.name : null, now, now);
+  await S.run('INSERT INTO "OmniWaKnowledge" (id, question, answer, active, numberId, category, confirmedAt, updatedByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)', newId, question, answer, active, numberId, category, confirmedAt, user ? user.name : null, now, now);
   return { ok: true, id: newId };
 }
 async function kbRemove(id) {
@@ -157,14 +168,72 @@ async function kbRemove(id) {
   await S.run('DELETE FROM "OmniWaKnowledge" WHERE id = ?', String(id));
   return { ok: true };
 }
+// ---- a pasted or uploaded list (owner 2026-11-25: "the business can upload or configure") ----------------------------------------------------------
+// One entry per line: category | question | answer   (or tab / comma separated, with a header line category,question,answer; two columns = question, answer).
+// A line that cannot be used is reported with its line number and the rest is still imported; nothing is guessed (an unknown category is refused, not turned into a FAQ).
+const CAT_WORDS = { company: 'company', about: 'company', 'company information': 'company', services: 'services', service: 'services', products: 'products', product: 'products', pricing: 'pricing', price: 'pricing', prices: 'pricing', hours: 'hours', timings: 'hours', 'working hours': 'hours', contact: 'contact', 'contact information': 'contact', policies: 'policies', policy: 'policies', faq: 'faq', faqs: 'faq', 'q&a': 'faq', 'questions and answers': 'faq' };
+function splitCells(line, delim) {
+  if (delim === '|') return line.split('|').map((c) => c.trim());
+  const out = []; let cur = ''; let q = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (q) { if (ch === '"' && line[i + 1] === '"') { cur += '"'; i += 1; } else if (ch === '"') q = false; else cur += ch; } else if (ch === '"' && !cur.trim()) q = true; else if (ch === delim) { out.push(cur.trim()); cur = ''; } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+const MAX_IMPORT_ROWS = 300;
+function parseKbList(text) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n').map((l, i) => ({ n: i + 1, t: l })).filter((l) => l.t.trim() && !l.t.trim().startsWith('#'));
+  const rows = []; const errors = [];
+  if (!lines.length) return { rows, errors: [{ line: 0, reason: 'Nothing to import: paste one entry on each line.' }] };
+  const first = lines[0].t;
+  const delim = first.includes('|') ? '|' : (first.includes('\t') ? '\t' : ',');
+  let start = 0;
+  const h = splitCells(first, delim).map((c) => c.toLowerCase());
+  if (['category', 'type'].includes(h[0]) && ['question', 'title', 'item', 'name'].includes(h[1])) start = 1;
+  for (const { n, t } of lines.slice(start)) {
+    if (rows.length >= MAX_IMPORT_ROWS) { errors.push({ line: n, reason: `Only ${MAX_IMPORT_ROWS} entries are imported at a time; the rest was not read.` }); break; }
+    const cells = splitCells(t, delim);
+    let category = 'faq'; let question; let answer;
+    if (cells.length >= 3) {
+      category = CAT_WORDS[cells[0].toLowerCase()] || null;
+      [, question] = cells; answer = cells.slice(2).join(delim === '|' ? ' | ' : delim === '\t' ? ' ' : ', ');
+      if (!category) { errors.push({ line: n, reason: `Unknown category "${S.clip(cells[0], 30)}". Use company, services, products, pricing, hours, contact, policies or faq.` }); continue; } // eslint-disable-line no-continue
+    } else if (cells.length === 2) [question, answer] = cells;
+    else { errors.push({ line: n, reason: 'Needs a question and an answer.' }); continue; } // eslint-disable-line no-continue
+    question = S.clip(question, 300); answer = S.clip(answer, 1500);
+    if (!question || !answer) { errors.push({ line: n, reason: 'The question or the answer is empty.' }); continue; } // eslint-disable-line no-continue
+    if (category === 'pricing' && (answer.length > PRICE_MAX || question.length > PRICE_TITLE_MAX)) { errors.push({ line: n, reason: `A price entry is ${PRICE_MAX} letters at most, and its name ${PRICE_TITLE_MAX}.` }); continue; } // eslint-disable-line no-continue
+    rows.push({ category, question, answer });
+  }
+  return { rows, errors };
+}
+// an entry with the same question in the same category (and for the same number) is updated, never doubled
+async function kbImportRows(user, text, { numberId = null } = {}) {
+  await ensure();
+  const { rows, errors } = parseKbList(text);
+  if (!rows.length) return { error: errors.length ? `${errors[0].reason}${errors[0].line ? ` (line ${errors[0].line})` : ''}` : 'Nothing to import.', errors, status: 400 };
+  const nid = numberId ? String(numberId) : null;
+  const now = Date.now();
+  let added = 0; let updated = 0;
+  for (const r of rows) {
+    const old = (await S.q('SELECT id FROM "OmniWaKnowledge" WHERE lower(question) = lower(?) AND COALESCE(category, \'faq\') = ? AND COALESCE(numberId, \'\') = ? LIMIT 1', r.question, r.category, nid || ''))[0]; // eslint-disable-line no-await-in-loop
+    const confirmedAt = r.category === 'pricing' ? now : null;
+    if (old) { await S.run('UPDATE "OmniWaKnowledge" SET answer = ?, active = 1, confirmedAt = ?, updatedByName = ?, updatedAt = ? WHERE id = ?', r.answer, confirmedAt, user ? user.name : null, now, old.id); updated += 1; } // eslint-disable-line no-await-in-loop
+    else { await S.run('INSERT INTO "OmniWaKnowledge" (id, question, answer, active, numberId, category, confirmedAt, updatedByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)', S.newId('wak'), r.question, r.answer, 1, nid, r.category, confirmedAt, user ? user.name : null, now, now); added += 1; } // eslint-disable-line no-await-in-loop
+  }
+  return { ok: true, added, updated, errors };
+}
+
 // the entries closest to the question (shared words, longer words count more): those for every number and those of this chat's number
-async function kbSearch(query, limit = 3, numberId = null) {
+async function kbSearch(query, limit = 3, numberId = null, { skip = [] } = {}) { // skip = kinds of entry this asker must not read (the recruitment AI never reads a price)
   await ensure();
   // plain words of the question, without the little ones ("what", "you", "the") that every page contains and that would make a hundred sections score alike
   const STOP = new Set('the and for you your are was were what who how can could would will with this that these those our have has had not but from about into any all more tell please give does did get got there their them they its it\'s hello'.split(' '));
   const words = [...new Set(String(query || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2 && !STOP.has(w)))];
   if (!words.length) return [];
-  const rows = await S.q('SELECT question, answer FROM "OmniWaKnowledge" WHERE active = 1 AND (numberId IS NULL OR numberId = ?)', numberId || '');
+  const rows = (await S.q('SELECT question, answer, category FROM "OmniWaKnowledge" WHERE active = 1 AND (numberId IS NULL OR numberId = ?)', numberId || '')).filter((r) => !skip.includes(r.category || 'faq'));
   return rows.map((r) => {
     const q = String(r.question).toLowerCase(); const a = String(r.answer).toLowerCase();
     return { ...r, score: words.reduce((n, w) => n + (q.includes(w) ? 2 * w.length : 0) + (a.includes(w) ? w.length : 0), 0) };
@@ -185,7 +254,7 @@ async function kbImportWebsite(user, { urls, numberId = null, maxPages = 30 } = 
   const now = Date.now();
   let saved = 0;
   for (const e of r.entries.slice(0, 400)) {
-    await S.run('INSERT INTO "OmniWaKnowledge" (id, question, answer, active, numberId, updatedByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?)', S.newId('wak'), S.clip(e.question, 300), S.clip(e.answer, 1500), 1, nid, tag, now, now); // eslint-disable-line no-await-in-loop
+    await S.run('INSERT INTO "OmniWaKnowledge" (id, question, answer, active, numberId, category, updatedByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)', S.newId('wak'), S.clip(e.question, 300), S.clip(e.answer, 1500), 1, nid, 'website', tag, now, now); // eslint-disable-line no-await-in-loop
     saved += 1;
   }
   return { ok: true, pages: r.pages.length, saved, failed: r.failed.length, by: user ? user.name : null };
@@ -211,4 +280,4 @@ async function setMarketingNumber(numberId, on) {
   return { ok: true, numbers: [...now] };
 }
 
-module.exports = { questions, saveQuestions, oneFallback, profiles, saveProfile, removeProfile, forNumber, read, save, kbList, kbSave, kbRemove, kbSearch, kbImportWebsite, marketingNumbers, isMarketingNumber, setMarketingNumber, MARKETING_PROMPT, DEFAULT_PROMPT, DEFAULT_FALLBACK };
+module.exports = { questions, saveQuestions, oneFallback, profiles, saveProfile, removeProfile, forNumber, read, save, kbList, kbSave, kbRemove, kbSearch, kbImportWebsite, kbImportRows, parseKbList, KB_CATEGORIES, catOf, PRICE_MAX, marketingNumbers, isMarketingNumber, setMarketingNumber, MARKETING_PROMPT, DEFAULT_PROMPT, DEFAULT_FALLBACK };

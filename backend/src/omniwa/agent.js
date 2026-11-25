@@ -348,6 +348,12 @@ const MARKETING_RULES = `Rules you must always follow:
 Answer with ONE JSON object only: {"reply":"your message","lead":{...only what they just told you}}, add "handoff":true only for a person, call, meeting or formal quote. Never write a web link yourself.`;
 
 async function askMarketing(conv, cfg, input) {
+  // the AI WhatsApp Marketing Assistant (omniwa/assist.js, owner 2026-11-25): with it switched on (Settings > WhatsApp AI > Assistant) the knowledge base answers, word for word, and the
+  // model may only re-word it; a question the knowledge base cannot answer is said so plainly and goes to a person. Off = everything below, as before.
+  const Assist = require('./assist'); // eslint-disable-line global-require
+  if (await Assist.isOn().catch(() => false)) {
+    return Assist.reply(conv, input, { model: (sys, hist, o) => modelJson(sys, hist, { model: cfg.model || undefined, ...o }), history: await memory(conv, cfg.memoryCount) });
+  }
   const ctx = { links: [], handoff: null, notInterested: false, facts: [] };
   const calls = [];
   const sent = (await T.sentBodies(conv).catch(() => [])).slice(0, 2);
@@ -686,7 +692,7 @@ async function runTurn(row, defaults, now = Date.now()) {
   const ms = Date.now() - t0;
   // the tools did their work and the model gave no words: the plain sentence, never silence
   const noWords = !got.reply && (ctx.handoff || ctx.links.length);
-  let reply = G.clipReply(G.stripLinks(got.reply || (noWords ? cfg.fallbackMessage : ''), ctx.links));
+  let reply = G.clipReply(G.stripLinks(got.reply || (noWords ? cfg.fallbackMessage : ''), [...ctx.links, ...(got.trusted || [])])); // trusted = a link the business itself wrote in a knowledge entry
   // a list TeamLink wrote from the database needs no check; the model's own words do
   const broken = got.written ? null : (!reply ? 'The AI gave no usable answer' : (got.marketing ? G.marketingProblem(reply, `${ctx.facts.join('\n')}`) : (G.promiseProblem(reply, `${ctx.facts.join('\n')}`) || G.jobClaim(reply, ctx.jobTitle))));
   if (broken) {

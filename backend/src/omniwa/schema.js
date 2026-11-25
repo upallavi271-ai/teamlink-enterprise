@@ -47,7 +47,11 @@ function ensure() {
     ready = (async () => {
       for (const sql of DDL) await S.run(sql); // eslint-disable-line no-await-in-loop
       const cols = await S.q('SELECT name FROM pragma_table_info(\'OmniWaKnowledge\')');
-      if (!cols.some((c) => c.name === 'numberId')) await S.run('ALTER TABLE "OmniWaKnowledge" ADD COLUMN "numberId" TEXT'); // the table went live before entries could belong to one number
+      // the table went live before entries could belong to one number (numberId) or to a kind of knowledge (category: company, services, products, pricing, hours,
+      // contact, policies, faq, website; confirmedAt = when a person last saved a pricing entry). Added, never changed: old rows read as category NULL = faq.
+      for (const [name, type] of [['numberId', 'TEXT'], ['category', 'TEXT'], ['confirmedAt', 'BIGINT']]) {
+        if (!cols.some((c) => c.name === name)) await S.run(`ALTER TABLE "OmniWaKnowledge" ADD COLUMN "${name}" ${type}`); // eslint-disable-line no-await-in-loop
+      }
     })().catch((e) => { ready = null; throw e; });
   }
   return ready;
