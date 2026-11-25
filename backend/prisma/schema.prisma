@@ -5455,3 +5455,58 @@ model MonitoringSetting {
 
   @@map("monitoring_settings")
 }
+
+// PROBATION AND CONFIRMATION (founder 2026-11-25, from the HR audit questionnaire; "fill the gaps, change nothing that exists").
+// ADDITIVE: two new tables and nothing else. Plain scalars point at Employee (no relation field), so the Employee table is not touched and
+// "On Probation" / Pause-Resume keep working exactly as before. Nothing is created or sent until HR switches probation tracking ON
+// (AppSetting "probation.settings"). Logic: utils/probation.js, screen: HRMS > Probation.
+model ProbationRecord {
+  id                   String           @id @default(cuid())
+  employeeId           String           @unique // Employee.id
+  employeeCode         String?
+  employeeName         String
+  department           String?
+  team                 String?
+  designation          String?
+  startDate            DateTime // first day of probation (the date of joining unless HR changed it)
+  months               Int              @default(3)
+  endDate              DateTime // last day of probation (moves when it is extended)
+  originalEndDate      DateTime
+  status               String           @default("In probation") // In probation | Extended | Confirmed | Service ending | Not tracked
+  reviewerUserId       String? // the Team Lead who reviews (User.id)
+  reviewerName         String?
+  reviewScore          Int? // 0-100, from the Team Lead's latest review
+  reviewRecommendation String? // Confirm | Extend | End service
+  reviewNote           String?
+  reviewedAt           DateTime?
+  reviewedByName       String?
+  confirmedOn          DateTime?
+  decisionNote         String?
+  decidedByName        String?
+  decidedAt            DateTime?
+  letterDocumentId     String? // EmployeeDocument.id of the confirmation letter
+  remindState          String? // JSON { milestone: day } so each reminder goes once
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  events               ProbationEvent[]
+
+  @@index([status, endDate])
+  @@index([department])
+}
+
+model ProbationEvent {
+  id             String          @id @default(cuid())
+  recordId       String
+  record         ProbationRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  kind           String // Started | Review | Extended | Confirmed | Service ending | Reopened | Tracking started | Reminder
+  at             DateTime        @default(now())
+  byUserId       String?
+  byName         String?
+  fromEnd        DateTime?
+  toEnd          DateTime?
+  score          Int?
+  recommendation String?
+  note           String?
+
+  @@index([recordId, at])
+}

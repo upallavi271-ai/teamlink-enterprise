@@ -79,6 +79,7 @@ import Integrations from './pages/admin/Integrations.jsx';
 import Notifications from './pages/admin/Notifications.jsx';
 import AuditLogs from './pages/admin/AuditLogs.jsx';
 import HrAuditChecks from './pages/admin/HrAuditChecks.jsx';
+import Probation from './pages/hrms/Probation.jsx';
 import SystemSafety from './pages/admin/SystemSafety.jsx';
 import CredentialsVault from './pages/admin/CredentialsVault.jsx';
 import FitSettings from './components/resume/FitSettings.jsx'; // fit_: Admin → Fit settings
@@ -309,6 +310,7 @@ export default function App() {
         <Route path="payroll" element={<Payroll />} />
         <Route path="performance" element={<PerformanceDevelopment />} />
         <Route path="employee-services" element={<EmployeeServices />} />
+        <Route path="probation" element={<Probation />} />
         {/* Timesheet is a tab of Employee Services AND a screen of its own, so
             it stays bookmarkable — the same convention Agreements, Offers and
             Joining follow. It is not listed in the sidebar, which keeps the
