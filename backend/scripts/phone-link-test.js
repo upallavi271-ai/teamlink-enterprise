@@ -299,6 +299,7 @@ const ist = (days) => new Date(Date.now() + 330 * 60000 + days * 86400000).toISO
   check('it dials the candidate: "dialing"', (await stepB('dialing')).bridgeStatus === 'dialing');
   check('the candidate answered: "connected"', (await stepB('candidate-answered')).bridgeStatus === 'connected');
   check('the two calls are joined: "merged"', (await stepB('merged')).bridgeStatus === 'merged');
+  check('the moment of joining is kept (the recording is cut to start there, without the operator "on hold" message)', !!(await S.one('SELECT "bridgeMergedAt" FROM "BrowserCall" WHERE "id"=?', b1.body.callId)).bridgeMergedAt);
   check('a bridge event cannot go backwards ("dialing" after "merged" is ignored)', (await stepB('dialing')).bridgeStatus === 'merged');
   const tr = await call('POST', '/phone-link/device/event', { callId: b1.body.callId, event: 'trace', bridge: true, trace: 'candidate call: disconnected cause=2/CALL_BARRED/' }, DK);
   const trRow = await S.one('SELECT "bridgeTrace","bridgeStatus" FROM "BrowserCall" WHERE "id"=?', b1.body.callId);

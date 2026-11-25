@@ -73,14 +73,14 @@ async function findRaw(token) {
 
 // ---- 2. ONE ffmpeg command ----------------------------------------------------------------------------------------------------------
 // for the transcriber only (deleted right after): mono 16 kHz WAV at normal loudness
-function toSttWav(src, dst) {
+function toSttWav(src, dst, skipSec = 0) {
   return new Promise((resolve) => {
-    execFile(ENV.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-ac', '1', '-ar', '16000', '-af', 'loudnorm=I=-18:TP=-2', '-c:a', 'pcm_s16le', dst], { timeout: 180000, windowsHide: true }, (e) => resolve(!e && fs.existsSync(dst) && fs.statSync(dst).size > 44));
+    execFile(ENV.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, ...(skipSec > 0 ? ['-ss', skipSec.toFixed(2)] : []), '-ac', '1', '-ar', '16000', '-af', 'loudnorm=I=-18:TP=-2', '-c:a', 'pcm_s16le', dst], { timeout: 180000, windowsHide: true }, (e) => resolve(!e && fs.existsSync(dst) && fs.statSync(dst).size > 44));
   });
 }
-function toMp3(src, dst) {
+function toMp3(src, dst, skipSec = 0) {
   return new Promise((resolve) => {
-    execFile(ENV.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, '-ac', '1', '-ar', '16000', '-af', 'loudnorm=I=-18:TP=-2', '-c:a', 'libmp3lame', '-b:a', '24k', dst], { /* loudnorm (23 Nov 2026): phone audio is quiet - Whisper heard only "Thank you." in a real call until it was brought up to normal loudness */ timeout: 180000, windowsHide: true }, (e) => resolve(!e && fs.existsSync(dst) && fs.statSync(dst).size > 0));
+    execFile(ENV.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', src, ...(skipSec > 0 ? ['-ss', skipSec.toFixed(2)] : []), '-ac', '1', '-ar', '16000', '-af', 'loudnorm=I=-18:TP=-2', '-c:a', 'libmp3lame', '-b:a', '24k', dst], { /* loudnorm (23 Nov 2026): phone audio is quiet - Whisper heard only "Thank you." in a real call until it was brought up to normal loudness */ timeout: 180000, windowsHide: true }, (e) => resolve(!e && fs.existsSync(dst) && fs.statSync(dst).size > 0));
   });
 }
 
@@ -240,8 +240,14 @@ async function processCall(id) {
   try { user = await require('../utils/identity').resolveIdentity(row.userId); } catch { user = null; } // eslint-disable-line global-require
   if (row.recordingStatus === 'off') {
     set.recordingNote = 'Recording was switched off for this call.';
+  } else if (row.bridgeDeviceId && !row.bridgeMergedAt) {
+    // TALK IN TEAMLINK that never joined the candidate: the file holds only the office leg (the operator's "on hold" message), nothing to keep
+    const raw0 = await findRaw(row.token).catch(() => null); if (raw0) try { fs.unlinkSync(raw0); } catch { /* none */ }
+    Object.assign(set, { recordingStatus: 'none', recordingNote: 'Not kept: the candidate was never joined to the call.' });
   } else {
     const raw = await findRaw(row.token);
+    // TALK IN TEAMLINK: the file starts when the phone answered the office leg; the conversation starts when the phone joined the candidate in
+    const skip = row.bridgeMergedAt && row.answerAt ? Math.max(0, (Date.parse(row.bridgeMergedAt) - Date.parse(row.answerAt)) / 1000 - 0.3) : 0;
     if (!raw) {
       Object.assign(set, { recordingStatus: 'missing', recordingNote: 'No recording file came from the phone system (is the generated dialplan installed and recording on?).' });
     } else {
@@ -250,12 +256,12 @@ async function processCall(id) {
       const dir = storeDir();
       const mp3 = path.join(dir, `${row.id}.mp3`);
       let stored = null;
-      if (await toMp3(raw, mp3)) stored = mp3;
+      if (await toMp3(raw, mp3, skip)) stored = mp3;
       else { const wav = path.join(dir, `${row.id}.wav`); fs.copyFileSync(raw, wav); stored = wav; set.recordingNote = 'Kept as WAV: ffmpeg is not available on this server.'; }
-      Object.assign(set, { recordingStatus: 'done', recordingPath: path.relative(storeDir(), stored), recordingBytes: fs.statSync(stored).size, recordingSec: info ? info.seconds : null });
+      Object.assign(set, { recordingStatus: 'done', recordingPath: path.relative(storeDir(), stored), recordingBytes: fs.statSync(stored).size, recordingSec: info ? Math.max(0, Math.round(info.seconds - skip)) : null });
       // the transcriber gets a clean 16 kHz WAV at normal loudness (23 Nov 2026): the small MP3 made Whisper drop most of a real call
       const sttWav = path.join(os.tmpdir(), `tl-stt-${row.id}.wav`);
-      const sttOk = await toSttWav(raw, sttWav);
+      const sttOk = await toSttWav(raw, sttWav, skip);
       let tr;
       try { tr = await transcribe(sttOk ? fs.readFileSync(sttWav) : buf, sttOk ? null : (stored.endsWith('.mp3') ? stored : null)); } finally { try { fs.unlinkSync(sttWav); } catch { /* gone */ } }
       if (tr.text) Object.assign(set, { transcript: clip(tr.text, 60000), transcriptSource: tr.source });

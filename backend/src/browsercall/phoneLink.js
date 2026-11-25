@@ -288,7 +288,7 @@ async function bridgeEvent(d, r, ev, b) {
   if (ev === 'trace') return { call: r };
   if (BRIDGE_NEXT[ev]) {
     const [to, from] = BRIDGE_NEXT[ev];
-    await run(`UPDATE "BrowserCall" SET "bridgeStatus"=?, "updatedAt"=? WHERE "id"=? AND "bridgeStatus" IN (${from.map(() => '?').join(',')})`, to, now, r.id, ...from);
+    await run(`UPDATE "BrowserCall" SET "bridgeStatus"=?, "updatedAt"=?${to === 'merged' ? ', "bridgeMergedAt"=COALESCE("bridgeMergedAt", ?)' : ''} WHERE "id"=? AND "bridgeStatus" IN (${from.map(() => '?').join(',')})`, to, now, ...(to === 'merged' ? [now] : []), r.id, ...from);
   } else if (ev === 'failed') {
     const why = oneLine(b && b.reason).slice(0, 200) || 'The phone could not connect the candidate.';
     await run(`UPDATE "BrowserCall" SET "bridgeStatus"='failed', "bridgeNote"=?, "updatedAt"=? WHERE "id"=? AND "bridgeStatus" NOT IN ('ended','failed')`, `Phone: ${why}`, now, r.id);

@@ -80,6 +80,8 @@ const ALTERS = [
   'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeTalkSec" INTEGER',
   'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeNote" TEXT',
   'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeTrace" TEXT',
+  // when the phone joined the candidate in (founder 2026-11-25: the recording starts there, not with the operator's "on hold" message)
+  'ALTER TABLE "BrowserCall" ADD COLUMN "bridgeMergedAt" TEXT',
 ];
 
 // 2026-11-24 (founder: "16 sims - edu 4, team 4, medical 4, mfg 4"): a port can be given to a recruiter before its SIM's number is known
