@@ -6,6 +6,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
+// Profit & Loss + forecast (founder 2026-11-25: "profit & loss button invoices lo ivvu"): the same screen as Accounts > Reports > Profit & Loss
+import ProfitLoss from './reports/ProfitLoss.jsx';
 import Combo from '../components/Combo.jsx';
 import FilterChips from '../components/FilterChips.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
@@ -187,6 +189,7 @@ const readShowAll = () => { const v = readStore(SHOWALL_KEY); return v == null ?
 
 export default function Invoices() {
   const { user } = useAuth();
+  const canPnl = can(user, null, 'reports', 'Accounts Reports', 'view'); // Profit & Loss tab (GET /reports/accounts/pnl asks for it)
   const clientLabel = useClientLabel();
   const canCreate = can(user, 'accounts', 'accounts', 'Invoices', 'create');
   const canPay = can(user, 'accounts', 'accounts', 'Payments', 'create');
@@ -248,7 +251,7 @@ export default function Invoices() {
   //   ?age=0-30 | 31-60 | 61-90 | 90+ | 60+   ?join=new | <applicationId>
   //   ?pay=1 | <invoiceId>   — read once on arrival.
   const [urlQ, setUrlQ] = useSearchParams();
-  const TABS = ['notes', 'payouts', 'check'];
+  const TABS = ['notes', 'payouts', 'check', 'pnl'];
   const tab = TABS.includes(urlQ.get('tab')) ? urlQ.get('tab') : 'invoices';
   const setTab = (t) => { const n = new URLSearchParams(urlQ); if (TABS.includes(t)) n.set('tab', t); else n.delete('tab'); n.delete('raise'); setUrlQ(n, { replace: true }); };
   // this screen's own address (with its tab) for the invoice page's Back link, and the spot on the page (utils/keptPlace.js)
@@ -704,8 +707,26 @@ export default function Invoices() {
       <button type="button" role="tab" aria-selected={tab === 'payouts'} className={`cn-tab${tab === 'payouts' ? ' is-on' : ''}`} onClick={() => setTab('payouts')}>Partner payouts</button>
       {/* Issue 6 — which Paid has proof behind it: read only. */}
       <button type="button" role="tab" aria-selected={tab === 'check'} className={`cn-tab${tab === 'check' ? ' is-on' : ''}`} onClick={() => setTab('check')}>Payment check</button>
+      {canPnl && <button type="button" role="tab" aria-selected={tab === 'pnl'} className={`cn-tab${tab === 'pnl' ? ' is-on' : ''}`} onClick={() => setTab('pnl')}>Profit &amp; Loss</button>}
     </div>
   );
+  if (tab === 'pnl' && canPnl) {
+    return (
+      <div className="inv-page">
+        <header className="inv-head">
+          <div className="inv-head-main">
+            <nav className="inv-crumbs" aria-label="Breadcrumb">
+              <span>TeamLink Accounts</span><span aria-hidden="true">/</span><span>Invoice</span><span aria-hidden="true">/</span><span aria-current="page">Profit &amp; Loss</span>
+            </nav>
+            <h1>Profit &amp; Loss</h1>
+            <p className="inv-lede">What the invoices earned against what payroll and the office bills cost, month by month this financial year, and a forecast to March. Also in Accounts › Reports.</p>
+          </div>
+        </header>
+        {tabBar}
+        <ProfitLoss />
+      </div>
+    );
+  }
   if (tab === 'check') {
     return (
       <div className="inv-page">
