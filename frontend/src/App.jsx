@@ -13,6 +13,8 @@ import Dashboard from './pages/Dashboard.jsx';
 import Requirements from './pages/Requirements.jsx';
 import RequirementDetail from './pages/RequirementDetail.jsx';
 import ClientJobPortal from './pages/ats/ClientJobPortal.jsx';
+import ClientPosts from './pages/portal/ClientPosts.jsx'; // the "Social posts" client login's screens (2026-11-25)
+import ClientAccounts from './pages/portal/ClientAccounts.jsx';
 import Clients from './pages/Clients.jsx';
 import ClientDetail from './pages/ClientDetail.jsx';
 import AgreementFlowPage, { AgreementFlowList } from './pages/AgreementFlowPage.jsx';
@@ -340,6 +342,9 @@ export default function App() {
             with a different permission (requirements/Client Job Portal), so a
             client can never land on the internal workspace above. */}
         <Route path="client-portal" element={<ClientJobPortal />} />
+        {/* The "Social posts" client login (the phone app's client login, 2026-11-25): posts to approve / approved and posted / their social accounts. */}
+        <Route path="client-posts" element={<ClientPosts />} />
+        <Route path="client-accounts" element={<ClientAccounts />} />
         {/* Clients · Requirements · Agreements · Job Portal are one module;
             each tab keeps its own route so it stays bookmarkable. Job Portal
             is another agent's screen — see components/ClientModuleTabs.jsx. */}

@@ -7,7 +7,7 @@
 //     Feedback ticks it for you and locks it while one of them is on.
 //   - Select all / Clear, and small "Fill like Reviewer / Viewer / Billing" links.
 const GROUPS = [['Look', 'What they can see'], ['Do', 'What they can do']];
-const PRESET_WORDS = { REVIEWER: 'Reviewer', VIEWER: 'Viewer', BILLING: 'Billing' };
+const PRESET_WORDS = { REVIEWER: 'Reviewer', VIEWER: 'Viewer', BILLING: 'Billing', MARKETING: 'Social posts (phone app login)' };
 
 export default function PortalTickList({
   list = [], presets = [], needsView = [], value = [], onChange, disabled = false,

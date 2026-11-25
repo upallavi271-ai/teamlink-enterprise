@@ -1,0 +1,55 @@
+/* The "Social posts" client login (the phone app's client login, 2026-11-25): pages/portal/ClientPosts.jsx and ClientAccounts.jsx.
+   Everything is scoped under .cpx so nothing here can restyle another screen. Phone first: one column, big tap targets. */
+.cpx { max-width: 720px; margin: 0 auto; }
+.cpx h1 { font-size: 20px; margin: 0 0 2px; }
+.cpx .cpx-sub { color: var(--muted, #64748b); font-size: 13px; margin-bottom: 12px; }
+.cpx .cpx-tabs { display: flex; gap: 6px; margin: 8px 0 14px; }
+.cpx .cpx-tab { flex: 1 1 0; border: 1px solid var(--line, #e2e8f0); background: #fff; border-radius: 10px; padding: 11px 8px; font: inherit; font-size: 14px; font-weight: 600; color: inherit; cursor: pointer; }
+.cpx .cpx-tab.on { background: #0a74bd; border-color: #0a74bd; color: #fff; }
+.cpx .cpx-list { display: grid; gap: 12px; }
+.cpx .cpx-card { background: #fff; border: 1px solid var(--line, #e2e8f0); border-radius: 12px; overflow: hidden; }
+.cpx .cpx-card.need { border-color: #f1c15b; box-shadow: 0 0 0 2px #fdf1d3; }
+.cpx .cpx-thumb { display: block; width: 100%; max-height: 260px; object-fit: cover; background: #eef1ef; }
+.cpx .cpx-thumb-video { display: flex; align-items: center; justify-content: center; height: 120px; background: #22333b; color: #fff; font-size: 14px; font-weight: 600; }
+.cpx .cpx-body { padding: 12px 14px 14px; }
+.cpx .cpx-title { font-size: 16px; font-weight: 700; margin: 0 0 4px; overflow-wrap: anywhere; }
+.cpx .cpx-meta { color: var(--muted, #64748b); font-size: 12.5px; }
+.cpx .cpx-preview { font-size: 14px; line-height: 1.5; color: #334155; margin: 6px 0 0; overflow-wrap: anywhere; }
+.cpx .cpx-chip { display: inline-block; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; background: #e2e8f0; color: #334155; }
+.cpx .cpx-chip.amber { background: #fdf1d3; color: #7a4a07; }
+.cpx .cpx-chip.green { background: #e1f5e8; color: #14532d; }
+.cpx .cpx-chip.red { background: #fde7e4; color: #8a1c13; }
+.cpx .cpx-chip.blue { background: #dbeafe; color: #1e3a8a; }
+.cpx .cpx-btn { display: block; width: 100%; box-sizing: border-box; border: 0; border-radius: 10px; padding: 14px 16px; font: inherit; font-size: 16px; font-weight: 700; cursor: pointer; background: #0a74bd; color: #fff; margin-top: 12px; text-align: center; }
+.cpx .cpx-btn.ok { background: #15803d; }
+.cpx .cpx-btn.no { background: #fff; color: #8a1c13; border: 2px solid #d9534f; }
+.cpx .cpx-btn.plain { background: #fff; color: #1e293b; border: 1px solid var(--line, #cbd5e1); }
+.cpx .cpx-btn[disabled] { opacity: .55; cursor: default; }
+.cpx .cpx-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cpx .cpx-media { width: 100%; border-radius: 10px; background: #000; display: block; }
+.cpx .cpx-note { background: #f1f5f9; border-radius: 10px; padding: 10px 12px; font-size: 14px; line-height: 1.5; margin: 10px 0 0; overflow-wrap: anywhere; }
+.cpx .cpx-words { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 15px; line-height: 1.6; background: #f4f6f5; border-radius: 10px; padding: 12px 14px; margin: 0; }
+.cpx .cpx-pills { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px; }
+.cpx .cpx-pill { border: 1px solid #cbd5e1; background: #fff; border-radius: 18px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.cpx .cpx-pill.on { background: #0a74bd; border-color: #0a74bd; color: #fff; }
+.cpx .cpx-box { background: #f4f6f5; border: 1px solid #cfd8d3; border-radius: 10px; padding: 12px 14px; margin-top: 14px; font-size: 14px; line-height: 1.5; }
+.cpx .cpx-box label { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; cursor: pointer; }
+.cpx .cpx-box input[type=checkbox] { width: 20px; height: 20px; margin-top: 2px; flex: 0 0 auto; }
+.cpx textarea { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 10px; padding: 11px 12px; font: inherit; font-size: 15px; min-height: 96px; margin-top: 6px; }
+.cpx .cpx-label { display: block; font-size: 13px; font-weight: 700; margin: 14px 0 0; }
+.cpx .cpx-msg { border-radius: 10px; padding: 12px 14px; font-size: 14px; line-height: 1.5; margin: 12px 0 0; }
+.cpx .cpx-msg.ok { background: #e1f5e8; color: #14532d; }
+.cpx .cpx-msg.err { background: #fde7e4; color: #8a1c13; }
+.cpx .cpx-msg.info { background: #eef6ff; color: #1d4fa8; }
+.cpx .cpx-back { border: 0; background: none; color: #0a74bd; font: inherit; font-size: 15px; font-weight: 700; padding: 6px 0 10px; cursor: pointer; }
+.cpx .cpx-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 6px 0 14px; }
+.cpx .cpx-stat { background: #fff; border: 1px solid var(--line, #e2e8f0); border-radius: 12px; padding: 10px 6px; text-align: center; }
+.cpx .cpx-stat b { display: block; font-size: 22px; color: #0a74bd; }
+.cpx .cpx-stat span { font-size: 12px; color: var(--muted, #64748b); }
+.cpx .cpx-acct { display: flex; gap: 12px; align-items: flex-start; }
+.cpx .cpx-ico { flex: 0 0 auto; width: 42px; height: 42px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; background: #e8eef5; }
+.cpx .cpx-kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 14px; margin-top: 10px; }
+.cpx .cpx-kv span:nth-child(odd) { color: #475569; }
+.cpx .cpx-kv span:nth-child(even) { font-weight: 700; text-align: right; }
+.cpx h2 { font-size: 15px; margin: 18px 0 8px; }
+.cpx a { color: #0a74bd; }

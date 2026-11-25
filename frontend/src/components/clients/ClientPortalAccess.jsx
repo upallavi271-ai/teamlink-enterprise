@@ -62,7 +62,8 @@ export default function ClientPortalAccess({ clientId }) {
   if (!data) return <div className="small-muted">Loading…</div>;
 
   const { agreement, rights, logins, requests, history, types, permList = [], needsView = [] } = data;
-  const canAdd = (rights.request || rights.approve) && agreement.active && data.seatsLeft > 0;
+  // the agreement must be Active for every login except the "Social posts" one (the phone app's client login), which the server lets through whatever the agreement says
+  const canAdd = (rights.request || rights.approve) && data.seatsLeft > 0;
   const on = logins.filter((l) => !l.off);
   const off = logins.filter((l) => l.off);
 
@@ -113,8 +114,8 @@ export default function ClientPortalAccess({ clientId }) {
         <div className={`notice ${agreement.expired ? 'red' : 'amber'}`}>
           <span>
             {agreement.expired
-              ? 'The agreement has ended. Switch logins off until it is renewed.'
-              : `Logins open only when the agreement is Active. Now: ${agreement.words}.`}
+              ? 'The agreement has ended. Switch logins off until it is renewed. A "Social posts" login (posts and social accounts only) can still be added.'
+              : `Logins open only when the agreement is Active. Now: ${agreement.words}. A "Social posts" login (posts and social accounts only) can still be added.`}
           </span>
         </div>
       )}

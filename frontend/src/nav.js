@@ -55,6 +55,14 @@ export function isExternalUser(user) {
   return EXTERNAL_ROLES.includes(user?.role) || EXTERNAL_ROLES.includes(user?.atsRole);
 }
 
+// THE "SOCIAL POSTS" CLIENT LOGIN (2026-11-25, the phone app's client login): a CLIENT whose ONLY tick is CREATIVE (Client 360 > Portal access > "Social posts").
+// It sees TeamLink's posts for its own company to approve or reject, the approved / posted ones, and its social accounts (read only), and nothing else.
+// A client with other ticks keeps My Portal exactly as before.
+export function isPostsOnlyClient(user) {
+  const caps = user && user.portalCaps;
+  return !!user && !!user.clientId && (user.role === 'CLIENT' || user.atsRole === 'CLIENT') && Array.isArray(caps) && caps.length === 1 && caps[0] === 'CREATIVE';
+}
+
 const EXTERNAL_SECTION_LABEL = {
   dashboard: 'Dashboard',
   hrms: 'My Workspace',
@@ -62,6 +70,7 @@ const EXTERNAL_SECTION_LABEL = {
   accounts: 'Billing',
   admin: 'Settings',
   reports: 'Reports',
+  posts: 'Social posts',
 };
 
 export function sectionLabel(section, user) {
@@ -124,8 +133,15 @@ const leaf = (icon, to, label, perms, product, unless) => ({
 // The group headings, and the standalone Dashboard entry above them.
 export const SECTION_ICON = {
   dashboard: '🏠', hrms: '👥', ats: '🎯',
-  accounts: '💰', reports: '📊', admin: '⚙️', crm: '🤝',
+  accounts: '💰', reports: '📊', admin: '⚙️', crm: '🤝', posts: '📣',
 };
+
+// The "Social posts" client login's three screens (isPostsOnlyClient, below). No permission list: the server decides what the login may read (routes/portalPosts.js).
+export const POSTS_ITEMS = [
+  { ...leaf('📝', '/client-posts', 'Posts to approve', null), when: (u) => isPostsOnlyClient(u) },
+  { ...leaf('✅', '/client-posts?tab=done', 'Approved & posted', null), when: (u) => isPostsOnlyClient(u) },
+  { ...leaf('📣', '/client-accounts', 'My social accounts', null), when: (u) => isPostsOnlyClient(u) },
+];
 
 export const HRMS_ITEMS = [
   leaf('📊', '/hrms', 'HRMS Dashboard', [['hrms', 'HRMS Dashboard', 'view']]),
@@ -511,6 +527,8 @@ export function groupsForUser(user) {
   // HRMS and Administration entries of the staff menu answered "Forbidden. This login can open only its own portal". Their invoices, agreement,
   // requirements and candidates are tabs INSIDE My Portal; the only other entries are their own Notifications and Profile.
   if (isExternalUser(user)) {
+    // 2026-11-25: the "Social posts" client login (only the CREATIVE tick) gets the three social screens and nothing else (the phone app's client login)
+    if (isPostsOnlyClient(user)) { add('posts', 'Social posts', POSTS_ITEMS); return groups; }
     add('ats', sectionLabel('ats', user), atsItemsFor(user));
     const ownOnly = ADMIN_ITEMS.filter((i) => ALWAYS_OPEN_PATHS.some((p) => i.to === p || String(i.to || '').startsWith(`${p}/`)));
     add('admin', sectionLabel('admin', user), ownOnly);
@@ -557,6 +575,7 @@ export function flattenGroups(groups) {
 // Returns [[id, label, items, icon], ...] like groupsForUser, or null for a client / candidate login (their menu is their own portal).
 // ---------------------------------------------------------------------------
 export function phoneGroupsFor(user) {
+  if (isPostsOnlyClient(user)) return [['phone-posts', 'Social posts', visibleItems(user, POSTS_ITEMS), SECTION_ICON.posts]]; // the client login of the phone app: three entries (Sign out is the button under the menu)
   if (!user || isExternalUser(user)) return null;
   const find = (items, to) => items.find((i) => i.to === to);
   const as = (item, patch) => (item ? { ...item, ...patch } : null);
@@ -616,6 +635,7 @@ const SECTION_OF_PATH = [
   [/^\/reports\/accounts(\/|$)/, 'accounts'],
   [/^\/reports/, 'reports'],
   [/^\/admin/, 'admin'],
+  [/^\/client-(posts|accounts)(\/|$)/, 'posts'], // the "Social posts" client login's own screens (2026-11-25)
 ];
 // THE EMPLOYEE LIST BELONGS TO WHICHEVER ENTRY THE USER ACTUALLY HAS.
 //

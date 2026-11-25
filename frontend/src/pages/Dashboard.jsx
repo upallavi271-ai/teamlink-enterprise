@@ -6,7 +6,7 @@ import sharedGet from '../utils/sharedGet';
 import { useAuth } from '../context/AuthContext.jsx';
 import { stageLabel, stepOf } from '../atsVocab';
 import { can, canModule, isClientUser, workRoleLabel } from '../permissions';
-import { REPORTS_ITEMS, visibleItems } from '../nav';
+import { REPORTS_ITEMS, visibleItems, isPostsOnlyClient } from '../nav';
 import DateRangePicker, { useDateRange, rangeParams, resolveRange } from '../components/DateRangePicker.jsx';
 import InsightsPanel from '../components/charts/InsightsPanel.jsx';
 import Reminders from './office/Reminders.jsx';
@@ -219,6 +219,7 @@ export default function Dashboard() {
   // pipeline and nothing else — never an internal product block, even where
   // their login carries a product flag for the portal screens.
   // User notes #4 — an outside login's home IS its portal.
+  if (isPostsOnlyClient(user)) return <Navigate to="/client-posts" replace />; // the "Social posts" client login opens on the posts waiting for it (2026-11-25)
   if (isClientUser(user)) return <Navigate to="/client-portal" replace />;
   if (user && user.role === 'CANDIDATE') return <Navigate to="/my-applications" replace />;
   // Super Admin / Admin (founder, 2026-10-23): the home IS the 360° Control Tower and nothing else. The module rows that used to sit below it

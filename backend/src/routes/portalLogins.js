@@ -42,10 +42,12 @@ const FEATURE = 'Client Portal Logins';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const norm = (e) => String(e || '').trim().toLowerCase();
 const REQUEST_KINDS = ['CLIENT_LOGIN', 'CLIENT_DISABLE', 'CLIENT_PERMS'];
-const SHORT_TYPE = { REVIEWER: 'Reviewer', VIEWER: 'Viewer', BILLING: 'Billing', CUSTOM: 'Custom' };
+const SHORT_TYPE = { REVIEWER: 'Reviewer', VIEWER: 'Viewer', BILLING: 'Billing', MARKETING: 'Social posts', CUSTOM: 'Custom' };
 // The display label of a login / request: Reviewer / Viewer / Billing / Custom (ticks equal a preset or not).
 const typeWords = (x) => T.labelFor(x && typeof x === 'object' ? x : { portalType: x });
 const PERM_HELP = 'Tick at least one thing this person may do.';
+// the "Social posts" login (ticks = ONLY the creative-work tick): the phone app's client login (pages/portal/ClientPosts.jsx); it does not depend on the staffing agreement
+const socialOnly = (caps) => Array.isArray(caps) && caps.length === 1 && caps[0] === 'CREATIVE';
 
 // The ticks asked for in a request body: a list of keys (or a comma string),
 // or — for an older caller — one of the three preset names. Returns { caps } or { error }.
@@ -165,7 +167,8 @@ async function sendInvite(user, req) {
 // Every rule a NEW client login must pass. Returns an error string or null.
 async function whyNot({ client, email, caps, permError, forRequest }) {
   const gate = L.agreementGate(client);
-  if (!gate.active) return `Client logins open only when the agreement is Active. This client's agreement: ${gate.words}.`;
+  // 2026-11-25: a "Social posts" login (the phone app's client login: ONLY the creative-work tick) is not about the staffing agreement, so it can be added whatever that agreement says; every other login still needs an Active agreement
+  if (!gate.active && !socialOnly(caps)) return `Client logins open only when the agreement is Active (only a "Social posts" login can be added without it). This client's agreement: ${gate.words}.`;
   if (!caps || !caps.length) return permError || PERM_HELP;
   if (!EMAIL_RE.test(email)) return 'Enter a valid email address.';
   const [taken] = await prisma.$queryRaw`SELECT id FROM User WHERE lower(trim(email)) = ${email} LIMIT 1`;
@@ -206,7 +209,7 @@ async function createLogin({ client, name, email, caps, req }) {
 function shapeLogin(u, gate) {
   const st = L.loginState(u);
   const flags = [];
-  if (!L.isOff(u) && !gate.active) flags.push({ key: 'agreement', label: `Agreement ${gate.words.toLowerCase()} — switch off?`, tone: 'red' });
+  if (!L.isOff(u) && !gate.active && !socialOnly(T.capsOf(u))) flags.push({ key: 'agreement', label: `Agreement ${gate.words.toLowerCase()} — switch off?`, tone: 'red' });
   if (L.reviewDue(u)) flags.push({ key: 'review', label: 'Quarterly check due', tone: 'orange' });
   return {
     id: u.id, name: u.name, email: u.email, type: u.portalType || null, typeWords: typeWords(u),
@@ -399,7 +402,7 @@ router.post('/client/:clientId/users/:userId/enable', wrap(async (req, res) => {
   const { client, target } = got;
   if (!L.isOff(target)) return res.status(409).json({ error: 'This login is already on.' });
   const gate = L.agreementGate(client);
-  if (!gate.active) return res.status(409).json({ error: `Client logins open only when the agreement is Active. Now: ${gate.words}.` });
+  if (!gate.active && !socialOnly(T.capsOf(target))) return res.status(409).json({ error: `Client logins open only when the agreement is Active. Now: ${gate.words}.` });
   const { maxClientLogins } = await portalSettings();
   const seats = await L.seatsUsed(client.id);
   if (seats.logins >= maxClientLogins) return res.status(409).json({ error: `This company already has ${seats.logins} logins — the most allowed is ${maxClientLogins}.` });
@@ -414,7 +417,7 @@ router.post('/client/:clientId/users/:userId/resend', wrap(async (req, res) => {
   const { client, target } = got;
   if (L.isOff(target)) return res.status(409).json({ error: 'Switch this login on first.' });
   const gate = L.agreementGate(client);
-  if (!gate.active) return res.status(409).json({ error: `The agreement is ${gate.words.toLowerCase()} — no new invite links.` });
+  if (!gate.active && !socialOnly(T.capsOf(target))) return res.status(409).json({ error: `The agreement is ${gate.words.toLowerCase()} — no new invite links.` });
   const invite = await sendInvite(target, req);
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Client portal invite link re-sent', entity: 'Client', entityId: client.id, toValue: `${target.email} · ${invite.sent ? 'mailed' : 'not mailed'}` });
   return res.json({ ok: true, message: invite.message, link: invite.link });
@@ -466,7 +469,7 @@ router.post('/client/:clientId/users/:userId/type', wrap(async (req, res) => {
   if (!got || !approverOnly(got, res)) return undefined;
   const { client, target } = got;
   const t = String((req.body && req.body.portalType) || '').toUpperCase();
-  if (!T.PORTAL_TYPES.includes(t)) return res.status(400).json({ error: 'Choose Reviewer, Viewer or Billing.' });
+  if (!T.PORTAL_TYPES.includes(t)) return res.status(400).json({ error: 'Choose Reviewer, Viewer, Billing or Social posts.' });
   await applyPerms({ target, caps: T.normalise(T.PRESET_CAPS[t]), actor: req.user, client, via: 'type' });
   return res.json({ ok: true, message: `${target.name} is now ${SHORT_TYPE[t]}.` });
 }));

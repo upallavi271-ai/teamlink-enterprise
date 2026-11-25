@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { workRoleLabel } from '../permissions';
 import {
   sectionLabel, mayRenderSection, groupsForUser, phoneGroupsFor, flattenGroups, sectionOf, scoreMatch,
-  SECTION_ICON, SETUP_TABS, INTERVIEW_TABS, moduleTabLabel, isExternalUser,
+  SECTION_ICON, SETUP_TABS, INTERVIEW_TABS, moduleTabLabel, isExternalUser, isPostsOnlyClient,
 } from '../nav';
 import ModuleTabs from './ModuleTabs.jsx';
 import Logo from './Logo.jsx';
@@ -221,10 +221,11 @@ export default function Shell() {
           <button type="button" className="sidebar-close" ref={drawer.closeRef} onClick={closeSidebar} aria-label="Close menu">✕</button>
         </div>
         {/* Search moves in here on a phone, where the top bar has no room for it. */}
-        {isPhone && hasAtsWork(user) && <div className="sidebar-search"><GlobalSearch /></div>}
+        {isPhone && hasAtsWork(user) && !isPostsOnlyClient(user) && <div className="sidebar-search"><GlobalSearch /></div>}
         <nav className="sidebar-nav" aria-label="Sections">
           {phoneShort && (
             <>
+              {!isPostsOnlyClient(user) && (
               <div
                 className={'sb-item' + (pathname === '/' ? ' top-active' : '')}
                 {...press(() => navTo('/'), 'link')}
@@ -232,6 +233,7 @@ export default function Shell() {
               >
                 <Ico char="🏠" />Home
               </div>
+              )}
               {phoneGroups.map(([gid, glabel, gitems, gicon]) => (
                 <div className="sb-group open" key={gid}>
                   <div className="sb-group-head" style={{ cursor: 'default' }}>

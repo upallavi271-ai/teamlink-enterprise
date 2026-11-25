@@ -494,6 +494,8 @@ async function resolveIdentity(userId, preloaded = null) {
   };
   identity.workspace = landingFor(identity);
   identity.landingPath = WORKSPACE_HOME[identity.workspace] || '/';
+  // 2026-11-25: the "Social posts" client login (a CLIENT whose only tick is the creative-work one, the phone app's client login) opens on its posts, not on My Portal
+  if ((identity.role === 'CLIENT' || identity.atsRole === 'CLIENT') && Array.isArray(identity.portalCaps) && identity.portalCaps.length === 1 && identity.portalCaps[0] === 'CREATIVE') identity.landingPath = '/client-posts';
   // SUPER ADMIN IS A SYSTEM ACCOUNT, NOT AN EMPLOYEE (utils/systemAccounts.js).
   // It lands straight on the overall admin Dashboard ("/"), never on a product
   // workspace, and the screens use `systemAccount` to leave out every

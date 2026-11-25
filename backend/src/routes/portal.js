@@ -1122,6 +1122,7 @@ router.post('/public/claim', wrap(async (req, res) => {
 
 // Candidate OTP sign-in / self-registration / invite links (spec B2).
 router.use('/client/creative', require('./portalCreative')); // AI Marketing in the client's own login (2026-11-14)
+router.use('/client/posts', require('./portalPosts')); // the same on the phone: posts to approve, approved / posted, the company's social accounts (2026-11-25)
 router.use('/public', require('./portalPublic'));
 
 // Client portal logins: Client 360 -> Portal access, quarterly review (spec B1).

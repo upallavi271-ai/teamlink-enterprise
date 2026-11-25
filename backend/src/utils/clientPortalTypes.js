@@ -49,16 +49,19 @@ const CAP_KEYS = CAPS.map((c) => c.key);
 const NEEDS_VIEW = ['DECIDE', 'INTERVIEW', 'FEEDBACK', 'OFFERS'];
 
 // The three old types, now only quick starting points.
-const PORTAL_TYPES = ['REVIEWER', 'VIEWER', 'BILLING'];
+const PORTAL_TYPES = ['REVIEWER', 'VIEWER', 'BILLING', 'MARKETING'];
 const PRESET_CAPS = {
   REVIEWER: ['VIEW', 'AGREEMENT', 'REQUEST', 'DECIDE', 'INTERVIEW', 'FEEDBACK'],
   VIEWER: ['VIEW', 'AGREEMENT'],
   BILLING: ['INVOICES'],
+  // 2026-11-25: a client who only approves the social media posts we make for them and sees their social accounts (the phone app's client login: pages/portal/ClientPosts.jsx)
+  MARKETING: ['CREATIVE'],
 };
 const PORTAL_TYPE_LABELS = {
   REVIEWER: 'Reviewer — shortlist / reject / feedback, ask for interviews, ask for requirements',
   VIEWER: 'Viewer — view only',
   BILLING: 'Billing — invoices only',
+  MARKETING: 'Social posts — approve the posts we make for you and see your social accounts (the phone app login)',
 };
 const READ_ACTIONS = ['view', 'export'];
 
@@ -107,7 +110,7 @@ const CHIP_WORDS = {
   REQUEST: 'Ask for a requirement', DECIDE: 'Shortlist / reject', INTERVIEW: 'Ask for interviews', FEEDBACK: 'Give feedback', OFFERS: 'Send offer / joining letters', CREATIVE: 'Approve creative work',
 };
 const chipsOf = (caps) => normalise(caps).map((k) => CHIP_WORDS[k]);
-const TYPE_WORDS = { REVIEWER: 'Reviewer', VIEWER: 'Viewer', BILLING: 'Billing', CUSTOM: 'Custom' };
+const TYPE_WORDS = { REVIEWER: 'Reviewer', VIEWER: 'Viewer', BILLING: 'Billing', MARKETING: 'Social posts', CUSTOM: 'Custom' };
 function labelFor(user) {
   const caps = capsOf(user);
   if (!caps) return 'Full access (older login)';

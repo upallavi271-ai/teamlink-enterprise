@@ -133,6 +133,7 @@ async function create(u, b = {}) {
     id, kind, it.id, S.clip(it.title, 120), S.clip(b.clientId, 40) || null, clientName, S.clip(b.contactName, 120) || null, email || null, S.clip(b.contactPhone, 30) || null, S.clip(b.message, 400) || null,
     snapshotOf(kind, it), now + days * DAY, it.department || null, u.id, S.clip(u.name, 80), now, now, decide ? 'decide' : 'confirm');
   await logAudit({ userId: u.id, actorName: u.name, action: decide ? 'Omni-Channel AI Marketing: sent to a client to decide (client approval is the approval)' : 'Omni-Channel AI Marketing: sent to a client for approval', entity: TABLE, entityId: id, toValue: `${it.title} (${kind}) to ${clientName}; link valid ${days} day(s)` });
+  await require('./clientPhone').announce(S.clip(b.clientId, 40) || null, clientName, 'A post is waiting for your approval', `"${S.clip(it.title, 60)}" is ready for you to check. Open it, then tap Approve, or Reject and tell us why.`); // eslint-disable-line global-require -- the company's client logins get a bell (and a phone alert if they switched alerts on)
   return { review: full(await row(id)) };
 }
 async function list(u, { kind = '', itemId = '' } = {}) {
@@ -444,6 +445,7 @@ async function reopen(reviewId, { message = '', user = null } = {}) {
   if (r.kind === 'image') { try { await Plan.onReopen(r.itemId, item); } catch (e) { console.error('[omni-mk] posting plan reopen:', e.message); } } // eslint-disable-line no-console -- the earlier permission is spent; words the team never edited follow the changed banner
   if (user) { const held = await moduleOf(r.kind).holdForClient(user, item); if (held && held.error) return held; }
   await logAudit({ userId: r.createdById, actorName: 'TeamLink', action: 'Omni-Channel AI Marketing: client link opened again with the changed version', entity: TABLE, entityId: r.id, toValue: `${r.itemTitle} for ${r.clientName}` });
+  await require('./clientPhone').announce(r.clientId || null, r.clientName, 'A new version is waiting for your approval', `We changed "${S.clip(r.itemTitle, 60)}" the way you asked. Open it, then tap Approve, or Reject and tell us why.`); // eslint-disable-line global-require
   return { ok: true };
 }
 
