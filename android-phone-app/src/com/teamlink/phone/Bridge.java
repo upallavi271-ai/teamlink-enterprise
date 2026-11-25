@@ -32,16 +32,27 @@ final class Bridge {
     private Bridge() { }
 
     static boolean armed() { return id != null && System.currentTimeMillis() < armedUntil && officeCall == null; }
-    static boolean busy() { return id != null && (officeCall != null || candidateCall != null || System.currentTimeMillis() < armedUntil); }
+    static boolean busy() { return id != null && (officeCall != null || candidateCall != null || LegacyBridge.active || System.currentTimeMillis() < armedUntil); }
+    /** The realme-dialler path answered the office call: nothing else may be taken as the office call now. */
+    static void officeAnsweredLegacy() { armedUntil = 0; }
+    static void reportFor(String callId, String ev, long seconds, String reason) { report(callId, ev, seconds, reason); }
 
     /** TeamLink says: a bridge call is coming to this phone in the next seconds. */
     static void arm(Context c, String callId, String candidate, int seconds) {
         app = c.getApplicationContext();
         if (busy()) { report(callId, "failed", 0, "The phone is already on a TeamLink call."); return; }
-        if (!TlInCallService.isDefaultDialer(app)) { report(callId, "failed", 0, "TeamLink Phone is not the phone's Phone app (open the app and tap \"Make TeamLink Phone the Phone app\")."); return; }
+        final boolean phoneApp = TlInCallService.isDefaultDialer(app);
         id = callId; number = candidate; armedUntil = System.currentTimeMillis() + Math.max(20, seconds) * 1000L;
         officeCall = null; candidateCall = null; candidateActiveAt = 0; merged = false; dialled = false; waitingForHold = false;
-        trace("armed (app " + BuildInfo.VERSION + ", " + Build.MANUFACTURER + " " + Build.MODEL + ", Android " + Build.VERSION.RELEASE + ")");
+        trace("armed (app " + BuildInfo.VERSION + ", " + Build.MANUFACTURER + " " + Build.MODEL + ", Android " + Build.VERSION.RELEASE + ", " + (phoneApp ? "Phone app" : "realme dialler") + ")");
+        if (!phoneApp) {
+            // the phone keeps its own dialler: answer / dial / end through Telecom, merge through the Accessibility service (LegacyBridge)
+            LegacyBridge.arm(c);
+            main.postDelayed(new Runnable() {
+                public void run() { if (callId.equals(id) && !LegacyBridge.answered) { report(callId, "failed", 0, "The office line call did not reach the phone in time."); LegacyBridge.active = false; reset(); } }
+            }, Math.max(20, seconds) * 1000L + 2000);
+            return;
+        }
         // a call that is already ringing (it came before TeamLink's message) is the office call
         main.post(new Runnable() { public void run() { TlInCallService s = TlInCallService.instance; if (s != null) s.answerRingingForBridge(); } });
         main.postDelayed(new Runnable() {
@@ -160,6 +171,15 @@ final class Bridge {
         if (s != null) { try { s.setMuted(false); } catch (Exception ignored) { } }
         report(callId, "ended", talk, null);
         new Prefs(app).setLastCall(talk > 0 ? "Last bridge: talked " + talk + " s" : "Last bridge: the candidate did not answer");
+    }
+
+    /** TeamLink's side (the recruiter's browser) hung up: end the phone's calls too. */
+    static void endFromTeamLink() {
+        if (id == null) return;
+        trace("TeamLink side ended: ending the phone's calls");
+        if (LegacyBridge.active) { LegacyBridge.endCalls(); return; }
+        try { if (candidateCall != null) candidateCall.disconnect(); } catch (Exception ignored) { }
+        try { if (officeCall != null) officeCall.disconnect(); } catch (Exception ignored) { }
     }
 
     static String stateWord(int s) {

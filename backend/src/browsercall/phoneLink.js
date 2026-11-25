@@ -238,6 +238,9 @@ async function nextFor(d) {
   await expire();
   const hang = await all(`SELECT "id" FROM "BrowserCall" WHERE "lineId"=? AND "status"='calling' AND "hangupReason"='hangup-requested'`, `${PREFIX}${d.id}`);
   if (hang.length) return { hangup: hang.map((h) => h.id) };
+  // the recruiter's browser leg of a bridge has ended: the phone ends its calls too
+  const ended = await all(`SELECT "id" FROM "BrowserCall" WHERE "bridgeDeviceId"=? AND "bridgeStatus" IN ('answered','dialing','connected','merged') AND "status" IN ('completed','failed','missed','busy','cancelled')`, d.id);
+  if (ended.length) return { bridgeEnd: ended.map((x) => x.id) };
   if (d.paused) return {};
   await expireBridges();
   const br = await one(`SELECT * FROM "BrowserCall" WHERE "bridgeDeviceId"=? AND "bridgeStatus"='arming' ORDER BY "startAt" LIMIT 1`, d.id);
@@ -410,5 +413,5 @@ module.exports = {
   PREFIX, NEXT, OUTCOME: Object.keys(OUTCOME), LIVE, ensure, statusOf, shape, ids,
   makePairCode, devices, byId, update, unpair, pair, deviceByToken, poll, event, touch,
   usableBy, queueCall, hangup, setLink, saveOutcome, expire, mayUse, _waiters: waiters,
-  armBridge, bridgeReady, bridgeBusy, expireBridges, BRIDGE_EVENTS,
+  armBridge, bridgeReady, bridgeBusy, expireBridges, BRIDGE_EVENTS, wake,
 };

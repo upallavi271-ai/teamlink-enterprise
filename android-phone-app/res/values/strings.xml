@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="merge_service_description">During a TeamLink "talk in TeamLink" call, TeamLink Phone presses your dialer\'s Merge button once the candidate answers, so the recruiter in TeamLink and the candidate are joined. It reads and does nothing else, at no other time.</string>
+</resources>

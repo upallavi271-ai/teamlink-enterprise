@@ -330,6 +330,16 @@ const ist = (days) => new Date(Date.now() + 330 * 60000 + days * 86400000).toISO
   check('a bridge the phone never answered fails after ~75 s, saying why', b4.status === 200 && rb4.bridgeStatus === 'failed' && /did not answer the office line call/.test(rb4.bridgeNote), rb4);
   check('the phone\'s own number cannot be the candidate', (await prisma.candidate.update({ where: { id: candB.id }, data: { phone: '9032321414' } }).then(() => call('POST', '/browser-calling/phone/bridge-calls', { candidateId: candB.id, lineId: LINE }, tR))).status !== 200);
   await prisma.candidate.update({ where: { id: candB.id }, data: { phone: phoneB } });
+  // the recruiter hangs up in TeamLink while the bridge is merged: the phone is told to end its calls
+  await legEnds(b4.body.callId);
+  const b5 = await call('POST', '/browser-calling/phone/bridge-calls', { candidateId: cand.id, lineId: LINE }, tR);
+  await call('POST', '/phone-link/device/poll', { wait: 0 }, DK);
+  for (const ev of ['bridge-answered', 'dialing', 'candidate-answered', 'merged']) await call('POST', '/phone-link/device/event', { callId: b5.body.callId, event: ev, bridge: true }, DK); // eslint-disable-line no-await-in-loop
+  await legEnds(b5.body.callId);
+  const p5e = await call('POST', '/phone-link/device/poll', { wait: 0 }, DK);
+  check('the recruiter hangs up in TeamLink: the phone\'s next poll says "end the bridge" for that call', b5.status === 200 && Array.isArray(p5e.body.bridgeEnd) && p5e.body.bridgeEnd.includes(b5.body.callId), p5e.body);
+  await call('POST', '/phone-link/device/event', { callId: b5.body.callId, event: 'ended', bridge: true, durationSec: 20 }, DK);
+  check('...and once the phone says ended, it is not asked again', !((await call('POST', '/phone-link/device/poll', { wait: 0 }, DK)).body.bridgeEnd));
   const bOff = await call('PUT', `/browser-calling/phone/admin/devices/${devId}`, { bridge: false }, tA);
   check('Admin switches "Talk in TeamLink" off again', bOff.body.devices[0].bridge === false);
 

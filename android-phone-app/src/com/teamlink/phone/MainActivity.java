@@ -102,6 +102,12 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 23 && !TlInCallService.isDefaultDialer(this)) {
             box.addView(text("For \"Talk in TeamLink\" (recruiters talk in TeamLink, this phone only lends its number), make this app the phone's Phone app:", 13));
             box.addView(button("Make TeamLink Phone the Phone app", new View.OnClickListener() { public void onClick(View v) { askDialerRole(); } }));
+            if (Build.VERSION.SDK_INT >= 28) {
+                boolean on = MergeService.enabled(this);
+                box.addView(text(on ? "Or keep the realme dialler: Accessibility for TeamLink Phone is ON, so \"Talk in TeamLink\" calls are answered, dialled and merged by themselves."
+                    : "Or keep the realme dialler: turn ON Accessibility > TeamLink Phone (merge calls). It only presses the dialler's Merge button during a TeamLink call.", 13, on ? Color.rgb(6, 118, 71) : Color.rgb(16, 24, 40)));
+                if (!on) box.addView(button("Open Accessibility settings", new View.OnClickListener() { public void onClick(View v) { try { startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); } catch (Exception ignored) { } } }));
+            }
         } else if (Build.VERSION.SDK_INT >= 23) {
             box.addView(text("TeamLink Phone is the Phone app: \"Talk in TeamLink\" calls are answered and joined here by themselves.", 13, Color.rgb(6, 118, 71)));
         }

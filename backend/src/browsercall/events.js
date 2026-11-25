@@ -84,6 +84,7 @@ async function onEvent(e) {
     await S.run('UPDATE "BrowserCall" SET "endAt"=?, "durationSec"=?, "talkSec"=?, "hangupCause"=?, "hangupReason"=COALESCE("hangupReason",?), "status"=?, "updatedAt"=? WHERE "id"=?',
       end, secs(row.startAt, end), answered ? secs(row.answerAt, end) : 0, Number(e.Cause) || null, why, final, end, id);
     require('./recording').enqueue(id); // eslint-disable-line global-require -- the recording, transcript and summary, after the call, one at a time
+    if (row.bridgeDeviceId) require('./phoneLink').wake(row.bridgeDeviceId); // eslint-disable-line global-require -- a bridge: the phone ends its calls now
     if (isIn && !answered) await SIMS.onMissed({ ...row, status: final, hangupReason: why });
     await log(id, e.Uniqueid, name, e);
     inbound.delete(id);

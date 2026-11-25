@@ -109,6 +109,8 @@ public class LinkService extends Service {
                 status(j.optBoolean("paused") ? "Disconnected in TeamLink (press Connect there)." : (prefs.paused() ? "Switched off on this phone." : "Connected. Waiting for calls from TeamLink."));
                 JSONArray hang = j.optJSONArray("hangup");
                 if (hang != null && hang.length() > 0) endCurrentCall();
+                JSONArray bridgeEnd = j.optJSONArray("bridgeEnd");
+                if (bridgeEnd != null && bridgeEnd.length() > 0) main.post(new Runnable() { public void run() { Bridge.endFromTeamLink(); } });
                 final JSONObject bridge = j.optJSONObject("bridge");
                 if (bridge != null) {
                     main.post(new Runnable() { public void run() { Bridge.arm(LinkService.this, bridge.optString("id"), bridge.optString("number"), bridge.optInt("answerWithinSec", 60)); } });
@@ -192,6 +194,7 @@ public class LinkService extends Service {
         listener = new PhoneStateListener() {
             @Override public void onCallStateChanged(int st, String ignored) {
                 int before = lastState; lastState = st;
+                LegacyBridge.onCallState(st); // "talk in TeamLink" on the realme dialler
                 if (callId == null) return;
                 if (st == TelephonyManager.CALL_STATE_OFFHOOK && !offhookSeen) {
                     offhookSeen = true;
