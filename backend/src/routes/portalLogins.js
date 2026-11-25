@@ -397,10 +397,10 @@ router.post('/marketing-plan/:planId/login', wrap(async (req, res) => {
     await logAudit({ userId: u.id, actorName: u.name, action: 'Client created', entity: 'Client', entityId: client.id, toValue: 'Made from AI Marketing > Client plans for a phone login (digital marketing only, no staffing agreement)' });
   }
   const out = await addDirect({ client, u, name, email, caps, reason: `From AI Marketing > Client plans (${plan.clientName})`, req });
-  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: phone login given to a client', entity: 'OmniMkClientPlan', entityId: plan.id, toValue: `${plan.clientName}: ${email}${clientCreated ? ` (Clients record ${client.clientCode} made)` : ''}` });
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client login given (web and phone)', entity: 'OmniMkClientPlan', entityId: plan.id, toValue: `${plan.clientName}: ${email}${clientCreated ? ` (Clients record ${client.clientCode} made)` : ''}` });
   return res.status(201).json({
     created: true, clientCreated, client: { id: client.id, code: client.clientCode || '', name: client.name },
-    message: `Phone login added for ${name}. ${out.invite.message}${clientCreated ? ` A Clients record (${client.clientCode}) was made for ${client.name}.` : ''}`,
+    message: `Client login added for ${name} (one login for the web and the phone app). ${out.invite.message}${clientCreated ? ` A Clients record (${client.clientCode}) was made for ${client.name}.` : ''}`,
     link: out.invite.link, expiresAt: out.invite.expiresAt,
   });
 }));

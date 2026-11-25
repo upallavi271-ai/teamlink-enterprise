@@ -139,6 +139,7 @@ export const SECTION_ICON = {
 
 // The "Social posts" client login's three screens (isPostsOnlyClient, below). No permission list: the server decides what the login may read (routes/portalPosts.js).
 export const POSTS_ITEMS = [
+  { ...leaf('📊', '/client-home', 'Dashboard', null), when: (u) => isPostsOnlyClient(u) },
   { ...leaf('📝', '/client-posts', 'Posts to approve', null), when: (u) => isPostsOnlyClient(u) },
   { ...leaf('✅', '/client-posts?tab=done', 'Approved & posted', null), when: (u) => isPostsOnlyClient(u) },
   { ...leaf('📣', '/client-accounts', 'My social accounts', null), when: (u) => isPostsOnlyClient(u) },
@@ -637,7 +638,7 @@ const SECTION_OF_PATH = [
   [/^\/reports\/accounts(\/|$)/, 'accounts'],
   [/^\/reports/, 'reports'],
   [/^\/admin/, 'admin'],
-  [/^\/client-(posts|accounts)(\/|$)/, 'posts'], // the "Social posts" client login's own screens (2026-11-25)
+  [/^\/client-(home|posts|accounts)(\/|$)/, 'posts'], // the "Social posts" client login's own screens (2026-11-25)
 ];
 // THE EMPLOYEE LIST BELONGS TO WHICHEVER ENTRY THE USER ACTUALLY HAS.
 //

@@ -53,3 +53,62 @@
 .cpx .cpx-kv span:nth-child(even) { font-weight: 700; text-align: right; }
 .cpx h2 { font-size: 15px; margin: 18px 0 8px; }
 .cpx a { color: #0a74bd; }
+
+/* ---- the dashboard (ClientHome.jsx, 2026-11-25): one column on a phone, two on a computer ---- */
+.cpx.cpx-home { max-width: 1040px; }
+.cpx .cpx-h { font-size: 15px; margin: 0 0 8px; }
+.cpx .cpx-month { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; font-size: 17px; }
+.cpx .cpx-month b { min-width: 150px; text-align: center; }
+.cpx .cpx-step { width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line, #cbd5e1); background: #fff; font-size: 22px; line-height: 1; cursor: pointer; color: #0a74bd; }
+.cpx .cpx-step[disabled] { opacity: .35; cursor: default; }
+.cpx .cpx-link { border: 0; background: none; color: #0a74bd; font: inherit; font-size: 14px; font-weight: 700; padding: 8px 4px; cursor: pointer; text-decoration: none; display: inline-block; }
+.cpx .cpx-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px; margin: 0 0 14px; }
+.cpx .cpx-tile { border: 1px solid var(--line, #e2e8f0); background: #fff; border-radius: 12px; padding: 12px 6px; text-align: center; font: inherit; cursor: pointer; color: inherit; }
+.cpx .cpx-tile b { display: block; font-size: 26px; color: #0a74bd; }
+.cpx .cpx-tile span { font-size: 12.5px; color: #475569; }
+.cpx .cpx-tile.on { background: #0a74bd; border-color: #0a74bd; }
+.cpx .cpx-tile.on b, .cpx .cpx-tile.on span { color: #fff; }
+.cpx .cpx-two { display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 900px) { .cpx .cpx-two { grid-template-columns: 1fr 1fr; align-items: start; } }
+.cpx .cpx-cal-head, .cpx .cpx-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cpx .cpx-cal-head span { text-align: center; font-size: 11.5px; font-weight: 700; color: #64748b; padding-bottom: 2px; }
+.cpx .cpx-cal-blank { display: block; }
+.cpx .cpx-cal-day { position: relative; min-height: 46px; border: 1px solid #eef2f7; background: #f8fafc; border-radius: 10px; padding: 4px 2px; font: inherit; color: #94a3b8; cursor: default; display: flex; flex-direction: column; align-items: center; justify-content: space-between; }
+.cpx .cpx-cal-day.has { background: #fff; border-color: #cfe0f1; color: #0f172a; cursor: pointer; }
+.cpx .cpx-cal-day.today { box-shadow: 0 0 0 2px #f1c15b; }
+.cpx .cpx-cal-day.on { background: #0a74bd; border-color: #0a74bd; color: #fff; }
+.cpx .cpx-cal-n { font-size: 13px; font-weight: 700; }
+.cpx .cpx-cal-dots { display: flex; gap: 3px; align-items: center; justify-content: center; flex-wrap: wrap; min-height: 9px; }
+.cpx .cpx-cal-dots i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; border: 1px solid rgba(255,255,255,.85); }
+.cpx .cpx-cal-dots em { font-style: normal; font-size: 10px; }
+.cpx .cpx-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: #475569; }
+.cpx .cpx-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.cpx .cpx-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.cpx .cpx-bars { display: grid; gap: 8px; }
+.cpx .cpx-bar { display: block; width: 100%; text-align: left; font: inherit; color: inherit; border: 1px solid var(--line, #e2e8f0); background: #fff; border-radius: 12px; padding: 10px 12px; cursor: pointer; }
+.cpx .cpx-bar.on { border-color: #0a74bd; box-shadow: 0 0 0 2px #cfe6f7; }
+.cpx .cpx-bar-top { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; margin-bottom: 6px; }
+.cpx .cpx-bar-ico { display: inline-flex; width: 22px; height: 22px; border-radius: 6px; background: #e8eef5; align-items: center; justify-content: center; font-size: 12px; margin-right: 4px; }
+.cpx .cpx-bar-track { display: block; height: 10px; border-radius: 6px; background: #e2e8f0; overflow: hidden; margin-bottom: 4px; }
+.cpx .cpx-bar-fill { display: block; height: 100%; border-radius: 6px; background: #0a74bd; }
+.cpx .cpx-prog { margin: 8px 0; }
+.cpx .cpx-prog-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; margin-bottom: 4px; }
+.cpx .cpx-det { margin-top: 10px; font-size: 13.5px; }
+.cpx .cpx-det summary { cursor: pointer; font-weight: 700; color: #0a74bd; padding: 6px 0; }
+.cpx .cpx-det ul { margin: 4px 0 0; padding-left: 18px; line-height: 1.5; color: #334155; }
+.cpx .cpx-acc { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid #eef2f7; }
+.cpx .cpx-acc-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; overflow-wrap: anywhere; }
+.cpx .cpx-listhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.cpx .cpx-rows { display: grid; gap: 8px; }
+.cpx .cpx-row { display: flex; gap: 10px; align-items: center; text-decoration: none; color: inherit; border: 1px solid var(--line, #e2e8f0); border-radius: 12px; padding: 10px; background: #fff; }
+.cpx .cpx-row:hover { border-color: #0a74bd; }
+.cpx .cpx-row-thumb { flex: 0 0 auto; width: 56px; height: 56px; border-radius: 10px; background: #e8eef5; display: flex; align-items: center; justify-content: center; font-size: 20px; overflow: hidden; }
+.cpx .cpx-row-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cpx .cpx-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cpx .cpx-row-title { font-size: 15px; overflow-wrap: anywhere; }
+.cpx .cpx-row-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.cpx .cpx-row-go { flex: 0 0 auto; font-size: 22px; color: #94a3b8; }
+.cpx .cpx-chip.plat { background: #eef2f7; color: #334155; font-weight: 600; }
+.cpx .cpx-mini { display: grid; gap: 8px; margin: 10px 0 0; }
+.cpx .cpx-mini-item { display: flex; gap: 10px; align-items: center; text-decoration: none; color: inherit; background: #fffaf0; border: 1px solid #f1d9a0; border-radius: 10px; padding: 8px; font-size: 14px; }
+.cpx .cpx-empty { text-align: center; padding: 22px 10px; color: #64748b; font-size: 14px; }

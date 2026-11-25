@@ -137,7 +137,7 @@ function ClientsTab({ cat, toast, onAudit }) {
         const [tone, words] = RENEW[r.renewal] || RENEW.running;
         return (
           <Panel key={r.id} title={`${r.clientName} · ${r.planLabel}`} sub={`${r.months} month(s) from ${fmtDate(r.startDate)} to ${fmtDate(r.endDate)} · paid ${rs(r.pricePaid)}${r.industry ? ` · ${r.industry}` : ''}`} style={{ marginBottom: 12 }}
-            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => setOnb(r)}>Onboarding</TinyBtn><TinyBtn title="Give this client a login for the phone app: approve their social posts and see their social accounts" onClick={() => setPhone(r)}>Phone login</TinyBtn><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn><TinyBtn onClick={() => setRep(r)}>Monthly report</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
+            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => setOnb(r)}>Onboarding</TinyBtn><TinyBtn title="Give this client ONE login for the web and the phone app: their dashboard, approving their social posts, their plan and their social accounts" onClick={() => setPhone(r)}>Client login</TinyBtn><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn><TinyBtn onClick={() => setRep(r)}>Monthly report</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Delivered in {month}: {r.deliveredPct}% of the plan. Posts, Reels and stories are counted by themselves from the work approved for {r.clientName} in Client projects; the + and − buttons add work made outside TeamLink. SEO blogs are counted when a post is marked Published in SEO and visibility > Blog planner. GBP posts are counted by hand.</div>
             {r.progress.map((p) => (
               <div key={p.item} style={{ display: 'grid', gridTemplateColumns: 'minmax(150px,1.2fr) 3fr auto', gap: 10, alignItems: 'center', margin: '5px 0', fontSize: 13 }}>
@@ -258,7 +258,7 @@ function PhoneLoginPanel({ plan, toast, onClose }) {
   useEffect(() => { load(); }, [load]);
   const give = async () => {
     setBusy(true); setDone(null);
-    try { const r = await api.post(`/portal/logins/marketing-plan/${plan.id}/login`, { name: f.name, email: f.email }); setDone(r.data); setF({ name: '', email: '' }); toast('Phone login added'); await load(); } catch (e) { setDone({ error: errOf(e, 'The login could not be added.') }); } finally { setBusy(false); }
+    try { const r = await api.post(`/portal/logins/marketing-plan/${plan.id}/login`, { name: f.name, email: f.email }); setDone(r.data); setF({ name: '', email: '' }); toast('Client login added'); await load(); } catch (e) { setDone({ error: errOf(e, 'The login could not be added.') }); } finally { setBusy(false); }
   };
   const resend = async (l) => {
     setBusy(true); setDone(null);
@@ -266,7 +266,7 @@ function PhoneLoginPanel({ plan, toast, onClose }) {
   };
   const canGive = d && d.seatsLeft > 0 && f.name.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim());
   return (
-    <Panel title={`Phone login: ${plan.clientName}`} sub="The client signs in on the phone app, approves or rejects the posts we make, and sees their social accounts. Nothing else." style={{ marginBottom: 12 }} right={<TinyBtn onClick={onClose}>Close</TinyBtn>}>
+    <Panel title={`Client login: ${plan.clientName}`} sub="One login for the web and the phone app (the same email and password on both). The client sees their dashboard, approves or rejects the posts we make, and sees their plan and their social accounts. Nothing else." style={{ marginBottom: 12 }} right={<TinyBtn onClick={onClose}>Close</TinyBtn>}>
       {err ? <Banner tone="error">{err}</Banner> : null}
       {!d && !err ? <div style={{ fontSize: 13 }}>Opening…</div> : null}
       {d ? (
@@ -289,7 +289,7 @@ function PhoneLoginPanel({ plan, toast, onClose }) {
             <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 10, alignItems: 'end' }}>
               <Field label="PERSON'S NAME"><input value={f.name} maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
               <Field label="PERSON'S EMAIL (THE LINK GOES HERE)"><input type="email" value={f.email} maxLength={160} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
-              <Btn primary disabled={busy || !canGive} onClick={give}>{busy ? 'Working…' : 'Give phone login'}</Btn>
+              <Btn primary disabled={busy || !canGive} onClick={give}>{busy ? 'Working…' : 'Give client login'}</Btn>
             </div>
           ) : <Banner tone="warn">This company already has {d.max} logins, the most allowed. Switch one off in Clients first.</Banner>}
         </div>

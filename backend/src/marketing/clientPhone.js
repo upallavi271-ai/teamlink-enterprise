@@ -217,6 +217,81 @@ async function accounts(u) {
   return { company: c.name, accounts: accountsOut, told, counts, recent: recent.slice(0, 5), postingOn: set.autoPostAllowed === true };
 }
 
+// ---- the DASHBOARD (2026-11-25, same day) -----------------------------------------------------------------------------------------------------------------------
+// Founder: "the client's dashboard is too simple: it must show how many posts, on which platform, on which date, their social accounts and their plan, everything, and interactive." One answer for the
+// month the client is looking at: the numbers, the posts by platform, one entry per day for the calendar, the plan and what is delivered, the accounts, and the posts waiting for the client now.
+// DATES. A post has no "post on" date of its own in TeamLink, so each post sits on the day of the last thing that happened to it: posted (the day it went out), approved or rejected (the day the client
+// answered), else the day it was sent for approval. Platforms: a message names its channels; a picture / video names the accounts of its posting plan, and the accounts it really went out on.
+// Read only; the same company rule as everything else here; no price, no token, no error text, no staff names.
+const CHANNEL_WORD = { ...PLATFORM_WORD, whatsapp: 'WhatsApp', sms: 'SMS', email: 'Email', rcs: 'RCS' };
+const istDay = (ms) => new Date(ms + 5.5 * 3600e3).toISOString().slice(0, 10);
+const istMonth = (ms) => istDay(ms).slice(0, 7);
+const okMonth = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ''));
+const msOf = (v) => { const n = Date.parse(v); return Number.isFinite(n) ? n : 0; };
+
+// "Hello Dr. Rao" (a title keeps the word after it), "Hello Priya"
+const TITLES = new Set(['dr', 'dr.', 'mr', 'mr.', 'mrs', 'mrs.', 'ms', 'ms.', 'miss', 'prof', 'prof.', 'shri', 'smt', 'smt.', 'sri', 'sir', 'madam']);
+const helloOf = (name) => { const w = String(name || '').trim().split(/\s+/).filter(Boolean); if (!w.length) return ''; return S.clip(TITLES.has(w[0].toLowerCase()) && w[1] ? `${w[0]} ${w[1]}` : w[0], 40); };
+
+// every post of the company, once, with its status, platforms and dates (newest first)
+async function gather(c, limit = 300) {
+  const R = require('./clientReview'); // eslint-disable-line global-require
+  await R.ensure();
+  const rows = await S.q(`SELECT * FROM "${TABLE}" WHERE deletedAt IS NULL AND status != 'revoked' AND ${mineWhere} ORDER BY createdAt DESC LIMIT ${Math.max(1, Math.min(500, limit))}`, c.id, lower(c.name));
+  const now = Date.now(); const set = await Cfg.getSettings(); const out = [];
+  for (const r of rows) { // eslint-disable-line no-restricted-syntax
+    const item = await itemOf(r.kind, r.itemId); // eslint-disable-line no-await-in-loop
+    if (!item || item.deletedAt) continue; // eslint-disable-line no-continue
+    const plan = r.kind === 'image' ? await planOf(r.itemId, set) : null; // eslint-disable-line no-await-in-loop
+    const p = await progressOf(r, item, plan, now); // eslint-disable-line no-await-in-loop
+    if (!p) continue; // eslint-disable-line no-continue
+    const kind = kindWord(r, item);
+    const seen = new Set(); const platforms = [];
+    const add = (key, word) => { const k = String(key || '').toLowerCase(); if (k && !seen.has(k)) { seen.add(k); platforms.push({ key: k, word: word || CHANNEL_WORD[k] || k }); } };
+    if (kind === 'words') parse(item.channels, []).forEach((k) => add(k));
+    if (plan) { (plan.accounts || []).forEach((a) => add(a.platform, a.platformWord)); (plan.results || []).filter((x) => x.ok).forEach((x) => add(x.platform, x.platformWord)); }
+    const sentMs = S.num(r.createdAt); const decidedMs = S.num(r.decidedAt); const postedMs = plan && plan.postedAt ? msOf(plan.postedAt) : 0;
+    let atMs = sentMs;
+    if (p.status === 'posted') atMs = postedMs || decidedMs || sentMs; else if (p.status === 'approved' || p.status === 'changes') atMs = decidedMs || sentMs;
+    out.push({
+      id: r.id, title: r.itemTitle || 'For your approval', kind, status: p.status, words: p.words, platforms,
+      sentAt: S.iso(sentMs), decidedAt: S.iso(decidedMs), postedAt: postedMs ? new Date(postedMs).toISOString() : '', at: new Date(atMs).toISOString(), day: istDay(atMs), comment: p.status === 'changes' ? (r.comment || '') : '',
+      thumb: kind === 'picture' ? `/api/public/mk-review/${encodeURIComponent(R.tokenOf(r.id))}/file` : '',
+      postedOn: plan && plan.results ? plan.results.filter((x) => x.ok).map((x) => ({ name: x.name, platformWord: x.platformWord, url: x.url || '' })) : [],
+    });
+  }
+  return out;
+}
+
+async function dashboard(u, monthIn) {
+  const c = await companyOf(u); if (!c) return { error: 'Your company record was not found: contact TeamLink.', status: 404 };
+  const now = Date.now(); const month = okMonth(monthIn) ? String(monthIn) : istMonth(now);
+  const all = await gather(c, 300);
+  const inMonth = all.filter((x) => x.day.slice(0, 7) === month);
+  const n = (arr, st) => arr.filter((x) => (Array.isArray(st) ? st.includes(x.status) : x.status === st)).length;
+  const by = new Map();
+  inMonth.forEach((x) => (x.platforms.length ? x.platforms : [{ key: 'none', word: 'Not chosen yet' }]).forEach((pl) => { // a post with no platform yet is counted too, so the bars add up to the posts
+    if (!by.has(pl.key)) by.set(pl.key, { platform: pl.key, word: pl.word, total: 0, posted: 0, approved: 0, waiting: 0, changes: 0 });
+    const e = by.get(pl.key); e.total += 1;
+    if (x.status === 'posted') e.posted += 1; else if (x.status === 'approved') e.approved += 1; else if (x.status === 'waiting') e.waiting += 1; else if (['changes', 'updating'].includes(x.status)) e.changes += 1;
+  }));
+  const months = [...new Set([istMonth(now), month, ...all.map((x) => x.day.slice(0, 7))])].sort().reverse();
+  let plan = null; try { plan = await require('./clientServices').forClient(c.name, month); } catch { plan = null; } // eslint-disable-line global-require
+  let acc = { accounts: [], postingOn: false }; try { acc = await accounts(u); if (acc.error) acc = { accounts: [], postingOn: false }; } catch { /* the accounts block stays empty */ }
+  const waiting = all.filter((x) => x.status === 'waiting');
+  return {
+    company: c.name, hello: helloOf(u.name), month, today: istDay(now), months,
+    now: { waiting: waiting.length, approved: n(all, 'approved'), posted: n(all, 'posted'), changes: n(all, ['changes', 'updating']), all: all.length },
+    counts: { total: inMonth.length, waiting: n(inMonth, 'waiting'), approved: n(inMonth, 'approved'), posted: n(inMonth, 'posted'), changes: n(inMonth, ['changes', 'updating']) },
+    platforms: [...by.values()].sort((a, b) => b.total - a.total || String(a.word).localeCompare(String(b.word))),
+    posts: inMonth.map((x) => ({ id: x.id, title: x.title, kind: x.kind, status: x.status, words: x.words, platforms: x.platforms, day: x.day, at: x.at, sentAt: x.sentAt, decidedAt: x.decidedAt, postedAt: x.postedAt, thumb: x.thumb, postedOn: x.postedOn, comment: x.comment })),
+    waiting: waiting.slice(0, 5).map((x) => ({ id: x.id, title: x.title, kind: x.kind, thumb: x.thumb, sentAt: x.sentAt, platforms: x.platforms })),
+    recent: all.filter((x) => x.status === 'posted').slice(0, 5).map((x) => ({ id: x.id, title: x.title, postedAt: x.postedAt || x.at, on: x.postedOn.map((y) => `${y.name} (${y.platformWord})`) })),
+    plan,
+    accounts: acc.accounts, postingOn: !!acc.postingOn,
+  };
+}
+
 // a bell (and, where the person switched phone alerts on, a phone alert) for the company's client logins when the team sends something for approval
 async function announce(clientId, clientName, title, message) {
   try {
@@ -233,4 +308,4 @@ async function announce(clientId, clientName, title, message) {
   } catch (e) { console.error('[omni-mk] client phone alert:', e.message); return 0; } // eslint-disable-line no-console
 }
 
-module.exports = { list, view, decide, allowPosting, accounts, announce, companyOf, isClientUser };
+module.exports = { list, view, decide, allowPosting, accounts, dashboard, announce, companyOf, isClientUser };

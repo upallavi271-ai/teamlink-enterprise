@@ -97,7 +97,7 @@ const P = '/api/portal/client/posts';
         const u = me.body && (me.body.user || me.body);
         check('A9 /auth/me: a CLIENT of that company whose only tick is the creative one', me.status === 200 && u.role === 'CLIENT' && u.clientId === clientC.id && Array.isArray(u.portalCaps) && u.portalCaps.length === 1 && u.portalCaps[0] === 'CREATIVE', u && { r: u.role, c: u.portalCaps });
         check('A10 the new login can open its (empty) post list', (await http('GET', P, lt)).status === 200);
-        check('A11 the login opens on its posts (/client-posts)', login.body && login.body.user && login.body.user.landingPath === '/client-posts', login.body && login.body.user && login.body.user.landingPath);
+        check('A11 the login opens on its dashboard (/client-home)', login.body && login.body.user && login.body.user.landingPath === '/client-home', login.body && login.body.user && login.body.user.landingPath);
       }
     } else check('A6-A10 skipped: no link in the answer (mail was sent)', false, add.body);
 
@@ -186,7 +186,7 @@ const P = '/api/portal/client/posts';
     check('E2 it cannot answer through the staff review routes either (403)', (await http('POST', '/api/outreach/gs/marketing/client-reviews', T.a, { kind: 'content', itemId: 'x' })).status === 403);
     check('E3 a client with other ticks (VIEW + creative) keeps My Portal and also reaches the posts', (await http('GET', '/api/portal/client', T.mixed)).status === 200 && (await http('GET', P, T.mixed)).status === 200);
     const meMixed = (await http('GET', '/api/auth/me', T.mixed)).body || {}; const meBill = (await http('GET', '/api/auth/me', T.bill)).body || {};
-    check('E3b the landing page of the other client types is unchanged (not /client-posts)', meMixed.landingPath !== '/client-posts' && meBill.landingPath !== '/client-posts' && !!meMixed.landingPath, { mixed: meMixed.landingPath, bill: meBill.landingPath });
+    check('E3b the landing page of the other client types is unchanged (not /client-posts)', meMixed.landingPath !== '/client-posts' && meMixed.landingPath !== '/client-home' && meBill.landingPath !== '/client-posts' && meBill.landingPath !== '/client-home' && !!meMixed.landingPath, { mixed: meMixed.landingPath, bill: meBill.landingPath });
     const pres = await http('GET', `/api/portal/logins/client/${clientB.id}`, T.sa);
     check('E4 Client 360 > Portal access offers the new "Social posts" start, the other three are unchanged', pres.status === 200 && ['REVIEWER', 'VIEWER', 'BILLING', 'MARKETING'].every((k) => (pres.body.types || []).some((t) => t.value === k)) && (pres.body.types || []).find((t) => t.value === 'MARKETING').perms.join() === 'CREATIVE' && (pres.body.types || []).find((t) => t.value === 'REVIEWER').perms.join() === 'VIEW,AGREEMENT,REQUEST,DECIDE,INTERVIEW,FEEDBACK', pres.body && pres.body.types);
   } catch (e) {

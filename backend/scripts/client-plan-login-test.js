@@ -107,7 +107,7 @@ const PW = `Zz-Plan-${RUN}-7!`;
     check('A6 the stored password is not a usable one (the person must set their own)', !!u1 && u1.passwordHash !== 'x' && String(u1.passwordHash).length > 20 && !!u1.setPasswordTokenHash);
     check('A7 the answer names the Clients record that was made', !!add.body.client && add.body.client.id === client.id && /CLI/i.test(add.body.message || ''), add.body);
     const audits = await prisma.auditLog.findMany({ where: { OR: [{ entityId: client.id }, { entityId: planId }] }, select: { action: true } });
-    check('A8 the audit log has the client made, the login created and the phone login given', ['Client created', 'Client portal login created (Social posts)', 'Omni-Channel AI Marketing: phone login given to a client'].every((a) => audits.some((x) => x.action === a)), audits.map((x) => x.action));
+    check('A8 the audit log has the client made, the login created and the client login given', ['Client created', 'Client portal login created (Social posts)', 'Omni-Channel AI Marketing: client login given (web and phone)'].every((a) => audits.some((x) => x.action === a)), audits.map((x) => x.action));
     const req = await prisma.portalRequest.findFirst({ where: { clientId: client.id, kind: 'CLIENT_LOGIN' } });
     check('A9 the usual "Approved" request row keeps the history (the Portal access tab shows it)', !!req && req.status === 'Approved' && req.email === em1, req && { s: req.status });
     const tok = add.body && add.body.link ? add.body.link.split('/set-password/')[1] : null;
@@ -116,7 +116,7 @@ const PW = `Zz-Plan-${RUN}-7!`;
       check('A10 the person sets their own password from the one-time link', set.status === 200, set.body);
       const login = await http('POST', '/api/auth/login', null, { email: em1, password: PW });
       const lt = login.body && (login.body.token || (login.body.data && login.body.data.token));
-      check('A11 and signs in, landing on the posts', login.status === 200 && !!lt && login.body.user && login.body.user.landingPath === '/client-posts', { s: login.status, l: login.body && login.body.user && login.body.user.landingPath });
+      check('A11 and signs in, landing on the dashboard', login.status === 200 && !!lt && login.body.user && login.body.user.landingPath === '/client-home', { s: login.status, l: login.body && login.body.user && login.body.user.landingPath });
       if (lt) {
         const me = await http('GET', '/api/auth/me', lt);
         const mu = me.body && (me.body.user || me.body);

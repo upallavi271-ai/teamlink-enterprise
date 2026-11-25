@@ -251,6 +251,20 @@ async function getPlan(u, id, month) {
   const au = await autoCounts(r.clientName, m);
   return { plan: { ...rowOut(r), month: m, progress: progress(r.plan, await deliveryRows(id, m), au), autoItems: au.items, quote: quote(r.plan, S.num(r.months)), quotas: PLANS[r.plan].quotas } };
 }
+// What a CLIENT may see of its OWN plan (the signed-in "Social posts" login's dashboard, marketing/clientPhone.js dashboard()): the plan, the period, and what is delivered in the month against what
+// the plan promises. Found by the company name (the same rule as the rest of the client login). NO price, no notes, no team names, no contact details, nothing of another company.
+async function forClient(clientName, month) {
+  if (!(await ensure())) return null;
+  const name = String(clientName || '').trim().toLowerCase(); if (!name) return null;
+  const r = (await S.q(`SELECT * FROM "${TP}" WHERE LOWER(TRIM(clientName)) = ? ORDER BY (status = 'active') DESC, createdAt DESC LIMIT 1`, name))[0]; if (!r) return null;
+  const m = okMonth(month) ? month : istMonth();
+  const p = rowOut(r); const def = PLANS[r.plan] || {};
+  const pr = progress(r.plan, await deliveryRows(r.id, m), await autoCounts(r.clientName, m));
+  return {
+    key: r.plan, label: p.planLabel, suited: def.suited || '', includes: def.includes || [], months: p.months, startDate: p.startDate, endDate: p.endDate, daysLeft: p.daysLeft, state: p.renewal, month: m,
+    progress: pr.map((x) => ({ item: x.item, label: x.label, quota: x.quota, done: x.done, over: x.over, pct: x.pct })),
+  };
+}
 // every plan that is running, for the daily reminders (no department filter: the reminder goes to whoever started the plan)
 async function activePlans() {
   if (!(await ensure())) return [];
@@ -296,4 +310,4 @@ async function listAudits(u, o = {}) {
   return { items: rows.map((r) => { const a = auditOut(r); delete a.answers; return a; }) };
 }
 
-module.exports = { ensure, PLANS, ITEMS, TERMS, GBP_AREAS, CHECKS, catalog, quote, scoreGbp, createPlan, updatePlan, listPlans, getPlan, setDelivery, saveAudit, getAudit, listAudits, istMonth, istDay, autoCounts, monthRange, activePlans, mayDept, AUTO_ITEMS, planRow: mine };
+module.exports = { ensure, PLANS, ITEMS, TERMS, GBP_AREAS, CHECKS, catalog, quote, scoreGbp, createPlan, updatePlan, listPlans, getPlan, setDelivery, saveAudit, getAudit, listAudits, istMonth, istDay, autoCounts, monthRange, activePlans, mayDept, AUTO_ITEMS, planRow: mine, forClient };

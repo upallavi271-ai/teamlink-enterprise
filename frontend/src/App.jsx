@@ -15,6 +15,7 @@ import RequirementDetail from './pages/RequirementDetail.jsx';
 import ClientJobPortal from './pages/ats/ClientJobPortal.jsx';
 import ClientPosts from './pages/portal/ClientPosts.jsx'; // the "Social posts" client login's screens (2026-11-25)
 import ClientAccounts from './pages/portal/ClientAccounts.jsx';
+import ClientHome from './pages/portal/ClientHome.jsx'; // the "Social posts" client login's dashboard (2026-11-25)
 import Clients from './pages/Clients.jsx';
 import ClientDetail from './pages/ClientDetail.jsx';
 import AgreementFlowPage, { AgreementFlowList } from './pages/AgreementFlowPage.jsx';
@@ -344,6 +345,7 @@ export default function App() {
             client can never land on the internal workspace above. */}
         <Route path="client-portal" element={<ClientJobPortal />} />
         {/* The "Social posts" client login (the phone app's client login, 2026-11-25): posts to approve / approved and posted / their social accounts. */}
+        <Route path="client-home" element={<ClientHome />} />
         <Route path="client-posts" element={<ClientPosts />} />
         <Route path="client-accounts" element={<ClientAccounts />} />
         {/* Clients · Requirements · Agreements · Job Portal are one module;
