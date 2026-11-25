@@ -109,8 +109,8 @@ async function ruleTest(user, body = {}) {
 }
 
 // ---- leads coming in from outside ------------------------------------------------------------------------------------------
-const SOURCE_NAME = { webhook: 'Other', email: 'Email', chat: 'Chat', facebook: 'Facebook lead ads', linkedin: 'LinkedIn', google: 'Google lead form', justdial: 'JustDial', indiamart: 'IndiaMART', tradeindia: 'TradeIndia' };
-const SOURCE_WORD = { webhook: 'Webhook (any system)', email: 'Inbound email', chat: 'Website chat box', facebook: 'Facebook / Instagram lead ads', linkedin: 'LinkedIn lead-gen forms', google: 'Google Ads lead forms', justdial: 'JustDial (push)', indiamart: 'IndiaMART', tradeindia: 'TradeIndia' };
+const SOURCE_NAME = { webhook: 'Other', whatsapp: 'WhatsApp', email: 'Email', chat: 'Chat', facebook: 'Facebook lead ads', linkedin: 'LinkedIn', google: 'Google lead form', justdial: 'JustDial', indiamart: 'IndiaMART', tradeindia: 'TradeIndia' };
+const SOURCE_WORD = { webhook: 'Webhook (any system)', whatsapp: 'WhatsApp chat (AI assistant)', email: 'Inbound email', chat: 'Website chat box', facebook: 'Facebook / Instagram lead ads', linkedin: 'LinkedIn lead-gen forms', google: 'Google Ads lead forms', justdial: 'JustDial (push)', indiamart: 'IndiaMART', tradeindia: 'TradeIndia' };
 async function log(source, status, detail, { leadId = null, externalId = null } = {}) {
   await P.run('INSERT INTO "CrmCaptureLog" ("id", "source", "status", "detail", "leadId", "externalId", "at") VALUES (?, ?, ?, ?, ?, ?, ?)', P.newId('cap'), source, status, clip(detail, 500) || null, leadId, externalId ? clip(externalId, 120) : null, P.nowIso()).catch(() => null);
 }

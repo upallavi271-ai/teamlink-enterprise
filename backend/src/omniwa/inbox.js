@@ -122,7 +122,44 @@ async function detail(user, key) {
   try { collected = c ? JSON.parse(c.collected || '{}') : {}; } catch { collected = {}; }
   delete collected.applyLinkSentAt;
   ['jobChoices', 'cardShown', 'promoJob', 'promoCardSent', 'intakeOn', 'intakeDone', 'intakeAt', 'chosenJob'].forEach((k) => { delete collected[k]; });
-  return { conv: c, view: { key, ai: aiOf(c), window: { open: !!closesAt && closesAt > Date.now(), closesAt }, alreadyContacted: seen, stopped: blocked, collected, ownerName: c ? c.ownerName : null, leadName: type === 'LEAD' && c ? c.name : null } };
+  // the AI WhatsApp Marketing Assistant's lead card: the details it collected, the Hot / Warm / Cold score with its reasons, the summary and the next step (omniwa/assistLead.js)
+  let assist = null;
+  const AL = require('./assistLead'); // eslint-disable-line global-require
+  if (c && Object.keys(AL.leadOf(c)).length) {
+    const a = await AL.assess(c, { stopped: blocked });
+    const l = a.lead;
+    assist = {
+      band: a.sc.band, score: a.sc.score, reasons: a.sc.reasons, summary: a.summary, crmLeadId: l.crmLeadId || null, collecting: l.pending || null, done: !!l.done, declined: !!l.declined,
+      fields: { name: l.name || null, service: l.service || null, requirement: l.requirement || null, budget: l.budget || null, callback: l.callback || null },
+    };
+  }
+  delete collected.assistLead;
+  return { conv: c, view: { key, ai: aiOf(c), window: { open: !!closesAt && closesAt > Date.now(), closesAt }, alreadyContacted: seen, stopped: blocked, collected, ownerName: c ? c.ownerName : null, leadName: type === 'LEAD' && c ? c.name : null, assist } };
+}
+
+// the AI WhatsApp Marketing Assistant's leads: the chats where it collected details or scored a customer, each login within its own chats (the same rule as the chat list)
+const BAND_RANK = { Hot: 0, Warm: 1, Cold: 2 };
+async function assistLeads(user, query = {}) {
+  await ensure();
+  const AL = require('./assistLead'); // eslint-disable-line global-require
+  const access = require('../utils/contactAccess'); // eslint-disable-line global-require
+  const numbers = await require('../utils/waNumbers').visibleNumberIds(user); // eslint-disable-line global-require
+  const text = String(query.q || '').trim().toLowerCase();
+  const band = ['Hot', 'Warm', 'Cold'].includes(query.band) ? query.band : null;
+  const all = [];
+  for (const c of await S.q(`SELECT * FROM "OmniWaConv" WHERE personType = 'LEAD' AND collected LIKE '%"assistLead"%' ORDER BY updatedAt DESC LIMIT 300`)) {
+    if (!(await leadVisible(user, c, numbers))) continue; // eslint-disable-line no-await-in-loop
+    const l = AL.leadOf(c);
+    all.push({
+      key: `LEAD:${c.id}`, name: l.name || c.name || 'New number', phoneHint: A.level(user) === 'admin' ? `+${c.e164}` : access.maskedHint(c.e164), service: l.service || null, requirement: l.requirement || null, budget: l.budget || null,
+      callback: l.callback || null, band: l.band || null, score: l.score === undefined ? null : l.score, crmLeadId: l.crmLeadId || null, saved: !!l.crmLeadId, ownerUserId: c.ownerUserId, ownerName: c.ownerName, ai: aiOf(c), updatedAt: Number(c.updatedAt), lastText: c.lastText || '',
+    });
+  }
+  const counts = { all: all.length, Hot: 0, Warm: 0, Cold: 0 };
+  all.forEach((r) => { if (r.band) counts[r.band] += 1; });
+  const rows = all.filter((r) => (!band || r.band === band) && (!text || `${r.name} ${r.service || ''} ${r.phoneHint}`.toLowerCase().includes(text)))
+    .sort((a, b) => (BAND_RANK[a.band] === undefined ? 3 : BAND_RANK[a.band]) - (BAND_RANK[b.band] === undefined ? 3 : BAND_RANK[b.band]) || b.updatedAt - a.updatedAt);
+  return { rows: rows.slice(0, 200), counts };
 }
 
 async function leadMessages(convId) {
@@ -153,4 +190,4 @@ async function runs(query = {}) {
   return rows.map((r) => { let calls = []; try { calls = JSON.parse(r.toolCalls || '[]'); } catch { calls = []; } return { ...r, toolCalls: calls, at: Number(r.at), ms: Number(r.ms) || 0 }; });
 }
 
-module.exports = { list, detail, recentContact, promotions, leadMessages, runs, aiOf };
+module.exports = { list, detail, assistLeads, recentContact, promotions, leadMessages, runs, aiOf, leadVisible };

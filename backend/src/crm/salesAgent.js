@@ -83,6 +83,7 @@ async function handedOver(leadId) {
 async function handles(e164) {
   const st = await load();
   if (!st.on) return false;
+  if (await require('../omniwa/assist').ownsPhone(e164).catch(() => false)) return false; // the WhatsApp marketing assistant answers this chat (omniwa/assist.js)
   const ph = S.phone10(e164);
   if (ph.length !== 10) return false;
   const rows = (await DB.all('SELECT * FROM "CrmLead" WHERE "phone" LIKE ?', `%${ph.slice(-4)}%`)).filter((l) => S.phone10(l.phone) === ph);

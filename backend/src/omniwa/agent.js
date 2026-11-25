@@ -275,6 +275,8 @@ async function sendText(conv, text, { user = null, ai: byAi = true } = {}) {
 async function handoff(conv, reason, now = Date.now()) {
   await S.run('UPDATE "OmniWaConv" SET state = \'needs_human\', handoffReason = ?, updatedAt = ? WHERE id = ?', clip(reason, 200), now, conv.id);
   if (conv.ownerUserId) await require('../utils/notify').pushNotification({ userId: conv.ownerUserId, title: `${conv.name || 'A person'} needs you on WhatsApp`, message: `${clip(reason, 120)}. Open Omni-Channel > Inbox & Replies > WhatsApp.` }).catch(() => null); // eslint-disable-line global-require
+  // a chat the marketing assistant owns: the Admins are told when nobody owns it, and a call or a person asked for saves the lead (omniwa/assist.js onHandoff)
+  await require('./assist').onHandoff(conv, reason, { alreadyTold: !!conv.ownerUserId }).catch(() => null); // eslint-disable-line global-require
   Live.changed();
 }
 // anyAge false: only a person who wrote in the last HUMAN_HOLD_MS is "answering this chat now" (founder 2026-11-13: a message from two hours earlier paused the AI when the candidate said Yes)

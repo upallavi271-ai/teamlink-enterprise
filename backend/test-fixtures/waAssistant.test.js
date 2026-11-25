@@ -26,7 +26,7 @@ const KB = [
   E('f1', 'faq', 'Do you work with small businesses?', 'Yes, most of our clients are small and medium businesses.'),
   E('w1', 'website', 'Home: Digital marketing', 'We grow businesses online with SEO, ads and content. Packages start at ₹5,000. (Page: https://acme.in/)'),
 ];
-const ST = { enabled: true, businessName: 'Acme Marketing', greeting: '', noAnswer: '', aiWording: true };
+const ST = { enabled: true, businessName: 'Acme Marketing', greeting: '', noAnswer: '', aiWording: true, collectLeads: false }; // phase 1 is the knowledge base alone: lead capture is tested in waAssistantLeads.test.js
 const ask = (q, entries = KB) => A.answer(q, { entries, settingsNow: ST });
 
 (async () => {
@@ -173,7 +173,7 @@ const ask = (q, entries = KB) => A.answer(q, { entries, settingsNow: ST });
   await Cfg.setMarketingNumber('zzn', true);
   await S.run('DELETE FROM "OmniWaKnowledge"');
   for (const e of KB.filter((x) => x.category !== 'website')) await Cfg.kbSave(admin, null, { category: e.category, question: e.question, answer: e.answer, numberId: 'zzn' });
-  await A.saveSettings(admin, { enabled: true, businessName: 'Acme Marketing', noAnswer: '', aiWording: true });
+  await A.saveSettings(admin, { enabled: true, businessName: 'Acme Marketing', noAnswer: '', aiWording: true, collectLeads: false });
 
   await inbound('What is the price of the SEO plan?'); await run();
   assert.equal(sent.length, 1, 'one reply'); assert.equal(aiCalls, 0, 'the model was not asked');

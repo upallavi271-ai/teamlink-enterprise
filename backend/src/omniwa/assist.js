@@ -21,7 +21,7 @@ const { ensure } = require('./schema');
 
 const clip = (v, n) => S.clip(v, n);
 const KEY = 'omni.wa.assist';
-const DEFAULTS = { enabled: false, businessName: '', greeting: '', noAnswer: '', aiWording: true };
+const DEFAULTS = { enabled: false, businessName: '', greeting: '', noAnswer: '', aiWording: true, collectLeads: true };
 const NO_ANSWER = 'I do not have that information in front of me, so I will not guess. I have asked a team member to confirm it and get back to you.';
 const NO_PRICE = 'I do not have our prices written down here, so I cannot quote one. A team member will share the right price with you.';
 const NO_OFFER = 'I do not have any discount or offer written down here, so I will not promise one. A team member will confirm what is available.';
@@ -36,7 +36,7 @@ async function settings() {
   let v = {};
   try { v = row ? JSON.parse(row.value) : {}; } catch { v = {}; }
   return {
-    enabled: v.enabled === true, businessName: clip(v.businessName, 80), greeting: clip(v.greeting, 300), noAnswer: clip(v.noAnswer, 300), aiWording: v.aiWording !== false,
+    enabled: v.enabled === true, businessName: clip(v.businessName, 80), greeting: clip(v.greeting, 300), noAnswer: clip(v.noAnswer, 300), aiWording: v.aiWording !== false, collectLeads: v.collectLeads !== false,
   };
 }
 async function saveSettings(user, b = {}) {
@@ -47,6 +47,7 @@ async function saveSettings(user, b = {}) {
     greeting: b.greeting === undefined ? cur.greeting : clip(b.greeting, 300),
     noAnswer: b.noAnswer === undefined ? cur.noAnswer : clip(b.noAnswer, 300),
     aiWording: b.aiWording === undefined ? cur.aiWording : b.aiWording !== false,
+    collectLeads: b.collectLeads === undefined ? cur.collectLeads : b.collectLeads !== false,
   };
   const value = JSON.stringify(next);
   await prisma.appSetting.upsert({ where: { key: KEY }, update: { value }, create: { key: KEY, value } });
@@ -244,39 +245,147 @@ ${facts}`;
 async function firstReply(conv) {
   return !(await S.q('SELECT 1 AS x FROM "OmniWaMessage" WHERE convId = ? AND direction = \'OUT\' AND aiGenerated = 1 LIMIT 1', conv.id)).length;
 }
+// is this chat the assistant's: it is on, and the chat is on a marketing number
+async function ownsChat(conv) {
+  try { return !!(conv && conv.numberId && (await isOn()) && (await Cfg.isMarketingNumber(conv.numberId))); } catch { return false; }
+}
+// the same for a phone number (the CRM asks, so its own sales assistant and its "Answer ..." follow-up stay out of a chat the assistant is in)
+async function ownsPhone(phone) {
+  const d = String(phone || '').replace(/\D/g, '');
+  if (d.length < 10 || !(await isOn())) return false;
+  await ensure();
+  const c = (await S.q('SELECT numberId FROM "OmniWaConv" WHERE e164 LIKE ? ORDER BY updatedAt DESC LIMIT 1', `%${d.slice(-10)}`))[0];
+  return !!(c && c.numberId && (await Cfg.isMarketingNumber(c.numberId)));
+}
+
+const BYE = (st, lead, who) => `No problem${who ? `, ${who}` : ''}. Thank you for your time. If you need anything, write to me at any time${st.businessName ? ` - ${st.businessName}` : ''}.`;
+const firstName = (n) => String(n || '').trim().split(/\s+/)[0] || '';
+function closing(lead, band) {
+  const who = firstName(lead.name);
+  const when = lead.callback && lead.callback !== 'No preference' ? ` and that you prefer a call ${/^(at|around|after|before|on|in|by|tomorrow|today|tonight|this|next|evening|morning|afternoon)\b/i.test(lead.callback) ? '' : 'at '}${lead.callback}` : '';
+  return `Thank you${who ? `, ${who}` : ''}. I have noted your details${lead.service ? ` about ${lead.service}` : ''}${when}. A team member will contact you${band === 'Hot' ? ' as soon as possible' : ''}.`;
+}
+
 /**
  * One reply for a chat on a marketing number (agent.askMarketing calls it when the assistant is on).
  * -> the same shape askModel returns: { ctx, calls, reply, written: true, marketing: true, trusted: [links the business wrote] }
  * deps.model(system, history, opts) -> parsed JSON (agent.modelJson); deps.history = what was said so far; deps.settings / deps.entries for tests.
  */
 async function reply(conv, input, deps = {}) {
+  const AL = require('./assistLead'); // eslint-disable-line global-require
   const st = deps.settings || await settings();
   const ctx = { links: [], handoff: null, notInterested: false, facts: [] };
   const calls = [];
-  const res = await answer(input, { numberId: conv.numberId, entries: deps.entries || null, settingsNow: st });
-  let text = null; let trusted = []; let how = res.kind;
-  if (res.kind !== 'none') {
-    text = res.text; trusted = res.links || [];
-    if (res.kind === 'answer') calls.push({ tool: 'knowledge_answer', args: { category: res.category, intents: res.intents }, result: { source: 'knowledge base, word for word', entries: res.entries.map((e) => e.title) } });
-  } else {
-    let problem = null;
-    if (!res.noPrice && st.aiWording && deps.model && res.weak.length) {
-      try {
-        const w = await wording(res.weak, input, deps.history, st, deps.model);
-        if (w.text) { text = w.text; how = 'ai_wording'; calls.push({ tool: 'knowledge_answer', args: { intents: res.intents }, result: { source: 'AI wording of these entries only', entries: res.weak.map((e) => e.question) } }); }
-        problem = w.problem || null;
-      } catch (err) { problem = `The AI could not word it (${clip(err && err.message, 80)})`; }
-    }
-    if (!text) {
-      text = res.noPrice ? noPriceText(input) : (st.noAnswer || NO_ANSWER);
-      how = 'no_answer';
-      ctx.handoff = `${res.noPrice ? 'Asked for a price or offer that is not in the knowledge base' : 'Asked something the knowledge base does not answer'}: "${clip(input, 120)}"`;
-      calls.push({ tool: 'knowledge_answer', args: { intents: res.intents }, result: { found: false, note: problem || 'nothing in the knowledge base matches' } });
+  const collect = st.collectLeads !== false && conv.personType !== 'CANDIDATE'; // a candidate's chat is about a job: no CRM lead
+  const lead = AL.leadOf(conv);
+  const entries = deps.entries || await activeEntries(conv.numberId);
+  const pending = collect && !lead.done && !lead.declined ? lead.pending : null;
+  const bare = /^\W*(yes|yeah|yep|ok|okay|sure|hmm+|hm)\W*$/i.test(String(input || ''));
+  let patch = {};
+  let acted = false; // this message was the answer to the question we asked: the knowledge base is not asked about it
+
+  // 1. the customer says no thank you in the middle of the questions
+  if (pending && AL.NOT_INTERESTED.test(input)) {
+    patch = { declined: true, pending: null };
+    await AL.saveLead(conv, patch);
+    if (lead.crmLeadId) await AL.ensureLead(conv, { reason: 'not interested' }).catch(() => null); // the score drops and the summary says so
+    ctx.notInterested = false;
+    ctx.facts.push('assistant:declined');
+    let text = BYE(st, lead, firstName(lead.name));
+    if (await firstReply(conv)) text = `${st.businessName ? `${st.businessName}'s AI assistant` : 'AI assistant'}: ${text}`;
+    return { ctx, calls, reply: text, written: true, marketing: true, trusted: [], assist: { how: 'declined' } };
+  }
+  // 2. is it the answer to the question we asked?
+  if (pending) {
+    const val = bare ? null : AL.answerFor(pending, input, null);
+    if (val) { patch[pending] = val; acted = true; } else if (!bare && AL.SKIP.test(String(input || ''))) { patch.skipped = [...new Set([...(lead.skipped || []), pending])]; acted = true; }
+    else if (bare) acted = true; // "ok": nothing to look up, the question is asked again
+  }
+  // 3. what the knowledge base says (unless the message was only an answer)
+  let res = { kind: 'none', entries: [], links: [], intents: [], weak: [] };
+  if (!acted) res = await answer(input, { numberId: conv.numberId, entries, settingsNow: st });
+  let text = null; let trusted = []; let how = acted ? 'collecting' : res.kind; let unanswered = null;
+  if (!acted) {
+    if (res.kind !== 'none') {
+      text = res.text; trusted = res.links || [];
+      if (res.kind === 'answer') calls.push({ tool: 'knowledge_answer', args: { category: res.category, intents: res.intents }, result: { source: 'knowledge base, word for word', entries: res.entries.map((e) => e.title) } });
+    } else {
+      let problem = null;
+      if (!res.noPrice && st.aiWording && deps.model && res.weak.length) {
+        try {
+          const w = await wording(res.weak, input, deps.history, st, deps.model);
+          if (w.text) { text = w.text; how = 'ai_wording'; calls.push({ tool: 'knowledge_answer', args: { intents: res.intents }, result: { source: 'AI wording of these entries only', entries: res.weak.map((e) => e.question) } }); }
+          problem = w.problem || null;
+        } catch (err) { problem = `The AI could not word it (${clip(err && err.message, 80)})`; }
+      }
+      if (!text) {
+        text = res.noPrice ? noPriceText(input) : (st.noAnswer || NO_ANSWER);
+        how = 'no_answer';
+        unanswered = clip(input, 120);
+        ctx.handoff = `${res.noPrice ? 'Asked for a price or offer that is not in the knowledge base' : 'Asked something the knowledge base does not answer'}: "${clip(input, 120)}"`;
+        calls.push({ tool: 'knowledge_answer', args: { intents: res.intents }, result: { found: false, note: problem || 'nothing in the knowledge base matches' } });
+      }
     }
   }
+
+  // 4. the lead: what was learned, whether the customer is interested, the next question or the end
+  let asked = null; let done = false;
+  if (collect) {
+    const known = { ...lead, ...patch };
+    const one = res.entries && res.entries.length === 1 && ['pricing', 'services', 'products'].includes(res.category) ? res.entries[0].title : null;
+    if (one && !known.service) { patch.service = one; known.service = one; }
+    if (one) patch.mentioned = [...new Set([...(lead.mentioned || []), one])].slice(0, 5);
+    if (!acted && AL.isQuestion(input) && res.kind !== 'smalltalk') patch.questions = [...new Set([...(lead.questions || []), clip(input, 100)])].slice(-6);
+    if (unanswered) patch.unanswered = [...new Set([...(lead.unanswered || []), unanswered])].slice(-5);
+    const interested = AL.showsInterest(input) || (res.category === 'pricing' && !!one) || !!lead.interestAt || !!pending;
+    if (interested && !lead.done && !lead.declined) {
+      if (!lead.interestAt) patch.interestAt = Date.now();
+      const needsBudget = entries.some((e) => e.category === 'pricing');
+      const field = AL.nextField({ ...known, asked: lead.asked }, { needsBudget });
+      if (field && !(how === 'no_answer' && !text)) {
+        const q = AL.QUESTIONS[field];
+        if ((text || '').length + q.length + 2 <= 640) { asked = field; patch.pending = field; patch.asked = { ...(lead.asked || {}), [field]: ((lead.asked || {})[field] || 0) + 1 }; } else patch.pending = field; // too long to add now: it comes after the next message
+      } else if (!field) { done = true; patch.done = true; patch.pending = null; }
+    }
+    if (Object.keys(patch).length) await AL.saveLead(conv, patch);
+  }
+  // 5. the CRM lead, the score, the team
+  let band = null;
+  if (collect && (done || AL.leadOf(conv).crmLeadId)) {
+    const out = await AL.ensureLead(conv, { reason: done ? 'details complete' : 'new message' }).catch((e) => ({ skipped: e && e.message }));
+    if (out && out.band) {
+      band = out.band;
+      calls.push({ tool: 'lead_saved', args: {}, result: { crmLeadId: out.id, created: out.created, band: out.band, score: out.score } });
+      if (out.created && !out.ownerId && !out.rose) await AL.tellTeam(conv, `New WhatsApp lead (${out.band}): ${AL.leadOf(conv).name || `+${conv.e164}`}`, `${AL.leadOf(conv).service ? `Interested in ${AL.leadOf(conv).service}. ` : ''}Open the lead in CRM > Leads.`);
+      if (out.rose && !ctx.handoff) { ctx.handoff = `Hot lead: ${AL.leadOf(conv).service || 'ready to talk'}`; }
+    }
+  }
+  if (done) text = [text, closing(AL.leadOf(conv), band)].filter(Boolean).join('\n\n');
+  else if (asked) text = [text, AL.QUESTIONS[asked]].filter(Boolean).join('\n\n');
+  else if (acted && !text) text = bare && pending ? AL.QUESTIONS[pending] : 'Thank you. I have noted that.';
   if (text && await firstReply(conv) && !/\bAI assistant\b/i.test(text)) text = `${st.businessName ? `${st.businessName}'s AI assistant` : 'AI assistant'}: ${text}`;
   ctx.facts.push(`assistant:${how}`);
-  return { ctx, calls, reply: text, written: true, marketing: true, trusted, assist: { how, category: res.category || null } };
+  return { ctx, calls, reply: text, written: true, marketing: true, trusted, assist: { how, category: res.category || null, band } };
+}
+
+// the agent passed the chat to a person (asked for a call or a person, the knowledge base had no answer, a Hot lead ...): on a chat the assistant owns the team is told when nobody owns it,
+// and when the customer asked for a call or a person the lead is saved with what is known so far
+async function onHandoff(conv, reason, { alreadyTold = false } = {}) {
+  if (!(await ownsChat(conv))) return null;
+  const AL = require('./assistLead'); // eslint-disable-line global-require
+  const st = await settings();
+  let leadOwnerId = null;
+  if (st.collectLeads !== false && /asked for a (call|person)/i.test(String(reason || '')) && !(await S.q('SELECT 1 AS x FROM "OmniWaOptOut" WHERE e164 = ?', conv.e164)).length) {
+    const out = await AL.ensureLead(conv, { reason }).catch(() => null);
+    if (out && out.ownerId) leadOwnerId = out.ownerId;
+  }
+  // one bell for a chat in half an hour, however many questions the assistant passes on
+  const recently = AL.leadOf(conv).toldAt && Date.now() - AL.leadOf(conv).toldAt < 30 * 60000;
+  if (!alreadyTold && !recently) {
+    await AL.tellTeam(conv, `${conv.name || `+${conv.e164}`} needs a team member on WhatsApp`, `${clip(reason, 160)}. Open Omni-Channel > Inbox & Replies > WhatsApp.`, { leadOwnerId });
+    await AL.saveLead(conv, { toldAt: Date.now() });
+  }
+  return { told: !alreadyTold && !recently };
 }
 
 // the Admin's "try a question" box: what a customer would get from the knowledge base, nothing is sent and no model is asked
@@ -301,4 +410,4 @@ async function overview() {
   return { settings: await settings(), categories: Cfg.KB_CATEGORIES, counts, marketingNumbers: await Cfg.marketingNumbers(), aiReady: !!(fastOn || (st && st.available && st.modelPulled)), aiNote: fastOn ? 'A free fast model is set in Integrations.' : (st && st.reason) || null };
 }
 
-module.exports = { settings, saveSettings, isOn, answer, reply, testQuestion, overview, intentsOf, tokens, activeEntries, greetingText, NO_ANSWER, NO_PRICE, NO_OFFER, noPriceText, DEFAULTS };
+module.exports = { settings, saveSettings, isOn, ownsChat, ownsPhone, onHandoff, answer, reply, testQuestion, overview, intentsOf, tokens, activeEntries, greetingText, NO_ANSWER, NO_PRICE, NO_OFFER, noPriceText, DEFAULTS };

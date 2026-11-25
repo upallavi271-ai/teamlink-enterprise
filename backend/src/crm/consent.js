@@ -84,6 +84,14 @@ async function fromWebsite(out, body, ip) {
   const st = await settings();
   for (const p of st.purposes) await writeRow('lead', out.id, { purpose: p, status: 'Given', channel: 'Website form', source: String(body.page_url || body.pageUrl || 'website').slice(0, 300), ip: String(ip || '').slice(0, 60), byName: 'Website form', noticeVersion: st.noticeVersion }); // eslint-disable-line no-await-in-loop
 }
+// a lead the WhatsApp assistant saved (omniwa/assistLead.js): the customer wrote to us first and gave their details after being told they are kept only to follow up on the enquiry.
+// Only the purposes that notice covers (sales calls and WhatsApp messages) are Given; newsletters and campaigns are never recorded from a chat.
+async function fromWhatsApp(leadId, { note } = {}) {
+  if (!leadId) return;
+  const st = await settings();
+  const own = st.purposes.filter((p) => /whatsapp|sales|call|follow/i.test(p));
+  for (const p of (own.length ? own : st.purposes.slice(0, 1))) await writeRow('lead', leadId, { purpose: p, status: 'Given', channel: 'WhatsApp', source: 'WhatsApp assistant', byName: 'WhatsApp assistant', note: S.clip(note, 300), noticeVersion: st.noticeVersion }); // eslint-disable-line no-await-in-loop
+}
 // the person's data as a file (DPDP: the right to know what is kept)
 async function exportData(user, kind, id) {
   const x = await recordFor(user, kind, id);
@@ -125,4 +133,4 @@ async function noticePage() {
 <p><b>Grievance Officer</b><br>${g || 'Write to us at the email address you received our message from.'}</p><p class="m">Notice version ${esc(st.noticeVersion)} · under the Digital Personal Data Protection Act, 2023 (India)</p></div></body></html>`;
 }
 
-module.exports = { settings, saveSettings, list, record, fromWebsite, exportData, erase, noticePage, PURPOSES, CHANNELS };
+module.exports = { settings, saveSettings, list, record, fromWebsite, fromWhatsApp, exportData, erase, noticePage, PURPOSES, CHANNELS };

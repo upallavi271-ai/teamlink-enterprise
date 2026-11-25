@@ -314,7 +314,9 @@ async function onReply({ channel, phone, email, subject, text, stop = false }, {
   const wantsOut = stop || (channel === 'Email' && STOP_MAIL.test(String(text || '')));
   // the AI sales assistant answers instead of a person (crm/salesAgent.js): then no "Answer ..." follow-up is made; it hands over when a person is needed
   const SA = require('./salesAgent'); // eslint-disable-line global-require
-  const aiAnswers = !wantsOut && (await SA.load()).on;
+  // a chat the WhatsApp marketing assistant is in (omniwa/assist.js ownsPhone): it answers, the CRM's sales assistant and its "Answer ..." follow-up stay out (one answerer per chat)
+  const mineChat = channel === 'WhatsApp' && !!(await require('../omniwa/assist').ownsPhone(phone).catch(() => false)); // eslint-disable-line global-require
+  const aiAnswers = !wantsOut && !mineChat && (await SA.load()).on;
   const CMP = require('./campaigns'); // eslint-disable-line global-require
   const names = SALES.stageNames(await SETTINGS.load());
   const word = CHANNEL_WORD[channel] || channel;
@@ -330,7 +332,7 @@ async function onReply({ channel, phone, email, subject, text, stop = false }, {
       if (lead.phone) await CMP.optOut('whatsapp', lead.phone, { reason: `Asked us to stop by ${word}` });
       if (lead.status !== 'Converted' && SALES.stageOf(lead, names) !== 'Won') await moveLead(lead, 'Lost', 'Asked us to stop');
     } else if (SALES.stageOf(lead, names) === names[0]) await moveLead(lead, 'Contacted', `Replied on ${word}`);
-    const to = lead.ownerId ? [lead.ownerId] : managers;
+    const to = mineChat ? [] : (lead.ownerId ? [lead.ownerId] : managers); // the WhatsApp assistant is answering: its own bells tell the team when a person is needed, not one per message
     const stamp = Date.now();
     for (const userId of to) {
       await prisma.notification.create({
@@ -341,7 +343,7 @@ async function onReply({ channel, phone, email, subject, text, stop = false }, {
     }
     // one follow-up however many messages they send: a person answers them all at once
     const open = !wantsOut && lead.ownerId && await DB.one('SELECT "id" FROM "CrmTask" WHERE "leadId" = ? AND "status" = \'Open\' AND "title" LIKE \'Answer %\'', lead.id);
-    if (!wantsOut && lead.ownerId && !open && !aiAnswers) {
+    if (!wantsOut && lead.ownerId && !open && !aiAnswers && !mineChat) {
       const iso = new Date(stamp + 5.5 * HOUR).toISOString();
       const now = DB.nowIso();
       await S.insert('CrmTask', {

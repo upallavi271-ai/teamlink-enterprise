@@ -5,6 +5,7 @@
 //   GET  /conversations/:key                     the strip above a chat: AI state, 24-hour window, already contacted, what the AI collected
 //   POST /conversations/:key/pause | /resume     a person takes over / gives the chat back to the AI
 //   GET  /conversations/:key/messages , POST .../send      a lead's chat (a candidate's chat uses /api/wa-chats as everywhere else)
+//   GET  /leads                                  the marketing assistant's leads (band, details); GET /assignees , POST /conversations/:key/assign { userId }
 //   GET  /promotions                             the promotion log
 //   POST /already-contacted { ids }              who else reached these candidates in the last 7 days
 //   GET  /stream                                 Server-Sent Events: "something changed", no names and no words
@@ -75,6 +76,18 @@ router.post('/conversations/:key/send', wrap(async (req, res) => {
   return res.json({ ok: true });
 }));
 
+// the AI WhatsApp Marketing Assistant's leads, and handing a lead's chat to a team member
+router.get('/leads', wrap(async (req, res) => res.json(await Inbox.assistLeads(req.user, req.query))));
+router.get('/assignees', wrap(async (req, res) => res.json({ people: await require('../omniwa/assistLead').assignees() }))); // eslint-disable-line global-require
+router.post('/conversations/:key/assign', wrap(async (req, res) => {
+  const d = await own(req, res);
+  if (!d) return undefined;
+  if (!d.conv) return res.status(409).json({ error: 'The AI is not in this chat.' });
+  const out = await require('../omniwa/assistLead').assign(req.user, d.conv, (req.body || {}).userId); // eslint-disable-line global-require
+  if (out.error) return send(res, out);
+  await logAudit({ userId: req.user.id, action: 'WhatsApp lead chat handed to a team member', entity: 'OmniWaConv', entityId: d.conv.id, toValue: out.owner.name }).catch(() => {});
+  return res.json((await Inbox.detail(req.user, req.params.key)).view);
+}));
 router.get('/promo-jobs', wrap(async (req, res) => {
   const prisma = require('../db'); // eslint-disable-line global-require
   const where = await require('../utils/scope').requirementWhere(req.user); // eslint-disable-line global-require

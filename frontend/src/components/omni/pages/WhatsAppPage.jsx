@@ -112,6 +112,64 @@ function AiStrip({ chatKey, tick, onChanged }) {
       {d.collected && d.collected.answers && (
         <details className="small-muted"><summary>Answers to the questions ({Object.keys(d.collected.answers).length})</summary>{Object.entries(d.collected.answers).map(([q, a]) => <div key={q}><b>{q}</b> {a}</div>)}</details>
       )}
+      {d.assist && <LeadCard a={d.assist} chatKey={chatKey} isLead={chatKey.startsWith('LEAD:')} onDone={(v) => { setD(v); onChanged(); }} />}
+    </div>
+  );
+}
+
+// the AI WhatsApp Marketing Assistant's lead: what it collected, Hot / Warm / Cold with the reasons, the summary and the next step. Plain facts: no model wrote any of it.
+const BAND = { Hot: 'red', Warm: 'warn', Cold: 'draft' };
+const openCrm = (id) => window.open(`/crm/leads?open=lead:${id}`, '_blank', 'noopener');
+
+// a lead's chat goes to a team member: they own it, the AI steps back, the CRM lead follows
+function HandOver({ chatKey, onDone }) {
+  const [people, setPeople] = useState(null);
+  const [to, setTo] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const load = () => api.get(`${BASE}/assignees`).then((r) => setPeople(r.data.people)).catch((e) => setErr(errOf(e, 'The team list could not be read.')));
+  const go = async () => {
+    setBusy(true); setErr('');
+    try { const r = await api.post(`${BASE}/conversations/${encodeURIComponent(chatKey)}/assign`, { userId: to }); onDone(r.data); setPeople(null); setTo(''); } catch (e) { setErr(errOf(e, 'The chat could not be handed over.')); } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+      {!people && <Btn small onClick={load}>Hand over to a team member</Btn>}
+      {people && (
+        <>
+          <select className="input" style={{ maxWidth: 240 }} aria-label="Team member" value={to} onChange={(e) => setTo(e.target.value)}>
+            <option value="">Choose a team member</option>
+            {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <Btn small primary onClick={go} disabled={!to || busy}>Hand over</Btn>
+          <Btn small ghost onClick={() => setPeople(null)}>Cancel</Btn>
+        </>
+      )}
+      {err && <span className="small-muted" role="alert">{err}</span>}
+    </div>
+  );
+}
+
+function LeadCard({ a, chatKey, isLead, onDone }) {
+  const f = a.fields;
+  const facts = [f.name && `Name: ${f.name}`, f.service && `Interested in: ${f.service}`, f.budget && `Budget: ${f.budget}`, f.callback && `Call: ${f.callback}`].filter(Boolean).join(' · ');
+  return (
+    <div style={{ border: '1px solid var(--line, #e5e7eb)', borderRadius: 8, padding: 8, display: 'grid', gap: 4 }} aria-label="AI lead">
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <b>AI lead</b>
+        <Pill tone={BAND[a.band] || 'draft'}>{a.band} ({a.score})</Pill>
+        {a.declined && <Pill tone="draft">Said no</Pill>}
+        {a.crmLeadId ? <Btn small onClick={() => openCrm(a.crmLeadId)}>Open in CRM ↗</Btn> : <span className="small-muted">Not in the CRM yet{a.collecting ? ': the assistant is still asking' : ''}</span>}
+      </div>
+      <div className="small-muted">{facts || 'No details yet.'}</div>
+      {f.requirement && <div className="small-muted">Needs: {f.requirement}</div>}
+      <div><b>Next:</b> {a.summary.next}</div>
+      <details className="small-muted">
+        <summary>Why {a.band}, and the summary</summary>
+        <div style={{ marginTop: 4 }}>{a.reasons.length ? a.reasons.map((r, i) => <div key={`${r.why}-${i}`}>{r.pts > 0 ? '+' : ''}{r.pts} {r.why}</div>) : <div>No sign of interest yet.</div>}</div> {/* eslint-disable-line react/no-array-index-key */}
+        <div style={{ whiteSpace: 'pre-wrap', marginTop: 6 }}>{a.summary.text}</div>
+      </details>
+      {isLead && <HandOver chatKey={chatKey} onDone={onDone} />}
     </div>
   );
 }
@@ -152,7 +210,7 @@ function LeadChat({ row, tick, onChanged, onBack }) {
   );
 }
 
-function Chats() {
+function Chats({ openKey, onOpened }) {
   const [f, setF] = useState({ filter: 'all', q: '', owner: '', requirementId: '', campaign: '' });
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
@@ -167,6 +225,12 @@ function Chats() {
   useLive(refresh);
   useEffect(() => { const t = setInterval(refresh, 30000); return () => clearInterval(t); }, [refresh]); // the push may be cut by a proxy: this keeps the list true
 
+  useEffect(() => { // "Open chat" on the leads list
+    if (!openKey || !data) return;
+    const r = data.rows.find((x) => x.key === openKey);
+    if (r) setSel(r);
+    onOpened();
+  }, [openKey, data, onOpened]);
   const selRow = useMemo(() => (sel && data ? data.rows.find((r) => r.key === sel.key) || sel : sel), [sel, data]);
   const pick = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
   return (
@@ -217,6 +281,38 @@ function Chats() {
   );
 }
 
+// the marketing assistant's leads: Hot first, each with what it collected; the chat and the CRM lead are one click away
+function Leads({ onOpen }) {
+  const [d, setD] = useState(null);
+  const [band, setBand] = useState('');
+  const [err, setErr] = useState('');
+  const load = useCallback(() => api.get(`${BASE}/leads`).then((r) => { setD(r.data); setErr(''); }).catch((e) => setErr(errOf(e, 'The leads could not be loaded.'))), []);
+  useEffect(() => { load(); }, [load]);
+  useLive(load);
+  const rows = d ? d.rows.filter((r) => !band || r.band === band) : [];
+  const columns = [
+    { id: 'name', label: 'Customer', sort: (r) => String(r.name).toLowerCase(), search: (r) => `${r.name} ${r.phoneHint} ${r.service || ''} ${r.requirement || ''}`, render: (r) => <span><b>{r.name}</b><br /><span className="small-muted">{r.phoneHint}</span></span> },
+    { id: 'band', label: 'Lead', sort: (r) => ({ Hot: 0, Warm: 1, Cold: 2 }[r.band] ?? 3), render: (r) => (r.band ? <Pill tone={BAND[r.band] || 'draft'}>{r.band}{r.score === null ? '' : ` (${r.score})`}</Pill> : <span className="small-muted">Not scored</span>) },
+    { id: 'service', label: 'Interested in', render: (r) => r.service || '—' },
+    { id: 'requirement', label: 'Needs', render: (r) => (r.requirement ? String(r.requirement).slice(0, 80) : '—') },
+    { id: 'budget', label: 'Budget', render: (r) => r.budget || '—' },
+    { id: 'callback', label: 'Call time', render: (r) => r.callback || '—' },
+    { id: 'ownerName', label: 'With', render: (r) => r.ownerName || '—' },
+    { id: 'updatedAt', label: 'Last talk', sort: (r) => r.updatedAt, render: (r) => fmtDateTime(r.updatedAt) },
+    { id: 'act', label: '', render: (r) => <span style={{ display: 'flex', gap: 6 }}><Btn small onClick={() => onOpen(r.key)}>Open chat</Btn>{r.crmLeadId && <Btn small onClick={() => openCrm(r.crmLeadId)}>CRM ↗</Btn>}</span> },
+  ];
+  if (err) return <Banner tone="warn">{err}</Banner>;
+  return (
+    <>
+      <p className="small-muted">Customers the AI assistant talked to on a marketing number: what they told it, and how ready they are, with the reasons. Open a chat to read what was said. Turn the assistant on in Settings &gt; WhatsApp AI &gt; Marketing assistant.</p>
+      <div className="msg-filter" role="group" aria-label="Show" style={{ margin: '6px 0' }}>
+        {[['', 'All', 'all'], ['Hot', 'Hot', 'Hot'], ['Warm', 'Warm', 'Warm'], ['Cold', 'Cold', 'Cold']].map(([id, word, key]) => <button key={id || 'all'} type="button" className={`msg-chip${band === id ? ' on' : ''}`} onClick={() => setBand(id)}>{word}{d ? ` (${d.counts[key]})` : ''}</button>)}
+      </div>
+      <DataTable columns={columns} rows={rows} rowKey={(r) => r.key} loading={!d} emptyText="No leads yet. When a customer on a marketing number shows interest, the assistant asks for their details and the lead appears here." searchPlaceholder="Search a name, service or number" />
+    </>
+  );
+}
+
 function Promotions() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
@@ -242,13 +338,18 @@ function Promotions() {
 }
 
 export default function WhatsAppPage() {
-  useOmni();
+  const { acc } = useOmni();
   const [tab, setTab] = useState('chats');
+  const [openKey, setOpenKey] = useState(null);
+  const showLeads = !acc || acc.kind !== 'recruiter'; // a recruiter's login has no use for the marketing assistant's leads
+  const done = useCallback(() => setOpenKey(null), []);
   return (
     <>
       <PageHead title="WhatsApp" lead="Chats with the AI assistant and your recruiters, and every promotion you sent." />
-      <Tabs tabs={[['chats', 'Chats'], ['promotions', 'Promotions']]} value={tab} onChange={setTab} />
-      {tab === 'chats' ? <Chats /> : <Promotions />}
+      <Tabs tabs={[['chats', 'Chats'], ...(showLeads ? [['leads', 'AI leads']] : []), ['promotions', 'Promotions']]} value={tab} onChange={setTab} />
+      {tab === 'chats' && <Chats openKey={openKey} onOpened={done} />}
+      {tab === 'leads' && <Leads onOpen={(k) => { setOpenKey(k); setTab('chats'); }} />}
+      {tab === 'promotions' && <Promotions />}
     </>
   );
 }
