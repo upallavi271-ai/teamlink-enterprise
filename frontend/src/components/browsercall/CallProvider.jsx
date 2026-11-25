@@ -229,7 +229,8 @@ export default function BrowserCallProvider({ children }) {
     return run({ candidateId: candidateId || (outreachTaskId ? `task:${outreachTaskId}` : undefined), name }, async () => (await api.post('/browser-calling/calls', { candidateId, applicationId, lineId: ln === 'vicidial' ? undefined : ln, outreachTaskId })).data);
   }, [run, curLine, viciCall, phoneCall, lines]);
   // CRM wave B: a lead / deal / customer of the CRM on the office line (POST /crm/b/calls; the row is kept as crm:<kind>:<id>)
-  const callCrm = useCallback(({ kind, id, name, lineId, to }) => run({ candidateId: `crm:${kind}:${id}`, name }, async () => (await api.post('/crm/b/calls', { kind, id, to, lineId: lineId || (curLine && !curLine.vicidial ? curLine.id : undefined) || undefined })).data, { sessionPath: '/crm/b/calls/session' }), [run, curLine]);
+  // CRM calls do not go through the Android phone (yet): with the phone picked in "Call using" they use the office line
+  const callCrm = useCallback(({ kind, id, name, lineId, to }) => run({ candidateId: `crm:${kind}:${id}`, name }, async () => (await api.post('/crm/b/calls', { kind, id, to, lineId: lineId || (curLine && !curLine.vicidial && !curLine.phone ? curLine.id : undefined) || undefined })).data, { sessionPath: '/crm/b/calls/session' }), [run, curLine]);
   // "pick the line first": the call bar shows "Call using" and the Call button
   const pickAndCall = useCallback((args) => { if (!sess.current) setState({ phase: 'choose', ...args }); }, []);
   // Admin: a test call on one line to one of the Test numbers (Phone lines > Test call)
