@@ -67,10 +67,13 @@ async function getSettings() {
   const row = await prisma.appSetting.findUnique({ where: { key: SETTINGS_KEY } }).catch(() => null);
   let v = {};
   try { v = row ? JSON.parse(row.value) : {}; } catch { v = {}; }
-  const months = Number.isInteger(v.months) && v.months >= 1 && v.months <= 12 ? v.months : (Number(process.env.PROBATION_MONTHS) || 3);
+  // founder 2026-11-25: 6 months for everybody, Team Leads 3 months
+  const months = Number.isInteger(v.months) && v.months >= 1 && v.months <= 12 ? v.months : (Number(process.env.PROBATION_MONTHS) || 6);
+  const leadMonths = Number.isInteger(v.leadMonths) && v.leadMonths >= 1 && v.leadMonths <= 12 ? v.leadMonths : 3;
   return {
     enabled: v.enabled === true,
     months,
+    leadMonths,
     letterText: cleanText(v.letterText, 4000) || DEFAULT_LETTER,
     defaultLetter: DEFAULT_LETTER,
     enabledAt: v.enabledAt || null,
@@ -78,15 +81,20 @@ async function getSettings() {
   };
 }
 
-/** body: { enabled?, months?, letterText? } -> { settings, sync? } | { error, status } */
+/** body: { enabled?, months?, leadMonths?, letterText? } -> { settings, sync? } | { error, status } */
 async function saveSettings(body, user) {
   const cur = await getSettings();
   const b = body || {};
-  const next = { enabled: cur.enabled, months: cur.months, letterText: cur.letterText === DEFAULT_LETTER ? '' : cur.letterText, enabledAt: cur.enabledAt, enabledByName: cur.enabledByName };
+  const next = { enabled: cur.enabled, months: cur.months, leadMonths: cur.leadMonths, letterText: cur.letterText === DEFAULT_LETTER ? '' : cur.letterText, enabledAt: cur.enabledAt, enabledByName: cur.enabledByName };
   if (b.months !== undefined) {
     const m = Number(b.months);
     if (!Number.isInteger(m) || m < 1 || m > 12) return { error: 'The probation length is a whole number of months, 1 to 12.', status: 400 };
     next.months = m;
+  }
+  if (b.leadMonths !== undefined) {
+    const m = Number(b.leadMonths);
+    if (!Number.isInteger(m) || m < 1 || m > 12) return { error: 'The Team Lead probation length is a whole number of months, 1 to 12.', status: 400 };
+    next.leadMonths = m;
   }
   if (b.letterText !== undefined) {
     const txt = cleanText(b.letterText, 4000);
@@ -105,7 +113,7 @@ async function saveSettings(body, user) {
     create: { key: SETTINGS_KEY, value: JSON.stringify(next), ...who },
     update: { value: JSON.stringify(next), ...who },
   });
-  await logAudit({ userId: user ? user.id : null, action: `Probation tracking settings saved${b.enabled !== undefined ? (next.enabled ? ' (switched ON)' : ' (switched OFF)') : ''}`, entity: 'Probation', entityId: SETTINGS_KEY, toValue: `${next.months} months` });
+  await logAudit({ userId: user ? user.id : null, action: `Probation tracking settings saved${b.enabled !== undefined ? (next.enabled ? ' (switched ON)' : ' (switched OFF)') : ''}`, entity: 'Probation', entityId: SETTINGS_KEY, toValue: `${next.months} months, Team Leads ${next.leadMonths} months${b.reason ? ` (${cleanLine(b.reason, 160)})` : ''}` });
   const out = { settings: await getSettings() };
   if (turnedOn) out.sync = await sync({ by: user });
   return out;
@@ -132,7 +140,12 @@ function reviewerFrom(e, people) {
   return { userId: null, name };
 }
 
-const EMP_SELECT = { id: true, employeeCode: true, name: true, department: true, team: true, designation: true, dateOfJoining: true, tl: true, stl: true, employmentStatus: true, reportingManager: { select: { userId: true, name: true } } };
+const EMP_SELECT = { id: true, employeeCode: true, name: true, department: true, team: true, designation: true, dateOfJoining: true, tl: true, stl: true, employmentStatus: true, reportingManager: { select: { userId: true, name: true } }, user: { select: { role: true, hrmsRole: true } } };
+
+/** A Team Lead is somebody whose login is a TL (STL stays on the usual length until the founder says otherwise). */
+const isLead = (e) => !!(e && e.user && [e.user.role, e.user.hrmsRole].includes('TL'));
+/** The probation length of one person: Team Leads have their own length, everybody else the usual one. */
+const monthsFor = (e, st) => (isLead(e) ? st.leadMonths : st.months);
 
 async function addEvent(recordId, kind, user, extra = {}) {
   return prisma.probationEvent.create({
@@ -175,16 +188,17 @@ async function sync({ now = Date.now(), by = null, force = false } = {}) {
     }
     const start = dayOfDate(e.dateOfJoining);
     if (!start) continue; // eslint-disable-line no-continue
-    const end = endFor(start, st.months);
+    const months = monthsFor(e, st);
+    const end = endFor(start, months);
     const tracked = end >= today;
     const created = await prisma.probationRecord.create({ // eslint-disable-line no-await-in-loop
       data: {
         employeeId: e.id, employeeCode: e.employeeCode, employeeName: e.name, department: e.department || null, team: e.team || null, designation: e.designation || null,
-        startDate: toDate(start), months: st.months, endDate: toDate(end), originalEndDate: toDate(end),
+        startDate: toDate(start), months, endDate: toDate(end), originalEndDate: toDate(end),
         status: tracked ? 'In probation' : 'Not tracked', reviewerUserId: rv.userId, reviewerName: rv.name,
       },
     });
-    await addEvent(created.id, 'Started', by, { toEnd: end, note: tracked ? `Probation of ${st.months} months from ${pretty(start)}.` : `Joined ${pretty(start)}, before probation tracking began. Not tracked.` }); // eslint-disable-line no-await-in-loop
+    await addEvent(created.id, 'Started', by, { toEnd: end, note: tracked ? `Probation of ${months} months from ${pretty(start)}.` : `Joined ${pretty(start)}, before probation tracking began. Not tracked.` }); // eslint-disable-line no-await-in-loop
     if (tracked) inProbation += 1; else notTracked += 1;
   }
   return { created: inProbation + notTracked, inProbation, notTracked, total: have.length + inProbation + notTracked };
@@ -514,11 +528,11 @@ async function track(user, id, body) {
   const b = body || {};
   const start = b.startDate ? String(b.startDate).slice(0, 10) : dayOfDate(rec.startDate);
   if (!isDay(start)) return { error: 'The start date is not valid.', status: 400 };
-  const months = b.months === undefined || b.months === '' ? st.months : Number(b.months);
+  const emp = await prisma.employee.findUnique({ where: { id: rec.employeeId }, select: EMP_SELECT });
+  const months = b.months === undefined || b.months === '' ? (emp ? monthsFor(emp, st) : st.months) : Number(b.months);
   if (!Number.isInteger(months) || months < 1 || months > 12) return { error: 'The probation length is a whole number of months, 1 to 12.', status: 400 };
   const end = endFor(start, months);
   const people = await peopleMaps();
-  const emp = await prisma.employee.findUnique({ where: { id: rec.employeeId }, select: EMP_SELECT });
   const rv = emp ? reviewerFrom(emp, people) : { userId: rec.reviewerUserId, name: rec.reviewerName };
   await prisma.probationRecord.update({
     where: { id }, data: { status: 'In probation', startDate: toDate(start), months, endDate: toDate(end), originalEndDate: toDate(end), reviewerUserId: rv.userId || rec.reviewerUserId, reviewerName: rv.name || rec.reviewerName, remindState: null },
@@ -533,5 +547,5 @@ module.exports = {
   getSettings, saveSettings, sync, remind, sweep, startSchedule,
   list, detail, byEmployee, review, confirm, extend, endService, reopen, track, letterPreview, letterFile,
   // for tests
-  addMonths, endFor, milestoneOf, shape, istToday,
+  addMonths, endFor, milestoneOf, shape, istToday, isLead, monthsFor,
 };

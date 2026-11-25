@@ -94,6 +94,10 @@ async function cleanup() {
     await t('only HR style settings are accepted: months 1-12, letter text not tiny', async () => {
       assert.ok((await P.saveSettings({ months: 0 }, hr)).error);
       assert.ok((await P.saveSettings({ months: 13 }, hr)).error);
+      assert.ok((await P.saveSettings({ leadMonths: 0 }, hr)).error);
+      assert.ok((await P.saveSettings({ leadMonths: 13 }, hr)).error);
+      const d = await P.getSettings();
+      assert.strictEqual(d.months, 6, 'usual length 6 months'); assert.strictEqual(d.leadMonths, 3, 'Team Leads 3 months');
       assert.ok((await P.saveSettings({ letterText: 'short' }, hr)).error);
     });
 
@@ -102,7 +106,8 @@ async function cleanup() {
       assert.ok(out.sync && out.sync.created >= 3, JSON.stringify(out.sync));
       const a = await rec(eNew); const b = await rec(eByTlName); const c = await rec(eOld);
       assert.strictEqual(a.status, 'In probation');
-      assert.strictEqual(P.endFor(ymd(now - 20 * DAY), 3), new Date(a.endDate.getTime() + 330 * 60000).toISOString().slice(0, 10));
+      assert.strictEqual(P.endFor(ymd(now - 20 * DAY), 6), new Date(a.endDate.getTime() + 330 * 60000).toISOString().slice(0, 10), 'the usual length is 6 months');
+      assert.strictEqual(a.months, 6);
       assert.strictEqual(b.status, 'In probation');
       assert.strictEqual(c.status, 'Not tracked');
       assert.strictEqual(await rec(eGone), null);
@@ -292,6 +297,29 @@ async function cleanup() {
       const out = await P.remind({ now: r.endDate.getTime() - 5 * DAY + 10 * 3600e3, notify: async (ids, m) => sent.push(m.title), force: true });
       assert.ok(!sent.some((x) => /ZZ Prob Old/.test(x)));
       void out;
+    });
+
+    await t('lengths: a Team Lead gets 3 months, everybody else 6 (a senior team lead stays on 6), and a person who is tracked later gets the same default', async () => {
+      const uLead = await mkUser('Lead2', { role: 'TL', hrmsRole: 'TL' });
+      const uStl = await mkUser('Stl2', { role: 'STL', hrmsRole: 'STL' });
+      const uPlain = await mkUser('Plain2');
+      const eLead = await mkEmp('Lead2', { userId: uLead.id, dateOfJoining: new Date(now - 20 * DAY) });
+      const eStl = await mkEmp('Stl2', { userId: uStl.id, dateOfJoining: new Date(now - 20 * DAY) });
+      const ePlain = await mkEmp('Plain2', { userId: uPlain.id, dateOfJoining: new Date(now - 20 * DAY) });
+      const out = await P.sync({});
+      assert.ok(out.created >= 3, JSON.stringify(out));
+      const a = await rec(eLead); const b = await rec(eStl); const c = await rec(ePlain);
+      assert.strictEqual(a.months, 3); assert.strictEqual(b.months, 6); assert.strictEqual(c.months, 6);
+      const day = (r) => new Date(r.endDate.getTime() + 330 * 60000).toISOString().slice(0, 10);
+      assert.strictEqual(day(a), P.endFor(ymd(now - 20 * DAY), 3));
+      assert.strictEqual(day(c), P.endFor(ymd(now - 20 * DAY), 6));
+      // eTl is a Team Lead who joined long ago (Not tracked): tracking him later defaults to 3 months
+      const t0 = await rec(eTl);
+      const start = ymd(now - 10 * DAY);
+      const tr = await P.track(hr, t0.id, { startDate: start });
+      assert.ok(!tr.error, tr.error);
+      assert.strictEqual(tr.record.months, 3); assert.strictEqual(tr.record.endDate, P.endFor(start, 3));
+      assert.ok(P.isLead({ user: { role: 'TL', hrmsRole: 'TL' } })); assert.ok(!P.isLead({ user: { role: 'STL', hrmsRole: 'STL' } })); assert.ok(!P.isLead({ user: null }));
     });
 
     await t('the settings screen data: only HR / Admin can reach the decision routes (route guard)', async () => {

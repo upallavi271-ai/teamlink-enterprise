@@ -229,18 +229,19 @@ function addMonthsStr(day, n) {
 // ---- settings (HR / Admin) ---------------------------------------------------------------------------------------------------
 function Settings({ enabled, onClose, onChanged }) {
   const [s, setS] = useState(null);
-  const [months, setMonths] = useState(3);
+  const [months, setMonths] = useState(6);
+  const [leadMonths, setLeadMonths] = useState(3);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    api.get('/probation/settings').then((r) => { setS(r.data); setMonths(r.data.months); setText(r.data.letterText); }).catch((e) => setError(errOf(e, 'The settings could not be loaded.')));
+    api.get('/probation/settings').then((r) => { setS(r.data); setMonths(r.data.months); setLeadMonths(r.data.leadMonths); setText(r.data.letterText); }).catch((e) => setError(errOf(e, 'The settings could not be loaded.')));
   }, []);
   async function save(extra, done) {
     setBusy(true); setError(''); setMsg('');
     try {
-      const r = await api.put('/probation/settings', { months: Number(months), letterText: text, ...extra });
+      const r = await api.put('/probation/settings', { months: Number(months), leadMonths: Number(leadMonths), letterText: text, ...extra });
       setS(r.data.settings); setMsg(done || 'Saved.');
       if (r.data.sync) {
         const y = r.data.sync;
@@ -272,11 +273,15 @@ function Settings({ enabled, onClose, onChanged }) {
             </div>
             {s.enabled
               ? <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { if (window.confirm('Switch probation tracking off? Records and history are kept; reminders stop.')) save({ enabled: false }, 'Probation tracking is OFF.'); }}>Switch off</button>
-              : <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => { if (window.confirm(`Switch probation tracking on?\n\nEveryone who joined in the last ${months} months gets a probation end date. Everyone who joined earlier is marked Not tracked and never shows as overdue. Nobody is reminded until their dates come near.`)) save({ enabled: true }); }}>Switch on</button>}
+              : <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => { if (window.confirm(`Switch probation tracking on?\n\nEveryone who joined within their probation length (${months} months, Team Leads ${leadMonths} months) gets a probation end date. Everyone who joined earlier is marked Not tracked and never shows as overdue. Nobody is reminded until their dates come near.`)) save({ enabled: true }); }}>Switch on</button>}
           </div>
           <label className="prb-field">Usual probation length (months)
             <input type="number" min="1" max="12" value={months} onChange={(e) => setMonths(e.target.value)} />
             <span className="small-muted">Used for new records. Records that already exist keep their own dates.</span>
+          </label>
+          <label className="prb-field">Team Lead probation length (months)
+            <input type="number" min="1" max="12" value={leadMonths} onChange={(e) => setLeadMonths(e.target.value)} />
+            <span className="small-muted">For people whose login is a Team Lead (TL). A senior team lead (STL) uses the usual length.</span>
           </label>
           <label className="prb-field">Confirmation letter text
             <textarea rows="9" value={text} onChange={(e) => setText(e.target.value)} />
