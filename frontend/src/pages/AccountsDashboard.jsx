@@ -17,6 +17,8 @@ import ClientTable from './accounts/dash/ClientTable.jsx';
 import { flatInvoices } from './accounts/dash/Drill.jsx';
 import MoreTools from './accounts/dash/MoreTools.jsx';
 import DashboardExport from '../components/dashboard/DashboardExport.jsx';
+// Profit & Loss + forecast (founder 2026-11-25: "profit & loss button dashboard lo ivvu"): the same screen as Accounts > Reports > Profit & Loss
+import ProfitLoss from './reports/ProfitLoss.jsx';
 import './accounts/dash/accDash.css';
 
 // ---------------------------------------------------------------------------
@@ -42,12 +44,15 @@ export default function AccountsDashboard() {
   const canPay = can(user, 'accounts', 'accounts', 'Payments', 'create');
   const canAttach = can(user, 'accounts', 'accounts', 'Invoices', 'edit');
   const canOffice = can(user, 'accounts', 'accounts', 'Office & Expenses', 'edit');
+  // the P&L asks for Accounts Reports and Invoices (GET /reports/accounts/pnl)
+  const canPnl = can(user, null, 'reports', 'Accounts Reports', 'view') && can(user, 'accounts', 'accounts', 'Invoices', 'view');
 
   const [f, setF] = useKeptState('accounts.dashboard.filters', BLANK); // kept when you leave and come back; Clear filters empties it
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [importing, setImporting] = useState(false);
+  const [pnl, setPnl] = useState(false); // the Profit & Loss opened on this page
   const [msg, setMsg] = useState(null);
   const seq = useRef(0);
   const msgTimer = useRef(null);
@@ -97,11 +102,13 @@ export default function AccountsDashboard() {
           <div className="acd-sub">Track invoices, collections, expenses, GST, TDS, pending payments and profit in one place.</div>
         </div>
         <div className="acd-head-btns">
+          {allowed && canPnl && <button type="button" className={`btn btn-sm${pnl ? ' btn-primary' : ''}`} aria-expanded={pnl} data-testid="acd-pnl-btn" onClick={() => setPnl((x) => !x)}>{pnl ? 'Hide Profit & Loss' : 'Profit & Loss'}</button>}
           {canImport && <button type="button" className="btn btn-sm" onClick={() => setImporting(true)}>⬆ Import</button>}
           {allowed && data && data.mayExport && <DashboardExport url="/dashboard/accounts/control/export" params={serverFilters} />}
         </div>
       </div>
       {importing && <AccountsImport onClose={() => setImporting(false)} onDone={() => load(true)} />}
+      {allowed && canPnl && pnl && <div className="card" style={{ margin: '0 0 14px' }} data-testid="acd-pnl"><ProfitLoss /></div>}
 
       {!allowed && (
         <div className="notice amber"><span>Money figures are open to Accounts, Admin and Super Admin only. Ask an admin if you need them.</span></div>
