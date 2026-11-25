@@ -48,16 +48,17 @@ public class MergeService extends AccessibilityService {
                 if (!LegacyBridge.waitingMerge) return;
                 MergeService s = instance;
                 if (s != null) s.tryMerge();
-                main.postDelayed(this, 1000);
+                main.postDelayed(this, 500);
             }
-        }, 1000);
+        }, 500);
     }
     static int dumps;
 
     private long lastTry;
+    private long lastMore;
     private void tryMerge() {
         long now = System.currentTimeMillis();
-        if (now - lastTry < 400) return;
+        if (now - lastTry < 300) return;
         lastTry = now;
         try {
             StringBuilder seen = new StringBuilder();
@@ -65,6 +66,16 @@ public class MergeService extends AccessibilityService {
             if (ws != null) for (AccessibilityWindowInfo w : ws) { AccessibilityNodeInfo r = w.getRoot(); if (r != null && (pressIn(r) || walk(r, seen, 0))) return; }
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root != null && (pressIn(root) || walk(root, seen, 0))) return;
+            // Google Phone / realme: Merge sits under "Show more". Once the candidate's call is live (its timer runs) while the office call is
+            // "On hold", open "Show more"; the next look (0.5 s later) finds and presses Merge.
+            String s = seen.toString();
+            boolean candidateLive = s.contains("contact_grid_chronometer") && s.contains("On hold");
+            if (candidateLive && now - lastMore > 2000) {
+                AccessibilityNodeInfo[] roots = rootsOf(ws, root);
+                for (AccessibilityNodeInfo r : roots) {
+                    if (r != null && clickLabel(r, new String[] { "show more", "more options", "more" }, 0)) { lastMore = now; Bridge.trace("candidate answered: opened \"Show more\" to reach Merge"); return; }
+                }
+            }
             // what the screen shows (labels / ids of clickable things), a few times per call, to learn this dialler's Merge button
             if (dumps < 5 && (System.currentTimeMillis() - lastDump) > 8000) {
                 dumps++; lastDump = System.currentTimeMillis();
@@ -74,6 +85,30 @@ public class MergeService extends AccessibilityService {
         } catch (Exception e) { Bridge.trace("merge scan error: " + e); }
     }
     private long lastDump;
+
+    private static AccessibilityNodeInfo[] rootsOf(List<AccessibilityWindowInfo> ws, AccessibilityNodeInfo active) {
+        java.util.ArrayList<AccessibilityNodeInfo> out = new java.util.ArrayList<AccessibilityNodeInfo>();
+        if (ws != null) for (AccessibilityWindowInfo w : ws) { AccessibilityNodeInfo r = w.getRoot(); if (r != null) out.add(r); }
+        if (active != null) out.add(active);
+        return out.toArray(new AccessibilityNodeInfo[0]);
+    }
+    /** Press the first enabled node whose text or description equals one of the words (or starts with it), through a clickable parent. */
+    private static boolean clickLabel(AccessibilityNodeInfo n, String[] words, int depth) {
+        if (n == null || depth > 25) return false;
+        CharSequence tx = n.getText(); CharSequence cd = n.getContentDescription();
+        String label = ((tx != null ? tx.toString() : "") + " " + (cd != null ? cd.toString() : "")).trim().toLowerCase();
+        if (label.length() > 0 && n.isEnabled()) {
+            for (String w : words) {
+                if (label.equals(w) || label.startsWith(w + " ") || (w.length() > 4 && label.contains(w))) {
+                    AccessibilityNodeInfo t = n;
+                    for (int i = 0; i < 6 && t != null && !t.isClickable(); i++) t = t.getParent();
+                    if (t != null && t.isEnabled() && t.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+                }
+            }
+        }
+        for (int i = 0; i < n.getChildCount(); i++) if (clickLabel(n.getChild(i), words, depth + 1)) return true;
+        return false;
+    }
 
     /** Walk the whole tree: a node whose text, description or view id says merge / conference, clickable itself or through a parent. */
     private boolean walk(AccessibilityNodeInfo n, StringBuilder seen, int depth) {
