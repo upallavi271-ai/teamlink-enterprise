@@ -81,7 +81,7 @@ export default function BdeHistory({ personId, embedded = false }) {
         </div>
         <Filters f={f} setF={setF} clients={(d.options && d.options.clients) || []} requirements={(d.options && d.options.requirements) || []} statuses />
         <FunnelTiles tiles={d.funnel} active={step} onPick={setStep} />
-        <StepPopup tile={step ? d.funnel.find((t) => t.key === step) : null} total={d.stepTotal || 0} shown={(d.stepRows || []).length} loading={loadedKey !== key} onClose={closeStep}><People rows={d.stepRows || []} /></StepPopup>
+        <StepPopup tile={step ? d.funnel.find((t) => t.key === step) : null} total={d.stepTotal || 0} shown={(d.stepRows || []).length} loading={loadedKey !== key} onClose={closeStep} rows={d.stepRows || []} render={(list) => <People rows={list} />} />
         <Definition text={d.definitions.dropped} joinedText={d.definitions.joined} joined={d.definitions.funnel} />
         <DropSummary s={d.dropSummary} />
         <HistorySeries series={d.series} grain={grain} setGrain={setGrain} cols={SERIES_COLS} />

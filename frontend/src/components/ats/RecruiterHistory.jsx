@@ -79,7 +79,7 @@ export default function RecruiterHistory({ personId, embedded = false }) {
         </div>
         <Filters f={f} setF={setF} recruiters={[]} clients={(d.options && d.options.clients) || []} requirements={(d.options && d.options.requirements) || []} statuses />
         <FunnelTiles tiles={d.funnel} active={step} onPick={(k) => { setStep(k); setStatus(''); }} />
-        <StepPopup tile={picked} total={d.total} shown={d.rows.length} loading={loadedKey !== key} onClose={closeStep}>{candTable(d.rows)}</StepPopup>
+        <StepPopup tile={picked} total={d.total} shown={d.rows.length} loading={loadedKey !== key} onClose={closeStep} rows={d.rows} render={candTable} />
         <Definition text={d.definitions.dropped} joinedText={d.definitions.joined} joined={d.definitions.funnel} />
         <DropSummary s={d.dropSummary} />
         <HistorySeries series={d.series} grain={grain} setGrain={setGrain} targets={d.targets} />

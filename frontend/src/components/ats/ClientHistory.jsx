@@ -51,12 +51,12 @@ export default function ClientHistory({ clientId }) {
   if (!d) return <div className="small-muted">Loading the history…</div>;
   const rq = d.requirements;
   const picked = step ? (d.funnel || []).find((t) => t.key === step) : null;
-  const candidateTable = (
+  const candidateTableOf = (list) => (
     <div className="hx-scroll">
       <table className="hx-table" style={{ minWidth: 860 }}>
         <thead><tr><th style={{ cursor: 'default' }}>Candidate</th><th style={{ cursor: 'default' }}>Requirement</th><th style={{ cursor: 'default' }}>Recruiter</th><th style={{ cursor: 'default' }}>Sent to client</th><th style={{ cursor: 'default' }}>Selected</th><th style={{ cursor: 'default' }}>Joined</th><th style={{ cursor: 'default' }}>Step / outcome</th></tr></thead>
         <tbody>
-          {d.candidates.map((x) => (
+          {list.map((x) => (
             <tr key={x.applicationId}>
               <td><HLink to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</HLink></td>
               <td>{x.requirement}</td><td>{x.recruiterName || '—'}</td>
@@ -81,7 +81,7 @@ export default function ClientHistory({ clientId }) {
       </div>
       <Filters f={f} setF={setF} recruiters={d.recruiters} />
       <FunnelTiles tiles={d.funnel} active={step} onPick={setStep} />
-      <StepPopup tile={picked} total={d.candidateTotal} shown={d.candidates.length} loading={loadedKey !== key} onClose={closeStep}>{candidateTable}</StepPopup>
+      <StepPopup tile={picked} total={d.candidateTotal} shown={d.candidates.length} loading={loadedKey !== key} onClose={closeStep} rows={d.candidates} render={candidateTableOf} />
       <JoinedNote detail={d.joinedDetail} />
       <Definition text={d.definitions.dropped} joinedText={d.definitions.joined} joined={d.definitions.funnel} />
       <div className="hx-avg">
@@ -132,7 +132,7 @@ export default function ClientHistory({ clientId }) {
       {(
         <div className="hx-sec" data-testid="client-candidates">
           <h3>Candidates ({d.candidateTotal})</h3>
-          {d.candidates.length === 0 ? <div className="small-muted">No candidates yet.</div> : candidateTable}
+          {d.candidates.length === 0 ? <div className="small-muted">No candidates yet.</div> : candidateTableOf(d.candidates)}
           {d.candidateTotal > d.candidates.length && <div className="hx-muted" style={{ marginTop: 6 }}>Showing {d.candidates.length} of {d.candidateTotal}. Download the Excel for all of them.</div>}
         </div>
       )}

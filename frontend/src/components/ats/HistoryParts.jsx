@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { stageLabel } from '../../atsVocab';
 import { PRESETS, presetDates, matchPreset, dateProblem } from '../../utils/dateRanges.js';
@@ -30,9 +30,59 @@ export const stepLabel = (t) => (t.key === 'joined' ? `${stageLabel('JOINED')} (
 
 // The row of numbered tiles: each is clickable (it opens the list behind it).
 // A funnel card picked: its people in a popup over the page (founder 2026-11-25). Esc, the X or a click outside closes it.
-export function StepPopup({ tile, total, shown, loading, onClose, children }) {
+// The popup's own filters (founder 2026-11-25: "ikkada kuda filters vundali"): a name search and Requirement / Recruiter / Client / Outcome /
+// Joined-between, worked on the people the card already brought (no new request). Each list only offers values that are in the card.
+const OUTCOME_WORD = { joined: 'Joined', dropped: 'Dropped', inprocess: 'In process', selected: 'Selected (not joined yet)' };
+const outcomeOf = (x) => (x.drop && x.drop.type === 'left_after_joining' ? 'left' : x.outcome || '');
+const OUTCOME_LABEL = (k) => (k === 'left' ? 'Left after joining' : OUTCOME_WORD[k] || k);
+const NO_POP_FILTER = { q: '', requirement: '', recruiter: '', client: '', outcome: '', from: '', to: '' };
+const csvHas = (csv, v) => !csv || String(csv).split(',').includes(String(v));
+function optionsOf(rows, keyOf, labelOf) {
+  const m = new Map();
+  rows.forEach((x) => { const k = keyOf(x); if (k === '' || k === null || k === undefined) return; const e = m.get(k) || { value: String(k), label: labelOf(x, k), count: 0 }; e.count += 1; m.set(k, e); });
+  return [...m.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+function PopupFilters({ rows, f, setF }) {
+  const reqs = optionsOf(rows, (x) => x.requirementId || x.requirement || '', (x) => x.requirement || '—');
+  const recs = optionsOf(rows, (x) => x.recruiterName || 'none', (x) => x.recruiterName || 'Not recorded');
+  const clients = optionsOf(rows, (x) => x.clientId || x.client || '', (x) => x.client || '—');
+  const outs = optionsOf(rows, outcomeOf, (x, k) => OUTCOME_LABEL(k));
+  const set = (k, v) => setF({ ...f, [k]: v });
+  const on = Object.values(f).some(Boolean);
+  return (
+    <div className="hx-pop-filters" data-testid="step-popup-filters">
+      <input type="search" className="hx-pop-q" placeholder="Search a name" value={f.q} onChange={(e) => set('q', e.target.value)} aria-label="Search a name" />
+      {reqs.length > 1 && <MultiSelect label="Requirement" allLabel="All requirements" value={f.requirement} onChange={(v) => set('requirement', v)} options={reqs} />}
+      {recs.length > 1 && <MultiSelect label="Recruiter" allLabel="Everyone" value={f.recruiter} onChange={(v) => set('recruiter', v)} options={recs} />}
+      {clients.length > 1 && <MultiSelect label="Client" allLabel="All clients" value={f.client} onChange={(v) => set('client', v)} options={clients} />}
+      {outs.length > 1 && <MultiSelect label="Outcome" allLabel="Any outcome" value={f.outcome} onChange={(v) => set('outcome', v)} options={outs} />}
+      <label className="hx-muted hx-pop-date">Joined from <input type="date" value={f.from} max={f.to || undefined} onChange={(e) => set('from', e.target.value)} /></label>
+      <label className="hx-muted hx-pop-date">to <input type="date" value={f.to} min={f.from || undefined} onChange={(e) => set('to', e.target.value)} /></label>
+      {on && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setF(NO_POP_FILTER)}>Clear</button>}
+    </div>
+  );
+}
+function popPasses(x, f) {
+  if (f.q && !String(x.candidate || '').toLowerCase().includes(f.q.trim().toLowerCase())) return false;
+  if (!csvHas(f.requirement, x.requirementId || x.requirement || '')) return false;
+  if (!csvHas(f.recruiter, x.recruiterName || 'none')) return false;
+  if (!csvHas(f.client, x.clientId || x.client || '')) return false;
+  if (!csvHas(f.outcome, outcomeOf(x))) return false;
+  const jd = x.joinDay ? String(x.joinDay).slice(0, 10) : '';
+  if ((f.from || f.to) && !jd) return false;
+  if (f.from && jd < f.from) return false;
+  if (f.to && jd > f.to) return false;
+  return true;
+}
+
+// rows + render(rows): the popup offers its filters and draws render() over the people that pass. (children: a fixed table, no filters)
+export function StepPopup({ tile, total, shown, loading, onClose, children, rows, render }) {
+  const [pf, setPf] = useState(NO_POP_FILTER);
+  useEffect(() => { setPf(NO_POP_FILTER); }, [tile && tile.key]);
+  const list = useMemo(() => (rows ? rows.filter((x) => popPasses(x, pf)) : null), [rows, pf]);
   useEffect(() => {
-    const k = (e) => { if (e.key === 'Escape') onClose(); };
+    // Esc closes an open filter list first, the popup only when none is open
+    const k = (e) => { if (e.key === 'Escape' && !document.querySelector('.hx-pop .msel-pop')) onClose(); };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
@@ -47,10 +97,13 @@ export function StepPopup({ tile, total, shown, loading, onClose, children }) {
           </div>
           <button type="button" className="btn btn-sm" onClick={onClose}>Close ✕</button>
         </div>
+        {rows && !loading && rows.length > 0 && <PopupFilters rows={rows} f={pf} setF={setPf} />}
         <div className="hx-pop-body">
+          {rows && !loading && rows.length > 0 && list.length !== rows.length && <div className="hx-muted" style={{ marginBottom: 6 }}>{num(list.length)} of {num(rows.length)} match these filters.</div>}
           {loading ? <div className="small-muted">Loading the people…</div>
             : total === 0 ? <div className="small-muted">Nobody at this step for these filters.</div>
-              : children}
+              : rows && render ? (list.length ? render(list) : <div className="small-muted">Nobody matches these filters.</div>)
+                : children}
           {!loading && total > shown && <div className="hx-muted" style={{ marginTop: 6 }}>Showing {num(shown)} of {num(total)}. Download the Excel for all of them.</div>}
         </div>
       </div>
