@@ -10,6 +10,7 @@ import { useOmni } from '../omniContext.js';
 import { PageHead, Pill, Tabs, Btn, Banner, DataTable, fmtDateTime } from '../ui.jsx';
 import { errOf } from '../omniApi.js';
 import WaMktCampaigns from './WaMktCampaigns.jsx';
+import WaAnalytics from './WaAnalytics.jsx';
 
 // ---------------------------------------------------------------------------
 // INBOX & REPLIES > WHATSAPP (founder 2026-11-05): the WhatsApp chats with the AI agent's state on top, and the promotion log. The chat itself is the app's existing chat pane
@@ -382,14 +383,16 @@ export default function WhatsAppPage() {
   const [openKey, setOpenKey] = useState(null);
   const showLeads = !acc || acc.kind !== 'recruiter'; // a recruiter's login has no use for the marketing assistant's leads
   const showCampaigns = !!(acc && acc.canCampaign); // promotions: only a login with campaign rights (the server checks it again)
+  const showAnalytics = !!(acc && (acc.canCampaign || ['admin', 'depthead', 'teamlead'].includes(acc.level))); // counts only; the server checks it again
   const done = useCallback(() => setOpenKey(null), []);
   return (
     <>
       <PageHead title="WhatsApp" lead="Chats with the AI assistant and your recruiters, and every promotion you sent." />
-      <Tabs tabs={[['chats', 'Chats'], ...(showLeads ? [['leads', 'AI leads']] : []), ...(showCampaigns ? [['campaigns', 'Campaigns']] : []), ['promotions', 'Promotions']]} value={tab} onChange={setTab} />
+      <Tabs tabs={[['chats', 'Chats'], ...(showLeads ? [['leads', 'AI leads']] : []), ...(showCampaigns ? [['campaigns', 'Campaigns']] : []), ...(showAnalytics ? [['analytics', 'Analytics']] : []), ['promotions', 'Promotions']]} value={tab} onChange={setTab} />
       {tab === 'chats' && <Chats openKey={openKey} onOpened={done} />}
       {tab === 'leads' && <Leads onOpen={(k) => { setOpenKey(k); setTab('chats'); }} />}
       {tab === 'campaigns' && <WaMktCampaigns />}
+      {tab === 'analytics' && <WaAnalytics />}
       {tab === 'promotions' && <Promotions />}
     </>
   );

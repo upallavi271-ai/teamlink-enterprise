@@ -5,6 +5,7 @@
 //   GET  /conversations/:key                     the strip above a chat: AI state, 24-hour window, already contacted, what the AI collected
 //   POST /conversations/:key/pause | /resume     a person takes over / gives the chat back to the AI
 //   GET  /conversations/:key/messages , POST .../send      a lead's chat (a candidate's chat uses /api/wa-chats as everywhere else)
+//   GET  /analytics?days=7|30|90                real numbers only (messages, delivery, enquiries, response time, leads, hand-over, opt-outs, campaigns)
 //   GET  /campaign-templates , GET|POST /campaigns , POST /campaigns/preview , GET /campaigns/:id , POST /campaigns/:id/send { at? } | /cancel   (campaign rights)
 //   GET  /followups , POST /followups/:id/decide { approve, text?, stopAll? } ; Admin: GET|PUT /followup-settings
 //   GET  /leads                                  the marketing assistant's leads (band, details); GET /assignees , POST /conversations/:key/assign { userId }
@@ -119,6 +120,8 @@ router.post('/campaigns/:id/cancel', wrap(async (req, res) => {
   if (!out.error) await logAudit({ userId: req.user.id, action: 'WhatsApp promotion campaign stopped', entity: 'OmniWaMktCampaign', entityId: req.params.id }).catch(() => {});
   return send(res, out);
 }));
+// the marketing assistant's analytics: real numbers only, counts (no names, no numbers); an Admin, a team lead or a login with campaign rights
+router.get('/analytics', wrap(async (req, res) => send(res, await require('../omniwa/analytics').compute(req.user, { days: Number(req.query.days) || 30 })))); // eslint-disable-line global-require
 router.get('/promo-jobs', wrap(async (req, res) => {
   const prisma = require('../db'); // eslint-disable-line global-require
   const where = await require('../utils/scope').requirementWhere(req.user); // eslint-disable-line global-require
