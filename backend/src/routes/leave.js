@@ -507,6 +507,17 @@ router.post('/', async (req, res, next) => {
     // A REMINDER, NOT A BLOCK (founder 2026-10-26: "employee apply cheyochu, leave apply avali, valla department lo leave lo unna kuda"):
     // the employee may apply even when colleagues are away; the cap is only said back with the saved request.
     req.leaveTeamNotice = await wouldExceedConcurrentCap(employee, fromDate, toDate);
+    // THE TEAM LIMIT (founder 2026-11-25, utils/teamLeaveLimit.js): at most N people of ONE team (same department + team name) on leave
+    // on the same day, counted day by day. A third person in Education Team-A cannot apply for a day when two are already away; Team-B is
+    // counted on its own. Whoever holds Leave & Holidays / configure (HR, Admin, Super Admin) may apply beyond it on purpose.
+    {
+      const tl = await require('../utils/teamLeaveLimit').check(employee, fromDate, toDate); // eslint-disable-line global-require
+      if (tl && tl.blocked) {
+        const mayOverride = req.body.overrideTeamLimit && await can(req.user, 'hrms', 'hrms', 'Leave & Holidays', 'configure');
+        if (!mayOverride) return res.status(409).json({ error: tl.message, code: 'TEAM_LEAVE_FULL', teamLimit: tl });
+        req.leaveTeamLimitOverride = tl;
+      }
+    }
   }
   if (String(toDate) < String(fromDate)) return res.status(400).json({ error: 'To date cannot be before From date.' });
   // LEAVE ENDS WITH THE JOB (HRMS spec item 7, utils/exitDate.js): no leave for days after the last working day.
@@ -552,6 +563,9 @@ router.post('/', async (req, res, next) => {
   const storedReason = leaveText.compose({ reason, comments: req.body.comments, details: [['Half day', halfDay]] });
   const leave = await prisma.leaveRequest.create({ data: { employeeId, type, fromDate, toDate, days, reason: storedReason } });
   await logAudit({ userId: req.user.id, action: 'Leave requested', entity: 'LeaveRequest', entityId: leave.id });
+  if (req.leaveTeamLimitOverride) {
+    await logAudit({ userId: req.user.id, action: 'Leave applied beyond the team limit', entity: 'LeaveRequest', entityId: leave.id, toValue: `${req.leaveTeamLimitOverride.teamName}: limit ${req.leaveTeamLimitOverride.limit}, full on ${req.leaveTeamLimitOverride.fullDates.join(', ')}` });
+  }
 
   // THE CHAIN IS LAID DOWN THE MOMENT THE REQUEST IS RAISED, so "where does
   // this sit and who has acted" has an answer from second zero. A failure
@@ -1397,6 +1411,8 @@ router.get('/concurrency-policy', async (req, res) => {
     escalationOrder: String(cfg.escalationOrder || '').split(',').map((r) => r.trim()).filter(Boolean),
     // Item 6: the sandwich rule (utils/attendancePolicy.js).
     sandwichLeave: (await attendancePolicy.readExtras()).sandwichLeave !== false,
+    // founder 2026-11-25: how many people of one team may be on leave at once (utils/teamLeaveLimit.js)
+    teamLeaveLimit: await require('../utils/teamLeaveLimit').getSettings(), // eslint-disable-line global-require
   });
 });
 
@@ -1427,6 +1443,16 @@ router.put('/concurrency-policy', require('../utils/internalHr').blockRoute('set
   });
   await logAudit({ userId: req.user.id, action: 'Leave concurrency policy updated', entity: 'HrConfig', entityId: updated.id });
   res.json(updated);
+});
+
+// THE TEAM LEAVE LIMIT, on / off and how many (Leave policy). Same right as the other leave policy settings.
+router.put('/team-limit', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
+  const TL = require('../utils/teamLeaveLimit'); // eslint-disable-line global-require
+  const body = req.body || {};
+  const r = await TL.saveSettings({ enabled: body.enabled, limit: body.limit }, { id: req.user.id, name: req.user.name || req.user.email });
+  if (r.error) return res.status(400).json({ error: r.error });
+  await logAudit({ userId: req.user.id, action: 'Team leave limit updated', entity: 'AppSetting', entityId: TL.KEY, fromValue: JSON.stringify(r.before), toValue: JSON.stringify(r.settings) });
+  return res.json({ teamLeaveLimit: r.settings });
 });
 
 // ---- HOLIDAYS ----------------------------------------------------------------
@@ -1498,7 +1524,9 @@ router.get('/who-else', async (req, res, next) => {
     const shape = (r) => ({ name: r.employee.name, designation: r.employee.designation || null, fromDate: r.fromDate, toDate: r.toDate, status: r.status, days: r.days });
     const team = me.team ? rows.filter((r) => r.employee.team && r.employee.team === me.team).map(shape) : [];
     const department = rows.filter((r) => !(me.team && r.employee.team === me.team)).map(shape);
-    return res.json({ teamName: me.team || null, departmentName: me.department, team, department });
+    // the TEAM LIMIT for these dates (null = not in a team / switched off): slots taken and left, day by day
+    const teamLimit = await require('../utils/teamLeaveLimit').check(me, from, to).catch(() => null); // eslint-disable-line global-require
+    return res.json({ teamName: me.team || null, departmentName: me.department, team, department, teamLimit });
   } catch (err) { return next(err); }
 });
 

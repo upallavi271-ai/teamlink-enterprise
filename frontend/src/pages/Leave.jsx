@@ -146,24 +146,47 @@ export function LeaveBalanceCards({ avail, picked, onPick }) {
 
 // WHO ELSE IS ON LEAVE THEN (founder 2026-10-26): a reminder of the colleagues in the same team / department who are on leave (or have
 // asked for it) on the chosen dates. Only a reminder: applying is never blocked by it.
-function WhoElseOnLeave({ from, to, employeeId }) {
+// TEAM LIMIT (founder 2026-11-25): the same call also says how many people of the employee's own team (Education Team-A, Team-B ...) may be
+// on leave on one day and how many slots are left on the chosen dates; onTeamLimit hands that to the form, which stops a full team.
+function WhoElseOnLeave({ from, to, employeeId, onTeamLimit = null }) {
   const [data, setData] = useState(null);
   useEffect(() => {
-    if (!from || !to || to < from) { setData(null); return undefined; }
+    if (!from || !to || to < from) { setData(null); if (onTeamLimit) onTeamLimit(null); return undefined; }
     let alive = true;
     api.get('/leave/who-else', { params: { from, to, employeeId: employeeId || undefined } })
-      .then((r) => { if (alive) setData(r.data); }).catch(() => { if (alive) setData(null); });
+      .then((r) => { if (alive) { setData(r.data); if (onTeamLimit) onTeamLimit(r.data.teamLimit || null); } })
+      .catch(() => { if (alive) { setData(null); if (onTeamLimit) onTeamLimit(null); } });
     return () => { alive = false; };
-  }, [from, to, employeeId]);
-  if (!data || (!data.team.length && !data.department.length)) return null;
+  }, [from, to, employeeId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tl = data ? data.teamLimit : null;
+  const tlDays = tl ? tl.days.filter((d) => d.taken > 0) : [];
+  const dmy = (d) => `${d.slice(8, 10)}-${d.slice(5, 7)}`;
+  if (!data || (!data.team.length && !data.department.length && !(tl && tlDays.length))) return null;
   const line = (p) => `${p.name} (${p.fromDate.slice(8, 10)}-${p.fromDate.slice(5, 7)}${p.toDate !== p.fromDate ? ` to ${p.toDate.slice(8, 10)}-${p.toDate.slice(5, 7)}` : ''}${p.status === 'Pending' ? ', asked' : ''})`;
   return (
+    <>
+    {tl && tlDays.length > 0 && (
+      <div className={`notice ${tl.blocked ? 'red' : 'amber'}`} style={{ display: 'block', marginBottom: 10, fontSize: 12.5 }} data-testid="team-limit">
+        <b>Team leave limit — {tl.teamName}:</b> only {tl.limit} people of this team can be on leave on the same day.{' '}
+        {tl.days.filter((d) => d.taken > 0).slice(0, 6).map((d) => (
+          <span key={d.date} style={{ display: 'block' }}>
+            {dmy(d.date)}: <b>{d.taken} of {tl.limit}</b> slots taken ({d.people.map((p) => `${p.name}${p.status === 'asked' ? ', asked' : ''}`).join(', ')}) —{' '}
+            {d.full ? <b>full</b> : <>{d.left} slot{d.left === 1 ? '' : 's'} left</>}
+          </span>
+        ))}
+        {tlDays.length > 6 && <span style={{ display: 'block' }}>and {tlDays.length - 6} more day(s)…</span>}
+        {tl.blocked && <b style={{ display: 'block', marginTop: 4 }}>You cannot apply for the full day(s) above. Choose other dates.</b>}
+      </div>
+    )}
+    {(data.team.length > 0 || data.department.length > 0) && (
     <div className="notice amber" style={{ display: 'block', marginBottom: 10, fontSize: 12.5 }}>
       <b>Reminder:</b>{' '}
       {data.team.length > 0 && <>in your team{data.teamName ? ` (${data.teamName})` : ''} <b>{data.team.length}</b> {data.team.length === 1 ? 'person is' : 'people are'} on leave on these dates: {data.team.map(line).join(', ')}. </>}
       {data.department.length > 0 && <>In your department ({data.departmentName}) <b>{data.department.length}</b> more: {data.department.slice(0, 8).map(line).join(', ')}{data.department.length > 8 ? ` and ${data.department.length - 8} more` : ''}. </>}
-      You can still apply.
+      {!(tl && tl.blocked) && 'You can still apply.'}
     </div>
+    )}
+    </>
   );
 }
 
@@ -181,6 +204,9 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
   const [error, setError] = useState('');
   const [avail, setAvail] = useState(null);
   const [override, setOverride] = useState(false);
+  const [teamLimit, setTeamLimit] = useState(null); // the team's slots for the chosen dates (who-else)
+  const [overrideTeam, setOverrideTeam] = useState(false);
+  const teamFull = !!(teamLimit && teamLimit.blocked && !(canOverride && overrideTeam));
   const half = form.dayMode === 'half';
 
   // What is available right now (balance on record minus pending) — the same
@@ -217,6 +243,7 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
     if (allOff) { setError('These dates are all Sundays or company holidays, so no leave is needed for them.'); return; }
     if (!half && (days <= 0 || (span && days > span))) { setError(`Days must be between 0.5 and ${span || 1}.`); return; }
     if (over && !(canOverride && override)) { setError(`Not enough ${form.type} balance: ${a.available} day(s) available, ${days} requested.`); return; }
+    if (teamFull) { setError(teamLimit.message); return; }
     try {
       const made = await api.post('/leave', {
         handoverToIds: form.handoverToIds.length ? form.handoverToIds : undefined,
@@ -229,6 +256,7 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
         halfDay: half ? form.halfDay : undefined,
         reason: form.reason,
         overrideBalance: canOverride && override ? true : undefined,
+        overrideTeamLimit: canOverride && overrideTeam ? true : undefined,
       });
       // the handover documents, one by one, once the leave exists
       const failed = [];
@@ -249,7 +277,7 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
     <Modal
       title="Apply Leave"
       onClose={onClose}
-      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={submit}>Submit</button></>}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={teamFull} title={teamFull ? 'Your team is full on these dates' : undefined} onClick={submit}>Submit</button></>}
     >
       {isHR && (
         <div className="field">
@@ -298,7 +326,12 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
             : <>Counted: <b>{count.countedDays}</b> day{count.countedDays === 1 ? '' : 's'} of {count.calendarDays}. Not counted: {count.skipped.map((s) => `${s.date.slice(8, 10)}-${s.date.slice(5, 7)} (${s.reason})`).join(', ')}.</>}
         </div>
       )}
-      <WhoElseOnLeave from={form.fromDate} to={half ? form.fromDate : form.toDate} employeeId={isHR ? form.employeeId : undefined} />
+      <WhoElseOnLeave from={form.fromDate} to={half ? form.fromDate : form.toDate} employeeId={isHR ? form.employeeId : undefined} onTeamLimit={setTeamLimit} />
+      {teamLimit && teamLimit.blocked && canOverride && (
+        <label className="lvx-muted" style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+          <input type="checkbox" style={{ width: 'auto' }} checked={overrideTeam} onChange={(e) => setOverrideTeam(e.target.checked)} /> Apply beyond the team limit (HR override, recorded in the audit log)
+        </label>
+      )}
       <div className="field"><label>Reason</label><textarea rows="2" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></div>
       {/* several people can take over (a checkbox list); who is listed follows the rule on the server: a TL sees the TLs and their own
           department, everybody else their own department (founder 2026-11-04) */}
@@ -439,6 +472,14 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
       const res = await api.put('/leave/sandwich-policy', { sandwichLeave: on });
       setCaps((c) => ({ ...c, sandwichLeave: res.data.sandwichLeave }));
       setPolicyMsg(`Saved. Holidays between leave days are ${res.data.sandwichLeave ? 'now counted as leave' : 'no longer counted as leave'}.`);
+    } catch (e) { setPolicyMsg(e.response?.data?.error || 'Could not save. Try again.'); }
+  }
+
+  async function saveTeamLimit(patch) {
+    try {
+      const res = await api.put('/leave/team-limit', patch);
+      setCaps((c) => ({ ...c, teamLeaveLimit: res.data.teamLeaveLimit }));
+      setPolicyMsg(res.data.teamLeaveLimit.enabled ? `Saved. At most ${res.data.teamLeaveLimit.limit} people of one team can be on leave on the same day.` : 'Saved. The team leave limit is off.');
     } catch (e) { setPolicyMsg(e.response?.data?.error || 'Could not save. Try again.'); }
   }
 
@@ -629,6 +670,24 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
                   {canEditPolicy && <button className="btn btn-sm" onClick={() => { const v = prompt('New value for Flat headcount cap', caps.concurrentLeaveCapFlat); if (v !== null) saveCaps({ concurrentLeaveCapFlat: Number(v) || 0 }); }}>Edit</button>}
                 </span>
               </AssignRow>
+              {/* TEAM LEAVE LIMIT (founder 2026-11-25): at most N people of ONE team on leave on one day */}
+              {caps.teamLeaveLimit && (
+                <AssignRow>
+                  <span>
+                    <b>Team leave limit</b><br />
+                    <span className="cell-muted" style={{ fontSize: 11.5 }}>
+                      {caps.teamLeaveLimit.enabled
+                        ? `At most ${caps.teamLeaveLimit.limit} people of the same team (for example Education Team-A) can be on leave on the same day. The next person cannot apply for that day. Every team is counted on its own; people with no team are not limited.`
+                        : 'Off: people can apply even when their team is already away.'}
+                    </span>
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <b>{caps.teamLeaveLimit.enabled ? `${caps.teamLeaveLimit.limit} per team` : 'Off'}</b>
+                    {canEditPolicy && <button className="btn btn-sm" onClick={() => { const v = prompt('How many people of one team may be on leave on the same day?', caps.teamLeaveLimit.limit); if (v !== null && Number(v) >= 1) saveTeamLimit({ limit: Number(v), enabled: true }); }}>Edit</button>}
+                    {canEditPolicy && <button className="btn btn-sm" onClick={() => saveTeamLimit({ enabled: !caps.teamLeaveLimit.enabled })}>{caps.teamLeaveLimit.enabled ? 'Switch off' : 'Switch on'}</button>}
+                  </span>
+                </AssignRow>
+              )}
               {/* HRMS item 6 — the sandwich rule. */}
               <AssignRow>
                 <span>
