@@ -48,6 +48,8 @@ export const PAGES = {
   audit: { label: 'Audit log', icon: '☰', title: 'Audit log' },
   // AI Marketing (2026-11-11): the AI Marketing OS, six modules built phase by phase (Phase 1 = AI Content). Page ids are lower-case letters only (they are in the address).
   mkhome: { label: 'Overview', icon: '✧', title: 'AI Marketing' },
+  // 2026-11-25: the AI Agent: a goal -> plan and preview -> one approval -> real steps through the modules below (marketing/agent.js)
+  mkagent: { label: 'AI Agent', icon: '✦', title: 'AI Agent: give a goal, approve the plan, and the agent does the steps in AI Content, AI Images, Approvals and SEO' },
   // Lead generation is a SUB-TAB of Client projects (2026-11-16; MK_SUBTABS below). Workflow automation, Email marketing and Campaign messages were removed: nothing had ever been made in them.
   mkleads: { label: 'Lead generation', icon: '◎', title: 'Lead generation: scored leads for the CRM' },
   // Plans meeting is also a SUB-TAB of Client projects (2026-11-17): a link sent on WhatsApp opens an automated, spoken meeting about the plans in English, Telugu or Hindi
@@ -75,7 +77,7 @@ export const SECTIONS = [
   { id: 'connections', label: 'Channel Connections', icon: '⚯', views: ['connections', 'fbchannel', 'igchannel', 'fbcatalogs', 'shopify'] },
   { id: 'reports', label: 'Reports', icon: '⌁', views: ['analytics'] },
   { id: 'settings', label: 'Settings & Audit Log', icon: '⚙', views: ['settings', 'waai', 'team', 'billing', 'superadmin', 'audit'] },
-  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkprojects', 'mkourwork', 'mkleads', 'mkmeeting', 'mkimages', 'mkvideos', 'mkservices', 'mkvisibility', 'mkapprove', 'mkreports', 'mkbrand', 'mkusage'] },
+  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkagent', 'mkprojects', 'mkourwork', 'mkleads', 'mkmeeting', 'mkimages', 'mkvideos', 'mkservices', 'mkvisibility', 'mkapprove', 'mkreports', 'mkbrand', 'mkusage'] },
 ];
 // AI MARKETING SUB-TABS: a tab that has more screens under it. The tab bar shows the parent only; opening the parent (or one of its screens) shows the row of sub-tabs under the bar,
 // the first one being the parent itself. A screen the login may not open is left out of the row.

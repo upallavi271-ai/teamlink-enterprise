@@ -33,6 +33,10 @@ const PlanRem = require('../marketing/planReminders');
 const Blog = require('../marketing/blogPlanner');
 const Onb = require('../marketing/onboarding');
 const Revision = require('../marketing/revision');
+const Agent = require('../marketing/agent');
+const AgentCtx = require('../marketing/agentContext');
+const AgentPlan = require('../marketing/agentPlanner');
+const AgentTools = require('../marketing/agentTools');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -425,5 +429,36 @@ router.post('/visibility/wording-check', mustWrite, wrap(async (req, res) => sen
 router.post('/visibility/signoff', mustWrite, wrap(async (req, res) => send(res, await Guard.signoff(req.user, req.body || {}))));
 router.get('/visibility/signoffs', mustWrite, wrap(async (req, res) => send(res, await Guard.signoffs(req.user, { clientName: req.query.clientName ? String(req.query.clientName) : '' }))));
 router.get('/visibility/photos', mustWrite, wrap(async (req, res) => send(res, await Ov.search(req.query.q, { page: req.query.page, shape: req.query.shape }))));
+
+// ---- AI Agent (marketing/agent.js): a goal -> a plan and preview -> ONE approval -> real steps through the services above. Everything here is for logins that may use AI Marketing. Nothing is posted, sent
+// or spent by the agent: typed words never approve (only POST .../approve does), and an outward step would need its own approval.
+router.use('/agent', mustWrite);
+router.get('/agent/meta', wrap(async (req, res) => res.json({
+  tools: AgentTools.catalog(), intents: Object.entries(AgentPlan.INTENTS).map(([key, v]) => ({ key, label: v.label, days: v.days, platforms: v.platforms })), examples: AgentPlan.EXAMPLES, platforms: AgentPlan.PLATFORM_WORDS, maxDays: AgentPlan.MAX_DAYS,
+  runWords: Agent.RUN_WORDS, taskWords: Agent.TASK_WORDS, isAdmin: A.isAdmin(req.user), ai: (await AI.status()).text,
+})));
+router.get('/agent/businesses', wrap(async (req, res) => res.json({ businesses: await AgentCtx.businesses(req.user) })));
+router.get('/agent/business', wrap(async (req, res) => res.json(await Agent.businessView(req.user, String(req.query.business || 'own'), String(req.query.name || '')))));
+router.put('/agent/business', wrap(async (req, res) => {
+  const b = req.body || {}; const out = await AgentCtx.save(req.user, String(b.business || 'own'), b.fields || {});
+  if (out.error) return send(res, out);
+  return res.json({ ok: 'Saved. The agent will use this from now on.', notes: out.notes || [], business: await Agent.businessView(req.user, out.key) });
+}));
+router.get('/agent/dashboard', wrap(async (req, res) => res.json(await Agent.dashboard(req.user))));
+router.get('/agent/runs', wrap(async (req, res) => res.json(await Agent.listRuns(req.user, { status: String(req.query.status || ''), business: String(req.query.business || '') }))));
+router.post('/agent/runs', wrap(async (req, res) => send(res, await Agent.startRun(req.user, { goal: (req.body || {}).goal, business: (req.body || {}).business, businessName: (req.body || {}).businessName, params: (req.body || {}).params }))));
+router.get('/agent/runs/:id', wrap(async (req, res) => send(res, await Agent.detail(req.user, req.params.id))));
+router.post('/agent/runs/:id/answer', wrap(async (req, res) => send(res, await Agent.answer(req.user, req.params.id, { answers: (req.body || {}).answers, skip: (req.body || {}).skip, params: (req.body || {}).params }))));
+router.post('/agent/runs/:id/talk', wrap(async (req, res) => send(res, await Agent.talk(req.user, req.params.id, (req.body || {}).text))));
+router.post('/agent/runs/:id/plan', wrap(async (req, res) => send(res, await Agent.changePlan(req.user, req.params.id, (req.body || {}).params))));
+router.put('/agent/runs/:id/days/:n', wrap(async (req, res) => send(res, await Agent.editDay(req.user, req.params.id, req.params.n, req.body || {}))));
+router.post('/agent/runs/:id/approve', wrap(async (req, res) => send(res, await Agent.approve(req.user, req.params.id))));
+router.post('/agent/runs/:id/cancel', wrap(async (req, res) => send(res, await Agent.cancelRun(req.user, req.params.id, (req.body || {}).reason))));
+router.post('/agent/runs/:id/results', wrap(async (req, res) => send(res, await Agent.addResult(req.user, req.params.id, req.body || {}))));
+router.delete('/agent/runs/:id', wrap(async (req, res) => send(res, await Agent.discard(req.user, req.params.id))));
+router.post('/agent/tasks/:id/retry', wrap(async (req, res) => send(res, await Agent.retryTask(req.user, req.params.id))));
+router.post('/agent/tasks/:id/cancel', wrap(async (req, res) => send(res, await Agent.cancelTask(req.user, req.params.id))));
+router.post('/agent/tasks/:id/approve', wrap(async (req, res) => send(res, await Agent.approveTask(req.user, req.params.id))));
+router.post('/agent/tasks/:id/done', wrap(async (req, res) => send(res, await Agent.markManual(req.user, req.params.id, req.body || {}))));
 
 module.exports = router;
