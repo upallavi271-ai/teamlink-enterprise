@@ -151,4 +151,4 @@ async function save(u, planId, b = {}) {
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: monthly report saved', entity: T, entityId: planId, toValue: `${p.plan.clientName}: ${m}` });
   return build(u, planId, m);
 }
-module.exports = { ensure, FIELDS, cleanMetrics, parseCsv, parseSearchConsole, build, save, sections };
+module.exports = { ensure, FIELDS, cleanMetrics, parseCsv, cell, parseSearchConsole, build, save, sections };

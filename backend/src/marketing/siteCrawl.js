@@ -132,9 +132,9 @@ async function run(input, max, opts = {}) {
     score: a.score, outOf: 100, areas: Object.entries(a.areas).map(([k, v]) => ({ key: k, label: Site.AREAS[k], got: r1(v.got), marks: v.marks })), checks: a.checks, actions: a.actions,
     disclaimer: `${Site.DISCLAIMER} With several pages, the page items (title, description, main heading and so on) are the average over the pages read; the answer-engine and local items count what is found on any page of the website.`,
     facts: homeRep.facts, url: homeRes.finalUrl, checkedAt: new Date().toISOString(), responseMs: homeRes.ms, links: broken, robotsOk: ex.robotsOk, sitemapOk: ex.sitemapOk,
-    pages: a.rows, cross: crossFindings(pages, failed),
+    pages: a.rows, cross: crossFindings(pages, failed), extra: await require('./seoExtras').gather(pages, homeRes.finalUrl, { ...opts, xRobots: homeRes.xRobots }), // eslint-disable-line global-require
     crawl: { asked, found: cands.length, fromSitemap: map.urls.length, fromLinks, read: pages.length, failed: failed.map((f) => ({ path: f.path, reason: f.reason })), skippedByRobots: byRobots, notReadInTime: late, timeUp: late > 0 },
   } };
 }
 
-module.exports = { run, norm, pick, disallowOf, siteView, analyzeSite, crossFindings, PAGE_KEYS, SITE_KEYS, MAX_PAGES };
+module.exports = { run, readSitemap, norm, pick, disallowOf, siteView, analyzeSite, crossFindings, PAGE_KEYS, SITE_KEYS, MAX_PAGES };

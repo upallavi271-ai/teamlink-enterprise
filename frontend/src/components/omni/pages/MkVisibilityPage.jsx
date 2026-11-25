@@ -242,6 +242,16 @@ function SiteTab({ toast, keySet }) {
           </Panel>
         </div>
       ) : null}
+      {rep && rep.extra && rep.extra.findings && rep.extra.findings.length ? (
+        <Panel title="Also found (not part of the score)" sub="Robots rules, internal links and social-card tags. The SEO assistant turns these into recommendations." style={{ marginTop: 12 }}>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.5 }}>{rep.extra.findings.map((f) => <li key={f.key}><b>{f.gap[0].toUpperCase() + f.gap.slice(1)}</b>{f.detail ? <small style={{ display: 'block', color: 'var(--muted)' }}>{f.detail}</small> : null}{f.fix}{f.pages && f.pages.length ? <small style={{ display: 'block', color: 'var(--muted)' }}>Pages: {f.pages.join(', ')}</small> : null}</li>)}</ul>
+        </Panel>
+      ) : null}
+      {rep && rep.extra && rep.extra.outlines && rep.extra.outlines.length ? (
+        <details style={{ marginTop: 10 }}><summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>Heading outline of the pages read (H1, H2, H3)</summary>
+          {rep.extra.outlines.map((o) => <div key={o.path} style={{ fontSize: 12.5, margin: '6px 0' }}><b>{o.path}</b>{o.headings.length ? o.headings.map((h, i) => <div key={i} style={{ paddingLeft: (h.level - 1) * 14 }}>H{h.level} {h.text}</div>) : <div style={{ color: 'var(--muted)' }}>No headings found.</div>}</div>)}
+        </details>
+      ) : null}
       {rep && rep.crawl ? <PagesPanels rep={rep} /> : null}
       {rep ? <SpeedPanel ps={ps} busy={psBusy} onRun={runSpeed} saved={!!savedId} keySet={keySet} /> : null}
       {past.length ? <Panel title={`Earlier checks: ${client.trim()}`} style={{ marginTop: 12 }}><table className="mk-table"><tbody>{past.slice(0, 8).map((x) => <tr key={x.id}><td style={{ fontSize: 12.5 }}>{fmtDate(x.createdAt)}</td><td>{x.url} <small style={{ color: 'var(--muted)' }}>({x.pages > 1 ? `${x.pages} pages` : 'home page'})</small></td><td><b>{x.score}/100</b></td></tr>)}</tbody></table></Panel> : null}

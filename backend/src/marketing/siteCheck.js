@@ -56,7 +56,7 @@ function scanHtml(html, pageUrl) {
   const address = /\b[1-9]\d{2}\s?\d{3}\b/.test(body) || /\b(road|street|nagar|colony|lane|avenue|plot no|door no|floor|opp\.?|near)\b/i.test(body);
   return {
     url: pageUrl, lang: attr(htmlTag, 'lang'), title: strip((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(head) || ['', ''])[1]), description: meta('description'), robotsMeta: meta('robots'), viewport: meta('viewport'),
-    ogTitle: meta('og:title'), canonical: canon ? attr(canon, 'href') : null, headings, h1: headings.filter((h) => h.level === 1), images, anchors, schemaTypes: types, orgNode: orgNode || null,
+    ogTitle: meta('og:title'), ogDescription: meta('og:description'), ogImage: meta('og:image'), twitterCard: meta('twitter:card'), canonical: canon ? attr(canon, 'href') : null, headings, h1: headings.filter((h) => h.level === 1), images, anchors, schemaTypes: types, orgNode: orgNode || null,
     faqHeading: headings.some((h) => /\bfaq|frequently asked|common questions/i.test(h.text)) || /<details\b/i.test(src), questionHeadings: headings.filter((h) => isQuestion(h.text) && h.level > 1).length,
     lists: /<(ul|ol|table)\b/i.test(src), paragraphs: paras.length, avgParaChars: paras.length ? Math.round(paras.reduce((s, p) => s + p.length, 0) / paras.length) : 0, wordCount: words(body), phone, address,
     sameAs: Boolean(orgNode && orgNode.sameAs && [].concat(orgNode.sameAs).length) || anchors.some((a) => SOCIAL.test(a.href)), aboutContact: anchors.some((a) => /(^|\/)(about|contact|contact-us|about-us)(\/|\.|$|\?|#)/i.test(a.href) || /^(about|contact)( us)?$/i.test(a.text)),
@@ -129,7 +129,7 @@ async function fetchPage(url, opts = {}) {
   const ms = Date.now() - t0; if (res.status >= 400) return { error: `The website answered with an error (${res.status}).`, status: 502 };
   const type = String((res.headers && res.headers.get && res.headers.get('content-type')) || ''); if (type && !/html|xml/i.test(type)) return { error: 'That address is not a web page.', status: 400 };
   let html; try { html = await readCapped(res, 3000000); } catch (e) { return { error: e.message, status: 502 }; }
-  return { html, ms, finalUrl: res.url || url };
+  return { html, ms, finalUrl: res.url || url, xRobots: String((res.headers && res.headers.get && res.headers.get('x-robots-tag')) || '') }; // xRobots: the X-Robots-Tag header, read by seoExtras.js
 }
 async function extras(base, f, opts = {}) {
   const fetchFn = opts.fetchFn || fetchPublic; const origin = new URL(base).origin; const out = { https: new URL(base).protocol === 'https:', robotsOk: false, sitemapOk: false, broken: { checked: 0, bad: 0, list: [] } };
@@ -149,7 +149,8 @@ async function runCheck(input, opts = {}) {
   const page = await fetchPage(c.url, opts); if (page.error) return page;
   const f = scanHtml(page.html, page.finalUrl); const ex = await extras(page.finalUrl, f, opts);
   const rep = analyze(f, { ...ex, ms: page.ms });
-  return { report: { ...rep, url: page.finalUrl, checkedAt: new Date().toISOString(), responseMs: page.ms, links: ex.broken, robotsOk: ex.robotsOk, sitemapOk: ex.sitemapOk } };
+  const extra = await require('./seoExtras').gather([{ url: page.finalUrl, path: '/', f }], page.finalUrl, { ...opts, xRobots: page.xRobots }); // eslint-disable-line global-require
+  return { report: { ...rep, url: page.finalUrl, checkedAt: new Date().toISOString(), responseMs: page.ms, links: ex.broken, robotsOk: ex.robotsOk, sitemapOk: ex.sitemapOk, extra } };
 }
 
 // ---- saved checks, per client ------------------------------------------------------------------------------------------------------------------------------------------

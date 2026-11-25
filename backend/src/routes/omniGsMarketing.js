@@ -37,6 +37,10 @@ const Agent = require('../marketing/agent');
 const AgentCtx = require('../marketing/agentContext');
 const AgentPlan = require('../marketing/agentPlanner');
 const AgentTools = require('../marketing/agentTools');
+const SeoSites = require('../marketing/seoSites');
+const SeoTasks = require('../marketing/seoTasks');
+const SeoAudit = require('../marketing/seoAudit');
+const SeoDash = require('../marketing/seoDashboard');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -460,5 +464,23 @@ router.post('/agent/tasks/:id/retry', wrap(async (req, res) => send(res, await A
 router.post('/agent/tasks/:id/cancel', wrap(async (req, res) => send(res, await Agent.cancelTask(req.user, req.params.id))));
 router.post('/agent/tasks/:id/approve', wrap(async (req, res) => send(res, await Agent.approveTask(req.user, req.params.id))));
 router.post('/agent/tasks/:id/done', wrap(async (req, res) => send(res, await Agent.markManual(req.user, req.params.id, req.body || {}))));
+// ---- SEO assistant (2026-11-25): the dashboard, the SEO site of each client (facts, competitors, schedule), the audit button, and the recommendation tasks (marketing/seo*.js). Writers only. Nothing is posted and no website is changed. ----
+router.get('/seo/overview', mustWrite, wrap(async (req, res) => send(res, await SeoDash.overview(req.user, { siteId: req.query.siteId ? String(req.query.siteId) : '' }))));
+router.get('/seo/sites', mustWrite, wrap(async (req, res) => send(res, await SeoSites.list(req.user))));
+router.get('/seo/plans', mustWrite, wrap(async (req, res) => send(res, await SeoSites.fromPlans(req.user))));
+router.get('/seo/prefill', mustWrite, wrap(async (req, res) => send(res, await SeoSites.prefill(req.user, req.query.clientName))));
+router.post('/seo/sites', mustWrite, wrap(async (req, res) => send(res, await SeoSites.save(req.user, { ...(req.body || {}), id: undefined }))));
+router.put('/seo/sites/:id', mustWrite, wrap(async (req, res) => send(res, await SeoSites.save(req.user, { ...(req.body || {}), id: req.params.id }))));
+router.delete('/seo/sites/:id', mustWrite, wrap(async (req, res) => send(res, await SeoSites.remove(req.user, req.params.id))));
+// an audit reads the client's site like the website check does, so it counts against the same 20 an hour (a several-page audit counts as 2)
+router.post('/seo/sites/:id/audit', mustWrite, wrap(async (req, res) => {
+  const site = await SeoSites.mine(req.user, req.params.id); if (!site) return res.status(404).json({ error: 'That SEO site was not found.' });
+  if (!siteOk(req.user.id, Number(site.pages) > 1 ? 2 : 1)) return res.status(429).json({ error: 'That is 20 website checks in the last hour (a check of several pages counts as 2). Try again later.' });
+  const r = await SeoAudit.run(req.user, site); if (r.error) return send(res, r);
+  return res.json({ checkId: r.checkId, score: r.score, prev: r.prev, delta: r.delta, tasks: r.tasks, pagesRead: r.report.crawl ? r.report.crawl.read : 1 });
+}));
+router.get('/seo/sites/:id/tasks', mustWrite, wrap(async (req, res) => send(res, await SeoTasks.list(req.user, { siteId: req.params.id, status: req.query.status ? String(req.query.status) : '' }))));
+router.post('/seo/sites/:id/remake', mustWrite, wrap(async (req, res) => send(res, await SeoTasks.remakeSite(req.user, req.params.id))));
+router.put('/seo/tasks/:id', mustWrite, wrap(async (req, res) => send(res, await SeoTasks.setStatus(req.user, req.params.id, req.body || {}))));
 
 module.exports = router;
