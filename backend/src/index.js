@@ -688,6 +688,7 @@ const server = app.listen(PORT, () => {
   require('./utils/greenStartIntegrations').start();
   require('./omniwa/agent').start(); // Omni-Channel WhatsApp: answers the waiting chats (does nothing until an Admin switches the AI on)
   require('./omniwa/followup').start(); // the marketing assistant's follow-ups (OFF until an Admin switches them on; never in the sandbox)
+  require('./omniwa/campaign').start(); // the marketing assistant's promotion campaigns: sends only what a person approved, only to people who agreed (OFF until switched on; never in the sandbox)
   require('./outreach/tplFromMeta').start(); // WhatsApp template approvals from Meta, TeamLink + Omni-Channel, every 15 minutes
   // TEST SANDBOX: no background workers or timers at all (utils/sandbox.js).
   // Admin-renamed stage names (utils/atsFlowConfig.js): read once now; outside the sandbox re-read every minute (another process may save one).

@@ -17,8 +17,10 @@ const no = (code, reason, extra = {}) => ({ ok: false, code, reason, ...extra })
 async function crmOptedOut(e164) {
   try { return !!(await require('../crm/campaigns').optedOut('whatsapp', `+${e164}`)); } catch { return false; } // eslint-disable-line global-require
 }
-// the formal line: a CRM lead of this chat with consent Given for WhatsApp / sales follow-up and no later Withdrawn
-async function hasConsent(conv) {
+// the formal line: a CRM lead of this chat with consent Given and no later Withdrawn. kind 'followup': the purposes about their enquiry (sales calls, WhatsApp messages); kind 'campaign':
+// the purpose for promotions ("Newsletters and campaigns"), which a follow-up never relies on and a campaign never borrows from the enquiry
+const PROMO = /newsletter|campaign|promot|offer/i;
+async function hasConsent(conv, kind = 'followup') {
   try {
     const id = require('./assistLead').leadOf(conv).crmLeadId; // eslint-disable-line global-require
     if (!id) return false;
@@ -28,7 +30,8 @@ async function hasConsent(conv) {
     if (!rows.length) return false;
     const latest = new Map();
     for (const r of rows) if (!latest.has(r.purpose)) latest.set(r.purpose, r.status);
-    return [...latest.values()].includes('Given') && ![...latest.values()].includes('Withdrawn');
+    const states = [...latest.entries()].filter(([p]) => (kind === 'campaign' ? PROMO.test(p) : !PROMO.test(p))).map(([, st]) => st);
+    return states.includes('Given') && !states.includes('Withdrawn');
   } catch { return false; }
 }
 // the approved-template check of the sending number's WhatsApp account. null = go ahead | a sentence
@@ -54,6 +57,14 @@ async function check(conv, { purpose = 'followup', template = null, now = Date.n
   try { blocked = await Agent.blockState(conv.e164); } catch { return no('CHECK_FAILED', 'The stop lists could not be checked just now, so nothing is sent. It is tried again later.', { defer: true }); } // fails closed, never open
   if (blocked.blocked) return no('OPTED_OUT', 'They asked us to stop, or the number is on a stop list. Nothing can be sent.');
   if (await crmOptedOut(conv.e164)) return no('OPTED_OUT', 'They are on the CRM opt-out list. Nothing can be sent.');
+  if (purpose === 'campaign') { // business-started and promotional: ALWAYS an approved template, never free text, even when the 24-hour window happens to be open
+    if (!template || !template.name) return no('NO_TEMPLATE', 'A campaign goes only as an approved WhatsApp template.');
+    if (!(await hasConsent(conv, 'campaign'))) return no('NO_CONSENT', 'No recorded consent for promotions (or it was withdrawn).');
+    const badT = await templateProblem(conv, template.name);
+    if (badT) return no('TEMPLATE_NOT_APPROVED', clip(badT, 300));
+    if (quiet) { const qq = await require('../utils/omniRules').quietNow('CAMPAIGN_PROMO', { at: new Date(now) }).catch(() => null); if (qq) return no('QUIET_HOURS', qq, { defer: true }); } // eslint-disable-line global-require
+    return { ok: true, via: 'template', template };
+  }
   const open = await Agent.windowOpen(conv).catch(() => false);
   let out;
   if (open) out = { ok: true, via: 'text' };

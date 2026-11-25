@@ -44,6 +44,13 @@ const DDL = [
     "templateName" TEXT, "vars" TEXT, "dueAt" BIGINT NOT NULL, "reason" TEXT, "error" TEXT, "decidedByName" TEXT, "decidedAt" BIGINT, "sentAt" BIGINT, "providerMessageId" TEXT, "createdAt" BIGINT NOT NULL, "updatedAt" BIGINT NOT NULL)`,
   'CREATE INDEX IF NOT EXISTS "OmniWaFollowUp_status" ON "OmniWaFollowUp"("status", "dueAt")',
   'CREATE INDEX IF NOT EXISTS "OmniWaFollowUp_conv" ON "OmniWaFollowUp"("convId")',
+  // the marketing assistant's promotion campaigns (omniwa/campaign.js): a campaign and the exact words each person gets; status ready | scheduled | sending | done | cancelled
+  `CREATE TABLE IF NOT EXISTS "OmniWaMktCampaign" ("id" TEXT NOT NULL PRIMARY KEY, "name" TEXT NOT NULL, "templateId" TEXT, "templateName" TEXT NOT NULL, "language" TEXT, "templateBody" TEXT, "varMap" TEXT, "audience" TEXT, "numberId" TEXT,
+    "status" TEXT NOT NULL, "scheduledAt" BIGINT, "note" TEXT, "createdById" TEXT, "createdByName" TEXT, "approvedByName" TEXT, "approvedAt" BIGINT, "startedAt" BIGINT, "finishedAt" BIGINT, "createdAt" BIGINT NOT NULL, "updatedAt" BIGINT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS "OmniWaMktRecipient" ("id" TEXT NOT NULL PRIMARY KEY, "campaignId" TEXT NOT NULL, "crmLeadId" TEXT, "e164" TEXT NOT NULL, "name" TEXT, "vars" TEXT, "body" TEXT, "status" TEXT NOT NULL, "reason" TEXT,
+    "providerMessageId" TEXT, "sentAt" BIGINT, "createdAt" BIGINT NOT NULL, "updatedAt" BIGINT NOT NULL)`,
+  'CREATE INDEX IF NOT EXISTS "OmniWaMktRecipient_campaign" ON "OmniWaMktRecipient"("campaignId", "status")',
+  'CREATE INDEX IF NOT EXISTS "OmniWaMktRecipient_phone" ON "OmniWaMktRecipient"("e164", "sentAt")',
 ];
 
 let ready = null;

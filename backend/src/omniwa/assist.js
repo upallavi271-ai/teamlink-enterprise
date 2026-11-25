@@ -21,7 +21,7 @@ const { ensure } = require('./schema');
 
 const clip = (v, n) => S.clip(v, n);
 const KEY = 'omni.wa.assist';
-const DEFAULTS = { enabled: false, businessName: '', greeting: '', noAnswer: '', aiWording: true, collectLeads: true };
+const DEFAULTS = { enabled: false, businessName: '', greeting: '', noAnswer: '', aiWording: true, collectLeads: true, campaignsOn: false, askOptIn: false };
 const NO_ANSWER = 'I do not have that information in front of me, so I will not guess. I have asked a team member to confirm it and get back to you.';
 const NO_PRICE = 'I do not have our prices written down here, so I cannot quote one. A team member will share the right price with you.';
 const NO_OFFER = 'I do not have any discount or offer written down here, so I will not promise one. A team member will confirm what is available.';
@@ -36,7 +36,7 @@ async function settings() {
   let v = {};
   try { v = row ? JSON.parse(row.value) : {}; } catch { v = {}; }
   return {
-    enabled: v.enabled === true, businessName: clip(v.businessName, 80), greeting: clip(v.greeting, 300), noAnswer: clip(v.noAnswer, 300), aiWording: v.aiWording !== false, collectLeads: v.collectLeads !== false,
+    enabled: v.enabled === true, businessName: clip(v.businessName, 80), greeting: clip(v.greeting, 300), noAnswer: clip(v.noAnswer, 300), aiWording: v.aiWording !== false, collectLeads: v.collectLeads !== false, campaignsOn: v.campaignsOn === true, askOptIn: v.askOptIn === true,
   };
 }
 async function saveSettings(user, b = {}) {
@@ -48,6 +48,8 @@ async function saveSettings(user, b = {}) {
     noAnswer: b.noAnswer === undefined ? cur.noAnswer : clip(b.noAnswer, 300),
     aiWording: b.aiWording === undefined ? cur.aiWording : b.aiWording !== false,
     collectLeads: b.collectLeads === undefined ? cur.collectLeads : b.collectLeads !== false,
+    campaignsOn: b.campaignsOn === undefined ? cur.campaignsOn : b.campaignsOn === true,
+    askOptIn: b.askOptIn === undefined ? cur.askOptIn : b.askOptIn === true,
   };
   const value = JSON.stringify(next);
   await prisma.appSetting.upsert({ where: { key: KEY }, update: { value }, create: { key: KEY, value } });
@@ -284,6 +286,20 @@ async function reply(conv, input, deps = {}) {
   let patch = {};
   let acted = false; // this message was the answer to the question we asked: the knowledge base is not asked about it
 
+  // 0. the answer to "Would you like our offers and updates here on WhatsApp?" (asked once, after the details): YES records the consent for promotions with their own words as the evidence,
+  // NO is kept too, anything else drops the question (it is never repeated)
+  if (collect && lead.pendingOptIn) {
+    const said = String(input || '');
+    const yes = /^\W*(yes|yeah|yep|y|sure|ok(ay)?|please|haan|avunu)\W*$/i.test(said);
+    const nope = /^\W*(no|nope|not now|later|skip|no thanks|nahi|kadu)\W*$/i.test(said);
+    await AL.saveLead(conv, yes || nope ? { pendingOptIn: false, optIn: yes ? 'yes' : 'no' } : { pendingOptIn: false });
+    if (yes || nope) {
+      if (yes && lead.crmLeadId) await require('../crm/consent').fromWhatsAppOptIn(lead.crmLeadId, { text: said }).catch(() => null); // eslint-disable-line global-require
+      calls.push({ tool: 'promo_opt_in', args: {}, result: { answer: yes ? 'yes' : 'no', recorded: !!(yes && lead.crmLeadId) } });
+      ctx.facts.push('assistant:promo_opt_in');
+      return { ctx, calls, reply: yes ? 'Thank you. You will get our offers and updates here from time to time. Write STOP at any time and we will not send you anything.' : 'No problem. We will not send you offers. You can still ask me anything here.', written: true, marketing: true, trusted: [], assist: { how: yes ? 'opt_in' : 'no_promo' } };
+    }
+  }
   // 1. the customer says no thank you in the middle of the questions
   if (pending && AL.NOT_INTERESTED.test(input)) {
     patch = { declined: true, pending: null };
@@ -361,6 +377,11 @@ async function reply(conv, input, deps = {}) {
     }
   }
   if (done) text = [text, closing(AL.leadOf(conv), band)].filter(Boolean).join('\n\n');
+  // the one honest way to a promotion list: ask, once, after the details, and keep their own YES
+  if (done && st.campaignsOn && st.askOptIn && AL.leadOf(conv).crmLeadId && !AL.leadOf(conv).optIn) {
+    text = `${text}\n\nWould you like to get our offers and updates here on WhatsApp from time to time? Reply YES to agree. You can write STOP at any time.`;
+    await AL.saveLead(conv, { pendingOptIn: true });
+  }
   else if (asked) text = [text, AL.QUESTIONS[asked]].filter(Boolean).join('\n\n');
   else if (acted && !text) text = bare && pending ? AL.QUESTIONS[pending] : 'Thank you. I have noted that.';
   if (text && await firstReply(conv) && !/\bAI assistant\b/i.test(text)) text = `${st.businessName ? `${st.businessName}'s AI assistant` : 'AI assistant'}: ${text}`;

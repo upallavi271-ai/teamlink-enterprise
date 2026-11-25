@@ -5,6 +5,7 @@
 //   GET  /conversations/:key                     the strip above a chat: AI state, 24-hour window, already contacted, what the AI collected
 //   POST /conversations/:key/pause | /resume     a person takes over / gives the chat back to the AI
 //   GET  /conversations/:key/messages , POST .../send      a lead's chat (a candidate's chat uses /api/wa-chats as everywhere else)
+//   GET  /campaign-templates , GET|POST /campaigns , POST /campaigns/preview , GET /campaigns/:id , POST /campaigns/:id/send { at? } | /cancel   (campaign rights)
 //   GET  /followups , POST /followups/:id/decide { approve, text?, stopAll? } ; Admin: GET|PUT /followup-settings
 //   GET  /leads                                  the marketing assistant's leads (band, details); GET /assignees , POST /conversations/:key/assign { userId }
 //   GET  /promotions                             the promotion log
@@ -96,6 +97,27 @@ router.post('/followups/:id/decide', wrap(async (req, res) => {
   if (out.error) return send(res, out);
   await logAudit({ userId: req.user.id, action: (req.body || {}).approve === false ? 'WhatsApp follow-up skipped' : 'WhatsApp follow-up approved', entity: 'OmniWaFollowUp', entityId: req.params.id, toValue: out.result }).catch(() => {});
   return res.json(out);
+}));
+// the marketing assistant's promotion campaigns (omniwa/campaign.js): only a login with campaign rights; nothing is saved by a preview and nothing is sent until a person approves
+const Camp = () => require('../omniwa/campaign'); // eslint-disable-line global-require
+router.get('/campaign-templates', wrap(async (req, res) => res.json({ templates: await Camp().templates(), canManage: Camp().mayCampaign(req.user) })));
+router.get('/campaigns', wrap(async (req, res) => res.json(await Camp().list(req.user))));
+router.post('/campaigns/preview', wrap(async (req, res) => send(res, await Camp().preview(req.user, req.body || {}))));
+router.post('/campaigns', wrap(async (req, res) => {
+  const out = await Camp().create(req.user, req.body || {});
+  if (!out.error) await logAudit({ userId: req.user.id, action: 'WhatsApp promotion campaign made', entity: 'OmniWaMktCampaign', entityId: out.id, toValue: `${out.people} people` }).catch(() => {});
+  return send(res, out);
+}));
+router.get('/campaigns/:id', wrap(async (req, res) => send(res, await Camp().get(req.user, req.params.id))));
+router.post('/campaigns/:id/send', wrap(async (req, res) => {
+  const out = await Camp().approve(req.user, req.params.id, { at: (req.body || {}).at || null });
+  if (!out.error) await logAudit({ userId: req.user.id, action: out.status === 'scheduled' ? 'WhatsApp promotion campaign scheduled' : 'WhatsApp promotion campaign sent', entity: 'OmniWaMktCampaign', entityId: req.params.id, toValue: out.status }).catch(() => {});
+  return send(res, out);
+}));
+router.post('/campaigns/:id/cancel', wrap(async (req, res) => {
+  const out = await Camp().cancel(req.user, req.params.id);
+  if (!out.error) await logAudit({ userId: req.user.id, action: 'WhatsApp promotion campaign stopped', entity: 'OmniWaMktCampaign', entityId: req.params.id }).catch(() => {});
+  return send(res, out);
 }));
 router.get('/promo-jobs', wrap(async (req, res) => {
   const prisma = require('../db'); // eslint-disable-line global-require

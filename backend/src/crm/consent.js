@@ -89,8 +89,15 @@ async function fromWebsite(out, body, ip) {
 async function fromWhatsApp(leadId, { note } = {}) {
   if (!leadId) return;
   const st = await settings();
-  const own = st.purposes.filter((p) => /whatsapp|sales|call|follow/i.test(p));
+  const own = st.purposes.filter((p) => /whatsapp|sales|call|follow/i.test(p) && !/newsletter|campaign|promot|offer/i.test(p)); // promotions are asked for separately (fromWhatsAppOptIn), never taken from an enquiry
   for (const p of (own.length ? own : st.purposes.slice(0, 1))) await writeRow('lead', leadId, { purpose: p, status: 'Given', channel: 'WhatsApp', source: 'WhatsApp assistant', byName: 'WhatsApp assistant', note: S.clip(note, 300), noticeVersion: st.noticeVersion }); // eslint-disable-line no-await-in-loop
+}
+// the customer answered YES, on WhatsApp, to "Would you like offers and updates from us here?" (omniwa/assist.js): the promotions purposes are Given, with their own words as the evidence
+async function fromWhatsAppOptIn(leadId, { text } = {}) {
+  if (!leadId) return;
+  const st = await settings();
+  const promo = st.purposes.filter((p) => /newsletter|campaign|promot|offer/i.test(p));
+  for (const p of promo) await writeRow('lead', leadId, { purpose: p, status: 'Given', channel: 'WhatsApp', source: 'WhatsApp assistant: replied YES to the offers question', byName: 'WhatsApp assistant', note: S.clip(`They replied: "${S.clip(text, 60)}"`, 300), noticeVersion: st.noticeVersion }); // eslint-disable-line no-await-in-loop
 }
 // the person's data as a file (DPDP: the right to know what is kept)
 async function exportData(user, kind, id) {
@@ -133,4 +140,4 @@ async function noticePage() {
 <p><b>Grievance Officer</b><br>${g || 'Write to us at the email address you received our message from.'}</p><p class="m">Notice version ${esc(st.noticeVersion)} · under the Digital Personal Data Protection Act, 2023 (India)</p></div></body></html>`;
 }
 
-module.exports = { settings, saveSettings, list, record, fromWebsite, fromWhatsApp, exportData, erase, noticePage, PURPOSES, CHANNELS };
+module.exports = { settings, saveSettings, list, record, fromWebsite, fromWhatsApp, fromWhatsAppOptIn, exportData, erase, noticePage, PURPOSES, CHANNELS };
