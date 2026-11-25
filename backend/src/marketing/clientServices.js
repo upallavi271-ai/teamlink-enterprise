@@ -296,4 +296,4 @@ async function listAudits(u, o = {}) {
   return { items: rows.map((r) => { const a = auditOut(r); delete a.answers; return a; }) };
 }
 
-module.exports = { ensure, PLANS, ITEMS, TERMS, GBP_AREAS, CHECKS, catalog, quote, scoreGbp, createPlan, updatePlan, listPlans, getPlan, setDelivery, saveAudit, getAudit, listAudits, istMonth, istDay, autoCounts, monthRange, activePlans, mayDept, AUTO_ITEMS };
+module.exports = { ensure, PLANS, ITEMS, TERMS, GBP_AREAS, CHECKS, catalog, quote, scoreGbp, createPlan, updatePlan, listPlans, getPlan, setDelivery, saveAudit, getAudit, listAudits, istMonth, istDay, autoCounts, monthRange, activePlans, mayDept, AUTO_ITEMS, planRow: mine };

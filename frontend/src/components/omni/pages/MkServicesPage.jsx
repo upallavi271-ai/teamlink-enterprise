@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import api from '../../../api';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Pill, Tag, Banner, Field, Tabs, Empty, fmtNum, fmtDate } from '../ui.jsx';
@@ -99,7 +100,7 @@ function Attention({ onOpen }) {
 
 function ClientsTab({ cat, toast, onAudit }) {
   const [month, setMonth] = useState(new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 7));
-  const [rows, setRows] = useState(null); const [err, setErr] = useState(''); const [form, setForm] = useState(null); const [busy, setBusy] = useState(false); const [rep, setRep] = useState(null); const [onb, setOnb] = useState(null);
+  const [rows, setRows] = useState(null); const [err, setErr] = useState(''); const [form, setForm] = useState(null); const [busy, setBusy] = useState(false); const [rep, setRep] = useState(null); const [onb, setOnb] = useState(null); const [phone, setPhone] = useState(null);
   const load = useCallback(() => omni.get('/gs/marketing/services/plans', { month }).then((d) => { setRows(d.items); setErr(''); }).catch((e) => setErr(errOf(e, 'The clients could not be read.'))), [month]);
   useEffect(() => { load(); }, [load]);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -128,6 +129,7 @@ function ClientsTab({ cat, toast, onAudit }) {
         </Panel>
       ) : null}
       {onb ? <OnboardingPanel key={onb.id} plan={onb} toast={toast} onClose={() => setOnb(null)} /> : null}
+      {phone ? <PhoneLoginPanel key={phone.id} plan={phone} toast={toast} onClose={() => setPhone(null)} /> : null}
       {rep ? <ReportPanel plan={rep} month={month} toast={toast} onClose={() => setRep(null)} /> : null}
       {err ? <Banner tone="error">{err}</Banner> : null}
       {rows && !rows.length ? <Empty title="No client on a plan yet">Add the first one: the plan, how many months were paid for, and the start date. Then count what is delivered each month.</Empty> : null}
@@ -135,7 +137,7 @@ function ClientsTab({ cat, toast, onAudit }) {
         const [tone, words] = RENEW[r.renewal] || RENEW.running;
         return (
           <Panel key={r.id} title={`${r.clientName} · ${r.planLabel}`} sub={`${r.months} month(s) from ${fmtDate(r.startDate)} to ${fmtDate(r.endDate)} · paid ${rs(r.pricePaid)}${r.industry ? ` · ${r.industry}` : ''}`} style={{ marginBottom: 12 }}
-            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => setOnb(r)}>Onboarding</TinyBtn><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn><TinyBtn onClick={() => setRep(r)}>Monthly report</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
+            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => setOnb(r)}>Onboarding</TinyBtn><TinyBtn title="Give this client a login for the phone app: approve their social posts and see their social accounts" onClick={() => setPhone(r)}>Phone login</TinyBtn><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn><TinyBtn onClick={() => setRep(r)}>Monthly report</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Delivered in {month}: {r.deliveredPct}% of the plan. Posts, Reels and stories are counted by themselves from the work approved for {r.clientName} in Client projects; the + and − buttons add work made outside TeamLink. SEO blogs are counted when a post is marked Published in SEO and visibility > Blog planner. GBP posts are counted by hand.</div>
             {r.progress.map((p) => (
               <div key={p.item} style={{ display: 'grid', gridTemplateColumns: 'minmax(150px,1.2fr) 3fr auto', gap: 10, alignItems: 'center', margin: '5px 0', fontSize: 13 }}>
@@ -243,6 +245,62 @@ function OnboardingPanel({ plan, toast, onClose }) {
           ))}
         </div>
       ))}
+    </Panel>
+  );
+}
+
+// PHONE LOGIN of one client (routes/portalLogins.js, /portal/logins/marketing-plan): a client that buys only digital marketing is kept here, not in Clients, but a login needs a Clients record.
+// "Give phone login" finds the company's Clients record by its name (or makes a bare one: the name, a client ID, the contact; no agreement) and adds the "Social posts" login: the client
+// approves or rejects the posts on the phone app and sees their social accounts. The person gets a one-time set-your-password link by email; nobody ever sees or types a password.
+function PhoneLoginPanel({ plan, toast, onClose }) {
+  const [d, setD] = useState(null); const [err, setErr] = useState(''); const [f, setF] = useState({ name: '', email: '' }); const [busy, setBusy] = useState(false); const [done, setDone] = useState(null);
+  const load = useCallback(() => api.get(`/portal/logins/marketing-plan/${plan.id}`).then((r) => { setD(r.data); setErr(''); if (!r.data.logins.length) setF((x) => ({ name: x.name || r.data.suggestedName || '', email: x.email || r.data.suggestedEmail || '' })); /* the contact is offered only for the FIRST login; later ones are typed */ }).catch((e) => setErr(errOf(e, 'The logins could not be read.'))), [plan.id]);
+  useEffect(() => { load(); }, [load]);
+  const give = async () => {
+    setBusy(true); setDone(null);
+    try { const r = await api.post(`/portal/logins/marketing-plan/${plan.id}/login`, { name: f.name, email: f.email }); setDone(r.data); setF({ name: '', email: '' }); toast('Phone login added'); await load(); } catch (e) { setDone({ error: errOf(e, 'The login could not be added.') }); } finally { setBusy(false); }
+  };
+  const resend = async (l) => {
+    setBusy(true); setDone(null);
+    try { const r = await api.post(`/portal/logins/client/${d.client.id}/users/${l.id}/resend`); setDone({ message: r.data.message || 'A new link was sent.', link: r.data.link }); await load(); } catch (e) { setDone({ error: errOf(e, 'The link could not be sent.') }); } finally { setBusy(false); }
+  };
+  const canGive = d && d.seatsLeft > 0 && f.name.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim());
+  return (
+    <Panel title={`Phone login: ${plan.clientName}`} sub="The client signs in on the phone app, approves or rejects the posts we make, and sees their social accounts. Nothing else." style={{ marginBottom: 12 }} right={<TinyBtn onClick={onClose}>Close</TinyBtn>}>
+      {err ? <Banner tone="error">{err}</Banner> : null}
+      {!d && !err ? <div style={{ fontSize: 13 }}>Opening…</div> : null}
+      {d ? (
+        <div>
+          <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 8 }}>
+            {d.client ? <>Clients record: <b>{d.client.code || d.client.name}</b> (found by the company name). </> : <>No Clients record has the name <b>{d.company}</b> yet: a bare one is made when you press the button (the name and a client ID, no agreement). </>}
+            Posts reach the phone by the company name, so keep it the same as the name you type when you send a post for approval. {d.used} of {d.max} logins used.
+          </div>
+          {d.logins.length ? (
+            <div style={{ margin: '6px 0 10px' }}>
+              {d.logins.map((l) => (
+                <div key={l.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, margin: '4px 0' }}>
+                  <b>{l.name}</b> <span style={{ color: 'var(--muted)' }}>{l.email}</span> <Pill tone={l.state.key === 'active' ? 'live' : l.state.key === 'off' ? 'draft' : 'warn'} dot>{l.state.label}</Pill>
+                  {!l.off && l.state.key !== 'active' ? <TinyBtn disabled={busy} onClick={() => resend(l)}>Send a new link</TinyBtn> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {d.seatsLeft > 0 ? (
+            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 10, alignItems: 'end' }}>
+              <Field label="PERSON'S NAME"><input value={f.name} maxLength={120} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+              <Field label="PERSON'S EMAIL (THE LINK GOES HERE)"><input type="email" value={f.email} maxLength={160} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
+              <Btn primary disabled={busy || !canGive} onClick={give}>{busy ? 'Working…' : 'Give phone login'}</Btn>
+            </div>
+          ) : <Banner tone="warn">This company already has {d.max} logins, the most allowed. Switch one off in Clients first.</Banner>}
+        </div>
+      ) : null}
+      {done && done.error ? <Banner tone="error">{done.error}</Banner> : null}
+      {done && !done.error ? (
+        <Banner tone="ok">
+          {done.message}
+          {done.link ? <div style={{ marginTop: 6 }}>The one-time link (give it by email only, never WhatsApp or chat): <input readOnly aria-label="One-time set-password link" value={done.link} onFocus={(e) => e.target.select()} style={{ width: '100%', marginTop: 4, fontSize: 12 }} /></div> : null}
+        </Banner>
+      ) : null}
     </Panel>
   );
 }

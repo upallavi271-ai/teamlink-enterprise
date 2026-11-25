@@ -107,8 +107,10 @@ export default function SetPassword() {
               {saving ? 'Saving…' : (sameHint ? 'Use this password anyway' : 'Set password and continue')}
             </button>
             <div className="small-muted" style={{ marginTop: 12 }}>
-              After signing in, open My Profile, fill in the rest of your details and submit them
-              for review. Once they are approved the profile locks.
+              {/* 2026-11-25: "My Profile" is the employee's first-day step; a client login has no such step, so it is told what the first page holds instead */}
+              {state.role === 'Client'
+                ? 'After signing in, the first page shows what you can do. You can add this page to your phone\'s home screen from the browser menu, so it opens like an app.'
+                : 'After signing in, open My Profile, fill in the rest of your details and submit them for review. Once they are approved the profile locks.'}
             </div>
           </form>
         )}

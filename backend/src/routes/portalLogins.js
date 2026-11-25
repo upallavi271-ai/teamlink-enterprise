@@ -33,6 +33,8 @@ const { departmentOk, pauseApproverIds } = require('../utils/clientLifecycle');
 const T = require('../utils/clientPortalTypes');
 const { portalSettings, savePortalSettings } = require('../utils/portalSettings');
 const L = require('../utils/portalLogins');
+const A = require('../outreach/access');
+const CS = require('../marketing/clientServices');
 
 const router = express.Router();
 const wrap = (fn) => (req, res, next) => { Promise.resolve(fn(req, res, next)).catch(next); };
@@ -110,6 +112,7 @@ async function loadClient(req, res, clientId) {
 const MAIL_WORDS = {
   VIEW: 'see your requirements and the candidates we send you', DECIDE: 'shortlist, hold or reject candidates', INTERVIEW: 'ask for an interview',
   FEEDBACK: 'give feedback after an interview', REQUEST: 'ask for a new requirement', AGREEMENT: 'see your agreement', INVOICES: 'see your invoices',
+  CREATIVE: 'check the social media posts we make for you and approve them or ask for changes, and see your social media accounts',
 };
 function inviteMail({ name, company, link, expiresAt, caps }) {
   const when = expiresAt.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
@@ -117,9 +120,12 @@ function inviteMail({ name, company, link, expiresAt, caps }) {
   const what = parts.length
     ? (parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`)
     : 'see your requirements, the candidates we send you, interviews and feedback';
-  const first = (caps || []).includes('VIEW') || !(caps || []).length
-    ? 'First time? After you sign in you will see "Your requirements" and "Candidates for review" — open a candidate to see the resume and give your decision.'
-    : 'First time? After you sign in, the buttons you can use are shown on the first page.';
+  // 2026-11-25: the "Social posts" login (only the creative tick) is for the phone app, so its first-time note is about posts, not candidates
+  const first = socialOnly(caps)
+    ? 'First time? After you sign in, the posts waiting for you are on the first page. Open one, then tap Approve — or Reject and tell us why. On your phone you can add this page to your home screen from the browser menu, so it opens like an app.'
+    : ((caps || []).includes('VIEW') || !(caps || []).length
+      ? 'First time? After you sign in you will see "Your requirements" and "Candidates for review" — open a candidate to see the resume and give your decision.'
+      : 'First time? After you sign in, the buttons you can use are shown on the first page.');
   return [
     `Hello ${name || 'there'},`,
     '',
@@ -206,6 +212,19 @@ async function createLogin({ client, name, email, caps, req }) {
   return { user, invite };
 }
 
+// The approver's direct add: the login, the "Approved" request row that keeps the history, the audit line. Used by Add user and by "Give phone login" (AI Marketing > Client plans).
+async function addDirect({ client, u, name, email, caps, reason, req }) {
+  const out = await createLogin({ client, name, email, caps, req });
+  await prisma.portalRequest.create({
+    data: {
+      kind: 'CLIENT_LOGIN', status: 'Approved', clientId: client.id, userId: out.user.id, name, email, ...requestTickData(caps), reason,
+      requestedById: u.id, requestedByName: u.name, decidedById: u.id, decidedByName: u.name, decidedAt: new Date(), decisionNote: 'Added directly',
+    },
+  });
+  await logAudit({ userId: u.id, actorName: u.name, action: `Client portal login created (${SHORT_TYPE[T.typeFor(caps)]})`, entity: 'Client', entityId: client.id, fromValue: null, toValue: `${email} · can: ${youCan(caps)} · ${out.invite.sent ? 'invite mailed' : 'invite not mailed'}` });
+  return out;
+}
+
 function shapeLogin(u, gate) {
   const st = L.loginState(u);
   const flags = [];
@@ -280,14 +299,7 @@ router.post('/client/:clientId/users', wrap(async (req, res) => {
   const u = req.user;
 
   if (rights.approve) {
-    const out = await createLogin({ client, name, email, caps, req });
-    await prisma.portalRequest.create({
-      data: {
-        kind: 'CLIENT_LOGIN', status: 'Approved', clientId: client.id, userId: out.user.id, name, email, ...requestTickData(caps), reason,
-        requestedById: u.id, requestedByName: u.name, decidedById: u.id, decidedByName: u.name, decidedAt: new Date(), decisionNote: 'Added directly',
-      },
-    });
-    await logAudit({ userId: u.id, actorName: u.name, action: `Client portal login created (${SHORT_TYPE[T.typeFor(caps)]})`, entity: 'Client', entityId: client.id, fromValue: null, toValue: `${email} · can: ${youCan(caps)} · ${out.invite.sent ? 'invite mailed' : 'invite not mailed'}` });
+    const out = await addDirect({ client, u, name, email, caps, reason, req });
     return res.status(201).json({ created: true, message: `Login added for ${name}. ${out.invite.message}`, link: out.invite.link, expiresAt: out.invite.expiresAt });
   }
 
@@ -300,6 +312,97 @@ router.post('/client/:clientId/users', wrap(async (req, res) => {
   // everyone concerned with the client sees it too (pop-up + mail, utils/atsUpdates.js); never blocks the answer
   require('../utils/atsUpdates').publish({ type: 'client_login', clientId: client.id, title: `Portal login asked for ${name} (${client.name})`, summary: `Can: ${youCan(caps)}${reason ? ` · ${reason}` : ''}`, open: '/clients/portal-logins', actor: { id: u.id, name: u.name } }).catch(() => {}); // eslint-disable-line global-require
   return res.status(201).json({ requested: true, id: r.id, message: `Request sent. The Admin will approve it, then ${name} gets an invite email.` });
+}));
+
+// ---- AI Marketing > Client plans > "Give phone login" (2026-11-25) ---------------------------------------------------------------------------------------------------
+//   GET  /marketing-plan/:planId          the company's Clients record (if any), its logins and the seats left
+//   POST /marketing-plan/:planId/login    {name,email}: finds the company's Clients record by its name (or makes one, "saved for later" style: the name, a client ID, the contact; no
+//                                         agreement), then adds the "Social posts" login with the same rules and the same one-time set-password link as Add user.
+// Why: a client that buys ONLY digital marketing is kept in AI Marketing > Client plans (a name and a plan), but a login needs a Clients record. Admin-level only: the people who may add a
+// login directly (an Admin / approver); everyone else is told to ask. A Clients record that already carries the same name is reused, never doubled.
+async function planForLogin(req, res) {
+  const u = req.user;
+  await A.warm();
+  if (!A.has('mayAiMarketing')(u)) { res.status(403).json({ error: 'Your login can look at AI Marketing but not use it to write.' }); return null; }
+  const base = await baseRights(u);
+  if (!base.approve) { res.status(403).json({ error: 'Only the Admin can give a client a login. Ask the Admin to press this.' }); return null; }
+  await CS.ensure();
+  const plan = await CS.planRow(u, req.params.planId);
+  if (!plan) { res.status(404).json({ error: 'That client plan was not found.' }); return null; }
+  return plan;
+}
+// The Clients record that carries the plan's company name (the oldest one when there are several branches), inside this login's area. hidden = it exists but not in this login's area.
+async function clientOfPlan(u, plan) {
+  const want = String(plan.clientName || '').trim().toLowerCase();
+  const rows = await prisma.$queryRaw`SELECT id FROM Client WHERE lower(trim(name)) = ${want} AND (clientType IS NULL OR clientType != 'Internal') ORDER BY createdAt ASC`;
+  if (!rows.length) return { client: null, hidden: false };
+  const seen = await prisma.client.findMany({
+    where: { AND: [{ id: { in: rows.map((r) => r.id) } }, clientWhere(u)] },
+    select: { id: true, name: true, clientCode: true, ownerDepartment: true, agreementStatus: true, agreementEnd: true, contactName: true, contactEmail: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  const usable = seen.filter((c) => departmentOk(u, c))[0] || null;
+  return { client: usable, hidden: !usable };
+}
+const HIDDEN_CLIENT = 'A client with this name already exists in another area. Ask the Admin to give the login.';
+
+router.get('/marketing-plan/:planId', wrap(async (req, res) => {
+  const plan = await planForLogin(req, res);
+  if (!plan) return undefined;
+  const { client, hidden } = await clientOfPlan(req.user, plan);
+  if (hidden) return res.status(403).json({ error: HIDDEN_CLIENT });
+  const settings = await portalSettings();
+  const logins = client ? await L.clientLogins(client.id) : [];
+  const waiting = client ? await prisma.portalRequest.count({ where: { clientId: client.id, kind: 'CLIENT_LOGIN', status: 'Pending' } }) : 0;
+  const used = logins.filter((x) => !L.isOff(x)).length;
+  const gate = L.agreementGate(client || { agreementStatus: 'DRAFT' });
+  return res.json({
+    company: plan.clientName,
+    client: client ? { id: client.id, code: client.clientCode || '', name: client.name } : null,
+    suggestedName: plan.contactName || (client && client.contactName) || '',
+    suggestedEmail: (client && client.contactEmail) || '',
+    max: settings.maxClientLogins,
+    used,
+    seatsLeft: Math.max(0, settings.maxClientLogins - used - waiting),
+    logins: logins.map((x) => shapeLogin(x, gate)),
+  });
+}));
+
+router.post('/marketing-plan/:planId/login', wrap(async (req, res) => {
+  const plan = await planForLogin(req, res);
+  if (!plan) return undefined;
+  const u = req.user;
+  const b = req.body || {};
+  const email = norm(b.email);
+  const name = String(b.name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const caps = T.normalise(T.PRESET_CAPS.MARKETING);
+  if (!name) return res.status(400).json({ error: 'Enter the person\'s name.' });
+  const found = await clientOfPlan(u, plan);
+  if (found.hidden) return res.status(403).json({ error: HIDDEN_CLIENT });
+  // every rule of Add user (email, one login per email, seats) BEFORE a Clients record is made, so a refused login never leaves an empty record behind
+  const no = await whyNot({ client: found.client || { id: '', agreementStatus: 'DRAFT' }, email, caps, forRequest: true });
+  if (no) return res.status(409).json({ error: no });
+  let client = found.client;
+  let clientCreated = false;
+  if (!client) {
+    if (!departmentOk(u, { ownerDepartment: plan.department || null })) return res.status(403).json({ error: 'A client can be made only in your own department.' });
+    client = await prisma.client.create({
+      data: {
+        name: String(plan.clientName).trim(), clientCode: await require('../utils/autoNumber').nextClientNumber(), // eslint-disable-line global-require
+        ownerDepartment: plan.department || null, contactName: plan.contactName || name, contactPhone: plan.contactPhone || null, contactEmail: email, agreementStatus: 'DRAFT',
+      },
+    });
+    require('../utils/clientLocations').forgetLabels(); // eslint-disable-line global-require
+    clientCreated = true;
+    await logAudit({ userId: u.id, actorName: u.name, action: 'Client created', entity: 'Client', entityId: client.id, toValue: 'Made from AI Marketing > Client plans for a phone login (digital marketing only, no staffing agreement)' });
+  }
+  const out = await addDirect({ client, u, name, email, caps, reason: `From AI Marketing > Client plans (${plan.clientName})`, req });
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: phone login given to a client', entity: 'OmniMkClientPlan', entityId: plan.id, toValue: `${plan.clientName}: ${email}${clientCreated ? ` (Clients record ${client.clientCode} made)` : ''}` });
+  return res.status(201).json({
+    created: true, clientCreated, client: { id: client.id, code: client.clientCode || '', name: client.name },
+    message: `Phone login added for ${name}. ${out.invite.message}${clientCreated ? ` A Clients record (${client.clientCode}) was made for ${client.name}.` : ''}`,
+    link: out.invite.link, expiresAt: out.invite.expiresAt,
+  });
 }));
 
 async function loadRequest(req, res) {
