@@ -144,7 +144,8 @@ export default function MkUsagePage() {
         <Panel title="Posting to client accounts" style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
           <div className="form-grid">
             <Field label="POST FROM TEAMLINK" full>
-              <select value={lim.autoPostAllowed ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, autoPostAllowed: e.target.value === 'yes' })}><option value="no">Off: post by hand</option><option value="yes">On: the team can post with a click</option></select>
+              <select value={lim.autoPostAllowed ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, autoPostAllowed: e.target.value === 'yes' })}><option value="no">Off: post by hand</option><option value="yes">On: the team can post with a click, and a picture can post itself after the client approves it</option></select>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>A picture can be set to post on the client's connected accounts by itself after the client approves it. It posts only if this switch is On, the client ticked their own permission (naming the accounts and the words) and the picture is the version they approved. Accounts are connected the official way (Administration &gt; Integrations &gt; Social Media): TeamLink never stores a username or password.</div>
             </Field>
             <Field label="OUR FACEBOOK LOGIN THAT CLIENTS ADD TO THEIR PAGE (NAME OR EMAIL)" full><input value={lim.accessLogin} maxLength={120} placeholder="For example: TeamLink Digital" onChange={(e) => setLim({ ...lim, accessLogin: e.target.value })} /></Field>
             <Field label="OUR META BUSINESS ID (OPTIONAL)" full><input value={lim.accessBusinessId} maxLength={30} inputMode="numeric" placeholder="Numbers only" onChange={(e) => setLim({ ...lim, accessBusinessId: e.target.value })} /></Field>

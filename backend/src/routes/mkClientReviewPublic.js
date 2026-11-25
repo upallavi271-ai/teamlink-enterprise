@@ -21,4 +21,7 @@ router.get('/:token/file', lim, wrap(async (req, res, next) => {
 }));
 router.post('/:token/decision', limPost, wrap(async (req, res) => send(res, await R.publicDecide(req.params.token, req.body || {}, require('../utils/clientIp').ipOf(req)))));
 
+// the client approved first (a tap on WhatsApp has no tick) and now allows the posting on the same private link (marketing/itemPlan.js allowLater)
+router.post('/:token/allow-posting', limPost, wrap(async (req, res) => send(res, await R.publicAllowPosting(req.params.token, req.body || {}))));
+
 module.exports = router;

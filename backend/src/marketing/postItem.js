@@ -46,6 +46,22 @@ async function posts(u, id) {
   return { posts: rows.map((r) => ({ id: r.id, accountId: r.accountId || '', platform: r.platform || '', accountName: r.accountName || '', ok: S.num(r.ok) === 1, url: r.url || '', error: r.error || '', caption: r.caption || '', byName: r.byName || '', at: S.iso(r.at) })) };
 }
 
+// the part that really posts, shared by the click (postItem) and the automatic post after the client approved (marketing/itemPlan.js): the public links Meta fetches, the local file X uploads, the publisher,
+// one history row per account (done or failed) and one audit line. -> the publisher's results [{ accountId, platform, name, ok, url, error }]
+async function publishItem(it, Img, targets, caption, site, byId, byName, how = 'by a click') {
+  const video = Img.isVideoRow(it);
+  const file = Img.rawFile(it);
+  const media = { type: video ? 'video' : 'image', url: site ? `${site}${Img.publicPathOf(it)}` : '', jpgUrl: site && !video && /^image\/(png|webp)$/.test(it.mime || '') ? `${site}${Img.publicJpegPath(it)}` : (site ? `${site}${Img.publicPathOf(it)}` : ''), path: file ? file.path : '', mime: it.mime };
+  const results = await require('./publisher').publish(targets, media, caption); // eslint-disable-line global-require
+  const now = Date.now();
+  for (const x of results) { // eslint-disable-line no-restricted-syntax
+    await S.run(`INSERT INTO "${T}" (id, itemId, accountId, platform, accountName, ok, url, error, caption, byId, byName, at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, // eslint-disable-line no-await-in-loop
+      S.newId('ip'), it.id, x.accountId || null, x.platform || null, S.clip(x.name, 120), x.ok ? 1 : 0, x.url || null, x.ok ? null : S.clip(x.error, 300), caption || null, byId, S.clip(byName, 80), now);
+  }
+  await logAudit({ userId: byId, actorName: byName, action: results.every((x) => x.ok) ? `Omni-Channel AI Marketing: ${video ? 'video' : 'picture'} posted ${how}` : `Omni-Channel AI Marketing: ${video ? 'video' : 'picture'} posting ${how} had a failure`, entity: 'OmniMkImage', entityId: it.id, toValue: `${S.clip(it.title, 80)}: ${results.map((x) => `${x.name} (${WORD[x.platform] || x.platform}) ${x.ok ? 'posted' : 'failed'}`).join(', ')}` });
+  return results;
+}
+
 // body: { accountIds: [..], caption, confirm: true }
 async function postItem(u, id, b = {}, base = '') {
   await ensure();
@@ -73,19 +89,10 @@ async function postItem(u, id, b = {}, base = '') {
   if (running.has(it.id)) return { error: 'It is being posted right now.', status: 409 };
   running.add(it.id);
   try {
-    const video = Img.isVideoRow(it);
-    const file = Img.rawFile(it);
-    const media = { type: video ? 'video' : 'image', url: site ? `${site}${Img.publicPathOf(it)}` : '', jpgUrl: site && !video && /^image\/(png|webp)$/.test(it.mime || '') ? `${site}${Img.publicJpegPath(it)}` : (site ? `${site}${Img.publicPathOf(it)}` : ''), path: file ? file.path : '', mime: it.mime };
-    const results = await require('./publisher').publish(targets, media, caption); // eslint-disable-line global-require
-    const now = Date.now();
-    for (const x of results) { // eslint-disable-line no-restricted-syntax
-      await S.run(`INSERT INTO "${T}" (id, itemId, accountId, platform, accountName, ok, url, error, caption, byId, byName, at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, // eslint-disable-line no-await-in-loop
-        S.newId('ip'), it.id, x.accountId || null, x.platform || null, S.clip(x.name, 120), x.ok ? 1 : 0, x.url || null, x.ok ? null : S.clip(x.error, 300), caption || null, u.id, S.clip(u.name, 80), now);
-    }
-    await logAudit({ userId: u.id, actorName: u.name, action: results.every((x) => x.ok) ? `Omni-Channel AI Marketing: ${video ? 'video' : 'picture'} posted by a click` : `Omni-Channel AI Marketing: ${video ? 'video' : 'picture'} posting by a click had a failure`, entity: 'OmniMkImage', entityId: it.id, toValue: `${S.clip(it.title, 80)}: ${results.map((x) => `${x.name} (${WORD[x.platform] || x.platform}) ${x.ok ? 'posted' : 'failed'}`).join(', ')}` });
+    const results = await publishItem(it, Img, targets, caption, site, u.id, u.name, 'by a click');
     const good = results.filter((x) => x.ok);
     return { ok: good.length === results.length ? `Posted on ${good.map((x) => x.name).join(', ')}.` : (good.length ? 'Some accounts were posted, some were not. See below.' : 'It could not be posted. See why below, then try again.'), results, posted: good.length > 0 };
   } finally { running.delete(it.id); }
 }
 
-module.exports = { ensure, posts, postItem };
+module.exports = { ensure, posts, postItem, publishItem, PLATFORMS, WORD };

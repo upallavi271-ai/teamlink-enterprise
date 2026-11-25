@@ -6,6 +6,7 @@ import { PageHead, Btn, TinyBtn, Panel, Pill, Banner, Field, Tabs, Empty, Confir
 import { MkStatus, MkImg, downloadMkImg, ClientChip } from '../marketing/mk.jsx';
 import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import PostItemModal from '../marketing/PostItemModal.jsx';
+import PostPlanModal, { PlanStatus } from '../marketing/PostPlanBox.jsx';
 import AutoStudioPanel from '../marketing/AutoStudioPanel.jsx';
 import '../marketing/marketing.css';
 
@@ -67,6 +68,7 @@ export default function MkImagesPage() {
   const [hist, setHist] = useState(null); // the picture whose change history is open
   const [toClient, setToClient] = useState(null); // the picture being sent to a client
   const [postIt, setPostIt] = useState(null); // the approved picture being posted on social accounts
+  const [planFor, setPlanFor] = useState(null); // the picture whose "post after the client approves" plan is being set
   const [proj, setProj] = useState(null); // a client project these pictures are made for (?project=<id>): its logo and colours are used (marketing/projects.js)
   const projectId = (() => { try { return new URLSearchParams(window.location.search).get('project') || ''; } catch { return ''; } })();
   useEffect(() => { if (projectId) omni.get(`/gs/marketing/projects/${projectId}`).then((x) => setProj({ id: x.project.id, clientName: x.project.clientName, occasion: x.project.occasion, hasLogo: x.project.hasLogo })).catch(() => setProj(null)); }, [projectId]);
@@ -113,6 +115,7 @@ export default function MkImagesPage() {
     } catch (e) { toast(errOf(e, 'That did not work.')); } finally { setBusy(''); }
   };
   const tryAgain = async (it) => { setBusy(it.id); try { const r = await omni.post(`/gs/marketing/revisions/${it.revision.id}/retry`); toast(r.revised ? 'Changed and sent again' : (r.needsPerson ? `Not changed: ${r.needsPerson}` : (r.failed ? `Failed: ${r.failed}` : (r.ok || 'Done')))); load(); } catch (e) { toast(errOf(e, 'It could not be tried again.')); } finally { setBusy(''); } };
+  const retryPlan = async (it) => { setBusy(it.id); try { const r = await omni.post(`/gs/marketing/images/${it.id}/post-plan/retry`); toast(r.state === 'posted' ? 'Posted' : (r.reason ? `Not posted: ${r.reason}` : 'Tried again: see the result on the card')); load(); } catch (e) { toast(errOf(e, 'It could not be tried again.')); } finally { setBusy(''); } };
   const remove = async () => { const it = del; setDel(null); try { await omni.del(`/gs/marketing/images/${it.id}`); toast('Deleted'); setView(null); load(); } catch (e) { toast(errOf(e, 'It could not be deleted.')); } };
   const saveName = async () => { try { await omni.put(`/gs/marketing/images/${rename.id}`, { title: rename.title }); toast('Renamed'); setRename(null); load(); } catch (e) { toast(errOf(e, 'It could not be renamed.')); } };
   const copyLink = async (it) => { const url = `${window.location.origin}${it.publicPath}`; try { await navigator.clipboard.writeText(url); toast('Public link copied'); } catch { window.prompt('Copy the public link:', url); } };
@@ -165,6 +168,7 @@ export default function MkImagesPage() {
                   </div>
                 ) : null}
                 {it.status === 'changes' && it.note && !(it.revision && it.revision.feedback) ? <div className="mk-note">Sent back by {it.decidedByName}: {it.note}</div> : null}
+                {it.plan ? <PlanStatus plan={it.plan} busy={busy === it.id ? 'retry' : ''} retry={it.canEdit ? () => retryPlan(it) : null} /> : null}
                 <div className="mk-acts" style={{ marginTop: 6, flexWrap: 'wrap' }}>
                   <TinyBtn onClick={() => download(it)}>⬇ Download</TinyBtn>
                   {it.revision && typeof it.revision === 'object' ? <TinyBtn onClick={() => setHist(it)} title="What the client asked for, what TeamLink changed, and every version side by side">🕘 Versions ({it.revision.count})</TinyBtn> : null}
@@ -176,6 +180,7 @@ export default function MkImagesPage() {
                   {it.publicPath ? <TinyBtn onClick={() => copyLink(it)}>🔗 Copy link</TinyBtn> : null}
                   {it.status === 'approved' && it.canEdit ? <TinyBtn onClick={() => setToClient(it)}>{it.clientReview && it.clientReview.status !== 'revoked' ? 'Client…' : '➤ Send to client'}</TinyBtn> : null}
                   {it.status === 'approved' && it.canEdit && it.style !== 'clip' ? <TinyBtn onClick={() => setPostIt(it)} title="Post it on the connected Facebook, Instagram or X accounts">📣 Post…</TinyBtn> : null}
+                  {it.canEdit && it.style !== 'clip' && !(it.plan && ['posted', 'posting'].includes(it.plan.state)) ? <TinyBtn onClick={() => setPlanFor(it)} title="Post it on the client's accounts by itself after the client approves it and allows it, with a caption and hashtags">{it.plan ? '📣 Posting plan…' : '📣 Post after approval…'}</TinyBtn> : null}
                   {it.canEdit ? <TinyBtn onClick={() => setRename({ id: it.id, title: it.title })} aria-label={`Rename ${it.title}`}>✎</TinyBtn> : null}
                   {it.canDelete ? <TinyBtn onClick={() => setDel(it)} aria-label={`Delete ${it.title}`}>🗑</TinyBtn> : null}
                 </div>
@@ -195,6 +200,7 @@ export default function MkImagesPage() {
       {hist ? <RevisionModal item={hist} onClose={() => setHist(null)} /> : null}
       {toClient ? <ClientReviewModal kind="image" item={toClient} onClose={() => setToClient(null)} onChanged={load} toast={toast} /> : null}
       {postIt ? <PostItemModal item={postIt} onClose={() => setPostIt(null)} onChanged={load} toast={toast} /> : null}
+      {planFor ? <PostPlanModal item={planFor} onClose={() => setPlanFor(null)} onChanged={load} toast={toast} /> : null}
       {rename ? (
         <GsModal title="Rename the picture" width={420} onClose={() => setRename(null)} foot={<><Btn onClick={() => setRename(null)}>Cancel</Btn><Btn primary disabled={!rename.title.trim()} onClick={saveName}>Save</Btn></>}>
           <Field label="NAME"><input autoFocus value={rename.title} maxLength={80} onChange={(e) => setRename({ ...rename, title: e.target.value })} /></Field>

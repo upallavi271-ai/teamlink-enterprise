@@ -44,6 +44,7 @@ const SeoDash = require('../marketing/seoDashboard');
 const SeoKw = require('../marketing/seoKeywords');
 const SeoContent = require('../marketing/seoContent');
 const SeoComp = require('../marketing/seoCompetitor');
+const Plan = require('../marketing/itemPlan');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -162,6 +163,7 @@ router.get('/images', wrap(async (req, res) => {
   const out = await Img.list(req.user, { status: String(req.query.status || ''), kind: ['image', 'video'].includes(req.query.kind) ? req.query.kind : '' });
   out.items = await CR.attach('image', out.items);
   out.items = await Revision.attach(out.items); // the latest automatic revision of each picture: status, version, the client's words (marketing/revision.js)
+  out.items = await Plan.attach(out.items); // the posting plan of each picture (post after the client approves): state, accounts, words, results (marketing/itemPlan.js)
   const used = await require('../marketing/mediaUse').countsFor(out.items.map((x) => x.id)).catch(() => ({})); // how many campaigns carried each item and to how many people
   out.items = out.items.map((x) => ({ ...x, uses: used[x.id] || { campaigns: 0, recipients: 0 } }));
   res.json(out);
@@ -203,6 +205,13 @@ router.get('/images/:id/versions/:n/file', wrap(async (req, res) => {
   res.setHeader('Content-Type', f.mime); res.setHeader('Cache-Control', 'private, max-age=600');
   return res.sendFile(f.path);
 }));
+// post after the client approves (marketing/itemPlan.js): the words suggested from the banner, set / change / switch off the plan, and Retry a posting that failed
+const planItem = async (req) => { const g = await Img.getRow(req.user, req.params.id); return g ? g.r : null; };
+const NOT_FOUND = { error: 'This picture was not found.', status: 404 };
+router.get('/images/:id/post-plan/suggest', mustWrite, wrap(async (req, res) => send(res, await Plan.suggestFor(req.user, req.params.id))));
+router.put('/images/:id/post-plan', mustWrite, wrap(async (req, res) => { const it = await planItem(req); send(res, it ? await Plan.arm(req.user, it, req.body || {}) : NOT_FOUND); }));
+router.delete('/images/:id/post-plan', mustWrite, wrap(async (req, res) => { const it = await planItem(req); send(res, it ? await Plan.clear(req.user, it) : NOT_FOUND); }));
+router.post('/images/:id/post-plan/retry', mustWrite, wrap(async (req, res) => { const it = await planItem(req); send(res, it ? await Plan.retry(req.user, it, siteOf(req)) : NOT_FOUND); }));
 router.post('/revisions/:id/retry', mustWrite, wrap(async (req, res) => send(res, await Revision.retryJob(req.user, req.params.id, siteOf(req)))));
 router.put('/images/:id', mustWrite, wrap(async (req, res) => send(res, await Img.update(req.user, req.params.id, req.body || {}))));
 router.delete('/images/:id', mustWrite, wrap(async (req, res) => send(res, await Img.remove(req.user, req.params.id))));

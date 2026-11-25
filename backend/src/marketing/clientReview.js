@@ -20,6 +20,7 @@ const AI = require('./ai');
 const Cfg = require('./settings');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
+const Plan = require('./itemPlan'); // 2026-11-25: "post after the client approves": the accounts and the exact words shown to the client, their tick, and the post (marketing/itemPlan.js)
 
 const TABLE = 'OmniMkClientReview';
 const DDL = [
@@ -246,7 +247,8 @@ async function tell(u, id, b = {}, base = '') {
   const word = r.kind === 'image' ? (item && /^video\//.test(item.mime || '') ? 'video' : 'picture') : 'message';
   const link = `${site}/client-review/${tokenOf(r.id)}`;
   const first = P.firstWord(r.contactName);
-  const text = `${first ? `Hello ${first},` : 'Hello,'} ${r.message ? S.clip(r.message, 400) : `please review the ${word} "${r.itemTitle}" and tell us if it is OK to use:`} ${link}`;
+  const planNote = r.kind === 'image' ? await Plan.clientNote(r.itemId, link) : ''; // the accounts and the exact words the team plans to post after the approval (itemPlan.js), with where to tick
+  const text = `${first ? `Hello ${first},` : 'Hello,'} ${r.message ? S.clip(r.message, 400) : `please review the ${word} "${r.itemTitle}" and tell us if it is OK to use:`} ${link}${planNote}`;
   const meta = { audience: 'client', personName: S.clip(r.contactName || r.clientName, 80), purpose: `AI Marketing: ${word} for the client to approve`, module: 'AI Marketing', senderUserId: u.id, senderName: S.clip(u.name, 80) };
   const Sender = require('./sender'); // eslint-disable-line global-require -- the WhatsApp number: the default company number unless the person picked another (marketing/sender.js)
   const pk = ways.includes('whatsapp') ? await Sender.pick(u, b.numberId) : { numberId: null };
@@ -262,7 +264,8 @@ async function tell(u, id, b = {}, base = '') {
         const AS = require('./approvalSend'); // eslint-disable-line global-require
         const f = await AS.mediaFile(item, r.id, 15 * 1024 * 1024); // eslint-disable-line no-await-in-loop
         if (!f.path) { sent.push({ way: 'WhatsApp', ok: false, to: core.maskMobile(nm.e164), error: f.skip || 'The file could not be prepared.' }); continue; } // eslint-disable-line no-continue
-        const caption = `${first ? `Hello ${first},` : 'Hello,'} ${r.message ? S.clip(r.message, 400) : `please review the ${word} "${S.clip(r.itemTitle, 80)}" and tell us if it is OK to use.`} Tap Approve, or Reject and tell us why.`;
+        const baseCaption = `${first ? `Hello ${first},` : 'Hello,'} ${r.message ? S.clip(r.message, 400) : `please review the ${word} "${S.clip(r.itemTitle, 80)}" and tell us if it is OK to use.`} Tap Approve, or Reject and tell us why.`;
+        const caption = `${baseCaption}${await Plan.clientNote(r.itemId, link, Math.max(300, 1000 - baseCaption.length))}`; // + the accounts and the exact words to be posted, and where to tick (WhatsApp keeps a picture's caption under 1000 characters)
         const tpl = require('./waTemplates').payload((await require('./settings').getSettings()).waTemplates, 'approval', { name: first || 'there', occasion: S.clip(r.itemTitle, 80) }); // eslint-disable-line global-require
         const w = await AS.waOne({ e164: nm.e164, file: f, text: caption, buttons: AS.buttonsFor('mkr', r.id), numberOpts: Sender.opts(pk), meta, templatePayload: tpl }); // eslint-disable-line no-await-in-loop
         f.cleanup();
@@ -318,6 +321,10 @@ async function publicView(token) {
   if (!item) return { ...out, item: null };
   if (r.kind === 'image') {
     out.item = { type: /^video\//.test(item.mime) ? 'video' : 'image', title: item.title, aspect: item.aspect || '1:1', headline: item.headline || '', version: (Number((parse(item.spec, {}) || {}).rev) || 0) + 1 };
+    // the post the team planned after the approval: the accounts and the EXACT words, with a key that proves the client read these words (the tick is sent with it)
+    const post = await Plan.forReview(r.itemId);
+    if (post && r.status === 'sent') out.item.post = { accounts: post.accounts, caption: post.caption, key: post.key, when: 'with' };
+    else if (post && r.status === 'approved' && post.state === 'consent') out.item.post = { accounts: post.accounts, caption: post.caption, key: post.key, when: 'later' }; // approved with a tap on WhatsApp (no tick there): the link still lets them allow the posting
   } else {
     const C = require('./content'); // eslint-disable-line global-require
     const keys = parse(item.channels, []);
@@ -344,6 +351,7 @@ async function publicDecide(token, b = {}, ip = '') {
   if (name.length < 2) return { error: 'Please write your name.', status: 400 };
   const comment = S.clip(b.comment, 600);
   if (!approve && comment.length < 5) return { error: 'Please say what should change (a few words).', status: 400 };
+  if (approve && r.kind === 'image') { const c = await Plan.consentCheck(r.itemId, b); if (c.error) return c; } // a tick must match the words and accounts the page showed
   const now = Date.now();
   await S.run(`UPDATE "${TABLE}" SET status = ?, comment = ?, decidedAt = ?, decidedByName = ?, decidedIp = ?, updatedAt = ? WHERE id = ? AND status = 'sent'`, approve ? 'approved' : 'changes', comment || null, now, name, S.clip(ip, 60) || null, now, r.id);
   // the client was the approver: their answer IS the approval (words reach the Content Library; a picture / video can be used) or sends it back to the writer
@@ -352,11 +360,32 @@ async function publicDecide(token, b = {}, ip = '') {
     try { const d = await moduleOf(r.kind).clientDecision(r.itemId, approve, name, r.clientName, comment); applied = !!(d && d.applied); } catch (e) { console.error('[omni-mk] client decision:', e.message); } // eslint-disable-line no-console
   }
   if (!approve && r.mode === 'decide') kick(r.id); // the banner is changed and sent again by itself (autoRevise below); a placeholder reason ("reason asked on WhatsApp") waits for the real words
+  // "post after the client approves" (itemPlan.js): the client's tick (named accounts, the exact words, this version) is saved; with it, and only then, the picture is posted in the background
+  let post = null;
+  if (approve && r.kind === 'image') {
+    try { post = await Plan.onClientDecision(r, item, { approve, name, comment, allowPosting: b.allowPosting === true, planKey: b.planKey }); if (post && post.state === 'consented') Plan.kick(r.itemId, r.site || ''); } catch (e) { console.error('[omni-mk] posting plan after the client answer:', e.message); } // eslint-disable-line no-console
+  }
   if (r.createdById) {
-    await notifyUsers([r.createdById], { title: `Client ${approve ? 'approved' : 'asked for changes on'} "${S.clip(r.itemTitle, 60)}"`, message: `${name} (${S.clip(r.clientName, 60)}) ${approve ? 'approved it' : 'asked for changes'}${comment ? `: ${S.clip(comment, 200)}` : ''}.${applied ? (approve ? (r.kind === 'content' ? ' It is now Approved and in the Content Library.' : ' It is now Approved and can be used in the Content Calendar.') : ' It is back with you to change.') : ''} Open Omni-Channel > AI Marketing > Approvals.` });
+    await notifyUsers([r.createdById], { title: `Client ${approve ? 'approved' : 'asked for changes on'} "${S.clip(r.itemTitle, 60)}"`, message: `${name} (${S.clip(r.clientName, 60)}) ${approve ? 'approved it' : 'asked for changes'}${comment ? `: ${S.clip(comment, 200)}` : ''}.${applied ? (approve ? (r.kind === 'content' ? ' It is now Approved and in the Content Library.' : ' It is now Approved and can be used in the Content Calendar.') : ' It is back with you to change.') : ''}${post && post.note ? post.note : ''} Open Omni-Channel > AI Marketing > Approvals.` });
   }
   await logAudit({ userId: r.createdById, actorName: `${name} (client: ${r.clientName})`, action: approve ? 'Omni-Channel AI Marketing: client approved' : 'Omni-Channel AI Marketing: client asked for changes', entity: TABLE, entityId: r.id, toValue: `${r.itemTitle}${comment ? `: ${S.clip(comment, 200)}` : ''}` });
-  return { ok: approve ? 'Thank you. Your approval has been recorded.' : 'Thank you. Your request for changes has been sent.' };
+  return { ok: approve ? `Thank you. Your approval has been recorded.${post && post.state === 'consented' ? ' As you allowed, it is being posted on the accounts shown.' : ''}` : 'Thank you. Your request for changes has been sent.' };
+}
+// the client approved first (a tap on WhatsApp has no tick) and now opens the link to allow the posting (itemPlan.js allowLater): the permission is saved with their name, the time, the accounts, the exact words and this version
+async function publicAllowPosting(token, b = {}) {
+  const g = await load(token);
+  if (!g) return GONE;
+  const { r, item } = g;
+  if (r.kind !== 'image' || !item) return GONE;
+  if (r.status !== 'approved') return { error: 'Please approve the picture first.', status: 409 };
+  if (r.snapshot !== snapshotOf(r.kind, item)) return { error: 'This picture was changed after the link was made. Please ask the sender for a new link.', status: 409 };
+  const name = S.clip(b.name, 80);
+  if (name.length < 2) return { error: 'Please write your name.', status: 400 };
+  const out = await Plan.allowLater(r, item, { name, allowPosting: b.allowPosting === true, planKey: b.planKey });
+  if (out.error) return out;
+  Plan.kick(r.itemId, r.site || '');
+  if (r.createdById) await notifyUsers([r.createdById], { title: `Client allowed posting "${S.clip(r.itemTitle, 60)}"`, message: `${name} (${S.clip(r.clientName, 60)}) allowed it to be posted on their accounts. It is being posted now. Open AI Images to see the result.` });
+  return { ok: 'Thank you. As you allowed, it is being posted on the accounts shown.' };
 }
 
 // ---- the client's answer from WhatsApp (marketing/approvalSend.js onInbound) ----------------------------------------------------------------------------------
@@ -368,7 +397,11 @@ async function answerByButton(reviewId, approve, from10, numberId) {
   const name = S.clip(r.contactName || r.clientName, 80) || 'Client';
   const out = await publicDecide(tokenOf(r.id), approve ? { decision: 'approve', name, comment: '' } : { decision: 'changes', name, comment: '(reason asked on WhatsApp)' }, 'WhatsApp button');
   if (out.error) return { error: out.error, reply: 'Thank you. ' + out.error };
-  if (approve) return { note: 'approved', reply: 'Thank you! We have recorded your approval.' };
+  if (approve) {
+    let more = ''; // a tap has no tick: if a post is planned, say so and where the client can allow it
+    try { const sh = r.kind === 'image' ? await Plan.forReview(r.itemId) : null; if (sh && sh.state === 'consent' && r.site) more = ` It will not be posted on your accounts until you allow it: open ${r.site}/client-review/${tokenOf(r.id)}, read the words and tick the box.`; } catch { /* the plain thank-you is enough */ }
+    return { note: 'approved', reply: `Thank you! We have recorded your approval.${more}` };
+  }
   await require('./approvalSend').ensure(); // eslint-disable-line global-require
   await S.run('INSERT INTO "OmniMkApprovalWait" (id, type, kind, refId, optionId, phone, numberId, createdAt) VALUES (?,?,?,?,?,?,?,?)', S.newId('aw'), 'reason', 'review', r.id, null, from10, numberId || null, Date.now());
   return { note: 'rejected, reason asked', reply: 'Thank you. Please reply here with a few words on what you would like changed.' };
@@ -408,9 +441,10 @@ async function reopen(reviewId, { message = '', user = null } = {}) {
   const item = await moduleOf(r.kind).rawRow(r.itemId); if (!item || item.deletedAt) return { error: 'The picture was not found.', status: 404 };
   const now = Date.now();
   await S.run(`UPDATE "${TABLE}" SET status = 'sent', comment = NULL, decidedAt = NULL, decidedByName = NULL, decidedIp = NULL, snapshot = ?, message = ?, expiresAt = ?, viewedAt = NULL, updatedAt = ? WHERE id = ?`, snapshotOf(r.kind, item), S.clip(message, 400) || null, now + 14 * DAY, now, r.id);
+  if (r.kind === 'image') { try { await Plan.onReopen(r.itemId, item); } catch (e) { console.error('[omni-mk] posting plan reopen:', e.message); } } // eslint-disable-line no-console -- the earlier permission is spent; words the team never edited follow the changed banner
   if (user) { const held = await moduleOf(r.kind).holdForClient(user, item); if (held && held.error) return held; }
   await logAudit({ userId: r.createdById, actorName: 'TeamLink', action: 'Omni-Channel AI Marketing: client link opened again with the changed version', entity: TABLE, entityId: r.id, toValue: `${r.itemTitle} for ${r.clientName}` });
   return { ok: true };
 }
 
-module.exports = { kick, reopen, rowOf: row, forItems, ensure, attach, create, contacts, sendToClient, list, revoke, extend, tell, publicView, publicFile, publicDecide, answerByButton, setReasonByReply, deliverHeld, tokenOf, idOfToken, snapshotOf, heldIds };
+module.exports = { kick, reopen, rowOf: row, forItems, ensure, attach, create, contacts, sendToClient, list, revoke, extend, tell, publicView, publicFile, publicDecide, publicAllowPosting, answerByButton, setReasonByReply, deliverHeld, tokenOf, idOfToken, snapshotOf, heldIds };

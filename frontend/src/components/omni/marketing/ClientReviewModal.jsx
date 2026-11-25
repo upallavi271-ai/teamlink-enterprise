@@ -3,6 +3,7 @@ import omni, { errOf } from '../omniApi.js';
 import { Btn, TinyBtn, GsModal, Field, Banner, fmtDateTime } from '../ui.jsx';
 import { ClientChip } from './mk.jsx';
 import SenderPick from './SenderPick.jsx';
+import { PostPlanBox } from './PostPlanBox.jsx';
 import useClientPeople from './clientPeople.js';
 
 // "SEND TO CLIENT" (AI Marketing > client approval): for an item the team has approved, makes a private link the client opens without a login to Approve or Request
@@ -28,6 +29,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   const [withFile, setWithFile] = useState(false); // also send the picture / video itself
   const [sendNote, setSendNote] = useState(null); // what the last "Send from TeamLink" did
   const [numberId, setNumberId] = useState(''); // the WhatsApp number to send from ('' = the default company number)
+  const [planDirty, setPlanDirty] = useState(false); // the "post after the client approves" plan has changes that are not saved yet: nothing is sent until they are saved (the client must see what is saved)
   const word = isVideo ? 'video' : (WORD[kind] || 'item');
 
   const load = () => omni.get('/gs/marketing/client-reviews', { kind, itemId: item.id }).then((d) => setReviews(d.reviews || [])).catch((e) => setErr(errOf(e, 'The client approvals could not be read.')));
@@ -104,8 +106,8 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
         </label>
       ) : null}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-        <Btn small primary disabled={!!busy || (ways && !ways.whatsapp.ready)} onClick={() => tellIt(r, 'whatsapp')} title={ways && !ways.whatsapp.ready ? `WhatsApp is not connected: ${ways.whatsapp.reason || 'ask an Admin'}` : 'TeamLink sends it from the company WhatsApp number'}>{busy === 'tellwhatsapp' ? 'Sending…' : 'Send on WhatsApp from TeamLink'}</Btn>
-        <Btn small disabled={!!busy || !(String(email != null ? email : (r.contactEmail || '')).trim()) || (ways && !ways.email.ready)} onClick={() => tellIt(r, 'email')} title={(email != null ? email : r.contactEmail) ? 'TeamLink sends it from the company mailbox, with the video attached and Approve / Reject links' : 'Type the client\'s email address first'}>{busy === 'tellemail' ? 'Sending…' : 'Send email from TeamLink'}</Btn>
+        <Btn small primary disabled={!!busy || planDirty || (ways && !ways.whatsapp.ready)} onClick={() => tellIt(r, 'whatsapp')} title={ways && !ways.whatsapp.ready ? `WhatsApp is not connected: ${ways.whatsapp.reason || 'ask an Admin'}` : 'TeamLink sends it from the company WhatsApp number'}>{busy === 'tellwhatsapp' ? 'Sending…' : 'Send on WhatsApp from TeamLink'}</Btn>
+        <Btn small disabled={!!busy || planDirty || !(String(email != null ? email : (r.contactEmail || '')).trim()) || (ways && !ways.email.ready)} onClick={() => tellIt(r, 'email')} title={(email != null ? email : r.contactEmail) ? 'TeamLink sends it from the company mailbox, with the video attached and Approve / Reject links' : 'Type the client\'s email address first'}>{busy === 'tellemail' ? 'Sending…' : 'Send email from TeamLink'}</Btn>
         <Btn small onClick={() => copy(r)}>⧉ Copy link</Btn>
       </div>
       {sendNote ? <div className="mk-note ok" style={{ marginTop: 8 }}>{sendNote}</div> : null}
@@ -140,8 +142,9 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
           </div>
         </div>
       ) : null}
+      {kind === 'image' && item.style !== 'clip' && reviews && !(item.plan && ['posted', 'posting'].includes(item.plan.state)) ? <PostPlanBox item={item} toast={toast} onChanged={onChanged} onDirty={setPlanDirty} /> : null}
       {showForm ? (
-        <div className="form-grid" style={{ marginTop: current && !again ? 14 : 0 }}>
+        <div className="form-grid" style={{ marginTop: current && !again ? 14 : 10 }}>
           {fromRequest ? <div className="mk-note ok" style={{ gridColumn: '1 / -1' }}>The client's details are taken from their request (name, WhatsApp number, email). Check the number, then press <b>Send</b>: the {word} itself goes to that number with Approve and Reject buttons.</div> : null}
           <Field label="CLIENT (COMPANY)" full>
             <input list="mk-clients" value={f.clientName} maxLength={120} onChange={(e) => pickClient(e.target.value)} placeholder="Pick or type the client's name" />
@@ -153,7 +156,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
           <Field label="MESSAGE TO THE CLIENT (OPTIONAL)" full><textarea style={{ minHeight: 60 }} value={f.message} maxLength={400} onChange={(e) => setF({ ...f, message: e.target.value })} placeholder={`Please check this ${word} and tell us if it is OK to use.`} /></Field>
           <Field label="THE LINK WORKS FOR"><select value={f.days} onChange={(e) => setF({ ...f, days: Number(e.target.value) })}>{[3, 7, 14, 30].map((n) => <option key={n} value={n}>{n} days</option>)}</select></Field>
           <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
-            <Btn primary disabled={!!busy || f.clientName.trim().length < 2 || !String(f.contactPhone).trim() || (ways && !ways.whatsapp.ready)} onClick={makeAndSend} title={!String(f.contactPhone).trim() ? 'Write the client\'s WhatsApp number first' : 'Makes the private link and sends it on WhatsApp from the company number'}>{busy === 'makesend' ? 'Sending…' : 'Send to the client on WhatsApp'}</Btn>
+            <Btn primary disabled={!!busy || planDirty || f.clientName.trim().length < 2 || !String(f.contactPhone).trim() || (ways && !ways.whatsapp.ready)} onClick={makeAndSend} title={!String(f.contactPhone).trim() ? 'Write the client\'s WhatsApp number first' : 'Makes the private link and sends it on WhatsApp from the company number'}>{busy === 'makesend' ? 'Sending…' : 'Send to the client on WhatsApp'}</Btn>
             <Btn disabled={!!busy || f.clientName.trim().length < 2} onClick={make}>{busy === 'make' ? 'Making…' : 'Make the private link only'}</Btn>
             {again ? <Btn onClick={() => setAgain(false)}>Back</Btn> : null}
           </div>
