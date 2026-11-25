@@ -220,7 +220,7 @@ async function armBridge(rowId, d, candidateNumber, lineName) {
 /** May this bridge go now: the phone is connected, set to bridge, and free. */
 async function bridgeReady(d) {
   const st = statusOf(d);
-  if (st.code !== 'connected') return { status: 409, error: `The phone ${d.number} is ${st.word.toLowerCase()}: ${st.why || ''}`.trim(), code: `PHONE_${st.code.toUpperCase()}` };
+  if (!['connected', 'reconnecting'].includes(st.code)) return { status: 409, error: `The phone ${d.number} is ${st.word.toLowerCase()}: ${st.why || ''}`.trim(), code: `PHONE_${st.code.toUpperCase()}` };
   if (!d.bridge) return { status: 409, error: 'This phone is not set to "Talk in TeamLink". An Admin switches it on in Android phones.', code: 'NOT_BRIDGE' };
   await expireBridges();
   const b = (await bridgeBusy(d.id)) || (await one(`SELECT "id","userName" FROM "BrowserCall" WHERE "lineId"=? AND "status" IN ('requested','initiated','calling')`, `${PREFIX}${d.id}`));
@@ -339,7 +339,7 @@ async function usableBy(user, isAdmin) {
 /** A call on the phone: the number comes from the candidate record (the route checks scope); one call at a time per phone and per person. */
 async function queueCall(user, d, { candidateId, applicationId, number, mode }) {
   const st = statusOf(d);
-  if (st.code !== 'connected') return { status: 409, error: `The phone ${d.number} is ${st.word.toLowerCase()}: ${st.why || ''}`.trim(), code: 'PHONE_' + st.code.toUpperCase() };
+  if (!['connected', 'reconnecting'].includes(st.code)) return { status: 409, error: `The phone ${d.number} is ${st.word.toLowerCase()}: ${st.why || ''}`.trim(), code: 'PHONE_' + st.code.toUpperCase() };
   const busyPhone = (await one(`SELECT "id","userName" FROM "BrowserCall" WHERE "lineId"=? AND "status" IN ('requested','initiated','calling')`, `${PREFIX}${d.id}`)) || (await bridgeBusy(d.id));
   if (busyPhone) return { status: 409, error: `The phone ${d.number} is on another call${busyPhone.userName ? ` (${busyPhone.userName})` : ''}. Try again when it ends.`, code: 'PHONE_BUSY' };
   const mine = await one(`SELECT "id" FROM "BrowserCall" WHERE "userId"=? AND "direction"='phone' AND "status" IN ('requested','initiated','calling')`, user.id);
