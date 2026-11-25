@@ -57,9 +57,9 @@ async function compute(user, { days = 30, now = Date.now() } = {}) {
   // ---- enquiries: customers who began a chat in the window, and what they wrote ----
   const inb = msgs.filter((m) => m.direction === 'IN');
   const writers = new Set(inb.map((m) => m.e164));
-  const convs = await S.q(`SELECT id, e164, numberId, createdAt, collected FROM "OmniWaConv" WHERE ${marketing.length ? `numberId IN (${ph})` : '1 = 0'}`, ...marketing);
-  const newChats = convs.filter((c) => n(c.createdAt) >= since && n(c.createdAt) <= now);
-  const enquiries = { newCustomers: newChats.length, customersWhoWrote: writers.size, messagesReceived: inb.length };
+  // a NEW customer = the first message they ever wrote on a marketing number came in this period (the chat row is not used: it moves to another number when the person writes to it)
+  const firsts = marketing.length ? await S.q(`SELECT e164 FROM "OmniWaMessage" WHERE direction = 'IN' AND numberId IN (${ph}) GROUP BY e164 HAVING MIN(at) >= ? AND MIN(at) <= ?`, ...marketing, since, now) : [];
+  const enquiries = { newCustomers: firsts.length, customersWhoWrote: writers.size, messagesReceived: inb.length };
 
   // ---- response time: the first answer to each message that started a wait ----
   const gaps = { assistant: [], team: [] };
@@ -84,7 +84,9 @@ async function compute(user, { days = 30, now = Date.now() } = {}) {
   leads.qualified = leads.Hot + leads.Warm;
 
   // ---- hand-over: what the assistant answered itself and what it passed on ----
-  const runs = marketing.length ? await S.q(`SELECT r.outcome FROM "OmniWaAiRun" r JOIN "OmniWaConv" c ON c.id = r.convId WHERE r.at >= ? AND r.at <= ? AND c.numberId IN (${ph})`, since, now, ...marketing) : [];
+  // a turn counts only when the customer's message that started it came in on a marketing number (the same scope as the messages above). The chat row's CURRENT number is not used: a person who wrote to
+  // another number first and to a marketing number later would bring all their old turns with them
+  const runs = marketing.length ? await S.q(`SELECT r.outcome FROM "OmniWaAiRun" r WHERE r.at >= ? AND r.at <= ? AND EXISTS (SELECT 1 FROM "OmniWaMessage" m WHERE m.e164 = r.e164 AND m.direction = 'IN' AND m.numberId IN (${ph}) AND m.at <= r.at + 60000 AND m.at >= r.at - 3600000)`, since, now, ...marketing) : [];
   const answered = runs.filter((r) => ANSWERED.includes(r.outcome)).length;
   const passed = runs.filter((r) => HANDOFF.includes(r.outcome)).length;
   const handover = { answeredByAssistant: answered, passedToAPerson: passed, passedPct: pct(passed, answered + passed) };
@@ -103,7 +105,7 @@ async function compute(user, { days = 30, now = Date.now() } = {}) {
   for (const r of rows) { const st = await Camp.stats(r.id); list.push({ id: r.id, name: r.name, status: r.status, createdAt: r.createdAt, sent: st.sent, delivered: st.delivered, read: st.read, replied: st.replied, optedOut: st.optedOut, failed: st.failed, deliveredPct: st.deliveredPct, readPct: st.readPct, repliedPct: st.repliedPct, optedOutPct: st.optedOutPct }); for (const k of Object.keys(tot)) tot[k] += st[k]; } // eslint-disable-line no-await-in-loop
   const campaigns = { count: rows.length, list: list.slice(0, 10), totals: { ...tot, deliveredPct: pct(tot.delivered, tot.sent), readPct: pct(tot.read, tot.sent), repliedPct: pct(tot.replied, tot.sent), optedOutPct: pct(tot.optedOut, tot.sent) } };
 
-  const empty = !msgs.length && !newChats.length && !rows.length;
+  const empty = !msgs.length && !firsts.length && !rows.length;
   return {
     days: d, since, now, empty, marketingNumbers: marketing.length, messages, enquiries, responseTime, leads, handover, optOuts, campaigns,
     notes: [
