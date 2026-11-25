@@ -146,6 +146,7 @@ async function onInbound(info, result) {
       ownerUserId = COALESCE(?, ownerUserId), ownerName = COALESCE(?, ownerName), promoAt = COALESCE(?, promoAt), lastInboundAt = ?, lastText = ?, unread = unread + 1, pendingAt = ?, updatedAt = ? WHERE id = ?`,
     conv.name, info.numberId || null, link.requirementId || null, link.campaignId || null, link.campaignName || null, link.ownerUserId || null, link.ownerName || null, link.promoAt || null, at, clip(info.text, 200), now, now, conv.id);
     if (result.stop || G.isStop(info.text)) await optOut({ ...conv, candidateId: candidateId || conv.candidateId }, info.text, now);
+    await require('./followup').onInbound(conv); // eslint-disable-line global-require -- the customer wrote: follow-ups waiting for them are dropped, the count starts again
     Live.changed();
     return { conv: conv.id };
   } catch (err) {

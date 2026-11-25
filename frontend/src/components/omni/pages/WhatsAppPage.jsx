@@ -281,6 +281,43 @@ function Chats({ openKey, onOpened }) {
   );
 }
 
+// the follow-ups waiting for a team member: read, change the words, send, skip, or stop them for this customer
+function FollowUps({ onOpen }) {
+  const [d, setD] = useState(null);
+  const [text, setText] = useState({});
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  const load = useCallback(() => api.get(`${BASE}/followups`).then((r) => { setD(r.data); setErr(''); }).catch((e) => setErr(errOf(e, 'The follow-ups could not be loaded.'))), []);
+  useEffect(() => { load(); }, [load]);
+  useLive(load);
+  const decide = async (r, body) => {
+    setBusy(r.id); setErr('');
+    try { await api.post(`${BASE}/followups/${r.id}/decide`, body); setText((t) => { const n = { ...t }; delete n[r.id]; return n; }); await load(); } catch (e) { setErr(errOf(e, 'That did not work. Try again.')); await load(); } finally { setBusy(''); }
+  };
+  if (!d || !d.rows.length) return err ? <Banner tone="warn">{err}</Banner> : null;
+  return (
+    <div style={{ border: '1px solid var(--line, #e5e7eb)', borderRadius: 8, padding: 10, margin: '8px 0', display: 'grid', gap: 10 }} aria-label="Follow-ups waiting">
+      <b>Follow-ups waiting ({d.rows.length})</b>
+      {err && <Banner tone="warn">{err}</Banner>}
+      {d.rows.map((r) => (
+        <div key={r.id} style={{ display: 'grid', gap: 6, borderTop: '1px solid var(--line, #e5e7eb)', paddingTop: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}><b>{r.name}</b><Pill tone="scheduled">Follow-up {r.step}</Pill><Btn small ghost onClick={() => onOpen(r.key)}>Open chat</Btn></div>
+          <textarea className="input" rows={4} aria-label={`Follow-up for ${r.name}`} value={text[r.id] === undefined ? r.body : text[r.id]} readOnly={!r.canDecide} onChange={(e) => setText((t) => ({ ...t, [r.id]: e.target.value }))} />
+          <div className="small-muted">{r.templateName ? `Inside 24 hours of their last message it goes as this text. Later it goes as the approved template ${r.templateName}.` : 'It goes as this text, only inside 24 hours of their last message.'}</div>
+          {r.reason && <Banner tone="warn">It cannot go yet: {r.reason}</Banner>}
+          {r.canDecide ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <Btn small primary disabled={busy === r.id} onClick={() => decide(r, { approve: true, ...(text[r.id] !== undefined && text[r.id] !== r.body ? { text: text[r.id] } : {}) })}>{busy === r.id ? 'Sending…' : 'Approve and send'}</Btn>
+              <Btn small disabled={busy === r.id} onClick={() => decide(r, { approve: false })}>Skip</Btn>
+              <Btn small danger disabled={busy === r.id} onClick={() => decide(r, { approve: false, stopAll: true })}>Stop follow-ups for this customer</Btn>
+            </div>
+          ) : <div className="small-muted">The owner of this lead or a team lead decides.</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // the marketing assistant's leads: Hot first, each with what it collected; the chat and the CRM lead are one click away
 function Leads({ onOpen }) {
   const [d, setD] = useState(null);
@@ -305,6 +342,7 @@ function Leads({ onOpen }) {
   return (
     <>
       <p className="small-muted">Customers the AI assistant talked to on a marketing number: what they told it, and how ready they are, with the reasons. Open a chat to read what was said. Turn the assistant on in Settings &gt; WhatsApp AI &gt; Marketing assistant.</p>
+      <FollowUps onOpen={onOpen} />
       <div className="msg-filter" role="group" aria-label="Show" style={{ margin: '6px 0' }}>
         {[['', 'All', 'all'], ['Hot', 'Hot', 'Hot'], ['Warm', 'Warm', 'Warm'], ['Cold', 'Cold', 'Cold']].map(([id, word, key]) => <button key={id || 'all'} type="button" className={`msg-chip${band === id ? ' on' : ''}`} onClick={() => setBand(id)}>{word}{d ? ` (${d.counts[key]})` : ''}</button>)}
       </div>

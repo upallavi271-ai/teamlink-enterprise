@@ -44,7 +44,7 @@ function AiForm() {
   const [err, setErr] = useState('');
   useEffect(() => { api.get(`${BASE}/settings`).then((r) => { setC({ ...r.data.config, testNumbers: r.data.config.testNumbers.join(', ') }); setModel(r.data.model); }).catch((e) => setErr(errOf(e, 'The settings could not be read.'))); }, []);
   if (err && !c) return <Banner tone="warn">{err}</Banner>;
-  if (!c) return <div className="small-muted">Loading…</div>;
+  if (!c || !fu) return <div className="small-muted">Loading…</div>;
   const set = (k) => (e) => setC((x) => ({ ...x, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
   const save = async () => {
     setBusy(true); setErr('');
@@ -285,13 +285,22 @@ function Assistant() {
   const [q, setQ] = useState('');
   const [tryNumber, setTryNumber] = useState('');
   const [ans, setAns] = useState(null);
-  const load = useCallback(() => Promise.all([api.get(`${BASE}/assistant`), api.get(`${BASE}/connection`)]).then(([a, cn]) => {
-    setD(a.data); setC(a.data.settings); setMarketing(a.data.marketingNumbers); setNumbers(cn.data.numbers);
+  const [fu, setFuState] = useState(null);
+  const [fuBusy, setFuBusy] = useState(false);
+  const [fuErr, setFuErr] = useState('');
+  const fromApi = (s) => ({ enabled: s.enabled, approval: s.approval, hours: s.intervalsHours.join(', '), tplName: s.template.name, tplLang: s.template.language, tplVars: s.template.vars.join(', ') });
+  const load = useCallback(() => Promise.all([api.get(`${BASE}/assistant`), api.get(`${BASE}/connection`), api.get(`${BASE}/followup-settings`)]).then(([a, cn, f]) => {
+    setD(a.data); setC(a.data.settings); setMarketing(a.data.marketingNumbers); setNumbers(cn.data.numbers); setFuState(fromApi(f.data.settings));
   }).catch((e) => setErr(errOf(e, 'The assistant could not be read.'))), []);
   useEffect(() => { load(); }, [load]);
   if (err && !c) return <Banner tone="warn">{err}</Banner>;
   if (!c) return <div className="small-muted">Loading…</div>;
   const set = (k) => (e) => setC((x) => ({ ...x, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
+  const setFu = (k) => (e) => setFuState((x) => ({ ...x, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
+  const saveFu = async () => {
+    setFuBusy(true); setFuErr('');
+    try { const r = await api.put(`${BASE}/followup-settings`, { enabled: fu.enabled, approval: fu.approval, intervalsHours: fu.hours, template: { name: fu.tplName, language: fu.tplLang, vars: fu.tplVars } }); setFuState(fromApi(r.data.settings)); toast('Saved.'); } catch (e) { setFuErr(errOf(e, 'The follow-ups could not be saved.')); } finally { setFuBusy(false); }
+  };
   const save = async () => {
     setBusy(true); setErr('');
     try { const r = await api.put(`${BASE}/assistant`, c); setC(r.data.settings); toast('Saved.'); } catch (e) { setErr(errOf(e, 'The assistant could not be saved.')); } finally { setBusy(false); }
@@ -324,6 +333,19 @@ function Assistant() {
             <input type="checkbox" aria-label={`${n.label} is a marketing number`} checked={marketing.includes(n.id)} onChange={(e) => flip(n, e.target.checked)} /><b>{n.label}</b><span className="small-muted">{n.display}</span>
           </label>
         ))}
+      </Panel>
+      <Panel title="Follow-ups" sub="A customer who showed interest and then went quiet gets a short, personal follow-up written from what they told the assistant. It stops by itself at STOP, at a no, when they write back, or when a person takes the chat.">
+        {fuErr && <Banner tone="warn">{fuErr}</Banner>}
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}><input type="checkbox" aria-label="Send follow-ups" checked={fu.enabled} onChange={setFu('enabled')} /><b>Follow up with customers who went quiet</b></label>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}><input type="checkbox" aria-label="A team member approves each follow-up" checked={fu.approval} onChange={setFu('approval')} /><span>A team member approves each follow-up before it is sent (recommended)</span></label>
+        <Field label="Hours of silence before each follow-up" hint="For example 4, 48, 120: the first follow-up after 4 hours of silence, the second 48 hours after that, and so on. At most five."><input className="input" aria-label="Follow-up hours" value={fu.hours} onChange={setFu('hours')} /></Field>
+        <Banner tone="info">WhatsApp lets us write free text only within 24 hours of the customer's last message. A follow-up later than that can only go as a template that Meta has approved, and only to a customer whose consent is recorded. Make the template in Omni-Channel &gt; Templates, wait for its approval, then type its exact name here. Without it, a late follow-up waits with the reason shown and is never sent.</Banner>
+        <Field label="Approved template for follow-ups after 24 hours" hint="Exactly as it is at Meta, for example tl_followup. Empty = none."><input className="input" aria-label="Follow-up template" value={fu.tplName} onChange={setFu('tplName')} /></Field>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <Field label="Template language"><input className="input" aria-label="Template language" style={{ width: 90 }} value={fu.tplLang} onChange={setFu('tplLang')} /></Field>
+          <Field label="What fills the template's blanks, in order" hint="From: name, service, requirement, business, callback. For example: name, service."><input className="input" aria-label="Template blanks" value={fu.tplVars} onChange={setFu('tplVars')} /></Field>
+        </div>
+        <Btn primary onClick={saveFu} disabled={fuBusy}>{fuBusy ? 'Saving…' : 'Save follow-ups'}</Btn>
       </Panel>
       <Panel title="Try a question" sub="See what a customer would get. Nothing is sent to anybody.">
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

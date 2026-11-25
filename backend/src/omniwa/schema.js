@@ -39,6 +39,11 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS "OmniWaOptOut" ("e164" TEXT NOT NULL PRIMARY KEY, "candidateId" TEXT, "source" TEXT, "text" TEXT, "at" BIGINT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS "OmniWaAiRun" ("id" TEXT NOT NULL PRIMARY KEY, "convId" TEXT, "e164" TEXT, "input" TEXT, "toolCalls" TEXT, "output" TEXT, "outcome" TEXT, "error" TEXT, "model" TEXT, "ms" INTEGER, "at" BIGINT NOT NULL)`,
   'CREATE INDEX IF NOT EXISTS "OmniWaAiRun_at" ON "OmniWaAiRun"("at")',
+  // the marketing assistant's follow-ups (omniwa/followup.js): one row per draft; status approval | ready | sent | skipped | stopped | failed
+  `CREATE TABLE IF NOT EXISTS "OmniWaFollowUp" ("id" TEXT NOT NULL PRIMARY KEY, "convId" TEXT NOT NULL, "e164" TEXT NOT NULL, "crmLeadId" TEXT, "step" INTEGER NOT NULL, "status" TEXT NOT NULL, "mode" TEXT, "body" TEXT,
+    "templateName" TEXT, "vars" TEXT, "dueAt" BIGINT NOT NULL, "reason" TEXT, "error" TEXT, "decidedByName" TEXT, "decidedAt" BIGINT, "sentAt" BIGINT, "providerMessageId" TEXT, "createdAt" BIGINT NOT NULL, "updatedAt" BIGINT NOT NULL)`,
+  'CREATE INDEX IF NOT EXISTS "OmniWaFollowUp_status" ON "OmniWaFollowUp"("status", "dueAt")',
+  'CREATE INDEX IF NOT EXISTS "OmniWaFollowUp_conv" ON "OmniWaFollowUp"("convId")',
 ];
 
 let ready = null;

@@ -5,6 +5,7 @@
 //   GET  /conversations/:key                     the strip above a chat: AI state, 24-hour window, already contacted, what the AI collected
 //   POST /conversations/:key/pause | /resume     a person takes over / gives the chat back to the AI
 //   GET  /conversations/:key/messages , POST .../send      a lead's chat (a candidate's chat uses /api/wa-chats as everywhere else)
+//   GET  /followups , POST /followups/:id/decide { approve, text?, stopAll? } ; Admin: GET|PUT /followup-settings
 //   GET  /leads                                  the marketing assistant's leads (band, details); GET /assignees , POST /conversations/:key/assign { userId }
 //   GET  /promotions                             the promotion log
 //   POST /already-contacted { ids }              who else reached these candidates in the last 7 days
@@ -87,6 +88,14 @@ router.post('/conversations/:key/assign', wrap(async (req, res) => {
   if (out.error) return send(res, out);
   await logAudit({ userId: req.user.id, action: 'WhatsApp lead chat handed to a team member', entity: 'OmniWaConv', entityId: d.conv.id, toValue: out.owner.name }).catch(() => {});
   return res.json((await Inbox.detail(req.user, req.params.key)).view);
+}));
+// the marketing assistant's follow-ups: the drafts waiting for a person, and the Admin's settings (intervals, approval, the approved template for after 24 hours)
+router.get('/followups', wrap(async (req, res) => res.json(await require('../omniwa/followup').list(req.user, req.query)))); // eslint-disable-line global-require
+router.post('/followups/:id/decide', wrap(async (req, res) => {
+  const out = await require('../omniwa/followup').decide(req.user, req.params.id, req.body || {}); // eslint-disable-line global-require
+  if (out.error) return send(res, out);
+  await logAudit({ userId: req.user.id, action: (req.body || {}).approve === false ? 'WhatsApp follow-up skipped' : 'WhatsApp follow-up approved', entity: 'OmniWaFollowUp', entityId: req.params.id, toValue: out.result }).catch(() => {});
+  return res.json(out);
 }));
 router.get('/promo-jobs', wrap(async (req, res) => {
   const prisma = require('../db'); // eslint-disable-line global-require
@@ -172,6 +181,13 @@ router.post('/assistant/ask', adminOnly, wrap(async (req, res) => {
   const q = String((req.body || {}).question || '').trim();
   if (!q) return res.status(400).json({ error: 'Type a question first.' });
   return res.json(await require('../omniwa/assist').testQuestion(q.slice(0, 500), (req.body || {}).numberId || null)); // eslint-disable-line global-require
+}));
+router.get('/followup-settings', adminOnly, wrap(async (req, res) => res.json({ settings: await require('../omniwa/followup').settings() }))); // eslint-disable-line global-require
+router.put('/followup-settings', adminOnly, wrap(async (req, res) => {
+  const out = await require('../omniwa/followup').saveSettings(req.user, req.body || {}); // eslint-disable-line global-require
+  if (out.error) return send(res, out);
+  await logAudit({ userId: req.user.id, action: 'WhatsApp follow-up settings changed', entity: 'AppSetting', entityId: 'omni.wa.followup', fromValue: out.was.enabled ? 'On' : 'Off', toValue: out.settings.enabled ? 'On' : 'Off' }).catch(() => {});
+  return res.json({ settings: out.settings });
 }));
 router.post('/knowledge/import', adminOnly, wrap(async (req, res) => {
   const b = req.body || {};
