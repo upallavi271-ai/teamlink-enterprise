@@ -30,6 +30,7 @@
 // nav is not a second permission system, and hiding an item is never the
 // control; the API still refuses the request.
 // ---------------------------------------------------------------------------
+import BRAND from './brand.js'; // NISH (IT staffing) only tabs
 import { can, canModule, productRole } from './permissions';
 
 export const SECTION_LABEL = {
@@ -200,8 +201,9 @@ export const CLIENTS_REQ_TABS = [
   leaf('💼', '/requirements', 'Requirements', [['requirements', 'Requirement List', 'view']]),
   // Agreements list: a tab here, not a second tab strip (ClientsTabs retired 2026-10-03).
   leaf('📝', '/agreements', 'Agreements', [['clients', 'Agreement Lifecycle', 'view']]),
-  // CONTRACT STAFF (ATS wave 2 X, 2026-11-25): placed contractors - timesheets, shifts, pay & bill, billing files, VMS (components/staffingX)
-  leaf('🧾', '/ats/contract-staff', 'Contract staff', [['requirements', 'Requirement List', 'view']]),
+  // CONTRACT STAFF (ATS wave 2 X, 2026-11-25): placed contractors - timesheets, shifts, pay & bill, billing files, VMS (components/staffingX).
+  // NISH only (founder 2026-11-25): an IT-staffing copy places contractors; TeamLink places permanent staff and has no such tab.
+  ...(BRAND.itStaffing ? [leaf('🧾', '/ats/contract-staff', 'Contract staff', [['requirements', 'Requirement List', 'view']])] : []),
 ];
 export const REPORTS_TEAM_TABS = [
   // ATS Reports; a login without it (a recruiter) gets "My Results" instead.

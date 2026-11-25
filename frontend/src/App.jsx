@@ -105,6 +105,7 @@ import AgreementStamp from './pages/AgreementStamp.jsx';
 import OfferSigning from './pages/OfferSigning.jsx'; // B3: the candidate's offer link (public)
 import TalkLink from './pages/TalkLink.jsx'; // 2026-10-28: the candidate's free AI link (public)
 import UpdateProfile from './pages/UpdateProfile.jsx'; // market wave B 03.17: the candidate's own profile-update link (public)
+import BRAND from './brand.js'; // NISH (IT staffing) only screens
 import ContractStaffX from './components/staffingX/ContractStaffX.jsx'; // ATS wave 2 X: Clients & Requirements > Contract staff
 import AiGovernance from './components/mktb/AiGovernance.jsx'; // market wave B: Administration > ATS settings > AI governance & automation
 import JoiningLink from './pages/JoiningLink.jsx'; // client hiring: the candidate's joining-letter link (public)
@@ -358,7 +359,8 @@ export default function App() {
         <Route path="tax-billing" element={<AgreementFlowList />} />
         <Route path="tax-billing/:id" element={<AgreementFlowPage />} />
         <Route path="agreements" element={<Agreements />} />
-        <Route path="ats/contract-staff" element={<ContractStaffX />} />
+        {/* NISH only (founder 2026-11-25): TeamLink has no contract staff, the old address opens Clients */}
+        <Route path="ats/contract-staff" element={BRAND.itStaffing ? <ContractStaffX /> : <Navigate to="/clients" replace />} />
         {/* One agreement: client login, its BDE, Accounts, Admin (routes/agreementSeal.js decides). */}
         <Route path="agreements/:clientId" element={<AgreementView />} />
         <Route path="candidates" element={<Candidates />} />
