@@ -102,7 +102,38 @@ async function connect() {
     ami.on('close', () => { status.connected = false; timer = setTimeout(connect, 10000); timer.unref(); });
     await ami.connect();
     status = { connected: true, lastEventAt: null, error: null };
+    setTimeout(() => reconcile().catch((e2) => console.error('[browser-call] reconcile:', e2.message)), 3000).unref();
   } catch (err) { status = { connected: false, lastEventAt: null, error: err.message }; timer = setTimeout(connect, 15000); timer.unref(); }
+}
+
+// RECONCILE (2026-11-25): a TeamLink restart while a call is on misses its Hangup event, and the row stays "connected" for hours, blocking the
+// person's next call ("You already have a call in progress"). When the events connection (re)opens, a row still live after 2 minutes whose call
+// Asterisk no longer has (asterisk -rx "core show channels concise", this server only) is closed: completed if it was answered, failed if not.
+function activeUniqueIds() {
+  if (!require('fs').existsSync('/etc/asterisk')) return Promise.resolve(null); // eslint-disable-line global-require -- not the phone system
+  return new Promise((resolve) => require('child_process').execFile('asterisk', ['-rx', 'core show channels concise'], { timeout: 8000 }, (e, out) => { // eslint-disable-line global-require
+    if (e) return resolve(null);
+    const ids = new Set();
+    String(out || '').split('\n').forEach((l) => { const p = l.split('!'); if (p.length >= 14) { ids.add(p[13]); if (p[14]) ids.add(p[14]); } });
+    return resolve(ids);
+  }));
+}
+async function reconcile() {
+  const live = await S.all('SELECT * FROM "BrowserCall" WHERE "status" IN (\'calling\',\'ringing\',\'connected\') AND "startAt"<?', new Date(Date.now() - 120000).toISOString());
+  if (!live.length) return 0;
+  const active = await activeUniqueIds();
+  if (!active) return 0;
+  let n = 0;
+  for (const r of live) {
+    if ((r.asteriskUniqueId && active.has(r.asteriskUniqueId)) || (r.asteriskLinkedId && active.has(r.asteriskLinkedId))) continue;
+    if (!r.asteriskUniqueId && active.size) continue; // not sure which channel is its own: leave it to the 6-hour sweep
+    const end = S.nowIso();
+    await S.run('UPDATE "BrowserCall" SET "status"=?, "endAt"=COALESCE("endAt",?), "talkSec"=COALESCE("talkSec",?), "hangupReason"=COALESCE("hangupReason",?), "bridgeStatus"=CASE WHEN "bridgeStatus" IN (\'arming\',\'armed\',\'answered\',\'dialing\',\'connected\',\'merged\') THEN \'ended\' ELSE "bridgeStatus" END, "updatedAt"=? WHERE "id"=? AND "status" IN (\'calling\',\'ringing\',\'connected\')', // eslint-disable-line no-await-in-loop
+      r.answerAt ? 'completed' : 'failed', end, r.answerAt ? secs(r.answerAt, end) : 0, 'Closed: the end of the call was missed while TeamLink restarted', end, r.id);
+    n += 1;
+  }
+  if (n) console.log(`[browser-call] reconcile: closed ${n} call(s) the phone system no longer has`);
+  return n;
 }
 
 // a call that never reached Asterisk (no TLCall within 90 s) is a real failure, said plainly
@@ -122,4 +153,4 @@ function start() {
   const rec = () => require('./recording').sweepOld().catch((e) => console.error('[browser-call] recordings sweep:', e.message)); // eslint-disable-line global-require
   setTimeout(rec, 60000).unref(); setInterval(rec, 3600000).unref();
 }
-module.exports = { start, getStatus: () => status, onEvent, sweepStale };
+module.exports = { start, getStatus: () => status, onEvent, sweepStale, reconcile };
