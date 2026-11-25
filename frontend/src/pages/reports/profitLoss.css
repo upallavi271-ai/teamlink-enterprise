@@ -1,0 +1,43 @@
+/* Accounts > Reports > Profit & Loss (ProfitLoss.jsx). The app's own tokens only. */
+.pl { display: grid; gap: 14px; }
+.pl-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.pl-kpi { display: grid; gap: 3px; padding: 14px 16px; }
+.pl-kpi > span { font-size: 13px; color: var(--ink-soft); }
+.pl-kpi b { font-size: 24px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.pl-sec { display: grid; gap: 10px; min-width: 0; }
+.pl-sec h3 { margin: 0; }
+.pl-sec-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.pl-neg { color: var(--red); font-weight: 600; }
+.pl-pos { color: var(--green); font-weight: 600; }
+.pl-legend { display: inline-flex; gap: 12px; align-items: center; font-size: 13px; color: var(--ink-soft); }
+.pl-legend i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 4px; }
+.pl-legend i.inc, .pl-bar.inc { background: var(--green); }
+.pl-legend i.cost, .pl-bar.cost { background: var(--ink-faint); }
+.pl-bars { display: flex; gap: 10px; align-items: flex-end; height: 190px; padding: 6px 0; overflow-x: auto; }
+.pl-bar-col { flex: 1 0 64px; display: grid; grid-template-rows: 1fr auto auto; justify-items: center; height: 100%; gap: 3px; font-size: 12px; }
+.pl-bar-pair { display: flex; gap: 4px; align-items: flex-end; height: 100%; }
+.pl-bar { display: block; width: 16px; border-radius: 3px 3px 0 0; min-height: 2px; }
+.pl-bar-col b { font-size: 12px; font-variant-numeric: tabular-nums; }
+.pl-scroll { overflow-x: auto; }
+.pl-table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 13.5px; }
+.pl-table th, .pl-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pl-table th:first-child, .pl-table td:first-child { text-align: left; }
+.pl-table th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); font-weight: 600; }
+.pl-table tr.pl-open td { color: var(--ink-soft); font-style: italic; }
+.pl-table tr.pl-total td { font-weight: 600; border-top: 2px solid var(--ink); }
+.pl-mini { min-width: 560px; }
+.pl-mini td.pl-note { text-align: left; white-space: normal; max-width: 360px; color: var(--ink-soft); }
+.pl-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.pl-what { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+@media (max-width: 760px) { .pl-what { grid-template-columns: minmax(0, 1fr); } }
+.pl-ctls { display: grid; gap: 12px; }
+.pl-ctl { display: grid; gap: 3px; }
+.pl-ctl label { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.pl-ctl output { font-variant-numeric: tabular-nums; font-weight: 600; }
+.pl-ctl input[type=range] { width: 100%; accent-color: var(--navy); }
+.pl-result { background: var(--paper); border-radius: 8px; padding: 12px 14px; display: grid; gap: 7px; align-content: start; }
+.pl-result > div { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; }
+.pl-result > div.pl-big { font-size: 17px; border-top: 1px solid var(--line); padding-top: 7px; }
+.pl-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.pl-check-head { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; text-decoration: underline dotted; }
+.pl-check-head:focus-visible { outline: 2px solid var(--navy); outline-offset: 2px; }

@@ -15,6 +15,8 @@ import AtsReports from './AtsReports.jsx';
 import TeamReports from './TeamReports.jsx';
 // B2 — Placement margin (fee − credit notes − incentive − partner payouts) per placement / client / recruiter / month.
 import PlacementMargin from './PlacementMargin.jsx';
+// Profit & Loss + forecast to March (founder 2026-11-25: "i need this in accounts").
+import ProfitLoss from './ProfitLoss.jsx';
 // Every number opens its list (reconciliation 2026-10-06): the same list component the Accounts Dashboard uses.
 import { DrillPanel } from '../accounts/dash/Drill.jsx';
 import '../accounts/dash/accDash.css';
@@ -96,7 +98,7 @@ export default function AccountsReports() {
 
   const viewSwitch = (
     <div className="report-groupby" style={{ margin: '0 0 12px' }} role="tablist" aria-label="Accounts reports">
-      {[['ledger', 'Receivables'], ['revenue', 'Client revenue'], ['teamcash', 'Team-wise cash'], ...(canMargin ? [['margin', 'Placement margin']] : [])].map(([id, label]) => (
+      {[['ledger', 'Receivables'], ['revenue', 'Client revenue'], ['teamcash', 'Team-wise cash'], ...(canMargin ? [['margin', 'Placement margin'], ['pnl', 'Profit & Loss']] : [])].map(([id, label]) => (
         <button key={id} type="button" role="tab" aria-selected={view === id} className={`report-tab${view === id ? ' is-on' : ''}`} onClick={() => setView(id)}>{label}</button>
       ))}
     </div>
@@ -105,6 +107,7 @@ export default function AccountsReports() {
   // Billed / collected / still to come for each team and person, with Excel + PDF (server-scoped; read-only).
   if (view === 'teamcash') return <div>{viewSwitch}<TeamReports fixedReport="cash" embedded /></div>;
   if (view === 'margin') return <div>{viewSwitch}<PlacementMargin canExport={canExport} /></div>;
+  if (view === 'pnl' && canMargin) return <div>{viewSwitch}<ProfitLoss /></div>;
 
   return (
     <div>
