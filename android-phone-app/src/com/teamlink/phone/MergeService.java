@@ -41,6 +41,8 @@ public class MergeService extends AccessibilityService {
 
     /** Look every second while waiting (the dialer does not always send an event when Merge becomes enabled). */
     static void scan() {
+        dumps = 0;
+        Bridge.trace("merge scan starts (accessibility service " + (instance != null ? "running" : "NOT running") + ")");
         main.postDelayed(new Runnable() {
             public void run() {
                 if (!LegacyBridge.waitingMerge) return;
@@ -50,6 +52,7 @@ public class MergeService extends AccessibilityService {
             }
         }, 1000);
     }
+    static int dumps;
 
     private long lastTry;
     private void tryMerge() {
@@ -57,11 +60,41 @@ public class MergeService extends AccessibilityService {
         if (now - lastTry < 400) return;
         lastTry = now;
         try {
+            StringBuilder seen = new StringBuilder();
             List<AccessibilityWindowInfo> ws = getWindows();
-            if (ws != null) for (AccessibilityWindowInfo w : ws) { AccessibilityNodeInfo r = w.getRoot(); if (r != null && pressIn(r)) return; }
+            if (ws != null) for (AccessibilityWindowInfo w : ws) { AccessibilityNodeInfo r = w.getRoot(); if (r != null && (pressIn(r) || walk(r, seen, 0))) return; }
             AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root != null) pressIn(root);
-        } catch (Exception ignored) { }
+            if (root != null && (pressIn(root) || walk(root, seen, 0))) return;
+            // what the screen shows (labels / ids of clickable things), a few times per call, to learn this dialler's Merge button
+            if (dumps < 4 && (System.currentTimeMillis() - lastDump) > 4000) {
+                dumps++; lastDump = System.currentTimeMillis();
+                Bridge.trace("screen: " + (seen.length() > 0 ? seen.substring(0, Math.min(280, seen.length())) : "(no readable window)"));
+            }
+        } catch (Exception e) { Bridge.trace("merge scan error: " + e); }
+    }
+    private long lastDump;
+
+    /** Walk the whole tree: a node whose text, description or view id says merge / conference, clickable itself or through a parent. */
+    private boolean walk(AccessibilityNodeInfo n, StringBuilder seen, int depth) {
+        if (n == null || depth > 25) return false;
+        CharSequence tx = n.getText(); CharSequence cd = n.getContentDescription(); String id = n.getViewIdResourceName();
+        String label = (tx != null ? tx.toString() : "") + (cd != null ? " " + cd : "");
+        String all = (label + " " + (id != null ? id : "")).toLowerCase();
+        if ((n.isClickable() || id != null) && (label.trim().length() > 0 || id != null) && seen.length() < 600) {
+            seen.append('[').append(label.trim()).append(id != null ? "#" + id.replaceAll("^.*:id/", "") : "").append(n.isEnabled() ? "" : " off").append("] ");
+        }
+        boolean isMerge = (all.contains("merge") || all.contains("విలీనం") || all.contains("मर्ज") || (all.contains("conference") && !all.contains("manage")));
+        if (isMerge && n.isEnabled()) {
+            AccessibilityNodeInfo t = n;
+            for (int i = 0; i < 6 && t != null && !t.isClickable(); i++) t = t.getParent();
+            if (t != null && t.isEnabled() && t.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Bridge.trace("pressed the dialler's merge control: " + label.trim() + (id != null ? " #" + id : ""));
+                LegacyBridge.merged();
+                return true;
+            }
+        }
+        for (int i = 0; i < n.getChildCount(); i++) if (walk(n.getChild(i), seen, depth + 1)) return true;
+        return false;
     }
 
     private boolean pressIn(AccessibilityNodeInfo root) {
