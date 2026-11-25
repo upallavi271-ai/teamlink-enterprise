@@ -477,7 +477,7 @@ router.delete('/agent/runs/:id', wrap(async (req, res) => send(res, await Agent.
 router.post('/agent/tasks/:id/retry', wrap(async (req, res) => send(res, await Agent.retryTask(req.user, req.params.id))));
 router.post('/agent/tasks/:id/cancel', wrap(async (req, res) => send(res, await Agent.cancelTask(req.user, req.params.id))));
 // an outward step (a post, a message to a client): the person sees what would go out (prepare), picks the accounts / confirms the recipient, and approves it. The site address comes from THIS request, never from the body.
-router.get('/agent/tasks/:id/prepare', wrap(async (req, res) => send(res, await Agent.prepareTask(req.user, req.params.id, { base: siteOf(req) }))));
+router.get('/agent/tasks/:id/prepare', wrap(async (req, res) => send(res, await Agent.prepareTask(req.user, req.params.id, { base: siteOf(req), query: req.query }))));
 router.post('/agent/tasks/:id/run-now', wrap(async (req, res) => send(res, await Agent.runNow(req.user, req.params.id)))); // a scheduled step that only reads (the call sheet) can be built now
 router.post('/agent/tasks/:id/approve', wrap(async (req, res) => send(res, await Agent.approveTask(req.user, req.params.id, req.body || {}, { base: siteOf(req) }))));
 router.post('/agent/runs/:id/approve-steps', wrap(async (req, res) => send(res, await Agent.approveSteps(req.user, req.params.id, String((req.body || {}).tool || ''), req.body || {}, { base: siteOf(req) }))));

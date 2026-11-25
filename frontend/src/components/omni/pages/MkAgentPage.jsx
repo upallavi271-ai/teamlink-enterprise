@@ -158,10 +158,10 @@ function Questions({ run, act, id }) {
 // ---------------------------------------------------------------------------------------------------------------- the plan and preview
 function Preview({ d, act, id, busy, meta, onBack }) {
   const { run, tasks, preflight } = d; const plan = run.plan; const p = plan.params;
-  const [form, setForm] = useState({ days: p.days, platforms: p.platforms, creative: p.creative, startDate: p.startDate, time: p.time, publish: p.publish || 'manual', approver: p.approver || 'team', clips: !!p.clips, callSheet: !!p.callSheet });
+  const [form, setForm] = useState({ days: p.days, platforms: p.platforms, creative: p.creative, startDate: p.startDate, time: p.time, publish: p.publish || 'manual', approver: p.approver || 'team', clips: !!p.clips, callSheet: !!p.callSheet, waCampaign: p.waCampaign !== false });
   const [confirm, setConfirm] = useState(false);
   const optional = (run.questions || []).filter((q) => !q.required);
-  const changed = form.clips !== !!p.clips || form.callSheet !== !!p.callSheet || form.publish !== (p.publish || 'manual') || form.approver !== (p.approver || 'team') || form.days !== p.days || form.creative !== p.creative || form.startDate !== p.startDate || form.time !== p.time || form.platforms.join() !== p.platforms.join();
+  const changed = form.waCampaign !== (p.waCampaign !== false) || form.clips !== !!p.clips || form.callSheet !== !!p.callSheet || form.publish !== (p.publish || 'manual') || form.approver !== (p.approver || 'team') || form.days !== p.days || form.creative !== p.creative || form.startDate !== p.startDate || form.time !== p.time || form.platforms.join() !== p.platforms.join();
   const toggle = (k) => setForm({ ...form, platforms: form.platforms.includes(k) ? form.platforms.filter((x) => x !== k) : [...form.platforms, k] });
   const counts = useMemo(() => { const c = {}; tasks.forEach((t) => { c[t.tool] = (c[t.tool] || 0) + 1; }); return c; }, [tasks]);
   const isSeo = plan.intent === 'seo';
@@ -174,6 +174,7 @@ function Preview({ d, act, id, busy, meta, onBack }) {
     counts['seo.keywords'] && 'keyword ideas kept in the SEO assistant (no search volumes: TeamLink has no source for them)',
     counts['seo.content'] && 'the home page title, description and FAQ written from the saved facts and kept in the SEO assistant (nothing is changed on the website)',
     counts['seo.blogplan'] && 'a blog plan saved (briefs only)',
+    counts['whatsapp.campaign'] && 'a WhatsApp campaign saved as READY after you pick the Meta-approved template and see every person and the exact words (nothing is sent: a person presses Send in WhatsApp > Campaigns)',
     counts['video.clips'] && `${plural(counts['video.clips'], 'search')} of the free stock footage source: the best two clips of each saved in AI Images as raw footage (approve before use)`,
     counts['calling.sheet'] && 'a call sheet built when the plan ends: the Hot and Warm leads from the CRM for your team to call (the agent calls nobody)',
     counts['social.post'] && `${plural(counts['social.post'], 'post')} prepared to go public: nothing is posted until you approve each one, pick its accounts and the picture is approved; it then goes out at its scheduled time`,
@@ -194,6 +195,7 @@ function Preview({ d, act, id, busy, meta, onBack }) {
             <Field label="POSTING"><select value={form.publish} onChange={(e) => setForm({ ...form, publish: e.target.value })}><option value="manual">I post by hand</option><option value="agent">The agent posts after I approve each post</option></select></Field>
             {run.businessKey !== 'own' ? <Field label="WHO APPROVES THE PICTURES"><select value={form.approver} onChange={(e) => setForm({ ...form, approver: e.target.value })}><option value="team">Our team</option><option value="client">The client (on WhatsApp, after I approve each send)</option></select></Field> : null}
             {plan.intent === 'videos' ? <Field label="STOCK CLIPS"><label style={{ fontSize: 13 }}><input type="checkbox" checked={form.clips} onChange={(e) => setForm({ ...form, clips: e.target.checked })} /> Add free stock clips (needs the stock-clip key)</label></Field> : null}
+            {form.platforms.includes('whatsapp') && run.businessKey === 'own' ? <Field label="WHATSAPP CAMPAIGN"><label style={{ fontSize: 13 }}><input type="checkbox" checked={form.waCampaign} onChange={(e) => setForm({ ...form, waCampaign: e.target.checked })} /> Also prepare a campaign for customers who agreed to promotions (saved as ready: I press Send)</label></Field> : null}
             <Field label="CALL SHEET"><label style={{ fontSize: 13 }}><input type="checkbox" checked={form.callSheet} onChange={(e) => setForm({ ...form, callSheet: e.target.checked })} /> A call sheet for my team when the plan ends</label></Field>
             <Field label="STARTS"><input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></Field>
             <Field label="POST TIME (IST)"><input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} /></Field>
@@ -332,31 +334,68 @@ function Execution({ d, act, id, go, busy }) {
 // an outward step: what would go out, exactly, and the person's own choices. Nothing leaves TeamLink before "Approve" here (and a post waits for its scheduled time).
 function OutwardModal({ task, tasks, runId, onClose, reload }) {
   const { toast } = useOmni();
+  const isCamp = task.tool === 'whatsapp.campaign';
   const [prep, setPrep] = useState(null); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState({ accountIds: [] });
   useEffect(() => {
-    omni.get(`${API}/tasks/${task.id}/prepare`).then((r) => { setPrep(r); setForm(task.tool === 'social.post' ? { accountIds: [] } : { clientName: r.defaults.clientName, contactName: r.defaults.contactName, contactPhone: r.defaults.contactPhone, contactEmail: r.defaults.contactEmail, email: false, message: r.message }); }).catch((e) => setErr(errOf(e, 'This step could not be opened.')));
+    omni.get(`${API}/tasks/${task.id}/prepare`).then((r) => { setPrep(r); setForm(isCamp ? { campaignName: r.name || '', templateId: r.choice ? r.choice.templateId : '', varMap: r.choice ? r.choice.varMap : [], bands: r.choice ? r.choice.bands : [], gapDays: r.choice ? r.choice.gapDays : 7 } : task.tool === 'social.post' ? { accountIds: [] } : { clientName: r.defaults.clientName, contactName: r.defaults.contactName, contactPhone: r.defaults.contactPhone, contactEmail: r.defaults.contactEmail, email: false, message: r.message }); }).catch((e) => setErr(errOf(e, 'This step could not be opened.')));
   }, [task.id, task.tool]);
   const isPost = task.tool === 'social.post';
+  // the campaign: what the person picks decides who it reaches and what each reads, so the preview is asked again for every change
+  const choose = (patch) => {
+    const next = { ...form, ...patch }; setForm(next);
+    omni.get(`${API}/tasks/${task.id}/prepare`, { templateId: next.templateId, varMap: (next.varMap || []).join(','), bands: (next.bands || []).join(','), gapDays: next.gapDays }).then((r) => { setPrep(r); if (r.choice && patch.templateId) setForm({ ...next, varMap: r.choice.varMap }); }).catch((e) => setErr(errOf(e, 'The preview could not be made.')));
+  };
   const waiting = tasks.filter((x) => x.tool === task.tool && x.status === 'awaiting_approval').length;
   const go = async (all) => {
     setBusy(true); setErr('');
     try {
-      const body = isPost ? { accountIds: form.accountIds } : { ...form };
+      const body = isCamp ? { campaignName: form.campaignName, templateId: form.templateId, varMap: (form.varMap || []).join(','), bands: (form.bands || []).join(','), gapDays: form.gapDays } : isPost ? { accountIds: form.accountIds } : { ...form };
       if (all && !isPost) delete body.message; // each day keeps its own caption in its message
       await (all ? omni.post(`${API}/runs/${runId}/approve-steps`, { tool: task.tool, ...body }) : omni.post(`${API}/tasks/${task.id}/approve`, body));
-      toast(isPost ? 'Approved. It goes out at its scheduled time.' : 'Approved. It is being sent.'); onClose(); await reload();
+      toast(isCamp ? 'Approved. The campaign is being saved as ready: nothing is sent.' : isPost ? 'Approved. It goes out at its scheduled time.' : 'Approved. It is being sent.'); onClose(); await reload();
     } catch (e) { setErr(errOf(e, 'It could not be approved.')); } finally { setBusy(false); }
   };
-  const ok = prep && prep.ready && (isPost ? form.accountIds.length > 0 : String(form.contactPhone || '').trim() && String(form.clientName || '').trim().length > 1);
+  const ok = prep && prep.ready && (isCamp ? String(form.campaignName || '').trim().length >= 3 : isPost ? form.accountIds.length > 0 : String(form.contactPhone || '').trim() && String(form.clientName || '').trim().length > 1);
   const tick = (id) => setForm({ ...form, accountIds: form.accountIds.includes(id) ? form.accountIds.filter((x) => x !== id) : [...form.accountIds, id] });
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   return (
-    <GsModal title={isPost ? 'Approve this post' : 'Send this picture to the client'} sub={task.title} width={620} onClose={onClose}
-      foot={<><Btn onClick={onClose}>Cancel</Btn>{waiting > 1 ? <Btn disabled={busy || !ok} onClick={() => go(true)}>{isPost ? `Approve all ${waiting} posts with these accounts` : `Send all ${waiting} to this client (each with its own caption)`}</Btn> : null}<Btn primary disabled={busy || !ok} onClick={() => go(false)}>{isPost ? 'Approve this post' : 'Send to the client'}</Btn></>}>
+    <GsModal title={isCamp ? 'Prepare the WhatsApp campaign' : isPost ? 'Approve this post' : 'Send this picture to the client'} sub={task.title} width={620} onClose={onClose}
+      foot={<><Btn onClick={onClose}>Cancel</Btn>{waiting > 1 && !isCamp ? <Btn disabled={busy || !ok} onClick={() => go(true)}>{isPost ? `Approve all ${waiting} posts with these accounts` : `Send all ${waiting} to this client (each with its own caption)`}</Btn> : null}<Btn primary disabled={busy || !ok} onClick={() => go(false)}>{isCamp ? 'Save the campaign as ready' : isPost ? 'Approve this post' : 'Send to the client'}</Btn></>}>
       {err ? <Banner tone="error">{err}</Banner> : null}
       {!prep && !err ? <div>Loading…</div> : null}
       {prep && !prep.ready && prep.reason ? <Banner tone="warn">{prep.reason}</Banner> : null}
       {prep && prep.media ? <p style={{ fontSize: 13, margin: '4px 0' }}><b>Picture:</b> {prep.media.title} ({prep.media.status})</p> : null}
+      {prep && isCamp && prep.templates.length ? (
+        <div>
+          <Field label="CAMPAIGN NAME"><input value={form.campaignName || ''} maxLength={120} onChange={(e) => setForm({ ...form, campaignName: e.target.value })} /></Field>
+          <Field label="WHATSAPP TEMPLATE (APPROVED BY META: ITS WORDS ARE FIXED)"><select value={form.templateId || ''} onChange={(e) => choose({ templateId: e.target.value, varMap: [] })}>{prep.templates.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+          {(() => { const tpl = prep.templates.find((x) => x.id === form.templateId) || prep.templates[0]; return (
+            <div>
+              <div style={{ whiteSpace: 'pre-wrap', background: '#f6f8fb', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, margin: '4px 0 8px' }}>{tpl.body}</div>
+              {Array.from({ length: tpl.blanks }, (_, k) => (
+                <Field key={k} label={`{{${k + 1}}} IS FILLED WITH`}>
+                  <select value={(form.varMap || [])[k] || ''} onChange={(e) => { const m = [...(form.varMap || [])]; m[k] = e.target.value; choose({ varMap: m }); }}>{prep.fields.map((f) => <option key={f} value={f}>{({ name: "the customer's first name", service: 'the service they asked about', business: 'our business name', callback: 'the time they asked for a call' })[f]}</option>)}</select>
+                </Field>
+              ))}
+            </div>
+          ); })()}
+          <div style={{ fontWeight: 800, fontSize: 12, margin: '8px 0 4px' }}>WHO (NONE TICKED = EVERYONE WHO AGREED TO PROMOTIONS)</div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            {prep.bandsAll.map((b) => <label key={b} style={{ fontSize: 13 }}><input type="checkbox" checked={(form.bands || []).includes(b)} onChange={() => choose({ bands: (form.bands || []).includes(b) ? form.bands.filter((x) => x !== b) : [...(form.bands || []), b] })} /> {b}</label>)}
+            <label style={{ fontSize: 13 }}>not messaged in the last <input type="number" min={1} max={90} style={{ width: 60 }} value={form.gapDays || 7} onChange={(e) => setForm({ ...form, gapDays: Number(e.target.value) })} onBlur={() => choose({})} /> days</label>
+          </div>
+          {prep.preview ? (
+            <div style={{ marginTop: 10 }}>
+              <p style={{ fontSize: 13, margin: '0 0 6px' }}><b>{prep.preview.total} customer{prep.preview.total === 1 ? '' : 's'}</b> would receive it, and nobody else. {Object.entries(prep.preview.skipped || {}).map(([why, n]) => `${n} left out (${why}).`).join(' ')}</p>
+              <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #e5eaf1', borderRadius: 8 }}>
+                {prep.preview.people.map((x, i) => <div key={i} style={{ padding: '6px 10px', borderTop: i ? '1px solid #eef1f5' : 'none', fontSize: 12.5 }}><b>{x.name || 'Customer'}</b> <span style={{ color: 'var(--muted)' }}>{x.phoneHint} · {x.band}</span><div style={{ whiteSpace: 'pre-wrap' }}>{x.text}</div></div>)}
+                {prep.preview.total > prep.preview.people.length ? <div style={{ padding: '6px 10px', fontSize: 12, color: 'var(--muted)' }}>…and {prep.preview.total - prep.preview.people.length} more with their own words.</div> : null}
+              </div>
+            </div>
+          ) : null}
+          <p style={{ fontSize: 12.5, margin: '10px 0 0' }}><b>Nothing is sent.</b> This saves the campaign as ready, with these people and these words frozen. A person presses Send (or schedules it) in WhatsApp &gt; Campaigns, which checks every person again at the moment of sending.</p>
+        </div>
+      ) : null}
       {prep && isPost ? (
         <div>
           <p style={{ fontSize: 13, margin: '4px 0' }}><b>Goes out:</b> {prep.scheduledLabel}. TeamLink posts it at that time (it checks every few minutes); if the time has passed it posts within a few minutes of your approval.</p>
@@ -366,7 +405,7 @@ function OutwardModal({ task, tasks, runId, onClose, reload }) {
           <p style={{ fontSize: 12.5, margin: '10px 0 0' }}><b>It goes public.</b> You are approving this exact picture and these words on the accounts you ticked. Only an approved picture is posted.</p>
         </div>
       ) : null}
-      {prep && !isPost ? (
+      {prep && !isPost && !isCamp ? (
         <div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <Field label="CLIENT (COMPANY)"><input value={form.clientName || ''} maxLength={120} onChange={set('clientName')} /></Field>

@@ -37,6 +37,13 @@ async function seoSiteOf(ctx, input) {
   return made.site;
 }
 const SOCIAL = ['instagram', 'facebook', 'x'];
+const WA_FIELDS = ['name', 'service', 'business', 'callback']; const WA_BANDS = ['Hot', 'Warm', 'Cold'];
+// what the person chose for the WhatsApp campaign (a query string or the approval body): the template, what fills each blank, which bands, how many days between campaign messages
+function waChoice(q, tpls) {
+  const list = (v) => (Array.isArray(v) ? v : String(v == null ? '' : v).split(',')).map((x) => String(x).trim()).filter(Boolean);
+  const tpl = tpls.find((t) => t.id === String(q.templateId || '')) || tpls[0] || null; const given = list(q.varMap);
+  return { templateId: tpl ? tpl.id : '', varMap: given.length ? given : WA_FIELDS.slice(0, tpl ? tpl.blanks : 0), bands: list(q.bands).filter((b) => WA_BANDS.includes(b)), gapDays: Math.max(1, Math.min(90, Math.round(Number(q.gapDays)) || 7)) };
+}
 const WORD = { instagram: 'Instagram', facebook: 'Facebook', x: 'X' };
 const STATUS_WORDS = { draft: 'still a draft', waiting: 'still waiting for approval', changes: 'sent back with changes', approved: 'approved' };
 const listWords = (a) => (a.length <= 1 ? (a[0] || '') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
@@ -246,6 +253,42 @@ const TOOLS = {
       return { summary: rows.length ? `Call sheet ready: ${rows.length} lead${rows.length === 1 ? '' : 's'} to call (${sheet.hot} hot, ${sheet.warm} warm of ${live.length} new since the plan started). Nobody is called by the agent.` : `Call sheet: none of the ${live.length} new lead${live.length === 1 ? '' : 's'} since the plan started is Hot or Warm yet. Nobody is called by the agent.`, refs: [{ kind: 'callsheet', id: ctx.task.id, label: 'Call sheet', page: 'crm' }], data: { sheet, rows: rows.length } };
     },
   },
+  // ---- the WhatsApp assistant's campaign service: the agent PREPARES the campaign, a person still presses Send --------------------------------------------------------------------------
+  // `confirm`: it reaches nobody, but it freezes WHO a message will go to and the exact words, so it waits for its own approval like an outward step (the person sees the people and the words first).
+  'whatsapp.campaign': {
+    label: 'Prepare the WhatsApp campaign', module: 'WhatsApp campaigns', page: 'whatsapp', risk: 'internal', confirm: true, auto: true, cost: { kind: 'free', unit: 'campaign', rupees: 0, note: 'saved as ready: sending is done by a person in WhatsApp > Campaigns, which has its own credits and rules' },
+    does: () => 'Saves a WhatsApp campaign as READY through the WhatsApp assistant: only customers whose consent for promotions is recorded, only through a template Meta approved (its own wording, not this plan\'s draft), with the blanks filled from their own facts. You see every person and the exact words first. NOTHING IS SENT: a person presses Send in WhatsApp > Campaigns. It needs "WhatsApp promotions" switched on by an Admin; if not, a person sends the approved message by hand.',
+    build: () => ({}),
+    async prepare(ctx) {
+      const { WA } = svcOf(ctx);
+      const out = { ready: false, reason: '', switchOn: null, templates: [], choice: null, preview: null, name: clip((ctx.plan && ctx.plan.title) || 'AI Agent campaign', 120), fields: WA_FIELDS, bandsAll: WA_BANDS };
+      try { const st = ctx.svc && ctx.svc.waSettings ? await ctx.svc.waSettings() : await require('../omniwa/assist').settings(); out.switchOn = !!(st && st.campaignsOn); } catch { out.switchOn = null; } // eslint-disable-line global-require
+      const t = await WA.call(ctx.u, 'campaign.templates', {});
+      if (!t || t.error) { out.reason = clip((t && t.error) || 'The WhatsApp templates could not be read.', 200); return out; }
+      out.templates = (t.templates || []).map((x) => ({ id: x.id, name: x.name, metaName: x.metaName, language: x.language, body: x.body, blanks: x.blanks }));
+      if (out.switchOn === false) { out.reason = 'WhatsApp promotions are switched off. An Admin switches them on in Settings > WhatsApp AI > Marketing assistant. Until then a person sends the approved message by hand.'; return out; }
+      if (!out.templates.length) { out.reason = 'There is no WhatsApp template approved by Meta. Create one in Omni-Channel > Templates and wait for Meta\'s approval: a campaign can only use an approved template. Until then a person sends the approved message by hand.'; return out; }
+      const ch = waChoice(ctx.query || {}, out.templates); out.choice = { templateId: ch.templateId, varMap: ch.varMap, bands: ch.bands, gapDays: ch.gapDays };
+      const pv = await WA.call(ctx.u, 'campaign.preview', { templateId: ch.templateId, varMap: ch.varMap, audience: { bands: ch.bands, gapDays: ch.gapDays } });
+      if (!pv || pv.error) { out.reason = clip((pv && pv.error) || 'The campaign could not be previewed.', 240); return out; }
+      out.preview = { template: pv.template, total: (pv.people || []).length, people: (pv.people || []).slice(0, 20).map((p) => ({ name: p.name, phoneHint: p.phoneHint, band: p.band, text: p.text })), skipped: pv.skipped || {}, considered: pv.considered || 0 };
+      if (!out.preview.total) out.reason = 'Nobody would receive this campaign: nobody in the audience has agreed to promotions on WhatsApp yet. Until then a person sends the approved message by hand.';
+      out.ready = !out.reason;
+      return out;
+    },
+    approval(body, prep) {
+      const name = clip(body.campaignName || prep.name, 120); if (name.length < 3) return { error: 'Give the campaign a name.' };
+      const ch = prep.choice; const tpl = ch && prep.templates.find((x) => x.id === ch.templateId);
+      if (!tpl) return { error: 'Choose an approved template.' };
+      return { input: { campaignName: name, templateId: ch.templateId, varMap: ch.varMap, bands: ch.bands, gapDays: ch.gapDays }, summary: `save the WhatsApp campaign "${name}" as ready with the template "${tpl.name}" for ${prep.preview.total} customer${prep.preview.total === 1 ? '' : 's'} who agreed to promotions (a person still presses Send in WhatsApp > Campaigns)` };
+    },
+    async run(ctx, input) {
+      const { WA } = svcOf(ctx);
+      const r = await WA.call(ctx.u, 'campaign.create', { name: input.campaignName, templateId: input.templateId, varMap: input.varMap, audience: { bands: input.bands, gapDays: input.gapDays } });
+      if (!r || r.error) throw fail(r, 'The campaign could not be saved.');
+      return { summary: `WhatsApp campaign "${input.campaignName}" saved as READY for ${r.people} customer${r.people === 1 ? '' : 's'}. Nothing was sent: open WhatsApp > Campaigns, check who it reaches and the words, and press Send.`, refs: [{ kind: 'campaign', id: r.id, label: 'WhatsApp campaign', page: 'whatsapp' }], data: { itemId: r.id, campaignId: r.id, people: r.people, skipped: r.skipped || {} } };
+    },
+  },
   // ---- OUTWARD steps (Phase 2): each one waits for its own approval; the engine never runs them on the plan's approval alone ----------------------------------------------------
   'social.post': {
     label: 'Post it on the social accounts', module: 'Social media', page: 'mkimages', risk: 'outward', auto: true, scheduled: true, cost: { kind: 'free', unit: 'post', rupees: 0, note: 'posting through the Facebook / Instagram / X accounts an Admin connected is free' },
@@ -343,7 +386,9 @@ const TOOLS = {
 };
 
 const COST_WORDS = { free: 'Free', 'free-tier': 'Free tier', paid: 'Paid' };
-const catalog = () => Object.entries(TOOLS).map(([id, t]) => ({ id, label: t.label, module: t.module, page: t.page, risk: t.risk, manual: !!t.manual, cost: { ...t.cost, word: COST_WORDS[t.cost.kind] || t.cost.kind } }));
+const catalog = () => Object.entries(TOOLS).map(([id, t]) => ({ id, label: t.label, module: t.module, page: t.page, risk: t.risk, needsApproval: t.risk === 'outward' || t.confirm === true, manual: !!t.manual, cost: { ...t.cost, word: COST_WORDS[t.cost.kind] || t.cost.kind } }));
 const isOutward = (tool) => !!TOOLS[tool] && TOOLS[tool].risk === 'outward';
+// a step that waits for its OWN approval: every outward step, and a step that freezes who a message will go to (confirm)
+const gated = (tool) => !!TOOLS[tool] && (TOOLS[tool].risk === 'outward' || TOOLS[tool].confirm === true);
 
-module.exports = { TOOLS, ToolError, catalog, isOutward, dayOf, svcOf };
+module.exports = { TOOLS, ToolError, catalog, isOutward, gated, dayOf, svcOf };

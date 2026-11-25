@@ -86,7 +86,7 @@ function taskView(t, plan) {
   const tool = Tools.TOOLS[t.tool] || {}; const out = par(t.output, null);
   const day = plan && t.day ? Tools.dayOf(plan, t.day) : null;
   return {
-    id: t.id, n: S.num(t.n), day: t.day == null ? null : S.num(t.day), tool: t.tool, toolLabel: tool.label || t.tool, module: tool.module || '', page: tool.page || '', manual: !!tool.manual, outward: Tools.isOutward(t.tool), title: t.title,
+    id: t.id, n: S.num(t.n), day: t.day == null ? null : S.num(t.day), tool: t.tool, toolLabel: tool.label || t.tool, module: tool.module || '', page: tool.page || '', manual: !!tool.manual, outward: Tools.isOutward(t.tool), gated: Tools.gated(t.tool), title: t.title,
     does: tool.does ? tool.does(t, day, plan) : '', cost: tool.cost ? { ...tool.cost } : null,
     status: t.status, statusWords: TASK_WORDS[t.status] || t.status, deps: par(t.deps, []), input: maskInput(par(t.input, null)), needsDetails: !!tool.prepare, scheduled: !!tool.scheduled, approvedAt: S.iso(t.approvedAt), summary: out ? out.summary || '' : '', refs: out ? out.refs || [] : [], data: out ? out.data || null : null,
     error: t.error || '', errorCode: t.errorCode || '', attempts: S.num(t.attempts), scheduledAt: S.iso(t.scheduledAt), startedAt: S.iso(t.startedAt), finishedAt: S.iso(t.finishedAt), note: t.note || '', cancelRequested: S.num(t.cancelRequested) === 1,
@@ -152,6 +152,7 @@ async function preflight(u, plan, ctx = {}) {
   const specs = P.taskSpecs(plan);
   if (specs.some((x) => x.tool === 'social.post') && !set.autoPostAllowed) warnings.push('Posting from TeamLink is switched off (an Admin turns it on in AI usage > Posting to client accounts). The posting steps cannot be approved until then.');
   if (specs.some((x) => x.tool === 'social.post')) warnings.push('Posting steps: nothing goes public until you approve each post, pick its accounts, and the picture is approved. A post goes out at its scheduled time.');
+  if (specs.some((x) => x.tool === 'whatsapp.campaign')) { let on = null; try { const st = ctx.svc && ctx.svc.waSettings ? await ctx.svc.waSettings() : await require('../omniwa/assist').settings(); on = !!(st && st.campaignsOn); } catch { on = null; } warnings.push(on === false ? 'WhatsApp campaign: WhatsApp promotions are switched off (an Admin turns them on in Settings > WhatsApp AI > Marketing assistant), so the campaign step cannot be approved yet; a person sends the approved message by hand.' : 'WhatsApp campaign: the agent only saves it as ready after you pick the template and see every person and the exact words; a person presses Send in WhatsApp > Campaigns.'); } // eslint-disable-line global-require
   if (specs.some((x) => x.tool === 'calling.sheet')) warnings.push('Call sheet: built when the plan ends (or when you press "Build it now"). It lists leads for your team to call from the CRM: the agent calls nobody.');
   if (specs.some((x) => x.tool === 'client.review')) warnings.push('Client approval: each picture is sent to the client on WhatsApp only after you approve that step and confirm who it goes to.');
   plan.days.forEach((d) => { const stops = (d.flags || []).filter((f) => f.level === 'stop'); if (stops.length) warnings.push(`${d.title.split(':')[0]}: the wording check says "${stops[0].match}" must change before it is posted.`); });
@@ -333,7 +334,7 @@ const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => { 
 async function processRun(runId) {
   const opts = runOpts;
   for (let guard = 0; guard < 500; guard += 1) {
-    const run = await runRow(runId); if (!run || run.status !== 'running') break;
+    const run = await runRow(runId); if (!run || !['running', 'attention'].includes(run.status)) break; // 'attention' is looked at too: a step approved just as the run was being closed up must not be lost
     const tasks = await tasksOf(runId);
     const byN = new Map(tasks.map((t) => [S.num(t.n), t]));
     let next = null; let changed = false;
@@ -342,28 +343,29 @@ async function processRun(runId) {
       const deps = par(t.deps, []).map((n) => byN.get(n)).filter(Boolean);
       if (deps.some((x) => ['failed', 'cancelled', 'skipped'].includes(x.status))) { await S.run(`UPDATE "${TK}" SET status = 'skipped', error = ?, updatedAt = ? WHERE id = ? AND status = 'queued'`, 'A step it needs did not finish.', Date.now(), t.id); await event(runId, t.id, 'task_skipped', null, `${t.title}: skipped, a step it needs did not finish.`); changed = true; break; } // eslint-disable-line no-await-in-loop
       if (deps.some((x) => x.status !== 'done')) continue;
-      if (Tools.isOutward(t.tool) && !t.approvedAt) { await S.run(`UPDATE "${TK}" SET status = 'awaiting_approval', updatedAt = ? WHERE id = ? AND status = 'queued'`, Date.now(), t.id); await event(runId, t.id, 'needs_approval', null, `${t.title}: reaches outside TeamLink, so it waits for its own approval.`); changed = true; break; } // eslint-disable-line no-await-in-loop
+      if (Tools.gated(t.tool) && !t.approvedAt) { await S.run(`UPDATE "${TK}" SET status = 'awaiting_approval', updatedAt = ? WHERE id = ? AND status = 'queued'`, Date.now(), t.id); await event(runId, t.id, 'needs_approval', null, `${t.title}: ${Tools.isOutward(t.tool) ? 'reaches outside TeamLink' : 'freezes who a message will go to and its words'}, so it waits for its own approval.`); changed = true; break; } // eslint-disable-line no-await-in-loop
       if ((Tools.TOOLS[t.tool] || {}).scheduled && S.ms(t.scheduledAt) > config.clock()) continue; // (approved,) but its time has not come: it stays queued and the next sweep looks again
       next = t; break;
     }
     if (changed) continue;
     if (!next) break;
+    if (run.status === 'attention') await S.run(`UPDATE "${R}" SET status = 'running', updatedAt = ? WHERE id = ? AND status = 'attention'`, Date.now(), runId); // there is work again
     await runTask(run, next, tasks, opts); // eslint-disable-line no-await-in-loop
   }
   await finishCheck(runId, opts);
 }
 
 // what a tool is given: who it runs as, the plan and day it belongs to, the outputs of the day's earlier steps, and the stand-ins a test passes
-function toolCtx(u, run, t, tasks, opts, base) {
+function toolCtx(u, run, t, tasks, opts, base, query) {
   const plan = par(run.plan, null); const sameDay = tasks.filter((x) => t.day && x.day === t.day);
-  return { u, plan, day: t.day && plan ? Tools.dayOf(plan, t.day) : null, run: { id: run.id, goal: run.goal, startedAt: S.ms(run.startedAt) || S.ms(run.approvedAt) || 0 }, task: { id: t.id, n: S.num(t.n), day: t.day }, dayTasks: sameDay.map((x) => ({ tool: x.tool, status: x.status, output: par(x.output, null) })), fetchFn: opts.fetchFn, svc: opts.svc, base: base || '' };
+  return { u, plan, day: t.day && plan ? Tools.dayOf(plan, t.day) : null, run: { id: run.id, goal: run.goal, startedAt: S.ms(run.startedAt) || S.ms(run.approvedAt) || 0 }, task: { id: t.id, n: S.num(t.n), day: t.day }, dayTasks: sameDay.map((x) => ({ tool: x.tool, status: x.status, output: par(x.output, null) })), fetchFn: opts.fetchFn, svc: opts.svc, base: base || '', query: query || {} };
 }
 async function runTask(run, t, tasks, opts) {
-  if (Tools.isOutward(t.tool) && !t.approvedAt) { await S.run(`UPDATE "${TK}" SET status = 'awaiting_approval', updatedAt = ? WHERE id = ?`, Date.now(), t.id); return; } // defence in depth: never without its own approval
+  if (Tools.gated(t.tool) && !t.approvedAt) { await S.run(`UPDATE "${TK}" SET status = 'awaiting_approval', updatedAt = ? WHERE id = ?`, Date.now(), t.id); return; } // defence in depth: never without its own approval
   const got = await S.run(`UPDATE "${TK}" SET status = 'running', attempts = attempts + 1, startedAt = ?, error = NULL, errorCode = NULL, updatedAt = ? WHERE id = ? AND status = 'queued'`, Date.now(), Date.now(), t.id);
   if (!got) return;
   inflight.add(t.id);
-  const tool = Tools.TOOLS[t.tool]; const attempts = S.num(t.attempts) + 1; const outward = Tools.isOutward(t.tool);
+  const tool = Tools.TOOLS[t.tool]; const attempts = S.num(t.attempts) + 1; const outward = Tools.gated(t.tool);
   await event(run.id, t.id, 'task_started', outward ? null : run.approvedByName, `${t.title}${attempts > 1 ? ` (try ${attempts})` : ''}`);
   const done = async (status, fields = {}) => {
     await S.run(`UPDATE "${TK}" SET status = ?, output = ?, error = ?, errorCode = ?, finishedAt = ?, updatedAt = ? WHERE id = ?`, status, fields.output ? JSON.stringify(fields.output) : null, fields.error || null, fields.code || null, Date.now(), Date.now(), t.id);
@@ -397,12 +399,17 @@ async function runTask(run, t, tasks, opts) {
 async function finishCheck(runId, opts = {}) {
   const run = await runRow(runId); if (!run || !['running', 'attention', 'done'].includes(run.status)) return;
   const tasks = await tasksOf(runId); if (!tasks.length) return;
-  if (tasks.some((t) => ['queued', 'running'].includes(t.status)) && run.status === 'running') return;
+  if (tasks.some((t) => ['queued', 'running'].includes(t.status))) { // work is pending (running, or waiting for its time): the run is running
+    if (run.status === 'attention') await S.run(`UPDATE "${R}" SET status = 'running', updatedAt = ? WHERE id = ? AND status = 'attention'`, Date.now(), runId);
+    return;
+  }
   const allEnd = tasks.every((t) => TERMINAL.includes(t.status));
   const next = allEnd ? 'done' : 'attention';
   const summary = await summarize(run, tasks);
   const prev = par(run.summary, null);
-  await S.run(`UPDATE "${R}" SET status = ?, summary = ?, finishedAt = ?, updatedAt = ? WHERE id = ? AND status IN ('running','attention','done')`, next, JSON.stringify({ ...summary, noticeFor: prev && prev.noticeFor }), allEnd ? Date.now() : null, Date.now(), runId);
+  // decided from a snapshot of the steps: the update itself refuses if a step was queued in the meantime (an approval that came in while this was being worked out), and the run is looked at again
+  const upd = await S.run(`UPDATE "${R}" SET status = ?, summary = ?, finishedAt = ?, updatedAt = ? WHERE id = ? AND status IN ('running','attention','done') AND NOT EXISTS (SELECT 1 FROM "${TK}" x WHERE x.runId = "${R}".id AND x.status IN ('queued','running'))`, next, JSON.stringify({ ...summary, noticeFor: prev && prev.noticeFor }), allEnd ? Date.now() : null, Date.now(), runId);
+  if (!upd) { kick(runId, opts); return; }
   if (!prev || prev.noticeFor !== next) {
     await say(runId, 'agent', `${next === 'done' ? 'All steps are finished.' : 'The steps that could run have run. Some need you.'}\n${summary.lines.join('\n')}`);
     await event(runId, null, next === 'done' ? 'finished' : 'attention', null, summary.lines[0] || next);
@@ -446,7 +453,7 @@ async function summarize(run, tasks, perf) {
   const outwardDone = tasks.filter((t) => Tools.isOutward(t.tool) && t.status === 'done').length;
   const numbers = {
     tasks: { total: tasks.length, done: count('done'), failed: count('failed'), waiting: count('waiting'), awaiting: count('awaiting_approval'), cancelled: count('cancelled'), skipped: count('skipped'), queued: count('queued'), running: count('running') },
-    made: { drafts: drafts.length, pictures: pics.length }, approval: tally, posted: { done: posted, of: postsTotal, byAgent: doneOf('social.post').length }, toClient, whatsapp: { done: waDone, of: waTotal }, callSheet: sheetTask ? (par(sheetTask.output, {}).data || {}).rows : null, calls: { done: callsDone, of: callsTotal }, clips: clipCount, keywords: kw ? (par(kw.output, {}).data || {}).kept : null, seoTexts: seoText ? ((par(seoText.output, {}).data || {}).saved || []).length : null, performance: perf || null, videos: { done: videosTotal ? videos : 0, of: videosTotal }, siteScore: site ? (par(site.output, {}).data || {}).score : null, blogBriefs: blog ? (par(blog.output, {}).data || {}).briefs : null, results, outward: outwardDone,
+    made: { drafts: drafts.length, pictures: pics.length }, approval: tally, posted: { done: posted, of: postsTotal, byAgent: doneOf('social.post').length }, toClient, whatsapp: { done: waDone, of: waTotal }, waCampaign: doneOf('whatsapp.campaign')[0] ? (par(doneOf('whatsapp.campaign')[0].output, {}).data || {}) : null, callSheet: sheetTask ? (par(sheetTask.output, {}).data || {}).rows : null, calls: { done: callsDone, of: callsTotal }, clips: clipCount, keywords: kw ? (par(kw.output, {}).data || {}).kept : null, seoTexts: seoText ? ((par(seoText.output, {}).data || {}).saved || []).length : null, performance: perf || null, videos: { done: videosTotal ? videos : 0, of: videosTotal }, siteScore: site ? (par(site.output, {}).data || {}).score : null, blogBriefs: blog ? (par(blog.output, {}).data || {}).briefs : null, results, outward: outwardDone,
   };
   const lines = [];
   lines.push(`${numbers.tasks.done} of ${plural(numbers.tasks.total, 'step')} done${numbers.tasks.failed ? `, ${numbers.tasks.failed} failed` : ''}${numbers.tasks.waiting ? `, ${numbers.tasks.waiting} waiting for a person` : ''}${numbers.tasks.cancelled ? `, ${numbers.tasks.cancelled} cancelled` : ''}${numbers.tasks.skipped ? `, ${numbers.tasks.skipped} skipped` : ''}.`);
@@ -455,6 +462,7 @@ async function summarize(run, tasks, perf) {
   if (toClient) lines.push(`Sent to the client to approve: ${plural(toClient, 'picture')}, each after your approval of that step.`);
   if (postsTotal) lines.push(`Posted: ${posted} of ${postsTotal} posting steps${numbers.posted.byAgent ? ` (${numbers.posted.byAgent} by the agent after your approval of each post, the rest marked by the person who posted)` : ' (marked by the person who posted)'}.`);
   if (videosTotal) lines.push(`Videos made: ${videos} of ${videosTotal} (put together by a person in AI Video).`);
+  if (numbers.waCampaign) lines.push(`WhatsApp campaign prepared: ${plural(numbers.waCampaign.people, 'customer')} who agreed to promotions, saved as READY in WhatsApp > Campaigns. Nothing was sent: a person presses Send.`);
   if (numbers.callSheet != null) lines.push(`Call sheet: ${numbers.callSheet} lead${numbers.callSheet === 1 ? '' : 's'} to call (Hot or Warm, new since the plan started). The agent calls nobody: your team calls from the CRM.`);
   if (callsTotal) lines.push(`Calls made by your team: ${callsDone} of ${callsTotal} (marked by a person).`);
   if (clipCount) lines.push(`Stock clips saved: ${clipCount} (raw footage in AI Images: approve before use).`);
@@ -514,7 +522,7 @@ async function retryTask(u, taskId, opts = {}) {
   if (['cancelled', 'needs_info', 'preview'].includes(r.status)) return { error: 'This run is not running.', status: 409 };
   if (S.num(t.attempts) >= config.maxAttempts) return { error: `This step was tried ${config.maxAttempts} times. Fix the cause (see the error) or start a new goal.`, status: 409 };
   const now = Date.now();
-  if (Tools.isOutward(t.tool)) { // a failed step that reaches outside TeamLink is never retried on the old approval: it asks again (an account that already got the post is skipped)
+  if (Tools.gated(t.tool)) { // a failed step that reaches outside TeamLink (or freezes who a message goes to) is never retried on the old approval: it asks again (an account that already got the post is skipped)
     await S.run(`UPDATE "${TK}" SET status = 'awaiting_approval', approvedById = NULL, approvedAt = NULL, error = NULL, errorCode = NULL, finishedAt = NULL, updatedAt = ? WHERE id = ?`, now, t.id);
     await event(r.id, t.id, 'task_retry_by_person', u.name, `${t.title}: ${u.name} asked to try again. It needs a fresh approval.`);
     await audit(u, 'outward step retry asked', r, t.title);
@@ -533,9 +541,9 @@ async function retryTask(u, taskId, opts = {}) {
 async function prepareTask(u, taskId, env = {}) {
   const g = await taskAction(u, taskId); if (g.error) return g; const { t, r } = g;
   const tool = Tools.TOOLS[t.tool];
-  if (!tool || !Tools.isOutward(t.tool)) return { error: 'This step does not need an approval of its own.', status: 409 };
+  if (!tool || !Tools.gated(t.tool)) return { error: 'This step does not need an approval of its own.', status: 409 };
   const tasks = await tasksOf(r.id);
-  const prep = tool.prepare ? await tool.prepare(toolCtx(u, r, t, tasks, env, env.base)) : { ready: true, reason: '' };
+  const prep = tool.prepare ? await tool.prepare(toolCtx(u, r, t, tasks, env, env.base, env.query)) : { ready: true, reason: '' };
   return { task: taskView(t, par(r.plan, null)), ready: t.status === 'awaiting_approval' && prep.ready, status: t.status, ...prep, reason: t.status !== 'awaiting_approval' ? `This step is ${TASK_WORDS[t.status] || t.status}.` : prep.reason };
 }
 async function approveTask(u, taskId, body = {}, env = {}) {
@@ -543,7 +551,7 @@ async function approveTask(u, taskId, body = {}, env = {}) {
   if (t.status !== 'awaiting_approval') return { error: 'This step is not waiting for an approval.', status: 409 };
   if (r.status === 'cancelled') return { error: 'This run is cancelled.', status: 409 };
   const tool = Tools.TOOLS[t.tool]; const tasks = await tasksOf(r.id);
-  const ctx = toolCtx(u, r, t, tasks, env, env.base);
+  const ctx = toolCtx(u, r, t, tasks, env, env.base, body);
   const prep = tool && tool.prepare ? await tool.prepare(ctx) : { ready: true, reason: '' };
   if (!prep.ready) return { error: prep.reason || 'This step is not ready to be approved.', status: 409, code: 'not_ready' };
   const ap = tool && tool.approval ? tool.approval(body || {}, prep, ctx) : { input: {}, summary: 'run it' };
@@ -704,7 +712,7 @@ async function recover(opts = {}) {
     await event(t.runId, t.id, 'task_failed', null, `${t.title}: interrupted by a restart. Press Retry if nothing was made.`); // eslint-disable-line no-await-in-loop
     n += 1;
   }
-  for (const r of await S.q(`SELECT id FROM "${R}" WHERE status = 'running'`)) { kick(r.id, opts); } // eslint-disable-line no-await-in-loop
+  for (const r of await S.q(`SELECT id FROM "${R}" WHERE status IN ('running','attention')`)) { kick(r.id, opts); } // eslint-disable-line no-await-in-loop
   return { interrupted: n };
 }
 // a bell when the time of a "post it" step has come (once), to whoever gave the goal
@@ -723,7 +731,7 @@ async function sweep(opts = {}) {
   }
   const stale = await S.q(`SELECT id FROM "${TK}" WHERE status = 'running' AND startedAt < ?`, now - 15 * 60000);
   if (stale.some((t) => !inflight.has(t.id))) await recover(opts);
-  for (const r of await S.q(`SELECT DISTINCT runId FROM "${TK}" WHERE status = 'queued'`)) { const run = await runRow(r.runId); if (run && run.status === 'running') kick(run.id, opts); } // eslint-disable-line no-await-in-loop
+  for (const r of await S.q(`SELECT DISTINCT runId FROM "${TK}" WHERE status = 'queued'`)) { const run = await runRow(r.runId); if (run && ['running', 'attention'].includes(run.status)) kick(run.id, opts); } // eslint-disable-line no-await-in-loop
   return { reminded: sent };
 }
 let timer = null;

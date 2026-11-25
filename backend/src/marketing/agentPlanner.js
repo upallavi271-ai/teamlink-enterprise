@@ -317,7 +317,7 @@ function paramsFor(parsed, given = {}, now = Date.now()) {
   const startDate = validDay(g.startDate) && g.startDate >= istDay(now) ? g.startDate : tomorrow;
   return {
     days: def.days === 0 ? 0 : days, platforms, startDate, time: validTime(g.time) ? g.time : '10:00',
-    creative: ['banner', 'ai', 'none'].includes(g.creative) ? g.creative : 'banner', callSheet: g.callSheet === true, clips: g.clips === true, publish: g.publish === 'agent' ? 'agent' : 'manual', approver: g.approver === 'client' ? 'client' : 'team', count: Math.max(1, Math.min(5, Math.round(Number(g.count)) || (parsed.intent === 'videos' ? parsed.days : 3))),
+    creative: ['banner', 'ai', 'none'].includes(g.creative) ? g.creative : 'banner', waCampaign: g.waCampaign !== false, callSheet: g.callSheet === true, clips: g.clips === true, publish: g.publish === 'agent' ? 'agent' : 'manual', approver: g.approver === 'client' ? 'client' : 'team', count: Math.max(1, Math.min(5, Math.round(Number(g.count)) || (parsed.intent === 'videos' ? parsed.days : 3))),
   };
 }
 
@@ -336,7 +336,7 @@ function build(goalText, ctxIn, given = {}, now = Date.now()) {
   const gaps = []; const assumptions = [];
   for (const k of [...def.essentials, ...def.optional]) if (!(Array.isArray(ctx[k]) ? ctx[k].length : ctx[k]) && CONSEQUENCE[k]) gaps.push(`${Ctx.FIELDS[k].label} not saved: ${CONSEQUENCE[k]}.`);
   if (healthcare) gaps.push('Healthcare business: a doctor or qualified medical reviewer must read every caption before it is approved. The wording check below is a starting checklist only.');
-  if (p.platforms.includes('whatsapp')) assumptions.push('WhatsApp: the message is prepared and approved here; TeamLink never sends it from the agent. A person sends it from Omni-Channel > Campaigns, whose own rules apply (only people who agreed to receive messages, the STOP list, quiet hours, credits and approval). Every message ends with the opt-out line.');
+  if (p.platforms.includes('whatsapp')) assumptions.push('WhatsApp: the message is prepared and approved here; TeamLink never sends it from the agent. A person sends it from Omni-Channel > Campaigns, whose own rules apply (only people who agreed to receive messages, the STOP list, quiet hours, credits and approval). Every message ends with the opt-out line.' + (p.waCampaign ? ' For our own company the agent can also prepare the campaign itself, through the WhatsApp assistant: you pick the Meta-approved template and see every person and the exact words first; it is saved as ready and a person still presses Send. Only customers whose consent for promotions is recorded are reached; if promotions are switched off, no template is approved or nobody has agreed, the step says so and a person sends the approved message by hand.' : ''));
   if (p.callSheet && parsed.intent !== 'seo') assumptions.push('Call sheet: when the plan ends the agent lists the leads who showed interest while it ran (from the CRM, with the reasons and, for WhatsApp leads, what they asked and when to call). It does not call anyone: your team calls from the CRM. The automatic AI Calling is built for job candidates with a recorded consent and is not used for marketing leads. TeamLink does not check the Do-Not-Disturb register for these leads: check it before calling.');
   if (p.clips && parsed.intent === 'videos') assumptions.push('Stock clips: a free stock footage source (Pixabay or Pexels, with the key an Admin saved) is searched for each video and the best clip is saved in AI Images as raw footage, to be approved before use. They are generic clips under the source\'s free licence, not footage of the business.');
   if (f.language !== 'English') assumptions.push(`Captions are written in English; ${f.language} is saved for this business, so have them translated and read before approving.`);
@@ -401,6 +401,9 @@ function taskSpecs(plan) {
     if (viaAgent) add({ tool: 'social.post', day: d.n, deps: [ask, pic], title: `${label}: post on ${listText(social.map((x) => PLATFORM_WORDS[x]))} at ${d.time} on ${d.date} (after you approve this post)` });
     if (byHand.length) add({ tool: 'manual.post', day: d.n, deps: [ask], title: `${label}: post on ${listText(byHand.map((x) => PLATFORM_WORDS[x]))} at ${d.time}, after it is approved (by hand)` });
     if (wa) add({ tool: 'manual.whatsapp', day: d.n, deps: [ask], title: `${label}: send the WhatsApp message to people who agreed to receive it (Campaigns), after it is approved` });
+  }
+  if (plan.params.waCampaign && plan.businessKey === 'own' && plan.days.some((d) => d.platforms.includes('whatsapp'))) { // our own WhatsApp marketing assistant's campaign (not for a client's customers): prepared, saved as ready, a person presses Send
+    add({ tool: 'whatsapp.campaign', title: 'Prepare a WhatsApp campaign for the customers who agreed to promotions (saved as ready: a person presses Send in WhatsApp > Campaigns)' });
   }
   if (plan.params.callSheet && plan.days.length) { // the leads who showed interest while the plan ran, for a person to call (the agent never calls)
     const at = atOf(addDays(plan.days[plan.days.length - 1].date, 1), '10:00');
