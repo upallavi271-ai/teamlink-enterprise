@@ -75,6 +75,24 @@ export default function MyProfile() {
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch { setXlError('That letter could not be downloaded. Please try again.'); } finally { setXlBusy(''); }
   }
+  // Sign with Aadhaar (eMudhra): ask for the signing, then send the browser to eMudhra's own page (the same way the offer page does)
+  const [esignBusy, setEsignBusy] = useState(false);
+  const [esignError, setEsignError] = useState('');
+  const esignResult = (() => { try { const q = new URLSearchParams(window.location.search); return q.get('esign') ? { state: q.get('esign'), why: q.get('why') || '' } : null; } catch { return null; } })();
+  async function signOfferLetter() {
+    setEsignBusy(true); setEsignError('');
+    try {
+      const r = await api.post('/employees/me/offer-letter/esign/start');
+      const form = document.createElement('form');
+      form.method = 'POST'; form.action = r.data.gatewayUrl;
+      Object.entries(r.data.fields || {}).forEach(([k, v]) => { const i = document.createElement('input'); i.type = 'hidden'; i.name = k; i.value = v; form.appendChild(i); });
+      document.body.appendChild(form); form.submit();
+    } catch (e) {
+      setEsignBusy(false);
+      setEsignError(e.response?.data?.error || 'Aadhaar signing could not start. Please try again later.');
+    }
+  }
+
   async function downloadOfferLetter() {
     setOlBusy(true); setOlError('');
     try {
@@ -244,14 +262,33 @@ export default function MyProfile() {
       {employee.offerLetter && (
         <div className="card section">
           <h3>Your offer letter</h3>
+          {esignResult && (
+            <div className={esignResult.state === 'signed' ? 'notice' : 'error-text'} style={{ marginBottom: 8 }}>
+              {esignResult.state === 'signed' ? 'Your offer letter is signed with Aadhaar. The signed copy is below and in your documents.'
+                : esignResult.state === 'cancelled' ? 'You cancelled the signing, so nothing was changed.'
+                  : esignResult.state === 'already' ? 'Your offer letter is already signed.'
+                    : `The signing was not completed, so nothing was changed.${esignResult.why ? ` ${esignResult.why}` : ''}`}
+            </div>
+          )}
           {employee.offerLetter.ok ? (
             <>
-              <div className="small-muted" style={{ marginBottom: 8 }}>Your profile is complete and you have joined, so your offer letter is ready. Download it as a PDF.</div>
+              {employee.offerLetter.signedAt ? (
+                <div className="small-muted" style={{ marginBottom: 8 }}>Signed with Aadhaar on {new Date(employee.offerLetter.signedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}. This is the signed copy.</div>
+              ) : (
+                <div className="small-muted" style={{ marginBottom: 8 }}>Your profile is complete and you have joined, so your offer letter is ready. {employee.offerLetter.esignReady ? 'Sign it with Aadhaar below, or download it first to read it.' : 'Download it as a PDF to read it.'}</div>
+              )}
               <button type="button" className="btn btn-primary" disabled={olBusy} onClick={downloadOfferLetter}>{olBusy ? 'Preparing…' : 'Download offer letter'}</button>
+              {!employee.offerLetter.signedAt && employee.offerLetter.esignReady && (
+                <button type="button" className="btn" style={{ marginLeft: 8 }} disabled={esignBusy} onClick={signOfferLetter}>{esignBusy ? 'Opening Aadhaar signing…' : 'Sign with Aadhaar'}</button>
+              )}
+              {!employee.offerLetter.signedAt && !employee.offerLetter.esignReady && (
+                <div className="small-muted" style={{ marginTop: 8 }}>Aadhaar signing is not set up yet, so you cannot sign online yet. HR will tell you when it is ready.</div>
+              )}
             </>
           ) : (
             <div className="small-muted">{employee.offerLetter.why}</div>
           )}
+          {esignError && <div className="error-text" style={{ marginTop: 8 }}>{esignError}</div>}
           {olError && <div className="error-text" style={{ marginTop: 8 }}>{olError}</div>}
         </div>
       )}

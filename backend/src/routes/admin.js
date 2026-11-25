@@ -1060,6 +1060,27 @@ router.put('/company', requirePerm(null, 'administration', 'Company Setup', 'edi
   res.json(shapeCompany(updated, departments, teams));
 });
 
+// THE COMPANY'S LETTER SIGNATORY (2026-11-25): the CEO / authorised signatory on every TeamLink letter, set once here (utils/letterSignatory.js).
+router.get('/letter-signatory', requirePerm(null, 'administration', 'Company Setup', 'view'), async (req, res, next) => {
+  try { return res.json(await require('../utils/letterSignatory').summary()); } catch (err) { return next(err); }
+});
+router.put('/letter-signatory', requirePerm(null, 'administration', 'Company Setup', 'edit'), async (req, res, next) => {
+  try {
+    const out = await require('../utils/letterSignatory').save(req.body || {}, req.user);
+    if (out.error) return res.status(400).json({ error: out.error });
+    return res.json(out.value);
+  } catch (err) { return next(err); }
+});
+router.get('/letter-signatory/picture', requirePerm(null, 'administration', 'Company Setup', 'view'), async (req, res, next) => {
+  try {
+    const s = await require('../utils/letterSignatory').load();
+    if (!s.png) return res.status(404).json({ error: 'No signature picture yet.' });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.send(s.png);
+  } catch (err) { return next(err); }
+});
+
 // ---- Notifications ----
 // EACH PERSON SEES THEIR OWN. Every notification is addressed to a user
 // (utils/notify.js drops any without one); a row with no owner is not

@@ -354,6 +354,16 @@ async function myExitLetters(employee) {
   return { lastWorkingDate: lwd, letters, note };
 }
 
+// My Profile -> "Your offer letter": ready or why not, whether the employee has signed it, and whether Aadhaar signing is connected
+async function myOfferLetter(employee) {
+  const OLM = require('../utils/offerLetterMail'); // eslint-disable-line global-require
+  const ES = require('../utils/employeeEsign'); // eslint-disable-line global-require
+  const gate = OLM.selfDownloadGate(employee, completionPct(employee));
+  const signed = await ES.signedDocOf(employee.id);
+  const esignReady = await require('../utils/emudhra').isAvailable().catch(() => false); // eslint-disable-line global-require
+  return { ...gate, signedAt: signed ? signed.uploadedAt : null, esignReady: !!esignReady };
+}
+
 router.get('/me', async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { userId: req.user.id }, include: { reportingManager: true } });
   if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
@@ -403,7 +413,7 @@ router.get('/me', async (req, res) => {
     emailVerification: await emailVerify.emailState(employee),
     channels: { sms: await empVerify.smsChannel() },
     // My Profile -> "Your offer letter": ready, or the plain words for what is still missing
-    offerLetter: require('../utils/offerLetterMail').selfDownloadGate(employee, completionPct(employee)), // eslint-disable-line global-require
+    offerLetter: await myOfferLetter(employee),
     exitLetters: await myExitLetters(employee).catch(() => null),
   });
 });
@@ -418,22 +428,40 @@ router.get('/me/offer-letter/pdf', async (req, res, next) => {
     const OL = require('../utils/offerLetterMail'); // eslint-disable-line global-require
     const gate = OL.selfDownloadGate(employee, completionPct(employee));
     if (!gate.ok) return res.status(409).json({ error: gate.why });
-    const doc = await prisma.employeeDocument.findFirst({ where: { employeeId: employee.id, docType: 'Offer Letter' }, orderBy: { uploadedAt: 'desc' } });
-    let pdf = null;
-    let name = `Offer-letter-${employee.employeeCode}.pdf`;
-    const full = doc ? attachments.resolveStored(doc.file) : null;
-    if (full) { pdf = require('fs').readFileSync(full); name = doc.fileName || name; } // eslint-disable-line global-require
-    if (!pdf) {
+    const signed = await require('../utils/employeeEsign').signedDocOf(employee.id); // eslint-disable-line global-require
+    const signedFull = signed ? attachments.resolveStored(signed.file) : null;
+    let pdf;
+    let name;
+    if (signedFull) {
+      // a signed copy is given exactly as it was signed
+      pdf = require('fs').readFileSync(signedFull); // eslint-disable-line global-require
+      name = signed.fileName;
+    } else {
+      // the letter as it stands now, with the company's signatory (never a stale copy)
       const made = await OL.pdfForEmployee(employee);
       pdf = made.pdf;
       name = made.name;
-      if (!doc) await OL.fileForEmployee(employee, req.user.id).catch(() => null); // kept in their documents too
+      const any = await prisma.employeeDocument.findFirst({ where: { employeeId: employee.id, docType: 'Offer Letter' } }).catch(() => null);
+      if (!any) await OL.fileForEmployee(employee, req.user.id).catch(() => null); // kept in their documents too
     }
-    await logAudit({ userId: req.user.id, action: 'Offer letter downloaded by the employee', entity: 'Employee', entityId: employee.id, toValue: `${employee.name} (${employee.employeeCode})` });
+    await logAudit({ userId: req.user.id, action: 'Offer letter downloaded by the employee', entity: 'Employee', entityId: employee.id, toValue: `${employee.name} (${employee.employeeCode})${signedFull ? ' (signed copy)' : ''}` });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/[^\w .()-]/g, '_')}"`);
     res.setHeader('Cache-Control', 'no-store');
     return res.send(pdf);
+  } catch (err) { return next(err); }
+});
+
+// Sign with Aadhaar (eMudhra): the employee starts the signing from My Profile. The letter goes to eMudhra's page; see utils/employeeEsign.js.
+router.post('/me/offer-letter/esign/start', async (req, res, next) => {
+  try {
+    const employee = await prisma.employee.findUnique({ where: { userId: req.user.id } });
+    if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
+    const out = await require('../utils/employeeEsign').startFor({ // eslint-disable-line global-require
+      employee, user: req.user, base: require('../utils/offerLink').publicBase(req), completion: completionPct(employee),
+    });
+    if (out.error) return res.status(out.status || 409).json({ error: out.error, notAvailable: !!out.notAvailable });
+    return res.json({ gatewayUrl: out.gatewayUrl, fields: out.fields, ref: out.ref });
   } catch (err) { return next(err); }
 });
 
@@ -3719,8 +3747,10 @@ router.get('/:id/documents/:docId/file', async (req, res) => {
   const doc = await prisma.employeeDocument.findUnique({ where: { id: req.params.docId } });
   if (!doc || doc.employeeId !== ctx.employee.id) return res.status(404).json({ error: 'Document not found' });
   if (offerLetterHider(ctx.access, ctx.employee, req.user.id)(doc)) return res.status(404).json({ error: 'Document not found' }); // not yet: My Profile -> Your offer letter
-  const full = attachments.resolveStored(doc.file);
-  if (!full) return res.status(404).json({ error: 'The file is no longer on the server' });
+  // A TeamLink-made offer letter is drawn fresh from the record (the company's signatory always shows); anything else is the saved file
+  const liveLetter = doc.docType === 'Offer Letter' && doc.docName === 'Generated by TeamLink';
+  const full = liveLetter ? null : attachments.resolveStored(doc.file);
+  if (!liveLetter && !full) return res.status(404).json({ error: 'The file is no longer on the server' });
   const disposition = req.query.disposition === 'inline' ? 'inline' : 'attachment';
   // Only a type this module allow-listed is ever sent as itself.
   const mime = attachments.ALLOWED[doc.mime] ? doc.mime : 'application/octet-stream';
@@ -3728,6 +3758,7 @@ router.get('/:id/documents/:docId/file', async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'private, no-store');
   res.setHeader('Content-Disposition', `${disposition}; filename="${attachments.safeDisplayName(doc.fileName)}"`);
+  if (liveLetter) return res.send((await require('../utils/offerLetterMail').pdfForEmployee(ctx.employee)).pdf); // eslint-disable-line global-require
   return res.sendFile(full);
 });
 

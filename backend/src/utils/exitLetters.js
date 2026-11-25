@@ -47,25 +47,19 @@ const dmy = (d) => (d ? `${d.slice(8, 10)}-${d.slice(5, 7)}-${d.slice(0, 4)}` : 
 // --- settings: who signs -------------------------------------------------------------------------------------------------
 const clean = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 async function loadSettings() {
-  const row = await prisma.appSetting.findUnique({ where: { key: SETTINGS_KEY } }).catch(() => null);
-  let v = {};
-  try { v = row ? JSON.parse(row.value) : {}; } catch { v = {}; }
+  // the company's letter signatory, set once in Company Setup (utils/letterSignatory.js): the same person signs every letter
+  const sig = await require('./letterSignatory').load(); // eslint-disable-line global-require
   return {
-    signatoryName: clean(v && v.signatoryName, 80),
-    signatoryTitle: clean(v && v.signatoryTitle, 120) || 'HR Department',
-    updatedByName: row ? row.updatedByName : null,
-    updatedAt: row ? row.updatedAt : null,
+    signatoryName: sig.name,
+    signatoryTitle: sig.title || 'HR Department',
+    png: sig.png,
+    updatedByName: sig.updatedByName,
+    updatedAt: sig.updatedAt,
   };
 }
 async function saveSettings(body, user) {
-  const value = { signatoryName: clean(body && body.signatoryName, 80), signatoryTitle: clean(body && body.signatoryTitle, 120) || 'HR Department' };
-  const who = user ? { updatedById: user.id, updatedByName: user.name } : {};
-  await prisma.appSetting.upsert({
-    where: { key: SETTINGS_KEY },
-    create: { key: SETTINGS_KEY, value: JSON.stringify(value), ...who },
-    update: { value: JSON.stringify(value), ...who },
-  });
-  await logAudit({ userId: user ? user.id : null, action: 'Exit letters: signatory changed', entity: 'AppSetting', entityId: SETTINGS_KEY, toValue: `${value.signatoryName || '(no name)'}, ${value.signatoryTitle}` });
+  // the same record as Company Setup's Letter signatory: a name and title typed here are the company's
+  await require('./letterSignatory').save({ name: body && body.signatoryName, title: body && body.signatoryTitle }, user); // eslint-disable-line global-require
   return loadSettings();
 }
 
@@ -118,7 +112,7 @@ function blockerOf(kind, f) {
 // The letter as data (paragraphs), drawn by the PDF.
 function modelOf(kind, f) {
   const co = f.company.name;
-  const sign = { company: co, name: f.settings.signatoryName, title: f.settings.signatoryTitle };
+  const sign = { company: co, name: f.settings.signatoryName, title: f.settings.signatoryTitle, png: f.settings.png || null };
   if (kind === 'service') {
     return {
       kind, title: 'SERVICE CERTIFICATE', company: f.company, date: longDay(f.today), dateAlign: 'left', to: null,
@@ -217,6 +211,7 @@ async function renderPdf(m) {
     doc.font('Helvetica-Bold').text(t(`For ${m.sign.company}`), { width: W });
     doc.moveDown(3);
     const sy = doc.y;
+    if (m.sign.png) { try { doc.image(m.sign.png, L, sy - 36, { height: 32 }); } catch { /* the line stands alone */ } }
     doc.moveTo(L, sy).lineTo(L + 200, sy).lineWidth(0.8).strokeColor('#8b93a3').stroke();
     doc.y = sy + 5;
     doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111').text(t(m.sign.name || LSTYLE.SIGNATORY_FALLBACK), L, doc.y, { width: W });

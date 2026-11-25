@@ -356,6 +356,8 @@ async function buildModel(app, tpl, { sample = false } = {}) {
     const title = fillPlain(row.title, vals);
     if (v.skip) omitted.push(`${title || 'A term'} (${why(v.missing)})`); else terms.push({ title, text: v.text });
   });
+  // the company's signatory, set once in Company Setup (utils/letterSignatory.js): the same on every letter
+  const sig = await require('./letterSignatory').load();
   return {
     company,
     refNo: vals.refNo,
@@ -369,7 +371,7 @@ async function buildModel(app, tpl, { sample = false } = {}) {
     termsHeading: fillPlain(tpl.termsHeading, vals),
     terms,
     closing: fillPlain(tpl.closing, bold),
-    signatory: { name: fillPlain(tpl.signatoryName, vals), title: fillPlain(tpl.signatoryTitle, vals), company: company.name },
+    signatory: { name: sig.name || fillPlain(tpl.signatoryName, vals), title: sig.title || fillPlain(tpl.signatoryTitle, vals), company: company.name, png: sig.png || null },
     acceptance: { line: fillPlain(tpl.acceptanceLine, vals), name: vals.name },
     footerNote: fillPlain(tpl.footerNote, vals),
     subject: fillPlain(tpl.subject, vals),
@@ -393,7 +395,9 @@ const LS = require('./letterStyle'); // the brand look: navy + cyan, Arial, head
 const navy = (inner) => `<b style="color:${LS.NAVY}">${inner}</b>`;
 const hRuns = (s) => esc(s).replace(BOLD_RE, '<b>$1</b>'); // esc leaves the bold marks alone
 const para = (text, mb = 12) => String(text || '').split(/\n{2,}/).map((p) => `<p style="margin:0 0 ${mb}px 0;line-height:1.5">${hRuns(p).replace(/\n/g, '<br>')}</p>`).join('');
-function renderHtml(m, { logoSrc = null, withCover = true } = {}) {
+function renderHtml(m, { logoSrc = null, withCover = true, signatureSrc = null } = {}) {
+  const sigSrc = signatureSrc || (m.signatory && m.signatory.png ? `data:image/png;base64,${m.signatory.png.toString('base64')}` : null);
+  const sigImg = sigSrc ? `<img src="${esc(sigSrc)}" alt="" height="44" style="display:block;height:44px;width:auto;border:0;margin:0 0 2px 0">` : '<br><br>';
   const font = 'Arial,Helvetica,sans-serif';
   const ul = (items) => `<ul style="margin:0 0 10px 0;padding-left:24px">${items.map((i) => `<li style="margin:0 0 6px 0;line-height:1.5">${i}</li>`).join('')}</ul>`;
   // the points: one-line points share a bullet list; a point written on several lines is a bold heading and its own list
@@ -436,7 +440,7 @@ ${m.termsHeading && m.terms.length ? `<p style="margin:6px 0 8px 0">${navy(esc(m
 ${blocks.join('')}
 ${m.closing ? `<div style="margin:14px 0 30px 0">${para(m.closing, 0)}</div>` : ''}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-  <td width="50%" style="vertical-align:top;line-height:1.5;font-size:15px">Yours sincerely,<br><b>For ${esc(m.signatory.company)}</b><br><br><br>${SIGN_LINE}<br><b>${esc(m.signatory.name || LS.SIGNATORY_FALLBACK)}</b>${m.signatory.title ? `<br>${esc(m.signatory.title)}` : ''}</td>
+  <td width="50%" style="vertical-align:top;line-height:1.5;font-size:15px">Yours sincerely,<br><b>For ${esc(m.signatory.company)}</b><br>${sigImg}${SIGN_LINE}<br><b>${esc(m.signatory.name || LS.SIGNATORY_FALLBACK)}</b>${m.signatory.title ? `<br>${esc(m.signatory.title)}` : ''}</td>
   <td width="50%" style="vertical-align:top;text-align:right;line-height:1.5;font-size:15px">Acceptance of Offer${m.acceptance.line ? `<br><span style="font-size:13px">${esc(m.acceptance.line)}</span>` : ''}<br><br><br>${SIGN_LINE}<br><b>Signature of Candidate</b><br>Date: ______________</td>
 </tr></table>
 ${m.footerNote ? `<div style="margin-top:22px;font-size:11px;color:#666;text-align:center">${esc(m.footerNote)}</div>` : ''}
@@ -576,7 +580,8 @@ async function renderPdf(m) {
     const leftHead = doc.y;
     font(false);
     const rightHead = top + lineH + (m.acceptance.line ? doc.heightOfString(t(m.acceptance.line), { width: colW }) : 0);
-    const signY = Math.max(leftHead, rightHead) + lineH * 2; // both signature lines on one row, as in the reference
+    const signY = Math.max(leftHead, rightHead) + lineH * 2 + (m.signatory.png ? 34 : 0); // both signature lines on one row, as in the reference
+    if (m.signatory.png) { try { doc.image(m.signatory.png, L, signY - 38, { height: 34 }); } catch { /* the line stands alone */ } }
     font(false).text(SIGN_LINE, L, signY, { width: colW });
     font(true).text(t(m.signatory.name || LSTYLE.SIGNATORY_FALLBACK), L, doc.y, { width: colW });
     if (m.signatory.title) font(false).text(t(m.signatory.title), L, doc.y, { width: colW });
@@ -711,7 +716,7 @@ async function deliver(app, { auto, trigger, actor }) {
   const m = await buildModel(app, settings.template);
   const pdf = await renderPdf(m);
   const logo = await logoPng();
-  const html = renderHtml(m, { logoSrc: logo ? 'cid:teamlink-logo' : null });
+  const html = renderHtml(m, { logoSrc: logo ? 'cid:teamlink-logo' : null, signatureSrc: m.signatory.png ? 'cid:teamlink-signature' : null });
   const safe = String(m.to.name || 'Candidate').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'Candidate';
   const reply = await replyToFor(app, actor);
   // eslint-disable-next-line global-require
@@ -720,6 +725,7 @@ async function deliver(app, { auto, trigger, actor }) {
     attachments: [
       { filename: `Offer-letter-${safe}.pdf`, content: pdf, contentType: 'application/pdf' },
       ...(logo ? [{ filename: 'teamlink-logo.png', content: logo, contentType: 'image/png', cid: 'teamlink-logo', contentDisposition: 'inline' }] : []),
+      ...(m.signatory.png ? [{ filename: 'signature.png', content: m.signatory.png, contentType: 'image/png', cid: 'teamlink-signature', contentDisposition: 'inline' }] : []),
     ],
     ...reply, useEmployeeFrom: false, fromName: 'TeamLink HR',
   });
@@ -920,6 +926,14 @@ function offerLetterHiddenFromSelf({ isSelf, isHr, userId, doc, employee, comple
   return !selfDownloadGate(employee, completionPct).ok;
 }
 
+// A TeamLink-made offer letter is drawn fresh from the record, so the company's signatory always shows; a signed copy is given as it was signed.
+async function bodyOfOfferDoc(employee, doc, full) {
+  if (doc.docName === 'Generated by TeamLink') {
+    try { return (await pdfForEmployee(employee)).pdf; } catch { /* the saved copy below */ }
+  }
+  return require('fs').readFileSync(full);
+}
+
 // "Email offer letter" (HR presses it on the employee's Documents): the offer letter that is ON FILE (the one made here, or an
 // e-signed copy) goes to the employee as a PDF attachment, with a short covering note. It goes to the work email, or the personal
 // one when there is no work email. -> { state: 'SENT', to } | { state: 'NOT_SENT', message }
@@ -949,7 +963,7 @@ async function emailForEmployee(employee, actor, { to: typedTo } = {}) {
   // eslint-disable-next-line global-require
   const out = await require('./mailer').sendMail({
     to, subject, text,
-    attachments: [{ filename: doc.fileName || `Offer-letter-${employee.employeeCode || 'employee'}.pdf`, content: require('fs').readFileSync(full), contentType: doc.mime || 'application/pdf' }],
+    attachments: [{ filename: doc.fileName || `Offer-letter-${employee.employeeCode || 'employee'}.pdf`, content: await bodyOfOfferDoc(employee, doc, full), contentType: doc.mime || 'application/pdf' }],
     ...reply, useEmployeeFrom: false, fromName: 'TeamLink HR',
   });
   if (!out || !out.ok) {
@@ -978,5 +992,5 @@ module.exports = {
   loadSettings, setAutomatic, cleanTemplate, saveTemplate, resetTemplate,
   buildModel, renderHtml, renderText, renderPdf, valuesFor,
   maybeSendAuto, sendNow, statusOf, previewOf, pdfOf, previewTemplate, blocker, rowOf,
-  pdfForEmployee, fileForEmployee, emailForEmployee, selfDownloadGate, offerLetterHiddenFromSelf, NEW_JOINER_DAYS,
+  pdfForEmployee, fileForEmployee, emailForEmployee, selfDownloadGate, offerLetterHiddenFromSelf, bodyOfOfferDoc, NEW_JOINER_DAYS,
 };
