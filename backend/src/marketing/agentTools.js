@@ -8,6 +8,8 @@
 //   prepare   an outward tool describes what the approval dialog must show (ready, or why not, and the choices) from the LIVE state; approval(body) checks the person's choices and says in words what was approved.
 //   cost      what a call costs, honestly: kind 'free' (plain code) or 'free-tier' (a free allowance) or 'paid'; rupees per unit (0 for everything today). The dashboard adds these up.
 //   (Phase 3) the SEO assistant's audit, keywords and texts are tools here (seo.audit / seo.keywords / seo.content): they call marketing/seoSites, seoAudit, seoKeywords and seoContent, never copy them.
+//   (Phase 4) video: one picture per SCENE (a person joins them in AI Video, in the browser: there is no server-side rendering), optional free stock clips; voice: a CALL SHEET for a person to call from the CRM
+//             (the agent never calls and never uses AI Calling, which is built for job candidates with a recorded consent).
 //   manual    a step only a person can do (post by hand, make the video in the browser, talk to the website owner). The agent lists it, reminds, and records when the person marks it done.
 // Every tool can be replaced by a stand-in in tests (ctx.svc), and nothing real is touched there.
 // ---------------------------------------------------------------------------
@@ -17,6 +19,7 @@ class ToolError extends Error {
   constructor(message, code = 'failed', opts = {}) { super(message); this.name = 'ToolError'; this.code = code; this.retryable = !!opts.retryable; this.waiting = !!opts.waiting; }
 }
 const svcOf = (ctx) => ({
+  Stock: (ctx.svc && ctx.svc.Stock) || require('./stockclips'), Lead: (ctx.svc && ctx.svc.Lead) || require('./leadgen'), WA: (ctx.svc && ctx.svc.WA) || require('../omniwa/services'),
   Sites: (ctx.svc && ctx.svc.Sites) || require('./seoSites'), Audit: (ctx.svc && ctx.svc.Audit) || require('./seoAudit'), Kw: (ctx.svc && ctx.svc.Kw) || require('./seoKeywords'), Content: (ctx.svc && ctx.svc.Content) || require('./seoContent'),
   Post: (ctx.svc && ctx.svc.Post) || require('./postItem'), CR: (ctx.svc && ctx.svc.CR) || require('./clientReview'), C: (ctx.svc && ctx.svc.C) || require('./content'), Img: (ctx.svc && ctx.svc.Img) || require('./images'), Site: (ctx.svc && ctx.svc.Site) || require('./siteCheck'), Blog: (ctx.svc && ctx.svc.Blog) || require('./blogPlanner'), // eslint-disable-line global-require
 });
@@ -64,7 +67,7 @@ const TOOLS = {
   'image.banner': {
     label: 'Design the banner', module: 'AI Images', page: 'mkimages', risk: 'internal', auto: true, cost: { kind: 'free', unit: 'banner', rupees: 0, note: 'designed by plain code, no AI service' },
     does: (t, d) => `Designs a banner (${d ? d.bannerSize : '1:1'}) with the headline "${d ? d.headline : ''}", the brand colours and the logo, saved as a draft picture in AI Images.`,
-    build: (plan, d, biz) => ({ size: d.bannerSize, headline: clip(d.headline, 90), sub: clip(d.sub, 80), cta: d.theme === 'contact' ? 'Enquire now' : 'Know more', footer: clip(biz.contactLine || biz.website || '', 100), title: clip(`${d.title} (banner)`, 80), projectId: biz.projectId || '' }),
+    build: (plan, d, biz, args) => { const sc = args && args.scene != null && d.scenes ? d.scenes[args.scene] : null; return { size: d.bannerSize, headline: clip(sc ? sc.headline : d.headline, 90), sub: clip(sc ? sc.sub : d.sub, 80), cta: (sc ? sc.label === 'call to action' : d.theme === 'contact') ? 'Enquire now' : 'Know more', footer: clip(biz.contactLine || biz.website || '', 100), title: clip(`${d.title} (${sc ? `scene ${sc.n}` : 'banner'})`, 80), projectId: biz.projectId || '' }; },
     async run(ctx, input) {
       const { Img } = svcOf(ctx);
       const r = await Img.createBanner(ctx.u, input);
@@ -75,7 +78,7 @@ const TOOLS = {
   'image.ai': {
     label: 'Make the picture with AI', module: 'AI Images', page: 'mkimages', risk: 'internal', auto: true, cost: { kind: 'free-tier', unit: 'picture', rupees: 0, note: 'uses the free daily allowance of the AI picture service an Admin set up (Cloudflare Workers AI is free; if only a Google Gemini key is set, Google\'s own price applies and is shown there)' },
     does: (t, d) => `Asks the AI picture service for one picture from the prompt, in the brand colours. It counts against your daily picture limit and is saved as a draft in AI Images.`,
-    build: (plan, d, biz) => ({ prompt: d.mediaPrompt, aspect: d.bannerSize === '16:9' ? '16:9' : d.bannerSize === '9:16' ? '9:16' : '1:1', style: 'graphic', count: 1, title: clip(`${d.title} (picture)`, 80), withLogo: false, projectId: biz.projectId || '' }),
+    build: (plan, d, biz, args) => { const sc = args && args.scene != null && d.scenes ? d.scenes[args.scene] : null; const col = biz.colors || {}; const prompt = sc ? clip(`A clean, modern marketing picture for ${biz.name}${biz.industry ? ` (${String(biz.industry).toLowerCase()})` : ''}. ${sc.text}.${col.primary ? ` Use the brand colours ${col.primary}${col.secondary ? ` and ${col.secondary}` : ''}.` : ''} Leave empty space for a headline. No words, no logos, no faces of real people.${plan.healthcare ? ' No patients, no medical results, no before-and-after.' : ''}`, 900) : d.mediaPrompt; return { prompt, aspect: d.bannerSize === '16:9' ? '16:9' : d.bannerSize === '9:16' ? '9:16' : '1:1', style: 'graphic', count: 1, title: clip(`${d.title} (${sc ? `scene ${sc.n}` : 'picture'})`, 80), withLogo: false, projectId: biz.projectId || '' }; },
     async available(ctx) { const { Img } = svcOf(ctx); const st = await Img.status(); return st && st.ready ? { ok: true, note: st.demo ? 'test sample picture' : `via ${st.provider || 'the picture service'}` } : { ok: false, reason: (st && st.reason) || 'AI pictures are not set up.' }; },
     async run(ctx, input) {
       const { Img } = svcOf(ctx);
@@ -92,7 +95,7 @@ const TOOLS = {
     async run(ctx) {
       const { C, Img } = svcOf(ctx);
       const sib = ctx.dayTasks || []; const get = (re) => sib.find((x) => re.test(x.tool) && x.status === 'done' && x.output && x.output.data && x.output.data.itemId);
-      const draft = get(/^content\.draft$/); const pic = get(/^image\./);
+      const draft = get(/^content\.draft$/); const pics = sib.filter((x) => /^image\./.test(x.tool) && x.status === 'done' && x.output && x.output.data && x.output.data.itemId); const pic = pics[0] || null;
       if (!draft) throw new ToolError('There is no draft to send for approval.', 'no_draft');
       const told = [];
       const one = async (label, fn, id) => {
@@ -104,8 +107,8 @@ const TOOLS = {
         told.push(`${label}: ${clip(r && r.ok, 120) || 'sent for approval'}`);
       };
       await one('Draft', C.submit, draft.output.data.itemId);
-      if (pic) { try { await one('Picture', Img.submit, pic.output.data.itemId); } catch (e) { if (e.waiting) throw e; told.push(`Picture: could not be sent (${e.message})`); } }
-      return { summary: told.join('. ') + '.', refs: [{ kind: 'content', id: draft.output.data.itemId, label: 'Draft', page: 'mkapprove' }, ...(pic ? [{ kind: 'image', id: pic.output.data.itemId, label: 'Picture', page: 'mkapprove' }] : [])], data: { contentId: draft.output.data.itemId, imageId: pic ? pic.output.data.itemId : null } };
+      for (const [k, x] of pics.entries()) { try { await one(pics.length > 1 ? `Picture ${k + 1}` : 'Picture', Img.submit, x.output.data.itemId); } catch (e) { if (e.waiting) throw e; told.push(`Picture${pics.length > 1 ? ` ${k + 1}` : ''}: could not be sent (${e.message})`); } } // eslint-disable-line no-await-in-loop
+      return { summary: told.join('. ') + '.', refs: [{ kind: 'content', id: draft.output.data.itemId, label: 'Draft', page: 'mkapprove' }, ...pics.map((x, k) => ({ kind: 'image', id: x.output.data.itemId, label: pics.length > 1 ? `Picture ${k + 1}` : 'Picture', page: 'mkapprove' }))], data: { contentId: draft.output.data.itemId, imageId: pic ? pic.output.data.itemId : null, imageIds: pics.map((x) => x.output.data.itemId) } };
     },
   },
   'seo.sitecheck': {
@@ -183,6 +186,64 @@ const TOOLS = {
       }
       if (!saved.length) throw new ToolError(errors.join(' ') || 'Nothing could be written.', 'no_text');
       return { summary: `${saved.join(' and ')} kept in the SEO assistant for ${site.clientName}.${errors.length ? ` Not written: ${errors.join(' ')}` : ''}`, refs: [{ kind: 'seotext', id: site.id, label: 'SEO texts', page: 'mkseo' }], data: { itemId: site.id, saved } };
+    },
+  },
+  // ---- PHASE 4: video and voice ---------------------------------------------------------------------------------------------------------------------------------------------
+  'video.clips': {
+    label: 'Find free stock clips', module: 'AI Video', page: 'mkimages', risk: 'internal', auto: true, cost: { kind: 'free-tier', unit: 'clip', rupees: 0, note: 'a free stock footage source (Pixabay or Pexels) with the key an Admin saved; each clip counts against the daily clip limit' },
+    does: () => 'Searches the free stock footage source an Admin set up for clips that match this video and saves the best two in AI Images as raw footage. They are generic clips under the source\'s free licence, not footage of the business; each must be approved before AI Video can use it.',
+    build: (plan, d, biz) => ({ q: clip(d.service || biz.industry || 'business team', 60), orientation: 'portrait', n: 2 }),
+    async available(ctx) { const { Stock } = svcOf(ctx); const st = await Stock.status(); return st && st.ready ? { ok: true } : { ok: false, reason: (st && st.reason) || 'Stock clips are not set up.' }; },
+    async run(ctx, input) {
+      const { Stock } = svcOf(ctx);
+      const found = await Stock.search(ctx.u, { q: input.q, orientation: input.orientation });
+      if (!found || found.error) throw fail(found, 'The stock clips could not be searched.');
+      const picks = (found.items || []).slice(0, input.n || 2);
+      if (!picks.length) throw new ToolError(`No stock clip matched "${input.q}". Search again with other words in AI Video.`, 'no_clips');
+      const saved = []; const errors = [];
+      for (const x of picks) {
+        const r = await Stock.importClip(ctx.u, { id: x.id, query: input.q }); // eslint-disable-line no-await-in-loop
+        const it = r && !r.error ? (r.item || null) : null;
+        if (it) saved.push(it); else errors.push(clip((r && r.error) || 'a clip could not be saved', 140));
+      }
+      if (!saved.length) throw new ToolError(errors.join(' ') || 'No clip could be saved.', 'no_clips');
+      return { summary: `${saved.length} stock clip${saved.length === 1 ? '' : 's'} saved in AI Images for "${input.q}" (raw footage: approve before use).${errors.length ? ` Not saved: ${errors[0]}` : ''}`, refs: saved.map((it) => ({ kind: 'image', id: it.id, label: it.title, page: 'mkimages' })), data: { itemId: saved[0].id, clips: saved.map((it) => it.id), query: input.q } };
+    },
+  },
+  // the leads who showed interest while the plan ran, for a PERSON to call. The agent never calls and never uses AI Calling (built for job candidates with a recorded consent) for marketing leads.
+  'calling.sheet': {
+    label: 'Build the call sheet', module: 'CRM', page: 'crm', risk: 'internal', auto: true, scheduled: true, cost: { kind: 'free', unit: 'sheet', rupees: 0, note: 'read from the CRM, nothing is called' },
+    does: () => 'When the plan ends (or when you press "Build it now") lists the leads who showed interest while it ran, from the CRM: who, how warm and why, where they came from and, for WhatsApp leads, what they asked and when to call. It calls nobody: your team calls from the CRM. Phone numbers and emails stay masked here.',
+    build: (plan, d, biz) => ({ business: clip(biz.name, 120) }),
+    async run(ctx, input) {
+      const { Lead, WA } = svcOf(ctx);
+      const o = await Lead.overview(ctx.u);
+      if (!o || o.error) throw new ToolError(`The CRM leads cannot be read for your login (${clip((o && o.error) || 'unknown reason', 160)}) Ask a Sales manager or an Admin to add you in the CRM settings, then use "Build it now".`, 'no_crm');
+      const from = Number((ctx.run && ctx.run.startedAt) || 0);
+      const live = (o.leads || []).filter((l) => Date.parse(l.createdAt) >= from && !/\b(lost|junk|won|converted|closed|dead)\b/i.test(`${l.status || ''} ${l.stage || ''}`));
+      const rank = { Hot: 0, Warm: 1 };
+      const worth = live.filter((l) => l.band === 'Hot' || l.band === 'Warm').sort((a, b) => rank[a.band] - rank[b.band] || (Number(b.score) || 0) - (Number(a.score) || 0) || Date.parse(b.createdAt) - Date.parse(a.createdAt));
+      const rows = [];
+      for (const l of worth.slice(0, 25)) {
+        let asked = null; let bestTime = null; let note = '';
+        if (rows.length < 15) { // a WhatsApp lead has what the customer told the assistant (the WhatsApp assistant's own service): the others simply have no such detail
+          const w = await WA.call(ctx.u, 'lead.summary', { crmLeadId: l.id }); // eslint-disable-line no-await-in-loop
+          if (w && !w.error) { asked = clip((w.fields && (w.fields.requirement || w.fields.service)) || '', 160) || null; bestTime = clip((w.fields && w.fields.callback) || '', 80) || null; note = clip(w.next || w.nextStep || '', 160); }
+        }
+        rows.push({ leadId: l.id, name: clip(l.contactName || l.company || 'Lead', 80), company: clip(l.company || '', 80), band: l.band, score: l.score == null ? null : Number(l.score), why: (l.why || []).slice(0, 3).map((x) => clip(typeof x === 'string' ? x : (x.text || x.reason || ''), 120)).filter(Boolean), source: l.source || '', status: l.status || '', phone: l.phone || '', owner: l.ownerName || '', createdAt: l.createdAt, asked, bestTime, note });
+      }
+      const sheet = {
+        from: new Date(from || Date.now()).toISOString(), total: live.length, hot: live.filter((l) => l.band === 'Hot').length, warm: live.filter((l) => l.band === 'Warm').length, rows,
+        script: [
+          `Say who you are: "Hello <name>, this is <your name> from ${clip(input.business, 80)}."`, 'Say why you call: they showed interest. Use only what the lead told us (the "asked" column); do not guess.',
+          'Ask if it is a good time, and offer the time they asked for, if there is one.', 'Do not promise prices, results or discounts that are not in the saved facts.', 'If they say no or ask not to be called again, stop and record it on the lead.',
+        ],
+        rules: [
+          'Call only people who gave their number to be contacted. TeamLink does not check the Do-Not-Disturb register for these leads: check it before calling.', 'Call between 9:00 and 21:00 India time.',
+          'The agent does not call anyone and does not use AI Calling for these leads (AI Calling is built for job candidates with a recorded consent): your team calls from the CRM.',
+        ],
+      };
+      return { summary: rows.length ? `Call sheet ready: ${rows.length} lead${rows.length === 1 ? '' : 's'} to call (${sheet.hot} hot, ${sheet.warm} warm of ${live.length} new since the plan started). Nobody is called by the agent.` : `Call sheet: none of the ${live.length} new lead${live.length === 1 ? '' : 's'} since the plan started is Hot or Warm yet. Nobody is called by the agent.`, refs: [{ kind: 'callsheet', id: ctx.task.id, label: 'Call sheet', page: 'crm' }], data: { sheet, rows: rows.length } };
     },
   },
   // ---- OUTWARD steps (Phase 2): each one waits for its own approval; the engine never runs them on the plan's approval alone ----------------------------------------------------
@@ -274,8 +335,10 @@ const TOOLS = {
     does: () => 'Waits for you. When the draft and picture are approved, post them yourself (AI Images > the approved picture > Post, or by hand), then mark this step done. The agent never posts by itself in this phase.', build: () => ({}) },
   'manual.whatsapp': { label: 'Send the WhatsApp message (by a person)', module: 'You', page: 'campaigns', risk: 'internal', auto: false, manual: true, cost: { kind: 'free', unit: 'message', rupees: 0, note: 'sent by a person from Omni-Channel > Campaigns (its own credits and rules apply)' },
     does: () => 'Waits for you. The agent never sends WhatsApp. When the message is approved, a person sends it from Omni-Channel > Campaigns (or Templates): that engine only reaches people who agreed to receive messages, applies the STOP list, quiet hours, credits and its own approval. Mark this step done once it was sent.', build: () => ({}) },
+  'manual.calls': { label: 'Call the leads (by your team)', module: 'You', page: 'crm', risk: 'internal', auto: false, manual: true, cost: { kind: 'free', unit: 'call', rupees: 0, note: 'made by your team from the CRM' },
+    does: () => 'Waits for you. Your team calls the leads on the sheet from the CRM (the agent does not call and does not use AI Calling for these leads). Mark this done when the calls are made and add what came of them under "Add a result".', build: () => ({}) },
   'manual.video': { label: 'Make the video', module: 'You', page: 'mkvideos', risk: 'internal', auto: false, manual: true, cost: { kind: 'free', unit: 'video', rupees: 0, note: 'done by a person in AI Video (free slideshow video made in your browser)' },
-    does: () => 'Waits for you. A video is put together in your browser on the AI Video screen: use the scenes of this plan, then mark this step done.', build: () => ({}) },
+    does: () => 'Waits for you. A video is put together in your browser on the AI Video screen: join the scene pictures made for this video (and any stock clips you approve), then mark this step done.', build: () => ({}) },
   'manual.note': { label: 'A step for a person', module: 'You', page: 'mkvisibility', risk: 'internal', auto: false, manual: true, cost: { kind: 'free', unit: 'step', rupees: 0, note: 'done by a person' }, does: (t) => (t && t.note) || 'Waits for you; mark it done when it is finished.', build: () => ({}) },
 };
 

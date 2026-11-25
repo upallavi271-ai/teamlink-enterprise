@@ -158,10 +158,10 @@ function Questions({ run, act, id }) {
 // ---------------------------------------------------------------------------------------------------------------- the plan and preview
 function Preview({ d, act, id, busy, meta, onBack }) {
   const { run, tasks, preflight } = d; const plan = run.plan; const p = plan.params;
-  const [form, setForm] = useState({ days: p.days, platforms: p.platforms, creative: p.creative, startDate: p.startDate, time: p.time, publish: p.publish || 'manual', approver: p.approver || 'team' });
+  const [form, setForm] = useState({ days: p.days, platforms: p.platforms, creative: p.creative, startDate: p.startDate, time: p.time, publish: p.publish || 'manual', approver: p.approver || 'team', clips: !!p.clips, callSheet: !!p.callSheet });
   const [confirm, setConfirm] = useState(false);
   const optional = (run.questions || []).filter((q) => !q.required);
-  const changed = form.publish !== (p.publish || 'manual') || form.approver !== (p.approver || 'team') || form.days !== p.days || form.creative !== p.creative || form.startDate !== p.startDate || form.time !== p.time || form.platforms.join() !== p.platforms.join();
+  const changed = form.clips !== !!p.clips || form.callSheet !== !!p.callSheet || form.publish !== (p.publish || 'manual') || form.approver !== (p.approver || 'team') || form.days !== p.days || form.creative !== p.creative || form.startDate !== p.startDate || form.time !== p.time || form.platforms.join() !== p.platforms.join();
   const toggle = (k) => setForm({ ...form, platforms: form.platforms.includes(k) ? form.platforms.filter((x) => x !== k) : [...form.platforms, k] });
   const counts = useMemo(() => { const c = {}; tasks.forEach((t) => { c[t.tool] = (c[t.tool] || 0) + 1; }); return c; }, [tasks]);
   const isSeo = plan.intent === 'seo';
@@ -174,6 +174,8 @@ function Preview({ d, act, id, busy, meta, onBack }) {
     counts['seo.keywords'] && 'keyword ideas kept in the SEO assistant (no search volumes: TeamLink has no source for them)',
     counts['seo.content'] && 'the home page title, description and FAQ written from the saved facts and kept in the SEO assistant (nothing is changed on the website)',
     counts['seo.blogplan'] && 'a blog plan saved (briefs only)',
+    counts['video.clips'] && `${plural(counts['video.clips'], 'search')} of the free stock footage source: the best two clips of each saved in AI Images as raw footage (approve before use)`,
+    counts['calling.sheet'] && 'a call sheet built when the plan ends: the Hot and Warm leads from the CRM for your team to call (the agent calls nobody)',
     counts['social.post'] && `${plural(counts['social.post'], 'post')} prepared to go public: nothing is posted until you approve each one, pick its accounts and the picture is approved; it then goes out at its scheduled time`,
     counts['client.review'] && `${plural(counts['client.review'], 'picture')} prepared to send to the client on WhatsApp: nothing is sent until you approve each one and confirm who it goes to`,
   ].filter(Boolean);
@@ -191,6 +193,8 @@ function Preview({ d, act, id, busy, meta, onBack }) {
             <Field label="PICTURES"><select value={form.creative} onChange={(e) => setForm({ ...form, creative: e.target.value })}><option value="banner">Designed banners (free)</option><option value="ai">AI pictures (free tier)</option><option value="none">No pictures</option></select></Field>
             <Field label="POSTING"><select value={form.publish} onChange={(e) => setForm({ ...form, publish: e.target.value })}><option value="manual">I post by hand</option><option value="agent">The agent posts after I approve each post</option></select></Field>
             {run.businessKey !== 'own' ? <Field label="WHO APPROVES THE PICTURES"><select value={form.approver} onChange={(e) => setForm({ ...form, approver: e.target.value })}><option value="team">Our team</option><option value="client">The client (on WhatsApp, after I approve each send)</option></select></Field> : null}
+            {plan.intent === 'videos' ? <Field label="STOCK CLIPS"><label style={{ fontSize: 13 }}><input type="checkbox" checked={form.clips} onChange={(e) => setForm({ ...form, clips: e.target.checked })} /> Add free stock clips (needs the stock-clip key)</label></Field> : null}
+            <Field label="CALL SHEET"><label style={{ fontSize: 13 }}><input type="checkbox" checked={form.callSheet} onChange={(e) => setForm({ ...form, callSheet: e.target.checked })} /> A call sheet for my team when the plan ends</label></Field>
             <Field label="STARTS"><input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></Field>
             <Field label="POST TIME (IST)"><input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} /></Field>
             <Btn disabled={busy || !changed || !form.platforms.length} onClick={() => act(() => omni.post(`${API}/runs/${id}/plan`, { params: form }), 'Plan made again.')}>Update the plan</Btn>
@@ -283,6 +287,8 @@ function Execution({ d, act, id, go, busy }) {
                   <div>{t.title}{t.attempts > 1 ? <span style={{ color: 'var(--muted)' }}> · {t.attempts} tries</span> : null}</div>
                   <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.does}</div>
                   {t.summary ? <div style={{ fontSize: 12.5 }}>{t.summary}</div> : null}
+                  {!t.outward && t.scheduled && t.status === 'queued' && t.scheduledAt ? <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>It runs at {fmtDateTime(t.scheduledAt)}.</div> : null}
+                  {t.data && t.data.sheet ? <CallSheet sheet={t.data.sheet} go={go} /> : null}
                   {t.outward && t.note && ['queued', 'running', 'done'].includes(t.status) ? <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Approved by {run.approvedByName || 'you'} to {t.note}{t.status === 'queued' && t.scheduled && t.scheduledAt ? `. Goes out at ${fmtDateTime(t.scheduledAt)} (checked every few minutes).` : '.'}</div> : null}
                   {t.error ? <div style={{ fontSize: 12.5, color: '#9b1c1c' }}>{t.error}</div> : null}
                   {t.data && t.data.top && t.data.top.length ? <ul style={{ margin: '3px 0', paddingLeft: 18, fontSize: 12 }}>{t.data.top.map((x) => <li key={x}>{x}</li>)}</ul> : null}
@@ -293,6 +299,7 @@ function Execution({ d, act, id, go, busy }) {
                     {t.status === 'failed' || t.status === 'skipped' ? <TinyBtn disabled={busy} onClick={() => act(() => omni.post(`${API}/tasks/${t.id}/retry`, {}), 'Trying again.')}>Retry</TinyBtn> : null}
                     {t.status === 'waiting' && t.manual ? <TinyBtn disabled={busy} onClick={() => setDone(t)}>Mark done</TinyBtn> : null}
                     {t.status === 'waiting' && t.manual ? <TinyBtn disabled={busy} onClick={() => act(() => omni.post(`${API}/tasks/${t.id}/done`, { action: 'skip' }), 'Skipped.')}>Skip</TinyBtn> : null}
+                    {t.status === 'queued' && t.scheduled && !t.outward ? <TinyBtn disabled={busy} onClick={() => act(() => omni.post(`${API}/tasks/${t.id}/run-now`, {}), 'Building it now.')}>Build it now</TinyBtn> : null}
                     {t.status === 'awaiting_approval' && t.needsDetails ? <TinyBtn disabled={busy} onClick={() => setOut(t)}>Review and approve</TinyBtn> : null}
                     {t.status === 'awaiting_approval' && !t.needsDetails ? <TinyBtn disabled={busy} onClick={() => act(() => omni.post(`${API}/tasks/${t.id}/approve`, {}), 'Approved.')}>Approve this step</TinyBtn> : null}
                     {['planned', 'queued', 'waiting', 'awaiting_approval', 'running'].includes(t.status) ? <TinyBtn disabled={busy} onClick={() => act(() => omni.post(`${API}/tasks/${t.id}/cancel`, {}), 'Cancel requested.')}>Cancel</TinyBtn> : null}
@@ -373,6 +380,30 @@ function OutwardModal({ task, tasks, runId, onClose, reload }) {
         </div>
       ) : null}
     </GsModal>
+  );
+}
+
+// the call sheet: who to call, how warm and why; numbers stay masked. The agent calls nobody.
+function CallSheet({ sheet, go }) {
+  return (
+    <details style={{ margin: '6px 0' }}>
+      <summary style={{ cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}>Open the call sheet ({sheet.rows.length} lead{sheet.rows.length === 1 ? '' : 's'}: {sheet.hot} hot, {sheet.warm} warm)</summary>
+      {sheet.rows.length ? (
+        <table className="mk-table"><tbody>
+          {sheet.rows.map((r) => (
+            <tr key={r.leadId}>
+              <td style={{ fontSize: 12.5 }}><b>{r.name}</b>{r.company && r.company !== r.name ? <div style={{ color: 'var(--muted)' }}>{r.company}</div> : null}<div style={{ color: 'var(--muted)' }}>{r.phone}</div></td>
+              <td><Pill tone={r.band === 'Hot' ? 'red' : 'warn'}>{r.band}</Pill></td>
+              <td style={{ fontSize: 12 }}>{r.why.join('; ')}{r.asked ? <div><b>Asked:</b> {r.asked}</div> : null}{r.bestTime ? <div><b>Best time:</b> {r.bestTime}</div> : null}</td>
+              <td style={{ fontSize: 12, color: 'var(--muted)' }}>{r.source}{r.owner ? ` · ${r.owner}` : ''}</td>
+            </tr>
+          ))}
+        </tbody></table>
+      ) : <div style={{ fontSize: 12.5, margin: '6px 0' }}>No Hot or Warm lead has come in since the plan started.</div>}
+      <div style={{ fontSize: 12.5, marginTop: 6 }}><b>On the call</b><ul style={{ margin: '3px 0', paddingLeft: 18 }}>{sheet.script.map((x) => <li key={x}>{x}</li>)}</ul></div>
+      <div style={{ fontSize: 12.5 }}><b>Rules</b><ul style={{ margin: '3px 0', paddingLeft: 18 }}>{sheet.rules.map((x) => <li key={x}>{x}</li>)}</ul></div>
+      <TinyBtn onClick={() => go('crm')}>Open the CRM</TinyBtn>
+    </details>
   );
 }
 

@@ -239,15 +239,19 @@ function promptFor(c, f, ctx, healthcare) {
     healthcare ? 'No patients, no medical results, no before-and-after.' : '',
   ].filter(Boolean).join(' '), 900);
 }
-function scenesFor(c, f, t, healthcare) {
-  const pts = f.svcs.slice(0, 2);
-  const s = [`Scene 1 (hook): ${c.headline}`];
-  if (t.kind === 'intro') s.push(`Scene 2: ${f.name}${f.ind ? `, ${f.indA}` : ''}${f.loc ? ` in ${f.loc}` : ''}`);
-  else if (t.service) s.push(`Scene 2: ${t.service}${f.aud ? `, for ${f.aud}` : ''}`);
-  else s.push(`Scene 2: ${c.sub || f.name}`);
-  pts.filter((x) => x !== t.service).forEach((x, i) => s.push(`Scene ${3 + i}: ${x}`));
-  s.push(`Scene ${s.length + 1} (call to action): ${f.hasContact ? f.cta : 'Send us a message to know more.'}`);
-  return clip(`${s.join('. ')}. Pictures in the brand colours, no real people's faces${healthcare ? ', no patients or medical results' : ''}. Make it in AI Video (Create from a prompt).`, 900);
+// the scenes of a short video: the hook, who / what, up to two more services, the call to action. Each has the words on its picture (headline, sub-line) and the words of the scene.
+function sceneList(c, f, t) {
+  const sc = [{ label: 'hook', text: c.headline, headline: clip(c.headline, 90), sub: clip(c.sub || f.name, 80) }];
+  if (t.kind === 'intro') sc.push({ label: 'who', text: `${f.name}${f.ind ? `, ${f.indA}` : ''}${f.loc ? ` in ${f.loc}` : ''}`, headline: clip(f.name, 90), sub: clip(f.ind ? cap1(f.ind) + (f.loc ? ` in ${f.loc}` : '') : f.tagline, 80) });
+  else if (t.service) sc.push({ label: 'what', text: `${t.service}${f.aud ? `, for ${f.aud}` : ''}`, headline: clip(t.service, 90), sub: clip(f.aud ? `For ${f.aud}` : `with ${f.name}`, 80) });
+  else sc.push({ label: 'what', text: c.sub || f.name, headline: clip(c.sub || f.name, 90), sub: clip(f.name, 80) });
+  f.svcs.slice(0, 2).filter((x) => x !== t.service).forEach((x) => sc.push({ label: 'also', text: x, headline: clip(x, 90), sub: clip(f.name, 80) }));
+  sc.push({ label: 'call to action', text: f.hasContact ? f.cta : 'Send us a message to know more.', headline: clip(`Talk to ${f.name}`, 90), sub: clip(f.hasContact ? (f.contact || f.webShort) : 'Send us a message', 80) });
+  return sc.map((x, k) => ({ n: k + 1, ...x }));
+}
+function scenesFor(scenes, healthcare) {
+  const s = scenes.map((x) => `Scene ${x.n}${x.label === 'hook' || x.label === 'call to action' ? ` (${x.label})` : ''}: ${String(x.text).replace(/[.!?]+$/, '')}`);
+  return clip(`${s.join('. ')}. Pictures in the brand colours, no real people's faces${healthcare ? ', no patients or medical results' : ''}. Join them in AI Video (the scene pictures are made for you).`, 900);
 }
 
 // the wording check (contentGuard.js) on a caption: what it finds that must change (stop) or be checked (review)
@@ -274,7 +278,7 @@ function buildDays(intent, f, ctx, p, healthcare) {
       theme: t.kind, service: t.service || '', title: clip(videos ? `Video ${i + 1}: ${c.headline}` : `Day ${i + 1}: ${c.headline}`, 80), headline: clip(c.headline, 90), sub: clip(c.sub, 80),
       contentType: videos ? 'Short video (Reel, 20 to 30 seconds)' : (p.platforms.length === 1 && p.platforms[0] === 'x' ? 'Text post with a picture' : p.platforms.length === 1 && p.platforms[0] === 'whatsapp' ? 'WhatsApp message with a picture' : 'Image post'),
       objective: c.objective, audience: f.aud || 'People who may need what you offer (no audience saved)', platforms: p.platforms.slice(), texts, hashtags: uniq(tagsAll),
-      mediaPrompt: videos ? scenesFor(c, f, t, healthcare) : promptFor(c, f, ctx, healthcare), bannerSize: size,
+      scenes: videos ? sceneList(c, f, t) : [], mediaPrompt: videos ? scenesFor(sceneList(c, f, t), healthcare) : promptFor(c, f, ctx, healthcare), bannerSize: size,
       metrics: dayMetrics(intent), flags,
     });
   });
@@ -313,7 +317,7 @@ function paramsFor(parsed, given = {}, now = Date.now()) {
   const startDate = validDay(g.startDate) && g.startDate >= istDay(now) ? g.startDate : tomorrow;
   return {
     days: def.days === 0 ? 0 : days, platforms, startDate, time: validTime(g.time) ? g.time : '10:00',
-    creative: ['banner', 'ai', 'none'].includes(g.creative) ? g.creative : 'banner', publish: g.publish === 'agent' ? 'agent' : 'manual', approver: g.approver === 'client' ? 'client' : 'team', count: Math.max(1, Math.min(5, Math.round(Number(g.count)) || (parsed.intent === 'videos' ? parsed.days : 3))),
+    creative: ['banner', 'ai', 'none'].includes(g.creative) ? g.creative : 'banner', callSheet: g.callSheet === true, clips: g.clips === true, publish: g.publish === 'agent' ? 'agent' : 'manual', approver: g.approver === 'client' ? 'client' : 'team', count: Math.max(1, Math.min(5, Math.round(Number(g.count)) || (parsed.intent === 'videos' ? parsed.days : 3))),
   };
 }
 
@@ -333,6 +337,8 @@ function build(goalText, ctxIn, given = {}, now = Date.now()) {
   for (const k of [...def.essentials, ...def.optional]) if (!(Array.isArray(ctx[k]) ? ctx[k].length : ctx[k]) && CONSEQUENCE[k]) gaps.push(`${Ctx.FIELDS[k].label} not saved: ${CONSEQUENCE[k]}.`);
   if (healthcare) gaps.push('Healthcare business: a doctor or qualified medical reviewer must read every caption before it is approved. The wording check below is a starting checklist only.');
   if (p.platforms.includes('whatsapp')) assumptions.push('WhatsApp: the message is prepared and approved here; TeamLink never sends it from the agent. A person sends it from Omni-Channel > Campaigns, whose own rules apply (only people who agreed to receive messages, the STOP list, quiet hours, credits and approval). Every message ends with the opt-out line.');
+  if (p.callSheet && parsed.intent !== 'seo') assumptions.push('Call sheet: when the plan ends the agent lists the leads who showed interest while it ran (from the CRM, with the reasons and, for WhatsApp leads, what they asked and when to call). It does not call anyone: your team calls from the CRM. The automatic AI Calling is built for job candidates with a recorded consent and is not used for marketing leads. TeamLink does not check the Do-Not-Disturb register for these leads: check it before calling.');
+  if (p.clips && parsed.intent === 'videos') assumptions.push('Stock clips: a free stock footage source (Pixabay or Pexels, with the key an Admin saved) is searched for each video and the best clip is saved in AI Images as raw footage, to be approved before use. They are generic clips under the source\'s free licence, not footage of the business.');
   if (f.language !== 'English') assumptions.push(`Captions are written in English; ${f.language} is saved for this business, so have them translated and read before approving.`);
   assumptions.push('Every caption is built only from the facts saved for this business. Nothing is added: no prices, years, awards, results or promises.');
   assumptions.push(`The posting time (${p.time} IST) is a suggestion: change it before approving.`);
@@ -376,17 +382,30 @@ function taskSpecs(plan) {
   for (const d of plan.days) {
     const label = d.title.split(':')[0];
     const draft = add({ tool: 'content.draft', day: d.n, title: `${label}: write the draft in AI Content` });
-    const pic = hasPic ? add({ tool: mode === 'ai' ? 'image.ai' : 'image.banner', day: d.n, title: `${label}: ${mode === 'ai' ? 'make the picture with AI (free tier)' : 'design the banner (free)'}` }) : 0;
+    let pic = 0; // the first picture of the day (what a post or a client message is about); a video has one picture per scene
+    if (hasPic) {
+      const scenes = d.kind === 'video' ? d.scenes : [null];
+      scenes.forEach((sc, k) => {
+        const id = add({ tool: mode === 'ai' ? 'image.ai' : 'image.banner', day: d.n, args: sc ? { scene: k } : undefined, title: sc ? `${label}: ${mode === 'ai' ? 'make' : 'design'} the picture for scene ${sc.n} (${sc.label})${mode === 'ai' ? ' with AI (free tier)' : ' (free)'}` : `${label}: ${mode === 'ai' ? 'make the picture with AI (free tier)' : 'design the banner (free)'}` });
+        if (!pic) pic = id;
+      });
+      if (d.kind === 'video' && plan.params.clips) add({ tool: 'video.clips', day: d.n, title: `${label}: find free stock clips for it (you choose which to use)` });
+    }
     const ask = clientAsks
       ? add({ tool: 'client.review', day: d.n, deps: [draft, pic], title: `${label}: send the picture and caption to the client to approve (you confirm who it goes to)` })
       : add({ tool: 'approval.request', day: d.n, deps: [draft], title: `${label}: ask the team to approve` });
-    if (d.kind === 'video') { add({ tool: 'manual.video', day: d.n, deps: [ask], title: `${label}: make the video in AI Video from the scenes` }); continue; } // eslint-disable-line no-continue
+    if (d.kind === 'video') { add({ tool: 'manual.video', day: d.n, deps: [ask], title: `${label}: join the scene pictures into the video in AI Video` }); continue; } // eslint-disable-line no-continue
     const social = d.platforms.filter((x) => SOCIAL.includes(x)); const wa = d.platforms.includes('whatsapp');
     const viaAgent = agentPosts && social.length > 0;
     const byHand = viaAgent ? d.platforms.filter((x) => !SOCIAL.includes(x) && x !== 'whatsapp') : d.platforms.filter((x) => x !== 'whatsapp'); // the platforms a person posts on
     if (viaAgent) add({ tool: 'social.post', day: d.n, deps: [ask, pic], title: `${label}: post on ${listText(social.map((x) => PLATFORM_WORDS[x]))} at ${d.time} on ${d.date} (after you approve this post)` });
     if (byHand.length) add({ tool: 'manual.post', day: d.n, deps: [ask], title: `${label}: post on ${listText(byHand.map((x) => PLATFORM_WORDS[x]))} at ${d.time}, after it is approved (by hand)` });
     if (wa) add({ tool: 'manual.whatsapp', day: d.n, deps: [ask], title: `${label}: send the WhatsApp message to people who agreed to receive it (Campaigns), after it is approved` });
+  }
+  if (plan.params.callSheet && plan.days.length) { // the leads who showed interest while the plan ran, for a person to call (the agent never calls)
+    const at = atOf(addDays(plan.days[plan.days.length - 1].date, 1), '10:00');
+    const sheet = add({ tool: 'calling.sheet', at, title: `Build the call sheet for your team on ${dayWords(addDays(plan.days[plan.days.length - 1].date, 1))} (leads who showed interest while the plan ran)` });
+    add({ tool: 'manual.calls', deps: [sheet], at, title: 'Your team calls the leads on the sheet from the CRM, then marks this done (the agent does not call)' });
   }
   return specs.slice(0, MAX_TASKS);
 }
