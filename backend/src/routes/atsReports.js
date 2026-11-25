@@ -512,7 +512,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
   const userById = new Map(users.map((u) => [u.id, u]));
   // handovers: the credit reads who had the candidate before each one (utils/handover.js)
   const HO = await require('../utils/handover').handoversFor(appRows.map((a) => a.id)); // eslint-disable-line global-require
-  person.startOf = (await workers.loadDirectory()).person.startOf; // each login's Date of joining, for workers.creditAt()
+  { const d0 = (await workers.loadDirectory()).person; person.startOf = d0.startOf; person.eduSeatAt = d0.eduSeatAt; person.tlOf = d0.tlOf; } // Date of joining (creditAt), seat and HRMS TL (teamLeadOf)
 
   const reqMap = new Map();
   reqRows.forEach((r) => {
@@ -580,7 +580,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
     const reqForAttr = {
       recruiterId: r.recruiterId, tlId: r.tlId, tl: r.tlText, bdeId: r.bdeId, positionCode: r.positionCode,
     };
-    const { recruiter: recruiterNow, seat, tl, bde } = workers.attribute(reqForAttr, fus, evs, person);
+    const { recruiter: recruiterNow, seat, tl: tlNow, bde } = workers.attribute(reqForAttr, fus, evs, person);
     // THE RESULT GOES TO WHO DID IT (founder 2026-11-04: a recruiter who took over a seat or a job got the old recruiter's
     // joinings): the recruiter who had the person when they reached the step they are at now - the joining for a joined person -
     // never somebody who joined the company after that (utils/workers.js creditAt). A person not past the first steps stays with
@@ -593,6 +593,8 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
     const recruiter = joined
       ? (workers.joinCredit(reqForAttr, fus, evs, person, creditTime, HO.get(a.id)) || { key: 'n:earlier recruiter', label: 'Earlier recruiter (not recorded)', team: null })
       : (creditTime ? (workers.creditAt(reqForAttr, fus, evs, person, creditTime, HO.get(a.id)) || recruiterNow) : recruiterNow);
+    // a joining counts under the credited recruiter's own team lead (founder 2026-11-25), not the requirement's
+    const tl = (joined && recruiter && workers.teamLeadOf(person, recruiter, workers.joinCreditTime(evs, creditTime))) || tlNow;
 
     const fb = fbBy.get(a.id) || [];
     const clientFb = fb.find((x) => x.kind === 'Client') || fb.find((x) => x.kind === 'Internal');

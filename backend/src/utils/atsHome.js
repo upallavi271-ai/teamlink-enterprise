@@ -307,6 +307,9 @@ async function loadWorld(appWhere, reqWhere, today) {
       const credit = W.joinCredit(attrReq, fuBy.get(a.id) || [], evBy.get(a.id) || [], dir.person, jd, HO.get(a.id));
       // nobody on record had joined the company by then: an earlier recruiter's work - never the one who has the candidate now
       who.recruiter = credit || { key: 'n:earlier recruiter', userId: null, label: 'Earlier recruiter (not recorded)', team: null };
+      // ...and under that recruiter's own team lead (founder 2026-11-25), not the requirement's
+      const ownTl = credit ? W.teamLeadOf(dir.person, credit, W.joinCreditTime(evBy.get(a.id) || [], jd)) : null;
+      if (ownTl) who.tl = ownTl;
     }
     const live = !CLOSED.includes(a.stage);
     return {

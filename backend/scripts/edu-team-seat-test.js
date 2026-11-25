@@ -30,5 +30,16 @@ check('the job\'s seat decides when the follow-up has none', tlOf([fu({})], { po
 check('the sheets\' "D.Usha" is D.Leela Usha Sri', tlOf([fu({ tlName: 'D.Usha' })]) === 'D.Leela Usha Sri');
 check('another department\'s seat is left alone', tlOf([fu({ ownerPositionCode: 'MED-1', tlName: 'mamatha' })]) === 'mamatha');
 
+// A JOINING COUNTS UNDER THE CREDITED RECRUITER'S OWN TEAM LEAD (founder 2026-11-25: "evari team recruiter joinings valla team lead kiindha ravaali")
+const Q = W.makeResolver([...users, { id: 'r2', name: 'N Saikumar', status: 'Active' }, { id: 'r3', name: 'Ravi Medical', status: 'Active' }, { id: 'r4', name: 'No Team', status: 'Active' }]);
+Q.eduSeatAt = (u, at) => (u === 'r2' ? (new Date(at) < new Date('2026-10-23') ? 'EDU-2' : 'EDU-9') : null);
+Q.tlOf = (u) => ({ r2: 'D.Leela Usha Sri', r3: 'Mamatha Dara' }[u] || null);
+const tlFor = (uid, at) => { const t = W.teamLeadOf(Q, Q(uid), at); return t ? t.label : null; };
+check('Saikumar in seat EDU-9 (Sirisha\'s team) on an Usha requirement: the joining is Sirisha\'s', tlFor('r2', '2026-11-12T10:00:00+05:30') === 'Masabattula Sai Sirisha');
+check('the seat on that day decides: Saikumar in EDU-2 back then: Usha', tlFor('r2', '2026-10-01T10:00:00+05:30') === 'D.Leela Usha Sri');
+check('no Education seat: the recruiter\'s TL in HRMS', tlFor('r3', '2026-11-12') === 'Mamatha Dara');
+check('no seat and no TL on file: not known (the old TL stays)', tlFor('r4', '2026-11-12') === null && W.teamLeadOf(Q, null, null) === null && W.teamLeadOf(Q, { key: 'n:x', userId: null, label: 'x' }, null) === null);
+check('the credit time is the move to Selected, else the joining day', W.joinCreditTime([{ toStage: 'SELECTED', createdAt: '2026-10-05' }, { toStage: 'JOINED', createdAt: '2026-11-02' }], '2026-11-01') === '2026-10-05' && W.joinCreditTime([], '2026-11-01') === '2026-11-01');
+
 console.log(bad ? `\n${bad} check(s) failed` : '\nAll checks passed');
 process.exit(bad ? 1 : 0);

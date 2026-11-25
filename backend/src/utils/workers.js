@@ -203,7 +203,7 @@ async function loadDirectory() {
       },
     }),
     prisma.employee.findMany({
-      select: { id: true, name: true, userId: true, department: true, employmentStatus: true, dateOfJoining: true },
+      select: { id: true, name: true, userId: true, department: true, employmentStatus: true, dateOfJoining: true, tl: true },
     }),
     // who sat in which Education seat, from when to when (the team of the work, eduTeamOfSeat)
     prisma.positionAssignment.findMany({
@@ -241,6 +241,8 @@ async function loadDirectory() {
     if (k && !empByName.has(k)) empByName.set(k, e);
   });
   const empById = new Map(employees.map((e) => [e.id, e]));
+  // each login's team lead in HRMS (Employee > TL), for teamLeadOf()
+  person.tlOf = (userId) => { const e = userId && empByUser.get(userId); return (e && e.tl && String(e.tl).trim()) || null; };
   return { users, employees, person, empByUser, empByName, empById };
 }
 
@@ -383,9 +385,25 @@ function selectedAt(evs) {
 }
 // No joining date typed ("day moved to Joined"): the day they were moved to Joined - never "whoever has them now", which gave
 // recruiters who joined later the joinings of the ones before them (founder 2026-11-10: Koushik, Janathri).
-function joinCredit(req, fus, evs, person, joinAt, handovers = null) {
+// the moment the joining's credit is read at (selected, else the joining day, else the day moved to Joined)
+function joinCreditTime(evs, joinAt) {
   const moved = (evs || []).find((e) => ['JOINED', 'HIRED'].includes(e.toStage));
-  return creditAt(req, fus, evs, person, selectedAt(evs) || joinAt || (moved && moved.createdAt) || null, handovers);
+  return selectedAt(evs) || joinAt || (moved && moved.createdAt) || null;
+}
+function joinCredit(req, fus, evs, person, joinAt, handovers = null) {
+  return creditAt(req, fus, evs, person, joinCreditTime(evs, joinAt), handovers);
+}
+// THE JOINING'S TEAM LEAD (founder 2026-11-25: "evari team recruiter joinings valla team lead kiindha ravaali"): the team lead of the
+// recruiter the joining is credited to, at that time - the Education seat they sat in that day (its team's TL), else their TL in HRMS.
+// Not the requirement's TL or whoever has the candidate now: N Saikumar (seat EDU-9, Sirisha's team) on an Usha requirement counts for Sirisha.
+// null = not known (a recruiter with no seat and no TL on file, or no login): the caller keeps the TL it had.
+function teamLeadOf(person, recruiter, at) {
+  if (!recruiter || !recruiter.userId) return null;
+  const edu = person.eduSeatAt ? eduTeamOfSeat(person.eduSeatAt(recruiter.userId, at)) : null;
+  if (edu) { const p = person(null, edu.tl); if (p) return { ...p, team: edu.team }; }
+  const name = person.tlOf ? person.tlOf(recruiter.userId) : null;
+  if (!name || nameKey(name) === nameKey(recruiter.label)) return null;
+  return person(null, name);
 }
 // WHO SOURCED THEM: who first brought the candidate onto this requirement - the person who added it (its first step), else the
 // first recruiter on record (an import's tracker name, the first handover's old recruiter). Never changes with a handover.
@@ -817,6 +835,6 @@ module.exports = {
   ROLES, ROLE_LABEL, LEFT_STATUSES, REAL_EVENT, ATTR_SELECT,
   clean, nameKey, seatRole, roleOfLabel, realActor,
   makeResolver, loadDirectory, resolvePersonValue, nameVariantsFor, shortFormFits, shortFormOf, partOfName,
-  attribute, creditAt, joinCredit, selectedAt, sourcedBy, stepAt, attributionWhere, seatWhere, seatCodes, personQuery, hasPersonQuery,
+  attribute, creditAt, joinCredit, joinCreditTime, teamLeadOf, selectedAt, sourcedBy, stepAt, attributionWhere, seatWhere, seatCodes, personQuery, hasPersonQuery,
   attributedApplications, attributedCounts, listWorkers,
 };
