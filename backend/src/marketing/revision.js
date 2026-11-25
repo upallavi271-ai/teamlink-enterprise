@@ -105,10 +105,19 @@ async function run(reviewId, opts = {}) {
     const note = `Changed automatically after the client's request: ${understood.summary.join(' ')}`;
     made = await retry(() => Img.reviseBanner(u, item.id, { ...understood.spec, handled }, note, validate), 3, attempts);
   } else {
-    if (Rev.classify(comment) === 'new_design') return needsPerson('The client wants a completely new picture, which has to be made again.', { classification: 'new_design' });
-    understood = { summary: [`Changed the picture as the client asked: "${S.clip(comment, 140)}"`], unclear: [], method: 'ai-edit', classification: 'correction', confidence: 1 };
-    made = await retry(() => Img.editPicture(u, item.id, comment, { editFn: hooks.editFn, check: validate }), 3, attempts);
-    if (made && ['unsupported', 'not_ready', 'limit'].includes(made.code)) return needsPerson(made.error);
+    // the LOGO (2026-11-25): "keep the logo top left and bigger" is done by TeamLink itself, with no AI model (images.js changeLogo); anything else the client wrote about the picture is listed as not done
+    const lr = Rev.logoRequest(comment);
+    if (lr && !Img.logoWhy(item, lr.add)) {
+      understood = { summary: ['Changed the logo as the client asked.'], unclear: lr.rest, method: 'rules', classification: 'correction', confidence: 1 };
+      made = await retry(() => Img.changeLogo(u, item.id, lr, { check: validate, instruction: comment }), 3, attempts);
+      if (made && made.summary) understood.summary = [made.summary];
+      if (made && ['unsupported', 'not_ready'].includes(made.code)) return needsPerson(made.error);
+    } else {
+      if (Rev.classify(comment) === 'new_design') return needsPerson('The client wants a completely new picture, which has to be made again.', { classification: 'new_design' });
+      understood = { summary: [`Changed the picture as the client asked: "${S.clip(comment, 140)}"`], unclear: [], method: 'ai-edit', classification: 'correction', confidence: 1 };
+      made = await retry(() => Img.editPicture(u, item.id, comment, { editFn: hooks.editFn, check: validate }), 3, attempts);
+      if (made && ['unsupported', 'not_ready', 'limit'].includes(made.code)) return needsPerson(made.error);
+    }
   }
   if (!made || made.error) { if (made && ['invalid', 'corrupt', 'refused'].includes(made.code)) return needsPerson(`The new picture was not good enough to send: ${made.error}`, { method: understood.method, unclear: understood.unclear }); return failed((made && made.error) || 'unknown error'); }
   // the spec of a picture made by the AI edit has no "handled" list yet: add it, so a second event for the same answer does nothing even if the revision row were lost
@@ -140,6 +149,10 @@ async function retryJob(u, revisionId, base = '') {
   const CR = require('./clientReview'); // eslint-disable-line global-require
   if (rv.status === 'failed') { await S.run(`UPDATE "${T}" SET answerKey = ?, updatedAt = ? WHERE id = ?`, `${rv.answerKey}:retired:${Date.now()}`, Date.now(), rv.id); return run(rv.reviewId, { base }); }
   if (rv.status === 'completed') { const r = await CR.rowOf(rv.reviewId); if (!r) return { error: 'The client link was not found.', status: 404 }; const out = await (hooks.tell || CR.tell)(u, r.id, { ways: r.contactPhone ? ['whatsapp'] : ['email'] }, base || r.site || ''); if (out && !out.error) await S.run(`UPDATE "${T}" SET status = 'sent', sentAt = ?, error = NULL, updatedAt = ? WHERE id = ?`, Date.now(), Date.now(), rv.id); return out && out.error ? out : { ok: out.ok, revision: outOf(await rowById(rv.id)) }; }
+  if (rv.status === 'needs-person') { // "Changes Requested": nothing was made; the client's answer is still waiting, so it is run again (after an update that can do more, or when a person wants TeamLink to try once more)
+    const r = await CR.rowOf(rv.reviewId); if (!r || r.deletedAt || r.status !== 'changes') return { error: 'The client\'s request has already been dealt with.', status: 409 };
+    await S.run(`UPDATE "${T}" SET answerKey = ?, updatedAt = ? WHERE id = ?`, `${rv.answerKey}:retired:${Date.now()}`, Date.now(), rv.id); return run(rv.reviewId, { base });
+  }
   return { error: 'Only a failed revision can be tried again, or one that was made but not sent.', status: 409 };
 }
 

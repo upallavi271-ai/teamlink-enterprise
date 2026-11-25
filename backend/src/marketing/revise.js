@@ -162,4 +162,40 @@ async function understand(spec, feedback, opts = {}) {
   return base;
 }
 
-module.exports = { interpret, understand, classify, variation, applyAi, aiRequest, clientNote, mentions, looksLikePrompt, COLOURS };
+// ---- the LOGO on a picture that is not a banner (2026-11-25): "the logo is too short and it is right bottom placed, keep it top left and some bigger" -> images.js changeLogo (plain code, no AI model). -----------------
+// -> { pos ('top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | ''), factor (times the size it has now), add, rest: [sentences that are NOT about the logo, left for a person] } | null when the words do not
+// ask for anything about the logo that this can do (taking the logo off is not done here either).
+const LOGOW = /\b(?:logo|brand ?mark)s?\b/i;
+const POSITIONS = [['top-left', '(?:top|upper)\\s*[- ]?\\s*left|left\\s*[- ]?\\s*(?:top|upper)'], ['top-right', '(?:top|upper)\\s*[- ]?\\s*right|right\\s*[- ]?\\s*(?:top|upper)'], ['bottom-left', '(?:bottom|lower)\\s*[- ]?\\s*left|left\\s*[- ]?\\s*(?:bottom|lower)'], ['bottom-right', '(?:bottom|lower)\\s*[- ]?\\s*right|right\\s*[- ]?\\s*(?:bottom|lower)']];
+const posRe = (src) => new RegExp(`\\b(?:${src})\\b`, 'gi');
+const BIGGER = /\b(?:bigger|larger|enlarge[ds]?|increase[ds]?|more visible|too (?:small|short|tiny|little|low)|(?:is|are|looks?|seems?) (?:very |so |too |really )?(?:small|short|tiny))\b/i;
+const SMALLER = /\b(?:smaller|reduce[ds]?|decrease[ds]?|shrink|too (?:big|large|huge)|less prominent)\b/i;
+const MUCH = /\b(?:much|very|lot|double|twice|huge|far)\b/i;
+// the place the client WANTS: not one described as where it is now ("it is right bottom"), not one it must leave ("from the bottom right", "instead of ...", "not ...")
+function logoTarget(text) {
+  const hits = [];
+  for (const [key, src] of POSITIONS) { const re = posRe(src); let m = re.exec(text); while (m) { hits.push({ key, i: m.index }); m = re.exec(text); } }
+  hits.sort((a, b) => a.i - b.i);
+  const keep = hits.filter((h) => {
+    const before = text.slice(Math.max(0, h.i - 28), h.i);
+    if (/\b(?:instead of|rather than|other than|away from|from|not|off)\s+(?:the\s+)?$/i.test(before)) return false; // a place to leave
+    const directive = /\b(?:keep|move|put|place|shift|set|bring|should|must|want|need|make|to)\b[^.,;]{0,24}$/i.test(before);
+    const state = /\b(?:is|are|was|now|currently|placed|located|present|sitting|showing|stuck)\b[^.,;]{0,24}$/i.test(before);
+    return directive || !state;
+  });
+  return keep.length ? keep[keep.length - 1].key : '';
+}
+function logoRequest(text) {
+  const raw = String(text || '').trim(); if (!LOGOW.test(raw)) return null;
+  if (/\b(?:remove|delete|hide|take (?:it )?(?:out|off|away)|get rid of|without|(?:do not|don'?t|dont) (?:need|want|show|put)|no need)\b[^.]{0,30}\blogo|\blogo\b[^.]{0,30}\b(?:not needed|not required|remove|delete)/i.test(raw)) return null;
+  const pos = logoTarget(raw);
+  let factor = 1; if (BIGGER.test(raw)) factor = MUCH.test(raw) ? 1.8 : 1.4; else if (SMALLER.test(raw)) factor = 0.75;
+  const add = /\b(?:add|put|place|include|insert)\b[^.]{0,30}\blogo\b|\blogo\b[^.]{0,30}\b(?:missing|not (?:there|shown|visible|present)|absent)\b|\bno logo\b/i.test(raw);
+  if (!pos && factor === 1 && !add) return null;
+  const sentences = raw.replace(/\r/g, '\n').split(/(?<=[.!?])\s+|\n+|;\s+/).map((s) => s.trim()).filter((s) => s.length >= 3);
+  const rest = []; let prev = false; // sentences that carry on about the logo ("Move it to the top left.") belong to it; the others are left for a person
+  for (const s of sentences) { const rel = LOGOW.test(s) || (prev && (POSITIONS.some(([, src]) => posRe(src).test(s)) || BIGGER.test(s) || SMALLER.test(s))); prev = rel; if (!rel) rest.push(clip(s, 160)); }
+  return { pos, factor, add, rest };
+}
+
+module.exports = { interpret, understand, classify, variation, applyAi, aiRequest, clientNote, mentions, looksLikePrompt, logoRequest, COLOURS };

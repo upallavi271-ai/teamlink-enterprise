@@ -112,7 +112,7 @@ export default function MkImagesPage() {
       load();
     } catch (e) { toast(errOf(e, 'That did not work.')); } finally { setBusy(''); }
   };
-  const tryAgain = async (it) => { setBusy(it.id); try { const r = await omni.post(`/gs/marketing/revisions/${it.revision.id}/retry`); toast(r.revised ? 'Changed and sent again' : (r.ok || 'Done')); load(); } catch (e) { toast(errOf(e, 'It could not be tried again.')); } finally { setBusy(''); } };
+  const tryAgain = async (it) => { setBusy(it.id); try { const r = await omni.post(`/gs/marketing/revisions/${it.revision.id}/retry`); toast(r.revised ? 'Changed and sent again' : (r.needsPerson ? `Not changed: ${r.needsPerson}` : (r.failed ? `Failed: ${r.failed}` : (r.ok || 'Done')))); load(); } catch (e) { toast(errOf(e, 'It could not be tried again.')); } finally { setBusy(''); } };
   const remove = async () => { const it = del; setDel(null); try { await omni.del(`/gs/marketing/images/${it.id}`); toast('Deleted'); setView(null); load(); } catch (e) { toast(errOf(e, 'It could not be deleted.')); } };
   const saveName = async () => { try { await omni.put(`/gs/marketing/images/${rename.id}`, { title: rename.title }); toast('Renamed'); setRename(null); load(); } catch (e) { toast(errOf(e, 'It could not be renamed.')); } };
   const copyLink = async (it) => { const url = `${window.location.origin}${it.publicPath}`; try { await navigator.clipboard.writeText(url); toast('Public link copied'); } catch { window.prompt('Copy the public link:', url); } };
@@ -169,6 +169,7 @@ export default function MkImagesPage() {
                   <TinyBtn onClick={() => download(it)}>⬇ Download</TinyBtn>
                   {it.revision && typeof it.revision === 'object' ? <TinyBtn onClick={() => setHist(it)} title="What the client asked for, what TeamLink changed, and every version side by side">🕘 Versions ({it.revision.count})</TinyBtn> : null}
                   {it.revision && typeof it.revision === 'object' && ['failed', 'completed'].includes(it.revision.status) && it.canClient ? <TinyBtn disabled={busy === it.id} onClick={() => tryAgain(it)}>{it.revision.status === 'failed' ? '↻ Try again' : '➤ Send again'}</TinyBtn> : null}
+                  {it.revision && typeof it.revision === 'object' && it.revision.status === 'needs-person' && it.canClient && it.clientReview && it.clientReview.status === 'changes' ? <TinyBtn disabled={busy === it.id} onClick={() => tryAgain(it)} title="TeamLink reads the client's request again and tries to make the change by itself">↻ Try the change again</TinyBtn> : null}
                   {it.canSubmit && !it.needsClient ? <TinyBtn disabled={busy === it.id} onClick={() => act(it, 'submit')}>Ask for approval</TinyBtn> : null}
                   {it.canSubmit && it.canEdit ? <TinyBtn onClick={() => setToClient(it)} title="The client approves it instead of your team: it becomes Approved only when the client says yes">➤ Ask client to approve</TinyBtn> : null}
                   {it.clientHold ? <TinyBtn onClick={() => setToClient(it)}>Client…</TinyBtn> : null}

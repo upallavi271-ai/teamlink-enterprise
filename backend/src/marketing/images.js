@@ -259,18 +259,62 @@ async function finishPic(buf, aspect, logo) {
     if (w / h > want) { const nw = Math.round(h * want); img = img.extract({ left: Math.round((w - nw) / 2), top: 0, width: nw, height: h }); w = nw; } else { const nh = Math.round(w / want); img = img.extract({ left: 0, top: Math.round((h - nh) / 2), width: w, height: nh }); h = nh; }
   }
   let out = await img.toBuffer();
-  let withLogo = false;
+  let withLogo = false; let clean = null;
   if (logo) {
-    const side = Math.max(24, Math.round(Math.min(w, h) * 0.16));
-    const lb = await sharp(Buffer.from(logo.b64, 'base64')).resize({ width: side, height: side, fit: 'inside' }).png().toBuffer();
-    const lm = await sharp(lb).metadata();
-    const pad = Math.max(6, Math.round(Math.min(w, h) * 0.025));
-    // a soft white plate behind the logo, so it reads on any picture
-    const plate = await sharp({ create: { width: lm.width + pad, height: lm.height + pad, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0.9 } } }).composite([{ input: lb, gravity: 'center' }]).png().toBuffer();
-    out = await sharp(out).composite([{ input: plate, left: Math.max(0, w - lm.width - pad * 2), top: Math.max(0, h - lm.height - pad * 2) }]).toBuffer();
+    clean = await sharp(out).jpeg({ quality: 92 }).toBuffer(); // the picture WITHOUT the logo, kept beside the finished one (create) so the logo can be moved or resized later without touching the photo (changeLogo)
+    const lp = await logoPlate(Buffer.from(logo.b64, 'base64'), w, h, 'bottom-right', 1);
+    out = await sharp(out).composite([{ input: lp.plate, left: lp.left, top: lp.top }]).toBuffer();
     withLogo = true;
   }
-  return { buf: await sharp(out).jpeg({ quality: 90 }).toBuffer(), mime: 'image/jpeg', withLogo };
+  return { buf: await sharp(out).jpeg({ quality: 90 }).toBuffer(), mime: 'image/jpeg', withLogo, clean };
+}
+// ---- THE LOGO ON A PICTURE (2026-11-25): the logo and its soft white plate are put on by TeamLink itself (not drawn by the AI), so "keep the logo top left and some bigger" is done by plain code: the
+// plate is drawn at the asked corner and size on the picture WITHOUT a logo. LOGO_FRAC = the logo's longest side as a share of the picture's shorter side (bottom right, size 1 = how it is first put on).
+const LOGO_FRAC = 0.16;
+const LOGO_POS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+const baseFileOf = (r) => path.join(dir(), `${path.basename(r.file, path.extname(r.file))}.base.jpg`);
+async function logoPlate(logoBuf, w, h, pos, scale) { // -> { plate (PNG), left, top, width, height } for a picture w x h
+  const sharp = require('sharp'); // eslint-disable-line global-require
+  const m = Math.min(w, h);
+  const side = Math.max(24, Math.round(m * LOGO_FRAC * scale));
+  const lb = await sharp(logoBuf).resize({ width: side, height: side, fit: 'inside' }).png().toBuffer();
+  const lm = await sharp(lb).metadata();
+  const pad = Math.max(6, Math.round(m * 0.025));
+  const width = lm.width + pad; const height = lm.height + pad;
+  const plate = await sharp({ create: { width, height, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0.9 } } }).composite([{ input: lb, gravity: 'center' }]).png().toBuffer(); // a soft white plate behind the logo, so it reads on any picture
+  return { plate, left: String(pos).endsWith('left') ? pad : Math.max(0, w - width - pad), top: String(pos).startsWith('top') ? pad : Math.max(0, h - height - pad), width, height };
+}
+// Fills a rectangle from the colours around it (a smooth blend of the four edges plus the picture's own grain). Used to take an old logo plate off a picture whose clean copy was not kept: the photograph
+// under a plate cannot be recovered, so the spot gets the surrounding colours. -> a JPEG
+async function fillRect(buf, rect) {
+  const sharp = require('sharp'); // eslint-disable-line global-require
+  const { data, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const W = info.width; const H = info.height; const ch = 3; const band = 3;
+  const x0 = Math.max(band + 1, Math.floor(rect.left)); const y0 = Math.max(band + 1, Math.floor(rect.top));
+  const x1 = Math.min(W - band - 1, Math.ceil(rect.left + rect.width)); const y1 = Math.min(H - band - 1, Math.ceil(rect.top + rect.height));
+  const rw = x1 - x0; const rh = y1 - y0;
+  const out = Buffer.from(data);
+  if (rw >= 2 && rh >= 2) {
+    const px = (x, y, c) => data[(y * W + x) * ch + c];
+    const avg = (f) => { let s = 0; for (let b = 1; b <= band; b += 1) s += f(b); return s / band; };
+    const T = (x, c) => avg((b) => px(x, y0 - b, c)); const Bt = (x, c) => avg((b) => px(x, y1 - 1 + b, c));
+    const L = (y, c) => avg((b) => px(x0 - b, y, c)); const Rt = (y, c) => avg((b) => px(x1 - 1 + b, y, c));
+    let seed = 1234567; const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(2 * Math.PI * rnd());
+    for (let c = 0; c < ch; c += 1) {
+      let d = 0; let n = 0; for (let x = 1; x < rw; x += 1) { d += Math.abs(px(x0 + x, y0 - 1, c) - px(x0 + x - 1, y0 - 1, c)); n += 1; }
+      const sigma = Math.min(6, (d / Math.max(1, n)) / 1.128); // the picture's own grain, so the patch is not flat
+      const TL = (T(x0, c) + L(y0, c)) / 2; const TR = (T(x1 - 1, c) + Rt(y0, c)) / 2; const BL = (Bt(x0, c) + L(y1 - 1, c)) / 2; const BR = (Bt(x1 - 1, c) + Rt(y1 - 1, c)) / 2;
+      for (let y = 0; y < rh; y += 1) {
+        for (let x = 0; x < rw; x += 1) {
+          const u = rw > 1 ? x / (rw - 1) : 0; const v = rh > 1 ? y / (rh - 1) : 0;
+          const val = (1 - v) * T(x0 + x, c) + v * Bt(x0 + x, c) + (1 - u) * L(y0 + y, c) + u * Rt(y0 + y, c) - ((1 - u) * (1 - v) * TL + u * (1 - v) * TR + (1 - u) * v * BL + u * v * BR) + gauss() * sigma;
+          out[((y0 + y) * W + (x0 + x)) * ch + c] = Math.max(0, Math.min(255, Math.round(val)));
+        }
+      }
+    }
+  }
+  return sharp(out, { raw: { width: W, height: H, channels: ch } }).jpeg({ quality: 92 }).toBuffer();
 }
 
 const refused = (why) => new AI.AiMkError(`Google would not make this picture${why ? ` (${String(why).toLowerCase().replace(/_/g, ' ')})` : ''}. Change the description and try again.`, 422, 'refused');
@@ -511,7 +555,7 @@ async function produce(u, x) {
   const finish = !modelGetsLogo && (provider !== 'gemini' || isImagen(c.model));
   if (finish) {
     for (const p of pics) {
-      try { const f = await finishPic(p.buf, aspect, logo); p.buf = f.buf; p.mime = f.mime; p.withLogo = f.withLogo; } // eslint-disable-line no-await-in-loop
+      try { const f = await finishPic(p.buf, aspect, logo); p.buf = f.buf; p.mime = f.mime; p.withLogo = f.withLogo; p.clean = f.clean; } // eslint-disable-line no-await-in-loop
       catch (e) { note = `${note ? `${note} ` : ''}The size or the logo could not be applied (${e.message}); the picture is kept as it came.`; }
     }
   } else pics.forEach((p) => { p.withLogo = !!modelGetsLogo; });
@@ -523,6 +567,7 @@ async function produce(u, x) {
     const id = S.newId('img');
     const file = `${id}.${EXT[mime]}`;
     fs.writeFileSync(path.join(dir(), file), buf);
+    if (p.clean) { try { fs.writeFileSync(path.join(dir(), `${id}.base.jpg`), p.clean); } catch { /* without the clean copy a later logo change fills the old spot from the colours around it */ } } // the picture without its logo (changeLogo)
     const ts = Date.now();
     await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?)`, // eslint-disable-line no-await-in-loop
       id, title, prompt, headline || null, style, aspect, st.demo ? 'sample' : (p.model || c.model), p.withLogo ? 1 : 0, file, mime, buf.length, st.demo ? 1 : 0, dept || null, u.id, S.clip(u.name, 80), ts, ts); // p.model: the model that REALLY made it (FLUX.2 klein, or schnell when klein was not available)
@@ -724,6 +769,61 @@ async function editPicture(u, id, instruction, opts = {}) {
   return { item: sameItemAfter(u, await row(r.id), g), spec: next, before: orig, after: buf };
 }
 
+// ---- MOVE / RESIZE THE LOGO (2026-11-25): "the logo is too small and at the bottom right: keep it top left and bigger". Plain code, no AI model, free: the picture WITHOUT the logo is the base (kept beside every
+// new picture as <id>.base.jpg; for an older picture the old logo plate is filled from the colours around it, once, and the result is kept as its base), the logo is drawn again at the new corner and size,
+// everything else on the picture is untouched. Same size and format, the earlier version is kept, the item goes back to Draft. A picture whose logo the AI model itself drew cannot be moved this way.
+// '' = it can be done; otherwise the reason it cannot
+function logoWhy(r, add = false) {
+  if (['banner', 'clip', 'upload', 'video'].includes(r.style) || isVideo(r)) return 'This kind of picture has no logo that TeamLink can move.';
+  if (S.num(r.withLogo) !== 1 && !add) return 'There is no logo on this picture to move.';
+  if (S.num(r.withLogo) === 1 && /^gemini/i.test(String(r.model || '')) && !fs.existsSync(baseFileOf(r))) return 'The logo on this picture was drawn by the AI picture model itself, so only that connection can move it.';
+  return '';
+}
+const POS_WORDS = { 'top-left': 'top left', 'top-right': 'top right', 'bottom-left': 'bottom left', 'bottom-right': 'bottom right' };
+// req: { pos ('top-left' | 'top-right' | 'bottom-left' | 'bottom-right', or '' to leave it), factor (times the size it has now; 1 = the same), add (put it on a picture that has none) }
+// opts: { check (the result must pass it BEFORE anything is replaced), instruction (the client's words) } -> { item, spec, before, after, summary } or { error, status, code }
+async function changeLogo(u, id, req = {}, opts = {}) {
+  await ensure();
+  const g = await getRow(u, id); if (!g) return { error: 'This picture was not found.', status: 404 };
+  const r = g.r;
+  const why = logoWhy(r, !!req.add); if (why) return { error: why, status: 400, code: 'unsupported' };
+  const f = rawFile(r); if (!f) return { error: 'The picture file is not on the server any more.', status: 404 };
+  const look = await projectLook(r.projectId); const logoRow = look ? (look.logoData ? { dataUrl: look.logoData } : null) : await Cfg.getLogo();
+  const lm = logoRow && /^data:([^;]+);base64,(.+)$/.exec(String(logoRow.dataUrl || ''));
+  if (!lm) return { error: 'No logo is saved for this picture (AI Marketing > Brand voice > Logo), so it cannot be placed.', status: 422, code: 'unsupported' };
+  const sharp = require('sharp'); // eslint-disable-line global-require
+  const logoBuf = Buffer.from(lm[2], 'base64'); const orig = fs.readFileSync(f.path);
+  let meta; try { meta = await sharp(orig).metadata(); } catch { return { error: 'The picture could not be read.', status: 422, code: 'corrupt' }; }
+  const w = meta.width; const h = meta.height;
+  const old = S.parse(r.spec, {}) || {}; const cur = old.logo && LOGO_POS.includes(old.logo.pos) ? { pos: old.logo.pos, scale: Number(old.logo.scale) || 1 } : { pos: 'bottom-right', scale: 1 };
+  const hadLogo = S.num(r.withLogo) === 1;
+  const pos = LOGO_POS.includes(req.pos) ? req.pos : cur.pos;
+  const scale = Math.max(0.5, Math.min(2.4, Math.round(cur.scale * (Number(req.factor) > 0 ? Number(req.factor) : 1) * 100) / 100));
+  if (hadLogo && pos === cur.pos && Math.abs(scale - cur.scale) < 0.02) return { error: `The logo is already at the ${POS_WORDS[pos]} and that size.`, status: 422, code: 'invalid' };
+  // the base: the picture without the logo
+  const bf = baseFileOf(r); let base; let refilled = false; let keepBase = false;
+  if (fs.existsSync(bf)) base = fs.readFileSync(bf);
+  else if (hadLogo) { const was = await logoPlate(logoBuf, w, h, cur.pos, cur.scale); const pad = 3; base = await fillRect(orig, { left: was.left - pad, top: was.top - pad, width: was.width + pad * 2, height: was.height + pad * 2 }); refilled = true; keepBase = true; }
+  else { base = await sharp(orig).flatten({ background: '#ffffff' }).jpeg({ quality: 92 }).toBuffer(); keepBase = true; }
+  const lp = await logoPlate(logoBuf, w, h, pos, scale);
+  let buf;
+  try { const drawn = sharp(base).composite([{ input: lp.plate, left: lp.left, top: lp.top }]); buf = r.mime === 'image/png' ? await drawn.png().toBuffer() : await drawn.jpeg({ quality: 90 }).toBuffer(); } catch { return { error: 'The logo could not be drawn on the picture.', status: 422, code: 'corrupt' }; }
+  if (opts.check) { const v = await opts.check(orig, buf); if (!v.ok) return { error: v.reason, status: 422, code: 'invalid' }; } // the new picture must pass the checks BEFORE it replaces anything
+  if (!keepVersion(r)) return { error: 'The earlier version could not be kept, so nothing was changed.', status: 500 };
+  fs.writeFileSync(path.join(dir(), path.basename(r.file)), buf);
+  if (keepBase) { try { fs.writeFileSync(bf, base); } catch { /* the next change fills the spot again */ } }
+  const next = { ...old, rev: versionOf(r) + 1, logo: { pos, scale }, edits: [...(old.edits || []).slice(-4), S.clip(opts.instruction || 'the logo', 300)], handled: old.handled || [] };
+  const grow = Math.round((scale / cur.scale - 1) * 100);
+  const parts = [];
+  if (!hadLogo) parts.push(`Put the logo at the ${POS_WORDS[pos]}`);
+  else if (pos !== cur.pos) parts.push(`Moved the logo to the ${POS_WORDS[pos]}`);
+  if (hadLogo && Math.abs(grow) >= 2) parts.push(`${parts.length ? 'made it' : 'Made the logo'} ${Math.abs(grow)}% ${grow > 0 ? 'bigger' : 'smaller'}`);
+  const summary = `${parts.join(' and ')}.${refilled ? ' The spot where the logo was is filled with the picture\'s own surrounding colours.' : ''}`;
+  await S.run(`UPDATE "${TABLE}" SET bytes = ?, spec = ?, withLogo = 1, status = 'draft', note = ?, decidedAt = NULL, decidedById = NULL, decidedByName = NULL, updatedAt = ? WHERE id = ?`, buf.length, JSON.stringify(next), S.clip(`Changed automatically after the client's request: ${summary}`, 300), Date.now(), r.id);
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: logo moved or resized after a client request', entity: TABLE, entityId: r.id, toValue: `${r.title}; version ${next.rev + 1}: ${summary}` });
+  return { item: sameItemAfter(u, await row(r.id), g), spec: next, before: orig, after: buf, summary };
+}
+
 // ---- a person's own picture (phone, Canva, the Gemini app ...) uploaded into AI Images: from then on it is approved and used like an AI picture ---------
 // Checked by its first bytes (PNG / JPEG / WebP), turned upright, made at most 2048 px and saved WITHOUT its metadata (no GPS place, no camera
 // details). It is not an AI request, so it never counts against the AI picture limits. q: { title, department }.
@@ -818,6 +918,7 @@ async function remove(u, id) {
   if (r.status === 'waiting') return { error: 'It is waiting for approval. Ask the approver to send it back first.', status: 409 };
   await S.run(`UPDATE "${TABLE}" SET deletedAt = ? WHERE id = ?`, Date.now(), r.id);
   try { fs.unlinkSync(path.join(dir(), path.basename(r.file))); } catch { /* already gone */ }
+  try { fs.unlinkSync(baseFileOf(r)); } catch { /* none was kept */ }
   await logAudit({ userId: u.id, actorName: u.name, action: `Omni-Channel AI Marketing: ${what(r)} deleted`, entity: TABLE, entityId: r.id, toValue: r.title });
   return { ok: true };
 }
@@ -886,7 +987,7 @@ async function saveSpec(id, spec) { await ensure(); await S.run(`UPDATE "${TABLE
 
 module.exports = {
   setNote, saveSpec,
-  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, createBanner, reviseBanner, editPicture, versionFile, versionOf, renderBanner, looksLikePrompt, bannerMeta, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
+  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, createBanner, reviseBanner, editPicture, changeLogo, logoWhy, finishPic, versionFile, versionOf, renderBanner, looksLikePrompt, bannerMeta, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
   cloudflareImage: { cfOne, fluxPrompt, DEFAULT_MODEL: CF_DEFAULT_MODEL, FALLBACK_MODEL: CF_FALLBACK_MODEL, resetKlein: () => { kleinFailedAt = 0; } }, // exported for the tests
   approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng, holdForClient, backToDraft, clientDecision, publicPathOf: publicPath, publicJpegPath, isVideoRow: isVideo,
 };
