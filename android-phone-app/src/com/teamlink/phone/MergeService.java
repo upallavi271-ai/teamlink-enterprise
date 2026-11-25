@@ -66,9 +66,10 @@ public class MergeService extends AccessibilityService {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root != null && (pressIn(root) || walk(root, seen, 0))) return;
             // what the screen shows (labels / ids of clickable things), a few times per call, to learn this dialler's Merge button
-            if (dumps < 4 && (System.currentTimeMillis() - lastDump) > 4000) {
+            if (dumps < 5 && (System.currentTimeMillis() - lastDump) > 8000) {
                 dumps++; lastDump = System.currentTimeMillis();
-                Bridge.trace("screen: " + (seen.length() > 0 ? seen.substring(0, Math.min(280, seen.length())) : "(no readable window)"));
+                String all = seen.length() > 0 ? seen.toString() : "(no readable window)";
+                for (int i = 0, part = 1; i < all.length() && part <= 6; i += 280, part++) Bridge.trace("screen " + dumps + "." + part + ": " + all.substring(i, Math.min(all.length(), i + 280)));
             }
         } catch (Exception e) { Bridge.trace("merge scan error: " + e); }
     }
@@ -80,8 +81,10 @@ public class MergeService extends AccessibilityService {
         CharSequence tx = n.getText(); CharSequence cd = n.getContentDescription(); String id = n.getViewIdResourceName();
         String label = (tx != null ? tx.toString() : "") + (cd != null ? " " + cd : "");
         String all = (label + " " + (id != null ? id : "")).toLowerCase();
-        if ((n.isClickable() || id != null) && (label.trim().length() > 0 || id != null) && seen.length() < 600) {
-            seen.append('[').append(label.trim()).append(id != null ? "#" + id.replaceAll("^.*:id/", "") : "").append(n.isEnabled() ? "" : " off").append("] ");
+        String shortId = id != null ? id.replaceAll("^.*:id/", "") : null;
+        boolean noise = shortId != null && shortId.startsWith("contact_grid") && label.trim().length() == 0;
+        if (!noise && (n.isClickable() || label.trim().length() > 0) && seen.length() < 1700) {
+            seen.append('[').append(n.isClickable() ? "*" : "").append(label.trim()).append(shortId != null ? "#" + shortId : "").append(n.isEnabled() ? "" : " off").append("] ");
         }
         boolean isMerge = (all.contains("merge") || all.contains("విలీనం") || all.contains("मर्ज") || (all.contains("conference") && !all.contains("manage")));
         if (isMerge && n.isEnabled()) {
