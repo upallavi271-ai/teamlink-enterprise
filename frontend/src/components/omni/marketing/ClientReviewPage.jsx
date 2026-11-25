@@ -8,6 +8,26 @@ import api from '../../../api';
 const errOf = (e, d) => (e && e.response && e.response.data && e.response.data.error) || d;
 const when = (iso) => { try { return new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }); } catch { return iso || ''; } };
 
+// The picture the client is asked about. If it does not load (the site was busy or restarting for a moment, a weak connection) it is asked for again by itself, up to 3 times, and then a visible box says so with
+// "Try again" and "Open the picture": the client never sees a blank gap where the picture should be. Always a link to open it in full size.
+function ReviewPicture({ src, alt }) {
+  const [n, setN] = useState(0); const [failed, setFailed] = useState(false);
+  useEffect(() => { setN(0); setFailed(false); }, [src]);
+  const url = n ? `${src}${src.includes('?') ? '&' : '?'}r=${n}` : src;
+  const onError = () => { if (n < 3) setTimeout(() => setN((x) => x + 1), 1500 * (n + 1)); else setFailed(true); };
+  return (
+    <div data-testid="review-picture">
+      {failed ? (
+        <div role="alert" style={{ background: '#fdf1e3', color: '#7a4a07', borderRadius: 10, padding: '14px 14px', lineHeight: 1.6 }}>
+          The picture could not be shown just now. <button type="button" onClick={() => { setFailed(false); setN((x) => x + 1); }} style={{ border: '1px solid #d98a2b', background: '#fff', color: '#7a4a07', borderRadius: 8, padding: '4px 10px', fontWeight: 700, cursor: 'pointer' }}>Try again</button>{' '}
+          or <a href={src} target="_blank" rel="noopener noreferrer" style={{ color: '#7a4a07', fontWeight: 700 }}>open the picture</a>.
+        </div>
+      ) : <img src={url} alt={alt} onError={onError} style={{ width: '100%', borderRadius: 10, background: '#eef1ef', display: 'block' }} />}
+      {!failed ? <div style={{ textAlign: 'right', marginTop: 4 }}><a href={src} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#6b7a73' }}>Open the picture in full size ↗</a></div> : null}
+    </div>
+  );
+}
+
 // `embedded` (the Client Portal, a signed-in client): the same page inside the portal, with the token handed over and the person's own name filled in.
 export default function ClientReviewPage({ token: tokenProp = '', embedded = false, defaultName = '', onChanged = null } = {}) {
   const { token: routeToken } = useParams();
@@ -95,7 +115,7 @@ export default function ClientReviewPage({ token: tokenProp = '', embedded = fal
         {r.message ? <p style={{ margin: '0 0 12px', lineHeight: 1.6, background: '#f4f6f5', borderRadius: 10, padding: '10px 12px' }}>{r.message}</p> : null}
 
         {!item ? <p style={{ lineHeight: 1.6 }}>This content was removed by the sender. Please ask for a new link.</p> : null}
-        {item && item.type === 'image' ? <img src={fileUrl} alt={r.itemTitle} style={{ width: '100%', borderRadius: 10, background: '#eef1ef', display: 'block' }} /> : null}
+        {item && item.type === 'image' ? <ReviewPicture src={fileUrl} alt={r.itemTitle} /> : null}
         {item && item.type === 'video' ? <video src={fileUrl} controls playsInline preload="metadata" style={{ width: '100%', borderRadius: 10, background: '#000', display: 'block' }} aria-label={r.itemTitle} /> : null}{/* eslint-disable-line jsx-a11y/media-has-caption */}
         {item && item.type === 'words' ? (
           <div>
