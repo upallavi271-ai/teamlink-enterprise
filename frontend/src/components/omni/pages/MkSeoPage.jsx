@@ -73,7 +73,7 @@ function DashboardTab({ ov, site, onOpen, audit, busy, toast }) {
       {ov.sites.length > 1 ? (
         <Panel title="All client websites" sub="Websites that need attention come first." style={{ marginTop: 12 }}>
           <div style={{ overflowX: 'auto' }}>
-            <table className="mk-table"><thead><tr><th>CLIENT</th><th>SCORE</th><th>CHANGE</th><th>OPEN</th><th>FIXED</th><th>NEXT AUDIT</th><th /></tr></thead>
+            <table className="mk-table" style={{ minWidth: 640 }}><thead><tr><th>CLIENT</th><th>SCORE</th><th>CHANGE</th><th>OPEN</th><th>FIXED</th><th>NEXT AUDIT</th><th /></tr></thead>
               <tbody>{ov.sites.map((s) => (
                 <tr key={s.id}>
                   <td><b>{s.clientName}</b><div style={{ fontSize: 11, color: 'var(--muted)' }}>{s.url}</div></td>
@@ -134,7 +134,7 @@ function SiteDash({ site, onOpen, audit, busy, toast }) {
             <div><b>Home page answer</b><br />{perf.responseMs} ms<br /><small style={{ color: 'var(--muted)' }}>How fast the server answered here. Not the full page speed.</small></div>
             <div><b>Links checked</b><br />{perf.links ? `${perf.links.checked} checked, ${perf.links.bad} did not open` : '—'}{perf.links && perf.links.list.length ? <small style={{ display: 'block', color: '#b91c1c' }}>{perf.links.list.join('; ')}</small> : null}</div>
             <div><b>robots.txt</b><br />{perf.robotsOk ? 'Found' : 'Not found'}<br /><b>Sitemap</b><br />{perf.sitemapOk ? 'Found' : 'Not found'}</div>
-            <div><b>Google PageSpeed</b><br />{ps ? <span>Phone: performance {psScore(ps.mobile, 'performance')}, SEO {psScore(ps.mobile, 'seo')}<br />Desktop: performance {psScore(ps.desktop, 'performance')}, SEO {psScore(ps.desktop, 'seo')}<br /><small style={{ color: 'var(--muted)' }}>Run {fmtDate(ps.ranAt)}</small></span> : <span style={{ color: 'var(--muted)' }}>Not run yet. Run it from SEO & visibility > Website check after a saved audit.</span>}</div>
+            <div><b>Google PageSpeed</b><br />{ps ? <span>Phone: performance {psScore(ps.mobile, 'performance')}, SEO {psScore(ps.mobile, 'seo')}<br />Desktop: performance {psScore(ps.desktop, 'performance')}, SEO {psScore(ps.desktop, 'seo')}<br /><small style={{ color: 'var(--muted)' }}>Run {fmtDate(ps.ranAt)}</small></span> : <span style={{ color: 'var(--muted)' }}>Not run yet. Run it from SEO &amp; visibility &gt; Website check after a saved audit.</span>}</div>
           </div>
         </Panel>
       ) : null}

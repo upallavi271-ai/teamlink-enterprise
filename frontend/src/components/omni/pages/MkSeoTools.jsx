@@ -34,7 +34,7 @@ export function KeywordsTab({ site, toast }) {
               <div key={g.key} style={{ margin: '10px 0' }}>
                 <div style={{ fontWeight: 800, fontSize: 13.5 }}>{g.label} <small style={{ fontWeight: 400, color: 'var(--muted)' }}>({g.items.length})</small></div>
                 <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>{g.note}</div>
-                <div style={{ overflowX: 'auto' }}><table className="mk-table"><thead><tr><th style={{ width: 28 }} /><th>PHRASE</th><th>INTENT</th><th>MONTHLY SEARCHES</th><th>DIFFICULTY</th></tr></thead>
+                <div style={{ overflowX: 'auto' }}><table className="mk-table" style={{ minWidth: 560 }}><thead><tr><th style={{ width: 28 }} /><th>PHRASE</th><th>INTENT</th><th>MONTHLY SEARCHES</th><th>DIFFICULTY</th></tr></thead>
                   <tbody>{g.items.map((i) => (<tr key={i.phrase}><td><input type="checkbox" aria-label={`Keep ${i.phrase}`} checked={chosen.has(i.phrase)} onChange={() => setChosen(tick(chosen, i.phrase))} /></td><td><b>{i.phrase}</b></td><td><Tag title={INTENT[i.intent]}>{i.intent}</Tag> <small style={{ color: 'var(--muted)' }}>{INTENT[i.intent]}</small></td><td>{NA}</td><td>{NA}</td></tr>))}</tbody></table></div>
               </div>))}
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0' }}>
@@ -52,7 +52,7 @@ export function KeywordsTab({ site, toast }) {
       </Panel>
       <Panel title="The client's keyword list" sub="Phrases kept for this client. A position appears once a Search Console export has the phrase." style={{ marginTop: 12 }}>
         {!list ? <div>Loading…</div> : !list.items.length ? <Empty title="No phrase kept yet">Tick phrases above and press "Keep the ticked phrases".</Empty> : (
-          <div style={{ overflowX: 'auto' }}><table className="mk-table"><thead><tr><th>PHRASE</th><th>INTENT</th><th>POSITION</th><th>CHANGE</th><th>CLICKS / SEEN</th><th>TRACKED</th><th /></tr></thead>
+          <div style={{ overflowX: 'auto' }}><table className="mk-table" style={{ minWidth: 560 }}><thead><tr><th>PHRASE</th><th>INTENT</th><th>POSITION</th><th>CHANGE</th><th>CLICKS / SEEN</th><th>TRACKED</th><th /></tr></thead>
             <tbody>{list.items.map((k) => (<tr key={k.id}>
               <td><b>{k.phrase}</b><div style={{ fontSize: 11, color: 'var(--muted)' }}>{k.group}</div></td><td>{k.intent}</td>
               <td>{k.position != null ? k.position : <span style={{ color: 'var(--muted)' }}>{list.sets.length ? 'not in the export' : 'no data yet'}</span>}{k.previous != null ? <small style={{ color: 'var(--muted)' }}> (was {k.previous})</small> : null}</td>
@@ -73,7 +73,7 @@ export function KeywordsTab({ site, toast }) {
         {qv && qv.sets.length ? <div style={{ fontSize: 12.5, marginBottom: 6 }}>Saved exports: {qv.sets.map((s) => `${s.label} (${s.rows} queries, to ${s.periodEnd})`).join('; ')}.</div> : null}
         {qv && qv.items.length ? (
           <div><div style={{ fontWeight: 800, fontSize: 13, margin: '6px 0' }}>Opportunities: queries at position 4 to 20 in "{qv.set.label}"</div><div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>Already close to the first page, the most seen first. A page that answers the query better is the work; no result is promised.</div>
-            <div style={{ overflowX: 'auto' }}><table className="mk-table"><thead><tr><th>QUERY</th><th>POSITION</th><th>SEEN</th><th>CLICKS</th><th /></tr></thead>
+            <div style={{ overflowX: 'auto' }}><table className="mk-table" style={{ minWidth: 560 }}><thead><tr><th>QUERY</th><th>POSITION</th><th>SEEN</th><th>CLICKS</th><th /></tr></thead>
               <tbody>{qv.items.map((i) => (<tr key={i.query}><td><b>{i.query}</b></td><td>{i.position} <small style={{ color: 'var(--muted)' }}>({i.band})</small></td><td>{i.impressions}</td><td>{i.clicks}</td><td>{i.saved ? <Tag green>On the list</Tag> : <TinyBtn onClick={() => keep([{ phrase: i.query, group: 'query', source: 'search-console' }])} aria-label={`Keep ${i.query}`}>Keep</TinyBtn>}</td></tr>))}</tbody></table></div></div>
         ) : qv && qv.sets.length ? <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>No query is at position 4 to 20 in the newest export.</div> : null}
       </Panel>
