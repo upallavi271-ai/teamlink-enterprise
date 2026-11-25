@@ -3,6 +3,7 @@ import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Pill, Tag, Banner, Field, Tabs, Empty, Kpi, Kpis, fmtDate } from '../ui.jsx';
 import { CopyBox, Chips, TrendChart, sign } from './MkSeoParts.jsx';
+import { KeywordsTab, ContentTab, CompetitorsTab, DashboardExtras } from './MkSeoTools.jsx';
 
 // AI MARKETING > SEO ASSISTANT (2026-11-25): the owner's AI SEO Assistant, built on what the SEO & visibility tools already measure.
 //   Dashboard        the health score of every client's website and its change, one site in full (trend, marks, technical findings, performance, progress feed), what to do first
@@ -20,6 +21,7 @@ export default function MkSeoPage() {
     try { const d = await omni.get('/gs/marketing/seo/overview', id ? { siteId: id } : {}); setOv(d); setErr(''); if (!id && d.sites.length) setSiteId(d.sites[0].id); } catch (e) { setErr(errOf(e, 'The SEO assistant could not be opened.')); }
   }, []);
   useEffect(() => { load(siteId); }, [siteId, load]);
+  useEffect(() => { if (tab === 'dashboard' && siteId) load(siteId); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps -- coming back to the dashboard shows what the other tabs just changed
   if (err && !ov) return <Banner tone="error">{err}</Banner>;
   if (!ov) return <div className="card panel">Loading…</div>;
   const site = ov.site; const none = !ov.sites.length;
@@ -29,7 +31,7 @@ export default function MkSeoPage() {
   };
   const pick = (id, to) => { setAdding(false); setSiteId(id); if (to) setTab(to); };
   const saved = async (id) => { setAdding(false); setTab('dashboard'); if (id === siteId) await load(id); else setSiteId(id); };
-  const tabs = [['dashboard', 'Dashboard'], ['tasks', 'Recommendations', site ? site.tasks.open : undefined], ['site', 'Site and schedule']];
+  const tabs = [['dashboard', 'Dashboard'], ['tasks', 'Recommendations', site ? site.tasks.open : undefined], ['keywords', 'Keywords'], ['content', 'Content'], ['competitors', 'Competitors'], ['site', 'Site and schedule']];
   return (
     <div>
       <PageHead eyebrow="AI Marketing" title="SEO assistant" lead="Audit a client's website, see what to fix first, and get ready-to-use text for each fix. TeamLink checks again later and confirms what was fixed. Nothing is posted and no website is changed." />
@@ -47,6 +49,9 @@ export default function MkSeoPage() {
         {none && !adding ? <Empty title="No client website yet" action={<Btn primary onClick={() => { setAdding(true); setTab('site'); }}>Add the first client website</Btn>}>Add a client's website, its real facts and how often to audit it. TeamLink then audits it, lists what to fix and writes the ready-to-use text.</Empty> : null}
         {(!none || adding) && tab === 'dashboard' && !adding ? <DashboardTab ov={ov} site={site} onOpen={pick} audit={audit} busy={busy} toast={toast} /> : null}
         {(!none || adding) && tab === 'tasks' && !adding && site ? <TasksTab key={site.id} site={site} toast={toast} onChanged={() => load(siteId)} /> : null}
+        {(!none && !adding && site && tab === 'keywords') ? <KeywordsTab key={`k${site.id}`} site={site} toast={toast} /> : null}
+        {(!none && !adding && site && tab === 'content') ? <ContentTab key={`c${site.id}`} site={site} toast={toast} /> : null}
+        {(!none && !adding && site && tab === 'competitors') ? <CompetitorsTab key={`p${site.id}`} site={site} toast={toast} /> : null}
         {(adding || (!none && tab === 'site')) ? <SiteTab key={adding ? 'new' : siteId} site={adding ? null : site} industries={ov.industries || []} toast={toast} onSaved={saved} onRemoved={() => { setSiteId(''); setAdding(false); setOv(null); load(''); }} /> : null}
       </div>
     </div>
@@ -133,7 +138,7 @@ function SiteDash({ site, onOpen, audit, busy, toast }) {
           </div>
         </Panel>
       ) : null}
-      <SiteExtras site={site} onOpen={onOpen} toast={toast} />
+      <DashboardExtras site={site} onOpen={onOpen} />
       <Panel title="Progress" sub="What changed, newest first." style={{ marginTop: 14 }}>
         {site.events.length ? <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', fontSize: 13 }}>{site.events.map((e) => <li key={e.id} style={{ padding: '5px 0', borderBottom: '1px solid var(--line)' }}><span style={{ color: e.level === 'bad' ? '#b91c1c' : e.level === 'warn' ? '#b45309' : e.level === 'good' ? '#15803d' : 'inherit', fontWeight: 700 }}>{e.title}</span> <small style={{ color: 'var(--muted)' }}>{fmtDate(e.at)}</small>{e.message ? <div style={{ fontSize: 12, color: 'var(--muted)' }}>{e.message}</div> : null}</li>)}</ul> : <div style={{ fontSize: 13, color: 'var(--muted)' }}>Nothing yet: the first audit starts the list.</div>}
       </Panel>
@@ -141,9 +146,6 @@ function SiteDash({ site, onOpen, audit, busy, toast }) {
     </div>
   );
 }
-// the keyword and content parts of the dashboard come from seoKeywords.js / seoContent.js (phase 1B); until a site has them this renders nothing
-function SiteExtras() { return null; }
-
 // ---- RECOMMENDATIONS -----------------------------------------------------------------------------------------------------------------------------------------------------
 function TasksTab({ site, toast, onChanged }) {
   const [data, setData] = useState(null); const [filter, setFilter] = useState('open'); const [err, setErr] = useState(''); const [busyId, setBusyId] = useState(''); const [notes, setNotes] = useState({}); const [remaking, setRemaking] = useState(false);

@@ -41,6 +41,9 @@ const SeoSites = require('../marketing/seoSites');
 const SeoTasks = require('../marketing/seoTasks');
 const SeoAudit = require('../marketing/seoAudit');
 const SeoDash = require('../marketing/seoDashboard');
+const SeoKw = require('../marketing/seoKeywords');
+const SeoContent = require('../marketing/seoContent');
+const SeoComp = require('../marketing/seoCompetitor');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -482,5 +485,28 @@ router.post('/seo/sites/:id/audit', mustWrite, wrap(async (req, res) => {
 router.get('/seo/sites/:id/tasks', mustWrite, wrap(async (req, res) => send(res, await SeoTasks.list(req.user, { siteId: req.params.id, status: req.query.status ? String(req.query.status) : '' }))));
 router.post('/seo/sites/:id/remake', mustWrite, wrap(async (req, res) => send(res, await SeoTasks.remakeSite(req.user, req.params.id))));
 router.put('/seo/tasks/:id', mustWrite, wrap(async (req, res) => send(res, await SeoTasks.setStatus(req.user, req.params.id, req.body || {}))));
+// keywords (marketing/seoKeywords.js): research from the facts (no volume or difficulty: no data provider), the client's list, and Search Console query snapshots pasted as CSV
+router.post('/seo/keywords/research', mustWrite, wrap(async (req, res) => send(res, await SeoKw.research(req.user, req.body || {}))));
+router.get('/seo/sites/:id/keywords', mustWrite, wrap(async (req, res) => send(res, await SeoKw.list(req.user, req.params.id))));
+router.post('/seo/sites/:id/keywords', mustWrite, wrap(async (req, res) => send(res, await SeoKw.save(req.user, req.params.id, req.body || {}))));
+router.put('/seo/keywords/:id', mustWrite, wrap(async (req, res) => send(res, await SeoKw.setTracked(req.user, req.params.id, (req.body || {}).tracked === true))));
+router.delete('/seo/keywords/:id', mustWrite, wrap(async (req, res) => send(res, await SeoKw.remove(req.user, req.params.id))));
+router.get('/seo/sites/:id/queries', mustWrite, wrap(async (req, res) => send(res, await SeoKw.queryView(req.user, req.params.id))));
+router.post('/seo/sites/:id/queries', mustWrite, wrap(async (req, res) => send(res, await SeoKw.importQueries(req.user, req.params.id, req.body || {}))));
+// content (marketing/seoContent.js): titles, descriptions, headings, alt text, product text, location page, FAQ and outline from the typed facts; the text check; a full article only when an AI model is ready
+router.post('/seo/content/make', mustWrite, wrap(async (req, res) => send(res, await SeoContent.make(req.user, req.body || {}))));
+router.post('/seo/content/check', mustWrite, wrap(async (req, res) => send(res, await SeoContent.check(req.user, req.body || {}))));
+router.get('/seo/content/ai', mustWrite, wrap(async (req, res) => res.json(await SeoContent.aiStatus())));
+router.post('/seo/content/article', mustWrite, wrap(async (req, res) => send(res, await SeoContent.article(req.user, req.body || {}))));
+router.get('/seo/sites/:id/content', mustWrite, wrap(async (req, res) => send(res, await SeoContent.list(req.user, req.params.id))));
+router.post('/seo/sites/:id/content', mustWrite, wrap(async (req, res) => send(res, await SeoContent.saveItem(req.user, req.params.id, req.body || {}))));
+router.put('/seo/content/:id', mustWrite, wrap(async (req, res) => send(res, await SeoContent.setStatus(req.user, req.params.id, String((req.body || {}).status || '')))));
+router.delete('/seo/content/:id', mustWrite, wrap(async (req, res) => send(res, await SeoContent.remove(req.user, req.params.id))));
+// what the competitors' sites are about (marketing/seoCompetitor.js): each website is read once, so it counts against the same 20 an hour as the website check
+router.post('/seo/competitor-topics', mustWrite, wrap(async (req, res) => {
+  const b = req.body || {}; const n = 1 + (Array.isArray(b.competitors) ? b.competitors.filter((c) => c && String(c).trim()).length : 0);
+  if (!siteOk(req.user.id, Math.min(Math.max(n, 2), SeoComp.MAX_COMPETITORS + 1))) return res.status(429).json({ error: 'That would be more than 20 website checks in an hour. Try again later.' });
+  return send(res, await SeoComp.topics(req.user, b));
+}));
 
 module.exports = router;
