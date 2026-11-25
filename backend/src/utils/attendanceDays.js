@@ -871,8 +871,13 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
 }
 
 // Off days between two full leave days become leave (in place).
+// A leave still WAITING for approval is a leave day too (founder 2026-10-26: "leave ani apply chesthe approve ayina kaakapoyina leave ane
+// count"), so a weekly off / holiday between two full-day leaves where at least one is still waiting is a sandwich day that WAITS as well:
+// status Leave Under Review, unpaid until both leaves are approved, then it reads as sandwich leave on the next read (founder 2026-11-25:
+// the rule worked for people whose leave was approved and not for the newer people whose leave was still pending).
 function applySandwich(rows) {
   const isFullLeave = (r) => r && r.status === 'On Leave' && (r.leave + (r.unpaidLeave || 0)) >= 1;
+  const isFullWaiting = (r) => r && r.status === STATUS.LEAVE_REVIEW && !r.pendingHalf && (Number(r.pending) || 0) >= 1;
   let i = 0;
   while (i < rows.length) {
     if (!OFF_STATUSES.includes(rows[i].status)) { i += 1; continue; }
@@ -891,6 +896,20 @@ function applySandwich(rows) {
           leaveId: after.leaveId || null, leaveType: after.leaveType || null,
           note: `Sandwich leave: ${was} between two leave days`,
           kpi: 'onLeave', reason: `On leave — sandwich: ${was} between two leave days`,
+        });
+      }
+    } else if ((isFullLeave(before) || isFullWaiting(before)) && (isFullLeave(after) || isFullWaiting(after))) {
+      // at least one of the two leaves is still waiting: the off days wait with it
+      const waitingId = (isFullWaiting(after) ? after : before).pendingLeaveId || null;
+      for (let k = i; k <= j; k += 1) {
+        const r = rows[k];
+        const was = r.status === 'Holiday' ? `holiday (${r.note || 'Holiday'})` : 'weekly off';
+        Object.assign(r, {
+          status: STATUS.LEAVE_REVIEW, counted: true, sandwich: true, sandwichWaiting: true, colour: colourOf(STATUS.LEAVE_REVIEW),
+          present: 0, leave: 0, absent: 0, unpaidLeave: 0, pending: 1, paid: 0,
+          leaveId: null, pendingLeaveId: waitingId,
+          note: `Sandwich leave (waiting for approval): ${was} between two leave days`,
+          kpi: 'onLeave', reason: `Leave (pending) — sandwich: ${was} between two leave days, waiting for approval`,
         });
       }
     }

@@ -158,6 +158,7 @@ function absentWhy(row) {
 }
 
 function pendingWhy(row) {
+  if (row.sandwichWaiting) return 'A weekly off or holiday between two leave days counts as leave (sandwich rule). One of the two leaves is still waiting for approval, so this day is unpaid until both are approved.';
   if (row.status === 'Informed') return 'An attendance correction was asked for but is still waiting for approval. The day stays unpaid until it is approved.';
   if (row.status === 'Half Day, Under Review') return 'Worked one half; the leave asked for the other half is still waiting for approval. Unpaid until it is approved.';
   if (row.status === 'Leave Under Review') return 'A leave was applied but is still waiting for approval. The day is unpaid until it is approved.';
