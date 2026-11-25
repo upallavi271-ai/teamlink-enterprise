@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
 import HistorySeries, { mayOpenBde, useHistoryAccess } from './HistorySeries.jsx';
 import {
-  Day, Definition, DropSummary, Filters, FunnelTiles, cleanParams, fmtDay, money, num,
+  Day, Definition, DropSummary, Filters, FunnelTiles, StepPopup, cleanParams, fmtDay, money, num,
 } from './HistoryParts.jsx';
 
 // ---------------------------------------------------------------------------
@@ -46,16 +46,19 @@ export default function BdeHistory({ personId, embedded = false }) {
   const id = personId || routeParams.id;
   const access = useHistoryAccess();
   const [f, setF] = useState({ from: '', to: '', period: '' });
+  const [step, setStep] = useState(''); // a funnel card picked: its people open in a popup (2026-11-25)
+  const [loadedKey, setLoadedKey] = useState('');
+  const closeStep = useCallback(() => setStep(''), []);
   const [grain, setGrain] = useState('month');
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
-  const params = { ...cleanParams(f), grain };
+  const params = { ...{ ...cleanParams(f), grain }, ...(step ? { step } : {}) };
   const key = JSON.stringify(params);
   useEffect(() => {
     let live = true;
     setErr('');
     api.get(`/ats/history/bde/${id}`, { params })
-      .then((r) => { if (live) setD(r.data); })
+      .then((r) => { if (live) { setD(r.data); setLoadedKey(key); } })
       .catch((e) => { if (live) setErr(e.response?.data?.error || 'The history could not be loaded.'); });
     return () => { live = false; };
   }, [id, key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -77,7 +80,8 @@ export default function BdeHistory({ personId, embedded = false }) {
           {p.bdes && head('BDEs', p.bdes.length ? p.bdes.map((b, i) => <span key={b.id}>{i ? ', ' : ''}{mayOpenBde(access, b.id) ? <HLink to={`/ats/history/bde/${b.id}`}>{b.name}</HLink> : b.name}</span>) : 'None')}
         </div>
         <Filters f={f} setF={setF} clients={(d.options && d.options.clients) || []} requirements={(d.options && d.options.requirements) || []} statuses />
-        <FunnelTiles tiles={d.funnel} />
+        <FunnelTiles tiles={d.funnel} active={step} onPick={setStep} />
+        <StepPopup tile={step ? d.funnel.find((t) => t.key === step) : null} total={d.stepTotal || 0} shown={(d.stepRows || []).length} loading={loadedKey !== key} onClose={closeStep}><People rows={d.stepRows || []} /></StepPopup>
         <Definition text={d.definitions.dropped} joinedText={d.definitions.joined} joined={d.definitions.funnel} />
         <DropSummary s={d.dropSummary} />
         <HistorySeries series={d.series} grain={grain} setGrain={setGrain} cols={SERIES_COLS} />

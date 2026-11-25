@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { stageLabel } from '../../atsVocab';
 import { PRESETS, presetDates, matchPreset, dateProblem } from '../../utils/dateRanges.js';
 import MultiSelect from './MultiSelect.jsx';
@@ -27,6 +29,36 @@ export function Day({ v, est, empty = '—' }) {
 export const stepLabel = (t) => (t.key === 'joined' ? `${stageLabel('JOINED')} (still working)` : t.stage ? stageLabel(t.stage) : t.plainLabel);
 
 // The row of numbered tiles: each is clickable (it opens the list behind it).
+// A funnel card picked: its people in a popup over the page (founder 2026-11-25). Esc, the X or a click outside closes it.
+export function StepPopup({ tile, total, shown, loading, onClose, children }) {
+  useEffect(() => {
+    const k = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [onClose]);
+  if (!tile) return null;
+  return createPortal(
+    <div className="hx-pop-back" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="hx-pop" role="dialog" aria-modal="true" aria-label={stepLabel(tile)} data-testid="step-popup">
+        <div className="hx-pop-head">
+          <div>
+            <div className="hx-muted">Card {tile.no}</div>
+            <h3 style={{ margin: 0 }}>{stepLabel(tile)} ({loading ? '…' : num(total)})</h3>
+          </div>
+          <button type="button" className="btn btn-sm" onClick={onClose}>Close ✕</button>
+        </div>
+        <div className="hx-pop-body">
+          {loading ? <div className="small-muted">Loading the people…</div>
+            : total === 0 ? <div className="small-muted">Nobody at this step for these filters.</div>
+              : children}
+          {!loading && total > shown && <div className="hx-muted" style={{ marginTop: 6 }}>Showing {num(shown)} of {num(total)}. Download the Excel for all of them.</div>}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function FunnelTiles({ tiles, active, onPick }) {
   return (
     <div className="hx-tiles" role="list">

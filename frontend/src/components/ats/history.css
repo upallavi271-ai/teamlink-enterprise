@@ -10,6 +10,10 @@
 .hx-tile.on { border-color: var(--navy); box-shadow: 0 0 0 2px var(--navy-tint); }
 .hx-tile.good .hx-n { color: var(--teal); }
 .hx-tile.bad .hx-n { color: var(--red); }
+.hx-pop-back { position: fixed; inset: 0; z-index: 4000; background: rgba(15, 23, 42, 0.45); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 16px 16px; }
+.hx-pop { background: var(--paper-raised, #fff); color: var(--ink, inherit); border-radius: 12px; width: min(1100px, 100%); max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3); }
+.hx-pop-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.hx-pop-body { padding: 12px 16px 16px; overflow: auto; }
 .hx-tile.sub { background: var(--paper); border-style: dashed; }
 .hx-no { position: absolute; top: 7px; right: 9px; font-size: 11px; color: var(--ink-soft); font-weight: 600; }
 .hx-n { font-family: 'Newsreader', serif; font-size: 26px; line-height: 1.05; }

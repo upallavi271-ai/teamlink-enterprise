@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
 import { Link, useParams } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
 import HistorySeries, { mayOpenRecruiter, useHistoryAccess } from './HistorySeries.jsx';
 import {
-  Day, Definition, DropSummary, Filters, FunnelTiles, cleanParams, fmtDay, num,
+  Day, Definition, DropSummary, Filters, FunnelTiles, StepPopup, cleanParams, fmtDay, num,
 } from './HistoryParts.jsx';
 
 // ---------------------------------------------------------------------------
@@ -39,16 +39,19 @@ export default function TlHistory({ personId, embedded = false }) {
   const id = personId || routeParams.id;
   const access = useHistoryAccess();
   const [f, setF] = useState({ from: '', to: '', period: '' });
+  const [step, setStep] = useState(''); // a funnel card picked: its people open in a popup (2026-11-25)
+  const [loadedKey, setLoadedKey] = useState('');
+  const closeStep = useCallback(() => setStep(''), []);
   const [grain, setGrain] = useState('month');
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
-  const params = { ...cleanParams(f), grain };
+  const params = { ...{ ...cleanParams(f), grain }, ...(step ? { step } : {}) };
   const key = JSON.stringify(params);
   useEffect(() => {
     let live = true;
     setErr('');
     api.get(`/ats/history/tl/${id}`, { params })
-      .then((r) => { if (live) setD(r.data); })
+      .then((r) => { if (live) { setD(r.data); setLoadedKey(key); } })
       .catch((e) => { if (live) setErr(e.response?.data?.error || 'The history could not be loaded.'); });
     return () => { live = false; };
   }, [id, key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -69,7 +72,8 @@ export default function TlHistory({ personId, embedded = false }) {
           {head('Handovers', `${d.handovers.given} given, ${d.handovers.taken} taken`)}
         </div>
         <Filters f={f} setF={setF} recruiters={(d.options && d.options.recruiters) || []} clients={(d.options && d.options.clients) || []} requirements={(d.options && d.options.requirements) || []} statuses />
-        <FunnelTiles tiles={d.funnel} />
+        <FunnelTiles tiles={d.funnel} active={step} onPick={setStep} />
+        <StepPopup tile={step ? d.funnel.find((t) => t.key === step) : null} total={d.stepTotal || 0} shown={(d.stepRows || []).length} loading={loadedKey !== key} onClose={closeStep}><People rows={d.stepRows || []} /></StepPopup>
         <Definition text={d.definitions.dropped} joinedText={d.definitions.joined} joined={d.definitions.funnel} />
         <DropSummary s={d.dropSummary} />
         <HistorySeries series={d.series} grain={grain} setGrain={setGrain} targets={d.targets} />

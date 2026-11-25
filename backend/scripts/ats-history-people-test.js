@@ -327,6 +327,17 @@ const COLS = ['added', 'sent', 'interviews', 'selected', 'offers', 'dropped'];
     check('team joined (still working) = recruiter A + recruiter B; the person who left is in Dropped, not Joined', tile(TLp.body, 'joined') === ta('joined') + tile(RBp.body, 'joined') && tile(TLp.body, 'left') === 1 && TLp.body.droppedList.some((r) => r.drop.type === 'left_after_joining') && !TLp.body.joinedList.some((r) => r.applicationId === apps.a2), { joinedList: TLp.body.joinedList.length });
     check('team page does not contain team two (c1, c2, requirement RC)', !JSON.stringify(TLp.body).includes(`Hxperson c1 ${RUN}`) && TLp.body.requirements.every((r) => r.id !== R.RC.id), TLp.body.requirements.map((r) => r.title));
     check('team: requirements handled (RA, RB), one client served with 2 requirements, 5 dropped listed', TLp.body.requirements.length === 2 && TLp.body.clients.length === 1 && TLp.body.clients[0].requirements === 2 && TLp.body.droppedList.length === 5, [TLp.body.requirements.length, TLp.body.clients]);
+    // founder 2026-11-25: a card clicked opens a popup with the people behind its number - the list matches the card on every card
+    const popBad = [];
+    for (const t of TLp.body.funnel) {
+      const sp = await C('GET', `/ats/history/tl/${tl.id}?${q({ step: t.key })}`, 'sa');
+      if (sp.status !== 200 || sp.body.stepTotal !== t.count || sp.body.stepRows.length !== t.count) popBad.push([t.key, t.count, sp.body.stepTotal]);
+    }
+    check('team page: every card\'s popup lists exactly the card\'s number of people', popBad.length === 0, popBad);
+    const rPop = await C('GET', `/ats/history/recruiter/${recA.id}?${q({ step: 'shared' })}`, 'sa');
+    check('recruiter page: the Sent to client card lists exactly its people', rPop.status === 200 && rPop.body.total === tile(RA.body, 'shared'), [rPop.body.total, tile(RA.body, 'shared')]);
+    const noStep = await C('GET', `/ats/history/tl/${tl.id}`, 'sa');
+    check('team page without a card picked sends no popup list', noStep.body.stepTotal === 0 && noStep.body.stepRows.length === 0);
     const tDay = await C('GET', `/ats/history/tl/${tl.id}?${q({ grain: 'day', from: day(-45), to: day(0) })}`, 'sa');
     const teamPlan = [...plan('A'), ...plan('B')];
     const badT = [];

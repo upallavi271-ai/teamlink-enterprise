@@ -312,6 +312,13 @@ const mkUser = async (tag, data, emp) => {
     check('client: billing shown to the Admin', CH.body.billing !== null && typeof CH.body.billing.revenue === 'number', CH.body.billing);
     const inv = await prisma.invoice.count({ where: { clientId: client.id } });
     check('client: invoices raised by the joinings are counted in billing', CH.body.billing && CH.body.billing.raised === inv, [CH.body.billing && CH.body.billing.raised, inv]);
+    // founder 2026-11-25: a card clicked opens a popup with the people behind its number
+    const cPopBad = [];
+    for (const t of CH.body.funnel) {
+      const sp = await C('GET', `/ats/history/client/${client.id}?step=${t.key}`, 'sa');
+      if (sp.status !== 200 || sp.body.candidateTotal !== t.count || sp.body.step !== t.key) cPopBad.push([t.key, t.count, sp.body.candidateTotal]);
+    }
+    check('client: every card\'s popup lists exactly the card\'s number of people', cPopBad.length === 0, cPopBad);
     const chFilt = await C('GET', `/ats/history/client/${client.id}?recruiter=${rec.id}&period=year`, 'sa');
     check('client date + recruiter filters answer', chFilt.status === 200, err(chFilt));
     const cx = await fetch(`${API}/ats/history/client/${client.id}/export`, { headers: { Authorization: `Bearer ${T.sa}` } });

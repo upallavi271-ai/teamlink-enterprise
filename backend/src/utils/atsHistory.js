@@ -669,7 +669,9 @@ async function clientHistory(user, id, q = {}) {
     }, tgc.get(x.applicationId));
   }).sort((a, b) => String(a.joinDay || '9999').localeCompare(String(b.joinDay || '9999')));
   // every candidate of this client (one row per application), one click from the client's History
-  const candidateRows = tableRows(recs, {}).slice(0, 500).map((x) => ({ ...rowOut(x), requirement: reqTitle.get(x.requirementId) || '' }));
+  // a funnel tile picked on the screen (?step=sourced|shared|...|joined|dropped|left|inprocess): only the candidates behind that number (2026-11-25)
+  const stepRows = tableRows(recs, { step: q.step });
+  const candidateRows = stepRows.slice(0, 500).map((x) => ({ ...rowOut(x), requirement: reqTitle.get(x.requirementId) || '' }));
   const recruiters = [...new Map(all.filter((x) => x.recruiterId).map((x) => [x.recruiterId, x.recruiterName || x.recruiterId])).entries()].map(([rid, name]) => ({ id: rid, name })).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   // agreements (hidden for the logins that never see them)
   let agreements = null;
@@ -710,7 +712,7 @@ async function clientHistory(user, id, q = {}) {
     big: { requirementsGiven: reqs.length, joinings: (f.tiles.find((t) => t.key === 'joined') || {}).count || 0, leftAfterJoining: (f.tiles.find((t) => t.key === 'left') || {}).count || 0 },
     requirements: { opened, closed: closedN, total: reqs.length, open: reqs.filter((r) => !['CLOSED', 'DRAFT'].includes(r.status)).length },
     averages: { daysToFill: avg(fill), daysShareToJoin: avg(shareToJoin), filledRequirements: fill.length },
-    joinings, candidates: candidateRows, candidateTotal: recs.length, requirementRows: reqRows, recruiters, agreements, billing, replacements: replacementsC,
+    joinings, candidates: candidateRows, candidateTotal: stepRows.length, step: q.step ? String(q.step) : null, requirementRows: reqRows, recruiters, agreements, billing, replacements: replacementsC,
     notes: { estimatedDates: f.tiles.reduce((n, t) => n + t.estimated, 0) },
   };
 }

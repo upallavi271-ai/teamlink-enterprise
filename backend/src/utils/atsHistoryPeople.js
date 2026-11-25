@@ -346,6 +346,8 @@ async function tlHistory(viewerUser, tlId, q = {}) {
     definitions: H.DEFINITIONS, period, range: rng, funnel: f.tiles, dropSummary: f.dropSummary, joinedDetail: f.joinedDetail,
     members: compare, total, requirements: requirementRows(recs, reqs, period).filter((r) => r.numbers.sourced > 0 || reqs.find((x) => x.id === r.id).tlId === tlId).filter(keepReq(q, reqs)), clients, series, targets,
     joinedList: listOf((r) => r.outcome === 'joined'), droppedList: listOf((r) => r.outcome === 'dropped'),
+    stepRows: q.step ? H.tableRows(recs, { step: q.step }).slice(0, 500).map((r) => personRow(r, reqById)) : [],
+    stepTotal: q.step ? H.tableRows(recs, { step: q.step }).length : 0,
     handovers: { given: hand.reduce((n, h) => n + h.given.length, 0), taken: hand.reduce((n, h) => n + h.taken.length, 0) },
     options,
     notes: { estimatedDates: f.tiles.reduce((n, t) => n + t.estimated, 0) }, viewer: { kind: v.kind },
@@ -518,6 +520,8 @@ async function bdeHistory(viewerUser, uid, q = {}) {
   return {
     person, definitions: H.DEFINITIONS, period, range: rng, funnel: tiles, total: totalsOf(recs, period), dropSummary: f.dropSummary, joinedDetail: f.joinedDetail,
     clients, requirements, series, joinedList: listOf((r) => r.outcome === 'joined'), droppedList: listOf((r) => r.outcome === 'dropped'),
+    stepRows: q.step ? H.tableRows(recs, { step: q.step }).slice(0, 500).map((r) => personRow(r, reqById)) : [],
+    stepTotal: q.step ? H.tableRows(recs, { step: q.step }).length : 0,
     replacements: rp ? { dropped: rp.dropped, replaced: rp.replaced, pending: rp.pending, table: rp.table || [] } : { dropped: 0, replaced: 0, pending: 0, table: [] },
     followups: touchesShown.slice(0, 500), followupTotal: touchesShown.length, billing, options,
     notes: { estimatedDates: f.tiles.reduce((n, t) => n + t.estimated, 0) }, viewer: { kind: v.kind },

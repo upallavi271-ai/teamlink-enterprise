@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
 import {
-  Day, Definition, DropSummary, Filters, FunnelTiles, JoinedNote, cleanParams, fmtDay, money, num,
+  Day, Definition, DropSummary, Filters, FunnelTiles, StepPopup, JoinedNote, cleanParams, fmtDay, money, num,
 } from './HistoryParts.jsx';
 import { ReplacementTags } from '../joindrop/ReplacementParts.jsx'; // who replaced whom
 import { ReplacementTable } from '../joindrop/JoinDropList.jsx';
@@ -21,16 +21,19 @@ export default function ClientHistory({ clientId }) {
   const [sp] = useSearchParams();
   const focus = sp.get('focus') || ''; // from a search result: invoice-<id> or agreement
   const [f, setF] = useState({ from: '', to: '', period: '', recruiter: '' });
+  const [step, setStep] = useState(''); // a funnel card picked: its candidates open in a popup (2026-11-25)
+  const [loadedKey, setLoadedKey] = useState('');
+  const closeStep = useCallback(() => setStep(''), []);
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [denied, setDenied] = useState(false);
-  const params = cleanParams(f);
+  const params = { ...cleanParams(f), ...(step ? { step } : {}) };
   const key = JSON.stringify(params);
   useEffect(() => {
     let live = true;
     setErr('');
     api.get(`/ats/history/client/${clientId}`, { params })
-      .then((r) => { if (live) setD(r.data); })
+      .then((r) => { if (live) { setD(r.data); setLoadedKey(key); } })
       .catch((e) => { if (live) { if (e.response?.status === 403) setDenied(true); setErr(e.response?.data?.error || 'The client history could not be loaded.'); } });
     return () => { live = false; };
   }, [clientId, key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -47,6 +50,24 @@ export default function ClientHistory({ clientId }) {
   if (err && !d) return <div className="notice red"><span>{err}</span></div>;
   if (!d) return <div className="small-muted">Loading the history…</div>;
   const rq = d.requirements;
+  const picked = step ? (d.funnel || []).find((t) => t.key === step) : null;
+  const candidateTable = (
+    <div className="hx-scroll">
+      <table className="hx-table" style={{ minWidth: 860 }}>
+        <thead><tr><th style={{ cursor: 'default' }}>Candidate</th><th style={{ cursor: 'default' }}>Requirement</th><th style={{ cursor: 'default' }}>Recruiter</th><th style={{ cursor: 'default' }}>Sent to client</th><th style={{ cursor: 'default' }}>Selected</th><th style={{ cursor: 'default' }}>Joined</th><th style={{ cursor: 'default' }}>Step / outcome</th></tr></thead>
+        <tbody>
+          {d.candidates.map((x) => (
+            <tr key={x.applicationId}>
+              <td><HLink to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</HLink></td>
+              <td>{x.requirement}</td><td>{x.recruiterName || '—'}</td>
+              <td><Day v={x.shared} /></td><td><Day v={x.selected} /></td><td>{x.joinDay && x.outcome === 'joined' ? <Day v={x.joinDay} est={false} /> : '—'}</td>
+              <td>{x.outcome === 'dropped' ? <><b>Dropped</b>{x.drop ? <div className="hx-muted">{x.drop.typeLabel}{x.drop.reason ? `: ${x.drop.reason}` : ''}</div> : null}</> : x.stageLabel}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
   return (
     <div className="hx-tab">
       <div className="hx-bar">
@@ -59,7 +80,8 @@ export default function ClientHistory({ clientId }) {
         <div className="hx-bigbox"><b>{num(d.big.joinings)}</b><span>joinings so far (still working){d.big.leftAfterJoining ? `, ${d.big.leftAfterJoining} more left after joining` : ''}</span></div>
       </div>
       <Filters f={f} setF={setF} recruiters={d.recruiters} />
-      <FunnelTiles tiles={d.funnel} />
+      <FunnelTiles tiles={d.funnel} active={step} onPick={setStep} />
+      <StepPopup tile={picked} total={d.candidateTotal} shown={d.candidates.length} loading={loadedKey !== key} onClose={closeStep}>{candidateTable}</StepPopup>
       <JoinedNote detail={d.joinedDetail} />
       <Definition text={d.definitions.dropped} joinedText={d.definitions.joined} joined={d.definitions.funnel} />
       <div className="hx-avg">
@@ -107,27 +129,13 @@ export default function ClientHistory({ clientId }) {
         )}
       </div>
 
-      <div className="hx-sec" data-testid="client-candidates">
-        <h3>Candidates ({d.candidateTotal})</h3>
-        {d.candidates.length === 0 ? <div className="small-muted">No candidates yet.</div> : (
-          <div className="hx-scroll">
-            <table className="hx-table" style={{ minWidth: 860 }}>
-              <thead><tr><th style={{ cursor: 'default' }}>Candidate</th><th style={{ cursor: 'default' }}>Requirement</th><th style={{ cursor: 'default' }}>Recruiter</th><th style={{ cursor: 'default' }}>Sent to client</th><th style={{ cursor: 'default' }}>Selected</th><th style={{ cursor: 'default' }}>Joined</th><th style={{ cursor: 'default' }}>Step / outcome</th></tr></thead>
-              <tbody>
-                {d.candidates.map((x) => (
-                  <tr key={x.applicationId}>
-                    <td><HLink to={`/ats/history/candidate/${x.candidateId}`}>{x.candidate}</HLink></td>
-                    <td>{x.requirement}</td><td>{x.recruiterName || '—'}</td>
-                    <td><Day v={x.shared} /></td><td><Day v={x.selected} /></td><td>{x.joinDay && x.outcome === 'joined' ? <Day v={x.joinDay} est={false} /> : '—'}</td>
-                    <td>{x.outcome === 'dropped' ? <><b>Dropped</b>{x.drop ? <div className="hx-muted">{x.drop.typeLabel}{x.drop.reason ? `: ${x.drop.reason}` : ''}</div> : null}</> : x.stageLabel}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {d.candidateTotal > d.candidates.length && <div className="hx-muted" style={{ marginTop: 6 }}>Showing {d.candidates.length} of {d.candidateTotal}. Download the Excel for all of them.</div>}
-      </div>
+      {(
+        <div className="hx-sec" data-testid="client-candidates">
+          <h3>Candidates ({d.candidateTotal})</h3>
+          {d.candidates.length === 0 ? <div className="small-muted">No candidates yet.</div> : candidateTable}
+          {d.candidateTotal > d.candidates.length && <div className="hx-muted" style={{ marginTop: 6 }}>Showing {d.candidates.length} of {d.candidateTotal}. Download the Excel for all of them.</div>}
+        </div>
+      )}
 
       <div className="hx-sec">
         <h3>Joinings ({d.joinings.length})</h3>
