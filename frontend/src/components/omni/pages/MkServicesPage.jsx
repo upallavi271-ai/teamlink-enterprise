@@ -270,6 +270,17 @@ function ReportPanel({ plan, month, toast, onClose }) {
       <Field label="GOOGLE SEARCH CONSOLE EXPORT (PASTE THE CSV OF QUERIES OR PAGES)" full><textarea rows={4} value={csv} onChange={(e) => setCsv(e.target.value)} style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} placeholder={'Top queries,Clicks,Impressions,CTR,Position\nbest hospital in …,120,4000,3%,8.2'} /></Field>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0' }}><TinyBtn disabled={!csv.trim()} onClick={readCsv}>Read the file</TinyBtn>{m.seo ? <Tag green>{m.seo.clicks} clicks · {m.seo.impressions} impressions read</Tag> : null}</div>
       <Field label="NOTE FROM THE TEAM" full><textarea rows={3} maxLength={1500} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: '100%' }} /></Field>
+      {d.comparison ? (() => {
+        const c = d.comparison; const better = (c.rows || []).filter((r) => r.better === 'better').length; const worse = (c.rows || []).filter((r) => r.better === 'worse').length; const same = (c.rows || []).filter((r) => r.better === 'same').length;
+        if (!c.hasPrev) return <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 8 }}>Compared with last month: {c.notes.join(' ')}</div>;
+        return (
+          <div style={{ marginTop: 8 }}>
+            <b style={{ fontSize: 13 }}>Compared with {c.prevWords}</b>
+            {c.metricsSaved ? <div style={{ fontSize: 12.5 }}>{better} better · {worse} worse · {same} the same{c.missing.length ? ` · ${c.missing.length} not compared (a number is missing in one month)` : ''}. The table is in the report below.</div> : null}
+            {c.notes.map((n, i) => <div key={i} style={{ fontSize: 12.5, color: '#8a6410' }}>{n}</div>)}
+          </div>
+        );
+      })() : null}
       <iframe title="Monthly report preview" srcDoc={d.report.html} sandbox="" style={{ width: '100%', height: 520, border: '1px solid #e2e8f0', borderRadius: 8, marginTop: 8 }} />
       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}><Btn onClick={print}>Print or save as PDF</Btn><Btn onClick={copyText}>Copy as text</Btn></div>
       <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 4 }}>The preview shows what is saved: press "Save and make the report" after changing a number. The report is not sent anywhere.</div>

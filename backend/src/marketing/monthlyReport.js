@@ -2,6 +2,7 @@
 // AI MARKETING > CLIENT PLANS > MONTHLY CLIENT REPORT (2026-11-24): the "digital marketing performance report" of the services document (section 11, "How we measure results"). One page per client and month:
 //   1 what TeamLink DELIVERED against the plan (counted in Client plans)   2 social media   3 SEO from a Google Search Console CSV (pasted, read here)   4 Google Business Profile numbers + the latest
 //   profile audit score   5 business results (enquiries, leads, calls)   6 the latest website check   7 the improvement plan (from the audit, the website check and what is still to deliver) and the team's note.
+//   8 (2026-11-25) this month beside the month before: the change in every number given for both months, in what was delivered and in the audit and website check scores (monthCompare.js).
 // HONEST BY DESIGN (the document's rule: "TeamLink must not invent views, calls, reviews or performance results"): every number is typed or imported by the team from the real source; a number that was not
 // given shows "Not provided", never a guess and never a zero. No ranking or lead is promised. The page is plain HTML the team prints or saves as PDF from the browser; nothing is sent.
 // Saved per plan and month (table OmniMkMonthlyMetrics); audit log "Omni-Channel AI Marketing: monthly report saved".
@@ -10,6 +11,7 @@ const S = require('../outreach/store');
 const CS = require('./clientServices');
 const Site = require('./siteCheck');
 const Comp = require('./competitors');
+const Cmp = require('./monthCompare');
 const { logAudit } = require('../utils/audit');
 
 const T = 'OmniMkMonthlyMetrics';
@@ -65,13 +67,14 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':
 const NP = 'Not provided';
 const fmt = (v, k) => (v == null ? NP : k === 'rating' ? `${v} / 5` : Number(v).toLocaleString('en-IN'));
 const monthWords = (m) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-function sections({ plan, month, metrics, notes, audit, site, comp }) {
+function sections({ plan, month, metrics, notes, audit, site, comp, cmp }) {
   const m = metrics || {}; const sec = []; const improve = [];
   const prog = plan.progress || []; const done = prog.reduce((a, x) => a + Math.min(x.done, x.quota), 0); const quota = prog.reduce((a, x) => a + x.quota, 0);
   sec.push({ key: 'delivery', title: `What TeamLink delivered in ${monthWords(month)}`, kind: 'bars', rows: prog.map((x) => ({ label: x.label, done: x.done, quota: x.quota, pct: x.pct, over: x.over })), summary: `${done} of ${quota} items of the ${plan.planLabel} plan (${quota ? Math.round((done / quota) * 100) : 0}%). Counted from the work approved in TeamLink plus what the team added by hand.` });
   prog.filter((x) => x.left > 0).forEach((x) => improve.push(`${x.left} ${x.label} still to deliver for this month's plan.`)); // the label as written ("AI-assisted Reels", "Google Business Profile posts"): lowercasing it spoiled AI, Google, SEO
   for (const [g, def] of Object.entries(FIELDS)) sec.push({ key: g, title: def.label, kind: 'table', rows: def.items.map(([k, label]) => ({ label, value: fmt(m[g] && m[g][k], k), given: !!(m[g] && m[g][k] != null) })) });
   const seo = m.seo; sec.splice(2, 0, { key: 'seo', title: 'Search performance (Google Search Console)', kind: 'seo', given: !!seo, rows: seo ? [{ label: 'Search clicks', value: fmt(seo.clicks) }, { label: 'Search impressions', value: fmt(seo.impressions) }, { label: 'Click-through rate', value: seo.ctr == null ? NP : `${seo.ctr}%` }, { label: 'Average search position', value: seo.position == null ? NP : String(seo.position) }] : [], top: seo ? (seo.rows || []).slice(0, 10) : [], source: seo ? seo.source : '' });
+  if (cmp && cmp.hasPrev) { sec.push(Cmp.section(cmp)); Cmp.improveLines(cmp).forEach((x) => improve.push(x)); } // this month beside the month before (monthCompare.js)
   if (audit) { sec.push({ key: 'audit', title: 'Google Business Profile quality audit (TeamLink\'s own score)', kind: 'score', score: audit.score, band: audit.band, when: audit.createdAt, note: "TeamLink's own audit score, not an official Google score or ranking." }); (audit.actions || []).slice(0, 3).forEach((a) => improve.push(`Google profile, ${a.area.toLowerCase()}: ${a.fix}`)); }
   if (site) {
     const perf = (s) => { const x = s && s.scores && s.scores.find((c) => c.key === 'performance'); return x && x.score != null ? x.score : null; };
@@ -94,7 +97,8 @@ function html(plan, month, parts) {
       if (s.kind === 'seo' && !s.given) out.push(`<p class="np">${NP}: no Search Console export was added for this month.</p>`);
       else out.push(`<table>${s.rows.map((r) => `<tr><td>${esc(r.label)}</td><td class="${r.value === NP ? 'np' : ''}">${esc(r.value)}</td></tr>`).join('')}</table>`);
       if (s.kind === 'seo' && s.top && s.top.length) out.push(`<p class="muted">Top results by clicks</p><table><tr><th>Query or page</th><th>Clicks</th><th>Impressions</th></tr>${s.top.map((r) => `<tr><td>${esc(r.label)}</td><td>${fmt(r.clicks)}</td><td>${fmt(r.impressions)}</td></tr>`).join('')}</table>`);
-    } else if (s.kind === 'score') out.push(`<div class="big">${s.score}<span class="muted"> / 100</span></div><div>${esc(s.band || '')}</div>${s.url ? `<div class="muted">${esc(s.url)}</div>` : ''}<div class="muted">${esc(s.note)}</div>`);
+    } else if (s.kind === 'compare') out.push(Cmp.renderHtml(s.cmp, esc));
+    else if (s.kind === 'score') out.push(`<div class="big">${s.score}<span class="muted"> / 100</span></div><div>${esc(s.band || '')}</div>${s.url ? `<div class="muted">${esc(s.url)}</div>` : ''}<div class="muted">${esc(s.note)}</div>`);
     else if (s.kind === 'competitors') {
       out.push(`<table><tr><th>Business</th><th>Website score</th></tr>${s.rows.map((r) => `<tr><td>${r.isClient ? '<b>' : ''}${esc(r.name)}${r.isClient ? ' (this client)</b>' : ''}</td><td>${r.score} / 100</td></tr>`).join('')}</table>`);
       for (const g of s.google) out.push(`<p class="muted">${esc(g.label)}: ${g.values.map((v) => `${esc(v.name)} ${v.value == null ? NP.toLowerCase() : esc(v.value)}`).join(' · ')}</p>`);
@@ -112,6 +116,7 @@ function text(plan, month, parts) {
     L.push(s.title.toUpperCase());
     if (s.kind === 'bars') { L.push(s.summary); s.rows.forEach((r) => L.push(`- ${r.label}: ${r.done} of ${r.quota}`)); }
     else if (s.kind === 'table' || s.kind === 'seo') { if (s.kind === 'seo' && !s.given) L.push(`${NP}.`); else s.rows.forEach((r) => L.push(`- ${r.label}: ${r.value}`)); }
+    else if (s.kind === 'compare') Cmp.renderText(s.cmp).forEach((l) => L.push(l));
     else if (s.kind === 'score') L.push(`Score ${s.score}/100. ${s.note}`);
     else if (s.kind === 'competitors') { s.rows.forEach((r) => L.push(`- ${r.name}${r.isClient ? ' (this client)' : ''}: ${r.score}/100`)); s.lines.forEach((l) => L.push(`- ${l}`)); }
     L.push('');
@@ -131,8 +136,10 @@ async function build(u, planId, month) {
   let audit = null; const al = await CS.listAudits(u, { planId }); if (al.items && al.items[0]) { const a = await CS.getAudit(u, al.items[0].id); if (a.audit) audit = { score: a.audit.score, band: a.audit.report.band, createdAt: a.audit.createdAt, actions: a.audit.report.actions.filter((x) => !x.unchecked) }; }
   let site = null; const sl = await Site.latestFor(u, plan.clientName); if (sl) { const g = await Site.get(u, sl.id); if (g.report) site = { score: g.report.score, areas: g.report.areas, actions: g.report.actions, url: g.report.url, checkedAt: g.report.checkedAt, pages: g.report.crawl ? g.report.crawl.read : 1, pagespeed: g.report.pagespeed || null }; }
   const comp = await Comp.latestFor(u, plan.clientName).catch(() => null);
-  const parts = sections({ plan, month: m, metrics, notes, audit, site, comp });
-  return { month: m, plan: { id: plan.id, clientName: plan.clientName, planLabel: plan.planLabel }, metrics, notes, fields: FIELDS, report: { html: html(plan, m, parts), text: text(plan, m, parts), improve: parts.improve }, saved: !!row, updatedAt: row ? S.iso(row.updatedAt) : null };
+  const prow = await rowFor(planId, Cmp.prevMonthOf(m)); const prevMetrics = prow ? cleanMetrics(S.parse(prow.metrics, {})) : null; // last month's saved numbers, if any
+  const cmp = await Cmp.make(u, plan, m, { metrics, prevMetrics, fields: FIELDS });
+  const parts = sections({ plan, month: m, metrics, notes, audit, site, comp, cmp });
+  return { month: m, plan: { id: plan.id, clientName: plan.clientName, planLabel: plan.planLabel }, metrics, notes, fields: FIELDS, comparison: cmp, report: { html: html(plan, m, parts), text: text(plan, m, parts), improve: parts.improve }, saved: !!row, updatedAt: row ? S.iso(row.updatedAt) : null };
 }
 async function save(u, planId, b = {}) {
   if (!(await ensure())) return { error: 'The report could not be saved.', status: 500 };
