@@ -50,6 +50,7 @@ const bankRoutes = require('./routes/bank');
 const publicRoutes = require('./routes/public');
 const performanceRoutes = require('./routes/performance');
 const hrAuditRoutes = require('./routes/hrAudit'); // HR audit checks: read-only lists of what looks wrong (HR / Admin only)
+const docRegisterRoutes = require('./routes/docRegister'); // Document expiry, NDAs and policy versions: its own four tables, reminders OFF until HR switches them on
 const probationRoutes = require('./routes/probation'); // Probation and confirmation: its own two tables, OFF until HR switches it on
 const lmsRoutes = require('./routes/lms');
 const projectRoutes = require('./routes/projects');
@@ -418,6 +419,7 @@ app.use('/api/public/mkt', require('./routes/mktPublic'));
 app.use('/api/public', publicRoutes);
 app.use('/api/performance', performanceRoutes);
 app.use('/api/hr-audit', hrAuditRoutes);
+app.use('/api/doc-register', docRegisterRoutes);
 app.use('/api/probation', probationRoutes);
 // HRMS → Performance & Development → Recruiter joinings + the Super Admin popup (routes/recruiterJoinings.js).
 app.use('/api/recruiter-joinings', require('./routes/recruiterJoinings'));
@@ -763,6 +765,7 @@ const server = app.listen(PORT, () => {
   require('./utils/portalOmniMirror').startSync(); // the approved Omni-Channel WhatsApp templates are given to the Job Portal's Send WhatsApp (every 10 minutes)
   require('./utils/candidateLogins').startSchedule();
   require('./utils/requirementExpiry').startSchedule(); // once a day after 9 am: open requirements closing in 3 days, or past their closing date, to their recruiters / TL / BDEs
+  require('./utils/docRegister').startSchedule(); // hourly; does nothing until HR switches the reminders on, then once a day after 9 am: document expiry and policy review reminders to HR
   require('./utils/probation').startSchedule(); // hourly; does nothing until HR switches probation tracking on, then once a day after 9 am: new joiners get a record and the 30 / 7 / 0 day and overdue reminders go out
   require('./calling/voiceCampaigns').startSchedule(); // AI Voice campaigns: dispatch the waiting calls, at most `concurrency` lines at once
   require('./utils/omniVoiceSync').startSchedule(); // finished AI calls -> Omni-Channel > Voice Calling (the history there too)

@@ -5514,3 +5514,74 @@ model ProbationEvent {
 
   @@index([recordId, at])
 }
+
+// DOCUMENT EXPIRY, NDAs AND POLICY VERSIONS (founder 2026-11-25, from the HR audit questionnaire; "fill the gaps, change nothing that exists").
+// ADDITIVE: four new tables and nothing else. They point at EmployeeDocument / PolicyDocument / Employee with plain scalars (no relation
+// fields), so those tables are not touched and the existing Documents screen and acknowledgements work exactly as before.
+// Logic: utils/docRegister.js and utils/policyRegister.js, screen: HRMS > Document expiry & policies. Reminders stay OFF until HR
+// switches them on (AppSetting "docregister.settings").
+
+// An item HR tracks for a person: a document with an expiry date (passport, visa, licence, certificate ...), or an NDA / agreement.
+model TrackedDocument {
+  id            String    @id @default(cuid())
+  employeeId    String // Employee.id
+  employeeCode  String?
+  employeeName  String
+  department    String?
+  kind          String // Document | NDA | Confidentiality agreement | Bond / service agreement | Other agreement
+  title         String
+  documentId    String? // EmployeeDocument.id: the uploaded file this item is about
+  issuedOn      DateTime?
+  expiresOn     DateTime? // empty = no expiry (an NDA that never ends)
+  note          String?
+  status        String    @default("Active") // Active | Removed
+  remindState   String? // JSON { milestone: day } so each reminder goes once
+  history       String? // JSON [{ at, by, action, from, to, note }]
+  createdByName String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([employeeId])
+  @@index([status, expiresOn])
+}
+
+// One row per revision of a policy. Version 1 is made when the first revision is recorded (the original issue).
+model PolicyVersion {
+  id             String   @id @default(cuid())
+  policyId       String // PolicyDocument.id
+  versionNo      Int
+  summary        String // what changed
+  effectiveOn    DateTime
+  requireReack   Boolean  @default(false) // everybody it was sent to has to accept this version again
+  recordedByName String?
+  recordedAt     DateTime @default(now())
+
+  @@unique([policyId, versionNo])
+  @@index([policyId])
+}
+
+// Review plan of a policy: how often it is looked at, when it was last, when it is next due.
+model PolicyRegister {
+  id                String    @id @default(cuid())
+  policyId          String    @unique // PolicyDocument.id
+  reviewEveryMonths Int?
+  ownerName         String?
+  lastReviewedOn    DateTime?
+  nextReviewOn      DateTime?
+  remindState       String?
+  history           String? // JSON [{ at, by, action, note }]
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+// An employee accepting a NEWER version of a policy (the old Acknowledgment table only knows "accepted", not which version).
+model PolicyAckVersion {
+  id             String   @id @default(cuid())
+  policyId       String
+  employeeId     String
+  versionNo      Int
+  acknowledgedAt DateTime @default(now())
+
+  @@unique([policyId, employeeId, versionNo])
+  @@index([policyId])
+}
