@@ -10,6 +10,7 @@
 //   A  SYNTHETIC FIXTURES (ZZLOP employees, a March-2026 calendar month nobody is paid for): one employee per rule -
 //      absent, half day, unpaid leave, pending leave, paid leave beyond the allowance, late beyond the free allowance, missing
 //      check-in, before joining, holiday / sandwich, absent-without-leave - and the dates add up to the engine's own number.
+//      + the LATE COMING group rule (every 3 late = 1 LOP, Payroll policy): off / on / starting a later month, and its save route.
 //   B  EVERY EMPLOYEE OF THE RUN: for every payroll record of the chosen months, the listed dates add up to exactly what the
 //      engine's attendanceDefaults() gives, and (for a record taken from attendance and never edited) to the stored LOP days.
 //      Records HR typed or somebody edited are reported separately, with the difference and the reason. Read-only.
@@ -49,6 +50,15 @@ async function http(user, url) {
   let r;
   for (let i = 0; i < 10; i += 1) {
     try { r = await fetch(`${API}${url}`, { headers: { Authorization: `Bearer ${tok(user)}` } }); break; } catch (e) { if (i === 9) throw e; await new Promise((res) => setTimeout(res, 3000)); }
+  }
+  const text = await r.text();
+  let json = null; try { json = JSON.parse(text); } catch { /* not json */ }
+  return { status: r.status, body: json };
+}
+async function send(user, method, url, body) {
+  let r;
+  for (let i = 0; i < 10; i += 1) {
+    try { r = await fetch(`${API}${url}`, { method, headers: { Authorization: `Bearer ${tok(user)}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); break; } catch (e) { if (i === 9) throw e; await new Promise((res) => setTimeout(res, 3000)); }
   }
   const text = await r.text();
   let json = null; try { json = JSON.parse(text); } catch { /* not json */ }
@@ -254,6 +264,50 @@ async function fixtures() {
   const stale = await LB.forEntry({ ...edited, id: null, daysLop: 7, attendanceSource: 'ATTENDANCE' }, { desk: true });
   ok(stale.status === 'attendance-changed' && stale.notes.some((n) => /attendance gives 2/.test(n)), 'attendance changed since calculation is said plainly');
 
+  // 13b LATE COMING group rule (founder 2026-11-25): every 3 late arrivals = 1 LOP (3 -> 1, 4 -> 1, 5 -> 1, 6 -> 2). Off = the old rule.
+  made.lateTouched = true;
+  made.restoreLate = await prisma.appSetting.findUnique({ where: { key: PCs.LATE_KEY } });
+  const setLate = async (value) => {
+    await prisma.appSetting.deleteMany({ where: { key: PCs.LATE_KEY } });
+    if (value) await prisma.appSetting.create({ data: { key: PCs.LATE_KEY, value: JSON.stringify(value) } });
+    PCs.clearCache();
+  };
+  const lateStaff = [];
+  for (const n of [2, 3, 4, 5, 6, 9]) { // eslint-disable-line no-restricted-syntax
+    const e = await newEmp(`Late${n}`); // eslint-disable-line no-await-in-loop
+    const days = WORKDAYS.slice(3, 3 + n);
+    await worked(e, WORKDAYS.filter((d) => !days.includes(d))); // eslint-disable-line no-await-in-loop
+    for (const d of days) await att(e, d, 'Late', '10:30', '18:30'); // eslint-disable-line no-restricted-syntax, no-await-in-loop
+    lateStaff.push({ n, e, days });
+  }
+  await setLate(null);
+  for (const { n, e } of lateStaff) { // eslint-disable-line no-restricted-syntax
+    r = await breakdownOf(e); // eslint-disable-line no-await-in-loop
+    const want = 0.5 * Math.max(0, n - free);
+    ok(near(r.auto.daysLop, want) && near(r.b.listedLop, r.auto.daysLop) && r.b.policy.lateRule === null, `late rule OFF: ${n} late = ${want} LOP (the old rule), dates add up`, `engine ${r.auto.daysLop} dates ${r.b.listedLop}`);
+  }
+  await setLate({ every: 3, days: 1, effectiveFrom: '2026-03' });
+  for (const { n, e, days } of lateStaff) { // eslint-disable-line no-restricted-syntax
+    r = await breakdownOf(e); // eslint-disable-line no-await-in-loop
+    const want = Math.floor(n / 3);
+    ok(near(r.auto.daysLop, want) && near(r.b.listedLop, r.auto.daysLop), `late rule every 3 = 1 LOP: ${n} late = ${want} LOP, dates add up`, `engine ${r.auto.daysLop} dates ${r.b.listedLop}`);
+    const costed = r.b.dates.filter((d) => d.reasons.some((x) => x.code === 'late')).map((d) => d.date);
+    ok(JSON.stringify(costed) === JSON.stringify(days.filter((_, i) => (i + 1) % 3 === 0)), `late rule: the cost sits on late arrival no. 3, 6, 9 (${n} late)`, JSON.stringify(costed));
+    ok(r.b.policy.lateRule && r.b.policy.lateRule.every === 3 && r.b.policy.lateRule.days === 1, 'late rule: the screen says which rule it used');
+  }
+  const staff4 = lateStaff.find((x) => x.n === 4);
+  const l4 = await breakdownOf(staff4.e);
+  const note4 = (l4.b.notCounted.find((d) => d.date === staff4.days[3]) || { notes: [] }).notes.map((nt) => nt.text).join(' ');
+  ok(l4.b.notCounted.filter((d) => d.notes.some((nt) => nt.kind === 'late')).length === 3 && /does not complete a group yet \(1 of 3\)/.test(note4), 'late rule: the 1st, 2nd and 4th late arrivals say they do not complete a group yet (4th = 1 of 3 of the next group)', note4);
+  await setLate({ every: 2, days: 0.5, effectiveFrom: '2026-03' });
+  r = await breakdownOf(lateStaff.find((x) => x.n === 5).e);
+  ok(near(r.auto.daysLop, 1) && near(r.b.listedLop, 1), 'late rule every 2 = 0.5 LOP: 5 late = 1 LOP');
+  await setLate({ every: 3, days: 1, effectiveFrom: '2026-04' });
+  r = await breakdownOf(lateStaff.find((x) => x.n === 3).e);
+  ok(near(r.auto.daysLop, 0.5) && r.b.policy.lateRule === null, 'late rule starting April: March still uses the old rule (3 late = 0.5)');
+  await setLate(made.restoreLate ? JSON.parse(made.restoreLate.value) : null);
+  made.lateTouched = false;
+
   // 14 empty state
   const eFull = await newEmp('FullAttendance');
   await worked(eFull, WORKDAYS);
@@ -347,6 +401,30 @@ async function routes() {
   ok(r.status === 200 && r.body.employee.id === B.e.id, 'the payroll desk on any payslip in scope: 200', `got ${r.status}`);
   r = await http(admin, `/payroll/entries/${A.run.id}/lop-breakdown`);
   ok(!/netPay|grossPay|lopDeduction|bankAccount|"basic"/.test(JSON.stringify(r.body)), 'no salary amounts or bank details in the answer');
+  // the late-coming rule is saved with the other payroll cycle settings (Super Admin / Admin only)
+  made.lateTouched = true;
+  const before = await prisma.appSetting.findUnique({ where: { key: 'payroll.lateRule' } });
+  r = await http(admin, '/payroll/cycle');
+  ok(r.status === 200 && r.body.settings && 'late' in r.body.settings && r.body.text && r.body.text.late, 'GET /payroll/cycle carries the late-coming rule and its words', `got ${r.status}`);
+  r = await send(admin, 'PUT', '/payroll/cycle', { late: { every: 3, days: 1, effectiveFrom: '2026-12' } });
+  ok(r.status === 200 && r.body.settings.late.every === 3 && r.body.settings.late.days === 1 && r.body.settings.late.effectiveFrom === '2026-12' && r.body.settings.saved.late === true, 'PUT /payroll/cycle saves "every 3 late = 1 LOP from 2026-12"', JSON.stringify(r.body));
+  r = await http(admin, '/payroll/cycle');
+  ok(r.body.settings.late.every === 3, 'the saved rule reads back');
+  r = await send(admin, 'PUT', '/payroll/cycle', { late: { every: 1, days: 1, effectiveFrom: '2026-12' } });
+  ok(r.status === 400, 'every 1 is refused (2 to 10)', `got ${r.status}`);
+  r = await send(admin, 'PUT', '/payroll/cycle', { late: { every: 3, days: 1, effectiveFrom: 'December' } });
+  ok(r.status === 400, 'a start month that is not YYYY-MM is refused', `got ${r.status}`);
+  r = await send(admin, 'PUT', '/payroll/cycle', { late: { every: 3, days: 0.3, effectiveFrom: '2026-12' } });
+  ok(r.status === 400, 'LOP days that are not in halves are refused', `got ${r.status}`);
+  r = await send(uA, 'PUT', '/payroll/cycle', { late: { every: 4, days: 1, effectiveFrom: '2026-12' } });
+  ok(r.status === 403, 'an employee cannot change the rule: 403', `got ${r.status}`);
+  r = await http(admin, '/payroll/cycle');
+  ok(r.body.settings.late.every === 3, 'the refused changes left the saved rule as it was');
+  r = await send(admin, 'PUT', '/payroll/cycle', { late: { off: true } });
+  ok(r.status === 200 && r.body.settings.saved.late === false && !r.body.settings.late.every, 'Switch off removes the rule (the old way applies again)', JSON.stringify(r.body));
+  if (before) await prisma.appSetting.create({ data: { key: before.key, value: before.value } });
+  require('../src/utils/payrollCycle').clearCache();
+  made.lateTouched = false;
   // a payslip of an older month that has no per-employee record still opens, from its own figures
   await prisma.employeePayrollRun.delete({ where: { id: B.run.id } });
   r = await http(admin, `/payroll/payslips/${B.slip.id}/lop-breakdown`);
@@ -354,6 +432,11 @@ async function routes() {
 }
 
 async function cleanup() {
+  if (made.lateTouched) { // the late-coming rule was being tested when something failed: back to what it was
+    await prisma.appSetting.deleteMany({ where: { key: 'payroll.lateRule' } });
+    if (made.restoreLate) await prisma.appSetting.create({ data: { key: made.restoreLate.key, value: made.restoreLate.value } });
+    require('../src/utils/payrollCycle').clearCache();
+  }
   if (made.restoreRule) { // the absent rule was being tested when something failed: put it back
     await prisma.appSetting.deleteMany({ where: { key: made.restoreRule.key } });
     await prisma.appSetting.create({ data: { key: made.restoreRule.key, value: made.restoreRule.value } });

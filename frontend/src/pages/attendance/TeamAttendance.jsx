@@ -273,7 +273,7 @@ function MonthlyTable({ preset = null, goList = null }) {
           holidays and weekly offs. Each person counts once per day. A past working day with no check-in and no leave or request is <b>Absent</b>;
           a pending leave or attendance correction is not Absent. Days the biometric device has not sent yet are <b>No device data</b>.
           Attendance % = days worked (Present, Late, Early Logout, Missing Check-Out; a worked half at ½) ÷ Working Days.
-          {isMonth && <> Late half-day cut = late days beyond the {data.freeLateArrivalsPerMonth ?? 0} free per month (what payroll deducts).</>}
+          {isMonth && <> Late half-day cut = late days beyond the {data.freeLateArrivalsPerMonth ?? 0} free per month. (Payroll deducts by the Late coming rule on the Payroll policy screen, which can count late arrivals differently, for example every 3 late = 1 LOP.)</>}
           {' '}People who left are included for the days they worked.
         </div>
         {error && <div className="notice red">{error}</div>}

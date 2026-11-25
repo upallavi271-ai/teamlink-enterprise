@@ -6,7 +6,7 @@ import { errText } from './payrollUi';
 import './payrollCycleCard.css';
 
 // ---------------------------------------------------------------------------
-// PAYROLL CYCLE + ABSENT WITHOUT LEAVE (user, 2026-10-12) - on the Payroll
+// PAYROLL CYCLE + ABSENT WITHOUT LEAVE (user, 2026-10-12) + LATE COMING (founder 2026-11-25: "3 late = 1 LOP, 4 = 1, 6 = 2") - on the Payroll
 // policy screen. Super Admin / Admin edit; everyone else reads. Nothing changes
 // until it is saved: with nothing saved payroll is the calendar month.
 // ---------------------------------------------------------------------------
@@ -38,7 +38,10 @@ export default function PayrollCycleCard({ isAdmin }) {
   const [awlDays, setAwlDays] = useState(2);
   const [halfDays, setHalfDays] = useState(1);
   const [awlFrom, setAwlFrom] = useState('2026-09');
-  const [msg, setMsg] = useState({ cycle: '', absent: '' });
+  const [lateEvery, setLateEvery] = useState(3);
+  const [lateDays, setLateDays] = useState(1);
+  const [lateFrom, setLateFrom] = useState('');
+  const [msg, setMsg] = useState({ cycle: '', absent: '', late: '' });
   const [notes, setNotes] = useState([]);
   const [busy, setBusy] = useState('');
 
@@ -49,6 +52,7 @@ export default function PayrollCycleCard({ isAdmin }) {
       setStartDay(s.cycle.startDay); setEffectiveFrom(s.cycle.effectiveFrom); setFirstFrom(s.cycle.firstFrom || '');
     }
     if (s.saved.absent && s.absent.days) { setAwlDays(s.absent.days); setHalfDays(s.absent.halfDayDays); setAwlFrom(s.absent.effectiveFrom); }
+    if (s.late && s.late.every) { setLateEvery(s.late.every); setLateDays(s.late.days); setLateFrom(s.late.effectiveFrom); } else if (data.current) setLateFrom((f) => f || data.current.key);
   }, [data]);
 
   if (!data) return null;
@@ -57,6 +61,7 @@ export default function PayrollCycleCard({ isAdmin }) {
   const sd = Number(startDay) || 1;
   const cycleOn = s.cycle.startDay > 1;
   const absentOn = !!s.absent.days;
+  const lateOn = !!(s.late && s.late.every);
 
   const upcoming = [];
   if (sd > 1) {
@@ -85,9 +90,19 @@ export default function PayrollCycleCard({ isAdmin }) {
     setBusy('');
   }
 
+  async function saveLate(off) {
+    setBusy('late'); setMsg((m) => ({ ...m, late: '' }));
+    try {
+      await api.put('/payroll/cycle', { late: off ? { off: true } : { every: Number(lateEvery), days: Number(lateDays), effectiveFrom: lateFrom } });
+      setMsg((m) => ({ ...m, late: off ? 'Switched off. Payroll counts late arrivals the old way again (the free ones, then half a day each).' : `Saved. From the ${monthShort(lateFrom)} payroll, every ${lateEvery} late arrivals count as ${lateDays} LOP day${Number(lateDays) === 1 ? '' : 's'}.` }));
+      await reloadPayrollCycle();
+    } catch (err) { setMsg((m) => ({ ...m, late: errText(err, 'Could not save.') })); }
+    setBusy('');
+  }
+
   return (
     <Panel style={{ marginTop: 14 }}>
-      <PanelHead title="Payroll cycle & absent days" />
+      <PanelHead title="Payroll cycle, absent days & late coming" />
       <div style={{ padding: '6px 18px 16px' }} className="pc-card">
         <div className="pc-sentence">
           <b>Payroll month</b> runs from day{' '}
@@ -143,6 +158,27 @@ export default function PayrollCycleCard({ isAdmin }) {
         {s.saved.absent && absentOn && <div className="pc-ok">On: from the {monthShort(s.absent.effectiveFrom)} payroll a day absent with no leave counts as {s.absent.days} LOP days.</div>}
         {canEdit && <button className="btn btn-primary btn-sm" disabled={busy === 'absent'} onClick={saveAbsent}>Save absent rule</button>}
         {msg.absent && <div className="pc-ok">{msg.absent}</div>}
+
+        <div className="pc-sep" />
+        <div className="pc-sentence">
+          <b>Late coming</b>: every{' '}
+          <input type="number" min="2" max="10" step="1" value={lateEvery} disabled={!canEdit} onChange={(e) => setLateEvery(e.target.value)} aria-label="Late arrivals per LOP step" /> late arrivals in a payroll month count as{' '}
+          <input type="number" min="0.5" max="5" step="0.5" value={lateDays} disabled={!canEdit} onChange={(e) => setLateDays(e.target.value)} aria-label="LOP days for each step" /> LOP day(s).
+        </div>
+        <div className="pc-row">
+          <span>Starts with the</span>
+          <input type="month" value={lateFrom} disabled={!canEdit} onChange={(e) => setLateFrom(e.target.value)} aria-label="First payroll month for the late coming rule" />
+          <span>payroll. Earlier months keep their numbers.</span>
+        </div>
+        <div className="pc-help">
+          Example with 3: 2 late = 0 LOP, 3 late = 1 LOP, 4 = 1, 5 = 1, 6 = 2, 9 = 3. A late arrival whose late-coming request was approved is not counted.
+          This replaces the old way (the free late arrivals of the Attendance policy, then half a day for each one more) for the months it applies to.
+        </div>
+        {!lateOn && <div className="pc-note">Not on yet: payroll still counts the free late arrivals of the Attendance policy, then half a day for each one more.</div>}
+        {lateOn && <div className="pc-ok">On: from the {monthShort(s.late.effectiveFrom)} payroll every {s.late.every} late arrivals count as {s.late.days} LOP day{Number(s.late.days) === 1 ? '' : 's'}.</div>}
+        {canEdit && <button className="btn btn-primary btn-sm" disabled={busy === 'late' || !lateFrom} onClick={() => saveLate(false)}>Save late coming rule</button>}
+        {canEdit && lateOn && <button className="btn btn-sm" style={{ marginLeft: 8 }} disabled={busy === 'late'} onClick={() => saveLate(true)}>Switch off</button>}
+        {msg.late && <div className="pc-ok">{msg.late}</div>}
       </div>
     </Panel>
   );

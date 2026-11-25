@@ -190,7 +190,7 @@ export default function LopBreakdown({ entryId = null, payslipId = null, onClose
     ['Waiting for approval (unpaid until approved)', b.terms.pending],
     ['No check-in days', b.terms.missingCheckIn],
     ['Extra for absent without leave', b.terms.awlExtra],
-    ['Late arrivals beyond the free ones', b.terms.lateArrivals],
+    [b.policy.lateRule ? `Late arrivals (every ${b.policy.lateRule.every} = ${num(b.policy.lateRule.days)} LOP day)` : 'Late arrivals beyond the free ones', b.terms.lateArrivals],
     ['Paid leave beyond the allowance', b.terms.leaveBeyondAllowance],
     ['Pay days before joining', b.terms.beforeJoining],
     ['Pay days after the last working day', b.terms.afterLeaving],
@@ -271,7 +271,7 @@ export default function LopBreakdown({ entryId = null, payslipId = null, onClose
               )}
 
               <div className="lop-rules">
-                The rules used: {b.policy.paidLeaveDays} paid leave day{b.policy.paidLeaveDays === 1 ? '' : 's'} per pay period; the first {b.policy.freeLateArrivals} late arrivals are free, then half a day each;
+                The rules used: {b.policy.paidLeaveDays} paid leave day{b.policy.paidLeaveDays === 1 ? '' : 's'} per pay period; {b.policy.lateRule ? <>every {b.policy.lateRule.every} late arrivals count as {plural(b.policy.lateRule.days, 'LOP day')} (3 late = 1, 6 = 2);</> : <>the first {b.policy.freeLateArrivals} late arrivals are free, then half a day each;</>}
                 working days with no check-in are {b.policy.unmarkedDaysUnpaid ? 'unpaid' : 'not counted as LOP'}; a holiday or week off between two leave days counts as leave{b.policy.sandwichLeave ? ' (sandwich rule on)' : ' (sandwich rule off)'}
                 {b.policy.absentWithoutLeave ? `; absent without applying for leave counts as ${b.policy.absentWithoutLeave.days} LOP days (a half day: ${b.policy.absentWithoutLeave.halfDayDays})` : ''}.
                 {' '}Where an allowance covers a whole pay period, it is given to the earliest days and the later days carry the cost.

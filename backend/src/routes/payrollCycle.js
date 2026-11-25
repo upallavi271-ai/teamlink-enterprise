@@ -3,7 +3,7 @@
 // the /api/payroll router (routes/payroll.js), which has already authenticated.
 //
 //   GET  /cycle                the settings, the month list with NAMES and DATE RANGES
-//   PUT  /cycle                save the cycle / the absent rule (Super Admin / Admin only)
+//   PUT  /cycle                save the cycle / the absent rule / the late-coming rule (Super Admin / Admin only)
 //   GET  /cycle/precheck?month=   "Pending leaves that affect pay" + absent-without-leave days
 //   GET  /cycle/lop-summary?month=&format=csv|xlsx   LOP split: leave-based vs absent without leave
 //   GET  /cycle/my-absences    the caller's own absent-without-leave days (the gentle banner)
@@ -57,13 +57,14 @@ module.exports = function registerPayrollCycle(router, { payrollEmployeeWhere })
     const settings = await PC.getSettings({ fresh: true });
     const months = await monthRows(settings);
     res.json({
-      settings: { cycle: settings.cycle, absent: settings.absent, saved: settings.saved },
+      settings: { cycle: settings.cycle, absent: settings.absent, late: settings.late, saved: settings.saved },
       canEdit: isAdmin(req.user),
       months,
       current: months.find((m) => m.current) || null,
       text: {
         cycle: 'A payroll month runs from the start day of the previous month to the day before it, and is named after the month it ends in.',
         absent: 'A working day absent with no leave applied counts as extra loss-of-pay days, valued from the monthly salary.',
+        late: 'Every N late arrivals in a payroll month count as LOP days (3 late = 1 LOP, 4 = 1, 5 = 1, 6 = 2). Late arrivals with an approved late-coming request are not counted.',
       },
     });
   });
@@ -84,10 +85,15 @@ module.exports = function registerPayrollCycle(router, { payrollEmployeeWhere })
       if (r.error) return res.status(400).json({ error: r.error });
       out.absent = r.absent;
     }
+    if (body.late) {
+      const r = await PC.saveLateRule(body.late, actor);
+      if (r.error) return res.status(400).json({ error: r.error });
+      out.late = r.late;
+    }
     const after = await PC.getSettings({ fresh: true });
     await logAudit({
       userId: req.user.id, actorName: actor.name, action: 'Payroll cycle settings changed', entity: 'AppSetting', entityId: PC.CYCLE_KEY,
-      fromValue: JSON.stringify({ cycle: before.cycle, absent: before.absent }), toValue: JSON.stringify({ cycle: after.cycle, absent: after.absent }),
+      fromValue: JSON.stringify({ cycle: before.cycle, absent: before.absent, late: before.late }), toValue: JSON.stringify({ cycle: after.cycle, absent: after.absent, late: after.late }),
     });
     // What the owner should know: payrolls already beyond draft inside the new range keep their money.
     const notes = [];
@@ -101,7 +107,7 @@ module.exports = function registerPayrollCycle(router, { payrollEmployeeWhere })
         notes.push(`${first.label} (${first.rangeText}) overlaps ${gap} day(s) of ${prev.label} (${prev.rangeText}) that were already paid. Set "First period starts on" to ${PC.addDays(prev.to, 1)} so nothing is paid twice.`);
       }
     }
-    return res.json({ settings: { cycle: after.cycle, absent: after.absent, saved: after.saved }, notes });
+    return res.json({ settings: { cycle: after.cycle, absent: after.absent, late: after.late, saved: after.saved }, notes });
   });
 
   // ---- The check before locking: pending leaves + absent days --------------------------------

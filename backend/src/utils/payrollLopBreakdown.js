@@ -82,12 +82,14 @@ function explainRows(rows, ctx) {
     if (d.status === 'Not Joined' && payable(d.date)) part(d.date).notJoined = 1;
     if (d.status === 'Left' && payable(d.date)) part(d.date).afterExit = 1;
   });
-  // late arrivals: the first `freeLate` of the period are free, each later one costs half a day
+  // late arrivals. Old rule: the first `freeLate` of the period are free, each later one costs half a day. Late-coming group rule
+  // (Payroll policy, founder 2026-11-25): every `every`-th late arrival closes a group and costs `days` LOP (3 late = 1, 6 = 2).
+  const lr = ctx.lateRule && ctx.lateRule.active ? ctx.lateRule : null;
   const lateRows = considered.filter((d) => d.late).sort((a, b) => (a.date < b.date ? -1 : 1));
   lateRows.forEach((d, i) => {
     const p = part(d.date);
     p.lateNo = i + 1;
-    if (i + 1 > freeLate) p.lateCost = 0.5;
+    if (lr) { if ((i + 1) % lr.every === 0) p.lateCost = lr.days; } else if (i + 1 > freeLate) p.lateCost = 0.5;
   });
   // approved paid leave: the paid-leave days of the period cover the earliest leave days, the rest is unpaid
   let allowance = paidLeave;
@@ -130,7 +132,7 @@ function explainRows(rows, ctx) {
     beforeJoining: [...byDate.values()].reduce((n, p) => n + p.notJoined, 0),
     afterLeaving: [...byDate.values()].reduce((n, p) => n + p.afterExit, 0),
   };
-  return { byDate, listed, total, capped: r2(listed - total), terms, freeLate, paidLeave, lateCount: lateRows.length };
+  return { byDate, listed, total, capped: r2(listed - total), terms, freeLate, paidLeave, lateCount: lateRows.length, lateRule: lr };
 }
 
 // ---- Words ------------------------------------------------------------------------------------------------------
@@ -182,7 +184,14 @@ function reasonsOf(row, p, ctx) {
         : `Absent without applying for leave: the payroll rule counts such a day as ${ctx.rule.days} LOP days instead of 1 (this is the extra ${p.awlExtra}).`,
     });
   }
-  if (p.lateCost) out.push({ code: 'late', days: p.lateCost, text: `Late arrival no. ${p.lateNo} of the pay period. The first ${ctx.freeLate} late arrival(s) are free; each one after that costs half a day.` });
+  if (p.lateCost) {
+    out.push({
+      code: 'late', days: p.lateCost,
+      text: ctx.lateRule && ctx.lateRule.active
+        ? `Late arrival no. ${p.lateNo} of the pay period. Every ${ctx.lateRule.every} late arrivals in a pay period count as ${ctx.lateRule.days} LOP day(s); this one completes group ${p.lateNo / ctx.lateRule.every}.`
+        : `Late arrival no. ${p.lateNo} of the pay period. The first ${ctx.freeLate} late arrival(s) are free; each one after that costs half a day.`,
+    });
+  }
   if (p.leaveCost) {
     out.push({
       code: 'leave-beyond-allowance', days: p.leaveCost,
@@ -201,7 +210,14 @@ function notCountedNotes(row, p, ctx) {
     notes.push({ kind: 'leave', text: `${row.status === 'Half Day + Half Leave' ? 'Worked one half and approved leave covers the other half.' : `Approved ${row.leaveType || ''} leave`.replace('  ', ' ')} Paid: it is within the ${ctx.paidLeave} paid leave day(s) of the pay period.`.trim() });
   }
   if (row.lateExcused || row.lateState === 'approved') notes.push({ kind: 'late', text: 'Came late, but the late-coming request was approved, so it is not counted as a late arrival.' });
-  else if (row.late && p && p.lateNo && !p.lateCost) notes.push({ kind: 'late', text: `Late arrival no. ${p.lateNo}: within the ${ctx.freeLate} free late arrival(s) of the pay period, so no cut.` });
+  else if (row.late && p && p.lateNo && !p.lateCost) {
+    notes.push({
+      kind: 'late',
+      text: ctx.lateRule && ctx.lateRule.active
+        ? `Late arrival no. ${p.lateNo}: every ${ctx.lateRule.every} late arrivals count as ${ctx.lateRule.days} LOP day(s), and this one does not complete a group yet (${p.lateNo % ctx.lateRule.every} of ${ctx.lateRule.every}), so no cut.`
+        : `Late arrival no. ${p.lateNo}: within the ${ctx.freeLate} free late arrival(s) of the pay period, so no cut.`,
+    });
+  }
   if (row.regularization === 'Approved') notes.push({ kind: 'regularized', text: 'An attendance correction (regularization) was approved for this day, so it counts as worked.' });
   return notes;
 }
@@ -294,7 +310,7 @@ async function forEntry(entry, { desk = true } = {}) {
   const workingDays = E.payrollWorkingDays(month, policy, cycle);
   const awlCtx = rule.active ? await E.awlContext([emp], cycle) : null;
   const joinedOn = emp.dateOfJoining ? new Date(emp.dateOfJoining).toISOString().slice(0, 10) : null;
-  const ctx = { policy, workingDays, rule, awlCtx, employeeId: emp.id, joinedOn };
+  const ctx = { policy, workingDays, rule, awlCtx, employeeId: emp.id, joinedOn, lateRule: PC.lateRuleFor(month, settings.late) };
   const x = explainRows(rows, ctx);
   ctx.freeLate = x.freeLate; ctx.paidLeave = x.paidLeave;
   const req = await loadRequests(emp.id, cycle.from, cycle.to);
@@ -381,6 +397,7 @@ async function forEntry(entry, { desk = true } = {}) {
       freeLateArrivals: x.freeLate, paidLeaveDays: x.paidLeave, unmarkedDaysUnpaid: policy.unmarkedDaysUnpaid !== false,
       weekendsPaid: !!policy.weekendsPaid, sandwichLeave: policy.sandwichLeave !== false,
       absentWithoutLeave: rule.active ? { days: rule.days, halfDayDays: rule.halfDayDays } : null,
+      lateRule: ctx.lateRule.active ? { every: ctx.lateRule.every, days: ctx.lateRule.days } : null,
     },
     terms: x.terms,
     capped: x.capped,

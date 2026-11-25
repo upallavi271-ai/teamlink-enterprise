@@ -848,7 +848,7 @@ function MethodsTab({ canEdit, canAssign, canAlerts }) {
           {saved && <div className="small-muted">{saved}</div>}
           {error && <div className="error-text">{error}</div>}
           <div className="small-muted" style={{ fontSize: 11.5 }}>
-            Late days beyond the free allowance become half-day cuts in the monthly report.
+            Late days beyond the free allowance become half-day cuts in the monthly report. Payroll can count late arrivals another way (Payroll policy, Late coming: for example every 3 late arrivals = 1 LOP day).
             {' '}First half {policy.workStartTime}–{policy.halfDaySplit}, second half {policy.halfDaySplit}–{policy.workEndTime}.
             {' '}Leaving between {policy.earlyLogoutFrom || '17:00'} and {policy.workEndTime} is an <b>Early Logout</b> ({policy.earlyLogoutFrom || '17:00'} sharp counts as early logout).
             {' '}Leaving before {policy.earlyLogoutFrom || '17:00'}, or coming at / after {policy.halfDaySplit}, is a <b>Half Day</b>.

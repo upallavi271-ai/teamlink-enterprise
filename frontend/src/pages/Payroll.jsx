@@ -543,7 +543,8 @@ function DashboardTab({ canRun, isAdmin, goTab }) {
             <div className="cell-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
               Pay follows attendance: days marked Present or on approved Leave are paid, days marked Absent are deducted as Loss of Pay
               (monthly gross ÷ working days × LOP days), and each check-in later than the grace period beyond the free monthly allowance
-              costs half a day's pay. Employees with no salary structure are skipped, never paid a default.
+              costs half a day's pay (from the payroll month where a Late coming rule is switched on in Payroll policy, every N late arrivals count as LOP days instead).
+              Employees with no salary structure are skipped, never paid a default.
             </div>
             {policy && (
               <>

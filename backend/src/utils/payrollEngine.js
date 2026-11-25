@@ -150,12 +150,15 @@ async function awlContext(employees, cycle) {
 //               + approved leave beyond the paid-leave days per month
 //               + working days before the joining date
 //               + half a day per late arrival beyond the free allowance
+//                 (or, from the payroll month set in Payroll policy -> Late coming: every N late
+//                 arrivals = 1 LOP, utils/payrollCycle.js lateRuleFor - founder 2026-11-25)
 // capped at the month's payroll working days. HR can override any employee.
 async function attendanceDefaults(employees, month, policy) {
   // The payroll month's own days (utils/payrollCycle.js): 16 Aug - 15 Sep for "Sep 2026".
   const settings = await PC.getSettings();
   const cycle = PC.cycleOf(month, settings.cycle);
   const rule = PC.absentRuleFor(month, settings.absent);
+  const lateRule = PC.lateRuleFor(month, settings.late);
   const { from, to } = cycle;
   const leavers = await leaversIn(employees, cycle);
   const { days } = await D.loadDays(prisma, { employees, from, to, cfg: policy, lastDayOf: leavers.size ? leavers : null });
@@ -178,7 +181,10 @@ async function attendanceDefaults(employees, month, policy) {
     const awl = ANL.detect(rows, {
       rule, withData: awlCtx ? awlCtx.withData : null, rejected: awlCtx ? (awlCtx.rejected.get(e.id) || null) : null, unmarkedUnpaid,
     });
-    const lop = s.absentDays + s.pendingDays + (unmarkedUnpaid ? s.missingCheckIn : 0) + unpaidLeave + notJoined + afterExit + 0.5 * excessLate + awl.extraLop;
+    // LATE COMING: the old rule (free allowance, then half a day each) until the founder's group rule is on for this payroll month
+    // ("3 late = 1 LOP, 4 = 1, 5 = 1, 6 = 2"): floor(late arrivals / N) x LOP days.
+    const lateLop = lateRule.active ? Math.floor(s.lateArrivals / lateRule.every) * lateRule.days : 0.5 * excessLate;
+    const lop = s.absentDays + s.pendingDays + (unmarkedUnpaid ? s.missingCheckIn : 0) + unpaidLeave + notJoined + afterExit + lateLop + awl.extraLop;
     const present = s.presentDays + (unmarkedUnpaid ? 0 : s.missingCheckIn);
     out.set(e.id, {
       workingDays,
@@ -192,7 +198,7 @@ async function attendanceDefaults(employees, month, policy) {
         absentNoLeaveDays: awl.days, absentNoLeaveDates: awl.dates, absentNoLeaveHalfDays: awl.halfDays, absentNoLeaveLop: awl.lop,
         present: s.present, late: s.late, halfDay: s.halfDay, absent: s.absent, onLeave: s.onLeave,
         missingCheckIn: s.missingCheckIn, missingCheckOut: s.missingCheckOut, lateArrivals: s.lateArrivals,
-        excessLate, unpaidLeave, notJoined,
+        excessLate, lateLop, lateRule: lateRule.active ? lateRule : null, unpaidLeave, notJoined,
         presentDays: s.presentDays, leaveDays: s.leaveDays, absentDays: s.absentDays, pendingDays: s.pendingDays,
         earlyLogouts: s.earlyLogouts, halfDayHalfLeave: s.halfDayHalfLeave, underReview: s.halfDayUnderReview + s.leaveUnderReview,
         sandwichDays: s.sandwichDays, unpaidLeaveTypeDays: s.unpaidLeaveDays,
@@ -443,7 +449,7 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
   const result = {
     month, period: monthLabel(month), workingDays, rows, skipped, locked, edited, totals,
     cycle: { key: cycle.key, label: cycle.label, from: cycle.from, to: cycle.to, days: cycle.days, rangeText: cycle.rangeText, heading: cycle.heading, custom: cycle.custom },
-    overlap: overlap || null, absentRule: PC.absentRuleFor(month, settings.absent),
+    overlap: overlap || null, absentRule: PC.absentRuleFor(month, settings.absent), lateRule: PC.lateRuleFor(month, settings.late),
   };
   if (dryRun) return result;
 
