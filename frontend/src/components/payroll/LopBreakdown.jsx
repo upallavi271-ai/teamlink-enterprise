@@ -221,6 +221,21 @@ export default function LopBreakdown({ entryId = null, payslipId = null, onClose
                 {r.status && <div><span>Payroll status</span><b className="small"><span className={`status ${STATUS_CLS[r.status]}`}>{STATUS_LABEL[r.status] || r.status}</span></b></div>}
               </div>
 
+              {b.carry && (b.carry.saved > 0 || b.carry.applied) && (
+                <div className="lop-carry" data-testid="lop-carry">
+                  <b>Carry-forward leaves: {num(b.carry.saved)} day{Number(b.carry.saved) === 1 ? '' : 's'} saved</b>{' '}
+                  from the earlier pay periods of this year (each pay period has 1 free leave day; the unused ones are saved until 31 Dec).{' '}
+                  {b.carry.applied
+                    ? <>This pay period used <b>{num(b.carry.used)}</b>, <b>{num(b.carry.left)}</b> left to take later. They cover approved leave before any LOP is cut.</>
+                    : <>Pay does not use them yet: the Carry-forward leave rule on Payroll policy is off, so leave beyond the free day is cut as LOP.</>}
+                  {b.carry.months.length > 0 && (
+                    <details style={{ marginTop: 4 }}>
+                      <summary>Month by month</summary>
+                      <ul>{b.carry.months.map((m) => <li key={m.month}>{m.label}: {num(m.used)} leave day(s) taken{m.saved > 0 ? `, ${num(m.saved)} saved` : ''}{m.covered > 0 ? `, ${num(m.covered)} paid from saved leave` : ''}</li>)}</ul>
+                    </details>
+                  )}
+                </div>
+              )}
               {b.status === 'match' && (
                 <div className="lop-ok" data-testid="lop-match">The dates below add up to the {num(r.daysLop)} LOP day{Number(r.daysLop) === 1 ? '' : 's'} in the payroll.</div>
               )}
@@ -272,7 +287,7 @@ export default function LopBreakdown({ entryId = null, payslipId = null, onClose
               )}
 
               <div className="lop-rules">
-                The rules used: {b.policy.paidLeaveDays} paid leave day{b.policy.paidLeaveDays === 1 ? '' : 's'} per pay period{b.policy.unapprovedRule ? ` (free whether the leave is approved or not; an approved leave beyond it counts 1 LOP day; a leave day that is not approved counts ${num(b.policy.unapprovedRule.days)} LOP days)` : ''}; {b.policy.lateRule ? <>every {b.policy.lateRule.every} late arrivals count as {plural(b.policy.lateRule.days, 'LOP day')} (3 late = 1, 6 = 2);</> : <>the first {b.policy.freeLateArrivals} late arrivals are free, then half a day each;</>}
+                The rules used: {b.policy.paidLeaveDays} paid leave day{b.policy.paidLeaveDays === 1 ? '' : 's'} per pay period{b.policy.unapprovedRule ? ` (free whether the leave is approved or not; an approved leave beyond it counts 1 LOP day; a leave day that is not approved counts ${num(b.policy.unapprovedRule.days)} LOP days)` : ''}{b.policy.leaveCarry ? '; unused free leave days of the earlier pay periods of the year are saved and cover approved leave before LOP' : ''}; {b.policy.lateRule ? <>every {b.policy.lateRule.every} late arrivals count as {plural(b.policy.lateRule.days, 'LOP day')} (3 late = 1, 6 = 2);</> : <>the first {b.policy.freeLateArrivals} late arrivals are free, then half a day each;</>}
                 working days with no check-in are {b.policy.unmarkedDaysUnpaid ? 'unpaid' : 'not counted as LOP'}; a holiday or week off between two leave days counts as leave{b.policy.sandwichLeave ? ' (sandwich rule on)' : ' (sandwich rule off)'}
                 {b.policy.absentWithoutLeave ? `; absent without applying for leave counts as ${b.policy.absentWithoutLeave.days} LOP days (a half day: ${b.policy.absentWithoutLeave.halfDayDays})` : ''}.
                 {' '}Where an allowance covers a whole pay period, it is given to the earliest days and the later days carry the cost.

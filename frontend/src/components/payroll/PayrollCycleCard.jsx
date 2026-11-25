@@ -43,7 +43,8 @@ export default function PayrollCycleCard({ isAdmin }) {
   const [lateFrom, setLateFrom] = useState('');
   const [unDays, setUnDays] = useState(2);
   const [unFrom, setUnFrom] = useState('');
-  const [msg, setMsg] = useState({ cycle: '', absent: '', late: '', un: '' });
+  const [carryFrom, setCarryFrom] = useState('');
+  const [msg, setMsg] = useState({ cycle: '', absent: '', late: '', un: '', carry: '' });
   const [notes, setNotes] = useState([]);
   const [busy, setBusy] = useState('');
 
@@ -56,6 +57,7 @@ export default function PayrollCycleCard({ isAdmin }) {
     if (s.saved.absent && s.absent.days) { setAwlDays(s.absent.days); setHalfDays(s.absent.halfDayDays); setAwlFrom(s.absent.effectiveFrom); }
     if (s.late && s.late.every) { setLateEvery(s.late.every); setLateDays(s.late.days); setLateFrom(s.late.effectiveFrom); } else if (data.current) setLateFrom((f) => f || data.current.key);
     if (s.unapproved && s.unapproved.days) { setUnDays(s.unapproved.days); setUnFrom(s.unapproved.effectiveFrom); } else if (data.current) setUnFrom((f) => f || data.current.key);
+    if (s.carry && s.carry.effectiveFrom) setCarryFrom(s.carry.effectiveFrom); else if (data.current) setCarryFrom((f) => f || data.current.key);
   }, [data]);
 
   if (!data) return null;
@@ -66,6 +68,7 @@ export default function PayrollCycleCard({ isAdmin }) {
   const absentOn = !!s.absent.days;
   const lateOn = !!(s.late && s.late.every);
   const unOn = !!(s.unapproved && s.unapproved.days);
+  const carryOn = !!(s.carry && s.carry.effectiveFrom);
 
   const upcoming = [];
   if (sd > 1) {
@@ -94,6 +97,15 @@ export default function PayrollCycleCard({ isAdmin }) {
     setBusy('');
   }
 
+  async function saveCarry(off) {
+    setBusy('carry'); setMsg((m) => ({ ...m, carry: '' }));
+    try {
+      await api.put('/payroll/cycle', { carry: off ? { off: true } : { effectiveFrom: carryFrom } });
+      setMsg((m) => ({ ...m, carry: off ? 'Switched off. The unused free leave day is lost every month again.' : `Saved. From the ${monthShort(carryFrom)} payroll, unused free leave days are saved until 31 Dec and cover approved leave before LOP.` }));
+      await reloadPayrollCycle();
+    } catch (err) { setMsg((m) => ({ ...m, carry: errText(err, 'Could not save.') })); }
+    setBusy('');
+  }
   async function saveUnapproved(off) {
     setBusy('un'); setMsg((m) => ({ ...m, un: '' }));
     try {
@@ -212,6 +224,25 @@ export default function PayrollCycleCard({ isAdmin }) {
         {canEdit && <button className="btn btn-primary btn-sm" disabled={busy === 'un' || !unFrom} onClick={() => saveUnapproved(false)}>Save leave rule</button>}
         {canEdit && unOn && <button className="btn btn-sm" style={{ marginLeft: 8 }} disabled={busy === 'un'} onClick={() => saveUnapproved(true)}>Switch off</button>}
         {msg.un && <div className="pc-ok">{msg.un}</div>}
+
+        <div className="pc-sep" />
+        <div className="pc-sentence">
+          <b>Carry-forward leave</b>: the free leave day of a month that is not used is saved for the next months, until 31 Dec.
+        </div>
+        <div className="pc-row">
+          <span>Starts with the</span>
+          <input type="month" value={carryFrom} disabled={!canEdit} onChange={(e) => setCarryFrom(e.target.value)} aria-label="First payroll month for carry-forward leave" />
+          <span>payroll. Earlier months keep their numbers.</span>
+        </div>
+        <div className="pc-help">
+          Example: no leave for 2 months = 2 saved days. In the third month a 3-day approved leave is 1 free day + 2 saved days = no LOP. A leave still waiting for approval never uses a saved day. Saved days start again from zero in January.
+          The saved days of each employee are shown on the LOP days screen (click the LOP number) whether this is on or not.
+        </div>
+        {!carryOn && <div className="pc-note">Not on yet: the unused free leave day is lost every month, and approved leave beyond the free day is cut as LOP.</div>}
+        {carryOn && <div className="pc-ok">On: from the {monthShort(s.carry.effectiveFrom)} payroll unused free leave days are saved until 31 Dec and cover approved leave before LOP.</div>}
+        {canEdit && <button className="btn btn-primary btn-sm" disabled={busy === 'carry' || !carryFrom} onClick={() => saveCarry(false)}>Save carry-forward rule</button>}
+        {canEdit && carryOn && <button className="btn btn-sm" style={{ marginLeft: 8 }} disabled={busy === 'carry'} onClick={() => saveCarry(true)}>Switch off</button>}
+        {msg.carry && <div className="pc-ok">{msg.carry}</div>}
       </div>
     </Panel>
   );

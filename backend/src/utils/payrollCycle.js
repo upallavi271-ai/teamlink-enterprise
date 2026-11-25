@@ -30,6 +30,9 @@
 //        days           LOP days for each leave day that is NOT approved (2, like absent with no leave applied); one leave day a
 //                       month is free whether approved or not; approved leave beyond it = 1 LOP (utils/payrollLeaveRule.js)
 //        effectiveFrom  first payroll month the rule applies to; nothing saved = the old arithmetic
+//   payroll.leaveCarry       { effectiveFrom }                  (founder 2026-11-25)
+//        the unused monthly free leave day is SAVED and covers approved leave before any LOP is cut, until 31 Dec
+//        (utils/payrollLeaveCarry.js); nothing saved = the free day is lost each month, as before
 //   payroll.absentNoLeave    { days, halfDayDays, effectiveFrom }
 //        days           LOP days for a working day ABSENT with NO leave applied (2)
 //        halfDayDays    LOP days for a half day with no leave applied (1)
@@ -43,6 +46,7 @@ const CYCLE_KEY = 'payroll.cycle';
 const ABSENT_KEY = 'payroll.absentNoLeave';
 const LATE_KEY = 'payroll.lateRule';
 const UNAPPROVED_KEY = 'payroll.unapprovedLeave';
+const CARRY_KEY = 'payroll.leaveCarry';
 const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const pad = (n) => String(n).padStart(2, '0');
@@ -72,6 +76,7 @@ const CALENDAR = Object.freeze({ startDay: 1, effectiveFrom: null });
 const NO_ABSENT_RULE = Object.freeze({ days: null, halfDayDays: 1, effectiveFrom: null });
 const NO_LATE_RULE = Object.freeze({ every: null, days: 1, effectiveFrom: null });
 const NO_UNAPPROVED_RULE = Object.freeze({ days: null, effectiveFrom: null });
+const NO_CARRY_RULE = Object.freeze({ effectiveFrom: null });
 
 function normaliseCycle(raw) {
   const startDay = Number(raw && raw.startDay);
@@ -108,6 +113,11 @@ function normaliseUnapproved(raw) {
   return { days, effectiveFrom: eff };
 }
 
+function normaliseCarry(raw) {
+  const eff = raw && isMonth(raw.effectiveFrom) ? raw.effectiveFrom : null;
+  return eff ? { effectiveFrom: eff } : { ...NO_CARRY_RULE };
+}
+
 let cache = null;
 let cacheAt = 0;
 const TTL_MS = 3000;
@@ -117,14 +127,15 @@ const parse = (row) => { try { return row && row.value ? JSON.parse(row.value) :
 async function getSettings({ fresh = false } = {}) {
   if (!fresh && cache && Date.now() - cacheAt < TTL_MS) return cache;
   let rows = [];
-  try { rows = await prisma.appSetting.findMany({ where: { key: { in: [CYCLE_KEY, ABSENT_KEY, LATE_KEY, UNAPPROVED_KEY] } } }); } catch { rows = []; }
+  try { rows = await prisma.appSetting.findMany({ where: { key: { in: [CYCLE_KEY, ABSENT_KEY, LATE_KEY, UNAPPROVED_KEY, CARRY_KEY] } } }); } catch { rows = []; }
   const byKey = new Map(rows.map((r) => [r.key, r]));
   cache = {
     cycle: normaliseCycle(parse(byKey.get(CYCLE_KEY))),
     absent: normaliseAbsent(parse(byKey.get(ABSENT_KEY))),
     late: normaliseLate(parse(byKey.get(LATE_KEY))),
     unapproved: normaliseUnapproved(parse(byKey.get(UNAPPROVED_KEY))),
-    saved: { cycle: !!byKey.get(CYCLE_KEY), absent: !!byKey.get(ABSENT_KEY), late: !!byKey.get(LATE_KEY), unapproved: !!byKey.get(UNAPPROVED_KEY) },
+    carry: normaliseCarry(parse(byKey.get(CARRY_KEY))),
+    saved: { cycle: !!byKey.get(CYCLE_KEY), absent: !!byKey.get(ABSENT_KEY), late: !!byKey.get(LATE_KEY), unapproved: !!byKey.get(UNAPPROVED_KEY), carry: !!byKey.get(CARRY_KEY) },
     updatedBy: byKey.get(CYCLE_KEY) ? byKey.get(CYCLE_KEY).updatedByName : null,
   };
   cacheAt = Date.now();
@@ -133,7 +144,7 @@ async function getSettings({ fresh = false } = {}) {
 const clearCache = () => { cache = null; };
 // The settings as last read, for the few synchronous builders (voucher payloads): every
 // async caller awaits getSettings() first. Nothing read yet = the calendar month.
-const lastKnown = () => cache || { cycle: { ...CALENDAR }, absent: { ...NO_ABSENT_RULE }, late: { ...NO_LATE_RULE }, unapproved: { ...NO_UNAPPROVED_RULE }, saved: { cycle: false, absent: false, late: false, unapproved: false } };
+const lastKnown = () => cache || { cycle: { ...CALENDAR }, absent: { ...NO_ABSENT_RULE }, late: { ...NO_LATE_RULE }, unapproved: { ...NO_UNAPPROVED_RULE }, carry: { ...NO_CARRY_RULE }, saved: { cycle: false, absent: false, late: false, unapproved: false, carry: false } };
 
 // ---- The pure core (settings in, answer out) --------------------------------
 // Is `month` on the cycle (not the calendar)?
@@ -215,6 +226,12 @@ function lateRuleFor(month, late = NO_LATE_RULE) {
 function unapprovedRuleFor(month, u = NO_UNAPPROVED_RULE) {
   const active = !!(u && u.days && u.effectiveFrom && String(month) >= u.effectiveFrom);
   return { active, days: active ? Number(u.days) : null, effectiveFrom: u ? u.effectiveFrom : null };
+}
+
+// Carry-forward leave for one payroll month: { active, effectiveFrom } (active only from its effective month).
+function carryRuleFor(month, c = NO_CARRY_RULE) {
+  const active = !!(c && c.effectiveFrom && String(month) >= c.effectiveFrom);
+  return { active, effectiveFrom: c ? c.effectiveFrom : null };
 }
 
 // ---- Async conveniences -----------------------------------------------------
@@ -319,9 +336,27 @@ async function saveUnapprovedRule({ days, effectiveFrom, off }, actor) {
   return { unapproved: normaliseUnapproved(value) };
 }
 
+// Carry-forward leave (founder 2026-11-25). { off: true } (or no month) switches it off: the free day is lost every month again.
+async function saveCarryRule({ effectiveFrom, off }, actor) {
+  if (off || !effectiveFrom) {
+    await prisma.appSetting.deleteMany({ where: { key: CARRY_KEY } });
+    clearCache();
+    return { carry: { ...NO_CARRY_RULE }, off: true };
+  }
+  if (!isMonth(effectiveFrom)) return { error: 'Pick the first payroll month this rule applies to (for example 2026-12).' };
+  const value = { effectiveFrom };
+  await prisma.appSetting.upsert({
+    where: { key: CARRY_KEY },
+    update: { value: JSON.stringify(value), updatedById: actor && actor.id || null, updatedByName: actor && actor.name || null },
+    create: { key: CARRY_KEY, value: JSON.stringify(value), updatedById: actor && actor.id || null, updatedByName: actor && actor.name || null },
+  });
+  clearCache();
+  return { carry: normaliseCarry(value) };
+}
+
 module.exports = {
-  CYCLE_KEY, ABSENT_KEY, LATE_KEY, UNAPPROVED_KEY, CALENDAR, NO_ABSENT_RULE, NO_LATE_RULE, NO_UNAPPROVED_RULE, MON3, MONTH_NAMES,
+  CYCLE_KEY, ABSENT_KEY, LATE_KEY, UNAPPROVED_KEY, CARRY_KEY, CALENDAR, NO_ABSENT_RULE, NO_LATE_RULE, NO_UNAPPROVED_RULE, NO_CARRY_RULE, MON3, MONTH_NAMES,
   isMonth, isDay, addMonths, addDays, daysBetween, daysInMonth, dayMon, dayMonYear,
-  normaliseCycle, normaliseAbsent, normaliseLate, normaliseUnapproved, getSettings, clearCache, cycleApplies, cycleOf, monthOfDate, monthList, overlapDays,
-  absentRuleFor, lateRuleFor, unapprovedRuleFor, cycleSync, voucherDateSync, rangeTail, lastKnown, cycleFor, monthOf, absentRule, lateRule, voucherDate, headingFor, saveCycle, saveAbsentRule, saveLateRule, saveUnapprovedRule,
+  normaliseCycle, normaliseAbsent, normaliseLate, normaliseUnapproved, normaliseCarry, getSettings, clearCache, cycleApplies, cycleOf, monthOfDate, monthList, overlapDays,
+  absentRuleFor, lateRuleFor, unapprovedRuleFor, carryRuleFor, cycleSync, voucherDateSync, rangeTail, lastKnown, cycleFor, monthOf, absentRule, lateRule, voucherDate, headingFor, saveCycle, saveAbsentRule, saveLateRule, saveUnapprovedRule, saveCarryRule,
 };

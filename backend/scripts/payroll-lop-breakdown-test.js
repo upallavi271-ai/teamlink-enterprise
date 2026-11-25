@@ -12,6 +12,7 @@
 //      check-in, before joining, holiday / sandwich, absent-without-leave - and the dates add up to the engine's own number.
 //      + the LATE COMING group rule (every 3 late = 1 LOP, Payroll policy): off / on / starting a later month, and its save route.
 //      + LEAVE NOT APPROVED (Payroll policy: one free leave day a month, a leave day not approved = 2 LOP, approved beyond the free day = 1): off / on / a later start month, its save route.
+//      + CARRY-FORWARD LEAVE (the unused monthly free leave day saved until 31 Dec; covers approved leave before LOP): off / on / a later start month / year reset, its save route.
 //   B  EVERY EMPLOYEE OF THE RUN: for every payroll record of the chosen months, the listed dates add up to exactly what the
 //      engine's attendanceDefaults() gives, and (for a record taken from attendance and never edited) to the stored LOP days.
 //      Records HR typed or somebody edited are reported separately, with the difference and the reason. Read-only.
@@ -367,6 +368,67 @@ async function fixtures() {
   await setUn(made.restoreUn ? JSON.parse(made.restoreUn.value) : null);
   made.unTouched = false;
 
+  // 13d CARRY-FORWARD LEAVE (founder 2026-11-25): the unused monthly free leave day of the earlier pay periods of the year is saved (until 31 Dec)
+  // and covers approved leave left over after this period's free day, before any LOP is cut. A leave still waiting never uses a saved day.
+  made.carryTouched = true;
+  made.restoreCarry = await prisma.appSetting.findUnique({ where: { key: PCs.CARRY_KEY } });
+  const setCarry = async (value) => {
+    await prisma.appSetting.deleteMany({ where: { key: PCs.CARRY_KEY } });
+    if (value) await prisma.appSetting.create({ data: { key: PCs.CARRY_KEY, value: JSON.stringify(value) } });
+    PCs.clearCache();
+  };
+  const cD = [WORKDAYS[2], WORKDAYS[3], WORKDAYS[4]]; // three working days of March
+  const J1 = '2026-01-07'; const J2 = '2026-01-08'; const J3 = '2026-01-09';
+  const carryCases = [];
+  const carryCase = async (label, joined, build, off, on, nMarch = 3) => {
+    const e = await newEmp(label.replace(/[^A-Za-z0-9]/g, '').slice(0, 14), { dateOfJoining: new Date(`${joined}T00:00:00Z`) }); // eslint-disable-line no-await-in-loop
+    await worked(e, WORKDAYS.filter((d) => !cD.slice(0, nMarch).includes(d))); // eslint-disable-line no-await-in-loop
+    await build(e); // eslint-disable-line no-await-in-loop
+    carryCases.push({ label, e, off, on });
+    return e;
+  };
+  const marchLeave = async (e, n, status = 'Approved') => { for (let i = 0; i < n; i += 1) await mkLeave(e, cD[i], null, status); }; // eslint-disable-line no-restricted-syntax, no-await-in-loop
+  const c1 = await carryCase('no leave Jan-Feb, 3 in March', '2025-01-01', (e) => marchLeave(e, 3), 2, 0);
+  await carryCase('1 in Jan, 3 in March', '2025-01-01', async (e) => { await mkLeave(e, J1, null, 'Approved'); await marchLeave(e, 3); }, 2, 1);
+  await carryCase('3 in Jan, 2 in March', '2025-01-01', async (e) => { await mkLeave(e, J1, J3, 'Approved', { days: 3 }); await marchLeave(e, 2); }, 1, 0, 2);
+  await carryCase('joined Feb, 3 in March', '2026-02-10', (e) => marchLeave(e, 3), 2, 1);
+  await carryCase('only 1 in March', '2025-01-01', (e) => marchLeave(e, 1), 0, 0, 1);
+  await setCarry(null);
+  for (const c of carryCases) { // eslint-disable-line no-restricted-syntax
+    r = await breakdownOf(c.e); // eslint-disable-line no-await-in-loop
+    ok(near(r.auto.daysLop, c.off) && near(r.b.listedLop, r.auto.daysLop) && r.b.policy.leaveCarry === false && r.b.carry.applied === false && r.b.carry.used === 0, `carry-forward OFF: ${c.label} = ${c.off} LOP (the free day is lost each month), dates add up`, `engine ${r.auto.daysLop} dates ${r.b.listedLop}`);
+  }
+  r = await breakdownOf(c1);
+  ok(near(r.b.carry.saved, 2) && r.b.carry.months.length === 2 && r.b.carry.months.every((m) => near(m.saved, 1)), 'carry-forward OFF: the screen still tells the person has 2 saved days (Jan and Feb, 1 each)', JSON.stringify(r.b.carry));
+  await setCarry({ effectiveFrom: '2026-03' });
+  for (const c of carryCases) { // eslint-disable-line no-restricted-syntax
+    r = await breakdownOf(c.e); // eslint-disable-line no-await-in-loop
+    ok(near(r.auto.daysLop, c.on) && near(r.b.listedLop, r.auto.daysLop) && r.b.policy.leaveCarry === true, `carry-forward ON: ${c.label} = ${c.on} LOP, dates add up`, `engine ${r.auto.daysLop} dates ${r.b.listedLop}`);
+  }
+  r = await breakdownOf(c1);
+  ok(near(r.b.carry.saved, 2) && near(r.b.carry.used, 2) && near(r.b.carry.left, 0) && r.b.carry.applied === true, 'carry-forward ON: 2 saved, 2 used, 0 left', JSON.stringify(r.b.carry));
+  ok(r.b.dates.length === 0 && r.b.notCounted.filter((d) => d.notes.some((nt) => nt.kind === 'carry')).length === 2, 'carry-forward ON: the 2 days paid from saved leave are listed under "not counted" and say so');
+  // a leave still waiting never uses a saved day (the leave-not-approved rule on as well: waiting day = 2 LOP)
+  const cw = await carryCase('approved + waiting, saved 2', '2025-01-01', async (e) => { await mkLeave(e, cD[0], null, 'Approved'); await mkLeave(e, cD[1], null, 'Pending'); }, 1, 1, 2);
+  await setUn({ days: 2, effectiveFrom: '2026-03' });
+  r = await breakdownOf(cw);
+  ok(near(r.auto.daysLop, 2) && near(r.b.listedLop, 2), 'carry-forward ON + leave-not-approved ON: the approved day is the free day, the waiting day still costs 2 (it never uses a saved day)', `engine ${r.auto.daysLop}`);
+  await setUn(null);
+  r = await breakdownOf(cw);
+  ok(near(r.auto.daysLop, 1), 'carry-forward ON, leave-not-approved OFF: the waiting day costs 1 as before', `engine ${r.auto.daysLop}`);
+  // the year starts again in January: the Jan payroll has no saved days, Feb has Jan's, Mar has both
+  const LCarry = require('../src/utils/payrollLeaveCarry');
+  const pol = await E.getPolicy();
+  const st = await PCs.getSettings({ fresh: true });
+  const emp1 = await prisma.employee.findUnique({ where: { id: c1.id } });
+  const sv = async (m) => (await LCarry.carryIn([emp1], m, pol, st)).get(emp1.id).saved;
+  ok(near(await sv('2026-01'), 0) && near(await sv('2026-02'), 1) && near(await sv('2026-03'), 2), 'saved days start again each January (Jan 0, Feb 1, Mar 2)');
+  await setCarry({ effectiveFrom: '2026-04' });
+  r = await breakdownOf(c1);
+  ok(near(r.auto.daysLop, 2) && r.b.policy.leaveCarry === false, 'carry-forward starting April: March keeps the old arithmetic (3 days = 2 LOP)');
+  await setCarry(made.restoreCarry ? JSON.parse(made.restoreCarry.value) : null);
+  made.carryTouched = false;
+
   // 14 empty state
   const eFull = await newEmp('FullAttendance');
   await worked(eFull, WORKDAYS);
@@ -502,6 +564,22 @@ async function routes() {
   if (beforeUn) await prisma.appSetting.create({ data: { key: beforeUn.key, value: beforeUn.value } });
   require('../src/utils/payrollCycle').clearCache();
   made.unTouched = false;
+  // the carry-forward rule is saved with the other payroll cycle settings (Super Admin / Admin only)
+  made.carryTouched = true;
+  const beforeCarry = await prisma.appSetting.findUnique({ where: { key: 'payroll.leaveCarry' } });
+  r = await send(admin, 'PUT', '/payroll/cycle', { carry: { effectiveFrom: '2026-12' } });
+  ok(r.status === 200 && r.body.settings.carry.effectiveFrom === '2026-12' && r.body.settings.saved.carry === true, 'PUT /payroll/cycle saves "carry-forward leave from 2026-12"', JSON.stringify(r.body));
+  r = await http(admin, '/payroll/cycle');
+  ok(r.body.settings.carry.effectiveFrom === '2026-12' && r.body.text && r.body.text.carry, 'the saved rule reads back, with its words');
+  r = await send(admin, 'PUT', '/payroll/cycle', { carry: { effectiveFrom: 'soon' } });
+  ok(r.status === 400, 'a start month that is not YYYY-MM is refused', `got ${r.status}`);
+  r = await send(uA, 'PUT', '/payroll/cycle', { carry: { effectiveFrom: '2026-12' } });
+  ok(r.status === 403, 'an employee cannot change it: 403', `got ${r.status}`);
+  r = await send(admin, 'PUT', '/payroll/cycle', { carry: { off: true } });
+  ok(r.status === 200 && r.body.settings.saved.carry === false && !r.body.settings.carry.effectiveFrom, 'Switch off removes the rule', JSON.stringify(r.body));
+  if (beforeCarry) await prisma.appSetting.create({ data: { key: beforeCarry.key, value: beforeCarry.value } });
+  require('../src/utils/payrollCycle').clearCache();
+  made.carryTouched = false;
   // a payslip of an older month that has no per-employee record still opens, from its own figures
   await prisma.employeePayrollRun.delete({ where: { id: B.run.id } });
   r = await http(admin, `/payroll/payslips/${B.slip.id}/lop-breakdown`);
@@ -509,6 +587,11 @@ async function routes() {
 }
 
 async function cleanup() {
+  if (made.carryTouched) { // the carry-forward rule was being tested when something failed: back to what it was
+    await prisma.appSetting.deleteMany({ where: { key: 'payroll.leaveCarry' } });
+    if (made.restoreCarry) await prisma.appSetting.create({ data: { key: made.restoreCarry.key, value: made.restoreCarry.value } });
+    require('../src/utils/payrollCycle').clearCache();
+  }
   if (made.unTouched) { // the leave-not-approved rule was being tested when something failed: back to what it was
     await prisma.appSetting.deleteMany({ where: { key: 'payroll.unapprovedLeave' } });
     if (made.restoreUn) await prisma.appSetting.create({ data: { key: made.restoreUn.key, value: made.restoreUn.value } });

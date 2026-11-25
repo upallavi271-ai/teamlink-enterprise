@@ -31,7 +31,8 @@ const E = require('./payrollEngine');
 const PC = require('./payrollCycle');
 const ANL = require('./absentNoLeave');
 const PEdit = require('./payrollEdit');
-const LR = require('./payrollLeaveRule'); // leave that is not approved (founder 2026-11-25)
+const LR = require('./payrollLeaveRule'); // leave that is not approved + carry-forward leave (founder 2026-11-25)
+const LC = require('./payrollLeaveCarry'); // the unused monthly free leave day, saved until 31 Dec
 const { monthLabel } = require('./attendanceMath');
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -64,7 +65,7 @@ function explainRows(rows, ctx) {
     if (!byDate.has(date)) {
       byDate.set(date, {
         date, absent: 0, pending: 0, missingCheckIn: 0, awlExtra: 0, awlKind: null, lateCost: 0, lateNo: 0, leaveCost: 0, leaveFree: 0,
-        notJoined: 0, afterExit: 0, rejectedExtra: 0, free: 0, pendingFraction: 0,
+        notJoined: 0, afterExit: 0, rejectedExtra: 0, free: 0, pendingFraction: 0, carryUsed: 0,
       });
     }
     return byDate.get(date);
@@ -119,15 +120,18 @@ function explainRows(rows, ctx) {
   // LEAVE NOT APPROVED (Payroll policy, founder 2026-11-25): from the one function the engine uses (utils/payrollLeaveRule.js), replacing the
   // waiting-leave and paid-leave terms above: one free leave day a month (approved or not), approved leave beyond it 1 LOP, a leave day that is
   // not approved (waiting, or rejected while absent) `days` LOP.
+  // CARRY-FORWARD LEAVE (founder 2026-11-25): the saved days of the earlier pay periods cover approved leave left over after the free day
+  // (same function again). Either rule on = the leave terms below come from it.
   const un = ctx.unRule && ctx.unRule.active ? ctx.unRule : null;
-  if (un) {
-    const alloc = LR.allocate(rows, { paidLeave, days: un.days, rejected: ctx.rejectedSet || null, unmarkedUnpaid });
+  const carryOn = !!(ctx.carryRule && ctx.carryRule.active);
+  if (un || carryOn) {
+    const alloc = LR.allocate(rows, { paidLeave, days: un ? un.days : null, carry: carryOn ? (ctx.carryIn || 0) : 0, rejected: un ? (ctx.rejectedSet || null) : null, unmarkedUnpaid });
     byDate.forEach((p) => { p.leaveCost = 0; p.leaveFree = 0; });
-    considered.forEach((d) => { if (d.counted && LR.isLeavePending(d)) part(d.date).pending = 0; }); // their waiting part is priced again below
+    if (un) considered.forEach((d) => { if (d.counted && LR.isLeavePending(d)) part(d.date).pending = 0; }); // their waiting part is priced again below
     alloc.byDate.forEach((a, date) => {
       const p = part(date);
-      p.leaveCost = a.leaveCost; p.leaveFree = a.free; p.free = a.free; p.pendingFraction = a.pendingFraction;
-      p.pending = r2(p.pending + a.pendingLop); p.rejectedExtra = a.rejectedExtra;
+      p.leaveCost = a.leaveCost; p.leaveFree = a.free; p.carryUsed = a.carryUsed;
+      if (un) { p.free = a.free; p.pendingFraction = a.pendingFraction; p.pending = r2(p.pending + a.pendingLop); p.rejectedExtra = a.rejectedExtra; }
     });
   }
   let sum = 0;
@@ -145,10 +149,11 @@ function explainRows(rows, ctx) {
     lateArrivals: r2([...byDate.values()].reduce((n, p) => n + p.lateCost, 0)),
     leaveBeyondAllowance: r2([...byDate.values()].reduce((n, p) => n + p.leaveCost, 0)),
     rejectedLeave: r2([...byDate.values()].reduce((n, p) => n + p.rejectedExtra, 0)),
+    carryCovered: r2([...byDate.values()].reduce((n, p) => n + p.carryUsed, 0)),
     beforeJoining: [...byDate.values()].reduce((n, p) => n + p.notJoined, 0),
     afterLeaving: [...byDate.values()].reduce((n, p) => n + p.afterExit, 0),
   };
-  return { byDate, listed, total, capped: r2(listed - total), terms, freeLate, paidLeave, lateCount: lateRows.length, lateRule: lr, unapprovedRule: un };
+  return { byDate, listed, total, capped: r2(listed - total), terms, freeLate, paidLeave, lateCount: lateRows.length, lateRule: lr, unapprovedRule: un, carryRule: carryOn ? ctx.carryRule : null };
 }
 
 // ---- Words ------------------------------------------------------------------------------------------------------
@@ -236,7 +241,9 @@ function notCountedNotes(row, p, ctx) {
   if (row.status === 'Holiday') notes.push({ kind: 'holiday', text: `Holiday${row.note ? ` (${row.note})` : ''}: not a working day.` });
   if (row.sandwichWaiting) notes.push({ kind: 'sandwich', text: `${row.note || 'Sandwich leave'}. The sandwich rule treats it as leave.` });
   else if (row.sandwich) notes.push({ kind: 'sandwich', text: `${row.note || 'Sandwich leave'}. The sandwich rule treats it as leave, and that leave is paid.` });
-  else if (Number(row.leave) > 0 && p && p.leaveFree > 0) {
+  else if (Number(row.leave) > 0 && p && p.carryUsed > 0 && !(p.leaveFree > 0)) {
+    notes.push({ kind: 'carry', text: `Approved ${row.leaveType || ''} leave paid from the carry-forward leave: ${p.carryUsed} day of the ${ctx.carryIn} saved from earlier pay periods of this year (the unused free leave days), so it is not cut.`.replace('  ', ' ') });
+  } else if (Number(row.leave) > 0 && p && p.leaveFree > 0) {
     notes.push({ kind: 'leave', text: `${row.status === 'Half Day + Half Leave' ? 'Worked one half and approved leave covers the other half.' : `Approved ${row.leaveType || ''} leave`.replace('  ', ' ')} Paid: it is within the ${ctx.paidLeave} paid leave day(s) of the pay period.`.trim() });
   }
   if (ctx.unRule && ctx.unRule.active && p && p.free > 0 && LR.isLeavePending(row)) {
@@ -342,9 +349,12 @@ async function forEntry(entry, { desk = true } = {}) {
   const rows = days(emp);
   const workingDays = E.payrollWorkingDays(month, policy, cycle);
   const unRule = PC.unapprovedRuleFor(month, settings.unapproved);
+  const carryRule = PC.carryRuleFor(month, settings.carry);
+  // the saved (carry-forward) leave days brought into this pay period: worked out for the screen whether or not pay uses them yet
+  const carryInfo = (await LC.carryIn([emp], month, policy, settings)).get(emp.id) || { saved: 0, months: [] };
   const awlCtx = (rule.active || unRule.active) ? await E.awlContext([emp], cycle) : null;
   const joinedOn = emp.dateOfJoining ? new Date(emp.dateOfJoining).toISOString().slice(0, 10) : null;
-  const ctx = { policy, workingDays, rule, awlCtx, employeeId: emp.id, joinedOn, lateRule: PC.lateRuleFor(month, settings.late), unRule, rejectedSet: awlCtx ? (awlCtx.rejected.get(emp.id) || null) : null };
+  const ctx = { policy, workingDays, rule, awlCtx, employeeId: emp.id, joinedOn, lateRule: PC.lateRuleFor(month, settings.late), unRule, carryRule, carryIn: carryInfo.saved, rejectedSet: awlCtx ? (awlCtx.rejected.get(emp.id) || null) : null };
   const x = explainRows(rows, ctx);
   ctx.freeLate = x.freeLate; ctx.paidLeave = x.paidLeave;
   const req = await loadRequests(emp.id, cycle.from, cycle.to);
@@ -433,8 +443,14 @@ async function forEntry(entry, { desk = true } = {}) {
       absentWithoutLeave: rule.active ? { days: rule.days, halfDayDays: rule.halfDayDays } : null,
       lateRule: ctx.lateRule.active ? { every: ctx.lateRule.every, days: ctx.lateRule.days } : null,
       unapprovedRule: unRule.active ? { days: unRule.days } : null,
+      leaveCarry: carryRule.active,
     },
     terms: x.terms,
+    // CARRY-FORWARD LEAVE: the unused free leave days of the earlier pay periods of this year, and how much pay used
+    carry: {
+      applied: carryRule.active, saved: carryInfo.saved, months: carryInfo.months,
+      used: carryRule.active ? x.terms.carryCovered : 0, left: r2(carryInfo.saved - (carryRule.active ? x.terms.carryCovered : 0)),
+    },
     capped: x.capped,
     dates: counted,
     notCounted,
