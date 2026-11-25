@@ -994,14 +994,15 @@ export default function Invoices() {
               {badge('before', 'Before GST', totals.before)}
               {badge('gst', 'GST charged', totals.gst)}
               {badge('after', 'After GST', totals.after)}
-              {/* founder 2026-11-25: the Net receivable card leaves out BOTH GST and TDS (Before GST − TDS, after any credit notes /
-                  adjustments): October = 4,90,774, not 5,87,769. Each invoice's own receivable, the Received and the Balance stay as they are. */}
-              <div className="inv-badge" title={`Before GST − TDS (GST and TDS both left out, after credit notes) across the ${rows.length} invoice(s) the filters leave`}>
-                <span>Net receivable</span>
-                <strong>{money2(totals.receivable - totals.gst)}</strong>
-              </div>
+              {badge('receivable', 'Net receivable', totals.receivable)}
               {badge('received', 'Received', totals.received)}
               {badge('pending', 'Balance', totals.pending)}
+              {/* founder 2026-11-25: a SEPARATE "Net profit" next to the Balance - the fee with GST and TDS both left out (Before GST − TDS,
+                  after any credit notes / adjustments). October: Balance 4,95,137, Net profit 4,90,774. Every other card stays as it was. */}
+              <div className="inv-badge" data-testid="inv-net-profit" title={`Before GST − TDS (GST and TDS both left out, after credit notes) across the ${rows.length} invoice(s) the filters leave`}>
+                <span>Net profit</span>
+                <strong>{money2(totals.receivable - totals.gst)}</strong>
+              </div>
               <div className="inv-badge inv-badge-wide" title={`TDS on the ${rows.length} invoice(s) the filters leave`}>
                 <span>TDS deducted</span>
                 <strong>{money2(totals.tds)}</strong>
