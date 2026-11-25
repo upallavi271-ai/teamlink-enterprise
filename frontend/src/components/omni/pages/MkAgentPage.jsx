@@ -5,7 +5,8 @@ import { PageHead, Btn, TinyBtn, Panel, Pill, Tag, Banner, Field, Tabs, Empty, K
 
 // AI MARKETING > AI AGENT (2026-11-25). A goal in plain words -> the agent asks for what it does not know (and saves it once) -> a day-by-day PLAN and PREVIEW -> you press "Approve and run" ->
 // the steps run in the background through AI Content, AI Images, Approvals and SEO as you -> the results are counted from what really happened. It is not a chatbot: typed words never approve,
-// nothing is posted, sent or spent by the agent, and every number on this screen comes from the saved work. Posting is a step you do and confirm (only after the content is approved).
+// nothing is posted, sent or spent by the agent on the plan's approval, and every number on this screen comes from the saved work. A post or a message to the client is a
+// step of its own (Phase 2): you see exactly what goes out, pick the accounts or confirm the recipient, and approve it; a post goes out only when the picture is approved, at its scheduled time.
 const API = '/gs/marketing/agent';
 const TONE = { done: 'live', running: 'scheduled', queued: 'scheduled', failed: 'red', waiting: 'warn', awaiting_approval: 'warn', cancelled: 'draft', skipped: 'draft', planned: 'draft' };
 const RUN_TONE = { running: 'scheduled', attention: 'warn', done: 'live', preview: 'warn', needs_info: 'warn', cancelled: 'draft' };
@@ -157,10 +158,10 @@ function Questions({ run, act, id }) {
 // ---------------------------------------------------------------------------------------------------------------- the plan and preview
 function Preview({ d, act, id, busy, meta, onBack }) {
   const { run, tasks, preflight } = d; const plan = run.plan; const p = plan.params;
-  const [form, setForm] = useState({ days: p.days, platforms: p.platforms, creative: p.creative, startDate: p.startDate, time: p.time });
+  const [form, setForm] = useState({ days: p.days, platforms: p.platforms, creative: p.creative, startDate: p.startDate, time: p.time, publish: p.publish || 'manual', approver: p.approver || 'team' });
   const [confirm, setConfirm] = useState(false);
   const optional = (run.questions || []).filter((q) => !q.required);
-  const changed = form.days !== p.days || form.creative !== p.creative || form.startDate !== p.startDate || form.time !== p.time || form.platforms.join() !== p.platforms.join();
+  const changed = form.publish !== (p.publish || 'manual') || form.approver !== (p.approver || 'team') || form.days !== p.days || form.creative !== p.creative || form.startDate !== p.startDate || form.time !== p.time || form.platforms.join() !== p.platforms.join();
   const toggle = (k) => setForm({ ...form, platforms: form.platforms.includes(k) ? form.platforms.filter((x) => x !== k) : [...form.platforms, k] });
   const counts = useMemo(() => { const c = {}; tasks.forEach((t) => { c[t.tool] = (c[t.tool] || 0) + 1; }); return c; }, [tasks]);
   const isSeo = plan.intent === 'seo';
@@ -170,7 +171,10 @@ function Preview({ d, act, id, busy, meta, onBack }) {
     counts['image.ai'] && `${plural(counts['image.ai'], 'picture')} made with the AI picture service (free tier, counts against your daily picture limit)`,
     counts['seo.sitecheck'] && `the website ${plan.seo ? plan.seo.url : ''} read once (up to ${plan.seo ? plan.seo.pages : 5} public pages) and scored`,
     counts['seo.blogplan'] && 'a blog plan saved (briefs only)',
+    counts['social.post'] && `${plural(counts['social.post'], 'post')} prepared to go public: nothing is posted until you approve each one, pick its accounts and the picture is approved; it then goes out at its scheduled time`,
+    counts['client.review'] && `${plural(counts['client.review'], 'picture')} prepared to send to the client on WhatsApp: nothing is sent until you approve each one and confirm who it goes to`,
   ].filter(Boolean);
+  const outward = (counts['social.post'] || 0) + (counts['client.review'] || 0) > 0;
   const forYou = tasks.filter((t) => t.manual).length;
   return (
     <div>
@@ -182,6 +186,8 @@ function Preview({ d, act, id, busy, meta, onBack }) {
             {plan.intent !== 'videos' ? <Field label="DAYS"><input type="number" min={1} max={meta.maxDays} style={{ width: 70 }} value={form.days} onChange={(e) => setForm({ ...form, days: Number(e.target.value) })} /></Field> : null}
             <Field label="PLATFORMS"><span style={{ display: 'flex', gap: 10 }}>{Object.entries(meta.platforms).map(([k, w]) => <label key={k} style={{ fontSize: 13 }}><input type="checkbox" checked={form.platforms.includes(k)} onChange={() => toggle(k)} /> {w}</label>)}</span></Field>
             <Field label="PICTURES"><select value={form.creative} onChange={(e) => setForm({ ...form, creative: e.target.value })}><option value="banner">Designed banners (free)</option><option value="ai">AI pictures (free tier)</option><option value="none">No pictures</option></select></Field>
+            <Field label="POSTING"><select value={form.publish} onChange={(e) => setForm({ ...form, publish: e.target.value })}><option value="manual">I post by hand</option><option value="agent">The agent posts after I approve each post</option></select></Field>
+            {run.businessKey !== 'own' ? <Field label="WHO APPROVES THE PICTURES"><select value={form.approver} onChange={(e) => setForm({ ...form, approver: e.target.value })}><option value="team">Our team</option><option value="client">The client (on WhatsApp, after I approve each send)</option></select></Field> : null}
             <Field label="STARTS"><input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></Field>
             <Field label="POST TIME (IST)"><input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} /></Field>
             <Btn disabled={busy || !changed || !form.platforms.length} onClick={() => act(() => omni.post(`${API}/runs/${id}/plan`, { params: form }), 'Plan made again.')}>Update the plan</Btn>
@@ -196,13 +202,13 @@ function Preview({ d, act, id, busy, meta, onBack }) {
       {plan.days.map((day) => <DayCard key={day.n} day={day} id={id} act={act} />)}
       <Panel title="What will really happen when you approve" sub="Read this once. The approval below is the only thing that starts it.">
         <ul style={{ margin: '0 0 8px', paddingLeft: 18, fontSize: 13, lineHeight: 1.6 }}>{willDo.map((x) => <li key={x}>{x}</li>)}{forYou ? <li>{plural(forYou, 'step')} wait for you (post it by hand, make the video, talk to the website owner)</li> : null}</ul>
-        <p style={{ fontSize: 13, margin: '0 0 10px' }}><b>What will NOT happen:</b> nothing is posted, no message is sent, no call is made, no money is spent and nothing on a website is changed.</p>
+        <p style={{ fontSize: 13, margin: '0 0 10px' }}><b>What will NOT happen:</b> {outward ? 'this approval posts nothing and messages nobody: every post and every message to the client waits for its own approval below. ' : ''}nothing is posted, no message is sent, no call is made, no money is spent and nothing on a website is changed{outward ? ' by this approval' : ''}.</p>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Btn primary disabled={busy || (preflight.blockers || []).length > 0} onClick={() => setConfirm(true)}>Approve and run</Btn>
           <Btn onClick={() => act(async () => { await omni.del(`${API}/runs/${id}`); onBack(); return null; }, 'Removed from the list.')}>Discard this plan</Btn>
         </div>
       </Panel>
-      {confirm ? <ConfirmModal title="Approve and run this plan?" yes="Approve and run" text={`${willDo.join('; ')}. ${forYou ? `${plural(forYou, 'step')} stay for you. ` : ''}Nothing is posted, sent, called or spent. Your name goes into the history as the approver.`} onNo={() => setConfirm(false)} onYes={() => { setConfirm(false); act(() => omni.post(`${API}/runs/${id}/approve`, {}), 'Approved. The steps are running.'); }} /> : null}
+      {confirm ? <ConfirmModal title="Approve and run this plan?" yes="Approve and run" text={`${willDo.join('; ')}. ${forYou ? `${plural(forYou, 'step')} stay for you. ` : ''}Nothing is posted, sent, called or spent by this approval${outward ? ': each post and each client message waits for its own approval' : ''}. Your name goes into the history as the approver.`} onNo={() => setConfirm(false)} onYes={() => { setConfirm(false); act(() => omni.post(`${API}/runs/${id}/approve`, {}), 'Approved. The steps are running.'); }} /> : null}
     </div>
   );
 }
@@ -250,7 +256,7 @@ function DayCard({ day, id, act }) {
 
 // ---------------------------------------------------------------------------------------------------------------- running and results
 function Execution({ d, act, id, go, busy }) {
-  const { run, tasks, events, live } = d; const [res, setRes] = useState({ label: 'Enquiries received', value: '', note: '' }); const [confirm, setConfirm] = useState(false); const [done, setDone] = useState(null);
+  const { run, tasks, events, live } = d; const [res, setRes] = useState({ label: 'Enquiries received', value: '', note: '' }); const [confirm, setConfirm] = useState(false); const [done, setDone] = useState(null); const [out, setOut] = useState(null);
   const byDay = useMemo(() => { const m = new Map(); tasks.forEach((t) => { const k = t.day || 0; if (!m.has(k)) m.set(k, []); m.get(k).push(t); }); return [...m.entries()]; }, [tasks]);
   const dayOf = (n) => (run.plan && run.plan.days || []).find((x) => x.n === n);
   const canAct = run.canAct && run.status !== 'cancelled';
@@ -273,6 +279,7 @@ function Execution({ d, act, id, go, busy }) {
                   <div>{t.title}{t.attempts > 1 ? <span style={{ color: 'var(--muted)' }}> · {t.attempts} tries</span> : null}</div>
                   <div style={{ fontSize: 12, color: 'var(--muted)' }}>{t.does}</div>
                   {t.summary ? <div style={{ fontSize: 12.5 }}>{t.summary}</div> : null}
+                  {t.outward && t.note && ['queued', 'running', 'done'].includes(t.status) ? <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>Approved by {run.approvedByName || 'you'} to {t.note}{t.status === 'queued' && t.scheduled && t.scheduledAt ? `. Goes out at ${fmtDateTime(t.scheduledAt)} (checked every few minutes).` : '.'}</div> : null}
                   {t.error ? <div style={{ fontSize: 12.5, color: '#9b1c1c' }}>{t.error}</div> : null}
                   {t.data && t.data.top && t.data.top.length ? <ul style={{ margin: '3px 0', paddingLeft: 18, fontSize: 12 }}>{t.data.top.map((x) => <li key={x}>{x}</li>)}</ul> : null}
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 3 }}>{t.refs.filter((x) => x.page).map((x) => <TinyBtn key={x.id} onClick={() => go(x.page)}>Open {x.label}{x.status ? ` (${x.status})` : ''}</TinyBtn>)}{t.refs.filter((x) => x.kind === 'link').map((x) => <a key={x.id} href={x.id} target="_blank" rel="noreferrer noopener" style={{ fontSize: 12 }}>{x.label}</a>)}</div>
@@ -282,7 +289,8 @@ function Execution({ d, act, id, go, busy }) {
                     {t.status === 'failed' || t.status === 'skipped' ? <TinyBtn disabled={busy} onClick={() => act(() => omni.post(`${API}/tasks/${t.id}/retry`, {}), 'Trying again.')}>Retry</TinyBtn> : null}
                     {t.status === 'waiting' && t.manual ? <TinyBtn disabled={busy} onClick={() => setDone(t)}>Mark done</TinyBtn> : null}
                     {t.status === 'waiting' && t.manual ? <TinyBtn disabled={busy} onClick={() => act(() => omni.post(`${API}/tasks/${t.id}/done`, { action: 'skip' }), 'Skipped.')}>Skip</TinyBtn> : null}
-                    {t.status === 'awaiting_approval' ? <TinyBtn disabled={busy} onClick={() => act(() => omni.post(`${API}/tasks/${t.id}/approve`, {}), 'Approved.')}>Approve this step</TinyBtn> : null}
+                    {t.status === 'awaiting_approval' && t.needsDetails ? <TinyBtn disabled={busy} onClick={() => setOut(t)}>Review and approve</TinyBtn> : null}
+                    {t.status === 'awaiting_approval' && !t.needsDetails ? <TinyBtn disabled={busy} onClick={() => act(() => omni.post(`${API}/tasks/${t.id}/approve`, {}), 'Approved.')}>Approve this step</TinyBtn> : null}
                     {['planned', 'queued', 'waiting', 'awaiting_approval', 'running'].includes(t.status) ? <TinyBtn disabled={busy} onClick={() => act(() => omni.post(`${API}/tasks/${t.id}/cancel`, {}), 'Cancel requested.')}>Cancel</TinyBtn> : null}
                   </div>
                 ) : null}
@@ -305,10 +313,65 @@ function Execution({ d, act, id, go, busy }) {
         <table className="mk-table"><tbody>{events.map((e) => <tr key={e.id}><td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{fmtDateTime(e.at)}</td><td style={{ fontSize: 12.5 }}>{e.text}{e.byName ? <span style={{ color: 'var(--muted)' }}> · {e.byName}</span> : null}</td></tr>)}</tbody></table>
       </details>
       {confirm ? <ConfirmModal danger title="Cancel this run?" yes="Cancel the run" text="Steps that are waiting will not run. A step that has already started finishes and its result is kept. Drafts and pictures already made stay in AI Content and AI Images." onNo={() => setConfirm(false)} onYes={() => { setConfirm(false); act(() => omni.post(`${API}/runs/${id}/cancel`, { reason: 'Cancelled from the AI Agent screen' }), 'Run cancelled.'); }} /> : null}
+      {out ? <OutwardModal task={out} tasks={tasks} runId={id} onClose={() => setOut(null)} reload={() => act(async () => null)} /> : null}
       {done ? <DoneModal task={done} onNo={() => setDone(null)} onYes={(b) => { const t = done; setDone(null); act(() => omni.post(`${API}/tasks/${t.id}/done`, { action: 'done', ...b }), 'Marked done.'); }} /> : null}
     </div>
   );
 }
+// an outward step: what would go out, exactly, and the person's own choices. Nothing leaves TeamLink before "Approve" here (and a post waits for its scheduled time).
+function OutwardModal({ task, tasks, runId, onClose, reload }) {
+  const { toast } = useOmni();
+  const [prep, setPrep] = useState(null); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false); const [form, setForm] = useState({ accountIds: [] });
+  useEffect(() => {
+    omni.get(`${API}/tasks/${task.id}/prepare`).then((r) => { setPrep(r); setForm(task.tool === 'social.post' ? { accountIds: [] } : { clientName: r.defaults.clientName, contactName: r.defaults.contactName, contactPhone: r.defaults.contactPhone, contactEmail: r.defaults.contactEmail, email: false, message: r.message }); }).catch((e) => setErr(errOf(e, 'This step could not be opened.')));
+  }, [task.id, task.tool]);
+  const isPost = task.tool === 'social.post';
+  const waiting = tasks.filter((x) => x.tool === task.tool && x.status === 'awaiting_approval').length;
+  const go = async (all) => {
+    setBusy(true); setErr('');
+    try {
+      const body = isPost ? { accountIds: form.accountIds } : { ...form };
+      if (all && !isPost) delete body.message; // each day keeps its own caption in its message
+      await (all ? omni.post(`${API}/runs/${runId}/approve-steps`, { tool: task.tool, ...body }) : omni.post(`${API}/tasks/${task.id}/approve`, body));
+      toast(isPost ? 'Approved. It goes out at its scheduled time.' : 'Approved. It is being sent.'); onClose(); await reload();
+    } catch (e) { setErr(errOf(e, 'It could not be approved.')); } finally { setBusy(false); }
+  };
+  const ok = prep && prep.ready && (isPost ? form.accountIds.length > 0 : String(form.contactPhone || '').trim() && String(form.clientName || '').trim().length > 1);
+  const tick = (id) => setForm({ ...form, accountIds: form.accountIds.includes(id) ? form.accountIds.filter((x) => x !== id) : [...form.accountIds, id] });
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  return (
+    <GsModal title={isPost ? 'Approve this post' : 'Send this picture to the client'} sub={task.title} width={620} onClose={onClose}
+      foot={<><Btn onClick={onClose}>Cancel</Btn>{waiting > 1 ? <Btn disabled={busy || !ok} onClick={() => go(true)}>{isPost ? `Approve all ${waiting} posts with these accounts` : `Send all ${waiting} to this client (each with its own caption)`}</Btn> : null}<Btn primary disabled={busy || !ok} onClick={() => go(false)}>{isPost ? 'Approve this post' : 'Send to the client'}</Btn></>}>
+      {err ? <Banner tone="error">{err}</Banner> : null}
+      {!prep && !err ? <div>Loading…</div> : null}
+      {prep && !prep.ready && prep.reason ? <Banner tone="warn">{prep.reason}</Banner> : null}
+      {prep && prep.media ? <p style={{ fontSize: 13, margin: '4px 0' }}><b>Picture:</b> {prep.media.title} ({prep.media.status})</p> : null}
+      {prep && isPost ? (
+        <div>
+          <p style={{ fontSize: 13, margin: '4px 0' }}><b>Goes out:</b> {prep.scheduledLabel}. TeamLink posts it at that time (it checks every few minutes); if the time has passed it posts within a few minutes of your approval.</p>
+          {Object.entries(prep.captions || {}).filter(([k]) => prep.accounts.some((a) => a.platform === k)).map(([k, v]) => <div key={k} style={{ margin: '6px 0' }}><div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)' }}>{k.toUpperCase()} WORDS</div><div style={{ whiteSpace: 'pre-wrap', background: '#f6f8fb', borderRadius: 8, padding: '8px 10px', fontSize: 12.5 }}>{v}</div></div>)}
+          <div style={{ fontWeight: 800, fontSize: 12, margin: '8px 0 4px' }}>POST ON</div>
+          {prep.accounts.length ? prep.accounts.map((a) => <label key={a.id} style={{ display: 'block', fontSize: 13, margin: '3px 0' }}><input type="checkbox" checked={form.accountIds.includes(a.id)} onChange={() => tick(a.id)} /> {a.platform === 'x' ? 'X' : a.platform[0].toUpperCase() + a.platform.slice(1)}: {a.name}{a.username ? ` (@${a.username})` : ''}{a.parentName ? ` · ${a.parentName}` : ''}</label>) : <div style={{ fontSize: 13, color: 'var(--muted)' }}>No connected account for these platforms.</div>}
+          <p style={{ fontSize: 12.5, margin: '10px 0 0' }}><b>It goes public.</b> You are approving this exact picture and these words on the accounts you ticked. Only an approved picture is posted.</p>
+        </div>
+      ) : null}
+      {prep && !isPost ? (
+        <div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <Field label="CLIENT (COMPANY)"><input value={form.clientName || ''} maxLength={120} onChange={set('clientName')} /></Field>
+            <Field label="CONTACT NAME"><input value={form.contactName || ''} maxLength={120} onChange={set('contactName')} /></Field>
+            <Field label="CLIENT'S WHATSAPP NUMBER"><input value={form.contactPhone || ''} maxLength={30} onChange={set('contactPhone')} placeholder="For example 98765 43210" /></Field>
+            <Field label="CLIENT'S EMAIL (OPTIONAL)"><input value={form.contactEmail || ''} maxLength={160} onChange={set('contactEmail')} /></Field>
+          </div>
+          <label style={{ fontSize: 13 }}><input type="checkbox" checked={!!form.email} onChange={(e) => setForm({ ...form, email: e.target.checked })} /> Also send the link by email</label>
+          <Field label="MESSAGE THE CLIENT SEES" full><textarea style={{ minHeight: 80 }} value={form.message || ''} maxLength={400} onChange={set('message')} /></Field>
+          <p style={{ fontSize: 12.5, margin: '10px 0 0' }}><b>The client is messaged.</b> TeamLink sends the picture and this message on WhatsApp from the company's Digital Marketing number; the client approves it or asks for changes on a private link. Check the number: this is the person who receives it.</p>
+        </div>
+      ) : null}
+    </GsModal>
+  );
+}
+
 function DoneModal({ task, onYes, onNo }) {
   const [url, setUrl] = useState(''); const [note, setNote] = useState('');
   return (

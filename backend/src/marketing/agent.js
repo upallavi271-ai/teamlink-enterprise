@@ -8,6 +8,9 @@
 //   safety    * NOTHING RUNS WITHOUT AN APPROVAL: typed words never approve (only the button does), and the engine refuses an 'outward' tool (a post, a message, a call, ad spend, a live
 //               website change) without a SEPARATE per-task approval. Phase 1 has no outward tool: posting is a step a person does and confirms, and it can only be confirmed once the
 //               draft and picture are APPROVED.
+//             * PHASE 2: social.post (publish an APPROVED picture on the accounts the person picks, at its scheduled time) and client.review (send the picture to the client's WhatsApp) are the first
+//               outward tools. Each is approved step by step: the person sees the exact accounts / recipient, the engine re-checks that the picture is approved and posting is allowed, and the step
+//               runs as THAT person, never before its scheduled time, never twice to the same account, and a failed one needs a fresh approval to retry.
 //             * a step runs as the approver, with their role and limits; if they lose the right to use AI Marketing the steps stop.
 //             * cancel anything that is waiting; a step already running finishes and its results are kept and listed. Retry a failed step. Transient busy errors retry by themselves twice.
 //             * every approval, step, failure, retry and cancel is in the history of the run and in the audit log ("Omni-Channel AI Marketing: agent ...").
@@ -43,7 +46,7 @@ async function ensure() {
 }
 
 // tests change these (nothing else does)
-const config = { backoff: [15000, 45000], taskMs: 90000, imageMs: 180000, maxRunning: 3, maxAttempts: 6 };
+const config = { backoff: [15000, 45000], taskMs: 90000, imageMs: 180000, maxRunning: 3, maxAttempts: 6, clock: () => Date.now() };
 
 const mayWrite = (u) => A.has('mayAiMarketing')(u);
 const visible = (u, r) => !!r && !r.deletedAt && (A.isAdmin(u) || r.createdById === u.id);
@@ -69,13 +72,22 @@ async function say(runId, role, text, data) {
 const touch = (id) => S.run(`UPDATE "${R}" SET updatedAt = ? WHERE id = ?`, Date.now(), id);
 const audit = (u, action, r, to) => logAudit({ userId: u && u.id, actorName: u && u.name, action: `Omni-Channel AI Marketing: agent ${action}`, entity: R, entityId: r.id, toValue: clip(to, 400) });
 
+const maskInput = (input) => {
+  if (!input || typeof input !== 'object') return input;
+  const core = require('../utils/messagingCore'); // eslint-disable-line global-require
+  const o = { ...input };
+  if (o.contactPhone) o.contactPhone = core.maskMobile(core.normalizeMobile(o.contactPhone).e164 || o.contactPhone) || '••••';
+  if (o.contactEmail) o.contactEmail = String(o.contactEmail).replace(/^(.).*(@.*)$/, '$1•••$2');
+  delete o.base;
+  return o;
+};
 function taskView(t, plan) {
   const tool = Tools.TOOLS[t.tool] || {}; const out = par(t.output, null);
   const day = plan && t.day ? Tools.dayOf(plan, t.day) : null;
   return {
     id: t.id, n: S.num(t.n), day: t.day == null ? null : S.num(t.day), tool: t.tool, toolLabel: tool.label || t.tool, module: tool.module || '', page: tool.page || '', manual: !!tool.manual, outward: Tools.isOutward(t.tool), title: t.title,
     does: tool.does ? tool.does(t, day, plan) : '', cost: tool.cost ? { ...tool.cost } : null,
-    status: t.status, statusWords: TASK_WORDS[t.status] || t.status, deps: par(t.deps, []), input: par(t.input, null), summary: out ? out.summary || '' : '', refs: out ? out.refs || [] : [], data: out ? out.data || null : null,
+    status: t.status, statusWords: TASK_WORDS[t.status] || t.status, deps: par(t.deps, []), input: maskInput(par(t.input, null)), needsDetails: !!tool.prepare, scheduled: !!tool.scheduled, approvedAt: S.iso(t.approvedAt), summary: out ? out.summary || '' : '', refs: out ? out.refs || [] : [], data: out ? out.data || null : null,
     error: t.error || '', errorCode: t.errorCode || '', attempts: S.num(t.attempts), scheduledAt: S.iso(t.scheduledAt), startedAt: S.iso(t.startedAt), finishedAt: S.iso(t.finishedAt), note: t.note || '', cancelRequested: S.num(t.cancelRequested) === 1,
   };
 }
@@ -117,7 +129,7 @@ async function makeTasks(runId, plan) {
   for (const s of specs) {
     const d = s.day ? Tools.dayOf(plan, s.day) : null; const tool = Tools.TOOLS[s.tool];
     const id = ids('agt'); rows.push(id);
-    await S.run(`INSERT INTO "${TK}" (id, runId, n, day, tool, title, status, deps, scheduledAt, note, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, id, runId, s.n, s.day || null, s.tool, clip(s.title, 200), 'planned', JSON.stringify(s.deps || []), d && tool && tool.manual ? d.atMs : null, s.note || null, now, now); // eslint-disable-line no-await-in-loop
+    await S.run(`INSERT INTO "${TK}" (id, runId, n, day, tool, title, status, deps, scheduledAt, note, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, id, runId, s.n, s.day || null, s.tool, clip(s.title, 200), 'planned', JSON.stringify(s.deps || []), d && tool && (tool.manual || tool.scheduled) ? d.atMs : null, s.note || null, now, now); // eslint-disable-line no-await-in-loop
   }
   return specs.length;
 }
@@ -133,15 +145,30 @@ async function preflight(u, plan, ctx = {}) {
   }
   if (plan.intent === 'seo' && !(plan.seo && plan.seo.url)) blockers.push('There is no website address to check.');
   const set = await Cfg.getSettings();
-  if (plan.days.length && Cfg.clientNeeded(set, 'words')) warnings.push('Your company requires the CLIENT to approve words: the "ask the team to approve" step will wait for you to use "Ask client to approve" on the draft.');
-  if (plan.days.length && plan.params.creative !== 'none' && Cfg.clientNeeded(set, 'pictures')) warnings.push('Your company requires the CLIENT to approve pictures: the picture will wait for "Ask client to approve".');
+  if (plan.days.length && plan.params.approver !== 'client' && Cfg.clientNeeded(set, 'words')) warnings.push('Your company requires the CLIENT to approve words: the "ask the team to approve" step will wait for you to use "Ask client to approve" on the draft.');
+  if (plan.days.length && plan.params.approver !== 'client' && plan.params.creative !== 'none' && Cfg.clientNeeded(set, 'pictures')) warnings.push('Your company requires the CLIENT to approve pictures: the picture will wait for "Ask client to approve".');
   if (plan.biz && plan.biz.projectId === '' && plan.businessKey !== Ctx.OWN && plan.params.creative !== 'none') warnings.push('This client has no logo or colours saved (no client project), so banners use TeamLink\'s own brand colours. Make a client project with their logo first, or choose "no pictures".');
+  const specs = P.taskSpecs(plan);
+  if (specs.some((x) => x.tool === 'social.post') && !set.autoPostAllowed) warnings.push('Posting from TeamLink is switched off (an Admin turns it on in AI usage > Posting to client accounts). The posting steps cannot be approved until then.');
+  if (specs.some((x) => x.tool === 'social.post')) warnings.push('Posting steps: nothing goes public until you approve each post, pick its accounts, and the picture is approved. A post goes out at its scheduled time.');
+  if (specs.some((x) => x.tool === 'client.review')) warnings.push('Client approval: each picture is sent to the client on WhatsApp only after you approve that step and confirm who it goes to.');
   plan.days.forEach((d) => { const stops = (d.flags || []).filter((f) => f.level === 'stop'); if (stops.length) warnings.push(`${d.title.split(':')[0]}: the wording check says "${stops[0].match}" must change before it is posted.`); });
   return { blockers, warnings };
 }
 
 // ---- starting, answering, re-planning ------------------------------------------------------------------------------------------------------------------------------------
 async function resolveBiz(u, ref, nameHint) { return Ctx.resolve(u, ref, nameHint); }
+// what the controls start as: the agent posts only if an Admin allowed posting AND an account is connected; the client approves only for a client when the company requires it
+async function defaultsFor(u, biz, opts = {}) {
+  let publish = 'manual'; let approver = 'team';
+  try {
+    const set = await Cfg.getSettings();
+    const acc = await (opts.svc && opts.svc.accounts ? opts.svc.accounts(u) : require('./projects').accounts(u)); // eslint-disable-line global-require
+    if (set.autoPostAllowed && acc && (acc.accounts || []).length) publish = 'agent';
+    if (biz.key !== Ctx.OWN && Cfg.clientNeeded(set, 'pictures')) approver = 'client';
+  } catch { /* the defaults stay on the safe side */ }
+  return { publish, approver };
+}
 
 async function start1(u, { goal, business, businessName, params } = {}, opts = {}) {
   await ensure();
@@ -153,7 +180,7 @@ async function start1(u, { goal, business, businessName, params } = {}, opts = {
   let biz = await resolveBiz(u, business, businessName);
   // a client is remembered by name from the first goal on (so its facts are found again under the same name)
   if (biz.key !== Ctx.OWN && !biz.saved && biz.name) { const sv = await Ctx.save(u, biz.key, { name: biz.name }, { quiet: true }); if (!sv.error) biz = sv; }
-  const built = P.build(text, biz.context, params || {}, opts.now || Date.now());
+  const built = P.build(text, biz.context, { ...(await defaultsFor(u, biz, opts)), ...(params || {}) }, opts.now || Date.now());
   const id = ids('agr'); const now = Date.now(); const plan = built.plan ? { ...built.plan, businessKey: biz.key, biz: snapshotOf(biz) } : null;
   await S.run(`INSERT INTO "${R}" (id, businessKey, businessName, goal, intent, status, params, plan, questions, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     id, biz.key, clip(biz.name, 80), text, built.parsed.intent, plan ? 'preview' : 'needs_info', JSON.stringify(plan ? plan.params : P.paramsFor(built.parsed, params || {}, opts.now || now)), plan ? JSON.stringify(plan) : null, JSON.stringify(built.questions), u.id, clip(u.name, 80), now, now);
@@ -288,13 +315,13 @@ function kick(runId, opts = {}) {
 }
 async function drain() { let c; do { c = chain; await c; } while (c !== chain); } // tests wait for the background work
 
-async function actorOf(run, opts) {
-  if (opts.actorFor) return opts.actorFor(run);
+async function actorOf(run, opts, userId) {
+  if (opts.actorFor) return opts.actorFor(run, userId);
   try {
     const { resolveIdentity } = require('../utils/identity'); // eslint-disable-line global-require
     await A.warm();
     const prisma = require('../db'); // eslint-disable-line global-require
-    const row = await prisma.user.findFirst({ where: { id: run.approvedById, status: 'Active' }, select: { id: true } });
+    const row = await prisma.user.findFirst({ where: { id: userId || run.approvedById, status: 'Active' }, select: { id: true } });
     const ident = row ? await resolveIdentity(row.id) : null;
     return ident && mayWrite(ident) ? ident : null;
   } catch { return null; }
@@ -314,6 +341,7 @@ async function processRun(runId) {
       if (deps.some((x) => ['failed', 'cancelled', 'skipped'].includes(x.status))) { await S.run(`UPDATE "${TK}" SET status = 'skipped', error = ?, updatedAt = ? WHERE id = ? AND status = 'queued'`, 'A step it needs did not finish.', Date.now(), t.id); await event(runId, t.id, 'task_skipped', null, `${t.title}: skipped, a step it needs did not finish.`); changed = true; break; } // eslint-disable-line no-await-in-loop
       if (deps.some((x) => x.status !== 'done')) continue;
       if (Tools.isOutward(t.tool) && !t.approvedAt) { await S.run(`UPDATE "${TK}" SET status = 'awaiting_approval', updatedAt = ? WHERE id = ? AND status = 'queued'`, Date.now(), t.id); await event(runId, t.id, 'needs_approval', null, `${t.title}: reaches outside TeamLink, so it waits for its own approval.`); changed = true; break; } // eslint-disable-line no-await-in-loop
+      if (Tools.isOutward(t.tool) && (Tools.TOOLS[t.tool] || {}).scheduled && S.ms(t.scheduledAt) > config.clock()) continue; // approved, but its time has not come: it stays queued and the next sweep looks again
       next = t; break;
     }
     if (changed) continue;
@@ -323,33 +351,39 @@ async function processRun(runId) {
   await finishCheck(runId, opts);
 }
 
+// what a tool is given: who it runs as, the plan and day it belongs to, the outputs of the day's earlier steps, and the stand-ins a test passes
+function toolCtx(u, run, t, tasks, opts, base) {
+  const plan = par(run.plan, null); const sameDay = tasks.filter((x) => t.day && x.day === t.day);
+  return { u, plan, day: t.day && plan ? Tools.dayOf(plan, t.day) : null, run: { id: run.id, goal: run.goal }, task: { id: t.id, n: S.num(t.n), day: t.day }, dayTasks: sameDay.map((x) => ({ tool: x.tool, status: x.status, output: par(x.output, null) })), fetchFn: opts.fetchFn, svc: opts.svc, base: base || '' };
+}
 async function runTask(run, t, tasks, opts) {
+  if (Tools.isOutward(t.tool) && !t.approvedAt) { await S.run(`UPDATE "${TK}" SET status = 'awaiting_approval', updatedAt = ? WHERE id = ?`, Date.now(), t.id); return; } // defence in depth: never without its own approval
   const got = await S.run(`UPDATE "${TK}" SET status = 'running', attempts = attempts + 1, startedAt = ?, error = NULL, errorCode = NULL, updatedAt = ? WHERE id = ? AND status = 'queued'`, Date.now(), Date.now(), t.id);
   if (!got) return;
   inflight.add(t.id);
-  const tool = Tools.TOOLS[t.tool]; const attempts = S.num(t.attempts) + 1;
-  await event(run.id, t.id, 'task_started', run.approvedByName, `${t.title}${attempts > 1 ? ` (try ${attempts})` : ''}`);
+  const tool = Tools.TOOLS[t.tool]; const attempts = S.num(t.attempts) + 1; const outward = Tools.isOutward(t.tool);
+  await event(run.id, t.id, 'task_started', outward ? null : run.approvedByName, `${t.title}${attempts > 1 ? ` (try ${attempts})` : ''}`);
   const done = async (status, fields = {}) => {
     await S.run(`UPDATE "${TK}" SET status = ?, output = ?, error = ?, errorCode = ?, finishedAt = ?, updatedAt = ? WHERE id = ?`, status, fields.output ? JSON.stringify(fields.output) : null, fields.error || null, fields.code || null, Date.now(), Date.now(), t.id);
     await touch(run.id);
   };
   try {
-    const u = await actorOf(run, opts);
-    if (!u) { await done('failed', { error: 'The person who approved this plan can no longer use AI Marketing, so the steps stopped. An Admin can retry them after approving again.', code: 'no_actor' }); await event(run.id, t.id, 'task_failed', null, `${t.title}: stopped, nobody allowed to run it.`); return; }
+    // an outward step runs as the person who approved THAT step; every other step as the person who approved the plan
+    const u = await actorOf(run, opts, outward ? t.approvedById : null);
+    if (!u) { await done('failed', { error: 'The person who approved this can no longer use AI Marketing, so the steps stopped. An Admin can retry them after approving again.', code: 'no_actor' }); await event(run.id, t.id, 'task_failed', null, `${t.title}: stopped, nobody allowed to run it.`); return; }
     if (!tool || !tool.run) throw new Tools.ToolError('That tool is not available.', 'no_tool');
-    const ctx = { u, run: { id: run.id, goal: run.goal }, task: { id: t.id, n: S.num(t.n), day: t.day }, dayTasks: tasks.filter((x) => t.day && x.day === t.day).map((x) => ({ tool: x.tool, status: x.status, output: par(x.output, null) })), fetchFn: opts.fetchFn, svc: opts.svc };
-    // the earlier steps of the same day may have finished since `tasks` was read
-    ctx.dayTasks = (await tasksOf(run.id)).filter((x) => t.day && x.day === t.day).map((x) => ({ tool: x.tool, status: x.status, output: par(x.output, null) }));
+    const fresh0 = await tasksOf(run.id); // the earlier steps of the same day may have finished since `tasks` was read
     const input = par(t.input, {});
+    const ctx = toolCtx(u, run, t, fresh0, opts, input.base);
     const out = await withTimeout(tool.run(ctx, input), t.tool === 'image.ai' ? config.imageMs : config.taskMs, tool.label);
     await done('done', { output: out });
-    await event(run.id, t.id, 'task_done', run.approvedByName, `${t.title}: ${out.summary || 'done'}`);
+    await event(run.id, t.id, 'task_done', outward ? run.approvedByName : run.approvedByName, `${t.title}: ${out.summary || 'done'}`);
     const fresh = await taskRow(t.id);
     if (fresh && S.num(fresh.cancelRequested) === 1) await event(run.id, t.id, 'note', null, `${t.title} had already started when it was cancelled: it finished and its result is kept.`);
   } catch (e) {
     const code = e.code || 'failed'; const msg = clip(e.message || 'It did not work.', 400);
     if (e.waiting) { await S.run(`UPDATE "${TK}" SET status = 'waiting', error = ?, errorCode = ?, finishedAt = ?, updatedAt = ? WHERE id = ?`, msg, code, Date.now(), Date.now(), t.id); await event(run.id, t.id, 'task_waiting', null, `${t.title}: ${msg}`); }
-    else if (e.retryable && attempts <= config.backoff.length) {
+    else if (e.retryable && !outward && attempts <= config.backoff.length) {
       await S.run(`UPDATE "${TK}" SET status = 'queued', error = ?, errorCode = ?, updatedAt = ? WHERE id = ?`, msg, code, Date.now(), t.id);
       await event(run.id, t.id, 'task_retry', null, `${t.title}: ${msg} Trying again in ${Math.round(config.backoff[attempts - 1] / 1000)} seconds.`);
       inflight.delete(t.id); await sleep(config.backoff[attempts - 1]); return;
@@ -401,19 +435,21 @@ async function summarize(run, tasks) {
   for (const t of drafts) stat('content', (par(t.output, {}).data || {}).itemId);
   for (const t of pics) stat('image', (par(t.output, {}).data || {}).itemId);
   const site = doneOf('seo.sitecheck')[0]; const blog = doneOf('seo.blogplan')[0];
-  const posted = doneOf('manual.post').length; const postsTotal = tasks.filter((t) => t.tool === 'manual.post').length;
+  const posted = doneOf('manual.post').length + doneOf('social.post').length; const postsTotal = tasks.filter((t) => t.tool === 'manual.post' || t.tool === 'social.post').length;
+  const toClient = doneOf('client.review').length;
   const videos = doneOf('manual.video').length; const videosTotal = tasks.filter((t) => t.tool === 'manual.video').length;
   const results = await resultsOf(run.id);
   const outwardDone = tasks.filter((t) => Tools.isOutward(t.tool) && t.status === 'done').length;
   const numbers = {
     tasks: { total: tasks.length, done: count('done'), failed: count('failed'), waiting: count('waiting'), awaiting: count('awaiting_approval'), cancelled: count('cancelled'), skipped: count('skipped'), queued: count('queued'), running: count('running') },
-    made: { drafts: drafts.length, pictures: pics.length }, approval: tally, posted: { done: posted, of: postsTotal }, videos: { done: videosTotal ? videos : 0, of: videosTotal }, siteScore: site ? (par(site.output, {}).data || {}).score : null, blogBriefs: blog ? (par(blog.output, {}).data || {}).briefs : null, results, outward: outwardDone,
+    made: { drafts: drafts.length, pictures: pics.length }, approval: tally, posted: { done: posted, of: postsTotal, byAgent: doneOf('social.post').length }, toClient, videos: { done: videosTotal ? videos : 0, of: videosTotal }, siteScore: site ? (par(site.output, {}).data || {}).score : null, blogBriefs: blog ? (par(blog.output, {}).data || {}).briefs : null, results, outward: outwardDone,
   };
   const lines = [];
   lines.push(`${numbers.tasks.done} of ${plural(numbers.tasks.total, 'step')} done${numbers.tasks.failed ? `, ${numbers.tasks.failed} failed` : ''}${numbers.tasks.waiting ? `, ${numbers.tasks.waiting} waiting for a person` : ''}${numbers.tasks.cancelled ? `, ${numbers.tasks.cancelled} cancelled` : ''}${numbers.tasks.skipped ? `, ${numbers.tasks.skipped} skipped` : ''}.`);
   if (drafts.length || pics.length) lines.push(`Made inside TeamLink: ${plural(drafts.length, 'draft')} in AI Content and ${plural(pics.length, 'picture')} in AI Images.`);
   if (drafts.length || pics.length) lines.push(`Approval right now: ${tally.approved} approved, ${tally.waiting} waiting for the team, ${tally.changes} sent back${tally.draft ? `, ${tally.draft} still drafts` : ''}.`);
-  if (postsTotal) lines.push(`Posted: ${posted} of ${postsTotal} (marked by the person who posted; the agent does not post by itself yet).`);
+  if (toClient) lines.push(`Sent to the client to approve: ${plural(toClient, 'picture')}, each after your approval of that step.`);
+  if (postsTotal) lines.push(`Posted: ${posted} of ${postsTotal} posting steps${numbers.posted.byAgent ? ` (${numbers.posted.byAgent} by the agent after your approval of each post, the rest marked by the person who posted)` : ' (marked by the person who posted)'}.`);
   if (videosTotal) lines.push(`Videos made: ${videos} of ${videosTotal} (put together by a person in AI Video).`);
   if (numbers.siteScore != null) lines.push(`Website check: ${numbers.siteScore}/100, TeamLink's own score of what is on the page (not rankings or traffic).`);
   if (numbers.blogBriefs != null) lines.push(`Blog plan: ${plural(numbers.blogBriefs, 'brief')} planned (nothing written or posted).`);
@@ -467,6 +503,12 @@ async function retryTask(u, taskId, opts = {}) {
   if (['cancelled', 'needs_info', 'preview'].includes(r.status)) return { error: 'This run is not running.', status: 409 };
   if (S.num(t.attempts) >= config.maxAttempts) return { error: `This step was tried ${config.maxAttempts} times. Fix the cause (see the error) or start a new goal.`, status: 409 };
   const now = Date.now();
+  if (Tools.isOutward(t.tool)) { // a failed step that reaches outside TeamLink is never retried on the old approval: it asks again (an account that already got the post is skipped)
+    await S.run(`UPDATE "${TK}" SET status = 'awaiting_approval', approvedById = NULL, approvedAt = NULL, error = NULL, errorCode = NULL, finishedAt = NULL, updatedAt = ? WHERE id = ?`, now, t.id);
+    await event(r.id, t.id, 'task_retry_by_person', u.name, `${t.title}: ${u.name} asked to try again. It needs a fresh approval.`);
+    await audit(u, 'outward step retry asked', r, t.title);
+    return detail(u, r.id);
+  }
   await S.run(`UPDATE "${TK}" SET status = 'queued', error = NULL, errorCode = NULL, finishedAt = NULL, updatedAt = ? WHERE id = ?`, now, t.id);
   await S.run(`UPDATE "${TK}" SET status = 'queued', error = NULL, updatedAt = ? WHERE runId = ? AND status = 'skipped'`, now, r.id);
   await S.run(`UPDATE "${R}" SET status = 'running', approvedById = ?, approvedByName = ?, updatedAt = ? WHERE id = ?`, u.id, clip(u.name, 80), now, r.id);
@@ -475,16 +517,44 @@ async function retryTask(u, taskId, opts = {}) {
   kick(r.id, opts);
   return detail(u, r.id);
 }
-// an outward step waits for ITS OWN approval; no outward tool exists in Phase 1, the rule is here (and tested) first
-async function approveTask(u, taskId, opts = {}) {
+// an outward step waits for ITS OWN approval: the person sees what would go out (prepareTask), picks the accounts / confirms the recipient, and only then does it become queued.
+// env: { base } the site address of the request (never from the body), plus the stand-ins of a test.
+async function prepareTask(u, taskId, env = {}) {
+  const g = await taskAction(u, taskId); if (g.error) return g; const { t, r } = g;
+  const tool = Tools.TOOLS[t.tool];
+  if (!tool || !Tools.isOutward(t.tool)) return { error: 'This step does not need an approval of its own.', status: 409 };
+  const tasks = await tasksOf(r.id);
+  const prep = tool.prepare ? await tool.prepare(toolCtx(u, r, t, tasks, env, env.base)) : { ready: true, reason: '' };
+  return { task: taskView(t, par(r.plan, null)), ready: t.status === 'awaiting_approval' && prep.ready, status: t.status, ...prep, reason: t.status !== 'awaiting_approval' ? `This step is ${TASK_WORDS[t.status] || t.status}.` : prep.reason };
+}
+async function approveTask(u, taskId, body = {}, env = {}) {
   const g = await taskAction(u, taskId); if (g.error) return g; const { t, r } = g;
   if (t.status !== 'awaiting_approval') return { error: 'This step is not waiting for an approval.', status: 409 };
-  await S.run(`UPDATE "${TK}" SET status = 'queued', approvedById = ?, approvedAt = ?, updatedAt = ? WHERE id = ?`, u.id, Date.now(), Date.now(), t.id);
-  await S.run(`UPDATE "${R}" SET status = 'running', updatedAt = ? WHERE id = ? AND status = 'attention'`, Date.now(), r.id);
-  await event(r.id, t.id, 'task_approved', u.name, `${t.title}: approved by ${u.name}`);
-  await audit(u, 'outward step approved', r, t.title);
-  kick(r.id, opts);
+  if (r.status === 'cancelled') return { error: 'This run is cancelled.', status: 409 };
+  const tool = Tools.TOOLS[t.tool]; const tasks = await tasksOf(r.id);
+  const ctx = toolCtx(u, r, t, tasks, env, env.base);
+  const prep = tool && tool.prepare ? await tool.prepare(ctx) : { ready: true, reason: '' };
+  if (!prep.ready) return { error: prep.reason || 'This step is not ready to be approved.', status: 409, code: 'not_ready' };
+  const ap = tool && tool.approval ? tool.approval(body || {}, prep, ctx) : { input: {}, summary: 'run it' };
+  if (ap.error) return { error: ap.error, status: 400, code: 'details' };
+  const now = Date.now(); const input = { ...par(t.input, {}), ...(ap.input || {}) };
+  await S.run(`UPDATE "${TK}" SET status = 'queued', approvedById = ?, approvedAt = ?, input = ?, note = ?, updatedAt = ? WHERE id = ?`, u.id, now, JSON.stringify(input), clip(ap.summary, 300), now, t.id);
+  await S.run(`UPDATE "${R}" SET status = 'running', updatedAt = ? WHERE id = ? AND status = 'attention'`, now, r.id);
+  const later = tool && tool.scheduled && S.ms(t.scheduledAt) > config.clock();
+  await event(r.id, t.id, 'task_approved', u.name, `${t.title}: approved by ${u.name} to ${ap.summary}${later ? '. It goes out at its scheduled time.' : '.'}`);
+  await audit(u, 'outward step approved', r, `${t.title}: ${ap.summary}`);
+  kick(r.id, env);
   return detail(u, r.id);
+}
+// the same approval for every ready step of one kind in a run (for example the seven client messages of a week), with the same choices; steps that are not ready are listed, not forced
+async function approveSteps(u, runId, toolId, body = {}, env = {}) {
+  const e = await editable(u, runId); if (e.error) return e;
+  const tasks = (await tasksOf(runId)).filter((t) => t.tool === toolId && t.status === 'awaiting_approval');
+  if (!tasks.length) return { error: 'No step of that kind is waiting for an approval.', status: 409 };
+  const approved = []; const notReady = [];
+  for (const t of tasks) { const r = await approveTask(u, t.id, body, env); if (r.error) notReady.push({ taskId: t.id, title: t.title, reason: r.error }); else approved.push(t.id); } // eslint-disable-line no-await-in-loop
+  if (!approved.length) return { error: `Nothing was approved. ${notReady[0].reason}`, status: notReady[0].code === 'details' ? 400 : 409, notReady };
+  return { ...(await detail(u, runId)), approved: approved.length, notReady };
 }
 const urlOk = (v) => { try { return /^https?:$/.test(new URL(v).protocol); } catch { return false; } };
 // a person did the step (posted it, made the video, talked to the website owner), or skips it
@@ -635,10 +705,10 @@ let timer = null;
 function start() {
   if (timer || require('../utils/sandbox').isSandbox()) return; // eslint-disable-line global-require
   setTimeout(() => { recover().catch(() => {}); }, 60 * 1000).unref();
-  timer = setInterval(() => { sweep().catch(() => {}); }, 5 * 60 * 1000); if (timer.unref) timer.unref();
+  timer = setInterval(() => { sweep().catch(() => {}); }, 2 * 60 * 1000); if (timer.unref) timer.unref();
 }
 
 module.exports = {
-  ensure, config, RUN_WORDS, TASK_WORDS, start, recover, sweep, drain, kick, preflight, startRun: start1, answer, changePlan, editDay, talk, approve, approveTask, cancelRun, cancelTask, retryTask, markManual, addResult, discard,
+  ensure, config, RUN_WORDS, TASK_WORDS, start, recover, sweep, drain, kick, preflight, startRun: start1, answer, changePlan, editDay, talk, approve, approveTask, cancelRun, cancelTask, retryTask, prepareTask, approveSteps, markManual, addResult, discard,
   detail, listRuns, dashboard, businessView, summarize,
 };

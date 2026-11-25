@@ -185,7 +185,7 @@ const base = { actorFor: async () => admin, notify, fetchFn };
   await Agent.approve(admin, g3.run.id, base); await Agent.drain(); r = await Agent.detail(admin, g3.run.id);
   assert.equal(sent, 0, 'the plan\'s approval does NOT cover an outward step'); assert.equal(r.tasks.find((t) => t.id === 't-out').status, 'awaiting_approval'); assert.equal(r.run.status, 'attention');
   assert.equal((await Agent.dashboard(admin)).pendingApprovals.outward.length, 1); assert.equal((await Agent.markManual(admin, 't-out', {})).status, 409);
-  await Agent.approveTask(other, 't-out'); assert.equal(sent, 0, 'somebody else cannot approve it'); await Agent.approveTask(admin, 't-out', base); await Agent.drain();
+  await Agent.approveTask(other, 't-out'); assert.equal(sent, 0, 'somebody else cannot approve it'); await Agent.approveTask(admin, 't-out', {}, base); await Agent.drain();
   assert.equal(sent, 1); r = await Agent.detail(admin, g3.run.id); assert.equal(r.tasks.find((t) => t.id === 't-out').status, 'done'); assert.ok(r.events.some((e) => e.kind === 'task_approved') && /1 outward action went outside TeamLink, each with its own approval/.test(r.live.lines.join(' ')));
   delete Tools.TOOLS['test.outward'];
   console.log('PASS the outward-step rule: the plan\'s approval does not cover a step that reaches outside TeamLink; it waits for its own approval by the owner of the run and only then runs once');
@@ -225,10 +225,104 @@ const base = { actorFor: async () => admin, notify, fetchFn };
   assert.ok((await Agent.discard(admin, asked.run.id)).ok && !(await Agent.listRuns(admin)).runs.some((x) => x.id === asked.run.id));
   console.log('PASS SEO and pictures: the website check (stand-in internet) and blog plan were really saved, an AI picture is made in the test sandbox; the dashboard adds up real counts and a ₹0 cost with the free-tier use shown, and a login sees only its own runs');
 
-  // 13. every tool is listed with its cost and risk: nothing outward exists yet
-  const cat = Tools.catalog(); assert.ok(cat.length >= 8 && cat.every((t) => t.cost.word && ['internal', 'outward'].includes(t.risk))); assert.equal(cat.filter((t) => t.risk === 'outward').length, 0, 'phase 1 has no outward tool: posting, WhatsApp and calls come later, each behind its own approval');
+  // 14. PHASE 2 planning: the posting and client steps appear only when asked for, and only for what TeamLink can post to
+  const ps = (params, bk = 'own', text = 'Promote us for 2 days') => { const pl = P.build(text, ctx, params, NOW).plan; pl.businessKey = bk; return P.taskSpecs(pl); };
+  const tools = (sp) => sp.map((t) => t.tool);
+  assert.deepEqual(tools(ps({ publish: 'agent' })).slice(0, 5), ['content.draft', 'image.banner', 'approval.request', 'social.post', 'content.draft'], 'agent posting: a social.post step replaces "post by hand"');
+  assert.deepEqual(ps({ publish: 'agent' })[3].deps, [3, 2], 'the post needs the approval step and the picture');
+  assert.equal(tools(ps({ publish: 'manual' })).filter((x) => x === 'social.post').length, 0, 'by hand stays the default'); assert.equal(tools(ps({})).filter((x) => x === 'social.post').length, 0);
+  assert.equal(tools(ps({ publish: 'agent', creative: 'none' })).filter((x) => x === 'social.post').length, 0, 'no picture, nothing to post: by hand');
+  assert.deepEqual(tools(ps({ publish: 'agent', platforms: ['instagram', 'linkedin'] })).slice(2, 6), ['approval.request', 'social.post', 'manual.post', 'content.draft'], 'LinkedIn cannot be posted from TeamLink: that part stays by hand');
+  assert.deepEqual(tools(ps({ publish: 'agent', platforms: ['linkedin'] })).slice(2, 4), ['approval.request', 'manual.post']);
+  assert.deepEqual(tools(ps({ approver: 'client' }, 'c:acme')).slice(0, 4), ['content.draft', 'image.banner', 'client.review', 'manual.post'], 'a client business: the client decides on the picture'); assert.deepEqual(ps({ approver: 'client' }, 'c:acme')[2].deps, [1, 2]);
+  assert.equal(tools(ps({ approver: 'client' }, 'own')).filter((x) => x === 'client.review').length, 0, 'our own company has no client to ask'); assert.equal(tools(ps({ approver: 'client', creative: 'none' }, 'c:acme')).filter((x) => x === 'client.review').length, 0);
+  assert.deepEqual([P.paramsFor(P.parse('x'), {}).publish, P.paramsFor(P.parse('x'), {}).approver, P.paramsFor(P.parse('x'), { publish: 'agent', approver: 'client' }).publish, P.paramsFor(P.parse('x'), { publish: 'yes please' }).publish], ['manual', 'team', 'agent', 'manual'], 'anything but an exact choice falls back to the safe one');
+  const cat2 = Tools.catalog().filter((t) => t.risk === 'outward').map((t) => t.id).sort(); assert.deepEqual(cat2, ['client.review', 'social.post']);
+  console.log('PASS phase 2 planning: posting and client steps only when chosen, only for Facebook / Instagram / X (LinkedIn stays by hand), never without a picture, and any odd choice falls back to the safe one');
+
+  // 15. social.post: waits for the picture to be approved, for the person's accounts, and for its time; posts as that person, once per account
+  const CLOCK0 = Date.parse('2026-11-25T12:00:00+05:30'); const CLOCK1 = Date.parse('2026-11-26T10:05:00+05:30');
+  Agent.config.clock = () => CLOCK0;
+  const posted = []; const actors = []; let prior = []; let failIg = false;
+  const accounts = [{ id: 'fb1', platform: 'facebook', name: 'Test Page', status: 'Connected' }, { id: 'ig1', platform: 'instagram', name: 'test_ig', status: 'Connected' }, { id: 'li1', platform: 'linkedin', name: 'Not postable' }];
+  let allowed = true;
+  const postSvc = { accounts: async () => ({ allowed, accounts }), Post: { posts: async () => ({ posts: prior }), postItem: async (u, itemId, b, base) => { posted.push({ u: u.id, itemId, ...b, base }); const res = b.accountIds.map((id) => { const a = accounts.find((x) => x.id === id); const ok = !(failIg && id === 'ig1'); return { accountId: id, platform: a.platform, name: a.name, ok, url: ok ? `https://social.test/${id}` : '', error: ok ? '' : 'The Instagram sign-in has expired.' }; }); return { ok: 'x', results: res, posted: res.some((x) => x.ok) }; } } };
+  const pbase = { ...base, svc: postSvc, actorFor: async (run, uid) => { actors.push(uid || null); return admin; } };
+  const pg = await Agent.startRun(admin, { goal: 'Promote TeamLink Consultants for 2 days', business: 'own', params: { publish: 'agent', platforms: ['instagram', 'facebook'] } }, { ...pbase, now: NOW });
+  assert.equal(pg.run.plan.params.publish, 'agent'); assert.ok(pg.preflight.warnings.some((w) => /nothing goes public until you approve each post/.test(w)), 'the preview says nothing goes public without each approval');
+  assert.equal(pg.tasks.filter((t) => t.tool === 'social.post').length, 2); assert.ok(pg.tasks.find((t) => t.tool === 'social.post').outward && pg.tasks.find((t) => t.tool === 'social.post').scheduledAt);
+  await Agent.approve(admin, pg.run.id, pbase); await Agent.drain(); r = await Agent.detail(admin, pg.run.id);
+  const posts = r.tasks.filter((t) => t.tool === 'social.post');
+  assert.deepEqual(posts.map((t) => t.status), ['awaiting_approval', 'awaiting_approval'], 'the plan\'s approval does not post anything'); assert.equal(posted.length, 0); assert.equal(r.run.status, 'attention');
+  let pr = await Agent.prepareTask(admin, posts[0].id, pbase); assert.equal(pr.ready, false); assert.ok(/The picture is still waiting for approval/.test(pr.reason), pr.reason);
+  let ap = await Agent.approveTask(admin, posts[0].id, { accountIds: ['fb1'] }, { ...pbase, base: 'https://tl.test' }); assert.equal(ap.code, 'not_ready', 'an unapproved picture cannot be approved for posting');
+  const pics = r.tasks.filter((t) => t.tool === 'image.banner').map((t) => t.refs[0].id); assert.ok(!(await Img.approve(admin, pics[0])).error);
+  pr = await Agent.prepareTask(admin, posts[0].id, pbase); assert.equal(pr.ready, true); assert.deepEqual(pr.accounts.map((a) => a.id), ['fb1', 'ig1'], 'only the connected accounts of the platforms in the plan, not LinkedIn');
+  assert.ok(pr.captions.instagram && pr.captions.facebook && pr.media.status === 'approved' && /Fri|Nov/.test(pr.scheduledLabel), 'the dialog shows the exact captions, the picture and the time');
+  assert.ok((await Agent.approveTask(admin, posts[0].id, {}, { ...pbase, base: 'https://tl.test' })).error, 'no account picked'); assert.ok((await Agent.approveTask(admin, posts[0].id, { accountIds: ['li1'] }, { ...pbase, base: 'https://tl.test' })).error, 'LinkedIn is not one of the choices');
+  assert.ok((await Agent.approveTask(admin, posts[0].id, { accountIds: ['fb1'] }, { ...pbase, base: 'http://tl.test' })).error, 'Facebook needs the https site address');
+  assert.ok((await Agent.approveTask(other, posts[0].id, { accountIds: ['fb1'] }, { ...pbase, base: 'https://tl.test' })).error, 'somebody else cannot approve it'); assert.equal(posted.length, 0);
+  allowed = false; assert.equal((await Agent.approveTask(admin, posts[0].id, { accountIds: ['fb1'] }, { ...pbase, base: 'https://tl.test' })).code, 'not_ready', 'posting switched off by the Admin'); allowed = true;
+  ap = await Agent.approveTask(admin, posts[0].id, { accountIds: ['fb1', 'ig1'] }, { ...pbase, base: 'https://tl.test' }); assert.ok(!ap.error, ap.error); await Agent.drain();
+  r = await Agent.detail(admin, pg.run.id); const p0 = r.tasks.find((t) => t.id === posts[0].id);
+  assert.equal(p0.status, 'queued', 'approved, but its time has not come: it waits'); assert.equal(posted.length, 0); assert.ok(r.events.some((e) => e.kind === 'task_approved' && /Facebook: Test Page and Instagram: test_ig/.test(e.text) && /scheduled time/.test(e.text)));
+  assert.equal(r.run.status, 'running', 'the run keeps waiting for the scheduled post'); assert.ok(!JSON.stringify(r).includes('https://tl.test'), 'the site address is not shown back');
+  Agent.config.clock = () => CLOCK1; await Agent.sweep({ ...pbase, force: true, notify, now: CLOCK1 }); await Agent.drain(); r = await Agent.detail(admin, pg.run.id);
+  assert.equal(r.tasks.find((t) => t.id === posts[0].id).status, 'done', JSON.stringify(r.tasks.find((t) => t.id === posts[0].id).error));
+  assert.deepEqual(posted.map((x) => x.accountIds), [['ig1'], ['fb1']], 'one call per platform'); assert.ok(posted.every((x) => x.confirm === true && x.base === 'https://tl.test' && x.u === admin.id)); assert.deepEqual([posted[0].caption, posted[1].caption], [r.run.plan.days[0].texts.instagram, r.run.plan.days[0].texts.facebook], 'each platform gets its own caption of that day');
+  assert.deepEqual(actors.slice(-2).filter(Boolean), [admin.id], 'the post ran as the person who approved that step'); assert.ok(r.tasks.find((t) => t.id === posts[0].id).refs.some((x) => x.kind === 'link' && /social\.test/.test(x.id)));
+  assert.ok(/Posted: 1 of 2 posting steps \(1 by the agent after your approval of each post/.test(r.live.lines.join(' ')) && /1 outward action went outside TeamLink, each with its own approval/.test(r.live.lines.join(' ')), r.live.lines.join(' | '));
+  assert.equal(r.tasks.find((t) => t.id === posts[1].id).status, 'awaiting_approval', 'the other day is still waiting for its own approval');
+  // a failure: retry needs a fresh approval, and an account that already got it is not posted to twice
+  assert.ok(!(await Img.approve(admin, pics[1])).error); failIg = true; posted.length = 0;
+  await Agent.approveTask(admin, posts[1].id, { accountIds: ['ig1', 'fb1'] }, { ...pbase, base: 'https://tl.test' }); Agent.config.clock = () => Date.parse('2026-11-27T10:05:00+05:30'); await Agent.sweep({ ...pbase, force: true, notify }); await Agent.drain(); r = await Agent.detail(admin, pg.run.id);
+  const p1 = r.tasks.find((t) => t.id === posts[1].id); assert.equal(p1.status, 'failed'); assert.ok(/Posted on Test Page, but test_ig: The Instagram sign-in has expired\./.test(p1.error), p1.error); assert.equal(p1.attempts, 1, 'an outward step is never retried by itself');
+  failIg = false; prior = [{ accountId: 'fb1', ok: true }]; posted.length = 0;
+  r = await Agent.retryTask(admin, posts[1].id, pbase); assert.equal(r.tasks.find((t) => t.id === posts[1].id).status, 'awaiting_approval', 'a retry asks again'); assert.equal(posted.length, 0); await Agent.drain(); assert.equal(posted.length, 0, 'nothing posted by the retry request itself');
+  await Agent.approveTask(admin, posts[1].id, { accountIds: ['ig1', 'fb1'] }, { ...pbase, base: 'https://tl.test' }); await Agent.sweep({ ...pbase, force: true, notify }); await Agent.drain();
+  assert.deepEqual(posted.map((x) => x.accountIds), [['ig1']], 'Test Page already had it, so only Instagram was posted'); r = await Agent.detail(admin, pg.run.id); assert.equal(r.tasks.find((t) => t.id === posts[1].id).status, 'done');
+  // cancel a queued, approved post before its time
+  const pg2 = await Agent.startRun(admin, { goal: 'Promote TeamLink Consultants for 1 days', business: 'own', params: { publish: 'agent', platforms: ['facebook'] } }, { ...pbase, now: NOW }); Agent.config.clock = () => CLOCK0;
+  await Agent.approve(admin, pg2.run.id, pbase); await Agent.drain(); r = await Agent.detail(admin, pg2.run.id); const sp = r.tasks.find((t) => t.tool === 'social.post'); assert.ok(!(await Img.approve(admin, r.tasks.find((t) => t.tool === 'image.banner').refs[0].id)).error);
+  posted.length = 0; await Agent.approveTask(admin, sp.id, { accountIds: ['fb1'] }, { ...pbase, base: 'https://tl.test' }); r = await Agent.cancelTask(admin, sp.id); assert.equal(r.tasks.find((t) => t.id === sp.id).status, 'cancelled'); Agent.config.clock = () => CLOCK1; await Agent.sweep({ ...pbase, force: true, notify }); await Agent.drain(); assert.equal(posted.length, 0, 'a cancelled post never goes out');
+  Agent.config.clock = () => Date.now();
+  console.log('PASS social.post: the plan\'s approval posts nothing; the step waits for the picture to be approved, the Admin switch, the person\'s accounts (connected ones of the plan\'s platforms only, https site) and its scheduled time; it posts as the approver, one call per platform with that platform\'s caption, never twice to an account; a failure needs a fresh approval; a cancelled post never goes out');
+
+  // 16. client.review: the client is messaged only after the person confirms who it goes to; the number is never shown back
+  await CS.createPlan(admin, { clientName: 'Review Test Clinic', plan: 'basic', months: 3, startDate: '2026-11-01', industry: 'Dental clinic' });
+  await Ctx.save(admin, 'c:review-test-clinic', { name: 'Review Test Clinic', services: ['Check-ups', 'Cleaning'], audience: 'Families nearby', contactLine: 'Call 99999 11111' });
+  const sentTo = []; let crFail = false;
+  const crSvc = { CR: { contacts: async () => ({ contacts: [{ name: 'review test clinic', contactName: 'Dr Earlier', contactPhone: '9876501234', contactEmail: '', clientId: '' }] }), sendToClient: async (u, itemId, b, base) => { sentTo.push({ u: u.id, itemId, ...b, base }); return crFail ? { error: 'The WhatsApp message could not be sent.', status: 502 } : { ok: 'Sent by WhatsApp (the picture itself, with the link).', review: { id: 'rv-test' } }; } } };
+  const cbase = { ...base, svc: crSvc };
+  const cr = await Agent.startRun(admin, { goal: 'Promote Review Test Clinic for 3 days', business: 'c:review-test-clinic', params: { approver: 'client' } }, { ...cbase, now: NOW });
+  assert.equal(cr.run.plan.params.approver, 'client'); assert.equal(cr.tasks.filter((t) => t.tool === 'client.review').length, 3); assert.equal(cr.tasks.filter((t) => t.tool === 'approval.request').length, 0); assert.ok(cr.preflight.warnings.some((w) => /sent to the client on WhatsApp only after you approve that step/.test(w)));
+  await Agent.approve(admin, cr.run.id, cbase); await Agent.drain(); r = await Agent.detail(admin, cr.run.id); const reviews = r.tasks.filter((t) => t.tool === 'client.review');
+  assert.deepEqual(reviews.map((t) => t.status), ['awaiting_approval', 'awaiting_approval', 'awaiting_approval']); assert.equal(sentTo.length, 0, 'nobody is messaged by the plan\'s approval');
+  const cp = await Agent.prepareTask(admin, reviews[0].id, cbase); assert.equal(cp.ready, true); assert.deepEqual([cp.defaults.clientName, cp.defaults.contactName, cp.defaults.contactPhone], ['review test clinic', 'Dr Earlier', '9876501234'], 'the client details typed on an earlier send are offered'); assert.ok(/Caption:/.test(cp.message) && cp.message.length <= 400);
+  const site = { ...cbase, base: 'https://tl.test' };
+  assert.ok((await Agent.approveTask(admin, reviews[0].id, { clientName: 'Review Test Clinic', contactPhone: '123' }, site)).error, 'a number that is not a number is refused'); assert.ok((await Agent.approveTask(admin, reviews[0].id, { clientName: 'Review Test Clinic', contactPhone: '9876501234' }, { ...cbase, base: '' })).error, 'the link needs the site address'); assert.equal(sentTo.length, 0);
+  assert.ok((await Agent.approveTask(admin, reviews[0].id, { clientName: 'R', contactPhone: '9876501234' }, site)).error && (await Agent.approveTask(admin, reviews[0].id, { clientName: 'Review Test Clinic', contactPhone: '9876501234', contactEmail: 'not-an-email' }, site)).error);
+  const many = await Agent.approveSteps(admin, cr.run.id, 'client.review', { clientName: 'Review Test Clinic', contactName: 'Dr Earlier', contactPhone: '9876501234' }, site); assert.equal(many.approved, 3, many.error); await Agent.drain();
+  assert.equal(sentTo.length, 3); assert.ok(sentTo.every((x) => x.clientName === 'Review Test Clinic' && x.contactPhone === '9876501234' && x.base === 'https://tl.test' && x.u === admin.id && x.message.length <= 400)); assert.equal(new Set(sentTo.map((x) => x.itemId)).size, 3, 'one message per picture'); assert.equal(new Set(sentTo.map((x) => x.message)).size, 3, 'each message carries the caption of its own day'); assert.ok(sentTo.every((x) => /Day \d of the plan\. Caption: /.test(x.message)));
+  r = await Agent.detail(admin, cr.run.id); assert.deepEqual(r.tasks.filter((t) => t.tool === 'client.review').map((t) => t.status), ['done', 'done', 'done']); assert.ok(/Sent to the client to approve: 3 pictures/.test(r.live.lines.join(' ')), r.live.lines.join(' | '));
+  const shown = JSON.stringify(r) + JSON.stringify(await Agent.dashboard(admin)); assert.ok(!shown.includes('9876501234') && !shown.includes('987650'), 'the client\'s number is never shown back (task views, history, summary, dashboard)'); assert.ok(r.tasks.find((t) => t.tool === 'client.review').input.contactPhone.includes('•') || /\*|•|X/.test(r.tasks.find((t) => t.tool === 'client.review').input.contactPhone), 'a masked number');
+  assert.ok(r.events.some((e) => e.kind === 'task_approved' && /send the picture to Review Test Clinic on WhatsApp/.test(e.text)));
+  // a failed send asks again; an already approved picture has nothing for the client to decide
+  const cr2 = await Agent.startRun(admin, { goal: 'Promote Review Test Clinic for 1 days', business: 'c:review-test-clinic', params: { approver: 'client' } }, { ...cbase, now: NOW }); await Agent.approve(admin, cr2.run.id, cbase); await Agent.drain(); crFail = true; sentTo.length = 0;
+  r = await Agent.detail(admin, cr2.run.id); const rv = r.tasks.find((t) => t.tool === 'client.review'); await Agent.approveTask(admin, rv.id, { clientName: 'Review Test Clinic', contactPhone: '9876501234' }, site); await Agent.drain(); r = await Agent.detail(admin, cr2.run.id);
+  assert.equal(r.tasks.find((t) => t.id === rv.id).status, 'failed'); assert.ok(/could not be sent/.test(r.tasks.find((t) => t.id === rv.id).error)); assert.equal(sentTo.length, 1, 'one try only'); crFail = false;
+  r = await Agent.retryTask(admin, rv.id, cbase); assert.equal(r.tasks.find((t) => t.id === rv.id).status, 'awaiting_approval'); await Agent.drain(); assert.equal(sentTo.length, 1, 'a retry request sends nothing');
+  await S.run(`UPDATE "OmniMkImage" SET status = 'approved' WHERE id = ?`, r.tasks.find((t) => t.tool === 'image.banner').refs[0].id); assert.ok(/already approved/.test((await Agent.prepareTask(admin, rv.id, cbase)).reason), 'nothing left for the client to decide');
+  console.log('PASS client.review: nobody is messaged by the plan\'s approval; the person confirms the client and number (checked, https site), approves one or all of the week\'s sends, the number is shown back nowhere, a failed send asks again, an approved picture is not sent');
+
+  // 17. the run is honest about what went outside
+  const dash2 = await Agent.dashboard(admin); assert.ok(dash2.usage.month.every((u) => u.rupees === 0) && dash2.usage.month.some((u) => u.tool === 'social.post') && dash2.usage.month.some((u) => u.tool === 'client.review'), 'posts and client messages are counted in the usage list'); assert.ok(dash2.pendingApprovals.outward.length >= 1 && dash2.pendingApprovals.outward.every((x) => x.title));
+  console.log('PASS the dashboard counts the posts and client messages and lists the steps still waiting for their own approval');
+
+  // 13. every tool is listed with its cost and risk: two outward tools, each behind its own approval
+  const cat = Tools.catalog(); assert.ok(cat.length >= 8 && cat.every((t) => t.cost.word && ['internal', 'outward'].includes(t.risk))); assert.deepEqual(cat.filter((t) => t.risk === 'outward').map((t) => t.id).sort(), ['client.review', 'social.post'], 'only the two Phase 2 outward tools exist: bulk WhatsApp, calls and ad spend are not tools');
   assert.ok(!cat.some((t) => t.cost.kind === 'paid') && cat.every((t) => t.cost.rupees === 0));
-  console.log('PASS the tool list: eight tools, each with its cost and risk, none outward, none paid');
+  console.log('PASS the tool list: each tool with its cost and risk, two outward (post, ask the client), none paid');
   console.log('\nALL AGENT CHECKS PASSED');
   process.exit(0);
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

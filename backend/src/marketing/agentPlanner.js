@@ -307,7 +307,7 @@ function paramsFor(parsed, given = {}, now = Date.now()) {
   const startDate = validDay(g.startDate) && g.startDate >= istDay(now) ? g.startDate : tomorrow;
   return {
     days: def.days === 0 ? 0 : days, platforms, startDate, time: validTime(g.time) ? g.time : '10:00',
-    creative: ['banner', 'ai', 'none'].includes(g.creative) ? g.creative : 'banner', count: Math.max(1, Math.min(5, Math.round(Number(g.count)) || (parsed.intent === 'videos' ? parsed.days : 3))),
+    creative: ['banner', 'ai', 'none'].includes(g.creative) ? g.creative : 'banner', publish: g.publish === 'agent' ? 'agent' : 'manual', approver: g.approver === 'client' ? 'client' : 'team', count: Math.max(1, Math.min(5, Math.round(Number(g.count)) || (parsed.intent === 'videos' ? parsed.days : 3))),
   };
 }
 
@@ -352,6 +352,7 @@ function build(goalText, ctxIn, given = {}, now = Date.now()) {
 // ---- the executable steps ---------------------------------------------------------------------------------------------------------------------------------------------------------
 // [{ n, day, tool, title, deps: [n] }] in the order they run. Day steps: draft -> creative -> ask for approval (needs the draft) -> a person's step (post / make the video).
 const MAX_TASKS = 70;
+const SOCIAL = ['instagram', 'facebook', 'x']; // the platforms TeamLink can post to (postItem.js); LinkedIn and the rest are posted by hand
 function taskSpecs(plan) {
   const specs = []; const add = (s) => { specs.push({ n: specs.length + 1, day: null, deps: [], ...s }); return specs.length; };
   if (plan.intent === 'seo') {
@@ -360,15 +361,24 @@ function taskSpecs(plan) {
     add({ tool: 'manual.note', title: 'Go through the website check with the person who runs the website and agree the fixes', deps: [a], note: 'The agent does not change the live website.' });
     return specs;
   }
-  const mode = plan.params.creative;
+  const mode = plan.params.creative; const hasPic = mode !== 'none';
+  const clientAsks = plan.params.approver === 'client' && plan.businessKey && plan.businessKey !== 'own' && hasPic; // the client decides on the picture (WhatsApp, after your approval of the step)
+  const agentPosts = plan.params.publish === 'agent' && hasPic; // TeamLink posts after your approval of each post
   for (const d of plan.days) {
-    const draft = add({ tool: 'content.draft', day: d.n, title: `${d.title.split(':')[0]}: write the draft in AI Content` });
-    if (mode !== 'none') add({ tool: mode === 'ai' ? 'image.ai' : 'image.banner', day: d.n, title: `${d.title.split(':')[0]}: ${mode === 'ai' ? 'make the picture with AI (free tier)' : 'design the banner (free)'}` });
-    const ask = add({ tool: 'approval.request', day: d.n, deps: [draft], title: `${d.title.split(':')[0]}: ask the team to approve` });
-    if (d.kind === 'video') add({ tool: 'manual.video', day: d.n, deps: [ask], title: `${d.title.split(':')[0]}: make the video in AI Video from the scenes` });
-    else add({ tool: 'manual.post', day: d.n, deps: [ask], title: `${d.title.split(':')[0]}: post on ${listText(d.platforms.map((x) => PLATFORM_WORDS[x]))} at ${d.time}, after it is approved (by hand)` });
+    const label = d.title.split(':')[0];
+    const draft = add({ tool: 'content.draft', day: d.n, title: `${label}: write the draft in AI Content` });
+    const pic = hasPic ? add({ tool: mode === 'ai' ? 'image.ai' : 'image.banner', day: d.n, title: `${label}: ${mode === 'ai' ? 'make the picture with AI (free tier)' : 'design the banner (free)'}` }) : 0;
+    const ask = clientAsks
+      ? add({ tool: 'client.review', day: d.n, deps: [draft, pic], title: `${label}: send the picture and caption to the client to approve (you confirm who it goes to)` })
+      : add({ tool: 'approval.request', day: d.n, deps: [draft], title: `${label}: ask the team to approve` });
+    if (d.kind === 'video') { add({ tool: 'manual.video', day: d.n, deps: [ask], title: `${label}: make the video in AI Video from the scenes` }); continue; } // eslint-disable-line no-continue
+    const social = d.platforms.filter((x) => SOCIAL.includes(x)); const rest = d.platforms.filter((x) => !SOCIAL.includes(x));
+    if (agentPosts && social.length) {
+      add({ tool: 'social.post', day: d.n, deps: [ask, pic], title: `${label}: post on ${listText(social.map((x) => PLATFORM_WORDS[x]))} at ${d.time} on ${d.date} (after you approve this post)` });
+      if (rest.length) add({ tool: 'manual.post', day: d.n, deps: [ask], title: `${label}: post on ${listText(rest.map((x) => PLATFORM_WORDS[x]))} at ${d.time}, after it is approved (by hand)` });
+    } else add({ tool: 'manual.post', day: d.n, deps: [ask], title: `${label}: post on ${listText(d.platforms.map((x) => PLATFORM_WORDS[x]))} at ${d.time}, after it is approved (by hand)` });
   }
   return specs.slice(0, MAX_TASKS);
 }
 
-module.exports = { flagsOf, INTENTS, EXAMPLES, METRICS, PLATFORM_WORDS, PLATFORM_LIMIT, MAX_DAYS, parse, build, taskSpecs, factsOf, paramsFor, captionFor, copyOf, themesFor, dayWords, atOf, istDay, validDay, validTime, addDays, listText };
+module.exports = { SOCIAL, flagsOf, INTENTS, EXAMPLES, METRICS, PLATFORM_WORDS, PLATFORM_LIMIT, MAX_DAYS, parse, build, taskSpecs, factsOf, paramsFor, captionFor, copyOf, themesFor, dayWords, atOf, istDay, validDay, validTime, addDays, listText };

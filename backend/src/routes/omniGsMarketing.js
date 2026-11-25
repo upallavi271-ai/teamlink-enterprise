@@ -474,7 +474,10 @@ router.post('/agent/runs/:id/results', wrap(async (req, res) => send(res, await 
 router.delete('/agent/runs/:id', wrap(async (req, res) => send(res, await Agent.discard(req.user, req.params.id))));
 router.post('/agent/tasks/:id/retry', wrap(async (req, res) => send(res, await Agent.retryTask(req.user, req.params.id))));
 router.post('/agent/tasks/:id/cancel', wrap(async (req, res) => send(res, await Agent.cancelTask(req.user, req.params.id))));
-router.post('/agent/tasks/:id/approve', wrap(async (req, res) => send(res, await Agent.approveTask(req.user, req.params.id))));
+// an outward step (a post, a message to a client): the person sees what would go out (prepare), picks the accounts / confirms the recipient, and approves it. The site address comes from THIS request, never from the body.
+router.get('/agent/tasks/:id/prepare', wrap(async (req, res) => send(res, await Agent.prepareTask(req.user, req.params.id, { base: siteOf(req) }))));
+router.post('/agent/tasks/:id/approve', wrap(async (req, res) => send(res, await Agent.approveTask(req.user, req.params.id, req.body || {}, { base: siteOf(req) }))));
+router.post('/agent/runs/:id/approve-steps', wrap(async (req, res) => send(res, await Agent.approveSteps(req.user, req.params.id, String((req.body || {}).tool || ''), req.body || {}, { base: siteOf(req) }))));
 router.post('/agent/tasks/:id/done', wrap(async (req, res) => send(res, await Agent.markManual(req.user, req.params.id, req.body || {}))));
 // ---- SEO assistant (2026-11-25): the dashboard, the SEO site of each client (facts, competitors, schedule), the audit button, and the recommendation tasks (marketing/seo*.js). Writers only. Nothing is posted and no website is changed. ----
 router.get('/seo/overview', mustWrite, wrap(async (req, res) => send(res, await SeoDash.overview(req.user, { siteId: req.query.siteId ? String(req.query.siteId) : '' }))));
