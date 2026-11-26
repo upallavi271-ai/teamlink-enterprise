@@ -123,11 +123,19 @@ async function logUsage({ user, module, task, provider, model, ok, inChars, outC
 // -> { result, provider, model, demo, ms }   (throws AiMkError with a plain-English message; every call, ok or not, is logged)
 // quickMs (optional): the answer must come within this many ms (a screen behind the web server's 60-second limit). The model waits at most a few seconds for live calls, is asked to stop at quickMs,
 // and a miss is an AiMkError with code 'timeout' (logged as failed) so the caller can use a plain fallback instead of showing a gateway error.
-async function generate({ user, module, task, system, prompt, json = true, demo, department, itemId, quickMs = 0 }) {
+// fast (optional, JSON tasks only): a short writing task goes to the free fast writer (marketing/fastText.js: Cloudflare) when its card is saved, else to the app's own model as before. An error from the
+// fast writer carries `fast: true`, so the caller can choose its own fallback.
+async function generate({ user, module, task, system, prompt, json = true, demo, department, itemId, quickMs = 0, fast = false }) {
   await ensure();
   await checkLimits(user);
-  const p = pick('text');
-  const st = p ? await p.status() : { ready: false, reason: 'No AI provider is set up.' };
+  let p = pick('text');
+  let st = null;
+  if (fast && json) {
+    const quick = require('./fastText'); // eslint-disable-line global-require
+    const qs = await quick.status();
+    if (qs.ready) { p = { id: 'cloudflare', fast: true, json: (s, q) => quick.json(s, q) }; st = qs; }
+  }
+  if (!st) st = p ? await p.status() : { ready: false, reason: 'No AI provider is set up.' };
   const inChars = String(system || '').length + String(prompt || '').length;
   if (!p || !st.ready) {
     const why = (st && st.reason) || 'The AI model is not ready.';
@@ -149,6 +157,7 @@ async function generate({ user, module, task, system, prompt, json = true, demo,
   } catch (e) {
     const ms = Date.now() - t0;
     const err = e instanceof AiMkError ? e : new AiMkError(e.message || 'The AI did not answer.', e.status || 503, e.code || 'failed');
+    if (p.fast) err.fast = true;
     await logUsage({ user, module, task, provider: st.provider || p.id, model: st.model, ok: false, inChars, ms, error: err.message, department, itemId });
     throw err;
   }

@@ -6,6 +6,8 @@
 // open client project's brief). The studio (autostudio.js plan) then makes the pictures / the video from that description. It only FILLS THE BOX for the person to read and change: nothing is
 // saved, made or sent. It never invents prices, offers, dates, phone numbers or facts. Whatever is already in the box is kept and improved. It goes through the shared AI layer (ai.js): the
 // person's daily limit, the company limit, the usage log (module "studio", task "idea") and the plain "AI is not ready" words.
+// 2026-11-26 (owner: "why 40 seconds?"): it asks the fast writer first (marketing/fastText.js, the free Cloudflare model the pictures already use): a few seconds. If that fails, the draft from the
+// person's own words comes at once; only when there is nothing to lay out (a title alone) is the app's own slower model asked instead.
 // ---------------------------------------------------------------------------
 const S = require('../outreach/store');
 const A = require('../outreach/access');
@@ -128,14 +130,19 @@ async function ideaAssist(u, b = {}) {
     project ? `Client project: ${project.clientName}${project.occasion ? `, ${project.occasion}` : ''}` : '', projectBrief ? `The client's brief: ${projectBrief}` : '',
   ].filter(Boolean).join('\n');
   const prompt = `${given || 'No title was given.'}\nIt is for: ${who}\nThey want: ${what}${own ? `\n\nThe person already wrote this in the idea box (keep its facts, improve and complete it in the layout above):\n${own}` : ''}`;
+  const ask = (more) => AI.generate({ user: u, module: 'studio', task: 'idea', system, prompt, json: true, demo: () => ({ idea: `SAMPLE (test mode, not written by AI)\nTopic: ${what} about ${topic || 'the client\'s brief'} for ${who}.\nPoints:\n- One clear message\n- A friendly, simple tone\n- A clear next step for the viewer` }), department: S.clip(b.department, 60) || undefined, ...more });
   let r;
   try {
-    // quickMs: nginx gives up at 60 seconds and the one small model is shared with the WhatsApp assistant (it was live 20 to 50 seconds and sometimes refused while busy), so the AI gets 40 seconds and a miss is said in words, never a gateway error
-    r = await AI.generate({ user: u, module: 'studio', task: 'idea', system, prompt, json: true, quickMs: 40000, demo: () => ({ idea: `SAMPLE (test mode, not written by AI)\nTopic: ${what} about ${topic || 'the client\'s brief'} for ${who}.\nPoints:\n- One clear message\n- A friendly, simple tone\n- A clear next step for the viewer` }), department: S.clip(b.department, 60) || undefined });
+    // quickMs: nginx gives up at 60 seconds. The fast writer has 12 seconds; the app's own small model is shared with the WhatsApp assistant (it was live 20 to 50 seconds and sometimes refused while busy), so it gets 40 seconds alone, 35 after a fast miss, and a miss is said in words, never a gateway error
+    try { r = await ask({ fast: true, quickMs: 40000 }); } catch (e) {
+      if (!e.fast || fromOwnWords({ title, heading, content, who, thing })) throw e;
+      r = await ask({ quickMs: 35000 });
+    }
   } catch (e) {
-    if ((e.code === 'timeout' || e.code === 'failed' || e.code === 'unavailable' || e.code === 'unreadable') && e.status !== 403 && e.status !== 429) { // a limit or a refused login is shown as it is; a slow or failed AI gives a draft from the person's own words
+    if (e.fast || ((e.code === 'timeout' || e.code === 'failed' || e.code === 'unavailable' || e.code === 'unreadable') && e.status !== 403 && e.status !== 429)) { // a limit or a refused login is shown as it is; a slow or failed AI gives a draft from the person's own words
       const draft = fromOwnWords({ title, heading, content, who, thing });
-      if (draft) return { idea: tidy(draft), demo: false, provider: 'own words', flags: [], fallback: true, note: 'The AI is busy right now, so TeamLink laid out your own words (the title and the lines of your content) as the topic and the points. Read it, change anything, or press AI Assist again for the AI to write it.' };
+      const why = e.code === 'provider_daily' ? 'Today\'s free AI allowance is used up' : 'The AI is busy right now';
+      if (draft) return { idea: tidy(draft), demo: false, provider: 'own words', flags: [], fallback: true, note: `${why}, so TeamLink laid out your own words (the title and the lines of your content) as the topic and the points. Read it, change anything, or press AI Assist again for the AI to write it.` };
     }
     if (e.code === 'timeout') return { error: 'The AI is slow right now. Try again in a moment, or write the idea yourself.', status: 504, code: 'timeout' };
     return { error: e.message, status: e.status || 503, code: e.code };

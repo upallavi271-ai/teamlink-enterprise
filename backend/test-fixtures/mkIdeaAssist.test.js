@@ -146,6 +146,58 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
   assert.ok(blocked && blocked.status === 429 && /Too many AI requests in one minute/.test(blocked.error), JSON.stringify(blocked));
   console.log('PASS logged as studio/idea; the off switch, the daily limit and the one-minute limit apply');
 
+  // 10. THE FAST WRITER (owner, 26 Nov: "why 40 seconds?"): with the free Cloudflare card saved the idea is written there, and the app's own slow model is not asked
+  const FT = require('../src/marketing/fastText');
+  const realStatus = FT.status; const realJson = FT.json;
+  assert.equal((await realStatus()).ready, false, 'the test sandbox makes no outside calls: the fast writer stays out');
+  const fastAsked = []; let fastAnswer = { idea: 'Topic: A fast hiring video for freshers.\nPoints:\n- One\n- Two\nMood: calm' };
+  FT.status = async () => ({ ready: true, provider: 'cloudflare', model: 'fast-model', reason: '' });
+  FT.json = async (system, prompt) => { fastAsked.push({ system, prompt }); if (typeof fastAnswer === 'function') return fastAnswer(); return fastAnswer; };
+  const person = (id) => ({ id, name: 'Fast Tester', role: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN' });
+  const slowBefore = seen.length;
+  r = await ideaAssist(person('u-fast'), { kind: 'video', title: 'Hiring freshers' });
+  assert.ok(r.idea.startsWith('Topic: A fast hiring video') && r.provider === 'cloudflare' && !r.fallback, JSON.stringify(r));
+  assert.equal(seen.length, slowBefore, 'the slow model is not asked'); assert.ok(fastAsked[0].prompt.includes('Title: Hiring freshers') && fastAsked[0].system.includes('Topic:'));
+  // it fails and there are words to lay out: the draft comes at once, the slow model is not waited for
+  fastAnswer = () => { throw new AI.AiMkError('Cloudflare did not answer in time. Try again.', 503, 'unreachable'); };
+  r = await ideaAssist(person('u-fast'), { kind: 'video', title: 'Hiring freshers', content: 'Freshers welcome\nSend your CV today' });
+  assert.ok(r.fallback && r.provider === 'own words' && /AI is busy right now/.test(r.note), JSON.stringify(r)); assert.equal(seen.length, slowBefore, 'no 40 second wait when there is a draft');
+  fastAnswer = () => { throw new AI.AiMkError('Cloudflare\'s free daily allowance is used up for today.', 429, 'provider_daily'); };
+  r = await ideaAssist(person('u-fast'), { kind: 'video', title: 'Hiring freshers', content: 'Freshers welcome\nSend your CV today' });
+  assert.ok(r.fallback && /free AI allowance is used up/.test(r.note), JSON.stringify(r));
+  // it fails and there is only a title: the app's own model is asked, with the shorter limit (the web server allows 60 seconds in all)
+  answer = { idea: 'Topic: Written by the own model\nPoints:\n- One\n- Two' };
+  r = await ideaAssist(person('u-fast'), { kind: 'video', title: 'Hiring freshers' });
+  assert.ok(r.idea.startsWith('Topic: Written by the own model') && r.provider === 'stub', JSON.stringify(r)); assert.equal(seen.length, slowBefore + 1); assert.equal(seen[seen.length - 1].lim.timeoutMs, 35000);
+  answer = () => { throw new AI.AiMkError('timed out', 504, 'timeout'); };
+  r = await ideaAssist(person('u-fast2'), { kind: 'video', title: 'Hiring freshers' }); assert.equal(r.status, 504); assert.ok(/slow right now/.test(r.error), r.error);
+  const logged = await S.q('SELECT provider, ok FROM "OmniMkAiUsage" WHERE userId = ?', 'u-fast');
+  assert.ok(logged.some((x) => x.provider === 'cloudflare' && S.num(x.ok) === 1) && logged.some((x) => x.provider === 'cloudflare' && S.num(x.ok) === 0) && logged.some((x) => x.provider === 'stub'), JSON.stringify(logged));
+  console.log('PASS the fast writer: used first; on a miss the draft comes at once; a title alone falls back to the app\'s own model; every try is logged');
+
+  // 11. what the fast writer sends and how it reads the answer (stand-in Cloudflare: nothing leaves the PC)
+  FT.status = realStatus; FT.json = realJson;
+  const Img = require('../src/marketing/images'); const sandbox = require('../src/utils/sandbox');
+  const realCf = { ...Img.cloudflareText }; const realAllow = sandbox.allowAi; const sent = [];
+  let card = { key: '', account: '' };
+  Img.cloudflareText.config = async () => card; sandbox.allowAi = () => true;
+  assert.equal((await FT.status()).ready, false, 'no card saved: not used, nothing changes');
+  card = { key: 'test-token', account: 'a'.repeat(32) };
+  assert.equal((await FT.status()).ready, true);
+  let reply = '{"idea": "Topic: Hello\\nPoints:\\n- One"}';
+  Img.cloudflareText.call = async (url, key, body, ms) => { sent.push({ url, key, body, ms }); return { choices: [{ message: { content: reply } }] }; };
+  assert.deepEqual(await FT.json('SYS', 'ASK'), { idea: 'Topic: Hello\nPoints:\n- One' });
+  assert.equal(sent[0].url, `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/ai/v1/chat/completions`);
+  assert.equal(sent[0].key, 'test-token'); assert.equal(sent[0].ms, 12000); assert.equal(sent[0].body.model, FT.MODEL);
+  assert.deepEqual(sent[0].body.messages, [{ role: 'system', content: 'SYS' }, { role: 'user', content: 'ASK' }]);
+  reply = 'Here it is:\n```json\n{"idea": "Topic: Fenced"}\n```'; assert.deepEqual(await FT.json('s', 'p'), { idea: 'Topic: Fenced' });
+  reply = '{"idea": "Topic: Real breaks\nPoints:\n- One"}'; assert.deepEqual(await FT.json('s', 'p'), { idea: 'Topic: Real breaks\nPoints:\n- One' });
+  reply = 'Topic: Plain words\nPoints:\n- One'; assert.deepEqual(await FT.json('s', 'p'), { idea: reply });
+  for (const bad of ['', '{"other": ']) { reply = bad; await assert.rejects(FT.json('s', 'p'), (e) => e.code === 'unreadable'); } // eslint-disable-line no-await-in-loop
+  Img.cloudflareText.call = async () => ({ result: { response: { idea: 'Topic: Older shape' } } }); assert.deepEqual(await FT.json('s', 'p'), { idea: 'Topic: Older shape' });
+  Object.assign(Img.cloudflareText, realCf); sandbox.allowAi = realAllow;
+  console.log('PASS the fast writer sends the system and the request to Cloudflare\'s chat address with the saved token, and reads JSON, fenced JSON, JSON with real line breaks and plain words; an empty answer is an error');
+
   console.log('idea assist tests: all passed');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

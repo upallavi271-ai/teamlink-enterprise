@@ -989,5 +989,6 @@ module.exports = {
   setNote, saveSpec,
   ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, createBanner, reviseBanner, editPicture, changeLogo, logoWhy, finishPic, versionFile, versionOf, renderBanner, looksLikePrompt, bannerMeta, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
   cloudflareImage: { cfOne, fluxPrompt, DEFAULT_MODEL: CF_DEFAULT_MODEL, FALLBACK_MODEL: CF_FALLBACK_MODEL, resetKlein: () => { kleinFailedAt = 0; } }, // exported for the tests
+  cloudflareText: { config: cloudflareConfig, call: cfCall }, // the same Cloudflare card and calls, for short writing (marketing/fastText.js)
   approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng, holdForClient, backToDraft, clientDecision, publicPathOf: publicPath, publicJpegPath, isVideoRow: isVideo,
 };
