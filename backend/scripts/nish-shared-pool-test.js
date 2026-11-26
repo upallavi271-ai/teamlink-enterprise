@@ -118,6 +118,7 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   await require('../src/utils/candidateAddedBy').record(X.id, recA, 'bulk'); // A uploaded X (bulk resumes), on no requirement
   // Z: imported with NO location, on no requirement - the founder's "tag cheyyakapoina" case
   const Z = await prisma.candidate.create({ data: { name: `Npz Nocity ${RUN}`, phone: ph(3), email: `npz.${RUN}@np-test.in`, skills: 'Java, Spring', experienceYears: 4, currentSalary: '600000', expectedSalary: '800000', source: 'Naukri' } });
+  await require('../src/utils/candidateAddedBy').record(Z.id, recB, 'bulk'); // B uploaded Z (so on TeamLink B may open Z: their own upload)
   // W: imported with no skills and no resume - nothing to score
   const W = await prisma.candidate.create({ data: { name: `Npw Noskills ${RUN}`, phone: ph(4), email: `npw.${RUN}@np-test.in`, experienceYears: 2, source: 'Other' } });
 
@@ -141,8 +142,17 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   const peopleOf = async (tok) => { const r = await call('GET', '/candidates?paged=1&pageSize=5&view=pipeline', tok); return r.body && r.body.counts && r.body.counts.views ? Number(r.body.counts.views.master) : null; };
   const tTT2 = await tokenOf(tl2.id); const tTS = await tokenOf(sa.id);
   const tPeople = [await peopleOf(tTT2), await peopleOf(tTS)];
+  // TEAMLINK too (2026-11-26): a person on no requirement is scored - but only against the open requirements THIS login may see
   const tZ = await call('GET', `/candidates/${Z.id}/location-requirements`, tTS);
-  check('TeamLink: a person with no location gets no requirement list and no scores there (as before)', tZ.status === 200 && !tZ.body.allOpen && !tZ.body.own && (tZ.body.rows || []).length === 0, [tZ.status, tZ.body]);
+  check('TeamLink: an untagged person (no location) gets the open-requirement Fit list and own scores', tZ.status === 200 && tZ.body.allOpen === true && !!tZ.body.own && (tZ.body.rows || []).some((r) => r.id === R1.id), [tZ.status, tZ.body && { allOpen: tZ.body.allOpen, n: (tZ.body.rows || []).length }]);
+  const tZb = await call('GET', `/candidates/${Z.id}/location-requirements`, TB);
+  const tZbIds = ((tZb.body && tZb.body.rows) || []).map((r) => r.id);
+  check('TeamLink: recruiter B\'s Fit list for Z holds only B\'s own job R2, not A\'s R1 (TeamLink keeps its scope)', tZb.status === 200 && tZbIds.includes(R2.id) && !tZbIds.includes(R1.id), [tZb.status, tZbIds.length]);
+  const tY2 = await call('GET', `/candidates/${Y.id}/location-requirements`, tTS);
+  check('TeamLink: a TAGGED person keeps the open-requirements-nearby list (no all-open list)', tY2.status === 200 && !tY2.body.allOpen, [tY2.status, tY2.body && tY2.body.allOpen]);
+  const tbList = await call('GET', `/candidates?paged=1&pageSize=100&view=master&search=${encodeURIComponent(Z.name)}`, tTS);
+  const tzr = rowsOf(tbList).find((r) => r.id === Z.id);
+  check('TeamLink: the People list shows Z a Fit % and the job it is', !!tzr && typeof tzr.fitOpenPct === 'number' && !!tzr.fitBest, tzr && { fitOpenPct: tzr.fitOpenPct, fitBest: tzr.fitBest });
   check('TeamLink: a TL\'s People count is their own reach, below the Super Admin\'s (as before)', tPeople[0] !== null && tPeople[1] !== null && tPeople[0] < tPeople[1], tPeople);
   await stopServer();
 
@@ -236,9 +246,13 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   const bX = await call('GET', `/candidates/${X.id}`, TB);
   check('TeamLink again: recruiter B still cannot open X', bX.status === 403 || bX.status === 404, bX.status);
   const bReqs = await call('GET', `/requirements?page=1&pageSize=100&view=all&clientId=${client.id}`, TB);
-  const zl = await call('GET', `/candidates?paged=1&pageSize=100&view=master&search=${encodeURIComponent(Z.name)}`, await tokenOf(sa.id));
-  const zr = rowsOf(zl).find((r) => r.id === Z.id);
-  check('TeamLink again: Z shows no Fit % in the People list (no job, as before)', !!zr && zr.fitOpenPct === undefined && !zr.fitBest, zr && { fitOpenPct: zr.fitOpenPct, fitBest: zr.fitBest });
+  // the untagged Fit agrees with what a tagged application stores: B adds Z to R2, and the stored score equals the Fit B was shown for R2
+  const shown = await call('GET', `/candidates/${Z.id}/location-requirements`, TB);
+  const shownR2 = ((shown.body && shown.body.rows) || []).find((r) => r.id === R2.id);
+  let zAdd = await call('POST', '/applications', TB, { candidateId: Z.id, requirementId: R2.id });
+  if (zAdd.status === 409 && zAdd.body && zAdd.body.code === 'NEEDS_OVERRIDE') zAdd = await call('POST', '/applications', TB, { candidateId: Z.id, requirementId: R2.id, overrideReason: 'test: profile rules only' });
+  const stored = await prisma.application.findUnique({ where: { candidateId_requirementId: { candidateId: Z.id, requirementId: R2.id } }, select: { matchScore: true } });
+  check('TeamLink again: the Fit shown before tagging equals the score stored once tagged', !!shownR2 && !!stored && stored.matchScore === shownR2.match, [shownR2 && shownR2.match, stored && stored.matchScore, zAdd.status]);
   check('TeamLink again: recruiter B still does not see A\'s R1', bReqs.status === 200 && !bReqs.text.includes(R1.title), rowsOf(bReqs).map((r) => r.title));
 
   console.log(`\n${total - failed}/${total} passed`);

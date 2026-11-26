@@ -375,8 +375,8 @@ const MASTER_COLUMNS = [
   { id: 'job', label: 'Current job' },
   { id: 'stage', label: 'Step' },
   { id: 'joining', label: 'Joining date' },
-  // NISH: a person on no requirement - their best open-requirement Fit (never offered on TeamLink)
-  ...(BRAND.itStaffing ? [{ id: 'fit', label: 'Fit %' }] : []),
+  // a person on no requirement: their best Fit among the open requirements this login may see (NISH 2026-11-26, TeamLink too)
+  { id: 'fit', label: 'Fit %' },
 ];
 const MASTER_DEFAULT_COLS = MASTER_COLUMNS.map((c) => c.id);
 // Built-in Saved Views (filters only — the server still decides what each
@@ -561,7 +561,8 @@ export default function Candidates() {
     (v) => v && MASTER_SORTS.some(([k]) => k === v.key));
   // v3: the ATS Pipeline column set (Candidate | Requirement | Client | Stage |
   // Owner | Next Action | Due).
-  const [mcols, setMcols] = useStoredState(`tl.candidates.mcols.v1${BRAND.itStaffing ? '.fit' : ''}.${uid}`, MASTER_DEFAULT_COLS,
+  // (the Fit % column came in 2026-11-26: a saved choice from before keeps its columns and gets Fit % added once)
+  const [mcols, setMcols] = useStoredState(`tl.candidates.mcols.v2.${uid}`, () => { try { const old = JSON.parse(window.localStorage.getItem(`tl.candidates.mcols.v1${BRAND.itStaffing ? '.fit' : ''}.${uid}`) || 'null'); return Array.isArray(old) && old.includes('candidate') ? [...new Set([...old, 'fit'])] : MASTER_DEFAULT_COLS; } catch { return MASTER_DEFAULT_COLS; } },
     (v) => Array.isArray(v) && v.includes('candidate') && v.every((id) => MASTER_COLUMNS.some((c) => c.id === id)));
   const [cols, setCols] = useStoredState(`tl.candidates.cols.v8.${uid}`, () => colsFromV7(uid),
     (v) => Array.isArray(v) && v.length > 0 && v.every((id) => COLUMN_IDS.has(id)));

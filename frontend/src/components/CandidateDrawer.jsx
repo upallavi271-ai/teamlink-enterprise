@@ -11,7 +11,6 @@ import {
   ApplicationsMini, ApplicationsFullTab, NotesTab, DocumentsTab,
 } from './Candidate360Tabs.jsx';
 import { LocationRequirementsPanel } from './CandidateReach.jsx';
-import BRAND from '../brand.js'; // NISH: the open-requirement Fit first on an untagged profile
 import './CandidateDrawer.css';
 import { DupBanner } from './duplicates/DupChip.jsx'; // dup_: red "Duplicate: resolve first" + Check duplicates
 // cand7_: the profile top + the other agents' mount points.
@@ -141,7 +140,7 @@ export default function CandidateDrawer({
             <C360Tabs tab={tab} setTab={setTab} c={c} className="pfl-tabs" />
             {flash && <div className="notice" style={{ marginBottom: 10 }}>{flash}</div>}
 
-            {tab === 'applications' && internal && BRAND.itStaffing && !(c.applications || []).length && <LocationRequirementsPanel candidateId={c.id} compact onApplied={changed} />}
+            {tab === 'applications' && internal && !(c.applications || []).length && <LocationRequirementsPanel candidateId={c.id} compact onApplied={changed} />}
             {tab === 'applications' && (
               <>
                 {c.profileStatus === 'Archived' && (
@@ -194,7 +193,7 @@ export default function CandidateDrawer({
                 user={user}
                 internal={internal}
                 onSelect={(c.applications || []).length ? pickApp : null}
-                extra={internal && !(BRAND.itStaffing && !(c.applications || []).length) ? <LocationRequirementsPanel candidateId={c.id} compact onApplied={changed} /> : null}
+                extra={internal && (c.applications || []).length ? <LocationRequirementsPanel candidateId={c.id} compact onApplied={changed} /> : null}
                 hideList
               />
             )}

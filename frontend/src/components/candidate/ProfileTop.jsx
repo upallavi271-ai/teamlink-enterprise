@@ -14,7 +14,6 @@ import { ContactButtons } from './ProfileSlots.jsx';
 import { recordedAs, IMPORTED_SOURCE, longDay, CAME_KIND_TEXT } from '../../utils/candidateSource.js';
 import PrivacyTools, { mayPrivacy } from './PrivacyTools.jsx';
 import CandidateIds from '../atsPlus/CandidateIds.jsx'; // Aadhaar last 4, PAN / bank masked, the consent log (market wave IN-07 / IN-08 / 15.09)
-import BRAND from '../../brand.js'; // NISH (IT staffing): Fit without a tag
 import { useOpenFit } from '../CandidateReach.jsx';
 import './ProfileTop.css';
 
@@ -108,7 +107,8 @@ export default function ProfileTop({
   // NISH (founder 2026-11-26: "tag cheyyakundaane raavaali ... percentage raavatledhu"): a person on no requirement shows their best Fit against the
   // open requirements and its Resume part right in the header (the same scorer a tagged application gets).
   const untagged = !(c.applications || []).length;
-  const openFit = useOpenFit(c.id, BRAND.itStaffing && internal !== false && untagged);
+  // (TeamLink too since 2026-11-26: "teamlink lo kuda" - the server scores within the login's own scope there)
+  const openFit = useOpenFit(c.id, internal !== false && untagged);
   const best = openFit && openFit.allOpen ? (openFit.rows || []).filter((r) => !r.applied)[0] || null : null;
   return (
     <div className="cpt">

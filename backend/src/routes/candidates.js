@@ -1731,6 +1731,37 @@ async function masterCore(req, sub, snap, all) {
   };
 }
 
+// TEAMLINK (2026-11-26): the People list's Fit % for a person on no requirement - their best Fit among the open requirements THIS login may see
+// (requirementWhere: a recruiter's own jobs, a TL's team, the Admin's all), scored with computeMatch exactly as a tagged application is.
+// Only the untagged rows of the page asked for are scored (a page is at most 100 rows), and each answer is kept per login + data version,
+// so paging back and forth costs nothing. No AI is called. (NISH fills fitOpenPct for every person while the rows are built.)
+const OPEN_FIT_MEMO = new Map(); // `${userId}|${version}` -> { reqs, best: Map(candidateId -> { pct, id, title, reqCode } | null) }
+async function attachOpenFit(user, rows, st) {
+  const ids = rows.filter((r) => !r.applicationsCount && r.fitOpenPct == null).map((r) => r.id);
+  if (!ids.length) return;
+  const key = `${user.id}|${st.version}`;
+  let m = OPEN_FIT_MEMO.get(key);
+  if (!m) {
+    const reqs = await prisma.requirement.findMany({ where: { AND: [{ status: { in: REQUIREMENT_LIVE_STATUSES } }, requirementWhere(user)] } });
+    m = { reqs, best: new Map() };
+    OPEN_FIT_MEMO.set(key, m);
+    while (OPEN_FIT_MEMO.size > 200) OPEN_FIT_MEMO.delete(OPEN_FIT_MEMO.keys().next().value);
+  }
+  if (!m.reqs.length) return;
+  const todo = ids.filter((id) => !m.best.has(id));
+  if (todo.length) {
+    const cands = await prisma.candidate.findMany({ where: { id: { in: todo } } });
+    cands.forEach((c) => {
+      let best = null;
+      m.reqs.forEach((r) => { const o = computeMatch(c, r).overall; if (!best || o > best.pct) best = { pct: o, id: r.id, title: r.title, reqCode: r.reqCode || null }; });
+      m.best.set(c.id, best);
+    });
+  }
+  rows.forEach((r) => {
+    const b = !r.applicationsCount ? m.best.get(r.id) : null;
+    if (b) { r.fitOpenPct = b.pct; r.fitBest = { id: b.id, title: b.title, reqCode: b.reqCode }; }
+  });
+}
 async function masterList(req, res, sub) {
   const q = req.query;
   const snap = await ensureNextActionContext();
@@ -1773,6 +1804,7 @@ async function masterList(req, res, sub) {
   if (q.all === '1') return res.json(sorted.rows.map(outRow));
   const pg = pageOf(sorted.rows, q);
   const masterOut = pg.pageRows.map(outRow);
+  if (kind === 'internal' && !require('../utils/atsProfile').itStaffing()) await attachOpenFit(req.user, masterOut, st).catch((e) => console.error('[candidates] open fit:', e.message)); // eslint-disable-line global-require
   if (kind === 'internal') await require('../utils/candidateDupes').attachFlags(masterOut); // eslint-disable-line global-require  // dup_: the red "Duplicate" chip
   if (kind === 'internal') await require('../utils/rejections').attachRejectionBadges(req.user, masterOut, (r) => r.id); // eslint-disable-line global-require
   const pipe = await pipelineRowsFor(req.user);
@@ -3367,7 +3399,10 @@ router.get('/:id/location-requirements', async (req, res) => {
   const scope = { status: { in: REQUIREMENT_LIVE_STATUSES }, ...requirementWhere(req.user) };
   // NISH (IT staffing): every open requirement is scored - skills, experience and the resume decide, the city is one part of the Fit, not a must.
   // The person's own scores ride along (profile completeness, resume on file). No paid AI: the same resume-based scorer a tagged application gets.
-  if (require('../utils/atsProfile').itStaffing()) { // eslint-disable-line global-require
+  // TEAMLINK (2026-11-26): the same for a person on NO requirement - within this login's scope (`scope` above), scored with computeMatch, the
+  // number a tagged application stores, so it agrees once the person is added. A tagged TeamLink profile keeps the open-requirements-nearby list.
+  const nishFit = require('../utils/atsProfile').itStaffing(); // eslint-disable-line global-require
+  if (nishFit || !(candidate.applications || []).length) {
     const rm = require('../utils/resumeMatch'); // eslint-disable-line global-require
     const DQ = require('../utils/dataQuality'); // eslint-disable-line global-require
     const openAll = await prisma.requirement.findMany({
@@ -3382,7 +3417,7 @@ router.get('/:id/location-requirements', async (req, res) => {
     const ev = (await rm.currentResumeEvidence([candidate.id]).catch(() => new Map())).get(candidate.id) || null;
     const linkedAll = new Set((candidate.applications || []).map((a) => a.requirementId));
     const scored = openAll.map((r) => {
-      const m = rm.threeNumbers(candidate, r, ev);
+      const m = nishFit ? rm.threeNumbers(candidate, r, ev) : computeMatch(candidate, r);
       return {
         id: r.id, reqCode: r.reqCode, title: r.title, client: r.internal ? 'TeamLink Internal' : (r.client && r.client.name) || null,
         department: r.department, location: r.location, openings: r.openings, status: r.status, employmentType: r.employmentType || null,
