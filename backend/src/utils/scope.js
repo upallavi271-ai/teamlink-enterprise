@@ -23,6 +23,19 @@ const { isBdeDepartment } = require('./bdeDesk');
 const RD = require('./reqDepartments'); // extra departments of a job (2026-10-13)
 const RT = require('./reqTeamLeads'); // extra team leads of a job (2026-10-14)
 const RR = require('./responseRecipients'); // the recruiters who receive a job's responses (2026-11-20)
+const AP = require('./atsProfile'); // NISH (IT staffing): one recruitment department, one shared candidate pool (2026-11-26)
+
+// THE SHARED POOL (founder 2026-11-26, NISH only: "evaru ey profiles add chesina, recruiters ki tls ki andhariki kanipinchali ... valladhi okate
+// recruitment dept"). On a copy started with ATS_PROFILE=it-staffing every ATS WORKING login - Recruiter, TL, STL, Manager, Assistant Manager -
+// sees every requirement, every candidate (also the ones bulk-uploaded or imported from Excel that are on no requirement yet) and every
+// application. What each one may DO stays their role's (permissions.js); the recruiter of each application stays that application's own
+// (Application.ownerRecruiterId). BDE, Accounts, HR, Client and Candidate logins keep their own rules. TeamLink (no ATS_PROFILE): always false.
+const POOL_ROLES = ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'];
+function sharedCandidatePool(user) {
+  if (!AP.itStaffing() || !user) return false;
+  const s = atsScopeOf(user); // eslint-disable-line no-use-before-define
+  return !s.global && POOL_ROLES.includes(s.atsRole);
+}
 
 // Roles that see everything, always.
 const GLOBAL_SCOPE_ROLES = ['SUPER_ADMIN', 'ADMIN'];
@@ -310,7 +323,9 @@ function eduSplitOk(et, a) {
   const r = a.requirement || {};
   return !(r.positionCode && et.otherSeats.includes(r.positionCode)) && !(r.recruiterId && et.otherUserIds.includes(r.recruiterId));
 }
+// opts.sharedPool === false: the login's OWN work even on NISH (the ATS dashboard's "My Work" / "My Team")
 function requirementWhere(user, opts = {}) {
+  if (!(opts && opts.sharedPool === false) && sharedCandidatePool(user)) return {}; // NISH: one department - every requirement
   const base = requirementWhereBase(user, opts);
   const arms = [base, deptTlLimit(user), nonItSplit(user)].filter(Boolean);
   return arms.length === 1 ? base : { AND: arms };
@@ -421,7 +436,8 @@ function requirementWhereBase(user, opts = {}) {
 // other role. Drives a TL's Clients view, their candidates / applications
 // and the "My Team" chip.
 function teamRequirementWhere(user) {
-  return requirementWhere(user, { pool: false });
+  // sharedPool: false - "my team's" stays the team's own work on NISH too (the shared pool is applied by the callers that want it)
+  return requirementWhere(user, { pool: false, sharedPool: false });
 }
 
 // Is this user personally named on this requirement's assignment chain? Used
@@ -589,7 +605,8 @@ function clientWhere(user) {
 function ownOnlyArm(s) {
   return s && s.atsRole === 'RECRUITER' && s.userId ? { OR: [{ ownerRecruiterId: s.userId }, { ownerRecruiterId: null }] } : null;
 }
-function applicationWhere(user) {
+function applicationWhere(user, opts = {}) {
+  if (!(opts && opts.sharedPool === false) && sharedCandidatePool(user)) return {}; // NISH: the shared pool - every application, whoever's recruiter it is
   const base = applicationWhereBase(user);
   const own = ownOnlyArm(atsScopeOf(user));
   const limit = deptTlLimit(user); // a department TL's candidates: their department's jobs only (2026-10-29)
@@ -723,7 +740,7 @@ function appScopeCtx(user) {
     if (same) return e;
   }
   const s = atsScopeOf(user);
-  e = { sig: APP_SCOPE_FIELDS.map((f) => user[f]), s, bdeTl: isBdeTl(user), teamWhere: null, arms: null, pool: undefined };
+  e = { sig: APP_SCOPE_FIELDS.map((f) => user[f]), s, bdeTl: isBdeTl(user), teamWhere: null, arms: null, pool: undefined, shared: sharedCandidatePool(user) };
   APP_SCOPE_MEMO.set(user, e);
   return e;
 }
@@ -737,6 +754,7 @@ function applicationInScope(user, application) {
   const s = ctx.s;
   if (s.global) return true;
   if (!application) return false;
+  if (ctx.shared) return true; // NISH: the shared pool
   // another recruiter's candidate (founder 2026-10-26)
   if (s.atsRole === 'RECRUITER' && application.ownerRecruiterId && application.ownerRecruiterId !== s.userId) return false;
   if (s.atsRole === 'CANDIDATE') return application.candidateId === s.candidateId;
@@ -799,6 +817,7 @@ function candidateWhere(user) {
   // HR falls through to applicationWhere(): internal-hiring candidates only.
   if (s.atsRole === 'CANDIDATE') return { id: s.candidateId || '__none__' };
   if (s.atsRole === 'MANAGER') return {};
+  if (sharedCandidatePool(user)) return {}; // NISH: every profile, also the ones on no requirement yet
   return { applications: { some: applicationWhere(user) } };
 }
 
@@ -1160,6 +1179,7 @@ function matches(record, where) {
 const OUT_OF_SCOPE = { error: 'This record is outside your access scope' };
 
 module.exports = {
+  sharedCandidatePool,
   GLOBAL_SCOPE_ROLES,
   CONFIGURABLE_GLOBAL_ROLES,
   HRMS_GLOBAL_ROLES,

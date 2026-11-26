@@ -340,7 +340,8 @@ async function loadWorld(appWhere, reqWhere, today) {
 }
 
 async function worldFor(user, opts = {}) {
-  return worldOf(applicationWhere(user), requirementWhere(user), opts);
+  // NISH (shared pool, utils/scope.js): the dashboard stays the login's own work - "My interviews" are theirs, not the whole pool's
+  return worldOf(applicationWhere(user, { sharedPool: false }), requirementWhere(user, { sharedPool: false }), opts);
 }
 // The whole company's rows (the same cached copy the Super Admin page reads): the department TL's results boxes read their
 // department out of it (dropsAndMonths), so a TL sees every joining / drop / replacement of their department.

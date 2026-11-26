@@ -146,6 +146,7 @@ function redactApplication(application, kind) {
 function visibleApplications(user, applications, sharedIds = null) {
   const s = atsScopeCached(user); // once per login, not once per candidate (Batch 1 perf)
   if (s.global) return applications;
+  if (s.atsRole !== 'CANDIDATE' && SC_POOL(user)) return applications;
   // A candidate sees only their OWN applications — never another candidate's,
   // even on a record they somehow reached.
   if (s.role === 'CANDIDATE') {
@@ -258,7 +259,7 @@ async function duplicateMatches(user, { email, phone, name, excludeId, dob, educ
   return hits.filter((h) => byId.has(h.id)).map((h) => {
     const c = byId.get(h.id);
     const visible = s.global ? c.applications : visibleApplications(user, c.applications);
-    const inScope = s.global || visible.length > 0;
+    const inScope = s.global || SC_POOL(user) || visible.length > 0;
     return {
       id: c.id,
       name: c.name,
@@ -430,7 +431,7 @@ async function scopedCandidates(user, onlyIds = null) {
   });
   const sharedIds = await clientSharedApplicationIds(user, all);
   const s = scopeOf(user);
-  if (s.global) return { candidates: all, sharedIds };
+  if (s.global || SC_POOL(user)) return { candidates: all, sharedIds };
   if (s.role === 'CANDIDATE') {
     return { candidates: all.filter((c) => c.id === s.candidateId), sharedIds };
   }
@@ -447,7 +448,7 @@ async function scopedFromState(user, st, onlyIds = null) {
   if (onlyIds) { const want = new Set(onlyIds); all = all.filter((c) => want.has(c.id)); }
   const sharedIds = await clientSharedApplicationIds(user, all);
   const s = scopeOf(user);
-  if (s.global) return { candidates: all, sharedIds };
+  if (s.global || SC_POOL(user)) return { candidates: all, sharedIds };
   if (s.role === 'CANDIDATE') return { candidates: all.filter((c) => c.id === s.candidateId), sharedIds };
   return { candidates: all.filter((c) => visibleApplications(user, c.applications, sharedIds).length > 0), sharedIds };
 }
@@ -805,7 +806,7 @@ async function buildPagedRows(user, st, s, shared = false) {
   let candidates = st.candidates;
   let sharedIds = null;
   if (s.role === 'CANDIDATE') candidates = candidates.filter((c) => c.id === s.candidateId);
-  else if (!s.global) {
+  else if (!s.global && !SC_POOL(user)) {
     // People this login typed in / uploaded and has not yet put on a requirement stay visible to them (utils/candidateAddedBy.js).
     const mine = await ADDED.idsOf(user.id);
     const inScope = (c) => c.applications.some((a) => a.requirement && applicationInScope(user, a));
@@ -940,6 +941,8 @@ function expBandOf(y) {
 // current company, location, specialisation - kept apart from the plain search text so a plain search finds exactly what it did.
 // A BDE never receives where a person lives or works (utils/clientRedact.js), so a BDE's search never reads those either.
 const isBdeViewer = (user) => require('../utils/scope').clientViewRole(user) === 'bde'; // eslint-disable-line global-require
+// NISH (IT staffing): the shared candidate pool - every working login sees every person, also the ones on no requirement (utils/scope.js)
+const SC_POOL = (user) => require('../utils/scope').sharedCandidatePool(user); // eslint-disable-line global-require
 function boolHayOf(c, bde = false) {
   return (bde ? [c.skills, c.technicalSkills, c.goodToHaveSkills, c.currentDesignation, c.specialization]
     : [c.skills, c.technicalSkills, c.goodToHaveSkills, c.currentDesignation, c.currentCompany, c.location, c.preferredLocation, c.specialization])
@@ -1465,7 +1468,7 @@ async function waitingPeople(user, search) {
   if (viewerKind(user) !== 'internal') return { total: 0, rows: [] };
   const st = await getListState();
   const s = scopeOf(user);
-  const mine = s.global ? null : await ADDED.idsOf(user.id);
+  const mine = s.global || SC_POOL(user) ? null : await ADDED.idsOf(user.id);
   const term = String(search || '').trim().toLowerCase();
   const digits = term.replace(/\D/g, '');
   const hide = require('../utils/clientLifecycle').isBdeTeam(user); // eslint-disable-line global-require
@@ -1964,13 +1967,13 @@ router.get('/new-summary', async (req, res, next) => {
   try {
     const st = await getListState();
     const s = scopeOf(req.user);
-    const mine = s.global ? null : await ADDED.idsOf(req.user.id);
+    const mine = s.global || SC_POOL(req.user) ? null : await ADDED.idsOf(req.user.id);
     const recent = st.candidates.filter(isNewRow);
     let people = 0; let unplaced = 0; let today = 0;
     const todayIst = istDay(new Date());
     recent.forEach((c) => {
       const apps = c.applications || [];
-      const reach = s.global || (mine && mine.has(c.id)) || apps.some((a) => a.requirement && applicationInScope(req.user, a));
+      const reach = s.global || SC_POOL(req.user) || (mine && mine.has(c.id)) || apps.some((a) => a.requirement && applicationInScope(req.user, a));
       if (!reach) return;
       people += 1;
       if (!apps.length) unplaced += 1;
@@ -2590,7 +2593,7 @@ async function loadInScope(req, res) {
       res.status(403).json(OUT_OF_SCOPE);
       return null;
     }
-  } else if (!s.global && decorated.applications.length === 0 && !(await ADDED.addedBy(req.user.id, candidate.id))) {
+  } else if (!s.global && !SC_POOL(req.user) && decorated.applications.length === 0 && !(await ADDED.addedBy(req.user.id, candidate.id))) {
     res.status(403).json(OUT_OF_SCOPE);
     return null;
   }

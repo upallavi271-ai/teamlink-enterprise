@@ -1,0 +1,186 @@
+#!/usr/bin/env node
+/**
+ * NISH SHARED POOL (founder 2026-11-26, NISH only): "evaru ey profiles add chesina, recruiters ki tls ki andhariki kanipinchali ... okey candidate ni
+ * multiple recruiters, multiple requirements ki followup cheskovachu ... dont touch teamlink".
+ * Two teams (TL1 + recruiter A, TL2 + recruiter B), one client "Infosys" with two jobs (R1 = A's, R2 = B's), a profile X uploaded with no job,
+ * and a profile Y on R1 owned by A. The same database copy is served twice:
+ *   ATS_PROFILE=it-staffing (NISH): B and TL2 see X and Y and R1; B adds Y to R2 with no "same client" reason; Y's two rows name A (R1) and B (R2);
+ *                                   B's dashboard stays B's own work.
+ *   no ATS_PROFILE (TeamLink):      B sees neither X nor Y nor R1 - exactly as before.
+ * SANDBOX ONLY: a private server on a COPY of the sandbox database.
+ *   TEST_SOURCE_DB=<path to a current-schema sandbox.db> TEST_PORT=4241 node scripts/nish-shared-pool-test.js
+ */
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawn } = require('child_process');
+const { DatabaseSync } = require('node:sqlite');
+
+const BACK = path.resolve(__dirname, '..');
+const SOURCE = process.env.TEST_SOURCE_DB || path.join(BACK, 'prisma', 'sandbox.db');
+const COPY = path.join(os.tmpdir(), `zz-nish-pool-${process.pid}.db`);
+const UPLOADS = path.join(os.tmpdir(), `zz-nish-pool-uploads-${process.pid}`);
+fs.mkdirSync(UPLOADS, { recursive: true });
+const src = new DatabaseSync(SOURCE, { readOnly: true });
+src.exec(`VACUUM INTO '${COPY.replace(/'/g, "''")}'`);
+src.close();
+const PORT = Number(process.env.TEST_PORT || 4241);
+const API = `http://localhost:${PORT}/api`;
+const baseEnv = {
+  ...process.env, TEAMLINK_SANDBOX: '1', TEST_MODE: '1', PORT: String(PORT), JWT_SECRET: 'nish-pool-test', UPLOAD_DIR: UPLOADS, DATABASE_URL: `file:${COPY.split(path.sep).join('/')}`,
+};
+delete baseEnv.ATS_PROFILE;
+Object.assign(process.env, baseEnv);
+delete process.env.ATS_PROFILE;
+const jwt = require('jsonwebtoken');
+const prisma = require('../src/db');
+const { resolveIdentity, tokenPayload } = require('../src/utils/identity');
+
+let failed = 0; let total = 0;
+const check = (name, ok, extra) => { total += 1; if (ok) console.log(`  ok  ${name}`); else { failed += 1; console.log(`FAIL  ${name}${extra !== undefined ? `\n      ${JSON.stringify(extra).slice(0, 700)}` : ''}`); } };
+const tokenOf = async (id) => jwt.sign({ ...tokenPayload(await resolveIdentity(id)), tms: Date.now() }, baseEnv.JWT_SECRET, { expiresIn: '2h' });
+const call = async (method, url, token, body) => {
+  const r = await fetch(API + url, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `10.69.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`, Authorization: `Bearer ${token}` },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await r.text();
+  let j = null; try { j = JSON.parse(text); } catch { /* not json */ }
+  return { status: r.status, body: j, text };
+};
+const RUN = Date.now().toString(36);
+let server = null;
+async function startServer(profile) {
+  const env = { ...baseEnv };
+  if (profile) env.ATS_PROFILE = profile;
+  server = spawn(process.execPath, ['src/index.js'], { cwd: BACK, env, stdio: process.env.TEST_DEBUG ? 'inherit' : 'ignore' });
+  for (let i = 0; i < 240; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await fetch(`${API}/health`).then((r) => r.ok).catch(() => false)) { await new Promise((r) => { setTimeout(r, 1100); }); return true; }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => { setTimeout(r, 500); });
+  }
+  return false;
+}
+async function stopServer() {
+  if (!server) return;
+  const s = server; server = null;
+  await new Promise((r) => { s.once('exit', r); s.kill(); setTimeout(r, 4000); });
+  for (let i = 0; i < 40; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await fetch(`${API}/health`).then((r) => r.ok).catch(() => false))) return;
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => { setTimeout(r, 250); });
+  }
+}
+async function finish(code) {
+  await stopServer();
+  await prisma.$disconnect().catch(() => {});
+  setTimeout(() => {
+    for (const s of ['', '-wal', '-shm']) { try { fs.unlinkSync(COPY + s); } catch { /* none */ } }
+    try { fs.rmSync(UPLOADS, { recursive: true, force: true }); } catch { /* none */ }
+    process.exit(code);
+  }, 800);
+}
+const mkUser = async (tag, data, emp) => {
+  const u = await prisma.user.create({
+    data: {
+      name: `Np ${tag} ${RUN}`, email: `np.${tag}.${RUN}@np-test.in`, username: `np.${tag}.${RUN}@np-test.in`, passwordHash: 'x', status: 'Active',
+      hrmsRole: 'NONE', accountsRole: 'NONE', hrmsAccess: false, accountsAccess: false, atsAccess: true, passwordChangedAt: new Date(Date.now() - 3600e3), ...data,
+    },
+  });
+  if (emp) await prisma.employee.create({ data: { employeeCode: `NP-${tag}-${RUN}`.slice(0, 40), name: u.name, userId: u.id, designation: 'Employee', employmentStatus: 'Active', department: 'IT', email: u.email, ...emp } });
+  return u;
+};
+const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(r.body) ? r.body : null))) || [];
+
+(async () => {
+  const DEPT = 'IT';
+  const T1 = `Np Team One ${RUN}`; const T2 = `Np Team Two ${RUN}`;
+  const sa = await mkUser('sa', { role: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN' });
+  const tl1 = await mkUser('tlone', { role: 'TL', atsRole: 'TL', atsDepartment: DEPT, atsScopeDepartments: DEPT, atsScopeTeams: T1 }, { designation: 'TL', team: T1 });
+  const tl2 = await mkUser('tltwo', { role: 'TL', atsRole: 'TL', atsDepartment: DEPT, atsScopeDepartments: DEPT, atsScopeTeams: T2 }, { designation: 'TL', team: T2 });
+  const recA = await mkUser('reca', { role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: DEPT, atsScopeDepartments: DEPT }, { tl: tl1.name, team: T1 });
+  const recB = await mkUser('recb', { role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: DEPT, atsScopeDepartments: DEPT }, { tl: tl2.name, team: T2 });
+  const client = await prisma.client.create({ data: { name: `Np Infosys ${RUN}`, industry: 'Information Technology', ownerDepartment: DEPT, agreementStatus: 'ACTIVE', status: 'Active' } });
+  const mkReq = (title, code, rec, tl) => prisma.requirement.create({
+    data: { title, clientId: client.id, department: DEPT, openings: 2, status: 'RECRUITER_ASSIGNED', skills: 'Java', reqCode: code, tlId: tl.id, tl: tl.name, recruiterId: rec.id, employmentType: 'Contract', location: 'Hyderabad' },
+  });
+  const R1 = await mkReq(`Np Java Developer ${RUN}`, `NP1${RUN}`.toUpperCase(), recA, tl1);
+  const R2 = await mkReq(`Np Java Lead ${RUN}`, `NP2${RUN}`.toUpperCase(), recB, tl2);
+  const ph = (i) => `9${String(Date.now()).slice(-7)}${i}`.slice(0, 10);
+  // X: bulk-uploaded / imported, on no requirement, added by nobody the recruiters are (what an Excel import or a bulk resume upload leaves)
+  const X = await prisma.candidate.create({ data: { name: `Npx Bulk ${RUN}`, phone: ph(1), email: `npx.${RUN}@np-test.in`, skills: 'Java', location: 'Hyderabad', experienceYears: 4, currentSalary: '600000', expectedSalary: '800000', source: 'Naukri' } });
+  // Y: on R1, recruiter A's
+  const Y = await prisma.candidate.create({ data: { name: `Npy Shared ${RUN}`, phone: ph(2), email: `npy.${RUN}@np-test.in`, skills: 'Java', location: 'Hyderabad', experienceYears: 4, currentSalary: '600000', expectedSalary: '800000', noticePeriod: '15 Days', source: 'Naukri' } });
+  const appA = await prisma.application.create({ data: { candidateId: Y.id, requirementId: R1.id, stage: 'RECRUITER_REVIEW', ownerRecruiterId: recA.id } });
+
+  // ------------------------------------------------------------------ TeamLink (no ATS_PROFILE): exactly as before
+  if (!(await startServer(null))) { console.log('FAIL  the server did not start (TeamLink mode)'); await finish(1); return; }
+  console.log('TeamLink (no ATS_PROFILE)');
+  let TB = await tokenOf(recB.id);
+  const tX = await call('GET', `/candidates/${X.id}`, TB);
+  check('TeamLink: recruiter B cannot open the uploaded profile X (as before)', tX.status === 403 || tX.status === 404, tX.status);
+  const tY = await call('GET', `/candidates/${Y.id}`, TB);
+  check('TeamLink: recruiter B cannot open recruiter A\'s candidate Y (as before)', tY.status === 403 || tY.status === 404, tY.status);
+  const tReqs = await call('GET', `/requirements?page=1&pageSize=100&view=all&clientId=${client.id}`, TB);
+  check('TeamLink: recruiter B sees only their own job R2, not A\'s R1 (as before)', tReqs.status === 200 && tReqs.text.includes(R2.title) && !tReqs.text.includes(R1.title), [tReqs.status, rowsOf(tReqs).map((r) => r.title)]);
+  const tList = await call('GET', `/candidates?paged=1&pageSize=100&view=master&search=${encodeURIComponent(RUN)}`, TB);
+  check('TeamLink: recruiter B\'s people list has neither X nor Y (as before)', tList.status === 200 && !tList.text.includes(X.name) && !tList.text.includes(Y.name), tList.status);
+  await stopServer();
+
+  // ------------------------------------------------------------------ NISH (ATS_PROFILE=it-staffing): the shared pool
+  if (!(await startServer('it-staffing'))) { console.log('FAIL  the server did not start (NISH mode)'); await finish(1); return; }
+  console.log('NISH (ATS_PROFILE=it-staffing)');
+  TB = await tokenOf(recB.id);
+  const TA = await tokenOf(recA.id);
+  const TT2 = await tokenOf(tl2.id);
+  const TS = await tokenOf(sa.id);
+  for (const [who, tok] of [['recruiter B', TB], ['TL2 (the other team)', TT2], ['recruiter A', TA]]) { // eslint-disable-line no-restricted-syntax
+    // eslint-disable-next-line no-await-in-loop
+    const x = await call('GET', `/candidates/${X.id}`, tok);
+    check(`NISH: ${who} opens the bulk-uploaded profile X (on no requirement)`, x.status === 200, [x.status, x.text.slice(0, 160)]);
+    // eslint-disable-next-line no-await-in-loop
+    const l = await call('GET', `/candidates?paged=1&pageSize=100&view=master&search=${encodeURIComponent(RUN)}`, tok);
+    check(`NISH: ${who}'s people list has X and Y`, l.status === 200 && l.text.includes(X.name) && l.text.includes(Y.name), [l.status, l.text.slice(0, 200)]);
+  }
+  const nY = await call('GET', `/candidates/${Y.id}`, TB);
+  check('NISH: recruiter B opens recruiter A\'s candidate Y, with the R1 application', nY.status === 200 && nY.text.includes(R1.title), [nY.status, nY.text.slice(0, 200)]);
+  const nReqs = await call('GET', `/requirements?page=1&pageSize=100&view=all&clientId=${client.id}`, TB);
+  check('NISH: recruiter B sees both jobs of the client (one department)', nReqs.status === 200 && nReqs.text.includes(R1.title) && nReqs.text.includes(R2.title), [nReqs.status, rowsOf(nReqs).map((r) => r.title)]);
+  // B picks Y up for B's own job R2 (same client): no "same client" reason asked
+  let add = await call('POST', '/applications', TB, { candidateId: Y.id, requirementId: R2.id });
+  if (add.status === 409 && add.body && add.body.code === 'NEEDS_OVERRIDE') {
+    const why = (add.body.why || []).join(' | ');
+    check('NISH: adding Y to a second job of the same client asks no "same client" reason', !/client/i.test(why), why);
+    add = await call('POST', '/applications', TB, { candidateId: Y.id, requirementId: R2.id, overrideReason: 'test: profile rules only' });
+  } else {
+    check('NISH: adding Y to a second job of the same client asks no "same client" reason', add.status < 300, [add.status, add.text.slice(0, 200)]);
+  }
+  check('NISH: recruiter B adds A\'s candidate Y to R2', add.status >= 200 && add.status < 300, [add.status, add.text.slice(0, 240)]);
+  const apps = await prisma.application.findMany({ where: { candidateId: Y.id }, select: { requirementId: true, ownerRecruiterId: true } });
+  const own = Object.fromEntries(apps.map((a) => [a.requirementId, a.ownerRecruiterId]));
+  check('NISH: each application keeps its own recruiter: R1 = A, R2 = B (A is not taken over)', own[R1.id] === recA.id && own[R2.id] === recB.id, own);
+  const pipe = await call('GET', `/candidates?paged=1&pageSize=100&view=pipeline&search=${encodeURIComponent(Y.name)}`, TS);
+  const yRows = rowsOf(pipe).filter((r) => r.requirementId === R1.id || r.requirementId === R2.id);
+  const nameOn = (rid) => (yRows.find((r) => r.requirementId === rid) || {}).recruiterName;
+  check('NISH: the pipeline names A on Y\'s R1 row and B on Y\'s R2 row', nameOn(R1.id) === recA.name && nameOn(R2.id) === recB.name, yRows.map((r) => [r.requirementTitle, r.recruiterName]));
+  const aStill = await call('GET', `/candidates/${Y.id}`, TA);
+  check('NISH: recruiter A still opens Y and sees both jobs', aStill.status === 200 && aStill.text.includes(R1.title) && aStill.text.includes(R2.title), aStill.status);
+  const dash = await call('GET', '/dashboard/ats/home', TB);
+  check('NISH: recruiter B\'s dashboard answers (it stays B\'s own work)', dash.status === 200, [dash.status, dash.text.slice(0, 160)]);
+  await stopServer();
+
+  // the shared pool is a NISH rule only: back on TeamLink, B is limited again (B now owns Y's R2 application, so B reaches Y through it, but not X or R1)
+  if (!(await startServer(null))) { console.log('FAIL  the server did not restart (TeamLink mode)'); await finish(1); return; }
+  console.log('TeamLink again');
+  TB = await tokenOf(recB.id);
+  const bX = await call('GET', `/candidates/${X.id}`, TB);
+  check('TeamLink again: recruiter B still cannot open X', bX.status === 403 || bX.status === 404, bX.status);
+  const bReqs = await call('GET', `/requirements?page=1&pageSize=100&view=all&clientId=${client.id}`, TB);
+  check('TeamLink again: recruiter B still does not see A\'s R1', bReqs.status === 200 && !bReqs.text.includes(R1.title), rowsOf(bReqs).map((r) => r.title));
+
+  console.log(`\n${total - failed}/${total} passed`);
+  await finish(failed ? 1 : 0);
+})().catch(async (e) => { console.error('CRASH', e.stack); await finish(1); });

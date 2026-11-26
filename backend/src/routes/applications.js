@@ -217,7 +217,8 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
   const fit = await fitAtAdd(req.user, candidate, requirement);
   // SAME CLIENT, ANOTHER JOB (utils/sameClientConflict.js): the person is already live with this client -> say why, like a rule miss
   try {
-    const clash = await require('../utils/sameClientConflict').reasons(candidate.id, requirement); // eslint-disable-line global-require
+    // NISH (IT staffing): one person on several jobs of the same client, by different recruiters, is normal work - no reason asked
+    const clash = require('../utils/atsProfile').itStaffing() ? [] : await require('../utils/sameClientConflict').reasons(candidate.id, requirement); // eslint-disable-line global-require
     if (clash.length) fit.overrideWhy = [...(fit.overrideWhy || []), ...clash];
   } catch { /* the add goes on as before */ }
   let override = null;
