@@ -91,7 +91,9 @@ const FIELDS = {
     ['tds', 'TDS amount', [/\btds\b/]],
     ['total', 'Total (incl. GST)', [/total|gross|incl|invoice value|bill value|net payable/]],
     ['base', 'Amount before GST', [/taxable|before gst|base|basic|excl/, /^(bill |expense )?amount$/, /amount|cost/, /value/]],
-    ['category', 'Category / expense head', [/categor|expense head|^head$|ledger|account head|expense type|type of expense|nature/]],
+    ['category', 'Category / expense head', [/categor|expense head|^head$|ledger|account head|expense type|type of expense|nature/, /^source$/]],
+    // Repeats every month or paid once (founder 2026-11-26: the expenses sheet says "Repeatedly" / "Uniquely")
+    ['frequency', 'Repeats? (monthly / one-time)', [/frequen|recurr|repeat|how often|one.?time/]],
     ['vendor', 'Vendor / paid to', [/vendor|paid to|payee|party|supplier|merchant/]],
     ['billNumber', 'Bill number', [/bill no|bill number|invoice no|invoice number|inv no|voucher/]],
     ['vendorGstin', 'Vendor GSTIN', [/gstin/]],
@@ -213,6 +215,18 @@ function findHeader(rows, kinds) {
 }
 
 // --- values --------------------------------------------------------------------
+
+// "Repeatedly" / "Monthly" / "Quarterly" ... -> a recurring bill and how often; "Uniquely" / "Once" / blank -> one-time
+function repeatsOf(v) {
+  const t = String(v == null ? '' : v).trim().toLowerCase();
+  if (!t || /unique|once|one.?time|single|non.?recurr|not recurr|^no$/.test(t)) return { recurring: false, frequency: 'One-Time' };
+  if (/quarter/.test(t)) return { recurring: true, frequency: 'Quarterly' };
+  if (/half|6 ?month|six/.test(t)) return { recurring: true, frequency: 'Half-Yearly' };
+  if (/3 times|thrice/.test(t)) return { recurring: true, frequency: '3 Times a Year' };
+  if (/year|annual/.test(t)) return { recurring: true, frequency: 'Yearly' };
+  if (/repeat|recurr|month|every|regular|^yes$/.test(t)) return { recurring: true, frequency: 'Monthly' };
+  return { recurring: false, frequency: 'One-Time' };
+}
 
 function num(v) {
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
@@ -382,7 +396,10 @@ function normalise(kind, dataRows, mapping) {
       if (!category && !vendor && !text(r, 'description')) { skipped.push({ line, reason: 'Nothing says what the bill was for' }); return; }
       if (/^(sub ?)?total|grand total/i.test(category || vendor)) { skipped.push({ line, reason: 'Total line' }); return; }
       const status = text(r, 'status').toLowerCase();
+      const rep = repeatsOf(text(r, 'frequency'));
       out.push({
+        recurring: rep.recurring,
+        frequency: rep.frequency,
         line,
         expenseDate: date(r, 'date'),
         dueDate: date(r, 'dueDate'),
@@ -835,8 +852,9 @@ router.post('/commit', async (req, res) => {
         tdsRatePct: r.tdsRatePct,
         paidStatus: r.paidStatus,
         paymentMode: MODES.find((m) => m.toLowerCase() === String(r.paymentMode || '').toLowerCase()) || 'Bank Transfer',
-        recurring: false,
-        frequency: 'One-Time',
+        // a "Repeatedly" / "Monthly" row is a monthly recurring bill; "Uniquely" / blank is one-time
+        recurring: !!r.recurring,
+        frequency: r.frequency || 'One-Time',
         remarks: `Imported from ${fileName}`,
         // Office & Expenses approval lifecycle: an imported bill that was
         // already paid is PAID; an unpaid one waits for approval.
