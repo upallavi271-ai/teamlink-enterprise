@@ -1063,11 +1063,26 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
 // ===========================================================================
 // THE LIST BEHIND A NUMBER (?view=list&person=&metric=)
 // ===========================================================================
+// FILTERS ON THE LIST (founder 2026-11-26: "ikkada kuda filters pettu"): built from the rows the list already has, so every choice has
+// something behind it - Client, Requirement, Step, the date (Joined on / Updated), Owner, Late only, Status, Type - with Clear.
+const LIST_FILTERS = {
+  applications: [['client', 'Client', (r) => r.client], ['requirement', 'Requirement', (r) => [r.reqCode, r.requirement].filter(Boolean).join(' · ')], ['step', 'Step', (r) => r.stageLabel]],
+  joined: [['client', 'Client', (r) => r.client], ['requirement', 'Requirement', (r) => [r.reqCode, r.requirement].filter(Boolean).join(' · ')], ['step', 'Step', (r) => r.stageLabel]],
+  requirements: [['client', 'Client', (r) => r.client], ['status', 'Status', (r) => r.statusLabel], ['type', 'Type', (r) => r.type], ['tl', 'Team lead', (r) => r.tl]],
+  actions: [['client', 'Client', (r) => r.client], ['step', 'Step', (r) => r.stageLabel], ['owner', 'Owner', (r) => r.owner], ['due', 'Due', (r) => DUE_LABEL[r.dueStatus] || r.dueStatus]],
+  clients: [['status', 'Status', (r) => r.status]],
+  people: [['section', 'Section', (r) => r.section]],
+};
+const dateOfRow = (kind, r) => String((kind === 'joined' ? r.joinDay : r.updatedAt) || '').slice(0, 10);
 function MetricList({ personId, metric, onOpen }) {
   const navigate = useNavigate();
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
+  const [pick, setPick] = useState({});
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  useEffect(() => { setPick({}); setFrom(''); setTo(''); setQ(''); }, [personId, metric]);
   useEffect(() => {
     setD(null);
     setError('');
@@ -1075,7 +1090,13 @@ function MetricList({ personId, metric, onOpen }) {
       .then((r) => setD(r.data))
       .catch((e) => setError(e.response?.data?.error || 'Could not open this list. Please try again.'));
   }, [personId, metric]);
-  const rows = useMemo(() => (d ? d.rows.filter((r) => !q || JSON.stringify([r.candidate, r.requirement, r.title, r.name, r.client, clientAliasText(r.client), r.reqCode]).toLowerCase().includes(lc(q))) : []), [d, q]);
+  const defs = (d && LIST_FILTERS[d.kind]) || [];
+  const dated = !!d && ['applications', 'joined'].includes(d.kind);
+  const rows = useMemo(() => (d ? d.rows.filter((r) => (!q || JSON.stringify([r.candidate, r.requirement, r.title, r.name, r.client, clientAliasText(r.client), r.reqCode]).toLowerCase().includes(lc(q)))
+    && defs.every(([k, , get]) => !pick[k] || String(get(r) || '—') === pick[k])
+    && (!dated || ((!from || (dateOfRow(d.kind, r) && dateOfRow(d.kind, r) >= from)) && (!to || (dateOfRow(d.kind, r) && dateOfRow(d.kind, r) <= to))))) : []), [d, q, pick, from, to]); // eslint-disable-line react-hooks/exhaustive-deps
+  const optionsOf = (get) => [...new Set(((d && d.rows) || []).map((r) => String(get(r) || '—')))].sort((a, b) => a.localeCompare(b));
+  const filtersOn = !!(q || from || to || Object.values(pick).some(Boolean));
   const page = usePaged(rows);
   if (error) return <div className="notice red">{error}</div>;
   if (!d) return <div className="small-muted" style={{ padding: 16 }}>Loading...</div>;
@@ -1093,6 +1114,31 @@ function MetricList({ personId, metric, onOpen }) {
         </div>
         <input placeholder="Search this list" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search this list" />
       </div>
+      {(defs.length > 0 || dated) && (
+        <div className="pw-filters" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'end', margin: '0 0 10px' }}>
+          {defs.map(([k, label, get]) => {
+            const opts = optionsOf(get);
+            if (opts.length < 2 && !pick[k]) return null;
+            return (
+              <label key={k} className="small-muted" style={{ display: 'grid', gap: 2 }}>
+                {label}
+                <select value={pick[k] || ''} onChange={(e) => setPick({ ...pick, [k]: e.target.value })} aria-label={label} style={{ minWidth: 150, maxWidth: 260 }}>
+                  <option value="">All</option>
+                  {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </label>
+            );
+          })}
+          {dated && (
+            <>
+              <label className="small-muted" style={{ display: 'grid', gap: 2 }}>{d.kind === 'joined' ? 'Joined from' : 'Updated from'}<input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} /></label>
+              <label className="small-muted" style={{ display: 'grid', gap: 2 }}>to<input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></label>
+            </>
+          )}
+          {filtersOn && <button type="button" className="btn btn-sm" onClick={() => { setPick({}); setFrom(''); setTo(''); setQ(''); }}>Clear filters</button>}
+          <span className="small-muted" style={{ marginLeft: 'auto' }}>{filtersOn ? `${fmt(rows.length)} of ${fmt(d.rows.length)}` : ''}</span>
+        </div>
+      )}
       <div className="tbl-wrap">
         <table className="pw-table">
           <thead>
