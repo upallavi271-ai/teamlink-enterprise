@@ -56,6 +56,18 @@ const check = (name, ok, extra) => { total += 1; if (ok) console.log(`  ok  ${na
     check('the total result is the sum of the closed months', after.totals.result === closed.reduce((s, r) => s + r.result, 0));
     check('the forecast covers November to March (5 months) and starts from the actual result', after.forecast.remainingMonths === 5 && after.forecast.actualSoFar === after.totals.result);
     check('forecast defaults are numbers', ['joinings', 'fee', 'payroll', 'office', 'statutory'].every((k) => Number.isFinite(after.forecast.defaults[k])), after.forecast.defaults);
+    // WHO AND WHAT (founder 2026-11-26): people, clients and expenses add up to the same result
+    const sum = (l, k) => l.reduce((t, x) => t + (x[k] || 0), 0);
+    check('people: fees add up to the income', Math.abs(sum(after.people, 'income') - after.summary.income) <= 2, [sum(after.people, 'income'), after.summary.income]);
+    check('clients: income adds up to the income', Math.abs(sum(after.clients, 'income') - after.summary.income) <= 2);
+    check('expenses: lines add up to the costs, and match the closed months', Math.abs(sum(after.costLines, 'amount') - after.summary.costs) <= 2 && Math.abs(after.summary.costs - after.totals.costs) <= 2, [after.summary.costs, after.totals.costs]);
+    check('the breakdown result is the P&L result', Math.abs(after.summary.result - after.totals.result) <= 2);
+    check('salaries are the first expense line when payroll is the biggest cost', after.costLines.some((c) => c.name === 'Salaries (payroll)'));
+    check('Salary / TDS / assets bills are not expense lines', !after.costLines.some((c) => /^(salary|tds|assets?)$/i.test(c.name)), after.costLines.map((c) => c.name));
+    check('the test invoice shows under its client', after.clients.some((c) => c.invoices > 0));
+    const one = await PL.buildProfitLoss({ today, month: M });
+    check('one month: the breakdown covers only that month', one.period.months.join() === M && Math.abs(one.summary.result - one.rows.find((r) => r.month === M).result) <= 2, one.period);
+    check('a month that is not closed falls back to all closed months', (await PL.buildProfitLoss({ today, month: '2026-11' })).period.months.length === closed.length);
     // read-only: building it twice changes nothing
     const n1 = await prisma.officeExpense.count(); await PL.buildProfitLoss({ today }); const n2 = await prisma.officeExpense.count();
     check('working it out writes nothing', n1 === n2);

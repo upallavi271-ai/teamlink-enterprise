@@ -2342,3 +2342,5 @@ router.numberForNewInvoice = numberForNewInvoice;
 // rows as this page, so its Total / Received / Pending can never differ.
 router.buildRegister = buildRegister;
 module.exports = router;
+// Accounts Dashboard > Profit & Loss names the recruiter of each invoice the same way (utils/profitLoss.js)
+module.exports.placementFacts = placementFacts;

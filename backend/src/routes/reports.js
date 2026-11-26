@@ -414,7 +414,7 @@ router.get('/job-portal', requirePerm(null, 'reports', 'Job Portal Reports', 'vi
 // the whole company, so it asks for both Accounts Reports and Invoices (the same pair the Placement margin view asks for).
 router.get('/accounts/pnl', requirePerm(null, 'reports', 'Accounts Reports', 'view'), requirePerm('accounts', 'accounts', 'Invoices', 'view'), async (req, res) => {
   try {
-    res.json(await require('../utils/profitLoss').buildProfitLoss({ fy: req.query.fy })); // eslint-disable-line global-require
+    res.json(await require('../utils/profitLoss').buildProfitLoss({ fy: req.query.fy, month: req.query.month })); // eslint-disable-line global-require
   } catch (e) {
     console.error('[reports] profit & loss', e); // eslint-disable-line no-console
     res.status(500).json({ error: 'The profit and loss could not be worked out.' });

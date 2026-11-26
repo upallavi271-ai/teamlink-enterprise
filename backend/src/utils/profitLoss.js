@@ -48,7 +48,7 @@ function monthsBetween(a, b) {
 }
 const istMonth = (d = new Date()) => new Date(d.getTime() + 5.5 * 3600 * 1000).toISOString().slice(0, 7);
 
-async function buildProfitLoss({ today = new Date(), fy: fyWanted } = {}) {
+async function buildProfitLoss({ today = new Date(), fy: fyWanted, month: monthWanted } = {}) {
   const now = istMonth(today);
   const fy = fyWanted && /^\d{4}$/.test(String(fyWanted)) ? fyOf(`${fyWanted}-04`) : fyOf(now);
   const lastShown = now < fy.end ? now : fy.end;
@@ -60,7 +60,7 @@ async function buildProfitLoss({ today = new Date(), fy: fyWanted } = {}) {
   const at = (k) => M.get(k);
 
   const [invoices, pays, bills, runs, joined] = await Promise.all([
-    prisma.invoice.findMany({ where: { status: { not: 'Cancelled' } } }),
+    prisma.invoice.findMany({ where: { status: { not: 'Cancelled' } }, include: { client: true, candidate: true, requirement: { include: { recruiter: true } } } }),
     prisma.invoicePayment.findMany({ select: { date: true, amount: true } }).catch(() => []),
     prisma.officeExpense.findMany(),
     prisma.payrollRun.findMany({ select: { month: true, totalGross: true, employees: true } }),
@@ -88,8 +88,12 @@ async function buildProfitLoss({ today = new Date(), fy: fyWanted } = {}) {
     if (m) {
       m.bills += 1;
       if (LEFT_OUT[cat]) m.leftOut[LEFT_OUT[cat]] += base;
-      else if (STATUTORY.has(cat)) m.statutory += base;
-      else m.office += base;
+      else {
+        if (STATUTORY.has(cat)) m.statutory += base; else m.office += base;
+        const label = STATUTORY.has(cat) ? 'PF / ESI / PT' : (String(e.category || '').trim() || 'Other');
+        m.costLines = m.costLines || new Map();
+        m.costLines.set(label, (m.costLines.get(label) || 0) + base);
+      }
     }
     if (!m) return;
     const sig = `${k}|${cat}|${R(e.monthlyAmount)}|${e.expenseDate || ''}|${e.description || ''}`;
@@ -131,12 +135,26 @@ async function buildProfitLoss({ today = new Date(), fy: fyWanted } = {}) {
   const remaining = monthsBetween(now, fy.end).length; // this month (still running) to March
   const actual = tot(closed, 'result');
 
+  // WHO AND WHAT MADE THE PROFIT OR LOSS (founder 2026-11-26: "evari valla entha profit, evari valla entha loss, dheyni valla profit,
+  // dheyni valla loss"), for the closed months, or one closed month (?month=YYYY-MM):
+  //   people  - each person's fees (the invoices of the joinings they recruited, by the app's own invoice attribution) against their
+  //             gross pay (EmployeePayrollRun.grossPay): what they brought in, what they cost, the difference. Staff who bill nothing
+  //             (TLs, HR, admin) show their pay as a cost.
+  //   clients - which clients the income came from
+  //   costs   - where the money went: salaries, then each office bill category
+  const closedMonths = closed.map((r) => r.month);
+  const scope = monthWanted && closedMonths.includes(monthWanted) ? [monthWanted] : closedMonths;
+  const inScope = new Set(scope);
+  const breakdown = await whoAndWhat({ invoices, scope: inScope, rows: rows.filter((r) => inScope.has(r.month)), at });
+
   // money owed now (every client invoice not paid in full, after notes)
   const owed = invoices.map((i) => CNU.pendingOf(i)).filter((p) => p > 0.5);
 
   return {
     fy: fy.label, from: fy.start, to: fy.end, now,
     rows,
+    period: { months: scope, label: scope.length === 1 ? scope[0] : (scope.length ? `${scope[0]} to ${scope[scope.length - 1]}` : '') },
+    ...breakdown,
     totals: {
       months: closed.length, income: tot(closed, 'income'), costs: tot(closed, 'costs'), result: actual,
       received: tot(rows, 'received'), invoiced: tot(rows, 'income'), joinings: tot(rows, 'joinings'),
@@ -150,6 +168,63 @@ async function buildProfitLoss({ today = new Date(), fy: fyWanted } = {}) {
       return items.length ? { kind, title, effect, count: items.length, amount: R(items.reduce((t, c) => t + (c.amount || 0), 0)), items } : null;
     }).filter(Boolean),
     rules: 'Income is the fee on the month\'s invoices before GST, after credit notes. Costs are gross payroll, PF / ESI / PT and office bills before GST (credit-card payments included). Salary bills (the payroll\'s own payout), TDS deposits and assets bought are left out.',
+  };
+}
+
+async function whoAndWhat({ invoices, scope, rows, at }) {
+  const inv = invoices.filter((i) => scope.has(ym(i.invoiceDate)));
+  const income = R(inv.reduce((t, i) => t + CNU.billedOf(i), 0));
+  // the recruiter of each invoice, the same way the Invoices page names it
+  let whoOf = () => null;
+  try {
+    const { loadHierarchy } = require('./invoiceHierarchy'); // eslint-disable-line global-require
+    const { placementFacts } = require('../routes/invoices'); // eslint-disable-line global-require
+    const hier = await loadHierarchy();
+    const factsOf = await placementFacts(inv, hier);
+    whoOf = (i) => { const f = factsOf(i); return f && f.who ? f.who : null; };
+  } catch (e) { console.error('[profit-loss] recruiter of an invoice', e.message); } // eslint-disable-line no-console
+  const people = new Map();
+  const person = (k, name) => { if (!people.has(k)) people.set(k, { key: k, name, role: '', income: 0, invoices: 0, pay: 0, months: new Set() }); return people.get(k); };
+  const clients = new Map();
+  inv.forEach((i) => {
+    const fee = CNU.billedOf(i);
+    const w = whoOf(i);
+    const p = w && w.recruiterKey ? person(w.recruiterKey, w.recruiterName || 'Unknown') : person('none', 'Not linked to a recruiter');
+    p.income += fee; p.invoices += 1;
+    const cn = (i.client && i.client.name) || 'Unknown client';
+    const c = clients.get(cn) || { name: cn, income: 0, invoices: 0 };
+    c.income += fee; c.invoices += 1; clients.set(cn, c);
+  });
+  const pay = await prisma.employeePayrollRun.findMany({
+    where: { month: { in: [...scope] } },
+    select: { employeeId: true, month: true, grossPay: true, employee: { select: { name: true, designation: true, department: true } } },
+  }).catch(() => []);
+  pay.forEach((r) => {
+    const p = person(`e:${r.employeeId}`, r.employee ? r.employee.name : 'Employee');
+    p.pay += Number(r.grossPay || 0); p.months.add(r.month);
+    if (r.employee) p.role = [r.employee.designation, r.employee.department].filter(Boolean).join(' · ');
+  });
+  const peopleRows = [...people.values()].map((p) => ({
+    key: p.key, name: p.name, role: p.role, invoices: p.invoices, income: R(p.income), pay: R(p.pay), months: p.months.size,
+    result: R(p.income - p.pay),
+  })).sort((a, b) => b.result - a.result);
+  // costs: salaries first, then each bill category, biggest first
+  const lines = new Map();
+  rows.forEach((r) => {
+    const m = at(r.month);
+    lines.set('Salaries (payroll)', (lines.get('Salaries (payroll)') || 0) + r.payroll);
+    (m.costLines || new Map()).forEach((v, k) => lines.set(k, (lines.get(k) || 0) + v));
+  });
+  const costTotal = R([...lines.values()].reduce((t, v) => t + v, 0));
+  const costRows = [...lines.entries()].map(([name, v]) => ({ name, amount: R(v), share: costTotal ? Math.round((v / costTotal) * 1000) / 10 : 0 }))
+    .filter((c) => c.amount !== 0).sort((a, b) => b.amount - a.amount);
+  const clientRows = [...clients.values()].map((c) => ({ ...c, income: R(c.income), share: income ? Math.round((c.income / income) * 1000) / 10 : 0 }))
+    .sort((a, b) => b.income - a.income);
+  return {
+    people: peopleRows,
+    clients: clientRows,
+    costLines: costRows,
+    summary: { income, costs: costTotal, result: R(income - costTotal) },
   };
 }
 
