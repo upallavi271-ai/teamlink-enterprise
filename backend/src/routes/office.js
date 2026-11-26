@@ -1246,7 +1246,10 @@ function repeatsOf(r) {
   if (f === 'One-Time' || (!f && r && r.recurring === false)) return 'One-time';
   return f || 'Monthly';
 }
-const REPEAT_FILTERS = [['Repeats', 'Repeats (monthly, yearly ...)'], ['One-time', 'One-time']];
+// The filter lists each kind by name - Monthly, Quarterly, Yearly ..., One-time (founder 2026-11-26: "monthly, one time, filter pettukune laaga");
+// "Repeats" (every repeating kind together) still works for an old link.
+const REPEAT_ORDER = ['Monthly', 'Quarterly', '3 Times a Year', 'Half-Yearly', 'Yearly', 'One-time'];
+const repeatsMatch = (want) => (want === 'Repeats' ? (r) => repeatsOf(r) !== 'One-time' : (r) => repeatsOf(r) === want);
 
 function ledgerFilter(q) {
   const from = ISO_DAY.test(String(q.from || '')) ? q.from : null;
@@ -1266,7 +1269,7 @@ function ledgerFilter(q) {
       : (status === 'PAID' || status === 'PENDING' ? (r) => r.approvalStatus === status : null),
     gst: gstKey ? GST_FILTERS[gstKey].test : null,
     tds: q.tds === 'Yes' || q.tds === 'No' ? (r) => (q.tds === 'Yes') === (r.tds > 0.5) : null,
-    repeats: q.repeats === 'Repeats' || q.repeats === 'One-time' ? (r) => (repeatsOf(r) === 'One-time') === (q.repeats === 'One-time') : null,
+    repeats: String(q.repeats || '').trim() ? repeatsMatch(String(q.repeats).trim()) : null,
     // Source (vendor portal v2 §11): a bill booked from a vendor's submission carries the tag 'Vendor Portal'.
     source: q.source === 'Vendor Portal' || q.source === 'Manual' ? (r) => (String(r.reportingTags || '').includes('Vendor Portal')) === (q.source === 'Vendor Portal') : null,
     // Search (spec 17): Expense ID, bill no, description, vendor and category.
@@ -1333,7 +1336,12 @@ async function ledgerData(q) {
     ],
     gst: Object.entries(GST_FILTERS).map(([value, g]) => ({ value, label: g.label, n: gstBase.filter(g.test).length })),
     source: [['Manual', 'Entered by staff'], ['Vendor Portal', 'Vendor Portal']].map(([value, label]) => ({ value, label, n: lf.run(books, 'source').filter((r) => (String(r.reportingTags || '').includes('Vendor Portal')) === (value === 'Vendor Portal')).length })),
-    repeats: REPEAT_FILTERS.map(([value, label]) => ({ value, label, n: lf.run(books, 'repeats').filter((r) => (repeatsOf(r) === 'One-time') === (value === 'One-time')).length })),
+    repeats: (() => {
+      const m = new Map(); lf.run(books, 'repeats').forEach((r) => { const k = repeatsOf(r); m.set(k, (m.get(k) || 0) + 1); });
+      if (q.repeats && !m.has(q.repeats) && q.repeats !== 'Repeats') m.set(q.repeats, 0);
+      const rank = (k) => { const i = REPEAT_ORDER.indexOf(k); return i < 0 ? 50 : i; };
+      return [...m.entries()].sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0])).map(([value, n]) => ({ value, label: value === 'One-time' ? 'One-time (paid once)' : value, n }));
+    })(),
   };
   const vendorCounts = new Map();
   books.forEach((r) => { const v = vendorLabel(r); if (v) vendorCounts.set(v, (vendorCounts.get(v) || 0) + 1); });

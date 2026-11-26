@@ -78,10 +78,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('the Office list carries a Repeats tag per bill', tagOf('Rent') === 'Monthly' && tagOf('Webmail') === 'One-time' && tagOf('Insurance') === 'Yearly', (all.rows || []).map((r) => [r.category, r.repeats]));
     const once = await get('&repeats=One-time');
     const reps = await get('&repeats=Repeats');
+    const mon = await get('&repeats=Monthly');
+    const yr = await get('&repeats=Yearly');
+    check('filter by name: Monthly shows only monthly bills, Yearly only yearly', (mon.rows || []).length === 2 && mon.rows.every((r) => r.repeats === 'Monthly') && (yr.rows || []).length === 1 && yr.rows[0].repeats === 'Yearly', [(mon.rows || []).map((r) => r.repeats), (yr.rows || []).map((r) => r.repeats)]);
     check('the Repeats filter: One-time shows only the one-time bills', (once.rows || []).length === 3 && once.rows.every((r) => r.repeats === 'One-time'), (once.rows || []).map((r) => [r.category, r.repeats]));
     check('the Repeats filter: Repeats shows only the repeating bills', (reps.rows || []).length === 3 && reps.rows.every((r) => r.repeats !== 'One-time'), (reps.rows || []).map((r) => [r.category, r.repeats]));
     const fc = (all.options && all.options.facets && all.options.facets.repeats) || [];
-    check('the filter offers both choices with counts', fc.length === 2 && fc.every((o) => typeof o.n === 'number'), fc);
+    check('the filter lists Monthly, Yearly and One-time by name, with counts, Monthly first', fc.map((o) => o.value).join() === 'Monthly,Yearly,One-time' && fc.find((o) => o.value === 'Monthly').n === 2 && fc.find((o) => o.value === 'One-time').n === 3, fc);
   } catch (e) {
     failed += 1; total += 1; console.log(`FAIL  crashed: ${e.message}`);
   } finally {
