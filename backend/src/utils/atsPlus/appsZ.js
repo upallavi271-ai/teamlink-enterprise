@@ -60,7 +60,7 @@ async function catalogue() {
   const bOk = bReady.filter((b) => b.lastResult && !b.lastResult.error).length;
   add({ id: 'board-apps', name: 'Applications from the boards (Naukri / Shine / foundit / LinkedIn)', category: 'Job boards', what: 'People who apply on a board come straight into the job in the ATS (a signed webhook, or a pull of the board\'s applications).', status: !bReady.length ? 'Not set up' : (bOk ? 'Connected' : 'Ready'), needsFounder: !bReady.length, setUpLink: '/admin/integrations?tab=jobportals&sub=boardapps', detail: bReady.length ? `${bReady.length} board(s) set up` : null });
   add({ id: 'career-site', name: 'Career page and Job Portal', category: 'Job boards', what: 'Your own jobs page and the candidate Job Portal.', status: 'Built in', setUpLink: '/admin/integrations?tab=jobportal' });
-  add({ id: 'linkedin-capture', name: 'LinkedIn profile capture (browser extension)', category: 'Job boards', what: 'Save a LinkedIn profile into the ATS with one click (each recruiter makes their own key).', status: 'Built in', setUpLink: '/candidates' });
+  add({ id: 'linkedin-capture', name: 'Profile capture: LinkedIn, Naukri, Shine, foundit (browser extension)', category: 'Job boards', what: 'Save a profile from LinkedIn, Naukri (Resdex), Shine or foundit into the ATS with one click, and put it on a requirement (each recruiter makes their own key).', status: 'Built in', setUpLink: '/candidates' });
   // ---- calendar, mail, meetings
   const I = require('../mkt/interviews'); // eslint-disable-line global-require
   const gReady = (await safe(() => I.appKeys('google'), {})).saved; const mReady = (await safe(() => I.appKeys('microsoft'), {})).saved;

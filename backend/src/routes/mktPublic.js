@@ -188,20 +188,54 @@ ext.use(wrap(async (req, res, next) => {
 }));
 ext.get('/me', wrap(async (req, res) => res.json({ name: req.user.name, mayAdd: await require('../middleware/auth').can(req.user, 'ats', 'candidates', 'Add Candidate', 'create') }))); // eslint-disable-line global-require
 ext.get('/check', wrap(async (req, res) => {
-  const url = MP.cleanLinkedin(req.query.url);
-  if (!url) return res.json({ known: false });
-  const cid = await MP.candidateByLink('linkedin', url);
+  // any of the four sites (extension 2.0): the profile address first, then the phone / email the page shows
+  const clean = MP.cleanProfileUrl(req.query.url);
+  if (!clean) return res.json({ known: false });
+  let cid = await MP.candidateByLink(clean.site, clean.url);
+  if (!cid && (req.query.email || req.query.phone)) {
+    const found = await require('../utils/jobPortalBridge').findCandidateByContact({ email: String(req.query.email || '').slice(0, 120), phone: String(req.query.phone || '').slice(0, 30) }).catch(() => null); // eslint-disable-line global-require
+    if (found) cid = found.id;
+  }
   if (!cid) return res.json({ known: false });
   const { candidateWhere } = require('../utils/scope'); // eslint-disable-line global-require
   const c = await prisma.candidate.findFirst({ where: { AND: [{ id: cid }, candidateWhere(req.user)] }, select: { id: true, name: true } });
   return res.json({ known: true, inScope: !!c, candidate: c ? { id: c.id, name: c.name, url: `${C.publicBase(req)}/candidates/${c.id}` } : null });
 }));
+// the open requirements this login works on, for "Add to a requirement" in the popup (newest first)
+ext.get('/requirements', wrap(async (req, res) => {
+  const { requirementWhere } = require('../utils/scope'); // eslint-disable-line global-require
+  const rows = await prisma.requirement.findMany({
+    where: { AND: [requirementWhere(req.user), { status: { in: ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'] } }] },
+    select: { id: true, reqCode: true, title: true, client: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 300,
+  });
+  return res.json({ rows: rows.map((r) => ({ id: r.id, label: [r.reqCode, r.title, r.client && r.client.name].filter(Boolean).join(' · ') })) });
+}));
+// put the saved person on a requirement - the ordinary Add to requirement, with its rules; "This profile is with <recruiter>" when already there
+async function attachToRequirement(user, candidateId, requirementId) {
+  const { requirementWhere } = require('../utils/scope'); // eslint-disable-line global-require
+  const requirement = await prisma.requirement.findFirst({ where: { AND: [{ id: String(requirementId) }, requirementWhere(user)] } });
+  if (!requirement) return { error: 'That requirement is not in your area.' };
+  const already = await prisma.application.findFirst({ where: { candidateId, requirementId: requirement.id }, select: { id: true, ownerRecruiterId: true } });
+  if (already) {
+    const owner = already.ownerRecruiterId ? await prisma.user.findUnique({ where: { id: already.ownerRecruiterId }, select: { name: true } }) : null;
+    return { error: `This profile is already on ${requirement.reqCode || requirement.title}${owner ? ` with ${owner.name}` : ''}.` };
+  }
+  const A = require('./applications'); // eslint-disable-line global-require
+  const refusal = await A.jobRefusalFor(requirement);
+  if (refusal) return { error: refusal.body.error };
+  const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
+  const app = await A.addApplication(user, { candidate, requirement, comment: 'Added from the browser extension' });
+  return { applicationId: app && app.id, requirement: requirement.reqCode || requirement.title };
+}
 ext.post('/profile', wrap(async (req, res) => {
   if (!(await require('../middleware/auth').can(req.user, 'ats', 'candidates', 'Add Candidate', 'create'))) return res.status(403).json({ error: 'Your role cannot add candidates.' }); // eslint-disable-line global-require
   const out = await MP.addFromProfile(req.user, req.body || {});
   if (out.error) return res.status(out.status).json({ error: out.error });
-  await require('../utils/audit').logAudit({ userId: req.user.id, action: out.created ? 'Candidate added from LinkedIn (browser extension)' : 'LinkedIn profile matched an existing candidate (extension)', entity: 'Candidate', entityId: out.candidate.id, toValue: out.candidate.name }); // eslint-disable-line global-require
-  return res.status(out.status).json({ ...out, url: `${C.publicBase(req)}/candidates/${out.candidate.id}` });
+  const label = (MP.SITES[out.site || 'linkedin'] || {}).label || 'LinkedIn';
+  await require('../utils/audit').logAudit({ userId: req.user.id, action: out.created ? `Candidate added from ${label} (browser extension)` : `${label} profile matched an existing candidate (extension)`, entity: 'Candidate', entityId: out.candidate.id, toValue: out.candidate.name }); // eslint-disable-line global-require
+  let attached = null;
+  if (req.body && req.body.requirementId) attached = await attachToRequirement(req.user, out.candidate.id, req.body.requirementId).catch((e) => ({ error: e.message }));
+  return res.status(out.status).json({ ...out, attached, url: `${C.publicBase(req)}/candidates/${out.candidate.id}` });
 }));
 
 module.exports = router;

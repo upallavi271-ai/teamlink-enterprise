@@ -15,7 +15,8 @@ async function api(method, path, body) {
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   (async () => {
     if (msg.type === 'teamlink-me') reply(await api('GET', '/me'));
-    else if (msg.type === 'teamlink-check') reply(await api('GET', `/check?url=${encodeURIComponent(msg.url)}`));
+    else if (msg.type === 'teamlink-check') reply(await api('GET', `/check?url=${encodeURIComponent(msg.url)}&email=${encodeURIComponent(msg.email || '')}&phone=${encodeURIComponent(msg.phone || '')}`));
+    else if (msg.type === 'teamlink-reqs') reply(await api('GET', '/requirements'));
     else if (msg.type === 'teamlink-add') reply(await api('POST', '/profile', msg.profile));
     else reply({ status: 400, body: { error: 'unknown request' } });
   })().catch((e) => reply({ status: 0, body: { error: e.message } }));

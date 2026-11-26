@@ -20,7 +20,7 @@ const SUB = [
   { key: 'call', label: 'Call notes', hint: 'Paste a call transcript: TeamLink suggests notice period, CTC and more.' },
   { key: 'email', label: 'Email', hint: 'Is the address real, were our emails opened, and your own mailbox.' },
   { key: 'tests', label: 'Tests', hint: 'Send the job\'s online test and see the score.' },
-  { key: 'ext', label: 'Browser extension', hint: 'Add LinkedIn profiles to TeamLink from the browser.', more: true },
+  { key: 'ext', label: 'Browser extension', hint: 'Add LinkedIn, Naukri, Shine and foundit profiles to TeamLink from the browser.', more: true },
 ];
 
 export default function OutreachTools({ candidateId, applicationId }) {
@@ -239,7 +239,8 @@ function ExtensionKey() {
   if (!d) return err ? <div className="error-text">{err}</div> : <div className="small-muted">Loading…</div>;
   return (
     <div className="ivt-body">
-      <div className="small-muted">The TeamLink browser extension adds the LinkedIn profile you are looking at as a candidate. It uses your own key (only your rights). Until it is in the Chrome Web Store, your admin installs it from the browser-extension folder (Chrome &gt; Extensions &gt; Developer mode &gt; Load unpacked).</div>
+      <div className="small-muted">The TeamLink browser extension (2.0) adds the profile you are looking at on <b>LinkedIn, Naukri (incl. Resdex), Shine or foundit</b> as a candidate - name, contact, experience, CTC, expected CTC, notice period, skills - and can put it straight on one of your requirements. You check and correct the details before it is saved; the same person found by link, email or phone is not added twice. It uses your own key (only your rights).</div>
+      <div className="small-muted"><b>Install:</b> <a href="/downloads/teamlink-extension.zip" download>download the extension</a>, unzip it, open Chrome &gt; Extensions, switch on Developer mode, press <i>Load unpacked</i> and pick the unzipped folder. Then open its Settings and paste the TeamLink address and your key. Already on 1.0? Remove it first, then load 2.0.</div>
       {d.key && <div className="kv"><span className="k">Your key …{d.key.hint}</span><span>made {when(d.key.createdAt)}{d.key.lastUsedAt ? `, last used ${when(d.key.lastUsedAt)}` : ''}</span></div>}
       {key && <div className="notice">Copy it now - it is shown once: <code className="ivt-code">{key}</code></div>}
       <div className="ivt-row">

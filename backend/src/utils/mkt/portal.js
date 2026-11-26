@@ -70,6 +70,28 @@ function cleanLinkedin(u) {
   const m = /linkedin\.com\/in\/([^/?#]+)/i.exec(s);
   return `https://www.linkedin.com/in/${decodeURIComponent(m[1]).toLowerCase()}`;
 }
+// JOB-BOARD PROFILES (founder 2026-11-26, extension 2.0): Naukri (incl. Resdex), Shine and foundit pages, besides LinkedIn. The profile
+// address is kept short and stable (host + path, plus the one id parameter a Resdex preview carries), so the same page matches next time.
+const SITES = {
+  linkedin: { label: 'LinkedIn', test: /(^|\.)linkedin\.com$/i },
+  naukri: { label: 'Naukri', test: /(^|\.)naukri\.com$/i },
+  shine: { label: 'Shine', test: /(^|\.)shine\.com$/i },
+  foundit: { label: 'foundit', test: /(^|\.)(foundit\.in|monsterindia\.com)$/i },
+};
+function siteOf(u) {
+  try { const h = new URL(String(u || '')).hostname; return Object.keys(SITES).find((k) => SITES[k].test.test(h)) || null; } catch { return null; }
+}
+function cleanProfileUrl(u) {
+  const site = siteOf(u);
+  if (!site) return null;
+  if (site === 'linkedin') { const l = cleanLinkedin(u); return l ? { site, url: l } : null; }
+  try {
+    const x = new URL(String(u));
+    const keep = ['uniqId', 'uniqid', 'profileId', 'id', 'resId', 'candidateId', 'cid'].find((k) => x.searchParams.get(k));
+    const path = x.pathname.replace(/\/+$/, '') || '/';
+    return { site, url: `https://${x.hostname.toLowerCase()}${path}${keep ? `?${keep}=${encodeURIComponent(x.searchParams.get(keep))}` : ''}` };
+  } catch { return null; }
+}
 async function linkCandidate(candidateId, kind, url, by) {
   await C.ensure();
   await x('INSERT OR IGNORE INTO "MktCandLink" ("candidateId","kind","url","createdAt","createdBy") VALUES (?,?,?,?,?)', candidateId, kind, url, nowIso(), by || null);
@@ -387,29 +409,35 @@ async function userOfExtKey(key) {
 }
 // the profile the person is looking at -> a candidate (de-duplicated by the LinkedIn link, then by email / phone)
 async function addFromProfile(user, b) {
-  const url = cleanLinkedin(b.profileUrl);
-  if (!url) return { status: 400, error: 'Open a LinkedIn profile page (linkedin.com/in/...) first.' };
+  const clean = cleanProfileUrl(b.profileUrl);
+  if (!clean) return { status: 400, error: 'Open a candidate profile on LinkedIn, Naukri, Shine or foundit first.' };
+  const { site, url } = clean;
+  const label = SITES[site].label;
   const name = txt(b.name, 100).replace(/\s*\(.*?\)\s*/g, ' ').trim();
   if (!name || name.length < 2) return { status: 400, error: 'The name could not be read from the page.' };
-  const known = await candidateByLink('linkedin', url);
+  const known = await candidateByLink(site, url);
   if (known) { const c = await prisma.candidate.findUnique({ where: { id: known }, select: { id: true, name: true } }); if (c) return { status: 200, existing: true, candidate: c }; }
   const email = txt(b.email, 120).toLowerCase() || null; const phone = txt(b.phone, 30) || null;
   if (email || phone) {
     const found = await require('../jobPortalBridge').findCandidateByContact({ email, phone }).catch(() => null); // eslint-disable-line global-require
-    if (found) { await linkCandidate(found.id, 'linkedin', url, C.who(user)); return { status: 200, existing: true, candidate: { id: found.id, name: found.name } }; }
+    if (found) { await linkCandidate(found.id, site, url, C.who(user)); return { status: 200, existing: true, candidate: { id: found.id, name: found.name }, site }; }
   }
   const skills = (Array.isArray(b.skills) ? b.skills : String(b.skills || '').split(',')).map((s) => txt(s, 40)).filter(Boolean).slice(0, 25).join(', ');
   const exp = Number(b.experienceYears);
   const c = await prisma.candidate.create({
     data: {
-      name, email, phone, source: 'LinkedIn', firstSource: 'LinkedIn (browser extension)', location: txt(b.location, 120) || null, currentCompany: txt(b.currentCompany, 120) || null,
+      name, email, phone, source: label, firstSource: `${label} (browser extension)`, location: txt(b.location, 120) || null, currentCompany: txt(b.currentCompany, 120) || null,
       currentDesignation: txt(b.headline || b.currentDesignation, 160) || null, skills: skills || null, experienceYears: Number.isFinite(exp) && exp >= 0 && exp <= 60 ? exp : null,
+      ...(txt(b.currentSalary, 60) ? { currentSalary: txt(b.currentSalary, 60) } : {}),
+      ...(txt(b.expectedSalary, 60) ? { expectedSalary: txt(b.expectedSalary, 60) } : {}),
+      ...(txt(b.noticePeriod, 60) ? { noticePeriod: txt(b.noticePeriod, 60) } : {}),
+      ...(txt(b.education, 200) ? { education: txt(b.education, 200) } : {}),
     },
     select: { id: true, name: true },
   });
-  await linkCandidate(c.id, 'linkedin', url, C.who(user));
+  await linkCandidate(c.id, site, url, C.who(user));
   try { require('../candidateListCache').markCandidateDirty(c.id); } catch { /* optional */ } // eslint-disable-line global-require
-  return { status: 201, created: true, candidate: c };
+  return { status: 201, created: true, candidate: c, site };
 }
 
 // ================================================================== 10.13 SMS job campaigns
@@ -478,6 +506,7 @@ async function campaignsOf(requirementId) {
 }
 
 module.exports = {
+  SITES, siteOf, cleanProfileUrl,
   formOf, checkAnswers, saveAnswers, answersOf, quickFill, cleanLinkedin, linkCandidate, candidateByLink, linksOf,
   LANGS, T, seoJobPage, translated, SECTIONS, cleanSite, publicSite, subscribe, confirmAlert, stopAlert, runAlerts, alertStats, startAlerts, matchesSub,
   BOARDS, boardConfig, boardsView, saveBoard, verifySignature, ingestBoardApp, ingestMany, pullBoard, linkedinFeed,

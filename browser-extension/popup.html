@@ -3,25 +3,42 @@
 <head>
 <meta charset="utf-8">
 <style>
-  body { font-family: system-ui, Arial, sans-serif; width: 300px; margin: 12px; color: #111; font-size: 13px; }
+  body { font-family: system-ui, Arial, sans-serif; width: 340px; margin: 12px; color: #111; font-size: 13px; }
   h1 { font-size: 15px; margin: 0 0 8px; }
   .muted { color: #6b7280; }
   .box { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin: 8px 0; }
-  input { width: 100%; box-sizing: border-box; margin: 2px 0 6px; padding: 6px; border: 1px solid #d1d5db; border-radius: 6px; }
-  button { background: #1f6feb; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; font-weight: 600; cursor: pointer; width: 100%; }
+  label { display: block; font-size: 11px; color: #4b5563; margin-top: 4px; }
+  input, select, textarea { width: 100%; box-sizing: border-box; margin: 2px 0 4px; padding: 5px 6px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; }
+  textarea { height: 44px; resize: vertical; }
+  .two { display: flex; gap: 6px; } .two > div { flex: 1; }
+  button { background: #1f6feb; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 6px; }
   button[disabled] { background: #9ca3af; cursor: default; }
   a { color: #1d4ed8; }
   .err { color: #b91c1c; }
   .ok { color: #047857; }
+  .warn { color: #92400e; }
+  .site { display: inline-block; background: #eef2ff; color: #3730a3; border-radius: 10px; padding: 1px 8px; font-size: 11px; }
 </style>
 </head>
 <body>
   <h1>Add to TeamLink</h1>
   <div id="who" class="muted">Checking your key...</div>
-  <div id="profile" class="box muted">Open a LinkedIn profile (linkedin.com/in/...).</div>
-  <input type="email" id="email" placeholder="Email (if you have it)">
-  <input type="tel" id="phone" placeholder="Phone (if you have it)">
-  <button id="add" disabled>Add as candidate</button>
+  <div id="profile" class="box muted">Open a candidate profile on LinkedIn, Naukri (Resdex), Shine or foundit.</div>
+  <form id="form" style="display:none">
+    <div class="muted" style="font-size:11px">Check the details - you can correct anything before it is saved.</div>
+    <label>Name</label><input id="f-name">
+    <div class="two"><div><label>Email</label><input id="f-email" type="email"></div><div><label>Phone</label><input id="f-phone" type="tel"></div></div>
+    <label>Designation</label><input id="f-headline">
+    <div class="two"><div><label>Company</label><input id="f-currentCompany"></div><div><label>Location</label><input id="f-location"></div></div>
+    <div class="two"><div><label>Experience (years)</label><input id="f-experienceYears" inputmode="decimal"></div><div><label>Notice period</label><input id="f-noticePeriod"></div></div>
+    <div class="two"><div><label>Current CTC</label><input id="f-currentSalary"></div><div><label>Expected CTC</label><input id="f-expectedSalary"></div></div>
+    <label>Education</label><input id="f-education">
+    <label>Skills (comma separated)</label><textarea id="f-skills"></textarea>
+    <label>Add to a requirement (optional)</label>
+    <select id="f-req"><option value="">- Only save the profile -</option></select>
+    <div id="known" style="margin-top: 4px"></div>
+    <button id="add" type="submit" disabled>Add as candidate</button>
+  </form>
   <div id="msg" style="margin-top: 8px"></div>
   <p class="muted" style="margin-top: 10px">Only what is on the profile page is sent, when you press the button. <a href="options.html" target="_blank">Settings</a></p>
   <script src="popup.js"></script>
