@@ -116,6 +116,8 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   const Y = await prisma.candidate.create({ data: { name: `Npy Shared ${RUN}`, phone: ph(2), email: `npy.${RUN}@np-test.in`, skills: 'Java', location: 'Hyderabad', experienceYears: 4, currentSalary: '600000', expectedSalary: '800000', noticePeriod: '15 Days', source: 'Naukri' } });
   const appA = await prisma.application.create({ data: { candidateId: Y.id, requirementId: R1.id, stage: 'RECRUITER_REVIEW', ownerRecruiterId: recA.id } });
   await require('../src/utils/candidateAddedBy').record(X.id, recA, 'bulk'); // A uploaded X (bulk resumes), on no requirement
+  // Z: imported with NO location, on no requirement - the founder's "tag cheyyakapoina" case
+  const Z = await prisma.candidate.create({ data: { name: `Npz Nocity ${RUN}`, phone: ph(3), email: `npz.${RUN}@np-test.in`, skills: 'Java, Spring', experienceYears: 4, currentSalary: '600000', expectedSalary: '800000', source: 'Naukri' } });
 
   // ------------------------------------------------------------------ TeamLink (no ATS_PROFILE): exactly as before
   if (!(await startServer(null))) { console.log('FAIL  the server did not start (TeamLink mode)'); await finish(1); return; }
@@ -137,6 +139,8 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   const peopleOf = async (tok) => { const r = await call('GET', '/candidates?paged=1&pageSize=5&view=pipeline', tok); return r.body && r.body.counts && r.body.counts.views ? Number(r.body.counts.views.master) : null; };
   const tTT2 = await tokenOf(tl2.id); const tTS = await tokenOf(sa.id);
   const tPeople = [await peopleOf(tTT2), await peopleOf(tTS)];
+  const tZ = await call('GET', `/candidates/${Z.id}/location-requirements`, tTS);
+  check('TeamLink: a person with no location gets no requirement list and no scores there (as before)', tZ.status === 200 && !tZ.body.allOpen && !tZ.body.own && (tZ.body.rows || []).length === 0, [tZ.status, tZ.body]);
   check('TeamLink: a TL\'s People count is their own reach, below the Super Admin\'s (as before)', tPeople[0] !== null && tPeople[1] !== null && tPeople[0] < tPeople[1], tPeople);
   await stopServer();
 
@@ -161,6 +165,16 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   const nPeople = async (tok) => { const r = await call('GET', '/candidates?paged=1&pageSize=5&view=pipeline', tok); return r.body && r.body.counts && r.body.counts.views ? Number(r.body.counts.views.master) : null; };
   const nList = async (tok) => { const r = await call('GET', '/candidates?paged=1&pageSize=5&view=master', tok); return r.body ? Number(r.body.total) : null; };
   const counts = { tl2Pipe: await nPeople(TT2), saPipe: await nPeople(TS), tl2List: await nList(TT2), saList: await nList(TS), bList: await nList(TB) };
+  // scores without a tag: Z (no location, on no requirement)
+  const zFit = await call('GET', `/candidates/${Z.id}/location-requirements`, TT2);
+  const zRows = (zFit.body && zFit.body.rows) || [];
+  const zR1 = zRows.find((r) => r.id === R1.id);
+  check('NISH: Z (no location, on no job) is scored against the open jobs - R1 and R2 listed with a Fit %', zFit.status === 200 && zFit.body.allOpen === true && !!zR1 && typeof zR1.match === 'number' && zRows.some((r) => r.id === R2.id), [zFit.status, zFit.body && { allOpen: zFit.body.allOpen, n: zRows.length }]);
+  check('NISH: Z\'s own scores come with it (profile complete %, resume on file)', zFit.body && zFit.body.own && typeof zFit.body.own.completeness === 'number' && typeof zFit.body.own.resumeOnFile === 'boolean', zFit.body && zFit.body.own);
+  check('NISH: each match shows its parts (resume / location / salary)', !!zR1 && zR1.resumePct !== undefined && zR1.locPct !== undefined, zR1);
+  const zList = await call('GET', `/candidates?paged=1&pageSize=100&view=master&search=${encodeURIComponent(Z.name)}`, TT2);
+  const zRow = rowsOf(zList).find((r) => r.id === Z.id);
+  check('NISH: in the People list Z shows a Fit % (the best open job) and which job it is', !!zRow && typeof zRow.fitOpenPct === 'number' && !!zRow.fitBest && !!zRow.fitBest.id, zRow && { fitOpenPct: zRow.fitOpenPct, fitBest: zRow.fitBest });
   check('NISH: TL2\'s People count on the pipeline screen equals the Super Admin\'s', counts.tl2Pipe !== null && counts.tl2Pipe === counts.saPipe, counts);
   check('NISH: the People list total is the same for TL2, recruiter B and the Super Admin', counts.tl2List !== null && counts.tl2List === counts.saList && counts.bList === counts.saList, counts);
   const nReqs = await call('GET', `/requirements?page=1&pageSize=100&view=all&clientId=${client.id}`, TB);
@@ -217,6 +231,9 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   const bX = await call('GET', `/candidates/${X.id}`, TB);
   check('TeamLink again: recruiter B still cannot open X', bX.status === 403 || bX.status === 404, bX.status);
   const bReqs = await call('GET', `/requirements?page=1&pageSize=100&view=all&clientId=${client.id}`, TB);
+  const zl = await call('GET', `/candidates?paged=1&pageSize=100&view=master&search=${encodeURIComponent(Z.name)}`, await tokenOf(sa.id));
+  const zr = rowsOf(zl).find((r) => r.id === Z.id);
+  check('TeamLink again: Z shows no Fit % in the People list (no job, as before)', !!zr && zr.fitOpenPct === undefined && !zr.fitBest, zr && { fitOpenPct: zr.fitOpenPct, fitBest: zr.fitBest });
   check('TeamLink again: recruiter B still does not see A\'s R1', bReqs.status === 200 && !bReqs.text.includes(R1.title), rowsOf(bReqs).map((r) => r.title));
 
   console.log(`\n${total - failed}/${total} passed`);

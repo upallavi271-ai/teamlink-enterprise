@@ -153,7 +153,10 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
       </div>
     );
   }
+  // NISH (data.allOpen): every open requirement is scored - no city needed (the city is one part of the Fit)
+  const allOpen = !!data.allOpen;
   const place = data.cities.length ? data.cities.join(' / ') : null;
+  const show = allOpen || !!place;
   const sorted = [...data.rows].sort((x, y) => (y.match || 0) - (x.match || 0));
   const rows = showAll ? sorted : sorted.slice(0, 5);
   const title = 'Requirements that fit this person';
@@ -161,20 +164,30 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
   return (
     <div className={compact ? 'cdw-card rq-reach' : 'card section rq-reach'} id="location-requirements">
       {compact ? <div className="cdw-label">{title}</div> : <h3>{title}</h3>}
-      {!place && (
+      {allOpen && data.own && (
+        <div className="small-muted" data-testid="reach-own-scores" style={{ marginBottom: 6 }}>
+          {`Profile complete: ${data.own.completeness}%${data.own.missing && data.own.missing.length ? ` (missing: ${data.own.missing.slice(0, 4).join(', ')})` : ''} · ${data.own.resumeOnFile ? 'Resume on file: the Fit reads it' : 'No resume on file: the Fit reads the profile only'}`}
+        </div>
+      )}
+      {allOpen && (
+        <div className="small-muted" style={{ marginBottom: 6 }}>
+          {`Open requirements: ${data.total}. ${data.strong} fit 60% or more, ${data.notApplied ?? data.total} not added yet.`}
+        </div>
+      )}
+      {!allOpen && !place && (
         <div className="small-muted">
           {data.location || data.preferredLocation
             ? `“${[data.location, data.preferredLocation].filter(Boolean).join(' / ')}” is not a city the matcher recognises.`
             : 'No current or preferred location on file — add one to see open requirements nearby.'}
         </div>
       )}
-      {place && (
+      {!allOpen && place && (
         <div className="small-muted" style={{ marginBottom: 6 }}>
           {`Open requirements in ${place}: ${data.total}. ${data.strong} fit 60% or more, ${data.notApplied ?? data.total} not added yet.`}
         </div>
       )}
       {error && <div className="error-text">{error}</div>}
-      {place && rows.length > 0 && (
+      {show && rows.length > 0 && (
         <div className="c360-jobs">
           {rows.map((r) => {
             const applied = r.applied || done.includes(r.id);
@@ -184,6 +197,7 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
                 <div className="c360-job-main">
                   <Link className="c360-job-title" to={`/requirements/${r.id}`}>{r.reqCode ? `${r.reqCode} · ` : ''}{r.title}</Link>
                   {where && <div className="small-muted">{where}</div>}
+                  {allOpen && <div className="small-muted">{[r.employmentType, r.resumePct != null ? `Resume ${r.resumePct}%` : null, r.locPct != null ? `Location ${r.locPct}%` : null, r.salPct != null ? `Salary ${r.salPct}%` : null].filter(Boolean).join(' · ')}</div>}
                 </div>
                 <StatusChip tone={r.match >= 60 ? 'green' : r.match >= 50 ? 'amber' : 'grey'}>{`${r.match}% fit`}</StatusChip>
                 {applied && <span className="c360-job-added">Added ✓</span>}
@@ -197,12 +211,12 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
           })}
         </div>
       )}
-      {place && sorted.length > 5 && (
+      {show && sorted.length > 5 && (
         <button type="button" className="link-btn c360-showall" onClick={() => setShowAll((x) => !x)}>
           {showAll ? 'Show top 5' : `Show all ${sorted.length}`}
         </button>
       )}
-      {place && !rows.length && <div className="small-muted">{`No open requirement in ${place} within your access.`}</div>}
+      {show && !rows.length && <div className="small-muted">{allOpen ? 'No open requirement right now.' : `No open requirement in ${place} within your access.`}</div>}
     </div>
   );
 }

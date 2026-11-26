@@ -2490,6 +2490,8 @@ const dash = <span className="small-muted">—</span>;
 function FitCell({ row }) {
   const b = useFitBreakdown(row.latestApplicationId || row.applicationId || null);
   if (b) return <div className="fb-cell"><div className="fb-main">{b.restricted ? `about ${b.total}%` : `${b.total}%`}</div><FitBreakdown b={b} compact showTotal={false} /></div>;
+  // NISH: a person on no requirement shows their best open-requirement Fit, and which job that is
+  if (row.fitOpenPct != null && row.fitBest) return <b title={`Best fit among the open requirements: ${row.fitBest.reqCode ? `${row.fitBest.reqCode} · ` : ''}${row.fitBest.title} (not added yet)`}>{`${row.fitOpenPct}%`}</b>;
   return row.matchScore != null ? <b>{`${row.matchScore}%`}</b> : dash;
 }
 // "Nil", "NA", "As per norms" … are not figures: the Salary cell shows a dash instead.

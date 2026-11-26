@@ -816,6 +816,18 @@ async function buildPagedRows(user, st, s, shared = false) {
     if (sharedIds) candidates = candidates.filter((c) => visibleApplications(user, c.applications, sharedIds).length > 0);
     if (addedOnly.length) candidates = candidates.concat(addedOnly);
   }
+  // NISH (IT staffing): a person on no requirement shows their BEST Fit against the open requirements in the Fit % column - the same
+  // resume-based scorer (no paid AI), worked out once per data version with the rows (this builder is memoised).
+  let openFit = null;
+  if (require('../utils/atsProfile').itStaffing()) { // eslint-disable-line global-require
+    const openReqs = [...(st.reqs ? st.reqs.values() : [])].filter((r) => REQUIREMENT_LIVE_STATUSES.includes(r.status));
+    const untagged = candidates.filter((c) => !(c.applications || []).length).map((c) => c.id);
+    if (openReqs.length && untagged.length) {
+      const rmx = require('../utils/resumeMatch'); // eslint-disable-line global-require
+      const evs = await rmx.currentResumeEvidence(untagged).catch(() => new Map());
+      openFit = { openReqs, rmx, evs };
+    }
+  }
   const me = user.id;
   // NISH (shared pool): "My candidates" also holds the people this login added (bulk resumes, Excel, by hand), on a requirement or not
   const addedMine = SC_POOL(user) ? await ADDED.idsOf(user.id) : null;
@@ -862,6 +874,11 @@ async function buildPagedRows(user, st, s, shared = false) {
     // the recruiter filters' facts (utils/candidateFilters.js): never sent out
     row.fx = FX.fxOf(c, fxIdx, { updatedDay: FX.istDay(row.lastActivityAt), sharedDay: FX.sharedDayOf(fxIdx, row.appIds) });
     // (login-specific, and only the pipeline rows' "My candidates" queue reads it: a shared copy has none)
+    if (openFit && !apps.length) {
+      let best = null;
+      openFit.openReqs.forEach((r) => { const m = openFit.rmx.threeNumbers(c, r, openFit.evs.get(c.id) || null); if (!best || m.overall > best.m) best = { m: m.overall, r }; });
+      if (best) { row.fitOpenPct = best.m; row.fitBest = { id: best.r.id, title: best.r.title, reqCode: best.r.reqCode || null }; }
+    }
     row.mine = shared ? undefined : apps.some((a) => {
       const r = a.requirement || {};
       const fu = st.followUps.get(a.id);
@@ -1042,6 +1059,7 @@ const PAGED_EXTRA_FIELDS = [
   'left', 'leftOn', 'leftReason', // joined, then left: the step says Dropped (with the day and the reason)
   'replacedBy', 'replacementFor', 'replacementWords', 'replacementState', // who replaced whom (the chips)
   'joiningDay', 'joiningPlanned', 'joinedOther', // Joining date column (joinedOther: the person joined on ANOTHER application than the shown one)
+  'fitOpenPct', 'fitBest', // NISH: a person on no requirement - their best open-requirement Fit and which job it is (never set on TeamLink)
 ];
 function pagedOut(row) {
   const out = slimForList(row);
@@ -3346,9 +3364,45 @@ router.get('/:id/location-requirements', async (req, res) => {
     cities: cities.map((c) => c.label),
     canAdd,
   };
+  const scope = { status: { in: REQUIREMENT_LIVE_STATUSES }, ...requirementWhere(req.user) };
+  // NISH (IT staffing): every open requirement is scored - skills, experience and the resume decide, the city is one part of the Fit, not a must.
+  // The person's own scores ride along (profile completeness, resume on file). No paid AI: the same resume-based scorer a tagged application gets.
+  if (require('../utils/atsProfile').itStaffing()) { // eslint-disable-line global-require
+    const rm = require('../utils/resumeMatch'); // eslint-disable-line global-require
+    const DQ = require('../utils/dataQuality'); // eslint-disable-line global-require
+    const openAll = await prisma.requirement.findMany({
+      where: scope,
+      select: {
+        id: true, reqCode: true, title: true, internal: true, department: true, location: true, openings: true, status: true,
+        skills: true, goodToHaveSkills: true, experience: true, education: true, workMode: true, employmentType: true,
+        salary: true, salaryType: true, joiningTimeline: true, jobPreference: true, createdAt: true, specialisation: true,
+        client: { select: { name: true } },
+      },
+    });
+    const ev = (await rm.currentResumeEvidence([candidate.id]).catch(() => new Map())).get(candidate.id) || null;
+    const linkedAll = new Set((candidate.applications || []).map((a) => a.requirementId));
+    const scored = openAll.map((r) => {
+      const m = rm.threeNumbers(candidate, r, ev);
+      return {
+        id: r.id, reqCode: r.reqCode, title: r.title, client: r.internal ? 'TeamLink Internal' : (r.client && r.client.name) || null,
+        department: r.department, location: r.location, openings: r.openings, status: r.status, employmentType: r.employmentType || null,
+        match: m.overall, resumePct: m.resumePct ?? null, locPct: m.locPct ?? null, salPct: m.salKnown ? (m.salPct ?? null) : null,
+        applied: linkedAll.has(r.id),
+      };
+    }).sort((a, b) => (a.applied - b.applied) || (b.match - a.match));
+    const dq = DQ.completeness(candidate);
+    return res.json({
+      ...base,
+      allOpen: true,
+      own: { completeness: dq.score, missing: dq.missing || [], resumeOnFile: !!ev, applications: linkedAll.size },
+      total: scored.length,
+      strong: scored.filter((r) => r.match >= 60).length,
+      notApplied: scored.filter((r) => !r.applied).length,
+      rows: scored.slice(0, 25),
+    });
+  }
   if (!cities.length) return res.json({ ...base, total: 0, strong: 0, rows: [] });
   const keys = cities.map((c) => c.key);
-  const scope = { status: { in: REQUIREMENT_LIVE_STATUSES }, ...requirementWhere(req.user) };
   const groups = await prisma.requirement.groupBy({ by: ['location'], where: scope, _count: { _all: true } });
   const values = valuesInCities(groups.map((g) => g.location), keys);
   if (!values.length) return res.json({ ...base, total: 0, strong: 0, rows: [] });
