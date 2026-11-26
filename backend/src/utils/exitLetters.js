@@ -190,7 +190,27 @@ async function renderPdf(m) {
     // the paragraphs (a run may be bold, e.g. the person's name)
     // pdfkit drops a space at the start of a continued run and stretches justified lines that mix fonts, so a mixed
     // paragraph keeps its spaces at the END of a run and is set ragged-right; a plain paragraph is justified.
+    // a table ({ table: [[cell, ...]], head }) drawn with thin borders; the first column is bold, as is a heading row
+    const drawTable = (rows, head) => {
+      const cols = rows[0].length;
+      const widths = cols === 2 ? [W * 0.3, W * 0.7] : [W * 0.4, ...Array(cols - 1).fill((W * 0.6) / (cols - 1))];
+      rows.forEach((row, ri) => {
+        const bold = (ci) => ci === 0 || (head && ri === 0);
+        const height = Math.max(...row.map((cell, ci) => doc.font(bold(ci) ? 'Helvetica-Bold' : 'Helvetica').fontSize(9.5).heightOfString(t(cell), { width: widths[ci] - 12 }))) + 8;
+        if (doc.y + height > doc.page.height - doc.page.margins.bottom) doc.addPage();
+        const top = doc.y;
+        let x = L;
+        row.forEach((cell, ci) => {
+          doc.rect(x, top, widths[ci], height).lineWidth(0.5).strokeColor('#b8bfcc').stroke();
+          doc.font(bold(ci) ? 'Helvetica-Bold' : 'Helvetica').fontSize(9.5).fillColor('#222').text(t(cell), x + 6, top + 4.5, { width: widths[ci] - 12 });
+          x += widths[ci];
+        });
+        doc.y = top + height; doc.x = L;
+      });
+    };
+    const gap = m.compact ? 0.45 : 0.9; // m.compact: a longer letter that should still fit one page
     m.paras.forEach((raw) => {
+      if (!Array.isArray(raw)) { drawTable(raw.table, raw.head); doc.moveDown(Math.max(gap, 0.65)); return; }
       const runs = raw.map((r) => ({ ...r }));
       for (let i = 1; i < runs.length; i += 1) {
         const lead = runs[i].t.match(/^\s+/);
@@ -202,20 +222,37 @@ async function renderPdf(m) {
         const opts = { width: W, lineGap: 3, align, continued: i < runs.length - 1 };
         if (i === 0) doc.text(t(r.t), L, doc.y, opts); else doc.text(t(r.t), opts);
       });
-      doc.moveDown(0.9);
+      doc.moveDown(gap);
     });
 
-    // signature
-    doc.moveDown(0.6);
+    // signature (kept on one page)
+    const signRoom = (m.accept ? 200 : 130) - (m.compact ? 45 : 0);
+    if (doc.y > doc.page.height - doc.page.margins.bottom - signRoom) doc.addPage();
+    doc.moveDown(m.compact ? 0.2 : 0.6);
     doc.font('Helvetica').fontSize(10.5).fillColor('#222').text('Yours sincerely,', L, doc.y, { width: W });
     doc.font('Helvetica-Bold').text(t(`For ${m.sign.company}`), { width: W });
-    doc.moveDown(3);
+    doc.moveDown(m.compact ? 2.6 : 3);
     const sy = doc.y;
     if (m.sign.png) { try { doc.image(m.sign.png, L, sy - 36, { height: 32 }); } catch { /* the line stands alone */ } }
     doc.moveTo(L, sy).lineTo(L + 200, sy).lineWidth(0.8).strokeColor('#8b93a3').stroke();
     doc.y = sy + 5;
     doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111').text(t(m.sign.name || LSTYLE.SIGNATORY_FALLBACK), L, doc.y, { width: W });
     doc.font('Helvetica').fontSize(10).fillColor('#333').text(t(m.sign.title), L, doc.y, { width: W });
+
+    if (m.accept) {
+      doc.moveDown(m.compact ? 0.8 : 1.6);
+      doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111').text('Accepted and agreed', L, doc.y, { width: W });
+      doc.font('Helvetica').fontSize(10.5).fillColor('#222').text(t(`Name: ${m.accept}`), { width: W });
+      doc.moveDown(m.compact ? 1 : 1.4);
+      doc.text('Signature: ______________________          Date: ______________', { width: W });
+    }
+    if (m.annexure) {
+      // on the same page when the whole table fits below the signature, otherwise on its own page
+      if (doc.y + 80 + m.annexure.table.length * 24 > doc.page.height - doc.page.margins.bottom) doc.addPage(); else doc.moveDown(2);
+      doc.font('Helvetica-Bold').fontSize(12).fillColor(NAVY).text(t(m.annexure.title), L, doc.y, { width: W });
+      doc.moveDown(0.8);
+      drawTable(m.annexure.table, true);
+    }
 
     // footer on every page: address, phone, email and website
     LSTYLE.drawFooters(doc, { L, W, company: m.company, t });

@@ -3573,7 +3573,7 @@ async function documentAccess(req, employee) {
   // delete (the POST / DELETE handlers below require `allowed` / `hr`).
   const viewer = !self && !hr && inScope && isViewOnlyAdmin(req.user)
     && await can(req.user, 'hrms', 'hrms', 'Employee Management', 'view');
-  return { self, hr, viewer, allowed: self || hr };
+  return { self, hr, viewer, allowed: self || hr, desk: require('../utils/exitDate').isHrDesk(req.user) }; // eslint-disable-line global-require
 }
 
 // The audit wording for a document: its type, and for "Other" the name typed
@@ -3588,7 +3588,9 @@ function docAuditLabel(doc) {
 function offerLetterHider(access, employee, userId) {
   const OL = require('../utils/offerLetterMail'); // eslint-disable-line global-require
   const pct = completionPct(employee);
-  return (doc) => OL.offerLetterHiddenFromSelf({ isSelf: access.self, isHr: access.hr, userId, doc, employee, completionPct: pct });
+  const HL = require('../utils/hrLetters'); // eslint-disable-line global-require
+  // (also: an appointment or appraisal letter shows pay, so its filed copy is only for the person and the HR desk)
+  return (doc) => HL.payLetterHidden(access, doc) || OL.offerLetterHiddenFromSelf({ isSelf: access.self, isHr: access.hr, userId, doc, employee, completionPct: pct });
 }
 
 async function loadForDocuments(req, res, { read = false } = {}) {

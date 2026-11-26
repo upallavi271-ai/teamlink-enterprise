@@ -614,6 +614,7 @@ app.use('/api/timesheet-checklist', require('./routes/timesheetChecklist')); // 
 app.use('/api/kt', employeeRecordRouter('KT'));
 app.use('/api/targets', employeeRecordRouter('TARGET', { createRoles: true }));
 app.use('/api/resignations', resignationRoutes);
+app.use('/api/hr-letters', require('./routes/hrLetters'));
 // One read endpoint for any request on the approval chain (components/ApprovalChain.jsx).
 app.use('/api/approvals', require('./routes/approvals'));
 // Phone alerts (Web Push): a person switches alerts on for this phone (routes/push.js, utils/webPush.js).

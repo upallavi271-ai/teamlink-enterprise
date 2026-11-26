@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import api from '../api';
 import './EmployeeDocuments.css';
 import Combo from './Combo.jsx';
+import HrLetters from './HrLetters.jsx';
 
 // ---------------------------------------------------------------------------
 // Documents on an employee's file — Aadhaar, PAN, certificates, joining
@@ -303,6 +304,8 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
       )}
       {error && <div className="error-text" style={{ marginBottom: 8 }}>{error}</div>}
       {notice && <div className="notice" style={{ marginBottom: 8 }}>{notice}</div>}
+      {/* appointment, experience, relieving, appraisal and internship letters (HR desk only; others see nothing) */}
+      {!readOnly && !draft && !embedded && data && <HrLetters employeeId={target} onSent={load} />}
       {!readOnly && !draft && data?.canEmailOfferLetter && (
         <div className="small-muted" style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button type="button" className="btn btn-sm" disabled={busy === 'offer-mail'} onClick={emailOfferLetter}>{busy === 'offer-mail' ? 'Sending…' : 'Email offer letter'}</button>
