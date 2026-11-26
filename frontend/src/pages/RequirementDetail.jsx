@@ -1,3 +1,4 @@
+import BRAND from '../brand.js'; // NISH (IT staffing): no job-posting section on the requirement page
 import JobKitsTab from '../components/jobs/JobKitsTab.jsx'; // market wave 2026-11-21: interview kits, apply form, tests, SMS campaign
 import { MoreDetails, CurrencyNote } from '../components/atsPlus/MoreDetails.jsx'; // Admin-added job fields + the rupee value of another currency (market wave 13.02 / 13.07)
 import RequirementPositions from '../components/clients/RequirementPositions.jsx'; // several positions inside one requirement (audit 114)
@@ -197,7 +198,8 @@ export const JOB_PORTAL = 'TeamLink Job Portal';
 //   → Candidates Available → On Hold / Closed
 const FLOW = ['DRAFT', 'AGREEMENT_CHECK', 'OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
 const PARKED = ['ON_HOLD', 'CLOSED'];
-const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', 'distribute', 'kits', 'history', 'activity', 'tools'];
+// NISH (IT staffing): no Postings tab (founder 2026-11-26: the job-posting section is removed there)
+const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', ...(BRAND.itStaffing ? [] : ['distribute']), 'kits', 'history', 'activity', 'tools'];
 const TAB_LABELS = {
   tools: 'Hiring tools', overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', distribute: 'Postings', kits: 'Kits & tests', history: 'History', activity: 'Activity',
 };
@@ -790,10 +792,12 @@ export default function RequirementDetail() {
         />
       )}
 
-      <JobPostingCard jobId={r.id} title={r.title} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load} onPost={() => setPostStepOpen(true)} />
-      {postStepOpen && <PostStepDialog job={{ id: r.id, title: r.title, reqCode: r.reqCode, tlId: r.tlId, recruiterId: r.recruiterId, recruiter: r.recruiter, department: r.department }} sources={String(r.postingSources || '').split(',').map((x) => x.trim()).filter(Boolean)} canAssign={!!p.assign} onClose={() => setPostStepOpen(false)} onChanged={load} />}
+      {/* NISH: no "Job posting status" section (founder 2026-11-26) */}
+      {!BRAND.itStaffing && <JobPostingCard jobId={r.id} title={r.title} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load} onPost={() => setPostStepOpen(true)} />}
+      {!BRAND.itStaffing && postStepOpen && <PostStepDialog job={{ id: r.id, title: r.title, reqCode: r.reqCode, tlId: r.tlId, recruiterId: r.recruiterId, recruiter: r.recruiter, department: r.department }} sources={String(r.postingSources || '').split(',').map((x) => x.trim()).filter(Boolean)} canAssign={!!p.assign} onClose={() => setPostStepOpen(false)} onChanged={load} />}
 
       <div className="card section" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+        {BRAND.itStaffing ? <div style={{ flex: '1 1 420px' }}><b style={{ fontSize: 13 }}>Job description</b></div> : (
         <div style={{ flex: '1 1 420px' }}>
           <b style={{ fontSize: 13 }}>Where it is posted</b>
           {!agreementActive && !r.internal && <div className="small-muted" style={{ fontSize: 12, marginTop: 2, color: 'var(--amber)' }}>Posting starts once the agreement is signed.</div>}
@@ -803,13 +807,14 @@ export default function RequirementDetail() {
           {!r.internal && <PartnerShare requirementId={r.id} onChanged={load} />}
           {!r.internal && !isClientLogin && <MoreBoardsY requirementId={r.id} internal={r.internal} />}
         </div>
+        )}
         {/* Two buttons: "Job description" (view, preview the post, generate)
             and "Share" (LinkedIn / Facebook / WhatsApp / X, each one saved). */}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           <button className="btn btn-sm" onClick={() => setDialog('jd')}>Job description</button>
-          {(p.edit || p.share) && <button className="btn btn-sm" aria-expanded={shareOpen} onClick={() => setShareOpen((o) => !o)}>Share</button>}
+          {!BRAND.itStaffing && (p.edit || p.share) && <button className="btn btn-sm" aria-expanded={shareOpen} onClick={() => setShareOpen((o) => !o)}>Share</button>}
         </div>
-        {shareOpen && (p.edit || p.share) && (
+        {!BRAND.itStaffing && shareOpen && (p.edit || p.share) && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', flex: '1 1 100%' }}>
             <span className="small-muted" style={{ fontSize: 12 }}>Share on:</span>
             {SHARE.map(([ch, urlOf]) => (
