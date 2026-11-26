@@ -79,9 +79,17 @@ function tlArm(userIds) {
   return { OR: [primary, { id: { in: ids } }] };
 }
 
-async function setExtras(jobId, primary, extras) {
+async function setExtras(jobId, primary, extras, opts = {}) {
   const key = PREFIX + jobId;
-  const list = clean(extras).filter((u) => u !== String(primary || '').trim());
+  let list = clean(extras).filter((u) => u !== String(primary || '').trim());
+  // TL PARTNERS (utils/tlPartners.js): a job of a partnered department keeps the whole group of TLs
+  if (!opts.skipPartners) {
+    try {
+      const job = await prisma.requirement.findUnique({ where: { id: String(jobId) }, select: { department: true } });
+      const add = await require('./tlPartners').missingFor(job && job.department, [primary, ...list]); // eslint-disable-line global-require
+      if (add.length) list = clean([...list, ...add]).filter((u) => u !== String(primary || '').trim());
+    } catch { /* saved without partners; the save hook catches up */ }
+  }
   if (!list.length) {
     await prisma.appSetting.deleteMany({ where: { key } }).catch(() => {});
     byJob.delete(String(jobId));

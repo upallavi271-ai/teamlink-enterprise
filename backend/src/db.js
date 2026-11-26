@@ -83,6 +83,17 @@ prisma.$use(async (params, next) => {
   return result;
 });
 
+// tlpartners_: a requirement saved with a partnered TL (utils/tlPartners.js, founder 2026-11-26: Education - Usha + Sirisha) gets the
+// rest of the group as "also assigned" TLs, from whichever screen made or changed it. Runs after the save; never throws.
+prisma.$use(async (params, next) => {
+  const result = await next(params);
+  if (params.model === 'Requirement' && (params.action === 'create' || params.action === 'update' || params.action === 'upsert') && result && result.id) {
+    const id = result.id;
+    setImmediate(() => { try { require('./utils/tlPartners').syncJob(id).catch(() => {}); } catch { /* next save catches up */ } }); // eslint-disable-line global-require
+  }
+  return result;
+});
+
 // vendorlink_: a bill booked in Accounts is linked to its vendor by the vendor's id the moment it is saved (utils/vendorExpenseLink.js).
 // Only fills vendorId when the vendor text matches exactly one vendor master record; never throws.
 prisma.$use(async (params, next) => {
