@@ -231,7 +231,7 @@ async function plan(u, b = {}) {
   const limit = Math.min(...PLATFORMS.filter((p) => platforms.includes(p.key)).map((p) => p.limit));
   const { system, prompt } = planPrompt(brand, f);
   try {
-    const r = await AI.generate({ user: u, module: 'calendar', task: 'plan', system, prompt, json: true, demo: () => demoIdeas(brand, f) });
+    const r = await AI.generate({ user: u, module: 'calendar', task: 'plan', system, prompt, json: true, fast: { own: true, maxTokens: 4000, ms: 40000 }, demo: () => demoIdeas(brand, f) });
     const raw = r.result && Array.isArray(r.result.ideas) ? r.result.ideas : [];
     const base = Date.parse(`${start}T00:00:00+05:30`);
     const times = ['10:00', '13:00', '17:30'];

@@ -123,19 +123,28 @@ async function logUsage({ user, module, task, provider, model, ok, inChars, outC
 // -> { result, provider, model, demo, ms }   (throws AiMkError with a plain-English message; every call, ok or not, is logged)
 // quickMs (optional): the answer must come within this many ms (a screen behind the web server's 60-second limit). The model waits at most a few seconds for live calls, is asked to stop at quickMs,
 // and a miss is an AiMkError with code 'timeout' (logged as failed) so the caller can use a plain fallback instead of showing a gateway error.
-// fast (optional, JSON tasks only): a short writing task goes to the free fast writer (marketing/fastText.js: Cloudflare) when its card is saved, else to the app's own model as before. An error from the
-// fast writer carries `fast: true`, so the caller can choose its own fallback.
-async function generate({ user, module, task, system, prompt, json = true, demo, department, itemId, quickMs = 0, fast = false }) {
+// fast (optional, JSON tasks only): the task goes to the free fast writer (marketing/fastText.js: Cloudflare) when its card is saved and writing still has allowance today, else to the app's own model as
+// before. { maxTokens, ms, plain } size it. own: true -> when the fast writer misses, the app's own model is asked as before, within what is left of the web server's 60 seconds. Without own, the error
+// carries `fast: true` and the caller chooses its own fallback.
+async function generate(args) {
   await ensure();
-  await checkLimits(user);
-  let p = pick('text');
-  let st = null;
-  if (fast && json) {
-    const quick = require('./fastText'); // eslint-disable-line global-require
-    const qs = await quick.status();
-    if (qs.ready) { p = { id: 'cloudflare', fast: true, json: (s, q) => quick.json(s, q) }; st = qs; }
+  await checkLimits(args.user);
+  const fast = args.json === false ? null : args.fast;
+  const quick = fast ? require('./fastText') : null; // eslint-disable-line global-require
+  const ready = quick ? await quick.status() : null;
+  if (!ready || !ready.ready) return ask(pick('text'), null, args);
+  const t0 = Date.now();
+  try {
+    return await ask({ id: 'cloudflare', fast: true, json: (s, q) => quick.json(s, q, fast) }, ready, args);
+  } catch (e) {
+    if (!fast.own) throw e;
+    const left = Math.max(10000, 55000 - (Date.now() - t0));
+    return ask(pick('text'), null, { ...args, quickMs: args.quickMs ? Math.min(args.quickMs, left) : left });
   }
-  if (!st) st = p ? await p.status() : { ready: false, reason: 'No AI provider is set up.' };
+}
+// one try with one provider: it is logged whether it works or not
+async function ask(p, ready, { user, module, task, system, prompt, json = true, demo, department, itemId, quickMs = 0 }) {
+  const st = ready || (p ? await p.status() : { ready: false, reason: 'No AI provider is set up.' });
   const inChars = String(system || '').length + String(prompt || '').length;
   if (!p || !st.ready) {
     const why = (st && st.reason) || 'The AI model is not ready.';

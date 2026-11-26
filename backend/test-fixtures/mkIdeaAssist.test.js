@@ -192,7 +192,7 @@ const admin = { id: 'u-admin', name: 'Test Admin', role: 'SUPER_ADMIN', atsRole:
   assert.deepEqual(sent[0].body.messages, [{ role: 'system', content: 'SYS' }, { role: 'user', content: 'ASK' }]);
   reply = 'Here it is:\n```json\n{"idea": "Topic: Fenced"}\n```'; assert.deepEqual(await FT.json('s', 'p'), { idea: 'Topic: Fenced' });
   reply = '{"idea": "Topic: Real breaks\nPoints:\n- One"}'; assert.deepEqual(await FT.json('s', 'p'), { idea: 'Topic: Real breaks\nPoints:\n- One' });
-  reply = 'Topic: Plain words\nPoints:\n- One'; assert.deepEqual(await FT.json('s', 'p'), { idea: reply });
+  reply = 'Topic: Plain words\nPoints:\n- One'; assert.deepEqual(await FT.json('s', 'p', { plain: 'idea' }), { idea: reply });
   for (const bad of ['', '{"other": ']) { reply = bad; await assert.rejects(FT.json('s', 'p'), (e) => e.code === 'unreadable'); } // eslint-disable-line no-await-in-loop
   Img.cloudflareText.call = async () => ({ result: { response: { idea: 'Topic: Older shape' } } }); assert.deepEqual(await FT.json('s', 'p'), { idea: 'Topic: Older shape' });
   Object.assign(Img.cloudflareText, realCf); sandbox.allowAi = realAllow;

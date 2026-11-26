@@ -161,7 +161,7 @@ async function generate(u, b) {
   const f = c.value;
   const { system, prompt } = promptFor(f, brand);
   try {
-    const r = await AI.generate({ user: u, module: 'content', task: 'draft', system, prompt, json: true, demo: () => demoVariants(f, brand), itemId: b.itemId || null });
+    const r = await AI.generate({ user: u, module: 'content', task: 'draft', system, prompt, json: true, fast: { own: true, maxTokens: 2500, ms: 30000 }, demo: () => demoVariants(f, brand), itemId: b.itemId || null });
     const variants = normalise(r.result, f, brand);
     if (!variants.length) return { error: 'The AI answer could not be read. Press "Write with AI" again.', status: 502, code: 'UNREADABLE' };
     return { variants, ai: { provider: r.provider, model: r.model, demo: r.demo, ms: r.ms }, used: { tone: f.tone, language: f.language, goal: f.goal, channels: f.channels, avoidWords: brand.avoidWords } };
@@ -190,7 +190,7 @@ async function revise(u, b) {
     return { text: t };
   };
   try {
-    const r = await AI.generate({ user: u, module: 'content', task: 'revise', system, prompt: `Instruction: ${instruction}\n\nMessage:\n${text}`, json: true, demo, itemId: b.itemId || null });
+    const r = await AI.generate({ user: u, module: 'content', task: 'revise', fast: { own: true, maxTokens: 1200, ms: 20000 }, system, prompt: `Instruction: ${instruction}\n\nMessage:\n${text}`, json: true, demo, itemId: b.itemId || null });
     const t = finish(key, r.result && typeof r.result.text === 'string' ? r.result.text : '');
     if (!t) return { error: 'The AI answer could not be read. Try again.', status: 502 };
     return { text: t, flags: flagsOf(t, brand.avoidWords), ai: { provider: r.provider, model: r.model, demo: r.demo, ms: r.ms } };

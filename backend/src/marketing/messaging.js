@@ -160,7 +160,7 @@ async function write(u, b = {}) {
   const { system, prompt } = promptFor(f, j.job, brand);
   let made;
   try {
-    made = await AI.generate({ user: u, module: 'messaging', task: 'write', system, prompt, json: true, demo: () => demoVariants(f, j.job, brand), itemId: b.id || undefined });
+    made = await AI.generate({ user: u, module: 'messaging', task: 'write', system, prompt, json: true, fast: { own: true, maxTokens: 1800, ms: 25000 }, demo: () => demoVariants(f, j.job, brand), itemId: b.id || undefined });
   } catch (e) { return { error: e.message, status: e.status || 503, code: e.code }; }
   const ctx = ctxOf(j.job, brand.brandName);
   const raw = Array.isArray(made.result && made.result.variants) ? made.result.variants : [];

@@ -168,7 +168,7 @@ async function write(u, b = {}) {
   const f = { note: S.clip(b.note, 600), nSubjects: 5, nBodies: 2, tone: St.VOICES.includes(b.tone) ? b.tone : (St.VOICES.includes(brand.tone) ? brand.tone : St.VOICES[0]), language: Cfg.LANGUAGES.includes(b.language) ? b.language : brand.language };
   const { system, prompt } = promptFor(f, j.job, brand);
   let made;
-  try { made = await AI.generate({ user: u, module: 'email', task: 'write', system, prompt, json: true, demo: () => demoWrite(f, j.job, brand), itemId: b.id || undefined }); } catch (e) { return { error: e.message, status: e.status || 503, code: e.code }; }
+  try { made = await AI.generate({ user: u, module: 'email', task: 'write', system, prompt, json: true, fast: { own: true, maxTokens: 2000, ms: 30000 }, demo: () => demoWrite(f, j.job, brand), itemId: b.id || undefined }); } catch (e) { return { error: e.message, status: e.status || 503, code: e.code }; }
   const ctx = ctxOf(j.job, brand.brandName);
   const res = made.result && typeof made.result === 'object' ? made.result : {};
   const seen = new Set();

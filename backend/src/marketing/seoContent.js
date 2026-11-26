@@ -67,7 +67,7 @@ async function article(u, b = {}) {
     '', `Topic: ${topic}`, `Focus phrase: ${phrase}`, `Length: about ${words} words.`, notes ? `Notes from the team: ${notes}` : '', F.healthcare ? 'This is healthcare: no medical advice, no claim of a cure or of no risk; say that a doctor should be consulted.' : ''].filter((x) => x !== '').join('\n');
   let g;
   try {
-    g = await AI.generate({ user: u, module: 'seo', task: 'article', system: SYSTEM, prompt, json: true, quickMs: 55000, department: r.site ? r.site.department : undefined,
+    g = await AI.generate({ user: u, module: 'seo', task: 'article', system: SYSTEM, prompt, json: true, fast: { own: true, maxTokens: 3500, ms: 45000 }, quickMs: 55000, department: r.site ? r.site.department : undefined,
       demo: () => ({ title: `SAMPLE: ${topic}`, metaTitle: `${topic} | ${F.name}`.slice(0, 60), metaDescription: `SAMPLE (test mode, not written by AI) about ${topic} at ${F.name}.`.slice(0, 155), markdown: `# SAMPLE (test mode, not written by AI): ${topic}\n\n## What to know\n${F.name} is a ${F.kind}${F.city ? ` in ${F.city}` : ''}. [CLIENT TO CONFIRM]\n\n## Questions\nWhat does ${F.name} offer? [CLIENT TO CONFIRM]` }) });
   } catch (e) { return { error: e.message, status: e.status || 503, code: e.code || 'ai' }; }
   const x = g.result && typeof g.result === 'object' ? g.result : {}; const md = String(x.markdown || x.article || x.text || '').slice(0, 20000); if (md.trim().length < 40) return { error: 'The AI did not write an article this time. Try again.', status: 502, code: 'empty' };

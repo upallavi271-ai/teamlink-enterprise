@@ -134,7 +134,7 @@ async function ideaAssist(u, b = {}) {
   let r;
   try {
     // quickMs: nginx gives up at 60 seconds. The fast writer has 12 seconds; the app's own small model is shared with the WhatsApp assistant (it was live 20 to 50 seconds and sometimes refused while busy), so it gets 40 seconds alone, 35 after a fast miss, and a miss is said in words, never a gateway error
-    try { r = await ask({ fast: true, quickMs: 40000 }); } catch (e) {
+    try { r = await ask({ fast: { plain: 'idea' }, quickMs: 40000 }); } catch (e) {
       if (!e.fast || fromOwnWords({ title, heading, content, who, thing })) throw e;
       r = await ask({ quickMs: 35000 });
     }
