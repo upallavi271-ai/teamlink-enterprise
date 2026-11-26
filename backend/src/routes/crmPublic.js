@@ -39,6 +39,25 @@ router.get('/privacy-notice', async (req, res) => {
   try { return res.send(await require('../crm/consent').noticePage()); } catch (e) { return res.status(500).send(page('Something went wrong', 'Please try again in a minute.')); } // eslint-disable-line global-require
 });
 
+// A payment receipt the customer opens from the WhatsApp message (no login): signed, 30 days, only ever that one receipt (crm/moneyMore.js shareReceipt).
+router.get('/receipt/:token', async (req, res) => {
+  const MM = require('../crm/moneyMore'); // eslint-disable-line global-require
+  const DB = require('../crm/schema'); // eslint-disable-line global-require
+  const payId = MM.idOfToken('receipt', req.params.token);
+  const html = (code, t, m) => { res.set('Content-Type', 'text/html; charset=utf-8'); return res.status(code).send(page(t, m)); };
+  if (!payId) return html(404, 'This link has expired', 'Please ask us to send the receipt again.');
+  try {
+    const pay = await DB.one('SELECT "id", "invoiceId" FROM "CrmPayment" WHERE "id" = ?', payId);
+    const out = pay ? await MM.receiptPdf(null, pay.invoiceId, pay.id, { signed: true }) : {};
+    if (!out.pdf) return html(404, 'This receipt is not available', 'Please ask us to send it again.');
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="${out.name}"`);
+    res.set('Cache-Control', 'private, no-store');
+    res.set('X-Robots-Tag', 'noindex');
+    return res.send(out.pdf);
+  } catch (e) { return html(500, 'Something went wrong', 'Please try the link again in a minute.'); }
+});
+
 // The invoice PDF a customer opens from the WhatsApp message (no login): the link is signed and expires after 30 days (crm/extra.js shareInvoice).
 router.get('/invoice/:token', async (req, res) => {
   const X = require('../crm/extra'); // eslint-disable-line global-require

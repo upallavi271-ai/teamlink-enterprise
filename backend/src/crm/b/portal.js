@@ -177,7 +177,7 @@ async function raiseTicket(u, body = {}) {
   const now = B.nowIso();
   const t = await S.insert('CrmTicket', {
     id: S.newId('tkt'), number: `TKT-${String(n).padStart(4, '0')}`, subject, description, accountId: u.accountId, contactId: u.contactId || null, category: SUP.CATEGORIES.includes(body.category) ? body.category : 'Other', channel: 'Other',
-    priority, status: 'Open', dueAt: new Date(Date.now() + SUP.SLA_HOURS[priority] * 3600000).toISOString(), ownerId: acc ? acc.ownerId : null, ownerName: acc ? acc.ownerName : null, createdById: null, createdAt: now, updatedAt: now,
+    priority, status: 'Open', dueAt: new Date(Date.now() + ((await SUP.slaNow())[priority] || SUP.SLA_HOURS[priority]) * 3600000).toISOString(), ownerId: acc ? acc.ownerId : null, ownerName: acc ? acc.ownerName : null, createdById: null, createdAt: now, updatedAt: now,
   });
   await B.run('UPDATE "CrmTicket" SET "portalUserId" = ? WHERE "id" = ?', u.id, t.id);
   await C.systemActivity({ accountId: u.accountId, contactId: u.contactId }, { kind: 'note', subject: `Support ticket ${t.number} raised in the customer portal: ${subject}`, note: `${priority} priority`, byName: u.name || u.email });

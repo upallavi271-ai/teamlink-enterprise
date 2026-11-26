@@ -49,7 +49,7 @@ const SOURCES = {
   invoices: { label: 'Invoices', from: '"CrmInvoice" x', own: 'x."ownerId"', fields: [
     ['code', 'Number', 's', 'x."code"'], ['accountName', 'Customer', 's', 'x."accountName"'], ['status', 'Status', 's', 'x."status"'], ['issueDate', 'Issued', 'y', 'x."issueDate"'], ['dueDate', 'Due', 'y', 'x."dueDate"'],
     ['amount', 'Amount', 'n', 'x."amount"'], ['taxAmount', 'Tax', 'n', 'x."taxAmount"'], ['total', 'Total', 'n', 'x."total"'], ['paidAmount', 'Paid', 'n', 'x."paidAmount"'],
-    ['balance', 'Balance', 'n', 'ROUND(x."total" - x."paidAmount" - COALESCE(x."tdsAmount", 0), 2)'], ['ownerName', 'Owner', 's', 'x."ownerName"'],
+    ['balance', 'Balance', 'n', 'ROUND(x."total" - COALESCE(x."creditAmount", 0) + COALESCE(x."debitAmount", 0) - x."paidAmount" - COALESCE(x."tdsAmount", 0), 2)'], ['ownerName', 'Owner', 's', 'x."ownerName"'],
   ] },
 };
 const fieldOf = (src, k) => (SOURCES[src].fields.find((f) => f[0] === k) || null);
@@ -251,7 +251,7 @@ async function kpi(user, key) {
   if (key === 'wonMonth') { const x = await DB.one(`SELECT COUNT(*) AS "n", COALESCE(SUM(COALESCE("finalValue", "value")), 0) AS "v" FROM "CrmDeal" WHERE "stage" = 'Won' AND "wonAt" >= ? AND ${own.sql}`, mFrom, ...own.p); return { value: Number(x.v), money: true, sub: `${x.n} deals` }; }
   if (key === 'followupsDue') { const x = await DB.one(`SELECT COUNT(*) AS "n", SUM(CASE WHEN "dueDate" < ? THEN 1 ELSE 0 END) AS "late" FROM "CrmTask" WHERE "status" = 'Open' AND "dueDate" <= ? AND ${own.sql}`, S.istToday(), S.istToday(), ...own.p); return { value: Number(x.n), sub: `${Number(x.late) || 0} late` }; }
   if (key === 'newLeads') { const x = await DB.one(`SELECT COUNT(*) AS "n" FROM "CrmLead" WHERE "createdAt" >= ? AND ${own.sql}`, mFrom, ...own.p); return { value: Number(x.n), sub: 'added this month' }; }
-  if (key === 'toCollect') { const x = await DB.one(`SELECT COALESCE(SUM("total" - "paidAmount" - COALESCE("tdsAmount", 0)), 0) AS "v", COUNT(*) AS "n" FROM "CrmInvoice" WHERE "status" IN ('Sent', 'Partly paid') AND ${own.sql}`, ...own.p); return { value: Number(x.v), money: true, sub: `${x.n} invoices` }; }
+  if (key === 'toCollect') { const x = await DB.one(`SELECT COALESCE(SUM("total" - COALESCE("creditAmount", 0) + COALESCE("debitAmount", 0) - "paidAmount" - COALESCE("tdsAmount", 0)), 0) AS "v", COUNT(*) AS "n" FROM "CrmInvoice" WHERE "status" IN ('Sent', 'Partly paid') AND ${own.sql}`, ...own.p); return { value: Number(x.v), money: true, sub: `${x.n} invoices` }; }
   return { value: 0 };
 }
 async function layoutOf(user) {

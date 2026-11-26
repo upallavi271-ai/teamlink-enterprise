@@ -310,7 +310,7 @@ async function healthOf(a, now = Date.now()) {
   const openT = Number(tk && tk.open) || 0; const lateT = Number(tk && tk.late) || 0; const highT = Number(tk && tk.high) || 0;
   if (openT) { score -= Math.min(20, openT * 5) + Math.min(15, lateT * 8) + Math.min(10, highT * 5); signals.push({ bad: true, text: `${openT} open support ticket${openT === 1 ? '' : 's'}${lateT ? `, ${lateT} past the promised time` : ''}${highT ? `, ${highT} urgent / high` : ''}` }); }
   const today = new Date(now + 5.5 * 3600000).toISOString().slice(0, 10);
-  const inv = await P.one('SELECT COUNT(*) AS "n", COALESCE(SUM("total" - "paidAmount" - COALESCE("tdsAmount", 0)), 0) AS "due" FROM "CrmInvoice" WHERE "accountId" = ? AND "status" NOT IN (\'Paid\', \'Cancelled\') AND "dueDate" IS NOT NULL AND "dueDate" < ?', a.id, today).catch(() => null);
+  const inv = await P.one('SELECT COUNT(*) AS "n", COALESCE(SUM("total" - COALESCE("creditAmount", 0) + COALESCE("debitAmount", 0) - "paidAmount" - COALESCE("tdsAmount", 0)), 0) AS "due" FROM "CrmInvoice" WHERE "accountId" = ? AND "status" NOT IN (\'Paid\', \'Cancelled\') AND "dueDate" IS NOT NULL AND "dueDate" < ?', a.id, today).catch(() => null);
   const overdue = Number(inv && inv.n) || 0;
   if (overdue) { score -= Math.min(30, overdue * 12); signals.push({ bad: true, text: `${overdue} invoice${overdue === 1 ? '' : 's'} overdue (₹${Math.round(Number(inv.due) || 0).toLocaleString('en-IN')} owed)` }); }
   const since90 = new Date(now - 90 * DAY).toISOString(); const since180 = new Date(now - 180 * DAY).toISOString();

@@ -212,6 +212,40 @@ const DDL = [
     "at" TEXT NOT NULL
   )`,
   'CREATE INDEX IF NOT EXISTS "CrmExportLog_at" ON "CrmExportLog"("at")',
+  // THE MONEY GAPS (2026-11-26, crm/moneyMore.js): credit / debit notes on an invoice, an invoice that repeats, salesperson commission, sales sequences
+  `CREATE TABLE IF NOT EXISTS "CrmInvoiceNote" (
+    "id" TEXT NOT NULL PRIMARY KEY, "invoiceId" TEXT NOT NULL, "kind" TEXT NOT NULL, "code" TEXT, "noteDate" TEXT NOT NULL, "reason" TEXT,
+    "amount" REAL NOT NULL, "taxPercent" REAL, "taxAmount" REAL NOT NULL DEFAULT 0, "total" REAL NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'Issued', "cancelledAt" TEXT, "cancelledByName" TEXT,
+    "createdById" TEXT, "createdByName" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS "CrmInvoiceNote_invoice" ON "CrmInvoiceNote"("invoiceId", "createdAt")',
+  `CREATE TABLE IF NOT EXISTS "CrmInvoiceRepeat" (
+    "id" TEXT NOT NULL PRIMARY KEY, "invoiceId" TEXT NOT NULL UNIQUE, "every" TEXT NOT NULL, "nextDate" TEXT NOT NULL, "untilDate" TEXT,
+    "active" INTEGER NOT NULL DEFAULT 1, "made" INTEGER NOT NULL DEFAULT 0, "lastMadeAt" TEXT, "lastInvoiceId" TEXT,
+    "createdById" TEXT, "createdByName" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "CrmCommission" (
+    "id" TEXT NOT NULL PRIMARY KEY, "ownerId" TEXT NOT NULL, "ownerName" TEXT, "month" TEXT NOT NULL,
+    "collected" REAL NOT NULL DEFAULT 0, "base" REAL NOT NULL DEFAULT 0, "percent" REAL NOT NULL DEFAULT 0, "amount" REAL NOT NULL DEFAULT 0,
+    "status" TEXT NOT NULL DEFAULT 'Approved', "approvedById" TEXT, "approvedByName" TEXT, "approvedAt" TEXT,
+    "paidOn" TEXT, "paidRef" TEXT, "paidByName" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL
+  )`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS "CrmCommission_owner_month" ON "CrmCommission"("ownerId", "month")',
+  `CREATE TABLE IF NOT EXISTS "CrmSequence" (
+    "id" TEXT NOT NULL PRIMARY KEY, "name" TEXT NOT NULL, "stepsJson" TEXT NOT NULL, "active" INTEGER NOT NULL DEFAULT 1,
+    "createdById" TEXT, "createdByName" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "CrmSeqEnrol" (
+    "id" TEXT NOT NULL PRIMARY KEY, "sequenceId" TEXT NOT NULL, "leadId" TEXT NOT NULL, "status" TEXT NOT NULL DEFAULT 'active', "stopWhy" TEXT,
+    "byId" TEXT, "byName" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS "CrmSeqEnrol_lead" ON "CrmSeqEnrol"("leadId", "status")',
+  `CREATE TABLE IF NOT EXISTS "CrmSeqStep" (
+    "id" TEXT NOT NULL PRIMARY KEY, "enrolId" TEXT NOT NULL, "leadId" TEXT NOT NULL, "idx" INTEGER NOT NULL, "dueAt" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'waiting', "result" TEXT, "sentAt" TEXT
+  )`,
+  'CREATE INDEX IF NOT EXISTS "CrmSeqStep_due" ON "CrmSeqStep"("status", "dueAt")',
 ];
 // Columns added after the first release: added once, "duplicate column" is the normal answer afterwards.
 const COLUMNS = [
@@ -239,6 +273,10 @@ const COLUMNS = [
   ['CrmInvoice', 'linesJson', 'TEXT'], ['CrmInvoice', 'tdsAmount', 'REAL'], ['CrmInvoice', 'sentAt', 'TEXT'], ['CrmInvoice', 'overdueAlertAt', 'TEXT'],
   ['CrmPayment', 'tdsAmount', 'REAL'], ['CrmPayment', 'tdsPercent', 'REAL'], ['CrmPayment', 'tdsRef', 'TEXT'],
   ['CrmTask', 'origin', 'TEXT'],
+  // the money gaps (2026-11-26, crm/moneyMore.js): what credit / debit notes took off / put on the invoice, the invoice a repeat was made from,
+  // the receipt number of a payment line (given the first time its receipt is made)
+  ['CrmInvoice', 'creditAmount', 'REAL'], ['CrmInvoice', 'debitAmount', 'REAL'], ['CrmInvoice', 'repeatOfId', 'TEXT'],
+  ['CrmPayment', 'receiptNo', 'TEXT'],
 ];
 const INDEXES = [
   'CREATE INDEX IF NOT EXISTS "CrmLead_phone" ON "CrmLead"("phone")', 'CREATE INDEX IF NOT EXISTS "CrmLead_email" ON "CrmLead"("email")', 'CREATE INDEX IF NOT EXISTS "CrmLead_stage" ON "CrmLead"("stage")',

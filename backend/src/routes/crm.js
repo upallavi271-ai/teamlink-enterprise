@@ -47,6 +47,8 @@ const AI = require('../crm/ai');
 const SALES = require('../crm/sales');
 const AUTO = require('../crm/autopilot');
 const MONEY = require('../crm/money'); // GST split, invoice numbering, draft editing, TDS, overdue alert, deal files, lost re-check
+const MM = require('../crm/moneyMore'); // receipts, credit / debit notes, repeating invoices, commission, SLA hours (2026-11-26)
+const SEQ = require('../crm/sequences'); // sales sequences a person puts a lead on (2026-11-26)
 
 const router = express.Router();
 router.use(requireAuth);
@@ -246,6 +248,40 @@ router.get('/invoices/:id/pdf', async (req, res, next) => {
   } catch (e) { return next(e); }
 });
 router.post('/deals/:id/invoice', wrap((req) => CRM.invoiceForDeal(req.user, req.params.id)));
+// THE MONEY GAPS (2026-11-26, crm/moneyMore.js): payment receipts, credit / debit notes, repeating invoices, commission, SLA hours; sales sequences (crm/sequences.js)
+const pdfOut = (fn) => async (req, res, next) => {
+  try {
+    const out = await fn(req);
+    if (!out.pdf) return send(res, out);
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="${out.name}"`);
+    return res.send(out.pdf);
+  } catch (e) { return next(e); }
+};
+router.get('/invoices/:id/payments/:pid/receipt', pdfOut((req) => MM.receiptPdf(req.user, req.params.id, req.params.pid)));
+router.post('/invoices/:id/payments/:pid/receipt/share', wrap((req) => MM.shareReceipt(req.user, req.params.id, req.params.pid, req)));
+router.get('/invoices/:id/payments/:pid/receipt/email-draft', wrap((req) => MM.receiptMailDraft(req.user, req.params.id, req.params.pid)));
+router.post('/invoices/:id/payments/:pid/receipt/email', wrap((req) => MM.emailReceipt(req.user, req.params.id, req.params.pid, req.body || {})));
+router.get('/invoices/:id/notes', wrap((req) => MM.notesOf(req.user, req.params.id)));
+router.post('/invoices/:id/notes', wrap((req) => MM.addNote(req.user, req.params.id, req.body || {})));
+router.post('/invoices/:id/notes/:nid/cancel', wrap((req) => MM.cancelNote(req.user, req.params.id, req.params.nid)));
+router.get('/invoices/:id/notes/:nid/pdf', pdfOut((req) => MM.notePdf(req.user, req.params.id, req.params.nid)));
+router.get('/invoices/:id/repeat', wrap((req) => MM.repeatOf(req.user, req.params.id)));
+router.put('/invoices/:id/repeat', wrap((req) => MM.setRepeat(req.user, req.params.id, req.body || {})));
+router.post('/invoices/:id/repeat/next', wrap((req) => MM.makeNextNow(req.user, req.params.id)));
+router.get('/money-settings', wrap((req) => MM.getSettings(req.user)));
+router.put('/money-settings', wrap((req) => MM.saveSettings(req.user, req.body || {})));
+router.get('/commission', wrap((req) => MM.statement(req.user, req.query || {})));
+router.get('/commission/lines', wrap((req) => MM.statementLines(req.user, req.query || {})));
+router.post('/commission/approve', wrap((req) => MM.approve(req.user, req.body || {})));
+router.post('/commission/undo', wrap((req) => MM.undoApprove(req.user, req.body || {})));
+router.post('/commission/paid', wrap((req) => MM.markPaid(req.user, req.body || {})));
+router.get('/sequences', wrap((req) => SEQ.list(req.user)));
+router.post('/sequences', wrap((req) => SEQ.save(req.user, null, req.body || {})));
+router.put('/sequences/:id', wrap((req) => SEQ.save(req.user, req.params.id, req.body || {})));
+router.get('/leads/:id/sequences', wrap((req) => SEQ.forLead(req.user, req.params.id)));
+router.post('/leads/:id/sequences', wrap((req) => SEQ.enrol(req.user, req.params.id, req.body || {})));
+router.post('/leads/:id/sequences/stop', wrap((req) => SEQ.stop(req.user, req.params.id)));
 // the money path, slice 2 (crm/money.js): a Draft invoice's lines / notes / due date (read-only once Sent), and files kept on a deal (the quotation)
 router.put('/invoices/:id', wrap((req) => MONEY.editDraft(req.user, req.params.id, req.body || {})));
 router.get('/deals/:id/files', wrap((req) => MONEY.dealFiles(req.user, req.params.id)));
@@ -285,11 +321,17 @@ if (!process.env.TEST_MODE && process.env.NODE_ENV !== 'test') {
     }
     // 10:00 India time: invoices past their due date with money owed -> one bell to the owner and the Sales managers (every 3 days at most, crm/money.js)
     if (h === 10) MONEY.escalateOverdueInvoices().catch((e) => console.error('[crm] overdue invoices:', e.message)); // eslint-disable-line no-console
+    // 07:00 India time: repeating invoices whose date has come get their Draft - only while "Repeating invoices" is on (crm/moneyMore.js)
+    if (h === 7) MM.repeatTick().catch((e) => console.error('[crm] repeat invoices:', e.message)); // eslint-disable-line no-console
   }, 60 * 60 * 1000).unref();
   // the timed reminders: every minute, each sent once (crm/sales.js)
   setInterval(() => { SALES.runDue().catch((e) => console.error('[crm] timed reminders:', e.message)); }, 60 * 1000).unref(); // eslint-disable-line no-console
   // the automatic follow-through: does nothing until it is turned on (crm/autopilot.js)
   setInterval(() => { AUTO.tick().catch((e) => console.error('[crm] autopilot:', e.message)); }, 60 * 1000).unref(); // eslint-disable-line no-console
+  // sales sequences a person put a lead on: every minute, each step once, never in quiet hours (crm/sequences.js)
+  setInterval(() => { SEQ.tick().catch((e) => console.error('[crm] sequences:', e.message)); }, 60 * 1000).unref(); // eslint-disable-line no-console
+  // a server that was down at 07:00 still makes the day's repeating invoices
+  setTimeout(() => { MM.repeatTick().catch(() => {}); }, 3 * 60 * 1000).unref();
   // nothing else reads the mailbox by itself: mail replies have to be seen for a sequence to stop (only while it is on)
   setInterval(() => { AUTO.checkMailbox().catch((e) => console.error('[crm] mailbox:', e.message)); }, 5 * 60 * 1000).unref(); // eslint-disable-line no-console
 }

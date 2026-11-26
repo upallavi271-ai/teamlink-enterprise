@@ -194,7 +194,7 @@ async function escalateOverdueInvoices({ now = Date.now(), notify } = {}) {
   const today = new Date(now + 5.5 * 3600000).toISOString().slice(0, 10);
   const again = new Date(now - 3 * 86400000).toISOString();
   const rows = await DB.all(`SELECT * FROM "CrmInvoice" WHERE "status" IN ('Sent', 'Partly paid') AND "dueDate" IS NOT NULL AND "dueDate" < ?
-    AND "total" - "paidAmount" - COALESCE("tdsAmount", 0) > 0.004 AND ("overdueAlertAt" IS NULL OR "overdueAlertAt" <= ?) ORDER BY "dueDate" ASC LIMIT 300`, today, again);
+    AND "total" - COALESCE("creditAmount", 0) + COALESCE("debitAmount", 0) - "paidAmount" - COALESCE("tdsAmount", 0) > 0.004 AND ("overdueAlertAt" IS NULL OR "overdueAlertAt" <= ?) ORDER BY "dueDate" ASC LIMIT 300`, today, again);
   if (!rows.length) return 0;
   const managers = await require('./sales').managersToTell().catch(() => []); // eslint-disable-line global-require
   const send = notify || require('../utils/notify').notifyUsers; // eslint-disable-line global-require
@@ -208,7 +208,7 @@ async function escalateOverdueInvoices({ now = Date.now(), notify } = {}) {
     const claimed = await DB.run('UPDATE "CrmInvoice" SET "overdueAlertAt" = ? WHERE "id" = ? AND ("overdueAlertAt" IS NULL OR "overdueAlertAt" <= ?)', new Date(now).toISOString(), inv.id, again);
     if (Number(claimed) !== 1) continue; // eslint-disable-line no-continue
     const late = Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${inv.dueDate}T00:00:00Z`)) / 86400000));
-    const balance = cents(inv.total - inv.paidAmount - (Number(inv.tdsAmount) || 0));
+    const balance = cents(S.netTotalOf(inv) - inv.paidAmount - (Number(inv.tdsAmount) || 0));
     // eslint-disable-next-line no-await-in-loop
     await send(to, { title: `⚠️ Invoice ${inv.code || ''} overdue — ${inv.accountName || 'a customer'}`, message: `${inr(balance)} still to come, due ${inv.dueDate} (${late} day${late === 1 ? '' : 's'} late). Owner: ${inv.ownerName || '-'}.\nOpen: /crm/deals?open=deal:${inv.dealId}` }).catch(() => null);
     told += 1;

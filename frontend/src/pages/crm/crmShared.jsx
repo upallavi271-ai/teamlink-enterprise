@@ -23,6 +23,7 @@ import { AiPredict, MoodChip, FillFromText, VisitButton, RecordCalls, RepeatPick
 import { usePlusSetup, applyLayout, CustomInput, TagInput, getNumberLocale, foreignMoney } from './crmPlusC.jsx';
 import { t as tr, useLang } from '../../i18n.jsx'; // the CRM's words in Telugu / Hindi (crmPlusC.jsx adds them)
 import { RecordMore, RecordPrivacy, MergeDialog } from './CrmRecordMore.jsx'; // eslint-disable-line import/no-cycle
+import { ReceiptButtons, NotesBox, RepeatBox, LeadSequenceBox } from './CrmMoneyMore.jsx'; // eslint-disable-line import/no-cycle -- receipts, credit / debit notes, repeat, sequences (2026-11-26)
 
 export const CrmCtx = createContext(null);
 export const useCrm = () => useContext(CrmCtx);
@@ -836,7 +837,7 @@ function PaymentDialog({ inv, onClose, onSaved }) {
     </Modal>
   );
 }
-function PaymentLog({ inv, canEdit, onChanged }) {
+export function PaymentLog({ inv, canEdit, onChanged }) {
   const { toast } = useCrm();
   const [adding, setAdding] = useState(false);
   const pays = inv.payments || [];
@@ -849,7 +850,7 @@ function PaymentLog({ inv, canEdit, onChanged }) {
     <div style={{ marginTop: 10, borderTop: '1px solid var(--line, #e5e7eb)', paddingTop: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <div className="section-label" style={{ margin: 0 }}>Payments</div>
-        <span className="small-muted" style={{ fontSize: 12 }}>{money(inv.paidAmount)} of {money(inv.total)} received{inv.tdsAmount > 0 ? ` · ${money(inv.tdsAmount)} TDS deducted` : ''}{left > 0 && inv.status !== 'Cancelled' ? ` · ${money(left)} left` : ''}</span>
+        <span className="small-muted" style={{ fontSize: 12 }}>{money(inv.paidAmount)} of {money(inv.netTotal != null ? inv.netTotal : inv.total)} received{inv.tdsAmount > 0 ? ` · ${money(inv.tdsAmount)} TDS deducted` : ''}{left > 0 && inv.status !== 'Cancelled' ? ` · ${money(left)} left` : ''}</span>
         {canEdit && left > 0 && inv.status !== 'Cancelled' && <button type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setAdding(true)}>+ Record payment</button>}
       </div>
       {!pays.length && <div className="small-muted" style={{ fontSize: 12.5, marginTop: 6 }}>No payment recorded yet.</div>}
@@ -861,6 +862,7 @@ function PaymentLog({ inv, canEdit, onChanged }) {
                 <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}><b style={{ fontSize: 14 }}>{money(p.amount)}</b><span>{p.mode || '—'}</span><span className="small-muted">{dateOf(p.paidOn)}</span>{p.tdsAmount > 0 && <span className="small-muted" style={{ fontSize: 12 }}>+ TDS {money(p.tdsAmount)}{p.tdsPercent ? ` (${p.tdsPercent}%)` : ''}{p.tdsRef ? ` · ${p.tdsRef}` : ''}</span>}</div>
                 {([p.reference, p.note].some(Boolean) || p.byName) && <div className="small-muted" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{[p.reference, p.note].filter(Boolean).join(' · ')}{p.byName ? `${[p.reference, p.note].some(Boolean) ? ' · ' : ''}by ${p.byName}` : ''}</div>}
               </div>
+              <ReceiptButtons inv={inv} pay={p} canEdit={canEdit} />
               {canEdit && <button type="button" className="btn btn-sm" aria-label={`Remove the payment of ${money(p.amount)}`} onClick={() => remove(p)}>Remove</button>}
             </div>
           ))}
@@ -918,12 +920,15 @@ function InvoiceBox({ deal, onChanged }) {
           )}
           <GstBlock inv={inv} />
           <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
+            {(inv.creditAmount > 0 || inv.debitAmount > 0) && <div><div className="small-muted" style={{ fontSize: 11 }}>After credit / debit notes</div><b>{money(inv.netTotal)}</b></div>}
             <div><div className="small-muted" style={{ fontSize: 11 }}>Received</div><b>{money(inv.paidAmount)}</b></div>
             {inv.tdsAmount > 0 && <div><div className="small-muted" style={{ fontSize: 11 }}>TDS deducted</div><b>{money(inv.tdsAmount)}</b></div>}
             <div><div className="small-muted" style={{ fontSize: 11 }}>Balance</div><b style={{ color: inv.overdue ? 'var(--red)' : undefined }}>{money(balanceOf(inv))}</b></div>
           </div>
           {inv.status !== 'Draft' && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 4 }}>🔒 Sent to the customer: the invoice itself can no longer be edited.</div>}
           <PaymentLog inv={inv} canEdit={me.canEdit} onChanged={() => { load(); if (onChanged) onChanged(); }} />
+          <NotesBox inv={inv} onChanged={() => { load(); if (onChanged) onChanged(); }} />
+          <RepeatBox inv={inv} onChanged={() => { load(); if (onChanged) onChanged(); }} />
           <PayBox inv={inv} />
         </div>
       )}
@@ -1492,6 +1497,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
         {tab === 'more' && <RecordMore kind={kind} id={row.id} onChanged={changed} />}
         {tab === 'privacy' && <RecordPrivacy kind={kind} id={row.id} />}
         {tab === 'products' && kind === 'lead' && <ProductSellBox lead={row} canEdit={d.canEdit} onChanged={changed} />}
+        {tab === 'followups' && kind === 'lead' && <LeadSequenceBox lead={row} onChanged={changed} />}
         {tab === 'followups' && <TaskList tasks={d.tasks || []} link={link} onChanged={changed} canEdit={d.canEdit} />}
         {tab === 'proposals' && kind === 'deal' && <><QuotesPlus deal={row} onChanged={changed} /><ProposalBox dealId={row.id} onChanged={changed} /><DealFiles dealId={row.id} onChanged={changed} /></>}
         {tab === 'invoice' && kind === 'deal' && <><InvoiceBox deal={row} onChanged={changed} /><ContractsBox deal={row} canEdit={d.canEdit} /></>}

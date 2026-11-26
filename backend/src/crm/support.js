@@ -11,7 +11,8 @@ const DB = require('./schema');
 const S = require('./service');
 
 const PRIORITIES = ['Urgent', 'High', 'Medium', 'Low'];
-const SLA_HOURS = { Urgent: 4, High: 24, Medium: 48, Low: 120 };
+const SLA_HOURS = { Urgent: 4, High: 24, Medium: 48, Low: 120 }; // the defaults; a Sales manager changes them (CRM settings, crm/moneyMore.js slaHours)
+const slaNow = () => require('./moneyMore').slaHours().catch(() => SLA_HOURS); // eslint-disable-line global-require
 const STATUSES = ['Open', 'In progress', 'Waiting on customer', 'Resolved', 'Closed'];
 const CATEGORIES = ['Candidate replacement', 'Invoice / payment', 'Requirement change', 'Interview scheduling', 'Candidate joining', 'Complaint', 'Agreement', 'Other'];
 const CHANNELS = ['Phone', 'Email', 'WhatsApp', 'Meeting', 'Other'];
@@ -90,7 +91,7 @@ async function create(user, body = {}) {
   const now = DB.nowIso();
   const t = await S.insert('CrmTicket', {
     id: S.newId('tkt'), number: `TKT-${String(n).padStart(4, '0')}`, ...c.data, status: 'Open',
-    dueAt: new Date(Date.now() + SLA_HOURS[c.data.priority] * 3600000).toISOString(),
+    dueAt: new Date(Date.now() + ((await slaNow())[c.data.priority] || SLA_HOURS[c.data.priority]) * 3600000).toISOString(),
     ownerId: own.id, ownerName: own.name || null, createdById: user.id, createdAt: now, updatedAt: now,
   });
   if (t.accountId) await S.insert('CrmActivity', { id: S.newId('act'), kind: 'note', subject: `Support ticket ${t.number}: ${t.subject}`, note: `${t.priority} priority${t.category ? ` · ${t.category}` : ''}`, at: now, accountId: t.accountId, contactId: t.contactId, byId: user.id, byName: user.name || null, createdAt: now });
@@ -119,7 +120,7 @@ async function edit(user, id, body = {}) {
   if (c.error) return S.fail(400, c.error);
   const data = { ...c.data };
   const now = DB.nowIso();
-  if (data.priority && data.priority !== t.priority) data.dueAt = new Date(Date.parse(t.createdAt) + SLA_HOURS[data.priority] * 3600000).toISOString();
+  if (data.priority && data.priority !== t.priority) data.dueAt = new Date(Date.parse(t.createdAt) + ((await slaNow())[data.priority] || SLA_HOURS[data.priority]) * 3600000).toISOString();
   if ('status' in body) {
     if (!STATUSES.includes(body.status)) return S.fail(400, 'Pick a status from the list.');
     data.status = body.status;
@@ -172,4 +173,4 @@ async function comment(user, id, { body, toCustomer, to } = {}) {
   return S.okBody({ ok: true, comment: c });
 }
 
-module.exports = { list, create, detail, edit, comment, PRIORITIES, STATUSES, CATEGORIES, CHANNELS, SLA_HOURS, OPEN };
+module.exports = { list, create, detail, edit, comment, PRIORITIES, STATUSES, CATEGORIES, CHANNELS, SLA_HOURS, OPEN, slaNow };

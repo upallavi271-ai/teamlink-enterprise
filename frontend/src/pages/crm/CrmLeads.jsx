@@ -15,6 +15,7 @@ import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx
 import CrmLeadBoard from './CrmLeadBoard.jsx';
 import { ProductCatalog } from './CrmProducts.jsx';
 import { AddLeadFromText } from './CrmPlusE.jsx'; // eslint-disable-line import/no-cycle
+import { SequencesView } from './CrmMoneyMore.jsx'; // eslint-disable-line import/no-cycle -- Leads > Sequences (2026-11-26)
 
 function ImportLeads({ onClose, onDone }) {
   const { me, toast } = useCrm();
@@ -176,8 +177,9 @@ export default function CrmLeads() {
         </div>
       </div>
       <div className="tabs" role="tablist">
-        {[['leads', 'Leads'], ['campaigns', 'Campaigns'], ['marketing', 'Marketing'], ['products', 'Our products']].map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={view === k} className={`tab${view === k ? ' active' : ''}`} onClick={() => setView(k)} onKeyDown={(e) => { if (e.key === 'Enter') setView(k); }}>{l}</div>)}
+        {[['leads', 'Leads'], ['sequences', 'Sequences'], ['campaigns', 'Campaigns'], ['marketing', 'Marketing'], ['products', 'Our products']].map(([k, l]) => <div key={k} role="tab" tabIndex={0} aria-selected={view === k} className={`tab${view === k ? ' active' : ''}`} onClick={() => setView(k)} onKeyDown={(e) => { if (e.key === 'Enter') setView(k); }}>{l}</div>)}
       </div>
+      {view === 'sequences' && <SequencesView />}
       {view === 'campaigns' && <CrmCampaigns />}
       {view === 'marketing' && <CrmMarketing />}
       {view === 'products' && <ProductCatalog />}

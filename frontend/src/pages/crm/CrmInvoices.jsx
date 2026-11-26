@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, shareInvoiceWhatsApp, InvoiceEmailDialog, InvoiceEditDialog, INVOICE_STATUSES, balanceOf, download } from './crmShared.jsx';
+import { InvoiceWindow } from './CrmMoneyMore.jsx'; // an invoice without a deal (a repeat) opens in its own window
 import MultiSelect, { csvToList } from '../../components/ats/MultiSelect.jsx'; // checkboxes: several values per filter (founder 2026-11-20)
 
 export default function CrmInvoices({ embedded = false }) {
@@ -18,6 +19,7 @@ export default function CrmInvoices({ embedded = false }) {
   const [busy, setBusy] = useState(false);
   const [mailInv, setMailInv] = useState(null); // the invoice whose email window is open
   const [editInv, setEditInv] = useState(null); // the Draft being edited
+  const [winId, setWinId] = useState(null); // an invoice with no deal (made by a repeat), open in its own window
   const xf = useListXf('crminvoices'); // total, issued-on, due-on (components/ats/ListFilters.jsx)
   const load = () => api.get('/crm/invoices', { params: { ...xf.params, q: q || undefined } }).then((r) => { setRows(r.data.invoices); setMissing(r.data.missing || 0); setErr(''); }).catch((e) => setErr(errOf(e, 'The invoices could not be read.')));
   async function backfill() {
@@ -81,13 +83,13 @@ export default function CrmInvoices({ embedded = false }) {
             <tbody>
               {!shown.length && <tr><td colSpan={me.seesAll ? 10 : 9}><div className="empty"><h3>{rows.length ? 'No invoice matches' : 'No invoices yet'}</h3>{rows.length ? 'Try another search or status.' : 'When a deal is moved to Won, its invoice appears here.'}</div></td></tr>}
               {shown.map((x) => (
-                <tr key={x.id} className="row-link" onClick={() => x.dealId && openRecord('deal', x.dealId)} style={x.overdue ? { boxShadow: 'inset 3px 0 0 var(--red)', background: 'rgba(220, 38, 38, 0.05)' } : undefined}>
-                  <td><b style={{ color: x.overdue ? 'var(--red)' : undefined }}>{x.code}</b>{x.gst && x.gst.flag && <div className="small-muted" style={{ fontSize: 11, color: 'var(--amber, #b45309)' }} title={x.gst.flag}>⚠ IGST: state not known</div>}</td>
+                <tr key={x.id} className="row-link" onClick={() => (x.dealId ? openRecord('deal', x.dealId) : setWinId(x.id))} style={x.overdue ? { boxShadow: 'inset 3px 0 0 var(--red)', background: 'rgba(220, 38, 38, 0.05)' } : undefined}>
+                  <td><b style={{ color: x.overdue ? 'var(--red)' : undefined }}>{x.code}</b>{x.repeatOfId && <span className="small-muted" title="Made by a repeating invoice" style={{ marginLeft: 4 }}>🔁</span>}{x.gst && x.gst.flag && <div className="small-muted" style={{ fontSize: 11, color: 'var(--amber, #b45309)' }} title={x.gst.flag}>⚠ IGST: state not known</div>}</td>
                   <td>{x.accountName || '—'}{x.missing && x.missing.length > 0 && <div className="small-muted" style={{ fontSize: 11.5, color: 'var(--amber, #b45309)' }} title="Add it on the customer's account; invoices made later will carry it">⚠ no {x.missing.join(' / ')}</div>}</td>
                   <td>{x.title || '—'}</td>
                   <td>{dateOf(x.issueDate)}</td>
                   <td style={{ color: x.overdue ? 'var(--red)' : undefined }}>{x.dueDate ? dateOf(x.dueDate) : '—'}</td>
-                  <td style={{ textAlign: 'right' }}>{money(x.total)}</td>
+                  <td style={{ textAlign: 'right' }}>{money(x.total)}{(x.creditAmount > 0 || x.debitAmount > 0) && <div className="small-muted" style={{ fontSize: 11 }} title="After credit / debit notes">now {money(x.netTotal)}</div>}</td>
                   <td style={{ textAlign: 'right' }}>{money(x.paidAmount)}{x.tdsAmount > 0 && <div className="small-muted" style={{ fontSize: 11 }}>+ TDS {money(x.tdsAmount)}</div>}</td>
                   <td>{me.canEdit ? <><InvoiceStatusSelect inv={x} onSaved={replace} />{x.overdue && <> <Pill v="Overdue" /></>}</> : <Pill v={invoicePill(x)} />}</td>
                   {me.seesAll && <td>{x.ownerName || '—'}</td>}
@@ -99,6 +101,7 @@ export default function CrmInvoices({ embedded = false }) {
         </div>
       )}
       {mailInv && <InvoiceEmailDialog inv={mailInv} onClose={() => setMailInv(null)} onSent={() => load()} />}
+      {winId && <InvoiceWindow id={winId} onClose={() => setWinId(null)} onChanged={() => load()} />}
       {editInv && <InvoiceEditDialog inv={editInv} onClose={() => setEditInv(null)} onSaved={(inv) => { setEditInv(null); replace(inv); }} />}
     </div>
   );

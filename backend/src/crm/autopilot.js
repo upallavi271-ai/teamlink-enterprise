@@ -326,6 +326,8 @@ async function onReply({ channel, phone, email, subject, text, stop = false }, {
     // paused as well, so a lead who writes before their first step is queued is not started afterwards
     await S.update('CrmLead', lead.id, { autoPaused: 1, updatedAt: DB.nowIso() });
     await DB.run('UPDATE "CrmAutoStep" SET "status" = \'stopped\', "result" = ? WHERE "recordId" = ? AND "status" = \'waiting\'', wantsOut ? 'they asked us to stop' : `they replied on ${word}`, lead.id);
+    // a sales sequence a person put the lead on stops too (crm/sequences.js)
+    await require('./sequences').stopFor(lead.id, wantsOut ? 'they asked us to stop' : `they replied on ${word}`).catch(() => 0); // eslint-disable-line global-require
     await note({ leadId: lead.id }, wantsOut ? `Asked us to stop (${word})` : `Replied on ${word}`, body, channel === 'Email' ? 'email' : (channel === 'WhatsApp' ? 'whatsapp' : 'note'));
     if (wantsOut) {
       if (lead.email) await CMP.optOut('email', lead.email, { reason: `Asked us to stop by ${word}` });
@@ -425,5 +427,5 @@ async function tick({ now = Date.now(), deps = {} } = {}) {
 }
 
 module.exports = {
-  DEFAULTS, clean, load, get, save, pauseLead, tick, bookMeeting, nextSlot, calendarFile, onReply, checkMailbox,
+  DEFAULTS, clean, load, get, save, pauseLead, tick, bookMeeting, nextSlot, calendarFile, onReply, checkMailbox, runStep, // runStep: also the sends of a sales sequence (crm/sequences.js)
 };

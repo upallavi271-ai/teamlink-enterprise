@@ -622,6 +622,11 @@ async function backfillInvoices(user) {
 }
 // What an invoice row says once shaped: its from / bill-to, its lines, the GST split (CGST + SGST or IGST, worked out on READ so an old invoice shows
 // it without its amounts being rewritten; our state / SAC missing on an old copy come from today's CRM settings), TDS, the balance and overdue.
+// What the invoice is worth now: its total less the credit notes, plus the debit notes issued on it (crm/moneyMore.js, 2026-11-26).
+// The printed total never changes; every balance (and Paid / Partly paid) is worked from this.
+function netTotalOf(row) {
+  return Math.round((Number((row && row.total) || 0) - Number((row && row.creditAmount) || 0) + Number((row && row.debitAmount) || 0)) * 100) / 100;
+}
 function invoiceOut(row) {
   let from = {}; let billTo = {};
   try { from = row.fromJson ? JSON.parse(row.fromJson) : {}; } catch { from = {}; }
@@ -635,11 +640,12 @@ function invoiceOut(row) {
   const lines = MONEY.linesOf(row, st);
   gst.sac = [...new Set(lines.map((l) => l.sac).filter(Boolean))].join(', ') || fromEff.sac;
   const tdsAmount = cents(row.tdsAmount);
-  const balance = cents(Math.max(0, row.total - row.paidAmount - tdsAmount));
+  const netTotal = netTotalOf(row);
+  const balance = cents(Math.max(0, netTotal - row.paidAmount - tdsAmount));
   const overdue = row.status !== 'Paid' && row.status !== 'Cancelled' && !!row.dueDate && row.dueDate < istToday() && balance > 0.004;
   // what is blank on the customer's side of the invoice (the account had no GSTIN / address when it was made): said on Won, shown on the invoice
   const missing = [!billTo.gstin && 'GSTIN', !billTo.address && 'address'].filter(Boolean);
-  return { ...row, from: fromEff, billTo, lines, gst, tdsAmount, overdue, missing, balance, editable: row.status === 'Draft' };
+  return { ...row, from: fromEff, billTo, lines, gst, tdsAmount, overdue, missing, balance, netTotal, creditAmount: cents(row.creditAmount), debitAmount: cents(row.debitAmount), editable: row.status === 'Draft' };
 }
 async function invoiceFull(row) { return { ...invoiceOut(row), payments: await paymentsOf(row.id) }; }
 async function invoiceDetail(user, id) {
@@ -664,9 +670,10 @@ async function settleInvoice(row) {
   const sum = cents(pays.reduce((n, p) => n + Number(p.amount || 0), 0));
   const tds = cents(pays.reduce((n, p) => n + Number(p.tdsAmount || 0), 0));
   const settled = cents(sum + tds);
-  const data = { paidAmount: Math.min(sum, row.total), tdsAmount: tds, updatedAt: DB.nowIso() };
+  const net = netTotalOf(row); // after credit / debit notes
+  const data = { paidAmount: Math.min(sum, Math.max(row.total, net)), tdsAmount: tds, updatedAt: DB.nowIso() };
   if (row.status !== 'Cancelled') {
-    if (settled > 0 && settled >= cents(row.total)) { data.status = 'Paid'; data.paidAt = `${pays[pays.length - 1].paidOn}T00:00:00.000Z`; } else if (settled > 0) { data.status = 'Partly paid'; data.paidAt = null; } else { data.paidAt = null; if (row.status === 'Paid' || row.status === 'Partly paid') data.status = 'Sent'; }
+    if (settled > 0 && settled >= net) { data.status = 'Paid'; data.paidAt = `${pays[pays.length - 1].paidOn}T00:00:00.000Z`; } else if (settled > 0) { data.status = 'Partly paid'; data.paidAt = null; } else { data.paidAt = null; if (row.status === 'Paid' || row.status === 'Partly paid') data.status = 'Sent'; }
     if (data.status && data.status !== 'Draft' && !row.sentAt) data.sentAt = DB.nowIso();
   }
   const saved = await update('CrmInvoice', row.id, data);
@@ -708,7 +715,7 @@ async function addPayment(user, id, body = {}) {
     tdsAmount = cents(t);
   }
   if (!(amount > 0) && !(tdsAmount > 0)) return fail(400, 'Write the amount received.');
-  const left = cents(row.total - row.paidAmount - (Number(row.tdsAmount) || 0));
+  const left = cents(netTotalOf(row) - row.paidAmount - (Number(row.tdsAmount) || 0));
   if (left <= 0) return fail(400, 'This invoice is paid in full already.');
   if (cents(amount + tdsAmount) > left + 0.005) return fail(400, `Only ${left} is left on this invoice${tdsAmount > 0 ? ` (this line settles ${cents(amount + tdsAmount)}: ${amount} received + ${tdsAmount} TDS)` : ''}. Write that or less.`, { left, tdsAmount });
   const paidOn = body.paidOn ? String(body.paidOn).slice(0, 10) : istToday();
@@ -746,7 +753,7 @@ async function setInvoiceStatus(user, id, { status, paidAmount } = {}) {
   let saved;
   if (status === 'Paid' || status === 'Partly paid') {
     if (row.status === 'Cancelled') return fail(400, 'This invoice is cancelled. Set it back to Sent first.');
-    const cashDue = cents(row.total - (Number(row.tdsAmount) || 0)); // the TDS recorded is settled already: the cash that can still come is the rest
+    const cashDue = cents(netTotalOf(row) - (Number(row.tdsAmount) || 0)); // the TDS recorded is settled already: the cash that can still come is the rest
     const target = status === 'Paid' ? cashDue : (num(paidAmount) == null ? row.paidAmount : Math.min(cashDue, num(paidAmount)));
     if (status === 'Partly paid' && !(target > 0)) return fail(400, 'Write the amount received.');
     if (cents(target) < cents(row.paidAmount)) return fail(400, 'More than that is already in the payment log. Delete a payment line to lower the amount.');
@@ -755,6 +762,7 @@ async function setInvoiceStatus(user, id, { status, paidAmount } = {}) {
     saved = await settleInvoice(row);
   } else {
     if (row.paidAmount > 0 || Number(row.tdsAmount) > 0) return fail(409, 'Payments are recorded on this invoice. Delete them from the payment log first.', { hasPayments: true });
+    if ((status === 'Draft' || status === 'Cancelled') && (Number(row.creditAmount) > 0.004 || Number(row.debitAmount) > 0.004)) return fail(409, 'Credit / debit notes are issued on this invoice. Cancel them first.', { hasNotes: true });
     saved = await update('CrmInvoice', row.id, { status, paidAmount: 0, paidAt: null, ...(status === 'Sent' && !row.sentAt ? { sentAt: now } : {}), updatedAt: now });
   }
   await audit(user, 'CRM invoice status', 'CrmInvoice', row.id, `${row.code || row.id}: ${row.status} -> ${saved.status}`);
@@ -1114,7 +1122,7 @@ async function remove(user, kind, id) {
 // the support pick lists (crm/support.js requires this file, so it is read when asked)
 function ticketLists() {
   const T = require('./support'); // eslint-disable-line global-require
-  return { ticketPriorities: T.PRIORITIES, ticketStatuses: T.STATUSES, ticketCategories: T.CATEGORIES, ticketChannels: T.CHANNELS, slaHours: T.SLA_HOURS };
+  return { ticketPriorities: T.PRIORITIES, ticketStatuses: T.STATUSES, ticketCategories: T.CATEGORIES, ticketChannels: T.CHANNELS, slaHours: { ...T.SLA_HOURS, ...require('./moneyMore').current().slaHours } }; // eslint-disable-line global-require
 }
 
 async function me(user) {
@@ -1137,5 +1145,5 @@ module.exports = {
   roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, taskCounts, snoozeTask, hasLoggedWork, NEEDS_LOGGED_WORK, backfillInvoices, invoiceForDeal, addPayment, deletePayment, PAYMENT_MODES, invoices, invoiceDetail, setInvoiceStatus, createInvoiceForDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
   STAGES, LEAD_STATUSES, RATINGS,
   // shared with crm/extra.js
-  openFollowUpsFor, resetCodeCounters, nextCodes, writePayment, settleInvoice, invoiceOut, invoiceFull, paymentsOf, ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,
+  openFollowUpsFor, resetCodeCounters, nextCodes, writePayment, settleInvoice, invoiceOut, netTotalOf, invoiceFull, paymentsOf, ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,
 };

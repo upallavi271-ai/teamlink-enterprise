@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateTimeOf } from './crmShared.jsx';
+import { SlaHoursButton } from './CrmMoneyMore.jsx'; // eslint-disable-line import/no-cycle -- the SLA hours a Sales manager sets (2026-11-26)
 
 const PRIO_CLASS = { Urgent: 'rejected', High: 'overdue', Medium: 'pending', Low: 'new' };
 const STATUS_CLASS = { Open: 'new', 'In progress': 'pending', 'Waiting on customer': 'review', Resolved: 'joined', Closed: 'joined' };
@@ -145,7 +146,8 @@ export function TicketList({ accountId, compact }) {
         {me.seesAll && !accountId && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Handled by"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
         <label style={{ display: 'flex', gap: 6, alignItems: 'center', margin: 0, fontWeight: 500 }}><input type="checkbox" checked={late} onChange={(e) => setLate(e.target.checked)} style={{ width: 'auto' }} /> Late only</label>
         {!accountId && <input type="text" placeholder="Search number, subject, company" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 220 }} aria-label="Search tickets" />}
-        {me.canEdit && <button type="button" className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setAdding(true)}>+ Ticket</button>}
+        {!accountId && !compact && <span style={{ marginLeft: 'auto' }}><SlaHoursButton /></span>}
+        {me.canEdit && <button type="button" className="btn btn-primary btn-sm" style={{ marginLeft: accountId || compact ? 'auto' : 0 }} onClick={() => setAdding(true)}>+ Ticket</button>}
       </div>
       <div className="tbl-wrap">
         <table>

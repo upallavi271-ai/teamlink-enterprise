@@ -12,7 +12,8 @@ import CrmInvoices from './CrmInvoices.jsx';
 import { ListFilterStrip, useListXf } from '../../components/ats/ListFilters.jsx';
 // wave D (2026-11-24): several pipelines, days in stage, bulk edit, and the Approvals / Analysis / Contracts views (CrmPlus.jsx)
 import { plusOf, daysSince, BulkDealBar, ApprovalsView, AnalysisView, ContractsView } from './CrmPlus.jsx';
-const VIEWS = ['board', 'list', 'invoices', 'approvals', 'analysis', 'contracts'];
+import { CommissionView } from './CrmMoneyMore.jsx'; // Deals > Commission (2026-11-26)
+const VIEWS = ['board', 'list', 'invoices', 'approvals', 'analysis', 'contracts', 'commission'];
 
 export default function CrmDeals() {
   const { me, toast, openRecord, version } = useCrm();
@@ -103,6 +104,7 @@ export default function CrmDeals() {
             <button type="button" className={`btn btn-sm${view === 'contracts' ? ' btn-primary' : ''}`} onClick={() => setView('contracts')}>Contracts</button>
             <button type="button" className={`btn btn-sm${view === 'approvals' ? ' btn-primary' : ''}`} onClick={() => setView('approvals')}>Approvals{waiting ? ` (${waiting})` : ''}</button>
             <button type="button" className={`btn btn-sm${view === 'analysis' ? ' btn-primary' : ''}`} onClick={() => setView('analysis')}>Analysis</button>
+            <button type="button" className={`btn btn-sm${view === 'commission' ? ' btn-primary' : ''}`} onClick={() => setView('commission')}>Commission</button>
           </div>
           {dealsView && me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download(`/crm/export/deals?${new URLSearchParams(Object.entries({ q, owner, ...xf.params }).filter(([, v]) => v))}`, `crm-deals-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
           {dealsView && me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Deal</button>}
@@ -121,6 +123,7 @@ export default function CrmDeals() {
       {view === 'approvals' && <ApprovalsView onCount={setWaiting} />}
       {view === 'analysis' && <AnalysisView />}
       {view === 'contracts' && <ContractsView />}
+      {view === 'commission' && <CommissionView />}
       {err && dealsView && <div className="notice" role="alert">{err}</div>}
       {rows == null && !err && dealsView && <div className="small-muted">Loading…</div>}
       {rows && view === 'board' && (

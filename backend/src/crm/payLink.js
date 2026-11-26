@@ -47,7 +47,7 @@ async function invoiceFor(user, id, { edit } = {}) {
   if (edit && !S.canEditRow(user, r, row)) return { err: S.fail(403, 'You cannot change this invoice.') };
   return { row };
 }
-const balanceOf = (row) => cents(Math.max(0, row.total - row.paidAmount - (Number(row.tdsAmount) || 0)));
+const balanceOf = (row) => cents(Math.max(0, S.netTotalOf(row) - row.paidAmount - (Number(row.tdsAmount) || 0))); // after credit / debit notes
 function upiOf(st, row, amount) {
   if (!st.upiId) return null;
   const q = new URLSearchParams({ pa: st.upiId, pn: st.payeeName || 'TeamLink', am: amount.toFixed(2), cu: 'INR', tn: `${row.code || 'Invoice'}`.slice(0, 50) });

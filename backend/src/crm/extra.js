@@ -538,7 +538,10 @@ async function invoicePdf(user, id, { signed } = {}) {
     const r2 = (n) => Math.round(n * 1000) / 1000;
     if (gst.mode === 'intra') { sum(`CGST @ ${r2(gst.halfRate)}%`, gst.cgst); sum(`SGST @ ${r2(gst.halfRate)}%`, gst.sgst); } else if (gst.mode === 'inter') sum(`IGST @ ${r2(gst.rate)}%`, gst.igst); else sum(`Tax (${inv.taxPercent || 0}%)`, inv.taxAmount);
     y += 4; sum('Total', inv.total, { bold: true, size: 12 });
-    if (inv.paidAmount > 0 || inv.tdsAmount > 0) {
+    // credit / debit notes issued on it (crm/moneyMore.js): the printed total stays, the balance follows the notes
+    if (inv.creditAmount > 0) sum('Less: credit notes', -inv.creditAmount);
+    if (inv.debitAmount > 0) sum('Add: debit notes', inv.debitAmount);
+    if (inv.paidAmount > 0 || inv.tdsAmount > 0 || inv.creditAmount > 0 || inv.debitAmount > 0) {
       if (inv.paidAmount > 0) sum('Received', inv.paidAmount);
       if (inv.tdsAmount > 0) sum('TDS deducted by you', inv.tdsAmount);
       sum('Balance', inv.balance, { bold: true, size: 10.5 });
@@ -596,7 +599,7 @@ async function shareInvoice(user, id, req) {
   let from = {}; try { from = JSON.parse(inv.fromJson || '{}'); } catch { from = {}; }
   const inr = (v) => `Rs. ${(Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
   const settled = inv.paidAmount + (Number(inv.tdsAmount) || 0); // TDS the customer deducted counts as settled
-  const left = Math.max(0, inv.total - settled);
+  const left = Math.max(0, S.netTotalOf(inv) - settled); // after credit / debit notes
   const due = inv.dueDate ? new Date(`${inv.dueDate}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
   const text = [
     `Hello${contactName ? ` ${String(contactName).split(/\s+/)[0]}` : ''},`,
@@ -687,7 +690,7 @@ async function emailInvoiceDraft(user, id) {
   }
   const inr = (v) => `Rs. ${(Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
   const settled = inv.paidAmount + (Number(inv.tdsAmount) || 0);
-  const left = Math.max(0, inv.total - settled);
+  const left = Math.max(0, S.netTotalOf(inv) - settled); // after credit / debit notes
   const due = inv.dueDate ? new Date(`${inv.dueDate}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
   const text = [
     `Dear ${contactName ? String(contactName).split(/\s+/)[0] : (billTo.name || 'Sir / Madam')},`,
@@ -827,11 +830,11 @@ async function overview(user, { period, mine } = {}) {
   const ymd = (iso) => new Date(Date.parse(iso) + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
   const dFrom = ymd(R.from); const dTo = ymd(R.to); const dPrevFrom = ymd(R.prevFrom); const dPrevTo = ymd(R.prevTo);
   const sumRow = async (sql, ...args) => { const x = (await DB.one(sql, ...args)) || {}; return { n: Number(x.n) || 0, v: Math.round((Number(x.v) || 0) * 100) / 100 }; };
-  const invoicedNow = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("total"), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" NOT IN ('Draft', 'Cancelled') AND "issueDate" >= ? AND "issueDate" < ?`, ...p, dFrom, dTo);
+  const invoicedNow = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("total" - COALESCE("creditAmount", 0) + COALESCE("debitAmount", 0)), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" NOT IN ('Draft', 'Cancelled') AND "issueDate" >= ? AND "issueDate" < ?`, ...p, dFrom, dTo);
   const collectedNow = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("amount"), 0) AS "v" FROM "CrmPayment" WHERE ${own} AND "amount" > 0 AND "paidOn" >= ? AND "paidOn" < ?`, ...p, dFrom, dTo);
   const collectedBefore = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("amount"), 0) AS "v" FROM "CrmPayment" WHERE ${own} AND "paidOn" >= ? AND "paidOn" < ?`, ...p, dPrevFrom, dPrevTo);
   // TDS the customer deducted counts as settled (it is not owed), but it is NOT cash: collected stays the money that came, TDS is its own line
-  const BAL = '"total" - "paidAmount" - COALESCE("tdsAmount", 0)';
+  const BAL = '"total" - COALESCE("creditAmount", 0) + COALESCE("debitAmount", 0) - "paidAmount" - COALESCE("tdsAmount", 0)'; // after credit / debit notes
   const owed = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM(${BAL}), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" IN ('Sent', 'Partly paid') AND ${BAL} > 0.004`, ...p);
   const overdueOwed = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM(${BAL}), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" IN ('Sent', 'Partly paid') AND ${BAL} > 0.004 AND "dueDate" IS NOT NULL AND "dueDate" < ?`, ...p, today);
   const tdsNow = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("tdsAmount"), 0) AS "v" FROM "CrmPayment" WHERE ${own} AND COALESCE("tdsAmount", 0) > 0 AND "paidOn" >= ? AND "paidOn" < ?`, ...p, dFrom, dTo);
