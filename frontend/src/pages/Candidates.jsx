@@ -38,6 +38,7 @@ import InsightsFold from '../components/candidates-v4/InsightsFold.jsx'; // ever
 import NewPeopleChip from '../components/candidate/NewPeopleChip.jsx'; // new people, not on a requirement yet: one chip beside the search
 import '../components/candidates-v4/candidatesTidy.css';
 import HiringTools from '../components/mktb/HiringTools.jsx'; // market wave B: Hiring tools view
+import BRAND from '../brand.js'; // NISH (IT staffing): My candidates | All candidates
 import TabStrip from '../components/ui/TabStrip.jsx'; // main tabs + More menu + the caption line (founder 2026-11-20)
 import {
   LIST_VIEW_ALIAS, LIST_MORE, PIPE_SUB_MORE, MASTER_SUB_MORE, defaultListTab, lastTab, rememberTab,
@@ -532,6 +533,11 @@ export default function Candidates() {
   const [filters, setFilters] = useState(initial.filters);
   const [hier, setHier] = useState(initial.hier);
   const [quick, setQuick] = useState(initial.quick);
+  // NISH (shared pool, founder 2026-11-26: "all candidates ani oka tab lo vundali, my candidates ani oka tab vundali"): every working login sees
+  // everyone's people; "My candidates" (the default) keeps the ones they added or handle on a requirement. TeamLink: never shown, never sent.
+  const poolTabs = BRAND.itStaffing && ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'].includes(user && user.atsRole);
+  const [poolTab, setPoolTabState] = useState(() => { try { return window.localStorage.getItem('nish.candidatesPool') === 'all' ? 'all' : 'mine'; } catch { return 'mine'; } });
+  const setPoolTab = (v) => { setPoolTabState(v); try { window.localStorage.setItem('nish.candidatesPool', v); } catch { /* storage off: the tab still works */ } };
   const [inactiveDays, setInactiveDays] = useStoredState(`tl.candidates.inactiveDays.${uid}`, 180, (v) => INACTIVE_CHOICES.includes(v));
   const [showForm, setShowForm] = useState(() => searchParams.get('add') === '1' && can(user, 'ats', 'candidates', 'Add Candidate', 'create'));
   const [dupe, setDupe] = useState(null);
@@ -727,6 +733,7 @@ export default function Candidates() {
     };
     if (master) p.inactiveDays = String(inactiveDays);
     if (!master && quick) p.quick = quick;
+    if (poolTabs && poolTab === 'mine') p.pool = 'mine'; // NISH: My candidates
     if (search) p.search = search;
     Object.assign(p, xf.params);
     Object.entries(filters).forEach(([k, v]) => {
@@ -739,7 +746,7 @@ export default function Candidates() {
       typed.split('\u0001').forEach((v, i) => { if (v) p[TYPED_KEYS[i]] = v; });
     }
     return p;
-  }, [main, pipeSub, masterSub, sort, masterSort, hier, hierTree.data, quick, search, filters, typed, inactiveDays, xf.key]);
+  }, [main, pipeSub, masterSub, sort, masterSort, hier, hierTree.data, quick, search, filters, typed, inactiveDays, xf.key, poolTabs, poolTab]);
   const baseKey = JSON.stringify(baseParams);
   useEffect(() => { setPage(1); }, [baseKey, pageSize]);
 
@@ -1637,6 +1644,13 @@ export default function Candidates() {
         }))}
       />
 
+      {poolTabs && (main === 'pipeline' || main === 'master') && (
+        <div className="cv4-pool" role="tablist" aria-label="Whose candidates" data-testid="nish-candidates-pool" style={{ display: 'flex', gap: 8, margin: '8px 0 4px' }}>
+          {[['mine', 'My candidates', 'The people you added, or handle on a requirement'], ['all', 'All candidates', 'Everybody\'s candidates, whoever added them']].map(([k, l, h]) => (
+            <button key={k} type="button" role="tab" aria-selected={poolTab === k} title={h} className={`btn btn-sm${poolTab === k ? ' btn-primary' : ''}`} onClick={() => setPoolTab(k)}>{l}</button>
+          ))}
+        </div>
+      )}
       {main === 'master' && cardNote}
       {stepPopup && (
         <StepPopup

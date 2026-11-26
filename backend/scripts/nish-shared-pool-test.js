@@ -115,6 +115,7 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   // Y: on R1, recruiter A's
   const Y = await prisma.candidate.create({ data: { name: `Npy Shared ${RUN}`, phone: ph(2), email: `npy.${RUN}@np-test.in`, skills: 'Java', location: 'Hyderabad', experienceYears: 4, currentSalary: '600000', expectedSalary: '800000', noticePeriod: '15 Days', source: 'Naukri' } });
   const appA = await prisma.application.create({ data: { candidateId: Y.id, requirementId: R1.id, stage: 'RECRUITER_REVIEW', ownerRecruiterId: recA.id } });
+  await require('../src/utils/candidateAddedBy').record(X.id, recA, 'bulk'); // A uploaded X (bulk resumes), on no requirement
 
   // ------------------------------------------------------------------ TeamLink (no ATS_PROFILE): exactly as before
   if (!(await startServer(null))) { console.log('FAIL  the server did not start (TeamLink mode)'); await finish(1); return; }
@@ -128,6 +129,10 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   check('TeamLink: recruiter B sees only their own job R2, not A\'s R1 (as before)', tReqs.status === 200 && tReqs.text.includes(R2.title) && !tReqs.text.includes(R1.title), [tReqs.status, rowsOf(tReqs).map((r) => r.title)]);
   const tList = await call('GET', `/candidates?paged=1&pageSize=100&view=master&search=${encodeURIComponent(RUN)}`, TB);
   check('TeamLink: recruiter B\'s people list has neither X nor Y (as before)', tList.status === 200 && !tList.text.includes(X.name) && !tList.text.includes(Y.name), tList.status);
+  check('TeamLink: the recruiter\'s requirement chips are as before (My Requirements · Open)', tReqs.body && JSON.stringify((tReqs.body.views || []).map((v) => v.key)) === JSON.stringify(['mine', 'open']), tReqs.body && tReqs.body.views);
+  const tTA = await tokenOf(recA.id);
+  const tDup = await call('POST', '/applications', tTA, { candidateId: Y.id, requirementId: R1.id });
+  check('TeamLink: adding Y to R1 again says "already on" as before (no "This profile is with")', tDup.status === 409 && tDup.body && /already on/.test(tDup.body.error || '') && !/This profile is with/.test(tDup.body.error || ''), [tDup.status, tDup.body && tDup.body.error]);
   await stopServer();
 
   // ------------------------------------------------------------------ NISH (ATS_PROFILE=it-staffing): the shared pool
@@ -162,6 +167,28 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   const apps = await prisma.application.findMany({ where: { candidateId: Y.id }, select: { requirementId: true, ownerRecruiterId: true } });
   const own = Object.fromEntries(apps.map((a) => [a.requirementId, a.ownerRecruiterId]));
   check('NISH: each application keeps its own recruiter: R1 = A, R2 = B (A is not taken over)', own[R1.id] === recA.id && own[R2.id] === recB.id, own);
+  // "This profile is with <recruiter>": A tries to add Y to R2, where B has them
+  const dup = await call('POST', '/applications', TA, { candidateId: Y.id, requirementId: R2.id });
+  check('NISH: adding Y to R2 again says "This profile is with" recruiter B', dup.status === 409 && dup.body && (dup.body.error || '').startsWith(`This profile is with ${recB.name}`) && dup.body.withRecruiter === recB.name, [dup.status, dup.body && dup.body.error]);
+  const chk = await call('GET', `/applications/pair-check?candidateId=${Y.id}&requirementId=${R1.id}`, TB);
+  check('NISH: the duplicate check before adding names recruiter A on R1', chk.status === 200 && chk.body && chk.body.exists === true && (chk.body.message || '').startsWith(`This profile is with ${recA.name}`), [chk.status, chk.body && chk.body.message]);
+  // My requirements | All requirements
+  const mineReqs = await call('GET', `/requirements?page=1&pageSize=100&clientId=${client.id}`, TB);
+  check('NISH: the requirement tabs are My requirements | All requirements, My first', mineReqs.body && JSON.stringify((mineReqs.body.views || []).map((v) => [v.key, v.label])) === JSON.stringify([['mine', 'My requirements'], ['all', 'All requirements']]) && mineReqs.body.defaultView === 'mine', mineReqs.body && [mineReqs.body.views, mineReqs.body.defaultView]);
+  check('NISH: My requirements (the default) holds B\'s R2, not A\'s R1', mineReqs.status === 200 && mineReqs.text.includes(R2.title) && !mineReqs.text.includes(R1.title), rowsOf(mineReqs).map((r) => r.title));
+  const allReqs = await call('GET', `/requirements?page=1&pageSize=100&view=all&clientId=${client.id}`, TB);
+  check('NISH: All requirements holds both', allReqs.status === 200 && allReqs.text.includes(R1.title) && allReqs.text.includes(R2.title), rowsOf(allReqs).map((r) => r.title));
+  // My candidates | All candidates
+  const pm = (tok, view) => call('GET', `/candidates?paged=1&pageSize=100&view=${view}&pool=mine&search=${encodeURIComponent(RUN)}`, tok);
+  const aMine = await pm(TA, 'master');
+  check('NISH: A\'s My candidates has X (A uploaded them) and Y (A\'s R1)', aMine.status === 200 && aMine.text.includes(X.name) && aMine.text.includes(Y.name), [aMine.status, aMine.text.slice(0, 200)]);
+  const bMine = await pm(TB, 'master');
+  check('NISH: B\'s My candidates has Y (B\'s R2) but not X (A uploaded X)', bMine.status === 200 && bMine.text.includes(Y.name) && !bMine.text.includes(X.name), [bMine.status, bMine.text.slice(0, 200)]);
+  const bMinePipe = await pm(TB, 'pipeline');
+  const bRows = rowsOf(bMinePipe).filter((r) => r.requirementId === R1.id || r.requirementId === R2.id);
+  check('NISH: B\'s My candidates in the pipeline is B\'s R2 row only, not A\'s R1 row', bMinePipe.status === 200 && bRows.length === 1 && bRows[0].requirementId === R2.id, bRows.map((r) => [r.requirementTitle, r.recruiterName]));
+  const bAll = await call('GET', `/candidates?paged=1&pageSize=100&view=master&search=${encodeURIComponent(RUN)}`, TB);
+  check('NISH: B\'s All candidates has X and Y', bAll.status === 200 && bAll.text.includes(X.name) && bAll.text.includes(Y.name), bAll.status);
   const pipe = await call('GET', `/candidates?paged=1&pageSize=100&view=pipeline&search=${encodeURIComponent(Y.name)}`, TS);
   const yRows = rowsOf(pipe).filter((r) => r.requirementId === R1.id || r.requirementId === R2.id);
   const nameOn = (rid) => (yRows.find((r) => r.requirementId === rid) || {}).recruiterName;

@@ -864,6 +864,15 @@ function roleViewDefs(user, q = {}) {
   V.agreement.test = isAgreementPending;
   let keys;
   let def;
+  // NISH (IT staffing, one department, the shared pool - utils/scope.js sharedCandidatePool): two tabs, the requirements this login handles now
+  // and every requirement (founder 2026-11-26: "thanu current handle chesthunna reqs anni oka tab lo vundali, remaining all reqs anni oka tab lo
+  // vundali"). TeamLink (no ATS_PROFILE): the chips below, unchanged.
+  if (require('../utils/scope').sharedCandidatePool(user)) { // eslint-disable-line global-require
+    const mw = mineWhere(me);
+    V.mine = { ...V.mine, label: 'My requirements', hint: 'The open requirements you handle now: you are the recruiter, a co-recruiter or the TL', where: { AND: [mw, OPEN_WHERE] }, test: (r) => isMineRow(r, me) && r.status !== 'CLOSED' };
+    V.all = { ...V.all, label: 'All requirements', hint: 'Every requirement of the company, open and closed' };
+    return { role, views: [V.mine, V.all], byKey: V, defaultView: 'mine', alert: false };
+  }
   // The BDE TL reads every client job, so gets the Admin's chips (founder 2026-11-03: "super admin ki bde relate em kanipisthundho, avi mottham bde tl ki kanipinchali").
   switch (role === 'tl' && isBdeTlUser(user) ? 'admin' : role) {
     case 'recruiter':

@@ -110,8 +110,17 @@ async function alreadyAppliedBody(user, candidate, requirement, existing) {
   const others = await otherApplications(user, candidate.id, requirement.id);
   const where = [application.requirementTitle, application.clientName].filter(Boolean).join(' at ');
   const by = application.addedBy ? ` by ${application.addedBy}` : '';
-  const already = `${candidate.name} is already on ${where}: step ${application.step}, added ${application.addedOnText}${by}.`;
+  let already = `${candidate.name} is already on ${where}: step ${application.step}, added ${application.addedOnText}${by}.`;
+  // NISH (IT staffing, founder 2026-11-26: "aa req ki, aa candidate already vuntey - this profile is with (recruiter name) ilaa raavali"): say
+  // WHOSE it is - the recruiter of that application (its owner), else the job's recruiter, else who added it. TeamLink: the sentence above.
+  let withName = null;
+  if (require('./atsProfile').itStaffing()) { // eslint-disable-line global-require
+    const own = owner && owner.ownerRecruiterId ? await prisma.user.findUnique({ where: { id: owner.ownerRecruiterId }, select: { name: true } }).catch(() => null) : null;
+    withName = (own && own.name) || application.recruiterName || application.addedBy || null;
+    if (withName) already = `This profile is with ${withName}: ${candidate.name} is already on ${where} (step ${application.step}, added ${application.addedOnText}).`;
+  }
   return {
+    ...(withName ? { withRecruiter: withName } : {}),
     error: yours ? `${already} ${leftName ? `${leftName} had them and has left, so they are yours now` : 'They are yours'}: open the profile and carry on.` : already,
     code: 'ALREADY_APPLIED',
     yours,

@@ -817,6 +817,8 @@ async function buildPagedRows(user, st, s, shared = false) {
     if (addedOnly.length) candidates = candidates.concat(addedOnly);
   }
   const me = user.id;
+  // NISH (shared pool): "My candidates" also holds the people this login added (bulk resumes, Excel, by hand), on a requirement or not
+  const addedMine = SC_POOL(user) ? await ADDED.idsOf(user.id) : null;
   const todayIst = istDay(new Date());
   const sections = await sectionMap();
   await require('../utils/teamLeadChange').ensureIndex().catch(() => null); // the team lead of each recruiter seat, for the TL column // eslint-disable-line global-require
@@ -864,8 +866,9 @@ async function buildPagedRows(user, st, s, shared = false) {
       const r = a.requirement || {};
       const fu = st.followUps.get(a.id);
       return (fu && fu.ownerUserId === me) || r.recruiterId === me || r.tlId === me || r.bdeId === me
-        || String(r.recruiterIds || '').split(',').includes(me);
-    });
+        || String(r.recruiterIds || '').split(',').includes(me)
+        || (!!addedMine && a.ownerRecruiterId === me); // NISH: the application is theirs
+    }) || (!!addedMine && addedMine.has(c.id)); // NISH: they added the person
     row.interviewToday = apps.some((a) => a.interviewAt && istDay(a.interviewAt) === todayIst
       && !['CANCELLED', 'NO_SHOW'].includes(a.interviewStatus));
     // Search: name, email, phone, skills, requirement title / id, client —
@@ -1013,6 +1016,7 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   const any = (pred) => apps.length > 0 && apps.some(pred);
   if (q.department && !any((a) => a.requirement && MP.multiHas(q.department, a.requirement.department))) return false;
   if (q.jobType && !any((a) => a.requirement && HIRING_OK(q.jobType, a.requirement.employmentType))) return false; // NISH (IT staffing)
+  if (q.pool === 'mine' && r.mine === false) return false; // NISH: the "My candidates" tab
   // ?hiring=internal | client — the Client | Internal split of the actual
   // workflow (internal hiring is a filter here, not a separate module).
   if (q.hiring && !any((a) => a.requirement && hiringOk(q.hiring, !!a.requirement.internal))) return false;
@@ -1248,7 +1252,8 @@ async function buildPipelineRows(user, st, s, snap) {
         }) : {}),
       };
       row.mine = (fu && fu.ownerUserId === me) || (!!r && (r.recruiterId === me || r.tlId === me || r.bdeId === me
-        || String(r.recruiterIds || '').split(',').includes(me)));
+        || String(r.recruiterIds || '').split(',').includes(me)))
+        || (SC_POOL(user) && a.ownerRecruiterId === me); // NISH: the application's own recruiter
       if (row.left) { const di = JRULE.dropInfo(a.id); if (di) { row.leftOn = di.droppedOn || null; row.leftReason = di.reason || null; } }
       RP.put(row, linkIdx.get(a.id));
       row.interviewToday = !!a.interviewAt && istDay(a.interviewAt) === today
@@ -1310,6 +1315,7 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (!skipStage && !pipelineStageMatches(r, q)) return false;
   if (q.department && !MP.multiHas(q.department, r.requirementDepartment)) return false;
   if (q.jobType && !HIRING_OK(q.jobType, r.requirementEmploymentType)) return false; // NISH (IT staffing)
+  if (q.pool === 'mine' && r.mine === false) return false; // NISH: the "My candidates" tab
   if (q.hiring && !hiringOk(q.hiring, !!r.internal)) return false;
   if (q.clientId && !MP.multiHas(q.clientId, r.clientId)) return false;
   if (q.requirementId && !MP.multiHas(q.requirementId, r.requirementId)) return false;
