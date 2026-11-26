@@ -83,7 +83,8 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
 
   function body() {
     if (kind === 'assign') return { action: 'assign', recruiterId: form.recruiterId, comment: form.comment };
-    if (kind === 'stage') return { action: 'stage', stage: form.stage, comment: form.comment };
+    // Interview scheduled needs its date and time (founder 2026-11-26: the day-before reminders run off it)
+    if (kind === 'stage') return { action: 'stage', stage: form.stage, comment: form.comment, ...(form.stage === 'INTERVIEW_SCHEDULED' && form.interviewAt ? { interviewAt: new Date(form.interviewAt).toISOString() } : {}) };
     if (kind === 'interview') {
       return {
         action: 'stage',
@@ -104,7 +105,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
   }
 
   const ready = (kind === 'assign' && form.recruiterId)
-    || (kind === 'stage' && form.stage)
+    || (kind === 'stage' && form.stage && (form.stage !== 'INTERVIEW_SCHEDULED' || form.interviewAt))
     || (kind === 'interview' && form.interviewAt)
     || (kind === 'hold' && form.reasonCategory && form.reviewOn)
     || (kind === 'addToJob' && form.requirementId)
@@ -273,6 +274,12 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
               {movable.map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
             </Combo>
           </label>
+          {form.stage === 'INTERVIEW_SCHEDULED' && (
+            <label className="field">
+              <span>Interview date &amp; time (needed)</span>
+              <input type="datetime-local" value={form.interviewAt} onChange={(e) => set({ interviewAt: e.target.value })} />
+            </label>
+          )}
           <div className="small-muted" style={{ marginBottom: 8 }}>
             Only the steps your role owns are listed. People move one step at a time, so anyone who is not at the
             step before this one is skipped, and you are told why.

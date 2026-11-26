@@ -818,6 +818,20 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     }
   }
 
+  // AN INTERVIEW NEEDS ITS DATE AND TIME (founder 2026-11-26: "make it compulsory"). The day-before pop-ups and mails to the recruiter,
+  // TL and BDE (utils/interviewHourly.js) run off Application.interviewAt: 61 interviews had none and 176 a date long gone, so nobody
+  // was reminded. Moving a person INTO Interview scheduled now needs a date and time that is not already over (30 minutes of grace for
+  // an interview being recorded as it starts). A person already in the step is not blocked by this. opts.allowNoInterviewDate: old-data imports.
+  if (stage === 'INTERVIEW_SCHEDULED' && existing.stage !== 'INTERVIEW_SCHEDULED' && !opts.allowNoInterviewDate) {
+    const when = interviewAt ? new Date(interviewAt) : (existing.interviewAt ? new Date(existing.interviewAt) : null);
+    if (!when || Number.isNaN(when.getTime())) {
+      return { status: 400, body: { error: 'Pick the interview date and time first. The recruiter, TL and BDE are reminded from the day before, so an interview cannot be saved without it.', code: 'INTERVIEW_DATE_REQUIRED' } };
+    }
+    if (when.getTime() < Date.now() - 30 * 60000) {
+      return { status: 400, body: { error: 'That interview date and time is already over. Pick the new date and time, or move the person to Interview completed.', code: 'INTERVIEW_DATE_PAST' } };
+    }
+  }
+
   // THE SAME STAGE EVENT TWICE DOES NOTHING (Audit 619): a double click or a retried request carries the same "from" state, so the second one is
   // answered with the application as it is and no second history row, mail, follow-up or invoice (utils/atsWork/core.js claimEvent).
   const dedupeKey = `${applicationId}:${existing.stage}>${stage}:${existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0}`;
