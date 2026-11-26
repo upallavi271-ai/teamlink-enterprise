@@ -30,12 +30,12 @@ const HEALTH_RULES = [
   'Superlatives such as "best" or "No. 1" need documentary proof; prefer plain facts (years of service, departments, equipment, accreditations that are real).',
 ];
 const HEALTH_POSTS = [
-  'Meet the team: one doctor or department each week (with their permission)', 'What to expect at your first visit', 'A short health tip written or approved by the doctor', 'Our facilities: reception, waiting area, labs (no patients in the picture)',
-  'How to book an appointment: the three steps', 'Opening hours and holiday hours reminder', 'Myth or fact: one common question, answered by the doctor', 'Our equipment and what it is used for', 'Hygiene and safety steps we follow',
+  'One department or service each week: what it does, in plain facts (no doctor photos or praise)', 'What to expect at your first visit', 'A short health tip written or approved by the doctor', 'Our facilities: reception, waiting area, labs (no patients in the picture)',
+  'How an appointment works: the three steps (information only, no "book now" push)', 'Opening hours and holiday hours reminder', 'Myth or fact: one common question, answered by the doctor', 'Our equipment and what it is used for', 'Hygiene and safety steps we follow',
   'Festival greeting from the team', 'World Health Day (7 April): a simple awareness post', 'World Heart Day (29 September): a simple awareness post', 'World Diabetes Day (14 November): a simple awareness post', 'Seasonal health reminder (monsoon, summer, winter)',
   'FAQ of the week: one question from the website FAQ', 'When to see a doctor: signs that should not wait (doctor approved)', 'Our timings for the week ahead', 'Staff appreciation and training update', 'Health camp or awareness talk announcement (real dates only)',
-  'Healthy-living tip: food, sleep or walking', 'Child and elder care reminder', 'Emergency contact numbers and how to reach us', 'Behind the scenes: how a department runs a day', 'Thank you to the community on an anniversary or milestone (real facts only)',
-  'Our services at a glance (a clear list)', 'Language support: which languages our staff speak', 'How to prepare for a test or a procedure (doctor approved)', 'Patient safety week: a reminder', 'New service or new doctor joining (real, approved)', 'Month in review: what we did',
+  'Healthy-living tip: food, sleep or walking', 'Child and elder care reminder', 'Emergency contact numbers and how to reach us', 'Behind the scenes: how a department runs a day', 'National or medical day greeting, such as Doctors\' Day (greeting only, nothing promotional)',
+  'Our services at a glance (a clear list)', 'Language support: which languages our staff speak', 'How to prepare for a test or a procedure (doctor approved)', 'Patient safety week: a reminder', 'New service or facility (real, approved, plain facts only)', 'Month in review: what we did',
 ];
 const BIZ_POSTS = [
   'Meet the team: one person each week', 'One service explained in plain words', 'A customer question answered (from the FAQ)', 'Behind the scenes: how we work', 'Our process in three steps', 'Festival greeting from the team',
