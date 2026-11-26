@@ -141,6 +141,8 @@ export default function ExpenseDrawer({
           <Row k="Expense ID"><span className="num">{code}</span></Row>
           <Row k="Date">{fmtD(d ? x.expenseDate : s.expenseDate)}</Row>
           <Row k="Category">{(d ? x.category : s.category) || '—'}</Row>
+          {/* Repeats every month / year, or paid once (founder 2026-11-26) */}
+          <Row k="Repeats">{(() => { const f = String((d ? x.frequency : '') || '').trim(); const rep = d ? ((f === 'One-Time' || (!f && x.recurring === false)) ? 'One-time' : (f || 'Monthly')) : (s.repeats || '—'); return <span className={`oe-rep ${rep === 'One-time' ? 'is-once' : 'is-rep'}`}>{rep === 'One-time' ? 'One-time (paid once)' : rep}</span>; })()}</Row>
           <Row k="Description">{(d ? x.description : s.description) || <em className="small-muted">none given</em>}</Row>
           <Row k="Vendor / Paid to">{(d ? x.vendor : s.vendor) || '—'}</Row>
           <Row k="Payment mode">{(d ? x.paymentMode : s.paymentMode) || '—'}</Row>

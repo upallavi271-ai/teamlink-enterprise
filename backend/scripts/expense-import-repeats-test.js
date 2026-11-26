@@ -71,6 +71,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const fl = await p.officeExpense.findFirst({ where: { category: `${TAG} Floor exp` } });
     check('a sheet headed "Source" fills the category', r3.status === 201 && r3.body.imported === 1 && !!fl, [r3.status, r3.body]);
     check('no frequency column -> one-time, as before', fl && fl.recurring === false && fl.frequency === 'One-Time', fl);
+    // the Office list shows it and filters by it (founder 2026-11-26: "repeated / unique ekkada telusthundhi?")
+    const get = async (qs) => (await fetch(`${API}/office-expenses/ledger?pageSize=100&q=${encodeURIComponent(TAG)}${qs}`, { headers: { Authorization: `Bearer ${tok}` } })).json();
+    const all = await get('');
+    const tagOf = (c) => ((all.rows || []).find((r) => r.category === `${TAG} ${c}`) || {}).repeats;
+    check('the Office list carries a Repeats tag per bill', tagOf('Rent') === 'Monthly' && tagOf('Webmail') === 'One-time' && tagOf('Insurance') === 'Yearly', (all.rows || []).map((r) => [r.category, r.repeats]));
+    const once = await get('&repeats=One-time');
+    const reps = await get('&repeats=Repeats');
+    check('the Repeats filter: One-time shows only the one-time bills', (once.rows || []).length === 3 && once.rows.every((r) => r.repeats === 'One-time'), (once.rows || []).map((r) => [r.category, r.repeats]));
+    check('the Repeats filter: Repeats shows only the repeating bills', (reps.rows || []).length === 3 && reps.rows.every((r) => r.repeats !== 'One-time'), (reps.rows || []).map((r) => [r.category, r.repeats]));
+    const fc = (all.options && all.options.facets && all.options.facets.repeats) || [];
+    check('the filter offers both choices with counts', fc.length === 2 && fc.every((o) => typeof o.n === 'number'), fc);
   } catch (e) {
     failed += 1; total += 1; console.log(`FAIL  crashed: ${e.message}`);
   } finally {

@@ -257,7 +257,7 @@ export default function ExpenseLedger({
                   {r.billNumber && <div className="oe-lg-sub" title="Bill / invoice number">{r.billNumber}</div>}
                 </td>
                 <td className="oe-lg-vendor" title={r.vendor || ''}>{r.vendor || '—'}</td>
-                <td className="oe-lg-cat">{r.category || '—'}</td>
+                <td className="oe-lg-cat">{r.category || '—'}{r.repeats && <span className={`oe-rep ${r.repeats === 'One-time' ? 'is-once' : 'is-rep'}`} title={r.repeats === 'One-time' ? 'Paid once' : `Repeats: ${r.repeats}`}>{r.repeats}</span>}</td>
                 <td className="oe-lg-desc" title={r.description || ''}>{r.description || <span className="cell-muted">—</span>}</td>
                 <Money v={r.amount} />
                 <td className="num">{r.gstRate ? `${r.gstRate}%` : '0%'}</td>

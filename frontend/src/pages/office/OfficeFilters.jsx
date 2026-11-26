@@ -16,7 +16,7 @@ import { money } from './officeUtil';
 import './officefilters.css';
 
 export const OFFICE_BLANK = {
-  q: '', category: '', vendor: '', gst: '', status: '', mode: '', source: '',
+  q: '', category: '', vendor: '', gst: '', status: '', mode: '', source: '', repeats: '',
 };
 export const officeFiltersOn = (f, pv) => !isAllTime(pv) || Object.keys(OFFICE_BLANK).some((k) => String(f[k] || '').trim());
 
@@ -31,6 +31,7 @@ export function officeParams(f, pv) {
     status: v(f.status),
     mode: v(f.mode),
     source: v(f.source),
+    repeats: v(f.repeats),
     from: isAllTime(pv) ? undefined : pv.from,
     to: isAllTime(pv) ? undefined : pv.to,
   };
@@ -53,6 +54,7 @@ export function OfficeFilterBar({
     f.status && { key: 'status', label: 'Status', value: labelOf('status', f.status), onRemove: () => set({ status: '' }) },
     f.mode && { key: 'mode', label: 'Payment mode', value: f.mode, onRemove: () => set({ mode: '' }) },
     f.source && { key: 'source', label: 'Source', value: labelOf('source', f.source), onRemove: () => set({ source: '' }) },
+    f.repeats && { key: 'repeats', label: 'Repeats', value: labelOf('repeats', f.repeats), onRemove: () => set({ repeats: '' }) },
   ].filter(Boolean);
   const on = chips.length > 0;
   const clearAll = () => { setF(OFFICE_BLANK); setPv(ALL_TIME); };
@@ -71,6 +73,8 @@ export function OfficeFilterBar({
         <FacetSelect label="Status" allLabel="All" value={f.status} onChange={(v) => set({ status: v })} options={opts(fc.status)} loading={!facets} />
         <FacetSelect label="Payment mode" allLabel="All payment modes" value={f.mode} onChange={(v) => set({ mode: v })} options={opts(fc.mode)} loading={!facets} />
         <FacetSelect label="Source" allLabel="All sources" value={f.source} onChange={(v) => set({ source: v })} options={opts(fc.source)} loading={!facets} />
+        {/* Repeats every month / year, or paid once (founder 2026-11-26) */}
+        <FacetSelect label="Repeats" allLabel="Monthly and one-time" value={f.repeats || ''} onChange={(v) => set({ repeats: v })} options={opts(fc.repeats)} loading={!facets} />
       </div>
       <FilterChips filters={chips} onClearAll={on ? clearAll : undefined} />
     </div>
