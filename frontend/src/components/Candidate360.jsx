@@ -1109,8 +1109,8 @@ function ChangeTeamLead({ app, ownership, onClose, onDone }) {
 const ROLL_OPTS = ['Dropped', 'Full time', 'Part time', 'On Roll', 'Replacement'];
 
 // THE JOINING CTC (founder 2026-11-17: "vellu join ayyaru, vellaki CTC ekkada enter chestharu? ... aa respective BDE or BDE TL CTC pettukovali"): the yearly CTC of a
-// joined candidate, shown on the current application; the requirement's BDE, a BDE team lead or an Admin adds or changes it (routes/joiningCtc.js). Once the joining is
-// invoiced it is changed on the invoice in Accounts. The invoice takes this CTC by itself.
+// joined candidate, shown on the current application. Only a BDE team lead of the requirement or a Super Admin (the Developer login) adds or changes it
+// (routes/joiningCtc.js, founder 2026-11-26). A wrong CTC on an invoice not paid yet is corrected here too, with a reason: the invoice follows it.
 const inr = (v) => `₹${Math.round(Number(v) || 0).toLocaleString('en-IN')}`;
 function JoiningCtcRow({ appId, onChanged }) {
   const [d, setD] = useState(null);
@@ -1119,14 +1119,16 @@ function JoiningCtcRow({ appId, onChanged }) {
   const [ask, setAsk] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [reason, setReason] = useState('');
+  const [done, setDone] = useState('');
   const load = () => api.get(`/ats/joining-ctc/${appId}`).then((r) => setD(r.data)).catch(() => setD(null));
   useEffect(() => { load(); setEdit(false); setAsk(''); setErr(''); }, [appId]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!d) return null;
   async function save(confirmCtc) {
     setBusy(true); setErr('');
     try {
-      await api.post(`/ats/joining-ctc/${appId}`, { offeredCtc: String(val).replace(/[,\s₹]/g, ''), confirmCtc: !!confirmCtc });
-      setEdit(false); setAsk(''); await load(); if (onChanged) onChanged();
+      const r = await api.post(`/ats/joining-ctc/${appId}`, { offeredCtc: String(val).replace(/[,\s₹]/g, ''), confirmCtc: !!confirmCtc, reason });
+      setEdit(false); setAsk(''); setReason(''); setDone((r.data && r.data.message) || ''); await load(); if (onChanged) onChanged();
     } catch (e) {
       const b = (e.response && e.response.data) || {};
       if (b.needsConfirm) setAsk(b.error); else setErr(b.error || 'It could not be saved.');
@@ -1138,20 +1140,24 @@ function JoiningCtcRow({ appId, onChanged }) {
       {edit ? (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <input type="text" inputMode="numeric" value={val} onChange={(e) => { setVal(e.target.value); setAsk(''); }} placeholder="Yearly, e.g. 450000" aria-label="Joining CTC, yearly in rupees" style={{ width: 150, padding: '2px 6px', fontSize: 13 }} />
+          {d.invoiced && <input type="text" value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} placeholder="Why (e.g. typed 4,20,000 instead of 4,80,000)" aria-label="Why the CTC is changed" style={{ width: 260, padding: '2px 6px', fontSize: 13 }} />}
           {ask ? (
             <>
               <span className="small-muted">{ask}</span>
               <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => save(true)}>Yes, it is right</button>
             </>
-          ) : <button type="button" className="btn btn-sm btn-primary" disabled={busy || !String(val).trim()} onClick={() => save(false)}>{busy ? 'Saving…' : 'Save'}</button>}
+          ) : <button type="button" className="btn btn-sm btn-primary" disabled={busy || !String(val).trim() || (d.invoiced && !reason.trim())} onClick={() => save(false)}>{busy ? 'Saving…' : 'Save'}</button>}
           <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setEdit(false); setAsk(''); setErr(''); }}>Cancel</button>
+          {d.invoiced && <span className="small-muted" style={{ flexBasis: '100%', fontSize: 12 }}>{d.invoiceFlatFee ? `Invoice ${d.invoiceNumber || ''} is a flat fee: only the CTC on it changes.` : `Invoice ${d.invoiceNumber || ''} is corrected too: ${d.feePercent}% of the new CTC, with GST and TDS worked out again.`}</span>}
           {err && <span className="small-muted" style={{ color: '#b42318' }}>{err}</span>}
         </span>
       ) : (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <b>{d.ctc ? `${inr(d.ctc)} a year` : 'Not entered yet'}</b>
-          {d.canEdit && <button type="button" className="link-btn" style={{ fontSize: 12.5 }} onClick={() => { setVal(d.ctc ? String(d.ctc) : ''); setEdit(true); }}>{d.ctc ? 'Change' : '+ Add CTC'}</button>}
-          {!d.canEdit && d.why && <span className="small-muted" style={{ fontSize: 12 }}>{d.invoiced ? `Invoiced${d.invoiceNumber ? ` (${d.invoiceNumber})` : ''}` : ''}</span>}
+          {d.invoiced && <span className="small-muted" style={{ fontSize: 12 }}>{`Invoiced${d.invoiceNumber ? ` (${d.invoiceNumber})` : ''}`}</span>}
+          {d.canEdit && <button type="button" className="link-btn" style={{ fontSize: 12.5 }} onClick={() => { setVal(d.ctc ? String(d.ctc) : ''); setDone(''); setEdit(true); }}>{d.ctc ? 'Change' : '+ Add CTC'}</button>}
+          {!d.canEdit && d.invoiced && d.why && /received|note|cancelled/i.test(d.why) && <span className="small-muted" style={{ fontSize: 12 }} title={d.why}>· locked: {d.why}</span>}
+          {done && <span className="small-muted" style={{ flexBasis: '100%', fontSize: 12, color: 'var(--green)' }}>{done}</span>}
         </span>
       )}
     </div>
