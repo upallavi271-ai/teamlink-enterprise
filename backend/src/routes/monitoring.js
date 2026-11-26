@@ -47,6 +47,8 @@ const publicSettings = (s) => ({
   // the agent reads these: whether to take screenshots and how often (founder 2026-11-17)
   screenshotsEnabled: !!s.screenshotsEnabled, screenshotIntervalMinutes: (s.screenshots && s.screenshots.intervalMinutes) || 10, historyDays: s.historyDays || 365, policyVersion: s.policyVersion,
   alertsEnabled: !!s.alertsEnabled, longIdleMinutes: s.longIdleMinutes, offlineMinutes: s.offlineMinutes, lowActivityHours: s.lowActivityHours,
+  // OVERTIME (agent 3.5): how long before / after work hours the agent keeps sending (0 = it stops at the end of work hours, as before)
+  ...(() => { const live = require('../utils/monitoringPlus').otLive(s.overtime, s.policyText); return { overtimeBefore: live ? s.overtime.beforeMinutes : 0, overtimeAfter: live ? s.overtime.afterMinutes : 0 }; })(), // eslint-disable-line global-require
 });
 // what only the Settings tab shows
 const fullSettings = (s) => ({
@@ -284,6 +286,37 @@ router.get('/reports', teamOnly, wrap(async (req, res) => {
     headers: table[0], rows: out.rows.map(table[1]),
     sheet: 'Monitoring', entity: 'ActivityLog', what: 'Employee monitoring report', scope: req.query.department || 'All departments', period: { from: out.from, to: out.to }, screen: 'Employee Monitoring',
   });
+}));
+
+// OVERTIME, TRENDS, ALERT RULES (utils/monitoringPlus.js, founder 2026-11-26)
+const MP = require('../utils/monitoringPlus');
+router.get('/overtime', teamOnly, wrap(async (req, res) => {
+  const day = M.todayIst();
+  const from = M.validDay(req.query.from) ? req.query.from : M.addDays(day, -6);
+  const to = M.validDay(req.query.to) ? req.query.to : day;
+  const out = await MP.overtimeReport(from, to, req.access, req.query.department || '', req.query.employeeId || null);
+  return out.status ? fail(res, out.status, out.error) : res.json(out);
+}));
+router.get('/trends', teamOnly, wrap(async (req, res) => {
+  const out = await MP.trends(req.query, req.access);
+  return out.status ? fail(res, out.status, out.error) : res.json(out);
+}));
+router.get('/alert-rules', teamOnly, wrap(async (req, res) => res.json({ rules: await MP.listRules(), metrics: MP.METRICS, overtime: await MP.otSettings(), canEdit: !!req.access.admin })));
+router.post('/alert-rules', adminOnly, wrap(async (req, res) => {
+  const out = await MP.saveRule(req.body || {});
+  if (out.status) return fail(res, out.status, out.error);
+  await logAudit({ userId: req.user.id, action: 'Monitoring alert rule saved', entity: 'MonitoringSetting', entityId: out.rule.id, toValue: `${out.rule.name} (${out.rule.metric})` }).catch(() => {});
+  return res.json(out);
+}));
+router.delete('/alert-rules/:id', adminOnly, wrap(async (req, res) => {
+  const out = await MP.removeRule(String(req.params.id));
+  await logAudit({ userId: req.user.id, action: 'Monitoring alert rule removed', entity: 'MonitoringSetting', entityId: String(req.params.id) }).catch(() => {});
+  return res.json(out);
+}));
+router.put('/overtime-settings', adminOnly, wrap(async (req, res) => {
+  const out = await MP.saveOtSettings(req.body || {});
+  await logAudit({ userId: req.user.id, action: 'Monitoring overtime settings saved', entity: 'MonitoringSetting', entityId: 'overtime', toValue: JSON.stringify(out) }).catch(() => {});
+  return res.json({ overtime: out });
 }));
 
 router.get('/usage', teamOnly, wrap(async (req, res) => res.json(await M.usage(req.query.from, req.query.to, req.query.department || '', req.access))));

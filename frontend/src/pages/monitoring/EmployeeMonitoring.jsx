@@ -9,6 +9,8 @@ import {
   KpiRow, KpiTile, Panel, BarList, Pill,
 } from '../../components/atskit/AtsKit.jsx';
 import './monitoring.css';
+// Overtime, Trends, Alert rules (founder 2026-11-26)
+import { Overtime, Trends, AlertRules } from './MonitoringPlus.jsx';
 
 // ---------------------------------------------------------------------------
 // HRMS -> EMPLOYEE MONITORING (2026-11-04). How office PCs are used in work hours, from the TeamLink desktop agent the
@@ -66,8 +68,8 @@ export default function EmployeeMonitoring() {
   const lead = !!(me.data && me.data.isLead);
   const it = !!(me.data && me.data.isIt);
   const tabs = admin
-    ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['agentver', 'Agent versions'], ['audit', 'Audit log'], ['datasec', 'Data security'], ['settings', 'Settings'], ['mine', 'My activity']]
-    : lead ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['mine', 'My activity']]
+    ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['trends', 'Trends'], ['overtime', 'Overtime'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['rules', 'Alert rules'], ['misuse', 'Misuse'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['agentver', 'Agent versions'], ['audit', 'Audit log'], ['datasec', 'Data security'], ['settings', 'Settings'], ['mine', 'My activity']]
+    : lead ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['trends', 'Trends'], ['overtime', 'Overtime'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['mine', 'My activity']]
       : it ? [['devices', 'Devices'], ['agentver', 'Agent versions'], ['settings', 'Agent settings'], ['mine', 'My activity']] : [['mine', 'My activity']];
   const tab = tabs.some(([k]) => k === params.get('tab')) ? params.get('tab') : tabs[0][0];
   const employee = params.get('employee');
@@ -103,6 +105,9 @@ export default function EmployeeMonitoring() {
             {tab === 'audit' && <Audit />}
             {tab === 'datasec' && <DataSecurity />}
             {tab === 'alerts' && <Alerts onOpen={(id) => go('alerts', { employee: id })} />}
+            {tab === 'trends' && <Trends />}
+            {tab === 'overtime' && <Overtime onOpen={(id) => go('overtime', { employee: id })} />}
+            {tab === 'rules' && <AlertRules />}
             {tab === 'misuse' && <Misuse onOpen={(id) => go('misuse', { employee: id })} />}
             {tab === 'devices' && <Devices manage />}
             {tab === 'agentver' && <AgentVersions />}

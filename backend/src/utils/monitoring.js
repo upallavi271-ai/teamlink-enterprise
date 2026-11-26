@@ -106,12 +106,16 @@ const INPUT_LINE = 'How much the keyboard and mouse are used: how many times eac
 const SHOT_LINE = 'A clear picture of the whole screen (a screenshot) is taken about every 10 minutes while you are working - never while the PC is idle or locked, nor during lunch, a break or a pause, nor before you accept this notice. It is seen only by Admin and HR, and it is deleted after 30 days.';
 const WEBSITE_LINE = 'The website name only - for example naukri.com, never the full web address, the page, the search or anything you type, and nothing from a private / incognito window - of the tab in front is read by a TeamLink browser add-on, so HR sees the exact website rather than a guess from the window title.';
 const NEVER_LINE = 'What is never recorded: what you type, passwords, the clipboard, your files, or the content of chats and mails. Chat apps are recorded by their name only.';
-const RETENTION_LINE = 'Only work hours are recorded. Your activity history is kept for 1 year, and screenshots are kept for 30 days (HR can change these).';
+// OVERTIME (founder 2026-11-26): the minutes just outside work hours are kept as overtime, app name and in use / idle only
+const PRE_OT_RETENTION_LINE = 'Only work hours are recorded. Your activity history is kept for 1 year, and screenshots are kept for 30 days (HR can change these).';
+const RETENTION_LINE = 'Work hours are recorded. Just outside them (up to the overtime limit HR sets, normally 1 hour before and 4 hours after), only the name of the app in front and whether the PC is in use are kept, as overtime: no window title, no screenshot and no key counts. Your activity history is kept for 1 year, and screenshots are kept for 30 days (HR can change these).';
 const INTRO_LINE = 'TeamLink records how this office PC is used during work hours, so that HR can see working time and idle time.';
 const RECORDED_LINE = 'What is recorded: the name of the app in front (for example Chrome or Excel), its window title, when the PC is in use or idle, and the first and last activity of the day.';
 const FINAL_LINE = 'Nothing is recorded until you accept this notice. You can ask HR about it at any time.';
 const POLICY_LINES = [INTRO_LINE, '', RECORDED_LINE, INPUT_LINE, SHOT_LINE, WEBSITE_LINE, NEVER_LINE, RETENTION_LINE, WHO_NEW, PAUSE_LINE, FINAL_LINE];
 const DEFAULT_POLICY = POLICY_LINES.join('\n');
+// the notice as it stood just before overtime (2026-11-17 .. 2026-11-26): replaced, everyone accepts the new one once
+const PRE_OT_POLICY = POLICY_LINES.map((l) => (l === RETENTION_LINE ? PRE_OT_RETENTION_LINE : l)).join('\n');
 // THE PREVIOUS NOTICES (each still accepted on some PCs) -> replaced by the new one above, as a new version everyone accepts again.
 // These are the EXACT historical texts, so they are built from the OLD lines (before screenshots / the 1-year history / the add-on),
 // never from the new POLICY_LINES above - changing the current notice must not silently change what counts as an old notice.
@@ -171,7 +175,7 @@ async function accessOf(user) {
 async function settings() {
   let row = await prisma.monitoringSetting.findUnique({ where: { id: 'default' } });
   if (!row) row = await prisma.monitoringSetting.create({ data: { id: 'default', policyText: DEFAULT_POLICY } }).catch(() => null);
-  if (row && [FIRST_POLICY, BEFORE_INPUT_POLICY, INPUT_25_POLICY, INPUT_26_POLICY, PRE_SHOTS_POLICY].includes(row.policyText)) row = await prisma.monitoringSetting.update({ where: { id: 'default' }, data: { policyText: DEFAULT_POLICY, policyVersion: (row.policyVersion || 1) + 1 } }).catch(() => row);
+  if (row && [FIRST_POLICY, BEFORE_INPUT_POLICY, INPUT_25_POLICY, INPUT_26_POLICY, PRE_SHOTS_POLICY, PRE_OT_POLICY].includes(row.policyText)) row = await prisma.monitoringSetting.update({ where: { id: 'default' }, data: { policyText: DEFAULT_POLICY, policyVersion: (row.policyVersion || 1) + 1 } }).catch(() => row);
   const s = row || { workStart: '09:30', workEnd: '18:30', breakStart: '12:30', breakEnd: '13:15', idleThresholdMinutes: 5, retentionDays: 90, screenshotsEnabled: true, policyVersion: 1, policyText: DEFAULT_POLICY, trackTitles: true, autoUpdate: true };
   // the weekly breaks: the Saturday break until somebody changes the list (an empty list is "none", on purpose)
   let weeklyBreaks = DEFAULT_WEEKLY_BREAKS;
@@ -180,7 +184,8 @@ async function settings() {
   const screenshots = await require('./monitoringScreenshots').shotSettings().catch(() => ({ enabled: true, intervalMinutes: 10, retentionDays: 30 })); // eslint-disable-line global-require
   let historyDays = DEFAULT_HISTORY_DAYS;
   try { const h = await prisma.appSetting.findUnique({ where: { key: HISTORY_KEY } }); if (h && h.value) { const n = Math.round(Number(JSON.parse(h.value))); if (n >= 30 && n <= 1825) historyDays = n; } } catch { /* the default year */ }
-  return { ...s, policyText: s.policyText || DEFAULT_POLICY, screenshots, screenshotsEnabled: screenshots.enabled, historyDays, weeklyBreaks };
+  const overtime = await require('./monitoringPlus').otSettings().catch(() => null); // eslint-disable-line global-require
+  return { ...s, policyText: s.policyText || DEFAULT_POLICY, screenshots, screenshotsEnabled: screenshots.enabled, historyDays, weeklyBreaks, overtime };
 }
 async function saveSettings(user, body = {}) {
   const cur = await settings();
@@ -428,6 +433,10 @@ async function ingest(device, records) {
   const now = Date.now();
   const rows = [];
   let skipped = 0;
+  // OVERTIME (utils/monitoringPlus.js): the parts just outside work hours go to their own table (app name + in use / idle only)
+  const P = require('./monitoringPlus'); // eslint-disable-line global-require
+  const otOn = P.otLive(s.overtime, s.policyText);
+  const otPieces = [];
   for (const r of records) {
     const app = cleanApp(r && r.appName);
     const st = new Date(r && r.start).getTime();
@@ -439,7 +448,9 @@ async function ingest(device, records) {
     const we = atShift(day, cfg.workEnd, cfg).getTime();
     const a = Math.max(st, ws);
     const b = Math.min(en, we);
-    if (b - a < 1000) { skipped += 1; continue; } // eslint-disable-line no-continue
+    const otBefore = otPieces.length;
+    if (otOn && r.isBreak !== true) P.otParts(st, en, ws, we, s.overtime).forEach(([x, y]) => otPieces.push({ start: x, end: y, day, appName: app, isIdle: r.isIdle === true || r.idle === true }));
+    if (b - a < 1000) { if (otPieces.length === otBefore) skipped += 1; continue; } // eslint-disable-line no-continue
     // THE LUNCH BREAK (founder 2026-11-05: "break 12:30 - 1:15 consider cheyyu"): the part inside it is Break - not idle, and no app or title kept
     const bs = HM.test(cfg.breakStart) && HM.test(cfg.breakEnd) && atShift(day, cfg.breakStart, cfg) < atShift(day, cfg.breakEnd, cfg) ? atShift(day, cfg.breakStart, cfg).getTime() : null;
     const be = bs ? atShift(day, cfg.breakEnd, cfg).getTime() : null;
@@ -489,8 +500,9 @@ async function ingest(device, records) {
     // eslint-disable-next-line no-await-in-loop
     await prisma.activityLog.createMany({ data: fresh.slice(i, i + 200) });
   }
+  const overtime = otPieces.length ? await P.savePieces(device, otPieces).catch((e) => { console.error('[monitoring overtime]', e.message); return 0; }) : 0; // eslint-disable-line no-console
   await prisma.monitoringDevice.update({ where: { id: device.id }, data: { lastSeenAt: new Date() } }).catch(() => {});
-  return { status: 200, saved: fresh.length, skipped };
+  return { status: 200, saved: fresh.length, skipped, overtime };
 }
 
 // What is on screen now, for the Live Dashboard: the same cleaning as a record, so no chat, mail or password title, and none at all

@@ -36,7 +36,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '3.4'
+$AgentVersion = '3.5'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -539,7 +539,7 @@ try {
 # the website add-on's local listener (agent 3.4): 127.0.0.1 only, a fixed port, no admin rights needed
 try { [TLHost]::Start(47811); if ([TLHost]::Started) { Write-Log 'website add-on listener on 127.0.0.1:47811' } else { Write-Log 'website add-on listener could not open 127.0.0.1:47811 (the website name falls back to the window title)' } } catch { Write-Log "website add-on listener not started: $($_.Exception.Message)" }
 
-$settings = @{ workStart = '09:30'; workEnd = '18:30'; idleThresholdMinutes = 5; excluded = $false }
+$settings = @{ workStart = '09:30'; workEnd = '18:30'; idleThresholdMinutes = 5; excluded = $false; overtimeBefore = 0; overtimeAfter = 0 }
 $queue = New-Object System.Collections.ArrayList
 # what was not sent last time, and the piece that was running when the PC went off: sent now
 function Restore-Saved {
@@ -576,6 +576,21 @@ function In-WorkHours {
   if ($settings.workStart -gt $settings.workEnd) { return ($now -ge $settings.workStart -or $now -lt $settings.workEnd) }
   return ($now -ge $settings.workStart -and $now -lt $settings.workEnd)
 }
+# OVERTIME (agent 3.5, founder 2026-11-26): just outside work hours - up to overtimeBefore minutes before and overtimeAfter minutes after,
+# both set by HR in TeamLink (0 = off) - only the app name and in use / idle are recorded: no window title, no website, no screenshot,
+# no key counts and no live picture. TeamLink keeps it apart as overtime.
+function Minutes-Of($hm) { $p = ([string]$hm).Split(':'); return ([int]$p[0]) * 60 + [int]$p[1] }
+function In-Overtime {
+  if ($settings.excluded) { return $false }
+  $b = [int]$settings.overtimeBefore; $a = [int]$settings.overtimeAfter
+  if ($b -le 0 -and $a -le 0) { return $false }
+  $m = Minutes-Of ((Get-Date).ToUniversalTime().AddMinutes(330).ToString('HH:mm'))
+  $s = Minutes-Of $settings.workStart; $e = Minutes-Of $settings.workEnd
+  if ($b -gt 0 -and ((($m - ($s - $b)) % 1440 + 1440) % 1440) -lt $b) { return $true }
+  if ($a -gt 0 -and ((($m - $e) % 1440 + 1440) % 1440) -lt $a) { return $true }
+  return $false
+}
+function In-RecordHours { return ((In-WorkHours) -or (In-Overtime)) }
 function Save-Queue {
   try {
     if ($script:queue.Count) { ConvertTo-Json -InputObject @($script:queue) -Depth 4 | Set-Content -Path $QueueFile -Encoding UTF8 }
@@ -627,7 +642,8 @@ function Sample {
   if ($script:lastSample -and ($now - $script:lastSample).TotalSeconds -gt 90) { Close-Segment $script:lastSample }
   $script:lastSample = $now
   if ($script:clockedOutDay -and $script:clockedOutDay -ne (Today-Ist)) { $script:clockedOutDay = ''; Update-Menu }
-  if ($script:paused -or $script:clockedOutDay -or -not (In-WorkHours)) { Close-Segment; return }
+  if ($script:paused -or $script:clockedOutDay -or -not (In-RecordHours)) { Close-Segment; return }
+  $ot = -not (In-WorkHours)   # overtime: app name and in use / idle only
   if ($script:onBreak) {
     # a break: only that it is a break and how long; no app, no title
     $c = $script:current
@@ -643,7 +659,7 @@ function Sample {
   $app = $front.app; $title = $front.title
   # a locked screen is never work: it is idle from the first moment, whatever the idle minutes
   if ($app -in @('LockApp', 'LogonUI')) { $idle = $true; $app = 'Locked' }
-  if ($idle) { $title = '' }
+  if ($idle -or $ot) { $title = '' }
   $c = $script:current
   if ($c -and $c.app -eq $app -and $c.title -eq $title -and $c.idle -eq $idle -and ($now - $c.start).TotalMinutes -lt 30) { Write-Open; return }
   $from = $now
@@ -653,7 +669,7 @@ function Sample {
     if ($from -lt $c.start) { $from = $c.start }
     Close-Segment $from
   } else { Close-Segment }
-  $script:current = @{ app = $app; title = $title; idle = $idle; brk = $false; start = $from; host = $(if ($idle) { '' } else { Host-For $app }) }
+  $script:current = @{ app = $app; title = $title; idle = $idle; brk = $false; start = $from; host = $(if ($idle -or $ot) { '' } else { Host-For $app }) }
   Write-Open
 }
 # THE LIVE DASHBOARD, WITHIN SECONDS: looks at what is in front every 2 seconds and tells TeamLink only when it changed. This is the live
@@ -1013,7 +1029,7 @@ function Heartbeat {
     $script:lastBeatOk = Get-Date   # it is reaching the server: the wake handler uses this to know it is back online
     $s = $r.data.settings
     $script:lastLive = ''   # this heartbeat may be up to 15 seconds old: the watcher sets the picture right
-    $script:settings = @{ workStart = $s.workStart; workEnd = $s.workEnd; idleThresholdMinutes = $s.idleThresholdMinutes; excluded = [bool]$s.excluded }
+    $script:settings = @{ workStart = $s.workStart; workEnd = $s.workEnd; idleThresholdMinutes = $s.idleThresholdMinutes; excluded = [bool]$s.excluded; overtimeBefore = $(if ($s.overtimeBefore) { [int]$s.overtimeBefore } else { 0 }); overtimeAfter = $(if ($s.overtimeAfter) { [int]$s.overtimeAfter } else { 0 }) }
     # screenshots: on / off and how often (agent 3.4)
     $script:shotEnabled = [bool]$s.screenshotsEnabled
     if ($s.screenshotIntervalMinutes) { $script:shotInterval = [Math]::Max(1, [int]$s.screenshotIntervalMinutes) }

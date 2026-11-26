@@ -56,6 +56,11 @@ async function scan(now = Date.now(), s = null) {
     prisma.leaveRequest.findMany({ where: { status: { in: ['Approved', 'Pending'] }, fromDate: { lte: today }, toDate: { gte: yesterday } }, select: { employeeId: true, fromDate: true, toDate: true } }),
     M.categoryIndex(), M.overrideIndex(),
   ]);
+  // CUSTOM ALERT RULES (utils/monitoringPlus.js, founder 2026-11-26): HR's own rules, checked with the alerts below
+  const P = require('./monitoringPlus'); // eslint-disable-line global-require
+  const customRules = (await P.listRules().catch(() => [])).filter((r) => r.enabled);
+  const otMinutes = customRules.length ? await P.overtimeMinutesOn(today).catch(() => new Map()) : new Map();
+  const otLast = customRules.length ? await P.lastActiveOn(today).catch(() => new Map()) : new Map();
   const banned = String(cfg.unauthorizedApps || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
   const latest = new Map();
   devices.forEach((d) => { const c = latest.get(d.employeeId); if (!c || new Date(d.lastSeenAt || 0) > new Date(c.lastSeenAt || 0)) latest.set(d.employeeId, d); });
@@ -88,6 +93,10 @@ async function scan(now = Date.now(), s = null) {
     if (banned.length) {
       const hit = mine.find((l) => !l.isIdle && !l.isBreak && banned.some((w) => String(l.appName).toLowerCase().includes(w) || String(l.windowTitle || '').toLowerCase().includes(w)));
       if (hit) add('unauthorized', `Used ${banned.find((w) => String(hit.appName).toLowerCase().includes(w) || String(hit.windowTitle || '').toLowerCase().includes(w))} at ${M.istTime(hit.startTime)}.`);
+    }
+    if (customRules.length) {
+      P.evalRules(customRules, { employeeId, department: d.employee.department || '', day, mine, catOf, totalsOf: M.totalsOf, otMinutes, otLast, now })
+        .forEach((x) => out.push({ employeeId, kind: x.kind, day, detail: x.detail, word: x.detail.split(':')[0] }));
     }
     if (now >= we && mine.length) {
       const t = M.totalsOf(mine, catOf, d.employee.department || '');
@@ -122,7 +131,8 @@ async function run(now = Date.now()) {
     created += 1;
     // eslint-disable-next-line no-await-in-loop
     const to = [...new Set([...(await recipients(emp, lad)), ...(DEVICE_KINDS.includes(a.kind) ? itUsers : [])])];
-    const title = `🖥️ ${WORD[a.kind]}: ${emp.name}`;
+    const word = a.word || WORD[a.kind] || 'Alert';
+    const title = `🖥️ ${word}: ${emp.name}`;
     // eslint-disable-next-line no-await-in-loop
     await notifyUsers(to, { title, message: `${a.detail}\nOpen: /monitoring?tab=alerts` }).catch(() => {});
     if (s.alertEmail && to.length) {
@@ -130,7 +140,7 @@ async function run(now = Date.now()) {
       const people = await prisma.user.findMany({ where: { id: { in: to }, status: 'Active' }, select: { email: true } });
       const list = people.map((u) => u.email).filter(Boolean);
       // eslint-disable-next-line no-await-in-loop
-      if (list.length) await require('./mailer').sendMail({ to: list.join(', '), subject: `TeamLink: ${WORD[a.kind]}, ${emp.name}`, text: `${emp.name}: ${a.detail}\n\nHRMS -> Employee Monitoring -> Alerts.`, useEmployeeFrom: false, fromName: 'TeamLink' }).catch(() => {}); // eslint-disable-line global-require
+      if (list.length) await require('./mailer').sendMail({ to: list.join(', '), subject: `TeamLink: ${word}, ${emp.name}`, text: `${emp.name}: ${a.detail}\n\nHRMS -> Employee Monitoring -> Alerts.`, useEmployeeFrom: false, fromName: 'TeamLink' }).catch(() => {}); // eslint-disable-line global-require
     }
   }
   return { created };
@@ -143,7 +153,8 @@ async function list(from, to, access = null) {
     orderBy: { createdAt: 'desc' }, take: 1000,
     select: { id: true, kind: true, day: true, detail: true, createdAt: true, employee: { select: { id: true, name: true, employeeCode: true, department: true } } },
   });
-  return { from, to, kinds: WORD, rows: rows.map((r) => ({ id: r.id, kind: r.kind, word: WORD[r.kind] || r.kind, day: r.day, detail: r.detail, at: r.createdAt, employeeId: r.employee.id, name: r.employee.name, code: r.employee.employeeCode, department: r.employee.department })) };
+  const ruleNames = new Map((await require('./monitoringPlus').listRules().catch(() => [])).map((x) => [`rule:${x.id}`, x.name])); // eslint-disable-line global-require
+  return { from, to, kinds: WORD, rows: rows.map((r) => ({ id: r.id, kind: r.kind, word: WORD[r.kind] || ruleNames.get(r.kind) || (String(r.kind).startsWith('rule:') ? 'Alert rule' : r.kind), day: r.day, detail: r.detail, at: r.createdAt, employeeId: r.employee.id, name: r.employee.name, code: r.employee.employeeCode, department: r.employee.department })) };
 }
 
 let TIMER = null;
