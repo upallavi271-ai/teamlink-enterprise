@@ -1097,6 +1097,7 @@ function scopeLabel(user, product) {
   if (ats && s.atsRole === 'HR') return 'Internal Hiring';
   if (ats && s.atsRole === 'ACCOUNTANT') return 'Billing — joined candidates';
   if (ats && s.atsRole === 'MANAGER') return 'All Company';
+  if (ats && sharedCandidatePool(user)) return 'All Company'; // NISH: one department, the shared pool - every requirement and person
   if (!ats && hrmsGlobal(user)) return 'All Employees';
   const departments = ats ? atsDepartmentsOf(user) : scopeDepartments(user);
   if (departments === undefined) return 'All Company';

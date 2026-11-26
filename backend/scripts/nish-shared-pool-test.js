@@ -133,6 +133,11 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   const tTA = await tokenOf(recA.id);
   const tDup = await call('POST', '/applications', tTA, { candidateId: Y.id, requirementId: R1.id });
   check('TeamLink: adding Y to R1 again says "already on" as before (no "This profile is with")', tDup.status === 409 && tDup.body && /already on/.test(tDup.body.error || '') && !/This profile is with/.test(tDup.body.error || ''), [tDup.status, tDup.body && tDup.body.error]);
+  // the People number on the pipeline screen (where a TL lands): a TL's own reach on TeamLink, smaller than the Super Admin's
+  const peopleOf = async (tok) => { const r = await call('GET', '/candidates?paged=1&pageSize=5&view=pipeline', tok); return r.body && r.body.counts && r.body.counts.views ? Number(r.body.counts.views.master) : null; };
+  const tTT2 = await tokenOf(tl2.id); const tTS = await tokenOf(sa.id);
+  const tPeople = [await peopleOf(tTT2), await peopleOf(tTS)];
+  check('TeamLink: a TL\'s People count is their own reach, below the Super Admin\'s (as before)', tPeople[0] !== null && tPeople[1] !== null && tPeople[0] < tPeople[1], tPeople);
   await stopServer();
 
   // ------------------------------------------------------------------ NISH (ATS_PROFILE=it-staffing): the shared pool
@@ -152,6 +157,12 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   }
   const nY = await call('GET', `/candidates/${Y.id}`, TB);
   check('NISH: recruiter B opens recruiter A\'s candidate Y, with the R1 application', nY.status === 200 && nY.text.includes(R1.title), [nY.status, nY.text.slice(0, 200)]);
+  // the People number on the pipeline screen and the People list itself: the same as the Super Admin's (founder: "super admin ki 138 ... verey vaalaki 20")
+  const nPeople = async (tok) => { const r = await call('GET', '/candidates?paged=1&pageSize=5&view=pipeline', tok); return r.body && r.body.counts && r.body.counts.views ? Number(r.body.counts.views.master) : null; };
+  const nList = async (tok) => { const r = await call('GET', '/candidates?paged=1&pageSize=5&view=master', tok); return r.body ? Number(r.body.total) : null; };
+  const counts = { tl2Pipe: await nPeople(TT2), saPipe: await nPeople(TS), tl2List: await nList(TT2), saList: await nList(TS), bList: await nList(TB) };
+  check('NISH: TL2\'s People count on the pipeline screen equals the Super Admin\'s', counts.tl2Pipe !== null && counts.tl2Pipe === counts.saPipe, counts);
+  check('NISH: the People list total is the same for TL2, recruiter B and the Super Admin', counts.tl2List !== null && counts.tl2List === counts.saList && counts.bList === counts.saList, counts);
   const nReqs = await call('GET', `/requirements?page=1&pageSize=100&view=all&clientId=${client.id}`, TB);
   check('NISH: recruiter B sees both jobs of the client (one department)', nReqs.status === 200 && nReqs.text.includes(R1.title) && nReqs.text.includes(R2.title), [nReqs.status, rowsOf(nReqs).map((r) => r.title)]);
   // B picks Y up for B's own job R2 (same client): no "same client" reason asked

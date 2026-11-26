@@ -1087,7 +1087,7 @@ async function buildPipelineRows(user, st, s, snap) {
   let candidates = st.candidates;
   let sharedIds = null;
   if (s.role === 'CANDIDATE') candidates = candidates.filter((c) => c.id === s.candidateId);
-  else if (!s.global) {
+  else if (!s.global && !SC_POOL(user)) { // NISH (shared pool): every person, as for the Super Admin - the People count below is all of them
     candidates = candidates.filter((c) => c.applications.some((a) => a.requirement && applicationInScope(user, a)));
     sharedIds = await clientSharedApplicationIds(user, candidates);
   }
@@ -1131,7 +1131,7 @@ async function buildPipelineRows(user, st, s, snap) {
   const linkIdx = await RP.linkIndex(user).catch((e) => { console.error('[candidates] replacement chips:', e.message); return new Map(); }); // who replaced whom
   candidates.forEach((c) => {
     const apps = s.global ? (c.applications || []) : visibleApplications(user, c.applications, sharedIds);
-    if (s.global || apps.length) people += 1;
+    if (s.global || SC_POOL(user) || apps.length) people += 1; // NISH: the People tab counts the whole pool, also people on no requirement
     const xhay = boolHayOf(c, bdeView); // one string per person, shared by their rows
     const inAts = apps.filter((a) => !isPreAtsApplication(a));
     const co = internalViewer ? CAME.cameOnOf(c, c.applications, bulkDays, dateMarks) : null;
