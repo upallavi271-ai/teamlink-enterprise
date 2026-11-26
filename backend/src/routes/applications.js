@@ -292,7 +292,7 @@ async function jobRefusalFor(requirement) {
       status: 409,
       body: {
         error: requirement.status === 'DRAFT'
-          ? 'This requirement is not live yet (it is not live yet), so no candidates can be added. Make the requirement live first.'
+          ? 'This requirement is still a draft, so no candidates can be added. Make the requirement live first.'
           : "This requirement is not live yet — it is waiting for the client's agreement (Agreement Check). Candidates can be added once the requirement is live.",
         code: 'JOB_NOT_LIVE',
       },

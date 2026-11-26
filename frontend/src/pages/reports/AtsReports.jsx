@@ -370,24 +370,50 @@ function Section({
 }
 
 // The list behind one number, with the filters the number was counted under.
+// SCROLL TO SEE THEM ALL (founder 2026-11-26: "10k applications vunnai, but scroll chesthuntey ravataledhu, just konney vasthunnai"): the first 100 open at
+// once, and the next 100 load by themselves as the list is scrolled to the bottom - no Previous / Next. Sorting still orders the WHOLE list on the server.
 function DrillModal({ tab, query, target, canExport, onClose }) {
-  const [offset, setOffset] = useState(0);
   const [data, setData] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [more, setMore] = useState(false);
   const [error, setError] = useState('');
+  const endRef = useRef(null);
+  const seq = useRef(0);
   // Sorting by a heading (user, 2026-10-17): the server orders the WHOLE list, then pages it.
   const [sort, setSort] = useState({ key: '', dir: 'asc' });
   const LIMIT = 100;
   const sortQ = sort.key ? `&sort=${encodeURIComponent(sort.key)}&dir=${sort.dir}` : '';
   const base = `${query}${query ? '&' : ''}${new URLSearchParams({ section: target.section, row: target.row, col: target.col }).toString()}${sortQ}`;
 
+  // a new list (or a new sort): start again from the top
   useEffect(() => {
-    setData(null);
-    api.get(`/ats-reports/${tab}/drill?${base}&offset=${offset}&limit=${LIMIT}`)
-      .then((res) => { setData(res.data); setError(''); })
-      .catch((err) => setError(err.response?.data?.error || 'Could not load this list.'));
-  }, [tab, base, offset]);
+    const my = ++seq.current; // eslint-disable-line no-plusplus
+    setData(null); setRows([]); setMore(false);
+    api.get(`/ats-reports/${tab}/drill?${base}&offset=0&limit=${LIMIT}`)
+      .then((res) => { if (my !== seq.current) return; setData(res.data); setRows(res.data.rows || []); setError(''); })
+      .catch((err) => { if (my === seq.current) setError(err.response?.data?.error || 'Could not load this list.'); });
+  }, [tab, base]);
+  const total = data ? data.total : 0;
+  const loadMore = useCallback(() => {
+    if (!data || more || rows.length >= total) return;
+    const my = seq.current;
+    setMore(true);
+    api.get(`/ats-reports/${tab}/drill?${base}&offset=${rows.length}&limit=${LIMIT}`)
+      .then((res) => { if (my === seq.current) setRows((r) => [...r, ...(res.data.rows || [])]); })
+      .catch((err) => { if (my === seq.current) setError(err.response?.data?.error || 'Could not load more.'); })
+      .finally(() => { if (my === seq.current) setMore(false); });
+  }, [data, more, rows.length, total, tab, base]);
+  // the bottom of the list came into view: the next 100
+  useEffect(() => {
+    const el = endRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) loadMore(); }, { rootMargin: '400px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [loadMore, rows.length]);
 
-  const to = data ? Math.min(offset + LIMIT, data.total) : 0;
+  const offset = 0;
+  const to = rows.length;
   const noun = data ? ({ req: 'requirements', cand: 'people', fu: 'follow-ups', inv: 'invoices', pay: 'payments' }[data.kind] || 'people') : '';
   return (
     <Modal
@@ -400,10 +426,9 @@ function DrillModal({ tab, query, target, canExport, onClose }) {
           {data && data.total > LIMIT && (
             <>
               <span className="small-muted" style={{ marginRight: 'auto' }}>
-                {(offset + 1).toLocaleString('en-IN')}–{to.toLocaleString('en-IN')} of {data.total.toLocaleString('en-IN')}
+                {`Showing ${to.toLocaleString('en-IN')} of ${data.total.toLocaleString('en-IN')}${to < data.total ? ' · scroll down for more' : ''}`}
               </span>
-              <button type="button" className="btn btn-sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - LIMIT))}>‹ Previous</button>
-              <button type="button" className="btn btn-sm" disabled={to >= data.total} onClick={() => setOffset(offset + LIMIT)}>Next ›</button>
+              {to < data.total && <button type="button" className="btn btn-sm" disabled={more} onClick={loadMore}>{more ? 'Loading…' : 'Load more'}</button>}
             </>
           )}
           {canExport && data && data.total > 0 && (
@@ -440,7 +465,7 @@ function DrillModal({ tab, query, target, canExport, onClose }) {
                         className="link-btn"
                         style={{ font: 'inherit', fontWeight: 'inherit', color: 'inherit', padding: 0, textAlign: 'left' }}
                         title={`Sort by ${c.label}`}
-                        onClick={() => { setOffset(0); setSort(on ? { key: c.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: dateCol ? 'desc' : 'asc' }); }}
+                        onClick={() => { setSort(on ? { key: c.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: dateCol ? 'desc' : 'asc' }); }}
                       >
                         {c.label}{on ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                       </button>
@@ -450,7 +475,7 @@ function DrillModal({ tab, query, target, canExport, onClose }) {
               })}</tr>
             </thead>
             <tbody>
-              {data.rows.map((r, i) => (
+              {rows.map((r, i) => (
                 <tr key={`${offset + i}`}>
                   {data.columns.map((c) => ((c.key === 'status' || c.key === 'stage') && r.cells[c.key]
                     // §24 — one colour per meaning (StatusChip).
@@ -458,8 +483,11 @@ function DrillModal({ tab, query, target, canExport, onClose }) {
                     : <Cell key={c.key} col={{ ...c, type: c.type || 'text' }} value={r.cells[c.key]} refs={r.refs} />))}
                 </tr>
               ))}
-              {data.rows.length === 0 && (
+              {rows.length === 0 && (
                 <tr><td colSpan={data.columns.length} className="small-muted" style={{ padding: 16 }}>Nothing in this list.</td></tr>
+              )}
+              {rows.length > 0 && rows.length < data.total && (
+                <tr ref={endRef}><td colSpan={data.columns.length} className="small-muted" style={{ padding: 12, textAlign: 'center' }}>{more ? 'Loading the next 100…' : 'Scroll for more'}</td></tr>
               )}
             </tbody>
           </table>

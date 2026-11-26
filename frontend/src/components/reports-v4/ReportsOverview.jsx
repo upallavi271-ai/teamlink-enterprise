@@ -203,6 +203,17 @@ export default function ReportsOverview({
     ...(dayMonths.length && (m1.data || m2.data) ? [{ name: 'Interviews scheduled', tone: 'violet', values: tr.rows.map((r) => ivByDay.get(r.key) || 0) }] : []),
   ] : [];
   const trendEmpty = tr && trendSeries.every((s) => s.values.every((v) => !v));
+  // A point on the trend opens the applications of that day / week / month (the same list as the Total applications card)
+  const pickTrend = (i) => {
+    const r = tr && tr.rows[i];
+    if (!r || !num(r.values && r.values[0])) return;
+    const k = String(r.key);
+    const day = (d) => d.toISOString().slice(0, 10);
+    let from = k; let to = k;
+    if (tr.bucket === 'month') { from = `${k}-01`; const e = new Date(`${k}-01T00:00:00Z`); e.setUTCMonth(e.getUTCMonth() + 1); e.setUTCDate(0); to = day(e); }
+    else if (tr.bucket === 'week') { const e = new Date(`${k}T00:00:00Z`); e.setUTCDate(e.getUTCDate() + 6); to = day(e); }
+    drill('recruitment', queryFor({ range: 'custom', from, to, compare: '' }), 'tiles', '', 'applications', `Applications · ${r.label}`);
+  };
 
   // --- recent activity (today's recorded work) ----------------------------------------
   const td = today.data;
@@ -292,7 +303,7 @@ export default function ReportsOverview({
               )}
             >
               {trend.loading && !tr ? loadingTxt : errTxt(trend) || (tr && !trendEmpty
-                ? <TrendLines labels={trendLabels} series={trendSeries} />
+                ? <TrendLines labels={trendLabels} series={trendSeries} onPick={pickTrend} />
                 : <div className="ak-empty">No applications in this period.</div>)}
             </Panel>
 

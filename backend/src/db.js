@@ -167,6 +167,21 @@ prisma.$use(async (params, next) => {
   }
   return next(params);
 });
+// busy_: "database is locked" (SQLITE_BUSY) on a single write means another write held the database longer than the 5-second wait, and THIS write did
+// nothing. It is tried again up to 3 more times (0.4 s, 1.2 s, 2.4 s) instead of failing - the monitoring agents' uploads, Omni events and audit lines were being
+// lost that way (1,494 times in the error log, 2026-11-26). Writes inside an interactive transaction are never retried here (the transaction decides).
+const BUSY_WRITES = new Set(['create', 'createMany', 'update', 'updateMany', 'upsert', 'delete', 'deleteMany', 'executeRaw', 'executeRawUnsafe', '$executeRaw', '$executeRawUnsafe']);
+const isBusy = (e) => /database is locked|SQLITE_BUSY|database table is locked/i.test(String((e && e.message) || ''));
+prisma.$use(async (params, next) => {
+  if (!BUSY_WRITES.has(params.action) || params.runInTransaction) return next(params);
+  const waits = [400, 1200, 2400];
+  for (let i = 0; ; i += 1) {
+    try { return await next(params); } catch (e) { // eslint-disable-line no-await-in-loop
+      if (i >= waits.length || !isBusy(e)) throw e;
+      await new Promise((r) => setTimeout(r, waits[i])); // eslint-disable-line no-await-in-loop
+    }
+  }
+});
 // memo_: a write made by the server itself (job, import, hook) raises the data version the short answer memo is keyed on (utils/responseMemo.js)
 prisma.$use(require('./utils/responseMemo').prismaHook());
 module.exports = prisma;

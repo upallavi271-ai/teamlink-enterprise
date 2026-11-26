@@ -23,7 +23,8 @@ function niceMax(v) {
 const short = (n) => (n >= 100000 ? `${Math.round(n / 1000)}K` : n >= 1000 ? `${Math.round((n / 1000) * 10) / 10}K` : String(Math.round(n * 10) / 10));
 
 //   labels: ['06 Oct', …]; series: [{ name, tone, values: [..] }]
-export function TrendLines({ labels = [], series = [], height = 280 }) {
+// onPick(i): a click on the chart opens the point nearest the pointer (founder 2026-11-26: "veeti meedha click chesthey, avi open avvali")
+export function TrendLines({ labels = [], series = [], height = 280, onPick = null }) {
   const box = useRef(null);
   const [w, setW] = useState(460);
   const [hover, setHover] = useState(-1);
@@ -70,7 +71,8 @@ export function TrendLines({ labels = [], series = [], height = 280 }) {
   return (
     <div className="rv4-trend" ref={box}>
       <svg width={w} height={height} viewBox={`0 0 ${w} ${height}`} role="img" aria-label={series.map((s) => s.name).join(' and ')}
-        onPointerMove={(e) => n && setHover(nearest(e))} onPointerLeave={() => setHover(-1)}>
+        onPointerMove={(e) => n && setHover(nearest(e))} onPointerLeave={() => setHover(-1)}
+        onClick={onPick ? (e) => n && onPick(nearest(e)) : undefined} style={onPick ? { cursor: 'pointer' } : undefined}>
         {ticks.map((t) => (
           <g key={t}>
             <line x1={pad.l} x2={w - pad.r} y1={y(t)} y2={y(t)} className="rv4-grid" />
@@ -99,7 +101,7 @@ export function TrendLines({ labels = [], series = [], height = 280 }) {
       </svg>
       {hover >= 0 && (
         <div className="rv4-tip" style={{ left: Math.min(Math.max(x(hover) - 70, 0), w - 150) }}>
-          <b>{labels[hover]}</b>
+          <b>{labels[hover]}</b>{onPick && <em style={{ fontStyle: 'normal', opacity: 0.7 }}> · click to open</em>}
           {series.map((s) => (
             <span key={s.name}><i style={{ background: COLORS[s.tone] || COLORS.blue }} />{s.name}: {fmtNum(Number(s.values[hover]) || 0)}</span>
           ))}
