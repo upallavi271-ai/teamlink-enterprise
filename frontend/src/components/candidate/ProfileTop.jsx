@@ -14,6 +14,8 @@ import { ContactButtons } from './ProfileSlots.jsx';
 import { recordedAs, IMPORTED_SOURCE, longDay, CAME_KIND_TEXT } from '../../utils/candidateSource.js';
 import PrivacyTools, { mayPrivacy } from './PrivacyTools.jsx';
 import CandidateIds from '../atsPlus/CandidateIds.jsx'; // Aadhaar last 4, PAN / bank masked, the consent log (market wave IN-07 / IN-08 / 15.09)
+import BRAND from '../../brand.js'; // NISH (IT staffing): Fit without a tag
+import { useOpenFit } from '../CandidateReach.jsx';
 import './ProfileTop.css';
 
 // ---------------------------------------------------------------------------
@@ -103,6 +105,11 @@ export default function ProfileTop({
   const fit = app && app.salaryFit ? app.salaryFit : null;
   const { user } = useAuth();
   const mayAdd = !!c.salaryMissing && (!fit || fit.prompt === 'Add salary') && mayEditProfile(user);
+  // NISH (founder 2026-11-26: "tag cheyyakundaane raavaali ... percentage raavatledhu"): a person on no requirement shows their best Fit against the
+  // open requirements and its Resume part right in the header (the same scorer a tagged application gets).
+  const untagged = !(c.applications || []).length;
+  const openFit = useOpenFit(c.id, BRAND.itStaffing && internal !== false && untagged);
+  const best = openFit && openFit.allOpen ? (openFit.rows || []).filter((r) => !r.applied)[0] || null : null;
   return (
     <div className="cpt">
       <span className="cpt-ini" aria-hidden="true">{initials(c.name)}</span>
@@ -113,6 +120,13 @@ export default function ProfileTop({
           {c.profileStatus === 'Archived' && <span className="cpt-flag is-orange">Archived</span>}
           {c.profileStatus === 'Do Not Use' && <span className="cpt-flag is-red">Do not use</span>}
           {internal !== false && (() => { const q = completenessOf(c); return <span className={`cpt-flag ${q.score >= 80 ? '' : q.score >= 60 ? 'is-orange' : 'is-red'}`} style={{ fontWeight: 600 }} title={q.missing.length ? `Missing: ${q.missing.join(', ')}` : 'Every key detail is filled'}>{q.score}% complete</span>; })()}
+          {openFit && openFit.allOpen && openFit.own && openFit.own.cantScore && <span className="cpt-flag is-orange" data-testid="cpt-cant-score" title="Add skills or a resume so the Fit can be read">Can't score: no skills found</span>}
+          {best && !(openFit.own && openFit.own.cantScore) && (
+            <span className={`cpt-flag ${best.match >= 60 ? '' : 'is-orange'}`} data-testid="cpt-best-fit" style={{ fontWeight: 600 }} title={`Best fit among the open requirements (not added yet): ${(openFit.rows || []).filter((r) => !r.applied).slice(0, 3).map((r) => `${r.title} ${r.match}%`).join(' · ')}`}>
+              {`Best fit ${best.match}% · ${best.title}`}
+            </span>
+          )}
+          {best && best.resumePct != null && !(openFit.own && openFit.own.cantScore) && <span className="cpt-flag" title="The Resume part of that Fit: skills and experience read from the profile and the resume">{`Resume ${best.resumePct}%`}</span>}
         </div>
         <div className="cpt-facts">
           {c.phone && <span>{c.phone}{internal !== false && <CallButton candidateId={c.id} applicationId={app && app.id} name={c.name} compact />}</span>}

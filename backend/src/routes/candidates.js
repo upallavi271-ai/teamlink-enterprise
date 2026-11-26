@@ -3394,7 +3394,11 @@ router.get('/:id/location-requirements', async (req, res) => {
     return res.json({
       ...base,
       allOpen: true,
-      own: { completeness: dq.score, missing: dq.missing || [], resumeOnFile: !!ev, applications: linkedAll.size },
+      own: {
+        completeness: dq.score, missing: dq.missing || [], resumeOnFile: !!ev, applications: linkedAll.size,
+        // nothing to read a Fit from: no skills on the profile and no resume text
+        cantScore: !String(candidate.skills || '').trim() && !String(candidate.specialization || '').trim() && !ev ? 'No skills found in the profile or the resume' : null,
+      },
       total: scored.length,
       strong: scored.filter((r) => r.match >= 60).length,
       notApplied: scored.filter((r) => !r.applied).length,

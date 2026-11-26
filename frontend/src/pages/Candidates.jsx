@@ -375,6 +375,8 @@ const MASTER_COLUMNS = [
   { id: 'job', label: 'Current job' },
   { id: 'stage', label: 'Step' },
   { id: 'joining', label: 'Joining date' },
+  // NISH: a person on no requirement - their best open-requirement Fit (never offered on TeamLink)
+  ...(BRAND.itStaffing ? [{ id: 'fit', label: 'Fit %' }] : []),
 ];
 const MASTER_DEFAULT_COLS = MASTER_COLUMNS.map((c) => c.id);
 // Built-in Saved Views (filters only — the server still decides what each
@@ -559,7 +561,7 @@ export default function Candidates() {
     (v) => v && MASTER_SORTS.some(([k]) => k === v.key));
   // v3: the ATS Pipeline column set (Candidate | Requirement | Client | Stage |
   // Owner | Next Action | Due).
-  const [mcols, setMcols] = useStoredState(`tl.candidates.mcols.v1.${uid}`, MASTER_DEFAULT_COLS,
+  const [mcols, setMcols] = useStoredState(`tl.candidates.mcols.v1${BRAND.itStaffing ? '.fit' : ''}.${uid}`, MASTER_DEFAULT_COLS,
     (v) => Array.isArray(v) && v.includes('candidate') && v.every((id) => MASTER_COLUMNS.some((c) => c.id === id)));
   const [cols, setCols] = useStoredState(`tl.candidates.cols.v8.${uid}`, () => colsFromV7(uid),
     (v) => Array.isArray(v) && v.length > 0 && v.every((id) => COLUMN_IDS.has(id)));
@@ -2041,6 +2043,7 @@ export default function Candidates() {
                       {mshow.phone && <th>Phone</th>}
                       {mshow.email && <th>Email</th>}
                       {mshow.applications && <th style={{ textAlign: 'right' }}>Applications</th>}
+                      {mshow.fit && <th style={{ textAlign: 'right' }} title="A person on no requirement: the best Fit among the open requirements">Fit %</th>}
                       {mshow.job && <th>Current job</th>}
                       {mshow.stage && <th>Step</th>}
                       {mshow.joining && (
@@ -2069,6 +2072,7 @@ export default function Candidates() {
                         {mshow.phone && <td className="cell-muted cpl-nowrap">{c.phone || '—'}</td>}
                         {mshow.email && <td className="cell-muted cviews-email">{c.email || '—'}</td>}
                         {mshow.applications && <td style={{ textAlign: 'right' }}><b>{c.applicationsCount}</b></td>}
+                        {mshow.fit && <td style={{ textAlign: 'right' }}>{c.fitOpenPct != null ? <b title={c.fitBest ? `Best fit: ${c.fitBest.reqCode ? `${c.fitBest.reqCode} · ` : ''}${c.fitBest.title} (not added yet)` : ''}>{`${c.fitOpenPct}%`}</b> : <span className="cell-muted">—</span>}</td>}
                         {mshow.job && (
                           <td>
                             {c.requirementTitle || <span className="small-muted">No application</span>}

@@ -24,6 +24,26 @@ import './jobs/reach.css';
 //                               requirement where the role may.
 // ---------------------------------------------------------------------------
 
+// NISH: the scores of a person against the open requirements, read once and shared by the header chips and the box (kept 30 s; an Add clears it)
+const FIT_CACHE = new Map();
+export function loadOpenFit(candidateId, { fresh = false } = {}) {
+  const hit = FIT_CACHE.get(candidateId);
+  if (!fresh && hit && Date.now() - hit.at < 30000) return hit.p;
+  const p = api.get(`/candidates/${candidateId}/location-requirements`).then((r) => r.data);
+  FIT_CACHE.set(candidateId, { at: Date.now(), p });
+  p.catch(() => FIT_CACHE.delete(candidateId));
+  return p;
+}
+export function useOpenFit(candidateId, enabled) {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    let live = true;
+    setD(null);
+    if (enabled && candidateId) loadOpenFit(candidateId).then((x) => { if (live) setD(x); }).catch(() => { if (live) setD(false); });
+    return () => { live = false; };
+  }, [candidateId, enabled]);
+  return d;
+}
 const CLOSED = ['REJECTED', 'JOINED', 'HIRED'];
 const clientOf = (a) => (a.requirement?.internal ? 'TeamLink Internal' : a.requirement?.client?.name || '—');
 const byLatest = (x, y) => String(y.createdAt || '').localeCompare(String(x.createdAt || ''));
@@ -124,8 +144,8 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
 
   useEffect(() => {
     setData(null); setError(''); setDone([]); setShowAll(false);
-    api.get(`/candidates/${candidateId}/location-requirements`)
-      .then((r) => setData(r.data))
+    loadOpenFit(candidateId)
+      .then((x) => setData(x))
       .catch((e) => { if (e.response?.status !== 403) setError(e.response?.data?.error || 'Could not load open requirements nearby.'); setData(false); });
   }, [candidateId]);
 
@@ -135,6 +155,7 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
     try {
       await api.post('/applications', { candidateId, requirementId: r.id });
       setDone((d) => [...d, r.id]);
+      FIT_CACHE.delete(candidateId);
       if (onApplied) onApplied();
     } catch (e) {
       if (e.alreadyApplied) { setDone((d) => [...d, r.id]); if (onApplied) onApplied(); } // the box says where
@@ -169,6 +190,7 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
           {`Profile complete: ${data.own.completeness}%${data.own.missing && data.own.missing.length ? ` (missing: ${data.own.missing.slice(0, 4).join(', ')})` : ''} · ${data.own.resumeOnFile ? 'Resume on file: the Fit reads it' : 'No resume on file: the Fit reads the profile only'}`}
         </div>
       )}
+      {allOpen && data.own && data.own.cantScore && <div className="notice amber" style={{ marginBottom: 6 }}><span>{`Can't score yet: ${data.own.cantScore.toLowerCase()}. Add skills or a resume.`}</span></div>}
       {allOpen && (
         <div className="small-muted" style={{ marginBottom: 6 }}>
           {`Open requirements: ${data.total}. ${data.strong} fit 60% or more, ${data.notApplied ?? data.total} not added yet.`}

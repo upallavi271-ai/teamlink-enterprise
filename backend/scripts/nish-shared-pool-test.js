@@ -118,6 +118,8 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   await require('../src/utils/candidateAddedBy').record(X.id, recA, 'bulk'); // A uploaded X (bulk resumes), on no requirement
   // Z: imported with NO location, on no requirement - the founder's "tag cheyyakapoina" case
   const Z = await prisma.candidate.create({ data: { name: `Npz Nocity ${RUN}`, phone: ph(3), email: `npz.${RUN}@np-test.in`, skills: 'Java, Spring', experienceYears: 4, currentSalary: '600000', expectedSalary: '800000', source: 'Naukri' } });
+  // W: imported with no skills and no resume - nothing to score
+  const W = await prisma.candidate.create({ data: { name: `Npw Noskills ${RUN}`, phone: ph(4), email: `npw.${RUN}@np-test.in`, experienceYears: 2, source: 'Other' } });
 
   // ------------------------------------------------------------------ TeamLink (no ATS_PROFILE): exactly as before
   if (!(await startServer(null))) { console.log('FAIL  the server did not start (TeamLink mode)'); await finish(1); return; }
@@ -171,6 +173,9 @@ const rowsOf = (r) => (r.body && (r.body.rows || r.body.items || (Array.isArray(
   const zR1 = zRows.find((r) => r.id === R1.id);
   check('NISH: Z (no location, on no job) is scored against the open jobs - R1 and R2 listed with a Fit %', zFit.status === 200 && zFit.body.allOpen === true && !!zR1 && typeof zR1.match === 'number' && zRows.some((r) => r.id === R2.id), [zFit.status, zFit.body && { allOpen: zFit.body.allOpen, n: zRows.length }]);
   check('NISH: Z\'s own scores come with it (profile complete %, resume on file)', zFit.body && zFit.body.own && typeof zFit.body.own.completeness === 'number' && typeof zFit.body.own.resumeOnFile === 'boolean', zFit.body && zFit.body.own);
+  check('NISH: Z (has skills) is scoreable - no "can\'t score" note', zFit.body && zFit.body.own && !zFit.body.own.cantScore, zFit.body && zFit.body.own);
+  const wFit = await call('GET', `/candidates/${W.id}/location-requirements`, TT2);
+  check('NISH: W (no skills, no resume) says honestly it cannot be scored', wFit.status === 200 && wFit.body.own && /no skills/i.test(wFit.body.own.cantScore || ''), [wFit.status, wFit.body && wFit.body.own]);
   check('NISH: each match shows its parts (resume / location / salary)', !!zR1 && zR1.resumePct !== undefined && zR1.locPct !== undefined, zR1);
   const zList = await call('GET', `/candidates?paged=1&pageSize=100&view=master&search=${encodeURIComponent(Z.name)}`, TT2);
   const zRow = rowsOf(zList).find((r) => r.id === Z.id);
