@@ -27,7 +27,7 @@ export default function IdeaAssist({ kind = 'video', title = '', heading = '', c
   return (
     <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
       <Btn small disabled={busy || disabled} onClick={run} title="The AI writes the topic and the points from your title and content. You can change them before you press Create.">{busy ? 'Writing…' : '✨ AI Assist'}</Btn>
-      {busy ? null : note ? <span role="status" style={{ fontSize: 12, color: bad ? '#b45309' : '#166534', fontWeight: 600 }}>{note}</span> : <span style={{ fontSize: 12, color: 'var(--muted)' }}>Write a title or content above, then press AI Assist: it writes the topic and the points for you.</span>}
+      {busy ? null : note ? <span role="status" style={{ fontSize: 12, color: bad ? '#b45309' : '#166534', fontWeight: 600 }}>{note}</span> : null}
     </div>
   );
 }

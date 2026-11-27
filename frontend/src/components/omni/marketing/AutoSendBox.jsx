@@ -53,7 +53,7 @@ export default function AutoSendBox({ auto }) {
           <Field label="WHATSAPP NUMBER"><input value={cfg.contactPhone} maxLength={30} inputMode="tel" placeholder="+91…" onChange={(e) => update({ contactPhone: e.target.value })} /></Field>
           <Field label="EMAIL (OPTIONAL)"><input value={cfg.contactEmail} maxLength={160} onChange={(e) => update({ contactEmail: e.target.value })} /></Field>
           <label style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center', alignSelf: 'end' }}><input type="checkbox" checked={cfg.email} disabled={!cfg.contactEmail.trim()} onChange={(e) => update({ email: e.target.checked })} />Also send by email</label>
-          {auto.ready ? <div style={{ gridColumn: '1 / -1', fontSize: 11.5, color: '#166534', fontWeight: 600 }}>On: each picture or video made here goes to {cfg.clientName.trim()} with Approve / Reject.</div> : null}
+          {auto.ready ? <div style={{ gridColumn: '1 / -1', fontSize: 11.5, color: '#166534', fontWeight: 600 }}>Sends to {cfg.clientName.trim()} for approval.</div> : null}
         </div>
       ) : null}
     </div>

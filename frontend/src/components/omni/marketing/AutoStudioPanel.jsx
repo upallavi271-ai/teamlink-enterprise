@@ -13,6 +13,7 @@ import IdeaAssist from './IdeaAssist.jsx';
 //   then     the pictures become a VIDEO (the AI Video page puts them together in the browser: onVideo) or stay as picture POSTS (onMade). Everything lands as a DRAFT that still needs
 //            approval (team or client). Nothing is posted from here.
 // kind 'video' | 'post'. projectId: made for a client project (its logo and colours are used).
+// 27 Nov (owner: "remove these unnecessary details, just keep what is needed"): no explaining sentences under the boxes and no example text inside them. Labels only; messages appear when something happens.
 // DESIGN "Promotional poster" (2026-11-27, posts): for our company or a client business, with THAT business's logo (used exactly as uploaded), contact details and services, typed once and kept
 // (marketing/posterKit.js). The AI writes the words and describes one photograph; the photograph is made; TeamLink draws the poster.
 // DESIGN Banner / Promotional poster / Instagram post, and one SIZE picked from every social page's sizes, narrowed by PLATFORM (the list comes from the server, banner.js SIZES).
@@ -278,7 +279,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   return (
     <>
     {!projectId ? <AutoSendBox auto={auto} /> : null}
-    <Panel title="✦ Create from your content" sub={isVideo ? 'Type your idea, and your own title, heading and words if you have them. TeamLink makes the pictures and puts the video together by itself: free, no paid AI needed.' : 'Type your idea, and your own title, heading and words if you have them. TeamLink makes the post pictures by itself: free, no paid AI needed.'} style={{ marginBottom: 14 }}
+    <Panel title="✦ Create from your content" style={{ marginBottom: 14 }}
       right={<Btn small onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Open'}</Btn>}>
       {open ? (
         <div>
@@ -294,7 +295,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
               <b>The client's brief ({brief.clientName}{brief.occasion ? `, ${brief.occasion}` : ''}):</b> {brief.text.length > 260 ? `${brief.text.slice(0, 260)}…` : brief.text}
               {brief.ideas && brief.ideas.length ? (
                 <div style={{ marginTop: 8 }}>
-                  <b>Ideas read from the brief</b> <span style={{ color: 'var(--muted)' }}>(press one to use it, or leave them all and make the overview):</span>
+                  <b>Ideas read from the brief</b>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}>
                     <TinyBtn disabled={working} onClick={() => { setPrompt(''); setHeading(''); }}>Everything in the brief</TinyBtn>
                     {brief.ideas.map((x) => <TinyBtn key={x.label} disabled={working} onClick={() => { setPrompt(x.idea); setHeading(x.heading); }} title={x.idea}>{x.label}</TinyBtn>)}
@@ -305,30 +306,30 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
                 <div style={{ marginTop: 6, padding: '6px 9px', background: '#fff', border: '1px solid #c7ddf7', borderRadius: 8 }}>
                   <b>Starter content, already written for this project:</b> “{brief.draft.headline}”
                   <ol style={{ margin: '4px 0 0 16px', padding: 0 }}>{brief.draft.scenes.map((t, i) => <li key={i}>{t}</li>)}</ol>
-                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, fontSize: 11 }}><input type="checkbox" checked={fresh} onChange={(e) => setFresh(e.target.checked)} />Write it fresh with the AI writer instead (slower, uses this brief's own details)</label>
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, fontSize: 11 }}><input type="checkbox" checked={fresh} onChange={(e) => setFresh(e.target.checked)} />Write it fresh with AI</label>
                 </div>
               ) : null}
-              <div style={{ marginTop: 4, color: 'var(--muted)' }}>Leave the idea below empty and press <b>Create</b>: TeamLink reads this brief and writes the {isVideo ? 'video' : 'post'} for the client's own customers, with useful points, real photos and a call to action, free. Type your own words only if you want to change it.</div>
+              <div style={{ marginTop: 4, color: 'var(--muted)' }}>Leave the idea empty to create from this brief.</div>
             </div>
           ) : null}
           <div className="form-grid" style={{ marginTop: 6 }}>
-            <Field label="TITLE (OPTIONAL)"><input value={title} maxLength={80} disabled={working} onChange={(e) => setTitle(e.target.value)} placeholder="Names it in your list" /></Field>
-            <Field label="HEADING (OPTIONAL)"><input value={heading} maxLength={80} disabled={working} onChange={(e) => setHeading(e.target.value)} placeholder="The big line on the first picture" /></Field>
-            <Field label="CONTENT" full hint="Your own words, one line for each picture. They are used exactly as you write them. Then press AI Assist under the idea box: it writes the idea from them.">
-              <textarea rows={3} maxLength={1200} value={content} disabled={working} onChange={(e) => setContent(e.target.value)} placeholder={'Freshers welcome\nStaffing consultancy you can trust\nSend your CV today'} style={{ width: '100%' }} />
+            <Field label="TITLE (OPTIONAL)"><input value={title} maxLength={80} disabled={working} onChange={(e) => setTitle(e.target.value)} /></Field>
+            <Field label="HEADING (OPTIONAL)"><input value={heading} maxLength={80} disabled={working} onChange={(e) => setHeading(e.target.value)} /></Field>
+            <Field label="CONTENT" full>
+              <textarea rows={3} maxLength={1200} value={content} disabled={working} onChange={(e) => setContent(e.target.value)} style={{ width: '100%' }} />
             </Field>
           </div>
           {/* 2026-11-24 (owner): the content box is above, the idea box below and REQUIRED; ✨ AI Assist writes the idea (topic and points, several lines) from the title and content */}
-          <Field label="YOUR IDEA OR CONCEPT" full hint="The topic and the main points of the video or post: the more clearly you write them, the better it is made. Write your own, or press AI Assist: it writes them from your title and content above. Then read it and change anything.">
-            <textarea rows={7} maxLength={800} value={prompt} disabled={working} onChange={(e) => setPrompt(e.target.value)} placeholder={isVideo ? 'Topic: We are hiring freshers for our staffing consultancy\nPoints:\n- Freshers welcome\n- A staffing consultancy you can trust\n- Send your CV today' : 'Topic: A Republic Day greeting post for our clients\nPoints:\n- Proud and simple\n- Warm wishes from our team'} style={{ width: '100%' }} />
+          <Field label="YOUR IDEA OR CONCEPT" full>
+            <textarea rows={7} maxLength={800} value={prompt} disabled={working} onChange={(e) => setPrompt(e.target.value)} style={{ width: '100%' }} />
             <IdeaAssist kind={kind} title={title} heading={heading} content={content} idea={prompt} projectId={projectId} clientName={auto.cfg.on ? auto.cfg.clientName : ''} disabled={working} onIdea={setPrompt} />
           </Field>
           <div className="form-grid" style={{ marginTop: 6 }}>
-            <Field label="CALL TO ACTION (OPTIONAL)"><input value={cta} maxLength={30} disabled={working} onChange={(e) => setCta(e.target.value)} placeholder="Apply now" /></Field>
+            <Field label="CALL TO ACTION (OPTIONAL)"><input value={cta} maxLength={30} disabled={working} onChange={(e) => setCta(e.target.value)} /></Field>
           </div>
           {!isVideo ? (
             <div style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px', margin: '10px 0 4px' }}>
-              <b style={{ fontSize: 12 }}>On the picture</b>{!isPoster ? <span style={{ fontSize: 11, color: '#92400e', fontWeight: 600 }}> Type the SERVICES to show them, with the logo and contact details, on your banner.</span> : null} <span style={{ fontSize: 11, color: 'var(--muted)' }}>The logo, contact details and name are saved for each business and used exactly as given.</span>
+              <b style={{ fontSize: 12 }}>On the picture</b>
               <div className="form-grid" style={{ marginTop: 6 }}>
                 {!projectId ? (
                   <Field label="MADE FOR">
@@ -339,13 +340,13 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
                     </select>
                   </Field>
                 ) : null}
-                {client === NEW_CLIENT && !projectId ? <Field label="CLIENT BUSINESS NAME"><input value={newName} maxLength={60} disabled={working} placeholder="Rao Dental Care" onChange={(e) => { setNewName(e.target.value); setContact({ ...contact, companyName: e.target.value }); }} /></Field> : null}
-                <Field label={client || projectId ? 'CLIENT LOGO' : 'LOGO'} hint="Used exactly as it is, large and clear. PNG with a clear background looks best (under 300 KB).">
+                {client === NEW_CLIENT && !projectId ? <Field label="CLIENT BUSINESS NAME"><input value={newName} maxLength={60} disabled={working} onChange={(e) => { setNewName(e.target.value); setContact({ ...contact, companyName: e.target.value }); }} /></Field> : null}
+                <Field label={client || projectId ? 'CLIENT LOGO' : 'LOGO'}>
                   {newLogo || logo ? <img src={newLogo || logo} alt="The logo on the poster" style={{ maxHeight: 54, maxWidth: 200, display: 'block', marginBottom: 6, background: '#fff', border: '1px solid var(--line)', borderRadius: 6, padding: 4 }} /> : null}
                   <input type="file" accept="image/png,image/jpeg,image/webp" disabled={working} onChange={chooseLogo} />
                 </Field>
-                <Field label="SERVICES (UP TO 6)" full hint="What this business offers, separated by commas. Shown clearly on the picture exactly as typed, and saved for next time."><input value={contact.services || ''} maxLength={220} disabled={working} placeholder="Permanent Hiring, Contract Staffing, Nurse Recruitment, Doctor Recruitment" onChange={(e) => setContact({ ...contact, services: e.target.value })} /></Field>
-                {CONTACT_FIELDS.map(([key, label, max, ph]) => <Field key={key} label={label}><input value={contact[key] || ''} maxLength={max} disabled={working} placeholder={ph} onChange={(e) => setContact({ ...contact, [key]: e.target.value })} /></Field>)}
+                <Field label="SERVICES (UP TO 6)" full><input value={contact.services || ''} maxLength={220} disabled={working} placeholder="Separate with commas" onChange={(e) => setContact({ ...contact, services: e.target.value })} /></Field>
+                {CONTACT_FIELDS.map(([key, label, max]) => <Field key={key} label={label}><input value={contact[key] || ''} maxLength={max} disabled={working} onChange={(e) => setContact({ ...contact, [key]: e.target.value })} /></Field>)}
               </div>
             </div>
           ) : null}
@@ -373,16 +374,15 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           </div>
           {more && !isPoster ? (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 12, alignItems: 'center' }}>
-              {!isVideo && can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={aiHero} disabled={working || !banners} onChange={(e) => setAiHero(e.target.checked)} />Hero picture made by AI (a few a day) instead of a stock photo</label> : null}
-              {!isVideo ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={banners} disabled={working} onChange={(e) => setBanners(e.target.checked)} />Professional banner (logo, two-colour headline, picture, icons, who it is for, website)</label> : null}
-              {isVideo ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={footage} disabled={working || !can.stock} onChange={(e) => setFootage(e.target.checked)} />Real video footage behind the words (free stock clips, like a real video)</label> : null}
-              <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={photos} disabled={working || !can.stock} onChange={(e) => setPhotos(e.target.checked)} />Free stock photos behind the words {can.stock ? '' : <span style={{ color: 'var(--muted)' }}>(not set up: an Admin adds a free Pixabay key in Administration &gt; Integrations; brand colours are used)</span>}</label>
-              {can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>Pictures: <select value={look} disabled={working} onChange={(e) => setLook(e.target.value)}><option value="designed">Designed by TeamLink (free)</option><option value="ai">{can.aiFree ? 'Made by the AI picture service (free daily allowance)' : 'Made by the AI picture service (may need billing; designed instead if it says no)'}</option></select></label> : <span style={{ color: 'var(--muted)' }}>Pictures are designed by TeamLink (free). A real AI-made picture needs the free Cloudflare picture service: an Admin adds it in Administration &gt; Integrations.</span>}
+              {!isVideo && can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={aiHero} disabled={working || !banners} onChange={(e) => setAiHero(e.target.checked)} />AI hero picture</label> : null}
+              {!isVideo ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={banners} disabled={working} onChange={(e) => setBanners(e.target.checked)} />Professional banner</label> : null}
+              {isVideo ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={footage} disabled={working || !can.stock} onChange={(e) => setFootage(e.target.checked)} />Real video footage</label> : null}
+              <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={photos} disabled={working || !can.stock} onChange={(e) => setPhotos(e.target.checked)} />Free stock photos {can.stock ? '' : <span style={{ color: 'var(--muted)' }}>(not set up)</span>}</label>
+              {can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>Pictures: <select value={look} disabled={working} onChange={(e) => setLook(e.target.value)}><option value="designed">Designed by TeamLink</option><option value="ai">AI pictures</option></select></label> : null}
             </div>
           ) : null}
-          {isVideo && can.stockChecked && !can.stock && !working ? <div style={{ fontSize: 11.5, color: '#92400e', marginTop: 6, lineHeight: 1.5 }}>Real video clips are off: the free stock-footage key is not set, so the video is made from designed pictures. An Admin adds the free Pixabay or Pexels key in Administration &gt; Integrations, and then every video uses real clips.</div> : null}
-          {!mine && !working ?<div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>{projectId ? 'This client project has no brief yet. ' : ''}The idea box is required: write the topic and the points, or write a title or content above and press ✨ AI Assist.</div> : null}
-          {projectId ? <div style={{ fontSize: 11, color: '#1d4fa8', marginTop: 6 }}>Made for the client project: their logo and colours are used.</div> : null}
+          {isVideo && can.stockChecked && !can.stock && !working ? <div style={{ fontSize: 11.5, color: '#92400e', marginTop: 6, lineHeight: 1.5 }}>Real video clips are off: the stock-footage key is not set.</div> : null}
+          {!mine && !working ?<div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Write the idea to start.</div> : null}
           {note ? <div style={{ fontSize: 11.5, color: '#92400e', marginTop: 8, lineHeight: 1.5 }}>{note}</div> : null}
 
           {working || phase === 'done' ? (
