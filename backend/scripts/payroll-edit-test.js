@@ -337,6 +337,21 @@ async function main() {
   const snap2 = JSON.parse((await prisma.appSetting.findUnique({ where: { key: snapKey } })).value);
   ok(aw.status === 200 && snap2.people[S.e3].awl.days === 1 && snap2.people[S.e3].awl.lop === 2 && (await prisma.employeePayrollRun.findUnique({ where: { id: e3r.id } })).daysLop === 3, 'T77 changing the AWL days / LOP days updates the snapshot (LOP summary + payslip lines agree)', snap2.people[S.e3]);
 
+  // LOP days are free to edit (founder 2026-11-27): no absent-without-leave condition
+  const setAwl = async () => { const s = JSON.parse((await prisma.appSetting.findUnique({ where: { key: snapKey } })).value); s.people[S.e3].awl = { days: 2, dates: ['2031-05-04', '2031-05-05'], halfDays: 0, perDay: 2, perHalf: 1, lop: 4 }; await prisma.appSetting.update({ where: { key: snapKey }, data: { value: JSON.stringify(s) } }); };
+  const awlNow = async () => JSON.parse((await prisma.appSetting.findUnique({ where: { key: snapKey } })).value).people[S.e3].awl;
+  await setAwl();
+  let ed4 = await http(S.hr, 'GET', `/payroll/entries/${e3r.id}/edit`);
+  const low = await http(S.hr, 'PUT', `/payroll/entries/${e3r.id}/edit`, saveBody(ed4.body, { daysLop: 1 }));
+  ok(low.status === 200 && (await prisma.employeePayrollRun.findUnique({ where: { id: e3r.id } })).daysLop === 1 && (await awlNow()) === null, 'T77b LOP can be typed lower than the absent-without-leave part: saved, and the old note goes', [low.status, low.body && low.body.error, await awlNow()]);
+  await setAwl();
+  ed4 = await http(S.hr, 'GET', `/payroll/entries/${e3r.id}/edit`);
+  const high = await http(S.hr, 'PUT', `/payroll/entries/${e3r.id}/edit`, saveBody(ed4.body, { daysLop: 6 }));
+  ok(high.status === 200 && (await awlNow()) && (await awlNow()).days === 2, 'T77c a higher LOP keeps the note', [high.status, high.body && high.body.error]);
+  ed4 = await http(S.hr, 'GET', `/payroll/entries/${e3r.id}/edit`);
+  const zero = await http(S.hr, 'PUT', `/payroll/entries/${e3r.id}/edit`, saveBody(ed4.body, { daysLop: 0 }));
+  ok(zero.status === 200 && (await awlNow()) === null, 'T77d LOP can be set to 0', [zero.status, zero.body && zero.body.error]);
+
   console.log('--- the adjustment is picked up when a month is calculated later');
   const a5 = await http(S.hr, 'POST', '/payroll/adjustments', { employeeId: S.e2, sourceMonth: M_PAID, kind: 'ARREARS', amount: 900, label: 'ZZTEST arrears 2', reason: 'ZZTEST x' });
   ok(a5.status === 201 && a5.body.targetMonth === M_OPEN && !a5.body.applied, 'T78 an employee with no record yet in the next open month: the adjustment waits for that month to be calculated', a5.body);

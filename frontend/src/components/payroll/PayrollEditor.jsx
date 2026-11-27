@@ -148,12 +148,9 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
   }
   const setDays = (which, raw) => {
     const wd = num(vals.workingDays);
+    // LOP days are typed freely (founder 2026-11-27): no absent-without-leave condition sits on them
     if (which === 'paid') setV('daysLop', Math.max(0, wd - num(raw)));
-    else if (which === 'awl') {
-      const per = data.awl ? Number(data.awl.perDay) || 2 : 2;
-      const delta = num(raw) - num(vals.awlDays);
-      setVals((s) => ({ ...s, awlDays: raw, daysLop: Math.max(0, num(s.daysLop) + delta * (per - 1)) }));
-    } else setV(which, raw);
+    else setV(which, raw);
   };
 
   // what changed, in words, for the right-hand list
@@ -164,7 +161,6 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
     const a = p2(num(orig[k])); const b = p2(num(shown(k)));
     if (a !== b) changes.push({ k, label: LABELS[k], a, b, days: k === 'workingDays' || k === 'daysLop' });
   });
-  if (vals.awlDays !== null && Number(vals.awlDays) !== Number(orig.awlDays)) changes.push({ k: 'awlDays', label: LABELS.awlDays, a: orig.awlDays, b: num(vals.awlDays), days: true });
   const oe = origRows.earn; const od = origRows.ded;
   earn.forEach((x) => { const o = oe.find((y) => y.id === x.id); if (!o) changes.push({ k: `n${x.id}`, label: `Added earning: ${x.label || '(no name)'}`, a: 0, b: num(x.amount) }); else if (o.amount !== num(x.amount)) changes.push({ k: `c${x.id}`, label: `Earning: ${x.label}`, a: o.amount, b: num(x.amount) }); });
   oe.forEach((o) => { if (!earn.find((x) => x.id === o.id)) changes.push({ k: `r${o.id}`, label: `Removed earning: ${o.label}`, a: o.amount, b: 0 }); });
@@ -182,7 +178,6 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
     const fields = {};
     SCALARS.forEach((k) => { if (k === 'stipend' && !stipend) return; fields[k] = num(vals[k]); });
     AUTO.forEach((k) => { if (manual[k]) fields[k] = num(vals[k]); });
-    if (data.awl && vals.awlDays !== null) fields.awlDays = num(vals.awlDays);
     const body = {
       fields, manual, reason: reason.trim(), notes,
       earnings: earn.map((x) => ({ id: x.id, label: x.label.trim(), amount: num(x.amount) })),
@@ -282,9 +277,6 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
               <div className={`pe-line${changedField('workingDays') ? ' changed' : ''}`}><label htmlFor="pe-wd">Working days</label><input id="pe-wd" type="number" min="1" max="31" step="0.5" disabled={!editable} value={vals.workingDays} onChange={(ev) => setDays('workingDays', ev.target.value)} /></div>
               <div className={`pe-line${changedField('daysLop') ? ' changed' : ''}`}><label htmlFor="pe-paid">Paid days</label><input id="pe-paid" type="number" min="0" step="0.5" disabled={!editable} value={Math.max(0, num(vals.workingDays) - num(vals.daysLop))} onChange={(ev) => setDays('paid', ev.target.value)} /></div>
               <div className={`pe-line${changedField('daysLop') ? ' changed' : ''}`}><label htmlFor="pe-lop">LOP days</label><input id="pe-lop" type="number" min="0" step="0.5" disabled={!editable} value={vals.daysLop} onChange={(ev) => setDays('daysLop', ev.target.value)} /></div>
-              {data.awl && Number(data.awl.days) > 0 && (
-                <div className="pe-line"><label htmlFor="pe-awl">Absent without leave days<small>each counts {data.awl.perDay} LOP days</small></label><input id="pe-awl" type="number" min="0" step="1" disabled={!editable} value={vals.awlDays === null ? 0 : vals.awlDays} onChange={(ev) => setDays('awl', ev.target.value)} /></div>
-              )}
             </div>
             {data.join && (
               <div className="pe-perday" data-testid="pe-join">

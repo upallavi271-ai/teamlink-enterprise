@@ -347,13 +347,22 @@ async function commit({ entry, state, res, c, lines, loan, manual, kind, actor, 
 }
 
 async function updateSnapshotAwl(entry, awlDays, res) {
-  if (awlDays === undefined || awlDays === null) return;
+  // LOP DAYS ARE FREE TO EDIT (founder 2026-11-27): when the LOP of the record becomes less than the absent-without-leave part the payroll
+  // had worked out, that note no longer describes the record, so it goes (the payslip stops showing it).
+  const typed = awlDays !== undefined && awlDays !== null;
   const key = `payroll.snapshot:${entry.month}`;
   const row = await prisma.appSetting.findUnique({ where: { key } }).catch(() => null);
   if (!row) return;
   let cur; try { cur = JSON.parse(row.value); } catch { return; }
   const p = cur.people && cur.people[entry.employeeId];
   if (!p || !p.awl) return;
+  if (!typed) {
+    if ((Number(p.awl.lop) || 0) <= (Number(res.daysLop) || 0) + 0.001) return;
+    p.awl = null;
+    p.edited = true;
+    await prisma.appSetting.update({ where: { key }, data: { value: JSON.stringify(cur) } }).catch(() => {});
+    return;
+  }
   const perDay = Number(p.awl.perDay) || 0; const perHalf = Number(p.awl.perHalf) || 0;
   const days = Math.max(0, Number(awlDays) || 0);
   const halfDays = Number(p.awl.halfDays) || 0;
