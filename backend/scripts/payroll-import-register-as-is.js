@@ -98,6 +98,7 @@ for (const sheet of ['Group A', 'Stipend']) {
     const stipend = sheet === 'Stipend';
     const s = {
       payableDays: num(g('Payable Days')), nonPayableDays: num(g('Non Payable Days')), grossSalary: num(g('Gross Salary')), lop: num(g('LOP')),
+      monthlyCtc: num(g('Monthly CTC') ?? g('Montly CTC')), // the register's own spelling too (the Stipend sheet)
       ...(stipend ? { stipend: num(g('Stipend')) } : {
         basic: num(g('Basic Pay')), hra: num(g('HR Allowance')), conveyance: num(g('Conveyance')), specialAllowance: num(g('Special Allowance')),
         performanceBonus: num(g('Performance Bonus')), monthlyBonus: num(g('Monthly Bonus')),

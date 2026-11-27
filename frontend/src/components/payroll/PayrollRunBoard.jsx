@@ -29,6 +29,8 @@ import LopBreakdown, { LopLink } from './LopBreakdown.jsx';
 // Paise are shown when there are any (pay-register months are worked out to the paisa, 2026-10-28).
 const inr0 = (n) => { const v = Math.round((Number(n) || 0) * 100) / 100; return `₹${v.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 })}`; };
 const groupOf = (e) => (e.payMode === 'Stipend' ? 'Stipend' : 'Group A');
+// Monthly CTC (founder 2026-11-27): the pay register's figure, else the salary structure's - the tooltip says which
+const ctcFrom = (f) => (!f ? 'No CTC on the salary structure' : f.from === 'register' ? `From the ${monthLabel(f.month)} pay register` : 'From the salary structure');
 
 // The list filter standard for the three tables on this board.
 const empSearch = (code, name) => ({ key: 'q', type: 'search', placeholder: 'Search employee name or ID…', get: (r) => `${code(r) || ''} ${name(r) || ''}` });
@@ -186,6 +188,7 @@ function EntryDetail({ id, onClose }) {
             <span>Status</span><b><span className={`status ${STATUS_CLS[e.status]}`}>{STATUS_LABEL[e.status]}</span></b>
             <span>Structure version</span><b>{data.version ? `from ${data.version.effectiveFrom.slice(0, 7)}${data.version.effectiveTo ? ` to ${data.version.effectiveTo}` : ''}` : '—'}</b>
             <span>Payroll days / LOP</span><b>{e.workingDays} / {e.daysLop} ({e.attendanceSource === 'OVERRIDE' ? 'HR override' : 'attendance'})</b>
+            <span>Monthly CTC</span><b>{e.monthlyCtc ? <>{inr0(e.monthlyCtc)} <span className="prb-note">({ctcFrom(e.monthlyCtcFrom).toLowerCase()})</span></> : '—'}</b>
             <span>Gross / LOP / earned</span><b>{inr0(e.grossPay)} − {inr0(e.lopDeduction)} = {inr0(e.earnedGross)}</b>
             {Number(e.incentive) > 0 && <><span>Incentive (in gross)</span><b>{inr0(e.incentive)} — recruiter joinings, given by Super Admin</b></>}
             <span>Deductions</span><b>PF {inr0(e.pfEmployee)} · ESI {inr0(e.esiEmployee)} · PT {inr0(e.professionalTax)} · TDS {inr0(e.tds)} · Other {inr0(e.otherDeductions)} · LOP {inr0(e.lopDeduction)} = {inr0(e.totalDeductions)}</b>
@@ -410,7 +413,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
               <thead>
                 <tr>
                   <th><input type="checkbox" checked={allOn} title="Tick every record the filters show" onChange={(e) => setSelected(e.target.checked ? Object.fromEntries(lf.rows.map((x) => [x.id, true])) : {})} /></th>
-                  <th>Code</th><th>Name</th><th>Group</th><th title="Days paid in the pay period">Paid days</th><th title="Days not paid (loss of pay)">LOP days</th><th title="Pay for the paid days">Earned</th><th>PF</th><th>ESI</th><th>PT</th><th>TDS</th>{showOther && <th>Other</th>}<th>Net pay</th><th>Status</th><th />
+                  <th>Code</th><th>Name</th><th>Group</th><th title="Cost to company per month: the pay register's figure, else the salary structure's">Monthly CTC</th><th title="Days paid in the pay period">Paid days</th><th title="Days not paid (loss of pay)">LOP days</th><th title="Pay for the paid days">Earned</th><th>PF</th><th>ESI</th><th>PT</th><th>TDS</th>{showOther && <th>Other</th>}<th>Net pay</th><th>Status</th><th />
                 </tr>
               </thead>
               <tbody>
@@ -420,6 +423,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
                     <td><b>{e.employee.employeeCode}</b></td>
                     <td>{e.employee.name}</td>
                     <td className="cell-muted">{groupOf(e)}</td>
+                    <td title={ctcFrom(e.monthlyCtcFrom)}>{e.monthlyCtc ? inr0(e.monthlyCtc) : '—'}</td>
                     <td>{e.workingDays - e.daysLop}<span className="cell-muted"> / {e.workingDays}</span>{e.attendanceSource === 'OVERRIDE' ? <span className="cell-muted" title="Days typed or imported by HR"> *</span> : null}</td>
                     <td className="cell-muted"><LopLink value={e.daysLop} onOpen={() => setLopId(e.id)} title={`Click to see which dates were counted as loss of pay for ${e.employee.name}, and why`} /></td>
                     <td>{inr0(e.earnedGross)}</td>

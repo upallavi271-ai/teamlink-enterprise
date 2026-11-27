@@ -61,6 +61,7 @@ const P = require('../utils/payrollPosting');
 const { compliance } = require('../utils/payrollReports');
 const { toCsv, toXlsx, toXlsxBook } = require('../utils/tabularExport');
 const REG = require('../utils/payrollRegister'); // pay-register columns of the export (2026-10-28)
+const CTC = require('../utils/payrollCtc'); // the Monthly CTC column (founder 2026-11-27)
 const { notifyDataIo } = require('../utils/dataIoNotify');
 // Payroll edit and recalculate (user spec 2026-10-13, item 5): utils/payrollEdit.js
 const PEdit = require('../utils/payrollEdit');
@@ -175,6 +176,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       prisma.payrollSyncLog.findMany({ where: { month } }),
     ]);
     const editStates = await PEdit.readStates(entries.map((e) => e.id));
+    const ctcOf = await CTC.monthlyCtcFor(entries); // register figure, else the salary structure
     // Everybody on the list: payable employees with NO record this month (no salary structure yet, a structure added since the last
     // Calculate, joins later ...) - shown under the table with the reason. Not asked for while a status filter is on.
     const missing = req.query.status ? [] : await missingFor({
@@ -194,6 +196,8 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       entries: entries.map((e) => ({
         ...e,
         statusLabel: E.STATUS_LABEL[e.status],
+        monthlyCtc: ctcOf.has(e.id) ? ctcOf.get(e.id).value : null,
+        monthlyCtcFrom: ctcOf.get(e.id) || null,
         lock: PEdit.lockOf(e),
         edit: (() => {
           const st = editStates.get(e.id);
@@ -230,20 +234,21 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     const edited = await PEdit.readStates(entries.map((e) => e.id));
     // Pay register layout (founder 2026-10-28): payable / non-payable days, the EARNED parts, the PF rule, amounts to the paisa.
     const pfRules = await REG.pfRulesFor(entries.map((e) => e.salaryVersionId));
+    const ctcOf = await CTC.monthlyCtcFor(entries);
     const n = (v) => REG.r2(v);
-    const headers = ['Employee ID', 'Name', 'Department', 'Designation', 'Pay type', 'Working days', 'Days present', 'LOP days', 'Payable days', 'Non-payable days',
+    const headers = ['Employee ID', 'Name', 'Department', 'Designation', 'Pay type', 'Monthly CTC', 'Working days', 'Days present', 'LOP days', 'Payable days', 'Non-payable days',
       'Basic', 'HRA', 'Special allowance', 'Conveyance', 'Bonus', 'Incentive', 'Other earnings', 'Gross', 'LOP amount', 'Earned gross',
       'Earned basic', 'Earned HRA', 'Earned conveyance', 'Earned special allowance', 'Earned bonus', 'Earned stipend', 'PF rule',
       'PF (employee)', 'ESI (employee)', 'Professional tax', 'TDS', 'Other deductions', 'Total deductions', 'Net pay',
       'PF (employer)', 'ESI (employer)', 'Gratuity', 'Status', 'Edited by hand'];
-    const MONEY = ['basic', 'hra', 'specialAllowance', 'conveyance', 'bonus', 'incentive', 'arrears', 'grossPay', 'lopDeduction', 'earnedGross',
+    const MONEY = ['monthlyCtc', 'basic', 'hra', 'specialAllowance', 'conveyance', 'bonus', 'incentive', 'arrears', 'grossPay', 'lopDeduction', 'earnedGross',
       'eBasic', 'eHra', 'eConveyance', 'eSpecial', 'eBonus', 'eStipend',
       'pfEmployee', 'esiEmployee', 'professionalTax', 'tds', 'otherDeductions', 'totalDeductions', 'netPay', 'pfEmployer', 'esiEmployer', 'gratuity'];
     const view = entries.map((e) => {
       const ep = REG.earnedParts(e);
       const rule = pfRules.get(e.salaryVersionId);
       return {
-        e, ep, eBasic: ep.basic, eHra: ep.hra, eConveyance: ep.conveyance, eSpecial: ep.specialAllowance, eBonus: ep.bonus, eStipend: ep.stipend,
+        e, ep, monthlyCtc: ctcOf.has(e.id) ? ctcOf.get(e.id).value : 0, eBasic: ep.basic, eHra: ep.hra, eConveyance: ep.conveyance, eSpecial: ep.specialAllowance, eBonus: ep.bonus, eStipend: ep.stipend,
         pfRule: e.payMode === 'Stipend' ? '' : (rule ? (rule.mode === 'FIXED' ? `Fixed ${n(rule.amount).toFixed(2)}` : REG.pfRuleText(rule)) : 'Standard'),
       };
     });
@@ -251,7 +256,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     const rowOf = (v) => {
       const { e } = v;
       return [e.employee.employeeCode || '', e.employee.name, e.employee.department || '', e.employee.designation || '', e.payMode || '',
-        e.workingDays ?? '', e.daysPresent ?? '', e.daysLop ?? '', v.ep.payable, v.ep.nonPayable,
+        v.monthlyCtc ? n(v.monthlyCtc) : '', e.workingDays ?? '', e.daysPresent ?? '', e.daysLop ?? '', v.ep.payable, v.ep.nonPayable,
         n(e.basic), n(e.hra), n(e.specialAllowance), n(e.conveyance), n(e.bonus), n(e.incentive), n(e.arrears), n(e.grossPay), n(e.lopDeduction), n(e.earnedGross),
         n(v.eBasic), n(v.eHra), n(v.eConveyance), n(v.eSpecial), n(v.eBonus), n(v.eStipend), v.pfRule,
         n(e.pfEmployee), n(e.esiEmployee), n(e.professionalTax), n(e.tds), n(e.otherDeductions), n(e.totalDeductions), n(e.netPay),
@@ -261,7 +266,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       const t = (k) => n(list.reduce((sum, v) => sum + n(val(v, k)), 0));
       const days = (k) => list.reduce((sum, v) => sum + (Number(v.ep[k]) || 0), 0);
       const T = Object.fromEntries(MONEY.map((k) => [k, t(k)]));
-      return ['', label, '', '', '', '', '', '', days('payable'), days('nonPayable'), T.basic, T.hra, T.specialAllowance, T.conveyance, T.bonus, T.incentive, T.arrears, T.grossPay,
+      return ['', label, '', '', '', T.monthlyCtc, '', '', '', days('payable'), days('nonPayable'), T.basic, T.hra, T.specialAllowance, T.conveyance, T.bonus, T.incentive, T.arrears, T.grossPay,
         T.lopDeduction, T.earnedGross, T.eBasic, T.eHra, T.eConveyance, T.eSpecial, T.eBonus, T.eStipend, '',
         T.pfEmployee, T.esiEmployee, T.professionalTax, T.tds, T.otherDeductions, T.totalDeductions, T.netPay,
         T.pfEmployer, T.esiEmployer, T.gratuity, '', ''];
@@ -318,8 +323,9 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       attendance: { source: e.attendanceSource === 'OVERRIDE' ? 'Days typed / imported by HR' : 'From the attendance module', daysPresent: e.daysPresent },
       calculatedAt: e.calculatedAt, calculatedBy: e.calculatedBy,
     };
+    const ctc = (await CTC.monthlyCtcFor([e])).get(e.id) || null;
     return res.json({
-      entry: { ...e, statusLabel: E.STATUS_LABEL[e.status] },
+      entry: { ...e, statusLabel: E.STATUS_LABEL[e.status], monthlyCtc: ctc ? ctc.value : null, monthlyCtcFrom: ctc },
       version, history, syncLogs: logs, breakup,
       // This employee's share of the month's one journal entry.
       journalPayload: await P.employeeShare(e),
