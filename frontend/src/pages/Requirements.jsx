@@ -827,13 +827,13 @@ export default function Requirements() {
         // SEVERAL TEAM LEADS (2026-10-14): the main one, then "+2"; hover shows everyone.
         return (
           <td key={c.key} className="jl-people" title={r.extraTlNames?.length ? [r.tlName, ...r.extraTlNames].filter(Boolean).join(', ') : undefined}>
-            <PersonName name={r.tlName} extra={r.extraTlNames?.length || 0} tone="red" live={r.live !== false} />
+            <PersonName name={r.tlName} others={r.extraTlNames} tone="red" live={r.live !== false} />
           </td>
         );
       case 'recruiter':
         return (
           <td key={c.key} className="jl-people" title={[r.workedBy, ...(r.coRecruiterNames || [])].filter(Boolean).join(', ') || undefined}>
-            <PersonName name={r.workedBy} extra={r.coRecruiterNames?.length || 0} tone="amber" live={r.live !== false} />
+            <PersonName name={r.workedBy} others={r.coRecruiterNames} tone="amber" live={r.live !== false} />
             {role !== 'recruiter' && r.workedBy && r.workedByPosition && <div className="small-muted" style={{ fontSize: 11 }}>{r.workedByPosition}</div>}
           </td>
         );

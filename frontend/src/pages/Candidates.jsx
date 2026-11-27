@@ -69,6 +69,7 @@ import MultiSelect from '../components/ats/MultiSelect.jsx';
 import CandidateFilterBar, {
   useCandidateXf, readUrlFilters, writeUrlFilters, URL_FILTER_KEYS,
 } from '../components/ats/CandidateFilterBar.jsx';
+import { DateRangeFilter, FBox } from '../components/ats/FilterBar.jsx'; // one box per filter, one date style (2026-11-27)
 import BooleanHint from '../components/BooleanHint.jsx'; // the boolean search line under the search box
 import CandidateDuplicatePanel from '../components/CandidateDuplicatePanel.jsx';
 import { SalaryFitChips, SalaryFields, AddSalaryDialog, salaryCheck } from '../components/SalaryFit.jsx'; // required salary + Salary fit chips (utils/salaryFit.js)
@@ -117,7 +118,6 @@ import '../components/candidates-v4/candidatesLook.css';
 const AVATAR_TONES = 8;
 const avatarTone = (name) => { let h = 0; for (const ch of String(name || '')) h = (h * 31 + ch.charCodeAt(0)) % 997; return h % AVATAR_TONES; };
 // The counts beside the title: the same numbers as the status strip, as small coloured pills.
-const HEAD_STATS = [['active', 'Active', 'blue'], ['hold', 'On hold', 'amber'], ['joined', 'Joined', 'green'], ['rejected', 'Rejected', 'red']];
 // Columns that hold a number: right-aligned.
 const NUM_COLS = new Set(['experience']);
 
@@ -346,7 +346,8 @@ const toggleCsv = (v, one) => { const l = csvList(v); return (l.includes(one) ? 
 const SIMPLE_COL = { salary: { id: 'salary', label: 'Salary', sort: 'ctc', tip: 'Now = what they earn now. Wants = what they ask for. The chip says how it fits the client budget.' } };
 // Simple view: ONE set of column widths for the header and every row (a fixed grid).
 const SIMPLE_W = {
-  source: 112, phone: 112, experience: 84, salary: 132, stage: 108, joining: 96, next: 150,
+  // (2026-11-27) fits a 1366 px screen without sideways scrolling, and the Next step button is never cut off
+  source: 100, phone: 106, experience: 72, salary: 124, stage: 104, joining: 92, next: 170,
 };
 const FEEDBACK_COLUMNS = ['candidate', 'client', 'requirement', 'ivdate', 'waiting', 'next'];
 // The Rejected tab shows its own set (change list §10): Job (client) · Rejected by · Reason · Date.
@@ -1454,91 +1455,106 @@ export default function Candidates() {
     filters.joinedFrom, filters.joinedTo, filters.location, filters.skills, filters.minExp, filters.maxExp, filters.notice, filters.expBand, filters.qualificationId,
     ...(masterView ? [filters.salaryMissing] : [filters.desig, filters.salaryFit, filters.contact, filters.rejectedBefore, filters.rejSide, filters.rejReason, filters.hiring, hier.tl, filters.followUp, filters.maxSalary, filters.minMatch, quickInFilters]),
   ].filter(Boolean).length;
-  const extraFilters = (
-    <>
-      <div className="lph-facet wide cpl-panelbar">
+  // (2026-11-27) the same controls in three plain parts of "More filters": About the person · Where they are in hiring · Dates.
+  // Every control is one box of the same height; a date filter is one "Any time" box (dates show only for Custom dates).
+  const appliedRange = { from: filters.appliedFrom || '', to: filters.appliedTo || '' };
+  const extraFilters = {
+    person: (
+      <>
+        {!masterView && <FacetSelect multi label="Designation" allLabel="All designations" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={withCurrent(facets.desig, filters.desig)} loading={facetsLoading} title="The person's current designation, with how many people each" />}
+        {masterView && counts.salaryMissing != null && (
+          <FacetSelect multi label="Salary" allLabel="All" value={filters.salaryMissing} onChange={(v) => setFilter({ salaryMissing: v })} options={[{ value: '1', label: 'Salary missing', count: counts.salaryMissing }]} title="People whose current or expected salary is not saved" />
+        )}
+        {/* the older filters: drawn only while a link or a saved filter has them on (Expected CTC and Skills above do the same job) */}
+        {!masterView && filters.maxSalary && (
+          <FBox label="Expected salary up to (₹ lakh)">
+            <input type="number" min="0" step="0.5" placeholder="e.g. 12" value={filters.maxSalary} onChange={(e) => setFilter({ maxSalary: e.target.value })} />
+          </FBox>
+        )}
+        {filters.location && <FacetSelect multi label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />}
+        {filters.skills && (
+          <FBox label="Skill">
+            <input type="text" placeholder="e.g. Java, SQL" value={filters.skills} onChange={(e) => setFilter({ skills: e.target.value })} />
+          </FBox>
+        )}
+        {(filters.minExp || filters.maxExp) && (
+          <FBox label="Experience (yrs)" className="fbar-range">
+            <input type="number" min="0" step="0.5" placeholder="Min" aria-label="Minimum experience (years)" value={filters.minExp} onChange={(e) => setFilter({ minExp: e.target.value })} />
+            <span className="fbar-dash" aria-hidden="true">–</span>
+            <input type="number" min="0" step="0.5" placeholder="Max" aria-label="Maximum experience (years)" value={filters.maxExp} onChange={(e) => setFilter({ maxExp: e.target.value })} />
+          </FBox>
+        )}
+        {filters.notice && <FacetSelect multi label="Notice period" allLabel="Any notice" value={filters.notice} onChange={(v) => setFilter({ notice: v })} options={withCurrent(facets.notice, filters.notice)} loading={facetsLoading} />}
+        {filters.expBand && <FacetSelect multi label="Experience band" allLabel="Any experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={withCurrent(['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean), filters.expBand)} loading={facetsLoading} />}
+      </>
+    ),
+    hiring: (
+      <>
         <PageFilterBar multiDept multiPeople
+          className="fbar-contents"
           value={pfValue}
           onChange={setPageFilters}
           options={pfOptions}
-          show={{ department: true, dateRange: true, client: false, people: show.recruiter || show.bde, jobType: true }}
+          show={{ department: true, dateRange: false, client: false, people: show.recruiter || show.bde, jobType: true }}
         />
-      </div>
-      <HierarchyFilter multi value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
-      <CameOnFilter filters={filters} setFilter={setFilter} />
-      <JoinedOnFilter filters={filters} setFilter={setFilter} />
-      {masterView && counts.salaryMissing != null && (
-        <FacetSelect multi label="Salary" allLabel="All" value={filters.salaryMissing} onChange={(v) => setFilter({ salaryMissing: v })} options={[{ value: '1', label: 'Salary missing', count: counts.salaryMissing }]} title="People whose current or expected salary is not saved" />
-      )}
-      {!masterView && (
-        <>
-          <FacetSelect multi label="Designation" allLabel="All designations" value={filters.desig} onChange={(v) => setFilter({ desig: v })} options={withCurrent(facets.desig, filters.desig)} loading={facetsLoading} title="The person's current designation, with how many people each" />
-          <FacetSelect multi
-            label="Salary fit"
-            allLabel="Any"
-            value={filters.salaryFit}
-            onChange={(v) => setFilter({ salaryFit: v })}
-            options={withCurrent(['within', 'slightly', 'above', 'missing', 'nobudget'].map((k) => (facets.salaryFit || []).find((o) => o.value === k)).filter(Boolean), filters.salaryFit)}
-            loading={facetsLoading}
-            title="Is what the person wants inside the client's budget?"
-          />
-          <FacetSelect multi label="Last contact" allLabel="Any time" value={filters.contact} onChange={(v) => setFilter({ contact: v })} options={withCurrent(facets.contact, filters.contact)} loading={facetsLoading} />
-          <FacetSelect multi label="Rejected before" allLabel="Either" value={filters.rejectedBefore} onChange={(v) => setFilter({ rejectedBefore: v })} options={withCurrent(facets.rejectedBefore, filters.rejectedBefore)} loading={facetsLoading} />
-          <FacetSelect multi label="Auto-screen" allLabel="Any" value={filters.screening} onChange={(v) => setFilter({ screening: v })} options={SCREEN_OPTIONS} title="The automatic screening result of the application (jobs with Auto-screen on)" />
-          {(pipeSub === 'rejected' || filters.status === 'Rejected' || filters.rejSide || filters.rejReason) && (
-            <>
-              <FacetSelect multi label="Rejected by" allLabel="Anyone" value={filters.rejSide} onChange={(v) => setFilter({ rejSide: v })} options={withCurrent(facets.rejSide, filters.rejSide)} loading={facetsLoading} />
-              <FacetSelect multi label="Reject reason" allLabel="Any reason" value={filters.rejReason} onChange={(v) => setFilter({ rejReason: v })} options={withCurrent(facets.rejReason, filters.rejReason)} loading={facetsLoading} />
-            </>
-          )}
-          {user?.atsRole !== 'HR' && (
-            <MultiSelect label="Hiring type" value={filters.hiring || ''} onChange={(v) => setFilter({ hiring: v, stage: '' })} allLabel="Client + internal" options={[{ value: 'client', label: 'Client requirements' }, { value: 'internal', label: 'Our own openings (internal)' }]} />
-          )}
-          {show.tl && (
-            <FacetSelect multi label="Team lead" allLabel="All team leads" value={hier.tl} onChange={(v) => setHier({ ...hier, tl: v })} options={withCurrent(facets.tl, hier.tl, personLabel(hier.tl))} loading={facetsLoading} />
-          )}
-          <MultiSelect label="Follow-up" value={filters.followUp} onChange={(v) => setFilter({ followUp: v })} allLabel="All follow-ups" options={[...FOLLOWUP_STATUSES.map((x) => ({ value: x, label: x === 'Overdue' ? 'Late' : x === 'Due Today' ? 'Due today' : x })), { value: 'Not set', label: 'Not set' }]} />
-          <PanelField label="Expected salary up to (₹L)">
-            <input type="number" min="0" step="0.5" placeholder="e.g. 12" value={filters.maxSalary} onChange={(e) => setFilter({ maxSalary: e.target.value })} />
-          </PanelField>
-          <PanelField label="Fit at least (%)">
-            <input type="number" min="0" max="100" step="5" placeholder="e.g. 70" value={filters.minMatch} onChange={(e) => setFilter({ minMatch: e.target.value })} />
-          </PanelField>
-          <PanelField label="Show only">
-            <Combo value={quickInFilters} onChange={(e) => { if (e.target.value) pickQuick(e.target.value); else if (quickInFilters) setQuick(''); }}>
-              <option value="">Everyone</option>
-              {QUICK_IN_FILTERS.map(([id, l]) => {
-                const n = Number((counts.quick || {})[id] ?? 0);
-                return <option key={id} value={id}>{n > 0 ? `${l} (${n.toLocaleString('en-IN')})` : l}</option>;
-              })}
-            </Combo>
-          </PanelField>
-        </>
-      )}
-      {(filters.location || filters.skills || filters.minExp || filters.maxExp || filters.notice || filters.expBand) && (
-        <>
-          <span className="lph-facet wide cpl-panel-sep">Set by a link or a saved filter</span>
-          {filters.location && <FacetSelect multi label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />}
-          {filters.skills && (
-            <PanelField label="Skill">
-              <input type="text" placeholder="e.g. Java, SQL" value={filters.skills} onChange={(e) => setFilter({ skills: e.target.value })} />
-            </PanelField>
-          )}
-          {(filters.minExp || filters.maxExp) && (
-            <span className="lph-facet">
-              <span className="lph-facet-lbl">Experience (years)</span>
-              <span className="lph-pair">
-                <input type="number" min="0" step="0.5" placeholder="Min" aria-label="Minimum experience (years)" value={filters.minExp} onChange={(e) => setFilter({ minExp: e.target.value })} />
-                <input type="number" min="0" step="0.5" placeholder="Max" aria-label="Maximum experience (years)" value={filters.maxExp} onChange={(e) => setFilter({ maxExp: e.target.value })} />
-              </span>
-            </span>
-          )}
-          {filters.notice && <FacetSelect multi label="Notice period" allLabel="Any notice" value={filters.notice} onChange={(v) => setFilter({ notice: v })} options={withCurrent(facets.notice, filters.notice)} loading={facetsLoading} />}
-          {filters.expBand && <FacetSelect multi label="Experience band" allLabel="Any experience" value={filters.expBand} onChange={(v) => setFilter({ expBand: v })} options={withCurrent(['0-1', '1-3', '3-5', '5-10', '10+', 'none'].map((k) => (facets.expBand || []).find((o) => o.value === k)).filter(Boolean), filters.expBand)} loading={facetsLoading} />}
-        </>
-      )}
-    </>
-  );
+        <HierarchyFilter multi value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
+        {!masterView && (
+          <>
+            {show.tl && (
+              <FacetSelect multi label="Team lead" allLabel="All team leads" value={hier.tl} onChange={(v) => setHier({ ...hier, tl: v })} options={withCurrent(facets.tl, hier.tl, personLabel(hier.tl))} loading={facetsLoading} />
+            )}
+            {user?.atsRole !== 'HR' && (
+              <MultiSelect label="Hiring type" value={filters.hiring || ''} onChange={(v) => setFilter({ hiring: v, stage: '' })} allLabel="Client + internal" options={[{ value: 'client', label: 'Client requirements' }, { value: 'internal', label: 'Our own openings (internal)' }]} />
+            )}
+            <MultiSelect label="Follow-up" value={filters.followUp} onChange={(v) => setFilter({ followUp: v })} allLabel="All follow-ups" options={[...FOLLOWUP_STATUSES.map((x) => ({ value: x, label: x === 'Overdue' ? 'Late' : x === 'Due Today' ? 'Due today' : x })), { value: 'Not set', label: 'Not set' }]} />
+            <FacetSelect multi label="Last contact" allLabel="Any time" value={filters.contact} onChange={(v) => setFilter({ contact: v })} options={withCurrent(facets.contact, filters.contact)} loading={facetsLoading} />
+            <FacetSelect multi
+              label="Salary fit"
+              allLabel="Any"
+              value={filters.salaryFit}
+              onChange={(v) => setFilter({ salaryFit: v })}
+              options={withCurrent(['within', 'slightly', 'above', 'missing', 'nobudget'].map((k) => (facets.salaryFit || []).find((o) => o.value === k)).filter(Boolean), filters.salaryFit)}
+              loading={facetsLoading}
+              title="Is what the person wants inside the client's budget?"
+            />
+            <FBox label="Fit at least (%)" title="The match score between the person and the requirement">
+              <input type="number" min="0" max="100" step="5" placeholder="e.g. 70" value={filters.minMatch} onChange={(e) => setFilter({ minMatch: e.target.value })} />
+            </FBox>
+            <FacetSelect multi label="Auto-screen" allLabel="Any" value={filters.screening} onChange={(v) => setFilter({ screening: v })} options={SCREEN_OPTIONS} title="The automatic screening result of the application (jobs with Auto-screen on)" />
+            <FacetSelect multi label="Rejected before" allLabel="Either" value={filters.rejectedBefore} onChange={(v) => setFilter({ rejectedBefore: v })} options={withCurrent(facets.rejectedBefore, filters.rejectedBefore)} loading={facetsLoading} />
+            {(pipeSub === 'rejected' || filters.status === 'Rejected' || filters.rejSide || filters.rejReason) && (
+              <>
+                <FacetSelect multi label="Rejected by" allLabel="Anyone" value={filters.rejSide} onChange={(v) => setFilter({ rejSide: v })} options={withCurrent(facets.rejSide, filters.rejSide)} loading={facetsLoading} />
+                <FacetSelect multi label="Reject reason" allLabel="Any reason" value={filters.rejReason} onChange={(v) => setFilter({ rejReason: v })} options={withCurrent(facets.rejReason, filters.rejReason)} loading={facetsLoading} />
+              </>
+            )}
+            <FBox label="Show only" title="A ready-made list, for example people waiting for the client">
+              <select value={quickInFilters} onChange={(e) => { if (e.target.value) pickQuick(e.target.value); else if (quickInFilters) setQuick(''); }}>
+                <option value="">Everyone</option>
+                {QUICK_IN_FILTERS.map(([id, l]) => {
+                  const n = Number((counts.quick || {})[id] ?? 0);
+                  return <option key={id} value={id}>{n > 0 ? `${l} (${n.toLocaleString('en-IN')})` : l}</option>;
+                })}
+              </select>
+            </FBox>
+          </>
+        )}
+      </>
+    ),
+    dates: (
+      <>
+        <DateRangeFilter
+          label={masterView ? 'Applied on' : 'Put on requirement'}
+          title="The day the person was put on a requirement (the application date)"
+          from={appliedRange.from}
+          to={appliedRange.to}
+          onChange={({ from, to }) => setPageFilters({ ...pfValue, range: from || to ? 'custom' : '', from, to })}
+        />
+        <CameOnFilter filters={filters} setFilter={setFilter} />
+        <JoinedOnFilter filters={filters} setFilter={setFilter} />
+      </>
+    ),
+  };
   const filterBar = (
     <CandidateFilterBar
       xf={xf}
@@ -1553,6 +1569,7 @@ export default function Candidates() {
       canClear={filterCount > 0 || Object.keys(xf.values).length > 0 || !!quick}
       moreExtra={extraFilters}
       moreExtraCount={extraCount}
+      extraChips={chips}
     />
   );
 
@@ -1567,17 +1584,7 @@ export default function Candidates() {
                 ? <ScopeLine user={user} count={fresh ? fresh.scopeTotal : (viewCounts.master || 0)} noun={viewNoun} />
                 : <span className="small-muted">New from the job portal — not checked yet</span>}
             </span>
-            {main === 'pipeline' && tabId !== 'todo' && fresh && (
-              <span className="cv4-stats">
-                {HEAD_STATS.map(([k, l, t]) => (
-                  <span key={k} className={`cv4-stat tone-${t}`} title={`${l}: ${Number((counts.subs || {})[k] ?? 0).toLocaleString('en-IN')} applications in this list`}>
-                    <i aria-hidden="true" />
-                    <b>{Number((counts.subs || {})[k] ?? 0).toLocaleString('en-IN')}</b>
-                    {` ${l}`}
-                  </span>
-                ))}
-              </span>
-            )}
+            {/* (2026-11-27) the Active / On hold / Joined / Rejected numbers are on the status tabs right below: not repeated here */}
           </p>
         </div>
         <div className="ak-page-tools cv4-tools">
@@ -2009,7 +2016,6 @@ export default function Candidates() {
           />
           {masterSub !== 'duplicates' && (
             <>
-              {!external && filterBar}
               <ListToolbar
                 search={filters.search}
                 onSearch={(v) => setFilter({ search: v })}
@@ -2029,9 +2035,10 @@ export default function Candidates() {
                     <span className="small-muted">{loading ? 'Loading…' : 'One row per candidate, however many applications'}</span>
                   </>
                 )}
-                chips={chips}
+                chips={external ? chips : []}
                 onClearAll={clearAll}
               />
+              {!external && filterBar}
               {masterSub === 'inactive' && defs.inactive && <div className="small-muted cviews-def">{defs.inactive}</div>}
               {loadError && <div className="error-text">{loadError}</div>}
               <PhoneCards rows={rows} onOpen={openRow} fresh={!!fresh} loading={loading} user={user} reload={reload} />
@@ -2163,7 +2170,6 @@ export default function Candidates() {
           />
           )}
           <div className="cv4-filtercard">
-          {!external && filterBar}
           <ListToolbar
             search={filters.search}
             onSearch={(v) => setFilter({ search: v })}
@@ -2203,9 +2209,10 @@ export default function Candidates() {
                 {!onBoard && quick !== 'client_feedback' && !rejectedTab && <ColumnChooser columns={COLUMNS} value={cols} onChange={(v) => { setCols(v); if (simple) setSimple(false); }} defaults={DEFAULT_COLS} />}
               </>
             )}
-            chips={chips}
+            chips={external ? chips : []}
             onClearAll={clearAll}
           />
+          {!external && filterBar}
           </div>
           {quick && defs[quick] && <div className="small-muted cviews-def">{defs[quick]}</div>}
           {rowFlash && (
@@ -2279,7 +2286,7 @@ export default function Candidates() {
                 <colgroup>
                   <col style={{ width: 36 }} />
                   {shownCols.map((col) => <col key={col.id} style={{ width: SIMPLE_W[col.id] }} />)}
-                  {reach.one && <col style={{ width: 150 }} />}
+                  {reach.one && <col style={{ width: 142 }} />}
                 </colgroup>
               )}
               <thead>
@@ -2502,27 +2509,21 @@ function FitCell({ row }) {
 // "Nil", "NA", "As per norms" … are not figures: the Salary cell shows a dash instead.
 const MONEY_FILLER = /^(nil|nill|na|n\.a\.?|n\/a|none|null|no|not applicable|not disclosed|as per (the )?(company |industry )?(norms?|standards?)|-+|—|0)$/i;
 const cleanMoney = (v) => { const t = String(v == null ? '' : v).trim(); return t && !MONEY_FILLER.test(t) ? t : null; };
-// "Came on": the day the person came to us (From / To) with three quick picks, and "only people with a real arrival date".
-const dayShift = (n) => new Date(Date.now() + 330 * 60000 + n * 86400000).toISOString().slice(0, 10);
+// "Came on": the day the person came to us, and "only people with a real arrival date".
 function CameOnFilter({ filters, setFilter }) {
-  const today = dayShift(0);
-  const mondayBack = (new Date(Date.now() + 330 * 60000).getUTCDay() + 6) % 7;
-  const quick = [['Today', today, today], ['This week', dayShift(-mondayBack), today], ['This month', `${today.slice(0, 7)}-01`, today]];
+  const real = 'fromSheet,sheet,applied,entered';
+  const kind = filters.cameKind || '';
   return (
-    <div className="cpl-came-filter">
-      <PanelField label="Came on (from)">
-        <input type="date" value={filters.cameFrom || ''} max={filters.cameTo || undefined} onChange={(e) => setFilter({ cameFrom: e.target.value })} title="The first day they came" />
-      </PanelField>
-      <PanelField label="Came on (to)">
-        <input type="date" value={filters.cameTo || ''} min={filters.cameFrom || undefined} onChange={(e) => setFilter({ cameTo: e.target.value })} title="The last day they came" />
-      </PanelField>
-      <div className="cpl-came-quick">
-        {quick.map(([label, a, b]) => (
-          <button key={label} type="button" className={`btn btn-sm${filters.cameFrom === a && filters.cameTo === b ? ' btn-primary' : ''}`} onClick={() => setFilter({ cameFrom: a, cameTo: b })}>{label}</button>
-        ))}
-        <button type="button" className={`btn btn-sm${filters.cameKind === 'fromSheet,sheet,applied,entered' ? ' btn-primary' : ''}`} title="Leave out people whose only date is the day they were loaded by an import" onClick={() => setFilter({ cameKind: filters.cameKind === 'fromSheet,sheet,applied,entered' ? '' : 'fromSheet,sheet,applied,entered' })}>Real dates only</button>
-      </div>
-    </div>
+    <>
+      <DateRangeFilter label="Came on" title="The day the person came to us" from={filters.cameFrom || ''} to={filters.cameTo || ''} onChange={({ from, to }) => setFilter({ cameFrom: from, cameTo: to })} />
+      <FBox label="Came-on date" title="Leave out people whose only date is the day an import loaded them">
+        <select value={kind} onChange={(e) => setFilter({ cameKind: e.target.value })}>
+          <option value="">Any kind of date</option>
+          <option value={real}>Real dates only</option>
+          {kind && kind !== real && <option value={kind}>{kind === 'imported' ? 'Only an import date' : 'As picked'}</option>}
+        </select>
+      </FBox>
+    </>
   );
 }
 
@@ -2543,26 +2544,9 @@ function JoinedElsewhere({ c }) {
   return <div className="small-muted cpl-joinedline" style={{ fontSize: 11.5, marginTop: 3 }} title={`Joined on another application: ${where}`}>{`Joined ${shortDmy(o.day)}${where ? ` (${where})` : ''}`}</div>;
 }
 
-// "Joined between": the first and the last day the person joined (the Joining date column), with the same three quick picks.
+// "Joined between": the first and the last day the person joined (the Joining date column).
 function JoinedOnFilter({ filters, setFilter }) {
-  const today = dayShift(0);
-  const mondayBack = (new Date(Date.now() + 330 * 60000).getUTCDay() + 6) % 7;
-  const quick = [['Today', today, today], ['This week', dayShift(-mondayBack), today], ['This month', `${today.slice(0, 7)}-01`, today]];
-  return (
-    <div className="cpl-came-filter">
-      <PanelField label="Joined between (from)">
-        <input type="date" value={filters.joinedFrom || ''} max={filters.joinedTo || undefined} onChange={(e) => setFilter({ joinedFrom: e.target.value })} title="The first joining day" />
-      </PanelField>
-      <PanelField label="Joined between (to)">
-        <input type="date" value={filters.joinedTo || ''} min={filters.joinedFrom || undefined} onChange={(e) => setFilter({ joinedTo: e.target.value })} title="The last joining day" />
-      </PanelField>
-      <div className="cpl-came-quick">
-        {quick.map(([label, a, b]) => (
-          <button key={label} type="button" className={`btn btn-sm${filters.joinedFrom === a && filters.joinedTo === b ? ' btn-primary' : ''}`} onClick={() => setFilter({ joinedFrom: a, joinedTo: b })}>{label}</button>
-        ))}
-      </div>
-    </div>
-  );
+  return <DateRangeFilter label="Joined between" title="The day the person joined (the Joining date column)" from={filters.joinedFrom || ''} to={filters.joinedTo || ''} onChange={({ from, to }) => setFilter({ joinedFrom: from, joinedTo: to })} />;
 }
 
 function Cell({

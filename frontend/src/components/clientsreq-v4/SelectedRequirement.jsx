@@ -91,8 +91,8 @@ export default function SelectedRequirement({
 
       <div className="crq4-sel-kvs">
         {kv('Openings', `${nf(r.openings || 1)}${r.filled ? ` · ${nf(r.filled)} filled` : ''}`)}
-        {kv('Team lead', <PersonName name={r.tlName} extra={r.extraTlNames?.length || 0} tone="red" live={live} />)}
-        {kv('Recruiter', <PersonName name={r.workedBy} extra={r.coRecruiterNames?.length || 0} tone="amber" live={live} />)}
+        {kv('Team lead', <PersonName name={r.tlName} others={r.extraTlNames} full tone="red" live={live} />)}
+        {kv('Recruiter', <PersonName name={r.workedBy} others={r.coRecruiterNames} full tone="amber" live={live} />)}
         {r.bde?.name && kv('Client manager', r.bde.name)}
         {kv('Priority', r.priority ? <PriorityChip value={r.priority} /> : null)}
         {kv('Age / SLA', sla

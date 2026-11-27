@@ -38,3 +38,39 @@
 .filter-chips-open{font:inherit;font-weight:700;background:none;border:0;padding:0;cursor:pointer;color:inherit;text-decoration:underline dotted}
 .fbar .msel{min-width:160px}
 .fbar-panel-body .msel,.fbar-row .fbar-cell{min-width:170px}
+
+/* ---- ONE LOOK (2026-11-27): every control is one box of the same height with its name inside ---- */
+.fbar-box{display:inline-flex;align-items:center;gap:6px;height:36px;min-height:36px;box-sizing:border-box;padding:0 6px 0 10px;border:1px solid var(--line,#d6dbe6);border-radius:8px;background:var(--surface,#fff);font-size:13px;color:var(--ink,#1c2540);min-width:0;max-width:100%}
+.fbar-box:hover,.fbar-box:focus-within{border-color:var(--blue,#2459d6)}
+.fbar-box-l{color:var(--muted,#5b6478);white-space:nowrap;flex:none}
+.fbar-box-l:empty{display:none}
+.fbar .fbar-box input,.fbar .fbar-box select{border:0!important;background:transparent!important;box-shadow:none!important;outline:0;min-width:0;height:34px;min-height:0!important;padding:0 2px;margin:0;font:inherit;font-size:13px;color:inherit;border-radius:0}
+.fbar .fbar-box select{flex:1 1 auto;cursor:pointer;font-weight:500}
+.fbar .fbar-range input{width:50px;flex:1 1 50px;min-width:42px;text-align:center}
+.fbar .fbar-box input[type=text]{flex:1 1 auto;width:auto}
+.fbar-dash{color:var(--muted,#5b6478);flex:none}
+.fbar-datewrap{display:inline-flex;flex-direction:column;gap:6px;min-width:0}
+.fbar .fbar-dates2 input{width:auto;flex:1 1 120px}
+.fbar-row>.fbar-box,.fbar-row>.fbar-datewrap{min-width:170px}
+.fbar-row{align-items:flex-start}
+.fbar-row>.mf-toggle,.fbar-row>.mf-clear{min-height:36px}
+.fbar-count{min-height:36px;display:inline-flex;align-items:center}
+/* the More filters panel in labelled parts, on an even grid */
+.fbar-groups{display:flex;flex-direction:column;gap:14px}
+.fbar-group+.fbar-group{border-top:1px solid var(--line-soft,#eef1f6);padding-top:12px}
+.fbar-group-h{margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted,#5b6478);display:flex;gap:8px;align-items:baseline}
+.fbar-group-h span{font-weight:400;text-transform:none;letter-spacing:0;font-size:12px}
+.fbar-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px 12px;align-items:start}
+.fbar-grid>*{min-width:0!important;width:100%}
+.fbar-grid .msel,.fbar-grid .fbar-cell,.fbar-grid .fbar-multimode{display:block;width:100%;min-width:0!important}
+.fbar-grid .fbar-box,.fbar-grid .fbar-datewrap{display:flex;width:100%}
+.fbar-grid .fbar-datewrap{flex-direction:column}
+/* a screen's own wrappers (department / people bar, section) lay their pieces straight into the grid */
+.fbar-grid .pfb,.fbar-grid .cpl-panelbar,.fbar-grid .hier-filter,.fbar-grid .fbar-contents{display:contents}
+.fbar-grid .pfb-clear{display:none}
+.fbar-grid>.fbar-cell:empty,.fbar-grid>.fbar-multimode:empty{display:none}
+.fbar-grid .lph-facet-loading{display:none}
+@media (max-width:720px){
+  .fbar-grid{grid-template-columns:1fr}
+  .fbar-row>.fbar-box,.fbar-row>.fbar-datewrap{width:100%}
+}

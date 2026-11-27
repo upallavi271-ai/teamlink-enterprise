@@ -1,5 +1,5 @@
 import { t as tr } from '../../i18n.jsx'; // Telugu / Hindi when chosen (ATS wave 2 Z, 13.06)
-import { useEffect, useMemo, useState } from 'react';
+import { isValidElement, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import MultiSelect from './MultiSelect.jsx';
 import FilterChips from '../FilterChips.jsx';
@@ -67,18 +67,43 @@ export function useUrlFilters(keys, { onWrite } = {}) {
   return { values, set, replace, clear, sig };
 }
 
-function Range({ f, values, onChange, facets, loading }) {
+// ONE LOOK FOR EVERY FILTER (founder 2026-11-27: "this page looks very clumsy, a new person will not understand it"): every control is one
+// box of the same height with its name inside it, like the pick lists ("Education: All"). FBox is that box for a number pair, a date
+// pick, a yes / no or a typed word.
+export function FBox({ label, title, className = '', children }) {
+  return (
+    <span className={`fbar-box ${className}`} title={title || label}>
+      <span className="fbar-box-l">{label}</span>
+      {children}
+    </span>
+  );
+}
+
+function Bands({ f, values, onChange, facets, loading }) {
+  return (
+    <MultiSelect
+      label={`${f.label} bands`}
+      allLabel="Any"
+      plural="bands"
+      value={values[f.keys.bucket] || ''}
+      onChange={(v) => onChange({ [f.keys.bucket]: v })}
+      options={(facets[f.facet || f.keys.bucket] || []).map((o) => ({ ...o, label: o.label }))}
+      loading={loading}
+      title={`Quick bands with how many people are in each${f.unit ? ` (${f.unit})` : ''}`}
+    />
+  );
+}
+
+function Range({ f, values, onChange, facets, loading, bands = true }) {
   const [kMin, kMax] = [f.keys.min, f.keys.max];
   return (
     <>
-      <span className="lph-facet fbar-range" title={f.title || f.label}>
-        <span className="lph-facet-lbl">{tr(f.label)}{f.unit ? ` (${f.unit})` : ''}</span>
-        <span className="lph-pair">
-          <input type="number" min="0" step={f.step || 1} placeholder="Min" aria-label={`${f.label} minimum`} value={values[kMin] || ''} onChange={(e) => onChange({ [kMin]: e.target.value })} />
-          <input type="number" min="0" step={f.step || 1} placeholder="Max" aria-label={`${f.label} maximum`} value={values[kMax] || ''} onChange={(e) => onChange({ [kMax]: e.target.value })} />
-        </span>
-      </span>
-      {f.keys.bucket && (
+      <FBox label={`${tr(f.label)}${f.unit ? ` (${f.unitShort || f.unit})` : ''}`} title={f.title || `${f.label}${f.unit ? ` (${f.unit})` : ''}`} className="fbar-range">
+        <input type="number" min="0" step={f.step || 1} placeholder="Min" aria-label={`${f.label} minimum`} value={values[kMin] || ''} onChange={(e) => onChange({ [kMin]: e.target.value })} />
+        <span className="fbar-dash" aria-hidden="true">–</span>
+        <input type="number" min="0" step={f.step || 1} placeholder="Max" aria-label={`${f.label} maximum`} value={values[kMax] || ''} onChange={(e) => onChange({ [kMax]: e.target.value })} />
+      </FBox>
+      {bands && f.keys.bucket && (
         <MultiSelect
           label={`${f.label} bands`}
           allLabel="Any"
@@ -96,27 +121,35 @@ function Range({ f, values, onChange, facets, loading }) {
 
 // A date range: the quick picks (Today, Yesterday, This week ... the same list on every screen, IST days) and the two dates.
 // A quick pick fills both dates (so the address bar and the server only ever see From and To); typing a date makes it Custom.
+// (2026-11-27) the two date boxes show only for "Custom dates", so a date filter is one tidy box like the others.
 function DateRangeField({ f, values, onChange }) {
   const from = values[f.keys.from] || '';
   const to = values[f.keys.to] || '';
   const picked = matchPreset(from, to);
   const problem = dateProblem(from, to);
+  const [custom, setCustom] = useState(false);
+  const showDates = custom || picked === 'custom';
   const pick = (k) => {
+    if (k === 'custom') { setCustom(true); return undefined; }
+    setCustom(false);
     if (!k) return onChange({ [f.keys.from]: '', [f.keys.to]: '' });
-    if (k === 'custom') return onChange({});
     const d = presetDates(k);
     return onChange({ [f.keys.from]: d.from || '', [f.keys.to]: d.to || '' });
   };
   return (
-    <span className="lph-facet fbar-dates" title={f.title || f.label}>
-      <span className="lph-facet-lbl">{tr(f.label)}</span>
-      <span className="lph-pair">
-        <select aria-label={`${f.label}: quick pick`} value={picked} onChange={(e) => pick(e.target.value)}>
-          {PRESETS.filter(([k]) => k !== 'custom' || picked === 'custom').map(([k, l]) => <option key={k} value={k}>{k === '' ? 'Any time' : l}</option>)}
+    <span className={`fbar-datewrap${showDates ? ' is-custom' : ''}`}>
+      <FBox label={tr(f.label)} title={f.title || f.label} className="fbar-dates">
+        <select aria-label={`${f.label}: when`} value={showDates ? 'custom' : picked} onChange={(e) => pick(e.target.value)}>
+          {PRESETS.map(([k, l]) => <option key={k} value={k}>{k === '' ? 'Any time' : k === 'custom' ? 'Custom dates…' : l}</option>)}
         </select>
-        <input type="date" aria-label={`${f.label} from`} value={from} max={to || undefined} onChange={(e) => onChange({ [f.keys.from]: e.target.value })} />
-        <input type="date" aria-label={`${f.label} to`} value={to} min={from || undefined} onChange={(e) => onChange({ [f.keys.to]: e.target.value })} />
-      </span>
+      </FBox>
+      {showDates && (
+        <span className="fbar-box fbar-dates2">
+          <input type="date" aria-label={`${f.label} from`} value={from} max={to || undefined} onChange={(e) => onChange({ [f.keys.from]: e.target.value })} />
+          <span className="fbar-dash">to</span>
+          <input type="date" aria-label={`${f.label} to`} value={to} min={from || undefined} onChange={(e) => onChange({ [f.keys.to]: e.target.value })} />
+        </span>
+      )}
       {problem && <span className="small-muted" role="alert" style={{ color: 'var(--danger, #b42318)' }}>{problem}</span>}
     </span>
   );
@@ -130,7 +163,7 @@ export function DateRangeFilter({ label, from = '', to = '', onChange, title }) 
 }
 
 function Control({
-  f, values, onChange, facets, loading, openToken = 0,
+  f, values, onChange, facets, loading, openToken = 0, bands = true,
 }) {
   const key = f.keys.value;
   const opts = f.options || facets[f.facet || key] || [];
@@ -150,7 +183,7 @@ function Control({
       </span>
     );
   }
-  if (f.type === 'range') return <Range f={f} values={values} onChange={onChange} facets={facets} loading={loading} />;
+  if (f.type === 'range') return <Range f={f} values={values} onChange={onChange} facets={facets} loading={loading} bands={bands} />;
   if (f.type === 'period') {
     const k = f.keys;
     return (
@@ -174,21 +207,19 @@ function Control({
   if (f.type === 'daterange') return <DateRangeField f={f} values={values} onChange={onChange} />;
   if (f.type === 'yesno') {
     return (
-      <label className="lph-facet" title={f.title || f.label}>
-        <span className="lph-facet-lbl">{tr(f.label)}</span>
-        <select value={values[key] || ''} onChange={(e) => onChange({ [key]: e.target.value })}>
+      <FBox label={tr(f.label)} title={f.title || f.label}>
+        <select aria-label={f.label} value={values[key] || ''} onChange={(e) => onChange({ [key]: e.target.value })}>
           <option value="">{f.allLabel || 'Either'}</option>
           <option value="yes">{f.yesLabel || 'Yes'}</option>
           <option value="no">{f.noLabel || 'No'}</option>
         </select>
-      </label>
+      </FBox>
     );
   }
   return (
-    <label className="lph-facet" title={f.title || f.label}>
-      <span className="lph-facet-lbl">{tr(f.label)}</span>
-      <input type="text" placeholder={f.placeholder || ''} value={values[key] || ''} onChange={(e) => onChange({ [key]: e.target.value })} />
-    </label>
+    <FBox label={tr(f.label)} title={f.title || f.label}>
+      <input type="text" aria-label={f.label} placeholder={f.placeholder || ''} value={values[key] || ''} onChange={(e) => onChange({ [key]: e.target.value })} />
+    </FBox>
   );
 }
 
@@ -235,7 +266,11 @@ function activeIn(fields, values) {
 
 export default function FilterBar({
   config, values, onChange, facets = {}, loading = false, total = null, noun = 'results', onClear, saved = null, extraChips = [], lead = null, className = '', storageKey = '', chipSkip = [], canClear, allTime = false, moreExtra = null, moreExtraCount = 0,
+  groups = null,
 }) {
+  // GROUPS (2026-11-27): [{ id, title, hint }] puts "More filters" in labelled parts on an even grid; a field says its part with `group`,
+  // and moreExtra may then be { [groupId]: nodes } for the screen's own controls. Without groups the panel is one list, as before.
+  const extraByGroup = !!moreExtra && typeof moreExtra === 'object' && !isValidElement(moreExtra) && !Array.isArray(moreExtra);
   const fields = useMemo(() => (config || []).filter((f) => f.show !== false), [config]);
   const primary = fields.filter((f) => f.primary);
   const more = fields.filter((f) => !f.primary);
@@ -252,19 +287,23 @@ export default function FilterBar({
   const chips = [...chipsOf(config, values, facets, onChange, chipSkip, openField), ...extraChips];
   const showClear = !!onClear && (canClear !== undefined ? canClear : chips.length > 0);
   const moreN = activeIn(more, values) + Number(moreExtraCount || 0);
-  const hasMore = more.length > 0 || !!moreExtra;
+  const hasMore = more.length > 0 || (extraByGroup ? Object.values(moreExtra).some(Boolean) : !!moreExtra);
+  const grouped = Array.isArray(groups) && groups.length > 0;
+  const groupList = grouped ? [...groups, ...(more.some((f) => !groups.some((g) => g.id === f.group)) ? [{ id: '__other', title: 'Other' }] : [])] : [];
+  const inGroup = (g, f) => (g.id === '__other' ? !groups.some((x) => x.id === f.group) : f.group === g.id);
   const nf = (n) => Number(n).toLocaleString('en-IN');
   return (
     <div className={`fbar ${className}`}>
       <div className="fbar-row">
         {lead}
-        {primary.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} openToken={openFor.id === f.id ? openFor.n : 0} />)}
+        {primary.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} openToken={openFor.id === f.id ? openFor.n : 0} bands={!grouped} />)}
         {hasMore && (
           <button type="button" className={`mf-toggle fbar-more${open ? ' on' : ''}`} onClick={toggle} aria-expanded={open}>
             {tr('More filters')}{moreN ? ` (${moreN})` : ''} {open ? '▴' : '▾'}
           </button>
         )}
-        {showClear && <button type="button" className="mf-clear" onClick={onClear}>{tr('Clear all')}</button>}
+        {/* the chips line below has its own Clear all: not twice (2026-11-27) */}
+        {showClear && !chips.length && <button type="button" className="mf-clear" onClick={onClear}>{tr('Clear all')}</button>}
         {saved}
         {total !== null && total !== undefined && <span className="small-muted fbar-count" role="status">{`${nf(total)} ${noun}`}{allTime ? ' · Showing all time' : ''}</span>}
       </div>
@@ -279,10 +318,31 @@ export default function FilterBar({
                 <button type="button" className="btn btn-sm fbar-close" onClick={() => setOpen(false)}>{`Show ${total !== null && total !== undefined ? nf(total) : ''} ${noun}`.replace(/\s+/g, ' ')}</button>
               </span>
             </div>
-            <div className="fbar-panel-body">
-              {more.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} openToken={openFor.id === f.id ? openFor.n : 0} />)}
-              {moreExtra}
-            </div>
+            {grouped ? (
+              <div className="fbar-groups">
+                {groupList.map((g) => {
+                  const fs = more.filter((f) => inGroup(g, f));
+                  const bandsHere = primary.filter((f) => f.type === 'range' && f.keys.bucket && inGroup(g, f));
+                  const extra = extraByGroup ? moreExtra[g.id] : null;
+                  if (!fs.length && !bandsHere.length && !extra) return null;
+                  return (
+                    <section key={g.id} className="fbar-group" aria-label={g.title}>
+                      <h4 className="fbar-group-h">{tr(g.title)}{g.hint && <span>{g.hint}</span>}</h4>
+                      <div className="fbar-grid">
+                        {bandsHere.map((f) => <Bands key={`b-${f.id}`} f={f} values={values} onChange={onChange} facets={facets} loading={loading} />)}
+                        {fs.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} openToken={openFor.id === f.id ? openFor.n : 0} />)}
+                        {extra}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="fbar-panel-body">
+                {more.map((f) => <Control key={f.id} f={f} values={values} onChange={onChange} facets={facets} loading={loading} openToken={openFor.id === f.id ? openFor.n : 0} />)}
+                {moreExtra}
+              </div>
+            )}
           </div>
         </>
       )}

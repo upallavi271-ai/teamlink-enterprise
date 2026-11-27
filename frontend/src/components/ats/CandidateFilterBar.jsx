@@ -46,43 +46,50 @@ export function writeUrlFilters(sp, filters) {
   return changed;
 }
 
+export const CAND_GROUPS = [
+  { id: 'person', title: 'About the person', hint: 'where they live, experience, pay, education, skills' },
+  { id: 'hiring', title: 'Where they are in hiring', hint: 'requirement, client, who has them, follow-up, rejections' },
+  { id: 'dates', title: 'Dates', hint: 'when they came, were updated, contacted, shared, joined' },
+];
+
 export function candidateConfig(f) {
   // f: { ctc, loc, priv, internal } = which groups the server offered (decided from the facets it sent)
   return [
-    { id: 'locCur', label: 'Current location', type: 'multi', primary: true, show: f.loc, keys: { value: 'locCur' }, allLabel: 'Any location', plural: 'locations', title: 'Where the person lives now, with how many people in each place' },
-    { id: 'spec', label: 'Specialization', type: 'select', primary: true, keys: { value: 'spec' }, allLabel: 'All specializations' },
-    { id: 'ctcCur', label: 'Current CTC', type: 'range', primary: true, show: f.ctc, unit: 'lakh / year', step: 0.5, keys: { min: 'ctcCurMin', max: 'ctcCurMax', bucket: 'ctcCurBucket' }, facet: 'ctcCurBucket' },
-    { id: 'ctcExp', label: 'Expected CTC', type: 'range', show: f.ctc, unit: 'lakh / year', step: 0.5, keys: { min: 'ctcExpMin', max: 'ctcExpMax', bucket: 'ctcExpBucket' }, facet: 'ctcExpBucket' },
-    { id: 'exp', label: 'Experience', type: 'range', primary: true, unit: 'years', step: 0.5, keys: { min: 'expMin', max: 'expMax' } },
-    { id: 'noticeBand', label: 'Notice period', type: 'multi', keys: { value: 'noticeBand' }, allLabel: 'Any notice', plural: 'bands' },
-    { id: 'stage', label: 'Stage', type: 'select', primary: true, show: !f.master, keys: { value: 'stage' }, allLabel: 'All stages', facet: '_stage' },
+    { id: 'stage', group: 'hiring', label: 'Stage', type: 'select', primary: true, show: !f.master, keys: { value: 'stage' }, allLabel: 'All stages', facet: '_stage' },
+    { id: 'locCur', group: 'person', label: 'Current location', type: 'multi', primary: true, show: f.loc, keys: { value: 'locCur' }, allLabel: 'Any location', plural: 'locations', title: 'Where the person lives now, with how many people in each place' },
+    { id: 'spec', group: 'person', label: 'Specialization', type: 'select', keys: { value: 'spec' }, allLabel: 'All specializations' },
+    { id: 'ctcCur', group: 'person', label: 'Current CTC', type: 'range', primary: true, show: f.ctc, unit: 'lakh / year', unitShort: '₹ lakh', step: 0.5, keys: { min: 'ctcCurMin', max: 'ctcCurMax', bucket: 'ctcCurBucket' }, facet: 'ctcCurBucket' },
+    { id: 'ctcExp', group: 'person', label: 'Expected CTC', type: 'range', show: f.ctc, unit: 'lakh / year', unitShort: '₹ lakh', step: 0.5, keys: { min: 'ctcExpMin', max: 'ctcExpMax', bucket: 'ctcExpBucket' }, facet: 'ctcExpBucket' },
+    { id: 'exp', group: 'person', label: 'Experience', type: 'range', primary: true, unit: 'years', unitShort: 'yrs', step: 0.5, keys: { min: 'expMin', max: 'expMax' } },
+    { id: 'noticeBand', group: 'person', label: 'Notice period', type: 'multi', keys: { value: 'noticeBand' }, allLabel: 'Any notice', plural: 'bands' },
     // ---- more filters
-    { id: 'locPref', label: 'Preferred location', type: 'multi', show: f.loc, keys: { value: 'locPref' }, allLabel: 'Any', plural: 'locations', title: 'Places the person is willing to work in' },
-    { id: 'locNative', label: 'Native / hometown', type: 'multi', show: f.loc, keys: { value: 'locNative' }, allLabel: 'Any', plural: 'places' },
-    { id: 'jobTitle', label: 'Job title', type: 'multi', show: f.internal, keys: { value: 'jobTitle' }, allLabel: 'Any title', plural: 'titles', title: 'The standardised job title from the Career tab' },
-    { id: 'qual', label: 'Education', type: 'select', keys: { value: 'qual' }, allLabel: 'All qualifications' },
-    { id: 'skillSet', label: 'Skills', type: 'multimode', keys: { value: 'skillSet', mode: 'skillMode' }, allLabel: 'Any skill', plural: 'skills' },
-    { id: 'workMode', label: 'Work mode', type: 'multi', show: f.internal, keys: { value: 'workMode' }, allLabel: 'Any', plural: 'modes' },
-    { id: 'empType', label: 'Employment type', type: 'multi', show: f.internal, keys: { value: 'empType' }, allLabel: 'Any', plural: 'types' },
-    { id: 'source', label: 'Source', type: 'multi', show: f.internal, keys: { value: 'source' }, allLabel: 'All sources', plural: 'sources' },
-    { id: 'status', label: 'Status', type: 'select', show: !f.master, keys: { value: 'status' }, allLabel: 'All statuses' },
-    { id: 'owner', label: 'Owner', type: 'select', show: f.internal && !f.master, keys: { value: 'owner' }, allLabel: 'Anyone', title: 'Whose move it is now' },
-    { id: 'clientId', label: 'Client', type: 'select', keys: { value: 'clientId' }, allLabel: 'All clients' },
-    { id: 'requirementId', label: 'Requirement', type: 'select', keys: { value: 'requirementId' }, allLabel: 'All requirements' },
-    { id: 'tag', label: 'Tags', type: 'multi', show: f.internal, keys: { value: 'tag' }, allLabel: 'Any tag', plural: 'tags' },
-    { id: 'added', label: 'Added on', type: 'daterange', primary: true, show: f.dates, keys: { from: 'addedFrom', to: 'addedTo' } },
-    { id: 'updated', label: 'Last updated', type: 'daterange', show: f.dates, keys: { from: 'updatedFrom', to: 'updatedTo' } },
-    { id: 'contacted', label: 'Last contacted', type: 'daterange', show: f.dates, keys: { from: 'contactedFrom', to: 'contactedTo' } },
-    { id: 'shared', label: 'Shared with client', type: 'daterange', show: f.dates, keys: { from: 'sharedFrom', to: 'sharedTo' } },
-    { id: 'resume', label: 'Resume', type: 'yesno', show: f.loc, keys: { value: 'resume' }, yesLabel: 'On file', noLabel: 'Not on file' },
-    { id: 'score', label: 'Profile completeness', type: 'range', show: f.loc, unit: '%', step: 5, keys: { min: 'scoreMin', max: 'scoreMax', bucket: 'scoreBucket' }, facet: 'scoreBucket' },
-    { id: 'dup', label: 'Duplicate', type: 'select', show: f.internal, keys: { value: 'dup' }, allLabel: 'Either' },
+    { id: 'locPref', group: 'person', label: 'Preferred location', type: 'multi', show: f.loc, keys: { value: 'locPref' }, allLabel: 'Any', plural: 'locations', title: 'Places the person is willing to work in' },
+    { id: 'locNative', group: 'person', label: 'Native / hometown', type: 'multi', show: f.loc, keys: { value: 'locNative' }, allLabel: 'Any', plural: 'places' },
+    { id: 'jobTitle', group: 'person', label: 'Job title', type: 'multi', show: f.internal, keys: { value: 'jobTitle' }, allLabel: 'Any title', plural: 'titles', title: 'The standardised job title from the Career tab' },
+    { id: 'qual', group: 'person', label: 'Education', type: 'select', keys: { value: 'qual' }, allLabel: 'All qualifications' },
+    { id: 'skillSet', group: 'person', label: 'Skills', type: 'multimode', keys: { value: 'skillSet', mode: 'skillMode' }, allLabel: 'Any skill', plural: 'skills' },
+    { id: 'workMode', group: 'person', label: 'Work mode', type: 'multi', show: f.internal, keys: { value: 'workMode' }, allLabel: 'Any', plural: 'modes' },
+    { id: 'empType', group: 'person', label: 'Employment type', type: 'multi', show: f.internal, keys: { value: 'empType' }, allLabel: 'Any', plural: 'types' },
+    { id: 'requirementId', group: 'hiring', label: 'Requirement', type: 'select', keys: { value: 'requirementId' }, allLabel: 'All requirements' },
+    { id: 'clientId', group: 'hiring', label: 'Client', type: 'select', keys: { value: 'clientId' }, allLabel: 'All clients' },
+    { id: 'source', group: 'hiring', label: 'Source', type: 'multi', show: f.internal, keys: { value: 'source' }, allLabel: 'All sources', plural: 'sources' },
+    { id: 'status', group: 'hiring', label: 'Status', type: 'select', show: !f.master, keys: { value: 'status' }, allLabel: 'All statuses' },
+    { id: 'owner', group: 'hiring', label: 'Owner', type: 'select', show: f.internal && !f.master, keys: { value: 'owner' }, allLabel: 'Anyone', title: 'Whose move it is now' },
+    { id: 'tag', group: 'hiring', label: 'Tags', type: 'multi', show: f.internal, keys: { value: 'tag' }, allLabel: 'Any tag', plural: 'tags' },
+    { id: 'added', group: 'dates', label: 'Added on', type: 'daterange', primary: true, show: f.dates, keys: { from: 'addedFrom', to: 'addedTo' } },
+    { id: 'updated', group: 'dates', label: 'Last updated', type: 'daterange', show: f.dates, keys: { from: 'updatedFrom', to: 'updatedTo' } },
+    { id: 'contacted', group: 'dates', label: 'Last contacted', type: 'daterange', show: f.dates, keys: { from: 'contactedFrom', to: 'contactedTo' } },
+    { id: 'shared', group: 'dates', label: 'Shared with client', type: 'daterange', show: f.dates, keys: { from: 'sharedFrom', to: 'sharedTo' } },
+    { id: 'resume', group: 'person', label: 'Resume', type: 'yesno', show: f.loc, keys: { value: 'resume' }, yesLabel: 'On file', noLabel: 'Not on file' },
+    { id: 'score', group: 'person', label: 'Profile complete', type: 'range', show: f.loc, unit: '%', step: 5, keys: { min: 'scoreMin', max: 'scoreMax', bucket: 'scoreBucket' }, facet: 'scoreBucket' },
+    { id: 'dup', group: 'hiring', label: 'Duplicate', type: 'select', show: f.internal, keys: { value: 'dup' }, allLabel: 'Either' },
   ];
 }
 
 export default function CandidateFilterBar({
-  xf, filters, setFilter, facets, loading, total, stageOptions, onClear, canClear, saved, master = false, moreExtra = null, moreExtraCount = 0,
+  xf, filters, setFilter, facets, loading, total, stageOptions, onClear, canClear, saved, master = false, moreExtra = null, moreExtraCount = 0, extraChips = [],
 }) {
+  // More filters in three plain parts (founder 2026-11-27: a new person must understand this screen)
   // what the server offered tells which groups this login may use
   const { user } = useAuth() || {};
   const groups = { ctc: facets.ctcCurBucket !== undefined, loc: facets.locCur !== undefined, internal: facets.dup !== undefined, dates: !!user && !['CLIENT', 'CANDIDATE'].includes(user.role) && !['CLIENT', 'CANDIDATE'].includes(user.atsRole), master }; // the date filters belong to every staff login: they do not wait for the facets to answer
@@ -124,6 +131,8 @@ export default function CandidateFilterBar({
       className="fbar-cand"
       moreExtra={moreExtra}
       moreExtraCount={moreExtraCount}
+      groups={CAND_GROUPS}
+      extraChips={extraChips}
     />
   );
 }

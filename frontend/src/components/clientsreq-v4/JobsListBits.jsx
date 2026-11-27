@@ -47,12 +47,45 @@ export function DeptTag({ name }) {
 // A person's name as plain text; when nobody is named: "Not assigned" in a
 // soft red (missing team lead) or amber (missing recruiter). A closed job that
 // never had one just shows a dash.
-export function PersonName({ name, extra, tone = 'red', live = true }) {
+// "+4" never hides who the others are (founder 2026-11-27: who are the remaining people behind +1 / +4?):
+//   full   every name, one under the other (the Selected requirement panel has the room)
+//   else   the first name and a "+4" button: hover shows the names, a press opens a small list of them
+export function PersonName({ name, extra, others = null, full = false, tone = 'red', live = true }) {
+  const [open, setOpen] = useState(false);
+  const rest = Array.isArray(others) ? others.filter((x) => x && x !== name) : [];
+  const n = rest.length || Number(extra) || 0;
   if (name) {
+    if (full && rest.length) {
+      return (
+        <span className="jl-person jl-person-all">
+          {[name, ...rest].map((x) => <span key={x}>{x}</span>)}
+        </span>
+      );
+    }
     return (
       <span className="jl-person">
         {name}
-        {extra ? <span className="jl-person-more">{` +${extra}`}</span> : null}
+        {n > 0 && (rest.length ? (
+          <span className="jl-person-wrap">
+            <button
+              type="button"
+              className="jl-person-more jl-person-btn"
+              title={`Also: ${rest.join(', ')}`}
+              aria-expanded={open}
+              aria-label={`${n} more: ${rest.join(', ')}`}
+              onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+              onBlur={() => setOpen(false)}
+            >
+              {`+${n}`}
+            </button>
+            {open && (
+              <span className="jl-person-pop" role="note">
+                <b>Also on it</b>
+                {rest.map((x) => <span key={x}>{x}</span>)}
+              </span>
+            )}
+          </span>
+        ) : <span className="jl-person-more">{` +${n}`}</span>)}
       </span>
     );
   }

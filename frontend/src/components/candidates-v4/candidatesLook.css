@@ -137,7 +137,7 @@
 .cpl.cv4 .cv4-listpanel .cpl-table thead th,
 .cpl.cv4 .cv4-listpanel .cpl-table.is-simple thead th{background:var(--cl-soft);color:var(--ink-soft);font-size:12px;font-weight:700;letter-spacing:0;text-transform:none;vertical-align:middle;height:42px;box-shadow:inset 0 -1px 0 var(--line)}
 .cpl.cv4 .cv4-listpanel .cpl-table.is-simple thead th{white-space:normal;line-height:1.2;text-overflow:clip}
-.cpl.cv4 .cv4-listpanel .cpl-table.is-simple{min-width:1090px}
+.cpl.cv4 .cv4-listpanel .cpl-table.is-simple{min-width:1000px}
 .cpl.cv4 .cv4-listpanel .cpl-table thead th.cpl-sticky,.cpl.cv4 .cv4-listpanel .cpl-table thead th.rch-sticky-right{background:var(--cl-soft)}
 .cpl.cv4 .cv4-listpanel .cpl-table .cpl-th{font-size:12px;font-weight:700;white-space:normal;text-align:left}
 .cpl.cv4 .cv4-listpanel .cpl-table .cpl-th.is-on{color:var(--navy)}
@@ -161,7 +161,7 @@
 .cpl.cv4 .cv4-listpanel .cpl-table tbody tr.cpl-row-open td.cpl-sticky{background:var(--navy-tint,#E7EDF7)}
 .cpl.cv4 .cv4-listpanel .cpl-table tbody tr.row-link:hover td.cpl-sticky-0{box-shadow:inset 3px 0 0 var(--navy)}
 .cpl.cv4 .cv4-listpanel .cpl-table.is-simple tbody tr,.cpl.cv4 .cv4-listpanel .cpl-table.is-simple tbody td{height:76px}
-.cpl.cv4 .cv4-listpanel .cpl-table.is-simple thead th.cpl-sticky-1,.cpl.cv4 .cv4-listpanel .cpl-table.is-simple td.cpl-sticky-1{width:232px;min-width:232px}
+.cpl.cv4 .cv4-listpanel .cpl-table.is-simple thead th.cpl-sticky-1,.cpl.cv4 .cv4-listpanel .cpl-table.is-simple td.cpl-sticky-1{width:186px;min-width:186px}
 .cpl.cv4 .cv4-listpanel .cpl-table input[type="checkbox"]{width:16px;height:16px;accent-color:var(--navy);cursor:pointer}
 /* the person: an initials circle in a soft colour, the name bold, the requirement · client muted under it */
 .cpl.cv4 .avatarsm{width:34px;height:34px;margin-right:10px;border-radius:50%;font-size:12px;font-weight:700;letter-spacing:.02em;background:var(--cl-blue-tint);color:var(--cl-blue-ink);flex:none}
