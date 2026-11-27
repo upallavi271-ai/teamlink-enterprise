@@ -164,7 +164,7 @@ function useCardJumps() {
   };
 }
 
-export default function ReportsHome({ tabs = [], onOpen, embedded = false }) {
+export default function ReportsHome({ tabs = [], onOpen, onOpenPage, embedded = false }) {
   const cat = useReportCatalog();
   const justMoved = useCardJumps();
   const [moved, setMoved] = useState('');
@@ -201,14 +201,13 @@ export default function ReportsHome({ tabs = [], onOpen, embedded = false }) {
                     <span className="rphome-t">{c.title}</span>
                     {c.answers && <span className="rphome-a">{c.answers}</span>}
                     {c.id === 'revenue' && <span className="rphome-lock">Only Super Admin, Admin and Accounts see this</span>}
-                    {c.link && <span className="rphome-lock">Opens in Accounts › Reports ↗</span>}
                     {c.views && c.views.length > 1 && <span className="rphome-views">{c.views.map(([, l]) => l).join(' · ')}</span>}
                     {moved === c.id && <span className="rphome-lock" role="status">The page moved as you clicked - click {c.title} again.</span>}
                   </span>
                 </>
               );
               return c.link
-                ? <Link key={c.id} className="rphome-card" to={c.link}>{body}</Link>
+                ? (onOpenPage ? <button key={c.id} type="button" className="rphome-card" data-card={c.id} onClick={() => onOpenPage(c)}>{body}</button> : <Link key={c.id} className="rphome-card" to={c.link}>{body}</Link>)
                 : <button key={c.id} type="button" className="rphome-card" data-card={c.id} onClick={(e) => open(c, e.currentTarget)}>{body}</button>;
             })}
           </div>

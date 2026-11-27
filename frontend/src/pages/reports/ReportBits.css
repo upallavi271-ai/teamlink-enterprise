@@ -46,3 +46,8 @@
   .atsrep .rpv-right{width:100%}
 }
 .rphome-views{display:block;font-size:11.5px;color:#64748b;margin-top:4px}
+
+/* A REPORT OPENED FROM ITS CARD (founder 2026-11-27): a large window over the Reports page - the whole report, the page behind stays as it was */
+.modal.rp-inplace{width:min(1480px,96vw);max-width:96vw;height:92vh;max-height:92vh;display:flex;flex-direction:column}
+.modal.rp-inplace .modal-body{flex:1;overflow:auto;padding:14px 18px}
+.modal.rp-inplace .atsrep{margin:0}

@@ -266,23 +266,6 @@ export default function ReportsOverview({
       )}
       {error && <div className="notice red" style={{ marginBottom: 10 }}>{error}</div>}
 
-      {/* THE REPORT CARDS COME FIRST (founder 2026-11-27, twice: "ee reports meedha click chesina, verey yedho pages ki navigate avuthundhi ... normal ga
-          vundali"). Under the charts, the cards were pushed down while the tiles and charts above them filled in, so a click landed on another card
-          (Team & person numbers opened the Hiring funnel). Here nothing above them loads: a card stays where it is drawn. The overview follows. */}
-      <section className="rv4-all" ref={allRef}>
-        <div className="rv4-all-head">
-          <h2>All reports</h2>
-          <span>Click a card to open that report, with its own filters, drill-downs and Excel / PDF / CSV export.</span>
-        </div>
-        {children}
-      </section>
-      {allowed && (
-        <div className="rv4-all-head rv4-over-head">
-          <h2>Overview</h2>
-          <span>The main numbers for the period above. A tile or a chart point opens the people behind it.</span>
-        </div>
-      )}
-
       {full && (
         <>
           <KpiRow className="rv4-kpis">
@@ -469,6 +452,13 @@ export default function ReportsOverview({
         </div>
       )}
 
+      <section className="rv4-all" ref={allRef}>
+        <div className="rv4-all-head">
+          <h2>All reports</h2>
+          <span>Every report opens with its own filters, drill-downs and Excel / PDF / CSV export.</span>
+        </div>
+        {children}
+      </section>
     </div>
   );
 }

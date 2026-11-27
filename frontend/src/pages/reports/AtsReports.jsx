@@ -45,6 +45,7 @@ import {
   Delta, OfBar, CompareToggle, COMPARE_CHOICES, ExportButtons, useReportCatalog,
 } from './ReportBits.jsx';
 import Modal from '../../components/Modal.jsx';
+import AccountsReports from './AccountsReports.jsx'; // eslint-disable-line import/no-cycle -- the Accounts reports card opens in place (2026-11-27)
 import Pager, { usePaged } from '../../components/Pager.jsx';
 // ATS layout v3 (2026-10-03): the shared filter bar, cards and charts.
 import PageFilterBar, { usePageFilters, rangeDates } from '../../components/ui/PageFilterBar.jsx';
@@ -566,12 +567,16 @@ function barFilters(pf) {
 
 // fixedTab: one report embedded in another page (Accounts Reports shows
 // Client revenue this way) — no landing page, no back link, no views.
-function AtsReportsFull({ fixedTab = '' } = {}) {
+// inPlace: { tab, card, groupBy, onClose } - the report opened from a card ON the Reports page, in a large window over it (founder 2026-11-27: "ee cards
+// verey pages ki navigate avvakudadhu, em vunna akkadey kanipinchali mottham complete ga"). The whole report - filters, views, drill-downs, export - is
+// there; the page behind does not change, and closing the window leaves you exactly where you were.
+function AtsReportsFull({ fixedTab = '', inPlace = null } = {}) {
   const { user } = useAuth();
   const cat = useReportCatalog();
   const own = !!(cat && cat.ownOnly); // a Recruiter's own reports: no people / compare controls, own titles (OwnReports.jsx)
   const [params, setParams] = useSearchParams();
-  const asked = fixedTab || params.get('tab');
+  const [placeTab, setPlaceTab] = useState(inPlace ? inPlace.tab : '');
+  const asked = inPlace ? placeTab : (fixedTab || params.get('tab'));
   const legacyView = RECRUITMENT_VIEWS.includes(asked) ? asked : '';
   // No tab = the Reports landing page (the list of report cards).
   const tab = !asked ? '' : (TAB_IDS.includes(asked) ? asked : (OLD_TABS[asked] || (legacyView ? 'recruitment' : '')));
@@ -581,7 +586,8 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
   const [draft, setDraft] = useState(EMPTY);
   const [filters, setFilters] = useState(EMPTY);
   const [compare, setCompare] = useState('');
-  const [groupBy, setGroupBy] = useState(() => (legacyView ? { recruitment: legacyView } : {}));
+  const [groupBy, setGroupBy] = useState(() => (legacyView ? { recruitment: legacyView } : (inPlace && inPlace.groupBy ? { [inPlace.tab]: inPlace.groupBy } : {})));
+  const [placed, setPlaced] = useState(null); // the report open in its window over the landing page
   const [options, setOptions] = useState(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -597,7 +603,7 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
   // at the bottom of the landing page; a report used to open wherever the page happened to be scrolled.
   const lastTab = useRef(tab);
   useEffect(() => {
-    if (fixedTab || lastTab.current === tab) return undefined;
+    if (fixedTab || inPlace || lastTab.current === tab) return undefined;
     const from = lastTab.current;
     lastTab.current = tab;
     if (tab) { window.scrollTo(0, 0); return undefined; }
@@ -613,6 +619,7 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
   }, [tab, fixedTab]);
   // Switching report keeps the bar's filters (and which card it was opened from).
   const goTab = (id, extra = {}) => {
+    if (inPlace) { if (id) setPlaceTab(id); else inPlace.onClose(); return; } // inside the window: another view of the same card, or close
     const next = {};
     BAR_URL_KEYS.forEach((k) => { if (params.get(k)) next[k] = params.get(k); });
     const card0 = params.get('card');
@@ -632,7 +639,7 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
 
   // An old address lands on its tab, with the tab in the URL.
   useEffect(() => {
-    if (!fixedTab && asked && asked !== tab) goTab(tab);
+    if (!fixedTab && !inPlace && asked && asked !== tab) goTab(tab);
   }, [fixedTab, asked, tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The fixed lists (status, step, interview / AI / joining status).
@@ -710,9 +717,11 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
     const landingQuery = (extra) => queryOf({ ...EMPTY, ...bar }, extra);
     const openFromOverview = (id, extra = {}, gb = '') => {
       if (gb) setGroupBy((m) => ({ ...m, [id]: gb }));
-      const { card: cardId, ...rest } = extra;
-      goTab(id, { ...rest, ...(cardId ? { card: cardId } : {}) });
+      const { card: cardId } = extra;
+      setPlaced({ tab: id, card: cardId || '', groupBy: gb || '' }); // opens right here, in its window
     };
+    const placedCard = placed ? (placed.page ? { title: placed.title } : cardOfTab(placed.tab, ATS_REPORT_TABS, placed.card)) : null;
+    const PlacedPage = placed && placed.page ? PAGE_IN_PLACE[placed.page] : null;
     const exportOverview = async (format) => {
       setBusy(format);
       const q = landingQuery({});
@@ -733,8 +742,13 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
           onDrill={(d) => setDrill(d)}
           onOpen={openFromOverview}
         >
-          <ReportsHome embedded tabs={ATS_REPORT_TABS} onOpen={(id, cardId) => goTab(id, cardId ? { card: cardId } : {})} />
+          <ReportsHome embedded tabs={ATS_REPORT_TABS} onOpen={(id, cardId) => setPlaced({ tab: id, card: cardId || '' })} onOpenPage={(c) => setPlaced({ page: c.link, title: c.title })} />
         </ReportsOverview>
+        {placed && (
+          <Modal title={placedCard ? placedCard.title : 'Report'} size="rp-inplace" onClose={() => setPlaced(null)}>
+            {PlacedPage ? <PlacedPage /> : <AtsReportsFull inPlace={{ ...placed, onClose: () => setPlaced(null) }} />}
+          </Modal>
+        )}
         {drill && (
           <DrillModal tab={drill.tab} query={drill.query} target={drill} canExport={canExport} onClose={() => setDrill(null)} />
         )}
@@ -742,9 +756,9 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
     );
   }
 
-  const card = (own && OWN_CARDS[tab]) || cardOfTab(tab, ATS_REPORT_TABS, params.get('card')) || { title: 'Report', answers: '', views: [[tab, tab]] };
+  const card = (own && OWN_CARDS[tab]) || cardOfTab(tab, ATS_REPORT_TABS, inPlace ? inPlace.card : params.get('card')) || { title: 'Report', answers: '', views: [[tab, tab]] };
   const views = own ? [] : (card.views || []).filter(([id]) => TAB_IDS.includes(id) && (!cat || mayOpen(cat, id) || id === tab)); // only the views this role opens (2026-11-04)
-  const back = fixedTab ? null : <button type="button" className="rpv-back" onClick={() => goTab('')}>← All reports</button>;
+  const back = fixedTab || inPlace ? null : <button type="button" className="rpv-back" onClick={() => goTab('')}>← All reports</button>;
   const viewSwitch = !fixedTab && views.length > 1 ? (
     <span className="rpv-views" role="tablist" aria-label="Views of this report">
       {views.map(([id, label]) => (
@@ -1000,6 +1014,9 @@ const OWN_CARDS = {
   interviews: { title: 'My interviews', answers: 'Which of my candidates have interviews, and how did they go?', views: [] },
   joining: { title: 'My joinings', answers: 'Who was selected, who joined, who did not?', views: [] },
 };
+
+// a card that is a page of its own (Accounts reports) opens in the same window, not by leaving the Reports page
+const PAGE_IN_PLACE = { '/reports/accounts': AccountsReports };
 
 export default function AtsReports(props = {}) {
   const cat = useReportCatalog();
