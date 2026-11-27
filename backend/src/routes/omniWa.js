@@ -214,6 +214,13 @@ router.put('/followup-settings', adminOnly, wrap(async (req, res) => {
   await logAudit({ userId: req.user.id, action: 'WhatsApp follow-up settings changed', entity: 'AppSetting', entityId: 'omni.wa.followup', fromValue: out.was.enabled ? 'On' : 'Off', toValue: out.settings.enabled ? 'On' : 'Off' }).catch(() => {});
   return res.json({ settings: out.settings });
 }));
+// the business's own website read into the knowledge base (omniwa/webKb.js): the entries read from the same site before are replaced
+router.post('/knowledge/website', adminOnly, wrap(async (req, res) => {
+  const b = req.body || {};
+  const out = await Cfg.kbImportWebsite(req.user, { urls: String(b.url || '').slice(0, 300), numberId: b.numberId || null });
+  if (!out.error) await logAudit({ userId: req.user.id, action: 'WhatsApp knowledge read from a website', entity: 'OmniWaKnowledge', entityId: 'website', toValue: `${String(b.url || '').slice(0, 200)}: ${out.saved} entries from ${out.pages} pages` }).catch(() => {});
+  return send(res, out);
+}));
 router.post('/knowledge/import', adminOnly, wrap(async (req, res) => {
   const b = req.body || {};
   const out = await Cfg.kbImportRows(req.user, String(b.text || '').slice(0, 200000), { numberId: b.numberId || null });

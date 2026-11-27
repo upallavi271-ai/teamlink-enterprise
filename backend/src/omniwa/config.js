@@ -242,12 +242,13 @@ async function kbSearch(query, limit = 3, numberId = null, { skip = [] } = {}) {
 
 // ---- the company website as knowledge (founder 2026-11-20: "mana products gurinchi adigitheyy website loo chusii answer evvali") -----------------------------
 // One import = the pages of our own site read into this number's knowledge base (webKb.js): the old entries of the SAME site and number are replaced, nothing else is touched.
-async function kbImportWebsite(user, { urls, numberId = null, maxPages = 30 } = {}) {
+async function kbImportWebsite(user, { urls, numberId = null, maxPages = 30, fetchFn = null } = {}) {
   await ensure();
-  const list = (Array.isArray(urls) ? urls : [urls]).map((u) => String(u || '').trim()).filter((u) => /^https?:\/\/[^\s]+$/i.test(u)).slice(0, 5);
-  if (!list.length) return { error: 'Give the website address, like https://tmlink.in', status: 400 };
-  const r = await require('./webKb').crawl(list, { maxPages: Math.min(60, Math.max(1, Number(maxPages) || 30)) }); // eslint-disable-line global-require
-  if (!r.entries.length) return { error: 'No readable text was found at that address.', status: 502 };
+  const list = (Array.isArray(urls) ? urls : [urls]).map((u) => String(u || '').trim()).filter(Boolean).map((u) => (/^[a-z][a-z0-9+.-]*:/i.test(u) ? u : `https://${u}`)).filter((u) => /^https?:\/\/[^\s/.]+\.[^\s]+$/i.test(u)).map((u) => { try { return new URL(u).href; } catch { return ''; } }).filter(Boolean).slice(0, 5);
+  if (!list.length) return { error: 'Write the website address, for example tmlink.in', status: 400 };
+  if (!fetchFn) { for (const u of list) { try { await require('../utils/safeFetch').assertSafeUrl(u); } catch (e) { return { error: e.message, status: 400 }; } } } // eslint-disable-line global-require, no-await-in-loop
+  const r = await require('./webKb').crawl(list, { maxPages: Math.min(60, Math.max(1, Number(maxPages) || 30)), ...(fetchFn ? { fetchFn } : {}) }); // eslint-disable-line global-require
+  if (!r.entries.length) return { error: r.pages.length ? 'The pages opened but have no readable words (a site that shows its words only with JavaScript cannot be read). Paste the details as a list instead.' : 'The website could not be read. Check the address.', status: 502 };
   const tag = `Website import: ${new URL(list[0]).host}`;
   const nid = numberId ? String(numberId) : null;
   await S.run('DELETE FROM "OmniWaKnowledge" WHERE updatedByName = ? AND COALESCE(numberId, \'\') = ?', tag, nid || '');

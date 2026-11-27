@@ -161,7 +161,7 @@ async function writeDraft(journey, lead, step, channel) {
     `Industry: ${lead.industry || 'not known'}. City: ${lead.city || 'not known'}. Source: ${lead.utmSource || lead.source || 'not known'}. Stage: ${lead.stage || lead.status}. Score: ${lead.leadBand || lead.rating || 'not scored'}.`,
     lead.notes ? `What they wrote: ${clip(lead.notes, 400)}` : '', `What this message must do: ${step.goal}`,
   ].filter(Boolean).join('\n');
-  const made = await AI.generate({ user: { id: journey.createdById || 'journeys', name: journey.createdByName || 'Journey' }, module: 'journeys', task: 'write', system, prompt, json: true, demo: () => demoDraft(lead, step, brand, channel), itemId: journey.id });
+  const made = await AI.generate({ user: { id: journey.createdById || 'journeys', name: journey.createdByName || 'Journey' }, module: 'journeys', task: 'write', system, prompt, json: true, fast: { own: true, maxTokens: 1500, ms: 25000 }, demo: () => demoDraft(lead, step, brand, channel), itemId: journey.id });
   const r = made.result && typeof made.result === 'object' ? made.result : {};
   const text = clip(r.text, 1500);
   if (text.length < 10) throw new AI.AiMkError('The AI did not write a usable message.', 502, 'unreadable');

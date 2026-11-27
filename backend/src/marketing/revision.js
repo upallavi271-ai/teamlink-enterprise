@@ -98,7 +98,7 @@ async function run(reviewId, opts = {}) {
   const attempts = { n: 0 };
 
   // 1 read the words and change the picture (checked before it replaces anything)
-  const ask = hooks.ask || (async (req) => { const out = await AI.generate({ user: u, module: 'revision', task: 'interpret', system: req.system, prompt: req.prompt, json: true, itemId: item.id, quickMs: 25000, demo: () => null }); return out.result; });
+  const ask = hooks.ask || (async (req) => { const out = await AI.generate({ user: u, module: 'revision', task: 'interpret', system: req.system, prompt: req.prompt, json: true, itemId: item.id, fast: { own: true, maxTokens: 700, ms: 15000 }, quickMs: 25000, demo: () => null }); return out.result; });
   const handled = [...(prevSpec.handled || []).slice(-9), answerKey]; let made; let understood = { summary: [], unclear: [], method: 'rules', classification: 'correction', confidence: 1 };
   if (kind === 'banner') {
     if (!prevSpec.headline) return needsPerson('This banner was made before TeamLink could change banners by itself.');

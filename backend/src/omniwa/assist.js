@@ -189,7 +189,13 @@ async function answer(input, { numberId = null, entries = null, settingsNow = nu
   // 1. the question is about a KIND of thing: that category answers it
   for (const cat of intents) {
     const pool = body.filter((e) => e.category === cat);
-    if (!pool.length) { if (cat === 'pricing') return { ...out, noPrice: true, weak: [] }; continue; } // eslint-disable-line no-continue
+    if (!pool.length) {
+      if (cat === 'pricing') return { ...out, noPrice: true, weak: [] };
+      // how to reach us, and nobody wrote it: the contact details read from the business's own website (webKb.js) answer
+      const own = cat === 'contact' && all.find((e) => e.category === 'website' && e.question === require('./webKb').CONTACT_TITLE); // eslint-disable-line global-require
+      if (own) { const link = pageOf(own.answer); return { ...out, kind: 'answer', text: `${plain(own.answer)}${link ? `\nMore: ${link}` : ''}`, category: 'website', entries: [{ id: own.id, title: own.question }], links: link ? [link] : [] }; }
+      continue; // eslint-disable-line no-continue
+    }
     const ranked = rank(pool, qTok, specific).sort(byScore);
     const hits = ranked.filter((r) => r.spec > 0);
     if (specific.length && hits.length) {

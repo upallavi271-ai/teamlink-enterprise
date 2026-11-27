@@ -201,6 +201,31 @@ function KbImport({ numbers, onClose, onDone }) {
   );
 }
 
+function KbWebsite({ numbers, onClose, onDone }) {
+  const [url, setUrl] = useState('');
+  const [numberId, setNumberId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [res, setRes] = useState(null);
+  const go = async () => {
+    setBusy(true); setErr(''); setRes(null);
+    try { const r = await api.post(`${BASE}/knowledge/website`, { url, numberId }); setRes(r.data); onDone(); } catch (e) { setErr(errOf(e, 'The website could not be read.')); } finally { setBusy(false); }
+  };
+  return (
+    <GsModal title="Read a website" onClose={onClose} foot={<Btn primary onClick={go} disabled={busy || !url.trim()}>{busy ? 'Reading…' : 'Read website'}</Btn>}>
+      {err && <Banner tone="warn">{err}</Banner>}
+      {res && res.ok && <Banner tone="ok">{res.saved} entries from {res.pages} page{res.pages === 1 ? '' : 's'}.{res.failed ? ` ${res.failed} page${res.failed === 1 ? '' : 's'} not read.` : ''}</Banner>}
+      <Field label="Website address"><input className="input" aria-label="Website address" value={url} onChange={(e) => setUrl(e.target.value)} /></Field>
+      <Field label="Which WhatsApp number?">
+        <Combo value={numberId} onChange={(e) => setNumberId(e.target.value)} emptyText="No such number">
+          <option value="">All numbers</option>
+          {numbers.map((n) => <option key={n.id} value={n.id}>{n.label}</option>)}
+        </Combo>
+      </Field>
+    </GsModal>
+  );
+}
+
 function Knowledge() {
   const { toast } = useOmni();
   const [numbers, setNumbers] = useState([]);
@@ -209,6 +234,7 @@ function Knowledge() {
   const [edit, setEdit] = useState(null);
   const [gone, setGone] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [reading, setReading] = useState(false);
   const [cat, setCat] = useState('all');
   const [err, setErr] = useState('');
   const load = useCallback(() => api.get(`${BASE}/knowledge`).then((r) => setRows(r.data.entries)).catch((e) => setErr(errOf(e, 'The entries could not be read.'))), []);
@@ -227,7 +253,7 @@ function Knowledge() {
   const isPrice = edit && edit.category === 'pricing';
   const age = (r) => (r.confirmedAt ? Math.floor((Date.now() - r.confirmedAt) / DAY_MS) : null);
   return (
-    <Panel title="Knowledge base" sub="What the AI answers from. Give each entry a kind: the marketing assistant quotes a price only from a Pricing entry, and says plainly when nothing fits." right={<><Btn small onClick={() => setImporting(true)}>Paste or upload a list</Btn> <Btn primary small onClick={() => setEdit({ question: '', answer: '', active: true, category: cat !== 'all' && cat !== 'website' ? cat : 'faq' })}>New</Btn></>}>
+    <Panel title="Knowledge base" sub="What the AI answers from. Give each entry a kind: the marketing assistant quotes a price only from a Pricing entry, and says plainly when nothing fits." right={<><Btn small onClick={() => setReading(true)}>Read website</Btn> <Btn small onClick={() => setImporting(true)}>Paste or upload a list</Btn> <Btn primary small onClick={() => setEdit({ question: '', answer: '', active: true, category: cat !== 'all' && cat !== 'website' ? cat : 'faq' })}>New</Btn></>}>
       {err && !edit && <Banner tone="warn">{err}</Banner>}
       <Tabs tabs={[['all', 'All', (rows || []).length], ...CATS.filter(([k]) => counts[k]).map(([k, l]) => [k, l, counts[k]])]} value={cat} onChange={setCat} />
       {rows && rows.length === 0 && <Empty title="No entries yet">Add what customers ask most: services, prices, working hours, contact details and policies. Without an entry the AI passes the question to your team.</Empty>}
@@ -268,6 +294,7 @@ function Knowledge() {
         </GsModal>
       )}
       {importing && <KbImport numbers={numbers} onClose={() => setImporting(false)} onDone={load} />}
+      {reading && <KbWebsite numbers={numbers} onClose={() => setReading(false)} onDone={load} />}
       {gone && <ConfirmModal title="Delete this entry?" text={gone.question} yes="Delete" danger onYes={remove} onNo={() => setGone(null)} />}
     </Panel>
   );
