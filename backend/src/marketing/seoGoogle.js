@@ -166,10 +166,38 @@ async function testConnection(opts = {}) {
   const r = await properties(opts); if (r.error) return { ok: false, text: r.error };
   return { ok: true, text: `Signed in to Google as ${st.email}. It can read ${r.items.length} Search Console propert${r.items.length === 1 ? 'y' : 'ies'}${r.items.length ? '' : ' (clients have not added this email yet)'}. Analytics properties are checked when a site is read.` };
 }
+// the stored numbers in plain sentences (pure). g: { gsc, ga4 }. Only what Google answered is said.
+function sentences(g) {
+  const out = []; const n = (v) => Number(v).toLocaleString('en-IN');
+  const t = g && g.gsc && g.gsc.totals;
+  if (t) { const b = g.gsc.beforeTotals; out.push(`Google Search Console, ${g.gsc.period.start} to ${g.gsc.period.end}: ${n(t.clicks)} clicks from search${b ? ` (${n(b.clicks)} in the 28 days before)` : ''}, seen ${n(t.impressions)} times${t.position != null ? `, average position ${t.position}` : ''}.`); }
+  const a = g && g.ga4 && g.ga4.totals && g.ga4.totals.now;
+  if (a && a.sessions != null) { const b = (g.ga4.totals.before || {}).sessions; const org = g.ga4.organic && g.ga4.organic.now ? g.ga4.organic.now.sessions : null; out.push(`Google Analytics, ${g.ga4.period.start} to ${g.ga4.period.end}: ${n(a.sessions)} visits${b != null ? ` (${n(b)} in the 28 days before)` : ''}${org != null ? `, ${n(org)} of them from search` : ''}.`); }
+  return out;
+}
+// the AI Marketing Agent's reading of one site (the raw site row). A site with no Search Console property gets the one that matches its own address, when the key can see it.
+// -> { read, gsc?, ga4?, matched, why: [words], retry }  (never throws for something a person has to set up)
+async function readForAgent(u, raw, opts = {}) {
+  const none = (why, retry = false) => ({ read: false, matched: '', why: [why], retry });
+  const st = await GA.status(opts); if (!st.configured) return none(st.problem || 'No Google key is saved yet (Administration > Integrations).');
+  let site = raw; let matched = ''; const why = [];
+  if (!site.gscProperty) {
+    const p = await properties(opts);
+    if (p.error) { if (!site.ga4Property) return none(p.error, ['net', 'google'].includes(p.code)); why.push(p.error); } else {
+      const found = suggestProperty(site.url, await visibleProperties(u, p.items, site.url));
+      if (found) { const saved = await Sites.save(u, { id: site.id, gscProperty: found }); if (saved && !saved.error) { matched = found; site = { ...site, gscProperty: found }; } }
+      if (!matched) why.push(`Search Console: this website is not shared with ${st.email || 'the service account'} yet (Search Console > Settings > Users and permissions > Add user).`);
+    }
+  }
+  if (!site.gscProperty && !site.ga4Property) return { read: false, matched: '', why, retry: false };
+  const r = await syncSite(u, site, 'both', opts);
+  r.errors.forEach((e) => why.push(e.error));
+  return { read: !!(r.gsc || r.ga4), gsc: r.gsc || null, ga4: r.ga4 || null, matched, why, retry: !r.gsc && !r.ga4 && r.errors.some((e) => ['net', 'google'].includes(e.code)) };
+}
 // the Google part of the dashboard: what was read last (nothing is fetched here)
 async function dashboardPart(u, site) {
   const st = await GA.status(); const g = await stored(site.id);
   return { google: { configured: st.configured, email: st.email, gscProperty: site.gscProperty || '', ga4Property: site.ga4Property || '', gsc: g && g.gsc, ga4: g && g.ga4, gscAt: g && g.gscAt, ga4At: g && g.ga4At, gscError: (g && g.gscError) || '', ga4Error: (g && g.ga4Error) || '' } };
 }
 
-module.exports = { ensure, properties, visibleProperties, suggestProperty, syncGsc, syncGa4, syncSite, manualSync, testConnection, dashboardPart, stored, alertsOf, periods, explain, pct, SOURCE, DROP_PCT, DROP_MIN };
+module.exports = { ensure, properties, visibleProperties, suggestProperty, syncGsc, syncGa4, syncSite, manualSync, testConnection, dashboardPart, sentences, readForAgent, stored, alertsOf, periods, explain, pct, SOURCE, DROP_PCT, DROP_MIN };

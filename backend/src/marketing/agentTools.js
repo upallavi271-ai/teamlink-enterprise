@@ -8,6 +8,7 @@
 //   prepare   an outward tool describes what the approval dialog must show (ready, or why not, and the choices) from the LIVE state; approval(body) checks the person's choices and says in words what was approved.
 //   cost      what a call costs, honestly: kind 'free' (plain code) or 'free-tier' (a free allowance) or 'paid'; rupees per unit (0 for everything today). The dashboard adds these up.
 //   (Phase 3) the SEO assistant's audit, keywords and texts are tools here (seo.audit / seo.keywords / seo.content): they call marketing/seoSites, seoAudit, seoKeywords and seoContent, never copy them.
+//   seo.google reads the client's real Search Console / Analytics numbers (marketing/seoGoogle.js, read only); when Google is not set up for the client it says what is missing and the plan carries on.
 //   (Phase 4) video: one picture per SCENE (a person joins them in AI Video, in the browser: there is no server-side rendering), optional free stock clips; voice: a CALL SHEET for a person to call from the CRM
 //             (the agent never calls and never uses AI Calling, which is built for job candidates with a recorded consent).
 //   manual    a step only a person can do (post by hand, make the video in the browser, talk to the website owner). The agent lists it, reminds, and records when the person marks it done.
@@ -20,7 +21,7 @@ class ToolError extends Error {
 }
 const svcOf = (ctx) => ({
   Stock: (ctx.svc && ctx.svc.Stock) || require('./stockclips'), Lead: (ctx.svc && ctx.svc.Lead) || require('./leadgen'), WA: (ctx.svc && ctx.svc.WA) || require('../omniwa/services'),
-  Sites: (ctx.svc && ctx.svc.Sites) || require('./seoSites'), Audit: (ctx.svc && ctx.svc.Audit) || require('./seoAudit'), Kw: (ctx.svc && ctx.svc.Kw) || require('./seoKeywords'), Content: (ctx.svc && ctx.svc.Content) || require('./seoContent'),
+  Sites: (ctx.svc && ctx.svc.Sites) || require('./seoSites'), Audit: (ctx.svc && ctx.svc.Audit) || require('./seoAudit'), Kw: (ctx.svc && ctx.svc.Kw) || require('./seoKeywords'), Google: (ctx.svc && ctx.svc.Google) || require('./seoGoogle'), Content: (ctx.svc && ctx.svc.Content) || require('./seoContent'),
   Post: (ctx.svc && ctx.svc.Post) || require('./postItem'), CR: (ctx.svc && ctx.svc.CR) || require('./clientReview'), C: (ctx.svc && ctx.svc.C) || require('./content'), Img: (ctx.svc && ctx.svc.Img) || require('./images'), Site: (ctx.svc && ctx.svc.Site) || require('./siteCheck'), Blog: (ctx.svc && ctx.svc.Blog) || require('./blogPlanner'), // eslint-disable-line global-require
 });
 const clip = (s, n) => S.clip(s, n);
@@ -159,9 +160,27 @@ const TOOLS = {
       return { summary: `Website audit saved: ${r.score}/100${r.prev != null ? ` (was ${r.prev})` : ''}; ${open} open recommendation${open === 1 ? '' : 's'} kept for ${site.clientName}.`, refs: [{ kind: 'sitecheck', id: r.checkId, label: `Website audit ${r.score}/100`, page: 'mkseo' }], data: { itemId: r.checkId, siteId: site.id, score: r.score, previous: r.prev, url: raw.url, open, top } };
     },
   },
+  'seo.google': {
+    label: 'Read the Google search numbers', module: 'SEO assistant', page: 'mkseo', risk: 'internal', auto: true, cost: { kind: 'free', unit: 'reading', rupees: 0, note: "Google's free Search Console and Analytics APIs, read only" },
+    does: () => "Reads what Google reports for the website: Search Console clicks, times seen, position and the real searches, and Analytics visits when its property number is saved (the last 28 days against the 28 before). Read only: nothing changes on Google or on the website. If Google is not set up for this client, the step says what is missing and the plan carries on.",
+    build: (plan, d, biz) => ({ url: plan.seo.url, pages: plan.seo.pages, clientName: clip(biz.name, 120), industry: biz.industryKey || '', facts: seoFacts(biz) }),
+    async run(ctx, input) {
+      const { Google, Sites, Kw } = svcOf(ctx);
+      const site = await seoSiteOf(ctx, input); const raw = await Sites.mine(ctx.u, site.id);
+      if (!raw) throw new ToolError('The SEO site of this client could not be opened.', 'no_site');
+      const r = await Google.readForAgent(ctx.u, raw, ctx.googleOpts || {});
+      if (r.retry) throw new ToolError(r.why.join(' '), 'google', { retryable: true });
+      const refs = [{ kind: 'google', id: site.id, label: 'Google numbers', page: 'mkseo' }];
+      if (!r.read) return { summary: `Google numbers were not read for ${site.clientName}. ${r.why.join(' ')}`, refs, data: { itemId: site.id, siteId: site.id, read: false, why: r.why } };
+      const opp = await Kw.opportunities(site.id, 5);
+      const top = ((opp && opp.items) || []).map((x) => `${x.query} (position ${x.position}, seen ${x.impressions} times)`);
+      const words = [...Google.sentences(r), r.matched ? `The Search Console property ${r.matched} was matched to the website and saved.` : '', top.length ? `Close to the top: ${top.slice(0, 3).join('; ')}.` : '', ...r.why].filter(Boolean);
+      return { summary: words.join(' '), refs, data: { itemId: site.id, siteId: site.id, read: true, why: r.why, top } };
+    },
+  },
   'seo.keywords': {
     label: 'Research and keep keyword ideas (SEO assistant)', module: 'SEO assistant', page: 'mkseo', risk: 'internal', auto: true, cost: { kind: 'free', unit: 'list', rupees: 0, note: 'plain code, no network' },
-    does: () => 'Builds keyword ideas from the saved services, city and kind of business (primary, local, secondary) and keeps the best few in the client\'s kept list. TeamLink has no free source for search volume or difficulty, so none is shown or invented.',
+    does: () => 'Builds keyword ideas from the saved services, city and kind of business (primary, local, secondary) and keeps the best few in the client\'s kept list, with up to 5 real searches from Google Search Console that are close to the top when they were read. TeamLink has no free source for search volume or difficulty, so none is shown or invented.',
     build: (plan, d, biz) => ({ url: plan.seo.url, pages: plan.seo.pages, clientName: clip(biz.name, 120), industry: biz.industryKey || '', facts: seoFacts(biz) }),
     async run(ctx, input) {
       const { Kw } = svcOf(ctx);
@@ -170,10 +189,11 @@ const TOOLS = {
       if (!r || r.error) throw fail(r);
       const pick = []; const take = { primary: 4, local: 3, secondary: 3 };
       for (const g of ['primary', 'local', 'secondary']) ((r.groups || []).find((x) => x.key === g) || { items: [] }).items.slice(0, take[g]).forEach((i) => pick.push({ phrase: i.phrase, group: g, intent: i.intent, source: 'agent' }));
+      const real = (((r.known && r.known.items) || []).filter((x) => !x.saved).slice(0, 5)); real.forEach((x) => pick.push({ phrase: x.query, group: 'query', source: 'search console' }));
       if (!pick.length) throw new ToolError('No keyword idea could be made from the saved facts. Add the services and the city under "Business" and retry.', 'no_ideas');
       const kept = await Kw.save(ctx.u, site.id, { phrases: pick });
       if (!kept || kept.error) throw fail(kept);
-      return { summary: `${kept.added} keyword idea${kept.added === 1 ? '' : 's'} kept for ${site.clientName}${kept.alreadyThere ? ` (${kept.alreadyThere} already there)` : ''}. No search volumes: TeamLink has no source for them.`, refs: [{ kind: 'keywords', id: site.id, label: 'Kept keywords', page: 'mkseo' }], data: { itemId: site.id, kept: kept.added, ideas: pick.length, top: pick.slice(0, 5).map((x) => x.phrase) } };
+      return { summary: `${kept.added} keyword idea${kept.added === 1 ? '' : 's'} kept for ${site.clientName}${kept.alreadyThere ? ` (${kept.alreadyThere} already there)` : ''}${real.length ? `, including ${real.length} real search${real.length === 1 ? '' : 'es'} from Google Search Console close to the top` : ''}. No search volumes: TeamLink has no source for them.`, refs: [{ kind: 'keywords', id: site.id, label: 'Kept keywords', page: 'mkseo' }], data: { itemId: site.id, kept: kept.added, ideas: pick.length, top: pick.slice(0, 5).map((x) => x.phrase) } };
     },
   },
   'seo.content': {

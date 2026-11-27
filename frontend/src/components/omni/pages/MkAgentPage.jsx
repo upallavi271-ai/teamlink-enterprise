@@ -171,6 +171,7 @@ function Preview({ d, act, id, busy, meta, onBack }) {
     counts['image.ai'] && `${plural(counts['image.ai'], 'picture')} made with the AI picture service (free tier, counts against your daily picture limit)`,
     counts['seo.sitecheck'] && `the website ${plan.seo ? plan.seo.url : ''} read once (up to ${plan.seo ? plan.seo.pages : 5} public pages) and scored`,
     counts['seo.audit'] && `the website ${plan.seo ? plan.seo.url : ''} read once (up to ${plan.seo ? plan.seo.pages : 5} public pages) by the SEO assistant and scored; its findings kept as recommendations for the client`,
+    counts['seo.google'] && 'the Google search numbers of the website read (Search Console and Analytics, when set up; read only)',
     counts['seo.keywords'] && 'keyword ideas kept in the SEO assistant (no search volumes: TeamLink has no source for them)',
     counts['seo.content'] && 'the home page title, description and FAQ written from the saved facts and kept in the SEO assistant (nothing is changed on the website)',
     counts['seo.blogplan'] && 'a blog plan saved (briefs only)',

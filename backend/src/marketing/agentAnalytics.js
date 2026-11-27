@@ -6,6 +6,7 @@
 //   leads      the NEW CRM leads since the plan started, by band and by source (including the WhatsApp assistant's leads), for the leads THIS login may see. HONEST: they come from all sources:
 //              TeamLink cannot tell which lead came from which post, so it says "while the plan ran", never "from the plan"
 //   site       the website score now against the score before the plan (the saved audits)
+//   google     what Google Search Console / Analytics reported for the client's website, as the SEO assistant last read it (nothing is fetched here); the whole website, not an effect of the plan
 // Nothing here is estimated or invented; a part that cannot be read for this login says why instead of showing a zero.
 // ---------------------------------------------------------------------------
 const S = require('../outreach/store');
@@ -59,6 +60,18 @@ async function siteOf(run, fromMs) {
   } catch { return null; }
 }
 
+// the client's SEO site (same business name, one this login may see) and the Google numbers saved for it
+async function googleOf(u, run, svc) {
+  try {
+    const Sites = (svc && svc.Sites) || require('./seoSites'); const Google = (svc && svc.Google) || require('./seoGoogle'); // eslint-disable-line global-require
+    const list = await Sites.list(u); const name = String(run.businessName || '').trim().toLowerCase();
+    const site = ((list && list.items) || []).find((x) => String(x.clientName).trim().toLowerCase() === name);
+    if (!site) return null; const g = await Google.stored(site.id); if (!g || (!g.gsc && !g.ga4)) return null;
+    const said = Google.sentences(g);
+    return said.length ? { siteId: site.id, gsc: g.gsc || null, ga4: g.ga4 || null, lines: said } : null;
+  } catch { return null; }
+}
+
 // opts: { svc (a test's stand-ins), leads (the prefetched leadsOf answer, for the dashboard) }
 async function performance(u, run, tasks, opts = {}) {
   const fromMs = S.ms(run.startedAt) || S.ms(run.approvedAt) || S.ms(run.createdAt) || Date.now();
@@ -68,6 +81,7 @@ async function performance(u, run, tasks, opts = {}) {
   return {
     from: S.iso(fromMs), posts: await postsOf(ids), clients: await clientsOf(ids), leads: wantLeads ? leadsSince(all, fromMs) : null,
     site: tasks.some((t) => /^seo\./.test(t.tool)) ? await siteOf(run, fromMs) : null,
+    google: await googleOf(u, run, opts.svc),
   };
 }
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -82,6 +96,7 @@ function lines(perf, run) {
     else out.push(`New CRM leads since the plan started: ${perf.leads.total}${perf.leads.total ? ` (${perf.leads.hot} hot, ${perf.leads.warm} warm, ${perf.leads.cold} cold${perf.leads.whatsapp ? `; ${perf.leads.whatsapp} through the WhatsApp assistant` : ''})` : ''}. They come from every source: TeamLink cannot tell which came from these posts.`);
   }
   if (perf.site && perf.site.before != null && perf.site.at !== perf.site.beforeAt) out.push(`Website score: ${perf.site.score}/100 now, ${perf.site.before}/100 before this plan (TeamLink's own score of what is on the page, not rankings).`);
+  if (perf.google) out.push(...perf.google.lines, "Google's figures cover the whole website for those dates: they do not show what this plan caused.");
   return out;
 }
 

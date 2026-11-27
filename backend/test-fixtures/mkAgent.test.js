@@ -69,7 +69,7 @@ const base = { actorFor: async () => admin, notify, fetchFn };
   const hosp = P.build('Promote my clinic', { name: 'Care Clinic', industry: 'Dental clinic', services: ['Teeth cleaning'], audience: 'Families nearby', contactLine: 'Call 99999 11111', language: 'Telugu', skips: [] }, {}, NOW).plan;
   assert.ok(hosp.healthcare && hosp.gaps.some((g) => /doctor/.test(g)) && hosp.assumptions.some((a) => /Telugu/.test(a)), 'healthcare needs a medical reviewer; a non-English business is told captions are English');
   const seo = P.build("Improve my website's SEO", { name: 'Site Co', skips: [] }, {}, NOW); assert.deepEqual(seo.questions.filter((q) => q.required).map((q) => q.key), ['website']);
-  const seoPlan = P.build("Improve my website's SEO", { name: 'Site Co', website: 'https://agent.test', skips: [] }, {}, NOW).plan; assert.deepEqual(P.taskSpecs(seoPlan).map((t) => t.tool), ['seo.audit', 'seo.keywords', 'seo.content', 'seo.blogplan', 'manual.note']);
+  const seoPlan = P.build("Improve my website's SEO", { name: 'Site Co', website: 'https://agent.test', skips: [] }, {}, NOW).plan; assert.deepEqual(P.taskSpecs(seoPlan).map((t) => t.tool), ['seo.audit', 'seo.google', 'seo.keywords', 'seo.content', 'seo.blogplan', 'manual.note']);
   const strat = P.build('Plan a complete marketing strategy for my new product', ctx, {}, NOW).plan; assert.ok(strat.strategy && strat.strategy.length === 6 && strat.days.length === 7);
   const vids = P.build('Generate promotional videos for my business', ctx, {}, NOW).plan; assert.deepEqual([vids.days.length, vids.days[0].kind, vids.days[1].date], [3, 'video', '2026-11-28']); assert.ok(/Scene 1 \(hook\)/.test(vids.days[0].mediaPrompt));
   assert.ok(P.taskSpecs(vids).some((t) => t.tool === 'manual.video'));
@@ -209,9 +209,11 @@ const base = { actorFor: async () => admin, notify, fetchFn };
   // 12. SEO goal through the real website check (stand-in internet) and blog planner, the AI picture path, and the dashboard
   await Ctx.save(admin, 'c:seo-test-co', { name: 'SEO Test Co', website: 'agent.test', services: ['Heart check-ups'], industry: 'Hospital', locations: ['Pune'] });
   const s1 = await Agent.startRun(admin, { goal: "Improve my website's SEO", business: 'c:seo-test-co' }, { now: NOW });
-  assert.equal(s1.run.status, 'preview'); assert.deepEqual(s1.tasks.map((t) => t.tool), ['seo.audit', 'seo.keywords', 'seo.content', 'seo.blogplan', 'manual.note']); assert.ok(/nothing on the website is changed|Nothing on the website is changed/i.test(JSON.stringify(s1.run.plan.assumptions)));
+  assert.equal(s1.run.status, 'preview'); assert.deepEqual(s1.tasks.map((t) => t.tool), ['seo.audit', 'seo.google', 'seo.keywords', 'seo.content', 'seo.blogplan', 'manual.note']); assert.ok(/nothing on the website is changed|Nothing on the website is changed/i.test(JSON.stringify(s1.run.plan.assumptions)));
   await Agent.approve(admin, s1.run.id, base); await Agent.drain(); r = await Agent.detail(admin, s1.run.id);
-  assert.deepEqual(r.tasks.map((t) => t.status), ['done', 'done', 'done', 'done', 'waiting'], r.tasks.map((t) => t.error).join('; ')); assert.ok(/Website audit saved: \d+\/100/.test(r.tasks[0].summary) && /Blog plan saved: \d+ briefs?/.test(r.tasks[3].summary)); assert.ok(Number.isInteger(r.live.numbers.siteScore) && r.live.numbers.blogBriefs > 0);
+  assert.deepEqual(r.tasks.map((t) => t.status), ['done', 'done', 'done', 'done', 'done', 'waiting'], r.tasks.map((t) => t.error).join('; ')); assert.ok(/Website audit saved: \d+\/100/.test(r.tasks[0].summary) && /Blog plan saved: \d+ briefs?/.test(r.tasks[4].summary));
+  assert.ok(/^Google numbers were not read for SEO Test Co\. No Google key is saved yet \(Administration > Integrations\)\.$/.test(r.tasks[1].summary) && r.tasks[1].data.read === false, `no key: the step says so and the plan carries on: ${r.tasks[1].summary}`);
+  assert.ok(s1.preflight.warnings.some((w) => /Google numbers: no Google key is saved yet/.test(w)) && !s1.preflight.blockers.length && !/Google Search Console, /.test(r.live.lines.join(' ')), 'said before the run, never blocking, and no number is shown'); assert.ok(Number.isInteger(r.live.numbers.siteScore) && r.live.numbers.blogBriefs > 0);
   assert.ok((await S.q(`SELECT 1 FROM "OmniMkSiteCheck" WHERE clientName = 'SEO Test Co'`)).length === 1, 'a real website check was saved for the client');
   const i1 = await Agent.startRun(admin, { goal: 'Promote TeamLink Consultants for 1 days', business: 'own', params: { creative: 'ai' } }, { now: NOW });
   assert.equal(i1.preflight.blockers.length, 0, i1.preflight.blockers.join()); await Agent.approve(admin, i1.run.id, base); await Agent.drain(); r = await Agent.detail(admin, i1.run.id);
@@ -332,9 +334,38 @@ const base = { actorFor: async () => admin, notify, fetchFn };
   // a second SEO goal for the same client: the same site is used, the audit has a score to compare with, the summary says so
   const s2 = await Agent.startRun(admin, { goal: "Improve my website's SEO", business: 'c:seo-test-co' }, { ...base, now: NOW }); await Agent.approve(admin, s2.run.id, base); await Agent.drain();
   assert.equal((await Sites.list(admin)).items.filter((x) => x.clientName === 'SEO Test Co').length, 1, 'no second SEO site'); const sd2 = await Agent.detail(admin, s2.run.id);
-  assert.deepEqual(sd2.tasks.map((t) => t.status), ['done', 'done', 'done', 'done', 'waiting'], sd2.tasks.map((t) => t.error).join('; ')); assert.ok(/\(was \d+\)/.test(sd2.tasks[0].summary), 'the second audit says what the score was before');
+  assert.deepEqual(sd2.tasks.map((t) => t.status), ['done', 'done', 'done', 'done', 'done', 'waiting'], sd2.tasks.map((t) => t.error).join('; ')); assert.ok(/\(was \d+\)/.test(sd2.tasks[0].summary), 'the second audit says what the score was before');
   assert.ok(/Website score: \d+\/100 now, \d+\/100 before this plan/.test(sd2.live.lines.join(' ')), sd2.live.lines.join(' | '));
   console.log('PASS the SEO assistant: the agent starts the client\'s SEO site once from the saved facts, audits it (findings kept as recommendations), keeps keyword ideas with no invented volumes and the home page texts, and a second goal compares with the earlier score');
+
+  // 18b. Google search data in the agent: the client's real Search Console numbers (Google is a stand-in), the property matched to the website, real searches kept as keywords, the figures in the summary
+  const GA = require(`${M}googleAuth`); const Google = require(`${M}seoGoogle`); GA.forget();
+  const { privateKey } = require('crypto').generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+  const googleKey = JSON.stringify({ type: 'service_account', project_id: 'teamlink-test', private_key_id: 'abc', private_key: privateKey, client_email: 'seo-reader@teamlink-test.iam.gserviceaccount.com' });
+  const split = Google.periods('gsc').now.start; const gAsked = []; const say = (status, body) => ({ status, json: async () => body });
+  let shared = []; // the properties the clients have shared with the service account
+  const googleFetch = async (url, init = {}) => {
+    gAsked.push({ url, method: init.method || 'GET' });
+    if (url === GA.TOKEN_URL) return say(200, { access_token: 'tok-1', expires_in: 3600, token_type: 'Bearer' });
+    if (url === 'https://www.googleapis.com/webmasters/v3/sites') return say(200, { siteEntry: shared.map((siteUrl) => ({ siteUrl, permissionLevel: 'siteRestrictedUser' })) });
+    if (!/searchAnalytics\/query$/.test(url)) return say(404, { error: { message: `unexpected ${url}` } });
+    const body = JSON.parse(init.body); const dims = body.dimensions || []; const before = body.startDate < split;
+    if (!dims.length) return say(200, { rows: [{ clicks: before ? 100 : 160, impressions: before ? 3000 : 4000, ctr: 0.04, position: 12.04 }] });
+    if (dims[0] === 'date') return say(200, { rows: [{ keys: [split], clicks: 5, impressions: 120 }] });
+    return say(200, { rows: [{ keys: ['heart check up in pune'], clicks: 12, impressions: 300, ctr: 0.04, position: 6.43 }, { keys: ['cardiac test cost pune'], clicks: 3, impressions: 150, ctr: 0.02, position: 12.12 }, { keys: ['seo test co'], clicks: 40, impressions: 200, ctr: 0.2, position: 1.1 }] });
+  };
+  const gbase = { ...base, googleFetch, googleKey, svc: { googleStatus: async () => ({ configured: true }) } };
+  const goal = async () => { const g = await Agent.startRun(admin, { goal: "Improve my website's SEO", business: 'c:seo-test-co' }, { ...gbase, now: NOW }); assert.ok(!g.preflight.warnings.some((w) => /Google numbers/.test(w)), 'with a key saved there is no warning'); await Agent.approve(admin, g.run.id, gbase); await Agent.drain(); return Agent.detail(admin, g.run.id, gbase); };
+  let sg = await goal(); let gt = sg.tasks.find((t) => t.tool === 'seo.google');
+  assert.ok(gt.status === 'done' && gt.data.read === false && /not shared with seo-reader@teamlink-test[\s\S]*Users and permissions/.test(gt.summary), `not shared yet: it says who to add: ${gt.summary}`);
+  shared = ['sc-domain:agent.test', 'sc-domain:somebody-else.test']; sg = await goal(); gt = sg.tasks.find((t) => t.tool === 'seo.google');
+  assert.ok(gt.status === 'done' && gt.data.read === true && /Google Search Console, \d{4}-\d\d-\d\d to \d{4}-\d\d-\d\d: 160 clicks from search \(100 in the 28 days before\), seen 4,000 times, average position 12\./.test(gt.summary) && /sc-domain:agent\.test was matched to the website and saved/.test(gt.summary) && /Close to the top: heart check up in pune \(position 6\.4, seen 300 times\)/.test(gt.summary) && gt.refs[0].page === 'mkseo', gt.summary);
+  assert.equal((await Sites.list(admin)).items.find((x) => x.id === seoSite.id).gscProperty, 'sc-domain:agent.test', 'the matching property is saved on the site; another client\'s is never taken');
+  const kt = sg.tasks.find((t) => t.tool === 'seo.keywords'); assert.ok(/including 2 real searches from Google Search Console close to the top/.test(kt.summary), kt.summary);
+  const real2 = (await Kw.list(admin, seoSite.id)).items.filter((k) => k.source === 'search console'); assert.deepEqual(real2.map((k) => k.phrase).sort(), ['cardiac test cost pune', 'heart check up in pune'], 'only the searches close to the top, not the brand name at position 1');
+  const said = sg.live.lines.join(' '); assert.ok(/Google Search Console, [^:]+: 160 clicks from search/.test(said) && /Google's figures cover the whole website for those dates: they do not show what this plan caused\./.test(said) && sg.live.numbers.performance.google.gsc.totals.clicks === 160 && !/Google Analytics, /.test(said), said);
+  assert.ok(gAsked.every((c) => c.method === 'GET' || /searchAnalytics\/query$|oauth2/.test(c.url)), 'Google is only read');
+  console.log('PASS Google search data in the agent: no key or not shared is said in words and the plan carries on; when shared, the property is matched to the website, the real 28-day figures and the searches close to the top are reported, kept as keywords, and the summary says they cover the whole website');
 
   // 19. PHASE 3 WhatsApp: a message is PREPARED and approved here; the agent never sends it
   const wp = P.build('Promote TeamLink Consultants for 2 days on WhatsApp and Instagram', ctx, { publish: 'manual' }, NOW).plan; assert.deepEqual(wp.params.platforms, ['instagram', 'whatsapp']);
@@ -417,7 +448,7 @@ const base = { actorFor: async () => admin, notify, fetchFn };
     { id: 'L-lost', company: 'Lost Co', contactName: 'Lou', band: 'Hot', score: 80, why: ['was keen'], source: 'Website', status: 'Lost', stage: '', phone: '+91 ••••• ••055', ownerName: '', createdAt: isoAt(startAt + 5000) },
   ] });
   const callSvc = { Lead: { overview: async () => (crmOk ? leadsFor() : { error: 'Your login is not on the CRM list.' }) }, WA: { call: async (u, name, input) => { waCalls.push([name, input.crmLeadId]); return input.crmLeadId === 'L-hot' ? { band: 'Hot', fields: { requirement: 'Hiring 5 nurses', callback: 'after 5 pm' }, next: 'Call this evening' } : { error: 'There is no chat for this lead.', status: 404 }; } } };
-  const callBase = { ...base, svc: callSvc }; Agent.config.clock = () => Date.now();
+  const callBase = { ...base, svc: callSvc }; Agent.config.clock = () => NOW; // the clock of the day the goals are given (the plan starts tomorrow), whatever today is
   const cg = await Agent.startRun(admin, { goal: 'Promote TeamLink Consultants for 1 days', business: 'own', params: { callSheet: true, creative: 'none', startDate: '2026-11-26' } }, { ...callBase, now: NOW });
   assert.ok(cg.preflight.warnings.some((w) => /Call sheet: built when the plan ends/.test(w)), 'the preview explains the call sheet'); assert.ok(cg.tasks.find((t) => t.tool === 'calling.sheet').scheduledAt && cg.tasks.find((t) => t.tool === 'calling.sheet').scheduled);
   await Agent.approve(admin, cg.run.id, callBase); await Agent.drain(); r = await Agent.detail(admin, cg.run.id); const sheetT = r.tasks.find((t) => t.tool === 'calling.sheet');

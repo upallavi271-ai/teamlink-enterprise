@@ -60,7 +60,7 @@ function platformsIn(t) {
   return out;
 }
 function intentOf(t) {
-  if (/\bseo\b|search engine|google rank|rank (higher|better|on google)|website.*(optimi[sz]|improve)|improve.*website/.test(t)) return 'seo';
+  if (/\bseo\b|search engine|search console|google analytics|google search (data|numbers|traffic|performance|results)|google rank|rank (higher|better|on google)|website.*(optimi[sz]|improve)|improve.*website/.test(t)) return 'seo';
   if (/strateg|marketing plan|plan a complete|complete marketing/.test(t)) return 'strategy';
   if (/\bvideos?\b|\breels?\b|\bshorts?\b/.test(t) && /(generate|create|make|produce|promotional|promo|shoot|need|want)/.test(t)) return 'videos';
   if (/instagram/.test(t)) return 'instagram';
@@ -95,6 +95,7 @@ const METRICS = {
   siteScore: { key: 'siteScore', label: 'Website score (TeamLink\'s own, out of 100)', how: 'the saved website check; it measures what is on the page, not rankings or traffic', live: true },
   leads: { key: 'leads', label: 'New CRM leads while the plan runs', how: 'counted from the CRM (all sources, including the WhatsApp assistant): TeamLink cannot tell which lead came from which post', live: true },
   blogs: { key: 'blogs', label: 'Blog briefs planned', how: 'counted from the saved blog plan', live: true },
+  search: { key: 'search', label: 'Google search clicks (when Google is set up for the client)', how: "read from Google Search Console by the SEO assistant; it counts the whole website, not only this plan", live: true },
 };
 const dayMetrics = (intent) => [METRICS.drafted, METRICS.approved, METRICS.posted, ...(intent === 'enquiries' || intent === 'promote' || intent === 'instagram' ? [METRICS.enquiries, METRICS.leads] : []), METRICS.reach];
 
@@ -347,7 +348,7 @@ function build(goalText, ctxIn, given = {}, now = Date.now()) {
   if (parsed.intent === 'seo') {
     const url = ctx.website;
     return { parsed, questions, plan: { ...base, title: `Improve the website SEO of ${f.name}`, objective: `Find what is missing on ${f.webShort || 'the website'} and plan this month's blog posts, using only what is really on the page.`, days: [], seo: { url, pages: 5 },
-      metrics: [METRICS.siteScore, METRICS.blogs, METRICS.reach],
+      metrics: [METRICS.siteScore, METRICS.search, METRICS.blogs, METRICS.reach],
       assumptions: [...assumptions.filter((x) => !/posting time/.test(x)), 'The check reads the website once (up to 5 pages), with plain code. It measures what is on the page, not rankings, traffic or what search engines or AI assistants say.', 'Nothing on the website is changed by the agent: fixes are done by the people who run the website.'], strategy: null } };
   }
   const days = buildDays(parsed.intent, f, ctx, p, healthcare);
@@ -370,6 +371,7 @@ function taskSpecs(plan) {
   const specs = []; const add = (s) => { specs.push({ n: specs.length + 1, day: null, deps: [], ...s }); return specs.length; };
   if (plan.intent === 'seo') {
     const a = add({ tool: 'seo.audit', title: `Audit the website ${plan.seo.url} with the SEO assistant (up to ${plan.seo.pages} pages) and keep its recommendations` });
+    add({ tool: 'seo.google', deps: [a], title: 'Read the Google search numbers (Search Console and Analytics, when set up for the client)' });
     add({ tool: 'seo.keywords', deps: [a], title: 'Research keyword ideas and keep the best phrases (no search volumes: TeamLink has no source for them)' });
     add({ tool: 'seo.content', deps: [a], title: 'Write the home page title, description and FAQ from the saved facts, ready for the website owner' });
     add({ tool: 'seo.blogplan', title: "Plan this month's blog posts (briefs only, nothing is written or posted)" });
