@@ -52,6 +52,12 @@ async function logoReady(buf, maxW, maxH) {
 const roleIcon = (t) => (ROLE_RULES.find(([re]) => re.test(t)) || [null, 'briefcase'])[1];
 const stepIcon = (t, i) => (STEP_RULES.find(([re]) => re.test(t)) || [null, ['userSearch', 'users', 'clipboard', 'userCheck', 'handshake'][i % 5]])[1];
 
+const iconPng = async (key, size, color, sw = 1.9) => sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(size)}" height="${Math.round(size)}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${ICONS[key]}</svg>`)).png().toBuffer();
+// the colours of a designed picture: the business's bright colour, a very dark shade of it for words and bars, and the accent
+function palette(spec, H) {
+  const c = spec.colors || {}; const bright = H.HEX.test(c.primary || '') ? c.primary : '#0b5ed7';
+  return { bright, dark: H.mix(bright, '#020a22', 0.66), accent: H.HEX.test(c.accent || '') ? c.accent : '#f5b301', soft: H.mix(bright, '#ffffff', 0.9), rule: H.mix(bright, '#ffffff', 0.68) };
+}
 const clean = (v, n) => String(v == null ? '' : v).replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, n);
 const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -87,15 +93,12 @@ async function makePoster(spec, H) {
   const { w, h } = sz;
   const k = Math.min(w / 1080, h / 1350); // one design unit: the design is drawn for 1080 x 1350
   const n = (v) => Math.round(v * k);
-  const c = spec.colors || {};
-  const bright = HEX.test(c.primary || '') ? c.primary : '#0b5ed7';
-  const dark = mix(bright, '#020a22', 0.66);
-  const accent = HEX.test(c.accent || '') ? c.accent : '#f5b301';
-  const soft = mix(bright, '#ffffff', 0.9); const rule = mix(bright, '#ffffff', 0.68);
+  const { bright, dark, accent, soft, rule } = palette(spec, H);
   const layers = [];
   const put = (input, left, top) => layers.push({ input, left: Math.max(0, Math.round(left)), top: Math.max(0, Math.round(top)) });
   const shape = (inner, top = 0, height = h) => put(svg(w, Math.max(1, Math.round(height)), inner), 0, top);
-  const icon = async (key, size, color, sw = 1.9) => sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(size)}" height="${Math.round(size)}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${ICONS[key]}</svg>`)).png().toBuffer();
+  const icon = iconPng;
+  const insta = spec.variant === 'insta'; // an Instagram post: the logo, the headline, a big photograph, the call to action and the contacts
   // a gold sweep, thick in the middle, under a line of words
   const sweep = (x1, x2, y) => { const mid = (x1 + x2) / 2; shape(`<path d="M${x1} ${y + n(13)} Q${mid} ${y - n(17)} ${x2} ${y + n(2)} Q${mid} ${y + n(1)} ${x1} ${y + n(13)} Z" fill="${accent}"/>`); };
   // a line of words with a short rule on each side
@@ -107,11 +110,11 @@ async function makePoster(spec, H) {
 
   const headline = clean(spec.headline, 40); const headline2 = clean(spec.headline2, 40); const pill = clean(spec.sub, 60); const tagline = clean(spec.tagline, 70);
   const roles = (Array.isArray(spec.roles) ? spec.roles : []).map((x) => clean(x, 24)).filter(Boolean).slice(0, 3);
-  const steps = (Array.isArray(spec.services) ? spec.services : []).map((x) => clean(x, 34)).filter(Boolean).slice(0, 6);
+  const steps = insta ? [] : (Array.isArray(spec.services) ? spec.services : []).map((x) => clean(x, 34)).filter(Boolean).slice(0, 6);
   const servicesTitle = steps.length ? clean(spec.servicesTitle, 30) : '';
   const cards = steps.length > 3; // four to six: large cards in two columns
-  const motto = clean(spec.motto, 44); const motto2 = clean(spec.motto2, 34);
-  const cta = clean(spec.cta, 44); const phone = clean(spec.phone, 24); const place = clean(spec.location, 44); const closing = clean(spec.closing, 60); const site = clean(spec.chip, 44); const email = clean(spec.email, 48);
+  const motto = insta ? '' : clean(spec.motto, 44); const motto2 = insta ? '' : clean(spec.motto2, 34);
+  const cta = clean(spec.cta, 44); const phone = clean(spec.phone, 24); const place = clean(spec.location, 44); const closing = insta ? '' : clean(spec.closing, 60); const site = clean(spec.chip, 44); const email = clean(spec.email, 48);
 
   // ---- the footer's rows decide its height ----
   const rows = [cta && ['cta', 66], (phone || place) && ['phone', 60], closing && ['closing', 44], (site || email) && ['web', 46]].filter(Boolean);
@@ -278,4 +281,4 @@ async function makePoster(spec, H) {
   return { buf, w, h };
 }
 
-module.exports = { makePoster, roleIcon, stepIcon };
+module.exports = { makePoster, roleIcon, stepIcon, tools: { textPng, line, logoReady, iconPng, stepIcon, clean, palette } };

@@ -126,6 +126,21 @@ const pic = (w, h, background, box) => sharp({ create: { width: w, height: h, ch
   assert.ok(x.revised && x.version === 3, JSON.stringify(x)); spec = await specOf(b.item.id); assert.ok(spec.heroFile === `${b.item.id}.hero-v2` && fs.readFileSync(path.join(UP, spec.hero2File)).equals(kept2) && spec.phone === '98480 12345', JSON.stringify(spec));
   console.log('PASS change requests: phone, e-mail, address and website exactly as the client typed; the main picture made again; the second one is a person\'s job (or removed)');
 
+  // ---- 5. every size of the social pages, in each design ----
+  const meta = await Img.bannerMeta(); const keys = meta.sizes.map((s) => s.key);
+  assert.deepEqual(keys, ['4:5', '1:1', '9:16', '1200:628', '16:9', '1280:720', '4:3', '1640:624', '1584:396', '1500:500', '2560:1440']);
+  assert.ok(meta.sizes.every((s) => s.label && s.platforms.length && /^\d+:\d+$/.test(s.key)), 'each has a label, its platforms and a width:height key the screens can read');
+  for (const p of ['instagram', 'facebook', 'linkedin', 'x', 'youtube', 'whatsapp', 'google']) assert.ok(meta.sizes.some((s) => s.platforms.includes(p)), p);
+  for (const [name, d] of [['poster', { layout: 'poster' }], ['insta', { layout: 'poster', variant: 'insta' }], ['banner', { layout: 'showcase' }]]) {
+    for (const s of meta.sizes) {
+      const x = await Img.createBanner(admin, { ...body, ...d, posterKey: 'biz:smile-dental', size: s.key, title: `${name} ${s.key}` }); assert.ok(x.item, `${name} ${s.key}: ${JSON.stringify(x)}`);
+      const mm = await sharp(await fileOf(x.item.id)).metadata(); assert.deepEqual([mm.width, mm.height, x.item.aspect], [s.w, s.h, s.key], `${name} ${s.key}`);
+    }
+  }
+  const ig = await Img.createBanner(admin, { ...body, variant: 'insta', size: '4:5', title: 'ig' }); assert.equal((await specOf(ig.item.id)).variant, 'insta');
+  const full = await Img.createBanner(admin, { ...body, size: '4:5', title: 'full' }); assert.ok(!fs.readFileSync(await fileOf(ig.item.id)).equals(fs.readFileSync(await fileOf(full.item.id))), 'the Instagram post is a different picture: no service cards');
+  console.log('PASS every social page size in all three designs, each exactly its size');
+
   console.log('poster tests: all passed');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

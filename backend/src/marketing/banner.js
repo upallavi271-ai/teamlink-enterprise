@@ -14,11 +14,19 @@ const sharp = require('sharp');
 
 const FONT_BOLD = path.join(__dirname, '..', '..', 'assets', 'fonts', 'LiberationSans-Bold.ttf');
 const FONT_REG = path.join(__dirname, '..', '..', 'assets', 'fonts', 'LiberationSans-Regular.ttf');
+// every picture size of the social pages (2026-11-27). `platforms` feeds the screen's filter; keys read as width:height. `safe`: the middle every screen shows; `indent`: keep clear of the profile photo
 const SIZES = {
-  '16:9': { w: 1920, h: 1080, label: 'Web / YouTube / LinkedIn (16:9)' },
-  '1:1': { w: 1080, h: 1080, label: 'Square (1:1)' },
-  '4:5': { w: 1080, h: 1350, label: 'Instagram portrait (4:5)' },
-  '9:16': { w: 1080, h: 1920, label: 'Story / Reel cover (9:16)' },
+  '4:5': { w: 1080, h: 1350, label: 'Portrait post 1080 x 1350', platforms: ['instagram', 'facebook', 'linkedin'] },
+  '1:1': { w: 1080, h: 1080, label: 'Square post 1080 x 1080', platforms: ['instagram', 'facebook', 'linkedin', 'whatsapp'] },
+  '9:16': { w: 1080, h: 1920, label: 'Story / Reel cover / Status 1080 x 1920', platforms: ['instagram', 'facebook', 'whatsapp', 'youtube'] },
+  '1200:628': { w: 1200, h: 628, label: 'Link post 1200 x 628', platforms: ['facebook', 'linkedin'] },
+  '16:9': { w: 1920, h: 1080, label: 'Wide post 1920 x 1080', platforms: ['x', 'youtube', 'linkedin'] },
+  '1280:720': { w: 1280, h: 720, label: 'YouTube thumbnail 1280 x 720', platforms: ['youtube'] },
+  '4:3': { w: 1200, h: 900, label: 'Google Business post 1200 x 900', platforms: ['google'] },
+  '1640:624': { w: 1640, h: 624, label: 'Facebook page cover 1640 x 624', platforms: ['facebook'] },
+  '1584:396': { w: 1584, h: 396, label: 'LinkedIn profile cover 1584 x 396', platforms: ['linkedin'], indent: 0.23 },
+  '1500:500': { w: 1500, h: 500, label: 'X header 1500 x 500', platforms: ['x'] },
+  '2560:1440': { w: 2560, h: 1440, label: 'YouTube channel banner 2560 x 1440', platforms: ['youtube'], safe: [1546, 423] },
 };
 const LAYOUTS = { poster: 'Poster: logo, two-tone headline, large photograph, roles and steps with icons, a motto beside a second picture, contact footer (a bright promotional flyer)', showcase: 'Showcase: logo band, two-tone headline, hero picture, service icons, price cards, who it is for, website (like a full promo poster)', split: 'Split: words and picture side by side', overlay: 'Overlay: full picture with the words on it', bold: 'Bold: brand colours and shapes (no picture needed)', offer: 'Offer: a big badge with the offer' };
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -52,8 +60,13 @@ async function roundCorners(buf, w, h, r) { return sharp(buf).composite([{ input
  * -> { buf (PNG), w, h }
  */
 async function makeBanner(spec = {}) {
-  // the bright promotional POSTER (2026-11-27, bannerPoster.js): portrait and square sizes; a wide size is drawn as a showcase
-  if (spec.layout === 'poster') { const shape = SIZES[spec.size] || SIZES['4:5']; if (shape.w <= shape.h * 1.2) return require('./bannerPoster').makePoster(spec, { SIZES, svg, mix, HEX }); return makeBanner({ ...spec, layout: 'showcase' }); } // eslint-disable-line global-require
+  // the designed pictures (2026-11-27): a page cover (very wide and low) has its own arrangement; the promotional POSTER (bannerPoster.js) draws portrait and square sizes, and bannerSizes.js the wide ones
+  if (spec.layout === 'poster' || spec.layout === 'showcase') {
+    const shape = SIZES[spec.size] || SIZES['4:5']; const tools = { SIZES, svg, mix, HEX };
+    if (shape.safe || shape.w >= shape.h * 2.2) return require('./bannerSizes').makeCover(spec, tools); // eslint-disable-line global-require
+    if (spec.size === '4:3') return require('./bannerSizes').makeWide(spec, tools); // eslint-disable-line global-require -- the showcase leaves a wide empty foot at 4:3
+    if (spec.layout === 'poster') return shape.w > shape.h * 1.2 ? require('./bannerSizes').makeWide(spec, tools) : require('./bannerPoster').makePoster(spec, tools); // eslint-disable-line global-require
+  }
   if (spec.layout === 'showcase') return require('./bannerShowcase').makeShowcase(spec, { SIZES, textPng, fit, svg, cover, roundCorners, mix, readable, HEX }); // eslint-disable-line global-require
   const sz = SIZES[spec.size] || SIZES['1:1'];
   const { w, h } = sz;
