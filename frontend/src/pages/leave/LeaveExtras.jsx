@@ -67,6 +67,16 @@ export function ReasonCell({ r }) {
   );
 }
 
+// The pay-month approval rule (utils/leaveSplit.js): which part a row is, and who approves it. A plain one-part TL + HR leave needs no chip.
+export function PartChip({ split }) {
+  if (!split || (split.of < 2 && split.kind !== 'sa')) return null;
+  return (
+    <span className="lvx-chip lvx-chip-blue" title={`The first ${split.limit} days of leave in a pay month need the Team Lead and then HR; every further day needs the Super Admin. This leave: ${split.totalDays} day(s), ${split.fromDate} to ${split.toDate}.`}>
+      {split.of > 1 ? `Part ${split.part} of ${split.of} · ` : ''}{split.kind === 'sa' ? 'Super Admin' : 'TL + HR'}
+    </span>
+  );
+}
+
 // THE REQUEST LIST — HR / TL / Manager see their scope, an employee their own
 // (the server scopes /api/leave).
 // ONE BUTTON per leave (founder 2026-11-13): it opens the one leave screen (LeaveRequestScreen: the leave, the chain, who approved and
@@ -93,7 +103,7 @@ export function LeaveRequestsTable({ requests, onOpen, limit = null, renderActio
               <td className="lvx-muted">{r.type}{r.earlyLogout?.chip && <div><span className="lvx-chip lvx-chip-warn" title={r.earlyLogout.text}>{'⏰'} {r.earlyLogout.chip}</span></div>}{r.pendingState && r.pendingState !== 'genuine' && <div><span className="lvx-chip lvx-chip-grey" title="Not counted in Pending Approvals">{r.pendingState === 'leaver' ? 'Employee has left' : r.pendingState === 'duplicate' ? 'Duplicate' : 'Old request'}</span></div>}{r.source && r.source !== 'TeamLink' && <div><span className="lvx-chip lvx-chip-blue" title="Came from Pulse HRMS">From Pulse</span></div>}</td>
               <td className="lvx-muted" style={{ whiteSpace: 'nowrap' }}>{r.fromDate}</td>
               <td className="lvx-muted" style={{ whiteSpace: 'nowrap' }}>{r.toDate || r.fromDate}</td>
-              <td className="lvx-muted" style={{ whiteSpace: 'nowrap' }}>{daysLabel(r)}</td>
+              <td className="lvx-muted" style={{ whiteSpace: 'nowrap' }}>{daysLabel(r)}{r.split && <div><PartChip split={r.split} /></div>}</td>
               <td><ReasonCell r={r} /></td>
               <td><Status>{r.status}</Status></td>
               <td><DecidedByCell r={r} /></td>
@@ -311,8 +321,8 @@ export function LeaveDecidePanel({ data, onDone }) {
 
 // MONTH-WISE BALANCE and the month-wise report moved to ./LeaveMonthWise.jsx (one view, with the leave behind every number).
 
-// HR LEAVE SETTINGS — the TL approval rule.
-export function TlRuleSetting({ canConfigure }) {
+// HR LEAVE SETTINGS — the TL approval rule. `split` = the long-leave setting (Leave policy), which changes what happens past the limit.
+export function TlRuleSetting({ canConfigure, split = null }) {
   const [rule, setRule] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => { api.get('/leave/tl-rule').then((r) => setRule(r.data)).catch(() => setRule(null)); }, []);
@@ -328,7 +338,9 @@ export function TlRuleSetting({ canConfigure }) {
         <div className="lvx-muted" style={{ marginBottom: 8 }}>
           {rule.enabled
             ? (rule.mode === 'days'
-              ? <>A TL may approve a leave request of <b>at most {rule.limit} day{rule.limit === 1 ? '' : 's'}</b>, and must give a reason. Longer requests are reassigned to HR / their manager.</>
+              ? (split && split.enabled
+                ? <>The <b>first {rule.limit} day{rule.limit === 1 ? '' : 's'} of leave in a pay month</b> need the TL (with a reason) and then HR. Every further day of that month needs the <b>Super Admin</b>.</>
+                : <>A TL may approve a leave request of <b>at most {rule.limit} day{rule.limit === 1 ? '' : 's'}</b>, and must give a reason. Longer requests are reassigned to HR / their manager.</>)
               : <>A TL may approve <b>at most {rule.limit} leave request{rule.limit === 1 ? '' : 's'} per employee per month</b>, and must give a reason. Beyond that the request is reassigned to HR / their manager.</>)
             : <>The TL rule is <b>off</b> — a TL approves like any other level (a reason is still asked for).</>}
         </div>

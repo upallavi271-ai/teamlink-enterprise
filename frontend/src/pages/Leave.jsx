@@ -7,6 +7,7 @@ import TabsPage from '../components/TabsPage.jsx';
 import { Panel, PanelPad, PanelHead, AssignRow, EmptyMini, ScopeNote, TwoCol, Status, Modal } from '../components/proto.jsx';
 import { ApprovalChainLine } from '../components/ApprovalChain.jsx';
 import LeaveRequestScreen from './leave/LeaveRequestScreen.jsx'; // the ONE leave screen: the leave, the chain, who approved and when, Approve / Reject
+import { dates as leaveDates } from './leave/EmployeeLeaves.jsx'; // "21 Dec 2026 – 22 Dec 2026"
 import { isAdmin, isHR as hasHrmsAdmin, can } from '../permissions';
 import Combo from '../components/Combo.jsx';
 import EmployeeStatusTag from '../components/EmployeeStatusTag.jsx';
@@ -16,7 +17,7 @@ import DataIoBar from '../components/dataio/DataIoBar.jsx';
 // Requests list (team, designation, approved-by, comments), Approve · Reject ·
 // Reassign with the TL rule, month-wise balance + report, TL rule setting.
 import {
-  LeaveRequestsTable, TlRuleSetting,
+  LeaveRequestsTable, TlRuleSetting, PartChip,
 } from './leave/LeaveExtras.jsx';
 import { MonthlyBalance, MonthlyReport } from './leave/LeaveMonthWise.jsx'; // month-wise leave: one view, the leave behind every number
 // Balances (one employee / all employees month-wise / all employees now) and
@@ -230,6 +231,19 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
     }).catch(() => { if (alive) setCount(null); });
     return () => { alive = false; };
   }, [form.fromDate, form.toDate, half]);
+  // WHO WILL APPROVE WHICH DAYS (founder 2026-11-25 / 27: pay-month rule), told before the leave is sent.
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    if (!form.fromDate || (!half && (!form.toDate || form.toDate < form.fromDate)) || (isHR && !form.employeeId)) { setPreview(null); return undefined; }
+    let alive = true;
+    api.get('/leave/split-preview', {
+      params: {
+        from: form.fromDate, to: half ? form.fromDate : form.toDate, days: half ? undefined : Number(form.days) || undefined,
+        halfDay: half ? form.halfDay : undefined, employeeId: isHR ? form.employeeId : undefined,
+      },
+    }).then((r) => { if (alive) setPreview(r.data.split); }).catch(() => { if (alive) setPreview(null); });
+    return () => { alive = false; };
+  }, [form.fromDate, form.toDate, form.days, form.halfDay, form.employeeId, half, isHR]);
   const calSpan = form.fromDate && form.toDate ? Math.max(1, Math.round((new Date(form.toDate) - new Date(form.fromDate)) / 86400000) + 1) : null;
   const allOff = !!(count && count.calendarDays > 0 && count.countedDays === 0);
   const span = count ? count.countedDays : calSpan;
@@ -324,6 +338,22 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
           {allOff
             ? 'These dates are all Sundays or company holidays, so no leave is needed.'
             : <>Counted: <b>{count.countedDays}</b> day{count.countedDays === 1 ? '' : 's'} of {count.calendarDays}. Not counted: {count.skipped.map((s) => `${s.date.slice(8, 10)}-${s.date.slice(5, 7)} (${s.reason})`).join(', ')}.</>}
+        </div>
+      )}
+      {preview && !allOff && (
+        <div className="notice amber" style={{ display: 'block', marginBottom: 10, fontSize: 12.5 }} data-testid="split-preview">
+          <b>Who will approve this leave.</b>
+          {preview.months.map((m) => <div key={m.key}>Pay month {m.rangeText}: {m.usedBefore} day(s) already applied. The first {preview.limit} need the TL and HR.</div>)}
+          {preview.parts.map((p) => {
+            const lead = preview.leadName ? `${isHR ? 'the TL' : 'your TL'} (${preview.leadName})` : '';
+            const hr = preview.hrName ? `HR (${preview.hrName})` : '';
+            return (
+              <div key={p.fromDate}>
+                {leaveDates(p.fromDate, p.toDate)} — {p.days} day{p.days === 1 ? '' : 's'}: <b>{p.kind === 'sa' || (!lead && !hr) ? 'the Super Admin' : [lead, hr].filter(Boolean).join(', then ')}</b>
+              </div>
+            );
+          })}
+          {preview.parts.length > 1 && <div>Each part is approved or rejected on its own.</div>}
         </div>
       )}
       <WhoElseOnLeave from={form.fromDate} to={half ? form.fromDate : form.toDate} employeeId={isHR ? form.employeeId : undefined} onTeamLimit={setTeamLimit} />
@@ -483,6 +513,16 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
     } catch (e) { setPolicyMsg(e.response?.data?.error || 'Could not save. Try again.'); }
   }
 
+  // Leave approval by pay month: first days Team Lead then HR, the rest Super Admin (founder 2026-11-25 / 27).
+  async function saveSplit(enabled) {
+    setPolicyMsg('');
+    try {
+      const res = await api.put('/leave/split-approval', { enabled });
+      setCaps((c) => ({ ...c, splitApproval: res.data.splitApproval }));
+      setPolicyMsg(res.data.splitApproval.enabled ? 'Saved. New leaves follow the pay-month approval rule.' : 'Saved. New leaves follow the earlier rule (the TL decides short leaves, longer ones go to HR / the Super Admin).');
+    } catch (e) { setPolicyMsg(e.response?.data?.error || 'Could not save. Try again.'); }
+  }
+
   async function saveCaps(patch) {
     const res = await api.put('/leave/concurrency-policy', patch);
     // The PUT echoes the whole HrConfig row, where escalationOrder is still the
@@ -611,6 +651,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
                     <span className="cell-muted" style={{ fontSize: 11.5 }}>
                       {r.type} · {r.fromDate}{r.toDate && r.toDate !== r.fromDate ? ` → ${r.toDate}` : ''}
                     </span>
+                    {r.split && <> <PartChip split={r.split} /></>}
                     {wf && wf.currentOwnerName && (
                       <div style={{ fontSize: 11.5, marginTop: 3 }}>
                         Waiting for <b>{wf.currentOwnerName}</b>
@@ -688,6 +729,25 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
                   </span>
                 </AssignRow>
               )}
+              {/* LEAVE APPROVAL BY PAY MONTH (founder 2026-11-25 / 27) */}
+              {caps.splitApproval && (
+                <AssignRow>
+                  <span>
+                    <b>Leave approval by pay month</b><br />
+                    <span className="cell-muted" style={{ fontSize: 11.5 }}>
+                      {!caps.splitApproval.enabled
+                        ? `Off: the TL decides a leave of up to ${caps.splitApproval.limit} days; a longer one goes to HR / the Super Admin.`
+                        : caps.splitApproval.blockedBy
+                          ? `On, but doing nothing now. ${caps.splitApproval.blockedBy}`
+                          : `The first ${caps.splitApproval.limit} days of leave in a pay month need the Team Lead and then HR (STL and Manager only see them). Every further day of that month needs the Super Admin only. A leave crossing the limit is split, and each part is approved or rejected on its own. A TL's own leave still goes to the Super Admin. The number is the TL Approval Rule limit below. Leaves already applied are not changed.`}
+                    </span>
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span className={`status ${caps.splitApproval.applies ? 'active' : 'hold'}`}>{caps.splitApproval.enabled ? 'On' : 'Off'}</span>
+                    {canEditPolicy && <button className="btn btn-sm" data-testid="split-switch" onClick={() => saveSplit(!caps.splitApproval.enabled)}>{caps.splitApproval.enabled ? 'Switch off' : 'Switch on'}</button>}
+                  </span>
+                </AssignRow>
+              )}
               {/* HRMS item 6 — the sandwich rule. */}
               <AssignRow>
                 <span>
@@ -742,7 +802,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
 
       <ApprovalLevelsPanel canConfigure={canEditPolicy} />
 
-      <TlRuleSetting canConfigure={canConfigure} />
+      <TlRuleSetting canConfigure={canConfigure} split={caps?.splitApproval} key={`tl-${caps?.splitApproval?.enabled}`} />
 
       <Panel style={{ marginTop: 16 }}>
         <PanelHead title="All leave requests" />

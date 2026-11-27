@@ -55,21 +55,22 @@ async function superAdminUser(saStep, applicantUserId) {
 
 // Move a request to the Super Admin step: everything else still open becomes Visibility, the Super Admin step becomes Pending.
 // `by` = who approved just before (for the note). Returns the Super Admin step.
-async function sendToSuperAdmin(workflowId, recordId, { by = null } = {}) {
+// saNote / visNote: the wording when something else sends a request here (utils/leaveSplit.js: the days after the TL limit).
+async function sendToSuperAdmin(workflowId, recordId, { by = null, saNote = SA_NOTE, visNote = VIS_NOTE } = {}) {
   const steps = await prisma.approvalStep.findMany({ where: { workflow: workflowId, recordId }, orderBy: { seq: 'asc' } });
   const sa = steps.find((s) => s.level === 'SUPER_ADMIN') || null;
   const applied = steps.find((s) => s.status === 'Applied');
   const who = await superAdminUser(sa, applied ? applied.approverUserId : null);
   const open = steps.filter((s) => ['Pending', 'Waiting'].includes(s.status) && (!sa || s.id !== sa.id));
   if (open.length) {
-    await prisma.approvalStep.updateMany({ where: { id: { in: open.map((s) => s.id) } }, data: { status: 'Visibility', note: VIS_NOTE } });
+    await prisma.approvalStep.updateMany({ where: { id: { in: open.map((s) => s.id) } }, data: { status: 'Visibility', note: visNote } });
   }
   const now = new Date();
   const data = {
     status: 'Pending', mode: 'required', activatedAt: now, dueAt: null, actedAt: null, actedByUserId: null, actedByName: null, direct: false,
     approverUserId: who ? who.id : (sa ? sa.approverUserId : null),
     approverName: who ? who.name : (sa ? sa.approverName : 'Super Admin'),
-    note: by ? `${SA_NOTE} (${by} approved before)` : SA_NOTE,
+    note: by ? `${saNote} (${by} approved before)` : saNote,
   };
   if (sa) return prisma.approvalStep.update({ where: { id: sa.id }, data });
   const top = steps.reduce((m, s) => Math.max(m, s.seq), 0);

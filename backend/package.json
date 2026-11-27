@@ -25,6 +25,7 @@
     "conversation-ticks-test": "node scripts/conversation-ticks-test.js",
     "hr-audit-test": "node scripts/hr-audit-test.js",
     "doc-register-test": "node scripts/doc-register-test.js",
+    "leave-split-test": "node scripts/leave-split-approval-test.js",
     "probation-test": "node scripts/probation-test.js",
     "openai-calling-test": "node scripts/openai-calling-test.js",
     "employee-hello-test": "node scripts/employee-hello-test.js",

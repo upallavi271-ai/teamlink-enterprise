@@ -108,6 +108,10 @@ async function closeOne(id, action, reason, user) {
   const cur = await prisma.leaveRequest.findUnique({ where: { id }, include: { employee: true } });
   if (!cur) return { error: 'Request not found' };
   if (cur.status !== 'Pending') return { error: `Already ${cur.status}` };
+  // Leave beyond the pay month's first days is the Super Admin's alone, here too (utils/leaveSplit.js).
+  const leaveSplit = require('../utils/leaveSplit'); // eslint-disable-line global-require
+  const split = await leaveSplit.of(id);
+  if (split && split.kind === 'sa' && !require('../utils/leadLeave').isRealSuperAdmin(user)) return { error: leaveSplit.refusal(split) }; // eslint-disable-line global-require
   const by = user.name || user.email;
   const decision = action === 'approve' ? 'Approved' : 'Rejected';
   const steps = await prisma.approvalStep.findMany({ where: { workflow: WF, recordId: id, status: { in: ['Pending', 'Waiting', 'Visibility'] } } });

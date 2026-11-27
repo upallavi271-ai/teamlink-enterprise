@@ -157,6 +157,9 @@ async function apply(rows, user, opts = {}) {
       if (it.action === 'update') {
         const cur = await prisma.leaveRequest.findUnique({ where: { id: it.leaveId } });
         if (!cur || cur.status !== 'Pending') { res.action = 'skipped'; res.reason = 'Changed in TeamLink since the preview'; results.push(res); continue; } // eslint-disable-line no-continue
+        // Leave beyond the pay month's first days is the Super Admin's alone (utils/leaveSplit.js): a file from Pulse does not decide it.
+        const sp = await require('./leaveSplit').of(cur.id); // eslint-disable-line global-require
+        if (sp && sp.kind === 'sa') { res.action = 'skipped'; res.reason = 'Waiting for the Super Admin in TeamLink'; results.push(res); continue; } // eslint-disable-line no-continue
         const r = it.r;
         const decidedAt = r.approvedOn ? new Date(`${r.approvedOn}T12:00:00`) : new Date();
         const decidedBy = `${r.approver || 'Pulse HRM'} (Pulse)`;

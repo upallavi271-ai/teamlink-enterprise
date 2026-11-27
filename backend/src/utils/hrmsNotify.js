@@ -254,10 +254,23 @@ async function leaveDecided({ leave, employee, by }) {
   const when = leave.toDate && leave.toDate !== leave.fromDate ? `${dmy(leave.fromDate)} to ${dmy(leave.toDate)}` : dmy(leave.fromDate);
   const approved = leave.status === 'Approved';
   const title = `Leave ${approved ? 'approved' : 'rejected'} — ${leave.type}, ${when}`;
-  const message = approved
+  const decided = approved
     ? `Your ${leave.type} for ${when} (${leave.days ?? 1} day(s)) was approved by ${by ? by.name || by.email : 'your approver'}.`
     : `Your ${leave.type} for ${when} was rejected by ${by ? by.name || by.email : 'your approver'}. Reason: ${leave.rejectReason || '—'}`;
-  return notify('leaveDecision', who, { title, message });
+  // A leave saved in parts (utils/leaveSplit.js, the pay-month rule): say that this is one part, and where the others stand.
+  let partLine = null;
+  try {
+    const LS = require('./leaveSplit'); // eslint-disable-line global-require
+    const split = await LS.of(leave.id);
+    if (split && split.of > 1) {
+      const others = (await LS.parts(split)).filter((p) => p.id !== leave.id && !p.deleted).map((p) => {
+        const days = p.toDate && p.toDate !== p.fromDate ? `${dmy(p.fromDate)} to ${dmy(p.toDate)}` : dmy(p.fromDate);
+        return `Part ${p.part} (${days}) ${p.status === 'Pending' ? `is still waiting for ${p.waitingFor || 'approval'}` : `is ${p.status}`}.`;
+      });
+      partLine = `This is part ${split.part} of ${split.of} of your ${split.totalDays} day leave. ${others.join(' ')}`.trim();
+    }
+  } catch (e) { console.error('[leave] part line failed', e.message); }
+  return notify('leaveDecision', who, { title, message: [decided, partLine].filter(Boolean).join(' ') });
 }
 
 // LATE PERMISSION: the approver whose turn it is hears about a new request (bell), the employee hears the decision.
@@ -313,7 +326,7 @@ async function approvalRaised({ workflow = 'leave', recordId, employee, title, l
 }
 const dayName = (iso) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${iso}T00:00:00Z`).getUTCDay()];
 // Leave: "<Name> applied for <type> from <date> to <date> (<days> days)".
-async function leaveRaised({ leave, employee, early = null, reassignedBy = null, toUserId = null, mailer = sendMail }) {
+async function leaveRaised({ leave, employee, early = null, reassignedBy = null, toUserId = null, note = null, mailer = sendMail }) {
   const e = employee || await prisma.employee.findUnique({ where: { id: leave.employeeId } });
   const from = String(leave.fromDate).slice(0, 10);
   const to = String(leave.toDate || leave.fromDate).slice(0, 10);
@@ -322,7 +335,7 @@ async function leaveRaised({ leave, employee, early = null, reassignedBy = null,
   const half = /First Half|Second Half/.exec(String(leave.reason || ''));
   const line = `${e.name} applied for ${leave.type}${half ? ` (${half[0]})` : ''} ${when} (${n} day${Number(n) === 1 ? '' : 's'}).`;
   const title = `${reassignedBy ? 'Leave request handed to you' : 'Leave request'} — ${e.name}, ${leave.type}, ${dmy(from)}${to !== from ? ` to ${dmy(to)}` : ''}`;
-  return approvalRaised({ workflow: 'leave', recordId: leave.id, employee: e, title, line, openPath: `/leave?tab=requests&open=${leave.id}`, also: [early && early.text], reassignedBy, toUserId, mailer });
+  return approvalRaised({ workflow: 'leave', recordId: leave.id, employee: e, title, line, openPath: `/leave?tab=requests&open=${leave.id}`, also: [note, early && early.text], reassignedBy, toUserId, mailer });
 }
 async function regularizationRaised({ reg, employee, mailer = sendMail }) {
   const e = employee || await prisma.employee.findUnique({ where: { id: reg.employeeId } });

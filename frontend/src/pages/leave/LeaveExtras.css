@@ -53,3 +53,25 @@
 .lvx-table{overflow-x:auto}
 .lvx-table .lvx-actions{position:sticky;right:0;z-index:1;background:var(--paper-raised,#fff);box-shadow:-6px 0 6px -6px rgba(0,0,0,.18);white-space:nowrap}
 .lvx-table thead .lvx-actions{z-index:2}
+
+/* Approve / Reject screen: the employee's other leaves, and the pay-month approval rule (2026-11-27) */
+.lvx-split{border:1px solid #93C5FD;background:var(--card2,#EFF6FF);border-radius:8px;padding:8px 10px;margin:6px 0 10px;font-size:12.5px}
+.lvx-part{border:1px solid var(--line,#DDE3EC);background:var(--card,#fff);border-radius:8px;padding:6px 8px;margin-top:6px}
+.lvx-part-now{border-color:#2563EB;box-shadow:inset 3px 0 0 #2563EB}
+.lvx-part-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:3px}
+.lvx-appr{font-size:11.5px;line-height:1.6}
+.lvx-appr-approved{color:#15803D}.lvx-appr-rejected{color:#B91C1C}.lvx-appr-pending{color:#C2410C}.lvx-appr-waiting{color:var(--muted,#8A94A6)}
+.lvx-history{margin:4px 0 2px}
+.lvx-totals{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:6px 0 8px}
+.lvx-total{border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;font-size:11.5px}
+.lvx-total b{font-size:18px;line-height:1.2}
+.lvx-total small{opacity:.75}
+.lvx-total-ok{background:#DCFCE7;color:#15803D}.lvx-total-wait{background:#FFEDD5;color:#C2410C}.lvx-total-no{background:#FEE2E2;color:#B91C1C}.lvx-total-off{background:#F1F5F9;color:#475569}
+.lvx-bal{overflow-x:auto;margin-bottom:8px}
+.lvx-bal table,.lvx-hist table{font-size:12px}
+.lvx-hist-title{font-size:11px;text-transform:uppercase;letter-spacing:.02em;color:var(--muted,#8A94A6);margin:6px 0 4px}
+.lvx-hist{max-height:320px;overflow:auto;border:1px solid var(--line,#DDE3EC);border-radius:8px}
+.lvx-hist td{vertical-align:top}
+.lvx-hist thead th{position:sticky;top:0;background:var(--paper-raised,#fff);z-index:1}
+.lvx-same td{background:var(--card2,#EFF6FF)}
+@media (max-width:700px){.lvx-totals{grid-template-columns:repeat(2,minmax(0,1fr))}.lvx-wide-only{display:none}.lvx-bal table,.lvx-hist table{width:100%;min-width:0}.lvx-bal th,.lvx-bal td,.lvx-hist th,.lvx-hist td{padding:6px;white-space:normal}}

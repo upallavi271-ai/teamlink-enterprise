@@ -6,9 +6,13 @@
 // ---------------------------------------------------------------------------
 const Z = require('./lib/zzfix')('LCS');
 
+const SPLIT_KEY = 'leave.splitApproval';
+
 (async () => {
   const { prisma } = Z;
   const leaveIds = [];
+  let splitBefore = null;
+  let splitTouched = false;
   try {
     const mk = (tag, role) => Z.mkUser(tag, { role, hrmsRole: role, hrmsAccess: true, atsRole: 'NONE', atsAccess: false }, { designation: 'Executive', department: 'R&D' });
     const tl = await mk('tl', 'TL');
@@ -82,7 +86,11 @@ const Z = require('./lib/zzfix')('LCS');
     const sS = await stepsOf(lvS.id);
     Z.check('C8 TL rung paused: the STL approves a 1-day leave - Approved at once, HR / Super Admin only Visibility', lvS1.status === 'Approved' && sS.HR === 'Visibility' && sS.SUPER_ADMIN === 'Visibility', [rS.status, rS.text.slice(0, 200), lvS1.status, sS]);
 
-    // 4. a NEW 3-day request raised through the app skips the TL from the start (HR decides)
+    // 4. a NEW 3-day request raised through the app skips the TL from the start (HR decides) - with the long-leave split (2026-11-27,
+    // utils/leaveSplit.js: TL the first days, Super Admin the rest; scripts/leave-split-approval-test.js) switched OFF for this case
+    splitBefore = await prisma.appSetting.findUnique({ where: { key: SPLIT_KEY } });
+    await prisma.appSetting.upsert({ where: { key: SPLIT_KEY }, update: { value: '{"enabled":false}' }, create: { key: SPLIT_KEY, value: '{"enabled":false}' } });
+    splitTouched = true;
     const r5 = await Z.call('POST', '/api/leave', await Z.mint(emp), { type: 'Casual', fromDate: '2026-12-14', toDate: '2026-12-16', reason: 'ZZTEST LCS new' });
     if (r5.body && r5.body.id) leaveIds.push(r5.body.id);
     const s5 = r5.body && r5.body.id ? await stepsOf(r5.body.id) : {};
@@ -93,6 +101,8 @@ const Z = require('./lib/zzfix')('LCS');
       const emps = Z.made.emps;
       for (const m of ['leaveCharge', 'leaveBalance']) { try { await prisma[m].deleteMany({ where: { employeeId: { in: emps } } }); } catch { /* not every table */ } } // eslint-disable-line no-await-in-loop
       await prisma.leaveRequest.deleteMany({ where: { id: { in: leaveIds } } });
+      if (splitTouched && splitBefore) await prisma.appSetting.update({ where: { key: SPLIT_KEY }, data: { value: splitBefore.value } });
+      else if (splitTouched) await prisma.appSetting.deleteMany({ where: { key: SPLIT_KEY } });
     } catch (e) { console.log('cleanup', String(e.message).slice(0, 160)); }
     await Z.cleanup([(p) => p.auditLog.deleteMany({ where: { OR: [{ entityId: { in: leaveIds } }, { reason: { contains: 'ZZTEST LCS' } }] } })]).catch((e) => console.log('cleanup problem', String(e.message).slice(0, 160)));
     console.log(`\n${Z.pass} passed, ${Z.fail} failed`);

@@ -20,6 +20,7 @@ const leaveMeta = require('../utils/leaveMeta');
 const attachments = require('../utils/attachments'); // leave work-handover documents (2026-11-04)
 const leadRule = require('../utils/leadLeave');
 const markedLeave = require('../utils/markedLeave');
+const leaveSplit = require('../utils/leaveSplit'); // pay-month rule: first days Team Lead then HR, the rest Super Admin (2026-11-27)
 
 const router = express.Router();
 router.use(requireAuth);
@@ -74,13 +75,17 @@ async function ensureWorkflow(request) {
   if (existing) return null;
   const employee = request.employee || await prisma.employee.findUnique({ where: { id: request.employeeId } });
   if (!employee) return null;
-  return workflow.start({
+  const laid = await workflow.start({
     workflow: WF,
     recordId: request.id,
     employee,
     applicantUserId: employee.userId || null,
     applicantName: employee.name,
   });
+  // A leave under the pay-month rule keeps its approvers (utils/leaveSplit.js), however late its chain is laid down.
+  const split = await leaveSplit.of(request.id);
+  if (split) await leaveSplit.shapeChain(request.id, split);
+  return laid;
 }
 
 // Never let a chain problem take an existing screen down — unhandled
@@ -186,6 +191,8 @@ router.get('/', async (req, res, next) => {
         canSelfCancel: mine && (l.status === 'Pending' || ((l.status === 'Approved' || l.status === 'Cancellation Requested') && String(l.fromDate || '') > istToday())),
         pendingState: l.status === 'Pending' ? (pendingState.get(l.id) || 'genuine') : null,
         source: (metaOf.get(l.id) || {}).source || 'TeamLink',
+        // Under the pay-month rule (utils/leaveSplit.js): who approves this row, and which part of the application it is.
+        split: (() => { const sp = (metaOf.get(l.id) || {}).split; return sp ? { kind: sp.kind, part: sp.part, of: sp.of, limit: sp.limit, totalDays: sp.totalDays, fromDate: sp.fromDate, toDate: sp.toDate } : null; })(),
         earlyLogout: ev && (mine || !req.user.caps.hrmsSelfOnly) ? { state: ev.state, chip: ev.chip || null, text: ev.text, date: ev.date || null } : null,
         // Days really taken from the balance (items 4/6), when the ledger has it.
         chargedDays: charged.has(l.id) ? charged.get(l.id) : null,
@@ -328,17 +335,27 @@ router.get('/:id/workflow', async (req, res, next) => {
     // The button is drawn only for the login that owns this step. A Super
     // Admin who is not the owner gets the separate "decide directly" buttons
     // (view.canDirect). The refusal itself comes from the API — see /decision.
-    const canAct = !!(current && mayAct && current.approverUserId === req.user.id);
+    // Days beyond the pay month's first days (utils/leaveSplit.js) are the Super Admin's alone, so no button is drawn for anybody else.
+    const split = await leaveSplit.of(request.id);
+    const superOnly = !!(split && split.kind === 'sa') && !leadRule.isRealSuperAdmin(req.user);
+    const canAct = !!(current && mayAct && current.approverUserId === req.user.id) && !superOnly;
     const view = await workflow.view(WF, request.id, req.user, { canAct });
+    if (view && superOnly) view.canDirect = false;
     const text = leaveText.parse(request.reason);
     // THE TL RULE, for the login looking at it: may they approve this one?
     let tl = null;
     if (current && (canAct || !view)) {
-      if (policy.actingAsTl(req.user, current)) tl = await policy.evaluateTlRule(await policy.getTlRule(), request);
+      if (policy.actingAsTl(req.user, current)) {
+        const thenHr = steps.some((s) => s.level === 'HR' && s.status === 'Waiting');
+        tl = split && split.kind === 'tl'
+          ? { allowed: true, note: `${leaveSplit.explain(split)} ${thenHr ? 'After your approval it goes to HR. ' : ''}A reason is required to approve.` }
+          : await policy.evaluateTlRule(await policy.getTlRule(), request);
+      }
     }
     // REASSIGN — the current owner (or a Super Admin) may hand it on.
-    const mayReassign = !!(current && mayAct && (current.approverUserId === req.user.id || workflow.hasDirectPower(req.user, WF, steps)));
-    const reassignTargets = mayReassign ? await policy.reassignTargets(steps, request.employee ? request.employee.userId : null, { allowTemp: !!(request.employee && policy.isTempAccount(request.employee.name, request.employee.employeeCode)) }) : [];
+    const mayReassign = !!(current && mayAct && !superOnly && (current.approverUserId === req.user.id || workflow.hasDirectPower(req.user, WF, steps)));
+    let reassignTargets = mayReassign ? await policy.reassignTargets(steps, request.employee ? request.employee.userId : null, { allowTemp: !!(request.employee && policy.isTempAccount(request.employee.name, request.employee.employeeCode)) }) : [];
+    if (split && split.kind === 'sa') reassignTargets = reassignTargets.filter((t) => t.level === 'SUPER_ADMIN');
     // Department of every possible new approver, so the picker can narrow by department (cascading filter rule).
     if (reassignTargets.length) {
       const emps = await prisma.employee.findMany({ where: { userId: { in: reassignTargets.map((t) => t.userId) } }, select: { userId: true, department: true } });
@@ -348,13 +365,21 @@ router.get('/:id/workflow', async (req, res, next) => {
     // HRMS item 4: the early-logout check, for the applicant and for approvers only (never a plain colleague).
     const isApplicant = !!(request.employee && request.employee.userId === req.user.id);
     let early = null;
+    // The early-logout check and the handover of a leave in parts were saved on its first part.
+    const firstId = split ? split.group : request.id;
     if (isApplicant || !req.user.caps.hrmsSelfOnly) {
-      early = await earlyLogout.snapshotOf(request.id);
+      early = await earlyLogout.snapshotOf(firstId);
       if (early) early = { ...early, snapshot: true };
-      else if (request.employee) { try { early = { ...(await earlyLogout.compute(request.employee, request.fromDate)), snapshot: false }; } catch { early = null; } }
+      else if (request.employee && firstId === request.id) { try { early = { ...(await earlyLogout.compute(request.employee, request.fromDate)), snapshot: false }; } catch { early = null; } }
     }
     const meta = await leaveMeta.getMeta(request.id);
-    const handover = publicHandover(meta && meta.handover, request.id);
+    const firstMeta = firstId === request.id ? meta : await leaveMeta.getMeta(firstId);
+    const handover = publicHandover(firstMeta && firstMeta.handover, firstId);
+    // THE EMPLOYEE'S LEAVES, ON THE APPROVE / REJECT SCREEN (founder 2026-11-25): for the person themselves and for approvers only.
+    let employeeLeave = null;
+    if (request.employee && (isApplicant || mayAct || await workflow.isParticipant(WF, request.id, req.user.id))) {
+      try { employeeLeave = await employeeLeaveFor(request, split); } catch (e) { console.error('[leave] employee history failed', e.message); }
+    }
     const handoffs = (await prisma.auditLog.findMany({
       where: { entity: 'LeaveRequest', entityId: request.id, action: policy.REASSIGNED },
       orderBy: { createdAt: 'asc' },
@@ -396,6 +421,8 @@ router.get('/:id/workflow', async (req, res, next) => {
       },
       workflow: view,
       tl,
+      split: split ? { kind: split.kind, part: split.part, of: split.of, limit: split.limit, totalDays: split.totalDays, fromDate: split.fromDate, toDate: split.toDate, months: split.months, parts: await leaveSplit.parts(split) } : null,
+      employeeLeave,
       reassign: { allowed: mayReassign && reassignTargets.length > 0, targets: reassignTargets },
       earlyLogout: early,
       source: (meta && meta.source) || 'TeamLink',
@@ -572,6 +599,9 @@ router.post('/', async (req, res, next) => {
   // here must not lose the employee's application — the request exists, and
   // the chain is materialised again on the next read (ensureWorkflow above).
   let chain = null;
+  // The rows of this application: one, or one per kind of approval (utils/leaveSplit.js, the pay-month rule).
+  let saved = [leave];
+  let split = null;
   try {
     if (!employee) employee = await prisma.employee.findUnique({ where: { id: employeeId } });
     if (employee) {
@@ -582,21 +612,57 @@ router.post('/', async (req, res, next) => {
         applicantUserId: employee.userId || null,
         applicantName: employee.name,
       });
-      if (await overTlLimit(leave, employee)) await sendPastTl(leave.id);
+      // WHO APPROVES, BY THE PAY MONTH (founder 2026-11-25 / 27, utils/leaveSplit.js): the first days of leave in the month need the Team
+      // Lead and then HR, every further day the Super Admin. Not under that rule (switched off, a TL's own leave): as before.
+      try {
+        const hasBelowSuperAdmin = leaveSplit.firstApprovers(await workflow.loadSteps(WF, leave.id)).length > 0;
+        const plan = hasBelowSuperAdmin ? await leaveSplit.plan({ employee, fromDate, toDate, days, halfDay, excludeId: leave.id }) : null;
+        if (plan) { saved = await leaveSplit.divide(leave, plan); split = await leaveSplit.of(leave.id); }
+      } catch (err) {
+        console.error('[leave] the pay-month approval rule failed', err.message);
+      }
+      if (split) await leaveSplit.shapeChain(leave.id, split);
+      else if (await overTlLimit(leave, employee)) await sendPastTl(leave.id);
       chain = workflow.summarize(await workflow.loadSteps(WF, leave.id));
     }
   } catch (err) {
     console.error('[leave] could not start the approval chain', err.message);
   }
+  const [mine, ...more] = saved;
+  // The other parts get their own chain. If that fails now it is laid down on the next read (ensureWorkflow).
+  for (const row of more) { // eslint-disable-line no-restricted-syntax
+    await logAudit({ userId: req.user.id, action: 'Leave requested', entity: 'LeaveRequest', entityId: row.id }); // eslint-disable-line no-await-in-loop
+    await safeEnsureWorkflow({ ...row, employee }); // eslint-disable-line no-await-in-loop
+  }
+  const splits = new Map();
+  for (const row of saved) { // eslint-disable-line no-restricted-syntax
+    const sp = split ? await leaveSplit.of(row.id) : null; // eslint-disable-line no-await-in-loop
+    if (!sp) continue; // eslint-disable-line no-continue
+    splits.set(row.id, sp);
+    await logAudit({ // eslint-disable-line no-await-in-loop
+      userId: req.user.id, action: 'Leave approval by pay month', entity: 'LeaveRequest', entityId: row.id,
+      toValue: `Part ${sp.part} of ${sp.of} (${row.fromDate} to ${row.toDate}, ${row.days} of ${days}): ${sp.kind === 'sa' ? 'Super Admin' : 'Team Lead then HR'}; pay month ${sp.months.map((m) => `${m.label}: ${m.usedBefore} day(s) applied before`).join(', ')}`,
+    });
+  }
   // HRMS item 4: what the previous working day's attendance said, frozen with the request (approvers see this snapshot).
   let early = null;
-  try { if (employee) early = await earlyLogout.snapshot(leave, employee); } catch (err) { console.error('[leave] early-logout check failed', err.message); }
-  // HRMS item 2: the first approver on the chain (the TL) hears at once, bell + email, once per request.
-  hrmsNotify.leaveRaised({ leave, employee, early }).catch((e) => console.error('[leave] notify approver failed', e.message));
+  try { if (employee) early = await earlyLogout.snapshot(mine, employee); } catch (err) { console.error('[leave] early-logout check failed', err.message); }
+  // HRMS item 2: the first approver of each part hears at once, bell + email, once per request.
+  hrmsNotify.leaveRaised({ leave: mine, employee, early, note: splits.has(mine.id) ? leaveSplit.noticeFor(splits.get(mine.id)) : null })
+    .catch((e) => console.error('[leave] notify approver failed', e.message));
+  for (const row of more) { // eslint-disable-line no-restricted-syntax
+    const first = (await workflow.loadSteps(WF, row.id).catch(() => [])).find((s) => s.status === 'Pending'); // eslint-disable-line no-await-in-loop
+    if (first && first.approverUserId) {
+      hrmsNotify.leaveRaised({ leave: row, employee, early, toUserId: first.approverUserId, note: splits.has(row.id) ? leaveSplit.noticeFor(splits.get(row.id)) : null })
+        .catch((e) => console.error('[leave] notify approver failed', e.message));
+    }
+  }
   // WORK HANDOVER (founder 2026-11-04: "leave ki apply chesetappudu work handover employee assign ... reports and documents upload ki apply
   // chese daggare evvu"): who takes over, what to hand over, and (uploaded right after) the documents. Kept in leave meta; the person told.
-  const handover = await saveHandover(leave, employee, req.body || {}, req.user).catch((e) => { console.error('[leave] handover', e.message); return null; });
-  return res.status(201).json({ ...leave, workflow: chain, ...(handover ? { handover } : {}), ...(req.leaveTeamNotice ? { teamNotice: req.leaveTeamNotice } : {}) });
+  // A leave in parts keeps one handover (on the first part) for the whole dates.
+  const handover = await saveHandover({ ...mine, toDate }, employee, req.body || {}, req.user).catch((e) => { console.error('[leave] handover', e.message); return null; });
+  const parts = split ? saved.map((r) => ({ id: r.id, part: splits.get(r.id) ? splits.get(r.id).part : 1, kind: splits.get(r.id) ? splits.get(r.id).kind : null, fromDate: r.fromDate, toDate: r.toDate, days: r.days })) : null;
+  return res.status(201).json({ ...mine, workflow: chain, ...(parts ? { split: { limit: split.limit, totalDays: split.totalDays, months: split.months, parts } } : {}), ...(handover ? { handover } : {}), ...(req.leaveTeamNotice ? { teamNotice: req.leaveTeamNotice } : {}) });
   } catch (err) {
     return next(err);
   }
@@ -625,6 +691,15 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
 
   const cfg = await getConfig();
   const days = existing.days != null ? existing.days : daySpan(existing.fromDate, existing.toDate);
+
+  // THE PAY-MONTH RULE (utils/leaveSplit.js): days beyond the month's first days are the Super Admin's alone - HR, Internal HR,
+  // an HR-super delegate and the TL cannot approve or reject it. Cancelling an approved part stays as for any leave.
+  const split = await leaveSplit.of(existing.id);
+  if (split && split.kind === 'sa' && existing.status === 'Pending' && status !== 'Cancelled' && !leadRule.isRealSuperAdmin(req.user)) {
+    return res.status(403).json({ error: leaveSplit.refusal(split), waitingFor: 'Super Admin' });
+  }
+  // The approval-reason rule counts the whole application the Super Admin is finishing, not just the part in front of them.
+  const reasonDays = split && split.kind === 'sa' ? split.totalDays : days;
 
   // ---- THE CHAIN -----------------------------------------------------------
   // A request that is climbing the chain is decided ONE STEP AT A TIME.
@@ -660,7 +735,8 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
     && (pendingStep.approverUserId === req.user.id || policy.actingAsTl(req.user, pendingStep) || leadRoleOf(req.user));
   // OVER THE TL LIMIT (founder 2026-10-28, sendPastTl above): the TL neither approves nor rejects it. A request raised before
   // this rule that still waits on the TL is moved to HR now, and the TL is told so.
-  if (['Approved', 'Rejected'].includes(status) && existing.status === 'Pending' && atLeadStep
+  // (A leave under the pay-month rule already has its approvers, so the per-request limit does not move it.)
+  if (['Approved', 'Rejected'].includes(status) && existing.status === 'Pending' && atLeadStep && !split
     && await overTlLimit(existing, existing.employee)) {
     const hr = await sendPastTl(existing.id);
     if (hr) hrmsNotify.leaveRaised({ leave: existing, employee: existing.employee, toUserId: hr.approverUserId }).catch(() => {});
@@ -671,9 +747,12 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
     });
   }
   if (status === 'Approved' && existing.status === 'Pending' && atLeadStep) {
-    const verdict = await policy.evaluateTlRule(await policy.getTlRule(), existing);
-    if (verdict.allowed && verdict.rule && verdict.rule.enabled) stopsHere = true;
-    if (!verdict.allowed) toHrNext = true;
+    // Pay-month rule, the month's first days: the Team Lead's approval is the first of two, it goes on to HR and never stops here.
+    if (!(split && split.kind === 'tl')) {
+      const verdict = await policy.evaluateTlRule(await policy.getTlRule(), existing);
+      if (verdict.allowed && verdict.rule && verdict.rule.enabled) stopsHere = true;
+      if (!verdict.allowed) toHrNext = true;
+    }
     if (!comment && !String(approvalReason || '').trim()) {
       return res.status(400).json({ error: 'A reason is required when a TL approves a leave request.', tlReasonRequired: true });
     }
@@ -702,7 +781,7 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
     const isFinalStep = leadLeave ? bySuperAdmin : (isDirect || stopsHere || !steps.some((s) => s.seq > pendingStep.seq && s.status === 'Waiting' && s.mode === workflow.MODE_REQUIRED));
     if (status === 'Approved' && isFinalStep) {
       const reasons = (await prisma.leaveReason.findMany()).filter((r) => r.active);
-      if (days >= cfg.leaveReasonThresholdDays && reasons.length) {
+      if (reasonDays >= cfg.leaveReasonThresholdDays && reasons.length) {
         if (!approvalReason) return res.status(400).json({ error: `Approvals of ${cfg.leaveReasonThresholdDays} days or more need an approval reason.`, reasons: reasons.map((r) => r.label) });
         if (!reasons.some((r) => r.label === approvalReason)) return res.status(400).json({ error: 'approvalReason must be one of the configured leave approval reasons', reasons: reasons.map((r) => r.label) });
       }
@@ -761,6 +840,14 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
 
     // STILL CLIMBING — the LeaveRequest stays Pending and no balance moves.
     if (!result.complete) {
+      // Pay-month rule: the second approver (HR) hears as soon as the Team Lead has approved.
+      if (split && split.kind === 'tl' && status === 'Approved') {
+        const next = (await workflow.loadSteps(WF, existing.id)).find((s) => s.status === 'Pending');
+        if (next && next.approverUserId) {
+          hrmsNotify.leaveRaised({ leave: existing, employee: existing.employee, toUserId: next.approverUserId, note: `${req.user.name || 'The Team Lead'} has approved; your approval is needed too.` })
+            .catch((e) => console.error('[leave] notify next approver failed', e.message));
+        }
+      }
       const view = await workflow.view(WF, existing.id, req.user, { canAct: false });
       return res.json({ ...existing, status: 'Pending', workflow: view, ...(sentToSuperAdmin ? { sentToSuperAdmin: true, waitingFor: 'Super Admin', message: `${leadRule.SENT_MESSAGE}.` } : {}) });
     }
@@ -771,7 +858,7 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   // in one step exactly as it always did.
   if (status === 'Approved' && !chainOutcome) {
     const reasons = (await prisma.leaveReason.findMany()).filter((r) => r.active);
-    if (days >= cfg.leaveReasonThresholdDays && reasons.length) {
+    if (reasonDays >= cfg.leaveReasonThresholdDays && reasons.length) {
       if (!approvalReason) return res.status(400).json({ error: `Approvals of ${cfg.leaveReasonThresholdDays} days or more need an approval reason.`, reasons: reasons.map((r) => r.label) });
       if (!reasons.some((r) => r.label === approvalReason)) return res.status(400).json({ error: 'approvalReason must be one of the configured leave approval reasons', reasons: reasons.map((r) => r.label) });
     }
@@ -862,9 +949,11 @@ router.post('/:id/reassign', requirePerm(null, 'hrms', 'Leave & Holidays', 'appr
     if (!isOwner && !workflow.hasDirectPower(req.user, WF, steps)) {
       return res.status(403).json({ error: `Only the current approver${current.approverName ? ` (${current.approverName})` : ''} can reassign this request.` });
     }
-    const targets = await policy.reassignTargets(steps, request.employee ? request.employee.userId : null, { allowTemp: !!(request.employee && policy.isTempAccount(request.employee.name, request.employee.employeeCode)) });
+    let targets = await policy.reassignTargets(steps, request.employee ? request.employee.userId : null, { allowTemp: !!(request.employee && policy.isTempAccount(request.employee.name, request.employee.employeeCode)) });
+    const split = await leaveSplit.of(request.id);
+    if (split && split.kind === 'sa') targets = targets.filter((t) => t.level === 'SUPER_ADMIN'); // these days stay with a Super Admin
     const target = targets.find((t) => t.userId === toUserId);
-    if (!target) return res.status(400).json({ error: "That person is not a valid approver for this request (the TL's manager on its chain, HR or the Super Admin)." });
+    if (!target) return res.status(400).json({ error: split && split.kind === 'sa' ? leaveSplit.refusal(split) : "That person is not a valid approver for this request (the TL's manager on its chain, HR or the Super Admin)." });
     const moved = await policy.performReassign(request.id, steps, target, req.user, reason || 'No reason given');
     await logAudit({
       userId: req.user.id, actorName: req.user.name, action: policy.REASSIGNED, entity: 'LeaveRequest', entityId: request.id,
@@ -958,6 +1047,48 @@ async function availabilityFor(employeeId) {
       available: limited ? Math.max(0, Math.round((remaining - pend) * 100) / 100) : null,
     };
   });
+}
+
+// EVERY OTHER LEAVE OF ONE EMPLOYEE, with what was decided, plus the balance - shown where the approver decides (GET /:id/workflow).
+// Totals are for the calendar year of the request being decided; the list is the latest 60, newest dates first.
+async function employeeLeaveFor(request, current = null) {
+  const rows = await prisma.leaveRequest.findMany({
+    where: { employeeId: request.employeeId, id: { not: request.id } },
+    orderBy: [{ fromDate: 'desc' }, { createdAt: 'desc' }],
+  });
+  const year = String(request.fromDate).slice(0, 4);
+  const totals = { approved: { requests: 0, days: 0 }, pending: { requests: 0, days: 0 }, rejected: { requests: 0, days: 0 }, cancelled: { requests: 0, days: 0 } };
+  const BUCKET = { Approved: 'approved', 'Cancellation Requested': 'approved', Pending: 'pending', Rejected: 'rejected', Cancelled: 'cancelled' };
+  rows.filter((r) => String(r.fromDate).slice(0, 4) === year).forEach((r) => {
+    const b = totals[BUCKET[r.status]];
+    if (!b) return;
+    b.requests += 1;
+    b.days = Math.round((b.days + Number(r.days ?? 1)) * 100) / 100;
+  });
+  const shown = rows.slice(0, 60);
+  const ids = shown.map((r) => r.id);
+  const summaries = await workflow.summariesFor(WF, shown.filter((r) => r.status === 'Pending').map((r) => r.id)).catch(() => ({}));
+  const charged = await leaveCharge.chargedMap(ids).catch(() => new Map());
+  const metaOf = await leaveMeta.metaMap(ids).catch(() => new Map());
+  const approvals = await leaveSplit.approvalsFor(ids).catch(() => new Map()); // everyone who approved or rejected, level by level
+  return {
+    year,
+    totals,
+    count: rows.length,
+    balances: await availabilityFor(request.employeeId),
+    requests: shown.map((r) => {
+      const sp = (metaOf.get(r.id) || {}).split;
+      return {
+        id: r.id, type: r.type, fromDate: r.fromDate, toDate: r.toDate, days: r.days, halfDay: leaveText.halfOf(r), status: r.status,
+        chargedDays: charged.has(r.id) ? charged.get(r.id) : null,
+        reasonText: leaveText.parse(r.reason).reasonText,
+        decision: policy.decisionInfo(r, summaries[r.id] || null),
+        appliedAt: r.createdAt,
+        approvals: approvals.get(r.id) || [],
+        split: sp ? { kind: sp.kind, part: sp.part, of: sp.of, sameApplication: !!(current && current.group === sp.group) } : null,
+      };
+    }),
+  };
 }
 
 router.get('/availability', async (req, res, next) => {
@@ -1413,7 +1544,20 @@ router.get('/concurrency-policy', async (req, res) => {
     sandwichLeave: (await attendancePolicy.readExtras()).sandwichLeave !== false,
     // founder 2026-11-25: how many people of one team may be on leave at once (utils/teamLeaveLimit.js)
     teamLeaveLimit: await require('../utils/teamLeaveLimit').getSettings(), // eslint-disable-line global-require
+    // founder 2026-11-25: the TL approves the first days of a long leave, the Super Admin the rest (utils/leaveSplit.js)
+    splitApproval: await leaveSplit.status(),
   });
+});
+
+// LONG LEAVE: TL FIRST DAYS + SUPER ADMIN THE REST, on / off (Leave policy). The number of days is the TL Approval Rule's limit.
+// It changes who approves and so what pay sees: the same right as the other leave policy settings (Super Admin / Admin).
+router.put('/split-approval', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res, next) => {
+  try {
+    const r = await leaveSplit.saveSettings({ enabled: (req.body || {}).enabled }, { id: req.user.id, name: req.user.name || req.user.email });
+    if (r.error) return res.status(400).json({ error: r.error });
+    await logAudit({ userId: req.user.id, action: 'Leave split approval updated', entity: 'AppSetting', entityId: leaveSplit.KEY, fromValue: JSON.stringify(r.before), toValue: JSON.stringify(r.settings) });
+    return res.json({ splitApproval: await leaveSplit.status() });
+  } catch (err) { return next(err); }
 });
 
 // Item 6 — the SANDWICH RULE on / off (Leave Policy). On: a holiday or weekly
@@ -1535,6 +1679,35 @@ router.get('/day-count', async (req, res) => {
   const to = String(req.query.to || req.query.from || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from) return res.status(400).json({ error: 'Send from and to dates (YYYY-MM-DD).' });
   try { return res.json(await require('../utils/leaveDays').countFor(from, to)); } catch (e) { return res.status(500).json({ error: 'Could not count the days.' }); } // eslint-disable-line global-require
+});
+
+// Tells the Apply form beforehand who will approve which days (the pay-month rule, utils/leaveSplit.js). Changes nothing, never blocks.
+router.get('/split-preview', async (req, res) => {
+  const from = String(req.query.from || '').slice(0, 10);
+  const to = String(req.query.to || req.query.from || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from) return res.status(400).json({ error: 'Send from and to dates (YYYY-MM-DD).' });
+  try {
+    const id = String(req.query.employeeId || '');
+    const emp = await prisma.employee.findUnique({ where: id ? { id } : { userId: req.user.id } });
+    if (!emp || (emp.userId !== req.user.id && !employeeInScope(req.user, emp))) return res.json({ split: null });
+    const halfDay = req.query.halfDay ? String(req.query.halfDay) : null;
+    let days = 0.5;
+    if (!halfDay) {
+      const counted = (await require('../utils/leaveDays').countFor(from, to)).countedDays; // eslint-disable-line global-require
+      days = Number(req.query.days) > 0 ? Math.min(Number(req.query.days), counted) : counted;
+    }
+    const plan = await leaveSplit.plan({ employee: emp, fromDate: from, toDate: halfDay ? from : to, days, halfDay });
+    if (!plan) return res.json({ split: null });
+    const chain = await workflow.resolveChain(emp);
+    const u = emp.userId ? await prisma.user.findUnique({ where: { id: emp.userId }, select: { role: true, hrmsRole: true } }) : null;
+    const role = u ? (u.hrmsRole && u.hrmsRole !== 'NONE' ? u.hrmsRole : u.role) : null;
+    // Nobody approves down the chain: HR's own leave has no HR step, and a Manager's has neither, so the rule is not applied to it.
+    const high = ['MANAGER', 'ASSISTANT_MANAGER', 'SUPER_ADMIN'].includes(role);
+    const lead = high ? null : (chain.TL || chain.STL);
+    const hr = high || role === 'HR' ? null : chain.HR;
+    if (!lead && !hr) return res.json({ split: null });
+    return res.json({ split: { ...plan, leadName: lead ? lead.name : null, hrName: hr ? hr.name : null } });
+  } catch (e) { console.error('[leave] split preview failed', e.message); return res.json({ split: null }); }
 });
 
 // Add: { name, date, toDate?, type?, optional?, repeatYearly? }
