@@ -46,9 +46,17 @@ const TYPES = {
   client_offer: { label: 'Client confirmed an offer or joining', hint: 'Offer / joining letter released, acknowledged, joined, or a drop' },
   client_login: { label: 'Client portal login request', hint: 'A portal login was asked for a client person' },
   client_agreement: { label: 'Agreement signed by the client', hint: 'BDE side and Admins only' },
+  // the TEAM's own changes (utils/teamPopups.js, founder 2026-11-27): pop-up for everyone concerned, no mail unless an Admin switches it on
+  team_candidate: { label: 'New candidate on a requirement', hint: 'Added, applied, imported or synced onto a job', mailDefault: false },
+  team_requirement: { label: 'New requirement', hint: 'A requirement was added', mailDefault: false },
+  team_client: { label: 'New client', hint: 'A client was added', mailDefault: false },
+  team_interview: { label: 'Interview booked or moved', hint: 'An interview was booked or its time changed', mailDefault: false },
+  team_joined: { label: 'Candidate joined', hint: 'A candidate joined', mailDefault: false },
+  team_rejected: { label: 'Candidate rejected', hint: 'A candidate was rejected', mailDefault: false },
+  team_move: { label: 'Candidate moved a step', hint: 'Any other step move (sent to client, shortlisted, offer, hold, joining dropped ...)', mailDefault: false },
 };
 const DEFAULTS = {
-  types: Object.fromEntries(Object.keys(TYPES).map((k) => [k, { popup: true, mail: true }])),
+  types: Object.fromEntries(Object.keys(TYPES).map((k) => [k, { popup: true, mail: TYPES[k].mailDefault !== false }])),
   digestMinutes: 15,
   interviews: { todayPopup: true, morningMail: true, morningAt: '08:00', hourMail: true, min15Popup: true },
 };
@@ -101,7 +109,7 @@ function normalise(v = {}) {
   const iv = v.interviews && typeof v.interviews === 'object' ? v.interviews : {};
   const dm = Number(v.digestMinutes);
   return {
-    types: Object.fromEntries(Object.keys(TYPES).map((k) => [k, { popup: bool(t[k] && t[k].popup, true), mail: bool(t[k] && t[k].mail, true) }])),
+    types: Object.fromEntries(Object.keys(TYPES).map((k) => [k, { popup: bool(t[k] && t[k].popup, true), mail: bool(t[k] && t[k].mail, TYPES[k].mailDefault !== false) }])),
     digestMinutes: Number.isFinite(dm) && dm >= 0 && dm <= 240 ? Math.round(dm) : DEFAULTS.digestMinutes,
     interviews: {
       todayPopup: bool(iv.todayPopup, true),
@@ -254,7 +262,7 @@ async function publish(ev) {
       r.mail = await mailOne(id, r.userId, { now, st });
     }
     await require('./audit').logAudit({ // eslint-disable-line global-require
-      userId: (ev.actor && ev.actor.id) || null, actorName: (ev.actor && ev.actor.name) || 'Client', action: `Client update: ${TYPES[ev.type].label}`,
+      userId: (ev.actor && ev.actor.id) || null, actorName: (ev.actor && ev.actor.name) || (ev.type.startsWith('team_') ? 'TeamLink' : 'Client'), action: `${ev.type.startsWith('team_') ? 'Team update' : 'Client update'}: ${TYPES[ev.type].label}`,
       entity: ev.applicationId ? 'Application' : ev.requirementId ? 'Requirement' : 'Client', entityId: ev.applicationId || ev.requirementId || ev.clientId || id,
       toValue: `${title} · told ${out.length} (${out.filter((o) => o.popup).length} pop-ups, ${out.filter((o) => o.mail === 'sent').length} mails, ${out.filter((o) => o.mail === 'digest').length} in digest)`.slice(0, 480),
     }).catch(() => {});

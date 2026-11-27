@@ -182,6 +182,18 @@ prisma.$use(async (params, next) => {
     }
   }
 });
+// teampop_: every ATS change (new application, step move, interview, joining, rejection, new requirement, new client) becomes a pop-up for everyone
+// concerned (utils/teamPopups.js, founder 2026-11-27). Gathered a few seconds, then told; never throws, never slows the write beyond one read.
+prisma.$use(async (params, next) => {
+  const TP = require('./utils/teamPopups'); // eslint-disable-line global-require
+  let watch = false;
+  try { watch = TP.watches(params); } catch { watch = false; }
+  if (!watch) return next(params);
+  const was = await TP.before(params).catch(() => null);
+  const result = await next(params);
+  try { TP.after(params, result, was); } catch (err) { console.error('[team-popups] hook:', err.message); } // eslint-disable-line no-console
+  return result;
+});
 // memo_: a write made by the server itself (job, import, hook) raises the data version the short answer memo is keyed on (utils/responseMemo.js)
 prisma.$use(require('./utils/responseMemo').prismaHook());
 module.exports = prisma;

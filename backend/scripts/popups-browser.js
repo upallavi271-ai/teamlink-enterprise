@@ -79,11 +79,7 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
   try {
     const R = await open(rec, '/ats/dashboard');
     const B = await open(bde, '/ats/dashboard');
-    // the dashboard: Your interviews today + Updates & reports
-    const today = R.page.locator('.uc-today', { hasText: cand2.name });
-    check('dashboard: "Your interviews today" lists the interview (time, candidate, job, client)', await today.waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false)
-      && (await today.innerText()).includes(req.title) && (await today.innerText()).includes(client.name), await R.page.locator('.uc').innerText().catch(() => ''));
-    check('dashboard: the Updates & reports centre is there with the day\'s reports', await R.page.locator('.uc', { hasText: 'Updates & reports' }).locator('.uc-row', { hasText: 'Daily report' }).first().isVisible().catch(() => false));
+    // (2026-11-27) the dashboard's "Updates & reports" panel is removed: every update pops up on screen instead, the bell keeps them
     const ivCard = R.page.locator('.ups-today', { hasText: cand2.name });
     check('pop-up: "Your interviews today" pops up after sign-in', await ivCard.waitFor({ state: 'visible', timeout: 40000 }).then(() => true).catch(() => false));
     await R.page.screenshot({ path: path.join(SHOTS, 'recruiter-dashboard.png') });
@@ -106,15 +102,10 @@ const waitFor = async (url, tries = 240) => { for (let i = 0; i < tries; i += 1)
     await B.page.screenshot({ path: path.join(SHOTS, 'bde-popup.png') });
     if (upR) await cardR.locator('button', { hasText: 'Got it' }).click();
     check('Got it closes the card', upR && await cardR.waitFor({ state: 'hidden', timeout: 10000 }).then(() => true).catch(() => false));
-    // the dashboard list shows it (after its next look, or a reload)
     await R.page.reload({ waitUntil: 'commit' });
-    const row = R.page.locator('.uc-row', { hasText: `shortlisted ${cand.name}` });
-    check('dashboard: the update is in the Updates & reports list', await row.first().waitFor({ state: 'visible', timeout: 60000 }).then(() => true).catch(() => false));
+    await R.page.waitForTimeout(20000); // the stack's next look
+    check('dashboard: the Updates & reports panel is gone', (await R.page.locator('.uc', { hasText: 'Updates & reports' }).count()) === 0);
     check('Got it is remembered: the card does not come back after a reload', (await R.page.locator('.ups-card', { hasText: `shortlisted ${cand.name}` }).count()) === 0);
-    await R.page.locator('.uc button', { hasText: 'See all' }).click();
-    const full = R.page.locator('.modal', { hasText: 'Updates & reports' });
-    check('See all opens the full view with type / date / read filters', await full.waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false) && (await full.locator('select').count()) >= 2 && (await full.locator('input[type=date]').count()) === 2);
-    await R.page.screenshot({ path: path.join(SHOTS, 'recruiter-full-view.png') });
     // the BDE presses Open: lands on the candidate
     if (upB) {
       await cardB.locator('button', { hasText: 'Open' }).click();

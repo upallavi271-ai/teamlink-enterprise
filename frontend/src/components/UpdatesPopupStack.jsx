@@ -16,7 +16,12 @@ import './UpdatesPopupStack.css';
 // checked every 30 seconds while the tab is visible and when the tab comes back. The 60 / 15 minute interview reminders
 // stay in their own pop-up (components/InterviewPopup.jsx) - never shown twice.
 // ---------------------------------------------------------------------------
-const POLL_MS = 30000;
+// (2026-11-27) every TEAM change pops up too (backend utils/teamPopups.js): new candidate, step move, interview, joined, rejected, new requirement,
+// new client - for everyone concerned. Checked every 15 seconds; when TeamLink is in a background tab and the person allowed it, the same update
+// also shows as a desktop notification (the browser's own), once per update.
+const POLL_MS = 15000;
+const TEAM_CHIP = { team_joined: 'ups-chip-ok', team_rejected: 'ups-chip-bad', team_interview: 'ups-chip-iv', team_candidate: 'ups-chip-new', team_requirement: 'ups-chip-new', team_client: 'ups-chip-new' };
+const canDesk = () => typeof window !== 'undefined' && 'Notification' in window;
 const SHOW = 3;
 
 export default function UpdatesPopupStack() {
@@ -26,10 +31,28 @@ export default function UpdatesPopupStack() {
   const [today, setToday] = useState(null);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
+  const told = useRef(null); // the updates already shown on the desktop in this tab
+  const [desk, setDesk] = useState(() => (canDesk() ? Notification.permission : 'denied'));
 
   const check = useCallback(() => {
     if (!user) return;
-    api.get('/ats-updates/popups').then((r) => { if (alive.current) setItems(Array.isArray(r.data) ? r.data : []); }).catch(() => { /* offline: next check */ });
+    api.get('/ats-updates/popups').then((r) => {
+      if (!alive.current) return;
+      const list = Array.isArray(r.data) ? r.data : [];
+      setItems(list);
+      // the desktop notification: only new ones, only while the tab is not in front (in front, the card itself shows)
+      if (told.current === null) { told.current = new Set(list.map((i) => i.eventId)); return; }
+      const fresh = list.filter((i) => !told.current.has(i.eventId));
+      fresh.forEach((i) => told.current.add(i.eventId));
+      if (document.hidden && canDesk() && Notification.permission === 'granted') {
+        fresh.slice(0, 3).forEach((i) => {
+          try {
+            const n = new Notification(i.title, { body: [i.summary, i.by].filter(Boolean).join(' · ').slice(0, 180), tag: i.eventId, icon: '/teamlink-icon-32.png' });
+            n.onclick = () => { window.focus(); if (i.open) navigate(i.open); n.close(); };
+          } catch { /* the browser refused: the card shows when the tab is back */ }
+        });
+      }
+    }).catch(() => { /* offline: next check */ });
     api.get('/ats-updates/interviews-today').then((r) => { if (alive.current) setToday(r.data && r.data.popup ? r.data : null); }).catch(() => {});
   }, [user]);
 
@@ -94,7 +117,7 @@ export default function UpdatesPopupStack() {
       {shown.map((u) => (
         <div className="ups-card" key={u.eventId} role="alertdialog" aria-labelledby={`ups-${u.eventId}`}>
           <div className="ups-top">
-            <span className="ups-chip">{u.typeLabel}</span>
+            <span className={`ups-chip ${TEAM_CHIP[u.type] || ''}`}>{u.typeLabel}</span>
             <span className="ups-when" title={new Date(u.at).toLocaleString('en-IN')}>{ago(u.at)}</span>
           </div>
           <div className="ups-title" id={`ups-${u.eventId}`}>{u.title}</div>
@@ -106,10 +129,16 @@ export default function UpdatesPopupStack() {
           </div>
         </div>
       ))}
+      {desk === 'default' && shown.length > 0 && (
+        <div className="ups-more">
+          <span>Show these on the desktop too, when TeamLink is in another tab?</span>
+          <button type="button" className="link-btn" onClick={() => Notification.requestPermission().then((p) => setDesk(p)).catch(() => {})}>Yes, allow</button>
+        </div>
+      )}
       {items.length > SHOW && (
         <div className="ups-more">
           <span>{`${items.length - SHOW} more update${items.length - SHOW === 1 ? '' : 's'}`}</span>
-          <button type="button" className="link-btn" onClick={() => navigate('/ats/dashboard?updates=1')}>See all</button>
+          <button type="button" className="link-btn" onClick={() => navigate('/admin/notifications')}>See all</button>
           <button type="button" className="link-btn" disabled={busy} onClick={() => seen(items.map((i) => i.eventId), false)}>Got it for all</button>
         </div>
       )}

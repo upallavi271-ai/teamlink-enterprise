@@ -23,7 +23,6 @@ import DashboardExport from './DashboardExport.jsx';
 import { V3_WIDGETS, Cards } from './AtsHomeV3.jsx';
 import AtsV4 from './ats-v4/AtsV4.jsx';
 import NewItems from './NewItems.jsx'; // the New button (2026-10-13)
-import UpdatesCentre from './UpdatesCentre.jsx'; // Your interviews today + every notification and report (2026-11-23)
 import { Icon } from '../atskit/AtsKit.jsx';
 import PendingOnTeam from './PendingOnTeam.jsx';
 import MissedItemsBox from '../MissedItemsBox.jsx';
@@ -636,7 +635,7 @@ export default function AtsHome() {
           </div>
         </header>
         <NewItems module="ats" />
-        {!asUser && <UpdatesCentre />}
+        {/* the "Updates & reports" panel is gone from here (founder 2026-11-27): every update pops up on screen instead (UpdatesPopupStack), the bell keeps them */}
         {data && !asUser && ownWork && <HomeWorkCards />}
         {ofBanner}
         {(f.department || extraChips.length > 0) && (
@@ -684,7 +683,6 @@ export default function AtsHome() {
           : <button type="button" className="btn btn-primary" onClick={() => setDrill(data.main.drill)}>{data.main.label} →</button>)}
       </div>
       <NewItems module="ats" />
-      {!asUser && <UpdatesCentre />}
       {dashboardOfPicker && <div className="ah-row2 dof-row">{dashboardOfPicker}</div>}
       {ofBanner}
       {/* Row 1: the department chooser (2+ departments). "Your area" is in the top bar. */}

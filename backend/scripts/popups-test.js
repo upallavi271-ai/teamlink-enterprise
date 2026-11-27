@@ -76,7 +76,7 @@ const MAILED = ['sent', 'not-configured', 'failed', 'skipped'];
 
   // ---- settings: defaults ON, Admin only
   const st0 = await call('GET', '/ats-updates/settings', null, T.sa);
-  check('settings: every client event type has pop-up ON and mail ON by default', st0.status === 200 && Object.values(st0.body.settings.types).every((t) => t.popup && t.mail) && Object.keys(st0.body.settings.types).length === 7 && st0.body.settings.digestMinutes === 15, st0.body);
+  check('settings: every client event type has pop-up ON and mail ON by default', st0.status === 200 && Object.entries(st0.body.settings.types).filter(([k]) => k.startsWith('client_')).every(([, t]) => t.popup && t.mail) && Object.keys(st0.body.settings.types).filter((k) => k.startsWith('client_')).length === 7 /* + the 7 team kinds (2026-11-27): pop-up on, mail off */ && st0.body.settings.digestMinutes === 15, st0.body);
   check('settings: a recruiter cannot open them', (await call('GET', '/ats-updates/settings', null, T.rec)).status === 403);
   check('settings: a recruiter cannot change them', (await call('PUT', '/ats-updates/settings', { types: { client_feedback: { popup: false } } }, T.rec)).status === 403);
 

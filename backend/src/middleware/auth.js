@@ -157,6 +157,8 @@ async function requireAuth(req, res, next) {
     if (identity.internalHr) require('../utils/internalHr').setScopeFor(identity.internalHr, req); // eslint-disable-line global-require
     identity.caps = await capsFor(identity);
     req.user = identity;
+    // who is acting: the team pop-ups say "By <name>" and never tell a person about their own change (utils/teamPopups.js)
+    try { require('../utils/teamPopups').enter(identity); } catch { /* optional */ } // eslint-disable-line global-require
     // HR SUPER ACCESS (utils/hrSuper.js): the guards kept Super-Admin-only, and the delete / export / import alerts.
     if (identity.hrSuper) {
       const hrSuper = require('../utils/hrSuper'); // eslint-disable-line global-require
