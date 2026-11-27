@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import useAtsLive from '../../utils/useAtsLive.js';
 import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
 import { Link, useParams } from 'react-router-dom';
 import api from '../../api';
@@ -28,6 +29,7 @@ export default function RecruiterHistory({ personId, embedded = false }) {
   const closeStep = useCallback(() => setStep(''), []);
   const params = { ...cleanParams(f), grain, ...(status ? { status } : {}), ...(step ? { step } : {}) };
   const key = JSON.stringify(params);
+  const live = useAtsLive(); // ATS data changed: load the numbers again (founder 2026-11-27)
   useEffect(() => {
     let live = true;
     setErr('');
@@ -35,7 +37,7 @@ export default function RecruiterHistory({ personId, embedded = false }) {
       .then((r) => { if (live) { setD(r.data); setLoadedKey(key); } })
       .catch((e) => { if (live) setErr(e.response?.data?.error || 'The history could not be loaded.'); });
     return () => { live = false; };
-  }, [id, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live, id, key]); // eslint-disable-line react-hooks/exhaustive-deps
   if (err && !d) return <div>{!embedded && <Link className="small-muted" to="/ats/search">← Search</Link>}<div className="notice red" style={{ marginTop: 8 }}><span>{err}</span></div></div>;
   if (!d) return <div className="small-muted">Loading the history…</div>;
   const p = d.person;

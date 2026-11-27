@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import useAtsLive from '../../utils/useAtsLive.js';
 import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import api from '../../api';
@@ -30,6 +31,7 @@ export default function CandidateHistory({ candidateId, embedded = false }) {
   const [err, setErr] = useState('');
   const [newest, setNewest] = useState(false);
   const [kind, setKind] = useState('');
+  const live = useAtsLive(); // ATS data changed: load the numbers again (founder 2026-11-27)
   useEffect(() => {
     let live = true;
     setErr(''); setD(null);
@@ -37,7 +39,7 @@ export default function CandidateHistory({ candidateId, embedded = false }) {
       .then((r) => { if (live) setD(r.data); })
       .catch((e) => { if (live) setErr(e.response?.data?.error || 'The history could not be loaded.'); });
     return () => { live = false; };
-  }, [id]);
+  }, [live, id]);
   useEffect(() => {
     if (!d || !focus) return undefined;
     const t = setTimeout(() => {

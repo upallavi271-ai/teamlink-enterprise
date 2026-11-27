@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import useAtsLive from '../../utils/useAtsLive.js';
 import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
@@ -29,6 +30,7 @@ export default function ClientHistory({ clientId }) {
   const [denied, setDenied] = useState(false);
   const params = { ...cleanParams(f), ...(step ? { step } : {}) };
   const key = JSON.stringify(params);
+  const live = useAtsLive(); // ATS data changed: load the numbers again (founder 2026-11-27)
   useEffect(() => {
     let live = true;
     setErr('');
@@ -36,7 +38,7 @@ export default function ClientHistory({ clientId }) {
       .then((r) => { if (live) { setD(r.data); setLoadedKey(key); } })
       .catch((e) => { if (live) { if (e.response?.status === 403) setDenied(true); setErr(e.response?.data?.error || 'The client history could not be loaded.'); } });
     return () => { live = false; };
-  }, [clientId, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live, clientId, key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!d || !focus) return undefined;

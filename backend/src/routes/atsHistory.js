@@ -39,6 +39,8 @@ async function exportRefusal(user) {
   return null;
 }
 
+// "ATS data changed" (utils/atsVersion.js): an open history window or the search page asks this and loads its numbers again when it moved
+router.get('/version', (req, res) => { res.set('Cache-Control', 'no-store'); res.json({ v: require('../utils/atsVersion').current() }); }); // eslint-disable-line global-require
 router.get('/search', wrap(async (req, res) => {
   // the ONE search (utils/atsSearch.js). ?mode=type is the typeahead (5 rows a group, no counts); without it the full results page, with counts, the facets
   // for the filter bar and (?group=candidates&offset=12) a further page of one group. The filters are the page's own parameter names.

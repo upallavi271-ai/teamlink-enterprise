@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import useAtsLive from '../../utils/useAtsLive.js';
 import { HLink } from '../search/historyOpen.jsx'; // a history link opens in the drawer
 import { Link } from 'react-router-dom';
 import api from '../../api';
@@ -36,6 +37,7 @@ export default function HistoryTab({ requirementId }) {
 
   const params = { ...cleanParams(f), ...(status ? { status } : {}), ...(step ? { step } : {}), sort: sort.key, dir: sort.dir };
   const key = JSON.stringify(params);
+  const live = useAtsLive(); // ATS data changed: load the numbers again (founder 2026-11-27)
   useEffect(() => {
     let live = true;
     setBusy(true); setErr('');
@@ -44,7 +46,7 @@ export default function HistoryTab({ requirementId }) {
       .catch((e) => { if (live) setErr(e.response?.data?.error || 'The history could not be loaded.'); })
       .finally(() => { if (live) setBusy(false); });
     return () => { live = false; };
-  }, [requirementId, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live, requirementId, key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (err && !d) return <div className="notice red"><span>{err}</span></div>;
   if (!d) return <div className="small-muted">Loading the history…</div>;

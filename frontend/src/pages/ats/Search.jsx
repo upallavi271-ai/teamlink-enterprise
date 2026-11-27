@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import useAtsLive from '../../utils/useAtsLive.js';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import FilterBar, { useUrlFilters, keysOfConfig } from '../../components/ats/FilterBar.jsx';
@@ -95,6 +96,17 @@ export default function Search() {
       });
     return () => c.abort();
   }, [urlQ, filterKey, evParam]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ATS DATA CHANGED (founder 2026-11-27: "search bar lo kuda, including joinings, rejections etc... yeppatikappudu modify avvali"): the same search is
+  // asked again quietly - the results stay on screen while the new numbers come, and nothing else on the page moves
+  const live = useAtsLive();
+  useEffect(() => {
+    if (!live || (urlQ.trim().length < 2 && !hasFilter)) return undefined;
+    const c = new AbortController();
+    api.get('/ats/history/search', { params: { q: urlQ, ...xf.values, ev: evParam || undefined }, signal: c.signal })
+      .then((r) => setData(r.data))
+      .catch(() => { /* the results on screen stay; the next change asks again */ });
+    return () => c.abort();
+  }, [live]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Show more": the next page of one group (nothing is cut silently)
   const showMore = (g) => {

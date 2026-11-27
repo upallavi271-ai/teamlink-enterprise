@@ -194,6 +194,9 @@ prisma.$use(async (params, next) => {
   try { TP.after(params, result, was); } catch (err) { console.error('[team-popups] hook:', err.message); } // eslint-disable-line no-console
   return result;
 });
+// atsver_: any ATS write raises the "ATS data changed" number (open histories / search reload) and clears the joinings / drops / rejections caches
+// at once (utils/atsVersion.js, founder 2026-11-27: "ats lo updates ayina prathi saari, annitlo update avvali")
+prisma.$use(require('./utils/atsVersion').prismaHook());
 // memo_: a write made by the server itself (job, import, hook) raises the data version the short answer memo is keyed on (utils/responseMemo.js)
 prisma.$use(require('./utils/responseMemo').prismaHook());
 module.exports = prisma;
