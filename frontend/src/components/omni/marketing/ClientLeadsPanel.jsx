@@ -14,7 +14,7 @@ export default function ClientLeadsPanel({ plan, month, toast, onClose }) {
   const run = async (fn, done) => { setBusy(true); try { await fn(); if (done) toast(done); await load(); return true; } catch (e) { toast(errOf(e, 'It could not be saved.')); return false; } finally { setBusy(false); } };
   const setP = (k) => (e) => setPage({ ...page, [k]: e.target.value });
   const setA = (k) => (e) => setAdd({ ...add, [k]: e.target.value });
-  const savePage = (on) => run(async () => { const r = await omni.put(`${base}/page`, { heading: page.heading, phone: page.phone, whatsapp: page.whatsapp, privacyContact: page.privacyContact, on }); setPage({ ...r.page, phone: phoneShown(r.page.phone), whatsapp: phoneShown(r.page.whatsapp) }); }, 'Enquiry page saved');
+  const savePage = (on) => run(async () => { const r = await omni.put(`${base}/page`, { heading: page.heading, phone: page.phone, whatsapp: page.whatsapp, privacyContact: page.privacyContact, clientSees: !!page.clientSees, on }); setPage({ ...r.page, phone: phoneShown(r.page.phone), whatsapp: phoneShown(r.page.whatsapp) }); }, 'Enquiry page saved');
   const addLead = () => run(async () => { await omni.post(base, add); setAdd(NEW_LEAD); }, 'Lead added');
   const change = (l, patch) => run(() => omni.put(`${base}/${l.id}`, patch));
   const linkOf = (source) => `${window.location.origin}${d.page.path}?s=${source}`;
@@ -42,6 +42,7 @@ export default function ClientLeadsPanel({ plan, month, toast, onClose }) {
               <Field label="WHATSAPP NUMBER"><input value={page.whatsapp} maxLength={20} inputMode="tel" onChange={setP('whatsapp')} /></Field>
               <Field label="PRIVACY CONTACT (PHONE OR EMAIL)"><input value={page.privacyContact} maxLength={120} onChange={setP('privacyContact')} /></Field>
             </div>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, marginTop: 10 }}><input type="checkbox" checked={!!page.clientSees} onChange={(e) => setPage({ ...page, clientSees: e.target.checked })} /><span>Show these leads in the client&apos;s login</span></label>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
               {d.page.on ? <><Btn primary disabled={busy} onClick={() => savePage(true)}>Save</Btn><Btn disabled={busy} onClick={() => savePage(false)}>Switch off</Btn></>
                 : <><Btn primary disabled={busy} onClick={() => savePage(true)}>Save and switch on</Btn><Btn disabled={busy} onClick={() => savePage(false)}>Save</Btn></>}

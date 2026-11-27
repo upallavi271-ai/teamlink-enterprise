@@ -137,12 +137,13 @@ export const SECTION_ICON = {
   accounts: '💰', reports: '📊', admin: '⚙️', crm: '🤝', posts: '📣',
 };
 
-// The "Social posts" client login's three screens (isPostsOnlyClient, below). No permission list: the server decides what the login may read (routes/portalPosts.js).
+// The "Social posts" client login's screens (isPostsOnlyClient, below). No permission list: the server decides what the login may read (routes/portalPosts.js).
 export const POSTS_ITEMS = [
   { ...leaf('📊', '/client-home', 'Dashboard', null), when: (u) => isPostsOnlyClient(u) },
   { ...leaf('📝', '/client-posts', 'Posts to approve', null), when: (u) => isPostsOnlyClient(u) },
   { ...leaf('✅', '/client-posts?tab=done', 'Approved & posted', null), when: (u) => isPostsOnlyClient(u) },
   { ...leaf('📣', '/client-accounts', 'My social accounts', null), when: (u) => isPostsOnlyClient(u) },
+  { ...leaf('📨', '/client-leads', 'My enquiries', null), when: (u) => isPostsOnlyClient(u) },
 ];
 
 export const HRMS_ITEMS = [

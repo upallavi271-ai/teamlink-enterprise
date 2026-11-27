@@ -22,6 +22,8 @@ let server;
 (async () => {
   const real = await require('../src/db').user.findFirst({ select: { id: true } }); if (real) admin.id = real.id;
   const month = CS.istMonth(); const today = CS.istDay();
+  // the table as the first release made it (no "clientSees" yet): it must be upgraded in place
+  await S.run('CREATE TABLE IF NOT EXISTS "OmniMkLeadPage" ("planId" TEXT NOT NULL PRIMARY KEY, "token" TEXT NOT NULL, "isOn" INTEGER NOT NULL DEFAULT 0, "heading" TEXT, "phone" TEXT, "whatsapp" TEXT, "privacyContact" TEXT, "updatedById" TEXT, "updatedAt" DATETIME NOT NULL DEFAULT 0)');
   const made = await CS.createPlan(admin, { clientName: 'Lead <Test> Clinic', plan: 'premium', months: 1, startDate: today, industry: 'Clinic', department: 'Medical' });
   assert.ok(made.plan, JSON.stringify(made)); const id = made.plan.id;
 
@@ -140,6 +142,36 @@ let server;
   assert.equal((await send('DELETE', `${A}/${added.id}`)).status, 200);
   s2.close();
   console.log('PASS routes: page, add, change, list, download and delete work behind the sign-in');
+
+  // 9. the client's own view: only when the team switched it on, only their own company
+  const prisma = require('../src/db');
+  const mineCo = await prisma.client.create({ data: { name: 'Lead <Test> Clinic' } });
+  let seen = await L.forClientLogin(mineCo, month); assert.deepEqual([seen.shared, seen.leads, seen.counts], [false, undefined, undefined], 'off until the team ticks it');
+  await L.addByHand(admin, id, { name: 'Shared Person', phone: '9876500077', source: 'phone', message: 'call back' });
+  const shared = (await L.forPlan(admin, id, month)).leads.find((x) => x.name === 'Shared Person'); await L.setLead(admin, id, shared.id, { status: 'contacted', note: 'TEAM ONLY NOTE' });
+  assert.equal((await L.savePage(admin, id, { on: false, privacyContact: '9999900000', clientSees: true })).page.clientSees, true);
+  assert.equal((await L.savePage(admin, id, { on: false, privacyContact: '9999900000' })).page.clientSees, true, 'a save without the tick keeps it');
+  seen = await L.forClientLogin(mineCo, month); assert.ok(seen.shared && seen.counts.total >= 1 && seen.leads.some((x) => x.name === 'Shared Person' && x.statusWords === 'Contacted' && x.phone === '919876500077'), JSON.stringify(seen).slice(0, 300));
+  assert.ok(!/TEAM ONLY NOTE|addedByName|Test Admin|"note"/.test(JSON.stringify(seen)), 'no team notes or team names');
+  assert.equal((await L.forClientLogin(mineCo, '2020-01')).leads.length, 0);
+  const otherCo = await prisma.client.create({ data: { name: 'Somebody Else Ltd' } });
+  seen = await L.forClientLogin(otherCo, month); assert.deepEqual([seen.shared, seen.leads], [false, undefined], 'another company sees nothing');
+  const twin = await prisma.client.create({ data: { name: '  lead <test> clinic ' } });
+  seen = await L.forClientLogin(mineCo, month); assert.deepEqual([seen.shared, seen.leads], [false, undefined], 'two companies with one name: nothing is shown to either');
+  assert.equal((await L.forClientLogin(twin, month)).shared, false); await prisma.client.delete({ where: { id: twin.id } });
+  console.log('PASS client view: off until ticked, own company only, nothing for a same-name company, no team notes or names');
+
+  // 10. the client's route: a signed-in client with the creative tick only
+  const auth = require('../src/middleware/auth'); let who = null; auth.requireAuth = (req, _res, next) => { req.user = who; next(); };
+  const portal = express(); portal.use(express.json()); portal.use('/p', require('../src/routes/portalPosts'));
+  const s3 = await new Promise((ok) => { const s = portal.listen(0, '127.0.0.1', () => ok(s)); }); const P = `http://127.0.0.1:${s3.address().port}/p/leads?month=${month}`;
+  who = { id: 'u-c1', role: 'CLIENT', clientId: mineCo.id, portalPerms: 'CREATIVE' }; let rr = await fetch(P); let jj = await rr.json();
+  assert.equal(rr.status, 200, JSON.stringify(jj)); assert.equal(rr.headers.get('cache-control'), 'no-store'); assert.ok(jj.shared && jj.leads.length >= 1);
+  who = { id: 'u-c2', role: 'CLIENT', clientId: otherCo.id, portalPerms: 'CREATIVE' }; jj = await (await fetch(`${P}&clientId=${mineCo.id}&company=Lead`)).json(); assert.equal(jj.shared, false, 'the address cannot ask for another company');
+  who = { id: 'u-c3', role: 'CLIENT', clientId: mineCo.id, portalPerms: 'INVOICES' }; assert.equal((await fetch(P)).status, 403, 'without the creative tick');
+  who = admin; assert.equal((await fetch(P)).status, 403, 'staff use their own screen');
+  s3.close();
+  console.log('PASS client route: own company from the login only, the tick is needed, staff and others refused');
 
   server.close(); console.log('ALL PASS'); process.exit(0);
 })().catch((e) => { console.error(e); if (server) server.close(); process.exit(1); });

@@ -13,6 +13,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import Requirements from './pages/Requirements.jsx';
 import RequirementDetail from './pages/RequirementDetail.jsx';
 import ClientJobPortal from './pages/ats/ClientJobPortal.jsx';
+import ClientLeads from './pages/portal/ClientLeads.jsx'; // the same client login: their own enquiries (2026-11-27)
 import ClientPosts from './pages/portal/ClientPosts.jsx'; // the "Social posts" client login's screens (2026-11-25)
 import ClientAccounts from './pages/portal/ClientAccounts.jsx';
 import ClientHome from './pages/portal/ClientHome.jsx'; // the "Social posts" client login's dashboard (2026-11-25)
@@ -350,6 +351,7 @@ export default function App() {
         <Route path="client-home" element={<ClientHome />} />
         <Route path="client-posts" element={<ClientPosts />} />
         <Route path="client-accounts" element={<ClientAccounts />} />
+        <Route path="client-leads" element={<ClientLeads />} />
         {/* Clients · Requirements · Agreements · Job Portal are one module;
             each tab keeps its own route so it stays bookmarkable. Job Portal
             is another agent's screen — see components/ClientModuleTabs.jsx. */}

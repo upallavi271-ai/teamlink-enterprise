@@ -26,7 +26,11 @@ let okAt = 0;
 async function ensure() {
   if (okAt && Date.now() - okAt < 600000) return true;
   if (!(await CS.ensure())) return false;
-  try { for (const sql of DDL) await S.run(sql); okAt = Date.now(); return true; } // eslint-disable-line no-await-in-loop
+  try {
+    for (const sql of DDL) await S.run(sql); // eslint-disable-line no-await-in-loop
+    try { await S.run(`ALTER TABLE "${TPG}" ADD COLUMN "clientSees" INTEGER NOT NULL DEFAULT 0`); } catch { /* the column is already there */ }
+    okAt = Date.now(); return true;
+  }
   catch (e) { console.error('[omni-mk] client leads schema:', e.message); return false; } // eslint-disable-line no-console
 }
 
@@ -58,7 +62,7 @@ const consentWords = (clientName) => `I agree that ${clientName} may contact me 
 const pageRow = async (planId) => (await S.q(`SELECT * FROM "${TPG}" WHERE planId = ?`, planId))[0] || null;
 const pageOut = (r) => ({
   on: !!(r && S.num(r.isOn)), heading: (r && r.heading) || '', phone: (r && r.phone) || '', whatsapp: (r && r.whatsapp) || '', privacyContact: (r && r.privacyContact) || '',
-  path: r ? `/api/public/mk-lead/${r.token}` : '',
+  path: r ? `/api/public/mk-lead/${r.token}` : '', clientSees: !!(r && S.num(r.clientSees)),
 });
 async function savePage(u, planId, b = {}) {
   if (!(await ensure())) return { error: 'The enquiry page could not be saved.', status: 500 };
@@ -72,9 +76,11 @@ async function savePage(u, planId, b = {}) {
   if (on && !privacyContact) return { error: 'Add the privacy contact first: the page tells people whom to ask to see or delete their details.', status: 400 };
   if (on && plan.status !== 'active') return { error: 'This plan has ended, so its page cannot be switched on.', status: 409 };
   const old = await pageRow(planId);
+  const sees = typeof b.clientSees === 'boolean' ? (b.clientSees ? 1 : 0) : (old ? S.num(old.clientSees) : 0); // off until the team ticks it
   if (old) await S.run(`UPDATE "${TPG}" SET isOn=?, heading=?, phone=?, whatsapp=?, privacyContact=?, updatedById=?, updatedAt=? WHERE planId=?`, on, heading || null, phone || null, whatsapp || null, privacyContact || null, u.id, Date.now(), planId);
   else await S.run(`INSERT INTO "${TPG}" (planId, token, isOn, heading, phone, whatsapp, privacyContact, updatedById, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)`, planId, crypto.randomBytes(16).toString('hex'), on, heading || null, phone || null, whatsapp || null, privacyContact || null, u.id, Date.now());
-  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client lead page saved', entity: TPG, entityId: planId, toValue: `${plan.clientName}: ${on ? 'on' : 'off'}` });
+  await S.run(`UPDATE "${TPG}" SET clientSees = ? WHERE planId = ?`, sees, planId);
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client lead page saved', entity: TPG, entityId: planId, toValue: `${plan.clientName}: ${on ? 'on' : 'off'}${sees ? ', shown in the client login' : ''}` });
   return { page: pageOut(await pageRow(planId)) };
 }
 
@@ -206,6 +212,26 @@ async function press(page, source, button) {
   return { ok: true };
 }
 
+// ---- the client's own view (their signed-in login: routes/portalPosts.js GET /leads) ------------------------------------------------------------------------------------
+// ONLY plans where the team switched "Show these leads in the client's login" on, and only when this company's name belongs to exactly one company record (two companies with one name: nothing is
+// shown, so one can never see the other's enquiries). No team names and no team notes.
+async function forClientLogin(company, month) {
+  if (!(await ensure())) return { error: 'The enquiries could not be opened just now.', status: 500 };
+  const name = String((company && company.name) || '').trim().toLowerCase(); const m = monthOf(month);
+  const none = { shared: false, company: (company && company.name) || '', month: m };
+  if (!name) return none;
+  const same = S.num((await S.q('SELECT COUNT(*) AS n FROM "Client" WHERE LOWER(TRIM(name)) = ?', name))[0].n);
+  if (same !== 1) return none;
+  const plans = await S.q(`SELECT p.id FROM "OmniMkClientPlan" p JOIN "${TPG}" g ON g.planId = p.id WHERE LOWER(TRIM(p.clientName)) = ? AND g.clientSees = 1`, name);
+  if (!plans.length) return none;
+  const all = { leads: [], presses: [] };
+  for (const p of plans) { const r = await monthRows(p.id, m); all.leads.push(...r.leads); all.presses.push(...r.presses); } // eslint-disable-line no-await-in-loop
+  all.leads.sort((a, b) => S.ms(b.at) - S.ms(a.at));
+  return {
+    shared: true, company: company.name, month: m, counts: countsOf(all),
+    leads: all.leads.map(leadOut).map(({ id, at, how, sourceWords, name: who, phone, email, message, status, statusWords, times }) => ({ id, at, how, sourceWords, name: who, phone, email, message, status, statusWords, times })),
+  };
+}
 module.exports = {
-  ensure, phoneDigits, linkSource, consentWords, LINK_SOURCES, HAND_SOURCES, STATUSES, SOURCE_WORDS, savePage, forPlan, reportCounts, addByHand, setLead, removeLead, csv, publicPage, publicSubmit, press,
+  forClientLogin, ensure, phoneDigits, linkSource, consentWords, LINK_SOURCES, HAND_SOURCES, STATUSES, SOURCE_WORDS, savePage, forPlan, reportCounts, addByHand, setLead, removeLead, csv, publicPage, publicSubmit, press,
 };
