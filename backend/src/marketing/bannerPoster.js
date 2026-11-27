@@ -3,7 +3,9 @@
 // logo and its line, a two-tone headline with a gold sweep, a pill, a large photograph that melts into the page, a role bar with icons, up to five steps with icons, a second photograph beside a motto,
 // and a footer (call to action, phone, place, closing line, website, e-mail). Drawn by TeamLink itself (sharp + SVG + Pango text), so every word, number and address is exactly as typed; only the
 // photographs come from elsewhere. Font: Poppins (SIL Open Font License, assets/fonts/LICENSE_POPPINS.txt). Icon shapes: Lucide (ISC licence), plus a nurse's cap drawn here.
-//   spec: logo (Buffer), companyName, tagline, headline, headline2, sub (the pill), roles [text], services [text] (the steps), motto, motto2, photo (Buffer), photo2 (Buffer), cta, phone, location,
+// The client's LOGO is used exactly as uploaded (never recoloured or reshaped), large, on a clean white page; a very light logo gets a dark plate behind it so it can be read. SERVICES are shown
+// clearly: up to three in a row, four to six as large cards in two columns.
+//   spec: logo (Buffer), companyName, tagline, headline, headline2, sub (the pill), roles [text], servicesTitle, services [text], motto, motto2, photo (Buffer), photo2 (Buffer), cta, phone, location,
 //         closing, chip (website), email, colors { primary (bright), secondary (dark), accent }
 // Portrait and square sizes; sections that are empty are left out and the photograph takes their room.
 // ---------------------------------------------------------------------------
@@ -34,6 +36,19 @@ const ICONS = {
 };
 const ROLE_RULES = [[/nurs/i, 'nurse'], [/doctor|physician|surgeon|consultant|dentist|medic/i, 'stethoscope'], [/teach|faculty|lectur|student|train|education/i, 'cap'], [/company|hospital|clinic|school|college|business|office/i, 'building'], [/team|staff|candidate|people/i, 'users']];
 const STEP_RULES = [[/requirement|understand|brief|need|consult|analys/i, 'userSearch'], [/sourc|search|find|database|reach|outreach/i, 'users'], [/screen|verif|check|assess|test|review|audit|plan/i, 'clipboard'], [/short.?list|select|match|hire|enrol/i, 'userCheck'], [/interview|coordinat|offer|join|onboard|deal|partner|support/i, 'handshake'], [/call|contact/i, 'phone'], [/train|course|class/i, 'cap']];
+// the logo ready to place: empty see-through borders taken off, sized to be clearly seen (at most twice its own size, so it stays sharp); `light` = a pale logo that needs a dark plate
+async function logoReady(buf, maxW, maxH) {
+  let src = await sharp(buf).rotate().png().toBuffer();
+  const first = await sharp(src).ensureAlpha().extract({ left: 0, top: 0, width: 1, height: 1 }).raw().toBuffer();
+  if (first[3] === 0) { try { src = await sharp(src).trim({ threshold: 1 }).png().toBuffer(); } catch { /* an empty picture stays as it is */ } }
+  const m = await sharp(src).metadata(); const scale = Math.min(maxW / m.width, maxH / m.height, 2);
+  const img = await sharp(src).resize({ width: Math.max(1, Math.round(m.width * scale)), height: Math.max(1, Math.round(m.height * scale)), fit: 'fill' }).png().toBuffer();
+  const { data, info } = await sharp(img).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let sum = 0; let solid = 0;
+  for (let i = 0; i < data.length; i += 4) { if (data[i + 3] > 128) { sum += (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255; solid += 1; } }
+  // a logo drawn on a see-through background (its first corner is clear, or much of it is) and mostly pale would vanish on the white page
+  return { buf: img, w: info.width, h: info.height, light: !!solid && sum / solid > 0.8 && (first[3] === 0 || (info.width * info.height - solid) > solid * 0.15) };
+}
 const roleIcon = (t) => (ROLE_RULES.find(([re]) => re.test(t)) || [null, 'briefcase'])[1];
 const stepIcon = (t, i) => (STEP_RULES.find(([re]) => re.test(t)) || [null, ['userSearch', 'users', 'clipboard', 'userCheck', 'handshake'][i % 5]])[1];
 
@@ -92,15 +107,18 @@ async function makePoster(spec, H) {
 
   const headline = clean(spec.headline, 40); const headline2 = clean(spec.headline2, 40); const pill = clean(spec.sub, 60); const tagline = clean(spec.tagline, 70);
   const roles = (Array.isArray(spec.roles) ? spec.roles : []).map((x) => clean(x, 24)).filter(Boolean).slice(0, 3);
-  const steps = (Array.isArray(spec.services) ? spec.services : []).map((x) => clean(x, 34)).filter(Boolean).slice(0, 5);
+  const steps = (Array.isArray(spec.services) ? spec.services : []).map((x) => clean(x, 34)).filter(Boolean).slice(0, 6);
+  const servicesTitle = steps.length ? clean(spec.servicesTitle, 30) : '';
+  const cards = steps.length > 3; // four to six: large cards in two columns
   const motto = clean(spec.motto, 44); const motto2 = clean(spec.motto2, 34);
   const cta = clean(spec.cta, 44); const phone = clean(spec.phone, 24); const place = clean(spec.location, 44); const closing = clean(spec.closing, 60); const site = clean(spec.chip, 44); const email = clean(spec.email, 48);
 
   // ---- the footer's rows decide its height ----
   const rows = [cta && ['cta', 66], (phone || place) && ['phone', 60], closing && ['closing', 44], (site || email) && ['web', 46]].filter(Boolean);
   const footerH = rows.length ? n(34 + rows.reduce((a, r) => a + r[1], 0) + 14) : 0;
-  const bandH = (spec.photo2 || motto || motto2) ? n(168) : 0;
-  const stepsH = steps.length ? n(142) : 0;
+  const bandH = spec.photo2 ? n(168) : ((motto || motto2) ? n(102) : 0);
+  const titleH = servicesTitle ? n(50) : 0;
+  const stepsH = !steps.length ? 0 : titleH + (cards ? Math.ceil(steps.length / 2) * n(68) + n(14) : n(150));
   const roleH = roles.length ? n(62) : 0;
   const footerTop = h - footerH; const bandTop = footerTop - bandH; const stepsTop = bandTop - stepsH; const roleTop = stepsTop - (roleH ? roleH + n(8) : 0);
 
@@ -108,14 +126,16 @@ async function makePoster(spec, H) {
   const head = []; // drawn after the photograph so the words stay on top
   let y = n(24);
   const drawHeader = [];
+  let logoPlate = null;
   if (spec.logo) {
-    const lb = await sharp(spec.logo).resize({ width: n(600), height: n(118), fit: 'inside' }).png().toBuffer(); const lm = await sharp(lb).metadata();
-    drawHeader.push([lb, (w - lm.width) / 2, y]); y += lm.height + n(8);
+    const logo = await logoReady(spec.logo, n(700), n(cards ? 132 : 150));
+    if (logo.light) { logoPlate = { x: (w - logo.w) / 2 - n(26), y: y - n(6), w: logo.w + n(52), h: logo.h + n(24) }; y += n(6); }
+    drawHeader.push([logo.buf, (w - logo.w) / 2, y]); y += logo.h + n(logo.light ? 24 : 10);
   } else if (spec.companyName) { const t = await line(clean(spec.companyName, 40), { font: 'heavy', size: n(54), color: dark }, w - n(120)); drawHeader.push([t.buf, (w - t.w) / 2, y + n(8)]); y += t.h + n(20); }
   const taglineAt = y; if (tagline) y += n(34);
   let h1 = null; let h1At = 0; let h2 = null; let h2At = 0;
-  if (headline) { h1 = await line(headline, { font: 'heavy', size: n(86), color: dark }, w - n(100)); h1At = y + n(10); y = h1At + h1.h; }
-  if (headline2) { h2 = await line(headline2, { font: 'heavy', size: n(104), color: bright }, w - n(80)); h2At = y + n(4); y = h2At + h2.h; }
+  if (headline) { h1 = await line(headline, { font: 'heavy', size: n(cards ? 74 : 86), color: dark }, w - n(100)); h1At = y + n(10); y = h1At + h1.h; }
+  if (headline2) { h2 = await line(headline2, { font: 'heavy', size: n(cards ? 90 : 104), color: bright }, w - n(80)); h2At = y + n(4); y = h2At + h2.h; }
   const sweepAt = y + n(6); y += n(28);
   let pillText = null; const pillAt = y;
   if (pill) { pillText = await line(pill, { font: 'semi', size: n(30), color: '#ffffff' }, w - n(220)); y += n(60); }
@@ -125,18 +145,21 @@ async function makePoster(spec, H) {
   const heroTop = Math.max(0, headerBottom - n(6)); const heroBottom = Math.max(heroTop + n(160), (stepsH ? stepsTop : (bandH ? bandTop : footerTop)) + n(4)); const heroH = Math.min(h - heroTop, heroBottom - heroTop);
   shape(`<defs><radialGradient id="a" cx="0" cy="0" r="0.75"><stop offset="0" stop-color="${bright}" stop-opacity="0.16"/><stop offset="1" stop-color="${bright}" stop-opacity="0"/></radialGradient><radialGradient id="b" cx="1" cy="0.1" r="0.7"><stop offset="0" stop-color="${bright}" stop-opacity="0.14"/><stop offset="1" stop-color="${bright}" stop-opacity="0"/></radialGradient></defs><rect width="${w}" height="${h}" fill="url(#a)"/><rect width="${w}" height="${h}" fill="url(#b)"/>`);
   if (spec.photo) {
-    // soft blurred sides, from the same photograph
-    const sideH = Math.max(1, heroBottom);
+    // soft blurred sides, from the same photograph, only beside it: the logo and the headline stay on a clean page
+    const sideH = Math.max(1, heroH);
     const blurred = await sharp(spec.photo).rotate().resize({ width: w, height: sideH, fit: 'cover' }).blur(Math.max(0.5, n(26))).ensureAlpha().png().toBuffer();
     const sideMask = svg(w, sideH, `<defs><linearGradient id="s" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0.5"/><stop offset="0.2" stop-color="#fff" stop-opacity="0"/><stop offset="0.8" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity="0.5"/></linearGradient></defs><rect width="${w}" height="${sideH}" fill="url(#s)"/>`);
-    put(await sharp(blurred).composite([{ input: sideMask, blend: 'dest-in' }]).png().toBuffer(), 0, 0);
+    const topFade = svg(w, sideH, `<defs><linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient></defs><rect width="${w}" height="${sideH}" fill="url(#t)"/>`);
+    const sides = await sharp(blurred).composite([{ input: sideMask, blend: 'dest-in' }]).png().toBuffer();
+    put(await sharp(sides).composite([{ input: topFade, blend: 'dest-in' }]).png().toBuffer(), 0, heroTop);
     const pw = Math.round(w * 0.94);
     const hero = await sharp(spec.photo).rotate().resize({ width: pw, height: heroH, fit: 'cover', position: 'top' }).ensureAlpha().png().toBuffer();
-    const vert = svg(pw, heroH, `<defs><linearGradient id="v" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.14" stop-color="#fff" stop-opacity="1"/><stop offset="0.93" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#fff" stop-opacity="0.9"/></linearGradient></defs><rect width="${pw}" height="${heroH}" fill="url(#v)"/>`);
+    const vert = svg(pw, heroH, `<defs><linearGradient id="v" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.07" stop-color="#fff" stop-opacity="1"/><stop offset="0.93" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#fff" stop-opacity="0.9"/></linearGradient></defs><rect width="${pw}" height="${heroH}" fill="url(#v)"/>`);
     const horiz = svg(pw, heroH, `<defs><linearGradient id="x" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.07" stop-color="#fff" stop-opacity="1"/><stop offset="0.93" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs><rect width="${pw}" height="${heroH}" fill="url(#x)"/>`);
     const faded = await sharp(hero).composite([{ input: vert, blend: 'dest-in' }]).png().toBuffer();
     put(await sharp(faded).composite([{ input: horiz, blend: 'dest-in' }]).png().toBuffer(), (w - pw) / 2, heroTop);
   }
+  if (logoPlate) shape(`<rect x="${logoPlate.x}" y="${logoPlate.y}" width="${logoPlate.w}" height="${logoPlate.h}" rx="${n(18)}" fill="${dark}"/>`);
   drawHeader.forEach(([b, x, top]) => put(b, x, top));
   if (tagline) await ruled(tagline, { font: 'italic', size: n(24), color: dark }, taglineAt, dark);
   if (h1) put(h1.buf, (w - h1.w) / 2, h1At);
@@ -169,17 +192,37 @@ async function makePoster(spec, H) {
     });
   }
 
-  // ---- steps ----
+  // ---- the services ----
   if (stepsH) {
-    const mx = n(34); const col = (w - mx * 2) / steps.length; const r = n(40); const taken = new Set();
-    for (let i = 0; i < steps.length; i += 1) {
-      const cx = mx + col * i + col / 2; const cy = stepsTop + n(46);
-      shape(`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${soft}" stroke="${rule}" stroke-width="${Math.max(1, n(2))}"/>`);
-      let key = stepIcon(steps[i], i); if (taken.has(key)) key = ['userSearch', 'users', 'clipboard', 'userCheck', 'handshake', 'cap'].find((x) => !taken.has(x)) || key; taken.add(key); // no icon twice on one poster
-      put(await icon(key, n(46), bright, 2.3), cx - n(23), cy - n(23)); // eslint-disable-line no-await-in-loop
-      const t = await block(steps[i], { font: 'semi', size: n(19), color: dark }, Math.round(col - n(18)), n(52)); // eslint-disable-line no-await-in-loop
-      put(t.buf, cx - t.w / 2, stepsTop + n(88) + (n(50) - t.h) / 2);
-      if (i) shape(`<line x1="${mx + col * i}" y1="${stepsTop + n(16)}" x2="${mx + col * i}" y2="${stepsTop + stepsH - n(14)}" stroke="${rule}" stroke-width="${Math.max(1, n(2))}"/>`);
+    const taken = new Set();
+    const keyFor = (text, i) => { let key = stepIcon(text, i); if (taken.has(key)) key = ['userSearch', 'users', 'clipboard', 'userCheck', 'handshake', 'cap', 'briefcase', 'building'].find((x) => !taken.has(x)) || key; taken.add(key); return key; }; // no icon twice on one poster
+    if (servicesTitle) {
+      const t = await line(servicesTitle, { font: 'heavy', size: n(34), color: dark }, w - n(320)); const ty = stepsTop + n(8);
+      const gap = n(20); const len = n(96); const x = (w - t.w) / 2;
+      shape(`<g stroke="${accent}" stroke-width="${Math.max(2, n(5))}" stroke-linecap="round"><line x1="${x - gap - len}" y1="${ty + t.h / 2}" x2="${x - gap}" y2="${ty + t.h / 2}"/><line x1="${x + t.w + gap}" y1="${ty + t.h / 2}" x2="${x + t.w + gap + len}" y2="${ty + t.h / 2}"/></g>`);
+      put(t.buf, x, ty);
+    }
+    const top = stepsTop + titleH;
+    if (cards) {
+      const mx = n(40); const gap = n(18); const cw = (w - mx * 2 - gap) / 2; const rh = n(68); const ch = rh - n(9); const r = n(24);
+      for (let i = 0; i < steps.length; i += 1) {
+        const alone = i === steps.length - 1 && steps.length % 2 === 1; // an odd last one sits in the middle
+        const x = alone ? (w - cw) / 2 : mx + (i % 2) * (cw + gap); const cy = top + Math.floor(i / 2) * rh;
+        shape(`<rect x="${x}" y="${cy}" width="${cw}" height="${ch}" rx="${n(16)}" fill="${soft}" stroke="${rule}" stroke-width="${Math.max(1, n(2))}"/><circle cx="${x + n(40)}" cy="${cy + ch / 2}" r="${r}" fill="${bright}"/>`);
+        put(await icon(keyFor(steps[i], i), n(32), '#ffffff', 2.2), x + n(24), cy + ch / 2 - n(16)); // eslint-disable-line no-await-in-loop
+        const t = await line(steps[i], { font: 'bold', size: n(28), color: dark }, cw - n(100)); // eslint-disable-line no-await-in-loop
+        put(t.buf, x + n(82), cy + (ch - t.h) / 2);
+      }
+    } else {
+      const mx = n(34); const col = (w - mx * 2) / steps.length; const r = n(42);
+      for (let i = 0; i < steps.length; i += 1) {
+        const cx = mx + col * i + col / 2; const cy = top + n(48);
+        shape(`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${bright}"/>`);
+        put(await icon(keyFor(steps[i], i), n(48), '#ffffff', 2.1), cx - n(24), cy - n(24)); // eslint-disable-line no-await-in-loop
+        const t = await block(steps[i], { font: 'bold', size: n(25), color: dark }, Math.round(col - n(22)), n(56)); // eslint-disable-line no-await-in-loop
+        put(t.buf, cx - t.w / 2, top + n(96) + (n(52) - t.h) / 2);
+        if (i) shape(`<line x1="${mx + col * i}" y1="${top + n(16)}" x2="${mx + col * i}" y2="${top + n(140)}" stroke="${rule}" stroke-width="${Math.max(1, n(2))}"/>`);
+      }
     }
   }
 

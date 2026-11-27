@@ -15,7 +15,7 @@
 const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9ऀ-෿\s]/g, ' ').replace(/\s+/g, ' ').trim();
 const wordsOf = (s) => norm(s).split(' ').filter(Boolean);
 const clip = (s, n) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, n);
-const TEXT_FIELDS = [['headline', 'the headline'], ['headline2', 'the second headline line'], ['sub', 'the sub-line'], ['chip', 'the website link'], ['audience', 'the "who it is for" words'], ['audienceTitle', 'the "who it is for" title'], ['tagline', 'the tagline'], ['cta', 'the button'], ['badge', 'the badge'], ['footer', 'the contact strip'], ['companyName', 'the company name'], ['servicesTitle', 'the services title']];
+const TEXT_FIELDS = [['headline', 'the headline'], ['headline2', 'the second headline line'], ['sub', 'the sub-line'], ['chip', 'the website link'], ['audience', 'the "who it is for" words'], ['audienceTitle', 'the "who it is for" title'], ['tagline', 'the tagline'], ['cta', 'the button'], ['badge', 'the badge'], ['footer', 'the contact strip'], ['companyName', 'the company name'], ['servicesTitle', 'the services title'], ['motto', 'the motto'], ['motto2', 'the motto'], ['closing', 'the closing line'], ['location', 'the address'], ['phone', 'the phone number'], ['email', 'the e-mail address']];
 const COLOURS = { blue: '#1d4ed8', navy: '#1e3a8a', green: '#15803d', red: '#b91c1c', orange: '#c2410c', purple: '#6d28d9', violet: '#6d28d9', pink: '#be185d', teal: '#0f766e', maroon: '#7f1d1d', black: '#111827', dark: '#111827', yellow: '#a16207', gold: '#a16207' };
 const REMOVE = /\b(remove|delete|take (?:it |this |that )?(?:out|away|off)|get rid of|no need (?:of|for)|(?:do not|don'?t|dont) (?:need|want|show|put|add|use)|not needed|not required|without|hide|drop)\b/i;
 const LINKW = /\b(link|website|web ?site|url|web ?address|site address|chip)\b/i;
@@ -25,6 +25,7 @@ const quoted = (s) => [...String(s).matchAll(/["“”]([^"“”]{2,160})["“�
 const PICW = /\b(?:picture|photo|photograph|image|hero)s?\b/i;
 const OTHER_PART = /\b(logo|text|font|words?|head ?line|heading|link|website|prices?|tag ?line|sub ?line|footer|badge|theme)\b/i; // the sentence is about something else on the banner
 const PICTURE_WISH = /\b(?:change|replace|different|another|new|other|better|show(?:ing)?|make|should|want|need|add|use|put|keep|include|with|without|remove|delete|more|less|instead|smil\w*)\b/i;
+const SECOND_PICTURE = /\b(?:second|2nd|bottom|lower|small(?:er)?)\s+(?:picture|photo|photograph|image)\b|\b(?:picture|photo|image)\s+(?:at|in)\s+the\s+bottom\b|\bhand ?shake\b/i; // a poster's second photograph
 // "remove the picture" / "the picture is not needed" -> the picture itself goes; "remove the mask from the picture" is a change INSIDE the picture
 const DROP_PICTURE = /\b(?:remove|delete|take (?:out|off|away)|get rid of|no need (?:of|for)|(?:do not|don'?t|dont) (?:need|want|show|put|add|use)|without|hide|drop)\s+(?:the\s+|this\s+|that\s+|a\s+|any\s+)?(?:(?:main|hero|big|stock)\s+)?(?:picture|photo|photograph|image|hero)s?\b(?!\s+(?:of|with|showing)\b)|\b(?:picture|photo|photograph|image|hero)s?\b[^.]{0,20}\b(?:not needed|not required|(?:to be|should be) removed)\b/i;
 // does the sentence contain a run of at least `min` consecutive words of `value` (or all of it when it is shorter)?
@@ -55,7 +56,17 @@ function interpret(spec, feedback) {
       } else if (/\b(?:bottom|footer|down|end|last)\b/i.test(t) && hasChip && /\b(?:at|in|to|on|back)\b/i.test(t)) { next.chipPos = 'bottom'; say('chipPos', 'The website link is at the bottom.'); hit = true; }
       if (/\b(?:one|single|1)\s*line\b|\bin a line\b|\bnot (?:in )?(?:two|2|more than one|multiple)\s*lines?\b|\bnot (?:to )?break|\b(?:do not|don'?t|dont) break|\bstraight line\b/i.test(t)) { if (hasChip) { say('chipOneLine', 'The website link is on one line.'); hit = true; } else if (!blocked) blocked = 'this banner has no website link'; }
       const setTo = /\b(?:should be|must be|to be|change(?:d)? (?:it )?to|is)\b\s*["“']?([a-z0-9][a-z0-9.\-/:_]+\.[a-z]{2,}[a-z0-9/._\-]*)["”']?\s*$/i.exec(raw);
-      if (setTo && next.layout === 'showcase') { next.chip = clip(setTo[1], 40); say('chip', `The website link now reads "${next.chip}".`); hit = true; }
+      if (setTo && (next.layout === 'showcase' || next.layout === 'poster')) { next.chip = clip(setTo[1], 40); say('chip', `The website link now reads "${next.chip}".`); hit = true; }
+    }
+    // ---- the poster's contact details: only what the client typed ----
+    if (next.layout === 'poster') {
+      const ph = /\b(?:phone|mobile|contact)(?:\s*(?:number|no\.?))?\b[^.]{0,30}?\b(?:should be|must be|change(?:d)? (?:it )?to|is|to|as)\s*:?\s*(\+?\d[\d \-()]{6,18}\d)/i.exec(raw);
+      if (ph) { next.phone = clip(ph[1], 24); say('phone', `The phone number now reads "${next.phone}".`); hit = true; }
+      const em = /\be-?mail(?:\s*(?:id|address))?\b[^]{0,30}?(?:should be|must be|change(?:d)? (?:it )?to|is|to|as)\s*:?\s*([^\s,;]+@[^\s,;]+\.[a-z]{2,})/i.exec(raw);
+      if (em) { next.email = clip(em[1].replace(/\.$/, ''), 48); say('email', `The e-mail address now reads "${next.email}".`); hit = true; }
+      const ad = /\b(?:address|location)\b[^.]{0,30}?\b(?:should be|must be|change(?:d)? (?:it )?to|to|as)\b\s*:?\s*["“']?([^"”'@]{3,44}?)["”']?\s*\.?$/i.exec(raw);
+      if (ad && !em) { next.location = clip(ad[1], 44); say('location', `The address now reads "${next.location}".`); hit = true; }
+      if (REMOVE.test(t) && SECOND_PICTURE.test(t) && (next.photo2ItemId || next.hero2File)) { next.photo2ItemId = ''; next.hero2File = ''; say('photo2', 'Removed the second picture.'); hit = true; }
     }
     // ---- text that is an instruction (a prompt) or that the client asked to remove ----
     if (next.sub) {
@@ -98,13 +109,15 @@ function interpret(spec, feedback) {
       }
     }
     // ---- colour, picture ----
-    const aboutPicture = PICW.test(t) && !OTHER_PART.test(t) && !DROP_PICTURE.test(t);
+    const second = next.layout === 'poster' && SECOND_PICTURE.test(t); // only the main picture is made again by TeamLink
+    if (second && !REMOVE.test(t)) blocked = blocked || 'the second picture has to be changed by hand';
+    const aboutPicture = !second && PICW.test(t) && !OTHER_PART.test(t) && !DROP_PICTURE.test(t);
     const redo = !!next.heroAi && aboutPicture && PICTURE_WISH.test(t); // the AI made this picture: a new one is made, following the sentence
     const col = /\b(blue|navy|green|red|orange|purple|violet|pink|teal|maroon|black|dark|yellow|gold)\b/i.exec(t);
     if (!redo && col && /\b(make|use|change|set|want|colou?r|theme|background)\b/i.test(t) && !/\b(text|font|words?|letters?)\b/i.test(t) && !REMOVE.test(t)) { const name = col[1].toLowerCase(); next.colors = { ...(next.colors || {}), primary: COLOURS[name] }; say('colors', `Changed the main colour to ${name}.`); hit = true; }
     if (redo) {
       next.heroRedo = clip([next.heroRedo, raw].filter(Boolean).join(' '), 300); if (!changes.some((c) => c.key === 'photo')) say('photo', 'Made a new picture the way you described.'); hit = true;
-    } else if (/\b(change|replace|different|another|new|other)\b/i.test(t) && PICW.test(t) && !REMOVE.test(t)) {
+    } else if (!second && /\b(change|replace|different|another|new|other)\b/i.test(t) && PICW.test(t) && !REMOVE.test(t)) {
       if (next.heroSearch) { next.heroN = ((Number(next.heroN) || 0) + 1) % 20; next.heroFile = ''; say('photo', 'Chose another picture.'); hit = true; } else if (!blocked) blocked = 'the picture was chosen by a person, so it has to be changed by hand';
     }
     if (!hit || changes.length === before) unclear.push(blocked ? `${raw} (${blocked})` : raw);
@@ -136,7 +149,7 @@ function variation(spec) {
 // ---- the AI reads what the plain rules did not understand ----------------------------------------------------------------------------------------------------------------------------
 // Asked ONLY when the rules left something unclear (no call otherwise). The AI answers JSON; EVERYTHING it says is checked here: only the fields below, only short plain text, never an instruction to a
 // designer, and a confidence under 0.6 is ignored. So the AI can only change what the banner has, in the ways listed, and the client is told what was done.
-const AI_TEXT = { headline: 90, headline2: 60, sub: 160, chip: 40, audience: 200, audienceTitle: 40, tagline: 60, cta: 28, badge: 18, footer: 90, companyName: 60, servicesTitle: 50 };
+const AI_TEXT = { headline: 90, headline2: 60, sub: 160, chip: 40, audience: 200, audienceTitle: 40, tagline: 60, cta: 28, badge: 18, footer: 90, companyName: 60, servicesTitle: 50, motto: 44, motto2: 34, closing: 60 }; // never the phone, address or e-mail: only the client's own typed words change those
 const AI_SYSTEM = `You change a designed marketing banner when a client asks for corrections. You are given the banner's fields (JSON) and what the client wrote. Answer ONLY with JSON: {"classification":"correction"|"new_design","confidence":0 to 1,"changes":[{"field":"<field>","action":"set"|"clear"|"next","value":"<new text>"}],"unclear":["<a part of the request you could not do>"]}. Allowed fields: ${Object.keys(AI_TEXT).join(', ')}, chipPos (value "under-headline" or "bottom"), colorPrimary (a colour name or #rrggbb), services (value: a list of up to 8 short texts), plans (action "clear" only), photo (action "next" for another picture or "clear"). Change ONLY what the client names; keep everything else. Never write an instruction to a designer as banner text. Do not invent facts, prices or contact details: if the client gives none, leave it unclear.`;
 const aiRequest = (spec, text) => ({ system: AI_SYSTEM, prompt: JSON.stringify({ banner: Object.fromEntries([...Object.keys(AI_TEXT), 'chipPos', 'services', 'layout'].filter((k) => spec[k] != null && spec[k] !== '' && !(Array.isArray(spec[k]) && !spec[k].length)).map((k) => [k, spec[k]])), client_wrote: String(text || '').slice(0, 800) }) });
 function applyAi(spec, ans) {

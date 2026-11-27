@@ -188,6 +188,9 @@ router.post('/video/voice', mustWrite, wrap(async (req, res) => {
 }));
 router.get('/banners/meta', mustWrite, wrap(async (req, res) => res.json(await Img.bannerMeta())));
 router.post('/banners', mustWrite, wrap(async (req, res) => send(res, await Img.createBanner(req.user, req.body || {}))));
+// AI Images > Poster (2026-11-27, marketing/posterKit.js): the contact details saved once per business, and the AI writes the poster's words
+router.get('/poster/kit', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/posterKit').getKit(req.user, req.query.projectId, req.query.business))));
+router.post('/poster/write', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/posterKit').write(req.user, req.body || {}))));
 router.post('/images', mustWrite, wrap(async (req, res) => send(res, await Img.create(req.user, req.body || {}))));
 // the background job of one "Make pictures" press (marketing/images.js create): the screen asks every few seconds until it is done
 router.get('/images/jobs/:id', mustWrite, wrap(async (req, res) => send(res, Img.getJob(req.user, req.params.id))));

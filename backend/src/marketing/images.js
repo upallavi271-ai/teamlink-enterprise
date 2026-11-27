@@ -642,15 +642,23 @@ async function bannerSpecOf(b, brand, look) {
       size: B.SIZES[b.size] ? b.size : '16:9', layout, headline: S.clip(b.headline, 90), headline2: S.clip(b.headline2, 60), sub, services: list(b.services, 8, 40), servicesTitle: S.clip(b.servicesTitle, 50), plans, audienceTitle: S.clip(b.audienceTitle, 40), audience: S.clip(b.audience, 200),
       chip: S.clip(b.chip, 40), chipPos: b.chipPos === 'under-headline' ? 'under-headline' : 'bottom', badge: S.clip(b.badge, 18), tagline: S.clip(b.tagline, 60) || (look ? '' : brand.tagline), companyName: S.clip(b.companyName, 60) || (look ? look.clientName : brand.brandName),
       cta: b.cta !== undefined ? S.clip(b.cta, 28) : (look ? '' : S.clip(brand.cta, 28)), footer: b.footer !== undefined ? S.clip(b.footer, 90) : (look ? '' : S.clip([brand.website, brand.contact].filter(Boolean).join('   |   '), 90)),
+      // the poster design (2026-11-27, bannerPoster.js)
+      ...(layout === 'poster' ? { posterKey: S.clip(b.posterKey, 120), roles: list(b.roles, 3, 24), motto: S.clip(b.motto, 44), motto2: S.clip(b.motto2, 34), phone: S.clip(b.phone, 24), location: S.clip(b.location, 44), email: S.clip(b.email, 48), closing: S.clip(b.closing, 60), photo2ItemId: S.clip(b.photo2ItemId, 60) } : {}),
       photoItemId: S.clip(b.photoItemId, 60), heroSearch: S.clip(b.heroSearch, 80), heroN: Math.max(0, Math.min(19, Math.floor(Number(b.heroN)) || 0)), projectId: S.clip(b.projectId, 60), colors: col, rev: 0, handled: [],
     }, warnings,
   };
+}
+// whose logo and colours a banner carries: a POSTER for a client business carries THAT business's logo (saved with its details, marketing/posterKit.js), never ours; else the client project, else our brand
+async function lookFor(b) {
+  const project = await projectLook(b.projectId);
+  if (b.layout !== 'poster') return project;
+  return require('./posterKit').look(S.clip(b.posterKey, 120), project); // eslint-disable-line global-require
 }
 // draw a banner from its spec -> { made: { buf, w, h } } or { error, status }
 async function renderBanner(u, spec) {
   const B = require('./banner'); // eslint-disable-line global-require
   const brand = await Cfg.getBrand();
-  const look = await projectLook(spec.projectId);
+  const look = await lookFor(spec);
   const logoRow = look ? (look.logoData ? { dataUrl: look.logoData } : null) : await Cfg.getLogo();
   const dec = (d) => { const m = /^data:image\/(?:png|jpeg|webp);base64,(.+)$/.exec(String(d || '')); return m ? Buffer.from(m[1], 'base64') : null; };
   let photo = null; let fresh = false; // fresh: a photo taken now (the chosen picture, or a new stock search), to be kept beside the banner so a change later uses the SAME photo
@@ -672,11 +680,16 @@ async function renderBanner(u, spec) {
       if (ph && ph.buf) { photo = ph.buf; fresh = true; }
     } catch { photo = null; }
   }
+  let photo2 = null; let fresh2 = false; // a poster's second photograph: the one kept beside it, else the chosen picture
+  if (spec.layout === 'poster') {
+    if (spec.hero2File) { try { const hp = path.join(dir(), path.basename(String(spec.hero2File))); if (fs.existsSync(hp)) photo2 = fs.readFileSync(hp); } catch { photo2 = null; } }
+    if (!photo2 && spec.photo2ItemId) { const got = await getRow(u, String(spec.photo2ItemId)); const f = got && !isVideo(got.r) ? rawFile(got.r) : null; if (f) { photo2 = fs.readFileSync(f.path); fresh2 = true; } }
+  }
   const base = (look && look.colors && look.colors.primary ? { primary: look.colors.primary, secondary: look.colors.secondary || undefined, accent: brand.colors.accent } : brand.colors) || {};
   const colors = { ...base, ...Object.fromEntries(Object.entries(spec.colors || {}).filter(([, v]) => v)) };
   try {
-    const made = await B.makeBanner({ headline2: spec.headline2, services: spec.services, servicesTitle: spec.servicesTitle, plans: spec.plans, audienceTitle: spec.audienceTitle, audience: spec.audience, chip: spec.chip, chipPos: spec.chipPos, tagline: spec.tagline, companyName: spec.companyName, size: spec.size, layout: spec.layout || (photo ? 'overlay' : 'bold'), headline: spec.headline, sub: spec.sub, cta: spec.cta, badge: spec.badge, footer: spec.footer, colors, logo: logoRow ? dec(logoRow.dataUrl) : null, photo, brandName: look ? look.clientName : brand.brandName });
-    return { made, withLogo: !!logoRow, photo: fresh ? photo : null };
+    const made = await B.makeBanner({ headline2: spec.headline2, services: spec.services, servicesTitle: spec.servicesTitle, plans: spec.plans, audienceTitle: spec.audienceTitle, audience: spec.audience, chip: spec.chip, chipPos: spec.chipPos, tagline: spec.tagline, companyName: spec.companyName, size: spec.size, layout: spec.layout || (photo ? 'overlay' : 'bold'), headline: spec.headline, sub: spec.sub, cta: spec.cta, badge: spec.badge, footer: spec.footer, colors, logo: logoRow ? dec(logoRow.dataUrl) : null, photo, photo2, roles: spec.roles, motto: spec.motto, motto2: spec.motto2, phone: spec.phone, location: spec.location, email: spec.email, closing: spec.closing, brandName: look ? look.clientName : brand.brandName });
+    return { made, withLogo: !!logoRow, photo: fresh ? photo : null, photo2: fresh2 ? photo2 : null };
   } catch (e) { return { error: 'The banner could not be designed: ' + e.message, status: 500 }; }
 }
 async function createBanner(u, b = {}) {
@@ -685,7 +698,7 @@ async function createBanner(u, b = {}) {
   const headline = S.clip(b.headline, 90);
   if (headline.length < 3) return { error: 'Write the banner headline (a few words).', status: 400 };
   const brand = await Cfg.getBrand();
-  const look = await projectLook(b.projectId);
+  const look = await lookFor(b);
   const { spec, warnings } = await bannerSpecOf(b, brand, look);
   const out = await renderBanner(u, spec); if (out.error) return out;
   const { made } = out; const size = spec.size; const layout = spec.layout;
@@ -694,6 +707,7 @@ async function createBanner(u, b = {}) {
   const id = S.newId('ban'); const file = id + '.png'; const ts = Date.now();
   fs.writeFileSync(path.join(dir(), file), made.buf);
   if (out.photo) { try { fs.writeFileSync(path.join(dir(), `${id}.hero`), out.photo); spec.heroFile = `${id}.hero`; } catch { /* the photo could not be kept: a change later looks for it again */ } } // the exact photo used, so a change asked for later keeps it
+  if (out.photo2) { try { fs.writeFileSync(path.join(dir(), `${id}.hero2`), out.photo2); spec.hero2File = `${id}.hero2`; } catch { /* a change later takes the chosen picture again */ } }
   const title = S.clip(b.title, 80) || ('Banner: ' + headline);
   await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt, spec) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?)`,
     id, title, S.clip([headline, spec.sub, spec.cta, spec.badge].filter(Boolean).join(' | '), 600), headline, 'banner', size, 'banner-designer', out.withLogo ? 1 : 0, file, 'image/png', made.buf.length, 0, dept || null, u.id, S.clip(u.name, 80), ts, ts, JSON.stringify(spec));
@@ -731,6 +745,7 @@ async function reviseBanner(u, id, spec, note, check) {
   fs.writeFileSync(file, out.made.buf);
   const prev = versionOf(r); const now = Date.now(); const next = { ...spec, rev: prev + 1 };
   if (out.photo) { try { const hf = `${path.basename(r.file, path.extname(r.file))}.hero`; fs.writeFileSync(path.join(dir(), hf), out.photo); next.heroFile = hf; } catch { /* the photo could not be kept */ } } // a NEW photo (another stock picture was asked for): keep it for the next change
+  if (out.photo2) { try { const hf = `${path.basename(r.file, path.extname(r.file))}.hero2`; fs.writeFileSync(path.join(dir(), hf), out.photo2); next.hero2File = hf; } catch { /* the photo could not be kept */ } }
   await S.run(`UPDATE "${TABLE}" SET prompt = ?, headline = ?, bytes = ?, spec = ?, status = 'draft', note = ?, decidedAt = NULL, decidedById = NULL, decidedByName = NULL, updatedAt = ? WHERE id = ?`,
     S.clip([spec.headline, spec.sub, spec.cta, spec.badge].filter(Boolean).join(' | '), 600), spec.headline, out.made.buf.length, JSON.stringify(next), S.clip(note, 300) || null, now, r.id);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: banner changed and made again', entity: TABLE, entityId: r.id, toValue: `${r.title}; version ${prev + 2}${note ? `: ${S.clip(note, 200)}` : ''}` });

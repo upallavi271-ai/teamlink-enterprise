@@ -173,6 +173,7 @@ app.get('/api/mk-image/:id/:file', async (req, res, next) => {
 });
 // AI Marketing brand logo: a picture of up to 300 KB arrives as base64 JSON (marketing/settings.js cleanLogo checks the real size and type)
 app.use('/api/outreach/gs/marketing/brand/logo', express.json({ limit: '600kb' }));
+app.use('/api/outreach/gs/marketing/poster', express.json({ limit: '700kb' })); // AI Images > Poster: a client's logo travels with the poster (a picture of up to 300 KB)
 app.use('/api/outreach/gs/marketing/projects', express.json({ limit: '700kb' })); // a client's logo travels with the project (a picture of up to 300 KB)
 app.use('/api/public/mk-project', express.json({ limit: '700kb' })); // the client's request form can carry their logo
 app.use('/api/followup-report/import', express.json({ limit: '2mb' })); // the follow-up import's choices: one per row of a sheet of up to 5,000 rows

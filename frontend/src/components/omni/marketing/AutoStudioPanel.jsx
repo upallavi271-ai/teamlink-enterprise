@@ -13,7 +13,13 @@ import IdeaAssist from './IdeaAssist.jsx';
 //   then     the pictures become a VIDEO (the AI Video page puts them together in the browser: onVideo) or stay as picture POSTS (onMade). Everything lands as a DRAFT that still needs
 //            approval (team or client). Nothing is posted from here.
 // kind 'video' | 'post'. projectId: made for a client project (its logo and colours are used).
+// DESIGN "Promotional poster" (2026-11-27, posts): for our company or a client business, with THAT business's logo (used exactly as uploaded), contact details and services, typed once and kept
+// (marketing/posterKit.js). The AI writes the words and describes one photograph; the photograph is made; TeamLink draws the poster.
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
+const NO_CONTACT = { companyName: '', tagline: '', phone: '', location: '', website: '', email: '' };
+const NEW_CLIENT = '__new';
+const LOGO_MAX = 300 * 1024;
+const CONTACT_FIELDS = [['companyName', 'NAME ON THE POSTER', 60, 'TeamLink Consultants'], ['tagline', 'LINE UNDER THE LOGO', 60, 'Your Recruitment Partner for a Better Tomorrow'], ['phone', 'PHONE', 24, '90000 00000'], ['location', 'PLACE', 44, 'Kukatpally, Hyderabad'], ['website', 'WEBSITE', 40, 'www.example.com'], ['email', 'E-MAIL', 48, 'hr@example.com']];
 const shapeOf = (aspect) => { const [w, h] = aspect.split(':').map(Number); return h > w * 1.1 ? 'portrait' : w > h * 1.1 ? 'landscape' : 'square'; };
 const AI_REFUSED = /billing|quota|limit|not ready|not connected|permission|api key|exceeded|payment|credit/i;
 // one-press starting ideas for a post (they only fill the idea and the heading; the person can change both)
@@ -38,6 +44,17 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const [scenes, setScenes] = useState(isVideo ? 4 : 2);
   const [aspect, setAspect] = useState(isVideo ? '9:16' : '1:1');
   const [look, setLook] = useState('designed'); // 'designed' (free) | 'ai' (paid picture AI)
+  const [design, setDesign] = useState('banner'); // posts: 'banner' | 'poster'
+  const [contact, setContact] = useState(NO_CONTACT); // the poster's contact details, kept for this business
+  const [kitReady, setKitReady] = useState(false); // the saved details were read: until then an empty box never wipes what is saved
+  const [client, setClient] = useState(''); // '' = our company, else a client business saved by its name; NEW_CLIENT while a new name is typed
+  const [newName, setNewName] = useState('');
+  const [businesses, setBusinesses] = useState([]);
+  const [logo, setLogo] = useState(''); // the logo saved for this business
+  const [newLogo, setNewLogo] = useState(''); // one just chosen, saved when the poster is made
+  const [services, setServices] = useState('');
+  const business = projectId ? '' : (client === NEW_CLIENT ? newName.trim() : client);
+  const isPoster = !isVideo && design === 'poster';
   const [photos, setPhotos] = useState(true);
   const [aiHero, setAiHero] = useState(true); // banners: the hero picture is made by the picture AI (when one is connected), like a designed poster's artwork; a free stock photo otherwise
   const [banners, setBanners] = useState(true); // posts: a professional banner (logo band, two-tone headline, hero picture, icons, who it is for, website), not a plain poster
@@ -68,12 +85,27 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
     go.then(async (k) => { let logo = null; if (k.logoUrl) { try { logo = await loadImage(k.logoUrl); } catch { logo = null; } } setKit({ colors: k.colors, logo, brandName: k.brandName, footer: k.footer }); }).catch(() => {});
   }, [projectId]);
   const working = phase === 'plan' || phase === 'pics';
+  useEffect(() => { // what was saved for this business the last time (our own, a client project, or a client business)
+    if (!isPoster) return;
+    setKitReady(false); setContact(NO_CONTACT); setLogo(''); setNewLogo('');
+    if (client === NEW_CLIENT) return; // a new client starts empty: nothing of ours is filled in
+    const q = projectId ? `?projectId=${encodeURIComponent(projectId)}` : (client ? `?business=${encodeURIComponent(client)}` : '');
+    omni.get(`/gs/marketing/poster/kit${q}`).then((x) => { if (!stop.current) { setContact({ ...NO_CONTACT, ...(x.kit || {}) }); setLogo(x.logo || ''); setBusinesses(x.businesses || []); setKitReady(true); } }).catch(() => {});
+  }, [isPoster, projectId, client]);
+  const chooseLogo = (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    if (!/^image\/(png|jpeg|webp)$/.test(f.type)) { setErr('Upload the logo as a PNG, JPG or WebP picture.'); return; }
+    if (f.size > LOGO_MAX) { setErr(`The logo is too big (${Math.round(f.size / 1024)} KB). Use a picture under ${LOGO_MAX / 1024} KB.`); return; }
+    const r = new FileReader(); r.onload = () => { setErr(''); setNewLogo(String(r.result)); }; r.readAsDataURL(f);
+  };
+  const pickDesign = (v) => { setDesign(v); setAspect(v === 'poster' ? '4:5' : '1:1'); };
 
   // an AI picture for one scene: start the job, then ask every 3 seconds until it is done (the same way the AI Images page does). A "too many in a minute" answer waits and tries again.
-  const makeAiPicture = async (scene, asp = aspect) => {
+  const makeAiPicture = async (scene, asp = aspect, logoOn = !isVideo) => {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       let r;
-      try { r = await omni.post('/gs/marketing/images', { prompt: scene.imagePrompt, headline: '', style: 'photo', aspect: asp, count: 1, useColors: true, withLogo: !isVideo, ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) }); } catch (e) {
+      try { r = await omni.post('/gs/marketing/images', { prompt: scene.imagePrompt, headline: '', style: 'photo', aspect: asp, count: 1, useColors: true, withLogo: logoOn, ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) }); } catch (e) {
         const st = e.response && e.response.status;
         if (st === 429 && /minute|wait/i.test(errOf(e, ''))) { await sleep(15000); if (stop.current) throw new Error('stopped'); continue; } // eslint-disable-line no-continue, no-await-in-loop
         throw e;
@@ -153,7 +185,39 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
     return r.item.id;
   };
 
+  // a PROMOTIONAL POSTER: words (AI), one photograph (picture AI, else a free stock photo), then TeamLink draws it
+  const createPoster = async () => {
+    if (client === NEW_CLIENT && newName.trim().length < 2) { setErr('Write the client\'s business name first.'); return; }
+    stop.current = false; setErr(''); setNote(''); setPlan(null); setFlags([]); setThumbs([]); setPhase('plan');
+    const where = { ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) };
+    try {
+      const details = kitReady ? contact : Object.fromEntries(Object.entries(contact).filter(([, v]) => v));
+      const r = await omni.post('/gs/marketing/poster/write', { idea: prompt, title, heading, content, cta, services, ...details, ...(business ? { business } : {}), ...(newLogo ? { logoDataUrl: newLogo } : {}), ...where });
+      const p = r.poster; if (r.kit) { setContact({ ...NO_CONTACT, ...r.kit }); setKitReady(true); } setLogo(r.logo || ''); setNewLogo(''); if (r.note) setNote(r.note);
+      setPhase('pics'); setStep({ i: 1, n: 1 }); let photo = null;
+      if (can.ai) {
+        try { photo = await makeAiPicture({ imagePrompt: p.heroPrompt }, '16:9', false); } catch (e) {
+          if (e.message === 'stopped') throw e;
+          setNote(`The photograph could not be made by the AI (${errOf(e, e.message || '')}). A free stock photo is used where one is found.`);
+        }
+      }
+      if (stop.current) throw new Error('stopped');
+      const two = String(p.headline || '').length >= 3; const first = two ? p.headline : `${p.headline || ''} ${p.headline2 || ''}`.trim();
+      const made = await omni.post('/gs/marketing/banners', {
+        layout: 'poster', posterKey: p.posterKey, size: aspect, title: (title || `${p.headline} ${p.headline2}`).trim().slice(0, 80), companyName: p.companyName || undefined, tagline: p.tagline, headline: first, headline2: two ? p.headline2 : '', sub: p.sub,
+        roles: p.roles, services: p.services, servicesTitle: p.servicesTitle, motto: p.motto, motto2: p.motto2, cta: p.cta, closing: p.closing, phone: p.phone, location: p.location, chip: p.website, email: p.email,
+        ...(photo ? { photoItemId: photo } : (can.stock ? { heroSearch: p.heroSearch } : {})), ...where,
+      });
+      const t = await omni.blob(`/gs/marketing/images/${made.item.id}/file`).catch(() => null); if (t) { const u = URL.createObjectURL(t); urls.current.push(u); setThumbs([u]); }
+      setPlan({ headline: [p.headline, p.headline2].filter(Boolean).join(' '), tagline: p.sub, cta: p.cta, caption: p.caption || '', hashtags: p.hashtags || [], scenes: [], dateLabel: '' });
+      if (client === NEW_CLIENT) { setBusinesses((x) => [business, ...x.filter((b) => b !== business)]); setClient(business); }
+      setPhase('done'); toast('Your poster is ready as a draft');
+      if (onMade) onMade(); if (!projectId && !business) auto.send([made.item.id]);
+    } catch (e) { if (e.message !== 'stopped') setErr(errOf(e, e.message || 'It could not be created.')); setPhase(''); if (onMade) onMade(); }
+  };
+
   const create = async () => {
+    if (isPoster) { await createPoster(); return; }
     stop.current = false; setErr(''); setNote(''); setPlan(null); setFlags([]); setThumbs([]); setPhase('plan');
     try {
       const r = await omni.post('/gs/marketing/studio/plan', { prompt, title, heading, content, cta, kind, scenes, date, ...(projectId && brief && brief.draft && !fresh ? { useDraft: true } : {}), ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
@@ -248,21 +312,47 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           <div className="form-grid" style={{ marginTop: 6 }}>
             <Field label="CALL TO ACTION (OPTIONAL)"><input value={cta} maxLength={30} disabled={working} onChange={(e) => setCta(e.target.value)} placeholder="Apply now" /></Field>
           </div>
+          {isPoster ? (
+            <div style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px', margin: '10px 0 4px' }}>
+              <b style={{ fontSize: 12 }}>On the poster</b> <span style={{ fontSize: 11, color: 'var(--muted)' }}>The logo, contact details and name are saved for each business and used exactly as given.</span>
+              <div className="form-grid" style={{ marginTop: 6 }}>
+                {!projectId ? (
+                  <Field label="POSTER FOR">
+                    <select value={client} disabled={working} onChange={(e) => { setClient(e.target.value); setNewName(''); }}>
+                      <option value="">Our company</option>
+                      {businesses.map((b) => <option key={b} value={b}>{b}</option>)}
+                      <option value={NEW_CLIENT}>+ A new client business</option>
+                    </select>
+                  </Field>
+                ) : null}
+                {client === NEW_CLIENT && !projectId ? <Field label="CLIENT BUSINESS NAME"><input value={newName} maxLength={60} disabled={working} placeholder="Rao Dental Care" onChange={(e) => { setNewName(e.target.value); setContact({ ...contact, companyName: e.target.value }); }} /></Field> : null}
+                <Field label={client || projectId ? 'CLIENT LOGO' : 'LOGO'} hint="Used exactly as it is, large and clear. PNG with a clear background looks best (under 300 KB).">
+                  {newLogo || logo ? <img src={newLogo || logo} alt="The logo on the poster" style={{ maxHeight: 54, maxWidth: 200, display: 'block', marginBottom: 6, background: '#fff', border: '1px solid var(--line)', borderRadius: 6, padding: 4 }} /> : null}
+                  <input type="file" accept="image/png,image/jpeg,image/webp" disabled={working} onChange={chooseLogo} />
+                </Field>
+                <Field label="SERVICES (UP TO 6)" full hint="Separate them with commas. They are shown on the poster exactly as typed; left empty, the AI suggests them."><input value={services} maxLength={220} disabled={working} placeholder="Permanent Hiring, Contract Staffing, Nurse Recruitment, Doctor Recruitment" onChange={(e) => setServices(e.target.value)} /></Field>
+                {CONTACT_FIELDS.map(([key, label, max, ph]) => <Field key={key} label={label}><input value={contact[key] || ''} maxLength={max} disabled={working} placeholder={ph} onChange={(e) => setContact({ ...contact, [key]: e.target.value })} /></Field>)}
+              </div>
+            </div>
+          ) : null}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 6 }}>
+            {!isVideo ? <Field label="DESIGN"><select value={design} disabled={working} onChange={(e) => pickDesign(e.target.value)}><option value="banner">Professional banner</option><option value="poster">Promotional poster (flyer)</option></select></Field> : null}
             <Field label="FOR WHICH DAY (OPTIONAL)"><input type="date" value={date} disabled={working} onChange={(e) => setDate(e.target.value)} /></Field>
+            {!isPoster ? (
             <Field label={isVideo ? 'SCENES (PICTURES)' : 'PICTURES'}>
               <select value={scenes} disabled={working} onChange={(e) => setScenes(Number(e.target.value))}>{(isVideo ? [3, 4, 5, 6] : [1, 2, 3]).map((n) => <option key={n} value={n}>{n}</option>)}</select>
             </Field>
+            ) : null}
             <Field label="SHAPE">
               <select value={aspect} disabled={working} onChange={(e) => setAspect(e.target.value)}>
-                {isVideo ? <><option value="9:16">Tall 9:16 (Reels, Status)</option><option value="16:9">Wide 16:9 (YouTube)</option><option value="1:1">Square 1:1</option></> : <><option value="1:1">Square post 1:1</option><option value="4:5">Instagram portrait 4:5</option><option value="9:16">Story 9:16</option><option value="16:9">Banner 16:9</option></>}
+                {isVideo ? <><option value="9:16">Tall 9:16 (Reels, Status)</option><option value="16:9">Wide 16:9 (YouTube)</option><option value="1:1">Square 1:1</option></> : <><option value="1:1">Square post 1:1</option><option value="4:5">Instagram portrait 4:5</option><option value="9:16">Story 9:16</option>{isPoster ? null : <option value="16:9">Banner 16:9</option>}</>}
               </select>
             </Field>
             <Btn primary disabled={working || !mine} onClick={create}>{working ? 'Creating…' : fromBrief ? (isVideo ? '✦ Create the video from the brief' : '✦ Create the post from the brief') : isVideo ? '✦ Create the video' : '✦ Create the post'}</Btn>
             {working ? <Btn onClick={() => { stop.current = true; }}>Stop</Btn> : null}
-            <button type="button" className="link-btn" style={{ fontSize: 11.5, paddingBottom: 9 }} onClick={() => setMore(!more)}>{more ? 'Fewer options' : 'More options'}</button>
+            {!isPoster ? <button type="button" className="link-btn" style={{ fontSize: 11.5, paddingBottom: 9 }} onClick={() => setMore(!more)}>{more ? 'Fewer options' : 'More options'}</button> : null}
           </div>
-          {more ? (
+          {more && !isPoster ? (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 12, alignItems: 'center' }}>
               {!isVideo && can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={aiHero} disabled={working || !banners} onChange={(e) => setAiHero(e.target.checked)} />Hero picture made by AI (a few a day) instead of a stock photo</label> : null}
               {!isVideo ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={banners} disabled={working} onChange={(e) => setBanners(e.target.checked)} />Professional banner (logo, two-colour headline, picture, icons, who it is for, website)</label> : null}
@@ -278,8 +368,8 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
 
           {working || phase === 'done' ? (
             <ol className="mk-steps" style={{ margin: '14px 0 0' }}>
-              <li><span className={`dot${phase !== 'plan' ? ' done' : ''}`}>{phase !== 'plan' ? '✓' : ''}</span>{phase === 'plan' ? 'The AI is planning it…' : 'Planned: headline, scenes, caption and hashtags'}</li>
-              <li><span className={`dot${phase === 'done' ? ' done' : ''}`}>{phase === 'done' ? '✓' : ''}</span>{phase === 'done' ? `${plan ? plan.scenes.length : ''} picture${plan && plan.scenes.length === 1 ? '' : 's'} made` : phase === 'pics' ? `Making picture ${step.i} of ${step.n}…` : 'Pictures'}</li>
+              <li><span className={`dot${phase !== 'plan' ? ' done' : ''}`}>{phase !== 'plan' ? '✓' : ''}</span>{phase === 'plan' ? 'The AI is planning it…' : isPoster ? 'Words written: headline, steps, caption and hashtags' : 'Planned: headline, scenes, caption and hashtags'}</li>
+              <li><span className={`dot${phase === 'done' ? ' done' : ''}`}>{phase === 'done' ? '✓' : ''}</span>{phase === 'done' ? (isPoster ? 'The poster is drawn' : `${plan ? plan.scenes.length : ''} picture${plan && plan.scenes.length === 1 ? '' : 's'} made`) : phase === 'pics' ? `Making picture ${step.i} of ${step.n}…` : 'Pictures'}</li>
               {isVideo ? <li><span className="dot" />{phase === 'done' ? 'Putting the video together: watch it below, then Save' : 'The video'}</li> : null}
             </ol>
           ) : null}
