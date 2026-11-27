@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { Btn, GsModal, Banner, fmtDateTime } from '../ui.jsx';
+import { ORDER, WORD } from './socialPlatforms.js';
 
-// "POST" (AI Images / AI Video, an APPROVED picture or video): pick the connected Facebook Pages, Instagram and X accounts (Administration > Integrations > Social Media), write the words,
+// "POST" (AI Images / AI Video, an APPROVED picture or video): pick the connected Facebook, Instagram, LinkedIn, X and YouTube (videos) accounts (Administration > Integrations > Social Media), write the words,
 // confirm, and TeamLink posts it (server: marketing/postItem.js, the same publisher a client project uses). What already went out from this item is listed, so a second post is never a surprise.
-const WORD = { facebook: 'Facebook', instagram: 'Instagram', x: 'X' };
-const ORDER = ['facebook', 'instagram', 'x'];
 
 export default function PostItemModal({ item, isVideo, onClose, onChanged, toast }) {
   const [acc, setAcc] = useState(null); // { allowed, accounts }
@@ -22,9 +21,10 @@ export default function PostItemModal({ item, isVideo, onClose, onChanged, toast
     omni.get(`/gs/marketing/images/${item.id}/posts`).then((d) => setBefore(d.posts || [])).catch(() => setBefore([]));
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const accounts = useMemo(() => ((acc && acc.accounts) || []).filter((a) => a.status !== 'Removed').sort((a, b) => ORDER.indexOf(a.platform) - ORDER.indexOf(b.platform) || String(a.name).localeCompare(String(b.name))), [acc]);
+  const accounts = useMemo(() => ((acc && acc.accounts) || []).filter((a) => a.status !== 'Removed' && (isVideo || a.platform !== 'youtube')).sort((a, b) => ORDER.indexOf(a.platform) - ORDER.indexOf(b.platform) || String(a.name).localeCompare(String(b.name))), [acc]);
   const chosen = accounts.filter((a) => picked.includes(a.id));
   const hasX = chosen.some((a) => a.platform === 'x');
+  const hasYt = chosen.some((a) => a.platform === 'youtube');
   const toggle = (id) => setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
   const post = async () => {
     setBusy(true); setErr('');
@@ -42,7 +42,7 @@ export default function PostItemModal({ item, isVideo, onClose, onChanged, toast
       {err ? <Banner tone="error">{err}</Banner> : null}
       {!acc ? <div style={{ fontSize: 12 }}>Loading…</div> : null}
       {acc && !acc.allowed ? <Banner tone="warn">Posting from TeamLink is switched off. An Admin switches it on in AI Marketing &gt; AI usage &gt; Posting to client accounts.</Banner> : null}
-      {acc && acc.allowed && !accounts.length ? <Banner tone="warn">No Facebook Page, Instagram or X account is connected yet. An Admin connects them in Administration &gt; Integrations &gt; Social Media (the client gives access to their Page first).</Banner> : null}
+      {acc && acc.allowed && !accounts.length ? <Banner tone="warn">No social account is connected yet. An Admin connects them in Administration &gt; Integrations &gt; Social Media.</Banner> : null}
       {before && before.length ? (
         <div style={{ background: '#f4f7f5', borderRadius: 10, padding: '8px 12px', marginBottom: 10, fontSize: 11.5 }}>
           <b>Already posted from this {word}:</b>
@@ -68,13 +68,14 @@ export default function PostItemModal({ item, isVideo, onClose, onChanged, toast
           <b>Post this {word} now on:</b>
           <ul style={{ margin: '6px 0 8px', paddingLeft: 18 }}>{chosen.map((a) => <li key={a.id}>{accWords(a)}</li>)}</ul>
           {caption.trim() ? <div style={{ background: '#f4f7f5', borderRadius: 8, padding: '8px 10px', whiteSpace: 'pre-wrap', fontSize: 12 }}>{caption.trim()}</div> : <div style={{ fontSize: 12, color: 'var(--muted)' }}>With no words, only the {word}.</div>}
+          {hasYt ? <div style={{ marginTop: 8, fontSize: 12 }}>YouTube: the first line is the title; public, not made for kids.</div> : null}
           <div style={{ marginTop: 8, fontSize: 12, color: '#92400e', fontWeight: 600 }}>It goes public at once. A post you made by mistake has to be deleted on the platform itself.</div>
         </div>
       ) : null}
       {step === 'done' && out ? (
         <div>
           <div className="mk-note ok" style={{ marginBottom: 8 }}>{out.ok}</div>
-          {(out.results || []).map((x) => <div key={x.accountId} style={{ fontSize: 12.5, margin: '4px 0' }}>{x.ok ? '✓' : '✗'} <b>{x.name}</b> ({WORD[x.platform] || x.platform}){x.ok && x.url ? <> · <a href={x.url} target="_blank" rel="noopener noreferrer">open the post</a></> : null}{!x.ok ? ` · ${x.error}` : ''}</div>)}
+          {(out.results || []).map((x) => <div key={x.accountId} style={{ fontSize: 12.5, margin: '4px 0' }}>{x.ok ? '✓' : '✗'} <b>{x.name}</b> ({WORD[x.platform] || x.platform}){x.ok && x.url ? <> · <a href={x.url} target="_blank" rel="noopener noreferrer">open the post</a></> : null}{!x.ok ? ` · ${x.error}` : ''}{x.note ? ` · ${x.note}` : ''}</div>)}
         </div>
       ) : null}
     </GsModal>

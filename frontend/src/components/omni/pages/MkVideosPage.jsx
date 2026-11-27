@@ -251,7 +251,7 @@ export default function MkVideosPage() {
         {!isClip && v.clientHold ? <TinyBtn onClick={() => setToClient(v)}>Client…</TinyBtn> : null}
         {v.publicPath ? <TinyBtn onClick={() => copyLink(v)}>🔗 Copy link</TinyBtn> : null}
         {!isClip && v.status === 'approved' && v.canEdit ? <TinyBtn onClick={() => setToClient(v)}>{v.clientReview && v.clientReview.status !== 'revoked' ? 'Client…' : '➤ Send to client'}</TinyBtn> : null}
-        {!isClip && v.status === 'approved' && v.canEdit ? <TinyBtn onClick={() => setPostIt(v)} title="Post it on the connected Facebook, Instagram or X accounts">📣 Post…</TinyBtn> : null}
+        {!isClip && v.status === 'approved' && v.canEdit ? <TinyBtn onClick={() => setPostIt(v)} title="Post it on the connected social accounts">📣 Post…</TinyBtn> : null}
         {v.canDelete ? <TinyBtn onClick={() => setDel(v)} aria-label={`Delete ${v.title}`}>🗑</TinyBtn> : null}
       </div>
       {isClip && v.status === 'approved' ? <small style={{ fontSize: 9.5, color: '#166534' }}>Ready: pick it in step 1.</small> : null}

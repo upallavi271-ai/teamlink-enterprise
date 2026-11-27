@@ -5,6 +5,7 @@ import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, GsModal, Pill, Tag, ConfirmModal, fmtDateTime, fmtDate } from '../ui.jsx';
 import { MkImg, downloadMkImg } from '../marketing/mk.jsx';
 import SenderPick from '../marketing/SenderPick.jsx';
+import { WORD } from '../marketing/socialPlatforms.js';
 import '../marketing/marketing.css';
 
 // AI MARKETING > CLIENT PROJECTS: the agency workflow in one place. A client asks (email, WhatsApp, phone, our portal link) -> the team accepts -> makes options with AI
@@ -17,7 +18,7 @@ const STATUS = {
 const TABS = [['', 'All'], ['request', 'New requests'], ['working', 'In progress'], ['awaiting_client', 'With the client'], ['approved', 'Approved'], ['posted', 'Posted'], ['invited', 'Invited'], ['declined', 'Declined']];
 const STEPS = [['request', 'Request'], ['working', 'Accepted'], ['awaiting_client', 'With the client'], ['approved', 'Client chose'], ['posted', 'Posted']];
 const KIND_ICON = { request: '✉', invited: '🔗', accepted: '✔', declined: '✖', options_sent: '➤', client_chose: '★', client_changes: '✎', cancelled: '↩', extended: '⏱', scheduled: '🗓', posted: '✓', post_consent: '✓', told: '💬', told_failed: '⚠', client_msg: '📥', chat_auto: '💬', chat_failed: '⚠' };
-const SEND = [['facebook', 'Facebook', 'f', '#1877f2'], ['instagram', 'Instagram', '◎', '#d62976'], ['x', 'X', '𝕏', '#111111']]; // the send buttons of an approved project
+const SEND = [['facebook', 'Facebook', 'f', '#1877f2'], ['instagram', 'Instagram', '◎', '#d62976'], ['linkedin', 'LinkedIn', 'in', '#0a66c2'], ['x', 'X', '𝕏', '#111111'], ['youtube', 'YouTube', '▶', '#cc0000']]; // the send buttons of an approved project (YouTube: videos only)
 const digits = (s) => String(s || '').replace(/\D/g, '');
 const origin = () => window.location.origin;
 const statusPill = (s) => { const [tone, words] = STATUS[s] || ['draft', s]; return <Pill tone={tone} dot>{words}</Pill>; };
@@ -144,7 +145,7 @@ function RequestModal({ meta, project, accountIds = [], onClose, onDone, toast }
           const row = (a) => (
             <label key={a.id} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12.5, padding: '4px 0', cursor: 'pointer' }}>
               <input type="checkbox" style={{ width: 'auto', flex: 'none', margin: 0 }} checked={postIds.includes(a.id)} disabled={a.status === 'Expired'} onChange={() => setPostIds((x) => (x.includes(a.id) ? x.filter((y) => y !== a.id) : [...x, a.id]))} />
-              <span style={{ textAlign: 'left' }}><b>{a.name}</b> · {a.platform === 'instagram' ? 'Instagram' : a.platform === 'x' ? 'X' : 'Facebook'}{a.parentName ? ' · ' + a.parentName : ''}{a.status !== 'Connected' ? ' · ' + a.status : ''}</span>
+              <span style={{ textAlign: 'left' }}><b>{a.name}</b> · {WORD[a.platform] || a.platform}{a.parentName ? ' · ' + a.parentName : ''}{a.status !== 'Connected' ? ' · ' + a.status : ''}</span>
             </label>
           );
           return (
@@ -432,7 +433,7 @@ ${(x.project.draft.hashtags || []).join(' ')}`.trim() : ''));
               <div style={{ margin: '10px 0 12px' }}>
                 <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>Send it</div>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  {SEND.map(([key, label, icon, color]) => {
+                  {SEND.filter(([key]) => key !== 'youtube' || (chosen && chosen.item && chosen.item.kind === 'video')).map(([key, label, icon, color]) => {
                     const list = accts.accounts.filter((a) => a.platform === key);
                     const res = (p.autoResult || []).filter((x) => x.platform === key);
                     const ok = res.find((x) => x.ok); const bad = res.filter((x) => !x.ok).slice(-1)[0];
@@ -451,7 +452,7 @@ ${(x.project.draft.hashtags || []).join(' ')}`.trim() : ''));
                   })}
                 </div>
                 {!accts.allowed ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>An Admin has to allow posting from TeamLink first: AI Marketing → AI usage → “Posting to client accounts”. Until then, post by hand with the buttons below.</div> : null}
-                {accts.allowed && !accts.accounts.length ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>No accounts are connected yet. An Admin connects the client's Facebook Page (and its Instagram) or X account in Administration → Integrations → Social Media. The client first makes your Facebook login an admin of their Page.</div> : null}
+                {accts.allowed && !accts.accounts.length ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>No accounts are connected yet. An Admin connects them in Administration → Integrations → Social Media. For Facebook, the client first makes your login an admin of their Page.</div> : null}
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <Btn small onClick={async () => { try { await navigator.clipboard.writeText(caption); toast('Words copied'); } catch { window.prompt('Copy the words:', caption); } }}>⧉ Copy the words</Btn>
@@ -460,7 +461,7 @@ ${(x.project.draft.hashtags || []).join(' ')}`.trim() : ''));
               </div>
               {p.scheduledFor ? <div style={{ fontSize: 11, marginTop: 12 }}>Planned for {fmtDate(p.scheduledFor)}</div> : null}
               <div style={{ marginTop: 12 }}><Btn primary disabled={!!busy} onClick={() => { setPostUrl(''); setModal('posted'); }}>✓ Mark as posted</Btn></div>
-              <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 8 }}>TeamLink does not publish for you yet: it needs the Facebook, Instagram and LinkedIn apps to be approved. Post by hand, then mark it posted.</div>
+              <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 8 }}>Posted somewhere else by hand? Mark it posted.</div>
             </Panel>
           ) : null}
         </div>
@@ -519,6 +520,7 @@ ${(x.project.draft.hashtags || []).join(' ')}`.trim() : ''));
             {postErr.length ? <Banner tone="error">{postErr.map((x) => <div key={x.name}><b>{x.name}:</b> {x.error}</div>)}</Banner> : null}
             {chosen ? <div style={{ maxWidth: 180, marginBottom: 10 }}><MkImg id={chosen.itemId} alt={chosen.label} video={chosen.item && chosen.item.kind === 'video'} controls={false} style={{ aspectRatio: String((chosen.item && chosen.item.aspect) || '1:1').replace(':', ' / '), objectFit: 'contain', background: '#000' }} /></div> : null}
             <div style={{ fontSize: 12, whiteSpace: 'pre-wrap', background: '#f4f6f5', borderRadius: 8, padding: '8px 10px', marginBottom: 10 }}>{caption || 'No words: only the picture or video is posted.'}</div>
+            {postFor === 'youtube' ? <div style={{ fontSize: 12, marginBottom: 10 }}>The first line is the title; public, not made for kids.</div> : null}
             {postFor === 'x' && caption.length > 280 ? <Banner tone="warn">The words are {caption.length} characters; X allows 280. Shorten them first.</Banner> : null}
             <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 4 }}>POST ON</div>
             {list.map((a) => (
@@ -540,14 +542,14 @@ ${(x.project.draft.hashtags || []).join(' ')}`.trim() : ''));
           </div>
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 4 }}>POST BY ITSELF WHEN THE CLIENT APPROVES</div>
-            {!accts.allowed ? <small style={{ color: 'var(--muted)' }}>Posting by itself is switched off. An Admin can allow it in AI Marketing &gt; AI usage.</small> : accts.accounts.length === 0 ? <small style={{ color: 'var(--muted)' }}>No Facebook, Instagram or X account is connected yet (Administration &gt; Integrations &gt; Social Media).</small> : (
+            {!accts.allowed ? <small style={{ color: 'var(--muted)' }}>Posting by itself is switched off. An Admin can allow it in AI Marketing &gt; AI usage.</small> : accts.accounts.length === 0 ? <small style={{ color: 'var(--muted)' }}>No social account is connected yet (Administration &gt; Integrations &gt; Social Media).</small> : (
               <>
                 {accts.accounts.map((a) => {
                   const cur = autoSel || d.clientAccountIds || [];
                   return (
                     <label key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '3px 0' }}>
                       <input type="checkbox" checked={cur.includes(a.id)} disabled={a.status === 'Expired'} onChange={() => setAutoSel(cur.includes(a.id) ? cur.filter((x) => x !== a.id) : [...cur, a.id])} />
-                      <span><b>{a.name}</b> · {a.platform === 'instagram' ? 'Instagram' : a.platform === 'x' ? 'X' : 'Facebook'}{a.status !== 'Connected' ? ` · ${a.status}` : ''}</span>
+                      <span><b>{a.name}</b> · {WORD[a.platform] || a.platform}{a.status !== 'Connected' ? ` · ${a.status}` : ''}</span>
                     </label>
                   );
                 })}

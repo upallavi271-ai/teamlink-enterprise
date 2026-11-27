@@ -58,7 +58,7 @@ const until = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now(
   const PI = require('../src/marketing/postItem'); await PI.ensure();
   const Pub2 = require('../src/marketing/publisher');
   // stand-ins: three connected accounts and one that is of another kind; the publisher records what it is asked to post and posts NOTHING anywhere
-  const KIND = { fb1: 'facebook', ig1: 'instagram', x1: 'x', li1: 'linkedin', fb2: 'facebook' };
+  const KIND = { fb1: 'facebook', ig1: 'instagram', x1: 'x', th1: 'threads', li1: 'linkedin', yt1: 'youtube', fb2: 'facebook' };
   SA.withToken = async (id) => (KIND[id] ? { account: { platform: KIND[id], name: `Account ${id}` }, token: 't' } : null);
   const asked = []; let delay = 0; let failIds = [];
   Pub2.publish = async (targets, media, caption) => { asked.push({ targets, media, caption }); if (delay) await new Promise((r) => setTimeout(r, delay)); return targets.map((t) => (failIds.includes(t.accountId) ? { accountId: t.accountId, platform: KIND[t.accountId], name: `Account ${t.accountId}`, ok: false, url: '', error: 'Meta said no.' } : { accountId: t.accountId, platform: KIND[t.accountId], name: `Account ${t.accountId}`, ok: true, url: `https://social.test/${t.accountId}/post1`, error: '' })); };
@@ -86,7 +86,8 @@ const until = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now(
   await allow(false); r = await PI.postItem(admin, a, body(), SITE); assert.equal(r.code, 'auto_off'); await allow(true);
   r = await PI.postItem(admin, a, body({ accountIds: [] }), SITE); assert.equal(r.status, 400);
   r = await PI.postItem(admin, a, body({ accountIds: ['gone'] }), SITE); assert.equal(r.status, 404);
-  r = await PI.postItem(admin, a, body({ accountIds: ['li1'] }), SITE); assert.equal(r.status, 400); assert.ok(/by hand/.test(r.error), r.error);
+  r = await PI.postItem(admin, a, body({ accountIds: ['th1'] }), SITE); assert.equal(r.status, 400); assert.ok(/by hand/.test(r.error), r.error);
+  r = await PI.postItem(admin, a, body({ accountIds: ['yt1'] }), SITE); assert.equal(r.status, 400); assert.ok(/YouTube takes videos only/.test(r.error), r.error);
   r = await PI.postItem(admin, a, body({ accountIds: ['fb1', 'x1'], caption: 'x'.repeat(281) }), SITE); assert.equal(r.status, 400); assert.ok(/280/.test(r.error), r.error);
   r = await PI.postItem(admin, a, body({ accountIds: ['fb1'] }), 'http://insecure.test'); assert.equal(r.status, 400); assert.ok(/https/.test(r.error), r.error);
   assert.equal(asked.length, 0, 'nothing was posted by any refused call');
@@ -118,6 +119,11 @@ const until = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now(
   const [r1, r2] = await Promise.all([PI.postItem(admin, c, body(), SITE), PI.postItem(admin, c, body(), SITE)]);
   const codes = [r1, r2].map((x) => (x.error ? x.status : 200)).sort(); assert.deepEqual(codes, [200, 409], JSON.stringify([r1, r2])); assert.equal(asked.length, 1); delay = 0;
   console.log('PASS two clicks at once post once');
+
+  // 8. LinkedIn and YouTube get the file itself: no https site is needed; a video may go to YouTube
+  const li = await makeItem('For LinkedIn'); await approve(li); asked.length = 0; r = await PI.postItem(admin, li, body({ accountIds: ['li1'] }), 'http://insecure.test'); assert.ok(r.posted, JSON.stringify(r)); assert.equal(asked[0].targets[0].platform, 'linkedin'); assert.ok(asked[0].media.path.endsWith('.png') && asked[0].media.title === 'For LinkedIn');
+  asked.length = 0; r = await PI.postItem(admin, v, body({ accountIds: ['yt1'] }), ''); assert.ok(r.posted, JSON.stringify(r)); assert.equal(asked[0].media.type, 'video');
+  console.log('PASS LinkedIn (any address) and a YouTube video are accepted');
 
   console.log('mkPostItem: all passed');
   process.exit(0);

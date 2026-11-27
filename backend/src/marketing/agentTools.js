@@ -37,7 +37,7 @@ async function seoSiteOf(ctx, input) {
   if (!made || made.error) throw fail(made, 'The SEO site could not be started.');
   return made.site;
 }
-const SOCIAL = ['instagram', 'facebook', 'x'];
+const SOCIAL = ['instagram', 'facebook', 'linkedin', 'x'];
 const WA_FIELDS = ['name', 'service', 'business', 'callback']; const WA_BANDS = ['Hot', 'Warm', 'Cold'];
 // what the person chose for the WhatsApp campaign (a query string or the approval body): the template, what fills each blank, which bands, how many days between campaign messages
 function waChoice(q, tpls) {
@@ -45,7 +45,7 @@ function waChoice(q, tpls) {
   const tpl = tpls.find((t) => t.id === String(q.templateId || '')) || tpls[0] || null; const given = list(q.varMap);
   return { templateId: tpl ? tpl.id : '', varMap: given.length ? given : WA_FIELDS.slice(0, tpl ? tpl.blanks : 0), bands: list(q.bands).filter((b) => WA_BANDS.includes(b)), gapDays: Math.max(1, Math.min(90, Math.round(Number(q.gapDays)) || 7)) };
 }
-const WORD = { instagram: 'Instagram', facebook: 'Facebook', x: 'X' };
+const WORD = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', x: 'X' };
 const STATUS_WORDS = { draft: 'still a draft', waiting: 'still waiting for approval', changes: 'sent back with changes', approved: 'approved' };
 const listWords = (a) => (a.length <= 1 ? (a[0] || '') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
 const siteOk = (base) => { try { return !!require('./projects').siteFor(base); } catch { return false; } }; // eslint-disable-line global-require
@@ -311,8 +311,8 @@ const TOOLS = {
   },
   // ---- OUTWARD steps (Phase 2): each one waits for its own approval; the engine never runs them on the plan's approval alone ----------------------------------------------------
   'social.post': {
-    label: 'Post it on the social accounts', module: 'Social media', page: 'mkimages', risk: 'outward', auto: true, scheduled: true, cost: { kind: 'free', unit: 'post', rupees: 0, note: 'posting through the Facebook / Instagram / X accounts an Admin connected is free' },
-    does: (t, d) => `Posts this day's APPROVED picture with its caption on the Facebook Pages, Instagram or X accounts you pick when you approve this step, at ${d ? d.label : 'its time'}. It goes public. Only an approved picture can be posted, and only while an Admin has allowed posting from TeamLink.`,
+    label: 'Post it on the social accounts', module: 'Social media', page: 'mkimages', risk: 'outward', auto: true, scheduled: true, cost: { kind: 'free', unit: 'post', rupees: 0, note: 'posting through the Facebook / Instagram / LinkedIn / X accounts an Admin connected is free' },
+    does: (t, d) => `Posts this day's APPROVED picture with its caption on the Facebook Pages, Instagram, LinkedIn or X accounts you pick when you approve this step, at ${d ? d.label : 'its time'}. It goes public. Only an approved picture can be posted, and only while an Admin has allowed posting from TeamLink.`,
     build: (plan, d) => ({ day: d.n, platforms: d.platforms.filter((x) => SOCIAL.includes(x)) }),
     async prepare(ctx) {
       const pic = picOf(ctx); const d = ctx.day || {};
@@ -333,7 +333,7 @@ const TOOLS = {
       if (!ids.length) return { error: 'Pick at least one account to post on.' };
       const chosen = ids.map((id) => prep.accounts.find((a) => a.id === id));
       if (chosen.some((a) => !a)) return { error: 'One of those accounts is not a connected account for this post. Pick from the list.' };
-      if (chosen.some((a) => a.platform !== 'x') && !siteOk(ctx.base)) return { error: 'Posting to Facebook or Instagram needs this page opened on the site\'s https address (Meta fetches the picture from it).' };
+      if (chosen.some((a) => ['facebook', 'instagram'].includes(a.platform)) && !siteOk(ctx.base)) return { error: 'Posting to Facebook or Instagram needs this page opened on the site\'s https address (Meta fetches the picture from it).' };
       if (chosen.some((a) => a.platform === 'x') && String((prep.captions || {}).x || '').length > 280) return { error: 'The X text is over 280 letters. Shorten it first.' };
       return { input: { accountIds: ids, base: ctx.base }, summary: `post on ${listWords(chosen.map((a) => `${WORD[a.platform]}: ${a.name}`))} at ${prep.scheduledLabel}` };
     },
@@ -345,7 +345,7 @@ const TOOLS = {
       const done = new Set(((prev && prev.posts) || []).filter((x) => x.ok).map((x) => x.accountId));
       const todo = (input.accountIds || []).filter((id) => !done.has(id));
       const results = []; const errors = [];
-      for (const platform of ['instagram', 'facebook', 'x']) {
+      for (const platform of SOCIAL) {
         const ids = todo.filter((id) => (byId.get(id) || {}).platform === platform); if (!ids.length) continue; // eslint-disable-line no-continue
         const caption = (d.texts || {})[platform] || '';
         const r = await Post.postItem(ctx.u, pic.output.data.itemId, { accountIds: ids, caption, confirm: true }, input.base); // eslint-disable-line no-await-in-loop

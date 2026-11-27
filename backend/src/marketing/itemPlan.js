@@ -28,7 +28,7 @@ let okAt = 0;
 async function ensure() { if (okAt && Date.now() - okAt < 600000) return true; try { for (const sql of DDL) await S.run(sql); okAt = Date.now(); return true; } catch (e) { console.error('[omni-mk] item plan schema:', e.message); return false; } } // eslint-disable-line no-await-in-loop, no-console
 
 const LABELS = { armed: 'Will post after the client approves', consent: 'Approved, but the client did not allow posting: not posted', review: 'Approved with suggestions: not posted by itself', consented: 'Posting soon', posting: 'Posting…', posted: 'Posted', failed: 'Posting failed', blocked: 'Not posted' };
-const PLATFORM_WORD = { facebook: 'Facebook', instagram: 'Instagram', x: 'X' };
+const { PLATFORMS, WORD: PLATFORM_WORD, NEEDS_SITE } = require('./publisher');
 const parse = (v, d) => { try { return typeof v === 'string' ? JSON.parse(v) : (v == null ? d : v); } catch { return d; } };
 const cap1 = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const rowOf = async (itemId) => (await S.q(`SELECT * FROM "${T}" WHERE itemId = ?`, String(itemId || '')))[0] || null;
@@ -77,7 +77,7 @@ async function checkTargets(ids) {
   for (const aid of ids) { // eslint-disable-line no-restricted-syntax
     const got = await SA.withToken(aid); // eslint-disable-line no-await-in-loop
     if (!got) return { error: 'One of those accounts is not connected any more: connect the account first (Administration > Integrations > Social Media).', status: 404 };
-    if (!['facebook', 'instagram', 'x'].includes(got.account.platform)) return { error: `${got.account.name}: only Facebook Pages, Instagram and X accounts can be posted to from here. Post the others by hand.`, status: 400 };
+    if (!PLATFORMS.includes(got.account.platform)) return { error: `${got.account.name}: only Facebook, Instagram, LinkedIn, X and YouTube accounts can be posted to from here. Post the others by hand.`, status: 400 };
     targets.push({ accountId: aid, platform: got.account.platform, name: got.account.name });
   }
   return { targets };
@@ -92,10 +92,11 @@ async function arm(u, item, b = {}) {
   const ids = (Array.isArray(b.accountIds) ? b.accountIds : []).map(String).filter((x, i, a) => x && a.indexOf(x) === i).slice(0, 6);
   if (!ids.length) return { error: 'Pick at least one account to post on.', status: 400 };
   const chk = await checkTargets(ids); if (chk.error) return chk;
+  if (chk.targets.some((t) => t.platform === 'youtube') && !require('./images').isVideoRow(item)) return { error: 'YouTube takes videos only: pick a video, or leave YouTube out.', status: 400 }; // eslint-disable-line global-require
   const sug = suggest(item, await Cfg.getBrand()).text;
   const words = S.clip(b.caption, 2200).trim() || sug;
   if (!words) return { error: 'Write the words to post with the picture.', status: 400 };
-  if (chk.targets.some((t) => t.platform === 'x') && words.length > 280) return { error: `The words are ${words.length} characters and X allows 280. Shorten them, or pick only Facebook and Instagram.`, status: 400 };
+  if (chk.targets.some((t) => t.platform === 'x') && words.length > 280) return { error: `The words are ${words.length} characters and X allows 280. Shorten them, or leave X out.`, status: 400 };
   const old = await rowOf(item.id);
   if (old && ['posting'].includes(old.state)) return { error: 'It is being posted right now.', status: 409 };
   if (old && old.state === 'posted') return { error: 'It was already posted. Post it again by hand from the Post window if you really want that.', status: 409 };
@@ -227,7 +228,7 @@ async function run(itemId, opts = {}) {
     if (!targets.length || !targets.every((t) => consented.includes(t.accountId)) || !p.consentCaption || p.caption !== p.consentCaption) return await stop('blocked', 'The client\'s permission does not cover these accounts and these words, so nothing was posted.');
     const rv = (await S.q(`SELECT site FROM "OmniMkClientReview" WHERE kind = 'image' AND itemId = ? ORDER BY createdAt DESC LIMIT 1`, itemId))[0];
     const site = P.siteFor(opts.base || p.site || (rv && rv.site) || '');
-    if (!site && targets.some((t) => t.platform !== 'x')) return await stop('blocked', 'Posting to Facebook or Instagram needs the site\'s https address (Meta fetches the picture from it). Open AI Images on the live site and press Retry.');
+    if (!site && targets.some((t) => NEEDS_SITE.includes(t.platform))) return await stop('blocked', 'Posting to Facebook or Instagram needs the site\'s https address (Meta fetches the picture from it). Open AI Images on the live site and press Retry.');
     // an account that already has THIS version (from an earlier run, a Retry, or a hand post after the client allowed it) is never posted again
     await Post.ensure();
     const before = parse(p.result, []).filter((x) => x.ok && x.version === ver); const have = new Set(before.map((x) => x.accountId));

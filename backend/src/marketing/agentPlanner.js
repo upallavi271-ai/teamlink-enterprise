@@ -366,7 +366,7 @@ function build(goalText, ctxIn, given = {}, now = Date.now()) {
 // ---- the executable steps ---------------------------------------------------------------------------------------------------------------------------------------------------------
 // [{ n, day, tool, title, deps: [n] }] in the order they run. Day steps: draft -> creative -> ask for approval (needs the draft) -> a person's step (post / make the video).
 const MAX_TASKS = 70;
-const SOCIAL = ['instagram', 'facebook', 'x']; // the platforms TeamLink can post to (postItem.js); LinkedIn and the rest are posted by hand
+const SOCIAL = ['instagram', 'facebook', 'linkedin', 'x']; // the platforms TeamLink can post to (publisher.js); the rest are posted by hand
 function taskSpecs(plan) {
   const specs = []; const add = (s) => { specs.push({ n: specs.length + 1, day: null, deps: [], ...s }); return specs.length; };
   if (plan.intent === 'seo') {

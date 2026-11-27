@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { Btn, GsModal, Banner, fmtDateTime } from '../ui.jsx';
+import { ORDER, WORD } from './socialPlatforms.js';
 
 // "POST AFTER THE CLIENT APPROVES" (AI Images): the team picks the connected accounts and checks the words (caption + hashtags, written from the banner's own words, never invented; the team can edit them).
 // The client sees the exact picture, accounts and words on their private page and ticks their own permission; only then, and only for the version they approved, does TeamLink post (server: marketing/itemPlan.js).
 // Nothing here asks for a username or password: the accounts are the ones an Admin connected (official sign-in) in Administration > Integrations > Social Media.
-const WORD = { facebook: 'Facebook', instagram: 'Instagram', x: 'X' };
-const ORDER = ['facebook', 'instagram', 'x'];
 
-export function PostPlanBox({ item, toast, onChanged, onDirty }) {
+export function PostPlanBox({ item, isVideo = false, toast, onChanged, onDirty }) {
   const [plan, setPlan] = useState(item.plan || null);
   const [acc, setAcc] = useState(null); // { allowed, accounts }
   const [on, setOn] = useState(!!item.plan);
@@ -17,7 +16,7 @@ export function PostPlanBox({ item, toast, onChanged, onDirty }) {
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   useEffect(() => { omni.get('/gs/marketing/projects/accounts').then(setAcc).catch((e) => setErr(errOf(e, 'The connected accounts could not be read.'))); }, []);
-  const accounts = useMemo(() => ((acc && acc.accounts) || []).filter((a) => a.status !== 'Removed').sort((a, b) => ORDER.indexOf(a.platform) - ORDER.indexOf(b.platform) || String(a.name).localeCompare(String(b.name))), [acc]);
+  const accounts = useMemo(() => ((acc && acc.accounts) || []).filter((a) => a.status !== 'Removed' && (isVideo || a.platform !== 'youtube')).sort((a, b) => ORDER.indexOf(a.platform) - ORDER.indexOf(b.platform) || String(a.name).localeCompare(String(b.name))), [acc]);
   const same = plan && JSON.stringify([...picked].sort()) === JSON.stringify((plan.accounts || []).map((a) => a.accountId).sort()) && caption === plan.caption;
   const dirty = on && !same;
   useEffect(() => { if (onDirty) onDirty(dirty); }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -51,7 +50,7 @@ export function PostPlanBox({ item, toast, onChanged, onDirty }) {
       <div style={{ fontSize: 11, color: 'var(--muted)', margin: '3px 0 0 24px' }}>The client sees the picture, the accounts and these exact words, and ticks their own permission. Nothing is posted without that tick, and only the version they approved is posted. TeamLink never asks for a username or password: it uses the accounts an Admin connected.</div>
       {err ? <div style={{ marginTop: 8 }}><Banner tone="error">{err}</Banner></div> : null}
       {on && acc && !acc.allowed ? <div style={{ marginTop: 8 }}><Banner tone="warn">Posting from TeamLink is switched off. An Admin switches it on in AI Marketing &gt; AI usage &gt; Posting to client accounts.</Banner></div> : null}
-      {on && acc && acc.allowed && !accounts.length ? <div style={{ marginTop: 8 }}><Banner tone="warn">No Facebook Page, Instagram or X account is connected yet: connect the account first (Administration &gt; Integrations &gt; Social Media). Nothing posts until then.</Banner></div> : null}
+      {on && acc && acc.allowed && !accounts.length ? <div style={{ marginTop: 8 }}><Banner tone="warn">No social account is connected yet: connect the account first (Administration &gt; Integrations &gt; Social Media). Nothing posts until then.</Banner></div> : null}
       {on ? (
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 10, fontWeight: 800, color: '#166534', margin: '4px 0 6px' }}>POST ON</div>

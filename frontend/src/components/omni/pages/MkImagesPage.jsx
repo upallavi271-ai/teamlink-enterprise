@@ -179,7 +179,7 @@ export default function MkImagesPage() {
                   {it.clientHold ? <TinyBtn onClick={() => setToClient(it)}>Client…</TinyBtn> : null}
                   {it.publicPath ? <TinyBtn onClick={() => copyLink(it)}>🔗 Copy link</TinyBtn> : null}
                   {it.status === 'approved' && it.canEdit ? <TinyBtn onClick={() => setToClient(it)}>{it.clientReview && it.clientReview.status !== 'revoked' ? 'Client…' : '➤ Send to client'}</TinyBtn> : null}
-                  {it.status === 'approved' && it.canEdit && it.style !== 'clip' ? <TinyBtn onClick={() => setPostIt(it)} title="Post it on the connected Facebook, Instagram or X accounts">📣 Post…</TinyBtn> : null}
+                  {it.status === 'approved' && it.canEdit && it.style !== 'clip' ? <TinyBtn onClick={() => setPostIt(it)} title="Post it on the connected social accounts">📣 Post…</TinyBtn> : null}
                   {it.canEdit && it.style !== 'clip' && !(it.plan && ['posted', 'posting'].includes(it.plan.state)) ? <TinyBtn onClick={() => setPlanFor(it)} title="Post it on the client's accounts by itself after the client approves it and allows it, with a caption and hashtags">{it.plan ? '📣 Posting plan…' : '📣 Post after approval…'}</TinyBtn> : null}
                   {it.canEdit ? <TinyBtn onClick={() => setRename({ id: it.id, title: it.title })} aria-label={`Rename ${it.title}`}>✎</TinyBtn> : null}
                   {it.canDelete ? <TinyBtn onClick={() => setDel(it)} aria-label={`Delete ${it.title}`}>🗑</TinyBtn> : null}

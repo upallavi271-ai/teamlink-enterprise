@@ -734,8 +734,9 @@ async function heldIds() {
 // Safety, because this publishes in public: (1) an Admin must switch "Allow automatic posting" on (settings.autoPostAllowed, off by default); (2) a project posts only
 // after the CLIENT approved it; (3) if the client added SUGGESTIONS with the pick, nothing is posted by itself: the team reads them and presses "Post now";
 // (4) the team chooses the exact accounts per project; (5) a failure never marks the project posted: it says why, per account, and "Retry" posts only the ones that failed;
-// (6) only https site addresses are accepted, because Meta fetches the picture / video from our public link. LinkedIn, X and WhatsApp stay "post by hand".
+// (6) only https site addresses are accepted, because Meta fetches the picture / video from our public link. LinkedIn, X and YouTube get the file itself; WhatsApp stays "post by hand".
 const running = new Set();
+const PUB = require('./publisher');
 // the approved picture / video the client chose, as the publisher needs it: public https links (Facebook, Instagram fetch them) and the local file (X uploads it)
 async function mediaOf(r, base) {
   const Img = require('./images'); // eslint-disable-line global-require
@@ -745,7 +746,7 @@ async function mediaOf(r, base) {
   const video = Img.isVideoRow(it);
   const file = Img.rawFile(it);
   const url = base ? `${base}${Img.publicPathOf(it)}` : '';
-  return { media: { type: video ? 'video' : 'image', url, jpgUrl: base && !video && /^image\/(png|webp)$/.test(it.mime || '') ? `${base}${Img.publicJpegPath(it)}` : url, path: file ? file.path : '', mime: it.mime } };
+  return { media: { type: video ? 'video' : 'image', url, jpgUrl: base && !video && /^image\/(png|webp)$/.test(it.mime || '') ? `${base}${Img.publicJpegPath(it)}` : url, path: file ? file.path : '', mime: it.mime, title: r.title || it.title } };
 }
 const HTTPS_BASE = /^https:\/\/[A-Za-z0-9.-]+(:\d+)?$/;
 const baseOk = (b) => HTTPS_BASE.test(String(b || '')) || (process.env.MK_PUBLISH_ALLOW_HTTP === '1' && /^http:\/\/[A-Za-z0-9.-]+(:\d+)?$/.test(String(b || '')));
@@ -755,7 +756,7 @@ async function accounts(u) {
   const all = await SA.list();
   const set = await Cfg.getSettings();
   const pick = (p) => (all[p] || []).filter((a) => a.status !== 'Removed').map((a) => ({ id: a.id, platform: a.platform, name: a.name, username: a.username || '', parentName: a.parentName || '', status: a.status, error: a.error || '' }));
-  return { allowed: set.autoPostAllowed === true, accounts: [...pick('facebook'), ...pick('instagram'), ...pick('x')] };
+  return { allowed: set.autoPostAllowed === true, accounts: PUB.PLATFORMS.flatMap((p) => pick(p)) };
 }
 // 2026-11-21: automatic posting only goes out with the client's own tick ("I allow you to post this on my page"), saved with their name and time, and only for the accounts it named.
 const consentCovers = (r, targets) => { const ids = parse(r.postConsentIds, []); return !!r.postConsentAt && targets.length > 0 && targets.every((t) => ids.includes(t.accountId)); };
@@ -777,7 +778,7 @@ async function setAutopost(u, id, b = {}, base = '') {
   for (const aid of ids) { // eslint-disable-line no-restricted-syntax
     const got = await SA.withToken(aid); // eslint-disable-line no-await-in-loop
     if (!got) return { error: 'One of those accounts is not connected any more. Connect it in Administration > Integrations > Social Media.', status: 404 };
-    if (!['facebook', 'instagram', 'x'].includes(got.account.platform)) return { error: `${got.account.name}: only Facebook Pages, Instagram and X accounts can be posted to from here. Post the others by hand.`, status: 400 };
+    if (!PUB.PLATFORMS.includes(got.account.platform)) return { error: `${got.account.name}: only Facebook, Instagram, LinkedIn, X and YouTube accounts can be posted to from here. Post the others by hand.`, status: 400 };
     targets.push({ accountId: aid, platform: got.account.platform, name: got.account.name });
   }
   let at = null;
@@ -791,7 +792,7 @@ async function setAutopost(u, id, b = {}, base = '') {
   const heldNoConsent = r.status === 'approved' && !consentCovers(r, targets); // approved earlier without the client's tick for these accounts
   const state = heldNoConsent ? 'consent' : (r.status === 'approved' && r.decisionNote ? 'review' : 'scheduled');
   await S.run(`UPDATE "${T}" SET autoPost = 1, autoTargets = ?, autoAt = ?, autoState = ?, autoBase = ?, autoResult = NULL, updatedAt = ? WHERE id = ?`, JSON.stringify(targets), at, state, site, Date.now(), r.id);
-  await event(r.id, 'autopost_on', u.name, `Will be posted automatically on ${targets.map((t) => `${t.name} (${t.platform === 'instagram' ? 'Instagram' : 'Facebook'})`).join(', ')}${at ? ` at ${new Date(at + 19800000).toISOString().slice(0, 16).replace('T', ' ')} IST` : ' as soon as the client approves'}`);
+  await event(r.id, 'autopost_on', u.name, `Will be posted automatically on ${targets.map((t) => `${t.name} (${PUB.WORD[t.platform] || t.platform})`).join(', ')}${at ? ` at ${new Date(at + 19800000).toISOString().slice(0, 16).replace('T', ' ')} IST` : ' as soon as the client approves'}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: automatic posting set for a client project', entity: T, entityId: r.id, toValue: `${r.clientName}: ${targets.map((t) => t.name).join(', ')}${at ? `; ${new Date(at).toISOString()}` : ''}` });
   if (heldNoConsent) return { ok: 'Saved, but the client has not given permission to post on these accounts, so it will NOT post by itself. Ask the client, or press Post now when you have their permission.', project: (await shortRow(r.id)) };
   return { ok: 'Done. It will be posted automatically after the client approves.', project: (await shortRow(r.id)) };
@@ -862,7 +863,7 @@ async function autoRun(id, { by = null, force = false } = {}) {
     const now = Date.now();
     await S.run(`UPDATE "${T}" SET autoResult = ?, autoState = ?, updatedAt = ? WHERE id = ?`, JSON.stringify(all), okAll ? 'done' : 'failed', now, r.id);
     const who = by ? by.name : 'Automatic posting';
-    for (const x of results) await event(r.id, x.ok ? 'autoposted' : 'autopost_failed', who, x.ok ? `Posted on ${x.name} (${x.platform === 'instagram' ? 'Instagram' : 'Facebook'})${x.url ? `: ${x.url}` : ''}` : `${x.name}: ${x.error}`); // eslint-disable-line no-await-in-loop
+    for (const x of results) await event(r.id, x.ok ? 'autoposted' : 'autopost_failed', who, x.ok ? `Posted on ${x.name} (${PUB.WORD[x.platform] || x.platform})${x.url ? `: ${x.url}` : ''}${x.note ? ` ${x.note}` : ''}` : `${x.name}: ${x.error}`); // eslint-disable-line no-await-in-loop
     if (okAll) {
       const first = (all.find((x) => x.url) || {}).url || null;
       await S.run(`UPDATE "${T}" SET status = 'posted', postUrl = ?, postedAt = ?, postedByName = ?, updatedAt = ? WHERE id = ?`, first, now, S.clip(who, 80), now, r.id);
@@ -889,15 +890,15 @@ async function postNow(u, id, b = {}, base = '') {
   const out = await autoRun(r.id, { by: u, force: true });
   return out.error ? out : { ...out, project: (await shortRow(r.id)) };
 }
-// THE "SEND" BUTTONS: post the approved picture / video on ONE platform now (Facebook, Instagram or X), on the accounts the person picked. A person presses it, after the client
+// THE "SEND" BUTTONS: post the approved picture / video on ONE platform now (Facebook, Instagram, LinkedIn, X or YouTube), on the accounts the person picked. A person presses it, after the client
 // approved: that click is the decision (with a confirmation: it goes public on the client's account). The project becomes Posted once every platform the client asked for
-// (that can be posted from here) has a post; anything else (LinkedIn, WhatsApp) is posted by hand and finished with "Mark as posted".
+// (that can be posted from here) has a post (LinkedIn counts once one of the client's LinkedIn accounts is used); anything else is posted by hand and finished with "Mark as posted".
 async function postTo(u, id, b = {}, base = '') {
   const g = await getVisible(u, id); if (g.error) return g;
   const { r } = g;
   if (r.status !== 'approved') return { error: r.status === 'posted' ? 'It is already posted.' : 'Only a project the client approved can be posted.', status: 409 };
   const platform = String(b.platform || '');
-  if (!['facebook', 'instagram', 'x'].includes(platform)) return { error: 'Pick Facebook, Instagram or X. The others are posted by hand.', status: 400 };
+  if (!PUB.PLATFORMS.includes(platform)) return { error: 'Pick Facebook, Instagram, LinkedIn, X or YouTube. The others are posted by hand.', status: 400 };
   if (b.confirm !== true) return { error: 'Confirm that you want to post it now: it goes public on the client\'s account.', status: 400, code: 'confirm' };
   const set = await Cfg.getSettings();
   if (!set.autoPostAllowed) return { error: 'An Admin has to allow posting from TeamLink first (AI Marketing > AI usage).', status: 409, code: 'auto_off' };
@@ -908,23 +909,25 @@ async function postTo(u, id, b = {}, base = '') {
   for (const aid of ids) { // eslint-disable-line no-restricted-syntax
     const got = await SA.withToken(aid); // eslint-disable-line no-await-in-loop
     if (!got) return { error: 'That account is not connected any more. Connect it in Administration > Integrations > Social Media.', status: 404 };
-    if (got.account.platform !== platform) return { error: `${got.account.name} is not a ${platform === 'x' ? 'X' : platform === 'instagram' ? 'Instagram' : 'Facebook'} account.`, status: 400 };
+    if (got.account.platform !== platform) return { error: `${got.account.name} is not a ${PUB.WORD[platform]} account.`, status: 400 };
     targets.push({ accountId: aid });
   }
   const site = baseOk(base) ? base : (baseOk(r.autoBase) ? r.autoBase : '');
-  if (platform !== 'x' && !site) return { error: 'Posting to Facebook or Instagram needs this page opened on the site\'s https address (Meta fetches the picture or video from it).', status: 400 };
+  if (PUB.NEEDS_SITE.includes(platform) && !site) return { error: 'Posting to Facebook or Instagram needs this page opened on the site\'s https address (Meta fetches the picture or video from it).', status: 400 };
   if (running.has(r.id)) return { error: 'It is being posted right now.', status: 409 };
   running.add(r.id);
   try {
     const mo = await mediaOf(r, site);
     if (mo.error) return mo;
-    await event(r.id, 'post_click', u.name, `Posting on ${platform === 'x' ? 'X' : platform === 'instagram' ? 'Instagram' : 'Facebook'}`);
+    if (platform === 'youtube' && mo.media.type !== 'video') return { error: 'YouTube takes videos only: the client chose a picture.', status: 400 };
+    await event(r.id, 'post_click', u.name, `Posting on ${PUB.WORD[platform]}`);
     const results = await require('./publisher').publish(targets, mo.media, captionWithTags(r)); // eslint-disable-line global-require
     const all = [...parse(r.autoResult, []).filter((x) => !results.some((n) => n.accountId === x.accountId)), ...results];
     const now = Date.now();
     await S.run(`UPDATE "${T}" SET autoResult = ?, autoBase = ?, updatedAt = ? WHERE id = ?`, JSON.stringify(all), site || r.autoBase || null, now, r.id);
-    for (const x of results) await event(r.id, x.ok ? 'autoposted' : 'autopost_failed', u.name, x.ok ? `Posted on ${x.name} (${platform === 'x' ? 'X' : platform === 'instagram' ? 'Instagram' : 'Facebook'})${x.url ? `: ${x.url}` : ''}` : `${x.name}: ${x.error}`); // eslint-disable-line no-await-in-loop
-    const needed = parse(r.platforms, []).filter((k) => ['facebook', 'instagram', 'x'].includes(k));
+    for (const x of results) await event(r.id, x.ok ? 'autoposted' : 'autopost_failed', u.name, x.ok ? `Posted on ${x.name} (${PUB.WORD[platform]})${x.url ? `: ${x.url}` : ''}${x.note ? ` ${x.note}` : ''}` : `${x.name}: ${x.error}`); // eslint-disable-line no-await-in-loop
+    const usesLinkedin = all.some((x) => x.platform === 'linkedin') || parse(r.autoTargets, []).some((t) => t.platform === 'linkedin');
+    const needed = parse(r.platforms, []).filter((k) => ['facebook', 'instagram', 'x'].includes(k) || (k === 'linkedin' && usesLinkedin));
     const have = new Set(all.filter((x) => x.ok).map((x) => x.platform));
     const finished = needed.length > 0 && needed.every((k) => have.has(k));
     if (finished) {

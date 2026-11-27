@@ -4,7 +4,7 @@
 // inside a client PROJECT. Now an approved item has a "Post" window: the person picks the connected accounts (Administration > Integrations > Social Media), writes the words, confirms, and it goes out
 // through the same publisher as a project (marketing/publisher.js). Every post (done or failed) is kept per item so the window shows what already went out and a second click is never a surprise.
 //   Rules  only an APPROVED picture or video (not a raw clip); an Admin must have switched on "Post from TeamLink" (AI usage); only the person who made it, or an Admin; Facebook Pages,
-//          Instagram and X only (the others by hand); the person must confirm (it goes public); Facebook / Instagram fetch the file from the site's https address; X takes 280 characters.
+//          Instagram, LinkedIn, X and YouTube (videos only); the person must confirm (it goes public); Facebook / Instagram fetch the file from the site's https address; X takes 280 characters.
 //   Nothing is posted by itself, on a schedule or for anybody else.
 // ---------------------------------------------------------------------------
 const S = require('../outreach/store');
@@ -24,8 +24,7 @@ async function ensure() {
 }
 
 const mayWrite = (u) => A.has('mayAiMarketing')(u);
-const PLATFORMS = ['facebook', 'instagram', 'x'];
-const WORD = { facebook: 'Facebook', instagram: 'Instagram', x: 'X' };
+const { PLATFORMS, WORD, NEEDS_SITE } = require('./publisher');
 const running = new Set();
 
 async function itemOf(u, id) {
@@ -51,7 +50,7 @@ async function posts(u, id) {
 async function publishItem(it, Img, targets, caption, site, byId, byName, how = 'by a click') {
   const video = Img.isVideoRow(it);
   const file = Img.rawFile(it);
-  const media = { type: video ? 'video' : 'image', url: site ? `${site}${Img.publicPathOf(it)}` : '', jpgUrl: site && !video && /^image\/(png|webp)$/.test(it.mime || '') ? `${site}${Img.publicJpegPath(it)}` : (site ? `${site}${Img.publicPathOf(it)}` : ''), path: file ? file.path : '', mime: it.mime };
+  const media = { type: video ? 'video' : 'image', url: site ? `${site}${Img.publicPathOf(it)}` : '', jpgUrl: site && !video && /^image\/(png|webp)$/.test(it.mime || '') ? `${site}${Img.publicJpegPath(it)}` : (site ? `${site}${Img.publicPathOf(it)}` : ''), path: file ? file.path : '', mime: it.mime, title: it.title };
   const results = await require('./publisher').publish(targets, media, caption); // eslint-disable-line global-require
   const now = Date.now();
   for (const x of results) { // eslint-disable-line no-restricted-syntax
@@ -79,13 +78,14 @@ async function postItem(u, id, b = {}, base = '') {
   for (const aid of ids) { // eslint-disable-line no-restricted-syntax
     const got = await SA.withToken(aid); // eslint-disable-line no-await-in-loop
     if (!got) return { error: 'One of those accounts is not connected any more. Connect it in Administration > Integrations > Social Media.', status: 404 };
-    if (!PLATFORMS.includes(got.account.platform)) return { error: `${got.account.name}: only Facebook Pages, Instagram and X accounts can be posted to from here. Post the others by hand.`, status: 400 };
+    if (!PLATFORMS.includes(got.account.platform)) return { error: `${got.account.name}: only Facebook, Instagram, LinkedIn, X and YouTube accounts can be posted to from here. Post the others by hand.`, status: 400 };
+    if (got.account.platform === 'youtube' && !Img.isVideoRow(it)) return { error: 'YouTube takes videos only: pick a video, or leave YouTube out.', status: 400 };
     targets.push({ accountId: aid, platform: got.account.platform, name: got.account.name });
   }
   const caption = S.clip(b.caption, 2200).trim();
-  if (targets.some((t) => t.platform === 'x') && caption.length > 280) return { error: `The words are ${caption.length} characters and X allows 280. Shorten them, or pick only Facebook and Instagram.`, status: 400 };
+  if (targets.some((t) => t.platform === 'x') && caption.length > 280) return { error: `The words are ${caption.length} characters and X allows 280. Shorten them, or leave X out.`, status: 400 };
   const site = require('./projects').siteFor(base); // eslint-disable-line global-require
-  if (targets.some((t) => t.platform !== 'x') && !site) return { error: 'Posting to Facebook or Instagram needs this page opened on the site\'s https address (Meta fetches the picture or video from it).', status: 400 };
+  if (targets.some((t) => NEEDS_SITE.includes(t.platform)) && !site) return { error: 'Posting to Facebook or Instagram needs this page opened on the site\'s https address (Meta fetches the picture or video from it).', status: 400 };
   if (running.has(it.id)) return { error: 'It is being posted right now.', status: 409 };
   running.add(it.id);
   try {

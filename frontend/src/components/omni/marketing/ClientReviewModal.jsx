@@ -142,7 +142,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
           </div>
         </div>
       ) : null}
-      {kind === 'image' && item.style !== 'clip' && reviews && !(item.plan && ['posted', 'posting'].includes(item.plan.state)) ? <PostPlanBox item={item} toast={toast} onChanged={onChanged} onDirty={setPlanDirty} /> : null}
+      {kind === 'image' && item.style !== 'clip' && reviews && !(item.plan && ['posted', 'posting'].includes(item.plan.state)) ? <PostPlanBox item={item} isVideo={isVideo} toast={toast} onChanged={onChanged} onDirty={setPlanDirty} /> : null}
       {showForm ? (
         <div className="form-grid" style={{ marginTop: current && !again ? 14 : 10 }}>
           {fromRequest ? <div className="mk-note ok" style={{ gridColumn: '1 / -1' }}>The client's details are taken from their request (name, WhatsApp number, email). Check the number, then press <b>Send</b>: the {word} itself goes to that number with Approve and Reject buttons.</div> : null}

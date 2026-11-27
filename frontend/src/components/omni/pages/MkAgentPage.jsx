@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
+import { WORD } from '../marketing/socialPlatforms.js';
 import { PageHead, Btn, TinyBtn, Panel, Pill, Tag, Banner, Field, Tabs, Empty, Kpi, Kpis, GsModal, ConfirmModal, fmtNum, fmtDateTime } from '../ui.jsx';
 
 // AI MARKETING > AI AGENT (2026-11-25). A goal in plain words -> the agent asks for what it does not know (and saves it once) -> a day-by-day PLAN and PREVIEW -> you press "Approve and run" ->
@@ -402,7 +403,7 @@ function OutwardModal({ task, tasks, runId, onClose, reload }) {
           <p style={{ fontSize: 13, margin: '4px 0' }}><b>Goes out:</b> {prep.scheduledLabel}. TeamLink posts it at that time (it checks every few minutes); if the time has passed it posts within a few minutes of your approval.</p>
           {Object.entries(prep.captions || {}).filter(([k]) => prep.accounts.some((a) => a.platform === k)).map(([k, v]) => <div key={k} style={{ margin: '6px 0' }}><div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)' }}>{k.toUpperCase()} WORDS</div><div style={{ whiteSpace: 'pre-wrap', background: '#f6f8fb', borderRadius: 8, padding: '8px 10px', fontSize: 12.5 }}>{v}</div></div>)}
           <div style={{ fontWeight: 800, fontSize: 12, margin: '8px 0 4px' }}>POST ON</div>
-          {prep.accounts.length ? prep.accounts.map((a) => <label key={a.id} style={{ display: 'block', fontSize: 13, margin: '3px 0' }}><input type="checkbox" checked={form.accountIds.includes(a.id)} onChange={() => tick(a.id)} /> {a.platform === 'x' ? 'X' : a.platform[0].toUpperCase() + a.platform.slice(1)}: {a.name}{a.username ? ` (@${a.username})` : ''}{a.parentName ? ` · ${a.parentName}` : ''}</label>) : <div style={{ fontSize: 13, color: 'var(--muted)' }}>No connected account for these platforms.</div>}
+          {prep.accounts.length ? prep.accounts.map((a) => <label key={a.id} style={{ display: 'block', fontSize: 13, margin: '3px 0' }}><input type="checkbox" checked={form.accountIds.includes(a.id)} onChange={() => tick(a.id)} /> {WORD[a.platform] || a.platform}: {a.name}{a.username ? ` (@${a.username})` : ''}{a.parentName ? ` · ${a.parentName}` : ''}</label>) : <div style={{ fontSize: 13, color: 'var(--muted)' }}>No connected account for these platforms.</div>}
           <p style={{ fontSize: 12.5, margin: '10px 0 0' }}><b>It goes public.</b> You are approving this exact picture and these words on the accounts you ticked. Only an approved picture is posted.</p>
         </div>
       ) : null}

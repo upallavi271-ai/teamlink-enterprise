@@ -13,8 +13,8 @@ const SA = require('../src/utils/socialAccounts'); const Pub = require('../src/m
 const Cfg = require('../src/marketing/settings'); const Img = require('../src/marketing/images'); const CR = require('../src/marketing/clientReview'); const Plan = require('../src/marketing/itemPlan'); const PI = require('../src/marketing/postItem'); const R = require('../src/marketing/revision');
 
 const SITE = 'https://example-teamlink.test';
-// stand-ins: fb1 / bad (Facebook), ig1 (Instagram), x1 (X), li1 (LinkedIn: not postable from here), gone (not connected any more)
-const PLATFORM = { fb1: 'facebook', bad: 'facebook', ig1: 'instagram', x1: 'x', li1: 'linkedin' }; const dead = new Set(['gone']);
+// stand-ins: fb1 / bad (Facebook), ig1 (Instagram), x1 (X), th1 (Threads: not postable from here), yt1 (YouTube: videos only), gone (not connected any more)
+const PLATFORM = { fb1: 'facebook', bad: 'facebook', ig1: 'instagram', x1: 'x', th1: 'threads', yt1: 'youtube' }; const dead = new Set(['gone']);
 SA.withToken = async (id) => (dead.has(id) || !PLATFORM[id] ? null : { account: { platform: PLATFORM[id], name: `Page ${id}` }, token: 't' });
 const posted = []; const failIds = new Set();
 Pub.publish = async (targets, media, caption) => { posted.push({ ids: targets.map((t) => t.accountId), media, caption }); return targets.map((t) => (failIds.has(t.accountId) ? { accountId: t.accountId, ok: false, name: t.name, platform: t.platform, error: 'The page refused it' } : { accountId: t.accountId, ok: true, name: t.name, platform: t.platform, url: `https://p.test/${t.accountId}` })); };
@@ -49,7 +49,8 @@ const until = async (fn, ms = 8000) => { const t0 = Date.now(); while (Date.now(
   await allow(false); let r = await Plan.arm(admin, await Img.rawRow(b0.id), ARM); assert.deepEqual([r.status, r.code], [409, 'auto_off']);
   await allow(true);
   assert.ok((await Plan.arm(admin, await Img.rawRow(b0.id), { accountIds: ['gone'] })).error.includes('connect the account first'), 'an account that is not connected cannot be picked');
-  assert.equal((await Plan.arm(admin, await Img.rawRow(b0.id), { accountIds: ['fb1', 'li1'] })).status, 400, 'LinkedIn cannot be posted to from here');
+  assert.equal((await Plan.arm(admin, await Img.rawRow(b0.id), { accountIds: ['fb1', 'th1'] })).status, 400, 'Threads cannot be posted to from here');
+  assert.ok(/YouTube takes videos only/.test((await Plan.arm(admin, await Img.rawRow(b0.id), { accountIds: ['yt1'] })).error), 'a picture is never planned for YouTube');
   assert.equal((await Plan.arm(admin, await Img.rawRow(b0.id), { accountIds: [] })).status, 400);
   assert.equal((await Plan.arm(admin, await Img.rawRow(b0.id), { accountIds: ['x1'], caption: 'x'.repeat(300) })).status, 400, 'X takes 280 characters');
   assert.equal((await Plan.arm({ id: 'someone-else', name: 'Other', role: 'EMPLOYEE', atsRole: 'EMPLOYEE' }, await Img.rawRow(b0.id), ARM)).status, 403, 'only the person who made it, or an Admin');
