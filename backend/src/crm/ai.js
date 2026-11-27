@@ -233,6 +233,10 @@ async function mentionedRecords(user, q) {
 async function ask(user, { question, history } = {}) {
   const q = S.clip(question, 1000);
   if (!q) return S.fail(400, 'Ask a question.');
+  // EXACT ANSWERS FIRST (crm/agentRouter.js, founder 2026-11-27): counts, lists and records straight from the CRM tables, no model
+  const t0 = Date.now();
+  const code = await require('./agentRouter').answer(user, q).catch(() => null); // eslint-disable-line global-require
+  if (code) return S.okBody({ text: code.text, items: code.items || [], intent: code.intent, provider: 'from your CRM data', ms: Date.now() - t0 });
   const hist = (Array.isArray(history) ? history : []).filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string').slice(-8).map((m) => ({ role: m.role, content: S.clip(m.content, 2000) }));
   // the facts: what this login may see, summarised
   const ov = await require('./extra').overview(user, { period: 'month' }); // eslint-disable-line global-require
@@ -257,10 +261,11 @@ async function ask(user, { question, history } = {}) {
     'Follow-ups due today:', ...todayTasks.slice(0, 15).map((t) => `- ${t.dueTime ? `${t.dueTime} ` : ''}${t.title} on ${t.recordName || '-'}${t.type ? ` (${t.type})` : ''}${S.seesAll(r) ? `, ${t.ownerName}` : ''}`),
     'Coming follow-ups and meetings:', ...upcoming.slice(0, 15).map((t) => `- ${t.dueDate}${t.dueTime ? ` ${t.dueTime}` : ''} ${t.title} on ${t.recordName || '-'}${t.type ? ` (${t.type})` : ''}${S.seesAll(r) ? `, ${t.ownerName}` : ''}`),
     'Recent activity:', ...recent.map((a) => `- ${String(a.at || '').slice(0, 10)} ${a.kind}: ${S.clip(a.subject, 100)}${a.note ? ` - ${S.clip(a.note, 140)}` : ''}${S.seesAll(r) && a.byName ? ` (${a.byName})` : ''}`),
+    '', 'Totals:', await require('./agentRouter').factsSummary(user).catch(() => ''), // eslint-disable-line global-require
     ...(named ? ['', named] : []),
   ].join('\n');
   const res = await askModel(`${RULES}\nYou are the CRM Agent: answer quickly (1-5 short lines or a short list), in the language the salesperson writes in (English, Telugu, Hindi or those written in English letters). For a general sales doubt give short practical advice and say it is general advice.\nAnswer the salesperson's question from these CRM facts:\n${facts}`, q, hist);
   return res.ok ? S.okBody({ text: res.text, provider: res.provider, ms: res.ms, note: res.note }) : S.fail(503, res.error);
 }
 
-module.exports = { insight, summary, draftEmail, ask, insightOf, meetingPrep, meetingNotes };
+module.exports = { insight, summary, draftEmail, ask, insightOf, meetingPrep, meetingNotes, factsText };

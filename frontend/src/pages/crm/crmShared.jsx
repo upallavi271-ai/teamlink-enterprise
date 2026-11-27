@@ -1266,14 +1266,17 @@ export function AskAi() {
   const [q, setQ] = useState('');
   const [chat, setChat] = useState([]);
   const [busy, setBusy] = useState(false);
-  const SUGGEST = ['Which deals need my attention this week?', 'Which follow-ups are late?', 'What meetings and follow-ups do I have coming up?', 'How far am I from my target this month?', 'Which leads should I call today?'];
+  const { openRecord } = useCrm();
+  const SUGGEST = ['Which deals need my attention?', 'Which follow-ups are late?', 'How many leads this month, by source?', 'Deals won this month', 'Unpaid invoices', 'How far am I from my target this month?'];
+  // exact answers (crm/agentRouter.js) name their records: a click opens the lead / deal / customer right here
+  const OPENS = { lead: 'lead', deal: 'deal', account: 'account' };
   // THE CRM AGENT (2026-11-18): the conversation goes back with each question, so "and the second one?" works; answers come from the free fast AI
   async function send(text) {
     const question = (text || q).trim();
     if (!question || busy) return;
     const history = chat.filter((m) => !m.err).slice(-8).map((m) => ({ role: m.who === 'me' ? 'user' : 'assistant', content: m.text }));
     setChat((c) => [...c, { who: 'me', text: question }]); setQ(''); setBusy(true);
-    try { const r = await api.post('/crm/ai/ask', { question, history }); setChat((c) => [...c, { who: 'ai', text: r.data.text, tag: r.data.provider ? `${r.data.provider}${r.data.ms ? ` · ${(r.data.ms / 1000).toFixed(1)}s` : ''}${r.data.note ? ` · ${r.data.note}` : ''}` : '' }]); } catch (e) { setChat((c) => [...c, { who: 'ai', text: errOf(e, 'The AI is not available right now.'), err: true }]); } finally { setBusy(false); }
+    try { const r = await api.post('/crm/ai/ask', { question, history }); setChat((c) => [...c, { who: 'ai', text: r.data.text, items: r.data.items || [], tag: r.data.provider ? `${r.data.provider}${r.data.ms ? ` · ${(r.data.ms / 1000).toFixed(1)}s` : ''}${r.data.note ? ` · ${r.data.note}` : ''}` : '' }]); } catch (e) { setChat((c) => [...c, { who: 'ai', text: errOf(e, 'The AI is not available right now.'), err: true }]); } finally { setBusy(false); }
   }
   return (
     <>
@@ -1288,7 +1291,19 @@ export function AskAi() {
                 {SUGGEST.map((s) => <button key={s} type="button" className="btn btn-sm" style={{ display: 'block', marginBottom: 6, textAlign: 'left', width: '100%' }} onClick={() => send(s)}>{s}</button>)}
               </div>
             )}
-            {chat.map((m, i) => <div key={i} className={`crm-ask-msg ${m.who}${m.err ? ' err' : ''}`}>{m.text}{m.tag && <div style={{ fontSize: 10.5, opacity: 0.55, marginTop: 4 }}>{m.tag}</div>}</div>)} {/* eslint-disable-line react/no-array-index-key */}
+            {chat.map((m, i) => (
+              <div key={i} className={`crm-ask-msg ${m.who}${m.err ? ' err' : ''}`} style={{ whiteSpace: 'pre-line' }}>{/* eslint-disable-line react/no-array-index-key */}
+                {m.items && m.items.some((x) => OPENS[x.kind]) ? m.text.split('\n').filter((l) => !l.startsWith('• ')).join('\n') : m.text}
+                {m.items && m.items.some((x) => OPENS[x.kind]) && (
+                  <div style={{ marginTop: 4, whiteSpace: 'normal' }}>
+                    {m.items.map((x, j) => (OPENS[x.kind]
+                      ? <button key={j} type="button" className="crm-linkbtn" style={{ display: 'block', textAlign: 'left', padding: '2px 0' }} onClick={() => openRecord(OPENS[x.kind], x.id)}>• {x.label}{x.sub ? <span className="small-muted"> · {x.sub}</span> : null}</button>
+                      : <div key={j}>• {x.label}{x.sub ? <span className="small-muted"> · {x.sub}</span> : null}</div>))} {/* eslint-disable-line react/no-array-index-key */}
+                  </div>
+                )}
+                {m.tag && <div style={{ fontSize: 10.5, opacity: 0.55, marginTop: 4 }}>{m.tag}</div>}
+              </div>
+            ))}
             {busy && <div className="crm-ask-msg ai small-muted">Thinking…</div>}
           </div>
           <div className="crm-ask-foot">
