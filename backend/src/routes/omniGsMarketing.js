@@ -501,6 +501,7 @@ router.post('/seo/sites/:id/audit', mustWrite, wrap(async (req, res) => {
   return res.json({ checkId: r.checkId, score: r.score, prev: r.prev, delta: r.delta, tasks: r.tasks, pagesRead: r.report.crawl ? r.report.crawl.read : 1 });
 }));
 router.get('/seo/sites/:id/tasks', mustWrite, wrap(async (req, res) => send(res, await SeoTasks.list(req.user, { siteId: req.params.id, status: req.query.status ? String(req.query.status) : '' }))));
+router.get('/seo/sites/:id/report', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/seoReport').build(req.user, req.params.id)))); // the printable audit report
 router.post('/seo/sites/:id/remake', mustWrite, wrap(async (req, res) => send(res, await SeoTasks.remakeSite(req.user, req.params.id))));
 router.put('/seo/tasks/:id', mustWrite, wrap(async (req, res) => send(res, await SeoTasks.setStatus(req.user, req.params.id, req.body || {}))));
 // keywords (marketing/seoKeywords.js): research from the facts (no volume or difficulty: no data provider), the client's list, and Search Console query snapshots pasted as CSV

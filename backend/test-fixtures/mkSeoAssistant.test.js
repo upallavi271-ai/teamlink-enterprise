@@ -127,5 +127,18 @@ const setWeb = (host, html, robots, sitemap = '<urlset></urlset>') => { Object.k
   assert.equal((await Sites.save(restricted, { clientName: 'Mine Co', url: 'mine.test', department: 'Sales' })).status, 403, 'cannot create one in a department that is not theirs'); const ro = await Dash.overview(restricted, { siteId: dsite.id }); assert.ok(!ro.sites.some((s) => s.clientName === 'Sales Only Co') && ro.site === null, 'the dashboard hides it');
   assert.ok(!(await Sites.fromPlans(restricted)).items.some((p) => p.clientName === 'Sales Only Co')); console.log('PASS departments: another department\'s SEO site cannot be listed, read, changed, removed, audited on, or its recommendations read or changed; the dashboard hides it');
 
+  // the printable report (owner's pending list, 27 Nov)
+  const Rep = require(`${M}seoReport`);
+  const sri = (await Sites.list(admin)).items.find((i) => i.clientName === 'Sri Care Clinic'); const rp = await Rep.build(admin, sri.id);
+  assert.ok(rp.html && rp.title === 'Sri Care Clinic: SEO audit report', JSON.stringify(rp).slice(0, 300));
+  for (const part of ['<h1>Sri Care Clinic</h1>', 'Website score', '<span class="muted"> / 100</span>', 'What to fix', 'It is not a ranking and not a Google score']) assert.ok(rp.html.includes(part), part);
+  const openN = (await Tasks.list(admin, { siteId: sri.id })).items.filter((t) => t.status === 'open').length; assert.ok(rp.html.includes(`What to fix (${openN})`) && (rp.html.match(/class="fix"/g) || []).length === openN, 'every open recommendation is on the report');
+  assert.ok(!/undefined|\[object Object\]|NaN/.test(rp.html), (rp.html.match(/.{60}(undefined|\[object Object\]|NaN).{60}/) || [])[0]);
+  const unsafe = Rep.html({ clientName: 'A <script>x</script> Co', url: 'https://a.test/', trend: [], report: { score: 10, checkedAt: new Date().toISOString(), pagesRead: 1, url: '<img onerror=1>', areas: [] }, performance: null, google: { gsc: { totals: { clicks: 5, impressions: 50, position: 7.2 }, beforeTotals: { clicks: 9, impressions: 40, position: 8 } } } }, [{ status: 'open', title: '<b>t</b>', area: 'SEO', impact: 'high', effort: 'low', detail: 'd', fix: 'f', pages: ['/<x>'], drafts: [{ kind: 'title', label: 'T', value: '<title>x</title>' }, { kind: 'needs', needs: ['city'] }] }], '<me>');
+  assert.ok(!/<script>|<img onerror|<title>x<\/title>|<b>t<\/b>|<me>/.test(unsafe) && unsafe.includes('&lt;title&gt;x&lt;/title&gt;') && unsafe.includes('Needed from the client: city') && unsafe.includes('<td>Clicks</td><td>5</td><td>9</td>'), 'everything from outside is escaped');
+  assert.equal((await Rep.build(restricted, dsite.id)).status, 404, 'another department\'s site');
+  const fresh = await Sites.save(admin, { clientName: 'Never Audited Co', url: 'never.test' }); const none = await Rep.build(admin, fresh.site.id); assert.ok(none.status === 409 && /Audit now/.test(none.error), JSON.stringify(none));
+  console.log('PASS the printable report: score, parts, every open fix with ready text, Google numbers, everything escaped; a site never audited says so');
+
   console.log('SEO assistant phase 1A tests: all passed'); process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

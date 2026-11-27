@@ -29,6 +29,11 @@ export default function MkSeoPage() {
     setBusy(true);
     try { const r = await omni.post(`/gs/marketing/seo/sites/${siteId}/audit`, {}, { timeout: 150000 }); toast(`Audit done: ${r.score} out of 100${r.delta != null ? ` (${r.delta === 0 ? 'no change' : sign(r.delta)})` : ''}. ${r.tasks.created} new, ${r.tasks.verified} fixed, ${r.tasks.reopened} came back.`); await load(siteId); } catch (e) { toast(errOf(e, 'The audit could not be run.')); } finally { setBusy(false); }
   };
+  // the printable audit report (marketing/seoReport.js). The window is opened at once, so the browser does not block it; then the report is written into it and the print box opens
+  const printReport = async () => {
+    const w = window.open('', '_blank'); if (!w) { toast('Allow pop-ups to print the report.'); return; }
+    try { const r = await omni.get(`/gs/marketing/seo/sites/${siteId}/report`); w.document.write(r.html); w.document.close(); w.focus(); setTimeout(() => w.print(), 300); } catch (e) { w.close(); toast(errOf(e, 'The report could not be made.')); }
+  };
   const pick = (id, to) => { setAdding(false); setSiteId(id); if (to) setTab(to); };
   const saved = async (id) => { setAdding(false); setTab('dashboard'); if (id === siteId) await load(id); else setSiteId(id); };
   const tabs = [['dashboard', 'Dashboard'], ['tasks', 'Recommendations', site ? site.tasks.open : undefined], ['keywords', 'Keywords'], ['content', 'Content'], ['competitors', 'Competitors'], ['site', 'Site and schedule']];
@@ -40,6 +45,7 @@ export default function MkSeoPage() {
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0' }}>
           <select aria-label="Client website" value={adding ? '' : siteId} onChange={(e) => pick(e.target.value)} style={{ minWidth: 240 }}>{adding ? <option value="">New website</option> : null}{ov.sites.map((s) => <option key={s.id} value={s.id}>{s.clientName} ({s.score != null ? `${s.score}/100` : 'not audited'})</option>)}</select>
           <Btn primary disabled={busy || adding || !siteId} onClick={audit}>{busy ? 'Auditing…' : 'Audit now'}</Btn>
+          <Btn disabled={busy || adding || !siteId} onClick={printReport}>🖨 Print report</Btn>
           <Btn onClick={() => { setAdding(true); setTab('site'); }}>＋ Add a client website</Btn>
           {busy ? <span style={{ fontSize: 12.5 }}>Reading the website. It takes about 15 to 60 seconds: please wait here.</span> : null}
         </div>
