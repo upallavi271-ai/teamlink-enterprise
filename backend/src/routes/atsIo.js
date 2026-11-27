@@ -123,9 +123,11 @@ async function parseResume(buf, name) {
 }
 const { pushNotification } = require('../utils/notify');
 const CSRC = require('../utils/candidateSource'); // the clean source list
+const { isScreeningRow, ensureScreeningRefs } = require('../utils/screeningImport');
 
 const {
   readSheet, buildIndex, candidateOnlyIndex, invalidateCandidateIndex, HANDLERS, isDry, findCandidate, contactMatch,
+  resolveInterviewRefs,
 } = internals;
 const candidateKeys = require('../utils/candidateDedupe');
 
@@ -987,6 +989,11 @@ const ALIASES = {
   'Candidate Email or Phone': ['email', 'emailid', 'phone', 'mobile', 'mobileno', 'mobilenumber', 'phonenumber', 'candidateemail', 'candidatephone', 'candidatemobile', 'contact', 'contactnumber'],
   'Full Name': ['name', 'candidatename', 'candidate', 'fullname'],
   'Candidate Name': ['name', 'candidate', 'fullname', 'nameofcandidate', 'nameofthecandidate', 'applicantname'],
+  'College Name': ['college', 'collegename', 'client', 'clientname', 'company', 'companyname', 'institution'],
+  'Candidate Experience': ['experience', 'exp', 'totalexperience'],
+  'Present Location': ['currentlocation', 'location'],
+  'Present Salary': ['currentsalary', 'currentctc', 'presentctc'],
+  'Expected Salary': ['expectedctc'],
   'Requirement Title': ['title', 'requirementtitle', 'jobrole', 'position', 'designation', 'role', 'jobtitle', 'post'],
   Email: ['emailid', 'mail', 'emailaddress', 'candidateemail'],
   Phone: ['mobile', 'mobileno', 'mobilenumber', 'phonenumber', 'contactnumber', 'contactno', 'candidatephone'],
@@ -1083,7 +1090,7 @@ function autoMap(headerCells, spec, override) {
   });
   spec.columns.forEach((col) => {
     if (!open(col)) return;
-    const aliases = ALIASES[col.h] || [];
+    const aliases = col.aliases || ALIASES[col.h] || [];
     const i = cells.findIndex((c, idx) => !used.has(idx) && c.k && aliases.includes(c.k));
     if (i >= 0) claim(col, i);
   });
@@ -1114,6 +1121,19 @@ function prepare(file, spec, { mapping, sheet: askedSheet, onlyRows = null } = {
   }
   const headerCells = (grid[best.idx] || []).map((h) => String(h ?? '').trim());
   const map = autoMap(headerCells, spec, mapping);
+  // a column known by its values ("Status - 1" = Selected / Rejected): the unused column that mostly holds them
+  spec.columns.filter((col) => col.pickByValue && !map.has(col.h)).forEach((col) => {
+    const known = new Set([...(LISTS[col.list] || []).map((v) => v.toLowerCase()), ...Object.keys(col.synonyms || {})]);
+    const used = new Set(map.values());
+    let pick = { i: -1, share: 0.5 };
+    headerCells.forEach((h, i) => {
+      if (!h || used.has(i)) return;
+      const vals = grid.slice(best.idx + 1).map((r) => String(r[i] ?? '').trim().toLowerCase()).filter(Boolean);
+      const share = vals.length ? vals.filter((v) => known.has(v)).length / vals.length : 0;
+      if (share > pick.share) pick = { i, share };
+    });
+    if (pick.i >= 0) map.set(col.h, pick.i);
+  });
   const exampleAt = headerCells.findIndex((h) => ['example', 'example?'].includes(String(h).trim().toLowerCase()));
 
   const ws = new ExcelJS.Workbook().addWorksheet('data');
@@ -1509,8 +1529,14 @@ const RULES = {
 
   interviews: {
     // A row may name its candidate / requirement by key or by name / title (see resolveInterviewRefs).
-    keyOf: (d, ix) => `${d._candidate ? ix.norm(d._candidate) : `name:${ix.ckey(d._candidateName)}`}|${d._requirement ? ix.norm(d._requirement) : `title:${ix.ckey(d._requirementTitle)}`}|${d.interviewRound || 1}`,
-    async guard(ctx, d) {
+    keyOf: (d, ix) => (isScreeningRow(d)
+      ? `scr:${ix.ckey(d._client)}|${ix.ckey(d._candidateName)}|${ix.ckey(d._requirementTitle)}|${d.interviewRound || 1}|${d._date}`
+      : `${d._candidate ? ix.norm(d._candidate) : `name:${ix.ckey(d._candidateName)}`}|${d._requirement ? ix.norm(d._requirement) : `title:${ix.ckey(d._requirementTitle)}`}|${d.interviewRound || 1}`),
+    async guard(ctx, d, note) {
+      if (isScreeningRow(d)) {
+        const made = await ensureScreeningRefs({ ctx, data: d, note, HANDLERS, isDry });
+        if (made.planned) return null;
+      }
       resolveInterviewRefs(ctx.ix, d);
       const app = await applicationFor(ctx, d);
       const round = d.interviewRound === null || d.interviewRound === undefined ? 1 : d.interviewRound;

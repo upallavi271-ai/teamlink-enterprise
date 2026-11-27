@@ -191,6 +191,7 @@ function coerce(col, raw) {
     // The template's ATS Role dropdown also offered HR and EMPLOYEE, which are
     // HRMS roles, not ATS roles — someone who picked them means "no ATS role".
     if (col.list === 'atsRole' && ['hr', 'employee'].includes(s.toLowerCase())) s = 'NONE';
+    if (col.synonyms && col.synonyms[s.toLowerCase()]) s = col.synonyms[s.toLowerCase()];
     const hit = allowed.find((a) => a.toLowerCase() === s.toLowerCase());
     if (!hit) return { error: `"${s}" is not allowed here. Use one of: ${allowed.join(', ')}` };
     return { value: hit };
@@ -1433,8 +1434,9 @@ const HANDLERS = {
       scores[f] = data[k];
     });
     const kind = data._feedbackBy;
-    if (!kind && (Object.keys(scores).length || data._comments)) {
-      throw new Error('scores or comments were given — say whose feedback it is in Feedback By (Internal or Client)');
+    // Comments alone are kept on the interview; scores are somebody's feedback and must say whose.
+    if (!kind && Object.keys(scores).length) {
+      throw new Error('scores were given — say whose feedback it is in Feedback By (Internal or Client)');
     }
     const recommendation = kind ? normalizeRecommendation(data.interviewResult) : null;
     if (kind && !recommendation) throw new Error('Feedback By is filled — give the Interview Result the feedback came to');
