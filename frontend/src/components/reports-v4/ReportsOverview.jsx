@@ -292,7 +292,7 @@ export default function ReportsOverview({
             })}
           </KpiRow>
 
-          <div className="rv4-row rv4-two">
+          <div className="rv4-row rv4-two rv4-fix">
             <Panel
               title="Application trend"
               sub={tr ? `${anyTime ? 'Last 12 months' : (tr.period && tr.period.label) || ''} · by ${tr.bucket}${otherFilters ? ' · client / person filters not applied' : ''}` : undefined}
@@ -324,7 +324,7 @@ export default function ReportsOverview({
 
           </div>
 
-          <div className="rv4-row rv4-three">
+          <div className="rv4-row rv4-three rv4-fix">
             <Panel title="Department-wise performance" action={{ label: 'View details', onClick: () => onOpen('departments', { card: 'funnel' }) }} flush>
               {dept.loading && !d ? loadingTxt : errTxt(dept) || (deptRows.length ? (
                 <table className="ak-table rv4-table">
@@ -386,7 +386,7 @@ export default function ReportsOverview({
 
           </div>
 
-          <div className="rv4-row rv4-two">
+          <div className="rv4-row rv4-two rv4-fix rv4-fix-s">
             <Panel title="Location-wise performance" sub="Applications by requirement location" action={{ label: 'View all', onClick: () => onOpen('recruitment', { card: 'people' }, 'location') }}>
               {loc.loading && !loc.data ? loadingTxt : errTxt(loc) || (locTop.length ? (
                 <ul className="rv4-locs">
@@ -433,7 +433,7 @@ export default function ReportsOverview({
         </>
       )}
       {allowed && !full && can('funnel') && (
-        <div className="rv4-row rv4-one">
+        <div className="rv4-row rv4-one rv4-fix">
           <Panel title="Hiring funnel" action={{ label: 'View details', onClick: () => onOpen('funnel', { card: 'funnel' }) }}>
             {fun.loading && !fun.data ? loadingTxt : errTxt(fun) || (funSec && funSec.rows.length && num(funSec.get(funSec.rows[0], 'count')) > 0 ? (
               <FunnelShape

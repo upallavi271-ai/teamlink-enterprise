@@ -593,6 +593,24 @@ function AtsReportsFull({ fixedTab = '' } = {}) {
   const labels = useRef({});
   const [pf, setPf] = usePageFilters();
   const bar = barFilters(pf);
+  // OPENING A REPORT STARTS AT ITS TOP, "All reports" BRINGS YOU BACK TO THE CARDS (founder 2026-11-27: "clumzy clumzy ga open avvakudadhu"). The cards sit
+  // at the bottom of the landing page; a report used to open wherever the page happened to be scrolled.
+  const lastTab = useRef(tab);
+  useEffect(() => {
+    if (fixedTab || lastTab.current === tab) return undefined;
+    const from = lastTab.current;
+    lastTab.current = tab;
+    if (tab) { window.scrollTo(0, 0); return undefined; }
+    if (!from) return undefined;
+    // back on the landing page: to the "All reports" cards, once they are drawn
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      const el = document.querySelector('.rv4-all');
+      if (el && el.querySelector('.rphome-card')) { window.scrollTo(0, Math.max(0, el.getBoundingClientRect().top + window.scrollY - 70)); clearInterval(t); } else if (tries > 40) clearInterval(t);
+    }, 50);
+    return () => clearInterval(t);
+  }, [tab, fixedTab]);
   // Switching report keeps the bar's filters (and which card it was opened from).
   const goTab = (id, extra = {}) => {
     const next = {};

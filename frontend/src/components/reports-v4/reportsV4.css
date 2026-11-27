@@ -158,6 +158,13 @@
 .rv4 .rphome-a{font-size:12px}
 
 .rv4 .rv4-row .ak-panel{overflow:hidden}
+/* THE CARDS STAY PUT (founder 2026-11-27: "ee cards meedha click chesthey, ekkadiko redirect ipothundhi, verey yedhodho open avuthundhi"): the panels
+   above "All reports" filled in one by one and grew (a "Loading..." line, then a chart or a table), pushing the report cards down by up to ~470 px while
+   the person was about to click one - so the click landed on another card. Every overview panel now has its full height from the first moment, and a
+   long table scrolls inside its panel. */
+.rv4 .rv4-fix .ak-panel{height:360px}
+.rv4 .rv4-fix .ak-panel-body{overflow:auto;min-height:0}
+.rv4 .rv4-fix-s .ak-panel{height:300px}
 
 /* ---- Names fit (2026-10-17): recruiter / TL / department names wrap instead of "..." ---- */
 .rv4 .rv4-trunc{max-width:260px;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;line-height:1.3}

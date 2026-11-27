@@ -167,6 +167,7 @@ export default function ReportsHome({ tabs = [], onOpen, embedded = false }) {
                     <span className="rphome-t">{c.title}</span>
                     {c.answers && <span className="rphome-a">{c.answers}</span>}
                     {c.id === 'revenue' && <span className="rphome-lock">Only Super Admin, Admin and Accounts see this</span>}
+                    {c.link && <span className="rphome-lock">Opens in Accounts › Reports ↗</span>}
                     {c.views && c.views.length > 1 && <span className="rphome-views">{c.views.map(([, l]) => l).join(' · ')}</span>}
                   </span>
                 </>
