@@ -1204,9 +1204,9 @@ function assertRequirementInScope(ctx, req, code) {
 
 // The application a row names, in scope, with its requirement.
 async function applicationFor(ctx, data) {
-  const candidateId = findCandidate(ctx.ix, data._candidate);
+  const candidateId = data._candidateId || findCandidate(ctx.ix, data._candidate);
   if (!candidateId) throw new Error(`no candidate with email / phone "${data._candidate}" is on file`);
-  const requirementId = ctx.ix.requirement.get(norm(data._requirement));
+  const requirementId = data._requirementId || ctx.ix.requirement.get(norm(data._requirement));
   if (!requirementId) throw new Error(`requirement "${data._requirement}" is not on file`);
   const app = await prisma.application.findFirst({
     where: { candidateId, requirementId },
@@ -1507,8 +1507,10 @@ const RULES = {
   },
 
   interviews: {
-    keyOf: (d, ix) => `${ix.norm(d._candidate)}|${ix.norm(d._requirement)}|${d.interviewRound || 1}`,
+    // A row may name its candidate / requirement by key or by name / title (see resolveInterviewRefs).
+    keyOf: (d, ix) => `${d._candidate ? ix.norm(d._candidate) : `name:${ix.ckey(d._candidateName)}`}|${d._requirement ? ix.norm(d._requirement) : `title:${ix.ckey(d._requirementTitle)}`}|${d.interviewRound || 1}`,
     async guard(ctx, d) {
+      resolveInterviewRefs(ctx.ix, d);
       const app = await applicationFor(ctx, d);
       const round = d.interviewRound === null || d.interviewRound === undefined ? 1 : d.interviewRound;
       if ((app.interviewRound || 1) === round && app.interviewAt) {

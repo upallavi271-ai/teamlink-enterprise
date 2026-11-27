@@ -311,7 +311,7 @@ async function buildIndex() {
   ] = await Promise.all([
     prisma.client.findMany({ select: { id: true, name: true, clientCode: true } }),
     prisma.requirement.findMany({ select: { id: true, reqCode: true, title: true } }),
-    prisma.candidate.findMany({ select: { id: true, email: true, phone: true, externalRef: true } }),
+    prisma.candidate.findMany({ select: { id: true, name: true, email: true, phone: true, externalRef: true } }),
     prisma.employee.findMany({ select: { id: true, name: true, employeeCode: true, userId: true } }),
     prisma.user.findMany({ select: { id: true, name: true, email: true } }),
     prisma.department.findMany({ select: { id: true, name: true } }),
@@ -344,6 +344,9 @@ async function buildIndex() {
     clientCode: new Map(clients.filter((r) => r.clientCode).map((r) => [norm(r.clientCode), ckey(r.name)])),
     requirement: new Map(requirements.filter((r) => r.reqCode).map((r) => [norm(r.reqCode), r.id])),
     candidate: new Map(),
+    // Interview rows may name a person and a requirement instead of giving keys (Candidate Name, Requirement Title).
+    candidateByName: new Map(),
+    requirementByTitle: new Map(),
     employee: new Map(employees.map((r) => [norm(r.name), r])),
     employeeByCode: new Map(employees.map((r) => [norm(r.employeeCode), r])),
     user: new Map(users.map((r) => [norm(r.name), r.id])),
@@ -375,6 +378,7 @@ async function buildIndex() {
     if (r.externalRef) ix.candidate.set(norm(`ref:${r.externalRef}`), r.id);
     indexCandidateContact(ix, r, r.id); // normalised phone (last 10) / email — one Candidate Master
   });
+  requirements.forEach((r) => { if (r.title) addTo(ix.requirementByTitle, ix.ckey(r.title), r.id); });
   // CLIENT ALIASES. A client merged away on Clients > Duplicate clients keeps
   // its old names as aliases of the surviving client, so a sheet that still
   // uses an old spelling reaches the survivor instead of recreating the copy.
@@ -447,6 +451,36 @@ async function candidateOnlyIndex({ fresh = false } = {}) {
 }
 function invalidateCandidateIndex() { candOnly = null; }
 
+function addTo(map, key, id) {
+  map.set(key, [...(map.get(key) || []), id]);
+}
+
+// An interview row may name its candidate and requirement by NAME or TITLE
+// instead of by key. That is only accepted when exactly one record matches,
+// so an interview is never attached to the wrong person or requirement.
+function resolveInterviewRefs(ix, data) {
+  if (!data._candidate && data._candidateName) {
+    const ids = ix.candidateByName.get(ix.ckey(data._candidateName)) || [];
+    if (ids.length !== 1) {
+      throw new Error(ids.length
+        ? `${ids.length} candidates are called "${data._candidateName}" — give Candidate Email or Phone to pick one`
+        : `no candidate called "${data._candidateName}" is on file — give Candidate Email or Phone`);
+    }
+    data._candidateId = ids[0];
+  }
+  if (!data._requirement && data._requirementTitle) {
+    const ids = ix.requirementByTitle.get(ix.ckey(data._requirementTitle)) || [];
+    if (ids.length !== 1) {
+      throw new Error(ids.length
+        ? `${ids.length} requirements are titled "${data._requirementTitle}" — give Requirement Code to pick one`
+        : `no requirement titled "${data._requirementTitle}" is on file — give Requirement Code`);
+    }
+    data._requirementId = ids[0];
+  }
+  if (!data._candidate && !data._candidateId) throw new Error('give Candidate Email or Phone, or Candidate Name');
+  if (!data._requirement && !data._requirementId) throw new Error('give Requirement Code, or Requirement Title');
+}
+
 function findCandidate(ix, value) {
   const v = ix.norm(value);
   if (!v) return null;
@@ -460,6 +494,7 @@ function findCandidate(ix, value) {
 // alongside the exact keys above; it only ever finds MORE existing people.
 const { phoneKeys: dupPhoneKeys, emailKey: dupEmailKey } = require('../utils/candidateDedupe');
 function indexCandidateContact(ix, r, id) {
+  if (r.name && ix.candidateByName) addTo(ix.candidateByName, ix.ckey(r.name), id);
   const e = dupEmailKey(r.email);
   if (e && !ix.candidate.has(`mail:${e}`)) ix.candidate.set(`mail:${e}`, id);
   dupPhoneKeys(r.phone).forEach((k) => { if (!ix.candidate.has(`tel:${k}`)) ix.candidate.set(`tel:${k}`, id); });
@@ -480,9 +515,9 @@ function employeeByCode(ix, code) {
 // The application a later sheet (Interviews, Joinings) talks about. In a dry
 // run it may be one the Applications sheet is about to create.
 async function findApplication(ix, data) {
-  const candidateId = findCandidate(ix, data._candidate);
+  const candidateId = data._candidateId || findCandidate(ix, data._candidate);
   if (!candidateId) throw new Error(`candidate "${data._candidate}" is not on the Candidates sheet or in the system`);
-  const requirementId = ix.requirement.get(ix.norm(data._requirement));
+  const requirementId = data._requirementId || ix.requirement.get(ix.norm(data._requirement));
   if (!requirementId) throw new Error(`requirement "${data._requirement}" is not on the Requirements sheet or in the system`);
   const key = `${candidateId}|${requirementId}`;
   let app = null;
@@ -1379,9 +1414,12 @@ const HANDLERS = {
 
   // --- Interviews -----------------------------------------------------------
   async interview({ data, ix, dry, note }) {
+    resolveInterviewRefs(ix, data);
     const { app } = await findApplication(ix, data);
     const round = data.interviewRound === null ? 1 : data.interviewRound;
     if (!Number.isInteger(round) || round < 1) throw new Error('Interview Round must be 1, 2, 3 …');
+    // Interview Date is optional only when it is already on the application (a fix to status or feedback).
+    if (!data._date && !(app && app.interviewAt)) throw new Error('no interview is on this application yet — give the Interview Date');
 
     const scores = {};
     [['_technical', 'technical', 'Technical'], ['_communication', 'communication', 'Communication'],
@@ -1406,13 +1444,16 @@ const HANDLERS = {
     // A row for an EARLIER round than the one already recorded is kept in the
     // interview history, not written over the later one.
     const latest = !app.interviewAt || round >= (app.interviewRound || 1);
-    const slot = `${data._date}${data._time ? ` ${data._time}` : ''}`;
+    // No Interview Date: the slot already on the application is kept as it is.
+    const slot = data._date ? `${data._date}${data._time ? ` ${data._time}` : ''}` : String(app.interviewAt || '');
     let action = app.interviewAt && (app.interviewRound || 1) === round ? 'updated' : 'created';
     if (latest) {
       const fields = pick(data);
       fields.interviewRound = round;
       // With a time, local clock time; a date alone is kept as that date.
-      fields.interviewAt = data._time ? new Date(`${data._date}T${data._time}:00`) : new Date(`${data._date}T00:00:00.000Z`);
+      if (data._date) {
+        fields.interviewAt = data._time ? new Date(`${data._date}T${data._time}:00`) : new Date(`${data._date}T00:00:00.000Z`);
+      }
       if (data._comments) fields.interviewFeedback = data._comments;
       fields.interviewCode = app.interviewCode || `INT-${app.id.slice(-6).toUpperCase()}`;
       if (!fields.interviewType && !app.interviewType) {
@@ -2023,4 +2064,5 @@ module.exports = router;
 // screens' one-sheet imports (routes/atsIo.js) — the same code, not a copy.
 module.exports.internals = {
   readSheet, buildIndex, candidateOnlyIndex, invalidateCandidateIndex, HANDLERS, rawText, isDry, findCandidate, IMPORTED_BY, contactMatch,
+  resolveInterviewRefs,
 };

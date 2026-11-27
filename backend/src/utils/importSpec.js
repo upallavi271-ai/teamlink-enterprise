@@ -597,11 +597,13 @@ const SHEETS = [
     title: 'Interviews and their feedback',
     note: 'Candidate + Requirement + Round is the key, and the candidate must already have a row on the Applications sheet for that requirement. The latest round is what the interview calendar shows; earlier rounds are kept in the interview history. Feedback By + scores record the Internal or Client feedback (one of each per application).',
     columns: [
-      c('Candidate Email or Phone', '_candidate', { req: true, eg: '9000000202' }),
-      c('Requirement Code', '_requirement', { req: true, eg: 'EDU-0001' }),
+      c('Candidate Email or Phone', '_candidate', { help: 'Give this, or Candidate Name.', eg: '9000000202' }),
+      c('Candidate Name', '_candidateName', { help: 'Used when there is no email or phone. Must match exactly ONE candidate on file.', eg: 'Ravi Kumar' }),
+      c('Requirement Code', '_requirement', { help: 'Give this, or Requirement Title.', eg: 'EDU-0001' }),
+      c('Requirement Title', '_requirementTitle', { help: 'Used when there is no Requirement Code. Must match exactly ONE requirement on file.', eg: 'Staff Nurse' }),
       c('Interview Round', 'interviewRound', { t: 'number', help: '1, 2, 3 … Blank = 1.', eg: '1' }),
       c('Interview Type', 'interviewType', { t: 'list', list: 'interviewType', eg: 'Client Interview' }),
-      c('Interview Date', '_date', { req: true, t: 'date', eg: '26-09-2026' }),
+      c('Interview Date', '_date', { t: 'date', help: 'Needed for a NEW interview. Blank keeps the date already on the calendar.', eg: '26-09-2026' }),
       c('Interview Time', '_time', { t: 'time', help: 'HH:MM, 24-hour.', eg: '11:00' }),
       c('Interview Mode', 'interviewMode', { t: 'list', list: 'interviewMode', eg: 'In Person' }),
       c('Interviewer', 'interviewer', { eg: 'Sample Principal' }),
@@ -825,7 +827,12 @@ const ATS_IMPORT_SHEETS = {
       'Candidate Email or Phone', 'Requirement Code', 'Interview Round', 'Interview Date', 'Interview Status',
       'Interview Result', 'Feedback By', 'Technical (1-5)', 'Communication (1-5)', 'Experience (1-5)',
       'Role Fit (1-5)', 'Feedback Comments',
-    ], { 'Interview Date': { req: false, help: 'Blank keeps the scheduled date.' } }),
+    ], {
+      // Feedback still needs to say which interview it is: the keys stay required here.
+      'Candidate Email or Phone': { req: true, help: 'Required here: the candidate whose interview this is.' },
+      'Requirement Code': { req: true, help: 'Required here: the requirement whose interview this is.' },
+      'Interview Date': { req: false, help: 'Blank keeps the scheduled date.' },
+    }),
   },
   offers: {
     ...sheetNamed('Joinings'),
