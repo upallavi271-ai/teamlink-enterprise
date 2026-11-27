@@ -309,8 +309,8 @@ function JobRow({ r, open, onToggle, assign, params, onCand, onAssign, viewAs, h
     <li className={`jb-row t-${r.bucket}${open ? ' is-open' : ''}`}>
       <div className="jb-head" role="button" tabIndex={0} aria-expanded={open} onClick={onToggle} onKeyDown={key}>
         <div className="jb-title">
-          <div className="jb-t1">{r.reqCode && <span className="jb-code">{r.reqCode}</span>}<b>{r.title}</b></div>
-          {place && <div className="jb-t2">{place}</div>}
+          <div className="jb-t1">{r.reqCode && <span className="jb-code">{r.reqCode}</span>}<b title={r.title}>{r.title}</b></div>
+          {place && <div className="jb-t2" title={place}>{place}</div>}
         </div>
         <div className="jb-who">
           {hidden ? (
@@ -323,7 +323,7 @@ function JobRow({ r, open, onToggle, assign, params, onCand, onAssign, viewAs, h
           ) : r.bucket === 'done' ? <span className="jb-muted">No recruiter</span> : mayAssign ? (
             <button type="button" className="btn btn-sm jb-assign" disabled={viewAs} title={viewAs ? 'You are in View as mode, which is read-only.' : 'Give this requirement to a recruiter'} onClick={(e) => { e.stopPropagation(); onAssign(r); }}>Assign</button>
           ) : <span className="jb-noone">No recruiter yet</span>}
-          {lead && <small className="jb-lead">{lead}</small>}
+          {lead && <small className="jb-lead" title={lead}>{lead}</small>}
         </div>
         <Strip s={r.steps} />
         <div className="jb-state">
@@ -367,11 +367,21 @@ function Section({ sec, data, defaultOpen, baseParams, params, assign, onCand, o
       {openSec && (
         <div className="jb-sec-b">
           {!rows.length ? <div className="jb-ok">{sec.key === 'needs' ? 'Nothing needs you right now. Good work.' : 'No requirements here.'}</div> : (
+            <>
+            {/* the column names, once per group (2026-11-27: every row lines up under them) */}
+            <div className="jb-colhead" aria-hidden="true">
+              <span>Requirement · client</span>
+              <span>{hidden ? 'Client manager' : 'Recruiter'}</span>
+              <span className="jb-colsteps">{STEPS.map((l, i) => <span key={l} title={STEP_TIPS[i]}>{l}</span>)}</span>
+              <span>Status</span>
+              <span />
+            </div>
             <ul className="jb-rows">
               {rows.map((r) => (
                 <JobRow key={r.id} r={r} open={openRow === r.id} onToggle={() => setOpenRow(openRow === r.id ? null : r.id)} assign={assign} params={params} onCand={onCand} onAssign={onAssign} viewAs={viewAs} hidden={hidden} />
               ))}
             </ul>
+            </>
           )}
           {data.total > data.rows.length && (
             <div className="jb-more">
@@ -473,27 +483,35 @@ export function OpenJobs({ w, params, onDrill, onCand, tlId = null, inner = fals
           {sm.mineOnly
             ? <Tile n={sm.mine} label={sm.mineLabel} sub="Requirements you lead or your recruiters hold" zero="No requirement is yours yet" tone="blue" on={flag === 'mine'} onClick={() => setFlag(flag === 'mine' ? 'all' : 'mine')} />
             : <Tile n={sm.open} label="Open requirements" sub="All open requirements here" zero="No open requirements" tone="blue" on={!flag || flag === 'all'} onClick={() => setFlag('')} />}
-          <Tile n={sm.late} label="Late" sub={`${plural(sm.lateRows, 'person', 'people')} waiting too long`} zero="Nothing is late" tone="red" on={flag === 'late'} onClick={() => setFlag(flag === 'late' ? '' : 'late')} />
+          <Tile n={sm.late} label="Late" sub={`${plural(sm.lateRows, 'person', 'people')} waiting too long on open requirements`} zero="Nothing is late" tone="red" on={flag === 'late'} onClick={() => setFlag(flag === 'late' ? '' : 'late')} />
           <Tile n={sm.noRecruiter} label="No recruiter yet" sub="Nobody is working on these requirements yet" zero="Every requirement has a recruiter" tone="orange" on={flag === 'norec'} onClick={() => setFlag(flag === 'norec' ? '' : 'norec')} />
           <Tile n={sm.interviewsWeek} label="Interviews this week" sub={`In the next 7 days, in ${plural(sm.interviewsWeekJobs, 'requirement', 'requirements')}`} zero="No interview booked this week" tone="green" on={flag === 'iv'} onClick={() => setFlag(flag === 'iv' ? '' : 'iv')} />
         </div>
       )}
+      {/* two tidy lines (2026-11-27): search + Export + row size, then the filters */}
       <div className="jb-tools">
         <input type="search" className="jb-search" placeholder="Search requirement, requirement ID, client or person…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search requirements" />
-        {!inner && facetUi('department', 'dept', 'Department', 'All departments')}
-        {!inner && facetUi('client', 'client', 'Client', 'All clients')}
-        {!inner && facetUi('tl', 'tl', 'Team lead', 'All team leads')}
-        {!inner && facetUi('rec', 'rec', 'Recruiter', 'All recruiters')}
-        {!inner && <DateRangeFilter label="Opened" from={opened.from} to={opened.to} onChange={setOpened} title="Requirements opened between these days" />}
-        {anyFilter && <button type="button" className="link-btn" onClick={clearAll}>Clear filters</button>}
         {d && d.filtered > 0 && <DrillExport name={tlId ? 'Open requirements - team lead' : 'Open requirements'} allowed={mayExport} disabled={state.loading} build={buildFile} />}
         <span className="jb-density" role="group" aria-label="Row size">
           <button type="button" className={density === 'comfortable' ? 'on' : ''} aria-pressed={density === 'comfortable'} onClick={() => setDensityTo('comfortable')}>Comfortable</button>
           <button type="button" className={density === 'compact' ? 'on' : ''} aria-pressed={density === 'compact'} onClick={() => setDensityTo('compact')}>Compact</button>
         </span>
       </div>
-      <div className="jb-legend"><b>Late</b> = a person has waited longer than the time allowed for their step (for example, 5 days for the client to reply). </div>
-      <div className="jb-legend jb-legend2">The numbers in each requirement are <b>people</b>. Each number counts the people who reached that step <b>or went further</b>, so the numbers only go down from left to right. Press a step to see what it means.</div>
+      {!inner && (
+        <div className="jb-tools jb-filters">
+          {facetUi('department', 'dept', 'Department', 'All departments')}
+          {facetUi('client', 'client', 'Client', 'All clients')}
+          {facetUi('tl', 'tl', 'Team lead', 'All team leads')}
+          {facetUi('rec', 'rec', 'Recruiter', 'All recruiters')}
+          <DateRangeFilter label="Opened" from={opened.from} to={opened.to} onChange={setOpened} title="Requirements opened between these days" />
+          {anyFilter && <button type="button" className="link-btn jb-clear" onClick={clearAll}>Clear filters</button>}
+        </div>
+      )}
+      {inner && anyFilter && <div className="jb-tools"><button type="button" className="link-btn jb-clear" onClick={clearAll}>Clear search</button></div>}
+      <div className="jb-legend">
+        <span>The step numbers are <b>people</b> who reached that step or went further, so they only go down from left to right.</span>
+        <span><b className="jb-red">Late</b> = waited longer than allowed for their step (for example, 5 days for a client reply).</span>
+      </div>
       {state.error && <div className="notice red">{state.error}</div>}
       {!d && state.loading && <div className="jb-empty">Loading the requirements…</div>}
       {d && d.filtered === 0 && (

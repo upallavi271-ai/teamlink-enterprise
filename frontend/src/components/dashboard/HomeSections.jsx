@@ -72,11 +72,11 @@ function TlHead({ cols, word }) {
     <th key={k} className="num hs-th" title={`${h} (${basisOf(b, word)})`}><span className="hs-th-l">{l}</span><small className="hs-th-b">{basisOf(b, word)}</small></th>
   ));
 }
-function PersonCells({ r, onDrill, cols = TL_COLS }) {
+function PersonCells({ r, onDrill, cols = TL_COLS, word }) {
   // A person with nothing yet: one plain line, never a row of zeros.
   if (cols.every(([k]) => !r[k])) return <td colSpan={cols.length} className="hs-nojobs" style={{ textAlign: 'left' }}><span className="small-muted">No requirements yet</span></td>;
-  return cols.map(([k, l]) => (
-    <td key={k} className="num" data-label={l}>
+  return cols.map(([k, l, , b]) => (
+    <td key={k} className="num" data-label={b === 'today' ? l : `${l} ${basisOf(b, word)}`}>
       <N value={r[k]} drill={r.drills[k]} onDrill={onDrill} tone={k === 'late' ? 'red' : k === 'joined' || k === 'joinedTotal' ? 'green' : null} what={`${r.name} — ${l}`} />
     </td>
   ));
@@ -98,13 +98,13 @@ export function TeamLeads({ w, onDrill, tls, params, onCand }) {
   const row = (r) => (
     <Fragment key={r.id}>
       <tr className={`hs-click${open === r.id ? ' is-open' : ''}`} onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
-        <td className="hs-who" data-label="Team lead">
+        <td className="hs-who-td" data-label="Team lead"><div className="hs-who">
           <span className="hs-avatar" aria-hidden="true">{initials(r.name)}</span>
           <span><b>{r.name}</b>{showDept && r.department && <span className="hs-sub">{r.department}</span>}</span>
           <span className="hs-caret" aria-hidden="true">{open === r.id ? '▴' : '▾'}</span>
-        </td>
+        </div></td>
         <td className="num" data-label="Recruiters">{r.teamSize ? fmt(r.teamSize) : <span className="hs-dash hs-zero" title="None">0</span>}</td>
-        <PersonCells r={r} onDrill={onDrill} cols={cols} />
+        <PersonCells r={r} onDrill={onDrill} cols={cols} word={data.word} />
       </tr>
       {open === r.id && (
         <tr className="hs-open-row"><td colSpan={cols.length + 2}>
@@ -114,7 +114,7 @@ export function TeamLeads({ w, onDrill, tls, params, onCand }) {
               <table className="hs-tbl hs-tbl-in">
                 <thead><tr><th>Recruiter</th><TlHead cols={cols} word={data.word} /></tr></thead>
                 <tbody>{r.recruiters.map((p) => (
-                  <tr key={p.id}><td className="hs-who" data-label="Recruiter"><span className="hs-avatar" aria-hidden="true">{initials(p.name)}</span><b>{p.name}</b></td><PersonCells r={p} onDrill={onDrill} cols={cols} /></tr>
+                  <tr key={p.id}><td className="hs-who-td" data-label="Recruiter"><div className="hs-who"><span className="hs-avatar" aria-hidden="true">{initials(p.name)}</span><b>{p.name}</b></div></td><PersonCells r={p} onDrill={onDrill} cols={cols} word={data.word} /></tr>
                 ))}</tbody>
               </table>
             )}

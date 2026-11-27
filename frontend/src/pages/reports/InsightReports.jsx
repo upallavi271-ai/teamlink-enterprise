@@ -73,7 +73,7 @@ function TtfByJob({ canExport }) {
             <StatCard label="People joined" value={d.tiles.joined} zeroText="None yet" />
             <StatCard label="Open requirements" value={d.tiles.openJobs} hint={d.tiles.medianOpenAge !== null ? `usually open ${d.tiles.medianOpenAge} days` : ''} />
           </StatRow>
-          {d.byMonth.length > 1 && <div className="card ins-card"><h3>Usual days to fill, month by month</h3><LineChart points={d.byMonth.map((m) => ({ label: m.label, value: m.medianFill || 0 }))} height={200} /></div>}
+          {d.byMonth.filter((m) => m.medianFill !== null).length > 1 && <div className="card ins-card"><h3>Usual days to fill, month by month</h3><LineChart points={d.byMonth.filter((m) => m.medianFill !== null).map((m) => ({ label: m.label, value: m.medianFill }))} height={200} /></div>}
           <h3 className="ins-h">By requirement</h3>
           <Table
             cols={[['Requirement', (r) => <Link to={`/requirements/${r.requirementId}`}>{r.requirement}</Link>], ['Client', (r) => r.client], ['Openings', (r) => r.openings, { num: true }], ['Joined', (r) => r.joined, { num: true }],

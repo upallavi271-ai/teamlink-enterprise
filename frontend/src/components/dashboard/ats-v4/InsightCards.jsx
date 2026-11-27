@@ -108,7 +108,8 @@ export function useInsightCards({ enabled, card }) {
         card('ins:ttf', 'Time to fill', (
           <Panel title="Time to fill" sub="last 90 days" icon="clock" iconTone="blue" action={{ label: 'By job & client', to: `${REPORTS}ttfjob` }}>
             <div className="ins-tiles"><Tile v={t.medianFill} l="usual days to fill" /><Tile v={t.medianHire} l="usual days to hire" /><Tile v={t.joined} l="joined" /></div>
-            {d.ttf.byClient.slice(0, 4).map((c) => <div key={c.client} className="small-muted">{c.client}: usually {c.medianFill ?? '—'} days ({c.joined} joined)</div>)}
+            {d.ttf.byClient.filter((c) => c.medianFill !== null && c.medianFill !== undefined).slice(0, 4).map((c) => <div key={c.client} className="small-muted">{c.client}: usually {c.medianFill} days ({c.joined} joined)</div>)}
+            {t.typedIn > 0 && <div className="small-muted">{`${t.typedIn} of the ${t.joined} joinings came from the joinings sheets (added on the joining day), so they have no hiring time and are left out of the days.`}</div>}
           </Panel>
         )),
         card('ins:forecast', 'Pipeline forecast', (

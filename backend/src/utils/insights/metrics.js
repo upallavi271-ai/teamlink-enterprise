@@ -23,29 +23,36 @@ function timeToFill(ctx, { days = 0, clientId = '' } = {}) {
   const clients = new Map();
   const months = new Map();
   const fillAll = []; const hireAll = [];
+  let joinedAll = 0; let typedIn = 0;
+  // TYPED IN ON THE JOINING DAY (2026-11-27): a joining imported from a joinings sheet was added to TeamLink on the day the
+  // person joined (or later), so it has no real hiring time - counting it as "0 days" made the usual days 0. Such a joining
+  // still counts as joined, but is left out of the days (and `typedIn` says how many).
+  const bump = (o, fill, hire) => { o.n += 1; if (fill !== null) o.fill.push(fill); if (hire !== null) o.hire.push(hire); };
   ctx.apps.forEach((x) => {
     if (!x.joined) return;
     if (clientId && x.req.clientKey !== clientId) return;
     const jd = C.joinDayOf(x);
     if (!jd || (from && jd < from)) return;
-    const fill = C.dayDiff(C.istDay(x.req.createdAt), jd);
-    const hire = C.dayDiff(C.istDay(x.a.createdAt), jd);
-    if (fill < 0 || fill > C.MAX_FILL_DAYS) return;
-    fillAll.push(fill);
-    if (hire >= 0 && hire <= C.MAX_FILL_DAYS) hireAll.push(hire);
-    const j = jobs.get(x.req.id) || { requirementId: x.req.id, requirement: reqLabel(x.req), client: x.req.clientName, clientId: x.req.internal ? null : x.req.clientId, department: x.req.department || '—', openings: x.req.openings || 1, fill: [], hire: [] };
-    j.fill.push(fill); if (hire >= 0 && hire <= C.MAX_FILL_DAYS) j.hire.push(hire);
-    jobs.set(x.req.id, j);
-    const c = clients.get(x.req.clientKey) || { clientId: x.req.internal ? null : x.req.clientId, client: x.req.clientName, jobs: new Set(), fill: [], hire: [] };
-    c.jobs.add(x.req.id); c.fill.push(fill); if (hire >= 0 && hire <= C.MAX_FILL_DAYS) c.hire.push(hire);
-    clients.set(x.req.clientKey, c);
+    const hireDays = C.dayDiff(C.istDay(x.a.createdAt), jd);
+    const fillDays = C.dayDiff(C.istDay(x.req.createdAt), jd);
+    const typed = !(hireDays > 0);
+    if (!typed && (fillDays < 0 || fillDays > C.MAX_FILL_DAYS)) return;
+    joinedAll += 1;
+    if (typed) typedIn += 1;
+    const fill = typed ? null : fillDays;
+    const hire = typed || hireDays > C.MAX_FILL_DAYS ? null : hireDays;
+    if (fill !== null) fillAll.push(fill);
+    if (hire !== null) hireAll.push(hire);
+    const j = jobs.get(x.req.id) || { requirementId: x.req.id, requirement: reqLabel(x.req), client: x.req.clientName, clientId: x.req.internal ? null : x.req.clientId, department: x.req.department || '—', openings: x.req.openings || 1, n: 0, fill: [], hire: [] };
+    bump(j, fill, hire); jobs.set(x.req.id, j);
+    const c = clients.get(x.req.clientKey) || { clientId: x.req.internal ? null : x.req.clientId, client: x.req.clientName, jobs: new Set(), n: 0, fill: [], hire: [] };
+    c.jobs.add(x.req.id); bump(c, fill, hire); clients.set(x.req.clientKey, c);
     const m = jd.slice(0, 7);
-    const mm = months.get(m) || { month: m, fill: [], hire: [] };
-    mm.fill.push(fill); if (hire >= 0 && hire <= C.MAX_FILL_DAYS) mm.hire.push(hire);
-    months.set(m, mm);
+    const mm = months.get(m) || { month: m, n: 0, fill: [], hire: [] };
+    bump(mm, fill, hire); months.set(m, mm);
   });
   const shape = (o) => ({
-    joined: o.fill.length, medianFill: C.median(o.fill), avgFill: C.average(o.fill), fastestFill: o.fill.length ? Math.min(...o.fill) : null,
+    joined: o.n, timed: o.fill.length, medianFill: C.median(o.fill), avgFill: C.average(o.fill), fastestFill: o.fill.length ? Math.min(...o.fill) : null,
     slowestFill: o.fill.length ? Math.max(...o.fill) : null, medianHire: C.median(o.hire), avgHire: C.average(o.hire),
   });
   // the open requirements nobody has joined yet: how long they have been open (the "still waiting" side of time to fill)
@@ -53,7 +60,7 @@ function timeToFill(ctx, { days = 0, clientId = '' } = {}) {
   return {
     tiles: {
       medianFill: C.median(fillAll), avgFill: C.average(fillAll), medianHire: C.median(hireAll), avgHire: C.average(hireAll),
-      joined: fillAll.length, openJobs: openAges.length, medianOpenAge: C.median(openAges),
+      joined: joinedAll, timed: fillAll.length, typedIn, openJobs: openAges.length, medianOpenAge: C.median(openAges),
     },
     window: from ? { from, to: C.today(), days } : null,
     byJob: [...jobs.values()].map((j) => ({ requirementId: j.requirementId, requirement: j.requirement, client: j.client, clientId: j.clientId, department: j.department, openings: j.openings, ...shape(j) }))
@@ -61,7 +68,7 @@ function timeToFill(ctx, { days = 0, clientId = '' } = {}) {
     byClient: [...clients.values()].map((c) => ({ clientId: c.clientId, client: c.client, requirements: c.jobs.size, ...shape(c) }))
       .sort((a, b) => b.joined - a.joined),
     byMonth: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)).map((m) => ({ month: m.month, label: C.monthLabel(m.month), ...shape(m) })),
-    note: 'Time to fill = days from the requirement being added to the person joining. Time to hire = days from the candidate being added to the requirement to joining. "Usual" is the median (the middle value).',
+    note: 'Time to fill = days from the requirement being added to the person joining. Time to hire = days from the candidate being added to the requirement to joining. "Usual" is the median (the middle value). A joining typed in from a joinings sheet on the joining day has no real hiring time, so it counts as joined but is left out of the days.',
   };
 }
 

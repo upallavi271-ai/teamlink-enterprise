@@ -109,8 +109,24 @@
   .ahome .hs-tbl-in{width:100%;box-sizing:border-box}
   .ahome .hs-detail,.ahome .hs-inside{padding-left:10px;padding-right:10px}
   .ahome .hs-tbl td[data-label]::before{content:attr(data-label);color:var(--ink-soft);font-size:12px}
-  .ahome .hs-tbl td.hs-who::before{content:none}
+  .ahome .hs-tbl td.hs-who-td::before{content:none}
   .ahome .hs-who{min-width:0}
   .ahome .hs-open-row>td{display:block}
   .ahome .hs-today{padding:0 12px 12px}
+}
+
+/* ---- Team leads table lines up (founder 2026-11-27) ----------------------------------------------
+   the name sits in a normal table cell (a flex <td> broke the columns), each header is two lines
+   (name, then what it counts) instead of "Open requirementsas of today", and the numbers share one width */
+.ahome .hs-who-td{min-width:220px;width:26%}
+.ahome .hs-who{min-width:0;line-height:1.3}
+.ahome .hs-th{vertical-align:bottom;white-space:normal;min-width:84px}
+.ahome .hs-th-l{display:block;white-space:nowrap}
+.ahome .hs-th-b{display:block;font-size:10.5px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-faint,#9aa3ad);white-space:nowrap;margin-top:1px}
+.ahome .hs-tbl td.num{font-variant-numeric:tabular-nums;font-size:14px}
+.ahome .hs-tbl td{padding:9px 12px}
+.ahome .hs-tbl th{padding:8px 12px}
+.ahome .hs-nojobs{color:var(--ink-soft)}
+@media (max-width: 640px){
+  .ahome .hs-who-td{min-width:0;width:100%}
 }

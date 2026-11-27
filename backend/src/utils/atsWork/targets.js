@@ -303,6 +303,13 @@ async function leaderboard(viewer, { period = 'MONTHLY', date = null } = {}) {
   if (ctx.error) return { status: 403, error: ctx.error };
   let rows = await rowsFor(ctx, b.from, b.to, P, { only });
   if (limited) rows = rows.filter((r) => only.has(r.key));
+  // a ranking of the recruitment team only (2026-11-27): a Super Admin / Admin / developer login that touched a candidate is not ranked against the recruiters
+  if (rows.length) {
+    const NOT_RANKED = ['SUPER_ADMIN', 'ADMIN', 'DEVELOPER'];
+    const us = await prisma.user.findMany({ where: { id: { in: rows.map((r) => r.userId) } }, select: { id: true, role: true, atsRole: true } });
+    const out = new Set(us.filter((u) => NOT_RANKED.includes(u.role) && (!u.atsRole || NOT_RANKED.includes(u.atsRole))).map((u) => u.id));
+    rows = rows.filter((r) => !out.has(r.userId));
+  }
   rows.sort((a, c) => (c.score ?? -1) - (a.score ?? -1) || c.metrics.joinings.done - a.metrics.joinings.done || c.metrics.submissions.done - a.metrics.submissions.done || a.name.localeCompare(c.name));
   let rank = 0; let prev = null;
   rows.forEach((r, i) => { const sig = `${r.score}|${r.metrics.joinings.done}`; if (sig !== prev) { rank = i + 1; prev = sig; } r.rank = rank; });

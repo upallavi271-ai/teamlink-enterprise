@@ -83,7 +83,7 @@ async function leaderboardFor(user, period = 'MONTHLY') {
   // gamification: a badge for the top of each number this period (only among the people this login may rank)
   const top = (k) => { const best = rows.filter((r) => Number(r[k]) > 0).sort((a, b) => b[k] - a[k])[0]; return best ? best.name : null; };
   const badges = [
-    rows[0] && rows[0].score != null ? { badge: 'Top scorer', name: rows[0].name, icon: '🏆' } : null,
+    rows[0] && Number(rows[0].score) > 0 ? { badge: 'Top scorer', name: rows[0].name, icon: '🏆' } : null,
     top('joinings') && { badge: 'Most joinings', name: top('joinings'), icon: '🎯' },
     top('submissions') && { badge: 'Most sent to clients', name: top('submissions'), icon: '📤' },
     top('interviews') && { badge: 'Most interviews', name: top('interviews'), icon: '🗓️' },
