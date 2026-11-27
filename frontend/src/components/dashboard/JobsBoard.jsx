@@ -87,6 +87,24 @@ function Chip({ s }) {
   );
 }
 
+// "+N" next to the first recruiter (founder 2026-11-27: "+1, +4 - how do we know who the others are?"): hover shows the names,
+// a click / tap opens the list.
+function OthersChip({ names }) {
+  const [open, setOpen] = useState(false);
+  if (!names.length) return null;
+  return (
+    <span className="jb-others">
+      <button type="button" className="jb-others-b" title={names.join(', ')} aria-expanded={open} aria-label={`${names.length} more: ${names.join(', ')}`} onClick={(e) => { e.stopPropagation(); setOpen(!open); }} onBlur={() => setOpen(false)}>+{names.length}</button>
+      {open && (
+        <span className="jb-tip jb-others-tip" role="note" onMouseDown={(e) => e.preventDefault()} onClick={(e) => e.stopPropagation()}>
+          <b>Also working on it</b>
+          {names.map((n) => <span key={n}>{n}</span>)}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // The five steps in one strip. Only the steps that have people are strong.
 function Strip({ s }) {
   const [tip, setTip] = useState(-1);
@@ -318,7 +336,8 @@ function JobRow({ r, open, onToggle, assign, params, onCand, onAssign, viewAs, h
           ) : r.recruiters.length ? (
             <span className="jb-rec" title={r.recruiters.join(', ')}>
               <Avatar name={r.recruiters[0]} size={26} />
-              <span>{r.recruiters[0]}{r.recruiters.length > 1 ? <em> +{r.recruiters.length - 1}</em> : null}</span>
+              <span>{r.recruiters[0]}</span>
+              <OthersChip names={r.recruiters.slice(1)} />
             </span>
           ) : r.bucket === 'done' ? <span className="jb-muted">No recruiter</span> : mayAssign ? (
             <button type="button" className="btn btn-sm jb-assign" disabled={viewAs} title={viewAs ? 'You are in View as mode, which is read-only.' : 'Give this requirement to a recruiter'} onClick={(e) => { e.stopPropagation(); onAssign(r); }}>Assign</button>
