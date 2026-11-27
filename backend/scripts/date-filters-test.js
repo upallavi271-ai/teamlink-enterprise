@@ -283,6 +283,14 @@ const ago = (n, hh = 12) => new Date(new Date(`${dayOf(Date.now() - n * 86400000
     const l = await call('GET', `/dashboard/ats/home/list?${qs({ set: 'interviews', range: 'today', d_size: '200', d_q: `${TAG} Q` })}`, null, TOK.SA);
     const q = ((l.body && l.body.rows) || []).map((r) => String(r.candidate));
     check('Today = the IST day: 00:00:00 IST today is in, 23:59:59 IST yesterday is out', q.includes(`${TAG} Qtod00`) && !q.includes(`${TAG} Qyes2359`), q.filter((x) => x.startsWith(`${TAG} Q`)));
+    // (2026-11-27) a candidate list behind a dashboard number has a Department filter, and picking one narrows the list
+    const fd = l.body && l.body.facets && l.body.facets.d_dept;
+    const opt = fd && (fd.options || []).find((o) => o.value !== '__none__');
+    check('the list has a Department filter with the departments in it', !!fd && fd.label === 'Department' && (fd.options || []).length > 0, l.body && l.body.facets && Object.keys(l.body.facets));
+    if (opt) {
+      const l2 = await call('GET', `/dashboard/ats/home/list?${qs({ set: 'interviews', range: 'today', d_size: '200', d_q: `${TAG} Q`, d_dept: opt.value })}`, null, TOK.SA);
+      check('picking a department narrows the list to it', l2.status === 200 && (l2.body.rows || []).length === Number(opt.count || (l2.body.rows || []).length) && (l2.body.rows || []).length <= q.length, [opt, (l2.body.rows || []).length, q.length]);
+    }
     const l2 = await call('GET', `/dashboard/ats/home/list?${qs({ set: 'interviews', range: 'yesterday', d_size: '200', d_q: `${TAG} Q` })}`, null, TOK.SA);
     const q2 = ((l2.body && l2.body.rows) || []).map((r) => String(r.candidate));
     check('Yesterday = the IST day: 23:59:59 IST yesterday is in, 00:00:00 IST today is out', q2.includes(`${TAG} Qyes2359`) && !q2.includes(`${TAG} Qtod00`), q2.filter((x) => x.startsWith(`${TAG} Q`)));

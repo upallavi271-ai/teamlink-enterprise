@@ -2814,6 +2814,8 @@ function reqRowOf(w, r, clientDesk) {
 function facetDefs(kind) {
   if (kind === 'app') {
     return [
+      // Department too (founder 2026-11-27: "department filter kuda vundali" on Joined this month and every list behind a dashboard number)
+      ['d_dept', 'Department', (r) => r.department || '__none__', (r) => r.department || 'No department'],
       ['d_client', 'Client', (r) => r.clientKey, (r) => r.client || '—'],
       ['d_job', 'Requirement', (r) => r.requirementId, (r) => r.requirement],
       ['d_rec', 'Recruiter', (r) => r.recKey || '__none__', (r) => r.recruiter || 'Nobody named'],
