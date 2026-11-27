@@ -71,7 +71,7 @@ export function ReasonCell({ r }) {
 export function PartChip({ split }) {
   if (!split || (split.of < 2 && split.kind !== 'sa')) return null;
   return (
-    <span className="lvx-chip lvx-chip-blue" title={`The first ${split.limit} days of leave in a pay month need the Team Lead${split.hr === false ? ' (no HR set for this department)' : ' and then HR'}; every further day needs the Super Admin. This leave: ${split.totalDays} day(s), ${split.fromDate} to ${split.toDate}.`}>
+    <span className="lvx-chip lvx-chip-blue" title={`The first ${split.limit} days${split.carried > 0 ? ` + ${split.carried} carried-forward day(s)` : ''} of leave in a pay month need the Team Lead${split.hr === false ? ' (no HR set for this department)' : ' and then HR'}; every further day needs the Super Admin. This leave: ${split.totalDays} day(s), ${split.fromDate} to ${split.toDate}.`}>
       {split.of > 1 ? `Part ${split.part} of ${split.of} · ` : ''}{split.kind === 'sa' ? 'Super Admin' : split.hr === false ? 'Team Lead' : 'TL + HR'}
     </span>
   );
@@ -339,7 +339,7 @@ export function TlRuleSetting({ canConfigure, split = null }) {
           {rule.enabled
             ? (rule.mode === 'days'
               ? (split && split.enabled
-                ? <>The <b>first {rule.limit} day{rule.limit === 1 ? '' : 's'} of leave in a pay month</b> need the TL (with a reason) and then HR. Every further day of that month needs the <b>Super Admin</b>.</>
+                ? <>The <b>first {rule.limit} day{rule.limit === 1 ? '' : 's'} of leave in a pay month</b> need the TL (with a reason) and then HR, plus the employee’s carry-forward leave days. Every further day of that month needs the <b>Super Admin</b>.</>
                 : <>A TL may approve a leave request of <b>at most {rule.limit} day{rule.limit === 1 ? '' : 's'}</b>, and must give a reason. Longer requests are reassigned to HR / their manager.</>)
               : <>A TL may approve <b>at most {rule.limit} leave request{rule.limit === 1 ? '' : 's'} per employee per month</b>, and must give a reason. Beyond that the request is reassigned to HR / their manager.</>)
             : <>The TL rule is <b>off</b> — a TL approves like any other level (a reason is still asked for).</>}

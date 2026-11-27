@@ -197,7 +197,7 @@ router.get('/', async (req, res, next) => {
         pendingState: l.status === 'Pending' ? (pendingState.get(l.id) || 'genuine') : null,
         source: (metaOf.get(l.id) || {}).source || 'TeamLink',
         // Under the pay-month rule (utils/leaveSplit.js): who approves this row, and which part of the application it is.
-        split: (() => { const sp = (metaOf.get(l.id) || {}).split; return sp ? { kind: sp.kind, hr: sp.hr, part: sp.part, of: sp.of, limit: sp.limit, totalDays: sp.totalDays, fromDate: sp.fromDate, toDate: sp.toDate } : null; })(),
+        split: (() => { const sp = (metaOf.get(l.id) || {}).split; return sp ? { kind: sp.kind, hr: sp.hr, part: sp.part, of: sp.of, limit: sp.limit, carried: sp.carried || 0, totalDays: sp.totalDays, fromDate: sp.fromDate, toDate: sp.toDate } : null; })(),
         earlyLogout: ev && (mine || !req.user.caps.hrmsSelfOnly) ? { state: ev.state, chip: ev.chip || null, text: ev.text, date: ev.date || null } : null,
         // Days really taken from the balance (items 4/6), when the ledger has it.
         chargedDays: charged.has(l.id) ? charged.get(l.id) : null,
@@ -433,7 +433,7 @@ router.get('/:id/workflow', async (req, res, next) => {
       },
       workflow: view,
       tl,
-      split: split ? { kind: split.kind, part: split.part, of: split.of, limit: split.limit, totalDays: split.totalDays, fromDate: split.fromDate, toDate: split.toDate, months: split.months, parts: await leaveSplit.parts(split) } : null,
+      split: split ? { kind: split.kind, part: split.part, of: split.of, limit: split.limit, carried: split.carried || 0, totalDays: split.totalDays, fromDate: split.fromDate, toDate: split.toDate, months: split.months, parts: await leaveSplit.parts(split) } : null,
       employeeLeave,
       reassign: { allowed: mayReassign && reassignTargets.length > 0, targets: reassignTargets },
       earlyLogout: early,

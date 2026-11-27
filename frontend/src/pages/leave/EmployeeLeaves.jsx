@@ -40,14 +40,15 @@ export function SplitNote({ split, currentId, onOpenPart }) {
   if (!split) return null;
   const { parts = [], months = [], limit, of, totalDays } = split;
   const noHr = parts.some((p) => p.kind === 'tl' && p.hr === false);
+  const saved = Math.max(0, Number(split.carried) || 0, ...months.map((m) => Number(m.carried) || 0)); // carry-forward days added to the Team Lead's days
   return (
     <div className="lvx-split" data-testid="split-note">
       <div>
         <b>{of > 1 ? `${days(totalDays)} leave in ${of} parts` : `${days(totalDays)} leave`}</b> ({dates(split.fromDate, split.toDate)}).
-        {' '}The first {days(limit)} of leave in a pay month need the Team Lead{noHr ? '' : ' and then HR'}; every further day needs the Super Admin.
+        {' '}The first {days(limit)}{saved > 0 ? ` + ${days(saved)} carried forward` : ''} of leave in a pay month need the Team Lead{noHr ? '' : ' and then HR'}; every further day needs the Super Admin.
         {noHr && ' No HR approver is set for this department, so the Team Lead’s approval is enough for those days.'}
       </div>
-      {months.map((m) => <div key={m.key} className="lvx-muted">Pay month {m.label} ({m.rangeText}): {days(m.usedBefore)} already applied before this leave.</div>)}
+      {months.map((m) => <div key={m.key} className="lvx-muted">Pay month {m.label} ({m.rangeText}): {days(m.usedBefore)} already applied before this leave{m.carried > 0 ? `, ${days(m.carried)} carried forward` : ''}.</div>)}
       {parts.map((p) => (p.deleted
         ? <div key={p.id} className="lvx-part lvx-muted">Part {p.part} was deleted.</div>
         : (

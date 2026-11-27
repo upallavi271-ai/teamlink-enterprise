@@ -13,6 +13,7 @@
 //   G  not under the rule: a TL's own leave, a Manager's own leave, switch off, TL rule counting requests; requests raised before
 //   H  the Approve / Reject screen: every part with who approved it, the employee's other leaves, balance, totals
 //   I  what payroll charges (utils/payrollLeaveRule.js: 1 free day, approved 1 LOP, waiting 2 LOP, rejected + absent 2 LOP, sandwich)
+//   L  carry-forward leave goes to the Team Lead: the saved days are added to the month's days; days already spoken for are not given twice
 // Removes every row it made and puts the settings back. Refuses to run against dev.db / port 4010.
 // ---------------------------------------------------------------------------
 /* eslint-disable no-console, no-await-in-loop */
@@ -92,7 +93,7 @@ const JUN = { mon: '2027-05-17', tue: '2027-05-18', wed: '2027-05-19', thu: '202
 const OLD = { fri: '2026-07-10', tue: '2026-07-14' }; // long past: the "old pending" desk
 
 (async () => {
-  const keys = [LS.KEY, 'payroll.cycle'];
+  const keys = [LS.KEY, 'payroll.cycle', 'payroll.leaveCarry'];
   const before = await prisma.appSetting.findMany({ where: { key: { in: keys } } });
   const ruleBefore = await prisma.approvalLevelConfig.findUnique({ where: { workflow_level: { workflow: 'leave-tl-rule', level: 'TL' } } });
   try {
@@ -500,6 +501,68 @@ const OLD = { fri: '2026-07-10', tue: '2026-07-14' }; // long past: the "old pen
     ok(k && k.recent.later && k.recent.later.pending === 1, 'a leave already applied for a later month is shown on its own line', k && k.recent.later);
     ok(k && k.recent.count === 7 && k.count === 8 && k.requests.filter((x) => x.recent).length === 7, 'its 7 leaves are marked, the request on the screen is not among them', k && [k.recent.count, k.count]);
     ok(k && k.requests.some((x) => x.id === longAgo.id && x.recent === false), 'an older leave stays, behind "Show older leaves"');
+
+    console.log('\nL. Carry-forward leave goes to the Team Lead');
+    const prev = PC.addMonths(thisKey, -1);
+    const two = PC.addMonths(thisKey, -3); // joins here: this and the month after it are earlier than `prev`
+    const sameYear = (a, b) => a.slice(0, 4) === b.slice(0, 4);
+    const joined = PC.cycleOf(two, cycle).from;
+    const savedInto = (m) => [two, PC.addMonths(thisKey, -2), prev, thisKey].filter((x) => x < m && sameYear(x, m)).length;
+    const days = async (month, n) => { const out = []; let d = PC.cycleOf(month, cycle).from; while (out.length < n) { if ((await leaveDays.countFor(d, d)).countedDays === 1) out.push(d); d = PC.addDays(d, 1); } return out; };
+    const lastDays = async (month, n) => { const out = []; let d = PC.cycleOf(month, cycle).to; while (out.length < n) { if ((await leaveDays.countFor(d, d)).countedDays === 1) out.unshift(d); d = PC.addDays(d, -1); } return out; };
+    const joiner = async (tag) => { const w = await emp(tag); await prisma.employee.update({ where: { id: w.e.id }, data: { dateOfJoining: new Date(`${joined}T00:00:00Z`) } }); return w; };
+    const preview = async (w, from, to) => ((await call(w.t, 'GET', `/leave/split-preview?from=${from}&to=${to}`)).body || {}).split;
+    const count = (s, kind) => (s ? s.parts.filter((x) => x.kind === kind).reduce((n, x) => n + x.days, 0) : -1);
+    const P = await days(prev, 8);
+    const into = savedInto(prev);
+    ok(into >= 1, `the fixture has saved days going into ${prev}`, [into, joined]);
+    const c1 = await joiner('C1');
+    let s = await preview(c1, P[0], P[3]);
+    ok(s && count(s, 'tl') === 2 && count(s, 'sa') === 2 && s.months[0].carried === 0, 'carry-forward rule off: 2 Team Lead, the rest Super Admin (as before)', s);
+    await prisma.appSetting.create({ data: { key: 'payroll.leaveCarry', value: JSON.stringify({ effectiveFrom: '2099-01' }) } }); // on (pay uses it later)
+    await wait(3500);
+    s = await preview(c1, P[0], P[1 + into]);
+    ok(s && s.parts.length === 1 && count(s, 'tl') === 2 + into && s.months[0].carried === into, `rule on: 2 + ${into} saved days all go to the Team Lead`, s);
+    s = await preview(c1, P[0], P[2 + into]);
+    ok(s && count(s, 'tl') === 2 + into && count(s, 'sa') === 1, 'one day more than that goes to the Super Admin', s);
+    r = await applyFor(c1, P[0], P[1 + into]);
+    let own = await rowsOf(c1);
+    const meta = await LS.of(own[0].id);
+    ok(r.status === 201 && own.length === 1 && meta.kind === 'tl' && meta.carried === into && (await pendingStep(own[0].id)).level === 'TL', 'applied: one request, waiting for the Team Lead', [r.status, own.length, meta]);
+    ok(new RegExp(`2 days \\+ ${into} carried-forward day`).test(LS.explain(meta)), 'and it says why', LS.explain(meta));
+    v = (await screen(tl.t, own[0].id)).body;
+    ok(v && v.workflow.canAct === true && /carried-forward/.test((v.tl && v.tl.note) || '') && v.split.carried === into, "the Team Lead's screen: may decide, says carried-forward", v && [v.workflow.canAct, v.tl]);
+    const [a1, a2] = await both(own[0].id);
+    ok(a1.status === 200 && a2.status === 200 && (await one(own[0].id)).status === 'Approved', 'Team Lead then HR approve all of it', [a1.status, a2.status, a2.text.slice(0, 200)]);
+    s = await preview(c1, P[2 + into], P[2 + into]);
+    ok(s && count(s, 'sa') === 1, 'the next day in that month is the Super Admin\'s', s);
+    // leave still waiting in an earlier month keeps the saved day it will use
+    const c2 = await joiner('C2');
+    const Q = await days(PC.addMonths(thisKey, -2), 2);
+    r = await applyFor(c2, Q[0], Q[1]);
+    s = await preview(c2, P[0], P[3 + into]);
+    ok(r.status === 201 && s && s.months[0].carried === Math.max(0, into - 1) && count(s, 'tl') === 2 + Math.max(0, into - 1), 'two days waiting in the month before: one saved day is already spoken for', [r.status, s]);
+    // one application crossing two pay months does not use a saved day twice
+    const c3 = await joiner('C3');
+    const end = await lastDays(PC.addMonths(thisKey, -2), 3);
+    s = await preview(c3, end[0], P[2]);
+    const first = s && s.months[0];
+    const second = s && s.months[1];
+    ok(second && second.carried === Math.max(0, into - Math.max(0, 3 - 1)) && first.carried === savedInto(PC.addMonths(thisKey, -2)), 'a leave crossing two pay months: the second month gets what the first did not use', [s && s.months, into]);
+    // the running month gets everything saved before it; a month after it earns nothing ahead
+    const c4 = await joiner('C4');
+    const C = await days(thisKey, 3 + savedInto(thisKey));
+    s = await preview(c4, C[0], C[C.length - 1]);
+    ok(s && s.months[0].carried === savedInto(thisKey) && count(s, 'tl') === 2 + savedInto(thisKey) && count(s, 'sa') === 1, `the running pay month: 2 + ${savedInto(thisKey)}`, s && [s.months, s.parts]);
+    const next = PC.addMonths(thisKey, 1);
+    const N = await days(next, 6);
+    s = await preview(c4, N[0], N[5]);
+    ok(s && s.months[0].carried === (sameYear(next, thisKey) ? savedInto(thisKey) : 0), sameYear(next, thisKey) ? 'the next month gets only what is saved so far' : 'a new year starts from zero', s && s.months);
+    // an old waiting leave moves to the Team Lead whole when the saved days cover it
+    const c5 = await joiner('C5');
+    const old = await prisma.leaveRequest.create({ data: { employeeId: c5.e.id, type: TYPE, fromDate: P[0], toDate: P[1 + into], days: 2 + into, status: 'Pending', reason: 'zz old' } });
+    v = (await screen(admin.t, old.id)).body;
+    ok(v && v.canSplit && v.canSplit.parts.length === 1 && v.canSplit.parts[0].kind === 'tl', 'an old waiting leave covered by saved days is offered to the Team Lead whole', v && v.canSplit);
   } catch (e) {
     fail += 1; console.error('  FAIL the test stopped:', e.stack || e.message);
   } finally {

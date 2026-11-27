@@ -282,7 +282,7 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
               <div className={`pe-line${changedField('workingDays') ? ' changed' : ''}`}><label htmlFor="pe-wd">Working days</label><input id="pe-wd" type="number" min="1" max="31" step="0.5" disabled={!editable} value={vals.workingDays} onChange={(ev) => setDays('workingDays', ev.target.value)} /></div>
               <div className={`pe-line${changedField('daysLop') ? ' changed' : ''}`}><label htmlFor="pe-paid">Paid days</label><input id="pe-paid" type="number" min="0" step="0.5" disabled={!editable} value={Math.max(0, num(vals.workingDays) - num(vals.daysLop))} onChange={(ev) => setDays('paid', ev.target.value)} /></div>
               <div className={`pe-line${changedField('daysLop') ? ' changed' : ''}`}><label htmlFor="pe-lop">LOP days</label><input id="pe-lop" type="number" min="0" step="0.5" disabled={!editable} value={vals.daysLop} onChange={(ev) => setDays('daysLop', ev.target.value)} /></div>
-              {data.awl && (
+              {data.awl && Number(data.awl.days) > 0 && (
                 <div className="pe-line"><label htmlFor="pe-awl">Absent without leave days<small>each counts {data.awl.perDay} LOP days</small></label><input id="pe-awl" type="number" min="0" step="1" disabled={!editable} value={vals.awlDays === null ? 0 : vals.awlDays} onChange={(ev) => setDays('awl', ev.target.value)} /></div>
               )}
             </div>

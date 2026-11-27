@@ -343,7 +343,7 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
       {preview && !allOff && (
         <div className="notice amber" style={{ display: 'block', marginBottom: 10, fontSize: 12.5 }} data-testid="split-preview">
           <b>Who will approve this leave.</b>
-          {preview.months.map((m) => <div key={m.key}>Pay month {m.rangeText}: {m.usedBefore} day(s) already applied. The first {preview.limit} need the TL{preview.hrName ? ' and HR' : ''}.</div>)}
+          {preview.months.map((m) => <div key={m.key}>Pay month {m.rangeText}: {m.usedBefore} day(s) already applied. The first {preview.limit}{m.carried > 0 ? ` + ${m.carried} carried-forward day(s)` : ''} need the TL{preview.hrName ? ' and HR' : ''}.</div>)}
           {preview.parts.map((p) => {
             const lead = preview.leadName ? `${isHR ? 'the TL' : 'your TL'} (${preview.leadName})` : '';
             const hr = preview.hrName ? `HR (${preview.hrName})` : '';
@@ -739,7 +739,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
                         ? `Off: the TL decides a leave of up to ${caps.splitApproval.limit} days; a longer one goes to HR / the Super Admin.`
                         : caps.splitApproval.blockedBy
                           ? `On, but doing nothing now. ${caps.splitApproval.blockedBy}`
-                          : `The first ${caps.splitApproval.limit} days of leave in a pay month need the Team Lead and then HR (STL and Manager only see them). Every further day of that month needs the Super Admin only. A leave crossing the limit is split, and each part is approved or rejected on its own. A TL's own leave still goes to the Super Admin. The number is the TL Approval Rule limit below. Leaves already applied are not changed.`}
+                          : `The first ${caps.splitApproval.limit} days of leave in a pay month need the Team Lead and then HR (STL and Manager only see them). Every further day of that month needs the Super Admin only. Carry-forward leave days saved from the earlier pay months are added to the Team Lead's days. A leave crossing the limit is split, and each part is approved or rejected on its own. A TL's own leave still goes to the Super Admin. The number is the TL Approval Rule limit below. Leaves already applied are not changed.`}
                     </span>
                   </span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

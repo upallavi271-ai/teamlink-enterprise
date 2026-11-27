@@ -6,6 +6,8 @@
 //
 //   * The first `limit` leave days of a pay month (limit = the TL Approval Rule's number, 2)  ->  Team Lead, then HR. Both must approve.
 //   * Every further leave day of that month                                                    ->  the Super Admin only.
+//   * CARRY-FORWARD (founder 2026-11-27: "carry-forward leaves go to the Team Lead - make it a rule"): the saved leave days the pay month
+//     starts with are added to the limit, so a month's quota = limit + carried (see carriedInto below). No carry-forward rule on = + 0.
 //   "Month" = the PAY MONTH of utils/payrollCycle.js (16th to 15th when so set), the same month as the free leave day in payroll.
 //   Days already applied in that month (waiting or approved, any leave type) use up the quota first; rejected and cancelled ones do not.
 //   A half day counts 0.5. A day is within the quota only if it fits whole.
@@ -14,7 +16,7 @@
 // attendance, the sandwich rule and the payroll rules (utils/payrollLeaveRule.js) work on them unchanged: an approved row is approved leave,
 // a waiting row is waiting leave. Meta key leave.meta.<id>.split:
 //   { group: <first id>, ids: [..], kinds: ['tl'|'sa'..], part: n, of: n, kind: 'tl'|'sa', limit, totalDays, fromDate, toDate (whole
-//     application), months: [{ key, label, rangeText, usedBefore }] }
+//     application), months: [{ key, label, rangeText, usedBefore, carried }], carried (of this part's month) }
 //
 // NOT UNDER THIS RULE (the earlier routing applies unchanged): the setting is off; the TL rule is off or counts requests instead of days;
 // a TL's / STL's own leave (utils/leadLeave.js: only the Super Admin, whole); somebody with no Team Lead and no HR above them on the chain
@@ -30,6 +32,7 @@ const leaveText = require('./leaveText');
 const PC = require('./payrollCycle');
 const policy = require('./leavePolicy');
 const leadRule = require('./leadLeave');
+const LC = require('./payrollLeaveCarry'); // the unused monthly free leave day, saved until 31 Dec
 
 const KEY = 'leave.splitApproval';
 const defaults = () => ({ enabled: !String(process.env.COMPANY_KEY || '').trim() });
@@ -42,16 +45,18 @@ const day = (v) => String(v || '').slice(0, 10);
 const dmy = (iso) => { const s = day(iso); return s ? `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(0, 4)}` : ''; };
 const span = (from, to) => (to && day(to) !== day(from) ? `${dmy(from)} to ${dmy(to)}` : dmy(from));
 
-const saNote = (limit) => `Beyond the first ${plural(limit)} of leave in the pay month - only the Super Admin approves or rejects these`;
-const saVisNote = (limit) => `Not needed - leave beyond ${plural(limit)} in the pay month is decided by the Super Admin. Shown for information.`;
-const tlVisNote = (limit) => `Not needed - the first ${plural(limit)} of leave in the pay month are approved by the Team Lead and HR. Shown for information.`;
-const refusal = (split) => `These days are beyond the first ${plural(split.limit)} of leave in the pay month: only the Super Admin approves or rejects them.`;
+// "2 days", or "2 days + 3 carried-forward days"
+const quota = (limit, carried) => (Number(carried) > 0 ? `${plural(limit)} + ${r2(carried)} carried-forward day${Number(carried) === 1 ? '' : 's'}` : plural(limit));
+const saNote = (limit, carried) => `Beyond the first ${quota(limit, carried)} of leave in the pay month - only the Super Admin approves or rejects these`;
+const saVisNote = (limit, carried) => `Not needed - leave beyond ${quota(limit, carried)} in the pay month is decided by the Super Admin. Shown for information.`;
+const tlVisNote = (limit, carried) => `Not needed - the first ${quota(limit, carried)} of leave in the pay month are approved by the Team Lead and HR. Shown for information.`;
+const refusal = (split) => `These days are beyond the first ${quota(split.limit, split.carried)} of leave in the pay month: only the Super Admin approves or rejects them.`;
 // What the approver of one row is told, and what the Team Lead's screen says. hr === false: nobody holds HR on this leave's chain.
 const explain = (split) => (split.kind === 'sa'
-  ? `Beyond the first ${plural(split.limit)} of leave in this pay month: only the Super Admin approves.`
+  ? `Beyond the first ${quota(split.limit, split.carried)} of leave in this pay month: only the Super Admin approves.`
   : split.hr === false
-    ? `Within the first ${plural(split.limit)} of leave in this pay month: the Team Lead approves (no HR approver is set for this department).`
-    : `Within the first ${plural(split.limit)} of leave in this pay month: the Team Lead and then HR both approve.`);
+    ? `Within the first ${quota(split.limit, split.carried)} of leave in this pay month: the Team Lead approves (no HR approver is set for this department).`
+    : `Within the first ${quota(split.limit, split.carried)} of leave in this pay month: the Team Lead and then HR both approve.`);
 
 async function getSettings() {
   const row = await prisma.appSetting.findUnique({ where: { key: KEY } });
@@ -104,14 +109,14 @@ async function daysOnDates({ fromDate, toDate, days, halfDay = null }) {
 }
 
 // Leave days this employee has already applied (waiting or approved) in each of these pay months. -> Map(monthKey -> days)
-async function usedInMonths(employeeId, monthKeys, cycle, excludeId = null) {
+async function usedInMonths(employeeId, monthKeys, cycle, excludeId = null, statuses = USES_QUOTA) {
   const used = new Map(monthKeys.map((k) => [k, 0]));
   if (!monthKeys.length) return used;
   const ranges = monthKeys.map((k) => PC.cycleOf(k, cycle));
   const from = ranges.map((r) => r.from).sort()[0];
   const to = ranges.map((r) => r.to).sort().pop();
   const rows = await prisma.leaveRequest.findMany({
-    where: { employeeId, status: { in: USES_QUOTA }, fromDate: { lte: to }, toDate: { gte: from }, ...(excludeId ? { id: { not: excludeId } } : {}) },
+    where: { employeeId, status: { in: statuses }, fromDate: { lte: to }, toDate: { gte: from }, ...(excludeId ? { id: { not: excludeId } } : {}) },
     select: { fromDate: true, toDate: true, days: true, reason: true },
   });
   for (const r of rows) { // eslint-disable-line no-restricted-syntax
@@ -122,6 +127,32 @@ async function usedInMonths(employeeId, monthKeys, cycle, excludeId = null) {
     });
   }
   return used;
+}
+
+// CARRY-FORWARD LEAVE ON TOP OF THE FIRST DAYS (founder 2026-11-27). The saved days a pay month starts with (utils/payrollLeaveCarry.js:
+// the unused free leave day of the earlier pay months of the same year) - less what is already spoken for, so one saved day is never given
+// twice: leave still WAITING in an earlier month beyond that month's free day, and any leave applied in a month between the running one
+// and the asked one. Nothing is earned ahead: a month after the running one gets what was saved up to the running month, a later year
+// starts from zero. `ahead` = days of the SAME application in earlier months, which use saved days too.
+async function carriedInto(employee, monthKey, { cycle, settings, excludeId = null, ahead = new Map() }) {
+  if (!settings.carry || !settings.carry.effectiveFrom) return 0; // the carry-forward leave rule is not on
+  const config = await require('./payrollEngine').getPolicy(); // eslint-disable-line global-require
+  const free = Number(config.paidLeaveDaysPerMonth || 0);
+  const running = PC.monthOfDate(todayIst(), cycle).month;
+  if (monthKey.slice(0, 4) > running.slice(0, 4)) return 0;
+  const from = monthKey < running ? monthKey : running;
+  const info = (await LC.carryIn([employee], from, config, settings)).get(employee.id);
+  if (!info) return 0;
+  const earlier = info.months.map((m) => m.month);
+  const between = [];
+  for (let k = from; k < monthKey; k = PC.addMonths(k, 1)) between.push(k);
+  const waiting = await usedInMonths(employee.id, earlier, cycle, excludeId, ['Pending']);
+  const applied = await usedInMonths(employee.id, between, cycle, excludeId);
+  let claimed = 0;
+  info.months.forEach((m) => { claimed += Math.max(0, (waiting.get(m.month) || 0) - Math.max(0, free - m.used)); });
+  between.forEach((k) => { claimed += Math.max(0, (applied.get(k) || 0) - free); });
+  ahead.forEach((v, k) => { if (k < monthKey) claimed += Math.max(0, v.before + v.days - free) - Math.max(0, v.before - free); });
+  return r2(Math.max(0, info.saved - claimed));
 }
 
 // THE LAST 3 MONTHS (founder 2026-11-27: "leave history last 3 months must be seen on the approve / reject tab itself"): the running pay
@@ -160,7 +191,7 @@ async function recentMonths(rows, today = todayIst()) {
 }
 
 // How would this application be approved? -> null (not under this rule) or
-// { limit, totalDays, months: [{ key, label, rangeText, usedBefore }], parts: [{ kind: 'tl'|'sa', fromDate, toDate, days }] }
+// { limit, totalDays, months: [{ key, label, rangeText, usedBefore, carried }], parts: [{ kind: 'tl'|'sa', fromDate, toDate, days, carried }] }
 // excludeId: the application itself when it is already saved, so it is not counted as used before.
 async function plan({ employee, fromDate, toDate, days, halfDay = null, excludeId = null }) {
   if (!employee || !(Number(days) > 0)) return null;
@@ -169,14 +200,18 @@ async function plan({ employee, fromDate, toDate, days, halfDay = null, excludeI
   if (await leadRule.isLeadEmployee(employee)) return null;
   const laid = await daysOnDates({ fromDate, toDate, days, halfDay });
   if (!laid.length) return null;
-  const { cycle } = await PC.getSettings();
+  const settings = await PC.getSettings();
+  const { cycle } = settings;
   laid.forEach((x) => { x.month = PC.monthOfDate(x.date, cycle).month; });
-  const keys = [...new Set(laid.map((x) => x.month))];
+  const keys = [...new Set(laid.map((x) => x.month))].sort();
   const before = await usedInMonths(employee.id, keys, cycle, excludeId);
+  const carried = new Map();
+  const ahead = new Map(keys.map((k) => [k, { before: before.get(k) || 0, days: r2(laid.filter((x) => x.month === k).reduce((n, x) => n + x.amount, 0)) }]));
+  for (const k of keys) carried.set(k, await carriedInto(employee, k, { cycle, settings, excludeId, ahead })); // eslint-disable-line no-restricted-syntax, no-await-in-loop
   const used = new Map(before);
   laid.forEach((x) => {
     const had = used.get(x.month) || 0;
-    x.kind = had + x.amount <= s.limit + 1e-9 ? 'tl' : 'sa';
+    x.kind = had + x.amount <= s.limit + (carried.get(x.month) || 0) + 1e-9 ? 'tl' : 'sa';
     used.set(x.month, r2(had + x.amount));
   });
   const groups = [];
@@ -187,12 +222,13 @@ async function plan({ employee, fromDate, toDate, days, halfDay = null, excludeI
   return {
     limit: s.limit,
     totalDays: r2(days),
-    months: keys.map((k) => { const c = PC.cycleOf(k, cycle); return { key: k, label: c.label, rangeText: c.rangeText, usedBefore: before.get(k) || 0 }; }),
+    months: keys.map((k) => { const c = PC.cycleOf(k, cycle); return { key: k, label: c.label, rangeText: c.rangeText, usedBefore: before.get(k) || 0, carried: carried.get(k) || 0 }; }),
     parts: groups.map((g, i) => ({
       kind: g[0].kind,
       fromDate: i === 0 ? day(fromDate) : g[0].date,
       toDate: i === groups.length - 1 ? day(toDate || fromDate) : g[g.length - 1].date,
       days: r2(g.reduce((n, x) => n + x.amount, 0)),
+      carried: carried.get(g[0].month) || 0,
     })),
   };
 }
@@ -218,7 +254,7 @@ async function divide(leave, p) {
       const cur = await tx.appSetting.findUnique({ where: { key } }); // eslint-disable-line no-await-in-loop
       let old = {};
       try { old = cur ? JSON.parse(cur.value) : {}; } catch { old = {}; }
-      const value = JSON.stringify({ ...old, split: { ...shared, part: i + 1, kind: p.parts[i].kind } });
+      const value = JSON.stringify({ ...old, split: { ...shared, part: i + 1, kind: p.parts[i].kind, carried: p.parts[i].carried || 0 } });
       await tx.appSetting.upsert({ where: { key }, update: { value }, create: { key, value } }); // eslint-disable-line no-await-in-loop
     }
     return rows;
@@ -252,7 +288,7 @@ async function of(id) {
   return (m && m.split) || null;
 }
 
-const toSuperAdmin = (recordId, limit) => leadRule.sendToSuperAdmin('leave', recordId, { saNote: saNote(limit), visNote: saVisNote(limit) });
+const toSuperAdmin = (recordId, limit, carried) => leadRule.sendToSuperAdmin('leave', recordId, { saNote: saNote(limit, carried), visNote: saVisNote(limit, carried) });
 
 // The two approvers of the month's first days on a chain: the Team Lead (the STL only where there is no Team Lead step) and HR.
 function firstApprovers(steps) {
@@ -264,15 +300,15 @@ function firstApprovers(steps) {
 
 // Team Lead, then HR; everybody else on the chain only sees it. With neither on the chain (a chain laid down later for somebody who has
 // no approver below the Super Admin) the Super Admin decides.
-async function toLeadThenHr(recordId, limit) {
+async function toLeadThenHr(recordId, limit, carried) {
   const steps = await prisma.approvalStep.findMany({ where: { workflow: 'leave', recordId }, orderBy: { seq: 'asc' } });
   const keep = firstApprovers(steps);
-  if (!keep.length) return toSuperAdmin(recordId, limit);
+  if (!keep.length) return toSuperAdmin(recordId, limit, carried);
   const cur = await of(recordId); // remembered for the labels: is there an HR to approve after the Team Lead?
   if (cur) await leaveMeta.setMeta(recordId, { split: { ...cur, hr: keep.some((s) => s.level === 'HR') } });
   const ids = new Set(keep.map((s) => s.id));
   const others = steps.filter((s) => !ids.has(s.id) && ['Pending', 'Waiting'].includes(s.status));
-  if (others.length) await prisma.approvalStep.updateMany({ where: { id: { in: others.map((s) => s.id) } }, data: { status: 'Visibility', note: tlVisNote(limit) } });
+  if (others.length) await prisma.approvalStep.updateMany({ where: { id: { in: others.map((s) => s.id) } }, data: { status: 'Visibility', note: tlVisNote(limit, carried) } });
   const now = new Date();
   for (let i = 0; i < keep.length; i += 1) {
     const s = keep[i];
@@ -285,7 +321,7 @@ async function toLeadThenHr(recordId, limit) {
 }
 
 // Lay the approvers of one part on its chain (the chain has just been started).
-const shapeChain = (recordId, split) => (split.kind === 'sa' ? toSuperAdmin(recordId, split.limit) : toLeadThenHr(recordId, split.limit));
+const shapeChain = (recordId, split) => (split.kind === 'sa' ? toSuperAdmin(recordId, split.limit, split.carried) : toLeadThenHr(recordId, split.limit, split.carried));
 
 // Who decided (or is to decide) each of these requests, level by level. -> Map(id -> [{ level, label, name, status, at, direct, note }])
 async function approvalsFor(ids, { open = false } = {}) {
@@ -335,5 +371,5 @@ function noticeFor(split) {
 }
 
 module.exports = {
-  KEY, getSettings, saveSettings, status, plan, countedDates, usedInMonths, recentMonths, divide, movable, of, firstApprovers, shapeChain, approvalsFor, parts, noticeFor, explain, refusal,
+  KEY, getSettings, saveSettings, status, plan, countedDates, usedInMonths, recentMonths, carriedInto, divide, movable, of, firstApprovers, shapeChain, approvalsFor, parts, noticeFor, explain, refusal,
 };
