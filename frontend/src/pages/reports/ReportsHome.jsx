@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ListPageHeader from '../../components/ui/ListPageHeader.jsx';
 import { useReportCatalog } from './ReportBits.jsx';
@@ -136,8 +137,41 @@ function allowed(card, cat) {
 
 // embedded: drawn under the Reports & Analytics overview (2026-10-08) — the
 // overview carries the page title and the scope, so they are not repeated.
+// A CLICK ON A CARD THAT HAS JUST MOVED IS NOT TRUSTED (2026-11-27): if something above a card moves it (a banner, a late chart), the card under the pointer
+// can change between aiming and clicking. The browser reports every such jump (layout-shift, with the elements that moved); a card that itself moved
+// within 0.7 s of the click asks for the click again instead of opening a report the person did not aim at. Movement elsewhere on the page is ignored.
+function useCardJumps() {
+  const shifts = useRef([]);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('PerformanceObserver' in window)) return undefined;
+    let po = null;
+    try {
+      po = new PerformanceObserver((list) => {
+        const now = performance.now();
+        list.getEntries().forEach((e) => {
+          if (e.hadRecentInput) return;
+          (e.sources || []).forEach((s) => { if (s.node) shifts.current.push({ t: now, node: s.node }); });
+        });
+        shifts.current = shifts.current.filter((x) => now - x.t < 1500).slice(-60);
+      });
+      po.observe({ type: 'layout-shift', buffered: false });
+    } catch { po = null; }
+    return () => { if (po) po.disconnect(); };
+  }, []);
+  return (el) => {
+    const now = performance.now();
+    return !!el && shifts.current.some((x) => now - x.t < 700 && x.node && (x.node === el || (x.node.contains && x.node.contains(el)) || el.contains(x.node)));
+  };
+}
+
 export default function ReportsHome({ tabs = [], onOpen, embedded = false }) {
   const cat = useReportCatalog();
+  const justMoved = useCardJumps();
+  const [moved, setMoved] = useState('');
+  const open = (c, el) => {
+    if (justMoved(el)) { setMoved(c.id); setTimeout(() => setMoved((m) => (m === c.id ? '' : m)), 2500); return; }
+    onOpen(c.views[0][0], c.id);
+  };
   const known = new Set(REPORT_GROUPS.flatMap((g) => g.cards.flatMap((c) => (c.views || []).map(([id]) => id))));
   const extra = tabs.filter(([id]) => !known.has(id)).map(([id, label]) => ({ id, icon: '📊', title: label, answers: '', views: [[id, label]] }));
   const groups = REPORT_GROUPS.map((g) => ({
@@ -169,12 +203,13 @@ export default function ReportsHome({ tabs = [], onOpen, embedded = false }) {
                     {c.id === 'revenue' && <span className="rphome-lock">Only Super Admin, Admin and Accounts see this</span>}
                     {c.link && <span className="rphome-lock">Opens in Accounts › Reports ↗</span>}
                     {c.views && c.views.length > 1 && <span className="rphome-views">{c.views.map(([, l]) => l).join(' · ')}</span>}
+                    {moved === c.id && <span className="rphome-lock" role="status">The page moved as you clicked - click {c.title} again.</span>}
                   </span>
                 </>
               );
               return c.link
                 ? <Link key={c.id} className="rphome-card" to={c.link}>{body}</Link>
-                : <button key={c.id} type="button" className="rphome-card" onClick={() => onOpen(c.views[0][0], c.id)}>{body}</button>;
+                : <button key={c.id} type="button" className="rphome-card" data-card={c.id} onClick={(e) => open(c, e.currentTarget)}>{body}</button>;
             })}
           </div>
         </section>

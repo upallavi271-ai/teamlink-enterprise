@@ -145,7 +145,8 @@
 .rv4 .rv4-ins-val{font-size:13px;font-weight:700;color:var(--ink);margin-top:2px;overflow-wrap:anywhere}
 
 /* --- all reports (the existing report cards, below the overview) ----------- */
-.rv4 .rv4-all{margin-top:8px;scroll-margin-top:70px}
+.rv4 .rv4-all{margin-top:8px;margin-bottom:18px;scroll-margin-top:70px}
+.rv4 .rv4-over-head{margin-top:4px;padding-top:14px;border-top:1px solid var(--line)}
 .rv4 .rv4-all-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:6px 0 4px}
 .rv4 .rv4-all-head h2{font-family:var(--font-ui);font-size:17px;font-weight:800;margin:0;color:var(--ink)}
 .rv4 .rv4-all-head span{font-size:12.5px;color:var(--ink-faint)}
