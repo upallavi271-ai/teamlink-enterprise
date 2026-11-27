@@ -121,8 +121,9 @@ async function endDateFor(employee, assignment, { live = false } = {}) {
 // ---- END THE SEAT(S) OF ONE PERSON -----------------------------------------
 // Ends every open tenure of this employee. Returns [{ code, fromDate, toDate, source }].
 // `onlyIfLeft` (default) does nothing unless the person's status is a leaving one.
+// `startedBy` (YYYY-MM-DD): end only the tenures that began on or before that day.
 async function releaseSeatsOf(employeeId, {
-  live = false, onlyIfLeft = true, date = null, source = null, reason = 'Exited', userId = null, actorName = null,
+  live = false, onlyIfLeft = true, date = null, source = null, reason = 'Exited', userId = null, actorName = null, startedBy = null,
 } = {}) {
   if (!employeeId) return [];
   const employee = await prisma.employee.findUnique({
@@ -137,6 +138,7 @@ async function releaseSeatsOf(employeeId, {
   });
   const out = [];
   for (const a of open) {
+    if (startedBy && a.fromDate > startedBy) continue;
     // eslint-disable-next-line no-await-in-loop
     const end = date ? { date: date < a.fromDate ? a.fromDate : date, source: source || 'chosen date' } : await endDateFor(employee, a, { live });
     const note = `${reason} - now ${employee.employmentStatus}. Seat freed ${end.date}, from ${end.source}.${a.note ? ` ${a.note}` : ''}`.slice(0, 500);
@@ -197,8 +199,11 @@ async function sweepDueExits({ backlog = sweepsBacklog() } = {}) {
     // eslint-disable-next-line no-await-in-loop
     const lwd = await lastWorkingDayOf(id);
     if (lwd && lwd.date < t) {
+      // Only the tenures that were already running on the last working day. A seat given AFTER that
+      // day was given on purpose to somebody still working (founder 2026-11-27: a team lead still
+      // at work after the last day on file) - the sweep leaves it alone.
       // eslint-disable-next-line no-await-in-loop
-      freed.push(...(await releaseSeatsOf(id, { onlyIfLeft: false, date: lwd.date, source: lwd.source, reason: 'Notice ended' })).map((r) => ({ ...r, employeeId: id })));
+      freed.push(...(await releaseSeatsOf(id, { onlyIfLeft: false, date: lwd.date, source: lwd.source, reason: 'Notice ended', startedBy: lwd.date })).map((r) => ({ ...r, employeeId: id })));
     }
   }
   return freed;
