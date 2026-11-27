@@ -254,6 +254,7 @@ function readSheet(ws, spec) {
     if (exampleAt && /^\s*example/i.test(String(rawText(row.getCell(exampleAt).value) || ''))) continue;
     const data = {};
     const rowProblems = [];
+    const ignored = []; // lenient sheets: optional cells that could not be read
     let anyValue = false;
 
     mapped.forEach(({ col, at }) => {
@@ -264,7 +265,10 @@ function readSheet(ws, spec) {
       // A label column (the HR Policy "Setting") names the row; on its own it
       // does not make the row one with data in it.
       if (present && !col.label) anyValue = true;
-      if (got.error) rowProblems.push({ row: n, column: col.h, message: got.error });
+      if (got.error && spec.lenient && !col.req) {
+        ignored.push(`${col.h} left blank: ${got.error}`);
+        data[col.f] = null;
+      } else if (got.error) rowProblems.push({ row: n, column: col.h, message: got.error });
       else data[col.f] = got.value;
     });
 
@@ -273,7 +277,7 @@ function readSheet(ws, spec) {
     // Only a row with something in it is held to the required-column rule.
     if (!anyValue) continue;
     rowProblems.forEach((p) => problems.push(p));
-    if (!rowProblems.length) rows.push({ row: n, data });
+    if (!rowProblems.length) rows.push({ row: n, data, ignored });
   }
 
   return { rows, problems };

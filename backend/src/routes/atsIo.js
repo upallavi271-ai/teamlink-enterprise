@@ -986,6 +986,7 @@ const ALIASES = {
   'Requirement Code': ['reqcode', 'reqid', 'requirementid', 'jobcode', 'jobid', 'req', 'requirementno', 'reqno'],
   'Candidate Email or Phone': ['email', 'emailid', 'phone', 'mobile', 'mobileno', 'mobilenumber', 'phonenumber', 'candidateemail', 'candidatephone', 'candidatemobile', 'contact', 'contactnumber'],
   'Full Name': ['name', 'candidatename', 'candidate', 'fullname'],
+  'Candidate Name': ['name', 'candidate', 'fullname', 'nameofcandidate', 'nameofthecandidate', 'applicantname'],
   'Requirement Title': ['title', 'requirementtitle', 'jobrole', 'position', 'designation', 'role', 'jobtitle', 'post'],
   Email: ['emailid', 'mail', 'emailaddress', 'candidateemail'],
   Phone: ['mobile', 'mobileno', 'mobilenumber', 'phonenumber', 'contactnumber', 'contactno', 'candidatephone'],
@@ -1076,7 +1077,7 @@ function autoMap(headerCells, spec, override) {
     if (i >= 0) claim(col, i);
   });
   spec.columns.forEach((col) => {
-    if (!open(col)) return;
+    if (!open(col) || col.exact) return;
     const i = cells.findIndex((c, idx) => !used.has(idx) && c.kb && c.kb === hkeyBare(col.h));
     if (i >= 0) claim(col, i);
   });
@@ -1701,12 +1702,12 @@ async function runImport(req, kindId, prepared, { dry, updateExisting = false, d
     row: p.row === 1 ? prepared.headerRow : prepared.rowOf(p.row), action: 'error', column: p.column, message: p.message,
   }));
   const seen = new Set();
-  for (const { row, data } of rows) {
+  for (const { row, data, ignored } of rows) {
     // A column the file does not have reads as BLANK, exactly as an empty
     // cell on the full template does — the handlers test for null.
     spec.columns.forEach((col) => { if (data[col.f] === undefined) data[col.f] = null; });
     const fileRow = prepared.rowOf(row);
-    const notes = [];
+    const notes = [...(ignored || [])];
     const note = (m) => notes.push(m);
     // the preview's date column: the day this row's person is dated, or what is wrong with it
     const camBits = () => (data._cam ? { cameOn: data._cam.day || null, cameOnFlag: data._cam.flag } : {});
