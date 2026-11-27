@@ -433,16 +433,52 @@ async function bdeHistory(viewerUser, uid, q = {}) {
     person.bdes = us;
   }
   await H.ensureIndexes();
-  // requirements they handled (named BDE) and the clients they own (Owner BDE by name, or named BDE on a requirement) - inside the viewer's scope
-  const mineReqs = await prisma.requirement.findMany({ where: { AND: [{ bdeId: uid }, SC.requirementWhere(viewerUser)] }, select: H.REQ_SELECT, orderBy: { createdAt: 'desc' } });
-  const ownerHits = (await prisma.client.findMany({ where: { AND: [{ bdeOwner: { contains: person.name } }, SC.clientWhere(viewerUser)] }, select: CLIENT_SEL })).filter((c) => ownsByName(c.bdeOwner, person.name));
-  const ownerIds = new Set(ownerHits.map((c) => c.id));
+  // WHOSE WORK IS IT (founder 2026-11-27: "sailaja, neeraja, vasavi valla daggara chaala clients vunnaru, chaala reqs vunnai, chaala joinings icharu but why
+  // it was showing like this" - every tile was 0). Most client jobs name no BDE on the job itself (Requirement.bdeId): the BDE is named on the CLIENT
+  // (Owner BDE / second BDE, by name - utils/clientBdes.js). Before, only bdeId counted. Now a BDE's work is:
+  //   * the jobs that name them (bdeId), and
+  //   * the jobs of the clients they own (Owner BDE or second BDE) that name no other BDE, and
+  //   * a BDE who LEFT: the jobs of the clients handed over from them ("Client handed over (the BDE left)"), opened before the handover.
+  // A BDE TL's page adds up their BDEs' work with their own. Inside the viewer's scope, as before.
+  const members = [{ id: uid, name: person.name }, ...((person.bdes || []).filter((b) => b.id !== uid))];
+  const memberIds = new Set(members.map((m) => m.id));
+  const nameWhere = (field) => ({ OR: members.map((m) => ({ [field]: { contains: m.name } })) });
+  const ownerOf = new Map(); // clientId -> how they hold it
+  const label = (m, how) => (members.length > 1 ? `${m.name} · ${how}` : how);
+  const ownedRows = await prisma.client.findMany({ where: { AND: [{ OR: [nameWhere('bdeOwner'), nameWhere('secondaryBde')] }, SC.clientWhere(viewerUser)] }, select: { ...CLIENT_SEL, secondaryBde: true } });
+  ownedRows.forEach((c) => {
+    const own = members.find((m) => ownsByName(c.bdeOwner, m.name));
+    const sec = !own && members.find((m) => ownsByName(c.secondaryBde, m.name));
+    if (own) ownerOf.set(c.id, { how: label(own, 'Owner BDE'), until: null });
+    else if (sec) ownerOf.set(c.id, { how: label(sec, 'Second BDE'), until: null });
+  });
+  const ownerHits = ownedRows.filter((c) => ownerOf.has(c.id));
+  // a BDE who left: the clients handed over from them, and the day of the handover
+  const handed = await prisma.auditLog.findMany({ where: { entity: 'Client', action: 'Client handed over (the BDE left)', OR: members.map((m) => ({ fromValue: m.name })) }, select: { entityId: true, fromValue: true, toValue: true, createdAt: true } }).catch(() => []);
+  const handedOf = new Map();
+  handed.forEach((h) => { const was = handedOf.get(h.entityId); if (!was || h.createdAt > was.at) handedOf.set(h.entityId, { at: h.createdAt, from: h.fromValue, to: h.toValue }); });
+  const handedIds = [...handedOf.keys()].filter((id) => !ownerOf.has(id));
+  const handedRows = handedIds.length ? await prisma.client.findMany({ where: { AND: [{ id: { in: handedIds } }, SC.clientWhere(viewerUser)] }, select: CLIENT_SEL }) : [];
+  handedRows.forEach((c) => {
+    const h = handedOf.get(c.id); const m = members.find((x) => x.name === h.from) || members[0];
+    ownerOf.set(c.id, { how: label(m, `Owner BDE until ${istDay(h.at)} (handed to ${h.to})`), until: h.at });
+  });
+  const ownerIds = new Set([...ownerHits, ...handedRows].map((c) => c.id));
+  const byBdeId = await prisma.requirement.findMany({ where: { AND: [{ bdeId: { in: [...memberIds] } }, SC.requirementWhere(viewerUser)] }, select: H.REQ_SELECT, orderBy: { createdAt: 'desc' } });
+  const clientReqs = ownerIds.size ? await prisma.requirement.findMany({ where: { AND: [{ clientId: { in: [...ownerIds] } }, SC.requirementWhere(viewerUser)] }, select: H.REQ_SELECT, orderBy: { createdAt: 'desc' } }) : [];
+  const theirs = (r) => {
+    if (r.bdeId) return memberIds.has(r.bdeId); // the job names its BDE: theirs only if it names them
+    const o = ownerOf.get(r.clientId);
+    return !!o && (!o.until || new Date(r.createdAt) <= new Date(o.until));
+  };
+  const seen = new Set();
+  const mineReqs = [...byBdeId, ...clientReqs.filter(theirs)].filter((r) => (seen.has(r.id) ? false : seen.add(r.id))).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const viaReq = [...new Set(mineReqs.map((r) => r.clientId).filter((id) => id && !ownerIds.has(id)))];
   const reqClients = viaReq.length ? await prisma.client.findMany({ where: { AND: [{ id: { in: viaReq } }, SC.clientWhere(viewerUser)] }, select: CLIENT_SEL }) : [];
-  const clientsAll = [...ownerHits, ...reqClients];
+  const clientsAll = [...ownerHits, ...handedRows, ...reqClients];
   // the owned clients' other requirements (another BDE named on them) count on the client row, not in this person's funnel
   const mineIds = new Set(mineReqs.map((r) => r.id));
-  const ownedReqs = ownerIds.size ? (await prisma.requirement.findMany({ where: { AND: [{ clientId: { in: [...ownerIds] } }, SC.requirementWhere(viewerUser)] }, select: H.REQ_SELECT })).filter((r) => !mineIds.has(r.id)) : [];
+  const ownedReqs = clientReqs.filter((r) => !mineIds.has(r.id));
   const allReqs = [...mineReqs, ...ownedReqs];
   const { recs: allRecs, reqById } = allReqs.length ? await H.loadRecords(viewerUser, allReqs, { fresh: false }) : { recs: [], reqById: new Map() };
   allReqs.forEach((r) => { if (!reqById.has(r.id)) reqById.set(r.id, r); });
@@ -488,7 +524,7 @@ async function bdeHistory(viewerUser, uid, q = {}) {
     const crecs = allNarrow.filter((r) => (reqById.get(r.requirementId) || {}).clientId === c.id);
     const t = totalsOf(crecs, period);
     return {
-      id: c.id, name: c.name, code: c.clientCode || null, owner: ownerIds.has(c.id) ? 'Owner BDE' : 'BDE on a requirement', status: c.status || null,
+      id: c.id, name: c.name, code: c.clientCode || null, owner: (ownerOf.get(c.id) || {}).how || 'BDE on a requirement', status: c.status || null,
       agreementStatus: blind ? undefined : c.agreementStatus, signedDay: blind ? undefined : signedDayOf(c),
       requirements: rqs.length, open: rqs.filter((r) => !['CLOSED', 'DRAFT'].includes(r.status)).length, shared: t.shared, joined: t.joined, dropped: t.dropped,
     };
