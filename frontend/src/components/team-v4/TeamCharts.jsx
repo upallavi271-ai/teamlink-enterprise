@@ -32,7 +32,8 @@ function niceMax(v) {
 
 //   labels  ['06 Oct', …]       one per x position
 //   series  [{ key, label, color, values: [n | null, …] }]
-export function LineChart({ labels = [], series = [], height = 210, empty }) {
+// onPick(index): a click on the chart opens what is behind that day (founder 2026-11-27: "ikkada click chesina kuda data raavali")
+export function LineChart({ labels = [], series = [], height = 210, empty, onPick }) {
   const [ref, width] = useBoxWidth();
   const [hover, setHover] = useState(null);
   const all = series.flatMap((s) => s.values.filter((v) => v !== null && v !== undefined));
@@ -70,7 +71,9 @@ export function LineChart({ labels = [], series = [], height = 210, empty }) {
   return (
     <div className="tv4-line" ref={ref}>
       <svg width={width} height={height} role="img" aria-label={series.map((s) => s.label).join(', ')}
-        onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        onMouseMove={onMove} onMouseLeave={() => setHover(null)}
+        onClick={onPick ? (e) => { onMove(e); const r = e.currentTarget.getBoundingClientRect(); const i = n <= 1 ? 0 : Math.round((((e.clientX - r.left) - padL) / iw) * (n - 1)); if (i >= 0 && i < n) onPick(i); } : undefined}
+        style={onPick ? { cursor: 'pointer' } : undefined}>
         <defs>
           <linearGradient id="tv4-area" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor={first ? first.color : '#2F6FE4'} stopOpacity="0.16" />
@@ -98,7 +101,7 @@ export function LineChart({ labels = [], series = [], height = 210, empty }) {
       </svg>
       {hover !== null && (
         <div className="tv4-tip" style={{ left: Math.min(width - 150, Math.max(0, x(hover) + 10)) }}>
-          <b>{labels[hover]}</b>
+          <b>{labels[hover]}</b>{onPick && <span className="tv4-tip-hint">Click to see who</span>}
           {series.map((s) => (
             <span key={s.key}><i style={{ background: s.color }} />{s.label}<em>{s.values[hover] === null || s.values[hover] === undefined ? '—' : s.values[hover]}</em></span>
           ))}
@@ -110,7 +113,7 @@ export function LineChart({ labels = [], series = [], height = 210, empty }) {
 }
 
 //   segments [{ key, label, value, color }]
-export function Donut({ segments = [], size = 132, thickness = 18, center, centerLabel }) {
+export function Donut({ segments = [], size = 132, thickness = 18, center, centerLabel, onPick }) {
   const total = segments.reduce((n, s) => n + (Number(s.value) || 0), 0);
   const r = (size - thickness) / 2;
   const c = 2 * Math.PI * r;
@@ -122,7 +125,8 @@ export function Donut({ segments = [], size = 132, thickness = 18, center, cente
         const len = ((Number(s.value) || 0) / total) * c;
         const el = (
           <circle key={s.key} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={s.color} strokeWidth={thickness}
-            strokeDasharray={`${len} ${c - len}`} strokeDashoffset={-off} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
+            strokeDasharray={`${len} ${c - len}`} strokeDashoffset={-off} transform={`rotate(-90 ${size / 2} ${size / 2})`}
+            onClick={onPick ? () => onPick(s.key) : undefined} style={onPick ? { cursor: 'pointer' } : undefined}><title>{`${s.label}: ${s.value}`}</title></circle>
         );
         off += len;
         return el;

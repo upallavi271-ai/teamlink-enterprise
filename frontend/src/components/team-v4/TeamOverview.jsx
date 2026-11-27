@@ -6,6 +6,7 @@ import {
 } from '../atskit/AtsKit.jsx';
 import { metricLink } from '../../pages/ats/Recruiter360.jsx';
 import { LineChart, Donut } from './TeamCharts.jsx';
+import Modal from '../Modal.jsx';
 import {
   monthOf, prevMonth, periodRange, daysBetween, shortDay, addDays, roleText, joinRate, lcName, timeAgo, parseDay,
 } from './teamData.js';
@@ -130,6 +131,81 @@ function useWeekInterviews(enabled, today, reloadKey) {
   return days;
 }
 
+// ---------------------------------------------------------------------------
+// WHAT IS BEHIND A NUMBER, RIGHT HERE (founder 2026-11-27: "ikkada click chesina kuda data raavali"): a chart point, a legend item, the
+// "Joined this month" card -> the people from the daily report (candidate, job, who did it, when); the donut, "Active", "On leave" -> the team
+// members. A window on this page; a name opens the person (their 360) or the candidate.
+// ---------------------------------------------------------------------------
+const WHAT_WORD = { interviews: 'Interviews scheduled', offers: 'Offers', joined: 'Joined' };
+function DayDrill({ title, days, metrics, onClose, onPerson }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const out = [];
+      for (const d of days.slice(0, 62)) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const r = await api.get('/ats-daily/day', { params: { day: d } });
+          out.push(...((r.data && r.data.rows) || []).filter((x) => metrics.includes(x.metric)).map((x) => ({ ...x, day: d })));
+        } catch { if (alive) setErr(true); }
+      }
+      if (alive) setRows(out);
+    })();
+    return () => { alive = false; };
+  }, [days.join(','), metrics.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <Modal title={title} size="wide" onClose={onClose} note={rows ? `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}` : null}>
+      {!rows && <div className="ak-empty">Loading…</div>}
+      {rows && !rows.length && <div className="ak-empty">{err ? 'The daily report could not be read for every day.' : 'Nothing recorded for this.'}</div>}
+      {rows && rows.length > 0 && (
+        <div className="tbl-wrap">
+          <table className="ak-table">
+            <thead><tr><th>Day</th><th>What</th><th>Candidate</th><th>Requirement</th><th>By</th></tr></thead>
+            <tbody>
+              {rows.map((a, i) => (
+                // eslint-disable-next-line react/no-array-index-key
+                <tr key={`${a.day}-${i}`}>
+                  <td>{shortDay(a.day)}{a.timeKnown && a.at ? ` · ${new Date(a.at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}` : ''}</td>
+                  <td>{WHAT_WORD[a.metric] || a.what}</td>
+                  <td>{a.candidateId ? <Link to={`/candidates/${a.candidateId}`}>{a.candidate || 'Open'}</Link> : (a.candidate || '—')}</td>
+                  <td>{a.job || '—'}</td>
+                  <td>{a.personId && onPerson ? <button type="button" className="tv4-link" onClick={() => onPerson(a.personId)}>{a.person}</button> : (a.person || '—')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Modal>
+  );
+}
+function PeopleDrill({ title, list, onClose, onPerson }) {
+  return (
+    <Modal title={title} onClose={onClose} note={`${list.length} ${list.length === 1 ? 'person' : 'people'}`}>
+      {!list.length && <div className="ak-empty">Nobody here.</div>}
+      {list.length > 0 && (
+        <div className="tbl-wrap">
+          <table className="ak-table">
+            <thead><tr><th>Name</th><th>Role</th><th>Department</th><th>Team lead</th></tr></thead>
+            <tbody>
+              {[...list].sort((a, b) => String(a.name).localeCompare(String(b.name))).map((r) => (
+                <tr key={r.id} className="ak-row-click" onClick={() => onPerson(r.id)}>
+                  <td><button type="button" className="tv4-link" onClick={(e) => { e.stopPropagation(); onPerson(r.id); }}>{r.name}</button></td>
+                  <td>{roleText ? roleText(r) : r.roleGroup}</td>
+                  <td>{r.department || r.atsDepartment || '—'}</td>
+                  <td>{r.tlName || r.tl || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export default function TeamOverview({
   rows = [], loading, selfMode, isAdmin, period, today, user, onOpen, goView,
   canAdd, canReports, canLeave, reportTo, dailyTo, reloadKey = 0, bdeTl = false,
@@ -151,6 +227,14 @@ export default function TeamOverview({
 
   // On leave today: the leave list matched to the people on this team (by name —
   // the leave list carries the employee's name, not their login).
+  const [drill, setDrill] = useState(null); // a chart point / legend / "Joined this month": the people behind it
+  const [peopleDrill, setPeopleDrill] = useState(null); // the donut / "Active" / "On leave": the team members
+  const drills = (
+    <>
+      {drill && <DayDrill {...drill} onClose={() => setDrill(null)} onPerson={onOpen} />}
+      {peopleDrill && <PeopleDrill {...peopleDrill} onClose={() => setPeopleDrill(null)} onPerson={(id) => { setPeopleDrill(null); onOpen(id); }} />}
+    </>
+  );
   const onLeave = useMemo(() => {
     if (!leave.data || !Array.isArray(leave.data.employees)) return null;
     const names = new Set(leave.data.employees.map((e) => lcName(e.name)));
@@ -213,6 +297,7 @@ export default function TeamOverview({
     { key: 'oth', label: 'Others', value: others.length, color: C.slate },
   ].filter((s) => s.value > 0 || s.key !== 'oth').filter((s) => !bdeTl || !['rec', 'tl'].includes(s.key));
   const pct = (n, of) => (of ? `${Math.round((n / of) * 100)}%` : '—');
+  const segList = (k) => ({ rec: recruiters, tl: tls, bde: bdes, oth: others }[k] || []);
 
   // --- calendar -----------------------------------------------------------------------
   const calPick = calDay || (week && (week.find((d) => d.total > 0) || week[0]) ? (week.find((d) => d.total > 0) || week[0]).date : null);
@@ -240,11 +325,17 @@ export default function TeamOverview({
       className="tv4-chart-panel"
     >
       <div className="tv4-legend">
-        {series.map((s) => <span key={s.key}><i style={{ background: s.color }} />{s.label} <b>{fmtNum(periodTotal(s.key))}</b></span>)}
+        {series.map((s) => (
+          <button key={s.key} type="button" className="tv4-legend-btn" title={`Who: ${s.label} in this period`}
+            onClick={() => setDrill({ title: `${s.label} · ${shortDay(range.from)} – ${shortDay(range.to)}`, days: periodDays.filter((d) => d <= today && daily.byDay.get(d) && Number(daily.byDay.get(d)[s.key]) > 0), metrics: [s.key] })}>
+            <i style={{ background: s.color }} />{s.label} <b>{fmtNum(periodTotal(s.key))}</b>
+          </button>
+        ))}
       </div>
       {daily.loading ? <div className="ak-empty">Loading…</div>
         : daily.error ? <div className="ak-empty">The daily report could not be loaded.</div>
-          : <LineChart labels={periodDays.map(shortDay)} series={series} empty="No interviews, offers or joinings recorded in this period." />}
+          : <LineChart labels={periodDays.map(shortDay)} series={series} empty="No interviews, offers or joinings recorded in this period."
+            onPick={(i) => { const d = periodDays[i]; if (d && d <= today) setDrill({ title: `${shortDay(d)}: interviews, offers and joinings`, days: [d], metrics: ['interviews', 'offers', 'joined'] }); }} />}
     </Panel>
   );
 
@@ -338,6 +429,7 @@ export default function TeamOverview({
             <Panel title="Quick Actions"><QuickActions items={quick} /></Panel>
           </div>
         </AtsGrid>
+        {drills}
       </div>
     );
   }
@@ -357,14 +449,17 @@ export default function TeamOverview({
         {!bdeTl && <KpiTile icon="team" tone="teal" label="Team leads" value={tls.length} loading={loading}
           sub={`${pct(tls.length, active.length)} of active`} onClick={tls.length ? () => goView('people', { role: 'TL' }) : undefined} />}
         <KpiTile icon="check" tone="green" label="Active" value={active.length} loading={loading}
-          sub={bdes.length ? `${fmtNum(bdes.length)} client manager${bdes.length === 1 ? '' : 's'}` : 'working now'} />
+          sub={bdes.length ? `${fmtNum(bdes.length)} client manager${bdes.length === 1 ? '' : 's'}` : 'working now'}
+          onClick={active.length ? () => setPeopleDrill({ title: 'Active team members', list: active }) : undefined} />
         <KpiTile icon="leave" tone="amber" label="On leave" value={onLeave ? onLeave.size : null}
           loading={!!canLeave && !leave.data && !leave.error}
           sub={onLeave ? 'today' : 'not in your access'}
-          title={onLeave ? 'Approved leave today (HRMS), matched to this team by name' : 'Leave needs the HRMS leave right'} />
+          title={onLeave ? 'Approved leave today (HRMS), matched to this team by name' : 'Leave needs the HRMS leave right'}
+          onClick={onLeave && onLeave.size ? () => setPeopleDrill({ title: 'On leave today', list: active.filter((r) => onLeave.has(r.id)) }) : undefined} />
         <KpiTile icon="handshake" tone="pink" label="Joined this month" value={joinedNow} loading={daily.loading}
           delta={joinedDelta} deltaLabel="vs last month" sub="candidates"
-          title="Candidates who joined this month (daily report), against the same days of last month" />
+          title="Candidates who joined this month (daily report), against the same days of last month"
+          onClick={joinedNow ? () => setDrill({ title: `Joined this month (${today.slice(0, 7)})`, days: [...daily.byDay.keys()].filter((d) => d.slice(0, 7) === today.slice(0, 7) && d <= today && Number(daily.byDay.get(d).joined) > 0).sort(), metrics: ['joined'] }) : undefined} />
       </KpiRow>
 
       <AtsGrid className="tv4-grid">
@@ -373,12 +468,15 @@ export default function TeamOverview({
         <div className="ak-span-3 tv4-cell">
           <Panel title="Team Distribution" sub="Active people by role">
             <div className="tv4-dist">
-              <Donut segments={seg} center={fmtNum(active.length)} centerLabel="Active" />
+              <Donut segments={seg} center={fmtNum(active.length)} centerLabel="Active" onPick={(k) => setPeopleDrill({ title: (seg.find((s) => s.key === k) || {}).label || 'People', list: segList(k) })} />
               <ul className="tv4-dist-legend">
                 {seg.map((s) => (
-                  <li key={s.key}><i style={{ background: s.color }} /><span>{s.label}</span><b>{fmtNum(s.value)}</b><em>{pct(s.value, active.length)}</em></li>
+                  <li key={s.key} className="tv4-dist-click" role="button" tabIndex={0} title={`See the ${s.label.toLowerCase()}`}
+                    onClick={() => setPeopleDrill({ title: s.label, list: segList(s.key) })} onKeyDown={(e) => { if (e.key === 'Enter') setPeopleDrill({ title: s.label, list: segList(s.key) }); }}>
+                    <i style={{ background: s.color }} /><span>{s.label}</span><b>{fmtNum(s.value)}</b><em>{pct(s.value, active.length)}</em>
+                  </li>
                 ))}
-                <li className="tv4-dist-leave">
+                <li className={`tv4-dist-leave${onLeave && onLeave.size ? ' tv4-dist-click' : ''}`} onClick={onLeave && onLeave.size ? () => setPeopleDrill({ title: 'On leave today', list: active.filter((r) => onLeave.has(r.id)) }) : undefined}>
                   <i style={{ background: C.amber }} /><span>On leave today</span>
                   <b>{onLeave ? fmtNum(onLeave.size) : '—'}</b><em>{onLeave ? pct(onLeave.size, active.length) : ''}</em>
                 </li>
@@ -516,6 +614,7 @@ export default function TeamOverview({
           </Panel>
         </div>
       </AtsGrid>
+      {drills}
     </div>
   );
 }
