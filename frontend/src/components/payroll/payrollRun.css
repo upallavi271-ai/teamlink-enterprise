@@ -26,6 +26,41 @@
 @media (max-width: 520px) { .prb-grid4 { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .prb-detail .prb-kv { grid-template-columns: 1fr; } .prb-tot { margin-left: 0; } }
 
+/* THE SALARY BREAKUP IN THE DETAILS WINDOW (founder 2026-11-27) */
+.psb-who { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12.5px; color: var(--ink-soft); margin-bottom: 10px; }
+.psb-back { font-size: 12.5px; background: #fdeccd; color: #8a5a00; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+.psb { font-size: 13px; }
+.psb h4 { margin: 16px 0 6px; font-size: 13.5px; }
+.psb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.psb-tile { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; display: flex; flex-direction: column; gap: 2px; }
+.psb-tile span { font-size: 11.5px; color: var(--ink-soft); }
+.psb-tile b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.psb-tile small { font-size: 11px; color: var(--ink-soft); line-height: 1.35; }
+.psb-tile.strong { background: #e2f3e8; border-color: #9fd3b4; }
+.psb-tile.strong b { color: #14562f; font-size: 19px; }
+.psb-days { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.psb-days > span { border: 1px solid var(--line-soft); border-radius: 8px; padding: 5px 10px; }
+.psb-days > span > b { font-size: 15px; margin-right: 3px; }
+.psb-days i { font-style: normal; color: var(--ink-soft); font-weight: 700; }
+.psb-days > span.psb-paid { background: #e2f3e8; border-color: #9fd3b4; }
+.psb-note { font-size: 12px; color: var(--ink-soft); margin-top: 5px; line-height: 1.5; }
+.psb-scroll { overflow-x: auto; }
+.psb-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.psb-table th, .psb-table td { padding: 6px 9px; border-bottom: 1px solid var(--line-soft); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.psb-table th { font-size: 11.5px; color: var(--ink-soft); text-transform: none; letter-spacing: 0; white-space: normal; }
+.psb-table th:first-child, .psb-table td:first-child { text-align: left; white-space: normal; }
+.psb-table.psb-ded th:nth-child(2), .psb-table.psb-ded td.psb-how { text-align: left; white-space: normal; }
+.psb-table td.psb-how { color: var(--ink-soft); font-size: 12px; }
+.psb-table tfoot td { font-weight: 700; border-top: 1px solid var(--line); border-bottom: 2px solid var(--line); }
+.psb-table td.psb-cut { color: var(--red); }
+.psb-table td.psb-zero { color: var(--ink-soft); }
+.psb-net { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; align-items: center; margin-top: 12px; padding: 11px 13px; border-radius: 10px; background: #e2f3e8; border: 1px solid #9fd3b4; font-variant-numeric: tabular-nums; }
+.psb-net span { font-size: 12.5px; color: #2b5c40; }
+.psb-net b { font-size: 18px; color: #14562f; }
+.psb-more { margin-top: 14px; border-top: 1px solid var(--line-soft); padding-top: 8px; }
+.psb-more > summary { cursor: pointer; font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+@media (max-width: 520px) { .psb-table th, .psb-table td { padding: 5px 5px; font-size: 12px; } .psb-days i { display: none; } .psb-tile.strong { grid-column: 1 / -1; } }
+
 /* ---- Accounts: Journal & Ledger ---- */
 .jl-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 18px; }
 .jl-filters input, .jl-filters select { width: auto; min-width: 140px; }

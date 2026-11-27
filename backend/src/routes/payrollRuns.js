@@ -62,6 +62,7 @@ const { compliance } = require('../utils/payrollReports');
 const { toCsv, toXlsx, toXlsxBook } = require('../utils/tabularExport');
 const REG = require('../utils/payrollRegister'); // pay-register columns of the export (2026-10-28)
 const JD = require('../utils/payrollJoinDays'); // joined inside the pay period: days before joining apart from LOP
+const SL = require('../utils/payrollSalaryLines'); // the Details window's salary breakup (founder 2026-11-27)
 const CTC = require('../utils/payrollCtc'); // the Monthly CTC column (founder 2026-11-27)
 const { notifyDataIo } = require('../utils/dataIoNotify');
 // Payroll edit and recalculate (user spec 2026-10-13, item 5): utils/payrollEdit.js
@@ -339,7 +340,10 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     };
     const ctc = (await CTC.monthlyCtcFor([e])).get(e.id) || null;
     const join = await (await JD.splitter())(e.month, e, e.employee.dateOfJoining);
+    // the salary breakup line by line, from the stored record (utils/payrollSalaryLines.js)
+    const lines = SL.salaryLines(e, { state: await PEdit.readState(e.id), version, register: regOn });
     return res.json({
+      lines, period: await PC.cycleFor(e.month),
       entry: { ...e, join: join ? { ...join, amounts: JD.amountsOf(e.lopDeduction, join) } : null, statusLabel: E.STATUS_LABEL[e.status], monthlyCtc: ctc ? ctc.value : null, monthlyCtcFrom: ctc },
       version, history, syncLogs: logs, breakup,
       // This employee's share of the month's one journal entry.

@@ -25,6 +25,8 @@ import PayrollEditHistory, { ChangesInRun } from './PayrollEditHistory.jsx';
 import Combo from '../Combo.jsx';
 // Which dates are the LOP days (2026-11-19): the LOP number opens the dates, reasons and approvals behind it
 import LopBreakdown, { LopLink } from './LopBreakdown.jsx';
+// The salary breakup in the Details window (founder 2026-11-27)
+import SalaryBreakdown from './SalaryBreakdown.jsx';
 
 // Paise are shown when there are any (pay-register months are worked out to the paisa, 2026-10-28).
 const inr0 = (n) => { const v = Math.round((Number(n) || 0) * 100) / 100; return `₹${v.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 })}`; };
@@ -182,6 +184,7 @@ function AttendancePanel({ month, canEdit, reloadKey, onChanged }) {
 
 function EntryDetail({ id, onClose }) {
   const [data, setData] = useState(null);
+  const [lop, setLop] = useState(false); // the LOP dates drawer, opened from the days line
   const [error, setError] = useState('');
   useEffect(() => { api.get(`/payroll/entries/${id}`).then((r) => setData(r.data)).catch((err) => setError(errText(err, 'Could not load.'))); }, [id]);
   const e = data?.entry;
@@ -191,38 +194,18 @@ function EntryDetail({ id, onClose }) {
       {error && <div className="error-text">{error}</div>}
       {!e ? <div className="small-muted">Loading…</div> : (
         <div className="prb-detail">
-          <div className="prb-kv">
-            <span>Status</span><b><span className={`status ${STATUS_CLS[e.status]}`}>{STATUS_LABEL[e.status]}</span></b>
-            <span>Structure version</span><b>{data.version ? `from ${data.version.effectiveFrom.slice(0, 7)}${data.version.effectiveTo ? ` to ${data.version.effectiveTo}` : ''}` : '—'}</b>
-            <span>Payroll days / LOP</span><b>{e.workingDays} / {lopOf(e)} ({e.attendanceSource === 'OVERRIDE' ? 'HR override' : 'attendance'})</b>
-            {e.join && <><span>Joined in this period</span><b data-testid="prb-join">{shortDay(e.join.joinedOn)}: salary is counted for {e.join.daysFromJoining} days from joining; the {e.join.beforeDays} day(s) before joining are not paid and are not LOP</b></>}
-            <span>Monthly CTC</span><b>{e.monthlyCtc ? <>{inr0(e.monthlyCtc)} <span className="prb-note">({ctcFrom(e.monthlyCtcFrom).toLowerCase()})</span></> : '—'}</b>
-            {e.join
-              ? <><span>Gross / not paid / earned</span><b>{inr0(e.grossPay)} − {inr0(e.join.amounts.beforeJoining)} (before joining) − {inr0(e.join.amounts.lop)} (LOP) = {inr0(e.earnedGross)}</b></>
-              : <><span>Gross / LOP / earned</span><b>{inr0(e.grossPay)} − {inr0(e.lopDeduction)} = {inr0(e.earnedGross)}</b></>}
-            {Number(e.incentive) > 0 && <><span>Incentive (in gross)</span><b>{inr0(e.incentive)} — recruiter joinings, given by Super Admin</b></>}
-            <span>Deductions</span><b>PF {inr0(e.pfEmployee)} · ESI {inr0(e.esiEmployee)} · PT {inr0(e.professionalTax)} · TDS {inr0(e.tds)} · Other {inr0(e.otherDeductions)} · {e.join ? <>Before joining {inr0(e.join.amounts.beforeJoining)} · LOP {inr0(e.join.amounts.lop)}</> : <>LOP {inr0(e.lopDeduction)}</>} = {inr0(e.totalDeductions)}</b>
-            <span>Net pay</span><b>{inr0(e.netPay)}</b>
-            <span>Employer</span><b>PF {inr0(e.pfEmployer)} · ESI {inr0(e.esiEmployer)}</b>
-            {e.rejectionReason && <><span>Sent back</span><b>{e.rejectionReason}</b></>}
+          <div className="psb-who">
+            <span>{[e.employee.employeeCode, e.employee.department, e.employee.designation].filter(Boolean).join(' · ')}</span>
+            <span className={`status ${STATUS_CLS[e.status]}`}>{STATUS_LABEL[e.status]}</span>
+            <span>{data.period ? `Pay period ${data.period.rangeText}` : ''}</span>
           </div>
+          {e.rejectionReason && <div className="psb-back"><b>Sent back:</b> {e.rejectionReason}</div>}
+          <SalaryBreakdown entry={e} lines={data.lines} onLop={() => setLop(true)} ctcNote={e.monthlyCtc ? ctcFrom(e.monthlyCtcFrom) : ''} />
           {data.breakup && (
-            <>
-              <SectionLabel style={{ margin: '14px 0 6px' }}>How this month's pay was worked out</SectionLabel>
+            <details className="psb-more">
+              <summary>How it was worked out</summary>
               <div className="prb-kv">
-                <span>Days</span><b>{data.breakup.payableDays} paid · {e.join ? <>{e.join.lopDays} not paid (LOP) · {e.join.beforeDays} before joining</> : <>{data.breakup.nonPayableDays} not paid (LOP)</>} · {data.breakup.workingDays} days in the pay period · {data.breakup.attendance.source}</b>
-                {e.payMode === 'Stipend'
-                  ? <><span>Stipend earned</span><b>{inr0(data.breakup.earned.stipend)} of {inr0(Number(e.grossPay) - Number(e.incentive || 0) - Number(e.arrears || 0))}</b></>
-                  : (
-                    <>
-                      <span>Basic</span><b>{inr0(data.breakup.earned.basic)} of {inr0(e.basic)}</b>
-                      <span>HRA</span><b>{inr0(data.breakup.earned.hra)} of {inr0(e.hra)}</b>
-                      <span>Conveyance</span><b>{inr0(data.breakup.earned.conveyance)} of {inr0(e.conveyance)}</b>
-                      <span>Special allowance</span><b>{inr0(data.breakup.earned.specialAllowance)} of {inr0(e.specialAllowance)}</b>
-                      <span>Bonus</span><b>{inr0(data.breakup.earned.bonus)} of {inr0(e.bonus)}</b>
-                    </>
-                  )}
-                <span>Earned pay</span><b>{inr0(e.earnedGross)}</b>
+                <span>Salary record used</span><b>{data.version ? `from ${monthLabel(data.version.effectiveFrom.slice(0, 7))}` : '—'}</b>
                 <span>Rules used</span><b>{data.breakup.rules.mode}</b>
                 <span>Earned parts</span><b>{data.breakup.rules.earned}</b>
                 <span>PF</span><b>{data.breakup.rules.pf}</b>
@@ -231,36 +214,42 @@ function EntryDetail({ id, onClose }) {
                 <span>TDS</span><b>{data.breakup.rules.tds}</b>
                 {data.breakup.calculatedAt && <><span>Calculated</span><b>{new Date(data.breakup.calculatedAt).toLocaleString('en-GB')}{data.breakup.calculatedBy ? ` by ${data.breakup.calculatedBy}` : ''}</b></>}
               </div>
-            </>
+            </details>
           )}
-          <SectionLabel style={{ margin: '14px 0 6px' }}>This employee's share of the month's journal</SectionLabel>
-          <table className="prb-journal">
-            <thead><tr><th>Account</th><th>Debit</th><th>Credit</th></tr></thead>
-            <tbody>
-              {p.debit.map((l) => <tr key={`d${l.account}`}><td>{l.account}</td><td>{money(l.amount)}</td><td /></tr>)}
-              {p.credit.map((l) => <tr key={`c${l.account}`}><td>{l.account}</td><td /><td>{money(l.amount)}</td></tr>)}
-              <tr className="tot"><td>Total</td><td>{money(p.debit.reduce((n, l) => n + l.amount, 0))}</td><td>{money(p.credit.reduce((n, l) => n + l.amount, 0))}</td></tr>
-            </tbody>
-          </table>
-          <div className="prb-note">{p.note || 'Part of the one journal entry booked for the whole month.'}</div>
-          <SectionLabel style={{ margin: '14px 0 6px' }}>History</SectionLabel>
-          {data.history.length === 0 ? <div className="small-muted">No transitions yet.</div> : (
-            <ul className="prb-hist">
-              {data.history.map((h, i) => (
-                <li key={i}><b>{h.action.replace(/^Payroll /, '')}</b> {h.fromValue && h.toValue ? `(${STATUS_LABEL[h.fromValue] || h.fromValue} → ${STATUS_LABEL[h.toValue] || h.toValue})` : ''} — {h.actorName || 'System'}, {new Date(h.createdAt).toLocaleString('en-GB')}{h.reason && !h.reason.includes(' · ') ? ` · ${h.reason}` : ''}</li>
-              ))}
-            </ul>
-          )}
-          {data.syncLogs.length > 0 && (
-            <>
-              <SectionLabel style={{ margin: '14px 0 6px' }}>Accounts sync</SectionLabel>
+          <details className="psb-more">
+            <summary>Accounts journal entry</summary>
+            <div className="psb-note">This employee's share of the month's journal</div>
+            <table className="prb-journal">
+              <thead><tr><th>Account</th><th>Debit</th><th>Credit</th></tr></thead>
+              <tbody>
+                {p.debit.map((l) => <tr key={`d${l.account}`}><td>{l.account}</td><td>{money(l.amount)}</td><td /></tr>)}
+                {p.credit.map((l) => <tr key={`c${l.account}`}><td>{l.account}</td><td /><td>{money(l.amount)}</td></tr>)}
+                <tr className="tot"><td>Total</td><td>{money(p.debit.reduce((n, l) => n + l.amount, 0))}</td><td>{money(p.credit.reduce((n, l) => n + l.amount, 0))}</td></tr>
+              </tbody>
+            </table>
+            <div className="prb-note">{p.note || 'Part of the one journal entry booked for the whole month.'}</div>
+          </details>
+          <details className="psb-more">
+            <summary>History of this record</summary>
+            {data.history.length === 0 ? <div className="small-muted">No transitions yet.</div> : (
               <ul className="prb-hist">
-                {data.syncLogs.map((l) => (
-                  <li key={l.id}><span className={`status ${SYNC_CLS[l.status]}`}>{l.status}</span> {l.kind === 'PAYMENT' ? 'Bank payment' : 'Salary journal'} · {l.attempts} attempt(s){l.lastError ? ` · ${l.lastError}` : ''}</li>
+                {data.history.map((h, i) => (
+                  <li key={i}><b>{h.action.replace(/^Payroll /, '')}</b> {h.fromValue && h.toValue ? `(${STATUS_LABEL[h.fromValue] || h.fromValue} → ${STATUS_LABEL[h.toValue] || h.toValue})` : ''} — {h.actorName || 'System'}, {new Date(h.createdAt).toLocaleString('en-GB')}{h.reason && !h.reason.includes(' · ') ? ` · ${h.reason}` : ''}</li>
                 ))}
               </ul>
-            </>
-          )}
+            )}
+            {data.syncLogs.length > 0 && (
+              <>
+                <SectionLabel style={{ margin: '14px 0 6px' }}>Accounts sync</SectionLabel>
+                <ul className="prb-hist">
+                  {data.syncLogs.map((l) => (
+                    <li key={l.id}><span className={`status ${SYNC_CLS[l.status]}`}>{l.status}</span> {l.kind === 'PAYMENT' ? 'Bank payment' : 'Salary journal'} · {l.attempts} attempt(s){l.lastError ? ` · ${l.lastError}` : ''}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </details>
+          {lop && <LopBreakdown entryId={id} onClose={() => setLop(false)} />}
         </div>
       )}
     </Modal>
