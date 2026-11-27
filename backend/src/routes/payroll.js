@@ -103,7 +103,7 @@ router.get('/', async (req, res) => {
   const out = [];
   for (const p of list) {
     // eslint-disable-next-line no-await-in-loop
-    const j = await split(p.month, { workingDays: p.workingDays, daysLop: p.lopDays }, p.employee && p.employee.dateOfJoining);
+    const j = await split(p.month, { workingDays: p.workingDays, daysLop: p.lopDays, employeeId: p.employeeId }, p.employee && p.employee.dateOfJoining);
     out.push(j ? { ...p, lopDays: j.lopDays, join: j } : p);
   }
   res.json(out);
@@ -584,7 +584,7 @@ async function payslipPayload(slip) {
   if (!lopDeduction && lopDays > 0 && !slip.payrollEntryId) lopDeduction = Math.max(0, Math.round(gross - pf - pt - lateCut - (Number(slip.netPay) || 0)));
   const workingDays = Number(slip.workingDays) > 0 ? Number(slip.workingDays) : null;
   // Joined inside the pay period (founder 2026-11-27): "before joining" is its own line, LOP is only what was lost after joining.
-  const join = workingDays ? await (await JD.splitter())(slip.month, { workingDays, daysLop: lopDays }, e.dateOfJoining) : null;
+  const join = workingDays ? await (await JD.splitter())(slip.month, { workingDays, daysLop: lopDays, employeeId: slip.employeeId }, e.dateOfJoining) : null;
   const joinAmounts = join ? JD.amountsOf(lopDeduction, join) : null;
   const dayWord = (n) => `${n} day${n === 1 ? '' : 's'}`;
 
@@ -622,7 +622,7 @@ async function payslipPayload(slip) {
       ? editLines.deductions
       : (Number(slip.otherDeductions) > 0 ? [{ label: 'Other Deductions', amount: Number(slip.otherDeductions) }] : [])),
     ...(!join && lopDeduction > 0 ? [{ label: `LOP (${dayWord(lopDays)})`, amount: lopDeduction }] : []),
-    ...(join && joinAmounts.beforeJoining > 0 ? [{ label: `Before joining (${dayWord(join.beforeDays)})`, amount: joinAmounts.beforeJoining }] : []),
+    ...(join && joinAmounts.beforeJoining > 0 ? [{ label: `Before ${join.word} (${dayWord(join.beforeDays)})`, amount: joinAmounts.beforeJoining }] : []),
     ...(join && joinAmounts.lop > 0 ? [{ label: `LOP (${dayWord(join.lopDays)})`, amount: joinAmounts.lop }] : []),
     ...(lateCut > 0 ? [{ label: `Late arrivals (${slip.lateDays || 0})`, amount: lateCut }] : []),
   ];
@@ -662,7 +662,7 @@ async function payslipPayload(slip) {
     workingDays,
     lopDays: join ? join.lopDays : lopDays,
     daysWorked: workingDays != null ? Math.max(0, workingDays - lopDays) : null,
-    join: join ? { ...join, joinedText: fmtDoj(e.dateOfJoining), amount: joinAmounts.beforeJoining } : null,
+    join: join ? { ...join, joinedText: fmtDoj(join.joinedOn), amount: joinAmounts.beforeJoining } : null,
     monthlyGross: gross,
     earnings,
     deductions,

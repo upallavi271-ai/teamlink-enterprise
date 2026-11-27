@@ -194,7 +194,7 @@ module.exports = function registerPayrollCycle(router, { payrollEmployeeWhere })
       const perDay = e.workingDays > 0 ? base / e.workingDays : 0;
       return {
         employeeId: e.employeeId, code: e.employee.employeeCode, name: e.employee.name, department: e.employee.department, status: e.status,
-        workingDays: e.workingDays, lopDays, beforeJoiningDays: join ? join.beforeDays : 0, awlDays: a ? a.days + (a.halfDays || 0) : 0, awlLopDays: awlLop,
+        workingDays: join ? join.daysFromJoining : e.workingDays, lopDays, beforeJoiningDays: join ? join.beforeDays : 0, awlDays: a ? a.days + (a.halfDays || 0) : 0, awlLopDays: awlLop,
         leaveLopDays: Math.max(0, Math.round((lopDays - awlLop) * 100) / 100),
         awlAmount: Math.round(perDay * awlLop), lopAmount: join ? JD.amountsOf(e.lopDeduction, join).lop : e.lopDeduction,
         awlDates: a ? [...(a.dates || []), ...(a.halfDates || [])].join(' ') : '',

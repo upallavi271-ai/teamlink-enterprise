@@ -73,6 +73,12 @@ async function emp(code, joined) {
     const am2 = JD.amountsOf(2903.23, s);
     ok(Math.abs(am2.beforeJoining + am2.lop - 2903.23) < 0.001, 'amounts in paise still add up', am2);
 
+    const gap = [{ from: '2026-10-03', to: '2026-11-08' }];
+    const back = JD.splitOf({ workingDays: 31, daysLop: 25, dateOfJoining: '2026-06-08', gaps: gap }, cyc, all, 31);
+    ok(back && back.word === 'rejoining' && back.joinedOn === '2026-11-09' && back.beforeDays === 24 && back.lopDays === 1 && back.daysFromJoining === 7, 'rejoined 9 Nov: 24 days before, 1 LOP, 7 days from rejoining', back);
+    ok(JD.splitOf({ workingDays: 31, daysLop: 25, dateOfJoining: '2026-06-08', gaps: [{ from: '2026-10-20', to: '2026-11-08' }] }, cyc, all, 31) === null, 'left and came back inside the period: left as it is');
+    ok(/rejoined on 9 Nov/.test(JD.tooFew('X', back, 2)) && JD.tooFew('X', back, 24) === null, 'a number that would pay the days before is refused in plain words', JD.tooFew('X', back, 2));
+
     try { const h = await fetch(`${API}/health`); if (!h.ok) throw new Error('x'); } catch { console.error(`The sandbox API is not answering at ${API}.`); process.exit(3); }
     if (await prisma.employeePayrollRun.count({ where: { month: MONTH } })) { console.error(`The sandbox already has ${MONTH} payroll - refusing.`); process.exit(2); }
     const policy = await E.getPolicy();
@@ -105,6 +111,13 @@ async function emp(code, joined) {
     ok(a.status === 200 && a.body.entry.join && a.body.entry.join.lopDays === 3 && a.body.entry.join.amounts, 'Details carries the split', a.body.entry && a.body.entry.join);
     a = await call(admin, 'GET', `/payroll/entries/${rl.id}/edit`);
     ok(a.status === 200 && a.body.join && a.body.join.beforeDays === 6, 'the edit screen is told about the days before joining', a.status);
+    a = await call(admin, 'PUT', `/payroll/entries/${rl.id}/edit`, { fields: { daysLop: 2 }, reason: 'ZZJD typed after-joining LOP only', manual: {}, earnings: [], deductions: [] });
+    ok(a.status === 422 && /cannot be less than 6/.test(a.body.error || '') && (await prisma.employeePayrollRun.findUnique({ where: { id: rl.id } })).daysLop === 9, 'an edit that would pay the days before joining is refused', [a.status, a.body && a.body.error]);
+    a = await call(admin, 'PUT', `/payroll/attendance-inputs/${lossy.e.id}`, { month: MONTH, daysPresent: 10, daysLop: 2, reason: 'ZZJD' });
+    ok(a.status === 400 && /cannot be less than 6/.test(a.body.error || ''), 'so is a typed attendance override', [a.status, a.body && a.body.error]);
+    a = await call(admin, 'GET', `/payroll/attendance-inputs?month=${MONTH}`);
+    const ai = a.body.rows.find((x) => x.employeeId === lossy.e.id);
+    ok(ai && ai.join && ai.join.beforeDays === 6, 'the attendance panel knows the days before joining', ai && ai.join);
 
     console.log('C. Export and LOP summary');
     a = await call(admin, 'GET', `/payroll/runs/${MONTH}/export?format=csv`);

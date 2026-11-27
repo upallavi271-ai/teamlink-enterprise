@@ -194,7 +194,8 @@ async function editorPayload(entry, access) {
   const lock = lockOf(entry);
   const cyc = await PC.cycleFor(entry.month).catch(() => null);
   // joined inside the pay period: the LOP days box also holds the days before joining, said under it (utils/payrollJoinDays.js)
-  const join = entry.employee ? await (await require('./payrollJoinDays').splitter())(entry.month, entry, entry.employee.dateOfJoining) : null;
+  // (what is before the start, whatever the record deducts today: the window counts LOP after it)
+  const join = entry.employee ? await require('./payrollJoinDays').startOf(entry.month, entry, entry.employee.dateOfJoining) : null;
   return {
     join,
     entry: {
@@ -410,6 +411,12 @@ async function saveEdit({ entry, body, actor, ip }) {
   const res = payrollCalc(c, rules);
   const problems = payrollCalcProblems(c, res, { allowNegativeReason: allowNegative });
   if (problems.length) throw new EditError(422, problems[0].message, { problems });
+  // joined / came back inside the pay period: the days before are never paid (utils/payrollJoinDays.js)
+  if (entry.employee) {
+    const JD = require('./payrollJoinDays');
+    const early = JD.tooFew(entry.employee.name, await JD.startOf(entry.month, { workingDays: res.workingDays, employeeId: entry.employeeId }, entry.employee.dateOfJoining), res.daysLop);
+    if (early) throw new EditError(422, early, { code: 'BEFORE_START' });
+  }
 
   // AWL days: only when the record has them; the LOP days field already carries their effect
   let awlDays;

@@ -447,11 +447,15 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     const { workingDays, map } = await E.attendanceInputs(employees, month, policy);
     const entries = await prisma.employeePayrollRun.findMany({ where: { month, employeeId: { in: employees.map((e) => e.id) } }, select: { employeeId: true, status: true } });
     const statusOf = new Map(entries.map((e) => [e.employeeId, e.status]));
+    const split = await JD.splitter();
+    const starts = new Map();
+    // eslint-disable-next-line no-await-in-loop
+    for (const e of employees) starts.set(e.id, await JD.startOf(month, { workingDays, employeeId: e.id }, e.dateOfJoining, split));
     res.json({
       month, period: monthLabel(month), cycle: await PC.cycleFor(month), workingDays,
       rows: employees.map((e) => ({
         employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department,
-        payrollStatus: statusOf.get(e.id) || null, ...map.get(e.id),
+        payrollStatus: statusOf.get(e.id) || null, ...map.get(e.id), join: starts.get(e.id) || null,
       })),
     });
   });
@@ -477,6 +481,8 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     if (!Number.isFinite(lop) || lop < 0 || lop > wd) return res.status(400).json({ error: `LOP days must be between 0 and ${wd}` });
     if ((present * 2) % 1 || (lop * 2) % 1) return res.status(400).json({ error: 'Days are whole or half days' });
     if (!reason) return res.status(400).json({ error: 'A reason is required for an attendance override' });
+    const early = JD.tooFew(emp.name, await JD.startOf(month, { workingDays: wd, employeeId: emp.id }, emp.dateOfJoining), lop);
+    if (early) return res.status(400).json({ error: early });
     const auto = map.get(emp.id);
     const prev = await prisma.payrollAttendance.findUnique({ where: { employeeId_month: { employeeId: emp.id, month } } });
     const { year, monthNum } = E.monthParts(month);

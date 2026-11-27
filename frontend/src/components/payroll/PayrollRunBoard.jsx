@@ -70,14 +70,16 @@ const LOG_FIELDS = [
 
 function AttendanceEditor({ row, month, onClose, onSaved }) {
   const [present, setPresent] = useState(String(row.daysPresent ?? ''));
-  const [lop, setLop] = useState(String(row.daysLop ?? 0));
+  // joined / came back inside the pay period: the box counts loss of pay after that date only
+  const early = row.join ? row.join.beforeDays : 0;
+  const [lop, setLop] = useState(String(Math.max(0, Math.round(((Number(row.daysLop) || 0) - early) * 100) / 100)));
   const [reason, setReason] = useState(row.override?.reason || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   async function save() {
     setBusy(true); setError('');
     try {
-      await api.put(`/payroll/attendance-inputs/${row.employeeId}`, { month, daysPresent: Number(present), daysLop: Number(lop), reason });
+      await api.put(`/payroll/attendance-inputs/${row.employeeId}`, { month, daysPresent: Number(present), daysLop: early + Number(lop), reason });
       onSaved();
     } catch (err) { setError(errText(err, 'Could not save the override.')); } finally { setBusy(false); }
   }
@@ -96,11 +98,11 @@ function AttendanceEditor({ row, month, onClose, onSaved }) {
       <div className="prb-note">
         From attendance: {row.override ? row.override.autoDaysPresent : row.daysPresent} present · {row.override ? row.override.autoDaysLop : row.daysLop} LOP of {row.workingDays} payroll days
         {d.absent != null && <> (absent {d.absent}, half days {d.halfDay}, no check-in {d.missingCheckIn}, leave {d.onLeave}, late beyond allowance {d.excessLate})</>}.
-        {d.notJoinedDays > 0 && <> The LOP days here include {d.notJoinedDays} day(s) before the joining date.</>}
+        {early > 0 && <> The {early} day(s) before {row.join.word} ({shortDay(row.join.joinedOn)}) are not paid; type only the loss of pay after that date.</>}
       </div>
       <div className="grid-2" style={{ marginTop: 10 }}>
         <div className="field"><label>Days present</label><input type="number" min="0" step="0.5" value={present} onChange={(e) => setPresent(e.target.value)} /></div>
-        <div className="field"><label>LOP days</label><input type="number" min="0" step="0.5" value={lop} onChange={(e) => setLop(e.target.value)} /></div>
+        <div className="field"><label>{row.join ? `LOP days (after ${row.join.word})` : 'LOP days'}</label><input type="number" min="0" step="0.5" value={lop} onChange={(e) => setLop(e.target.value)} /></div>
       </div>
       <div className="field"><label>Reason (recorded in the audit log)</label><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Approved regularization not yet in attendance" /></div>
       {error && <div className="error-text">{error}</div>}
@@ -153,8 +155,8 @@ function AttendancePanel({ month, canEdit, reloadKey, onChanged }) {
                       <td>{r.name}</td>
                       <td className="cell-muted">{r.workingDays}</td>
                       <td>{r.daysPresent}</td>
-                      <td>{r.detail && r.detail.notJoinedDays > 0 && r.daysLop >= r.detail.notJoinedDays
-                        ? <>{Math.round((r.daysLop - r.detail.notJoinedDays) * 100) / 100}<div className="prb-note">+ {r.detail.notJoinedDays} before joining</div></>
+                      <td>{r.join && r.daysLop >= r.join.beforeDays
+                        ? <>{Math.round((r.daysLop - r.join.beforeDays) * 100) / 100}<div className="prb-note">from {shortDay(r.join.joinedOn)}</div></>
                         : r.daysLop}</td>
                       <td>{r.source === 'OVERRIDE' ? <span className="status pending" title={`${r.override.reason} — ${r.override.by}`}>Override</span> : <span className="cell-muted">Attendance</span>}</td>
                       <td className="cell-muted">{r.payrollStatus ? STATUS_LABEL[r.payrollStatus] : '—'}</td>
@@ -197,7 +199,7 @@ function EntryDetail({ id, onClose }) {
           <div className="psb-who">
             <span>{[e.employee.employeeCode, e.employee.department, e.employee.designation].filter(Boolean).join(' · ')}</span>
             <span className={`status ${STATUS_CLS[e.status]}`}>{STATUS_LABEL[e.status]}</span>
-            <span>{data.period ? `Pay period ${data.period.rangeText}` : ''}</span>
+            <span>{e.join ? `Counted from ${shortDay(e.join.joinedOn)} (${e.join.word}) to ${shortDay(e.join.periodTo)}` : data.period ? `Pay period ${data.period.rangeText}` : ''}</span>
           </div>
           {e.rejectionReason && <div className="psb-back"><b>Sent back:</b> {e.rejectionReason}</div>}
           <SalaryBreakdown entry={e} lines={data.lines} onLop={() => setLop(true)} ctcNote={e.monthlyCtc ? ctcFrom(e.monthlyCtcFrom) : ''} />

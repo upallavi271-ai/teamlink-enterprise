@@ -149,7 +149,9 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
   const setDays = (which, raw) => {
     const wd = num(vals.workingDays);
     // LOP days are typed freely (founder 2026-11-27): no absent-without-leave condition sits on them
-    if (which === 'paid') setV('daysLop', Math.max(0, wd - num(raw)));
+    const floor = data.join ? data.join.beforeDays : 0;
+    if (which === 'paid') setV('daysLop', Math.max(floor, wd - num(raw)));
+    else if (which === 'daysLop' && floor) setV('daysLop', raw === '' ? '' : floor + Math.max(0, num(raw)));
     else setV(which, raw);
   };
 
@@ -159,7 +161,8 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
     if (k === 'stipend' && !stipend) return;
     if (['basic', 'hra', 'conveyance', 'specialAllowance', 'bonus'].includes(k) && stipend) return;
     const a = p2(num(orig[k])); const b = p2(num(shown(k)));
-    if (a !== b) changes.push({ k, label: LABELS[k], a, b, days: k === 'workingDays' || k === 'daysLop' });
+    const off = k === 'daysLop' && data.join ? data.join.beforeDays : 0;
+    if (a !== b) changes.push({ k, label: LABELS[k], a: p2(a - off), b: p2(Math.max(0, b - off)), days: k === 'workingDays' || k === 'daysLop' });
   });
   const oe = origRows.earn; const od = origRows.ded;
   earn.forEach((x) => { const o = oe.find((y) => y.id === x.id); if (!o) changes.push({ k: `n${x.id}`, label: `Added earning: ${x.label || '(no name)'}`, a: 0, b: num(x.amount) }); else if (o.amount !== num(x.amount)) changes.push({ k: `c${x.id}`, label: `Earning: ${x.label}`, a: o.amount, b: num(x.amount) }); });
@@ -170,7 +173,10 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
   const dirty = changes.length > 0 || manualChanged;
   const before = data.stored;
   const after = { grossPay: res.grossPay, totalDeductions: res.totalDeductions, netPay: res.netPay, ctc: res.ctc };
-  const canSave = editable && dirty && reason.trim().length >= 3 && problems.length === 0 && !busy
+  // joined / came back inside the pay period: the LOP box counts only what was lost after that date; the days before are never paid
+  const before0 = data.join ? data.join.beforeDays : 0;
+  const startWord = data.join ? data.join.word : '';
+  const canSave = editable && dirty && reason.trim().length >= 3 && problems.length === 0 && !busy && num(vals.daysLop) >= before0
     && !(res.netPay < 0 && !negOk.trim()) && earn.every((x) => x.label.trim()) && ded.every((x) => x.label.trim());
 
   async function save() {
@@ -265,7 +271,7 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
             {rowsBlock('earning', earn, setEarn, adjE)}
 
             <h4>Deductions</h4>
-            {AUTO_DED.map(([k, l]) => line(k, l, k === 'lopDeduction' ? { note: `${res.daysLop} day(s) × ${inr(perDay)} per day` } : {}))}
+            {AUTO_DED.map(([k, l]) => line(k, l, k === 'lopDeduction' ? { note: `${before0 ? `${before0} before ${startWord} + ${p2(Math.max(0, res.daysLop - before0))} LOP` : `${res.daysLop} day(s)`} × ${inr(perDay)} per day` } : {}))}
             {PLAIN_DED.map(([k, l]) => line(k, l))}
             {rowsBlock('deduction', ded, setDed, adjD)}
 
@@ -276,12 +282,12 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
             <div className="pe-days">
               <div className={`pe-line${changedField('workingDays') ? ' changed' : ''}`}><label htmlFor="pe-wd">Working days</label><input id="pe-wd" type="number" min="1" max="31" step="0.5" disabled={!editable} value={vals.workingDays} onChange={(ev) => setDays('workingDays', ev.target.value)} /></div>
               <div className={`pe-line${changedField('daysLop') ? ' changed' : ''}`}><label htmlFor="pe-paid">Paid days</label><input id="pe-paid" type="number" min="0" step="0.5" disabled={!editable} value={Math.max(0, num(vals.workingDays) - num(vals.daysLop))} onChange={(ev) => setDays('paid', ev.target.value)} /></div>
-              <div className={`pe-line${changedField('daysLop') ? ' changed' : ''}`}><label htmlFor="pe-lop">LOP days</label><input id="pe-lop" type="number" min="0" step="0.5" disabled={!editable} value={vals.daysLop} onChange={(ev) => setDays('daysLop', ev.target.value)} /></div>
+              <div className={`pe-line${changedField('daysLop') ? ' changed' : ''}`}><label htmlFor="pe-lop">{data.join ? `LOP days (after ${startWord})` : 'LOP days'}</label><input id="pe-lop" type="number" min="0" step="0.5" disabled={!editable} value={!data.join || vals.daysLop === '' ? vals.daysLop : Math.max(0, p2(num(vals.daysLop) - before0))} onChange={(ev) => setDays('daysLop', ev.target.value)} /></div>
             </div>
             {data.join && (
               <div className="pe-perday" data-testid="pe-join">
-                Joined {new Date(`${data.join.joinedOn}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}: the LOP days box includes {data.join.beforeDays} day(s) before joining (not paid).
-                {' '}LOP after joining: {Math.max(0, Math.round((num(vals.daysLop) - data.join.beforeDays) * 100) / 100)}.
+                <b>{data.join.word === 'rejoining' ? 'Rejoined' : 'Joined'} {new Date(`${data.join.joinedOn}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}.</b> The {data.join.beforeDays} day(s) before are never paid and are counted by themselves.
+                {' '}In the LOP box type only the loss of pay after that date. Not paid in all: {p2(num(vals.daysLop))} day(s).
               </div>
             )}
             <div className="pe-perday">One day = {inr(perDay)} ({inr(res.baseGross)} ÷ {num(vals.workingDays)} days){data.cycle ? ` · pay period ${data.cycle.rangeText}` : ''}.</div>

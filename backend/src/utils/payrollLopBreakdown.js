@@ -362,7 +362,8 @@ async function forEntry(entry, { desk = true } = {}) {
 
   // Joined inside the pay period (founder 2026-11-27): the days before joining are not LOP on the screen. Every LOP number below is
   // shown without them; nothing stored changes, and the comparison stored <-> attendance is still made on the full numbers.
-  const join = JD.splitOf({ workingDays: Number(entry.workingDays) || workingDays, daysLop: r2(entry.daysLop), dateOfJoining: emp.dateOfJoining }, cycle, policy, workingDays);
+  const gaps = (await D.rejoinGapsFor(prisma, [emp.id])).get(emp.id) || [];
+  const join = JD.splitOf({ workingDays: Number(entry.workingDays) || workingDays, daysLop: r2(entry.daysLop), dateOfJoining: emp.dateOfJoining, gaps }, cycle, policy, workingDays);
   const off = join ? join.beforeDays : 0;
   const less = (v) => r2(Math.max(0, Number(v) - off));
 

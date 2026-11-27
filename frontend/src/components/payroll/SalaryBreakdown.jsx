@@ -37,8 +37,9 @@ export default function SalaryBreakdown({ entry: e, lines: l, onLop, ctcNote }) 
 
       <h4>Days</h4>
       <div className="psb-days" data-testid="psb-days">
-        <span><b>{dayCount(l.days.workingDays)}</b> days in the pay period</span>
-        {join && <><i>−</i><span><b>{dayCount(join.beforeDays)}</b> before joining ({shortDay(join.joinedOn)})</span></>}
+        {join
+          ? <span><b>{dayCount(join.daysFromJoining)}</b> days from {join.word} ({shortDay(join.joinedOn)})</span>
+          : <span><b>{dayCount(l.days.workingDays)}</b> days in the pay period</span>}
         <i>−</i>
         <span><b>{onLop ? <LopLink value={lopDays} onOpen={onLop} title="See which dates were counted as loss of pay, and why" /> : dayCount(lopDays)}</b> loss of pay (LOP)</span>
         <i>=</i>
@@ -58,7 +59,7 @@ export default function SalaryBreakdown({ entry: e, lines: l, onLop, ctcNote }) 
           <tfoot><tr><td>Total</td><td>{rs(l.totals.full)}</td><td className={l.totals.cut ? 'psb-cut' : 'psb-zero'}>{l.totals.cut ? `− ${rs(l.totals.cut)}` : '—'}</td><td>{rs(l.totals.earned)}</td></tr></tfoot>
         </table>
       </div>
-      {join && <div className="psb-note">The cut is {rs(join.amounts.beforeJoining)} for the days before joining and {rs(join.amounts.lop)} for loss of pay.</div>}
+      {join && <div className="psb-note">The cut is {rs(join.amounts.beforeJoining)} for the days before {join.word} and {rs(join.amounts.lop)} for loss of pay.</div>}
       {Number(e.incentive) > 0 && <div className="psb-note">Incentive: recruiter joinings, given by Super Admin.</div>}
 
       <h4>Deductions (cut from the salary)</h4>

@@ -145,7 +145,7 @@ function requestText(d) {
 }
 const whyText = (d) => (d.reasons || []).map((r) => `${num(r.days)} day: ${r.text}`).join(' ');
 function asText(b) {
-  const head = `LOP days: ${b.employee.name}${b.employee.code ? ` (${b.employee.code})` : ''} · ${b.monthLabel} (pay period ${b.cycle.rangeText}, ${b.cycle.days} days). LOP days in the payroll: ${num(b.record.daysLop)}.${b.join ? ` Joined ${fmtDate(b.join.joinedOn)}: salary counted for ${num(b.join.daysFromJoining)} days from joining; ${plural(b.join.beforeDays, 'day')} before joining are not paid and are not LOP.` : ''}`;
+  const head = `LOP days: ${b.employee.name}${b.employee.code ? ` (${b.employee.code})` : ''} · ${b.monthLabel} (${b.join ? `counted ${fmtShort(b.join.joinedOn)} to ${fmtShort(b.cycle.to)}, ${num(b.join.daysFromJoining)} days` : `pay period ${b.cycle.rangeText}, ${b.cycle.days} days`}). LOP days in the payroll: ${num(b.record.daysLop)}.${b.join ? ` ${b.join.word === 'rejoining' ? 'Rejoined' : 'Joined'} ${fmtDate(b.join.joinedOn)}: salary is counted from that date (${num(b.join.daysFromJoining)} days).` : ''}`;
   const lines = b.dates.map((d) => `${fmtDate(d.date)} — ${num(d.lop)} LOP day — ${d.status}. ${d.attendance}. In ${clock(d.checkIn)}, out ${clock(d.checkOut)}. Why: ${whyText(d)}${requestText(d) ? ` Requests: ${requestText(d)}` : ' No leave or request for this date.'}`);
   return [head, ...lines, ...b.notes].join('\n');
 }
@@ -204,7 +204,7 @@ export default function LopBreakdown({ entryId = null, payslipId = null, onClose
         <div className="lop-head">
           <div>
             <h3>{b ? `LOP days: ${b.employee.name}${b.employee.code ? ` (${b.employee.code})` : ''} · ${b.monthLabel}` : 'LOP days'}</h3>
-            {b && <div className="lop-subhead">Pay period {b.cycle.rangeText} ({b.cycle.days} days){b.employee.department ? ` · ${b.employee.department}` : ''}</div>}
+            {b && <div className="lop-subhead">{b.join ? `${fmtShort(b.join.joinedOn)} – ${fmtShort(b.cycle.to)} (${num(b.join.daysFromJoining)} days, from ${b.join.word})` : `Pay period ${b.cycle.rangeText} (${b.cycle.days} days)`}{b.employee.department ? ` · ${b.employee.department}` : ''}</div>}
           </div>
           <button className="close-x" onClick={onClose} aria-label="Close">×</button>
         </div>
@@ -216,16 +216,16 @@ export default function LopBreakdown({ entryId = null, payslipId = null, onClose
               <div className="lop-tiles">
                 <div><span>LOP days in payroll</span><b data-testid="lop-total">{num(r.daysLop)}</b></div>
                 <div><span>Paid days</span><b>{num(r.paidDays)}</b></div>
-                <div><span>Days in the pay period</span><b>{num(r.workingDays)}</b></div>
-                {b.join && <div><span>Days from joining</span><b>{num(b.join.daysFromJoining)}</b></div>}
+                {b.join
+                  ? <div><span>Days from {b.join.word}</span><b>{num(b.join.daysFromJoining)}</b></div>
+                  : <div><span>Days in the pay period</span><b>{num(r.workingDays)}</b></div>}
                 <div><span>Where the number came from</span><b className="small">{SOURCE[r.source] || 'Payslip figure'}{b.adjustments.edits.length ? ' · edited by hand' : ''}</b></div>
                 {r.status && <div><span>Payroll status</span><b className="small"><span className={`status ${STATUS_CLS[r.status]}`}>{STATUS_LABEL[r.status] || r.status}</span></b></div>}
               </div>
 
               {b.join && (
                 <div className="lop-carry" data-testid="lop-join">
-                  <b>Joined {fmtDate(b.join.joinedOn)}.</b> Salary is counted from that day to {fmtShort(b.cycle.to)} ({plural(b.join.daysFromJoining, 'day')}).
-                  {' '}The {plural(b.join.beforeDays, 'day')} from {fmtShort(b.cycle.from)} to {fmtShort(b.join.beforeTo)} are before joining: not paid, and not counted as LOP.
+                  <b>{b.join.word === 'rejoining' ? 'Rejoined' : 'Joined'} {fmtDate(b.join.joinedOn)}.</b> Salary is counted from this date to {fmtShort(b.cycle.to)} ({plural(b.join.daysFromJoining, 'day')}).
                 </div>
               )}
 

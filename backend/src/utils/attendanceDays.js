@@ -1284,6 +1284,7 @@ function equationText(c) {
 }
 
 module.exports = {
+  rejoinGapsFor,
   tallyPerson, addTallies, equationText,
   applyPunchToDay,
   LEFT_EMPLOYMENT, rollOf, joinedOn, onRolls, BUCKETS, BUCKET_LABEL, bucketOf, tally,
