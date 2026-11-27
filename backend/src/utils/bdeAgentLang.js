@@ -48,6 +48,10 @@ const TYPOS = [
   [/\btommorow\b|\btomorow\b|\btmrw\b|\btmr\b|\btommorrow\b/g, 'tomorrow'],
   [/\btoday'?s\b|\btday\b|\btodays\b/g, 'today'],
   [/\boverdu\b|\bover\s+due\b/g, 'overdue'],
+  // (2026-11-27) "rejecte dcount", "rejcted", "rejectd"
+  [/\brejecte dcount\b/g, 'rejected count'],
+  [/\brejecte\b|\brejectd\b|\brejcted\b|\brejeted\b|\brejectes\b/g, 'rejected'],
+  [/\bdcount\b/g, 'count'],
 ];
 function normalize(text) {
   let s = String(text || '').normalize('NFC');

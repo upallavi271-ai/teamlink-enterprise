@@ -297,6 +297,75 @@ async function selections(ctx, p, lang, f) {
   });
 }
 
+// ---- REJECTED (founder 2026-11-27: "rejected count", "in 2026 how many were rejected from all departments") ------------------------------
+async function deptOfApps(ids) {
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 400) {
+    // eslint-disable-next-line no-await-in-loop
+    const rows = await prisma.application.findMany({ where: { id: { in: ids.slice(i, i + 400) } }, select: { id: true, source: true, requirement: { select: { department: true } } } });
+    rows.forEach((r) => out.set(r.id, { dept: (r.requirement && r.requirement.department) || 'No department', source: r.source || 'Not recorded' }));
+  }
+  return out;
+}
+const countLine = (label, values) => {
+  const m = new Map(); values.forEach((v) => m.set(v, (m.get(v) || 0) + 1));
+  const parts = [...m.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`);
+  return parts.length ? `${label}: ${parts.slice(0, 8).join(' · ')}${parts.length > 8 ? ` · +${parts.length - 8} more` : ''}` : null;
+};
+async function rejections(ctx, p0, lang, f) {
+  const p = p0.to > ctx.today ? { ...p0, to: ctx.today } : p0; // never past today: a record dated in the future (a bad import) is not counted
+  const [m, nowN] = await Promise.all([
+    distinctEventApps(ctx, ['REJECTED'], p, f),
+    prisma.application.count({ where: appWhere(ctx, { stage: 'REJECTED' }, filterArm(f)) }),
+  ]);
+  const ids = [...m.keys()];
+  const dept = await deptOfApps(ids);
+  const top = ids.slice(0, SHOW);
+  const rows = await appsById(top);
+  const byId = new Map(rows.map((a) => [a.id, a]));
+  const when = p.label(lang);
+  return answer(ctx, {
+    intent: 'rejections', count: m.size, total: m.size, open: searchOpen('candidates', f, { status: 'rejected' }),
+    title: say(lang, { en: `${when}: ${plural(m.size, 'candidate', 'candidates')} rejected${forName(f)}`, tl: `${when}: ${m.size} candidates reject ayyaru${forName(f)}`, te: `${when}: ${m.size} మంది తిరస్కరించబడ్డారు${forName(f)}` }),
+    lines: [
+      countLine('By department', ids.map((id) => (dept.get(id) || {}).dept || 'No department')),
+      monthLine([...m.values()].map((d) => L.istDay(d)), p, ctx),
+      p.all ? null : `At Rejected now (all time): ${nowN}`,
+    ],
+    items: top.map((id) => byId.get(id)).filter(Boolean).map((a) => candItem(a, `${jobOf(a)} · rejected ${L.dmy(L.istDay(m.get(a.id)))}${a.stage !== 'REJECTED' ? ` · now ${stepOf(a)}` : ''}`)),
+    facts: [`Counted: each candidate once, moved to Rejected between ${L.dmy(p.from)} and ${L.dmy(p.to)} (the stage history)${f && f.name ? `, for ${f.name}` : ''}. "At Rejected now" = every application whose step is Rejected today.`, scopeFact(ctx)],
+  });
+}
+// ---- NEW CANDIDATES (founder 2026-11-27: "how many candidates added this month", "how many new candidates came into ats") ----------------
+async function newCandidates(ctx, p0, lang, f) {
+  const p = p0.to > ctx.today ? { ...p0, to: ctx.today } : p0; // never past today
+  const where = appWhere(ctx, { createdAt: { gte: L.startOf(p.from), lt: L.endOf(p.to) } }, filterArm(f));
+  const [all, poolN] = await Promise.all([
+    prisma.application.findMany({ where, select: { id: true, candidateId: true, createdAt: true }, orderBy: { createdAt: 'desc' } }),
+    ctx.role === 'admin' && !f ? prisma.candidate.count({ where: { createdAt: { gte: L.startOf(p.from), lt: L.endOf(p.to) }, NOT: { name: { contains: 'zztest' } } } }) : null,
+  ]);
+  const firstOf = new Map();
+  all.forEach((a) => { if (!firstOf.has(a.candidateId)) firstOf.set(a.candidateId, a); });
+  const people = [...firstOf.values()];
+  const info = await deptOfApps(all.map((a) => a.id));
+  const top = people.slice(0, SHOW);
+  const rows = await appsById(top.map((a) => a.id));
+  const byId = new Map(rows.map((a) => [a.id, a]));
+  const when = p.label(lang);
+  return answer(ctx, {
+    intent: 'newCandidates', count: people.length, total: people.length, open: searchOpen('candidates', f),
+    title: say(lang, { en: `${when}: ${plural(people.length, 'new candidate', 'new candidates')} came in on requirements${forName(f)} (${plural(all.length, 'application', 'applications')})`, tl: `${when}: ${people.length} kotha candidates vacharu${forName(f)} (${all.length} applications)`, te: `${when}: ${people.length} కొత్త అభ్యర్థులు వచ్చారు${forName(f)} (${all.length} దరఖాస్తులు)` }),
+    lines: [
+      poolN != null ? `New candidate profiles in the ATS (with or without a requirement): ${poolN}` : null,
+      countLine('By department', all.map((a) => (info.get(a.id) || {}).dept || 'No department')),
+      countLine('By source', all.map((a) => (info.get(a.id) || {}).source || 'Not recorded')),
+      monthLine(all.map((a) => L.istDay(a.createdAt)), p, ctx),
+    ],
+    items: top.map((a) => byId.get(a.id)).filter(Boolean).map((a) => candItem(a, `${jobOf(a)} · added ${L.dmy(L.istDay(firstOf.get(a.candidateId).createdAt))} · now ${stepOf(a)}`)),
+    facts: [`Counted: each candidate once, put on a requirement (applied, added, imported or synced) between ${L.dmy(p.from)} and ${L.dmy(p.to)}${f && f.name ? `, for ${f.name}` : ''}.`, scopeFact(ctx)],
+  });
+}
+
 async function offers(ctx, p, lang, f) {
   if (p.named) {
     // offers RELEASED in the window (the Offer step in the stage history, or the offer date), and where each one stands now
@@ -543,10 +612,23 @@ async function agreements(ctx, p, lang, f, t) {
     const list = clientsOf(ctx, f).filter((c) => live(c) && liveJobClients.has(c.id) && !V.agreementIsSigned(c.agreementStatus));
     const allUnsigned = clientsOf(ctx, f).filter((c) => !V.agreementIsSigned(c.agreementStatus)).length;
     const notSent = list.filter((c) => V.normalizeAgreementStatus(c.agreementStatus) === 'DRAFT').length;
+    const listIds = new Set(list.map((c) => c.id));
+    const openReqs = ctx.reqs.filter((r) => LIVE.includes(r.status) && listIds.has(r.clientId));
+    // "how many requirements are open for unsigned agreement": the requirements, not the clients (founder 2026-11-27)
+    if (/\brequirements?\b|\breqs?\b|\bjobs?\b|\bopenings?\b|\bpositions?\b|\bvacanc/.test(t)) {
+      const openings = openReqs.reduce((n, r) => n + (Number(r.openings) || 1), 0);
+      return answer(ctx, {
+        intent: 'agreements', count: openReqs.length, total: openReqs.length,
+        title: say(lang, { en: `${nowLabel(ctx, lang)}: ${plural(openReqs.length, 'open requirement is', 'open requirements are')} with clients that have no signed agreement (${plural(list.length, 'client', 'clients')})`, tl: `${nowLabel(ctx, lang)}: agreement sign avvani ${list.length} clients ki ${openReqs.length} open requirements unnayi`, te: `${nowLabel(ctx, lang)}: ఒప్పందం సంతకం కాని ${list.length} క్లయింట్లకు ${openReqs.length} ఓపెన్ రిక్వైర్‌మెంట్లు` }),
+        lines: [`Openings in them: ${openings}`, `Not sent yet: ${notSent} clients; waiting for the client: ${list.length - notSent}`],
+        items: openReqs.sort((a, b) => String(a.client && a.client.name).localeCompare(String(b.client && b.client.name))).map((r) => reqItem(r, `${(r.client && r.client.name) || ''} · ${(V.requirementStatusUser && V.requirementStatusUser(r.status)) || r.status} · ${plural(Number(r.openings) || 1, 'opening', 'openings')}`)),
+        facts: ['Open = a live requirement (Open, Recruiter assigned, Sourcing, Candidates available) of an active client whose agreement is not Signed / Active.', scopeFact(ctx)],
+      });
+    }
     return answer(ctx, {
       intent: 'agreements', count: list.length, total: list.length,
       title: say(lang, { en: `${nowLabel(ctx, lang)}: ${plural(list.length, 'client', 'clients')} with open requirements ${list.length === 1 ? 'has' : 'have'} no signed agreement`, tl: `${nowLabel(ctx, lang)}: ${list.length} clients ki open requirements unnayi kani agreement sign avvaledu`, te: `${nowLabel(ctx, lang)}: ${list.length} క్లయింట్లకు ఓపెన్ రిక్వైర్‌మెంట్లు ఉన్నాయి కానీ ఒప్పందం సంతకం కాలేదు` }),
-      lines: [`Not sent yet: ${notSent}; waiting for the client: ${list.length - notSent}`, `All clients without a signed agreement: ${allUnsigned}`],
+      lines: [`Not sent yet: ${notSent}; waiting for the client: ${list.length - notSent}`, `Their open requirements: ${openReqs.length}`, `All clients without a signed agreement: ${allUnsigned}`],
       items: list.map((c) => clientItem(c, `${V.agreementStatusLabel(V.normalizeAgreementStatus(c.agreementStatus))}${c.agreementSentAt ? ` · sent ${L.dm(L.istDay(c.agreementSentAt))}` : ''}`)),
       facts: ['The dashboard\'s rule: active clients with a live requirement whose agreement is not Signed / Active.', scopeFact(ctx)],
     });
@@ -995,6 +1077,9 @@ const TOPICS = [
   ['target', /\btargets?\b|\bachiev\w*\b|\bquota\b|\bclosings?\b|\bincentive\b/],
   ['crm', /\bcrm\b|\bleads?\b|\bdeals?\b/],
   ['feedback', /\bfeedback\b|\bnot replied\b|\bno reply\b|\bnot responded\b|\bno response\b|\bwaiting for (the )?client\b|\bclient (has not|hasn't|did not|didn't) (reply|replied|respond|responded)\b|\breply ivvaledu\b|\bresponse ledu\b|\bshortlisted\b/],
+  // (founder 2026-11-27) "rejected count", "2026 rejected", "how many candidates added this month", "new candidates came into ats"
+  ['rejections', /\breject\w*\b|\bnot selected\b/],
+  ['newCandidates', /\b(new|added|came|come|entered|sourced|fresh|kotha|kottha)\b.{0,30}\b(candidates?|profiles?|applicants?|applications?)\b|\b(candidates?|profiles?|applicants?|applications?)\b.{0,30}\b(added|came|entered|sourced|vachina|vacharu)\b/],
   ['interviews', /\binterviews\b|\binterview\b/],
   ['offers', /\boffers?\b|\boffer letter\b/],
   ['joinings', /\bjoinings\b|\bjoined\b|\bjoin\b|\bjoining\b|\bonboard\w*\b|\bplacements?\b|\bplaced\b/],
@@ -1029,7 +1114,9 @@ time far list lists motham mottham year years samvatsaram wise breakdown month-w
 are there have been got happened came made raised released per each
 handles handle handled handling owner owns own report reports work worked activity activities performance summary did doing bde bdes team all every each
 department departments dept desk wise monthly daily roju vaari vari nela which most least top ranking leaderboard best highest lowest maximum minimum more less
-naa nenu chesina chesaru chesindi pani panulu`.split(/\s+/));
+naa nenu chesina chesaru chesindi pani panulu
+added add came come entered sourced fresh applicants applicant applications application ats system kotha vachina vacharu
+rejected reject rejects rejection rejections rejecting count counts`.split(/\s+/));
 
 function residualOf(norm) {
   return norm.split(' ').filter((w) => w && !STOP.has(w) && !/^[\d/.-]+$/.test(w) && !/^\d{1,2}(st|nd|rd|th)$/.test(w) && w.length >= 2).join(' ').trim();
@@ -1135,7 +1222,13 @@ const RUN = {
   joinings: [joinings, 'month'], drops: [drops, 'month'], replacements: [replacements, 'month'], invoices: [invoices, 'month'], agreements: [agreements, 'days'],
   followups: [followups, 'today'], target: [target, 'month'], clients: [clientsList, 'month'], requirements: [requirements, 'month'], health: [health, 'month'],
   complaints: [complaints, 'month'], nps: [nps, 'month'], crm: [crm, 'month'], agenda: [agenda, 'today'],
+  rejections: [rejections, 'month'], newCandidates: [newCandidates, 'month'],
 };
+// a record is named and no period is: the answer is all time ("who are joined candidates from vcare" = all 20, not this month's 0)
+const ALL_WHEN_NAMED = ['joinings', 'selections', 'drops', 'shared', 'offers', 'rejections', 'newCandidates'];
+// "P.Shailaja", "p. shailaja": an initial before a name - a candidate, not a BDE named Sailaja
+const initialOf = (q) => { const m = /(?:^|[^a-z])([a-z])\s?\.\s?([a-z]{3,})/.exec(String(q || '').toLowerCase()); return m ? { i: m[1], tok: m[2] } : null; };
+const fitsInitial = (name, ini) => new RegExp(`(^|[^a-z])${ini.i}[\\s.]*${ini.tok}`).test(String(name || '').toLowerCase());
 
 function topicsOf(norm) { return TOPICS.filter(([, re]) => re.test(norm)).map(([k]) => k); }
 
@@ -1176,7 +1269,11 @@ async function routeUncached(ctx, question, norm, lang) {
   }
   const residual = residualOf(norm);
   const PIPE = ['interviews', 'offers', 'joinings', 'selections', 'feedback', 'shared', 'drops', 'replacements'];
-  const rec = residual ? await resolve(ctx, residual, { candidates: !topics.length || ABOUT.test(norm) || topics.some((t) => PIPE.includes(t)) }) : null;
+  // "P.Shailaja - which requirement?", "for which client was Gouthami selected": a candidate's name may be asked with requirements / clients too
+  const askWhich = /which (client|clients|requirement|requirements|req|job|company|college|hospital)|for which|where (did|was|is)/.test(norm) || !!initialOf(question);
+  let rec = residual ? await resolve(ctx, residual, { candidates: !topics.length || ABOUT.test(norm) || askWhich || topics.some((t) => PIPE.includes(t)) }) : null;
+  const ini = initialOf(question);
+  if (ini && rec && rec.kind === 'candidate' && rec.ties) { const one = rec.ties.filter((x) => fitsInitial(x.name, ini)); if (one.length === 1) rec = { ...rec, x: one[0], ties: null }; }
   if (rec && rec.kind === 'candidate' && !rec.ties) {
     const a = await candidate360(ctx, rec.x.id, lang);
     if (a) return { kind: 'code', answers: [a], record: rec };
@@ -1207,7 +1304,7 @@ async function routeUncached(ctx, question, norm, lang) {
     const answers = [];
     for (const t of pick) { // eslint-disable-line no-restricted-syntax
       const [fn, def] = RUN[t];
-      const p = L.periodOf(norm, def, ctx.today, { future: t === 'agreements' });
+      const p = L.periodOf(norm, fr && ALL_WHEN_NAMED.includes(t) ? 'all' : def, ctx.today, { future: t === 'agreements' });
       // eslint-disable-next-line no-await-in-loop
       answers.push(await fn(ctx, p, lang, t === 'clients' ? null : fr, norm));
     }
@@ -1268,7 +1365,13 @@ async function routeTeam(ctx, question, norm, lang, topics, T) {
   };
   // 1. a BDE TL / Admin / Super Admin names a BDE: that person's work (their own scope)
   if (T.canSeeTeam(ctx)) {
-    const who = await T.matchBde(ctx, residualOf(norm));
+    let who = await T.matchBde(ctx, residualOf(norm));
+    // "P.Shailaja" is a candidate, not the BDE "Sailaja Bongu": an initial before the name, or a BDE matched only by a near spelling while
+    // candidates carry the exact name, goes to the candidate (founder 2026-11-27)
+    if (who && !who.ties && (initialOf(question) || !who.exact)) {
+      const also = await T.sameNameCandidates(ctx, residualOf(norm));
+      if (also && also.count) who = null;
+    }
     if (who && who.ties) {
       return { kind: 'code', answers: [answer(ctx, { intent: 'choose', count: who.ties.length, title: say(lang, { en: `${who.ties.length} BDEs match. Which one do you mean?`, tl: `${who.ties.length} BDEs match ayyaru. Evaru?`, te: `${who.ties.length} BDEలు సరిపోలారు. ఎవరు?` }), lines: ['Ask again with the full name.'], items: who.ties.map((u) => ({ kind: 'person', id: u.id, label: u.name, sub: 'BDE', to: `/clients?search=${encodeURIComponent(u.name)}` })), facts: [scopeFact(ctx)] })] };
     }
@@ -1307,7 +1410,7 @@ async function routeTeam(ctx, question, norm, lang, topics, T) {
       if (a) return { kind: 'code', answers: [a] };
       return { kind: 'code', answers: [await T.deptReport(ctx, dep, L.periodOf(norm, 'month', ctx.today), lang)] };
     }
-  } else if (DEPT_ALL.test(norm)) {
+  } else if (DEPT_ALL.test(norm) && !topics.some((t) => ['rejections', 'newCandidates'].includes(t))) {
     return { kind: 'code', answers: [await T.deptReport(ctx, null, L.periodOf(norm, 'month', ctx.today), lang)] };
   }
   return null;

@@ -53,11 +53,13 @@ async function matchBde(ctx, residual) {
     const words = String(u.name).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
     let s = 0; let hit = 0;
     toks.forEach((t) => { const before = s; if (words.includes(t)) s += t.length + 2; else if (t.length >= 4 && words.some((w) => w.startsWith(t))) s += t.length; else if (t.length >= 5 && words.some((w) => w.length >= 5 && lev1(t, w))) s += t.length - 1; if (s > before) hit += 1; });
-    return { u, s, all: hit === toks.length };
+    // exact: every word is the name's own word (or its start) - not only a near spelling ("shailaja" is near "sailaja")
+    const exact = toks.every((t) => words.includes(t) || (t.length >= 4 && words.some((w) => w.startsWith(t))));
+    return { u, s, all: hit === toks.length, exact };
   }).filter((x) => x.s >= 4 && x.all) // every word must be part of the name: "Sravani Kondapalli" (a candidate) is not the BDE "Sravani".sort((a, b) => b.s - a.s);
   if (!scored.length) return null;
   const ties = scored.filter((x) => x.s === scored[0].s).map((x) => x.u);
-  return { user: scored[0].u, ties: ties.length > 1 ? ties : null };
+  return { user: scored[0].u, ties: ties.length > 1 ? ties : null, exact: !!scored[0].exact };
 }
 // a BDE was named; candidates in the viewer's scope may carry the same name: "Also candidates named sailaja: 5" (+ a Search link), never a question back
 async function sameNameCandidates(ctx, words) {
