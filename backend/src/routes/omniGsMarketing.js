@@ -20,6 +20,7 @@ const Eml = require('../marketing/emailmk');
 const Lead = require('../marketing/leadgen');
 const Jny = require('../marketing/journeys');
 const CS = require('../marketing/clientServices');
+const Leads = require('../marketing/clientLeads');
 const Site = require('../marketing/siteCheck');
 const Geo = require('../marketing/geoTools');
 const Rev = require('../marketing/reviewReply');
@@ -406,6 +407,18 @@ router.post('/services/plans/:id/delivery', mustWrite, wrap(async (req, res) => 
 // onboarding of a new client (marketing/onboarding.js): the checklist of what to collect, claim and verify; the steps of the TeamLink tools tick themselves
 router.get('/services/plans/:id/onboarding', mustWrite, wrap(async (req, res) => send(res, await Onb.get(req.user, req.params.id))));
 router.put('/services/plans/:id/onboarding/:key', mustWrite, wrap(async (req, res) => send(res, await Onb.setStep(req.user, req.params.id, req.params.key, req.body || {}))));
+// lead tracking of one client on a plan (marketing/clientLeads.js): the enquiry page, the leads, a spreadsheet
+router.get('/services/plans/:id/leads', mustWrite, wrap(async (req, res) => send(res, await Leads.forPlan(req.user, req.params.id, req.query.month))));
+router.put('/services/plans/:id/leads/page', mustWrite, wrap(async (req, res) => send(res, await Leads.savePage(req.user, req.params.id, req.body || {}))));
+router.post('/services/plans/:id/leads', mustWrite, wrap(async (req, res) => send(res, await Leads.addByHand(req.user, req.params.id, req.body || {}))));
+router.put('/services/plans/:id/leads/:leadId', mustWrite, wrap(async (req, res) => send(res, await Leads.setLead(req.user, req.params.id, req.params.leadId, req.body || {}))));
+router.delete('/services/plans/:id/leads/:leadId', mustWrite, wrap(async (req, res) => send(res, await Leads.removeLead(req.user, req.params.id, req.params.leadId))));
+router.get('/services/plans/:id/leads.csv', mustWrite, wrap(async (req, res) => {
+  const out = await Leads.csv(req.user, req.params.id, req.query.month);
+  if (out.error) return send(res, out);
+  res.set('Content-Type', 'text/csv; charset=utf-8'); res.set('Content-Disposition', `attachment; filename="${out.name}"`); res.set('Cache-Control', 'no-store');
+  return res.send(out.csv);
+}));
 // the monthly client report: the numbers the team types or imports (nothing invented), the printable page, the Search Console CSV reader
 router.get('/services/plans/:id/report', mustWrite, wrap(async (req, res) => send(res, await Mrep.build(req.user, req.params.id, req.query.month))));
 router.put('/services/plans/:id/report', mustWrite, wrap(async (req, res) => send(res, await Mrep.save(req.user, req.params.id, req.body || {}))));

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../../api';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
+import ClientLeadsPanel from '../marketing/ClientLeadsPanel.jsx';
 import { PageHead, Btn, TinyBtn, Panel, Pill, Tag, Banner, Field, Tabs, Empty, fmtNum, fmtDate } from '../ui.jsx';
 
 // AI MARKETING > CLIENT PLANS (2026-11-24): the services document made usable. 1 the three plans and the offers with a price calculator, 2 the clients on a plan with what has been
@@ -101,6 +102,7 @@ function Attention({ onOpen }) {
 function ClientsTab({ cat, toast, onAudit }) {
   const [month, setMonth] = useState(new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 7));
   const [rows, setRows] = useState(null); const [err, setErr] = useState(''); const [form, setForm] = useState(null); const [busy, setBusy] = useState(false); const [rep, setRep] = useState(null); const [onb, setOnb] = useState(null); const [phone, setPhone] = useState(null);
+  const [leadsOf, setLeadsOf] = useState(null);
   const load = useCallback(() => omni.get('/gs/marketing/services/plans', { month }).then((d) => { setRows(d.items); setErr(''); }).catch((e) => setErr(errOf(e, 'The clients could not be read.'))), [month]);
   useEffect(() => { load(); }, [load]);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -130,6 +132,7 @@ function ClientsTab({ cat, toast, onAudit }) {
       ) : null}
       {onb ? <OnboardingPanel key={onb.id} plan={onb} toast={toast} onClose={() => setOnb(null)} /> : null}
       {phone ? <PhoneLoginPanel key={phone.id} plan={phone} toast={toast} onClose={() => setPhone(null)} /> : null}
+      {leadsOf ? <ClientLeadsPanel key={leadsOf.id} plan={leadsOf} month={month} toast={toast} onClose={() => setLeadsOf(null)} /> : null}
       {rep ? <ReportPanel plan={rep} month={month} toast={toast} onClose={() => setRep(null)} /> : null}
       {err ? <Banner tone="error">{err}</Banner> : null}
       {rows && !rows.length ? <Empty title="No client on a plan yet">Add the first one: the plan, how many months were paid for, and the start date. Then count what is delivered each month.</Empty> : null}
@@ -137,7 +140,7 @@ function ClientsTab({ cat, toast, onAudit }) {
         const [tone, words] = RENEW[r.renewal] || RENEW.running;
         return (
           <Panel key={r.id} title={`${r.clientName} · ${r.planLabel}`} sub={`${r.months} month(s) from ${fmtDate(r.startDate)} to ${fmtDate(r.endDate)} · paid ${rs(r.pricePaid)}${r.industry ? ` · ${r.industry}` : ''}`} style={{ marginBottom: 12 }}
-            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => setOnb(r)}>Onboarding</TinyBtn><TinyBtn title="Give this client ONE login for the web and the phone app: their dashboard, approving their social posts, their plan and their social accounts" onClick={() => setPhone(r)}>Client login</TinyBtn><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn><TinyBtn onClick={() => setRep(r)}>Monthly report</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
+            right={<span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={tone} dot>{words}{r.renewal === 'soon' ? ` (${r.daysLeft} days)` : ''}</Pill><TinyBtn onClick={() => setOnb(r)}>Onboarding</TinyBtn><TinyBtn title="Give this client ONE login for the web and the phone app: their dashboard, approving their social posts, their plan and their social accounts" onClick={() => setPhone(r)}>Client login</TinyBtn><TinyBtn onClick={() => onAudit(r)}>Google profile audit</TinyBtn><TinyBtn onClick={() => setLeadsOf(r)}>Leads</TinyBtn><TinyBtn onClick={() => setRep(r)}>Monthly report</TinyBtn>{r.status === 'active' ? <TinyBtn onClick={() => setStatus(r, 'ended')}>End plan</TinyBtn> : <TinyBtn onClick={() => setStatus(r, 'active')}>Reopen</TinyBtn>}</span>}>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Delivered in {month}: {r.deliveredPct}% of the plan. Posts, Reels and stories are counted by themselves from the work approved for {r.clientName} in Client projects; the + and − buttons add work made outside TeamLink. SEO blogs are counted when a post is marked Published in SEO and visibility > Blog planner. GBP posts are counted by hand.</div>
             {r.progress.map((p) => (
               <div key={p.item} style={{ display: 'grid', gridTemplateColumns: 'minmax(150px,1.2fr) 3fr auto', gap: 10, alignItems: 'center', margin: '5px 0', fontSize: 13 }}>

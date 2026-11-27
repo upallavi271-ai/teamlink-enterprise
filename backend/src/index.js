@@ -332,6 +332,7 @@ app.use('/api/mcp', require('./routes/mktBPublic').mcpRouter); // market wave B:
 app.use('/api/public/feedback', require('./routes/feedbackPublic'));
 app.use('/api/public/qoh', require('./routes/qohPublic')); // the client's quality-of-hire rating page (signed token, no login; utils/insights/qoh.js)
 app.use('/api/bi', require('./routes/biFeed')); // read-only BI feed for Power BI / Looker / Excel (Admin-made API key; utils/insights/bi.js) // the candidate / client experience survey (signed token, no login; utils/atsExperience.js)
+app.use('/api/public/mk-lead', require('./routes/mkLeadPublic')); // AI Marketing client plans: a client's enquiry page (random token, no login; marketing/clientLeads.js)
 app.use('/api/public/mk-review', require('./routes/mkClientReviewPublic')); // AI Marketing client approval link (signed token in the address, no login; marketing/clientReview.js)
 app.use('/api/public/mk-meeting', require('./routes/mkMeetingPublic')); // AI Marketing plans meeting: the automated spoken presentation a client opens from a WhatsApp link (signed token, no login; marketing/meeting.js)
 setTimeout(() => { try { if (!require('./utils/sandbox').isSandbox()) require('./marketing/meetingVoice').prewarm().catch(() => {}); } catch { /* no voice on this server */ } }, 60000).unref(); // the meeting's first sentences are made a minute after start (marketing/meetingVoice.js)
