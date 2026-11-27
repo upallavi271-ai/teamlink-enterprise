@@ -87,4 +87,40 @@ function napCheck(places) {
   }
   return { places: list, reference: base.place, issues, consistent: issues.length === 0, note: `Compared with "${base.place}". Small spelling differences count as differences: write the details the same way everywhere.` };
 }
-module.exports = { businessSchema, faqSchema, describe, napCheck, parseHours };
+// A DOCTOR OR STAFF PROFILE (the "doctor and professional profile content" of the GEO work): the words of a profile page and its Person structured data, from the typed facts only.
+// b: { kind: 'doctor' | 'professional', name, role, qualification, regNo, council, since, specialty, services, languages, hours, place, phone, profileUrl, social, about }
+function profile(b = {}) {
+  const doctor = b.kind !== 'professional'; const name = clean(b.name, 120); if (!name) return { error: 'Write the person\'s name.', status: 400 };
+  const role = clean(b.role, 100); const qualification = clean(b.qualification, 200); const regNo = clean(b.regNo, 60); const council = clean(b.council, 120); const specialty = clean(b.specialty, 120);
+  const list = (v, n) => String(v || '').split(/[,;\n]/).map((x) => clean(x, 80)).filter(Boolean).slice(0, n);
+  const services = list(b.services, 15); const languages = list(b.languages, 10); const place = clean(b.place, 160); const hours = clean(b.hours, 200); const phone = clean(b.phone, 30); const about = clean(strip(b.about), 1200);
+  const since = Number(b.since) > 1950 && Number(b.since) <= new Date().getFullYear() ? Number(b.since) : 0;
+  const and = (a) => (a.length > 1 ? `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}` : a[0] || '');
+  const lines = [`${name}${qualification ? `, ${qualification}` : ''}`];
+  const first = [role || specialty ? `${name} is ${role ? (/^[aeiou]/i.test(role) ? `an ${role}` : `a ${role}`) : `a ${specialty} ${doctor ? 'doctor' : 'specialist'}`}` : '', place ? `at ${place}` : ''].filter(Boolean).join(' ');
+  if (role || specialty) lines.push(`${first}.`); else if (place) lines.push(`${name} works at ${place}.`);
+  if (role && specialty) lines.push(`Speciality: ${specialty}.`);
+  if (since) lines.push(`Practising since ${since}.`);
+  if (services.length) lines.push(`${doctor ? 'Consults for' : 'Works on'} ${and(services)}.`);
+  if (languages.length) lines.push(`Speaks ${and(languages)}.`);
+  if (hours) lines.push(`Timings: ${hours}.`);
+  if (phone) lines.push(`Appointments and enquiries: ${phone}.`);
+  if (regNo) lines.push(`Registration number: ${regNo}${council ? ` (${council})` : ''}.`);
+  if (about) lines.push(about);
+  const o = { '@context': 'https://schema.org', '@type': 'Person', name };
+  if (role || doctor) o.jobTitle = role || (specialty ? `${specialty} doctor` : 'Doctor');
+  if (qualification) o.hasCredential = qualification.split(/[,;]/).map((x) => x.trim()).filter(Boolean).slice(0, 8).map((x) => ({ '@type': 'EducationalOccupationalCredential', name: x }));
+  if (regNo) o.identifier = { '@type': 'PropertyValue', propertyID: council || 'Registration number', value: regNo };
+  const knows = [specialty, ...services].filter(Boolean); if (knows.length) o.knowsAbout = knows;
+  if (languages.length) o.knowsLanguage = languages;
+  if (place) o.worksFor = { '@type': 'Organization', name: place };
+  if (/^https?:\/\//i.test(clean(b.profileUrl, 300))) o.url = clean(b.profileUrl, 300);
+  const sa = links(b.social); if (sa.length) o.sameAs = sa;
+  const missing = []; if (!qualification) missing.push('qualification'); if (doctor && !regNo) missing.push('registration number'); if (!specialty) missing.push('speciality'); if (!place) missing.push('where they work'); if (!languages.length) missing.push('languages');
+  const text = lines.join('\n');
+  const checked = require('./contentGuard').check(text, { healthcare: doctor });
+  return { text, script: `<script type="application/ld+json">\n${JSON.stringify(o, null, 2).replace(/</g, '\u003c')}\n</script>`, schema: o, missing,
+    warnings: (checked.findings || []).slice(0, 8).map((f) => `"${f.match}": ${f.why}`),
+    note: doctor ? 'The doctor reads and approves this before it goes on the website. Only real qualifications and registration.' : 'The person approves this before it goes on the website.' };
+}
+module.exports = { businessSchema, faqSchema, describe, napCheck, parseHours, profile };

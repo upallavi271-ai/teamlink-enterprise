@@ -47,15 +47,16 @@ async function posts(u, id) {
 
 // the part that really posts, shared by the click (postItem) and the automatic post after the client approved (marketing/itemPlan.js): the public links Meta fetches, the local file X uploads, the publisher,
 // one history row per account (done or failed) and one audit line. -> the publisher's results [{ accountId, platform, name, ok, url, error }]
-async function publishItem(it, Img, targets, caption, site, byId, byName, how = 'by a click') {
+async function publishItem(it, Img, targets, caption, site, byId, byName, how = 'by a click', story = false) {
   const video = Img.isVideoRow(it);
   const file = Img.rawFile(it);
   const media = { type: video ? 'video' : 'image', url: site ? `${site}${Img.publicPathOf(it)}` : '', jpgUrl: site && !video && /^image\/(png|webp)$/.test(it.mime || '') ? `${site}${Img.publicJpegPath(it)}` : (site ? `${site}${Img.publicPathOf(it)}` : ''), path: file ? file.path : '', mime: it.mime, title: it.title };
+  if (story) media.story = true;
   const results = await require('./publisher').publish(targets, media, caption); // eslint-disable-line global-require
   const now = Date.now();
   for (const x of results) { // eslint-disable-line no-restricted-syntax
     await S.run(`INSERT INTO "${T}" (id, itemId, accountId, platform, accountName, ok, url, error, caption, byId, byName, at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, // eslint-disable-line no-await-in-loop
-      S.newId('ip'), it.id, x.accountId || null, x.platform || null, S.clip(x.name, 120), x.ok ? 1 : 0, x.url || null, x.ok ? null : S.clip(x.error, 300), caption || null, byId, S.clip(byName, 80), now);
+      S.newId('ip'), it.id, x.accountId || null, x.platform || null, S.clip(story ? `${x.name} (Story)` : x.name, 120), x.ok ? 1 : 0, x.url || null, x.ok ? null : S.clip(x.error, 300), caption || null, byId, S.clip(byName, 80), now);
   }
   await logAudit({ userId: byId, actorName: byName, action: results.every((x) => x.ok) ? `Omni-Channel AI Marketing: ${video ? 'video' : 'picture'} posted ${how}` : `Omni-Channel AI Marketing: ${video ? 'video' : 'picture'} posting ${how} had a failure`, entity: 'OmniMkImage', entityId: it.id, toValue: `${S.clip(it.title, 80)}: ${results.map((x) => `${x.name} (${WORD[x.platform] || x.platform}) ${x.ok ? 'posted' : 'failed'}`).join(', ')}` });
   return results;
@@ -82,16 +83,19 @@ async function postItem(u, id, b = {}, base = '') {
     if (got.account.platform === 'youtube' && !Img.isVideoRow(it)) return { error: 'YouTube takes videos only: pick a video, or leave YouTube out.', status: 400 };
     targets.push({ accountId: aid, platform: got.account.platform, name: got.account.name });
   }
-  const caption = S.clip(b.caption, 2200).trim();
+  const story = b.asStory === true;
+  if (story && it.aspect !== '9:16') return { error: 'A Story needs a tall (9:16) picture or video.', status: 400 };
+  if (story && targets.some((t) => !require('./publisher').STORY_PLATFORMS.includes(t.platform))) return { error: 'Stories can be posted to Facebook and Instagram only. Leave the other accounts out.', status: 400 }; // eslint-disable-line global-require
+  const caption = story ? '' : S.clip(b.caption, 2200).trim();
   if (targets.some((t) => t.platform === 'x') && caption.length > 280) return { error: `The words are ${caption.length} characters and X allows 280. Shorten them, or leave X out.`, status: 400 };
   const site = require('./projects').siteFor(base); // eslint-disable-line global-require
   if (targets.some((t) => NEEDS_SITE.includes(t.platform)) && !site) return { error: 'Posting to Facebook or Instagram needs this page opened on the site\'s https address (Meta fetches the picture or video from it).', status: 400 };
   if (running.has(it.id)) return { error: 'It is being posted right now.', status: 409 };
   running.add(it.id);
   try {
-    const results = await publishItem(it, Img, targets, caption, site, u.id, u.name, 'by a click');
+    const results = await publishItem(it, Img, targets, caption, site, u.id, u.name, story ? 'as a Story by a click' : 'by a click', story);
     const good = results.filter((x) => x.ok);
-    return { ok: good.length === results.length ? `Posted on ${good.map((x) => x.name).join(', ')}.` : (good.length ? 'Some accounts were posted, some were not. See below.' : 'It could not be posted. See why below, then try again.'), results, posted: good.length > 0 };
+    return { ok: good.length === results.length ? `Posted${story ? ' as a Story' : ''} on ${good.map((x) => x.name).join(', ')}.` : (good.length ? 'Some accounts were posted, some were not. See below.' : 'It could not be posted. See why below, then try again.'), results, posted: good.length > 0 };
   } finally { running.delete(it.id); }
 }
 

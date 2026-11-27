@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
+import { ListingsTab, AiAnswersTab, ProfilePanel } from '../marketing/VisibilityMore.jsx';
 import { PageHead, Btn, TinyBtn, Panel, Pill, Tag, Banner, Field, Tabs, Empty, fmtDate } from '../ui.jsx';
 
 // AI MARKETING > SEO & VISIBILITY (2026-11-24): the search, answer-engine (AEO), AI-search (GEO) and reputation services of the services document, as tools the team uses with plain code:
@@ -25,9 +26,9 @@ export default function MkVisibilityPage() {
   return (
     <div>
       <PageHead eyebrow="AI Marketing" title="SEO and visibility" lead="Check a client's website, plan the month's blog posts, make the FAQ and business data for search and AI answers, write careful review replies, check the wording, and find free photos. Nothing is posted: the client approves first." />
-      <Tabs value={tab} onChange={setTab} tabs={[['site', 'Website check'], ['competitors', 'Competitors'], ['blog', 'Blog planner'], ['schema', 'FAQ and schema'], ['reviews', 'Review replies'], ['wording', 'Wording check'], ['packs', 'Industry packs'], ['photos', 'Free photos']]} />
+      <Tabs value={tab} onChange={setTab} tabs={[['site', 'Website check'], ['competitors', 'Competitors'], ['blog', 'Blog planner'], ['schema', 'FAQ and schema'], ['listings', 'Trusted listings'], ['ai', 'AI answers'], ['reviews', 'Review replies'], ['wording', 'Wording check'], ['packs', 'Industry packs'], ['photos', 'Free photos']]} />
       <div style={{ marginTop: 14 }}>
-        {tab === 'site' ? <SiteTab {...p} /> : null}{tab === 'competitors' ? <CompetitorsTab {...p} /> : null}{tab === 'blog' ? <BlogTab {...p} /> : null}{tab === 'schema' ? <SchemaTab {...p} /> : null}{tab === 'reviews' ? <ReviewsTab {...p} /> : null}
+        {tab === 'site' ? <SiteTab {...p} /> : null}{tab === 'competitors' ? <CompetitorsTab {...p} /> : null}{tab === 'blog' ? <BlogTab {...p} /> : null}{tab === 'schema' ? <SchemaTab {...p} /> : null}{tab === 'listings' ? <ListingsTab {...p} /> : null}{tab === 'ai' ? <AiAnswersTab {...p} /> : null}{tab === 'reviews' ? <ReviewsTab {...p} /> : null}
         {tab === 'wording' ? <WordingTab {...p} /> : null}{tab === 'packs' ? <PacksTab {...p} /> : null}{tab === 'photos' ? <PhotosTab {...p} /> : null}
       </div>
     </div>
@@ -309,6 +310,7 @@ function SchemaTab({ toast, industries }) {
         <div style={{ display: 'flex', gap: 8 }}><TinyBtn onClick={() => setPlaces([...places, { place: 'Other listing', name: '', address: '', phone: '' }])}>＋ Add a place</TinyBtn><Btn primary onClick={() => call('nap', { places }, setNap)}>Compare</Btn></div>
         {nap ? <div style={{ marginTop: 8, fontSize: 13 }}>{nap.consistent ? <Pill tone="live" dot>The same everywhere</Pill> : <><Pill tone="warn" dot>{nap.issues.length} difference(s)</Pill><ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>{nap.issues.map((x, i) => <li key={i}><b>{x.place}</b> {x.field}: "{x.here}" should read "{x.expected}"</li>)}</ul></>}<div style={{ fontSize: 12, color: 'var(--muted)' }}>{nap.note}</div></div> : null}
       </Panel>
+      <ProfilePanel toast={toast} />
     </div>
   );
 }

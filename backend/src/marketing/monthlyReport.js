@@ -74,13 +74,24 @@ function leadSection(c) {
     ...c.bySource.map((x) => [`Came from ${x.words}`, x.count])];
   return { key: 'leads', title: 'Enquiries tracked by TeamLink', kind: 'table', rows: rows.map(([label, v]) => ({ label, value: n(v), given: true })) };
 }
-function sections({ plan, month, metrics, notes, audit, site, comp, cmp, leads }) {
+// what a person saw in AI answers this month (aiAnswers.js) and the trusted listings as last ticked (listings.js)
+function aiSection(c) {
+  const rows = [['Questions asked', String(c.asked)], ['Business named in the answer', `${c.named} of ${c.asked}`], ['Website shown', `${c.site} of ${c.asked}`], ...c.byEngine.map((x) => [`Named in ${x.engine}`, `${x.named} of ${x.asked}`]), ...(c.others.length ? [['Others named', c.others.join(', ')]] : [])];
+  return { key: 'aiAnswers', title: 'AI answers checked by the team (answers differ by person and day; not a ranking)', kind: 'table', rows: rows.map(([label, value]) => ({ label, value, given: true })) };
+}
+function listingSection(c) {
+  const say = (a) => (a.length ? a.join(', ') : 'None');
+  return { key: 'listings', title: 'Trusted listings (as last checked by the team)', kind: 'table', rows: [['Places checked', String(c.checked)], ['Listed with the same details', say(c.same)], ['Listed with wrong details', say(c.wrong)], ['Not there yet', say(c.missing)]].map(([label, value]) => ({ label, value, given: true })) };
+}
+function sections({ plan, month, metrics, notes, audit, site, comp, cmp, leads, ai, listings }) {
   const m = metrics || {}; const sec = []; const improve = [];
   const prog = plan.progress || []; const done = prog.reduce((a, x) => a + Math.min(x.done, x.quota), 0); const quota = prog.reduce((a, x) => a + x.quota, 0);
   sec.push({ key: 'delivery', title: `What TeamLink delivered in ${monthWords(month)}`, kind: 'bars', rows: prog.map((x) => ({ label: x.label, done: x.done, quota: x.quota, pct: x.pct, over: x.over })), summary: `${done} of ${quota} items of the ${plan.planLabel} plan (${quota ? Math.round((done / quota) * 100) : 0}%). Counted from the work approved in TeamLink plus what the team added by hand.` });
   prog.filter((x) => x.left > 0).forEach((x) => improve.push(`${x.left} ${x.label} still to deliver for this month's plan.`)); // the label as written ("AI-assisted Reels", "Google Business Profile posts"): lowercasing it spoiled AI, Google, SEO
   for (const [g, def] of Object.entries(FIELDS)) sec.push({ key: g, title: def.label, kind: 'table', rows: def.items.map(([k, label]) => ({ label, value: fmt(m[g] && m[g][k], k), given: !!(m[g] && m[g][k] != null) })) });
   if (leads) { sec.push(leadSection(leads)); if (leads.waiting) improve.push(`${leads.waiting} ${leads.waiting === 1 ? 'enquiry is' : 'enquiries are'} still marked New: contact ${leads.waiting === 1 ? 'that person' : 'those people'}.`); }
+  if (ai) { sec.push(aiSection(ai)); if (ai.named < ai.asked) improve.push(`The business was named in ${ai.named} of ${ai.asked} AI answers checked: improve the website facts, FAQ and trusted listings.`); }
+  if (listings) { sec.push(listingSection(listings)); if (listings.wrong.length) improve.push(`Correct the business details on: ${listings.wrong.join(', ')}.`); if (listings.missing.length) improve.push(`Add the business, where it qualifies, to: ${listings.missing.join(', ')}.`); }
   const seo = m.seo; sec.splice(2, 0, { key: 'seo', title: 'Search performance (Google Search Console)', kind: 'seo', given: !!seo, rows: seo ? [{ label: 'Search clicks', value: fmt(seo.clicks) }, { label: 'Search impressions', value: fmt(seo.impressions) }, { label: 'Click-through rate', value: seo.ctr == null ? NP : `${seo.ctr}%` }, { label: 'Average search position', value: seo.position == null ? NP : String(seo.position) }] : [], top: seo ? (seo.rows || []).slice(0, 10) : [], source: seo ? seo.source : '' });
   if (cmp && cmp.hasPrev) { sec.push(Cmp.section(cmp)); Cmp.improveLines(cmp).forEach((x) => improve.push(x)); } // this month beside the month before (monthCompare.js)
   if (audit) { sec.push({ key: 'audit', title: 'Google Business Profile quality audit (TeamLink\'s own score)', kind: 'score', score: audit.score, band: audit.band, when: audit.createdAt, note: "TeamLink's own audit score, not an official Google score or ranking." }); (audit.actions || []).slice(0, 3).forEach((a) => improve.push(`Google profile, ${a.area.toLowerCase()}: ${a.fix}`)); }
@@ -147,7 +158,9 @@ async function build(u, planId, month) {
   const prow = await rowFor(planId, Cmp.prevMonthOf(m)); const prevMetrics = prow ? cleanMetrics(S.parse(prow.metrics, {})) : null; // last month's saved numbers, if any
   const cmp = await Cmp.make(u, plan, m, { metrics, prevMetrics, fields: FIELDS });
   const leads = await require('./clientLeads').reportCounts(planId, m).catch(() => null); // eslint-disable-line global-require
-  const parts = sections({ plan, month: m, metrics, notes, audit, site, comp, cmp, leads });
+  const ai = await require('./aiAnswers').reportCounts(u, plan.clientName, m).catch(() => null); // eslint-disable-line global-require
+  const listings = await require('./listings').reportCounts(u, plan.clientName).catch(() => null); // eslint-disable-line global-require
+  const parts = sections({ plan, month: m, metrics, notes, audit, site, comp, cmp, leads, ai, listings });
   return { month: m, plan: { id: plan.id, clientName: plan.clientName, planLabel: plan.planLabel }, metrics, notes, fields: FIELDS, comparison: cmp, report: { html: html(plan, m, parts), text: text(plan, m, parts), improve: parts.improve }, saved: !!row, updatedAt: row ? S.iso(row.updatedAt) : null };
 }
 async function save(u, planId, b = {}) {

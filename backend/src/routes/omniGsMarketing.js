@@ -21,6 +21,8 @@ const Lead = require('../marketing/leadgen');
 const Jny = require('../marketing/journeys');
 const CS = require('../marketing/clientServices');
 const Leads = require('../marketing/clientLeads');
+const Listings = require('../marketing/listings');
+const AiAnswers = require('../marketing/aiAnswers');
 const Site = require('../marketing/siteCheck');
 const Geo = require('../marketing/geoTools');
 const Rev = require('../marketing/reviewReply');
@@ -456,6 +458,15 @@ router.put('/visibility/blog-plans/:id/items/:n', mustWrite, wrap(async (req, re
 router.post('/visibility/schema/business', mustWrite, wrap(async (req, res) => send(res, Geo.businessSchema(req.body || {}))));
 router.post('/visibility/schema/faq', mustWrite, wrap(async (req, res) => send(res, Geo.faqSchema((req.body || {}).faq))));
 router.post('/visibility/describe', mustWrite, wrap(async (req, res) => send(res, Geo.describe(req.body || {}))));
+router.post('/visibility/profile', mustWrite, wrap(async (req, res) => send(res, Geo.profile(req.body || {}))));
+// trusted listings (marketing/listings.js) and the by-hand AI answers check (marketing/aiAnswers.js)
+router.get('/visibility/listings', mustWrite, wrap(async (req, res) => send(res, await Listings.view(req.user, req.query || {}))));
+router.put('/visibility/listings', mustWrite, wrap(async (req, res) => send(res, await Listings.save(req.user, req.body || {}))));
+router.post('/visibility/ai-answers/questions', mustWrite, wrap(async (req, res) => send(res, AiAnswers.questions(req.body || {}))));
+router.post('/visibility/ai-answers/check', mustWrite, wrap(async (req, res) => send(res, AiAnswers.check(req.body || {}))));
+router.get('/visibility/ai-answers', mustWrite, wrap(async (req, res) => send(res, await AiAnswers.list(req.user, req.query || {}))));
+router.post('/visibility/ai-answers', mustWrite, wrap(async (req, res) => send(res, await AiAnswers.save(req.user, req.body || {}))));
+router.delete('/visibility/ai-answers/:id', mustWrite, wrap(async (req, res) => send(res, await AiAnswers.remove(req.user, req.params.id))));
 router.post('/visibility/nap', mustWrite, wrap(async (req, res) => send(res, Geo.napCheck((req.body || {}).places))));
 router.post('/visibility/pack', mustWrite, wrap(async (req, res) => send(res, Packs.buildPack((req.body || {}).industry, req.body || {}))));
 router.post('/visibility/review-reply', mustWrite, wrap(async (req, res) => send(res, Rev.draft(req.body || {}))));

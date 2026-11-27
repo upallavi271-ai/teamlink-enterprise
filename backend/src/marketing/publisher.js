@@ -41,7 +41,37 @@ async function graph(method, path, form, token, platform) {
   return j;
 }
 
+// a Facebook Page STORY (Page Stories API). Picture: upload it unpublished, then /photo_stories. Video: /video_stories start -> Meta's upload address fetches our https file -> wait -> finish.
+async function toFacebookStory(acc, token, media) {
+  const page = encodeURIComponent(acc.externalId);
+  if (media.type === 'image') {
+    const up = await graph('POST', `${page}/photos`, { url: media.url, published: 'false' }, token, 'facebook');
+    const j = await graph('POST', `${page}/photo_stories`, { photo_id: String(up.id) }, token, 'facebook');
+    return { id: String(j.post_id || up.id), url: '' };
+  }
+  if (media.type !== 'video') throw new PublishError('A Story needs a picture or a video.', 'nomedia');
+  const start = await graph('POST', `${page}/video_stories`, { upload_phase: 'start' }, token, 'facebook');
+  // the token only goes to Meta: its upload host (or the API's own address, which the tests stand in for)
+  let to = null; try { to = new URL(start.upload_url); } catch { to = null; }
+  if (!to || !((to.protocol === 'https:' && to.hostname === 'rupload.facebook.com') || to.origin === new URL(graphBase()).origin)) throw new PublishError('Facebook gave no safe upload address for the video. Try again.', 'meta');
+  let res; try { res = await fetch(to.href, { method: 'POST', headers: { Authorization: `OAuth ${token}`, file_url: media.url }, signal: AbortSignal.timeout(180000) }); } catch { throw new PublishError('Facebook could not be reached to upload the video. Try again.', 'unreachable'); }
+  const put = await res.json().catch(() => ({}));
+  if (!res.ok || put.success === false || put.error) throw new PublishError(plain(put.error || put.debug_info || { message: `upload refused (${res.status})` }, 'facebook'), 'meta');
+  for (let i = 0; i < 40; i += 1) {
+    const s = await graph('GET', encodeURIComponent(start.video_id), { fields: 'status' }, token, 'facebook'); // eslint-disable-line no-await-in-loop
+    const st = s.status || {}; const upl = (st.uploading_phase || {}).status;
+    if (st.video_status === 'error' || st.video_status === 'upload_failed' || upl === 'error') throw new PublishError('Facebook could not use this video. A Story video is a tall MP4 of 3 to 60 seconds.', 'processing');
+    if (!upl || upl === 'complete') break;
+    if (i === 39) throw new PublishError('Facebook is still receiving the video. Try again in a few minutes.', 'slow');
+    await sleep(POLL_MS()); // eslint-disable-line no-await-in-loop
+  }
+  const j = await graph('POST', `${page}/video_stories`, { video_id: String(start.video_id), upload_phase: 'finish' }, token, 'facebook');
+  if (j.success === false) throw new PublishError('Facebook did not publish the Story. Try again.', 'meta');
+  return { id: String(j.post_id || start.video_id), url: '' };
+}
+
 async function toFacebook(acc, token, media, caption) {
+  if (media.story) return toFacebookStory(acc, token, media);
   const page = encodeURIComponent(acc.externalId);
   if (media.type === 'video') {
     const j = await graph('POST', `${page}/videos`, { file_url: media.url, description: caption }, token, 'facebook');
@@ -58,7 +88,9 @@ async function toFacebook(acc, token, media, caption) {
 async function toInstagram(acc, token, media, caption) {
   const ig = encodeURIComponent(acc.externalId);
   if (media.type !== 'image' && media.type !== 'video') throw new PublishError('Instagram needs a picture or a video. This project has none to post.', 'nomedia');
-  const form = media.type === 'video' ? { media_type: 'REELS', video_url: media.url, caption } : { image_url: media.jpgUrl || media.url, caption };
+  // a Story carries no words: the picture or video only
+  const form = media.story ? { media_type: 'STORIES', ...(media.type === 'video' ? { video_url: media.url } : { image_url: media.jpgUrl || media.url }) }
+    : media.type === 'video' ? { media_type: 'REELS', video_url: media.url, caption } : { image_url: media.jpgUrl || media.url, caption };
   const made = await graph('POST', `${ig}/media`, form, token, 'instagram');
   // Instagram prepares the media first (a video takes a while): wait until it is FINISHED
   for (let i = 0; i < 40; i += 1) {
@@ -241,6 +273,7 @@ async function toYouTube(acc, saved, media, caption) {
 const PLATFORMS = ['facebook', 'instagram', 'linkedin', 'x', 'youtube'];
 const WORD = { facebook: 'Facebook', instagram: 'Instagram', linkedin: 'LinkedIn', x: 'X', youtube: 'YouTube' };
 const NEEDS_SITE = ['facebook', 'instagram'];
+const STORY_PLATFORMS = ['facebook', 'instagram'];
 const SENDERS = { facebook: toFacebook, instagram: toInstagram, linkedin: toLinkedIn, x: toX, youtube: toYouTube };
 
 // targets: [{ accountId }]; media: { type: 'image' | 'video' | '', url, jpgUrl, path, mime, title }; returns one result per target: { accountId, platform, name, ok, url, error }
@@ -253,6 +286,7 @@ async function publish(targets, media, caption) {
     const base = { accountId: t.accountId, platform: account.platform, name: account.name };
     if (account.status === 'Expired') { out.push({ ...base, ok: false, url: '', error: 'The sign-in for this account has expired. An Admin connects it again in Administration > Integrations > Social Media.' }); continue; } // eslint-disable-line no-continue
     try {
+      if (media.story && !STORY_PLATFORMS.includes(account.platform)) { out.push({ ...base, ok: false, url: '', error: 'Stories can be posted to Facebook and Instagram only.' }); continue; } // eslint-disable-line no-continue
       const send = SENDERS[account.platform];
       const r = send ? await send(account, got.token, media, caption) : null; // eslint-disable-line no-await-in-loop
       if (!r) out.push({ ...base, ok: false, url: '', error: 'Only Facebook, Instagram, LinkedIn, X and YouTube accounts can be posted to from here. Post this one by hand.' });
@@ -262,4 +296,4 @@ async function publish(targets, media, caption) {
   return out;
 }
 
-module.exports = { publish, plain, PublishError, PLATFORMS, WORD, NEEDS_SITE, ytTitle };
+module.exports = { publish, plain, PublishError, PLATFORMS, WORD, NEEDS_SITE, STORY_PLATFORMS, ytTitle };
