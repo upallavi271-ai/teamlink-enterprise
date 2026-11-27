@@ -30,8 +30,12 @@ const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const canSeeTeam = (ctx) => ctx.role === 'admin' || ctx.role === 'bdetl';
 async function bdeList(ctx) {
   if (ctx.bdes) return ctx.bdes;
-  const users = await prisma.user.findMany({ where: { atsRole: 'BDE', status: 'Active' }, select: { id: true, name: true, email: true }, orderBy: { name: 'asc' } });
-  ctx.bdes = users.filter((u) => u.name && (ctx.testViewer || !TEST_RE.test(`${u.name} ${u.email || ''}`)));
+  // the BDEs and the BDE team leads ("luhitha report" is a BDE TL, founder 2026-11-27)
+  const users = await prisma.user.findMany({
+    where: { status: 'Active', OR: [{ atsRole: 'BDE' }, { atsRole: 'TL', OR: [{ atsDepartment: 'BDE' }, { atsScopeDepartments: { contains: 'BDE' } }] }] },
+    select: { id: true, name: true, email: true, atsRole: true }, orderBy: { name: 'asc' },
+  });
+  ctx.bdes = users.filter((u) => u.name && (ctx.testViewer || !TEST_RE.test(`${u.name} ${u.email || ''}`))).map((u) => ({ id: u.id, name: u.name, email: u.email, bdeTl: u.atsRole === 'TL' }));
   return ctx.bdes;
 }
 const lev1 = (a, b) => {
@@ -323,7 +327,7 @@ const TOPIC_METRIC = {
 };
 async function teamReport(ctx, p, lang, metric, { rank = null } = {}) {
   const h = H();
-  const bdes = await bdeList(ctx);
+  const bdes = (await bdeList(ctx)).filter((u) => !u.bdeTl); // the team report is the BDEs; a BDE TL is asked by name
   const metrics = metric ? [metric] : TEAM_METRICS;
   const rows = [];
   for (const u of bdes) { // eslint-disable-line no-restricted-syntax

@@ -84,7 +84,8 @@ async function derived(user) {
   // ---- new jobs -------------------------------------------------------------
   try {
     const jobs = await prisma.requirement.findMany({
-      where: { AND: [scope.requirementWhere(user), { status: { not: 'CLOSED' } }, { createdAt: { gte: new Date(now - 14 * DAY) } }] },
+      // never a date in the future (an import with a wrong date showed as "just now" and stayed on top, 2026-11-27)
+      where: { AND: [scope.requirementWhere(user), { status: { not: 'CLOSED' } }, { createdAt: { gte: new Date(now - 14 * DAY), lte: new Date(now + 60000) } }] },
       orderBy: { createdAt: 'desc' },
       take: 15,
       select: { id: true, title: true, reqCode: true, createdAt: true, department: true, client: { select: { name: true } }, internal: true },
@@ -100,7 +101,7 @@ async function derived(user) {
   // ---- new candidates -------------------------------------------------------
   try {
     const apps = await prisma.application.findMany({
-      where: { AND: [scope.applicationWhere(user), { createdAt: { gte: new Date(now - 7 * DAY) } }] },
+      where: { AND: [scope.applicationWhere(user), { createdAt: { gte: new Date(now - 7 * DAY), lte: new Date(now + 60000) } }] },
       orderBy: { createdAt: 'desc' },
       take: 20,
       select: { id: true, createdAt: true, candidate: { select: { id: true, name: true } }, requirement: { select: { id: true, title: true, reqCode: true } } },

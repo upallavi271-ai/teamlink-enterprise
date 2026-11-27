@@ -1377,9 +1377,21 @@ async function routeTeam(ctx, question, norm, lang, topics, T) {
     }
     if (who) {
       const c = await T.ctxOfBde(ctx, who.user);
-      const a = await runWith(c, who.user.name, null);
-      const ans = a || await T.personReport(c, L.periodOf(norm, 'today', ctx.today), lang, who.user.name);
-      const also = await T.sameNameCandidates(ctx, residualOf(norm));
+      const label = who.user.bdeTl ? `${who.user.name} (BDE TL)` : who.user.name;
+      const a = await runWith(c, label, null);
+      // "sailaja report" with no period: this month, with today's line on top (founder 2026-11-27: today alone was all zeros on a quiet day)
+      const asked = L.periodOf(norm, 'month', ctx.today);
+      let ans = a;
+      if (!ans) {
+        ans = await T.personReport(c, asked, lang, label);
+        if (!asked.named) {
+          const td = await T.personReport(c, L.periodOf('today', 'today', ctx.today), lang, label).catch(() => null);
+          const s = td && td.stats;
+          if (s) ans.lines = [`Today (${L.dm(ctx.today)}): ${s.interviews} interviews, ${s.followups} client follow-ups, ${s.shared} profiles shared, ${s.joinings} joinings, ${s.pending} pending`, ...(ans.lines || [])];
+        }
+      }
+      // candidates with the same name: only said when the person was matched by a near spelling (an exact name is that person)
+      const also = who.exact ? null : await T.sameNameCandidates(ctx, residualOf(norm));
       if (also) { ans.lines = [also.line, ...(ans.lines || [])]; ans.items = [also.item, ...(ans.items || [])]; }
       return { kind: 'code', answers: [ans], person: who.user.id };
     }

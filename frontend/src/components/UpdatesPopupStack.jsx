@@ -33,6 +33,10 @@ export default function UpdatesPopupStack() {
   const alive = useRef(true);
   const told = useRef(null); // the updates already shown on the desktop in this tab
   const [desk, setDesk] = useState(() => (canDesk() ? Notification.permission : 'denied'));
+  // EVERY BELL LINE POPS UP TOO (founder 2026-11-27: "ey kind of info move ayina, display meedha popup avali"): a notification that arrives while
+  // TeamLink is open (a report, a posting reminder, a message, anything) shows as a card here as well; the ones from before stay in the bell only
+  const [bell, setBell] = useState([]);
+  const bellSeen = useRef(null);
 
   const check = useCallback(() => {
     if (!user) return;
@@ -54,6 +58,26 @@ export default function UpdatesPopupStack() {
       }
     }).catch(() => { /* offline: next check */ });
     api.get('/ats-updates/interviews-today').then((r) => { if (alive.current) setToday(r.data && r.data.popup ? r.data : null); }).catch(() => {});
+    api.get('/admin/notifications').then((r) => {
+      if (!alive.current) return;
+      const list = Array.isArray(r.data) ? r.data : [];
+      if (bellSeen.current === null) { bellSeen.current = new Set(list.map((n) => n.id)); return; }
+      // the team / client updates are cards of their own already (recipient "cu|<event>")
+      const fresh = list.filter((n) => !bellSeen.current.has(n.id) && !n.read && !String(n.recipient || '').startsWith('cu|'));
+      fresh.forEach((n) => bellSeen.current.add(n.id));
+      if (!fresh.length) return;
+      const shape = (n) => {
+        const msg = String(n.message || '');
+        const m = msg.match(/Open:\s*(\/[^\s]+)/);
+        return { id: n.id, title: n.title || 'Notice', text: msg.replace(/\n?Open:\s*\/[^\s]+/, '').trim().slice(0, 240), open: m ? m[1] : null, at: n.createdAt };
+      };
+      setBell((prev) => [...fresh.map(shape), ...prev].slice(0, 20));
+      if (document.hidden && canDesk() && Notification.permission === 'granted') {
+        fresh.slice(0, 3).map(shape).forEach((b) => {
+          try { const dn = new Notification(b.title, { body: b.text.slice(0, 180), tag: `n-${b.id}`, icon: '/teamlink-icon-32.png' }); dn.onclick = () => { window.focus(); if (b.open) navigate(b.open); dn.close(); }; } catch { /* the card shows when the tab is back */ }
+        });
+      }
+    }).catch(() => {});
   }, [user]);
 
   useEffect(() => {
@@ -72,7 +96,12 @@ export default function UpdatesPopupStack() {
     };
   }, [user && user.id, check]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!user || (!items.length && !today)) return null;
+  const bellDone = (b, then) => {
+    setBell((list) => list.filter((x) => x.id !== b.id));
+    api.patch(`/admin/notifications/${b.id}/read`).catch(() => {});
+    if (then) then();
+  };
+  if (!user || (!items.length && !today && !bell.length)) return null;
 
   const seen = async (ids, opened, then) => {
     if (busy) return;
@@ -89,6 +118,7 @@ export default function UpdatesPopupStack() {
   };
   const left = (today ? today.items.filter((i) => !i.past) : []);
   const shown = items.slice(0, SHOW);
+  const bellShown = bell.slice(0, Math.max(1, SHOW - shown.length));
 
   return (
     <div className="ups" role="region" aria-label="Updates for you">
@@ -133,6 +163,26 @@ export default function UpdatesPopupStack() {
         <div className="ups-more">
           <span>Show these on the desktop too, when TeamLink is in another tab?</span>
           <button type="button" className="link-btn" onClick={() => Notification.requestPermission().then((p) => setDesk(p)).catch(() => {})}>Yes, allow</button>
+        </div>
+      )}
+      {bellShown.map((b) => (
+        <div className="ups-card" key={`n-${b.id}`} role="alertdialog" aria-labelledby={`ups-n-${b.id}`}>
+          <div className="ups-top">
+            <span className="ups-chip">Notice</span>
+            <span className="ups-when" title={new Date(b.at).toLocaleString('en-IN')}>{ago(b.at)}</span>
+          </div>
+          <div className="ups-title" id={`ups-n-${b.id}`}>{b.title}</div>
+          {b.text && <div className="ups-text">{b.text}</div>}
+          <div className="ups-foot">
+            {b.open && <button type="button" className="btn btn-sm btn-primary" onClick={() => bellDone(b, () => navigate(b.open))}>Open</button>}
+            <button type="button" className="btn btn-sm" onClick={() => bellDone(b)}>Got it</button>
+          </div>
+        </div>
+      ))}
+      {bell.length > bellShown.length && (
+        <div className="ups-more">
+          <span>{`${bell.length - bellShown.length} more notice${bell.length - bellShown.length === 1 ? '' : 's'}`}</span>
+          <button type="button" className="link-btn" onClick={() => { bell.forEach((b) => api.patch(`/admin/notifications/${b.id}/read`).catch(() => {})); setBell([]); }}>Got it for all</button>
         </div>
       )}
       {items.length > SHOW && (

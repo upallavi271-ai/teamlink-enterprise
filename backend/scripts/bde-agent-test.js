@@ -416,9 +416,10 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     ['B', 'team report this month', { intent: 'person', hasNot: [A.name, C.name] }],
     ['C', 'my month', { intent: 'person', stats: { reqsRaised: VREQ.filter((x) => inMonth(x.created)).length, reqsClosed: 22, joinings: J(`${T.slice(0, 7)}-01`, L.lastOfMonth(T)), newClients: 0 } }],
     // BDE TL: one person
-    ['TL', A.name.split(' ')[0], { intent: 'person', stats: { followups: 2, meetings: 1, interviews: 1, newClients: 2, reqsRaised: 3 }, text: new RegExp(`^Today \\(${L.dm(T)}\\): ${A.name} - `) }],
-    ['TL', `${A.name.split(' ')[0]} today`, { intent: 'person', stats: { followups: 2, interviews: 1 } }],
-    ['TL', 'anita report', { intent: 'person', stats: { followups: 2, interviews: 1 }, text: new RegExp(A.name) }],
+    // (2026-11-27) a name / "report" with no period: this month, with today's line on top
+    ['TL', A.name.split(' ')[0], { intent: 'person', text: new RegExp(`^This month \\([^)]*\\): ${A.name} - [\\s\\S]*\\nToday \\(${L.dm(T)}\\): 1 interviews, 2 client follow-ups`) }],
+    ['TL', `${A.name.split(' ')[0]} today`, { intent: 'person', stats: { followups: 2, meetings: 1, interviews: 1, newClients: 2, reqsRaised: 3 }, text: new RegExp(`^Today \\(${L.dm(T)}\\): ${A.name} - `) }],
+    ['TL', 'anita report today', { intent: 'person', stats: { followups: 2, interviews: 1 }, text: new RegExp(A.name) }],
     ['TL', `${A.name.split(' ')[0]} this week`, { intent: 'person', stats: { shared: wk.shared, interviews: exp.ivWeek, selections: wk.selections, offers: wk.offers, joinings: wk.joinings, drops: wk.drops, followups: wk.followupsA } }],
     ['TL', `${B.name.split(' ')[0]} yesterday`, { intent: 'person', stats: { shared: 1, interviews: 0, followups: 0 } }],
     ['TL', `ninna ${B.name.split(' ')[0]} report`, { intent: 'person', lang: 'tl', stats: { shared: 1 } }],
@@ -428,7 +429,7 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     ['TL', `${A.name.split(' ')[0]} interviews today`, { intent: 'interviews', count: 1, has: ['Lakshmi Prasanna'] }],
     ['TL', `${C.name.split(' ')[0]} ee nela report`, { intent: 'person', stats: { reqsClosed: 22 } }],
     ['TL', `${A.name.split(' ')[0]} joinings month wise`, { intent: 'history_joinings', count: 2 }],
-    ['SA', A.name.split(' ')[0], { intent: 'person', stats: { followups: 2, interviews: 1 } }],
+    ['SA', `${A.name.split(' ')[0]} today`, { intent: 'person', stats: { followups: 2, interviews: 1 } }],
     // BDE TL: the team
     ['TL', 'all BDEs today', { intent: 'team', rows: { [A.name]: { followups: 2, interviews: 1, shared: 0, joinings: 0 }, [B.name]: { followups: 1, interviews: 1 }, [C.name]: { followups: 0, interviews: 0, joinings: 0 } }, nrows: BDE_LOGINS }],
     ['TL', 'all BDEs interviews this week', { intent: 'team_metric', rows: { [A.name]: { interviews: exp.ivWeek }, [B.name]: { interviews: 1 }, [C.name]: { interviews: 0 } }, nrows: BDE_LOGINS }],
@@ -477,8 +478,9 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
 
     // ---- a BDE's name before candidates of the same name; department names with "department" / "dept" (founder 2026-11-21) -----------------
     ...(SAILAJA ? [['SA', 'sailaja report', { intent: 'person', text: new RegExp(`: ${SAILAJA} - `) }], ['TL', 'sailaja ee roju', { intent: 'person', text: new RegExp(`: ${SAILAJA} - `) }]] : []),
-    ['TL', 'zoravati report', { intent: 'person', stats: { interviews: 1, followups: 1 }, text: /Also candidates named "zoravati": 3/, has: ['Candidates named "zoravati" (3)'] }],
-    ['TL', 'Zoravati report', { intent: 'person', text: new RegExp(`^Today \\(${L.dm(T)}\\): ${D.name} - 1 interview, 1 client follow-up`) }],
+    // (2026-11-27) the BDE's exact name: no "also candidates named" line (it is that person)
+    ['TL', 'zoravati report today', { intent: 'person', stats: { interviews: 1, followups: 1 }, hasNot: ['Candidates named "zoravati"'] }],
+    ['TL', 'Zoravati report', { intent: 'person', text: new RegExp(`^This month \\([^)]*\\): ${D.name} - [\\s\\S]*\\nToday \\(${L.dm(T)}\\): 1 interviews, 1 client follow-ups`) }],
     ['TL', 'zoravati ee roju', { intent: 'person', lang: 'tl', stats: { interviews: 1, followups: 1 } }],
     ['TL', 'zoravati work', { intent: 'person', stats: { interviews: 1 } }],
     ['TL', 'zoravati today', { intent: 'person', stats: { interviews: 1 } }],
@@ -486,7 +488,7 @@ const inMonth = (d) => d.slice(0, 7) === T.slice(0, 7);
     ['TL', 'Zoravati interviews today', { intent: 'interviews', count: 1, has: ['Pranitha Goud'], text: new RegExp(D.name) }],
     ['TL', 'zoravati joinings', { intent: 'joinings', count: inMonth(day(-40)) ? 1 : 0, text: /Till now: 1 joining \(1 still working, 0 left after joining\)/ }],
     ['TL', 'zoravati clients', { intent: 'clients', count: 1, has: ['Orbita Public School'] }],
-    ['SA', 'zoravati report', { intent: 'person', stats: { interviews: 1 }, text: /Also candidates named "zoravati": 3/ }],
+    ['SA', 'zoravati report today', { intent: 'person', stats: { interviews: 1 } }],
     ['TL', 'all BDEs today', { intent: 'team', rows: { [D.name]: { interviews: 1, followups: 1 } } }],
     ['A', 'zoravati report', { intent: 'not_found', hasNot: [D.name, 'Zoravati Kumari'] }],
     ['B', 'zoravati report', { intent: 'choose', count: 3, hasNot: [D.name] }],
