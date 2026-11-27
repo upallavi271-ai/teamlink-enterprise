@@ -640,8 +640,8 @@ async function bannerSpecOf(b, brand, look) {
   return {
     spec: {
       size: B.SIZES[b.size] ? b.size : '16:9', layout, headline: S.clip(b.headline, 90), headline2: S.clip(b.headline2, 60), sub, services: list(b.services, 8, 40), servicesTitle: S.clip(b.servicesTitle, 50), plans, audienceTitle: S.clip(b.audienceTitle, 40), audience: S.clip(b.audience, 200),
-      chip: S.clip(b.chip, 40), chipPos: b.chipPos === 'under-headline' ? 'under-headline' : 'bottom', badge: S.clip(b.badge, 18), tagline: S.clip(b.tagline, 60) || (look ? '' : brand.tagline), companyName: S.clip(b.companyName, 60) || (look ? look.clientName : brand.brandName),
-      cta: b.cta !== undefined ? S.clip(b.cta, 28) : (look ? '' : S.clip(brand.cta, 28)), footer: b.footer !== undefined ? S.clip(b.footer, 90) : (look ? '' : S.clip([brand.website, brand.contact].filter(Boolean).join('   |   '), 90)),
+      chip: S.clip(Cfg.publicSite(b.chip), 40), chipPos: b.chipPos === 'under-headline' ? 'under-headline' : 'bottom', badge: S.clip(b.badge, 18), tagline: S.clip(b.tagline, 60) || (look ? '' : brand.tagline), companyName: S.clip(b.companyName, 60) || (look ? look.clientName : brand.brandName),
+      cta: b.cta !== undefined ? S.clip(b.cta, 28) : (look ? '' : S.clip(brand.cta, 28)), footer: b.footer !== undefined ? S.clip(Cfg.publicSite(b.footer), 90) : (look ? '' : S.clip(Cfg.publicSite([brand.website, brand.contact].filter(Boolean).join('   |   ')), 90)),
       // the poster design (2026-11-27, bannerPoster.js)
       ...(layout === 'poster' ? { variant: b.variant === 'insta' ? 'insta' : '', posterKey: S.clip(b.posterKey, 120), roles: list(b.roles, 3, 24), motto: S.clip(b.motto, 44), motto2: S.clip(b.motto2, 34), phone: S.clip(b.phone, 24), location: S.clip(b.location, 44), email: S.clip(b.email, 48), closing: S.clip(b.closing, 60), photo2ItemId: S.clip(b.photo2ItemId, 60) } : {}),
       photoItemId: S.clip(b.photoItemId, 60), heroSearch: S.clip(b.heroSearch, 80), heroN: Math.max(0, Math.min(19, Math.floor(Number(b.heroN)) || 0)), projectId: S.clip(b.projectId, 60), colors: col, rev: 0, handled: [],

@@ -17,8 +17,10 @@ import IdeaAssist from './IdeaAssist.jsx';
 // (marketing/posterKit.js). The AI writes the words and describes one photograph; the photograph is made; TeamLink draws the poster.
 // DESIGN Banner / Promotional poster / Instagram post, and one SIZE picked from every social page's sizes, narrowed by PLATFORM (the list comes from the server, banner.js SIZES).
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
-const NO_CONTACT = { companyName: '', tagline: '', phone: '', location: '', website: '', email: '' };
+const NO_CONTACT = { companyName: '', tagline: '', phone: '', location: '', website: '', email: '', services: '' };
 const NEW_CLIENT = '__new';
+// the app's own sign-in address is never printed as a website (owner, 27 Nov: "it should be tmlink.in"; the server does the same, marketing/settings.js publicSite)
+const publicSite = (v) => String(v || '').replace(/(?:https?:\/\/)?(?:www\.)?teamlink\.teamlinks\.in(?![\w.-])\/?/gi, 'www.tmlink.in');
 const PLATFORMS = [['', 'All platforms'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['linkedin', 'LinkedIn'], ['x', 'X (Twitter)'], ['youtube', 'YouTube'], ['whatsapp', 'WhatsApp'], ['google', 'Google Business']];
 const BASIC_SIZES = [{ key: '1:1', label: 'Square post 1080 x 1080', platforms: ['instagram', 'facebook', 'linkedin', 'whatsapp'] }, { key: '4:5', label: 'Portrait post 1080 x 1350', platforms: ['instagram', 'facebook', 'linkedin'] }, { key: '9:16', label: 'Story / Reel cover / Status 1080 x 1920', platforms: ['instagram', 'facebook', 'whatsapp', 'youtube'] }, { key: '16:9', label: 'Wide post 1920 x 1080', platforms: ['x', 'youtube', 'linkedin'] }]; // if the server's list cannot be read
 // the browser draws its plain pictures and the picture AI makes photographs in four shapes: the nearest one to the size picked
@@ -60,9 +62,10 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const [businesses, setBusinesses] = useState([]);
   const [logo, setLogo] = useState(''); // the logo saved for this business
   const [newLogo, setNewLogo] = useState(''); // one just chosen, saved when the poster is made
-  const [services, setServices] = useState('');
   const business = projectId ? '' : (client === NEW_CLIENT ? newName.trim() : client);
-  const isPoster = !isVideo && design !== 'banner'; // the poster and the Instagram post: a logo, contact details, one photograph
+  // the CLEAR design (the business's logo, services and contacts, one photograph): the poster, the Instagram post, any client business, and a banner as soon as services are listed. A banner with
+  // no services and for our own company is made as before.
+  const isPoster = !isVideo && (design !== 'banner' || client !== '' || !!String(contact.services || '').trim());
   const shown = sizes.filter((x) => !platform || (x.platforms || []).includes(platform));
   const [photos, setPhotos] = useState(true);
   const [aiHero, setAiHero] = useState(true); // banners: the hero picture is made by the picture AI (when one is connected), like a designed poster's artwork; a free stock photo otherwise
@@ -87,7 +90,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   useEffect(() => {
     omni.get('/gs/marketing/stock/meta').then((m) => setCan((c) => ({ ...c, stock: !!m.ready, stockChecked: true }))).catch(() => {});
     omni.get('/gs/marketing/images/meta').then((m) => setCan((c) => ({ ...c, ai: !!(m.ai && m.ai.ready && !m.ai.demo), aiFree: !!(m.ai && m.ai.ready && m.ai.provider === 'cloudflare') }))).catch(() => {});
-    const useBrand = () => Promise.all([omni.get('/gs/marketing/brand'), omni.get('/gs/marketing/brand/logo').catch(() => ({ logo: null }))]).then(([b, l]) => ({ colors: b.brand.colors, brandName: b.brand.brandName, footer: [b.brand.website, b.brand.contact].filter(Boolean).join('  ·  '), logoUrl: l.logo ? l.logo.dataUrl : '' }));
+    const useBrand = () => Promise.all([omni.get('/gs/marketing/brand'), omni.get('/gs/marketing/brand/logo').catch(() => ({ logo: null }))]).then(([b, l]) => ({ colors: b.brand.colors, brandName: b.brand.brandName, footer: publicSite([b.brand.website, b.brand.contact].filter(Boolean).join('  ·  ')), logoUrl: l.logo ? l.logo.dataUrl : '' }));
     const go = projectId
       ? omni.get(`/gs/marketing/projects/${projectId}`).then(async (x) => { setBrief({ clientName: x.project.clientName, occasion: x.project.occasion, text: x.project.brief || '', draft: x.project.draft || null, ideas: x.ideas || [] }); const base = await useBrand().catch(() => ({ colors: null, brandName: '', footer: '', logoUrl: '' })); const p = x.project; return { colors: { ...(base.colors || {}), ...(p.colors && p.colors.primary ? { primary: p.colors.primary } : {}), ...(p.colors && p.colors.secondary ? { secondary: p.colors.secondary } : {}) }, brandName: p.clientName, footer: [(p.handles || '').split('\n')[0], p.contactPhone].filter(Boolean).join('  ·  '), logoUrl: x.logo || '' }; }).catch(() => useBrand())
       : useBrand();
@@ -95,12 +98,12 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   }, [projectId]);
   const working = phase === 'plan' || phase === 'pics';
   useEffect(() => { // what was saved for this business the last time (our own, a client project, or a client business)
-    if (!isPoster) return;
+    if (isVideo) return;
     setKitReady(false); setContact(NO_CONTACT); setLogo(''); setNewLogo('');
     if (client === NEW_CLIENT) return; // a new client starts empty: nothing of ours is filled in
     const q = projectId ? `?projectId=${encodeURIComponent(projectId)}` : (client ? `?business=${encodeURIComponent(client)}` : '');
     omni.get(`/gs/marketing/poster/kit${q}`).then((x) => { if (!stop.current) { setContact({ ...NO_CONTACT, ...(x.kit || {}) }); setLogo(x.logo || ''); setBusinesses(x.businesses || []); setKitReady(true); } }).catch(() => {});
-  }, [isPoster, projectId, client]);
+  }, [isVideo, projectId, client]);
   const chooseLogo = (e) => {
     const f = e.target.files && e.target.files[0]; e.target.value = '';
     if (!f) return;
@@ -203,7 +206,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
     const where = { ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) };
     try {
       const details = kitReady ? contact : Object.fromEntries(Object.entries(contact).filter(([, v]) => v));
-      const r = await omni.post('/gs/marketing/poster/write', { idea: prompt, title, heading, content, cta, services, ...details, ...(business ? { business } : {}), ...(newLogo ? { logoDataUrl: newLogo } : {}), ...where });
+      const r = await omni.post('/gs/marketing/poster/write', { idea: prompt, title, heading, content, cta, ...details, ...(business ? { business } : {}), ...(newLogo ? { logoDataUrl: newLogo } : {}), ...where });
       const p = r.poster; if (r.kit) { setContact({ ...NO_CONTACT, ...r.kit }); setKitReady(true); } setLogo(r.logo || ''); setNewLogo(''); if (r.note) setNote(r.note);
       setPhase('pics'); setStep({ i: 1, n: 1 }); let photo = null;
       if (can.ai) {
@@ -222,7 +225,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
       const t = await omni.blob(`/gs/marketing/images/${made.item.id}/file`).catch(() => null); if (t) { const u = URL.createObjectURL(t); urls.current.push(u); setThumbs([u]); }
       setPlan({ headline: [p.headline, p.headline2].filter(Boolean).join(' '), tagline: p.sub, cta: p.cta, caption: p.caption || '', hashtags: p.hashtags || [], scenes: [], dateLabel: '' });
       if (client === NEW_CLIENT) { setBusinesses((x) => [business, ...x.filter((b) => b !== business)]); setClient(business); }
-      setPhase('done'); toast(design === 'insta' ? 'Your Instagram post is ready as a draft' : 'Your poster is ready as a draft');
+      setPhase('done'); toast(design === 'insta' ? 'Your Instagram post is ready as a draft' : design === 'banner' ? 'Your banner is ready as a draft' : 'Your poster is ready as a draft');
       if (onMade) onMade(); if (!projectId && !business) auto.send([made.item.id]);
     } catch (e) { if (e.message !== 'stopped') setErr(errOf(e, e.message || 'It could not be created.')); setPhase(''); if (onMade) onMade(); }
   };
@@ -323,12 +326,12 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           <div className="form-grid" style={{ marginTop: 6 }}>
             <Field label="CALL TO ACTION (OPTIONAL)"><input value={cta} maxLength={30} disabled={working} onChange={(e) => setCta(e.target.value)} placeholder="Apply now" /></Field>
           </div>
-          {isPoster ? (
+          {!isVideo ? (
             <div style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px', margin: '10px 0 4px' }}>
-              <b style={{ fontSize: 12 }}>{design === 'insta' ? 'On the post' : 'On the poster'}</b> <span style={{ fontSize: 11, color: 'var(--muted)' }}>The logo, contact details and name are saved for each business and used exactly as given.</span>
+              <b style={{ fontSize: 12 }}>On the picture</b>{!isPoster ? <span style={{ fontSize: 11, color: '#92400e', fontWeight: 600 }}> Type the SERVICES to show them, with the logo and contact details, on your banner.</span> : null} <span style={{ fontSize: 11, color: 'var(--muted)' }}>The logo, contact details and name are saved for each business and used exactly as given.</span>
               <div className="form-grid" style={{ marginTop: 6 }}>
                 {!projectId ? (
-                  <Field label="POSTER FOR">
+                  <Field label="MADE FOR">
                     <select value={client} disabled={working} onChange={(e) => { setClient(e.target.value); setNewName(''); }}>
                       <option value="">Our company</option>
                       {businesses.map((b) => <option key={b} value={b}>{b}</option>)}
@@ -341,7 +344,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
                   {newLogo || logo ? <img src={newLogo || logo} alt="The logo on the poster" style={{ maxHeight: 54, maxWidth: 200, display: 'block', marginBottom: 6, background: '#fff', border: '1px solid var(--line)', borderRadius: 6, padding: 4 }} /> : null}
                   <input type="file" accept="image/png,image/jpeg,image/webp" disabled={working} onChange={chooseLogo} />
                 </Field>
-                {design === 'poster' ? <Field label="SERVICES (UP TO 6)" full hint="Separate them with commas. They are shown on the poster exactly as typed; left empty, the AI suggests them."><input value={services} maxLength={220} disabled={working} placeholder="Permanent Hiring, Contract Staffing, Nurse Recruitment, Doctor Recruitment" onChange={(e) => setServices(e.target.value)} /></Field> : null}
+                <Field label="SERVICES (UP TO 6)" full hint="What this business offers, separated by commas. Shown clearly on the picture exactly as typed, and saved for next time."><input value={contact.services || ''} maxLength={220} disabled={working} placeholder="Permanent Hiring, Contract Staffing, Nurse Recruitment, Doctor Recruitment" onChange={(e) => setContact({ ...contact, services: e.target.value })} /></Field>
                 {CONTACT_FIELDS.map(([key, label, max, ph]) => <Field key={key} label={label}><input value={contact[key] || ''} maxLength={max} disabled={working} placeholder={ph} onChange={(e) => setContact({ ...contact, [key]: e.target.value })} /></Field>)}
               </div>
             </div>
@@ -384,8 +387,8 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
 
           {working || phase === 'done' ? (
             <ol className="mk-steps" style={{ margin: '14px 0 0' }}>
-              <li><span className={`dot${phase !== 'plan' ? ' done' : ''}`}>{phase !== 'plan' ? '✓' : ''}</span>{phase === 'plan' ? 'The AI is planning it…' : isPoster ? 'Words written: headline, steps, caption and hashtags' : 'Planned: headline, scenes, caption and hashtags'}</li>
-              <li><span className={`dot${phase === 'done' ? ' done' : ''}`}>{phase === 'done' ? '✓' : ''}</span>{phase === 'done' ? (isPoster ? (design === 'insta' ? 'The post is drawn' : 'The poster is drawn') : `${plan ? plan.scenes.length : ''} picture${plan && plan.scenes.length === 1 ? '' : 's'} made`) : phase === 'pics' ? `Making picture ${step.i} of ${step.n}…` : 'Pictures'}</li>
+              <li><span className={`dot${phase !== 'plan' ? ' done' : ''}`}>{phase !== 'plan' ? '✓' : ''}</span>{phase === 'plan' ? 'The AI is planning it…' : isPoster ? 'Words written: headline, caption and hashtags' : 'Planned: headline, scenes, caption and hashtags'}</li>
+              <li><span className={`dot${phase === 'done' ? ' done' : ''}`}>{phase === 'done' ? '✓' : ''}</span>{phase === 'done' ? (isPoster ? 'The picture is drawn' : `${plan ? plan.scenes.length : ''} picture${plan && plan.scenes.length === 1 ? '' : 's'} made`) : phase === 'pics' ? `Making picture ${step.i} of ${step.n}…` : 'Pictures'}</li>
               {isVideo ? <li><span className="dot" />{phase === 'done' ? 'Putting the video together: watch it below, then Save' : 'The video'}</li> : null}
             </ol>
           ) : null}

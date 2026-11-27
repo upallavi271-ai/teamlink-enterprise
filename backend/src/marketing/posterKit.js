@@ -3,7 +3,7 @@
 // photo is just for reference, no need of keeping 4 people; keep the client company logo as it is, clearly, and then their services clearly".
 //   * each BUSINESS keeps its LOGO and contact details, typed once (table OmniMkPosterKit: our own company, one per client project, one per client business typed by name). The logo is used exactly as
 //     uploaded; a client's poster never carries our logo or our contact details. Its colours are read from its logo. The AI never writes a phone number, an address or a link.
-//   * the WORDS (headline, pill, services, motto, call to action, post caption) and the description of the photograph (at most two people) are written by the AI from the person's idea (the fast writer,
+//   * the SERVICES are only what a person typed for that business (saved like the contacts): the AI never makes them up. The other WORDS (headline, pill, motto, call to action, post caption) and the description of the photograph (at most two people) are written by the AI from the person's idea (the fast writer,
 //     else the app's own model); what the person typed, above all the SERVICES, is used as it is; when the AI cannot answer, plain words are made from the person's own. Nothing is made or posted from
 //     here: the screen then makes the photograph and draws the poster (POST /banners, layout 'poster').
 // ---------------------------------------------------------------------------
@@ -21,7 +21,7 @@ async function ensure() {
 }
 
 const mayWrite = (u) => A.has('mayAiMarketing')(u);
-const CONTACT = { companyName: 60, tagline: 60, phone: 24, location: 44, website: 40, email: 48 };
+const CONTACT = { companyName: 60, tagline: 60, phone: 24, location: 44, website: 40, email: 48, services: 220 };
 const DEFAULT_BLUE = '#0b5ed7';
 const one = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
 const slug = (v) => one(v, 60).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
@@ -60,7 +60,7 @@ async function colorOf(buf) {
 }
 // what is known before anything was saved: our own brand kit, or the client's name (never our details for a client)
 async function defaults(project, business) {
-  const empty = { companyName: '', tagline: '', phone: '', location: '', website: '', email: '' };
+  const empty = { companyName: '', tagline: '', phone: '', location: '', website: '', email: '', services: '' };
   if (project) return { ...empty, companyName: one(project.clientName, 60) };
   if (slug(business)) return { ...empty, companyName: one(business, 60) };
   const b = await Cfg.getBrand(); const contact = String(b.contact || '');
@@ -87,6 +87,7 @@ async function getKit(u, projectId, business) {
   const biz = project ? '' : business; const key = keyOf(projectId, biz);
   const saved = await stored(key);
   const kit = { ...(await defaults(project, biz)) }; if (saved) for (const k of Object.keys(CONTACT)) if (saved[k] !== undefined) kit[k] = saved[k];
+  kit.website = Cfg.publicSite(kit.website);
   return { key, kit, logo: await logoOf(key, saved, project), saved: !!saved, businesses: await businesses() };
 }
 // only the fields that were sent are changed (an empty one clears that detail). logoDataUrl: a new logo; removeLogo: forget the saved one
@@ -94,7 +95,7 @@ async function saveKit(u, projectId, b = {}) {
   const got = await getKit(u, projectId, b.business); if (got.error) return got;
   const prev = (await stored(got.key)) || {}; const next = { ...prev }; let changed = false;
   if (got.key.startsWith('biz:')) next.business = one(b.business, 60);
-  for (const [k, n] of Object.entries(CONTACT)) if (b[k] !== undefined) { next[k] = one(b[k], n); changed = true; }
+  for (const [k, n] of Object.entries(CONTACT)) if (b[k] !== undefined) { next[k] = k === 'services' ? one(list(b[k], 6, 34).join(', '), n) : one(b[k], n); changed = true; }
   if (b.logoDataUrl) {
     const l = Cfg.cleanLogo({ dataUrl: b.logoDataUrl }); if (l.error) return { error: l.error, status: 400 };
     next.logo = l.value.dataUrl; next.color = await colorOf(Buffer.from(next.logo.split(',')[1], 'base64')); changed = true;
@@ -132,7 +133,7 @@ function fromOwnWords({ heading, title, topic, content, who }) {
   const words = main.split(' '); let cut = Math.ceil(words.length / 2);
   while (cut > 1 && words.slice(0, cut).join(' ').length > LIMIT.headline) cut -= 1;
   const lines = String(content || '').split('\n').map((x) => one(x, 60)).filter(Boolean);
-  return { headline: words.length > 1 ? words.slice(0, cut).join(' ') : '', headline2: words.length > 1 ? words.slice(cut).join(' ') : main, sub: one(lines[0] || '', LIMIT.sub), services: lines.slice(1, 7).filter((x) => x.length <= 34), motto: '', motto2: '', cta: one(who ? `Contact ${who}` : 'Contact us today', LIMIT.cta), closing: '', heroPrompt: `A photograph about: ${one(topic, 160)}`, caption: one(lines.join(' ') || topic, 400) };
+  return { headline: words.length > 1 ? words.slice(0, cut).join(' ') : '', headline2: words.length > 1 ? words.slice(cut).join(' ') : main, sub: one(lines[0] || '', LIMIT.sub), motto: '', motto2: '', cta: one(who ? `Contact ${who}` : 'Contact us today', LIMIT.cta), closing: '', heroPrompt: `A photograph about: ${one(topic, 160)}`, caption: one(lines.join(' ') || topic, 400) };
 }
 
 // b: { projectId, business, idea, title, heading, content, cta, services, motto, motto2, closing, logoDataUrl, department, + the contact fields (saved) }
@@ -146,13 +147,13 @@ async function write(u, b = {}) {
   const saved = await saveKit(u, b.projectId, b); if (saved.error) return saved;
   const kit = saved.kit; const brand = await Cfg.getBrand(); const ours = saved.key === 'own';
   const who = kit.companyName || (project && project.clientName) || (ours ? brand.brandName : one(b.business, 60)) || '';
-  const mine = { services: list(b.services, 6, 34), roles: list(b.roles, 3, 24), motto: one(b.motto, LIMIT.motto), motto2: one(b.motto2, LIMIT.motto2), cta: one(b.cta, LIMIT.cta), closing: one(b.closing, LIMIT.closing) };
+  const mine = { services: list(kit.services, 6, 34), roles: list(b.roles, 3, 24), motto: one(b.motto, LIMIT.motto), motto2: one(b.motto2, LIMIT.motto2), cta: one(b.cta, LIMIT.cta), closing: one(b.closing, LIMIT.closing) };
   const given = [idea, heading, title, content, who, kit.tagline, project ? `${project.occasion || ''} ${project.brief || ''}` : '', ...mine.services, ...mine.roles, mine.motto, mine.motto2, mine.cta, mine.closing].join(' \n ');
   const system = [
     'You write the words of one promotional poster for a business in India, and describe its photograph.',
     `headline: the first big line, 1 or 2 words, at most ${LIMIT.headline} characters. headline2: the second big line, 1 to 3 words, at most ${LIMIT.headline2} characters. Together they name what the poster is about.`,
     `sub: one short line under the headline, at most ${LIMIT.sub} characters.`,
-    'services: 3 to 6 services of this business for this topic, 1 to 3 words each, at most 30 characters each.',
+    'The services of the business are given: never add, rename or invent a service.',
     `motto: the start of a short motto, at most ${LIMIT.motto} characters; motto2: its strong ending, at most ${LIMIT.motto2} characters.`,
     `cta: a call to action, at most ${LIMIT.cta} characters. closing: one warm closing line, at most ${LIMIT.closing} characters.`,
     'heroPrompt: describe ONE clear photograph for this topic, with at most two people (or the place or the product when that says it better): who or what, clothes, place. No words or logos in the picture.',
@@ -160,9 +161,9 @@ async function write(u, b = {}) {
     'NEVER invent phone numbers, addresses, websites, e-mails, prices, discounts, offers, dates, counts, awards or promises such as guaranteed, free, best or No. 1: use only what is given.',
     brand.language && brand.language !== 'English' && ours ? `Write in ${brand.language}.` : 'Write in English unless the idea is written in another language.',
     ...(ours && brand.avoidWords && brand.avoidWords.length ? [`Never use these words: ${brand.avoidWords.join(', ')}.`] : []),
-    'Answer with ONLY a JSON object: {"headline":"","headline2":"","sub":"","services":[],"motto":"","motto2":"","cta":"","closing":"","heroPrompt":"","caption":"","hashtags":[]}',
+    'Answer with ONLY a JSON object: {"headline":"","headline2":"","sub":"","motto":"","motto2":"","cta":"","closing":"","heroPrompt":"","caption":"","hashtags":[]}',
   ].join('\n');
-  const prompt = [`Business: ${who || 'a business'}`, `Idea: ${topic}`, heading ? `Heading the person wrote: ${heading}` : '', content ? `Content the person wrote:\n${content}` : '', project && project.brief ? `The client's brief: ${one(project.brief, 500)}` : '', mine.services.length ? `Services (use exactly these): ${mine.services.join(', ')}` : ''].filter(Boolean).join('\n');
+  const prompt = [`Business: ${who || 'a business'}`, `Idea: ${topic}`, heading ? `Heading the person wrote: ${heading}` : '', content ? `Content the person wrote:\n${content}` : '', project && project.brief ? `The client's brief: ${one(project.brief, 500)}` : '', mine.services.length ? `The services of the business: ${mine.services.join(', ')}` : ''].filter(Boolean).join('\n');
   const own = fromOwnWords({ heading, title, topic, content, who });
   let ans = null; let note = ''; let provider = ''; let demo = false;
   try {
@@ -173,14 +174,14 @@ async function write(u, b = {}) {
     note = 'The AI writer is busy right now, so the poster words are made from your own. Change them if you like.';
   }
   const pick = (k) => { const v = one(ans && ans[k], LIMIT[k]); return v && !invented(v, given) ? v : one(own[k], LIMIT[k]); };
-  const aiServices = list(ans && ans.services, 6, 34).filter((x) => !invented(x, given));
   const words = {
     headline: pick('headline'), headline2: pick('headline2'), sub: pick('sub'),
-    roles: mine.roles, services: mine.services.length ? mine.services : (aiServices.length ? aiServices : own.services),
+    roles: mine.roles, services: mine.services,
     motto: mine.motto || pick('motto'), motto2: mine.motto2 || pick('motto2'), cta: mine.cta || pick('cta'), closing: mine.closing || pick('closing'),
   };
   if (heading && !one(ans && ans.headline2, 40)) { words.headline = own.headline; words.headline2 = own.headline2; }
   if (!saved.logo) note = `${note ? `${note} ` : ''}No logo is saved for ${who || 'this business'}, so its name is written instead. Upload the logo to show it.`;
+  if (!mine.services.length) note = `${note ? `${note} ` : ''}No services are listed for ${who || 'this business'}: type them in SERVICES so the picture says what is offered.`;
   const scene = one(ans && ans.heroPrompt, 360) || own.heroPrompt;
   const caption = one(ans && ans.caption, 500);
   const hashtags = list(ans && ans.hashtags, 6, 40).map((h) => `#${h.replace(/^#+/, '').replace(/[^\p{L}\p{N}_]/gu, '')}`).filter((h) => h.length > 1);

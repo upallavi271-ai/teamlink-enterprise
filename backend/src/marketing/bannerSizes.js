@@ -23,7 +23,7 @@ async function sidePhoto(c, H, photo, x, w, height, fade) {
 }
 const words = (spec) => ({
   headline: clean(spec.headline, 40), headline2: clean(spec.headline2, 40), sub: clean(spec.sub, 70), tagline: clean(spec.tagline, 70), cta: clean(spec.cta, 44),
-  services: spec.variant === 'insta' ? [] : (Array.isArray(spec.services) ? spec.services : []).map((x) => clean(x, 34)).filter(Boolean).slice(0, 6),
+  services: (Array.isArray(spec.services) ? spec.services : []).map((x) => clean(x, 34)).filter(Boolean).slice(0, 6),
   phone: clean(spec.phone, 24), place: clean(spec.location, 44), site: clean(spec.chip, 44), email: clean(spec.email, 48), company: clean(spec.companyName, 40),
 });
 
@@ -93,6 +93,12 @@ async function coverAt(spec, H, w, h, indent) {
       }
     }
     if (t.sub) { const x = await line(t.sub, { font: 'semi', size: m(24), color: '#ffffff' }, room - m(44)); const ph = m(44); parts.push({ h: ph + m(14), draw: (y) => { c.shape(`<rect x="${left}" y="${y}" width="${x.w + m(44)}" height="${ph}" rx="${ph / 2}" fill="${dark}"/>`); c.put(x.buf, left + m(22), y + (ph - x.h) / 2); } }); } // eslint-disable-line no-await-in-loop
+    if (t.services.length) { // the services, in one or two lines
+      const half = Math.ceil(t.services.length / 2); const rows = t.services.length > 3 ? [t.services.slice(0, half), t.services.slice(half)] : [t.services];
+      const texts = rows.map((group) => group.join('   •   ')); let size = m(25);
+      for (const text of texts) size = Math.min(size, (await line(text, { font: 'bold', size: m(25), color: bright }, room)).size); // eslint-disable-line no-await-in-loop -- both lines in the same size
+      for (const [i, text] of texts.entries()) { const x = await line(text, { font: 'bold', size, color: bright }, room); parts.push({ h: x.h + m(i === texts.length - 1 ? 12 : 6), draw: (y) => c.put(x.buf, left, y) }); } // eslint-disable-line no-await-in-loop
+    }
     const reach = [t.phone, t.site, t.email].filter(Boolean).join('   |   ');
     if (reach) { const x = await line(reach, { font: 'bold', size: m(23), color: dark }, room); parts.push({ h: x.h, draw: (y) => c.put(x.buf, left, y) }); } // eslint-disable-line no-await-in-loop
     total = parts.reduce((a, p) => a + p.h, 0);

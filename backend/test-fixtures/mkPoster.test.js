@@ -40,10 +40,15 @@ const pic = (w, h, background, box) => sharp({ create: { width: w, height: h, ch
   AI.register('text', { id: 'stub', usable: () => true, async status() { return { ready: true, provider: 'stub', model: 'stub-1', reason: '' }; }, async json(system, prompt) { asked.push({ system, prompt }); if (typeof answer === 'function') return answer(); return answer; } });
   AI.register('text', { id: 'demo', usable: () => false, async status() { return { ready: true, provider: 'demo', model: 'x', reason: '' }; } });
   answer = { headline: 'Medical', headline2: 'Recruitment', sub: 'Hiring Indian Doctors & Staff Nurses', roles: ['Doctors', 'Staff Nurses'], services: ['Requirement Understanding', 'Candidate Sourcing', 'Screening', 'Call 99999 99999', 'Guaranteed Joining'], motto: 'We turn hiring challenges', motto2: 'to Right Connections', cta: 'Partner with TeamLink', closing: 'Visit www.fake.com for a 50% discount', heroPrompt: 'Four Indian doctors and nurses in a hospital corridor', secondPrompt: 'A handshake', caption: 'We help hospitals hire doctors and nurses.', hashtags: ['#Hiring', 'medical jobs'] };
-  let r = await Kit.write(person('u-p1'), { idea: 'Medical recruitment: hiring Indian doctors and staff nurses', tagline: 'Your Recruitment Partner for a Better Tomorrow' });
+  let r = await Kit.write(person('u-p0'), { idea: 'Medical recruitment' });
+  assert.deepEqual([r.poster.services, r.poster.servicesTitle], [[], ''], 'with no services listed, none are made up, whatever the AI says'); assert.ok(/No services are listed for TeamLink Consultants/.test(r.note), r.note);
+  asked.length = 0;
+  r = await Kit.write(person('u-p1'), { idea: 'Medical recruitment: hiring Indian doctors and staff nurses', tagline: 'Your Recruitment Partner for a Better Tomorrow', services: 'Doctor Recruitment, Nurse Recruitment\nInterview Support' });
   assert.ok(r.poster, JSON.stringify(r)); let p = r.poster;
   assert.deepEqual([p.headline, p.headline2, p.sub, p.motto, p.motto2, p.cta], ['Medical', 'Recruitment', 'Hiring Indian Doctors & Staff Nurses', 'We turn hiring challenges', 'to Right Connections', 'Partner with TeamLink']);
-  assert.deepEqual([p.roles, p.posterKey, p.servicesTitle], [[], 'own', 'Our Services']); assert.deepEqual(p.services, ['Requirement Understanding', 'Candidate Sourcing', 'Screening'], 'an invented number or promise is dropped');
+  assert.deepEqual([p.roles, p.posterKey, p.servicesTitle], [[], 'own', 'Our Services']); assert.deepEqual(p.services, ['Doctor Recruitment', 'Nurse Recruitment', 'Interview Support'], 'only the services the person typed, never the AI\'s');
+  assert.ok(asked[0].prompt.includes('The services of the business: Doctor Recruitment, Nurse Recruitment, Interview Support') && /never add, rename or invent a service/.test(asked[0].system));
+  assert.equal((await Kit.getKit(admin, '')).kit.services, 'Doctor Recruitment, Nurse Recruitment, Interview Support', 'the services are saved for next time');
   assert.equal(p.closing, '', 'a made-up link and discount never reach the poster');
   assert.deepEqual([p.companyName, p.tagline, p.phone, p.location, p.website, p.email], ['TeamLink Consultants', 'Your Recruitment Partner for a Better Tomorrow', '90323 21414', 'Kukatpally, Hyderabad', 'www.tmlink.in', 'hr@teamlinkcs.com'], 'contact details are the saved ones');
   assert.ok(/^Four Indian doctors and nurses in a hospital corridor\. At most two people/.test(p.heroPrompt) && /no text, no letters/.test(p.heroPrompt) && !('secondPrompt' in p) && /at most two people/.test(asked[0].system), p.heroPrompt);
@@ -54,7 +59,7 @@ const pic = (w, h, background, box) => sharp({ create: { width: w, height: h, ch
   assert.ok(/No logo is saved for Rao Dental Care/.test(r.note), r.note);
   answer = () => { throw new AI.AiMkError('timed out', 504, 'timeout'); };
   r = await Kit.write(person('u-p3'), { idea: 'Topic: Walk-in interviews for staff nurses', heading: 'Walk-in Interviews', content: 'This Saturday at our office\nBring your CV\nCarry ID proof' });
-  assert.ok(r.poster && /busy right now/.test(r.note), JSON.stringify(r)); assert.deepEqual([r.poster.headline, r.poster.headline2, r.poster.sub, r.poster.services], ['Walk-in', 'Interviews', 'This Saturday at our office', ['Bring your CV', 'Carry ID proof']]);
+  assert.ok(r.poster && /busy right now/.test(r.note), JSON.stringify(r)); assert.deepEqual([r.poster.headline, r.poster.headline2, r.poster.sub, r.poster.services], ['Walk-in', 'Interviews', 'This Saturday at our office', ['Doctor Recruitment', 'Nurse Recruitment', 'Interview Support']], 'the saved services; lines of content are not turned into services');
   assert.equal((await Kit.write(person('u-p4'), { idea: '' })).status, 400);
   await Cfg.saveSettings({ ...(await Cfg.getSettings()), aiDailyPerUser: 0 }); assert.equal((await Kit.write(person('u-p5'), { idea: 'A hiring poster' })).status, 403); await Cfg.saveSettings({ ...(await Cfg.getSettings()), aiDailyPerUser: 200 });
   console.log('PASS the words: from the AI, invented numbers / links / promises dropped, the person\'s own kept, saved contacts used, plain words when the AI is busy');
@@ -138,8 +143,22 @@ const pic = (w, h, background, box) => sharp({ create: { width: w, height: h, ch
     }
   }
   const ig = await Img.createBanner(admin, { ...body, variant: 'insta', size: '4:5', title: 'ig' }); assert.equal((await specOf(ig.item.id)).variant, 'insta');
-  const full = await Img.createBanner(admin, { ...body, size: '4:5', title: 'full' }); assert.ok(!fs.readFileSync(await fileOf(ig.item.id)).equals(fs.readFileSync(await fileOf(full.item.id))), 'the Instagram post is a different picture: no service cards');
+  const full = await Img.createBanner(admin, { ...body, size: '4:5', title: 'full' }); assert.ok(!fs.readFileSync(await fileOf(ig.item.id)).equals(fs.readFileSync(await fileOf(full.item.id))), 'the Instagram post has no motto or closing line');
+  // the services are really drawn: in every design and in a cover, a picture with services differs from the same one without
+  for (const [name, d, size] of [['insta', { layout: 'poster', variant: 'insta' }, '4:5'], ['wide', { layout: 'poster' }, '1200:628'], ['cover', { layout: 'poster' }, '1640:624'], ['li', { layout: 'showcase' }, '1584:396']]) {
+    const a = await Img.createBanner(admin, { ...body, ...d, size, title: `${name}-with` }); const b0 = await Img.createBanner(admin, { ...body, ...d, size, services: [], title: `${name}-without` });
+    assert.ok(!fs.readFileSync(await fileOf(a.item.id)).equals(fs.readFileSync(await fileOf(b0.item.id))), `${name}: the services are on the picture`);
+  }
   console.log('PASS every social page size in all three designs, each exactly its size');
+
+  // ---- 6. the app's own sign-in address is never printed as the website ----
+  assert.equal(Cfg.publicSite('https://teamlink.teamlinks.in/'), 'www.tmlink.in'); assert.equal(Cfg.publicSite('greenstart.teamlinks.in'), 'greenstart.teamlinks.in');
+  const linked = await Img.createBanner(admin, { size: '16:9', layout: 'showcase', headline: 'A recruitment and', chip: 'https://teamlink.teamlinks.in', footer: 'teamlink.teamlinks.in | 90323 21414', title: 'link' });
+  let ls = await specOf(linked.item.id); assert.deepEqual([ls.chip, ls.footer], ['www.tmlink.in', 'www.tmlink.in | 90323 21414'], JSON.stringify(ls));
+  await Cfg.saveBrand({ ...(await Cfg.getBrand()), brandName: 'TeamLink Consultants', website: 'https://teamlink.teamlinks.in' }, admin);
+  const own2 = await Img.createBanner(admin, { size: '16:9', layout: 'showcase', headline: 'Hire faster', title: 'link2' }); assert.ok(!/teamlink\.teamlinks/.test((await specOf(own2.item.id)).footer));
+  await Kit.saveKit(admin, '', { website: 'teamlink.teamlinks.in' }); assert.equal((await Kit.getKit(admin, '')).kit.website, 'www.tmlink.in', 'a saved detail with the app address is read as the public website');
+  console.log('PASS the website printed is www.tmlink.in, never the app\'s sign-in address');
 
   console.log('poster tests: all passed');
   process.exit(0);

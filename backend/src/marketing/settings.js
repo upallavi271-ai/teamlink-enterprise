@@ -183,4 +183,8 @@ function cleanLogo(b) {
 async function saveLogo(v) { await write(LOGO_KEY, v); }
 async function removeLogo() { try { await prisma.appSetting.delete({ where: { key: LOGO_KEY } }); } catch { /* nothing to remove */ } }
 
-module.exports = { getSettings, cleanSettings, saveSettings, getClientAccounts, saveClientAccounts, clientNeeded, CLIENT_KINDS, getBrand, cleanBrand, saveBrand, getLogo, cleanLogo, saveLogo, removeLogo, DEFAULT_SETTINGS, LANGUAGES, EMOJI, LIMITS, clip };
+// 2026-11-27 (owner: "the down link should be tmlink.in, not teamlink.teamlinks.in"): that address is the sign-in page of this app, never the company's website. Wherever a picture or its saved details
+// would print it, the public website is printed instead.
+const publicSite = (v) => String(v == null ? '' : v).replace(/(?:https?:\/\/)?(?:www\.)?teamlink\.teamlinks\.in(?![\w.-])/gi, 'www.tmlink.in').replace(/(www\.tmlink\.in)\/(?=\s|\||$)/g, '$1');
+
+module.exports = { publicSite, getSettings, cleanSettings, saveSettings, getClientAccounts, saveClientAccounts, clientNeeded, CLIENT_KINDS, getBrand, cleanBrand, saveBrand, getLogo, cleanLogo, saveLogo, removeLogo, DEFAULT_SETTINGS, LANGUAGES, EMOJI, LIMITS, clip };

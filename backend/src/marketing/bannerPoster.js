@@ -98,7 +98,7 @@ async function makePoster(spec, H) {
   const put = (input, left, top) => layers.push({ input, left: Math.max(0, Math.round(left)), top: Math.max(0, Math.round(top)) });
   const shape = (inner, top = 0, height = h) => put(svg(w, Math.max(1, Math.round(height)), inner), 0, top);
   const icon = iconPng;
-  const insta = spec.variant === 'insta'; // an Instagram post: the logo, the headline, a big photograph, the call to action and the contacts
+  const insta = spec.variant === 'insta'; // an Instagram post: the logo, the headline, the photograph, the services, the call to action and the contacts (no motto or closing line)
   // a gold sweep, thick in the middle, under a line of words
   const sweep = (x1, x2, y) => { const mid = (x1 + x2) / 2; shape(`<path d="M${x1} ${y + n(13)} Q${mid} ${y - n(17)} ${x2} ${y + n(2)} Q${mid} ${y + n(1)} ${x1} ${y + n(13)} Z" fill="${accent}"/>`); };
   // a line of words with a short rule on each side
@@ -110,7 +110,7 @@ async function makePoster(spec, H) {
 
   const headline = clean(spec.headline, 40); const headline2 = clean(spec.headline2, 40); const pill = clean(spec.sub, 60); const tagline = clean(spec.tagline, 70);
   const roles = (Array.isArray(spec.roles) ? spec.roles : []).map((x) => clean(x, 24)).filter(Boolean).slice(0, 3);
-  const steps = insta ? [] : (Array.isArray(spec.services) ? spec.services : []).map((x) => clean(x, 34)).filter(Boolean).slice(0, 6);
+  const steps = (Array.isArray(spec.services) ? spec.services : []).map((x) => clean(x, 34)).filter(Boolean).slice(0, 6); // the business's services, shown clearly in every design
   const servicesTitle = steps.length ? clean(spec.servicesTitle, 30) : '';
   const cards = steps.length > 3; // four to six: large cards in two columns
   const motto = insta ? '' : clean(spec.motto, 44); const motto2 = insta ? '' : clean(spec.motto2, 34);
