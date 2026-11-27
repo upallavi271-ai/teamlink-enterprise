@@ -71,8 +71,8 @@ export function ReasonCell({ r }) {
 export function PartChip({ split }) {
   if (!split || (split.of < 2 && split.kind !== 'sa')) return null;
   return (
-    <span className="lvx-chip lvx-chip-blue" title={`The first ${split.limit} days of leave in a pay month need the Team Lead and then HR; every further day needs the Super Admin. This leave: ${split.totalDays} day(s), ${split.fromDate} to ${split.toDate}.`}>
-      {split.of > 1 ? `Part ${split.part} of ${split.of} · ` : ''}{split.kind === 'sa' ? 'Super Admin' : 'TL + HR'}
+    <span className="lvx-chip lvx-chip-blue" title={`The first ${split.limit} days of leave in a pay month need the Team Lead${split.hr === false ? ' (no HR set for this department)' : ' and then HR'}; every further day needs the Super Admin. This leave: ${split.totalDays} day(s), ${split.fromDate} to ${split.toDate}.`}>
+      {split.of > 1 ? `Part ${split.part} of ${split.of} · ` : ''}{split.kind === 'sa' ? 'Super Admin' : split.hr === false ? 'Team Lead' : 'TL + HR'}
     </span>
   );
 }

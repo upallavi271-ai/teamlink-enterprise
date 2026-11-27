@@ -1,11 +1,15 @@
 // ---------------------------------------------------------------------------
 // ON THE APPROVE / REJECT SCREEN (founder 2026-11-25: "in the approve / reject tab the leaves that employee has taken, and whether they were
 // approved or rejected, must be seen right there"):
-//   * EmployeeLeaves - the employee's balance, this year's totals and every other leave with what was decided
+//   * EmployeeLeaves - the last 3 months (month by month, then each leave with what was decided), older leaves behind a button,
+//                      this year's totals and the balance
+//   * SplitOffer     - a leave applied before the rule: the button that splits it by the rule
 //   * SplitNote      - the pay-month rule (first days Team Lead then HR, the rest Super Admin): every part of the application, who has
 //                      approved or rejected each one, and who it still waits for
 // Both only draw what the server sends (GET /api/leave/:id/workflow: employeeLeave, split).
 // ---------------------------------------------------------------------------
+import { useState } from 'react';
+import api from '../../api';
 import { EmptyMini, SectionLabel, Status } from '../../components/proto.jsx';
 
 const dm = (iso) => {
@@ -16,7 +20,8 @@ const dm = (iso) => {
 export const dates = (from, to) => (to && to !== from ? `${dm(from)} – ${dm(to)}` : dm(from));
 const days = (n) => `${n} day${Number(n) === 1 ? '' : 's'}`;
 
-const whoNeeded = (kind) => (kind === 'sa' ? 'Super Admin' : 'Team Lead, then HR');
+// hr === false: nobody holds HR on this leave's chain, so the Team Lead's approval is the one needed.
+const whoNeeded = (kind, hr) => (kind === 'sa' ? 'Super Admin' : hr === false ? 'Team Lead (no HR set for this department)' : 'Team Lead, then HR');
 
 // One approver of one request: who, and whether they approved, rejected, or are still to decide.
 export function Approval({ a }) {
@@ -34,11 +39,13 @@ export function Approval({ a }) {
 export function SplitNote({ split, currentId, onOpenPart }) {
   if (!split) return null;
   const { parts = [], months = [], limit, of, totalDays } = split;
+  const noHr = parts.some((p) => p.kind === 'tl' && p.hr === false);
   return (
     <div className="lvx-split" data-testid="split-note">
       <div>
         <b>{of > 1 ? `${days(totalDays)} leave in ${of} parts` : `${days(totalDays)} leave`}</b> ({dates(split.fromDate, split.toDate)}).
-        {' '}The first {days(limit)} of leave in a pay month need the Team Lead and then HR; every further day needs the Super Admin.
+        {' '}The first {days(limit)} of leave in a pay month need the Team Lead{noHr ? '' : ' and then HR'}; every further day needs the Super Admin.
+        {noHr && ' No HR approver is set for this department, so the Team Lead’s approval is enough for those days.'}
       </div>
       {months.map((m) => <div key={m.key} className="lvx-muted">Pay month {m.label} ({m.rangeText}): {days(m.usedBefore)} already applied before this leave.</div>)}
       {parts.map((p) => (p.deleted
@@ -47,7 +54,7 @@ export function SplitNote({ split, currentId, onOpenPart }) {
           <div key={p.id} className={`lvx-part${p.id === currentId ? ' lvx-part-now' : ''}`}>
             <div className="lvx-part-head">
               <b>{of > 1 ? `Part ${p.part}: ` : ''}{dates(p.fromDate, p.toDate)} ({days(p.days)})</b>
-              <span className="lvx-muted">{whoNeeded(p.kind)}</span>
+              <span className="lvx-muted">{whoNeeded(p.kind, p.hr)}</span>
               <Status>{p.status}</Status>
               {of > 1 && (p.id === currentId
                 ? <span className="lvx-chip lvx-chip-blue">On this screen</span>
@@ -57,6 +64,33 @@ export function SplitNote({ split, currentId, onOpenPart }) {
             {(p.approvals || []).length === 0 && p.decidedBy && <div className="lvx-appr">{p.status} by <b>{p.decidedBy}</b>{p.decidedAt ? ` on ${dm(p.decidedAt)}` : ''}</div>}
           </div>
         )))}
+    </div>
+  );
+}
+
+// A LEAVE APPLIED BEFORE THE RULE (founder 2026-11-27): what it would become, and the button that does it. Nothing is approved here.
+export function SplitOffer({ leaveId, offer, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (!offer) return null;
+  async function split() {
+    setBusy(true); setError('');
+    try {
+      await api.post(`/leave/${leaveId}/apply-split`);
+      onDone();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not split this leave.');
+    } finally { setBusy(false); }
+  }
+  return (
+    <div className="lvx-split" data-testid="split-offer">
+      <div>This leave was applied before the {offer.limit}-day rule. Under the rule it becomes:</div>
+      {offer.parts.map((p) => (
+        <div key={p.fromDate} className="lvx-part"><b>{dates(p.fromDate, p.toDate)} ({days(p.days)})</b> <span className="lvx-muted">{whoNeeded(p.kind, offer.hr)}</span></div>
+      ))}
+      <div className="lvx-muted">Nothing is approved or rejected by splitting. Each part is then decided on its own.</div>
+      {error && <div className="error-text">{error}</div>}
+      <button type="button" className="btn btn-sm btn-primary lvx-older" data-testid="split-now" disabled={busy} onClick={split}>{busy ? 'Splitting…' : `Split by the ${offer.limit}-day rule`}</button>
     </div>
   );
 }
@@ -71,12 +105,100 @@ function Total({ label, t, tone }) {
   );
 }
 
+// One table of leaves. Three columns so that "approved or rejected, and by whom" is on screen on a phone too.
+function LeaveTable({ requests, all = false }) {
+  return (
+    <div className={`tbl-wrap lvx-hist${all ? ' lvx-hist-all' : ''}`}>
+      <table>
+        <thead><tr><th>Leave</th><th>Approved / rejected</th><th className="lvx-wide-only">Reason</th></tr></thead>
+        <tbody>
+          {requests.map((r) => {
+            const d = r.decision || {};
+            const pending = r.status === 'Pending';
+            const acted = r.approvals || [];
+            const n = r.halfDay ? `0.5 day (${r.halfDay})` : days(r.days ?? 1);
+            const used = r.chargedDays != null && r.status !== 'Cancelled' && Number(r.chargedDays) !== Number(r.days) ? ` · ${r.chargedDays} taken` : '';
+            return (
+              <tr key={r.id} className={r.split?.sameApplication ? 'lvx-same' : undefined}>
+                <td><b>{dates(r.fromDate, r.toDate)}</b>
+                  <div className="lvx-muted">{r.type} · {n}{used}</div>
+                  {r.split && r.split.of > 1 && <div className="lvx-muted">{r.split.sameApplication ? 'Other part of this leave' : `Part ${r.split.part} of ${r.split.of}`}</div>}
+                </td>
+                <td>
+                  <Status>{r.status}</Status>
+                  {/* every approval level that has decided; older and imported leaves have only the final decider */}
+                  {acted.map((a) => <Approval key={a.level} a={a} />)}
+                  {pending && <div className="lvx-muted">{d.by ? `Waiting for ${d.by}` : 'Waiting'}</div>}
+                  {!pending && acted.length === 0 && (d.by || d.at) && <div className="lvx-muted">{d.by ? `by ${d.by}` : ''}{d.at ? `${d.by ? ' · ' : ''}${dm(d.at)}` : ''}</div>}
+                  {!pending && acted.length === 0 && d.comment && <div className="lvx-comment">“{d.comment}”</div>}
+                </td>
+                <td className="lvx-muted lvx-wide-only">{r.reasonText || '—'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// THE LAST 3 MONTHS (founder 2026-11-27): the running pay month and the 3 before it - days approved / waiting / rejected - then each leave.
+function RecentLeaves({ recent, requests }) {
+  if (!recent) return null;
+  const rows = [...(recent.later ? [{ key: 'later', label: 'Later months', ...recent.later }] : []), ...(recent.months || [])];
+  const n = (v) => (v ? <b>{v}</b> : <span className="lvx-muted">0</span>);
+  return (
+    <div data-testid="recent-leaves">
+      <div className="tbl-wrap lvx-months">
+        <table>
+          <thead><tr><th>Pay month</th><th>Approved</th><th>Waiting</th><th>Rejected</th></tr></thead>
+          <tbody>
+            {rows.map((m) => (
+              <tr key={m.key}>
+                <td><b>{m.label}</b>{m.current ? ' (this month)' : ''}{m.rangeText && <div className="lvx-muted">{m.rangeText}</div>}</td>
+                <td className="lvx-m-ok">{n(m.approved)}</td>
+                <td className="lvx-m-wait">{n(m.pending)}</td>
+                <td className="lvx-m-no">{n(m.rejected)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {requests.length === 0
+        ? <EmptyMini>No leave in the last 3 months.</EmptyMini>
+        : <LeaveTable requests={requests} all />}
+    </div>
+  );
+}
+
 export default function EmployeeLeaves({ data, name }) {
+  const [showOlder, setShowOlder] = useState(false);
   if (!data) return null;
-  const { totals, year, balances = [], requests = [], count } = data;
+  const { totals, year, balances = [], requests = [], count, recent } = data;
+  const lately = requests.filter((r) => r.recent);
+  const older = requests.filter((r) => !r.recent);
+  const olderCount = count - (recent ? recent.count : lately.length);
   return (
     <div className="lvx-history" data-testid="employee-leaves">
-      <SectionLabel style={{ marginTop: 14 }}>{`${name || 'This employee'} — leaves in ${year} (this request not included)`}</SectionLabel>
+      <SectionLabel style={{ marginTop: 14 }}>{`${name || 'This employee'} — leave history, last 3 months (this request not included)`}</SectionLabel>
+      <RecentLeaves recent={recent} requests={lately} />
+      {olderCount > 0 && (
+        <>
+          <button type="button" className="btn btn-sm lvx-older" data-testid="older-leaves" onClick={() => setShowOlder((v) => !v)}>
+            {showOlder ? 'Hide older leaves' : `Show older leaves (${olderCount})`}
+          </button>
+          {showOlder && (older.length === 0
+            ? <EmptyMini>Older leaves are on the Requests tab.</EmptyMini>
+            : (
+              <>
+                {olderCount > older.length && <div className="lvx-muted">Latest {older.length} of {olderCount} shown.</div>}
+                <LeaveTable requests={older} />
+              </>
+            ))}
+        </>
+      )}
+
+      <SectionLabel style={{ marginTop: 14 }}>{`Totals for ${year} and balance`}</SectionLabel>
       <div className="lvx-totals">
         <Total label="Days approved" t={totals.approved} tone="ok" />
         <Total label="Days waiting" t={totals.pending} tone="wait" />
@@ -103,44 +225,6 @@ export default function EmployeeLeaves({ data, name }) {
           <div className="lvx-muted" style={{ padding: '2px 8px 4px' }}>* Waiting includes the request on this screen.</div>
         </div>
       )}
-
-      <div className="lvx-hist-title">All other leave requests ({count}){count > requests.length ? ` — latest ${requests.length} shown` : ''}</div>
-      {requests.length === 0
-        ? <EmptyMini>No other leave requests.</EmptyMini>
-        : (
-          <div className="tbl-wrap lvx-hist">
-            {/* Three columns so that "approved or rejected, and by whom" is on screen on a phone too. */}
-            <table>
-              <thead><tr><th>Leave</th><th>Approved / rejected</th><th className="lvx-wide-only">Reason</th></tr></thead>
-              <tbody>
-                {requests.map((r) => {
-                  const d = r.decision || {};
-                  const pending = r.status === 'Pending';
-                  const acted = r.approvals || [];
-                  const n = r.halfDay ? `0.5 day (${r.halfDay})` : days(r.days ?? 1);
-                  const used = r.chargedDays != null && r.status !== 'Cancelled' && Number(r.chargedDays) !== Number(r.days) ? ` · ${r.chargedDays} taken` : '';
-                  return (
-                    <tr key={r.id} className={r.split?.sameApplication ? 'lvx-same' : undefined}>
-                      <td><b>{dates(r.fromDate, r.toDate)}</b>
-                        <div className="lvx-muted">{r.type} · {n}{used}</div>
-                        {r.split && r.split.of > 1 && <div className="lvx-muted">{r.split.sameApplication ? 'Other part of this leave' : `Part ${r.split.part} of ${r.split.of}`}</div>}
-                      </td>
-                      <td>
-                        <Status>{r.status}</Status>
-                        {/* every approval level that has decided; older and imported leaves have only the final decider */}
-                        {acted.map((a) => <Approval key={a.level} a={a} />)}
-                        {pending && <div className="lvx-muted">{d.by ? `Waiting for ${d.by}` : 'Waiting'}</div>}
-                        {!pending && acted.length === 0 && (d.by || d.at) && <div className="lvx-muted">{d.by ? `by ${d.by}` : ''}{d.at ? `${d.by ? ' · ' : ''}${dm(d.at)}` : ''}</div>}
-                        {!pending && acted.length === 0 && d.comment && <div className="lvx-comment">“{d.comment}”</div>}
-                      </td>
-                      <td className="lvx-muted lvx-wide-only">{r.reasonText || '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
     </div>
   );
 }

@@ -14,7 +14,7 @@ import api from '../../api';
 import { Modal, EmptyMini, SectionLabel } from '../../components/proto.jsx';
 import ApprovalChain from '../../components/ApprovalChain.jsx';
 import { LeaveFacts, LeaveDecidePanel } from './LeaveExtras.jsx';
-import EmployeeLeaves, { SplitNote } from './EmployeeLeaves.jsx';
+import EmployeeLeaves, { SplitNote, SplitOffer } from './EmployeeLeaves.jsx';
 import { ChainSteps, ChainHistory } from './LeaveChainScreen.jsx';
 import './LeaveChainScreen.css';
 
@@ -51,7 +51,8 @@ export default function LeaveRequestScreen({ requestId, onClose, onActed = () =>
 
           {/* What this employee has already taken, then the decision, on the same screen (founder 2026-11-25). */}
           <EmployeeLeaves data={data.employeeLeave} name={e.name} />
-          <LeaveDecidePanel data={data} onDone={() => { load(); onActed(); }} />
+          <SplitOffer leaveId={leave.id} offer={data.canSplit} onDone={() => { setData(null); load(); onActed(); }} />
+          <LeaveDecidePanel key={`${leave.id}-${leave.days}`} data={data} onDone={() => { load(); onActed(); }} />
 
           {wf && <><SectionLabel style={{ marginTop: 14 }}>Approval chain</SectionLabel><ApprovalChain workflow={wf} recordStatus={leave.status} /></>}
 

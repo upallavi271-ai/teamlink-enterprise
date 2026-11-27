@@ -46,10 +46,12 @@ const saNote = (limit) => `Beyond the first ${plural(limit)} of leave in the pay
 const saVisNote = (limit) => `Not needed - leave beyond ${plural(limit)} in the pay month is decided by the Super Admin. Shown for information.`;
 const tlVisNote = (limit) => `Not needed - the first ${plural(limit)} of leave in the pay month are approved by the Team Lead and HR. Shown for information.`;
 const refusal = (split) => `These days are beyond the first ${plural(split.limit)} of leave in the pay month: only the Super Admin approves or rejects them.`;
-// What the approver of one row is told, and what the Team Lead's screen says.
+// What the approver of one row is told, and what the Team Lead's screen says. hr === false: nobody holds HR on this leave's chain.
 const explain = (split) => (split.kind === 'sa'
   ? `Beyond the first ${plural(split.limit)} of leave in this pay month: only the Super Admin approves.`
-  : `Within the first ${plural(split.limit)} of leave in this pay month: the Team Lead and then HR both approve.`);
+  : split.hr === false
+    ? `Within the first ${plural(split.limit)} of leave in this pay month: the Team Lead approves (no HR approver is set for this department).`
+    : `Within the first ${plural(split.limit)} of leave in this pay month: the Team Lead and then HR both approve.`);
 
 async function getSettings() {
   const row = await prisma.appSetting.findUnique({ where: { key: KEY } });
@@ -122,6 +124,41 @@ async function usedInMonths(employeeId, monthKeys, cycle, excludeId = null) {
   return used;
 }
 
+// THE LAST 3 MONTHS (founder 2026-11-27: "leave history last 3 months must be seen on the approve / reject tab itself"): the running pay
+// month and the 3 before it, with the days approved / waiting / rejected in each; `ids` = the requests that touch that window (or come
+// after it). A request's days are laid on its dates, so one crossing two pay months is counted in both.
+const RECENT_MONTHS = 3;
+const BUCKET = { Approved: 'approved', 'Cancellation Requested': 'approved', Pending: 'pending', Rejected: 'rejected' };
+const todayIst = (now = Date.now()) => new Date(now + 330 * 60000).toISOString().slice(0, 10);
+
+async function recentMonths(rows, today = todayIst()) {
+  const { cycle } = await PC.getSettings();
+  const current = PC.monthOfDate(today, cycle).month;
+  const empty = () => ({ approved: 0, pending: 0, rejected: 0 });
+  const months = Array.from({ length: RECENT_MONTHS + 1 }, (_, i) => { // newest first
+    const c = PC.cycleOf(PC.addMonths(current, -i), cycle);
+    return { key: c.key, label: c.label, rangeText: c.rangeText, from: c.from, current: i === 0, ...empty() };
+  });
+  const since = months[months.length - 1].from;
+  const later = empty(); // already applied for a pay month after the running one
+  const recent = rows.filter((r) => day(r.toDate || r.fromDate) >= since);
+  for (const r of recent) { // eslint-disable-line no-restricted-syntax
+    const bucket = BUCKET[r.status]; // a cancelled leave is listed but counts nowhere
+    if (bucket) {
+      const laid = await daysOnDates({ fromDate: r.fromDate, toDate: r.toDate, days: r.days ?? 1, halfDay: leaveText.halfOf(r) }); // eslint-disable-line no-await-in-loop
+      // days that sit on no working date (a Sunday counted by the sandwich rule) go with the leave's last date
+      const rest = r2(Number(r.days ?? 1) - laid.reduce((n, x) => n + x.amount, 0));
+      if (rest > 0) laid.push({ date: laid.length ? laid[laid.length - 1].date : day(r.fromDate), amount: rest });
+      laid.filter((x) => x.date >= since).forEach((x) => {
+        const key = PC.monthOfDate(x.date, cycle).month;
+        const into = key > current ? later : months.find((m) => m.key === key);
+        if (into) into[bucket] = r2(into[bucket] + x.amount);
+      });
+    }
+  }
+  return { since, months, later: later.approved + later.pending + later.rejected > 0 ? later : null, ids: recent.map((r) => r.id) };
+}
+
 // How would this application be approved? -> null (not under this rule) or
 // { limit, totalDays, months: [{ key, label, rangeText, usedBefore }], parts: [{ kind: 'tl'|'sa', fromDate, toDate, days }] }
 // excludeId: the application itself when it is already saved, so it is not counted as used before.
@@ -188,6 +225,27 @@ async function divide(leave, p) {
   });
 }
 
+// A LEAVE ALREADY WAITING WHEN THIS RULE STARTED (founder 2026-11-27: "the TL gives approval for 2 days only - it is not taking it").
+// It keeps the routing it was applied with until the Team Lead / Super Admin presses "Split by the 2-day rule" on its screen; only then is
+// it divided like a new application. -> the plan, or null when it cannot be moved: not waiting, already split or decided by somebody,
+// within the day limit (the TL may already approve it), a TL's own leave, one from Pulse or marked in attendance, days already counted on
+// import, or no day of the month left for the Team Lead.
+async function movable(leave, employee) {
+  if (!leave || !employee || leave.status !== 'Pending') return null;
+  const meta = await leaveMeta.getMeta(leave.id);
+  if (meta && (meta.split || (meta.source && meta.source !== 'TeamLink'))) return null;
+  if (/Marked as Leave in attendance|Pulse HRM sync/i.test(String(leave.reason || ''))) return null;
+  const steps = await prisma.approvalStep.findMany({ where: { workflow: 'leave', recordId: leave.id }, orderBy: { seq: 'asc' } });
+  if (steps.some((s) => s.mode !== 'applicant' && ['Approved', 'Rejected'].includes(s.status))) return null;
+  if (!firstApprovers(steps).length) return null;
+  if (await prisma.auditLog.count({ where: { entityId: leave.id, action: policy.PRECOUNTED } })) return null;
+  const p = await plan({
+    employee, fromDate: leave.fromDate, toDate: leave.toDate, days: leave.days, halfDay: leaveText.halfOf(leave), excludeId: leave.id,
+  });
+  if (!p || !(Number(leave.days) > p.limit) || !p.parts.some((x) => x.kind === 'tl')) return null;
+  return p;
+}
+
 // The split record of one request, or null (an ordinary request).
 async function of(id) {
   const m = await leaveMeta.getMeta(id);
@@ -210,6 +268,8 @@ async function toLeadThenHr(recordId, limit) {
   const steps = await prisma.approvalStep.findMany({ where: { workflow: 'leave', recordId }, orderBy: { seq: 'asc' } });
   const keep = firstApprovers(steps);
   if (!keep.length) return toSuperAdmin(recordId, limit);
+  const cur = await of(recordId); // remembered for the labels: is there an HR to approve after the Team Lead?
+  if (cur) await leaveMeta.setMeta(recordId, { split: { ...cur, hr: keep.some((s) => s.level === 'HR') } });
   const ids = new Set(keep.map((s) => s.id));
   const others = steps.filter((s) => !ids.has(s.id) && ['Pending', 'Waiting'].includes(s.status));
   if (others.length) await prisma.approvalStep.updateMany({ where: { id: { in: others.map((s) => s.id) } }, data: { status: 'Visibility', note: tlVisNote(limit) } });
@@ -251,13 +311,16 @@ async function parts(split) {
   if (!split) return [];
   const rows = await prisma.leaveRequest.findMany({ where: { id: { in: split.ids } } });
   const approvals = await approvalsFor(split.ids, { open: true });
+  const withHr = new Set((await prisma.approvalStep.findMany({
+    where: { workflow: 'leave', recordId: { in: split.ids }, level: 'HR', approverUserId: { not: null }, mode: 'required' }, select: { recordId: true },
+  })).map((s) => s.recordId));
   return split.ids.map((id, i) => {
     const row = rows.find((r) => r.id === id);
     if (!row) return { id, part: i + 1, kind: split.kinds[i], deleted: true };
     const steps = (approvals.get(id) || []).filter((s) => row.status === 'Pending' || ['Approved', 'Rejected'].includes(s.status));
     const waiting = row.status === 'Pending' ? steps.find((s) => s.status === 'Pending') : null;
     return {
-      id, part: i + 1, kind: split.kinds[i], fromDate: row.fromDate, toDate: row.toDate, days: row.days, status: row.status,
+      id, part: i + 1, kind: split.kinds[i], hr: withHr.has(id), fromDate: row.fromDate, toDate: row.toDate, days: row.days, status: row.status,
       waitingFor: waiting ? (waiting.name || waiting.label) : null, waitingLevel: waiting ? waiting.label : null,
       decidedBy: row.decidedBy || null, decidedAt: row.decidedAt || null, comment: row.rejectReason || row.approvalReason || null,
       approvals: steps,
@@ -272,5 +335,5 @@ function noticeFor(split) {
 }
 
 module.exports = {
-  KEY, getSettings, saveSettings, status, plan, countedDates, usedInMonths, divide, of, firstApprovers, shapeChain, approvalsFor, parts, noticeFor, explain, refusal,
+  KEY, getSettings, saveSettings, status, plan, countedDates, usedInMonths, recentMonths, divide, movable, of, firstApprovers, shapeChain, approvalsFor, parts, noticeFor, explain, refusal,
 };

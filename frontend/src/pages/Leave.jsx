@@ -343,7 +343,7 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
       {preview && !allOff && (
         <div className="notice amber" style={{ display: 'block', marginBottom: 10, fontSize: 12.5 }} data-testid="split-preview">
           <b>Who will approve this leave.</b>
-          {preview.months.map((m) => <div key={m.key}>Pay month {m.rangeText}: {m.usedBefore} day(s) already applied. The first {preview.limit} need the TL and HR.</div>)}
+          {preview.months.map((m) => <div key={m.key}>Pay month {m.rangeText}: {m.usedBefore} day(s) already applied. The first {preview.limit} need the TL{preview.hrName ? ' and HR' : ''}.</div>)}
           {preview.parts.map((p) => {
             const lead = preview.leadName ? `${isHR ? 'the TL' : 'your TL'} (${preview.leadName})` : '';
             const hr = preview.hrName ? `HR (${preview.hrName})` : '';

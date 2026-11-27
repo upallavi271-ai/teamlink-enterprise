@@ -88,6 +88,11 @@ async function ensureWorkflow(request) {
   return laid;
 }
 
+// Who may split a waiting leave by the pay-month rule: the Team Lead / STL named on its chain, or a login that decides any step
+// (a Super Admin, an Internal HR admin).
+const maySplit = (user, steps) => (steps || []).some((s) => ['TL', 'STL'].includes(s.level) && s.approverUserId === user.id)
+  || leadRule.isRealSuperAdmin(user) || workflow.hasDirectPower(user, WF, steps || []);
+
 // Never let a chain problem take an existing screen down — unhandled
 // rejections have exited this process before.
 async function safeEnsureWorkflow(request) {
@@ -192,7 +197,7 @@ router.get('/', async (req, res, next) => {
         pendingState: l.status === 'Pending' ? (pendingState.get(l.id) || 'genuine') : null,
         source: (metaOf.get(l.id) || {}).source || 'TeamLink',
         // Under the pay-month rule (utils/leaveSplit.js): who approves this row, and which part of the application it is.
-        split: (() => { const sp = (metaOf.get(l.id) || {}).split; return sp ? { kind: sp.kind, part: sp.part, of: sp.of, limit: sp.limit, totalDays: sp.totalDays, fromDate: sp.fromDate, toDate: sp.toDate } : null; })(),
+        split: (() => { const sp = (metaOf.get(l.id) || {}).split; return sp ? { kind: sp.kind, hr: sp.hr, part: sp.part, of: sp.of, limit: sp.limit, totalDays: sp.totalDays, fromDate: sp.fromDate, toDate: sp.toDate } : null; })(),
         earlyLogout: ev && (mine || !req.user.caps.hrmsSelfOnly) ? { state: ev.state, chip: ev.chip || null, text: ev.text, date: ev.date || null } : null,
         // Days really taken from the balance (items 4/6), when the ledger has it.
         chargedDays: charged.has(l.id) ? charged.get(l.id) : null,
@@ -348,7 +353,7 @@ router.get('/:id/workflow', async (req, res, next) => {
       if (policy.actingAsTl(req.user, current)) {
         const thenHr = steps.some((s) => s.level === 'HR' && s.status === 'Waiting');
         tl = split && split.kind === 'tl'
-          ? { allowed: true, note: `${leaveSplit.explain(split)} ${thenHr ? 'After your approval it goes to HR. ' : ''}A reason is required to approve.` }
+          ? { allowed: true, note: `${leaveSplit.explain({ ...split, hr: thenHr })} ${thenHr ? 'After your approval it goes to HR. ' : ''}A reason is required to approve.` }
           : await policy.evaluateTlRule(await policy.getTlRule(), request);
       }
     }
@@ -380,6 +385,12 @@ router.get('/:id/workflow', async (req, res, next) => {
     if (request.employee && (isApplicant || mayAct || await workflow.isParticipant(WF, request.id, req.user.id))) {
       try { employeeLeave = await employeeLeaveFor(request, split); } catch (e) { console.error('[leave] employee history failed', e.message); }
     }
+    // A LEAVE APPLIED BEFORE THE PAY-MONTH RULE: offered to be split by it, to those who may press the button (utils/leaveSplit.js movable).
+    let canSplit = null;
+    if (!split && mayAct && maySplit(req.user, steps)) {
+      const p = await leaveSplit.movable(request, request.employee).catch((e) => { console.error('[leave] split offer failed', e.message); return null; });
+      if (p) canSplit = { limit: p.limit, totalDays: p.totalDays, parts: p.parts, hr: leaveSplit.firstApprovers(steps).some((s) => s.level === 'HR') };
+    }
     const handoffs = (await prisma.auditLog.findMany({
       where: { entity: 'LeaveRequest', entityId: request.id, action: policy.REASSIGNED },
       orderBy: { createdAt: 'asc' },
@@ -396,6 +407,7 @@ router.get('/:id/workflow', async (req, res, next) => {
     return res.json({
       handover,
       history,
+      canSplit,
       leave: {
         id: request.id,
         employee: request.employee ? {
@@ -641,7 +653,7 @@ router.post('/', async (req, res, next) => {
     splits.set(row.id, sp);
     await logAudit({ // eslint-disable-line no-await-in-loop
       userId: req.user.id, action: 'Leave approval by pay month', entity: 'LeaveRequest', entityId: row.id,
-      toValue: `Part ${sp.part} of ${sp.of} (${row.fromDate} to ${row.toDate}, ${row.days} of ${days}): ${sp.kind === 'sa' ? 'Super Admin' : 'Team Lead then HR'}; pay month ${sp.months.map((m) => `${m.label}: ${m.usedBefore} day(s) applied before`).join(', ')}`,
+      toValue: `Part ${sp.part} of ${sp.of} (${row.fromDate} to ${row.toDate}, ${row.days} of ${days}): ${sp.kind === 'sa' ? 'Super Admin' : sp.hr === false ? 'Team Lead (no HR set)' : 'Team Lead then HR'}; pay month ${sp.months.map((m) => `${m.label}: ${m.usedBefore} day(s) applied before`).join(', ')}`,
     });
   }
   // HRMS item 4: what the previous working day's attendance said, frozen with the request (approvers see this snapshot).
@@ -738,6 +750,14 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   // (A leave under the pay-month rule already has its approvers, so the per-request limit does not move it.)
   if (['Approved', 'Rejected'].includes(status) && existing.status === 'Pending' && atLeadStep && !split
     && await overTlLimit(existing, existing.employee)) {
+    // Applied before the pay-month rule: it is not moved away from the TL - the screen offers to split it by the rule.
+    const offer = await leaveSplit.movable(existing, existing.employee).catch(() => null);
+    if (offer) {
+      return res.status(409).json({
+        error: `This leave was applied before the ${offer.limit}-day rule. Press "Split by the ${offer.limit}-day rule" on this screen first, then approve the Team Lead's days.`,
+        overTlLimit: true, canSplit: true,
+      });
+    }
     const hr = await sendPastTl(existing.id);
     if (hr) hrmsNotify.leaveRaised({ leave: existing, employee: existing.employee, toUserId: hr.approverUserId }).catch(() => {});
     const rule = await policy.getTlRule();
@@ -927,6 +947,57 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
 });
 
 // ---- REASSIGN --------------------------------------------------------------
+// SPLIT A LEAVE THAT WAS ALREADY WAITING (founder 2026-11-27), by the pay-month rule: the Team Lead named on it, a Super Admin or an
+// Internal HR admin presses the button on its screen. Nothing is approved or rejected here; each part then waits for its own approvers.
+const splitting = new Set(); // one split at a time per leave (a double click must not make the parts twice)
+router.post('/:id/apply-split', requirePerm(null, 'hrms', 'Leave & Holidays', 'approve'), async (req, res, next) => {
+  const { id } = req.params;
+  if (splitting.has(id)) return res.status(409).json({ error: 'This leave is being split now.' });
+  splitting.add(id);
+  try {
+    const request = await prisma.leaveRequest.findUnique({ where: { id }, include: { employee: true } });
+    if (!request) return res.status(404).json({ error: 'Leave request not found' });
+    if (!employeeInScope(req.user, request.employee) && !await workflow.isParticipant(WF, id, req.user.id)) return res.status(403).json(OUT_OF_SCOPE);
+    await safeEnsureWorkflow(request);
+    const steps = await workflow.loadSteps(WF, id);
+    if (!maySplit(req.user, steps)) return res.status(403).json({ error: "Only the Team Lead of this leave or a Super Admin can split it." });
+    const plan = await leaveSplit.movable(request, request.employee);
+    if (!plan) return res.status(409).json({ error: 'This leave cannot be split by the pay-month rule (it may already be decided or split).' });
+    const { employee, ...row } = request;
+    const saved = await leaveSplit.divide(row, plan);
+    const who = req.user.name || req.user.email;
+    const done = [];
+    for (let i = 0; i < saved.length; i += 1) {
+      const part = saved[i];
+      if (i > 0) {
+        await logAudit({ userId: req.user.id, action: 'Leave requested', entity: 'LeaveRequest', entityId: part.id }); // eslint-disable-line no-await-in-loop
+        await safeEnsureWorkflow({ ...part, employee }); // eslint-disable-line no-await-in-loop
+      }
+      if (i === 0) await leaveSplit.shapeChain(part.id, await leaveSplit.of(part.id)); // eslint-disable-line no-await-in-loop
+      const sp = await leaveSplit.of(part.id); // eslint-disable-line no-await-in-loop
+      done.push(sp);
+      await logAudit({ // eslint-disable-line no-await-in-loop
+        userId: req.user.id, actorName: who, action: 'Leave approval by pay month', entity: 'LeaveRequest', entityId: part.id,
+        fromValue: `${request.fromDate} to ${request.toDate}, ${request.days} days, applied before the rule`,
+        toValue: `Part ${sp.part} of ${sp.of} (${part.fromDate} to ${part.toDate}, ${part.days}): ${sp.kind === 'sa' ? 'Super Admin' : sp.hr === false ? 'Team Lead (no HR set)' : 'Team Lead then HR'}; split by ${who}`,
+      });
+      const first = (await workflow.loadSteps(WF, part.id)).find((s) => s.status === 'Pending'); // eslint-disable-line no-await-in-loop
+      if (first && first.approverUserId && first.approverUserId !== req.user.id) {
+        hrmsNotify.leaveRaised({ leave: part, employee, toUserId: first.approverUserId, note: leaveSplit.noticeFor(sp) })
+          .catch((e) => console.error('[leave] notify approver failed', e.message));
+      }
+    }
+    if (employee.userId && saved.length > 1) {
+      pushNotification({ userId: employee.userId, title: `Your leave is now in ${saved.length} parts`, message: `${request.type} ${request.fromDate} to ${request.toDate}: ${saved.map((p, i) => `${p.fromDate}${p.toDate !== p.fromDate ? ` to ${p.toDate}` : ''} (${done[i].kind === 'sa' ? 'Super Admin' : done[i].hr === false ? 'Team Lead' : 'Team Lead, then HR'})`).join('; ')}. Each part is approved or rejected on its own.` }).catch(() => {});
+    }
+    return res.json({ ok: true, parts: saved.map((p, i) => ({ id: p.id, part: i + 1, kind: plan.parts[i].kind, fromDate: p.fromDate, toDate: p.toDate, days: p.days })) });
+  } catch (err) {
+    return next(err);
+  } finally {
+    splitting.delete(id);
+  }
+});
+
 // Approve / Reject / REASSIGN. The current owner of the pending step (or a
 // Super Admin) hands the request to another valid approver — one further up
 // this request's own chain (the TL's STL), HR or the Super Admin — with a
@@ -1050,7 +1121,8 @@ async function availabilityFor(employeeId) {
 }
 
 // EVERY OTHER LEAVE OF ONE EMPLOYEE, with what was decided, plus the balance - shown where the approver decides (GET /:id/workflow).
-// Totals are for the calendar year of the request being decided; the list is the latest 60, newest dates first.
+// `recent` = the last 3 months month by month (founder 2026-11-27); totals are for the calendar year of the request being decided; the
+// list is the latest 60, newest dates first, and every leave of the last 3 months is always in it (marked `recent`).
 async function employeeLeaveFor(request, current = null) {
   const rows = await prisma.leaveRequest.findMany({
     where: { employeeId: request.employeeId, id: { not: request.id } },
@@ -1065,7 +1137,10 @@ async function employeeLeaveFor(request, current = null) {
     b.requests += 1;
     b.days = Math.round((b.days + Number(r.days ?? 1)) * 100) / 100;
   });
-  const shown = rows.slice(0, 60);
+  const { ids: recentList, ...recent } = await leaveSplit.recentMonths(rows);
+  const isRecent = new Set(recentList);
+  const older = rows.filter((r) => !isRecent.has(r.id)).slice(0, Math.max(0, 60 - isRecent.size));
+  const shown = [...rows.filter((r) => isRecent.has(r.id)), ...older];
   const ids = shown.map((r) => r.id);
   const summaries = await workflow.summariesFor(WF, shown.filter((r) => r.status === 'Pending').map((r) => r.id)).catch(() => ({}));
   const charged = await leaveCharge.chargedMap(ids).catch(() => new Map());
@@ -1075,11 +1150,13 @@ async function employeeLeaveFor(request, current = null) {
     year,
     totals,
     count: rows.length,
+    recent: { ...recent, count: isRecent.size },
     balances: await availabilityFor(request.employeeId),
     requests: shown.map((r) => {
       const sp = (metaOf.get(r.id) || {}).split;
       return {
         id: r.id, type: r.type, fromDate: r.fromDate, toDate: r.toDate, days: r.days, halfDay: leaveText.halfOf(r), status: r.status,
+        recent: isRecent.has(r.id),
         chargedDays: charged.has(r.id) ? charged.get(r.id) : null,
         reasonText: leaveText.parse(r.reason).reasonText,
         decision: policy.decisionInfo(r, summaries[r.id] || null),
