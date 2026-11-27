@@ -13,6 +13,8 @@ function pcNn2(n) { return Math.max(0, pcR2(n)); }
 function pcSum2(list) { return pcR2((list || []).reduce((a, x) => a + pcNn2(x), 0)); }
 function pcCeil(n) { return Math.ceil(Number((Number(n) || 0).toFixed(6))); }
 function pcCap(value, cap) { return Number(cap) > 0 ? Math.min(value, Number(cap)) : value; }
+// PF AT THE LIMIT (founder 2026-11-27): Basic x pct% reaches the monthly cap (Basic Rs 25,000 and above at 12% / Rs 3,000)
+function pcPfAtLimit(basic, full, pct, cap) { return Number(cap) > 0 && Number(full) >= Number(cap) && (Number(basic) * (Number(pct) || 0)) / 100 >= Number(cap); }
 function pcSlab(slab, g) {
   const gross = Number(g) || 0;
   const row = (slab || []).find((r) => gross > r.above);
@@ -50,8 +52,10 @@ function payrollCalc(c, rules) {
   const empFull = basicSame ? pcNn(pf.employeeFull) : pcR0(pcCap((basic * (Number(pf.empPct) || 0)) / 100, pf.empCap));
   const erFull = basicSame ? pcNn(pf.employerFull) : pcR0(pcCap((basic * (Number(pf.erPct) || 0)) / 100, pf.erCap));
   const gratFull = basicSame ? pcNn(pf.gratuityFull) : pcR0((basic * (Number(pf.gratuityPct) || 0)) / 100);
-  const pfEmployee = manual.pfEmployee ? pcNn(c.pfEmployee) : (stipend ? 0 : pcR0(empFull * ratio));
-  const pfEmployer = manual.pfEmployer ? pcNn(c.pfEmployer) : (stipend ? 0 : pcR0(erFull * ratio));
+  // PF at the limit (rules.pf.fixedAtLimit): the structure's PF is not reduced for unpaid days; no paid day = no PF.
+  const pfShare = (full, pct, cap) => (pf.fixedAtLimit && pcPfAtLimit(basic, full, pct, cap) ? (ratio > 0 ? full : 0) : pcR0(full * ratio));
+  const pfEmployee = manual.pfEmployee ? pcNn(c.pfEmployee) : (stipend ? 0 : Math.min(pfShare(empFull, pf.empPct, pf.empCap), pcNn(earnedGross)));
+  const pfEmployer = manual.pfEmployer ? pcNn(c.pfEmployer) : (stipend ? 0 : pfShare(erFull, pf.erPct, pf.erCap));
   const gratuity = manual.gratuity ? pcNn(c.gratuity) : (stipend ? 0 : pcR0(gratFull * ratio));
 
   // ESI: decided on the full-month base gross, charged on what was earned.

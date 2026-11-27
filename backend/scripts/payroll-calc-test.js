@@ -102,6 +102,32 @@ for (let i = 0; i < 500; i += 1) {
 }
 ok(identities, 'T38 identities hold on 500 random inputs (net = gross - deductions, CTC, earned = gross - LOP)', null);
 
+// PF AT THE LIMIT (founder 2026-11-27): with the month's rule on, a PF at the monthly cap is not reduced by unpaid days
+{
+  const cap3000 = { ...policy, employeePfMonthlyCap: 3000, employerPfMonthlyCap: 3000 };
+  const big = { ...version, basic: 28000, hra: 11200, bonus: 1000, specialAllowance: 25453, employeePf: 3000, employerPf: 3000, gratuity: 1347 };
+  const low = { ...version, basic: 22000, hra: 8800, bonus: 1000, specialAllowance: 19502, employeePf: 2640, employerPf: 2640, gratuity: 1058 };
+  const comp = (v, lop) => ({ ...base, basic: v.basic, hra: v.hra, bonus: v.bonus, specialAllowance: v.specialAllowance, workingDays: 31, daysLop: lop });
+  const pol = (on) => ({ ...cap3000, pfFixedAtLimit: on });
+  const calc = (v, lop, on) => payrollCalc(comp(v, lop), PEdit.rulesFromVersion(v, pol(on), 'Package'));
+  const engine = (v, lop, on) => E.computeEntry({ version: v, att: att(lop, 31), policy: pol(on) });
+  const both = (v, lop, on, pf, label) => {
+    const a = calc(v, lop, on); const b = engine(v, lop, on);
+    ok(a.pfEmployee === pf && a.pfEmployer === pf && b.pfEmployee === pf && b.pfEmployer === pf && a.netPay === b.netPay, label, { edit: [a.pfEmployee, a.pfEmployer, a.netPay], engine: [b.pfEmployee, b.pfEmployer, b.netPay] });
+  };
+  both(big, 5, false, 2516, 'L01 rule off: Basic 28,000 with 5 unpaid days of 31 = PF 2,516 (as before)');
+  both(big, 5, true, 3000, 'L02 rule on: the same record = PF 3,000 from employee and company');
+  both(big, 0, true, 3000, 'L03 rule on, no unpaid days = 3,000');
+  both(big, 31, true, 0, 'L04 rule on, no paid day = no PF');
+  both(low, 6, true, 2129, 'L05 rule on, below the limit (Basic 22,000) stays by paid days = 2,129');
+  const edge = { ...big, basic: 25000, employeePf: 3000, employerPf: 3000 };
+  both(edge, 10, true, 3000, 'L06 rule on, Basic exactly 25,000 = at the limit');
+  both({ ...big, basic: 24999, employeePf: 3000, employerPf: 3000 }, 10, true, 2032, 'L07 rule on, Basic 24,999 is below the limit');
+  const one = calc(big, 30.5, true); const oneE = engine(big, 30.5, true);
+  ok(one.pfEmployee <= one.earnedGross && one.netPay >= 0 && oneE.pfEmployee === one.pfEmployee && oneE.netPay >= 0, 'L08 half a paid day: the employee PF is never more than what was earned', { one: [one.pfEmployee, one.earnedGross, one.netPay], engine: [oneE.pfEmployee, oneE.netPay] });
+  ok(E.forMonth({ pfFixedFrom: '2026-11' }, '2026-11').pfFixedAtLimit === true && E.forMonth({ pfFixedFrom: '2026-11' }, '2026-10').pfFixedAtLimit === false && E.forMonth({ pfFixedFrom: '2026-11' }, '2027-01').pfFixedAtLimit === true && E.forMonth({ pfFixedFrom: null }, '2026-11').pfFixedAtLimit === false, 'L09 the rule starts at its own month and is off without the setting', null);
+}
+
 // frontend copy: identical text + identical numbers
 const BEND = fs.readFileSync(path.join(__dirname, '..', 'src', 'utils', 'payrollCalc.js'), 'utf8');
 const FEND = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'src', 'utils', 'payrollCalc.js'), 'utf8');

@@ -92,6 +92,8 @@ function salaryLines(entry, { state = null, version = null, register = false } =
     if (stipend) return 'No PF on a stipend';
     if (typed('pfEmployee')) return 'Typed by hand';
     if (pfFull === 0 && !Number(e.pfEmployee)) return 'No PF in the salary record';
+    // part month but the full figure was taken: PF at the limit (payrollEngine.forMonth)
+    if (part && pfFull > 0 && Math.abs(Number(e.pfEmployee) - pfFull) < 0.005) return `Fixed ₹${money(pfFull)} (the PF limit): not reduced for unpaid days`;
     return pfFull !== null ? `Salary record: ₹${money(pfFull)} for a full month${part}` : '';
   };
   const deductions = [

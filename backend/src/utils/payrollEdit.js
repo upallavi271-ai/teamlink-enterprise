@@ -107,6 +107,7 @@ function rulesFromVersion(version, policy, payMode, reg = null) {
     pf: {
       employeeFull: Number(v.employeePf) || 0, employerFull: Number(v.employerPf) || 0, gratuityFull: Number(v.gratuity) || 0, basicRef: Number(v.basic) || 0,
       empPct: r.employeePfPctOfBasic, empCap: r.employeePfMonthlyCap, erPct: r.employerPfPctOfBasic, erCap: r.employerPfMonthlyCap, gratuityPct: r.gratuityPctOfBasic,
+      fixedAtLimit: !!(policy && policy.pfFixedAtLimit), // PF at the limit is not reduced by unpaid days (payrollEngine.forMonth)
     },
     esi: {
       enabled: !policy || policy.esiEnabled !== false,
@@ -126,7 +127,7 @@ async function rulesFor(entry) {
     REG.isRegisterMonth(entry.month),
   ]);
   const reg = regOn ? { pfRule: await REG.pfRuleOf(entry.salaryVersionId) } : null;
-  return { rules: rulesFromVersion(version, policy, entry.payMode, reg), version };
+  return { rules: rulesFromVersion(version, E.forMonth(policy, entry.month), entry.payMode, reg), version };
 }
 
 // ---- Components of a stored record -> the calc's input ---------------------------------

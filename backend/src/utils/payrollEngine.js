@@ -10,7 +10,9 @@
 //   grossPay        Basic + HRA + Bonus + Special (or the stipend) — full month
 //   lopDeduction    round(grossPay x daysLop / workingDays)
 //   earnedGross     grossPay - lopDeduction
-//   pfEmployee/Er   the version's PF x paid-day ratio (so LOP reduces PF too)
+//   pfEmployee/Er   the version's PF x paid-day ratio (so LOP reduces PF too). PF AT THE LIMIT (founder
+//                   2026-11-27, AppSetting 'payroll.pfFixedAtLimit' {on, from}): from that month a PF that is at
+//                   the monthly cap (Basic x 12% >= Rs 3,000) is NOT reduced by LOP; no paid day = no PF.
 //   esiEmployee/Er  on earnedGross, 0.75% / 3.25%, rounded up, only when the
 //                   version's full gross is <= the ESI ceiling (HrConfig)
 //   professionalTax min(version PT, Telangana slab on earnedGross)
@@ -34,7 +36,8 @@
 const prisma = require('../db');
 const D = require('./attendanceDays');
 const { monthLabel } = require('./attendanceMath');
-const { professionalTaxFor, DEFAULT_RULES } = require('./salaryRules');
+const { professionalTaxFor, DEFAULT_RULES, rulesFrom } = require('./salaryRules');
+const { pcPfAtLimit } = require('./payrollCalc');
 const { versionsFor, versionFor, esiFor } = require('./salaryVersions');
 const { logAudit } = require('./audit');
 const { NOT_SYSTEM_EMPLOYEE } = require('./systemAccounts');
@@ -72,11 +75,23 @@ class PayrollError extends Error {
   }
 }
 
+const PF_FIXED_KEY = 'payroll.pfFixedAtLimit';
+
 async function getPolicy(db = prisma) {
   let config = await db.hrConfig.findFirst();
   if (!config) config = await db.hrConfig.create({ data: { basicPctOfCtc: DEFAULT_RULES.basicPctOfCtc } });
-  return config;
+  // not a column: the first payroll month from which PF at the limit is fixed (null = never)
+  let pfFixedFrom = null;
+  try {
+    const row = await db.appSetting.findUnique({ where: { key: PF_FIXED_KEY } });
+    const v = row ? JSON.parse(row.value) : null;
+    if (v && v.on && /^\d{4}-(0[1-9]|1[0-2])$/.test(String(v.from || ''))) pfFixedFrom = v.from;
+  } catch { /* an unreadable setting = the rule is off */ }
+  return { ...config, pfFixedFrom };
 }
+
+// The settings as they apply to one payroll month.
+const forMonth = (policy, month) => ({ ...policy, pfFixedAtLimit: !!(policy && policy.pfFixedFrom && String(month || '') >= policy.pfFixedFrom) });
 
 const isMonth = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ''));
 const monthParts = (m) => { const [y, mo] = m.split('-').map(Number); return { year: y, monthNum: mo }; };
@@ -274,8 +289,14 @@ function computeEntry({ version, att, policy, incentive = 0, register = null }) 
   const grossPay = baseGross + incentiveAmt;
   const earnedGross = grossPay - lopDeduction;
 
-  const pfEmployee = stipend ? 0 : Math.round((Number(version.employeePf) || 0) * ratio);
-  const pfEmployer = stipend ? 0 : Math.round((Number(version.employerPf) || 0) * ratio);
+  const caps = rulesFrom(policy || {});
+  const pfShare = (full, pct, cap) => {
+    const amount = Number(full) || 0;
+    if (policy && policy.pfFixedAtLimit && pcPfAtLimit(basic, amount, pct, cap)) return ratio > 0 ? Math.round(amount) : 0;
+    return Math.round(amount * ratio);
+  };
+  const pfEmployee = stipend ? 0 : Math.min(pfShare(version.employeePf, caps.employeePfPctOfBasic, caps.employeePfMonthlyCap), Math.max(0, Math.round(earnedGross)));
+  const pfEmployer = stipend ? 0 : pfShare(version.employerPf, caps.employerPfPctOfBasic, caps.employerPfMonthlyCap);
   const gratuity = stipend ? 0 : Math.round((Number(version.gratuity) || 0) * ratio);
   // ESI eligibility is decided on the version's full-month gross; the
   // contribution is on what was actually earned.
@@ -382,7 +403,7 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
     const posted = await prisma.employeePayrollRun.count({ where: { month, status: { in: ['SYNCED_TO_ACCOUNTS', 'PAID'] } } });
     if (posted) throw new PayrollError(409, `${monthLabel(month)} is already posted to Accounts. Re-open the month first to change it.`);
   }
-  const policy = await getPolicy();
+  const policy = forMonth(await getPolicy(), month);
   const settings = await PC.getSettings();
   const cycle = PC.cycleOf(month, settings.cycle);
   // The switch-over guard: a payroll month may not be created over days an earlier
@@ -532,7 +553,7 @@ async function engineRowFor(employeeId, month) {
   const PEdit = require('./payrollEdit');
   const emp = await prisma.employee.findUnique({ where: { id: employeeId } });
   if (!emp) return null;
-  const policy = await getPolicy();
+  const policy = forMonth(await getPolicy(), month);
   const [versions, { map: inputs }, incentives, adjMap] = await Promise.all([
     versionsFor([employeeId], month), attendanceInputs([emp], month, policy), incentivesFor([employeeId], month), PEdit.adjustmentsFor(month),
   ]);
@@ -730,7 +751,7 @@ async function historyOf(entryId) {
 
 module.exports = {
   STATUSES, STATUS_LABEL, FINAL_STATUSES, PAYABLE_STATUSES, TRANSITIONS, PayrollError,
-  getPolicy, isMonth, monthParts, payrollWorkingDays, overlapProblem, readSnapshot,
+  getPolicy, forMonth, PF_FIXED_KEY, isMonth, monthParts, payrollWorkingDays, overlapProblem, readSnapshot,
   leaversIn, awlContext, // read-only helpers reused by utils/payrollLopBreakdown.js (the LOP dates screen)
   attendanceDefaults, attendanceInputs, computeEntry, computeRegisterEntry, registerFor, calculateMonth, engineRowFor, refreshMonthRun,
   writePayslip, slipFieldsOf, transition, historyOf, incentivesFor,
