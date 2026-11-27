@@ -819,7 +819,29 @@ const ATS_IMPORT_SHEETS = {
   },
   applications: { ...sheetNamed('Applications'), columns: [...sheetNamed('Applications').columns.filter((x) => !x.legacy), { ...CAME_COLUMN, help: 'Optional: the day this person applied / was sourced for this requirement. The application is dated that day (not the day of the import).' }] },
   // `lenient`: an optional cell that cannot be read is left blank (and said so) instead of refusing the row.
-  interviews: { ...sheetNamed('Interviews'), lenient: true },
+  interviews: {
+    ...sheetNamed('Interviews'),
+    lenient: true,
+    note: 'A screening sheet needs only College Name, Candidate Name and Interview Date: a college, requirement or candidate that is not in ATS yet is added when you confirm. The preview lists what will be added. Nothing is saved until you confirm.',
+    columns: [
+      ...sheetNamed('Interviews').columns.map((col) => {
+        // the words people write on their own sheets. A "Position" column there often holds a person, so it is not read as the job title.
+        if (col.h === 'Requirement Title') return { ...col, aliases: ['title', 'jobrole', 'jobtitle'] };
+        if (col.h === 'Feedback Comments') return { ...col, aliases: ['comments', 'feedback', 'remarks', 'status2'] };
+        if (col.h === 'Interview Mode') return { ...col, synonyms: { offline: 'In Person', 'in-person': 'In Person', phone: 'Telephonic' } };
+        if (col.h === 'Interview Result') return { ...col, pickByValue: true, synonyms: { selected: 'Recommended', rejected: 'Not Selected', rejectd: 'Not Selected' } };
+        return col;
+      }),
+      c('College Name', '_client', { help: 'The college / client. Used with Candidate Name when there is no email, phone or Requirement Code.' }),
+      c('Qualification', '_qualification'),
+      c('Branch', '_branch'),
+      c('Candidate Experience', '_candidateExperience', { help: 'As written: "4 Years", "Fresher".' }),
+      c('Present Location', '_presentLocation'),
+      c('Present Salary', '_presentSalary'),
+      c('Expected Salary', '_expectedSalary'),
+      c('Notice Period', '_noticePeriod'),
+    ],
+  },
   'interview-feedback': {
     ...sheetNamed('Interviews'),
     name: 'Interview Feedback',
