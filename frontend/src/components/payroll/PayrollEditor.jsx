@@ -286,6 +286,12 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
                 <div className="pe-line"><label htmlFor="pe-awl">Absent without leave days<small>each counts {data.awl.perDay} LOP days</small></label><input id="pe-awl" type="number" min="0" step="1" disabled={!editable} value={vals.awlDays === null ? 0 : vals.awlDays} onChange={(ev) => setDays('awl', ev.target.value)} /></div>
               )}
             </div>
+            {data.join && (
+              <div className="pe-perday" data-testid="pe-join">
+                Joined {new Date(`${data.join.joinedOn}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}: the LOP days box includes {data.join.beforeDays} day(s) before joining (not paid).
+                {' '}LOP after joining: {Math.max(0, Math.round((num(vals.daysLop) - data.join.beforeDays) * 100) / 100)}.
+              </div>
+            )}
             <div className="pe-perday">One day = {inr(perDay)} ({inr(res.baseGross)} ÷ {num(vals.workingDays)} days){data.cycle ? ` · pay period ${data.cycle.rangeText}` : ''}.</div>
 
             {editable && (

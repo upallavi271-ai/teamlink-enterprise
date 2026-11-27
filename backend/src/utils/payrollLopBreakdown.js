@@ -34,6 +34,7 @@ const PEdit = require('./payrollEdit');
 const LR = require('./payrollLeaveRule'); // leave that is not approved + carry-forward leave (founder 2026-11-25)
 const LC = require('./payrollLeaveCarry'); // the unused monthly free leave day, saved until 31 Dec
 const { monthLabel } = require('./attendanceMath');
+const JD = require('./payrollJoinDays'); // joined inside the pay period: days before joining apart from LOP
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -359,11 +360,19 @@ async function forEntry(entry, { desk = true } = {}) {
   ctx.freeLate = x.freeLate; ctx.paidLeave = x.paidLeave;
   const req = await loadRequests(emp.id, cycle.from, cycle.to);
 
+  // Joined inside the pay period (founder 2026-11-27): the days before joining are not LOP on the screen. Every LOP number below is
+  // shown without them; nothing stored changes, and the comparison stored <-> attendance is still made on the full numbers.
+  const join = JD.splitOf({ workingDays: Number(entry.workingDays) || workingDays, daysLop: r2(entry.daysLop), dateOfJoining: emp.dateOfJoining }, cycle, policy, workingDays);
+  const off = join ? join.beforeDays : 0;
+  const less = (v) => r2(Math.max(0, Number(v) - off));
+
   const counted = [];
   const notCounted = [];
   let weeklyOffs = 0;
   rows.forEach((row) => {
     const p = x.byDate.get(row.date) || null;
+    // before joining: said once, in its own line (for somebody who came back these days read 'Left' - they are before joining too)
+    if (join && p && row.date < join.joinedOn) return;
     if (p && p.lop > 0) { counted.push(dayOf(row, p, ctx, req)); return; }
     if (row.status === 'Weekly Off' && !row.sandwich) { weeklyOffs += 1; return; }
     const notes = notCountedNotes(row, p, ctx);
@@ -383,7 +392,7 @@ async function forEntry(entry, { desk = true } = {}) {
   const edits = [];
   versions.slice(1).forEach((v) => {
     (v.changes || []).filter((c) => c.field === 'daysLop').forEach((c) => edits.push({
-      kind: v.kind, at: v.at, by: desk ? v.byName : null, reason: desk ? (v.reason || null) : null, from: r2(c.old), to: r2(c.new), change: r2(Number(c.new) - Number(c.old)),
+      kind: v.kind, at: v.at, by: desk ? v.byName : null, reason: desk ? (v.reason || null) : null, from: less(c.old), to: less(c.new), change: r2(less(c.new) - less(c.old)),
     }));
   });
   const notes = [];
@@ -396,9 +405,9 @@ async function forEntry(entry, { desk = true } = {}) {
     else status = 'unknown';
   }
   if (override) {
-    notes.push(`HR entered ${r2(override.daysLop)} LOP day(s) for this record by hand instead of working it out from attendance (details under "Changed by hand"). The dates below are what the attendance module shows.`);
+    notes.push(`HR entered ${less(override.daysLop)} LOP day(s) for this record by hand instead of working it out from attendance (details under "Changed by hand"). The dates below are what the attendance module shows.`);
     if (override.autoDaysLop != null && Math.abs(r2(override.autoDaysLop) - att) > 0.001) {
-      notes.push(`Attendance gave ${r2(override.autoDaysLop)} LOP day(s) when HR saved this; it gives ${att} now (a leave decision, a punch upload or a correction since).`);
+      notes.push(`Attendance gave ${less(override.autoDaysLop)} LOP day(s) when HR saved this; it gives ${less(att)} now (a leave decision, a punch upload or a correction since).`);
     }
   }
   if (!override && typedByHand) {
@@ -407,10 +416,10 @@ async function forEntry(entry, { desk = true } = {}) {
       : "These LOP days were typed by HR (or imported from the team's attendance / pay register sheet), not worked out from attendance. The entry on file does not say who or when. The dates below are what the attendance module shows.");
   }
   if (!override && !edits.length && status === 'attendance-changed') {
-    notes.push(`The payroll was calculated with ${stored} LOP day(s); attendance gives ${att} now. A leave, correction or biometric upload was probably decided or added after the payroll was calculated, so the dates below are today's picture. Recalculating the month (while it is not submitted) brings the payroll up to date.`);
+    notes.push(`The payroll was calculated with ${less(stored)} LOP day(s); attendance gives ${less(att)} now. A leave, correction or biometric upload was probably decided or added after the payroll was calculated, so the dates below are today's picture. Recalculating the month (while it is not submitted) brings the payroll up to date.`);
   }
   if (edits.length && Math.abs(calculatedLop - att) > 0.001) {
-    notes.push(`When the payroll was first calculated it had ${calculatedLop} LOP day(s); attendance gives ${att} now.`);
+    notes.push(`When the payroll was first calculated it had ${less(calculatedLop)} LOP day(s); attendance gives ${less(att)} now.`);
   }
   if (Number(entry.workingDays) && Math.abs(Number(entry.workingDays) - workingDays) > 0.001 && !override) {
     notes.push(`This record has ${entry.workingDays} payroll days, the pay period now has ${workingDays} (the pay-period or week-off policy changed since it was calculated).`);
@@ -422,20 +431,21 @@ async function forEntry(entry, { desk = true } = {}) {
     cycle: { from: cycle.from, to: cycle.to, days: cycle.days, rangeText: cycle.rangeText, label: cycle.label },
     record: {
       id: entry.id || null, status: entry.status || null, source: entry.attendanceSource || null,
-      workingDays: Number(entry.workingDays) || workingDays, daysPresent: Number(entry.daysPresent) || 0, daysLop: stored,
+      workingDays: Number(entry.workingDays) || workingDays, daysPresent: Number(entry.daysPresent) || 0, daysLop: less(stored),
       paidDays: r2(Math.max(0, (Number(entry.workingDays) || workingDays) - stored)),
     },
-    attendanceLop: att,
-    listedLop: x.listed,
+    join,
+    attendanceLop: less(att),
+    listedLop: less(x.listed),
     status,
     notes,
     adjustments: {
       override: override ? {
-        daysLop: r2(override.daysLop), autoDaysLop: override.autoDaysLop != null ? r2(override.autoDaysLop) : null,
+        daysLop: less(override.daysLop), autoDaysLop: override.autoDaysLop != null ? less(override.autoDaysLop) : null,
         by: desk ? override.overriddenByName || null : null, at: override.overriddenAt || null, reason: desk ? override.reason || null : null,
       } : null,
       edits,
-      calculatedLop,
+      calculatedLop: less(calculatedLop),
     },
     policy: {
       freeLateArrivals: x.freeLate, paidLeaveDays: x.paidLeave, unmarkedDaysUnpaid: policy.unmarkedDaysUnpaid !== false,
@@ -445,7 +455,9 @@ async function forEntry(entry, { desk = true } = {}) {
       unapprovedRule: unRule.active ? { days: unRule.days } : null,
       leaveCarry: carryRule.active,
     },
-    terms: x.terms,
+    terms: join
+      ? { ...x.terms, beforeJoining: 0, afterLeaving: [...x.byDate.values()].filter((p) => p.date >= join.joinedOn).reduce((n, p) => n + p.afterExit, 0) }
+      : x.terms,
     // CARRY-FORWARD LEAVE: the unused free leave days of the earlier pay periods of this year, and how much pay used
     carry: {
       applied: carryRule.active, saved: carryInfo.saved, months: carryInfo.months,

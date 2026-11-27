@@ -64,6 +64,7 @@ export function PayslipSheet({ p, onLop = null }) {
     ['Days Worked', p.daysWorked, 'LOP Days', onLop ? <LopLink value={p.lopDays} onOpen={onLop} /> : p.lopDays],
     ['DOJ', e.dateOfJoining, 'Salary month', p.periodLabel || p.period],
     ...(p.periodRange ? [['Pay period', p.periodRange, 'Days in period', p.periodDays]] : []),
+    ...(p.join ? [['Salary from', p.join.joinedText, 'Days from joining', p.join.daysFromJoining]] : []),
     ['Department', e.department, 'Designation', e.designation],
     ['Location', e.location, 'Bank A/C Number', e.bankAccountNumber],
     ['Monthly Gross', `₹${money(p.monthlyGross)}`, 'Bank Name', e.bankName],
@@ -163,7 +164,7 @@ export function PayslipPhoneSheet({ p, onLop = null }) {
       {p.deductions.length ? lines(p.deductions) : <div className="pssheet-row"><span>None</span><b>{DASH}</b></div>}
       <div className="pssheet-row pssheet-tot"><span>Total deductions</span><b>{money(p.totalDeductions)}</b></div>
       <h4>Days</h4>
-      {rows([['Days worked', p.daysWorked], ['LOP days', onLop ? <LopLink value={p.lopDays} onOpen={onLop} /> : p.lopDays], ...(p.periodRange ? [['Days in period', p.periodDays]] : []), ['Monthly gross', `₹${money(p.monthlyGross)}`]])}
+      {rows([['Days worked', p.daysWorked], ['LOP days', onLop ? <LopLink value={p.lopDays} onOpen={onLop} /> : p.lopDays], ...(p.periodRange ? [['Days in period', p.periodDays]] : []), ...(p.join ? [['Salary from', p.join.joinedText], ['Days from joining', p.join.daysFromJoining]] : []), ['Monthly gross', `₹${money(p.monthlyGross)}`]])}
       {p.absentNoLeave && (
         <div className="pssheet-note">
           <b>{p.absentNoLeave.text}</b> — ₹{money(p.absentNoLeave.amount)} (inside the LOP line).

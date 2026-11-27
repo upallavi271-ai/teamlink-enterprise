@@ -135,6 +135,7 @@ function renderPayslip(p, out) {
     ['Days Worked', p.daysWorked, 'LOP Days', p.lopDays],
     ['DOJ', e.dateOfJoining, 'Salary month', p.periodLabel || p.period],
     ...(p.periodRange ? [['Pay period', p.periodRange, 'Days in period', p.periodDays]] : []),
+    ...(p.join ? [['Salary from', p.join.joinedText, 'Days from joining', p.join.daysFromJoining]] : []),
     ['Department', e.department, 'Designation', e.designation],
     ['Location', e.location, 'Bank A/C Number', e.bankAccountNumber],
     ['Monthly Gross', `${R}${money(p.monthlyGross)}`, 'Bank Name', e.bankName],

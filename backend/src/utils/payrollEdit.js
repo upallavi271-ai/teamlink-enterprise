@@ -193,7 +193,10 @@ async function editorPayload(entry, access) {
   const awl = snap && snap.people && snap.people[entry.employeeId] ? snap.people[entry.employeeId].awl : null;
   const lock = lockOf(entry);
   const cyc = await PC.cycleFor(entry.month).catch(() => null);
+  // joined inside the pay period: the LOP days box also holds the days before joining, said under it (utils/payrollJoinDays.js)
+  const join = entry.employee ? await (await require('./payrollJoinDays').splitter())(entry.month, entry, entry.employee.dateOfJoining) : null;
   return {
+    join,
     entry: {
       id: entry.id, month: entry.month, status: entry.status, statusLabel: E.STATUS_LABEL[entry.status], payMode: entry.payMode,
       employee: entry.employee ? { id: entry.employee.id, name: entry.employee.name, employeeCode: entry.employee.employeeCode, department: entry.employee.department } : null,

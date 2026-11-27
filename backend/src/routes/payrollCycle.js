@@ -175,20 +175,28 @@ module.exports = function registerPayrollCycle(router, { payrollEmployeeWhere })
     const cycle = PC.cycleOf(month, settings.cycle);
     const entries = await prisma.employeePayrollRun.findMany({
       where: { month, employee: payrollEmployeeWhere(req) },
-      include: { employee: { select: { name: true, employeeCode: true, department: true } } },
+      include: { employee: { select: { name: true, employeeCode: true, dateOfJoining: true, department: true } } },
       orderBy: { employee: { name: 'asc' } },
     });
     const snap = await E.readSnapshot(month);
+    // joined inside the pay period: the days (and rupees) before joining are not counted as LOP here (utils/payrollJoinDays.js)
+    const JD = require('../utils/payrollJoinDays');
+    const split = await JD.splitter();
+    const joins = new Map();
+    // eslint-disable-next-line no-await-in-loop
+    for (const e of entries) joins.set(e.id, await split(month, e, e.employee.dateOfJoining));
     const rows = entries.map((e) => {
+      const join = joins.get(e.id);
+      const lopDays = join ? join.lopDays : e.daysLop;
       const a = snap && snap.people && snap.people[e.employeeId] ? snap.people[e.employeeId].awl : null;
       const awlLop = a ? a.lop : 0;
       const base = Number(e.grossPay || 0) - Number(e.incentive || 0) - Number(e.arrears || 0); // the full-month pay the per-day rate comes from (no incentive / arrears)
       const perDay = e.workingDays > 0 ? base / e.workingDays : 0;
       return {
         employeeId: e.employeeId, code: e.employee.employeeCode, name: e.employee.name, department: e.employee.department, status: e.status,
-        workingDays: e.workingDays, lopDays: e.daysLop, awlDays: a ? a.days + (a.halfDays || 0) : 0, awlLopDays: awlLop,
-        leaveLopDays: Math.max(0, Math.round((e.daysLop - awlLop) * 100) / 100),
-        awlAmount: Math.round(perDay * awlLop), lopAmount: e.lopDeduction,
+        workingDays: e.workingDays, lopDays, beforeJoiningDays: join ? join.beforeDays : 0, awlDays: a ? a.days + (a.halfDays || 0) : 0, awlLopDays: awlLop,
+        leaveLopDays: Math.max(0, Math.round((lopDays - awlLop) * 100) / 100),
+        awlAmount: Math.round(perDay * awlLop), lopAmount: join ? JD.amountsOf(e.lopDeduction, join).lop : e.lopDeduction,
         awlDates: a ? [...(a.dates || []), ...(a.halfDates || [])].join(' ') : '',
       };
     });

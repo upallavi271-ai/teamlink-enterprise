@@ -35,6 +35,7 @@ const PE = require('../utils/payrollEngine');
 const PEdit = require('../utils/payrollEdit'); // payroll edit and recalculate (2026-10-13)
 const PC = require('../utils/payrollCycle'); // payroll cycle (16th to 15th) - the dates behind a payroll month
 const ANL = require('../utils/absentNoLeave');
+const JD = require('../utils/payrollJoinDays'); // joined inside the pay period: days before joining apart from LOP
 const PROV = require('../utils/payslipProvisional'); // a person's own calculated-not-yet-approved month, marked provisional (2026-11-24)
 
 const router = express.Router();
@@ -97,7 +98,15 @@ router.get('/', async (req, res) => {
   // Never other people's: the register of everybody's payslips stays the approved ones.
   const own = reach.ownId && (!req.query.employeeId || req.query.employeeId === reach.ownId)
     ? await PROV.ownFor(reach.ownId, { month: req.query.month || null }) : [];
-  res.json(own.length ? PROV.newestFirst([...own, ...payslips]) : payslips);
+  const list = own.length ? PROV.newestFirst([...own, ...payslips]) : payslips;
+  const split = await JD.splitter();
+  const out = [];
+  for (const p of list) {
+    // eslint-disable-next-line no-await-in-loop
+    const j = await split(p.month, { workingDays: p.workingDays, daysLop: p.lopDays }, p.employee && p.employee.dateOfJoining);
+    out.push(j ? { ...p, lopDays: j.lopDays, join: j } : p);
+  }
+  res.json(out);
 });
 
 // ---- Salary structures ----
@@ -574,6 +583,10 @@ async function payslipPayload(slip) {
   let lopDeduction = Number(slip.lopDeduction) || 0;
   if (!lopDeduction && lopDays > 0 && !slip.payrollEntryId) lopDeduction = Math.max(0, Math.round(gross - pf - pt - lateCut - (Number(slip.netPay) || 0)));
   const workingDays = Number(slip.workingDays) > 0 ? Number(slip.workingDays) : null;
+  // Joined inside the pay period (founder 2026-11-27): "before joining" is its own line, LOP is only what was lost after joining.
+  const join = workingDays ? await (await JD.splitter())(slip.month, { workingDays, daysLop: lopDays }, e.dateOfJoining) : null;
+  const joinAmounts = join ? JD.amountsOf(lopDeduction, join) : null;
+  const dayWord = (n) => `${n} day${n === 1 ? '' : 's'}`;
 
   // Recruiter-joinings incentive (Super Admin's decision, utils/recruiterJoinings.js):
   // its own earning line, already inside the run's gross.
@@ -608,7 +621,9 @@ async function payslipPayload(slip) {
     ...(editLines && editLines.deductions.reduce((n, x) => n + x.amount, 0) === Math.round(Number(slip.otherDeductions) || 0)
       ? editLines.deductions
       : (Number(slip.otherDeductions) > 0 ? [{ label: 'Other Deductions', amount: Number(slip.otherDeductions) }] : [])),
-    ...(lopDeduction > 0 ? [{ label: `LOP (${lopDays} day${lopDays === 1 ? '' : 's'})`, amount: lopDeduction }] : []),
+    ...(!join && lopDeduction > 0 ? [{ label: `LOP (${dayWord(lopDays)})`, amount: lopDeduction }] : []),
+    ...(join && joinAmounts.beforeJoining > 0 ? [{ label: `Before joining (${dayWord(join.beforeDays)})`, amount: joinAmounts.beforeJoining }] : []),
+    ...(join && joinAmounts.lop > 0 ? [{ label: `LOP (${dayWord(join.lopDays)})`, amount: joinAmounts.lop }] : []),
     ...(lateCut > 0 ? [{ label: `Late arrivals (${slip.lateDays || 0})`, amount: lateCut }] : []),
   ];
   const totalDeductions = deductions.reduce((s, d) => s + (Number(d.amount) || 0), 0);
@@ -645,8 +660,9 @@ async function payslipPayload(slip) {
       bankName: e.bankName || null,
     },
     workingDays,
-    lopDays,
+    lopDays: join ? join.lopDays : lopDays,
     daysWorked: workingDays != null ? Math.max(0, workingDays - lopDays) : null,
+    join: join ? { ...join, joinedText: fmtDoj(e.dateOfJoining), amount: joinAmounts.beforeJoining } : null,
     monthlyGross: gross,
     earnings,
     deductions,

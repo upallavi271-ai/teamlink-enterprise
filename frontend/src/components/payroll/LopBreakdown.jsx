@@ -145,7 +145,7 @@ function requestText(d) {
 }
 const whyText = (d) => (d.reasons || []).map((r) => `${num(r.days)} day: ${r.text}`).join(' ');
 function asText(b) {
-  const head = `LOP days: ${b.employee.name}${b.employee.code ? ` (${b.employee.code})` : ''} · ${b.monthLabel} (pay period ${b.cycle.rangeText}, ${b.cycle.days} days). LOP days in the payroll: ${num(b.record.daysLop)}.`;
+  const head = `LOP days: ${b.employee.name}${b.employee.code ? ` (${b.employee.code})` : ''} · ${b.monthLabel} (pay period ${b.cycle.rangeText}, ${b.cycle.days} days). LOP days in the payroll: ${num(b.record.daysLop)}.${b.join ? ` Joined ${fmtDate(b.join.joinedOn)}: salary counted for ${num(b.join.daysFromJoining)} days from joining; ${plural(b.join.beforeDays, 'day')} before joining are not paid and are not LOP.` : ''}`;
   const lines = b.dates.map((d) => `${fmtDate(d.date)} — ${num(d.lop)} LOP day — ${d.status}. ${d.attendance}. In ${clock(d.checkIn)}, out ${clock(d.checkOut)}. Why: ${whyText(d)}${requestText(d) ? ` Requests: ${requestText(d)}` : ' No leave or request for this date.'}`);
   return [head, ...lines, ...b.notes].join('\n');
 }
@@ -217,9 +217,17 @@ export default function LopBreakdown({ entryId = null, payslipId = null, onClose
                 <div><span>LOP days in payroll</span><b data-testid="lop-total">{num(r.daysLop)}</b></div>
                 <div><span>Paid days</span><b>{num(r.paidDays)}</b></div>
                 <div><span>Days in the pay period</span><b>{num(r.workingDays)}</b></div>
+                {b.join && <div><span>Days from joining</span><b>{num(b.join.daysFromJoining)}</b></div>}
                 <div><span>Where the number came from</span><b className="small">{SOURCE[r.source] || 'Payslip figure'}{b.adjustments.edits.length ? ' · edited by hand' : ''}</b></div>
                 {r.status && <div><span>Payroll status</span><b className="small"><span className={`status ${STATUS_CLS[r.status]}`}>{STATUS_LABEL[r.status] || r.status}</span></b></div>}
               </div>
+
+              {b.join && (
+                <div className="lop-carry" data-testid="lop-join">
+                  <b>Joined {fmtDate(b.join.joinedOn)}.</b> Salary is counted from that day to {fmtShort(b.cycle.to)} ({plural(b.join.daysFromJoining, 'day')}).
+                  {' '}The {plural(b.join.beforeDays, 'day')} from {fmtShort(b.cycle.from)} to {fmtShort(b.join.beforeTo)} are before joining: not paid, and not counted as LOP.
+                </div>
+              )}
 
               {b.carry && (b.carry.saved > 0 || b.carry.applied) && (
                 <div className="lop-carry" data-testid="lop-carry">

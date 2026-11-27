@@ -172,8 +172,9 @@ async function fixtures() {
   const eJoin = await newEmp('Joiner', { dateOfJoining: new Date('2026-03-20T00:00:00Z') });
   await worked(eJoin, WORKDAYS.filter((d) => d >= '2026-03-20'));
   r = await breakdownOf(eJoin);
-  ok(near(r.b.listedLop, r.auto.daysLop), 'joined late: listed dates = engine LOP', `${r.b.listedLop} vs ${r.auto.daysLop}`);
-  ok(r.b.terms.beforeJoining === 19 && codesOn(r.b, '2026-03-02').includes('before-joining'), 'joined late: the 19 pay days before the joining date are listed', JSON.stringify(r.b.terms)); // week offs are paid days here (weekendsPaid), so Sundays count too
+  // joined inside the pay period (2026-11-27): the days before joining are said apart from LOP (utils/payrollJoinDays.js)
+  ok(r.b.join && near(r.b.listedLop + r.b.join.beforeDays, r.auto.daysLop), 'joined late: listed dates + days before joining = engine unpaid days', `${r.b.listedLop} vs ${r.auto.daysLop}`);
+  ok(r.b.join && r.b.join.beforeDays === 19 && r.b.terms.beforeJoining === 0 && !codesOn(r.b, '2026-03-02').includes('before-joining'), 'joined late: the 19 pay days before the joining date are one separate line, not LOP dates', JSON.stringify([r.b.join, r.b.terms])); // week offs are paid days here (weekendsPaid), so Sundays count too
 
   // 8 holiday + sandwich: a holiday on 9 March; approved leave on 7 (Sat) and 10 (Tue) around a Sunday + a holiday? (Sunday 8 + holiday 9 between Sat 7 and Tue 10)
   const hol = await prisma.holiday.create({ data: { name: 'ZZLOP Holiday', date: '2026-03-09', type: 'Public' } }).catch(() => null);
@@ -461,7 +462,8 @@ async function everyone() {
       const b = await LB.forEntry(e, { desk: true });
       const auto = map.get(e.employeeId);
       totals.records += 1;
-      const listedOk = near(b.listedLop - b.capped, auto.daysLop) && near(b.attendanceLop, auto.daysLop) && near(sum(b.dates, 'lop'), b.listedLop);
+      const off = b.join ? b.join.beforeDays : 0; // a joiner's days before joining are shown apart
+      const listedOk = near(b.listedLop - b.capped + off, auto.daysLop) && near(b.attendanceLop + off, auto.daysLop) && near(sum(b.dates, 'lop'), b.listedLop);
       if (listedOk) { totals.matchEngine += 1; monthMatch += 1; } else { totals.mismatchEngine += 1; problems.push(`${month} ${e.employee.employeeCode} ${e.employee.name}: dates ${b.listedLop} (cap ${b.capped}) vs engine ${auto.daysLop}`); }
       if (b.status === 'match') totals.stored.match += 1;
       else if (b.status === 'adjusted') { totals.stored.adjusted += 1; adjusted.push(`${month} ${e.employee.employeeCode} ${e.employee.name}: stored ${b.record.daysLop}, attendance ${b.attendanceLop} (${e.attendanceSource}${b.adjustments.edits.length ? ', edited' : ''})`); }

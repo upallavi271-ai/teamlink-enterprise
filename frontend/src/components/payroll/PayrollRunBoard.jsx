@@ -32,6 +32,10 @@ const groupOf = (e) => (e.payMode === 'Stipend' ? 'Stipend' : 'Group A');
 // Monthly CTC (founder 2026-11-27): the pay register's figure, else the salary structure's - the tooltip says which
 const ctcFrom = (f) => (!f ? 'No CTC on the salary structure' : f.from === 'register' ? `From the ${monthLabel(f.month)} pay register` : 'From the salary structure');
 
+// Joined inside the pay period (founder 2026-11-27): LOP is only what was lost after joining; the days before it are said apart
+const lopOf = (e) => (e.join ? e.join.lopDays : e.daysLop);
+const shortDay = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
+
 // The list filter standard for the three tables on this board.
 const empSearch = (code, name) => ({ key: 'q', type: 'search', placeholder: 'Search employee name or ID…', get: (r) => `${code(r) || ''} ${name(r) || ''}` });
 // S3: the month is posted as one journal, so a record is Posted / Paid / Not posted.
@@ -43,12 +47,12 @@ const ENTRY_FIELDS = [
   { key: 'department', label: 'Department', get: (e) => e.employee?.department, primary: true },
   { key: 'sync', label: 'Accounts', allLabel: 'Posted or not', options: ['Posted', 'Paid', 'Not posted'], get: syncLabel },
   { key: 'source', label: 'Attendance source', allLabel: 'Any attendance source', options: ['HR override', 'Attendance'], get: (e) => (e.attendanceSource === 'OVERRIDE' ? 'HR override' : 'Attendance') },
-  { key: 'lop', label: 'Loss of pay', allLabel: 'Everyone', options: ['With LOP days'], match: (e) => Number(e.daysLop) > 0 },
+  { key: 'lop', label: 'Loss of pay', allLabel: 'Everyone', options: ['With LOP days'], match: (e) => Number(lopOf(e)) > 0 },
 ];
 const ENTRY_SORTS = [
   { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.employee?.name || '').localeCompare(String(b.employee?.name || '')) },
   { key: 'net', label: 'Net (high to low)', cmp: (a, b) => (Number(b.netPay) || 0) - (Number(a.netPay) || 0) },
-  { key: 'lop', label: 'LOP days (most first)', cmp: (a, b) => (Number(b.daysLop) || 0) - (Number(a.daysLop) || 0) },
+  { key: 'lop', label: 'LOP days (most first)', cmp: (a, b) => (Number(lopOf(b)) || 0) - (Number(lopOf(a)) || 0) },
 ];
 const ATT_FIELDS = [
   empSearch((r) => r.employeeCode, (r) => r.name),
@@ -90,6 +94,7 @@ function AttendanceEditor({ row, month, onClose, onSaved }) {
       <div className="prb-note">
         From attendance: {row.override ? row.override.autoDaysPresent : row.daysPresent} present · {row.override ? row.override.autoDaysLop : row.daysLop} LOP of {row.workingDays} payroll days
         {d.absent != null && <> (absent {d.absent}, half days {d.halfDay}, no check-in {d.missingCheckIn}, leave {d.onLeave}, late beyond allowance {d.excessLate})</>}.
+        {d.notJoinedDays > 0 && <> The LOP days here include {d.notJoinedDays} day(s) before the joining date.</>}
       </div>
       <div className="grid-2" style={{ marginTop: 10 }}>
         <div className="field"><label>Days present</label><input type="number" min="0" step="0.5" value={present} onChange={(e) => setPresent(e.target.value)} /></div>
@@ -146,7 +151,9 @@ function AttendancePanel({ month, canEdit, reloadKey, onChanged }) {
                       <td>{r.name}</td>
                       <td className="cell-muted">{r.workingDays}</td>
                       <td>{r.daysPresent}</td>
-                      <td>{r.daysLop}</td>
+                      <td>{r.detail && r.detail.notJoinedDays > 0 && r.daysLop >= r.detail.notJoinedDays
+                        ? <>{Math.round((r.daysLop - r.detail.notJoinedDays) * 100) / 100}<div className="prb-note">+ {r.detail.notJoinedDays} before joining</div></>
+                        : r.daysLop}</td>
                       <td>{r.source === 'OVERRIDE' ? <span className="status pending" title={`${r.override.reason} — ${r.override.by}`}>Override</span> : <span className="cell-muted">Attendance</span>}</td>
                       <td className="cell-muted">{r.payrollStatus ? STATUS_LABEL[r.payrollStatus] : '—'}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>
@@ -187,11 +194,14 @@ function EntryDetail({ id, onClose }) {
           <div className="prb-kv">
             <span>Status</span><b><span className={`status ${STATUS_CLS[e.status]}`}>{STATUS_LABEL[e.status]}</span></b>
             <span>Structure version</span><b>{data.version ? `from ${data.version.effectiveFrom.slice(0, 7)}${data.version.effectiveTo ? ` to ${data.version.effectiveTo}` : ''}` : '—'}</b>
-            <span>Payroll days / LOP</span><b>{e.workingDays} / {e.daysLop} ({e.attendanceSource === 'OVERRIDE' ? 'HR override' : 'attendance'})</b>
+            <span>Payroll days / LOP</span><b>{e.workingDays} / {lopOf(e)} ({e.attendanceSource === 'OVERRIDE' ? 'HR override' : 'attendance'})</b>
+            {e.join && <><span>Joined in this period</span><b data-testid="prb-join">{shortDay(e.join.joinedOn)}: salary is counted for {e.join.daysFromJoining} days from joining; the {e.join.beforeDays} day(s) before joining are not paid and are not LOP</b></>}
             <span>Monthly CTC</span><b>{e.monthlyCtc ? <>{inr0(e.monthlyCtc)} <span className="prb-note">({ctcFrom(e.monthlyCtcFrom).toLowerCase()})</span></> : '—'}</b>
-            <span>Gross / LOP / earned</span><b>{inr0(e.grossPay)} − {inr0(e.lopDeduction)} = {inr0(e.earnedGross)}</b>
+            {e.join
+              ? <><span>Gross / not paid / earned</span><b>{inr0(e.grossPay)} − {inr0(e.join.amounts.beforeJoining)} (before joining) − {inr0(e.join.amounts.lop)} (LOP) = {inr0(e.earnedGross)}</b></>
+              : <><span>Gross / LOP / earned</span><b>{inr0(e.grossPay)} − {inr0(e.lopDeduction)} = {inr0(e.earnedGross)}</b></>}
             {Number(e.incentive) > 0 && <><span>Incentive (in gross)</span><b>{inr0(e.incentive)} — recruiter joinings, given by Super Admin</b></>}
-            <span>Deductions</span><b>PF {inr0(e.pfEmployee)} · ESI {inr0(e.esiEmployee)} · PT {inr0(e.professionalTax)} · TDS {inr0(e.tds)} · Other {inr0(e.otherDeductions)} · LOP {inr0(e.lopDeduction)} = {inr0(e.totalDeductions)}</b>
+            <span>Deductions</span><b>PF {inr0(e.pfEmployee)} · ESI {inr0(e.esiEmployee)} · PT {inr0(e.professionalTax)} · TDS {inr0(e.tds)} · Other {inr0(e.otherDeductions)} · {e.join ? <>Before joining {inr0(e.join.amounts.beforeJoining)} · LOP {inr0(e.join.amounts.lop)}</> : <>LOP {inr0(e.lopDeduction)}</>} = {inr0(e.totalDeductions)}</b>
             <span>Net pay</span><b>{inr0(e.netPay)}</b>
             <span>Employer</span><b>PF {inr0(e.pfEmployer)} · ESI {inr0(e.esiEmployer)}</b>
             {e.rejectionReason && <><span>Sent back</span><b>{e.rejectionReason}</b></>}
@@ -200,7 +210,7 @@ function EntryDetail({ id, onClose }) {
             <>
               <SectionLabel style={{ margin: '14px 0 6px' }}>How this month's pay was worked out</SectionLabel>
               <div className="prb-kv">
-                <span>Days</span><b>{data.breakup.payableDays} paid · {data.breakup.nonPayableDays} not paid (LOP) · {data.breakup.workingDays} days in the pay period · {data.breakup.attendance.source}</b>
+                <span>Days</span><b>{data.breakup.payableDays} paid · {e.join ? <>{e.join.lopDays} not paid (LOP) · {e.join.beforeDays} before joining</> : <>{data.breakup.nonPayableDays} not paid (LOP)</>} · {data.breakup.workingDays} days in the pay period · {data.breakup.attendance.source}</b>
                 {e.payMode === 'Stipend'
                   ? <><span>Stipend earned</span><b>{inr0(data.breakup.earned.stipend)} of {inr0(Number(e.grossPay) - Number(e.incentive || 0) - Number(e.arrears || 0))}</b></>
                   : (
@@ -424,8 +434,8 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
                     <td>{e.employee.name}</td>
                     <td className="cell-muted">{groupOf(e)}</td>
                     <td title={ctcFrom(e.monthlyCtcFrom)}>{e.monthlyCtc ? inr0(e.monthlyCtc) : '—'}</td>
-                    <td>{e.workingDays - e.daysLop}<span className="cell-muted"> / {e.workingDays}</span>{e.attendanceSource === 'OVERRIDE' ? <span className="cell-muted" title="Days typed or imported by HR"> *</span> : null}</td>
-                    <td className="cell-muted"><LopLink value={e.daysLop} onOpen={() => setLopId(e.id)} title={`Click to see which dates were counted as loss of pay for ${e.employee.name}, and why`} /></td>
+                    <td>{e.workingDays - e.daysLop}<span className="cell-muted"> / {e.join ? e.join.daysFromJoining : e.workingDays}</span>{e.attendanceSource === 'OVERRIDE' ? <span className="cell-muted" title="Days typed or imported by HR"> *</span> : null}{e.join && <div className="prb-note" title="Joined in this pay period: the days are counted from the joining date">from {shortDay(e.join.joinedOn)}</div>}</td>
+                    <td className="cell-muted"><LopLink value={lopOf(e)} onOpen={() => setLopId(e.id)} title={`Click to see which dates were counted as loss of pay for ${e.employee.name}, and why`} /></td>
                     <td>{inr0(e.earnedGross)}</td>
                     <td className="cell-muted">{inr0(e.pfEmployee)}</td>
                     <td className="cell-muted">{inr0(e.esiEmployee)}</td>
