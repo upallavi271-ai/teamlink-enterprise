@@ -814,6 +814,9 @@ const server = app.listen(PORT, () => {
   require('./utils/messageSchedules').ensure().catch((e) => console.error('[messageSchedules] start-up:', e.message)); // eslint-disable-line no-console
   // A recruiter who left: their candidates go to the recruiter on the job following them up now, every hour (utils/leaverHandover.js).
   require('./utils/leaverHandover').startSweep();
+  // An APPROVER who left: leave / attendance / other requests still waiting on them move to whoever holds that level now, every 5
+  // minutes; nothing is approved or rejected (utils/approverLeft.js; APPROVER_LEFT_SWEEP_MS=0 switches it off).
+  require('./utils/approverLeft').startSweep();
   // ON LEAVE TODAY: their due follow-ups / tasks go to their backup or TL, and come back after the leave (utils/leaveCover.js), hourly
   require('./utils/leaveCover').startSweep();
   // TAMPER-EVIDENT AUDIT: new audit rows are sealed into a hash chain every 5 minutes (utils/auditSeal.js); the read log keeps 365 days.

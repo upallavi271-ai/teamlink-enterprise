@@ -1264,6 +1264,7 @@ module.exports = {
   labelFor,
   reroutePausedSteps,
   reopenOwnLeads,
+  activateNext, // utils/approverLeft.js passes a leaver's step to the next level
   resolveChain,
   levelConfig,
   levelConfigList,
