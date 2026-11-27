@@ -4,7 +4,10 @@
 //   opened again showing the newest version -> the client is told (WhatsApp / email, like a person's click) -> the client approves, or asks again, and it repeats (up to MAX_ROUNDS) until approved.
 //   * a banner designed in TeamLink (images.js spec): its spec is edited and it is drawn again (marketing/revise.js): the logo, colours, photographs, cards and wording the client did not mention are untouched,
 //     the size is the same, nothing is distorted, in a second or two, free. The words are read by plain rules first; ONLY what they leave unclear goes to the AI model (when one is ready), and what it says is checked.
-//   * an AI-made picture: the picture AI is given the picture itself as the REFERENCE and told to change only what the client asked (images.js editPicture; needs the Google Gemini picture connection).
+//   * a banner whose picture the AI made, and the client asks about the picture: a NEW picture is made from the first description plus the client's words (images.js heroPicture), then the banner is drawn
+//     again, so the wording and the logo stay exact (2026-11-27).
+//   * an AI-made picture: the picture AI is given the picture itself as the REFERENCE and told to change only what the client asked (images.js editPicture). Google Gemini, or the free Cloudflare model,
+//     which is not asked to change words or the logo (a person does those).
 //   * "a completely new design" is its own case: same words, new look (another colour, the next picture), handled as a new version.
 // NOT SENT (a person is told, the original and the client's words are kept): the result is empty / corrupt / blank / a different size / no visible change, the words were not understood, the connection failed after
 //   retries, no way to reach the client, MAX_ROUNDS used. Each client answer is handled once (a duplicate event does nothing). Admin switch: AI usage > "When a client asks for changes on a banner".
@@ -27,7 +30,7 @@ async function ensure() { if (okAt && Date.now() - okAt < 600000) return true; t
 
 const MAX_ROUNDS = 10; const PLACEHOLDER = /^\(reason asked on WhatsApp\)$/;
 const LABELS = { processing: 'AI Processing', completed: 'Revision Completed', sent: 'Waiting for Client Approval', failed: 'Revision Failed', 'needs-person': 'Changes Requested' };
-const hooks = { tell: null, editFn: null, ask: null, waitMs: 1500 }; // a test answers instead of WhatsApp / the picture AI / the text AI, and does not wait between tries
+const hooks = { tell: null, editFn: null, makeFn: null, ask: null, waitMs: 1500 }; // a test answers instead of WhatsApp / the picture AI / the text AI, and does not wait between tries
 const parse = (v, d) => { try { return typeof v === 'string' ? JSON.parse(v) : (v == null ? d : v); } catch { return d; } };
 const sleep = (ms) => new Promise((res) => { setTimeout(res, ms); });
 const transient = (e) => !!e && !['not_ready', 'limit', 'unsupported', 'invalid', 'refused', 'corrupt'].includes(e.code) && (e.status >= 500 || e.status === 429 || e.status === 408 || /unreachable|timeout|timed out|temporar|try again|ECONN|socket|network|overloaded/i.test(`${e.code || ''} ${e.error || e.message || ''}`));
@@ -99,11 +102,26 @@ async function run(reviewId, opts = {}) {
   const handled = [...(prevSpec.handled || []).slice(-9), answerKey]; let made; let understood = { summary: [], unclear: [], method: 'rules', classification: 'correction', confidence: 1 };
   if (kind === 'banner') {
     if (!prevSpec.headline) return needsPerson('This banner was made before TeamLink could change banners by itself.');
-    understood = await Rev.understand(prevSpec, comment, { ask });
+    const heroRow = prevSpec.photoItemId ? await Img.rawRow(prevSpec.photoItemId) : null; // was the banner's picture made by the AI? then a request about it makes a new one
+    const heroAi = Img.isAiPicture(heroRow);
+    understood = await Rev.understand({ ...prevSpec, heroAi }, comment, { ask });
     if (!understood.changes.length) return needsPerson(understood.unclear.length ? `TeamLink could not turn "${S.clip(understood.unclear.join(' / '), 120)}" into a change by itself.` : 'TeamLink could not turn the words into a change by itself.', { method: understood.method, classification: understood.classification, unclear: understood.unclear });
     if (understood.confidence < 0.5) return needsPerson('TeamLink was not sure what the client meant.', { method: understood.method, unclear: understood.unclear });
+    const nextSpec = { ...understood.spec }; const wish = nextSpec.heroRedo; delete nextSpec.heroRedo; delete nextSpec.heroAi;
+    if (wish) {
+      const wishes = [...(prevSpec.heroWishes || []), wish].slice(-3);
+      const got = await retry(() => Img.heroPicture(u, item.id, heroRow, wishes, { makeFn: hooks.makeFn }), 3, attempts);
+      if (got && got.file) { nextSpec.heroFile = got.file; nextSpec.heroWishes = wishes; }
+      else { // no new picture: the other changes still go ahead and the picture is left for a person; with nothing else to change, nothing is sent
+        const why = (got && got.error) || 'unknown error';
+        const rest = (understood.changes || []).filter((c) => !['photo', 'newDesign'].includes(c.key));
+        const redesign = understood.classification === 'new_design';
+        if (!rest.length && !redesign) return needsPerson(`A new picture could not be made: ${why}`, { method: understood.method, unclear: [wish] });
+        understood = { ...understood, summary: redesign ? ['Made a new design with the same words: changed the colours.'] : rest.map((c) => c.text), unclear: [...understood.unclear, S.clip(`the new picture (${why})`, 160)] };
+      }
+    }
     const note = `Changed automatically after the client's request: ${understood.summary.join(' ')}`;
-    made = await retry(() => Img.reviseBanner(u, item.id, { ...understood.spec, handled }, note, validate), 3, attempts);
+    made = await retry(() => Img.reviseBanner(u, item.id, { ...nextSpec, handled }, note, validate), 3, attempts);
   } else {
     // the LOGO (2026-11-25): "keep the logo top left and bigger" is done by TeamLink itself, with no AI model (images.js changeLogo); anything else the client wrote about the picture is listed as not done
     const lr = Rev.logoRequest(comment);

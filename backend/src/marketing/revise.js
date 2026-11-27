@@ -6,7 +6,9 @@
 //   * the website link: on one line (always so now), under the headline, at the bottom;     * text that is an instruction to a designer ("create a premium ... banner") left in the banner: removed;
 //   * remove the sub-line / second line / website link / "who it is for" / services / prices / tagline / contact strip / badge / picture;
 //   * change "X" to "Y" (the words must be on the banner), "the headline should be Y", "the link should be Y", "write Y instead of X";     * "make it blue" (and green, red, orange, purple ...);
-//   * "change the picture" when the picture was chosen by TeamLink from the free stock photos (another one is taken).
+//   * "change the picture" when the picture was chosen by TeamLink from the free stock photos (another one is taken);
+//   * (2026-11-27) when the banner's picture was MADE BY THE AI, any request about the picture ("change it", "show a female doctor") asks for a NEW picture that follows the client's words (spec.heroRedo,
+//     made by images.js heroPicture); the wording and the logo of the banner are drawn again exactly as they were.
 // HONEST BY DESIGN: a clause it does not understand, or one that asks for something this banner cannot do, is NOT guessed at: it is listed as "unclear" so a person can do it, and the client is told
 // which part was not done. Nothing is ever changed that the client's words do not name. Up to 3 automatic rounds per banner; then a person takes over (clientReview.js).
 // ---------------------------------------------------------------------------
@@ -19,6 +21,12 @@ const REMOVE = /\b(remove|delete|take (?:it |this |that )?(?:out|away|off)|get r
 const LINKW = /\b(link|website|web ?site|url|web ?address|site address|chip)\b/i;
 
 const quoted = (s) => [...String(s).matchAll(/["“”]([^"“”]{2,160})["“”]|(?:^|\s)['‘]([^'’]{2,160})['’](?=\s|$|[.,;:!?])/g)].map((m) => (m[1] || m[2]).trim());
+// ---- requests about the banner's picture ----
+const PICW = /\b(?:picture|photo|photograph|image|hero)s?\b/i;
+const OTHER_PART = /\b(logo|text|font|words?|head ?line|heading|link|website|prices?|tag ?line|sub ?line|footer|badge|theme)\b/i; // the sentence is about something else on the banner
+const PICTURE_WISH = /\b(?:change|replace|different|another|new|other|better|show(?:ing)?|make|should|want|need|add|use|put|keep|include|with|without|remove|delete|more|less|instead|smil\w*)\b/i;
+// "remove the picture" / "the picture is not needed" -> the picture itself goes; "remove the mask from the picture" is a change INSIDE the picture
+const DROP_PICTURE = /\b(?:remove|delete|take (?:out|off|away)|get rid of|no need (?:of|for)|(?:do not|don'?t|dont) (?:need|want|show|put|add|use)|without|hide|drop)\s+(?:the\s+|this\s+|that\s+|a\s+|any\s+)?(?:(?:main|hero|big|stock)\s+)?(?:picture|photo|photograph|image|hero)s?\b(?!\s+(?:of|with|showing)\b)|\b(?:picture|photo|photograph|image|hero)s?\b[^.]{0,20}\b(?:not needed|not required|(?:to be|should be) removed)\b/i;
 // does the sentence contain a run of at least `min` consecutive words of `value` (or all of it when it is shorter)?
 function mentions(sentence, value, min = 3) {
   const v = wordsOf(value); if (!v.length) return false; const s = ` ${wordsOf(sentence).join(' ')} `; const need = Math.min(min, v.length);
@@ -65,7 +73,7 @@ function interpret(spec, feedback) {
       if (LINKW.test(t) && next.chip) rm('chip', 'the website link', () => { next.chip = ''; });
       if (/\b(?:sub ?line|sub ?heading|small text|paragraph|description|second line of text)\b/.test(t) && next.sub) rm('sub', 'the sub-line', () => { next.sub = ''; });
       if (/\b(?:second line|2nd line|coloured line|colored line)\b/.test(t) && next.headline2) rm('headline2', 'the second headline line', () => { next.headline2 = ''; });
-      if (/\b(?:picture|photo|image|hero)\b/.test(t) && (next.photoItemId || next.heroSearch)) rm('photo', 'the picture', () => { next.photoItemId = ''; next.heroSearch = ''; next.heroFile = ''; });
+      if (DROP_PICTURE.test(t) && (next.photoItemId || next.heroSearch)) rm('photo', 'the picture', () => { next.photoItemId = ''; next.heroSearch = ''; next.heroFile = ''; next.heroAi = false; delete next.heroRedo; });
       const qs = quoted(raw); for (const q of qs) for (const [k] of TEXT_FIELDS) if (next[k] && norm(next[k]) === norm(q)) { rm(k, `"${clip(q, 40)}"`, () => { next[k] = ''; }); }
     }
     // ---- change X to Y, the headline should be Y ----
@@ -90,9 +98,13 @@ function interpret(spec, feedback) {
       }
     }
     // ---- colour, picture ----
+    const aboutPicture = PICW.test(t) && !OTHER_PART.test(t) && !DROP_PICTURE.test(t);
+    const redo = !!next.heroAi && aboutPicture && PICTURE_WISH.test(t); // the AI made this picture: a new one is made, following the sentence
     const col = /\b(blue|navy|green|red|orange|purple|violet|pink|teal|maroon|black|dark|yellow|gold)\b/i.exec(t);
-    if (col && /\b(make|use|change|set|want|colou?r|theme|background)\b/i.test(t) && !/\b(text|font|words?|letters?)\b/i.test(t) && !REMOVE.test(t)) { const name = col[1].toLowerCase(); next.colors = { ...(next.colors || {}), primary: COLOURS[name] }; say('colors', `Changed the main colour to ${name}.`); hit = true; }
-    if (/\b(change|replace|different|another|new|other)\b/i.test(t) && /\b(picture|photo|image|hero)\b/i.test(t) && !REMOVE.test(t)) {
+    if (!redo && col && /\b(make|use|change|set|want|colou?r|theme|background)\b/i.test(t) && !/\b(text|font|words?|letters?)\b/i.test(t) && !REMOVE.test(t)) { const name = col[1].toLowerCase(); next.colors = { ...(next.colors || {}), primary: COLOURS[name] }; say('colors', `Changed the main colour to ${name}.`); hit = true; }
+    if (redo) {
+      next.heroRedo = clip([next.heroRedo, raw].filter(Boolean).join(' '), 300); if (!changes.some((c) => c.key === 'photo')) say('photo', 'Made a new picture the way you described.'); hit = true;
+    } else if (/\b(change|replace|different|another|new|other)\b/i.test(t) && PICW.test(t) && !REMOVE.test(t)) {
       if (next.heroSearch) { next.heroN = ((Number(next.heroN) || 0) + 1) % 20; next.heroFile = ''; say('photo', 'Chose another picture.'); hit = true; } else if (!blocked) blocked = 'the picture was chosen by a person, so it has to be changed by hand';
     }
     if (!hit || changes.length === before) unclear.push(blocked ? `${raw} (${blocked})` : raw);
@@ -115,7 +127,8 @@ function variation(spec) {
   const next = JSON.parse(JSON.stringify(spec || {})); const cur = String((next.colors && next.colors.primary) || '').toLowerCase();
   const pick = PALETTE.find((c, i) => c !== cur && PALETTE.indexOf(cur) < i) || PALETTE.find((c) => c !== cur);
   next.colors = { ...(next.colors || {}), primary: pick }; const text = [`Changed the colours to a new look.`];
-  if (next.heroSearch) { next.heroN = ((Number(next.heroN) || 0) + 1) % 20; next.heroFile = ''; text.push('Chose another picture.'); }
+  if (next.heroAi) { next.heroRedo = 'a completely different picture: another scene, another angle'; text.push('Made a new picture.'); }
+  else if (next.heroSearch) { next.heroN = ((Number(next.heroN) || 0) + 1) % 20; next.heroFile = ''; text.push('Chose another picture.'); }
   if (next.chip && next.layout === 'showcase') { next.chipPos = next.chipPos === 'under-headline' ? 'bottom' : 'under-headline'; text.push('Moved the website link.'); }
   return { spec: next, changes: [{ key: 'newDesign', text: `Made a new design with the same words: ${text.join(' ')}` }], unclear: [], summary: [`Made a new design with the same words: ${text.join(' ')}`] };
 }
@@ -140,6 +153,7 @@ function applyAi(spec, ans) {
     else if (f === 'colorPrimary') { const hex = /^#[0-9a-f]{6}$/i.test(String(c.value)) ? String(c.value) : COLOURS[String(c.value).toLowerCase()]; if (hex) { out.spec.colors = { ...(out.spec.colors || {}), primary: hex }; out.changes.push({ key: 'colors', text: `Changed the main colour to ${/^#/.test(String(c.value)) ? hex : String(c.value).toLowerCase()}.` }); } }
     else if (f === 'services' && Array.isArray(c.value)) { const list = c.value.map((x) => plain(x, 40)).filter((x) => x.length >= 2 && !looksLikePrompt(x)).slice(0, 8); if (list.length) { out.spec.services = list; out.changes.push({ key: 'services', text: 'Changed the services list.' }); } }
     else if (f === 'plans' && act === 'clear' && (out.spec.plans || []).length) { out.spec.plans = []; out.changes.push({ key: 'plans', text: 'Removed the price cards.' }); }
+    else if (f === 'photo' && (act === 'next' || act === 'set') && out.spec.heroAi) { out.spec.heroRedo = plain(c.value, 240) || 'a different picture'; out.changes.push({ key: 'photo', text: 'Made a new picture the way you described.' }); }
     else if (f === 'photo' && act === 'next' && out.spec.heroSearch) { out.spec.heroN = ((Number(out.spec.heroN) || 0) + 1) % 20; out.spec.heroFile = ''; out.changes.push({ key: 'photo', text: 'Chose another picture.' }); }
     else if (f === 'photo' && act === 'clear' && (out.spec.photoItemId || out.spec.heroSearch)) { out.spec.photoItemId = ''; out.spec.heroSearch = ''; out.spec.heroFile = ''; out.changes.push({ key: 'photo', text: 'Removed the picture.' }); }
   }

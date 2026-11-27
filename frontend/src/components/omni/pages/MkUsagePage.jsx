@@ -71,9 +71,9 @@ export default function MkUsagePage() {
             <Field label="ONLY A CLIENT CAN APPROVE" full>
               <select value={lim.clientRequired ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, clientRequired: e.target.value === 'yes' })}><option value="no">Off: my team approves</option><option value="yes">On: only the client approves</option></select>
             </Field>
-            <Field label="WHEN A CLIENT ASKS FOR CHANGES ON A BANNER" full>
+            <Field label="WHEN A CLIENT ASKS FOR CHANGES ON A BANNER OR PICTURE" full>
               <select value={lim.autoRevise ? 'auto' : 'person'} onChange={(e) => setLim({ ...lim, autoRevise: e.target.value === 'auto' })}><option value="auto">TeamLink changes it by itself and sends it to the client again (up to 3 rounds)</option><option value="person">A person changes it: the sender is told what the client wrote</option></select>
-              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 3 }}>It understands the usual requests (the website link on one line or under the headline, remove or change a line, "change X to Y", a colour). If it does not understand, nothing is sent and the sender is told.</div>
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 3 }}>It understands the usual requests (the website link on one line or under the headline, remove or change a line, "change X to Y", a colour). When the picture was made by the AI it also makes a new banner picture, or changes the picture itself, the way the client describes; words drawn inside a picture are left to a person. If it does not understand, nothing is sent and the sender is told.</div>
             </Field>
             {lim.clientRequired ? (
               <Field label="THE CLIENT MUST APPROVE" full>

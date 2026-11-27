@@ -736,8 +736,80 @@ async function reviseBanner(u, id, spec, note, check) {
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: banner changed and made again', entity: TABLE, entityId: r.id, toValue: `${r.title}; version ${prev + 2}${note ? `: ${S.clip(note, 200)}` : ''}` });
   return { item: sameItemAfter(u, await row(r.id), g), spec: next, before, after: out.made.buf };
 }
-// An AI picture (not a banner) changed with the picture AI and the picture ITSELF as the reference (Gemini picture editing): only what the client asked for is to change. Same size and format as the
-// original; the original stays as version 0. It counts as one AI picture against the limits. opts.editFn lets a test answer instead of Google. -> { item, spec, before, after } or { error, code }
+// ---- CHANGES THAT NEED THE PICTURE AI (2026-11-27, owner: "yes, build both"): a new picture for a banner, and an AI-made picture edited with Cloudflare's free model ------------------------------
+const isAiPicture = (r) => !!r && !!STYLES[r.style]; // made by the picture AI from words (not a banner, an upload, a video or a clip)
+// the person's own daily limit of AI pictures: '' = one more is allowed
+async function pictureLimit(u, perDay) {
+  const used = S.num(((await S.q('SELECT COUNT(*) AS n FROM "OmniMkAiUsage" WHERE userId = ? AND module = ? AND at >= ? AND ok = 1', u.id, 'images', AI.dayStart(Date.now())))[0] || {}).n);
+  return used + 1 > perDay ? `That would pass the ${perDay} pictures a day (${used} made).` : '';
+}
+// A NEW picture for a banner whose picture the AI made: the description the first one was made from (`from`) plus what the client asked (`wishes`, newest last). It is kept beside the banner under a new
+// name (the banner is then drawn again with the same words and logo; earlier versions are saved pictures, so they do not change). Counts as one AI picture. opts.makeFn lets a test answer.
+// -> { file } or { error, code, status }
+async function heroPicture(u, bannerId, from, wishes, opts = {}) {
+  await ensure();
+  const g = await getRow(u, bannerId); if (!g) return { error: 'This picture was not found.', status: 404 };
+  const base = String((from && (from.prompt || from.title)) || '').replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '');
+  const asked = `${S.clip(base, 520)}. The client asks for this: ${S.clip((wishes || []).join(' / '), 340)}`;
+  const style = from && STYLES[from.style] ? from.style : 'photo';
+  const aspect = from && ASPECTS.some((a) => a.key === from.aspect) ? from.aspect : '16:9';
+  const t0 = Date.now(); let pic; let provider = 'test'; let model = 'test'; let sent = asked;
+  try {
+    if (opts.makeFn) pic = await opts.makeFn(asked);
+    else {
+      const c = await config(); const st = await status();
+      if (!st.ready || st.demo) return { error: 'The AI picture model is not available here (not connected, or the test sandbox).', status: 503, code: 'not_ready' };
+      const over = await pictureLimit(u, c.perDay); if (over) return { error: over, status: 429, code: 'limit' };
+      provider = c.provider; model = c.model;
+      const brand = await Cfg.getBrand(); const b = { prompt: asked, style, aspect, headline: '', useColors: true };
+      sent = c.provider === 'cloudflare' ? fluxPrompt(b, brand) : promptFor(b, brand, false);
+      if (c.provider === 'cloudflare') { const one = await cfOne(c, sent, aspect); pic = one.buf; model = one.model || model; }
+      else if (isImagen(c.model)) pic = Buffer.from((await imagenMany(c, sent, aspect, 1))[0].b64, 'base64');
+      else pic = Buffer.from((await geminiOne(c, sent, aspect))[0].b64, 'base64');
+    }
+  } catch (e) { await AI.logUsage({ user: u, module: 'images', task: 'hero', provider, model, ok: false, inChars: sent.length, ms: Date.now() - t0, error: e.message }); return { error: e.message || 'The picture could not be made.', status: e.status || 502, code: e.code || 'failed' }; }
+  let done; try { done = await finishPic(pic, aspect, null); } catch { return { error: 'The AI sent something that is not a picture.', status: 502, code: 'corrupt' }; }
+  const file = `${path.basename(g.r.file, path.extname(g.r.file))}.hero-v${versionOf(g.r) + 1}`;
+  fs.writeFileSync(path.join(dir(), file), done.buf);
+  await AI.logUsage({ user: u, module: 'images', task: 'hero', provider, model, ok: true, inChars: sent.length, outChars: done.buf.length, ms: Date.now() - t0, itemId: g.r.id });
+  return { file };
+}
+// words the free model cannot be trusted with: it redraws the whole picture, so lettering and the logo come out wrong
+const ASKS_WORDS = /\b(text|words?|wording|write|written|spell\w*|letters?|head ?line|heading|caption|title|slogan|tag ?line|phone|contact number|mobile number|e-?mail|address|website|link|price|offer|discount|date|timings?)\b|[%₹]|\brs\.?\s*\d/i;
+const CF_REF_MAX = 511; // Cloudflare: every reference picture must be smaller than 512 x 512
+// the picture WITHOUT TeamLink's logo is sent to FLUX.2 klein as the reference, with the client's words; the logo is then put back by TeamLink exactly where and as large as it was.
+// -> { buf (the finished picture, same size and format), clean (without the logo, or null), model }
+async function cfEdit(c, r, instruction, orig, meta) {
+  const sharp = require('sharp'); // eslint-disable-line global-require
+  const model = isKlein(c.model) ? c.model : CF_DEFAULT_MODEL;
+  const old = S.parse(r.spec, {}) || {};
+  let logo = null; const hadLogo = S.num(r.withLogo) === 1;
+  if (hadLogo) {
+    const look = await projectLook(r.projectId); const logoRow = look ? (look.logoData ? { dataUrl: look.logoData } : null) : await Cfg.getLogo();
+    const lm = logoRow && /^data:([^;]+);base64,(.+)$/.exec(String(logoRow.dataUrl || ''));
+    if (!lm) throw new AI.AiMkError('The logo saved for this picture is not there any more (AI Marketing > Brand voice > Logo), so it could not be put back.', 422, 'unsupported');
+    logo = { buf: Buffer.from(lm[2], 'base64'), pos: old.logo && LOGO_POS.includes(old.logo.pos) ? old.logo.pos : 'bottom-right', scale: (old.logo && Number(old.logo.scale)) || 1 };
+  }
+  const bf = baseFileOf(r); let base = orig;
+  if (hadLogo && fs.existsSync(bf)) base = fs.readFileSync(bf);
+  else if (hadLogo) { const was = await logoPlate(logo.buf, meta.width, meta.height, logo.pos, logo.scale); const pad = 3; base = await fillRect(orig, { left: was.left - pad, top: was.top - pad, width: was.width + pad * 2, height: was.height + pad * 2 }); }
+  const ref = await sharp(base).rotate().flatten({ background: '#ffffff' }).resize({ width: CF_REF_MAX, height: CF_REF_MAX, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 92 }).toBuffer();
+  const [w, h] = CF_SIZES[r.aspect] || CF_SIZES['1:1'];
+  const text = `Image 0 is the current picture. Edit image 0 and change only this: ${S.clip(instruction, 600).replace(/[.\s]+$/, '')}. Keep everything else the same: the same composition, people, faces, clothes, colours, background and light. No lettering, no logos, no watermarks.`;
+  const form = new FormData(); form.append('prompt', text.slice(0, 2000)); form.append('width', String(w)); form.append('height', String(h)); form.append('input_image_0', new Blob([ref], { type: 'image/jpeg' }), 'picture.jpg');
+  const res = await cfCall(`${CF_API}/accounts/${c.account}/ai/run/${model}`, c.key, form);
+  const b64 = res.result && (res.result.image || (res.result.images && res.result.images[0]));
+  const pic = res.image || (b64 ? Buffer.from(String(b64), 'base64') : null);
+  if (!pic) throw new AI.AiMkError('Cloudflare sent no picture back.', 422, 'refused');
+  let edited; try { edited = await sharp(pic).resize({ width: meta.width, height: meta.height, fit: 'cover' }).flatten({ background: '#ffffff' }).jpeg({ quality: 92 }).toBuffer(); } catch { throw new AI.AiMkError('The AI sent something that is not a picture.', 502, 'corrupt'); }
+  let drawn = sharp(edited);
+  if (logo) { const lp = await logoPlate(logo.buf, meta.width, meta.height, logo.pos, logo.scale); drawn = drawn.composite([{ input: lp.plate, left: lp.left, top: lp.top }]); }
+  const buf = r.mime === 'image/png' ? await drawn.png().toBuffer() : await drawn.jpeg({ quality: 90 }).toBuffer();
+  return { buf, clean: logo ? edited : null, model };
+}
+// An AI picture (not a banner) changed with the picture AI and the picture ITSELF as the reference: only what the client asked for is to change. Same size and format as the original; the original
+// stays as version 0. It counts as one AI picture against the limits. Google Gemini, or (2026-11-27) the free Cloudflare model for changes to the picture itself: words and the logo stay a person's job
+// there. opts.editFn lets a test answer instead of Google. -> { item, spec, before, after } or { error, code }
 async function editPicture(u, id, instruction, opts = {}) {
   await ensure();
   const g = await getRow(u, id); if (!g) return { error: 'This picture was not found.', status: 404 };
@@ -745,26 +817,36 @@ async function editPicture(u, id, instruction, opts = {}) {
   if (['banner', 'clip', 'upload', 'video'].includes(r.style) || isVideo(r)) return { error: 'This kind of picture cannot be changed with the AI picture model.', status: 400, code: 'unsupported' };
   const text = `Edit the attached picture. Change ONLY what is asked here: ${S.clip(instruction, 600)}\nKeep everything else exactly as it is: the same layout, colours, people, photographs, logo, wording and spelling, and the same shape. Do not add, remove or move anything that was not asked for. Do not redraw the logo. Any wording on the picture must stay spelled exactly as it is.`;
   const c = await config(); const st = await status();
+  const cf = !opts.editFn && c.provider === 'cloudflare';
   if (!opts.editFn) {
     if (!st.ready || st.demo) return { error: 'The AI picture model is not available here (not connected, or the test sandbox).', status: 503, code: 'not_ready' };
-    if (c.provider !== 'gemini' || isImagen(c.model)) return { error: `Changing a picture with the picture itself as the reference needs the Google Gemini picture connection; this server uses ${c.provider === 'cloudflare' ? 'Cloudflare' : 'Imagen'}.`, status: 501, code: 'unsupported' };
-    const used = S.num(((await S.q('SELECT COUNT(*) AS n FROM "OmniMkAiUsage" WHERE userId = ? AND module = ? AND at >= ? AND ok = 1', u.id, 'images', AI.dayStart(Date.now())))[0] || {}).n);
-    if (used + 1 > c.perDay) return { error: `That would pass the ${c.perDay} pictures a day (${used} made).`, status: 429, code: 'limit' };
+    if (!cf && (c.provider !== 'gemini' || isImagen(c.model))) return { error: 'Changing a picture with the picture itself as the reference needs the Cloudflare or the Google Gemini picture connection; this server uses Imagen.', status: 501, code: 'unsupported' };
+    if (cf) {
+      const no = (why) => ({ error: why, status: 422, code: 'unsupported' });
+      if (r.headline) return no('This picture has words drawn into it by the AI, and the free picture model could garble them: a person should change it.');
+      if (ASKS_WORDS.test(instruction)) return no('The client asks about words on the picture, which the free picture model cannot write reliably: a person should do it.');
+      if (/\blogo\b/i.test(instruction)) return no('The client asks about the logo in a way TeamLink cannot do by itself.');
+      const why = S.num(r.withLogo) === 1 ? logoWhy(r) : ''; if (why) return no(why);
+    }
+    const over = await pictureLimit(u, c.perDay); if (over) return { error: over, status: 429, code: 'limit' };
   }
   const f = rawFile(r); if (!f) return { error: 'The picture file is not on the server any more.', status: 404 };
   const sharp = require('sharp'); // eslint-disable-line global-require
-  const orig = fs.readFileSync(f.path); const meta = await sharp(orig).metadata(); const t0 = Date.now(); let pic;
+  const orig = fs.readFileSync(f.path); const meta = await sharp(orig).metadata(); const t0 = Date.now(); let pic; let free = null;
+  const provider = cf ? 'cloudflare' : 'gemini';
   try {
     if (opts.editFn) pic = await opts.editFn(text, orig);
+    else if (cf) { free = await cfEdit(c, r, instruction, orig, meta); pic = free.buf; }
     else { const ref = (await sharp(orig).rotate().resize({ width: 1536, height: 1536, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer()).toString('base64'); const outp = await geminiOne(c, text, r.aspect || '1:1', { mime: 'image/jpeg', b64: ref }); pic = Buffer.from(outp[0].b64, 'base64'); }
-  } catch (e) { await AI.logUsage({ user: u, module: 'images', task: 'edit', provider: 'gemini', model: c.model, ok: false, inChars: text.length, ms: Date.now() - t0, error: e.message }); return { error: e.message || 'The picture could not be changed.', status: e.status || 502, code: e.code || 'failed' }; }
-  let buf; try { const sh = sharp(pic).resize({ width: meta.width, height: meta.height, fit: 'cover' }); buf = r.mime === 'image/png' ? await sh.png().toBuffer() : await sh.jpeg({ quality: 90 }).toBuffer(); } catch { return { error: 'The AI sent something that is not a picture.', status: 502, code: 'corrupt' }; }
+  } catch (e) { await AI.logUsage({ user: u, module: 'images', task: 'edit', provider, model: c.model, ok: false, inChars: text.length, ms: Date.now() - t0, error: e.message }); return { error: e.message || 'The picture could not be changed.', status: e.status || 502, code: e.code || 'failed' }; }
+  let buf; if (free) buf = free.buf; else try { const sh = sharp(pic).resize({ width: meta.width, height: meta.height, fit: 'cover' }); buf = r.mime === 'image/png' ? await sh.png().toBuffer() : await sh.jpeg({ quality: 90 }).toBuffer(); } catch { return { error: 'The AI sent something that is not a picture.', status: 502, code: 'corrupt' }; }
   if (opts.check) { const v = await opts.check(orig, buf); if (!v.ok) return { error: v.reason, status: 422, code: 'invalid' }; } // the new picture must pass the checks BEFORE it replaces anything
   if (!keepVersion(r)) return { error: 'The earlier version could not be kept, so nothing was changed.', status: 500 };
   const file = path.join(dir(), path.basename(r.file)); fs.writeFileSync(file, buf);
+  if (free && free.clean) { try { fs.writeFileSync(baseFileOf(r), free.clean); } catch { /* a later logo change fills the old spot from the colours around it */ } } // the changed picture without its logo, for the next change
   const old = S.parse(r.spec, {}) || {}; const next = { ...old, rev: versionOf(r) + 1, edits: [...(old.edits || []).slice(-4), S.clip(instruction, 300)], handled: old.handled || [] };
   await S.run(`UPDATE "${TABLE}" SET bytes = ?, spec = ?, status = 'draft', note = ?, decidedAt = NULL, decidedById = NULL, decidedByName = NULL, updatedAt = ? WHERE id = ?`, buf.length, JSON.stringify(next), S.clip(`Changed with the AI picture model after the client's request: ${instruction}`, 300), Date.now(), r.id);
-  await AI.logUsage({ user: u, module: 'images', task: 'edit', provider: 'gemini', model: c.model, ok: true, inChars: text.length, ms: Date.now() - t0 });
+  await AI.logUsage({ user: u, module: 'images', task: 'edit', provider, model: (free && free.model) || c.model, ok: true, inChars: text.length, ms: Date.now() - t0 });
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: picture changed by the AI picture model after a client request', entity: TABLE, entityId: r.id, toValue: `${r.title}; version ${next.rev + 1}: ${S.clip(instruction, 200)}` });
   return { item: sameItemAfter(u, await row(r.id), g), spec: next, before: orig, after: buf };
 }
@@ -986,7 +1068,7 @@ async function setNote(id, note) { await ensure(); await S.run(`UPDATE "${TABLE}
 async function saveSpec(id, spec) { await ensure(); await S.run(`UPDATE "${TABLE}" SET spec = ?, updatedAt = ? WHERE id = ?`, JSON.stringify(spec), Date.now(), id); }
 
 module.exports = {
-  setNote, saveSpec,
+  setNote, saveSpec, heroPicture, isAiPicture,
   ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, createBanner, reviseBanner, editPicture, changeLogo, logoWhy, finishPic, versionFile, versionOf, renderBanner, looksLikePrompt, bannerMeta, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
   cloudflareImage: { cfOne, fluxPrompt, DEFAULT_MODEL: CF_DEFAULT_MODEL, FALLBACK_MODEL: CF_FALLBACK_MODEL, resetKlein: () => { kleinFailedAt = 0; } }, // exported for the tests
   cloudflareText: { config: cloudflareConfig, call: cfCall }, // the same Cloudflare card and calls, for short writing (marketing/fastText.js)
