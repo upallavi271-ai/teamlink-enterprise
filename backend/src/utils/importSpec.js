@@ -612,10 +612,11 @@ const SHEETS = [
       c('Interview Status', 'interviewStatus', { t: 'list', list: 'interviewStatus', eg: 'SCHEDULED' }),
       c('Interview Result', 'interviewResult', { t: 'list', list: 'interviewResult', eg: '' }),
       c('Feedback By', '_feedbackBy', { t: 'list', list: 'feedbackBy', eg: '' }),
-      c('Technical (1-5)', '_technical', { t: 'number', eg: '' }),
-      c('Communication (1-5)', '_communication', { t: 'number', eg: '' }),
-      c('Experience (1-5)', '_experience', { t: 'number', eg: '' }),
-      c('Role Fit (1-5)', '_roleFit', { t: 'number', eg: '' }),
+      // `exact`: only the full header matches. A screening sheet's own "Experience" (years) is not an interview score.
+      c('Technical (1-5)', '_technical', { t: 'number', exact: true, eg: '' }),
+      c('Communication (1-5)', '_communication', { t: 'number', exact: true, eg: '' }),
+      c('Experience (1-5)', '_experience', { t: 'number', exact: true, eg: '' }),
+      c('Role Fit (1-5)', '_roleFit', { t: 'number', exact: true, eg: '' }),
       c('Feedback Comments', '_comments', { eg: '' }),
     ],
   },
@@ -817,7 +818,8 @@ const ATS_IMPORT_SHEETS = {
     ],
   },
   applications: { ...sheetNamed('Applications'), columns: [...sheetNamed('Applications').columns.filter((x) => !x.legacy), { ...CAME_COLUMN, help: 'Optional: the day this person applied / was sourced for this requirement. The application is dated that day (not the day of the import).' }] },
-  interviews: { ...sheetNamed('Interviews') },
+  // `lenient`: an optional cell that cannot be read is left blank (and said so) instead of refusing the row.
+  interviews: { ...sheetNamed('Interviews'), lenient: true },
   'interview-feedback': {
     ...sheetNamed('Interviews'),
     name: 'Interview Feedback',
