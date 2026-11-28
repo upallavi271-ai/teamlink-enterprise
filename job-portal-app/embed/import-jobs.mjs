@@ -70,11 +70,14 @@ export function importJobsForDepartment(deps) {
     try {
       const token = deps.cookieOf(req.headers && req.headers.cookie, deps.cookieName);
       const session = token ? await deps.resolveSession(token) : null;
-      if (!session || session.role === 'admin') return next(); // not signed in: the portal says so; admin: everything (the portal's list, all departments)
+      // ?all=1 = every department (the Send to ATS box): answered here too, so an unpublished open requirement is said to be open
+      const all = String((req.query || {}).all || '') === '1';
+      if (!session || !['recruiter', 'bde', 'admin'].includes(session.role)) return next(); // not signed in / not staff: the portal says so
+      if (session.role === 'admin' && !all) return next(); // admin: everything (the portal's list, all departments)
       const SYSTEM = { userId: '', role: 'admin', profileId: null };
-      const dept = session.profileId ? await deps.withUser(SYSTEM, async (c) => ((await c.query('select department from recruiters where id = $1', [session.profileId])).rows[0] || {}).department) : null;
+      const dept = !all && session.profileId ? await deps.withUser(SYSTEM, async (c) => ((await c.query('select department from recruiters where id = $1', [session.profileId])).rows[0] || {}).department) : null;
       const keys = allowedKeys(dept);
-      if (!keys.length) return next();
+      if (!all && !keys.length) return next();
       const q = String((req.query || {}).q || '').trim().toLowerCase().slice(0, 80);
       const rows = await deps.withUser(SYSTEM, async (c) => (await c.query(
         `select id, title, location, status, department, description from jobs where id like 'tl\\_%' order by (status = 'open') desc, published_at desc nulls last, id limit 5000`)).rows);
@@ -84,7 +87,7 @@ export function importJobsForDepartment(deps) {
         if (m) j.status = m[1] === 'CLOSED' ? 'closed' : 'open';
         delete j.description;
       });
-      const mine = rows.filter((j) => keys.includes(deptKey(j.department)) && (!q || String(j.title || '').toLowerCase().includes(q)));
+      const mine = rows.filter((j) => (all || keys.includes(deptKey(j.department))) && (!q || String(j.title || '').toLowerCase().includes(q)));
       return res.json({ jobs: reshapeImportJobs(mine) });
     } catch { return next(); }
   };

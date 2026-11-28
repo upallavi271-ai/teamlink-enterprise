@@ -93,3 +93,17 @@ test("a Manufacturing recruiter gets the Manufacturing and the Medical roles, no
   const { sent } = await run2({ dept: "Manufacturing" });
   assert.deepEqual(sent.jobs.map((j) => j.id).sort(), ["tl_f1", "tl_m0", "tl_m1", "tl_m2", "tl_n1"]);
 });
+
+test('all=1 (Send to ATS): every department for a recruiter and for admin, open ones said open', async () => {
+  for (const role of ['recruiter', 'admin']) {
+    let sent;
+    const res = { json: (b) => { sent = b; return res; } };
+    const deps = {
+      cookieOf: () => 't', cookieName: 'tl_session', resolveSession: async () => ({ role, profileId: role === 'admin' ? null : 'r1' }),
+      withUser: async (_s, fn) => fn({ query: async () => ({ rows: JOBS.map((j) => ({ ...j })) }) }),
+    };
+    await importJobsForDepartment(deps)({ headers: {}, query: { all: '1' } }, res, () => assert.fail('left to the portal'));
+    assert.equal(sent.jobs.length, JOBS.length, role);
+    assert.equal(sent.jobs.find((j) => j.id === 'tl_e2').status, 'open');
+  }
+});
