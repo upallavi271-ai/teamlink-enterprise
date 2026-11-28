@@ -20,6 +20,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { workHistory, educationList } from './resume-enrich.mjs'; // the jobs and degrees of a resume, line by line (2026-11-20)
+import { nameFallback } from './resume-name.mjs'; // a name when the portal's reader finds none (2026-11-28)
 
 const READ_AT_ONCE = 4;
 const newId = (p) => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -125,9 +126,10 @@ export function makeImport(P) {
           matched.push({ file: name, candidateId: hit.candidateId, candidateName: hit.name, matchedBy: hit.by, fileName: stored.displayName, fieldsDetected: r.parsed.found });
           continue;
         }
-        const person = clean(f.name, 120);
         const email = clean(f.email, 200).toLowerCase();
         const phone = clean(f.phone || f.altPhone, 32);
+        // no name read ("GADAM.ROHITH KUMAR" was refused for its dot): take it from the top of the resume, else the file name / email (resume-name.mjs)
+        const person = clean(f.name, 120) || (email || phone ? nameFallback(r.doc && r.doc.text, email, name) : '');
         if (!person || (!email && !phone)) {
           unmatched.push({
             file: name,
