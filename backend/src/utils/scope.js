@@ -623,7 +623,7 @@ function applicationWhere(user, opts = {}) {
   // whose latest recruiter follow-up is on their seat - the previous holder's work too - and no profile whose latest seat is another
   // one. A profile with no seat on any recruiter follow-up keeps the rule above (assigned jobs, own work).
   if (!s0.global && s0.atsRole === 'RECRUITER' && s0.positions && Array.isArray(s0.positions.seatApplicationIds)) {
-    where = { OR: [{ id: { in: s0.positions.seatApplicationIds.length ? s0.positions.seatApplicationIds : ['__none__'] } }, { AND: [where, SEAT.UNSEATED_WHERE] }] };
+    where = { OR: [s0.positions.seatWhere || { id: '__none__' }, { AND: [where, SEAT.UNSEATED_WHERE] }] };
   }
   // A TEAM LEAD'S OWN CANDIDATES ARE ALWAYS IN THEIR VIEW (founder 2026-11-28: TLs bring joinings too - a TL owns the people they add,
   // utils/applicationOwner.js): a TL / STL sees the applications they own even on a requirement with no TL yet, another team's seat or

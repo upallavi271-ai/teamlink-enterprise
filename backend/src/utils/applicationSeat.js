@@ -57,6 +57,17 @@ function load() {
       });
       const seatOf = new Map();
       const byCode = new Map();
+      // every spelling a seat was written with, and every profile a seat ever touched (for the list query: see seatWhere)
+      const spellings = new Map();
+      const touched = new Map();
+      rows.forEach((r) => {
+        const seat = normSeat(r.code);
+        if (!seat) return;
+        if (!spellings.has(seat)) spellings.set(seat, new Set());
+        spellings.get(seat).add(r.code);
+        if (!touched.has(seat)) touched.set(seat, new Set());
+        touched.get(seat).add(r.id);
+      });
       last.forEach((v, id) => {
         const seat = normSeat(v.code);
         seatOf.set(id, seat);
@@ -65,7 +76,7 @@ function load() {
       return seatsOfPeople.then((ps) => {
         const eduSeatOfUser = new Map(); // the person's latest Education seat (a profile with no seat yet takes its owner's team)
         ps.forEach((r) => eduSeatOfUser.set(r.uid, normSeat(r.code)));
-        MAP = { at: Date.now(), seatOf, byCode, eduSeatOfUser };
+        MAP = { at: Date.now(), seatOf, byCode, eduSeatOfUser, spellings, touched };
         return MAP;
       });
     })
@@ -92,6 +103,28 @@ async function idsOnSeats(codes) {
   (codes || []).map(normSeat).filter(Boolean).forEach((c) => (m.byCode.get(c) || []).forEach((id) => out.push(id)));
   return out;
 }
+// The Prisma piece for "the profiles whose latest seat is one of these seats", WITHOUT a list of every profile id (a seat can hold
+// over a thousand: an id list that long breaks a query that also has a NOT in it - Prisma P2029, 2026-11-28): a recruiter follow-up
+// written with one of the seat's spellings, minus the few profiles whose latest follow-up has since moved to another seat.
+async function seatWhere(codes) {
+  const m = await seatMap();
+  const seats = (codes || []).map(normSeat).filter(Boolean);
+  if (!m || !seats.length) return { id: '__none__' };
+  const spell = new Set();
+  const moved = [];
+  seats.forEach((s) => {
+    (m.spellings.get(s) || new Set()).forEach((x) => spell.add(x));
+    (m.touched.get(s) || new Set()).forEach((id) => { if (!seats.includes(m.seatOf.get(id))) moved.push(id); });
+  });
+  if (!spell.size) return { id: '__none__' };
+  return {
+    AND: [
+      { followUps: { some: { ownerPositionCode: { in: [...spell] }, OR: [{ ownerRole: null }, { ownerRole: { notIn: NOT_RECRUITER } }] } } },
+      ...(moved.length ? [{ id: { notIn: moved } }] : []),
+    ],
+  };
+}
+
 // For one loaded application: 'none' (no seat recorded - old rule), or whether its seat is one of `codes`.
 function seatVerdict(appId, codes) {
   const m = seatMapSync();
@@ -112,4 +145,4 @@ function eduTeamOfApp(appId, ownerUserId) {
   return eduTeamOfSeat(m.seatOf.get(appId)) || (ownerUserId && m.eduSeatOfUser ? eduTeamOfSeat(m.eduSeatOfUser.get(ownerUserId)) : null);
 }
 
-module.exports = { normSeat, eduTeamOfSeat, UNSEATED_WHERE, seatMap, seatMapSync, invalidate, idsOnSeats, seatVerdict, seatOfApp, eduTeamOfApp };
+module.exports = { normSeat, eduTeamOfSeat, UNSEATED_WHERE, seatMap, seatMapSync, invalidate, idsOnSeats, seatVerdict, seatOfApp, eduTeamOfApp, seatWhere };

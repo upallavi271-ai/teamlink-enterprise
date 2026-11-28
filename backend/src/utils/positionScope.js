@@ -156,10 +156,15 @@ async function resolvePositionScope({ userId, employeeId, atsRole }) {
   const seatApplicationIds = atsRole === 'RECRUITER'
     ? await require('./applicationSeat').idsOnSeats(mine.map((a) => a.position.code)) // eslint-disable-line global-require
     : undefined;
+  // the same profiles as a query piece without the id list (a seat can hold over a thousand - utils/applicationSeat.js seatWhere)
+  const seatWhere = atsRole === 'RECRUITER'
+    ? await require('./applicationSeat').seatWhere(mine.map((a) => a.position.code)) // eslint-disable-line global-require
+    : undefined;
 
   return {
     role: atsRole,
     seatApplicationIds,
+    seatWhere,
     // "Education Team A", "Medical Team" — what the scope line says.
     label: uniq(mine.map((a) => [a.position.department, a.position.team].filter(Boolean).join(' '))).join(', ') || null,
     ownPositionIds: rootIds,
