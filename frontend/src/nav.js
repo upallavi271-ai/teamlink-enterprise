@@ -170,8 +170,6 @@ export const HRMS_ITEMS = [
   leaf('🏖️', '/leave', 'Leave & Holidays', [['hrms', 'Leave & Holidays', 'view']]),
   leaf('💵', '/payroll', 'Payroll & Compensation', [['hrms', 'Payroll & Compensation', 'view']]),
   leaf('📈', '/performance', 'Performance & Development', [['hrms', 'Performance & Development', 'view']]),
-  // PROBATION (2026-11-25): HR / Admin see everybody and decide; a lead sees only their own team and adds a review (the server decides). Off until HR switches tracking on.
-  { ...leaf('🌱', '/probation', 'Probation', [['hrms', 'Employee Management', 'view']]), when: (u) => !!u && [u.role, u.hrmsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL'].includes(r)) },
   leaf('🛎️', '/employee-services', 'Employee Services', [['hrms', 'Employee Services', 'view']]),
   // DOCUMENT EXPIRY & POLICIES (2026-11-25): expiry dates, NDAs, policy versions and review dates. HR / Admin only; an employee who gets a bell notice about a new policy version lands on the same page and sees only what they must accept again.
   { ...leaf('📑', '/doc-register', 'Expiry & policies', [['hrms', 'Employee Services', 'view']]), when: (u) => !!u && [u.role, u.hrmsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR'].includes(r)) },

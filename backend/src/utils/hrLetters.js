@@ -94,10 +94,10 @@ async function factsFor(employeeId) {
     exitLetters.loadSettings(),
     prisma.salaryStructureVersion.findMany({ where: { employeeId }, orderBy: { effectiveFrom: 'desc' } }),
     prisma.employeeRecord.findFirst({ where: { employeeId, type: 'RESIGNATION', status: { notIn: ['Rejected', 'Withdrawn'] } }, orderBy: { createdAt: 'desc' }, include: { employee: true } }),
-    require('./probation').getSettings(), // eslint-disable-line global-require
+    require('./probationLength').getSettings(), // eslint-disable-line global-require
   ]);
   const company = require('./companyContact').forLetter(companyRow); // eslint-disable-line global-require
-  const lead = !!(employee.user && [employee.user.role, employee.user.hrmsRole].includes('TL')); // the probation rule of utils/probation.js
+  const lead = !!(employee.user && [employee.user.role, employee.user.hrmsRole].includes('TL')); // Team Leads have the shorter probation (utils/probationLength.js)
   const manager = employee.reportingManager;
   return {
     employee,

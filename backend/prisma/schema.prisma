@@ -5463,7 +5463,9 @@ model MonitoringSetting {
 // PROBATION AND CONFIRMATION (founder 2026-11-25, from the HR audit questionnaire; "fill the gaps, change nothing that exists").
 // ADDITIVE: two new tables and nothing else. Plain scalars point at Employee (no relation field), so the Employee table is not touched and
 // "On Probation" / Pause-Resume keep working exactly as before. Nothing is created or sent until HR switches probation tracking ON
-// (AppSetting "probation.settings"). Logic: utils/probation.js, screen: HRMS > Probation.
+// (AppSetting "probation.settings").
+// REMOVED 2026-11-28 (founder: no separate probation module; probation is mentioned in the offer / HR letters). The screen, routes and reminders are gone;
+// these two tables are kept so no recorded data is lost. Nothing reads or writes them now.
 model ProbationRecord {
   id                   String           @id @default(cuid())
   employeeId           String           @unique // Employee.id
