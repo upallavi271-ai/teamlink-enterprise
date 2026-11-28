@@ -11,6 +11,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import ScrollSync from '../../components/accounts/ScrollSync.jsx';
 import AddGstin from './AddGstin.jsx';
+import { GstParties, GstGap } from './GstInOut.jsx';
 import { money, fmtD } from './officeUtil';
 import './gstposition.css';
 
@@ -142,6 +143,7 @@ export default function GstPosition({
           <Card label="Invoice value" value={money(o.value)} sub="Before GST + GST" />
           <Card label="Invoices raised" value={o.invoices} sub="Under this GSTIN · who they went to →" onClick={() => setClientsOpen(true)} />
         </div>
+        <GstParties kind="clients" data={d.inOut?.clients} />
 
         <div className="gp-band">Inward — what we bought</div>
         <div className="gp-cards">
@@ -150,6 +152,7 @@ export default function GstPosition({
           <Card label="Input credit you can claim" value={money(i.claimable)} sub={`Vendor GSTIN on file (${i.claimableBills})`} tone="green" />
           <Card label="At risk" value={money(i.atRisk)} sub={`No vendor GSTIN on ${plural(i.atRiskBills, 'bill')}`} tone="red" />
         </div>
+        <GstParties kind="vendors" data={d.inOut?.vendors} />
 
         <div className="gp-band">The position</div>
         <div className="gp-cards">
@@ -159,6 +162,7 @@ export default function GstPosition({
           <Card label="If the GSTINs are filled in" value={money(p.ifFilled)} sub={`you would pay ${money(p.saving)} less`} tone="green" />
           <Card label="Our GSTIN" value={d.ourGstin || 'Not set'} sub={d.ourState || 'Add it in Company details'} mono />
         </div>
+        <GstGap inOut={d.inOut} />
       </div>
 
       {i.atRisk > 0.5 && (
