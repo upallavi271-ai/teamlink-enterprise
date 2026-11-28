@@ -1642,6 +1642,34 @@ function officeFacts({
 
   const taxableExp = ROUND(inPeriod.reduce((s, r) => s + r.base, 0));
   const gstOnBills = ROUND(inPeriod.reduce((s, r) => s + r.gst, 0));
+  // GST INWARD AND OUTWARD, party by party (founder 2026-11-28): how much GST each client has really paid us, and how
+  // much GST we have really paid each vendor. A client's share follows the money received on the invoice; a vendor's GST
+  // is paid when the bill is paid.
+  const inOutClients = new Map();
+  gstInv.forEach((i) => {
+    const k = i.client?.name || '—';
+    const c = inOutClients.get(k) || { name: k, n: 0, gst: 0, done: 0, pending: 0 };
+    const gst = CNU.gstBilledOf(i);
+    const got = Math.min(gst, gstShare(i, Number(i.receivedAmount || 0)));
+    c.n += 1; c.gst = ROUND(c.gst + gst); c.done = ROUND(c.done + got); c.pending = ROUND(c.gst - c.done);
+    inOutClients.set(k, c);
+  });
+  const inOutVendors = new Map();
+  withGst.forEach((r) => {
+    const k = vendorLabel(r) || `${r.category || 'Unnamed'} (no vendor name)`;
+    const v = inOutVendors.get(k) || { name: k, n: 0, gst: 0, done: 0, pending: 0, noGstin: 0 };
+    v.n += 1; v.gst = ROUND(v.gst + r.gst);
+    if (PAID_LIKE.includes(r.approvalStatus)) v.done = ROUND(v.done + r.gst);
+    v.pending = ROUND(v.gst - v.done);
+    if (!r.gstinOnFile) v.noGstin = ROUND(v.noGstin + r.gst);
+    inOutVendors.set(k, v);
+  });
+  const sideOf = (map) => {
+    const rows = [...map.values()].sort((a, b) => b.gst - a.gst || a.name.localeCompare(b.name));
+    const sum = (key) => ROUND(rows.reduce((s, x) => s + x[key], 0));
+    return { rows, count: rows.reduce((s, x) => s + x.n, 0), gst: sum('gst'), done: sum('done'), pending: sum('pending') };
+  };
+
   const outstandingOf = (i) => Math.max(0, invoiceOutstanding(i));
   const outstanding = ROUND(gstInv.reduce((s, i) => s + outstandingOf(i), 0));
 
@@ -1680,6 +1708,7 @@ function officeFacts({
         ifFilled: ROUND(charged - gstPaid),
         saving: ROUND(atRisk),
       },
+      inOut: { clients: sideOf(inOutClients), vendors: sideOf(inOutVendors) },
       ourGstin: gstin || null,
       ourGstinValid: !!(gc && gc.ok),
       ourCompany: company.legalName || company.name || null,

@@ -12,6 +12,7 @@ import { ALL_TIME, isAllTime } from '../components/accounts/PeriodPicker.jsx';
 import Section from './office/Section.jsx';
 import ExpenseLedger from './office/ExpenseLedger.jsx';
 import GstPosition from './office/GstPosition.jsx';
+import GstInOut from './office/GstInOut.jsx';
 import GstPortalCompare from './office/GstPortalCompare.jsx'; // GST portal figures against our books, month by month
 import VendorBillsReview from './office/VendorBillsReview.jsx'; // P3 vendor portal bills
 import VendorModuleBillsReview from './office/VendorModuleBillsReview.jsx'; // vendor invoices / monthly bills of the vendor modules
@@ -206,6 +207,7 @@ export default function Office() {
       <Section id="overview" title="Money summary" sub={plabel ? `${plabel}${facts?.filtered ? ' · these filters' : ''}` : null} openSignal={openSig.overview}
         info="Every card follows the filters above and equals the table's TOTAL row. GST received from clients comes from Invoices and follows the period only. The two portal balances are typed in by hand — nothing is fetched from the portals.">
         <OfficeCards kpi={facts?.kpi} recon={rc} balances={portals?.balances} canManage={canManage} onSaveBalance={saveBalance} f={lf} setF={setLf} onJump={() => jump('expenses')} />
+        <GstInOut data={rc?.inOut} />
       </Section>
 
       <VendorBillsReview onChanged={changed} />
