@@ -869,9 +869,8 @@ router.post('/interviews/:id/feedback', async (req, res) => {
     data: {
       interviewStatus: 'FEEDBACK_SUBMITTED', interviewFeedback: feedback,
       interviewResult: result, interviewScore: score,
-      // Completing the interview moves the pipeline forward, but the
-      // select/reject decision stays a decision of its own.
-      ...(app.stage === 'INTERVIEW_SCHEDULED' ? { stage: 'INTERVIEW_COMPLETED' } : {}),
+      // Completing the interview moves the pipeline forward (to Interview done, with its history row, from any step before it -
+      // utils/stepSync.js does it for every screen), but the select/reject decision stays a decision of its own.
     },
   });
   const data = {

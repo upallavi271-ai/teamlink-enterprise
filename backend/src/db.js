@@ -201,5 +201,7 @@ prisma.$use(require('./utils/atsVersion').prismaHook());
 prisma.$use(require('./utils/responseMemo').prismaHook());
 // joined_: a person marked Joined on one requirement is closed on the others still waiting at Selected / Offer (utils/joinedElsewhere.js, 2026-11-28).
 require('./utils/joinedElsewhere').hook(prisma);
+// one fact, every screen: interview done -> the step; the step moved on -> the calendar; Joined -> the joining fields (utils/stepSync.js, 2026-11-28)
+require('./utils/stepSync').hook(prisma);
 
 module.exports = prisma;
