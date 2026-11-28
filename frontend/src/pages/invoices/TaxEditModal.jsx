@@ -3,7 +3,7 @@
 // receivable and the balance are worked out on every change. PATCH
 // /invoices/:id recalculates them on the server and refuses anything that
 // does not add up — e.g. money already received above the new net receivable.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { money2 } from './invFormat';
@@ -20,6 +20,22 @@ export default function TaxEditModal({ invoice, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [fail, setFail] = useState('');
   const received = Number(invoice.receivedAmount || 0);
+  // Invoice date, joining date, candidate name and salary - edited here too (saved on the candidate's ATS record).
+  const [det, setDet] = useState(null); // as loaded
+  const [d, setD] = useState({ invoiceDate: '', joiningDate: '', candidateName: '', offeredCtc: '' });
+  useEffect(() => {
+    api.get(`/invoices/${invoice.id}/details`).then((r) => {
+      setDet(r.data);
+      setD({ invoiceDate: r.data.invoiceDate || '', joiningDate: r.data.joiningDate || '', candidateName: r.data.candidateName || '', offeredCtc: r.data.offeredCtc != null ? String(r.data.offeredCtc) : '' });
+    }).catch(() => setDet(null));
+  }, [invoice.id]);
+  const setField = (k) => (e) => setD((c0) => ({ ...c0, [k]: e.target.value }));
+  // A new salary works the fee out again (the client's fee %); the amount can still be typed over.
+  const setSalary = (e) => {
+    const v = e.target.value;
+    setD((c0) => ({ ...c0, offeredCtc: v }));
+    if (det && Number(det.feePercent) > 0 && Number(v) > 0) setBase(String(Math.round((Number(v) * Number(det.feePercent)) / 100)));
+  };
   const b = Number(base);
   const c = taxOfForm(f, b > 0 ? b : 0);
 
@@ -32,6 +48,11 @@ export default function TaxEditModal({ invoice, onClose, onSaved }) {
     if (Object.keys(e).length) return;
     setBusy(true); setFail('');
     try {
+      let said = [];
+      if (det) {
+        const r0 = await api.patch(`/invoices/${invoice.id}/details`, d);
+        said = r0.data.changed || [];
+      }
       const res = await api.patch(`/invoices/${invoice.id}`, {
         ...taxPayload(f, b),
         tdsSection: f.tdsOn ? f.tdsSection : '',
@@ -42,10 +63,10 @@ export default function TaxEditModal({ invoice, onClose, onSaved }) {
       if (c.tds > 0.5 && ref && ref !== (invoice.tdsCertRef || '')) {
         await api.patch(`/invoices/${invoice.id}/tds-certificate`, { received: true, reference: ref });
       }
-      const d = res.data;
-      onSaved(d.unchanged && !ref
+      const out = res.data;
+      onSaved(out.unchanged && !ref && !said.length
         ? 'Nothing changed.'
-        : `Saved — GST ${money2(d.gst)}, TDS ${money2(d.tds)}, net receivable ${money2(d.total)} · ${d.status}.${d.movedMoney ? ` ${money2(d.movedMoney.amount)} of received money moved${d.movedMoney.reapplied.length ? ` to ${d.movedMoney.reapplied.map((x) => `${x.invoiceNumber || 'invoice'} (${money2(x.amount)})`).join(', ')}` : ''}${d.movedMoney.unappliedOnBank > 0.004 ? `; ${money2(d.movedMoney.unappliedOnBank)} is left unapplied on its bank line` : ''}.` : ''}`);
+        : `Saved — GST ${money2(out.gst)}, TDS ${money2(out.tds)}, net receivable ${money2(out.total)} · ${out.status}.${out.movedMoney ? ` ${money2(out.movedMoney.amount)} of received money moved${out.movedMoney.reapplied.length ? ` to ${out.movedMoney.reapplied.map((x) => `${x.invoiceNumber || 'invoice'} (${money2(x.amount)})`).join(', ')}` : ''}${out.movedMoney.unappliedOnBank > 0.004 ? `; ${money2(out.movedMoney.unappliedOnBank)} is left unapplied on its bank line` : ''}.` : ''}`);
     } catch (err) {
       setFail(err.response?.data?.error || 'The changes could not be saved.');
       setBusy(false);
@@ -54,7 +75,7 @@ export default function TaxEditModal({ invoice, onClose, onSaved }) {
 
   return (
     <Modal
-      title={`Edit GST / TDS — ${invoice.invoiceNumber || ''}`}
+      title={`Edit invoice — ${invoice.invoiceNumber || ''}`}
       size="wide"
       onClose={onClose}
       footer={(
@@ -64,6 +85,29 @@ export default function TaxEditModal({ invoice, onClose, onSaved }) {
         </>
       )}
     >
+      {det && (
+        <div className="invx-form" style={{ marginBottom: 10 }}>
+          <label className="field">
+            <span>Invoice date</span>
+            <input type="date" value={d.invoiceDate} onChange={setField('invoiceDate')} />
+          </label>
+          <label className="field">
+            <span>Joining date</span>
+            <input type="date" value={d.joiningDate} onChange={setField('joiningDate')} />
+          </label>
+          {det.hasCandidate && (
+            <label className="field">
+              <span>Candidate name</span>
+              <input value={d.candidateName} maxLength={120} onChange={setField('candidateName')} />
+            </label>
+          )}
+          <label className="field">
+            <span>Salary / annual CTC (₹)</span>
+            <input type="number" min="0" inputMode="numeric" value={d.offeredCtc} onChange={setSalary} />
+          </label>
+          <div className="small-muted" style={{ gridColumn: '1 / -1' }}>Joining date, name and salary are saved on the candidate&apos;s ATS record too.{Number(det.feePercent) > 0 ? ` Changing the salary works the amount out again at ${det.feePercent}%.` : ''}</div>
+        </div>
+      )}
       <div className="invx-form" style={{ marginBottom: 10 }}>
         <label className="field">
           <span>Amount before GST (₹)</span>

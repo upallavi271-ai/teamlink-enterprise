@@ -1606,6 +1606,80 @@ router.patch('/:id/joining-date', async (req, res) => {
   res.json({ joiningDate, applicationId: fx.app.id });
 });
 
+// THE DETAILS ON AN INVOICE (founder 2026-11-28, from the Edit form): invoice date, joining date, candidate name and salary.
+// The joining date, name and salary are the candidate's own ATS records, so the change shows in the ATS and everywhere else.
+async function detailsOf(invoice) {
+  const fx = (await placementFacts([invoice]))(invoice);
+  return {
+    fx,
+    view: {
+      invoiceDate: invoice.invoiceDate || null,
+      joiningDate: fx.joiningDate ? String(fx.joiningDate).slice(0, 10) : null,
+      candidateName: invoice.candidate?.name || null,
+      offeredCtc: fx.offeredCtc ?? null,
+      feePercent: invoice.feePercent ?? invoice.client?.agreementFeePercent ?? null,
+      hasCandidate: !!invoice.candidateId,
+      hasApplication: !!fx.app,
+    },
+  };
+}
+router.get('/:id/details', async (req, res) => {
+  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, include: { client: true, candidate: true, requirement: true } });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
+  return res.json((await detailsOf(invoice)).view);
+});
+router.patch('/:id/details', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
+  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, include: { client: true, candidate: true, requirement: true } });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
+  if (invoice.status === 'Cancelled') return res.status(400).json({ error: 'This invoice is cancelled - it cannot be edited.' });
+  const { fx, view } = await detailsOf(invoice);
+  const body = req.body || {};
+  const J = require('../utils/joining'); // eslint-disable-line global-require
+  const inv = {}; const app = {}; const changes = [];
+  for (const [key, label] of [['invoiceDate', 'invoice date'], ['joiningDate', 'joining date']]) {
+    if (body[key] === undefined || body[key] === '' || body[key] === view[key]) continue;
+    const day = String(body[key]);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(new Date(day).getTime())) return res.status(400).json({ error: `The ${label} is not a date.` });
+    const yp = J.dateYearProblem(day, label);
+    if (yp) return res.status(400).json({ error: yp });
+    changes.push(`${label} ${view[key] || 'none'} -> ${day}`);
+    if (key === 'invoiceDate') {
+      inv.invoiceDate = day;
+      // the due date keeps the same distance from the invoice date
+      const gap = Date.parse(invoice.dueDate) - Date.parse(invoice.invoiceDate);
+      if (Number.isFinite(gap)) inv.dueDate = new Date(Date.parse(day) + gap).toISOString().slice(0, 10);
+    } else {
+      if (!fx.app && !invoice.joiningDate) inv.joiningDate = day;
+      if (invoice.joiningDate) inv.joiningDate = day;
+      if (fx.app) app.joiningDate = day;
+    }
+  }
+  let name = null;
+  if (body.candidateName !== undefined && String(body.candidateName).trim() !== (view.candidateName || '')) {
+    name = String(body.candidateName).trim().replace(/\s+/g, ' ').slice(0, 120);
+    if (!invoice.candidateId) return res.status(400).json({ error: 'This invoice has no candidate linked.' });
+    if (name.length < 2) return res.status(400).json({ error: 'Enter the candidate name.' });
+    changes.push(`candidate name ${view.candidateName} -> ${name}`);
+  }
+  if (body.offeredCtc !== undefined && body.offeredCtc !== '' && Number(body.offeredCtc) !== Number(view.offeredCtc)) {
+    const ctc = Number(body.offeredCtc);
+    if (!(ctc > 0)) return res.status(400).json({ error: 'The annual salary must be more than zero.' });
+    inv.offeredCtc = ctc;
+    if (fx.app) app.offeredCtc = ctc;
+    changes.push(`salary ${view.offeredCtc ?? 'none'} -> ${ctc}`);
+  }
+  if (!changes.length) return res.json({ changed: [] });
+  await prisma.$transaction([
+    ...(Object.keys(inv).length ? [prisma.invoice.update({ where: { id: invoice.id }, data: inv })] : []),
+    ...(Object.keys(app).length ? [prisma.application.update({ where: { id: fx.app.id }, data: app })] : []),
+    ...(name ? [prisma.candidate.update({ where: { id: invoice.candidateId }, data: { name } })] : []),
+  ]);
+  await logAudit({ userId: req.user.id, action: 'Invoice details edited', entity: 'Invoice', entityId: invoice.id, toValue: `${invoice.invoiceNumber || ''} · ${changes.join(' · ')}` });
+  return res.json({ changed: changes });
+});
+
 router.get('/:id/document', async (req, res) => {
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, include: DOC_INCLUDE });
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
