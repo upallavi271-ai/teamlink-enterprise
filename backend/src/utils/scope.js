@@ -618,9 +618,20 @@ function applicationWhere(user, opts = {}) {
   // utils/applicationOwner.js): a TL / STL sees the applications they own even on a requirement with no TL yet, another team's seat or
   // the other side of the Medical / Non IT split. Nothing else widens.
   const s = atsScopeOf(user);
-  if (!s.global && ['TL', 'STL'].includes(s.atsRole) && s.userId && !isBdeTl(user)) return { OR: [{ ownerRecruiterId: s.userId }, where] };
+  if (!s.global && ['TL', 'STL'].includes(s.atsRole) && s.userId && !isBdeTl(user)) {
+    // THE OLD WORK OF THE TL'S DEPARTMENT (founder 2026-11-28: "old data vundhi kadha, adhi kuda TLs ki kanipinchali, vallaki only new
+    // data matramey kanipisthundhi"): work from before the team seats (before October 2026) carries no seat, so the seat rule hid it.
+    // A TL also sees their own department's applications from before then - Medical / Non IT apart (the department list), and in
+    // Education whatever belongs to the other team's people or seats stays with that team (eduSplitWhere).
+    const depts = (s.departments || []).filter((d) => d && !/^bde$/i.test(d));
+    const old = depts.length
+      ? { AND: [{ createdAt: { lt: OLD_WORK_BEFORE } }, { requirement: { department: { in: depts } } }, ...(edu ? [eduSplitWhere(edu)] : [])] }
+      : null;
+    return { OR: [{ ownerRecruiterId: s.userId }, ...(old ? [old] : []), where] };
+  }
   return where;
 }
+const OLD_WORK_BEFORE = new Date('2026-10-01T00:00:00+05:30');
 function applicationWhereBase(user) {
   const s = atsScopeOf(user);
   if (s.global) return {};

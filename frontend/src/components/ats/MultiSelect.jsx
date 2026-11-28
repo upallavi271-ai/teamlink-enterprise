@@ -34,6 +34,7 @@ export default function MultiSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [flip, setFlip] = useState(false);
+  const popRef = useRef(null);
   const [q, setQ] = useState('');
   const [act, setAct] = useState(0);
   const box = useRef(null);
@@ -61,7 +62,14 @@ export default function MultiSelect({
     if (!open || !box.current) return;
     setQ(''); setAct(0);
     const r = box.current.getBoundingClientRect();
-    setFlip(r.left + 290 > window.innerWidth);
+    // open to the left when the list would pass the right edge of what holds it - the window, or a pop-up / panel that clips
+    // (2026-11-28: in the dashboard's "Open requirements" pop-up the counts were cut off)
+    let edge = window.innerWidth;
+    for (let el = box.current.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (/(auto|scroll|hidden|clip)/.test(window.getComputedStyle(el).overflowX)) { edge = Math.min(edge, el.getBoundingClientRect().right); break; }
+    }
+    const w = popRef.current ? popRef.current.getBoundingClientRect().width : 290;
+    setFlip(r.left + w > edge - 8);
   }, [open]);
   useEffect(() => {
     if (!open) { flush(); return undefined; }
@@ -109,7 +117,7 @@ export default function MultiSelect({
         <span aria-hidden="true">{open ? '▴' : '▾'}</span>
       </button>
       {open && (
-        <div className={`msel-pop${flip ? ' is-flip' : ''}`} role="listbox" aria-multiselectable="true" aria-label={label} tabIndex={-1} onKeyDown={onKey}>
+        <div ref={popRef} className={`msel-pop${flip ? ' is-flip' : ''}`} role="listbox" aria-multiselectable="true" aria-label={label} tabIndex={-1} onKeyDown={onKey}>
           <div className="msel-sheet-head"><b>{label}</b><button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>Done</button></div>
           {showSearch && (
             <input className="msel-search" type="text" autoFocus autoComplete="off" value={q} placeholder="Type to search" aria-label={`Search ${label}`} onChange={(e) => { setQ(e.target.value); setAct(0); }} onKeyDown={onKey} />
