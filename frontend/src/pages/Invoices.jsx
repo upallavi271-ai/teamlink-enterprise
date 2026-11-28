@@ -26,6 +26,7 @@ import AccountsImport from '../components/AccountsImport.jsx';
 import PaymentModal from './invoices/PaymentModal.jsx';
 import NewJoinModal from './invoices/NewJoinModal.jsx';
 import NewInvoiceModal from './invoices/NewInvoiceModal.jsx';
+import GenerateInvoiceModal from './invoices/GenerateInvoiceModal.jsx';
 import AddClientModal from './invoices/AddClientModal.jsx';
 import ClientAccountModal from './invoices/ClientAccountModal.jsx';
 // B2 — the Credit & debit notes tab.
@@ -238,6 +239,7 @@ export default function Invoices() {
   const [openList, setOpenList] = useKeptState('invoices.openInv', []);
   const openInv = useMemo(() => new Set(openList), [openList]);
   const toggleInv = useCallback((k) => setOpenList((o) => (o.includes(k) ? o.filter((x) => x !== k) : [...o, k].slice(-50))), [setOpenList]);
+  const [generate, setGenerate] = useState(false); // pick client + month, candidates come in by themselves
   const [viewFor, setViewFor] = useState(null); // null | a client invoice (the invoice window)
   const bellRef = useRef(null);
   const noticeRef = useRef(null);
@@ -659,7 +661,27 @@ export default function Invoices() {
     canJoin,
     onPay: (g) => setPayFor({ id: g.id }),
     onAccount: (g) => setAccountFor({ clientId: g.clientId, client: g.client }),
-    onView: (g) => setViewFor(g),
+    // View opens the invoice in its OWN browser tab (founder 2026-11-28); if the browser blocks the tab, the window on this page is used.
+    onView: (g) => {
+      const w = window.open('', '_blank');
+      if (!w) { setViewFor(g); return; }
+      w.document.title = `Invoice ${g.invoiceNumber}`;
+      w.document.body.textContent = 'Opening the invoice…';
+      api.get('/invoices/group/document', { params: { ids: g.ids.join(',') } })
+        .then((r) => {
+          const draw = (mode) => {
+            const { style, inner } = invoiceDocumentHtml(r.data, mode);
+            w.document.head.innerHTML = `<meta charset="utf-8"><style>${style}
+.tab-bar{display:flex;gap:8px;padding:10px;position:sticky;top:0;background:#fff;border-bottom:1px solid #ddd}.tab-bar button{padding:6px 14px;cursor:pointer}@media print{.tab-bar{display:none}}</style>`;
+            w.document.title = `Invoice ${r.data.invoiceNumber}`;
+            w.document.body.innerHTML = `<div class="tab-bar"><button data-m="client">Client copy</button><button data-m="internal">Internal copy</button><button data-print="1">Print / Save as PDF</button></div>${inner}`;
+            w.document.querySelectorAll('.tab-bar button[data-m]').forEach((b) => { b.onclick = () => draw(b.getAttribute('data-m')); b.style.fontWeight = b.getAttribute('data-m') === mode ? '700' : '400'; });
+            w.document.querySelector('.tab-bar button[data-print]').onclick = () => w.print();
+          };
+          draw('client');
+        })
+        .catch((e) => { w.document.body.textContent = e.response?.data?.error || 'The invoice could not be opened.'; });
+    },
     onChanged: load,
     wa: waOn ? { sel: waSel, toggle: (id) => setWaSel((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }) } : null,
   };
@@ -805,6 +827,7 @@ export default function Invoices() {
             )}
           </div>
           {canCreate && <button type="button" className="btn btn-gold" onClick={() => setJoinFor('')}>+ New join</button>}
+          {canCreate && <button type="button" className="btn btn-gold inv-hbtn" onClick={() => setGenerate(true)} title="Pick a client and a month: the joined candidates come in, you check them and generate">Generate invoices</button>}
           {canCreate && <button type="button" className="btn inv-hbtn" onClick={() => setNewInvoice(true)} title="Raise an invoice for any client in your list">+ New invoice</button>}
           {canCreate && <button type="button" className="btn inv-hbtn" onClick={() => setAddClient(true)} title="Add a client to the client list">+ Add client</button>}
           {canPay && <button type="button" className="btn inv-hbtn" onClick={() => setPayFor({ id: null })}>+ Payment</button>}
@@ -1361,6 +1384,7 @@ export default function Invoices() {
           onSaved={(id, msg) => { setNewInvoice(false); setFlash(msg); load(); focusRow(id); }}
         />
       )}
+      {generate && <GenerateInvoiceModal rows={data?.rows || []} onClose={() => setGenerate(false)} onDone={load} />}
       {addClient && (
         <AddClientModal
           onClose={() => setAddClient(false)}
