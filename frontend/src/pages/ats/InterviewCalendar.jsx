@@ -1310,6 +1310,7 @@ export default function InterviewCalendar() {
                           <StatusChip status={r.statusLabel} tone={{ RESCHEDULED: 'yellow', FEEDBACK_SUBMITTED: 'green', NO_SHOW: 'red', CANCELLED: 'grey' }[r.status]} />
                           {isLateFeedback(r) ? <> <StatusChip status="Feedback late" tone="red" /></> : slotOverdue(r) && <> <StatusChip status="Waiting for feedback" tone="yellow" /></>}
                           {r.cancelReason && <div className="ivv3-sub2" title={r.cancelReason}>{r.cancelReason}</div>}
+                          <RowFeedback r={r} />
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>
                           {!canRun ? <span className="small-muted">—</span> : <Actions row={r} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} canBook={canAct} onStarted={load} />}
@@ -1438,6 +1439,24 @@ export default function InterviewCalendar() {
 
 // The prototype's ivActionsHtml(): what you can do depends entirely on where the
 // interview currently is.
+// THE FEEDBACK ON THE ROW ITSELF (founder 2026-11-28: "screen meedhaney display avvali, feedback"): the decision and the words, without
+// opening Edit feedback. The client's feedback first, else the panel's, else what the interview record says; the full text on hover.
+function RowFeedback({ r }) {
+  const fb = r.clientFeedback || r.internalFeedback || null;
+  const text = String((fb && fb.overall) || r.feedback || '').replace(/\s+/g, ' ').trim();
+  const rec = String((fb && fb.recommendation) || r.result || '').trim();
+  if (!text && !rec) return null;
+  const tone = /reject|not selected/i.test(rec) ? 'bad' : /select|recommend|hire/i.test(rec) ? 'ok' : '';
+  // "Selected with 38k" already says Selected: the words alone, in the decision's colour
+  const says = rec && text.toLowerCase().startsWith(rec.toLowerCase());
+  return (
+    <div className="ivv3-fb" title={[says ? null : rec, text].filter(Boolean).join(' - ')}>
+      {rec && !says && <b className={`ivv3-fb-rec ${tone ? `ivv3-fb-${tone}` : ''}`}>{rec}</b>}
+      {text && text.toLowerCase() !== rec.toLowerCase() && <span className={says && tone ? `ivv3-fb-${tone}` : ''}>{text}</span>}
+    </div>
+  );
+}
+
 function Actions({
   row, advance, setDialog, onNextRound = null, canFeedback = true, canBook = true, onStarted = null,
 }) {
