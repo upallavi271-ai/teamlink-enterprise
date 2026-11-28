@@ -42,7 +42,7 @@ import { allowedKeys, deptKey, importJobsForDepartment } from '../import-jobs.mj
 test('which departments a desk sees', () => {
   assert.deepEqual(allowedKeys('Education'), ['educ']);
   assert.deepEqual(allowedKeys('Educational'), ['educ']);
-  assert.deepEqual(allowedKeys('Manufacturing'), ['manu']);
+  assert.deepEqual(allowedKeys('Manufacturing').sort(), ['manu', 'medi', 'noni']);
   assert.deepEqual(allowedKeys('Medical').sort(), ['medi', 'noni']);
   assert.deepEqual(allowedKeys('Non IT').sort(), ['medi', 'noni']);
   assert.deepEqual(allowedKeys('Non IT Medical').sort(), ['medi', 'noni']);
@@ -87,4 +87,9 @@ test('a typed word narrows it; admin / signed-out / no department are left to th
   assert.equal((await run2({ role: 'admin' })).passed, true);
   assert.equal((await run2({ cookie: '' })).passed, true);
   assert.equal((await run2({ dept: '' })).passed, true);
+});
+
+test("a Manufacturing recruiter gets the Manufacturing and the Medical roles, not Education", async () => {
+  const { sent } = await run2({ dept: "Manufacturing" });
+  assert.deepEqual(sent.jobs.map((j) => j.id).sort(), ["tl_f1", "tl_m0", "tl_m1", "tl_m2", "tl_n1"]);
 });

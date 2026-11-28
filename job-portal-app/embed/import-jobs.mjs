@@ -54,14 +54,14 @@ export function importJobsMiddleware() {
  * both, medical vallaki entire medical"): the list the import wizard offers is the caller's department - every requirement of it, open AND closed -
  * and not the first 80 of everybody's. Admin sees every department. Unknown / no department: the portal's own answer is left as it is.
  *   Education      -> Education
- *   Manufacturing  -> Manufacturing
+ *   Manufacturing  -> Manufacturing + Medical + Non IT Medical
  *   Medical        -> Medical + Non IT Medical   (the entire medical desk)
  *   Non IT         -> Medical + Non IT Medical   (both medical and non-IT roles)
  *   anything else  -> its own department
  * Departments are compared on their first four letters, like the desks already are (Education / Educational, Manufacture / Manufacturing).
  */
 export const deptKey = (d) => String(d || '').replace(/[^A-Za-z]/g, '').toLowerCase().slice(0, 4);
-const GROUPS = { noni: ['noni', 'medi'], medi: ['medi', 'noni'] };
+const GROUPS = { noni: ['noni', 'medi'], medi: ['medi', 'noni'], manu: ['manu', 'medi', 'noni'] };
 export const allowedKeys = (dept) => { const k = deptKey(dept); return k ? (GROUPS[k] || [k]) : []; };
 
 /** deps: { resolveSession(token), withUser, cookieOf, cookieName } - answers the list itself for a department-scoped caller, else calls next(). */
