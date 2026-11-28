@@ -304,6 +304,17 @@ export default function ExpenseLedger({
                 <td className="oe-nowrap">
                   {r.bill && r.bill.onServer && <button type="button" className="link-btn" onClick={() => setBill(r)}>View</button>}
                   {r.bill && !r.bill.onServer && <span className="cell-muted" title={`Only the file name is on record: ${r.bill.name}`}>name only</span>}
+                  {r.bill && canManage && (
+                    <> <button
+                      type="button"
+                      className="link-btn"
+                      style={{ color: 'var(--red)' }}
+                      onClick={async () => {
+                        if (!window.confirm(`Remove the proof "${r.bill.name}" from ${r.expenseCode || 'this expense'}? The expense and any bank line stay.`)) return;
+                        try { await api.delete(`/office-expenses/${r.id}/proof`); onChanged(); } catch (e) { window.alert(e.response?.data?.error || 'The proof could not be removed.'); }
+                      }}
+                    >Remove proof</button></>
+                  )}
                   {/* The bank line is shown EXPLICITLY (date, amount, matched or not) from the one truth table - never a bare "bank line". It sits beside a bill file when both exist. */}
                   {r.bankLine && <div className={`oe-lg-prooftext oe-pt-${(r.payment && r.payment.tone) || 'grey'}`} title={r.payment ? r.payment.reason : 'An imported bank statement line is linked'}>{(r.payment && r.payment.proof && r.payment.proof.text) || 'Bank line'}</div>}
                   {!r.bankLine && r.proofLink && <span className="cell-muted oe-pay-bad" title={r.payment ? r.payment.reason : 'The linked bank line cannot be used'}>{(r.payment && r.payment.proof && r.payment.proof.text) || 'link broken'}</span>}
