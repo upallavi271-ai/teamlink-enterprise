@@ -311,7 +311,7 @@ async function remindExpiry({ now = Date.now(), notify, force = false } = {}) {
     if (m.kind === 'overdue') { title = `⏰ Expired: ${what}, ${it.employeeName}`; message = `${what} of ${who} expired on ${pretty(end)} (${-left} day${-left === 1 ? '' : 's'} ago). Renew it and update the date.`; }
     else if (m.kind === 'today') { title = `📄 Expires today: ${what}, ${it.employeeName}`; message = `${what} of ${who} expires today (${pretty(end)}).`; }
     else { title = `📄 Expires in ${left} day${left === 1 ? '' : 's'}: ${what}, ${it.employeeName}`; message = `${what} of ${who} expires on ${pretty(end)}. Ask for the renewed copy and update the date.`; }
-    if (hr.length) await send(hr, { title, message, open: '/doc-register' }).catch(() => null); // eslint-disable-line no-await-in-loop
+    if (hr.length) await send(hr, { title, message, open: '/employee-services?tab=documents&section=expiry' }).catch(() => null); // eslint-disable-line no-await-in-loop
     if (st.tellEmployee && e.userId) {
       const mine = m.kind === 'overdue'
         ? { title: `⏰ Your ${it.title} has expired`, message: `Your ${what} expired on ${pretty(end)}. Please get it renewed and give the new copy to HR.` }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin, canManageServices } from '../../permissions';
@@ -12,6 +13,12 @@ import AudiencePicker, { DeliverVia, EMPTY_AUDIENCE, audienceReady } from '../..
 import {
   ComposeModal, Field, Row, CheckLine, useSubmit,
 } from '../../components/ComposeForm.jsx';
+import DocumentTracking, { PoliciesToAccept } from './DocRegister.jsx';
+import './DocRegister.css';
+
+// Expiry dates, NDAs, policy versions and their reminders live inside this tab (founder 2026-11-28), for HR / Admin only
+// (the server enforces the same rule on /api/doc-register). ?section= opens one directly, e.g. from a bell notice.
+const SECTIONS = [['documents', 'Documents'], ['expiry', 'Expiry & NDAs'], ['policies', 'Policy versions'], ['reminders', 'Reminders']];
 
 // A policy document is company-wide, not per employee, so its filters are its
 // own: title, category, and — for HR, who sees unpublished ones — whether it
@@ -85,6 +92,10 @@ export default function Documents() {
   // gone on offering them every button on this screen. Both halves, because
   // the screen is an administration screen AND these are writes.
   const isHR = hasHrmsAdmin(user) && canManageServices(user);
+  const [params, setParams] = useSearchParams();
+  const canTrack = [user.role, user.hrmsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR'].includes(r));
+  const section = canTrack && SECTIONS.some(([k]) => k === params.get('section')) ? params.get('section') : 'documents';
+  const goSection = (k) => setParams(k === 'documents' ? { tab: 'documents' } : { tab: 'documents', section: k });
   const [documents, setDocuments] = useState([]);
   const [df, setDf] = useState(EMPTY_DOC_FILTERS);
   const [sort, setSort] = useState('new');
@@ -135,6 +146,16 @@ export default function Documents() {
         <h1>Documents</h1>
       </div>
 
+      {canTrack && (
+        <div className="drg">
+          <div className="drg-tabs drg-top" role="tablist" aria-label="Documents sections">
+            {SECTIONS.map(([k, label]) => <button key={k} type="button" role="tab" aria-selected={section === k} className={`drg-tab${section === k ? ' on' : ''}`} onClick={() => goSection(k)}>{label}</button>)}
+          </div>
+        </div>
+      )}
+      {section !== 'documents' ? <DocumentTracking section={section} onSection={goSection} /> : (
+      <>
+      {!canTrack && <PoliciesToAccept />}
       {/* hrms-24 §3 — each employee's documents on file and policy
           acknowledgments, in this login's scope (own only without the
           export permission): Export all · Export one employee; Import is
@@ -234,6 +255,8 @@ export default function Documents() {
       </div>
       {shown.length > 0 && <Pager page={page} noun="documents" />}
       {chainFor && <ApprovalChainModal type="document" recordId={chainFor.id} onClose={() => setChainFor(null)} onChanged={load} />}
+      </>
+      )}
     </div>
   );
 }

@@ -164,7 +164,7 @@ async function recordVersion(user, policyId, body) {
       const ids = w.people.filter((x) => x.state === 'Needs re-acknowledgement' && x.userId).map((x) => x.userId);
       await require('./notify').notifyUsers(ids, { // eslint-disable-line global-require
         title: `📘 Policy updated: ${p.title} (version ${next})`,
-        message: `${p.title} has a new version. Please read it and accept it again.`, exceptUserId: user ? user.id : undefined, open: '/doc-register',
+        message: `${p.title} has a new version. Please read it and accept it again.`, exceptUserId: user ? user.id : undefined, open: '/employee-services?tab=documents',
       });
       told = ids.length;
     } catch { /* the version is saved either way */ }
@@ -267,7 +267,7 @@ async function remindReviews({ now = Date.now(), notify, hrUserIds } = {}) {
     if (marks[m.mark]) continue; // eslint-disable-line no-continue
     const head = m.kind === 'overdue' ? `⏰ Policy review overdue: ${title}` : m.kind === 'today' ? `📘 Policy review due today: ${title}` : `📘 Policy review due in ${left} day${left === 1 ? '' : 's'}: ${title}`;
     const msg = `${title} is to be reviewed every ${r.reviewEveryMonths} month${r.reviewEveryMonths === 1 ? '' : 's'}${r.ownerName ? ` (owner ${r.ownerName})` : ''}. ${m.kind === 'overdue' ? `The review was due on ${pretty(next)}.` : `The next review is on ${pretty(next)}.`} Open the policy and press "Mark as reviewed" when it is done.`;
-    await send(hr, { title: head, message: msg, open: '/doc-register' }).catch(() => null); // eslint-disable-line no-await-in-loop
+    await send(hr, { title: head, message: msg, open: '/employee-services?tab=documents&section=policies' }).catch(() => null); // eslint-disable-line no-await-in-loop
     marks[m.mark] = today;
     await prisma.policyRegister.update({ where: { id: r.id }, data: { remindState: JSON.stringify(marks) } }); // eslint-disable-line no-await-in-loop
     told.push({ policyId: r.policyId, kind: m.kind });

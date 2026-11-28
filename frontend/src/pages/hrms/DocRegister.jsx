@@ -3,10 +3,11 @@ import api from '../../api';
 import './DocRegister.css';
 
 // ---------------------------------------------------------------------------
-// DOCUMENT EXPIRY, NDAs AND POLICY VERSIONS (founder 2026-11-25, from the HR audit questionnaire). HRMS > Expiry & policies.
-// ADDITIVE: it only talks to /api/doc-register (backend/src/routes/docRegister.js) and changes no employee record, uploaded file,
-// policy record or old acknowledgement. HR / Admin see three tabs (Expiry & agreements, Policies, Settings); any other login that
-// arrives here from a bell notice sees only the policies it has to accept again.
+// DOCUMENT EXPIRY, NDAs AND POLICY VERSIONS, shown INSIDE Employee Services > Documents (pages/hrms/Documents.jsx).
+// Founder 2026-11-28: "there is a Documents module, put these features in it" - there is no separate menu entry or page.
+// It only talks to /api/doc-register (backend/src/routes/docRegister.js) and changes no employee record, uploaded file, policy
+// record or old acknowledgement. HR / Admin get the sections Expiry & NDAs, Policy versions and Reminders; everybody else sees,
+// above the document list, only the policies they have to accept again.
 // ---------------------------------------------------------------------------
 
 const errOf = (e, fallback) => (e.response && e.response.data && e.response.data.error) || fallback;
@@ -288,7 +289,7 @@ function PolicyDetail({ id, onBack, onChanged }) {
           <label className="drg-wide">What changed<textarea rows="3" value={ver.summary} onChange={(e) => setVer({ ...ver, summary: e.target.value })} required /></label>
           <label>In force from<input type="date" value={ver.effectiveOn} onChange={(e) => setVer({ ...ver, effectiveOn: e.target.value })} required /></label>
           <label className="drg-check"><input type="checkbox" checked={ver.requireReack} onChange={(e) => setVer({ ...ver, requireReack: e.target.checked })} /> Everyone has to accept it again</label>
-          <div className="drg-wide small-muted">This keeps a history. The policy itself is changed on the Documents page as before.</div>
+          <div className="drg-wide small-muted">This keeps a history. The policy itself is changed in the Documents list as before.</div>
           <div className="drg-wide drg-actions"><button type="submit" className="btn btn-primary btn-sm" disabled={busy}>Record version</button></div>
         </form>
         <form className="drg-form" onSubmit={(e) => { e.preventDefault(); act(() => api.put(`/doc-register/policies/${id}/review`, { reviewEveryMonths: plan.months === '' ? null : Number(plan.months), ownerName: plan.owner }), 'Review plan saved.'); }}>
@@ -424,25 +425,27 @@ function SettingsTab({ onChanged }) {
   );
 }
 
-// ---- the employee's own list ----------------------------------------------------------------------------------------------------------
-function MyPolicies() {
-  const [rows, setRows] = useState(null);
+// ---- the employee's own list (shown above the Documents list only when something is waiting) -------------------------------
+export function PoliciesToAccept() {
+  const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
-  const load = useCallback(() => { api.get('/doc-register/my-policies').then((r) => setRows(r.data.rows)).catch((e) => setError(errOf(e, 'This could not be loaded.'))); }, []);
+  // a failed look-up shows nothing: the Documents list below keeps working as before
+  const load = useCallback(() => { api.get('/doc-register/my-policies').then((r) => setRows(r.data.rows || [])).catch(() => setRows([])); }, []);
   useEffect(() => { load(); }, [load]);
   async function accept(r) {
     setError(''); setMsg('');
     try { await api.post(`/doc-register/policies/${r.policyId}/reack`); setMsg(`Thank you. You accepted version ${r.currentVersion} of ${r.title}.`); load(); } catch (e) { setError(errOf(e, 'This could not be saved.')); }
   }
+  if (!rows.length && !msg && !error) return null;
   return (
-    <div>
+    <div className="drg">
       {msg && <div className="drg-ok" role="status">{msg}</div>}
       {error && <div className="error-text" role="alert">{error}</div>}
-      {rows && !rows.length && <div className="small-muted drg-empty">You have no policy to accept again.</div>}
-      {(rows || []).map((r) => (
+      {!!rows.length && <h3 className="drg-h3">Policies to accept again</h3>}
+      {rows.map((r) => (
         <div key={r.policyId} className="drg-mine">
-          <div><b>{r.title}</b> <span className="small-muted">Version {r.currentVersion} · you accepted version {r.readVersion}</span><div>{r.summary}</div><div className="small-muted">Read the policy in Employee Services &gt; Documents, then accept it here.</div></div>
+          <div><b>{r.title}</b> <span className="small-muted">Version {r.currentVersion} · you accepted version {r.readVersion}</span><div>{r.summary}</div><div className="small-muted">Read the policy in the list below, then accept it here.</div></div>
           <button type="button" className="btn btn-primary btn-sm" onClick={() => accept(r)}>I have read it and accept</button>
         </div>
       ))}
@@ -450,50 +453,37 @@ function MyPolicies() {
   );
 }
 
-// ---- the page ------------------------------------------------------------------------------------------------------------------------------
-export default function DocRegister() {
-  const [mode, setMode] = useState(null); // 'hr' | 'employee'
-  const [tab, setTab] = useState('expiry');
+// ---- the HR sections of Documents ------------------------------------------------------------------------------------------------
+export default function DocumentTracking({ section, onSection }) {
   const [ov, setOv] = useState(null);
+  const [error, setError] = useState('');
   const loadOv = useCallback(() => {
-    api.get('/doc-register/overview').then((r) => { setOv(r.data); setMode('hr'); }).catch((e) => { if (e.response && e.response.status === 403) setMode('employee'); else setMode('hr'); });
+    api.get('/doc-register/overview').then((r) => setOv(r.data)).catch((e) => setError(errOf(e, 'The numbers could not be loaded.')));
   }, []);
   useEffect(() => { loadOv(); }, [loadOv]);
-
-  if (!mode) return <div className="drg"><div className="small-muted">Loading…</div></div>;
-  if (mode === 'employee') {
-    return (
-      <div className="drg">
-        <div className="page-head"><div><h1>Policies to accept again</h1><div className="page-sub">A policy you accepted earlier has a newer version. Please read it and accept it again.</div></div></div>
-        <MyPolicies />
-      </div>
-    );
-  }
   const items = ov ? ov.items : null;
   return (
     <div className="drg">
-      <div className="page-head">
-        <div>
-          <h1>Document expiry &amp; policies</h1>
-          <div className="page-sub">What expires and when, who has an NDA, and each policy’s versions, review date and who accepted which version.</div>
-        </div>
-      </div>
-      {ov && !ov.settings.enabled && <div className="drg-off" role="status"><b>Reminders are switched OFF.</b> Nobody is reminded or told yet. Everything else here works. Open <button type="button" className="drg-link" onClick={() => setTab('settings')}>Settings</button> to switch them on.</div>}
-      {ov && (
+      {error && <div className="error-text" role="alert">{error}</div>}
+      {ov && !ov.settings.enabled && section !== 'reminders' && (
+        <div className="drg-off" role="status"><b>Reminders are switched OFF.</b> Nobody is reminded or told yet. Everything else here works. Open <button type="button" className="drg-link" onClick={() => onSection('reminders')}>Reminders</button> to switch them on.</div>
+      )}
+      {ov && section === 'expiry' && (
         <div className="drg-kpis">
           <div className="drg-kpi" title="Tracked items past their expiry date"><b className={items.expired ? 'drg-late' : ''}>{items.expired}</b><span>Expired documents</span></div>
           <div className="drg-kpi"><b>{items.soon}</b><span>Due soon ({ov.settings.soonDays} days)</span></div>
+        </div>
+      )}
+      {ov && section === 'policies' && (
+        <div className="drg-kpis">
           <div className="drg-kpi"><b className={ov.policies.reviewDue ? 'drg-late' : ''}>{ov.policies.reviewDue}</b><span>Policy reviews due</span></div>
           <div className="drg-kpi"><b>{ov.policies.needsReack}</b><span>People to accept a policy again</span></div>
           <div className="drg-kpi"><b className={ov.policies.mandatoryPending ? 'drg-late' : ''}>{ov.policies.mandatoryPending}</b><span>Mandatory policies not accepted</span></div>
         </div>
       )}
-      <div className="drg-tabs drg-top" role="tablist">
-        {[['expiry', 'Expiry & agreements'], ['policies', 'Policies'], ['settings', 'Settings']].map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`drg-tab${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{l}</button>)}
-      </div>
-      {tab === 'expiry' && <ExpiryTab onChanged={loadOv} />}
-      {tab === 'policies' && <PoliciesTab onChanged={loadOv} />}
-      {tab === 'settings' && <SettingsTab onChanged={loadOv} />}
+      {section === 'expiry' && <ExpiryTab onChanged={loadOv} />}
+      {section === 'policies' && <PoliciesTab onChanged={loadOv} />}
+      {section === 'reminders' && <SettingsTab onChanged={loadOv} />}
     </div>
   );
 }
