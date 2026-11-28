@@ -2474,8 +2474,7 @@ async function ensureExpenseCodes() {
 // required there, and the mode must be one of the seven the modal offers.
 function quickProblem(body, isNew) {
   const has = (k) => String(body[k] ?? '').trim().length > 0;
-  if (isNew || body.description !== undefined) { if (!has('description')) return 'Description is required'; }
-  // Founder 2026-11-28: only the date, the description and the amount are needed - vendor, payment mode and category are optional.
+  // Founder 2026-11-28: only the date and the amount are needed - description, vendor, payment mode and category are optional.
   if (has('paymentMode')) {
     if (!LEDGER_MODES.includes(body.paymentMode) && !EXP_MODES.includes(body.paymentMode)) return `Payment mode must be one of: ${LEDGER_MODES.join(', ')}`;
   }

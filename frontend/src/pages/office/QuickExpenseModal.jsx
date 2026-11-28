@@ -113,7 +113,6 @@ export default function QuickExpenseModal({
   const errors = useMemo(() => {
     const e = {};
     if (!/^\d{4}-\d{2}-\d{2}$/.test(f.expenseDate)) e.expenseDate = 'Pick the expense date';
-    if (!f.description.trim()) e.description = 'Say what it was for';
     if (!(amount > 0)) e.amount = 'Amount must be more than zero';
     else if (amount > 100000000) e.amount = 'That amount looks too large';
     if (!(gstPct >= 0 && gstPct <= 100)) e.gstPct = 'GST % is 0 to 100';
@@ -271,7 +270,7 @@ export default function QuickExpenseModal({
           {bad('category') && <em className="oe-qx-err">{errors.category}</em>}
         </div>
 
-        <label className={`field oe-qx-full${bad('description') ? ' oe-qx-bad' : ''}`} data-invalid={inv('description')} onBlur={touch('description')}><span>Description</span>
+        <label className={`field oe-qx-full${bad('description') ? ' oe-qx-bad' : ''}`} data-invalid={inv('description')} onBlur={touch('description')}><span>Description (optional)</span>
           <input value={f.description} maxLength={500} onChange={set('description')} placeholder="What the money was for — e.g. Cab to client meeting, Madhapur" aria-invalid={bad('description') ? true : undefined} />
           {bad('description') && <em className="oe-qx-err">{errors.description}</em>}
         </label>
