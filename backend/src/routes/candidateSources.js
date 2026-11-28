@@ -212,7 +212,7 @@ async function cachedFacets(user, filters, role, key) {
 async function build(req) {
   const user = req.user;
   const { getListState } = require('../utils/candidateListCache'); // eslint-disable-line global-require
-  const st = require('../utils/profileWindow').viewOfState(await getListState());
+  const st = await getListState();
   const { filters, q } = filtersOf(user, req.query);
   const today = istDay(new Date());
   const onlyReal = String(q.onlyReal || '') === '1';

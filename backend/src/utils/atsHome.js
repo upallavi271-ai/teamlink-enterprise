@@ -256,13 +256,9 @@ async function loadWorld(appWhere, reqWhere, today) {
   const t0 = Date.now();
   // The whole company (no scope filter): plain SQL reads, ~3x faster than
   // the same rows through Prisma's object mapping.
-  // The company-wide view with only the profiles-from-2025 rule on it (utils/profileWindow.js) still takes the fast read, then the date.
-  const win = require('./profileWindow').applicationWindowWhere(); // eslint-disable-line global-require
-  const onlyWin = !!win && JSON.stringify(appWhere || {}) === JSON.stringify(win);
-  const global = onlyWin || !Object.keys(appWhere || {}).length;
-  const fromMs = onlyWin ? win.createdAt.gte.getTime() : null;
+  const global = !Object.keys(appWhere || {}).length;
   const [apps, reqs] = await Promise.all([
-    global ? rawAll('Application', Object.keys(APP_SELECT), APP_DATES).then((rows) => (fromMs == null ? rows : rows.filter((a) => !a.createdAt || a.createdAt.getTime() >= fromMs))) : prisma.application.findMany({ where: appWhere, select: APP_SELECT }),
+    global ? rawAll('Application', Object.keys(APP_SELECT), APP_DATES) : prisma.application.findMany({ where: appWhere, select: APP_SELECT }),
     prisma.requirement.findMany({ where: reqWhere, select: REQ_SELECT }),
   ]);
   const reqById = new Map(reqs.map((r) => [r.id, r]));

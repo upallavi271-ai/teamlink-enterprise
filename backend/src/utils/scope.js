@@ -23,8 +23,7 @@ const { isBdeDepartment } = require('./bdeDesk');
 const RD = require('./reqDepartments'); // extra departments of a job (2026-10-13)
 const RT = require('./reqTeamLeads'); // extra team leads of a job (2026-10-14)
 const RR = require('./responseRecipients'); // the recruiters who receive a job's responses (2026-11-20)
-const AP = require('./atsProfile');
-const PW = require('./profileWindow'); // candidate profiles from 1 Jan 2025 on the screens (founder 2026-11-28) // NISH (IT staffing): one recruitment department, one shared candidate pool (2026-11-26)
+const AP = require('./atsProfile'); // NISH (IT staffing): one recruitment department, one shared candidate pool (2026-11-26)
 
 // THE SHARED POOL (founder 2026-11-26, NISH only: "evaru ey profiles add chesina, recruiters ki tls ki andhariki kanipinchali ... valladhi okate
 // recruitment dept"). On a copy started with ATS_PROFILE=it-staffing every ATS WORKING login - Recruiter, TL, STL, Manager, Assistant Manager -
@@ -606,13 +605,7 @@ function clientWhere(user) {
 function ownOnlyArm(s) {
   return s && s.atsRole === 'RECRUITER' && s.userId ? { OR: [{ ownerRecruiterId: s.userId }, { ownerRecruiterId: null }] } : null;
 }
-// CANDIDATE PROFILES FROM 2025 (utils/profileWindow.js): every login's applications are narrowed to the ones added from the start
-// date on - a candidate's own portal excepted. The duplicate checks do not go through here.
 function applicationWhere(user, opts = {}) {
-  const w = applicationWhereInner(user, opts);
-  return atsScopeOf(user).atsRole === 'CANDIDATE' ? w : PW.withApplicationWindow(w);
-}
-function applicationWhereInner(user, opts = {}) {
   if (!(opts && opts.sharedPool === false) && sharedCandidatePool(user)) return {}; // NISH: the shared pool - every application, whoever's recruiter it is
   const base = applicationWhereBase(user);
   const own = ownOnlyArm(atsScopeOf(user));
@@ -776,7 +769,6 @@ function atsScopeCached(user) {
 function applicationInScope(user, application) {
   const ctx = appScopeCtx(user);
   const s = ctx.s;
-  if (application && s.atsRole !== 'CANDIDATE' && !PW.appInWindow(application)) return false; // profiles from 2025 (utils/profileWindow.js)
   if (s.global) return true;
   if (!application) return false;
   if (ctx.shared) return true; // NISH: the shared pool
@@ -838,10 +830,6 @@ const CLIENT_SHARED_STAGES = [
 // applications. Candidates themselves see only their own record.
 function candidateWhere(user) {
   const s = atsScopeOf(user);
-  if (s.atsRole === 'CANDIDATE') return { id: s.candidateId || '__none__' };
-  return PW.withCandidateWindow(candidateWhereInner(user, s)); // profiles from 2025 (utils/profileWindow.js)
-}
-function candidateWhereInner(user, s) {
   if (s.global) return {};
   // HR falls through to applicationWhere(): internal-hiring candidates only.
   if (s.atsRole === 'CANDIDATE') return { id: s.candidateId || '__none__' };
