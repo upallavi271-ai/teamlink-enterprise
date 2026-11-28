@@ -10,6 +10,8 @@ import './payroll.css';
 // `b` is the backend's breakup shape (backend utils/salaryRules.js):
 //   { basic, hra, bonus, special, gross, employeePf, professionalTax,
 //     deductions, net, employerPf, gratuity, ctcCheck, valid }
+// A salary on an extra structure also has `lines` = { earnings, deductions }
+// ([{ label, amount }]): the card lists those names instead of the standard ones.
 // A stipend has no components: pass `stipend` instead and the card shows the
 // flat amount as both earnings and net pay.
 // ---------------------------------------------------------------------------
@@ -51,7 +53,28 @@ export default function SalaryStructureCard({
           </>
         )}
 
-        {b && !isStipend && (
+        {b && !isStipend && b.lines && (
+          <>
+            <div className="ss-sec earn">Earnings</div>
+            {b.lines.earnings.map((x) => <Row key={x.label} label={x.label} value={rupees(x.amount)} />)}
+            <Row label="Gross" value={rupees(b.gross)} total />
+
+            <div className="ss-sec ded">Deductions</div>
+            {b.employeePf > 0 && <Row label="PF (Provident Fund)" value={minus(b.employeePf)} ded />}
+            {b.professionalTax > 0 && <Row label="PT (Professional Tax)" value={minus(b.professionalTax)} ded />}
+            {b.lines.deductions.map((x) => <Row key={x.label} label={x.label} value={minus(x.amount)} ded />)}
+            <Row label="Total Deductions" value={minus(b.deductions)} total ded />
+
+            <div className="ss-net"><span>Net Pay</span><span className="ss-amt">{rupees(b.net)}</span></div>
+
+            <div className="ss-sec emp">Employer Cost <span className="ss-sec-note">(not part of your take-home)</span></div>
+            {b.employerPf > 0 && <Row label="Employer PF" value={rupees(b.employerPf)} />}
+            {b.gratuity > 0 && <Row label="Gratuity" value={rupees(b.gratuity)} />}
+            <Row label="CTC" value={rupees(b.ctcCheck)} total />
+          </>
+        )}
+
+        {b && !isStipend && !b.lines && (
           <>
             <div className="ss-sec earn">Earnings</div>
             <Row label="Basic" value={rupees(b.basic)} />

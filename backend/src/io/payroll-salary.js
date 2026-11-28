@@ -29,6 +29,7 @@
 const prisma = require('../db');
 const io = require('../utils/moduleIo');
 const SV = require('../utils/salaryVersions');
+const ST = require('../utils/salaryTemplates'); // extra salary structures (2026-11-28)
 const E = require('../utils/payrollEngine');
 const { structureFromRow } = require('../utils/salaryRules');
 const { withoutSystemAccounts } = require('../utils/systemAccounts');
@@ -141,7 +142,8 @@ function numberOf(r, key, label, errors) {
 // arithmetic PUT /api/payroll/structure/:id does, with blank cells keeping the
 // current value.
 // `rules` = Map(versionId -> PF rule) of these versions (utils/payrollRegister.js).
-function plan(versions, x, cfg, rules = new Map()) {
+// `notes` = Map(versionId -> component names) of those on an extra structure, `templates` = Map(id -> structure) (utils/salaryTemplates.js).
+function plan(versions, x, cfg, rules = new Map(), notes = new Map(), templates = new Map()) {
   const eff = x.effectiveFrom;
   const sameMonth = versions.find((v) => v.effectiveFrom === eff) || null;
   const inForce = versions.filter((v) => v.effectiveFrom <= eff).pop() || null;
@@ -173,6 +175,25 @@ function plan(versions, x, cfg, rules = new Map()) {
   if (payMode === 'Stipend' && !(stipend > 0)) {
     return { error: { field: 'Monthly Stipend', message: 'Monthly Stipend is required for the Stipend pay mode.' } };
   }
+  const baseNote = base && base.payMode !== 'Stipend' ? notes.get(base.id) || null : null;
+  if (baseNote && payMode === 'Package') {
+    // An employee on an extra structure stays on it: a new CTC is split by that structure, an unchanged one keeps its parts.
+    if (x.bonus !== null && Math.round(x.bonus) !== Math.round(Number(base.bonus) || 0)) {
+      return { error: { field: 'Bonus (monthly)', message: `The bonus comes from the salary structure "${baseNote.structureName}". Leave it as it is, or change the structure.` } };
+    }
+    const ctcChanged = Math.round(annual) !== Math.round(Number(base.ctc) || 0);
+    const live = templates.get(baseNote.structureId);
+    // the file's "Other Deductions" is the whole figure, as the export writes it
+    const wholeOther = x.otherDeductions !== null ? x.otherDeductions : base.otherDeductions;
+    const built = ST.versionData({
+      structureId: baseNote.structureId, definition: ctcChanged && live ? live : baseNote.definition, annualCtc: annual, cfg,
+      esiApplicable: x.esi !== undefined ? x.esi : base.esiApplicable, tds: x.tds !== null ? x.tds : base.tds,
+      extraOther: ST.extraOtherOf(baseNote, wholeOther), esiFor: SV.esiFor,
+    });
+    if (built.error) return { error: { field: 'Monthly CTC', message: built.error } };
+    built.data.note = x.note || (sameMonth ? sameMonth.note : null);
+    return { data: built.data, sameMonth, pfRule: null, before, note: built.snapshot };
+  }
   const overrides = {};
   if (!recompute && base && payMode === 'Package' && base.payMode !== 'Stipend' && Number(base.basic) > 0) {
     COMPONENT_FIELDS.forEach((f) => { overrides[f] = Number(base[f]) || 0; });
@@ -181,10 +202,13 @@ function plan(versions, x, cfg, rules = new Map()) {
   if (bonus === undefined && base && base.payMode !== 'Stipend' && Number(base.basic) > 0) bonus = Number(base.bonus) || 0;
   const esiApplicable = x.esi !== undefined ? x.esi : (base ? base.esiApplicable : null);
   const tds = x.tds !== null ? x.tds : (base ? base.tds : null);
-  const otherDeductions = x.otherDeductions !== null ? x.otherDeductions : (base ? base.otherDeductions : 0);
+  // leaving an extra structure (to a stipend): only what was typed on top of its own deductions carries over
+  const keptOther = base ? (baseNote ? ST.extraOtherOf(baseNote, base.otherDeductions) : base.otherDeductions) : 0;
+  const otherDeductions = x.otherDeductions !== null ? x.otherDeductions : keptOther;
   const data = SV.buildComponents({
     payMode, annualCtc: annual, bonus, overrides, stipend, cfg, esiApplicable, tds, otherDeductions,
   });
+  if (baseNote) data.conveyance = 0;
   if (payMode === 'Package' && pfRule) data.employeePf = REG.fullMonthPf(pfRule, data.basic);
   if (payMode === 'Package' && Number(data.conveyance) > 0) {
     // Conveyance is part of the gross the ESI eligibility is decided on (as the pay register does)
@@ -262,7 +286,7 @@ module.exports = {
   instructions: [
     'One row = one employee\'s salary structure from a month (Effective From, YYYY-MM). Every change is saved as a VERSION, exactly like the Salary Structure screen: the same month edits that version, a new month adds a revision.',
     'A month whose payroll is already submitted, approved, synced or paid is refused — an import never changes a past run. Payroll from that month on must be recalculated afterwards.',
-    'Components (Basic, HRA, Special Allowance, PF, PT, ESI …) are computed from the Standard Package rules and are read-only here. Blank cells keep the current value.',
+    'Components (Basic, HRA, Special Allowance, PF, PT, ESI …) are computed from the Standard Package rules (or the employee\'s extra salary structure, which an import keeps) and are read-only here. Blank cells keep the current value.',
     'To keep your pay register\'s OWN amounts instead (paise kept), fill the Full: columns (Basic, HRA, Conveyance, Special, Performance Bonus, Monthly Bonus) and the PF rule (24% of earned basic, 12% of earned basic, or Fixed with the PF fixed amount). These columns are optional.',
     'A row with only the Employee ID filled in (the export lists everybody on the register) is skipped.',
   ],
@@ -306,6 +330,8 @@ module.exports = {
     ]) : [[], []];
     const versionsOf = (id) => versions.filter((v) => v.employeeId === id);
     const pfRules = await REG.pfRulesFor(versions.map((v) => v.id));
+    const notes = await ST.linesFor(versions.map((v) => v.id));
+    const templates = new Map((await ST.list()).map((t) => [t.id, t]));
     const lockedOf = new Map();
     runs.forEach((r) => { const cur = lockedOf.get(r.employeeId); if (!cur || r.month > cur.month) lockedOf.set(r.employeeId, r); });
     const seen = new Map();
@@ -365,7 +391,7 @@ module.exports = {
         else seen.set(k, r.line);
       }
       if (errors.length) { out.push({ line: r.line, label, errors, action: 'error' }); return; }
-      const p = plan(versionsOf(e.id), x, cfg, pfRules);
+      const p = plan(versionsOf(e.id), x, cfg, pfRules, notes, templates);
       if (p.error) { out.push({ line: r.line, label, errors: [p.error], action: 'error' }); return; }
       const changes = diff(p.sameMonth, p.data, p.before, p.pfRule);
       if (!p.sameMonth) {
@@ -399,13 +425,16 @@ module.exports = {
           const locked = await SV.lastLockedMonth(e.id, tx);
           if (locked && x.effectiveFrom <= `${locked.month}-01`) throw new Error(`payroll for ${locked.month} is already ${E.STATUS_LABEL[locked.status] || locked.status}`);
           const versions = await tx.salaryStructureVersion.findMany({ where: { employeeId: e.id }, orderBy: { effectiveFrom: 'asc' } });
-          const p = plan(versions, x, cfg, await REG.pfRulesFor(versions.map((y) => y.id), tx));
+          const ids = versions.map((y) => y.id);
+          const templates = new Map((await ST.list(tx)).map((t) => [t.id, t]));
+          const p = plan(versions, x, cfg, await REG.pfRulesFor(ids, tx), await ST.linesFor(ids, tx), templates);
           if (p.error) throw new Error(p.error.message);
           if (p.sameMonth && !diff(p.sameMonth, p.data, p.before, p.pfRule).length) return 'nochange';
           const version = p.sameMonth
             ? await tx.salaryStructureVersion.update({ where: { id: p.sameMonth.id }, data: p.data })
             : await tx.salaryStructureVersion.create({ data: { employeeId: e.id, effectiveFrom: x.effectiveFrom, createdBy: `${actor} (import)`, ...p.data } });
           await REG.setPfRule(version.id, p.pfRule, tx);
+          await ST.setLines(version.id, p.note || null, tx);
           const structure = await SV.relink(e.id, tx);
           await tx.auditLog.create({
             data: {

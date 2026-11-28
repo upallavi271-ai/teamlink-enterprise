@@ -352,7 +352,8 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     const ctc = (await CTC.monthlyCtcFor([e])).get(e.id) || null;
     const join = await (await JD.splitter())(e.month, e, e.employee.dateOfJoining);
     // the salary breakup line by line, from the stored record (utils/payrollSalaryLines.js)
-    const lines = SL.salaryLines(e, { state: await PEdit.readState(e.id), version, register: regOn });
+    const note = await require('../utils/salaryTemplates').linesOf(e.salaryVersionId); // component names of an extra structure
+    const lines = SL.salaryLines(e, { state: await PEdit.readState(e.id), version, register: regOn, note });
     const salary = await SD.forMonth(e.month, [e.employeeId]);
     return res.json({
       lines, period: await PC.cycleFor(e.month),

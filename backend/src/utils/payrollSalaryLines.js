@@ -9,6 +9,7 @@
 //   employer    what the company pays on top (never cut from the salary)
 // ---------------------------------------------------------------------------
 const REG = require('./payrollRegister');
+const ST = require('./salaryTemplates');
 
 const r2 = (n) => REG.r2(n);
 const sum = (list, k) => r2(list.reduce((n, x) => n + (Number(x[k]) || 0), 0));
@@ -35,9 +36,24 @@ function shareCut(parts, lop, base) {
   return cuts;
 }
 
+// A salary on an extra structure (utils/salaryTemplates.js): each pay column is shown as the structure's own components, which add up
+// to it; the column's loss-of-pay cut is shared between them by size.
+function nameParts(rows, note) {
+  const out = [];
+  rows.forEach((row) => {
+    const lines = note.earnings.filter((x) => x.column === row.key && x.amount > 0);
+    if (!lines.length || row.cut > row.full + 0.005) { out.push(row); return; }
+    if (lines.length === 1) { out.push({ ...row, label: lines[0].name }); return; }
+    const cuts = shareCut(lines.map((l) => ({ full: l.amount })), row.cut, row.full);
+    lines.forEach((l, i) => out.push({ key: `${row.key}:${i}`, label: l.name, full: r2(l.amount), cut: r2(cuts[i]), earned: r2(l.amount - cuts[i]) }));
+  });
+  return out;
+}
+
 // entry: an EmployeePayrollRun row. state: its edit state (utils/payrollEdit.js readState). version: the salary record it was made from.
 // register: true in a pay-register month (utils/payrollRegister.js).
-function salaryLines(entry, { state = null, version = null, register = false } = {}) {
+// note: the component names kept with the salary record (an extra structure), else null.
+function salaryLines(entry, { state = null, version = null, register = false, note = null } = {}) {
   const e = entry;
   const stipend = e.payMode === 'Stipend';
   const incentive = r2(e.incentive);
@@ -62,7 +78,8 @@ function salaryLines(entry, { state = null, version = null, register = false } =
     if (Math.abs(own.reduce((n, c) => n + c, 0) - lop) < 0.005) cuts = own;
   }
   if (!cuts) cuts = shareCut(parts, lop, base);
-  const earnings = parts.map((x, i) => ({ ...x, cut: r2(cuts[i]), earned: r2(x.full - cuts[i]) }));
+  let earnings = parts.map((x, i) => ({ ...x, cut: r2(cuts[i]), earned: r2(x.full - cuts[i]) }));
+  if (note && !stipend && !sheet && ST.matches(note, e)) earnings = nameParts(earnings, note);
   const further = sheet ? 0 : r2(lop - sum(earnings, 'cut')); // only when more was cut than the pay parts hold (a typed figure)
   const extra = (state && state.extras && state.extras.earnings) || [];
   const flat = (key, label, amount) => ({ key, label, full: r2(amount), cut: 0, earned: r2(amount) });
@@ -111,6 +128,13 @@ function salaryLines(entry, { state = null, version = null, register = false } =
     lines.forEach((x, i) => deductions.push({ key: `ded${i}`, label: x.label, amount: r2(x.amount), how: 'Added line' }));
     if (other - listed > 0.005) deductions.push({ key: 'other', label: 'Other deductions', amount: r2(other - listed), how: '' });
   } else if (other > 0) deductions.push({ key: 'other', label: 'Other deductions', amount: other, how: '' });
+  const otherAt = note && !stipend && !sheet ? deductions.findIndex((x) => x.key === 'other') : -1;
+  const own = otherAt >= 0 ? ST.splitOther(note, deductions[otherAt].amount) : null;
+  if (own) {
+    deductions.splice(otherAt, 1,
+      ...own.lines.map((x, i) => ({ key: `own${i}`, label: x.label, amount: x.amount, how: `From the ${note.structureName} structure` })),
+      ...(own.rest > 0 ? [{ key: 'other', label: 'Other deductions', amount: own.rest, how: '' }] : []));
+  }
   if (sheet) deductions.forEach((x) => { x.how = 'From the pay register'; });
   const deductionsTotal = sum(deductions, 'amount');
 

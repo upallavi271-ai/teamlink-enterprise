@@ -26,13 +26,14 @@ const { withoutSystemAccounts } = require('../utils/systemAccounts');
 const { monthLabel } = require('../utils/attendanceMath');
 const { can } = require('../utils/permissions');
 const {
-  computeStructure, structureFromRow, PT_SLAB, PT_STATE, DEFAULT_RULES,
+  computeStructure, structureFromRow, PT_SLAB, PT_STATE, DEFAULT_RULES, rulesFrom,
 } = require('../utils/salaryRules');
 const { renderPayslip } = require('../utils/payslipPdf');
 // Payroll -> Accounts (SPEC B): versioned structures, the per-employee engine.
 const SV = require('../utils/salaryVersions');
 const PE = require('../utils/payrollEngine');
 const PEdit = require('../utils/payrollEdit'); // payroll edit and recalculate (2026-10-13)
+const ST = require('../utils/salaryTemplates'); // extra salary structures: the Super Admin's own components (2026-11-28)
 const PC = require('../utils/payrollCycle'); // payroll cycle (16th to 15th) - the dates behind a payroll month
 const ANL = require('../utils/absentNoLeave');
 const JD = require('../utils/payrollJoinDays'); // joined inside the pay period: days before joining apart from LOP
@@ -121,12 +122,13 @@ router.get('/', async (req, res) => {
 //
 // GET '/' above is the employee's own payslip history and stays open — it is
 // scoped by payslipReach() to their own rows.
-function breakupOf(ss, cfg) {
+// `note` = the component names kept with a salary on an extra structure (utils/salaryTemplates.js), else null.
+function breakupOf(ss, cfg, note = null) {
   if (!ss) return null;
   if (ss.payMode === 'Stipend') return null;
   // Stored components win (they may carry HR's overrides); a row with only a
   // CTC on it is computed from the rules.
-  if (Number(ss.basic) > 0) return structureFromRow(ss);
+  if (Number(ss.basic) > 0) return ST.breakupWithNames(structureFromRow(ss), note, ss);
   return Number(ss.ctc) > 0 ? salaryBreakup(ss.ctc, cfg) : null;
 }
 
@@ -137,11 +139,13 @@ router.get('/structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'ed
   const employees = await prisma.employee.findMany({
     where: withoutSystemAccounts(payrollEmployeeWhere(req)), include: { salaryStructure: true }, orderBy: { name: 'asc' },
   });
+  const notes = await ST.linesFor(employees.map((e) => e.salaryStructure && e.salaryStructure.currentVersionId));
   res.json(
     employees.map((e) => {
       const ss = e.salaryStructure;
+      const note = ss ? notes.get(ss.currentVersionId) : null;
       // employmentStatus: so the list can open on the people who are still here (ACTIVE EMPLOYEES FIRST, founder 2026-11-14); nothing else changes
-      return { employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, employmentStatus: e.employmentStatus, structure: ss, breakup: breakupOf(ss, cfg) };
+      return { employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, employmentStatus: e.employmentStatus, structure: ss, breakup: breakupOf(ss, cfg, note) };
     })
   );
 });
@@ -168,7 +172,7 @@ router.get('/my-structure', async (req, res) => {
   return res.json({
     employee: { id: me.id, name: me.name, employeeCode: me.employeeCode, department: me.department, designation: me.designation },
     structure: ss ? { payMode: ss.payMode, ctc: ss.ctc, stipend: ss.stipend, updatedAt: ss.updatedAt } : null,
-    breakup: breakupOf(ss, cfg),
+    breakup: breakupOf(ss, cfg, ss ? await ST.linesOf(ss.currentVersionId) : null),
   });
 });
 
@@ -183,13 +187,20 @@ router.get('/structure/:employeeId', requirePerm(null, 'hrms', 'Payroll & Compen
     prisma.employeePayrollRun.findMany({ where: { employeeId: emp.id }, select: { month: true, status: true, salaryVersionId: true }, orderBy: { month: 'asc' } }),
     SV.lastLockedMonth(emp.id),
   ]);
+  const notes = await ST.linesFor(versions.map((v) => v.id));
+  const currentNote = emp.salaryStructure ? notes.get(emp.salaryStructure.currentVersionId) || null : null;
   return res.json({
     employee: { id: emp.id, name: emp.name, employeeCode: emp.employeeCode, department: emp.department, designation: emp.designation, dateOfJoining: emp.dateOfJoining },
     structure: emp.salaryStructure,
-    breakup: breakupOf(emp.salaryStructure, cfg),
+    breakup: breakupOf(emp.salaryStructure, cfg, currentNote),
+    // the extra structure the current salary is on (null = Standard Package); extraOther = "Other deductions" beyond its own
+    custom: currentNote && emp.salaryStructure.payMode !== 'Stipend' ? {
+      structureId: currentNote.structureId, structureName: currentNote.structureName, definition: currentNote.definition,
+      extraOther: ST.extraOtherOf(currentNote, emp.salaryStructure.otherDeductions),
+    } : null,
     versions: versions.map((v) => ({
       ...v,
-      breakup: v.payMode === 'Stipend' ? null : structureFromRow(v),
+      breakup: v.payMode === 'Stipend' ? null : ST.breakupWithNames(structureFromRow(v), notes.get(v.id), v),
       runs: used.filter((r) => r.salaryVersionId === v.id).map((r) => ({ month: r.month, status: r.status })),
     })),
     // A new or edited version may only take effect after this month.
@@ -207,6 +218,7 @@ router.delete('/structure/versions/:versionId', requirePerm(null, 'hrms', 'Payro
   const locked = await SV.lastLockedMonth(v.employeeId);
   if (locked && v.effectiveFrom <= `${locked.month}-01`) return res.status(409).json({ error: `Removing it would change ${locked.month}'s payroll, which is already ${locked.status}.` });
   await prisma.salaryStructureVersion.delete({ where: { id: v.id } });
+  await ST.setLines(v.id, null);
   await SV.relink(v.employeeId);
   await logAudit({ userId: req.user.id, action: 'Salary structure version removed', entity: 'SalaryStructureVersion', entityId: v.id, fromValue: v.effectiveFrom });
   return res.json({ ok: true });
@@ -220,6 +232,7 @@ const COMPONENT_FIELDS = ['basic', 'hra', 'bonus', 'specialAllowance', 'employer
 // not save.
 //
 // Body: { payMode, monthlyCtc | ctc (annual), bonus, components: { basic, … }, stipend,
+//         structureId ('standard' | an extra structure's id; left out = stays on the one it is on),
 //         effectiveFrom ('YYYY-MM'; default: the latest version's month, or the
 //         joining month / this month for a first structure),
 //         esiApplicable (true | false | null = automatic), tds (monthly, '' = policy),
@@ -273,11 +286,28 @@ router.put('/structure/:employeeId', requirePerm(null, 'hrms', 'Payroll & Compen
   if (annual == null) annual = base ? Number(base.ctc) || 0 : 0;
   if (payMode === 'Package' && !(annual > 0)) return res.status(400).json({ error: 'Enter the monthly CTC' });
 
+  // Which structure the salary is on (utils/salaryTemplates.js). Left out of the request = the one the base version is on.
+  const baseNote = base && base.id ? await ST.linesOf(base.id) : null;
+  const baseStructure = baseNote && base.payMode !== 'Stipend' ? baseNote.structureId : ST.STANDARD;
+  const asked = body.structureId === undefined || body.structureId === null ? null : String(body.structureId || ST.STANDARD);
+  const structureId = asked || baseStructure;
+  let custom = null; // { id, definition } when the salary is on an extra structure
+  if (payMode === 'Package' && structureId !== ST.STANDARD) {
+    const found = await ST.get(structureId);
+    if (found) custom = { id: structureId, definition: found };
+    else if (baseNote && baseNote.structureId === structureId) custom = { id: structureId, definition: baseNote.definition }; // deleted since: its own copy
+    else return res.status(400).json({ error: 'That salary structure no longer exists. Choose another one.' });
+    if (body.components && typeof body.components === 'object' && Object.keys(body.components).length) {
+      return res.status(400).json({ error: `The parts come from the structure "${custom.definition.name}". Change them by editing the structure, or choose the Standard Package.` });
+    }
+  }
+  const structureChanged = !!base && base.payMode !== 'Stipend' && payMode === 'Package' && structureId !== baseStructure;
+
   // HR's overrides, kept exactly as typed. Without a new CTC, the base
   // version's stored components carry over as overrides.
   const overrides = {};
   const ctcGiven = (body.monthlyCtc != null && body.monthlyCtc !== '') || (body.ctc != null && body.ctc !== '');
-  if (!ctcGiven && base && payMode === 'Package' && Number(base.basic) > 0) COMPONENT_FIELDS.forEach((f) => { overrides[f] = Number(base[f]) || 0; });
+  if (!ctcGiven && !structureChanged && base && payMode === 'Package' && Number(base.basic) > 0) COMPONENT_FIELDS.forEach((f) => { overrides[f] = Number(base[f]) || 0; });
   const typed = body.components && typeof body.components === 'object' ? body.components : {};
   for (const f of COMPONENT_FIELDS) {
     if (typed[f] === undefined || typed[f] === null || typed[f] === '') continue;
@@ -295,14 +325,31 @@ router.put('/structure/:employeeId', requirePerm(null, 'hrms', 'Payroll & Compen
   const esiRaw = pick('esiApplicable', base ? base.esiApplicable : null);
   const esiApplicable = esiRaw === true || esiRaw === 'true' ? true : (esiRaw === false || esiRaw === 'false' ? false : null);
   const tds = pick('tds', base ? base.tds : null);
-  const otherDeductions = pick('otherDeductions', base ? base.otherDeductions : 0);
+  // coming from an extra structure, only what was typed on top of its own deductions carries over
+  const baseOther = baseNote ? ST.extraOtherOf(baseNote, base.otherDeductions) : (base ? base.otherDeductions : 0);
+  const otherDeductions = pick('otherDeductions', baseOther);
   if (tds !== null && tds !== '' && tds !== undefined && !(Number(tds) >= 0)) return res.status(400).json({ error: 'TDS must be 0 or more' });
   if (!(Number(otherDeductions || 0) >= 0)) return res.status(400).json({ error: 'Other deductions must be 0 or more' });
 
   const bonus = body.bonus != null && body.bonus !== '' ? Number(body.bonus) : undefined;
-  const data = SV.buildComponents({
-    payMode, annualCtc: annual, bonus, overrides, stipend: stipendAmount, cfg, esiApplicable, tds, otherDeductions,
-  });
+  let data;
+  let note = null; // the component names kept with the version (extra structures only)
+  if (custom) {
+    // same structure and no new CTC: the saved parts stay as they are, even if the structure was edited since
+    const keep = !ctcGiven && !structureChanged && !!baseNote && Number(base.basic) > 0;
+    const built = ST.versionData({
+      structureId: custom.id, definition: keep ? baseNote.definition : custom.definition, annualCtc: annual, cfg, esiApplicable, tds,
+      extraOther: otherDeductions, esiFor: SV.esiFor,
+    });
+    if (built.error) return res.status(400).json({ error: built.error });
+    data = built.data;
+    note = built.snapshot;
+  } else {
+    data = SV.buildComponents({
+      payMode, annualCtc: annual, bonus, overrides, stipend: stipendAmount, cfg, esiApplicable, tds, otherDeductions,
+    });
+    if (baseNote) data.conveyance = 0; // the extra structure's conveyance does not stay behind
+  }
   data.note = body.note ? String(body.note).slice(0, 300) : (sameMonth ? sameMonth.note : null);
 
   const version = sameMonth
@@ -310,22 +357,82 @@ router.put('/structure/:employeeId', requirePerm(null, 'hrms', 'Payroll & Compen
     : await prisma.salaryStructureVersion.create({ data: { employeeId: inScope.id, effectiveFrom, createdBy: req.user.name, ...data } });
   // Pay register (2026-10-28, utils/payrollRegister.js): a new revision keeps the PF rule (24% / 12% of earned basic, Fixed)
   // of the version it replaces, so the month's PF stays the register's.
-  if (!sameMonth && base && base.id && payMode === 'Package') {
+  if (!sameMonth && base && base.id && payMode === 'Package' && !custom && !baseNote) {
     const REG = require('../utils/payrollRegister');
     const rule = await REG.pfRuleOf(base.id);
     if (rule) await REG.setPfRule(version.id, rule);
   }
+  if (custom) await require('../utils/payrollRegister').setPfRule(version.id, null); // PF as the structure says
+  await ST.setLines(version.id, note);
   const structure = await SV.relink(inScope.id);
   await logAudit({
     userId: req.user.id, action: sameMonth ? 'Salary structure version updated' : 'Salary structure version created',
-    entity: 'SalaryStructure', entityId: structure.id, toValue: `effective ${effectiveFrom.slice(0, 7)} · CTC ${Math.round(annual / 12)}/month`,
+    entity: 'SalaryStructure', entityId: structure.id, toValue: `effective ${effectiveFrom.slice(0, 7)} · CTC ${Math.round(annual / 12)}/month${note ? ` · structure ${note.structureName}` : ''}`,
   });
   // Drafts already calculated from what this changed must be recalculated
   // before they can be submitted (payrollEngine.transition checks this).
   const staleDrafts = await prisma.employeePayrollRun.findMany({
     where: { employeeId: inScope.id, status: 'DRAFT', month: { gte: effectiveFrom.slice(0, 7) } }, select: { month: true },
   });
-  res.json({ structure, version, breakup: breakupOf(structure, cfg), staleDrafts: staleDrafts.map((d) => d.month) });
+  res.json({ structure, version, breakup: breakupOf(structure, cfg, note), staleDrafts: staleDrafts.map((d) => d.month) });
+});
+
+// ---- Extra salary structures (utils/salaryTemplates.js) ---------------------
+// Add / edit / delete is the same right as the CTC split rules (configure); the list and the preview are for whoever sets salaries.
+
+router.get('/structures', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
+  const [templates, cfg, employees] = await Promise.all([
+    ST.list(),
+    getPolicy(),
+    prisma.employee.findMany({ where: withoutSystemAccounts(payrollEmployeeWhere(req)), select: { salaryStructure: { select: { currentVersionId: true, payMode: true } } } }),
+  ]);
+  const current = employees.map((e) => e.salaryStructure).filter((s) => s && s.payMode !== 'Stipend');
+  const notes = await ST.linesFor(current.map((s) => s.currentVersionId));
+  const used = new Map();
+  notes.forEach((n) => used.set(n.structureId, (used.get(n.structureId) || 0) + 1));
+  const rules = rulesFrom(cfg);
+  res.json({
+    structures: templates.map((t) => ({ ...t, usedBy: used.get(t.id) || 0 })),
+    defaults: { employeePct: rules.employeePfPctOfBasic, employerPct: rules.employerPfPctOfBasic, cap: rules.employeePfMonthlyCap, gratuityPct: rules.gratuityPctOfBasic },
+  });
+});
+
+// The figures of a structure for a monthly CTC: a saved one (structureId) or one still being typed (definition). Writes nothing.
+router.post('/structures/preview', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
+  const body = req.body || {};
+  const saved = body.structureId ? await ST.get(String(body.structureId)) : null;
+  const typed = saved || body.definition;
+  if (!typed) return res.status(404).json({ error: 'That salary structure no longer exists.' });
+  const cleaned = ST.cleanDefinition({ ...typed, name: typed.name || 'New structure' }, await getPolicy());
+  if (cleaned.error) return res.json({ error: cleaned.error, breakup: null });
+  const result = ST.compute(cleaned.definition, Number(body.monthlyCtc) || 0);
+  return res.json({ error: result.error, breakup: ST.breakupOfResult(result, cleaned.definition.name) });
+});
+
+async function saveStructure(req, res, id) {
+  const cleaned = ST.cleanDefinition(req.body, await getPolicy());
+  if (cleaned.error) return res.status(400).json({ error: cleaned.error });
+  const all = await ST.list();
+  if (id && !all.some((t) => t.id === id)) return res.status(404).json({ error: 'That salary structure no longer exists.' });
+  if (all.some((t) => t.id !== id && t.name.toLowerCase() === cleaned.definition.name.toLowerCase())) {
+    return res.status(409).json({ error: `There is already a structure called "${cleaned.definition.name}".` });
+  }
+  const saved = await ST.save(id, cleaned.definition, req.user);
+  await logAudit({
+    userId: req.user.id, action: id ? 'Salary structure edited' : 'Salary structure added', entity: 'SalaryTemplate', entityId: saved.id,
+    toValue: `${saved.name}: ${saved.components.map((c) => c.name).join(', ')}`.slice(0, 500),
+  });
+  return res.json(saved);
+}
+const configureStructures = requirePerm(null, 'hrms', 'Payroll & Compensation', 'configure');
+router.post('/structures', configureStructures, (req, res) => saveStructure(req, res, null));
+router.put('/structures/:id', configureStructures, (req, res) => saveStructure(req, res, req.params.id));
+router.delete('/structures/:id', configureStructures, async (req, res) => {
+  const t = await ST.get(req.params.id);
+  if (!t) return res.status(404).json({ error: 'That salary structure no longer exists.' });
+  await ST.remove(req.params.id);
+  await logAudit({ userId: req.user.id, action: 'Salary structure deleted', entity: 'SalaryTemplate', entityId: req.params.id, fromValue: t.name });
+  return res.json({ ok: true });
 });
 
 // ---- CTC Split Settings (how CTC is broken into components) ----
@@ -594,10 +701,13 @@ async function payslipPayload(slip) {
   // Payroll edit (2026-10-13): added earning / deduction rows keep their own names on the payslip.
   // (a provisional payslip carries its rows with it: nothing is stored for it)
   const editLines = slip._lines !== undefined ? slip._lines : (slip.payrollEntryId ? await PEdit.payslipLines(slip.id) : null);
+  // Extra salary structure (utils/salaryTemplates.js): the parts print under the structure's own names while they still add up.
+  const slipRun = slip.payrollEntryId && !isStipend ? await prisma.employeePayrollRun.findUnique({ where: { id: slip.payrollEntryId }, select: { salaryVersionId: true } }) : null;
+  const note = slipRun ? await ST.linesOf(slipRun.salaryVersionId) : null;
   const earnings = [
     ...(isStipend
       ? [{ label: 'Stipend', amount: gross - incentive }]
-      : [
+      : ST.matches(note, slip) ? note.earnings.filter((x) => x.amount !== 0).map((x) => ({ label: x.name, amount: x.amount })) : [
         { label: 'Basic', amount: slip.basic || 0 },
         { label: 'HRA', amount: slip.hra || 0 },
         // Payroll import (2026-10-06): the registers' Conveyance line, only when paid.
@@ -626,6 +736,10 @@ async function payslipPayload(slip) {
     ...(join && joinAmounts.lop > 0 ? [{ label: `LOP (${dayWord(join.lopDays)})`, amount: joinAmounts.lop }] : []),
     ...(lateCut > 0 ? [{ label: `Late arrivals (${slip.lateDays || 0})`, amount: lateCut }] : []),
   ];
+  // an extra structure's own deductions print under their names instead of inside "Other Deductions"
+  const otherAt = note ? deductions.findIndex((d) => d.label === 'Other Deductions') : -1;
+  const own = otherAt >= 0 ? ST.splitOther(note, deductions[otherAt].amount) : null;
+  if (own) deductions.splice(otherAt, 1, ...own.lines, ...(own.rest > 0 ? [{ label: 'Other Deductions', amount: own.rest }] : []));
   const totalDeductions = deductions.reduce((s, d) => s + (Number(d.amount) || 0), 0);
 
   return {

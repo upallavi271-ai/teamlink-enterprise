@@ -30,3 +30,22 @@
 .ss-edit-grid .field label { display: flex; justify-content: space-between; gap: 6px; }
 .ss-edit-grid .ss-overridden { color: var(--amber); font-weight: 600; font-size: 10.5px; }
 @media (max-width: 640px) { .ss-edit-grid { grid-template-columns: 1fr; } }
+
+/* Extra salary structures: the list and the component rows of "Add structure" (2026-11-28) */
+.st-item { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 10px 18px 0; }
+.st-summary { font-size: 12px; line-height: 1.6; margin-top: 2px; overflow-wrap: anywhere; }
+.st-actions { display: flex; gap: 6px; flex: none; }
+.st-row { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, .8fr) 38px; gap: 8px; align-items: center; margin-bottom: 8px; }
+.st-row > * { min-width: 0; }
+.st-row > input { width: 100%; }
+.st-row.st-head { font-size: 11px; font-weight: 700; color: var(--ink-soft); margin-bottom: 4px; }
+.st-del { justify-content: center; }
+.st-check { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 5px 0; }
+.st-check input { width: auto; }
+.st-sub { margin: 2px 0 8px; }
+@media (max-width: 640px) {
+  .st-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding-bottom: 10px; border-bottom: 1px dashed var(--line-soft); }
+  .st-row.st-head { display: none; }
+  .st-row .st-del { justify-self: start; }
+  .st-item { flex-direction: column; }
+}

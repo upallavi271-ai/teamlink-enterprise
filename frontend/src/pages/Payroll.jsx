@@ -8,6 +8,7 @@ import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel
 import { canRunPayroll, isAdmin as hasAdminAccess, can } from '../permissions';
 import Combo from '../components/Combo.jsx';
 import SalaryStructureCard from '../components/payroll/SalaryStructureCard.jsx';
+import SalaryStructures from '../components/payroll/SalaryStructures.jsx'; // extra salary structures: + Add structure (2026-11-28)
 import PayslipView, { downloadPayslipPdf } from '../components/payroll/PayslipView.jsx';
 import LopBreakdown, { LopLink } from '../components/payroll/LopBreakdown.jsx'; // LOP number -> the dates behind it (2026-11-19)
 import PayslipPhoneList from '../components/payroll/PayslipPhoneList.jsx'; // my payslips as cards on a phone (2026-11-19)
@@ -127,7 +128,7 @@ function StructureEditor({ row, defaultBonus, onClose, onSaved }) {
   const s = row.structure;
   const [mode, setMode] = useState(s?.payMode || 'Package');
   const [ctc, setCtc] = useState(s?.ctc ? String(Math.round(s.ctc / 12)) : '');
-  const [bonus, setBonus] = useState(s?.bonus != null && s?.ctc ? String(s.bonus) : String(defaultBonus ?? 1000));
+  const [bonus, setBonus] = useState(s?.bonus != null && s?.ctc && !row.breakup?.lines ? String(s.bonus) : String(defaultBonus ?? 1000));
   const [stipend, setStipend] = useState(s?.stipend ? String(s.stipend) : '');
   // Current component values, and which ones HR typed over.
   const [vals, setVals] = useState(() => {
@@ -144,9 +145,16 @@ function StructureEditor({ row, defaultBonus, onClose, onSaved }) {
   const [tds, setTds] = useState(s?.tds != null ? String(s.tds) : '');
   const [other, setOther] = useState(s?.otherDeductions ? String(s.otherDeductions) : '');
   const [history, setHistory] = useState(null);
+  // Which structure: 'standard' or an extra one. null until the saved salary is read (the server then keeps it as it is).
+  const [structureId, setStructureId] = useState(null);
+  const [structures, setStructures] = useState([]);
+  useEffect(() => { api.get('/payroll/structures').then((res) => setStructures(res.data.structures || [])).catch(() => setStructures([])); }, []);
   useEffect(() => {
     api.get(`/payroll/structure/${row.employeeId}`).then((res) => {
       setHistory(res.data);
+      const on = res.data.custom;
+      setStructureId(on ? on.structureId : 'standard');
+      if (on) setOther(on.extraOther ? String(on.extraOther) : '');
       const latest = res.data.versions?.[0];
       const next = (m) => { const [y, mm] = m.split('-').map(Number); return mm === 12 ? `${y + 1}-01` : `${y}-${String(mm + 1).padStart(2, '0')}`; };
       const locked = res.data.lockedThrough;
@@ -188,7 +196,39 @@ function StructureEditor({ row, defaultBonus, onClose, onSaved }) {
   live.ctcCheck = live.gross + live.employerPf + live.gratuity;
   live.valid = live.special >= 0;
   const monthly = Math.round(Number(ctc) || 0);
-  const mismatch = mode === 'Package' && monthly > 0 && live.ctcCheck !== monthly;
+  const isCustom = mode === 'Package' && !!structureId && structureId !== 'standard';
+  const mismatch = !isCustom && mode === 'Package' && monthly > 0 && live.ctcCheck !== monthly;
+  const saved = history?.custom || null;
+  const deleted = saved && !structures.some((t) => t.id === saved.structureId) ? saved : null;
+  // The figures of the chosen extra structure for the typed CTC, worked out by the server.
+  const [customPreview, setCustomPreview] = useState(null);
+  const previewSeq = useRef(0);
+  useEffect(() => {
+    const n = ++previewSeq.current;
+    if (!isCustom) { setCustomPreview(null); return undefined; }
+    const t = setTimeout(() => {
+      const body = { monthlyCtc: monthly, structureId };
+      if (saved && saved.structureId === structureId) body.definition = saved.definition; // used only if it was deleted
+      api.post('/payroll/structures/preview', body)
+        .then((res) => { if (n === previewSeq.current) setCustomPreview(res.data); })
+        .catch((err) => { if (n === previewSeq.current) setCustomPreview({ error: err.response?.data?.error || 'Could not work out the preview.', breakup: null }); });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [isCustom, structureId, monthly, history]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function chooseStructure(id) {
+    setStructureId(id);
+    if (id !== 'standard') return;
+    // back on the Standard Package: fill its parts again for the typed CTC
+    touched.current = true;
+    setBonus(String(defaultBonus ?? 1000));
+    if (preview) {
+      const v = {};
+      COMPONENTS.forEach(([f, , key]) => { v[f] = String(preview[key]); });
+      setVals(v);
+    }
+    setOverridden({});
+  }
 
   async function save() {
     setError(''); setBusy(true);
@@ -197,10 +237,13 @@ function StructureEditor({ row, defaultBonus, onClose, onSaved }) {
       if (mode === 'Package') {
         if (!(monthly > 0)) throw new Error('Enter the monthly CTC.');
         body.monthlyCtc = monthly;
-        body.bonus = Number(bonus) || 0;
-        const components = {};
-        Object.keys(overridden).forEach((f) => { if (overridden[f]) components[f] = Number(vals[f]) || 0; });
-        body.components = components;
+        if (structureId) body.structureId = structureId;
+        if (!isCustom) {
+          body.bonus = Number(bonus) || 0;
+          const components = {};
+          Object.keys(overridden).forEach((f) => { if (overridden[f]) components[f] = Number(vals[f]) || 0; });
+          body.components = components;
+        }
       } else {
         if (!(Number(stipend) >= 0) || stipend === '') throw new Error('Enter the monthly stipend.');
         body.stipend = Number(stipend);
@@ -225,7 +268,7 @@ function StructureEditor({ row, defaultBonus, onClose, onSaved }) {
       footer={(
         <>
           <button className="btn btn-sm" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary btn-sm" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save structure'}</button>
+          <button className="btn btn-primary btn-sm" disabled={busy || !history} onClick={save}>{busy ? 'Saving…' : 'Save structure'}</button>
         </>
       )}
     >
@@ -249,7 +292,26 @@ function StructureEditor({ row, defaultBonus, onClose, onSaved }) {
         )}
       </div>
 
-      {mode === 'Package' ? (
+      {mode === 'Package' && (structures.length > 0 || saved) && (
+        <div className="field" style={{ marginBottom: 12 }}>
+          <label>Salary structure</label>
+          <Combo value={structureId || 'standard'} onChange={(e) => chooseStructure(e.target.value)} aria-label="Salary structure">
+            <option value="standard">Standard Package</option>
+            {structures.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            {deleted && <option value={deleted.structureId}>{`${deleted.structureName} (deleted)`}</option>}
+          </Combo>
+        </div>
+      )}
+
+      {isCustom ? (
+        <>
+          <div className="small-muted" style={{ marginBottom: 8 }}>
+            The parts come from this structure as it is now. To change them, use Edit under Extra salary structures.
+          </div>
+          {customPreview?.error && <div className="notice amber"><span>{customPreview.error}</span></div>}
+          {customPreview?.breakup && monthly > 0 && <SalaryStructureCard b={customPreview.breakup} title="Preview" subtitle="What this employee will see on their side." />}
+        </>
+      ) : mode === 'Package' ? (
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div style={{ flex: '1 1 300px', minWidth: 0 }}>
             <div className="field" style={{ marginBottom: 10 }}>
@@ -303,7 +365,7 @@ function StructureEditor({ row, defaultBonus, onClose, onSaved }) {
           <input type="number" min="0" step="100" value={tds} placeholder="policy %" onChange={(e) => setTds(e.target.value)} />
         </div>
         <div className="field">
-          <label>Other deductions (₹ / month)</label>
+          <label>{isCustom ? 'Other deductions on top (₹ / month)' : 'Other deductions (₹ / month)'}</label>
           <input type="number" min="0" step="100" value={other} onChange={(e) => setOther(e.target.value)} />
         </div>
       </div>
@@ -405,7 +467,7 @@ function SalaryStructuresTable({ canEdit, defaultBonus }) {
                 <tr key={r.employeeId}>
                   <td><b>{r.employeeCode}</b></td>
                   <td>{r.name}<EmployeeStatusTag employmentStatus={r.employmentStatus} /></td>
-                  <td className="cell-muted">{s ? (s.payMode || 'Package') : '—'}</td>
+                  <td className="cell-muted">{s ? (s.payMode || 'Package') : '—'}{b?.structureName && <div style={{ fontSize: 11 }}>{b.structureName}</div>}</td>
                   {isStipend ? (
                     <td colSpan="10" className="cell-muted" style={{ textAlign: 'center', fontStyle: 'italic' }}>Fixed stipend {inr(s?.stipend)} — no components, no PF/PT</td>
                   ) : b ? (
@@ -413,7 +475,7 @@ function SalaryStructuresTable({ canEdit, defaultBonus }) {
                       <td className="cell-muted">{inr(b.basic)}</td>
                       <td className="cell-muted">{inr(b.hra)}</td>
                       <td className="cell-muted">{inr(b.bonus)}</td>
-                      <td className="cell-muted">{inr(b.special)}</td>
+                      <td className="cell-muted" title={b.lines ? b.lines.earnings.map((x) => `${x.label} ${inr(x.amount)}`).join(', ') : undefined}>{inr(b.special + (b.lines ? b.conveyance || 0 : 0))}</td>
                       <td className="cell-muted">{inr(b.gross)}</td>
                       <td className="cell-muted">{inr(b.employeePf)}</td>
                       <td className="cell-muted">{inr(b.professionalTax)}</td>
@@ -753,6 +815,7 @@ function StructureTab({ canRun, isAdmin }) {
           )}
         </Panel>
       </TwoCol>
+      <SalaryStructures isAdmin={isAdmin} onChanged={() => setKey((k) => k + 1)} />
       <SalaryStructuresTable key={key} canEdit={canRun} defaultBonus={policy?.bonusFixedMonthly} />
     </div>
   );
