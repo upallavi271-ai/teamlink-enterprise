@@ -199,4 +199,7 @@ prisma.$use(async (params, next) => {
 prisma.$use(require('./utils/atsVersion').prismaHook());
 // memo_: a write made by the server itself (job, import, hook) raises the data version the short answer memo is keyed on (utils/responseMemo.js)
 prisma.$use(require('./utils/responseMemo').prismaHook());
+// joined_: a person marked Joined on one requirement is closed on the others still waiting at Selected / Offer (utils/joinedElsewhere.js, 2026-11-28).
+require('./utils/joinedElsewhere').hook(prisma);
+
 module.exports = prisma;
