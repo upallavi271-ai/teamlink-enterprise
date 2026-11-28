@@ -22,6 +22,10 @@ export function invoiceDocumentHtml(d, mode, opts = {}) {
   const showRec = !forClient && d.lines.some((l) => l.recruiter);
   const gst = d.totals.gst;
   const n = (v) => money2(v).replace('₹', '');
+  // Founder 2026-11-28: the CLIENT's copy asks for the TOTAL amount (fee + GST) - TDS is not cut on it. The internal copy keeps
+  // the TDS working. A fully settled invoice (nothing left after TDS) stays at nothing due.
+  const showTds = !forClient && d.totals.tds > 0;
+  const balanceDue = forClient && d.totals.tds > 0 && d.totals.balance > 0.5 ? d.totals.balance + d.totals.tds : d.totals.balance;
   const taxHead = d.inter
     ? '<th colspan="2" class="grp">IGST</th>'
     : '<th colspan="2" class="grp">CGST</th><th colspan="2" class="grp">SGST</th>';
@@ -149,7 +153,7 @@ export function invoiceDocumentHtml(d, mode, opts = {}) {
     <div class="foot">
       <div class="lft">
         <div class="words"><b>Total In Words</b><i>${esc(d.words.total)}</i></div>
-        ${d.words.netAfterTds ? `<div class="words"><b>Net Payable After TDS In Words</b><i>${esc(d.words.netAfterTds)}</i></div>` : ''}
+        ${!forClient && d.words.netAfterTds ? `<div class="words"><b>Net Payable After TDS In Words</b><i>${esc(d.words.netAfterTds)}</i></div>` : ''}
         <div class="notes"><b>Notes</b>
           ${esc(co.bank.accountName)}<br>
           ${co.bank.accountNumber ? `Account Number: ${esc(co.bank.accountNumber)}<br>` : ''}
@@ -167,18 +171,18 @@ export function invoiceDocumentHtml(d, mode, opts = {}) {
     : `<tr><td>CGST${d.halfPct} (${d.halfPct}%)</td><td class="n">${n(d.totals.cgst)}</td></tr>
                  <tr><td>SGST${d.halfPct} (${d.halfPct}%)</td><td class="n">${n(d.totals.sgst)}</td></tr>`) : ''}
           <tr class="g"><td>Total</td><td class="n">${money2(d.totals.invoiceValue)}</td></tr>
-          ${d.totals.tds > 0 ? `<tr><td>Less: TDS @ ${d.tdsPct}% u/s ${esc(d.tdsSection || '194J')}${d.tdsBase === 'gross' ? ' (on the total)' : ''}</td><td class="n">(${n(d.totals.tds)})</td></tr>
+          ${showTds ? `<tr><td>Less: TDS @ ${d.tdsPct}% u/s ${esc(d.tdsSection || '194J')}${d.tdsBase === 'gross' ? ' (on the total)' : ''}</td><td class="n">(${n(d.totals.tds)})</td></tr>
             <tr class="g"><td>Net Payable After TDS</td><td class="n">${money2(d.totals.receivable)}</td></tr>` : ''}
           ${d.totals.paid > 0 ? `<tr><td>Amount Received</td><td class="n">${n(d.totals.paid)}</td></tr>` : ''}
           ${d.totals.credited > 0 ? `<tr><td>Less: Credit Notes</td><td class="n">(${n(d.totals.credited)})</td></tr>` : ''}
           ${d.totals.debited > 0 ? `<tr><td>Add: Debit Notes</td><td class="n">${n(d.totals.debited)}</td></tr>` : ''}
-          <tr class="b"><td>Balance Due</td><td class="n">${money2(d.totals.balance)}</td></tr>
+          <tr class="b"><td>Balance Due</td><td class="n">${money2(balanceDue)}</td></tr>
         </table>
         <div class="sign"><span>Authorized Signature</span></div>
       </div>
     </div>
     <div class="blank"></div>
-    ${d.totals.tds > 0 ? `<div class="tdsnote">TDS @ ${d.tdsPct}% u/s ${esc(d.tdsSection || '194J')} (${money2(d.totals.tds)}) ${d.tdsBase === 'gross' ? 'is worked out on the total including GST, as agreed for this invoice' : 'is deductible on the professional fee only, not on GST'}. Net payable after TDS: ${money2(d.totals.balance)}. Kindly share Form 16A after deduction.</div>` : ''}
+    ${showTds ? `<div class="tdsnote">TDS @ ${d.tdsPct}% u/s ${esc(d.tdsSection || '194J')} (${money2(d.totals.tds)}) ${d.tdsBase === 'gross' ? 'is worked out on the total including GST, as agreed for this invoice' : 'is deductible on the professional fee only, not on GST'}. Net payable after TDS: ${money2(d.totals.balance)}. Kindly share Form 16A after deduction.</div>` : ''}
   </div>
   <div class="pageno">1</div>`;
   return { style, inner };
