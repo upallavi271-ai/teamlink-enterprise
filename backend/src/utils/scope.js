@@ -613,7 +613,13 @@ function applicationWhere(user, opts = {}) {
   const split = nonItSplit(user); // Medical vs Non IT Medical, both ways (2026-10-29)
   const edu = eduSplit(user); // Education Team A vs Team B, both ways (2026-11-11)
   const arms = [base, ...(own ? [own] : []), ...(limit ? [{ requirement: limit }] : []), ...(split ? [{ requirement: split }] : []), ...(edu ? [eduSplitWhere(edu)] : [])];
-  return arms.length === 1 ? base : { AND: arms };
+  const where = arms.length === 1 ? base : { AND: arms };
+  // A TEAM LEAD'S OWN CANDIDATES ARE ALWAYS IN THEIR VIEW (founder 2026-11-28: TLs bring joinings too - a TL owns the people they add,
+  // utils/applicationOwner.js): a TL / STL sees the applications they own even on a requirement with no TL yet, another team's seat or
+  // the other side of the Medical / Non IT split. Nothing else widens.
+  const s = atsScopeOf(user);
+  if (!s.global && ['TL', 'STL'].includes(s.atsRole) && s.userId && !isBdeTl(user)) return { OR: [{ ownerRecruiterId: s.userId }, where] };
+  return where;
 }
 function applicationWhereBase(user) {
   const s = atsScopeOf(user);
