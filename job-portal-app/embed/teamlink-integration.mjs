@@ -1604,6 +1604,26 @@ export function teamlinkFrontRouter({ root, express }) {
     const { withUser } = await portal();
     res.json(await M.importSummary(withUser, SYSTEM));
   }));
+  /*
+   * A RECRUITER'S LOGIN EMAIL CORRECTED to the one TeamLink uses (2026-11-28: the portal said "no Job Portal account for your email address" because it held a
+   * differently spelled one). Behind the x-teamlink-token guard above. The portal's OWN function does it (staff_recruiter_email_change, 0118): the same
+   * account, password, candidates and jobs; refused when another account has the new address; audited; the old sessions end. dryRun unless false.
+   *   POST /api/integrations/teamlink/recruiters/email { from, to, dryRun } -> { ok, recruiterId, name, changed }
+   */
+  r.post('/api/integrations/teamlink/recruiters/email', json, wrap(async (req, res) => {
+    const b = req.body || {};
+    const from = String(b.from || '').trim().toLowerCase();
+    const to = String(b.to || '').trim().toLowerCase();
+    const ok = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) && v.length <= 254;
+    if (!ok(from) || !ok(to)) return res.status(422).json({ ok: false, error: 'from and to must be email addresses' });
+    const { withUser } = await portal();
+    const rows = await withUser(SYSTEM, async (c) => (await c.query('select id, name from recruiters where lower(email) = $1', [from])).rows);
+    if (rows.length !== 1) return res.status(404).json({ ok: false, error: rows.length ? 'more than one recruiter has that address' : 'no recruiter has that address' });
+    if (b.dryRun !== false) return res.json({ ok: true, dryRun: true, recruiterId: rows[0].id, name: rows[0].name });
+    const out = await withUser(SYSTEM, async (c) => (await c.query('select staff_recruiter_email_change($1, $2) as r', [rows[0].id, to])).rows[0].r);
+    return res.json({ ok: true, recruiterId: rows[0].id, name: rows[0].name, changed: !(out && out.changed === false), result: out });
+  }));
+
   r.put('/api/integrations/teamlink/jobs/:requirementId', wrap(async (req, res) => {
     const { withUser } = await portal();
     const out = await withUser(SYSTEM, (c) => upsertJob(c, req.params.requirementId, req.body));
