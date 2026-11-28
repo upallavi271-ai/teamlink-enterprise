@@ -674,7 +674,8 @@ export default function Invoices() {
             w.document.head.innerHTML = `<meta charset="utf-8"><style>${style}
 .tab-bar{display:flex;gap:8px;padding:10px;position:sticky;top:0;background:#fff;border-bottom:1px solid #ddd}.tab-bar button{padding:6px 14px;cursor:pointer}@media print{.tab-bar{display:none}}</style>`;
             w.document.title = `Invoice ${r.data.invoiceNumber}`;
-            w.document.body.innerHTML = `<div class="tab-bar"><button data-m="client">Client copy</button><button data-m="internal">Internal copy</button><button data-print="1">Print / Save as PDF</button></div>${inner}`;
+            w.document.body.innerHTML = `<div class="tab-bar"><button data-m="client">Client copy</button><button data-m="internal">Internal copy</button><button data-print="1">Print / Save as PDF</button><button data-edit="1">✎ Edit amount / GST / TDS</button></div>${inner}`;
+            w.document.querySelector('.tab-bar button[data-edit]').onclick = () => { w.location.href = `${window.location.origin}/invoices/${g.ids[0]}`; };
             w.document.querySelectorAll('.tab-bar button[data-m]').forEach((b) => { b.onclick = () => draw(b.getAttribute('data-m')); b.style.fontWeight = b.getAttribute('data-m') === mode ? '700' : '400'; });
             w.document.querySelector('.tab-bar button[data-print]').onclick = () => w.print();
           };
@@ -1368,7 +1369,7 @@ export default function Invoices() {
         />
       )}
       {waBulk && <WaBulkModal entityType="invoice" ids={waBulk.ids} onClose={() => { setWaBulk(null); setWaTick((n) => n + 1); }} onDone={() => { setWaSel(new Set()); setWaTick((n) => n + 1); }} />}
-      {viewFor && <ClientInvoiceView g={viewFor} docHtml={invoiceDocumentHtml} onClose={() => setViewFor(null)} />}
+      {viewFor && <ClientInvoiceView g={viewFor} docHtml={invoiceDocumentHtml} onChanged={load} onClose={() => setViewFor(null)} />}
       {payFor && (
         <PaymentModal
           rows={allGroups}

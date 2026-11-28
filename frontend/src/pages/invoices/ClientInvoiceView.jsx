@@ -6,14 +6,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import { money2, fmtD } from './invFormat';
+import TaxEditModal from './TaxEditModal.jsx';
 
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-export default function ClientInvoiceView({ g, docHtml, onClose }) {
+export default function ClientInvoiceView({ g, docHtml, onClose, onChanged }) {
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState('');
   const [mode, setMode] = useState('client');
   const frame = useRef(null);
+  // Edit from the invoice window: the amount before GST, GST and TDS of one candidate's line (the same form as the invoice page).
+  const [editing, setEditing] = useState(null); // the loaded invoice being edited
+  const [tick, setTick] = useState(0); // redraw the document after a save
+  const members = g.members && g.members.length ? g.members : g.ids.map((id) => ({ id }));
+  const openEdit = async (id) => {
+    if (!id) return;
+    try {
+      const { data } = await api.get(`/invoices/${id}`);
+      if (!data.tax) setError('This invoice has no amount that can be edited here.'); else setEditing(data);
+    } catch (e) { setError(e.response?.data?.error || 'Could not open this invoice for editing.'); }
+  };
 
   useEffect(() => {
     let live = true;
@@ -22,7 +34,7 @@ export default function ClientInvoiceView({ g, docHtml, onClose }) {
       .then((r) => { if (live) setDoc(r.data); })
       .catch((e) => { if (live) setError(e.response?.data?.error || 'The invoice could not be opened.'); });
     return () => { live = false; };
-  }, [g.key, g.ids.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [g.key, g.ids.join(','), tick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const html = useMemo(() => {
     if (!doc) return '';
@@ -78,9 +90,24 @@ export default function ClientInvoiceView({ g, docHtml, onClose }) {
         </div>
         <div className="modal-foot">
           <button type="button" className="btn" onClick={onClose}>Close</button>
+          {members.length === 1
+            ? <button type="button" className="btn btn-gold" onClick={() => openEdit(members[0].id)}>✎ Edit</button>
+            : (
+              <select aria-label="Edit a candidate's amount, GST or TDS" value="" onChange={(e) => openEdit(e.target.value)} style={{ padding: '6px 10px' }}>
+                <option value="">✎ Edit a candidate…</option>
+                {members.map((m) => <option key={m.id} value={m.id}>{`${m.candidateName || '(no candidate)'} · ${m.invoiceNumber || ''}`}</option>)}
+              </select>
+            )}
           <button type="button" className="btn btn-primary" disabled={!doc} onClick={print}>🖨 Print / Save as PDF</button>
         </div>
       </div>
+      {editing && (
+        <TaxEditModal
+          invoice={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(said) => { setEditing(null); window.alert(said); setTick((n) => n + 1); if (onChanged) onChanged(); }}
+        />
+      )}
     </div>
   );
 }
