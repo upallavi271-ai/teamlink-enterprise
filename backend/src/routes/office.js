@@ -1431,6 +1431,8 @@ function ledgerRow(r, names, txnDates, payment) {
     paymentDate: pay.date,
     paymentDateSource: pay.source,
     billNumber: r.billNumber || null,
+    paidByPerson: r.paidByPerson || null,
+    personSettledOn: r.personSettledOn || null,
     bill: r.proofName ? {
       name: r.proofName,
       onServer: !!r.proofFile,
@@ -2779,6 +2781,24 @@ async function backToPending(req, res, existing) {
   });
   return res.json(await expenseDetail(existing.id, req.user));
 }
+
+// WHO PAID IT (founder 2026-11-28): the person who paid from their own money, and the day the office sent it back to them.
+// It changes no amount and no status, so it can be set or changed on any bill at any time (audited).
+router.patch('/:id/paid-by', async (req, res) => {
+  const existing = await prisma.officeExpense.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: 'Expense not found' });
+  const person = String(req.body?.person || '').trim().replace(/\s+/g, ' ').slice(0, 60) || null;
+  const day = String(req.body?.settledOn || '').trim() || null;
+  if (day && !/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ error: 'The date the money was sent back is not a date.' });
+  if (day && !person) return res.status(400).json({ error: 'Say who paid it first.' });
+  await prisma.officeExpense.update({ where: { id: existing.id }, data: { paidByPerson: person, personSettledOn: person ? day : null, updatedById: req.user.id } });
+  const say = (p, d) => (p ? `${p}${d ? ` · sent back ${d}` : ' · to be sent back'}` : 'office');
+  await logAudit({
+    userId: req.user.id, action: 'Expense paid-by changed', entity: 'OfficeExpense', entityId: existing.id,
+    fromValue: say(existing.paidByPerson, existing.personSettledOn), toValue: say(person, person ? day : null),
+  });
+  return res.json({ ok: true, paidByPerson: person, personSettledOn: person ? day : null });
+});
 
 router.patch('/:id/status', async (req, res) => {
   if (!(await isApprover(req.user))) return res.status(403).json({ error: APPROVER_ONLY });

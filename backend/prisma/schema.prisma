@@ -2361,6 +2361,10 @@ model OfficeExpense {
   vendorId        String?
   vendorAddress   String?
   vendorPan       String?
+  // 20261128120000_expense_paid_by_person - the person (Vasu, Purna ...) who paid this from their own money, and the
+  // day the office sent it back to them (null = still to be sent back).
+  paidByPerson    String?
+  personSettledOn String?
 
   @@index([approvalStatus])
   @@index([expenseDate])

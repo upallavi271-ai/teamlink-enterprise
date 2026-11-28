@@ -191,7 +191,7 @@ export default function ExpenseLedger({
     if (e.target.closest('button, a, input, select, label')) return;
     setOpenId(r.id);
   };
-  const cols = 17;
+  const cols = 18;
   const summary = rows.find((r) => r.id === openId);
 
   return (
@@ -222,6 +222,7 @@ export default function ExpenseLedger({
               <Sortable k="date" order={order} setOrder={setOrder}>Date</Sortable>
               <Sortable k="code" order={order} setOrder={setOrder}>Bill / Expense No.</Sortable>
               <th>Vendor</th>
+              <th title="Who paid it from their own money, and whether it was sent back to them">Paid by</th>
               <th>Category</th>
               <th>Description</th>
               <Sortable k="amount" num order={order} setOrder={setOrder}>Before GST</Sortable>
@@ -257,6 +258,30 @@ export default function ExpenseLedger({
                   {r.billNumber && <div className="oe-lg-sub" title="Bill / invoice number">{r.billNumber}</div>}
                 </td>
                 <td className="oe-lg-vendor" title={r.vendor || ''}>{r.vendor || '—'}</td>
+                <td className="oe-nowrap">
+                  {!r.paidByPerson ? <span className="cell-muted">Office</span> : (
+                    <>
+                      <b>{r.paidByPerson}</b>
+                      <div>
+                        <span className={`status ${r.personSettledOn ? 'priority-low' : 'priority-high'}`}>{r.personSettledOn ? `Sent ${fmtD(r.personSettledOn)}` : 'To be sent'}</span>
+                        {canManage && (
+                          <> <button
+                            type="button"
+                            className="link-btn"
+                            onClick={async () => {
+                              const back = !r.personSettledOn;
+                              if (!window.confirm(back ? `Mark the money as SENT to ${r.paidByPerson} today?` : `Change back to "To be sent" for ${r.paidByPerson}?`)) return;
+                              try {
+                                await api.patch(`/office-expenses/${r.id}/paid-by`, { person: r.paidByPerson, settledOn: back ? new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10) : '' });
+                                onChanged();
+                              } catch (e) { window.alert(e.response?.data?.error || 'That could not be changed.'); }
+                            }}
+                          >{r.personSettledOn ? 'Undo' : 'Mark sent'}</button></>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </td>
                 <td className="oe-lg-cat">{r.category || '—'}{r.repeats && <span className={`oe-rep ${r.repeats === 'One-time' ? 'is-once' : 'is-rep'}`} title={r.repeats === 'One-time' ? 'Paid once' : `Repeats: ${r.repeats}`}>{r.repeats}</span>}</td>
                 <td className="oe-lg-desc" title={r.description || ''}>{r.description || <span className="cell-muted">—</span>}</td>
                 <Money v={r.amount} />
@@ -303,7 +328,7 @@ export default function ExpenseLedger({
           {t && t.count > 0 && (
             <tfoot>
               <tr>
-                <td className="oe-tot-l" colSpan={5}>Total · {t.count} expense{t.count === 1 ? '' : 's'}{data.filtered ? ' (these filters)' : ''}</td>
+                <td className="oe-tot-l" colSpan={6}>Total · {t.count} expense{t.count === 1 ? '' : 's'}{data.filtered ? ' (these filters)' : ''}</td>
                 <td className="num" title={money2(t.before)}>{money(t.before)}</td>
                 <td />
                 <td className="num" title={money2(t.gst)}>{money(t.gst)}</td>

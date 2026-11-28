@@ -49,11 +49,14 @@ function fromRow(r) {
     notes: r.remarks || r.notes || '',
     status: r.approvalStatus || 'PENDING',
     reason: '',
+    paidByPerson: r.paidByPerson || '',
+    returned: !!r.personSettledOn,
+    returnedOn: r.personSettledOn || '',
   };
 }
 const BLANK = () => ({
   expenseDate: todayIso(), category: '', description: '', vendor: '', paymentMode: '', amount: '', gstPct: '0',
-  billNumber: '', notes: '', status: 'PENDING', reason: '',
+  billNumber: '', notes: '', status: 'PENDING', reason: '', paidByPerson: '', returned: false, returnedOn: '',
 });
 
 export default function QuickExpenseModal({
@@ -84,7 +87,7 @@ export default function QuickExpenseModal({
   useEffect(() => {
     api.get('/office-expenses/categories').then((r) => {
       const names = r.data.map((c) => c.name);
-      setCats((cur) => [...new Set([...names, ...cur])].sort((a, b) => a.localeCompare(b)));
+      setCats((cur) => [...new Set([...names, ...cur, 'Others'])].sort((a, b) => a.localeCompare(b)));
     }).catch(() => {});
   }, []);
 
@@ -180,6 +183,17 @@ export default function QuickExpenseModal({
       else setErr(d?.error || 'The expense could not be saved.');
       setBusy(false);
       return;
+    }
+    // Who paid it from their own money, and whether it has been sent back to them (saved on its own - it changes no amount).
+    const person = f.paidByPerson.trim();
+    if (person || (editing && row.paidByPerson)) {
+      try {
+        await api.patch(`/office-expenses/${id}/paid-by`, { person, settledOn: person && f.returned ? (f.returnedOn || todayIso()) : '' });
+      } catch (e4) {
+        setErr(`The expense was saved, but who paid it could not be saved: ${e4.response?.data?.error || 'try again'}.`);
+        setBusy(false);
+        return;
+      }
     }
     if (file) {
       const fd = new FormData();
@@ -281,6 +295,21 @@ export default function QuickExpenseModal({
           </Combo>
           {bad('paymentMode') && <em className="oe-qx-err">{errors.paymentMode}</em>}
         </label>
+
+        <div className="field"><span>Paid by (from own money)</span>
+          <Combo creatable value={f.paidByPerson} onChange={set('paidByPerson')} placeholder="Office account — or pick / type a name" aria-label="Paid by">
+            {[...new Set(['Vasu', 'Purna', ...(f.paidByPerson ? [f.paidByPerson] : [])])].map((v) => <option key={v} value={v}>{v}</option>)}
+          </Combo>
+          <em className="oe-qx-hint">Leave empty when the office account paid it</em>
+        </div>
+        <div className="field">
+          <span>Money sent back to them?</span>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" disabled={!f.paidByPerson.trim()} checked={!!f.returned} onChange={(e) => setF((c) => ({ ...c, returned: e.target.checked, returnedOn: e.target.checked ? (c.returnedOn || todayIso()) : '' }))} />
+            {f.returned ? 'Yes, sent' : 'Not yet'}
+          </label>
+          {f.returned && <input type="date" value={f.returnedOn} onChange={set('returnedOn')} aria-label="Date the money was sent back" />}
+        </div>
 
         <FormSection id="oe-qx-s-amount" title="Amount & GST" className="oe-qx-full" />
         <label className={`field${bad('amount') ? ' oe-qx-bad' : ''}`} data-invalid={inv('amount')} onBlur={touch('amount')}><span>Amount (₹, before GST)</span>
