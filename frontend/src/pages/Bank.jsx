@@ -67,6 +67,18 @@ const LINE_SORTS = [
 // The reconciliation table has its own State tabs, so its bar leaves State out.
 const RECON_FIELDS = LINE_FIELDS.filter((f) => f.key !== 'state');
 
+// Delete one statement line that no file brought in. Two presses: the first asks, the second deletes.
+function DeleteLine({ txn, call }) {
+  const [ask, setAsk] = useState(false);
+  if (!ask) return <button type="button" className="btn btn-sm" style={{ color: 'var(--red)' }} onClick={() => setAsk(true)}>Delete line</button>;
+  return (
+    <>
+      <button type="button" className="btn btn-sm btn-danger" onClick={() => { setAsk(false); call('delete', `/bank/${txn.id}`, undefined, () => `Line of ${fmtD(txn.date)} for ${money2(txn.amount)} deleted.`); }}>Confirm delete</button>{' '}
+      <button type="button" className="btn btn-sm" onClick={() => setAsk(false)}>Keep</button>
+    </>
+  );
+}
+
 // A month picker for statement lines: 'All months' or one month that the lines cover. The totals strip under it then reads
 // "this month: N lines, money in, money out".
 const monthKey = (t) => String(t.date || '').slice(0, 7);
@@ -822,6 +834,10 @@ function AccountView({
                       <button className="btn btn-sm" onClick={() => setDialog({ kind: 'catz', txn: t, tab: 'cat' })}>Categorise</button>{' '}
                       <button className="btn btn-sm" onClick={() => act(t.id, 'exclude', { excluded: !t.excluded })}>{t.excluded ? 'Bring back' : 'Exclude'}</button>
                     </>
+                  )}
+                  {/* founder 2026-11-28: a line that came from no statement file (typed by hand / sample) can be deleted. */}
+                  {canManage && !t.importBatch && !t.importFile && !t.createdBillId && !t.billLinks && t.state !== 'Reconciled' && (
+                    <> <DeleteLine txn={t} call={call} /></>
                   )}
                 </td>
               </tr>
