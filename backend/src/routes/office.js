@@ -2286,7 +2286,8 @@ async function resolveCategory(user, raw) {
   const hit = await findCategory(name);
   if (hit && hit.isActive) return { name: hit.name };
   if (hit) return { status: 400, error: `The category "${hit.name}" has been retired — pick another, or restore it on the category list` };
-  if (!(await isApprover(user))) {
+  // 'Others' is what an expense with no category picked is filed under, so anyone may use it.
+  if (name !== 'Others' && !(await isApprover(user))) {
     return { status: 403, error: `"${name}" is not on the category list. ${APPROVER_ONLY} — ask an approver to add it.` };
   }
   const row = await prisma.expenseCategory.create({ data: { name, createdById: user.id } });
@@ -2474,9 +2475,8 @@ async function ensureExpenseCodes() {
 function quickProblem(body, isNew) {
   const has = (k) => String(body[k] ?? '').trim().length > 0;
   if (isNew || body.description !== undefined) { if (!has('description')) return 'Description is required'; }
-  if (isNew || body.vendor !== undefined) { if (!has('vendor')) return 'Vendor / Paid To is required'; }
-  if (isNew || body.paymentMode !== undefined) {
-    if (!has('paymentMode')) return 'Payment mode is required';
+  // Founder 2026-11-28: only the date, the description and the amount are needed - vendor, payment mode and category are optional.
+  if (has('paymentMode')) {
     if (!LEDGER_MODES.includes(body.paymentMode) && !EXP_MODES.includes(body.paymentMode)) return `Payment mode must be one of: ${LEDGER_MODES.join(', ')}`;
   }
   if (body.gstRatePct !== undefined && body.gstRatePct !== '' && body.gstRatePct != null) {
@@ -2519,7 +2519,8 @@ router.post('/', async (req, res) => {
     location, vendor, expenseDate, recurring, notes,
   } = req.body;
   // Spec A validation: date required, category required (and on the list),
-  // amount > 0 (below).
+  // amount > 0 (below). The quick form may leave the category out: it is filed under Others.
+  if (req.body.form === 'quick' && !String(req.body.category || '').trim()) req.body.category = 'Others';
   if (!String(req.body.category || '').trim()) return res.status(400).json({ error: 'Category is required' });
   if (!isRealDay(expenseDate)) return res.status(400).json({ error: 'Date is required (YYYY-MM-DD)' });
   const gp = gstinProblem(req.body) || hsnProblem(req.body);

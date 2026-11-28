@@ -111,10 +111,7 @@ export default function QuickExpenseModal({
   const errors = useMemo(() => {
     const e = {};
     if (!/^\d{4}-\d{2}-\d{2}$/.test(f.expenseDate)) e.expenseDate = 'Pick the expense date';
-    if (!f.category.trim()) e.category = 'Pick a category';
     if (!f.description.trim()) e.description = 'Say what it was for';
-    if (!f.vendor.trim()) e.vendor = 'Who was paid?';
-    if (!f.paymentMode) e.paymentMode = 'Pick how it was paid';
     if (!(amount > 0)) e.amount = 'Amount must be more than zero';
     else if (amount > 100000000) e.amount = 'That amount looks too large';
     if (!(gstPct >= 0 && gstPct <= 100)) e.gstPct = 'GST % is 0 to 100';
@@ -150,10 +147,10 @@ export default function QuickExpenseModal({
     const body = {
       form: 'quick',
       expenseDate: f.expenseDate,
-      category: f.category.trim(),
+      category: f.category.trim() || 'Others',
       description: f.description.trim(),
       vendor: f.vendor.trim(),
-      paymentMode: f.paymentMode,
+      ...(f.paymentMode ? { paymentMode: f.paymentMode } : {}),
       billNumber: f.billNumber.trim(),
       remarks: f.notes.trim(),
     };
@@ -265,8 +262,8 @@ export default function QuickExpenseModal({
           <input type="date" value={f.expenseDate} onChange={set('expenseDate')} max="2100-12-31" aria-invalid={bad('expenseDate') ? true : undefined} />
           {bad('expenseDate') && <em className="oe-qx-err">{errors.expenseDate}</em>}
         </label>
-        <div className={`field${bad('category') ? ' oe-qx-bad' : ''}`} data-invalid={inv('category')} onBlur={touch('category')}><span>Category</span>
-          <Combo creatable={!!acc.approver} value={f.category} onChange={set('category')} placeholder="Pick a category" aria-label="Category">
+        <div className={`field${bad('category') ? ' oe-qx-bad' : ''}`} data-invalid={inv('category')} onBlur={touch('category')}><span>Category (optional)</span>
+          <Combo creatable={!!acc.approver} value={f.category} onChange={set('category')} placeholder="Others, if left empty" aria-label="Category">
             {[...new Set([...cats, ...(f.category ? [f.category] : [])])].map((c) => <option key={c} value={c}>{c}</option>)}
           </Combo>
           {bad('category') && <em className="oe-qx-err">{errors.category}</em>}
@@ -278,7 +275,7 @@ export default function QuickExpenseModal({
         </label>
 
         <FormSection id="oe-qx-s-vendor" title="Vendor & payment" className="oe-qx-full" />
-        <div className={`field${bad('vendor') ? ' oe-qx-bad' : ''}`} data-invalid={inv('vendor')} onBlur={touch('vendor')}><span>Vendor / Paid To</span>
+        <div className={`field${bad('vendor') ? ' oe-qx-bad' : ''}`} data-invalid={inv('vendor')} onBlur={touch('vendor')}><span>Vendor / Paid To (optional)</span>
           <Combo creatable value={f.vendor} onChange={set('vendor')} placeholder="Pick or type who was paid" aria-label="Vendor / Paid To">
             {[...new Set([...vendors, ...(f.vendor ? [f.vendor] : [])])].map((v) => <option key={v} value={v}>{v}</option>)}
           </Combo>
@@ -288,7 +285,7 @@ export default function QuickExpenseModal({
             + Add Vendor
           </button>
         </div>
-        <label className={`field${bad('paymentMode') ? ' oe-qx-bad' : ''}`} data-invalid={inv('paymentMode')} onBlur={touch('paymentMode')}><span>Payment Mode</span>
+        <label className={`field${bad('paymentMode') ? ' oe-qx-bad' : ''}`} data-invalid={inv('paymentMode')} onBlur={touch('paymentMode')}><span>Payment Mode (optional)</span>
           <Combo value={f.paymentMode} onChange={set('paymentMode')} aria-invalid={bad('paymentMode') ? true : undefined}>
             <option value="">— Pick —</option>
             {modes.map((m) => <option key={m} value={m}>{m}</option>)}
