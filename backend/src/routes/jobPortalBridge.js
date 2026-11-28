@@ -73,6 +73,16 @@ router.post('/applications', async (req, res) => {
   return res.status(out.status).json(out.body);
 });
 
+// SEND TO ATS FOR A REQUIREMENT NOT PUBLISHED ON THE PORTAL (2026-11-28): the portal hands the ticked candidates here (bridge secret + the
+// recruiter's e-mail); utils/portalSendToAts.js adds them to that requirement's pipeline, owned by that recruiter.
+router.post('/send-to-ats', async (req, res) => {
+  if (!bridge.secretMatches(req.get('x-job-portal-secret'))) return res.status(401).json({ error: 'Invalid or missing job portal secret' });
+  try {
+    const out = await require('../utils/portalSendToAts').sendToAts(String(req.get('x-portal-user-email') || ''), req.body); // eslint-disable-line global-require
+    return res.status(out.ok === false ? out.status || 400 : 200).json(out);
+  } catch (err) { console.error('[send-to-ats]', err.message); return res.status(500).json({ error: 'The ATS could not take the candidates. Please try again.' }); } // eslint-disable-line no-console
+});
+
 // THE CANDIDATE LOGIN SMS (2026-11-20): the portal hands over the login ID and the candidate's own password-setup link; TeamLink sends the
 // approved DLT login template through the existing SMS Push integration (utils/loginSms.js). Always 200: the portal reads status
 // sent | duplicate | off | failed (a 5xx would be retried and could send twice).

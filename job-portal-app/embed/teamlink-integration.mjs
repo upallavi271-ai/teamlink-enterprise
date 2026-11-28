@@ -40,6 +40,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { withRcsLogin } from './rcs-login.mjs';
 import { isIP } from 'node:net';
+import { createRequire } from 'node:module';
 
 const SYSTEM = { userId: '', role: 'admin' };
 const PREFIX = 'tl_';
@@ -760,6 +761,15 @@ export function teamlinkFrontRouter({ root, express }) {
     res.set('Cache-Control', 'no-cache');
     res.sendFile(join(import.meta.dirname, 'omni-panel-addon.js'));
   });
+  // SEND TO ATS for a requirement not published on the portal goes to the ATS itself (embed/send-to-ats-stub.mjs); published jobs are the portal's own route
+  r.post('/api/ats/send-to-pipeline', json, wrap(async (req, res, next) => {
+    const M = await import(pathToFileURL(join(import.meta.dirname, 'send-to-ats-stub.mjs')).href);
+    const { withUser } = await portal();
+    const auth = await import(pathToFileURL(join(ROOT, 'api', 'src', 'auth.js')).href);
+    const cookieParser = createRequire(join(ROOT, 'api', 'package.json'))('cookie-parser');
+    const guard = [cookieParser(), auth.attachSession(), auth.csrfProtection(), auth.requireAuth(), auth.requireRole('recruiter', 'admin')];
+    return M.sendToAtsForStubs({ withUser, guard, api: teamlinkApi(), secret: pushSecret() })(req, res, next);
+  }));
   r.get('/tl-addon/app-selection.js', (_req, res) => {
     res.set('Content-Type', 'application/javascript; charset=utf-8');
     res.set('Cache-Control', 'no-cache');
