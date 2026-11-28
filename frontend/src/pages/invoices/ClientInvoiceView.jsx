@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import { money2, fmtD } from './invFormat';
 import TaxEditModal from './TaxEditModal.jsx';
+import { INVOICE_LOGO } from './invoiceLogo.js';
 
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -38,7 +39,7 @@ export default function ClientInvoiceView({ g, docHtml, onClose, onChanged }) {
 
   const html = useMemo(() => {
     if (!doc) return '';
-    const { style, inner } = docHtml(doc, mode);
+    const { style, inner } = docHtml(doc, mode, { logo: INVOICE_LOGO });
     return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(doc.invoiceNumber)} — ${esc(doc.client.name)}</title><style>${style}</style></head><body>${inner}</body></html>`;
   }, [doc, mode, docHtml]);
 

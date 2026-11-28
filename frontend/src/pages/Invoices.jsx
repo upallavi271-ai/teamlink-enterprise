@@ -670,7 +670,7 @@ export default function Invoices() {
       api.get('/invoices/group/document', { params: { ids: g.ids.join(',') } })
         .then((r) => {
           const draw = (mode) => {
-            const { style, inner } = invoiceDocumentHtml(r.data, mode);
+            const { style, inner } = invoiceDocumentHtml(r.data, mode, { logo: INVOICE_LOGO });
             w.document.head.innerHTML = `<meta charset="utf-8"><style>${style}
 .tab-bar{display:flex;gap:8px;padding:10px;position:sticky;top:0;background:#fff;border-bottom:1px solid #ddd}.tab-bar button{padding:6px 14px;cursor:pointer}@media print{.tab-bar{display:none}}</style>`;
             w.document.title = `Invoice ${r.data.invoiceNumber}`;
