@@ -97,7 +97,7 @@ async function factsFor(employeeId) {
     require('./probationLength').getSettings(), // eslint-disable-line global-require
   ]);
   const company = require('./companyContact').forLetter(companyRow); // eslint-disable-line global-require
-  const lead = !!(employee.user && [employee.user.role, employee.user.hrmsRole].includes('TL')); // Team Leads have the shorter probation (utils/probationLength.js)
+  const lead = require('./probationLength').isLead({ designation: employee.designation, user: employee.user }); // eslint-disable-line global-require
   const manager = employee.reportingManager;
   return {
     employee,

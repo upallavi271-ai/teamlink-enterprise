@@ -52,6 +52,10 @@ const fill = (t, v) => String(t).replace(/\{\{(\w+)\}\}/g, (m, k) => (v[k] != nu
 async function letterValues({ employee, application }) {
   const mgr = employee.reportingManagerId ? await prisma.employee.findUnique({ where: { id: employee.reportingManagerId }, select: { name: true, designation: true } }).catch(() => null) : null;
   const company = process.env.COMPANY_LEGAL_NAME || 'TeamLink Consultants OPC Pvt Ltd';
+  // probation: 6 months, Team Leads 3 (founder 2026-11-28, utils/probationLength.js)
+  const PL = require('./probationLength'); // eslint-disable-line global-require
+  const length = await PL.getSettings();
+  const login = employee.userId ? await prisma.user.findUnique({ where: { id: employee.userId }, select: { role: true, hrmsRole: true } }).catch(() => null) : null;
   return {
     company,
     name: employee.name,
@@ -63,7 +67,7 @@ async function letterValues({ employee, application }) {
     employmentType: employee.employeeType || 'Full-time',
     manager: mgr ? `${mgr.name}${mgr.designation ? `, ${mgr.designation}` : ''}` : 'Will be introduced on your first day',
     ctc: inr(application && application.offeredCtc),
-    probationMonths: Number(process.env.PROBATION_MONTHS) || 3, // the trainee period in the reference offer letter (3 months, 2026-11-19)
+    probationMonths: PL.isLead({ designation: employee.designation, user: login }) ? length.leadMonths : length.months,
   };
 }
 

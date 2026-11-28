@@ -168,7 +168,8 @@ export default function OfferLetterEditor() {
             <div className="field"><label>Opening paragraph</label><textarea rows="5" {...field('intro')} /></div>
             <div className="grid-2">
               <div className="field"><label>Trainee stipend per month (₹) <span className="small-muted">- during the trainee period</span></label><input type="text" inputMode="numeric" {...field('monthlySalary')} placeholder="10000" /></div>
-              <div className="field"><label>Trainee period (months) <span className="small-muted">- 1 to 12</span></label><input type="text" inputMode="numeric" {...field('traineeMonths')} placeholder="3" /></div>
+              <div className="field"><label>Trainee period (months) <span className="small-muted">- 1 to 12</span></label><input type="text" inputMode="numeric" {...field('traineeMonths')} placeholder="6" /></div>
+              <div className="field"><label>Trainee period for Team Leads (months) <span className="small-muted">- used when the position is Team Lead / TL</span></label><input type="text" inputMode="numeric" {...field('traineeMonthsLead')} placeholder="3" /></div>
               <div className="field"><label>Annual CTC on confirmation (₹) <span className="small-muted">- empty = this line is left out</span></label><input type="text" inputMode="numeric" {...field('confirmedCtc')} placeholder="300000" /></div>
               <div className="field"><label>Working hours <span className="small-muted">- empty = this line is left out</span></label><input type="text" {...field('workingHours')} placeholder="e.g. 9:00 am to 6:00 pm, Monday to Saturday" /></div>
             </div>

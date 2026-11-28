@@ -58,7 +58,7 @@ const TOKENS = [
   { key: 'ctc', label: 'Annual CTC from the offer (not used in the standard letter)', sample: '₹ 1,20,000 per annum' },
   { key: 'manager', label: 'Reporting manager (the job’s team lead)', sample: 'Ravi Kumar, Team Lead' },
   { key: 'company', label: 'Company name', sample: 'TeamLink Consultants' },
-  { key: 'probationMonths', label: 'Trainee period in months (set below in the editor)', sample: '3' },
+  { key: 'probationMonths', label: 'Trainee period in months (set below in the editor; Team Leads have their own number)', sample: '6' },
   { key: 'offerDate', label: 'Date of this letter', sample: '17 Nov 2026' },
   { key: 'refNo', label: 'Letter reference number', sample: 'TL/OL/2026/A1B2C3' },
 ];
@@ -88,7 +88,8 @@ const DEFAULT_TEMPLATE = {
   // showCtc is the old name of the "print the salary" tick; it switches the salary lines off when false.
   showCtc: true,
   monthlySalary: 10000, // the trainee stipend per month (the founder's reference offer letter, 2026-11-19)
-  traineeMonths: 3, // the trainee period (probation) in months
+  traineeMonths: 6, // the trainee period (probation) in months (founder 2026-11-28)
+  traineeMonthsLead: 3, // the same for an offer whose designation is Team Lead / TL (utils/probationLength.js isLead)
   confirmedCtc: 300000, // the annual CTC on confirmation (the same reference letter)
   workingHours: '', // the founder types the real hours once; until then the working-hours lines are left out
   details: [], // the reference letter has no details table; rows can still be added in the editor
@@ -179,12 +180,14 @@ function cleanTemplate(body) {
   const rawSalary = b.monthlySalary == null ? '' : String(b.monthlySalary).replace(/[,\s₹]/g, '');
   const salary = rawSalary === '' ? 0 : Number(rawSalary);
   if (!Number.isFinite(salary) || salary < 0 || salary > LIMITS.maxMonthlySalary) return { error: 'Write the trainee stipend per month as a number of rupees, for example 10000.' };
-  // the annual CTC on confirmation (blank = no CTC line); the trainee period is 1 to 12 months (default 3)
+  // the annual CTC on confirmation (blank = no CTC line); the trainee period is 1 to 12 months (default 6, Team Leads 3)
   const rawCtc = b.confirmedCtc == null ? '' : String(b.confirmedCtc).replace(/[,\s₹]/g, '');
   const ctc = rawCtc === '' ? 0 : Number(rawCtc);
   if (!Number.isFinite(ctc) || ctc < 0 || ctc > LIMITS.maxConfirmedCtc) return { error: 'Write the annual CTC on confirmation as a number of rupees, for example 300000.' };
-  const months = b.traineeMonths == null || b.traineeMonths === '' ? 3 : Math.round(Number(b.traineeMonths));
+  const months = b.traineeMonths == null || b.traineeMonths === '' ? 6 : Math.round(Number(b.traineeMonths));
   if (!Number.isFinite(months) || months < 1 || months > LIMITS.maxTraineeMonths) return { error: 'The trainee period is 1 to 12 months.' };
+  const leadMonths = b.traineeMonthsLead == null || b.traineeMonthsLead === '' ? 3 : Math.round(Number(b.traineeMonthsLead));
+  if (!Number.isFinite(leadMonths) || leadMonths < 1 || leadMonths > LIMITS.maxTraineeMonths) return { error: 'The trainee period for Team Leads is 1 to 12 months.' };
   const value = {
     subject: s(b.subject, LIMITS.subject),
     coverNote: s(b.coverNote, LIMITS.coverNote),
@@ -194,6 +197,7 @@ function cleanTemplate(body) {
     showCtc: b.showCtc !== false,
     monthlySalary: Math.round(salary),
     traineeMonths: months,
+    traineeMonthsLead: leadMonths,
     confirmedCtc: Math.round(ctc),
     workingHours: s(b.workingHours, LIMITS.workingHours),
     details: (Array.isArray(b.details) ? b.details : []).map((r) => ({ label: s(r && r.label, LIMITS.rowLabel), value: s(r && r.value, LIMITS.rowValue) })).filter((r) => r.label && r.value),
@@ -280,7 +284,7 @@ async function valuesFor(app, tpl) {
     workingHours: tpl.workingHours || '',
     manager: await managerOf(r),
     company: company.name,
-    probationMonths: String(tpl.traineeMonths || 3),
+    probationMonths: String(require('./probationLength').isLead({ designation: r.title }) ? (tpl.traineeMonthsLead || 3) : (tpl.traineeMonths || 6)), // eslint-disable-line global-require
     offerDate: shortDay(istToday()),
     refNo: `TL/OL/${year}/${String(app.id).slice(-6).toUpperCase()}`,
   };
@@ -336,7 +340,7 @@ async function buildModel(app, tpl, { sample = false } = {}) {
     vals.monthlySalaryWords = tpl.showCtc === false ? '' : rupeeWords(tpl.monthlySalary);
     vals.confirmedCtc = tpl.showCtc === false ? '' : yearlyText(tpl.confirmedCtc);
     vals.confirmedCtcWords = tpl.showCtc === false ? '' : rupeeWords(tpl.confirmedCtc);
-    vals.probationMonths = String(tpl.traineeMonths || 3);
+    vals.probationMonths = String(tpl.traineeMonths || 6);
     vals.workingHours = tpl.workingHours || '';
   }
   const why = (missing) => [...new Set(missing.map((k) => k.replace(/Words$/, '')))].map((k) => (k === 'monthlySalary' ? 'trainee stipend not written in the editor' : k === 'confirmedCtc' ? 'annual CTC on confirmation not written in the editor' : k === 'workingHours' ? 'working hours not written in the editor' : `no ${k} on file`)).join(', ');
