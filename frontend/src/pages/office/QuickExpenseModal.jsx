@@ -99,6 +99,8 @@ export default function QuickExpenseModal({
 
   const set = (k) => (e) => { const v = e && e.target ? e.target.value : e; setF((cur) => ({ ...cur, [k]: v })); setDup(null); };
 
+  // 'Others' (fruits, flowers and the like): who was paid is not asked - the description says it, and 'Paid by' names whose money.
+  const others = f.category.trim() === 'Others';
   const amount = Number(f.amount);
   const gstPct = Number(f.gstPct) || 0;
   const gstAmt = Number.isFinite(amount) && amount > 0 ? r2((amount * gstPct) / 100) : 0;
@@ -149,7 +151,7 @@ export default function QuickExpenseModal({
       expenseDate: f.expenseDate,
       category: f.category.trim() || 'Others',
       description: f.description.trim(),
-      vendor: f.vendor.trim(),
+      vendor: others ? '' : f.vendor.trim(),
       ...(f.paymentMode ? { paymentMode: f.paymentMode } : {}),
       billNumber: f.billNumber.trim(),
       remarks: f.notes.trim(),
@@ -274,7 +276,8 @@ export default function QuickExpenseModal({
           {bad('description') && <em className="oe-qx-err">{errors.description}</em>}
         </label>
 
-        <FormSection id="oe-qx-s-vendor" title="Vendor & payment" className="oe-qx-full" />
+        <FormSection id="oe-qx-s-vendor" title={others ? 'Payment' : 'Vendor & payment'} className="oe-qx-full" />
+        {!others && (
         <div className={`field${bad('vendor') ? ' oe-qx-bad' : ''}`} data-invalid={inv('vendor')} onBlur={touch('vendor')}><span>Vendor / Paid To (optional)</span>
           <Combo creatable value={f.vendor} onChange={set('vendor')} placeholder="Pick or type who was paid" aria-label="Vendor / Paid To">
             {[...new Set([...vendors, ...(f.vendor ? [f.vendor] : [])])].map((v) => <option key={v} value={v}>{v}</option>)}
@@ -285,6 +288,7 @@ export default function QuickExpenseModal({
             + Add Vendor
           </button>
         </div>
+        )}
         <label className={`field${bad('paymentMode') ? ' oe-qx-bad' : ''}`} data-invalid={inv('paymentMode')} onBlur={touch('paymentMode')}><span>Payment Mode (optional)</span>
           <Combo value={f.paymentMode} onChange={set('paymentMode')} aria-invalid={bad('paymentMode') ? true : undefined}>
             <option value="">— Pick —</option>
@@ -301,11 +305,11 @@ export default function QuickExpenseModal({
         </div>
         <div className="field">
           <span>Money sent back to them?</span>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="checkbox" disabled={!f.paidByPerson.trim()} checked={!!f.returned} onChange={(e) => setF((c) => ({ ...c, returned: e.target.checked, returnedOn: e.target.checked ? (c.returnedOn || todayIso()) : '' }))} />
-            {f.returned ? 'Yes, sent' : 'Not yet'}
-          </label>
-          {f.returned && <input type="date" value={f.returnedOn} onChange={set('returnedOn')} aria-label="Date the money was sent back" />}
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', minHeight: 40, flexWrap: 'wrap' }}>
+            <input type="checkbox" id="oe-qx-returned" style={{ width: 18, height: 18, margin: 0, flex: '0 0 auto' }} disabled={!f.paidByPerson.trim()} checked={!!f.returned} onChange={(e) => setF((c) => ({ ...c, returned: e.target.checked, returnedOn: e.target.checked ? (c.returnedOn || todayIso()) : '' }))} />
+            <label htmlFor="oe-qx-returned">{f.returned ? 'Yes, sent' : 'Not yet'}</label>
+            {f.returned && <input type="date" value={f.returnedOn} onChange={set('returnedOn')} aria-label="Date the money was sent back" style={{ flex: '1 1 140px' }} />}
+          </div>
         </div>
 
         <FormSection id="oe-qx-s-amount" title="Amount & GST" className="oe-qx-full" />
