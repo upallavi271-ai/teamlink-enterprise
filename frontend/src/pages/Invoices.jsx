@@ -40,6 +40,7 @@ import {
 import { saveBlob } from './office/officeUtil';
 import { invoiceDocumentHtml, esc } from './invoices/invoiceDoc';
 import { INVOICE_LOGO } from './invoices/invoiceLogo.js';
+import { sendInvoice } from './invoices/invoiceShare.js';
 import {
   ALL, changeFilter, reconcile, departmentOptions, sectionOptions, employeeOptions, roleOptions, describeEmployee,
   waitingUnder, sectionByKey, personByKey, deptLabelOf, recruiterOption,
@@ -674,10 +675,12 @@ export default function Invoices() {
             w.document.head.innerHTML = `<meta charset="utf-8"><style>${style}
 .tab-bar{display:flex;gap:8px;padding:10px;position:sticky;top:0;background:#fff;border-bottom:1px solid #ddd}.tab-bar button{padding:6px 14px;cursor:pointer}@media print{.tab-bar{display:none}}</style>`;
             w.document.title = `Invoice ${r.data.invoiceNumber}`;
-            w.document.body.innerHTML = `<div class="tab-bar"><button data-m="client">Client copy</button><button data-m="internal">Internal copy</button><button data-print="1">Print / Save as PDF</button><button data-edit="1">✎ Edit amount / GST / TDS</button></div>${inner}`;
+            w.document.body.innerHTML = `<div class="tab-bar"><button data-m="client">Client copy</button><button data-m="internal">Internal copy</button><button data-print="1">Print / Save as PDF</button><button data-send="Email">✉ Email</button><button data-send="WhatsApp">WhatsApp</button><button data-send="Share">Share</button><button data-edit="1">✎ Edit amount / GST / TDS</button></div>${inner}`;
             w.document.querySelector('.tab-bar button[data-edit]').onclick = () => { w.location.href = `${window.location.origin}/invoices/${g.ids[0]}`; };
             w.document.querySelectorAll('.tab-bar button[data-m]').forEach((b) => { b.onclick = () => draw(b.getAttribute('data-m')); b.style.fontWeight = b.getAttribute('data-m') === mode ? '700' : '400'; });
             w.document.querySelector('.tab-bar button[data-print]').onclick = () => w.print();
+            // What is sent is always the client's copy of the facts (number, date, total, bank) - never the internal view.
+            w.document.querySelectorAll('.tab-bar button[data-send]').forEach((b) => { b.onclick = () => sendInvoice(w, b.getAttribute('data-send'), r.data, g.ids, load); });
           };
           draw('client');
         })

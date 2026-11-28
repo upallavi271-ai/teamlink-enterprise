@@ -22,6 +22,8 @@ export function invoiceDocumentHtml(d, mode, opts = {}) {
   const showRec = !forClient && d.lines.some((l) => l.recruiter);
   const gst = d.totals.gst;
   const n = (v) => money2(v).replace('₹', '');
+  // The paper writes dates as 17/11/2026 (the founder's sample invoice).
+  const day = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : fmtD(v); };
   // Founder 2026-11-28: the CLIENT's copy asks for the TOTAL amount (fee + GST) - TDS is not cut on it. The internal copy keeps
   // the TDS working. A fully settled invoice (nothing left after TDS) stays at nothing due.
   const showTds = !forClient && d.totals.tds > 0;
@@ -97,7 +99,7 @@ export function invoiceDocumentHtml(d, mode, opts = {}) {
   const co = d.company;
   const rows = d.lines.map((l) => `<tr>
     <td class="c">${l.n}</td>
-    <td class="desc"><b>${esc(l.description)}</b>${l.joiningDate ? `<div class="sub">Date of joining: ${fmtD(l.joiningDate)}</div>` : ''}${!forClient ? `<div class="sub in">${[l.role, l.department, l.ref ? `ref ${l.ref}` : ''].filter(Boolean).map(esc).join(' · ')}</div>` : ''}</td>
+    <td class="desc"><b>${esc(l.description)}</b>${!forClient && l.joiningDate ? `<div class="sub">Date of joining: ${fmtD(l.joiningDate)}</div>` : ''}${!forClient ? `<div class="sub in">${[l.role, l.department, l.ref ? `ref ${l.ref}` : ''].filter(Boolean).map(esc).join(' · ')}</div>` : ''}</td>
     ${showRec ? `<td class="rec">${esc(l.recruiter || '—')}</td>` : ''}
     <td class="n">${l.salary != null ? String(Math.round(l.salary)) : ''}</td>
     <td class="n">${esc(l.sac)}</td>
@@ -121,8 +123,9 @@ export function invoiceDocumentHtml(d, mode, opts = {}) {
     <div class="meta">
       <div class="l"><table>
         <tr><td class="k">#</td><td class="v">: ${esc(d.invoiceNumber)}</td></tr>
-        <tr><td class="k">Invoice Date</td><td class="v">: ${fmtD(d.invoiceDate)}</td></tr>
-        <tr><td class="k">Due Date</td><td class="v">: ${fmtD(d.dueDate)}</td></tr>
+        <tr><td class="k">Invoice Date</td><td class="v">: ${day(d.invoiceDate)}</td></tr>
+        <tr><td class="k">Terms</td><td class="v">: ${esc(d.terms || 'Due On Receipt')}</td></tr>
+        <tr><td class="k">Due Date</td><td class="v">: ${day(d.dueDate)}</td></tr>
       </table></div>
       <div class="r"><table><tr><td class="k">Place Of Supply</td><td class="v">: ${esc(d.placeOfSupply)}</td></tr></table></div>
     </div>

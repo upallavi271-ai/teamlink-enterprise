@@ -8,6 +8,7 @@ import api from '../../api';
 import { money2, fmtD } from './invFormat';
 import TaxEditModal from './TaxEditModal.jsx';
 import { INVOICE_LOGO } from './invoiceLogo.js';
+import { sendInvoice } from './invoiceShare.js';
 
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -91,6 +92,11 @@ export default function ClientInvoiceView({ g, docHtml, onClose, onChanged }) {
         </div>
         <div className="modal-foot">
           <button type="button" className="btn" onClick={onClose}>Close</button>
+          {['Email', 'WhatsApp', 'Share'].map((how) => (
+            <button key={how} type="button" className="btn" disabled={!doc} onClick={() => sendInvoice(window, how, doc, g.ids, onChanged)}>
+              {how === 'Email' ? '✉ Email' : how === 'WhatsApp' ? '🟢 WhatsApp' : '↗ Share'}
+            </button>
+          ))}
           {members.length === 1
             ? <button type="button" className="btn btn-gold" onClick={() => openEdit(members[0].id)}>✎ Edit</button>
             : (
