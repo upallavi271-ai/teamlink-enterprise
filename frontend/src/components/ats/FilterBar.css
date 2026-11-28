@@ -44,13 +44,16 @@
 .fbar-box:hover,.fbar-box:focus-within{border-color:var(--blue,#2459d6)}
 .fbar-box-l{color:var(--muted,#5b6478);white-space:nowrap;flex:none}
 .fbar-box-l:empty{display:none}
-.fbar .fbar-box input,.fbar .fbar-box select{border:0!important;background:transparent!important;box-shadow:none!important;outline:0;min-width:0;height:34px;min-height:0!important;padding:0 2px;margin:0;font:inherit;font-size:13px;color:inherit;border-radius:0}
-.fbar .fbar-box select{flex:1 1 auto;cursor:pointer;font-weight:500}
+.fbar-box input,.fbar-box select{border:0!important;background:transparent!important;box-shadow:none!important;outline:0;min-width:0;height:34px;min-height:0!important;padding:0 2px;margin:0;font:inherit;font-size:13px;color:inherit;border-radius:0}
+.fbar-box select{flex:1 1 auto;cursor:pointer;font-weight:500}
 .fbar .fbar-range input{width:50px;flex:1 1 50px;min-width:42px;text-align:center}
-.fbar .fbar-box input[type=text]{flex:1 1 auto;width:auto}
+.fbar-box input[type=text]{flex:1 1 auto;width:auto}
 .fbar-dash{color:var(--muted,#5b6478);flex:none}
 .fbar-datewrap{display:inline-flex;flex-direction:column;gap:6px;min-width:0}
-.fbar .fbar-dates2 input{width:auto;flex:1 1 120px}
+.fbar-dates2{width:100%}
+.fbar-dates2 input{width:auto;flex:1 1 0;min-width:0}
+/* Custom dates: room for both days wherever the filter sits (a dashboard pop-up too, 2026-11-28) */
+.fbar-datewrap.is-custom{min-width:280px}
 .fbar-row>.fbar-box,.fbar-row>.fbar-datewrap{min-width:170px}
 .fbar-row{align-items:flex-start}
 .fbar-row>.mf-toggle,.fbar-row>.mf-clear{min-height:36px}

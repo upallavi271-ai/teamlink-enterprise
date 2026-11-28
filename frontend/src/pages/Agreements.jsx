@@ -8,7 +8,7 @@ import { rowClickProps } from '../utils/rowClick.js';
 import AtsDataTools from '../components/AtsDataTools.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import ScopeLine from '../components/ScopeLine.jsx';
-import { agreementIsActive } from '../atsVocab';
+import { agreementIsActive, deptLabel } from '../atsVocab';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
 import { downloadAgreementPdf } from '../components/agreements/AgreementPanel.jsx';
@@ -54,6 +54,73 @@ const MONTH = (value) => {
 
 // A client has signed once the signing date is set, or the step is Signed / Active / Expired.
 const isSignedByClient = (c) => !!c.agreementSignedAt || ['SIGNED', 'ACTIVE', 'EXPIRED'].includes(c.agreementStatus);
+
+// AGREEMENTS SIGNED, BY THE DATE ON THE AGREEMENT (founder 2026-11-28: "ey date na enni agreements ayina, ey month na enni, ey dept
+// nunchi, ey month lo enni agreements ayyinai"): the signing date is the date the client wrote when signing and stamping
+// (Client > Agreement > Signed on). Counted per day or per month, one column per department; a number lists those agreements.
+const istDay = (v) => { if (!v) return null; const t = new Date(v).getTime(); return Number.isFinite(t) ? new Date(t + 330 * 60000).toISOString().slice(0, 10) : null; };
+const signedDayOf = (c) => (isSignedByClient(c) ? istDay(c.agreementSignedAt || c.agreementActivatedAt) : null);
+const DEPT_ORDER = ['Education', 'Medical', 'Manufacturing'];
+const deptOfClient = (c) => c.ownerDepartment || 'Other';
+const monthName = (ym) => new Date(`${ym}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+const dayName = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+function SignedReport({ clients, pick, onPick }) {
+  const [by, setBy] = useState('month');
+  const signed = clients.map((c) => ({ c, day: signedDayOf(c) })).filter((x) => isSignedByClient(x.c));
+  const dated = signed.filter((x) => x.day);
+  const undated = signed.length - dated.length;
+  const depts = [...new Set(dated.map((x) => deptOfClient(x.c)))].sort((a, b) => ((DEPT_ORDER.indexOf(a) + 1) || 99) - ((DEPT_ORDER.indexOf(b) + 1) || 99));
+  const months = [...new Set(dated.map((x) => x.day.slice(0, 7)))].sort().reverse();
+  const [month, setMonth] = useState('');
+  const m = month || months[0] || '';
+  const keyOf = (x) => (by === 'month' ? x.day.slice(0, 7) : x.day);
+  const pool = by === 'month' ? dated : dated.filter((x) => x.day.slice(0, 7) === m);
+  const keys = [...new Set(pool.map(keyOf))].sort().reverse();
+  const n = (k, d) => pool.filter((x) => keyOf(x) === k && (!d || deptOfClient(x.c) === d)).length;
+  const cell = (k, d, count) => (count
+    ? <button type="button" className={`link-btn${pick && pick.key === k && (pick.dept || '') === (d || '') ? ' is-on' : ''}`} title="List these agreements" onClick={() => onPick({ by, key: k, dept: d || '', label: `${by === 'month' ? monthName(k) : dayName(k)}${d ? ` · ${deptLabel(d)}` : ''}` })}>{count}</button>
+    : <span className="cell-muted">—</span>);
+  if (!signed.length) return null;
+  return (
+    <div className="card section" aria-label="Agreements signed by date and department" style={{ margin: '0 0 12px' }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 15 }}>Agreements signed</h3>
+        <span className="small-muted">by the date on the agreement (when the client signed and stamped it)</span>
+        <span style={{ flex: 1 }} />
+        <div className="iv4-seg" role="tablist" aria-label="Count by">
+          {[['month', 'By month'], ['day', 'By day']].map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={by === k} className={by === k ? 'is-on' : ''} onClick={() => setBy(k)}>{l}</button>)}
+        </div>
+        {by === 'day' && (
+          <select aria-label="Month" value={m} onChange={(e) => setMonth(e.target.value)} style={{ width: "auto" }}>
+            {months.map((x) => <option key={x} value={x}>{monthName(x)}</option>)}
+          </select>
+        )}
+      </div>
+      <div className="tbl-wrap" style={{ maxHeight: 360, overflow: 'auto' }}>
+        <table>
+          <thead><tr><th>{by === 'month' ? 'Month' : 'Day'}</th>{depts.map((d) => <th key={d}>{deptLabel(d)}</th>)}<th>Total</th></tr></thead>
+          <tbody>
+            {keys.map((k) => (
+              <tr key={k}>
+                <td><b>{by === 'month' ? monthName(k) : dayName(k)}</b></td>
+                {depts.map((d) => <td key={d}>{cell(k, d, n(k, d))}</td>)}
+                <td><b>{cell(k, '', n(k, ''))}</b></td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td><b>{by === 'month' ? 'All months' : monthName(m)}</b></td>
+              {depts.map((d) => <td key={d}><b>{pool.filter((x) => deptOfClient(x.c) === d).length}</b></td>)}
+              <td><b>{pool.length}</b></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {undated > 0 && <div className="small-muted" style={{ marginTop: 6 }}>{`${undated} signed agreement${undated === 1 ? ' has' : 's have'} no date yet: open the client's Agreement and set "Signed on".`}</div>}
+    </div>
+  );
+}
 
 export default function Agreements() {
   const clientLabel = useClientLabel();
@@ -119,7 +186,7 @@ export default function Agreements() {
           setClients(rows.map((r) => ({
             id: r.id, name: r.name, clientCode: r.clientCode, agreementId: r.agreementId, agreementStatus: r.status,
             agreementSignedBy: r.signedBy, agreementSignedAt: r.signedAt, agreementActivatedAt: r.activatedAt,
-            agreementStart: r.start, agreementEnd: r.end, agreementFeePercent: r.feePercent, createdAt: r.sentAt,
+            agreementStart: r.start, agreementEnd: r.end, agreementFeePercent: r.feePercent, createdAt: r.sentAt, ownerDepartment: r.department,
           })));
         }
       })
@@ -164,7 +231,13 @@ export default function Agreements() {
     return Object.entries(out).sort((a, b) => b[1].at - a[1].at);
   }, [clients]);
 
+  const [signedPick, setSignedPick] = useState(null); // a number pressed in "Agreements signed"
   const rows = useMemo(() => clients.filter((c) => {
+    if (signedPick) {
+      const d = signedDayOf(c);
+      if (!d || (signedPick.by === 'month' ? d.slice(0, 7) : d) !== signedPick.key) return false;
+      if (signedPick.dept && deptOfClient(c) !== signedPick.dept) return false;
+    }
     if (statusFilter === 'SIGNED_ALL') { if (!isSignedByClient(c)) return false; }
     else if (statusFilter && agreementStepOf(c.agreementStatus) !== statusFilter) return false;
     if (search) {
@@ -177,8 +250,8 @@ export default function Agreements() {
       if (!(q && hay.includes(q)) && !(num && (hay.includes(`agr${num}`) || hay.includes(`cli${num}`)))) return false;
     }
     return true;
-  }), [clients, statusFilter, search]);
-  const paged = usePaged(rows, 25, keep, `${statusFilter}|${search}`);
+  }), [clients, statusFilter, search, signedPick]);
+  const paged = usePaged(rows, 25, keep, `${statusFilter}|${search}|${signedPick ? `${signedPick.key}${signedPick.dept}` : ''}`);
   const mayMessage = desk && mayMessageClients;
   const tickedNow = ticked.filter((id) => rows.some((c) => c.id === id)); // ticks that are still in the list
 
@@ -272,6 +345,13 @@ export default function Agreements() {
       )}
 
 
+      {loaded && <SignedReport clients={clients} pick={signedPick} onPick={(p) => setSignedPick(signedPick && signedPick.key === p.key && signedPick.dept === p.dept ? null : p)} />}
+      {signedPick && (
+        <div style={{ margin: '0 0 8px', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className="chip">{`Signed: ${signedPick.label} · ${rows.length}`}</span>
+          <button type="button" className="link-btn" onClick={() => setSignedPick(null)}>Show all</button>
+        </div>
+      )}
       {listError && !desk && <div className="notice red"><span>{listError}</span></div>}
       {loadError && <div className="notice red"><span>{loadError}</span></div>}
 

@@ -2544,6 +2544,27 @@ router.post('/:id/agreement/reject', requirePerm('ats', 'clients', 'Agreement Li
 ));
 
 // Attach the countersigned copy the client returned out of band.
+// THE DATE ON THE SIGNED AGREEMENT (founder 2026-11-28: "agreements lo clients sign chesi, date & stamp vestharu - ahh date agreement
+// ayina date kindha consider chestham"): set or corrected here; the Agreements counts (by day, month and department) read it.
+router.patch('/:id/agreement/signed-date', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'edit'), async (req, res) => {
+  const client = req.client;
+  const d = String((req.body || {}).date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return res.status(400).json({ error: 'Pick the date written on the signed agreement.' });
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  if (d > today) return res.status(400).json({ error: 'That date is in the future. Pick the date written on the agreement.' });
+  if (d < '2015-01-01') return res.status(400).json({ error: 'That date is too old. Check the year.' });
+  if (!client.agreementSignedAt && !['SIGNED', 'ACTIVE', 'EXPIRED'].includes(String(client.agreementStatus || '').toUpperCase())) {
+    return res.status(409).json({ error: 'This agreement is not signed yet. Upload the signed agreement first.' });
+  }
+  const from = client.agreementSignedAt ? new Date(new Date(client.agreementSignedAt).getTime() + 330 * 60000).toISOString().slice(0, 10) : null;
+  await prisma.client.update({ where: { id: client.id }, data: { agreementSignedAt: new Date(`${d}T12:00:00+05:30`), ...(client.agreementStart ? {} : { agreementStart: d }) } });
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: 'Agreement date set (the date on the signed agreement)', entity: 'Client', entityId: client.id,
+    field: 'agreementSignedAt', fieldLabel: 'Signed on', fromValue: from, toValue: d, reason: 'The date the client wrote when signing and stamping',
+  });
+  return res.json({ ok: true, signedOn: d });
+});
+
 router.post('/:id/agreement/signed-copy', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'create'), async (req, res) => {
   const { fileName, note } = req.body;
   if (!String(fileName || '').trim()) return res.status(400).json({ error: 'Name the signed copy you are attaching.' });

@@ -10,6 +10,7 @@ import ScopeLine from '../components/ScopeLine.jsx';
 import Pager from '../components/Pager.jsx';
 import {
   requirementStatusLabel, requirementIsLive,
+  deptLabel,
 } from '../atsVocab';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can, canRaiseRequirement, productRole } from '../permissions';
@@ -1186,6 +1187,11 @@ export default function Requirements() {
         onFilter={(patch) => removeFilter(patch)}
       />
 
+      <ReqMonthReport onPick={(p) => {
+        // the list below: that month as the Created dates, that department, Open or Closed
+        if (p.kind === 'closed') { setShowClosed(true); setView('closed'); } else setView('open');
+        removeFilter({ from: p.from, to: p.to, dstatus: '' }, canFilter.hierarchy ? { ...EMPTY_HIERARCHY, department: p.department || '' } : undefined);
+      }} />
       {sum && sum.total > 0 && (
         <div className="crq4-row4">
           <Panel className="crq4-stagep" title="Requirements by stage" sub="Click a stage to show its requirements">
@@ -1514,6 +1520,69 @@ export default function Requirements() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// REQUIREMENTS BY MONTH AND DEPARTMENT (founder 2026-11-28): raised in a month, and how many of them are open now, on hold or
+// closed; and the same per department. Open = not closed (Open, Recruiter assigned, Waiting for agreement ...). A number of
+// open / closed requirements shows them in the list below (the month as the Created dates, the department, Open or Closed).
+const RQ_DEPT_ORDER = ['Education', 'Medical', 'Manufacturing', 'Non IT Medical'];
+const rqMonthName = (ym) => new Date(`${ym}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+function ReqMonthReport({ onPick }) {
+  const [data, setData] = useState(null);
+  const [by, setBy] = useState('month');
+  const [dept, setDept] = useState('');
+  const [year, setYear] = useState('');
+  useEffect(() => { api.get('/requirements/counts-by-month').then((r) => setData(r.data.rows || [])).catch(() => setData([])); }, []);
+  if (!data || !data.length) return null;
+  const depts = [...new Set(data.map((r) => r.department))].sort((a, b) => ((RQ_DEPT_ORDER.indexOf(a) + 1) || 99) - ((RQ_DEPT_ORDER.indexOf(b) + 1) || 99));
+  const years = [...new Set(data.map((r) => r.month.slice(0, 4)))].sort().reverse();
+  const y = year || years[0];
+  const sum = (list) => list.reduce((o, r) => ({ raised: o.raised + r.raised, open: o.open + r.open, onHold: o.onHold + r.onHold, closed: o.closed + r.closed }), { raised: 0, open: 0, onHold: 0, closed: 0 });
+  const monthRows = by === 'month'
+    ? [...new Set(data.filter((r) => r.month.startsWith(y)).map((r) => r.month))].sort().reverse().map((m) => ({ key: m, label: rqMonthName(m), ...sum(data.filter((r) => r.month === m && (!dept || r.department === dept))) })).filter((r) => r.raised)
+    : depts.map((d) => ({ key: d, label: d ? deptLabel(d) : 'No department', ...sum(data.filter((r) => r.department === d && r.month.startsWith(y))) })).filter((r) => r.raised);
+  const total = sum(monthRows);
+  const pickFor = (row, kind) => {
+    const month = by === 'month' ? row.key : '';
+    const from = month ? `${month}-01` : `${y}-01-01`;
+    const end = month ? new Date(Date.UTC(+month.slice(0, 4), +month.slice(5, 7), 0)).toISOString().slice(0, 10) : `${y}-12-31`;
+    onPick({ kind, from, to: end, department: by === 'month' ? dept : row.key });
+  };
+  const num = (row, kind) => (row[kind] ? <button type="button" className="link-btn" style={{ fontWeight: 700, textDecoration: "underline" }} title="Show these requirements in the list" onClick={() => pickFor(row, kind)}>{row[kind]}</button> : <span className="cell-muted">—</span>);
+  return (
+    <div className="card section" aria-label="Requirements by month and department" style={{ margin: '0 0 12px' }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 15 }}>Requirements by month</h3>
+        <span className="small-muted">raised in the month, and where they are now</span>
+        <span style={{ flex: 1 }} />
+        <div className="iv4-seg" role="tablist" aria-label="Count by">
+          {[['month', 'By month'], ['dept', 'By department']].map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={by === k} className={by === k ? 'is-on' : ''} onClick={() => setBy(k)}>{l}</button>)}
+        </div>
+        {by === 'month' && (
+          <select aria-label="Department" value={dept} onChange={(e) => setDept(e.target.value)} style={{ width: "auto" }}>
+            <option value="">All departments</option>
+            {depts.map((d) => <option key={d} value={d}>{d ? deptLabel(d) : 'No department'}</option>)}
+          </select>
+        )}
+        <select aria-label="Year" value={y} onChange={(e) => setYear(e.target.value)} style={{ width: "auto" }}>
+          {years.map((x) => <option key={x} value={x}>{x}</option>)}
+        </select>
+      </div>
+      <div className="tbl-wrap" style={{ maxHeight: 360, overflow: 'auto' }}>
+        <table>
+          <thead><tr><th>{by === 'month' ? 'Month' : 'Department'}</th><th>Raised</th><th>Open now</th><th>On hold</th><th>Closed</th></tr></thead>
+          <tbody>
+            {monthRows.map((r) => (
+              <tr key={r.key}>
+                <td><b>{r.label}</b></td><td>{r.raised}</td><td>{num(r, 'open')}</td><td className="cell-muted">{r.onHold || '—'}</td><td>{num(r, 'closed')}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot><tr><td><b>{by === 'month' ? `${y}${dept ? ` · ${deptLabel(dept)}` : ''}` : `All departments · ${y}`}</b></td><td><b>{total.raised}</b></td><td><b>{total.open}</b></td><td><b>{total.onHold}</b></td><td><b>{total.closed}</b></td></tr></tfoot>
+        </table>
+      </div>
     </div>
   );
 }

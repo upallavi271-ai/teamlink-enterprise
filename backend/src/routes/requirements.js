@@ -1179,6 +1179,27 @@ const LIST_INCLUDE = {
 //                  token, which made this 21 MB and ten seconds for 4,347
 //                  requirements.
 // ---------------------------------------------------------------------------
+// REQUIREMENTS BY MONTH AND DEPARTMENT (founder 2026-11-28: "ey month lo enni reqs ayinai, enni open lo vunnai, enni closed lo vunnai ...
+// ey dept lo enni open, enni closed"): every requirement in the viewer's own area, counted by the month it was raised and its
+// department - raised, open now, on hold, closed. The Requirements page draws the table (By month / By department).
+router.get('/counts-by-month', async (req, res, next) => {
+  try {
+    const rows = await prisma.requirement.findMany({ where: requirementWhere(req.user), select: { createdAt: true, status: true, department: true } });
+    const out = new Map();
+    rows.forEach((r) => {
+      const month = new Date(new Date(r.createdAt).getTime() + 330 * 60000).toISOString().slice(0, 7);
+      const dept = r.department || '';
+      const k = `${month}|${dept}`;
+      if (!out.has(k)) out.set(k, { month, department: dept, raised: 0, open: 0, onHold: 0, closed: 0 });
+      const o = out.get(k);
+      o.raised += 1;
+      const st = String(r.status || '').toUpperCase();
+      if (st === 'CLOSED') o.closed += 1; else if (st === 'ON_HOLD') o.onHold += 1; else o.open += 1;
+    });
+    return res.json({ rows: [...out.values()] });
+  } catch (err) { return next(err); }
+});
+
 router.get('/', require('../utils/responseMemo').memoRoute('requirements'), async (req, res) => {
   const q = req.query;
   const where = await listWhere(req);

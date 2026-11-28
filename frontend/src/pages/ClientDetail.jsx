@@ -1375,6 +1375,9 @@ export default function ClientDetail() {
                 <AgreementPanel bare clientId={id} refreshKey={`${c.agreementStatus}|${c.agreementSentAt || ''}|${c.agreementSignedAt || ''}`} onChanged={load} />
               </details>
             )}
+            {(c.agreementSignedAt || ['SIGNED', 'ACTIVE', 'EXPIRED'].includes(String(c.agreementStatus || '').toUpperCase())) && (
+              <SignedOnLine clientId={id} signedAt={c.agreementSignedAt} canEdit={can(user, 'ats', 'clients', 'Agreement Lifecycle', 'edit')} onSaved={load} />
+            )}
             <details className="card section agr6-more">
               <summary>Show history</summary>
               <Row k="Made">{protoDate(c.createdAt)}</Row>
@@ -1667,6 +1670,37 @@ export default function ClientDetail() {
         </Modal>
       )}
 
+    </div>
+  );
+}
+
+// THE DATE ON THE SIGNED AGREEMENT (founder 2026-11-28): the date the client wrote when signing and stamping is the agreement's date;
+// it is shown here and can be corrected (an upload before 28 Nov took the upload day). The Agreements counts read it.
+function SignedOnLine({ clientId, signedAt, canEdit, onSaved }) {
+  const day = signedAt ? new Date(new Date(signedAt).getTime() + 330 * 60000).toISOString().slice(0, 10) : '';
+  const [edit, setEdit] = useState(false);
+  const [v, setV] = useState(day);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const save = async () => {
+    setBusy(true); setErr('');
+    try { await api.patch(`/clients/${clientId}/agreement/signed-date`, { date: v }); setEdit(false); if (onSaved) onSaved(); } catch (e) { setErr(e.response?.data?.error || 'Could not save the date.'); }
+    setBusy(false);
+  };
+  return (
+    <div className="card section" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      <b>Signed on</b>
+      <span className="small-muted">the date on the agreement</span>
+      {!edit && <span>{day ? new Date(`${day}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Not set'}</span>}
+      {!edit && canEdit && <button type="button" className="btn btn-sm" onClick={() => { setV(day); setEdit(true); }}>{day ? 'Change' : 'Set the date'}</button>}
+      {edit && (
+        <>
+          <input type="date" value={v} max={new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)} onChange={(e) => setV(e.target.value)} aria-label="Date on the signed agreement" />
+          <button type="button" className="btn btn-sm btn-primary" disabled={busy || !v} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>
+          <button type="button" className="btn btn-sm" onClick={() => setEdit(false)}>Cancel</button>
+        </>
+      )}
+      {err && <span className="error-text">{err}</span>}
     </div>
   );
 }

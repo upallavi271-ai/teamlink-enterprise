@@ -131,8 +131,22 @@ function apiBase(req) {
   const host = String(req.get('x-forwarded-host') || req.get('host') || '').split(',')[0].trim();
   return `${proto}://${host}`;
 }
-async function statusFromPapers(clientId, user, base = null) {
+// THE AGREEMENT'S DATE IS THE DATE THE CLIENT WROTE WHEN THEY SIGNED AND STAMPED IT (founder 2026-11-28), not the upload day.
+const signedOnDate = (v) => {
+  const d = String(v || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  return d > today || d < '2015-01-01' ? null : d;
+};
+async function statusFromPapers(clientId, user, base = null, signedOn = null) {
   try {
+    // the date on the signed agreement: saved even when the step does not change (a correction, or a second copy)
+    const day = signedOnDate(signedOn);
+    if (day) {
+      const was = await prisma.client.findUnique({ where: { id: clientId }, select: { agreementSignedAt: true, agreementStart: true } });
+      await prisma.client.update({ where: { id: clientId }, data: { agreementSignedAt: new Date(`${day}T12:00:00+05:30`), ...(was && !was.agreementStart ? { agreementStart: day } : {}) } });
+      await logAudit({ userId: user ? user.id : null, actorName: user ? user.name || null : 'TeamLink', action: 'Agreement date set (the date on the signed agreement)', entity: 'Client', entityId: clientId, field: 'agreementSignedAt', fieldLabel: 'Signed on', fromValue: was && was.agreementSignedAt ? new Date(was.agreementSignedAt).toISOString().slice(0, 10) : null, toValue: day });
+    }
     const files = await filesOf(clientId);
     const has = (label) => files.some((f) => f.label === label || f.kind === label);
     // both DigiLocker copies with a valid signature = executed (each side signed the same agreement with Aadhaar eSign)
@@ -148,7 +162,7 @@ async function statusFromPapers(clientId, user, base = null) {
       where: { id: clientId },
       data: {
         agreementStatus: target,
-        agreementSignedAt: c.agreementSignedAt || at,
+        agreementSignedAt: (day && new Date(`${day}T12:00:00+05:30`)) || c.agreementSignedAt || at,
         ...(target === 'ACTIVE' ? { agreementActivatedAt: c.agreementActivatedAt || at } : {}),
         agreementSource: dlBoth ? 'DigiLocker Aadhaar eSign (two signed copies)' : 'Uploaded (signed outside the ATS)',
       },
@@ -232,7 +246,7 @@ async function checkDigiLockerCopy(c, type, buf) {
 // Keeps one uploaded paper (or DigiLocker copy) and moves the agreement on (statusFromPapers). user: the staff login, or null with
 // `by` for the client on their own link. Returns the new agreement status (or null when it did not change).
 // base: the address the thank-you summary's web links start with (the request's own address)
-async function saveCopy(clientId, { label, stored, data, esign, user = null, by = null, base = null }) {
+async function saveCopy(clientId, { label, stored, data, esign, user = null, by = null, base = null, signedOn = null }) {
   const name = user ? user.name || null : by;
   const row = await prisma.clientDocument.create({
     data: {
@@ -243,7 +257,7 @@ async function saveCopy(clientId, { label, stored, data, esign, user = null, by 
   });
   await prisma.appSetting.create({ data: { key: `${PREFIX}${row.id}`, value: JSON.stringify({ label, kind: label, uploadedBy: name, ...(esign ? { esign, sha256: crypto.createHash('sha256').update(data).digest('hex') } : {}) }) } });
   await logAudit({ userId: user ? user.id : null, actorName: name, action: 'Agreement paper uploaded', entity: 'Client', entityId: clientId, toValue: `${label}: ${stored.billName}${esign ? ` - valid Aadhaar eSign by ${esign.signer || 'unknown'} (${esign.issuer || 'CA'})` : ''}`.slice(0, 300) });
-  return statusFromPapers(clientId, user, base);
+  return statusFromPapers(clientId, user, base, label === UPLOAD_TYPES.agreement ? signedOn : null);
 }
 
 // WHO SIGNED IN DIGILOCKER, per side (the newest valid copy): { teamlink: { signer, signedAt } | null, client: … | null }.
@@ -397,7 +411,7 @@ function mountView(router, { requireAuth, loadForView }) {
         if (err.code === 'TOO_LARGE') return res.status(413).json({ error: 'The file is too big. Keep it under 10 MB.' });
         return res.status(400).json({ error: 'That file could not be read as a PDF, Word file or picture. Please pick it again.' });
       }
-      const status = await saveCopy(loaded.client.id, { label, stored, data: file.data, esign, user: req.user, base: apiBase(req) });
+      const status = await saveCopy(loaded.client.id, { label, stored, data: file.data, esign, user: req.user, base: apiBase(req), signedOn: req.query.signedOn || null });
       const said = status === 'ACTIVE' ? ` The agreement is now Active.${type.startsWith('dl') ? ' A thank-you email with both signed copies and the summary goes to the client.' : ''}` : status === 'SIGNED' ? (type === 'dlclient' ? ' The agreement is now Signed by the client (upload the TeamLink eSigned copy to make it Active).' : ' The agreement is now Signed (upload Vasu sir confirmation to make it Active).') : '';
       const who = esign ? ` Valid Aadhaar eSign by ${esign.signer || 'the signer'}.${esign.nameNote ? ` Note: ${esign.nameNote}` : ''}` : '';
       return res.status(201).json({ ok: true, message: `${label} uploaded.${who}${said}`, agreementStatus: status, files: await filesOf(loaded.client.id) });

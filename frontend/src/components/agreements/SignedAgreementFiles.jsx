@@ -177,6 +177,7 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
   const [busy, setBusy] = useState('');
   const fileInput = useRef(null);
   const paperInput = useRef(null);
+  const [signedOn, setSignedOn] = useState(''); // the date written on the signed agreement (founder 2026-11-28)
   const paperType = useRef('');
   const [note, setNote] = useState('');
   // who eSigns TeamLink's copy (name as on Aadhaar): printed in the PDF's Name / Sign (founder 2026-10-31). Starts as the signatory
@@ -233,7 +234,7 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
     try {
       const f = new FormData();
       f.append('file', file);
-      const r = await api.post(`/agreement/${clientId}/signed-files?type=${type}`, f);
+      const r = await api.post(`/agreement/${clientId}/signed-files?type=${type}${type === 'agreement' && signedOn ? `&signedOn=${signedOn}` : ''}`, f);
       setNote(r.data?.message || 'Uploaded.');
       setD(await load());
       if (onChanged) onChanged();
@@ -355,6 +356,10 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
         {!d.denied && d.canAdd && (
           <div className="vag-up" style={{ marginTop: 12 }}>
             <div className="saf-label" style={{ marginBottom: 6 }}>Upload papers</div>
+            <label className="field" style={{ maxWidth: 360, marginBottom: 8 }}>
+              <span>Date on the signed agreement <span className="small-muted">(the date the client wrote when signing and stamping)</span></span>
+              <input type="date" value={signedOn} max={new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)} onChange={(e) => setSignedOn(e.target.value)} aria-label="Date on the signed agreement" />
+            </label>
             <input ref={paperInput} type="file" accept={UPLOAD_ACCEPT} style={{ display: 'none' }} onChange={(e) => addPaper(e.target.files && e.target.files[0])} />
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {PAPERS.map(([type, label]) => (
@@ -363,7 +368,11 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
                   type="button"
                   className="btn btn-sm"
                   disabled={!!busy}
-                  onClick={() => { paperType.current = type; if (paperInput.current) paperInput.current.click(); }}
+                  onClick={() => {
+                    // the signed agreement needs its date: it is the agreement's date in every count
+                    if (type === 'agreement' && !signedOn) { setErr('First pick the date on the signed agreement (the date the client wrote when signing and stamping).'); return; }
+                    setErr(''); paperType.current = type; if (paperInput.current) paperInput.current.click();
+                  }}
                 >
                   {busy === `paper-${type}` ? 'Uploading…' : `${hasPaper(label) ? '✓ ' : ''}${label}`}
                 </button>

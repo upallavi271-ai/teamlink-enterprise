@@ -158,7 +158,7 @@ const LIST_SELECT = {
   id: true, name: true, clientCode: true, agreementId: true, agreementStatus: true, agreementSentAt: true,
   agreementSignedAt: true, agreementSignedBy: true, agreementActivatedAt: true, agreementCompanySealedAt: true,
   agreementClientSealedAt: true, agreementVerifiedAt: true, agreementStart: true, agreementEnd: true,
-  agreementFeePercent: true, bdeOwner: true,
+  agreementFeePercent: true, bdeOwner: true, ownerDepartment: true,
 };
 
 router.get('/list', requireAuth, async (req, res, next) => {
@@ -183,7 +183,7 @@ router.get('/list', requireAuth, async (req, res, next) => {
         return {
           id: c.id, name: c.name, clientCode: c.clientCode, agreementId: c.agreementId, status: summary.status,
           sentAt: c.agreementSentAt, signedAt: c.agreementSignedAt, signedBy: c.agreementSignedBy, activatedAt: c.agreementActivatedAt,
-          start: c.agreementStart, end: c.agreementEnd, feePercent: c.agreementFeePercent,
+          start: c.agreementStart, end: c.agreementEnd, feePercent: c.agreementFeePercent, department: c.ownerDepartment || null,
           awaitingCountersign: summary.awaitingCountersign, linkExpired: summary.linkExpired, pdfAvailable: summary.pdfAvailable,
           missing: summary.missing,
         };
