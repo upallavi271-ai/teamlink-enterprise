@@ -3312,7 +3312,46 @@ router.get('/hand-loans', async (req, res) => {
       possible: [...r.takenMaybe, ...r.repayMaybe].slice(0, 20).map((m) => lineShape(m.t, m.why)),
     };
   });
+  // IN AND OUT BY PERSON (founder 2026-11-28): every rupee that came in from a person and went out to them as a hand
+  // loan. Linked lines first, then lines filed as hand loan, then open lines that read like one (marked 'guess'), then
+  // typed entries with no statement line. One statement line is counted once.
+  const personNames = new Map();
+  loans.forEach((l) => [l.name, l.lender].filter(Boolean).forEach((x) => personNames.set(normName(x), l.lender || l.name)));
+  const spelled = new Map();
+  const personFor = (name) => {
+    const k = normName(name);
+    if (personNames.has(k)) return personNames.get(k);
+    if (!spelled.has(k)) spelled.set(k, name);
+    return spelled.get(k);
+  };
+  const ledger = movements.map((m) => ({
+    id: m.txnId, person: m.lender || m.person, date: m.date, dir: m.type === 'Credit' ? 'in' : 'out', amount: m.amount, account: m.account, description: m.description, how: 'linked',
+  }));
+  txns.forEach((t) => {
+    if (t.excluded || linkedIds.has(t.id) || txnState(t) === 'Ignored') return;
+    let name = null; let how = 'filed';
+    if (t.categoryKind === 'hand') name = t.counterparty || 'Name not recorded';
+    else if (lineOpen(t, linkedIds)) {
+      const g = catzGuess(t, ctx);
+      if (g && g.kind === 'hand' && g.party && !/cash deposited/i.test(g.party)) { name = g.party; how = 'guess'; }
+    }
+    if (!name) return;
+    ledger.push({
+      id: t.id, person: personFor(name), date: t.date, dir: t.type === 'Credit' ? 'in' : 'out', amount: ROUND(t.amount), account: accountLabel(accounts, t.bankAccountId), description: t.description, how,
+    });
+  });
+  const used = new Set();
+  loans.filter((l) => !(l.links || []).some((x) => x.kind === 'taken')).forEach((l) => {
+    const person = l.lender || l.name;
+    const same = ledger.find((r) => !used.has(r.id) && r.how !== 'entry' && r.dir === 'in' && r.person === person && Math.abs(r.amount - Number(l.amount)) < 0.5);
+    if (same) { used.add(same.id); return; }
+    ledger.push({
+      id: `entry-${l.id}`, person, date: l.dateTaken, dir: 'in', amount: ROUND(l.amount), account: '', description: l.notes || l.name, how: 'entry',
+    });
+  });
+  ledger.sort((a, b) => String(b.date).localeCompare(String(a.date)));
   res.json({
+    ledger,
     loans: rows,
     movements,
     unentered,

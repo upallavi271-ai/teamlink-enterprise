@@ -84,6 +84,10 @@ function MonthPick({ rows, month, setMonth }) {
   );
 }
 
+// A line that is cash over the counter or at a machine, read from the bank's own narration; every other line is money
+// moved by bank (UPI, IMPS, NEFT, RTGS, cheque, card, bank charges).
+const isCashLine = (t) => /cash\s*(dep|deposit|wdl|withdrawal|paid)|^\s*(atw|nwd|eaw)-|\bcdm\b|\batm\s*(cash|wdl)/i.test(t.description || '');
+
 // What the search / filters found, in full (every page, not just the one on screen): how many statement
 // lines, and the money in and out across them.
 function LineTotals({ rows, filtered, month }) {
@@ -95,6 +99,9 @@ function LineTotals({ rows, filtered, month }) {
   const rec = list.filter((t) => st(t) === 'Reconciled');
   const unm = list.filter((t) => st(t) === 'Unmatched');
   const other = list.length - rec.length - unm.length;
+  const split = (cash) => ({ cr: cr.filter((t) => isCashLine(t) === cash), dr: dr.filter((t) => isCashLine(t) === cash) });
+  const byBank = split(false);
+  const byCash = split(true);
   return (
     <div className="notice" style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0' }} data-testid="bank-line-totals">
       <span>{month ? <b>{monthName(month)}: </b> : null}<b>{list.length}</b> statement line{list.length === 1 ? '' : 's'}{filtered ? ' found' : ''}</span>
@@ -104,6 +111,11 @@ function LineTotals({ rows, filtered, month }) {
       <span>Money in (deposits): <b style={{ color: 'var(--teal)' }}>{money2(sum(cr))}</b> ({cr.length})</span>
       <span>Money out (withdrawals): <b style={{ color: 'var(--red)' }}>{money2(sum(dr))}</b> ({dr.length})</span>
       <span>Net: <b>{money2(sum(cr) - sum(dr))}</b></span>
+      {[['By bank transfer', byBank, 'bank-by-transfer'], ['By cash', byCash, 'bank-by-cash']].map(([label, g, id]) => (
+        <span key={id} data-testid={id} style={{ flexBasis: '100%', fontSize: 15 }}>
+          <b>{label}:</b> came in <b style={{ color: 'var(--teal)' }}>{money2(sum(g.cr))}</b> ({g.cr.length}) · went out <b style={{ color: 'var(--red)' }}>{money2(sum(g.dr))}</b> ({g.dr.length})
+        </span>
+      ))}
     </div>
   );
 }

@@ -373,11 +373,14 @@ async function stampJoinDays(invoices) {
 }
 // How each invoice's received money came in: CASH (payment mode Cash) or BANK (every other mode - transfer, UPI, cheque, card).
 // Money recorded on the invoice with no receipt row behind it (older imports) is counted as bank and flagged as `unitemised`.
-function stampModeSplit(invoices, payments) {
+// A receipt is cash when its payment mode is Cash, or when it came off a CASH DEPOSIT line of the statement (founder
+// 2026-11-28: money paid in cash carries no GST, even after it is put into the bank).
+const CASH_DEPOSIT = /cash\s*dep|\bcdm\b/i;
+function stampModeSplit(invoices, payments, cashLines = new Set()) {
   const by = new Map();
   payments.forEach((p) => {
     const e = by.get(p.invoiceId) || { cash: 0, bank: 0 };
-    if (/cash/i.test(String(p.method || ''))) e.cash += Number(p.amount || 0); else e.bank += Number(p.amount || 0);
+    if (/cash/i.test(String(p.method || '')) || (p.bankTxnId && cashLines.has(p.bankTxnId))) e.cash += Number(p.amount || 0); else e.bank += Number(p.amount || 0);
     by.set(p.invoiceId, e);
   });
   invoices.forEach((i) => {
@@ -399,7 +402,10 @@ async function officeScope(query) {
   ]);
   await stampJoinDays(invoices);
   await CNU.decorateNet(invoices); // B9.9: billed figures after issued notes
-  stampModeSplit(invoices, payments);
+  const credits = await prisma.bankTransaction.findMany({
+    where: { id: { in: [...new Set(payments.map((p) => p.bankTxnId).filter(Boolean))] }, type: 'Credit' }, select: { id: true, description: true },
+  });
+  stampModeSplit(invoices, payments, new Set(credits.filter((t) => CASH_DEPOSIT.test(t.description || '')).map((t) => t.id)));
   // A hand loan or the owner's own money is not a cost — it stays out of
   // profit and out of GST, exactly as the accounting application has it.
   // A REJECTED bill is out of the books as well (see APPROVAL above); it is
@@ -1648,10 +1654,13 @@ function officeFacts({
   const inOutClients = new Map();
   gstInv.forEach((i) => {
     const k = i.client?.name || '—';
-    const c = inOutClients.get(k) || { name: k, n: 0, gst: 0, done: 0, pending: 0 };
+    const c = inOutClients.get(k) || { name: k, n: 0, gst: 0, done: 0, pending: 0, cash: 0, inCash: 0 };
     const gst = CNU.gstBilledOf(i);
-    const got = Math.min(gst, gstShare(i, Number(i.receivedAmount || 0)));
-    c.n += 1; c.gst = ROUND(c.gst + gst); c.done = ROUND(c.done + got); c.pending = ROUND(c.gst - c.done);
+    // GST is received only with money that came by bank transfer; the share paid in cash carries no GST.
+    const got = Math.min(gst, gstShare(i, i.bankReceived || 0));
+    const inCash = Math.min(gst - got, gstShare(i, i.cashReceived || 0));
+    c.n += 1; c.gst = ROUND(c.gst + gst); c.done = ROUND(c.done + got); c.inCash = ROUND(c.inCash + inCash);
+    c.cash = ROUND(c.cash + (i.cashReceived || 0)); c.pending = ROUND(Math.max(0, c.gst - c.done - c.inCash));
     inOutClients.set(k, c);
   });
   const inOutVendors = new Map();
@@ -1667,7 +1676,9 @@ function officeFacts({
   const sideOf = (map) => {
     const rows = [...map.values()].sort((a, b) => b.gst - a.gst || a.name.localeCompare(b.name));
     const sum = (key) => ROUND(rows.reduce((s, x) => s + x[key], 0));
-    return { rows, count: rows.reduce((s, x) => s + x.n, 0), gst: sum('gst'), done: sum('done'), pending: sum('pending') };
+    return {
+      rows, count: rows.reduce((s, x) => s + x.n, 0), gst: sum('gst'), done: sum('done'), pending: sum('pending'), cash: ROUND(rows.reduce((s, x) => s + (x.cash || 0), 0)),
+    };
   };
 
   const outstandingOf = (i) => Math.max(0, invoiceOutstanding(i));

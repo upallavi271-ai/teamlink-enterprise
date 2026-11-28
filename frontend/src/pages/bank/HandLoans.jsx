@@ -15,6 +15,7 @@ import Modal from '../../components/Modal.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import { money, money2, fmtD, todayIso } from '../invoices/invFormat';
 import BankLineModal from './BankLineModal.jsx';
+import PersonInOut from './PersonInOut.jsx';
 import {
   entriesOfPerson, entryProblems, localToday, pickerRows, reasonProblem, removeBlock, REASON_CHIPS,
 } from './handLoanActions.js';
@@ -510,6 +511,7 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
 
           {data && (
             <>
+              <PersonInOut ledger={data.ledger} />
               <div className="s6-section-row" style={{ marginTop: 0 }}>
                 {canManage
                   ? <button type="button" className="s6-btn s6-primary" onClick={() => setForm({ loan: null })}>+ Hand entry — I took money from someone</button>

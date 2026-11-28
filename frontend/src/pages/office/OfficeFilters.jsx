@@ -181,7 +181,7 @@ export function OfficeCards({
       k: 'cash', l: 'Received in cash', v: money(o.cashReceived || 0), tone: 'gold',
       s: `GST inside it ${money(o.cashGst || 0)} · not counted in GST payable`,
       x: `By bank transfer / other: ${money(o.bankReceived || 0)}${o.unitemised > 0.5 ? ` (${money(o.unitemised)} has no receipt detail, counted as bank)` : ''}`,
-      t: 'Money clients paid in cash on these invoices, and the GST inside it. Receipts with payment mode Cash are read as cash; every other mode is read as bank.',
+      t: 'Money clients paid in cash on these invoices, and the GST inside it. Receipts with payment mode Cash, or linked to a cash deposit line of the statement, are read as cash; every other receipt is read as bank.',
     },
     { k: 'tds', l: 'TDS we cut', v: money(kpi.tds), s: kpi.tdsCount ? `on ${n(kpi.tdsCount, 'bill')}` : 'No TDS cut', t: 'TDS we held back from vendors and pay to the government for them' },
   ];

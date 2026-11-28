@@ -5,7 +5,7 @@
 import { money } from './officeUtil';
 
 const WORDS = {
-  clients: { party: 'Client', count: 'Invoices', billed: 'GST on invoices', done: 'Received', pending: 'Yet to come', none: 'No invoice with GST in this period.' },
+  clients: { party: 'Client', count: 'Invoices', billed: 'GST on invoices', done: 'Received by bank', pending: 'Yet to come', none: 'No invoice with GST in this period.' },
   vendors: { party: 'Vendor', count: 'Bills', billed: 'GST on bills', done: 'Paid', pending: 'Yet to pay', none: 'No expense in this period has a GST amount entered, so there is no vendor GST to show.' },
 };
 
@@ -16,6 +16,7 @@ export function GstParties({ kind, data, filtered }) {
     <div data-testid={`gst-parties-${kind}`} style={{ marginTop: 10 }}>
       <div style={{ marginBottom: 6 }}>
         {w.billed} <b>{money(data.gst)}</b> · {w.done} <b style={{ color: 'var(--teal)' }}>{money(data.done)}</b> · {w.pending} <b style={{ color: data.pending > 0.5 ? 'var(--red)' : undefined }}>{money(data.pending)}</b>
+        {data.cash > 0.5 && <> · Paid in cash <b>{money(data.cash)}</b> (no GST counted on it)</>}
       </div>
       {data.rows.length ? (
         <div className="tbl-wrap" style={{ maxHeight: 300 }}>
@@ -24,7 +25,7 @@ export function GstParties({ kind, data, filtered }) {
             <tbody>
               {data.rows.map((r) => (
                 <tr key={r.name}>
-                  <td style={{ whiteSpace: 'normal' }}>{r.name}{r.noGstin > 0.5 && <div className="small-muted">No GSTIN on {money(r.noGstin)}</div>}</td>
+                  <td style={{ whiteSpace: 'normal' }}>{r.name}{r.noGstin > 0.5 && <div className="small-muted">No GSTIN on {money(r.noGstin)}</div>}{r.cash > 0.5 && <div className="small-muted">Paid in cash {money(r.cash)}: no GST</div>}</td>
                   <td className="num">{r.n}</td><td className="num">{money(r.gst)}</td><td className="num">{money(r.done)}</td><td className="num">{money(r.pending)}</td>
                 </tr>
               ))}
