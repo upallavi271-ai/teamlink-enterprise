@@ -241,6 +241,7 @@ export const INTERVIEW_STATUS_LABELS = {
   COMPLETED: 'Completed',
   PENDING_FEEDBACK: 'Waiting for feedback',
   FEEDBACK_SUBMITTED: 'Feedback in',
+  FEEDBACK_SENT: 'Feedback sent',
   CANCELLED: 'Cancelled',
   NO_SHOW: 'No show',
   RESCHEDULED: 'Rescheduled',

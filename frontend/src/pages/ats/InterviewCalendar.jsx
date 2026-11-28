@@ -379,6 +379,7 @@ export default function InterviewCalendar() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [dialog, setDialog] = useState(null); // { kind, row, ...fields }
+  const [sendFor, setSendFor] = useState(null); // the row whose saved feedback is being sent (SendFeedback below)
   const [openCand, setOpenCand] = useState(null); // { candidateId, applicationId }
   const showCand = (r) => setOpenCand({ candidateId: r.candidate.id, applicationId: r.id });
   // ?schedule=1 (the BDE dashboard's "Schedule Interview") opens the dialog.
@@ -719,6 +720,8 @@ export default function InterviewCalendar() {
     }
     setNotice(msg);
     load();
+    // SAVE, THEN SEND (founder 2026-11-28): the saved feedback goes to the BDE TL, the team lead, the recruiter and the candidate
+    if (!body.nextRound && canFeedback) setSendFor(row);
     return true;
   }
   const bookNext = (row) => setScheduling({
@@ -1067,7 +1070,7 @@ export default function InterviewCalendar() {
           onClear={() => setSelId(null)}
           onOpenCandidate={showCand}
           onFull={(r) => setDialog({ kind: 'detail', row: r })}
-          actions={shownRow && canRun ? <div className="iv4-det-acts"><Actions row={shownRow} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} canBook={canAct} onStarted={load} /></div> : null}
+          actions={shownRow && canRun ? <div className="iv4-det-acts"><Actions row={shownRow} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} canBook={canAct} onStarted={load} onSend={canFeedback ? setSendFor : null} /></div> : null}
         />
       </div>
 
@@ -1313,7 +1316,7 @@ export default function InterviewCalendar() {
                           <RowFeedback r={r} />
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>
-                          {!canRun ? <span className="small-muted">—</span> : <Actions row={r} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} canBook={canAct} onStarted={load} />}
+                          {!canRun ? <span className="small-muted">—</span> : <Actions row={r} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} canBook={canAct} onStarted={load} onSend={canFeedback ? setSendFor : null} />}
                         </td>
                       </tr>
                     ))}
@@ -1366,7 +1369,7 @@ export default function InterviewCalendar() {
       {dialog?.kind === 'feedback' && (
         <ShortFeedbackForm
           row={dialog.row}
-          existing={dialog.row.internalFeedback}
+          existing={dialog.row.internalFeedback || dialog.row.clientFeedback}
           allowNoShow={!['FEEDBACK_SUBMITTED', 'CANCELLED', 'NO_SHOW'].includes(dialog.row.status)}
           allowNextRound={!DECIDED_STAGES.includes(dialog.row.stage)}
           rejectForm={canDecide}
@@ -1383,6 +1386,7 @@ export default function InterviewCalendar() {
         />
       )}
       {dialog?.kind === 'history' && <HistoryPanel dialog={dialog} setDialog={setDialog} />}
+      {sendFor && <SendFeedback row={sendFor} onClose={() => setSendFor(null)} onSent={(m) => { setSendFor(null); setNotice(m); load(); }} />}
       {dialog?.kind === 'tell' && (
         <InterviewTell
           applicationId={dialog.row.id}
@@ -1441,8 +1445,71 @@ export default function InterviewCalendar() {
 // interview currently is.
 // THE FEEDBACK ON THE ROW ITSELF (founder 2026-11-28: "screen meedhaney display avvali, feedback"): the decision and the words, without
 // opening Edit feedback. The client's feedback first, else the panel's, else what the interview record says; the full text on hover.
+const sentOf = (r) => (r && Array.isArray(r.history) ? [...r.history].reverse().find((h) => h && h.status === 'FEEDBACK_SENT') : null) || null;
+
+// SEND THE SAVED FEEDBACK (founder 2026-11-28): who gets it, then one press. The server (POST .../feedback/send) tells the BDE TL, the
+// team lead and the recruiter (bell + mail), mails the candidate the decision and gives the recruiter a "tell the candidate" task.
+function SendFeedback({ row, onClose, onSent }) {
+  const [info, setInfo] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    api.get(`/ats/interviews/${row.id}/feedback/send`).then((r) => setInfo(r.data)).catch((e) => setErr(e.response?.data?.error || 'Could not load who gets it.'));
+  }, [row.id]);
+  const send = async () => {
+    setBusy(true); setErr('');
+    try {
+      const r = await api.post(`/ats/interviews/${row.id}/feedback/send`);
+      const d = r.data || {};
+      onSent(`Feedback sent to ${(d.people || []).map((x) => x.name).join(', ') || 'nobody on the team'}. Candidate: ${String(d.candidate || '').replace(/[.\s]+$/, '')}.${d.task ? ` ${d.recruiter} has a task to tell ${row.candidate.name}.` : ''}`);
+    } catch (e) { setErr(e.response?.data?.error || 'Could not send. Please try again.'); setBusy(false); }
+  };
+  const dec = info && info.decision;
+  return (
+    <Modal
+      title={`Send ${row.candidate.name}'s feedback`}
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn" onClick={onClose}>Not now</button>
+          <button type="button" className="btn btn-primary" disabled={busy || !info} onClick={send}>{busy ? 'Sending…' : 'Send'}</button>
+        </>
+      )}
+    >
+      {!info && !err && <div className="small-muted">Loading…</div>}
+      {err && <div className="error-text">{err}</div>}
+      {info && (
+        <div style={{ display: 'grid', gap: 10 }}>
+          <div className="ivv3-fb" style={{ maxWidth: 'none', WebkitLineClamp: 'unset' }}>
+            {dec && <b className={`ivv3-fb-rec ${/reject/i.test(dec) ? 'ivv3-fb-bad' : /select/i.test(dec) ? 'ivv3-fb-ok' : ''}`}>{dec}</b>}
+            <span>{info.feedback}</span>
+          </div>
+          <div>
+            <b>The team</b>
+            {info.team.length
+              ? <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{info.team.map((t) => <li key={`${t.as}-${t.name}`}>{`${t.name} (${t.as})`}</li>)}</ul>
+              : <div className="small-muted">Nobody found for this candidate.</div>}
+            <div className="small-muted">{`A notice on their screen${info.teamMailsOn ? ' and a mail' : ' (interview mails are switched off, so no mail)'}.`}</div>
+          </div>
+          <div>
+            <b>The candidate</b>
+            <div className="small-muted">
+              {!info.candidateEmail ? 'No e-mail on file: the recruiter tells them by call or WhatsApp.'
+                : info.candidateEmailsOn ? `A short mail to ${info.candidateEmail} with the decision only (no remarks, no salary).`
+                  : 'Candidate mails are switched off: the mail is recorded, not sent. The recruiter tells them.'}
+            </div>
+          </div>
+          <div className="small-muted">The recruiter gets a task due today: tell the candidate.</div>
+          {info.sent && <div className="small-muted">{`Sent before: ${new Date(info.sent.createdAt).toLocaleString('en-IN')} by ${info.sent.by || '—'}.`}</div>}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function RowFeedback({ r }) {
   const fb = r.clientFeedback || r.internalFeedback || null;
+  const sent = sentOf(r);
   const text = String((fb && fb.overall) || r.feedback || '').replace(/\s+/g, ' ').trim();
   const rec = String((fb && fb.recommendation) || r.result || '').trim();
   if (!text && !rec) return null;
@@ -1453,12 +1520,13 @@ function RowFeedback({ r }) {
     <div className="ivv3-fb" title={[says ? null : rec, text].filter(Boolean).join(' - ')}>
       {rec && !says && <b className={`ivv3-fb-rec ${tone ? `ivv3-fb-${tone}` : ''}`}>{rec}</b>}
       {text && text.toLowerCase() !== rec.toLowerCase() && <span className={says && tone ? `ivv3-fb-${tone}` : ''}>{text}</span>}
+      {sent && <div className="ivv3-sub2" title={sent.reason || ''}>{`Sent to the team · ${new Date(sent.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`}</div>}
     </div>
   );
 }
 
 function Actions({
-  row, advance, setDialog, onNextRound = null, canFeedback = true, canBook = true, onStarted = null,
+  row, advance, setDialog, onNextRound = null, canFeedback = true, canBook = true, onStarted = null, onSend = null,
 }) {
   const st = row.status;
   const next = INTERVIEW_NEXT[st];
@@ -1497,8 +1565,11 @@ function Actions({
         {/* The decision is taken on the Feedback tab of this same screen. */}
         {decide && canFeedback && <><Link className="btn btn-sm btn-primary" to="/ats/interview-feedback">Decide</Link>{' '}</>}
         {decide && onNextRound && canBook && <><button type="button" className="btn btn-sm" onClick={() => onNextRound(row)}>{`Book round ${(Number(row.round) || 1) + 1}`}</button>{' '}</>}
+        {canFeedback && st === 'FEEDBACK_SUBMITTED' && onSend && (
+          <><button type="button" className={'btn btn-sm' + (decide || sentOf(row) ? '' : ' btn-primary')} title="Send the feedback to the BDE TL, the team lead, the recruiter and the candidate" onClick={() => onSend(row)}>{sentOf(row) ? 'Send again' : 'Send'}</button>{' '}</>
+        )}
         {canFeedback && (
-          <button className={'btn btn-sm' + (decide ? '' : ' btn-primary')} onClick={() => setDialog({ kind: 'feedback', row })}>
+          <button className={'btn btn-sm' + (decide || (st === 'FEEDBACK_SUBMITTED' && onSend && !sentOf(row)) ? '' : ' btn-primary')} onClick={() => setDialog({ kind: 'feedback', row })}>
             {['COMPLETED', 'FEEDBACK_SUBMITTED'].includes(st) ? 'Edit feedback' : 'Add feedback'}
           </button>
         )}{' '}

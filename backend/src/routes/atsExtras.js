@@ -915,6 +915,33 @@ router.post('/interviews/:id/feedback', async (req, res) => {
   await respondWith(res, app.id);
 });
 
+// SEND THE CLIENT'S FEEDBACK (founder 2026-11-28, utils/feedbackSend.js): after the BDE saves it, one press tells the BDE TL,
+// the candidate's team lead and recruiter (bell + mail), mails the candidate the decision and gives the recruiter a task.
+// GET .../send = who would get it (the confirm window shows it); POST .../send = send.
+router.get('/interviews/:id/feedback/send', async (req, res) => {
+  const app = await loadInterview(req, res, 'feedback');
+  if (!app) return;
+  const FS = require('../utils/feedbackSend'); // eslint-disable-line global-require
+  const full = await prisma.application.findUnique({ where: { id: app.id }, include: { candidate: true, requirement: { include: { client: true } }, interviewFeedbacks: true } });
+  const who = await FS.recipientsOf(full);
+  const { text, rec } = FS.feedbackOf(full);
+  const N = require('../utils/interviewNotices'); // eslint-disable-line global-require
+  res.json({
+    decision: rec, feedback: text,
+    team: [...who.bdeTl.map((u) => ({ name: u.name, as: 'BDE TL' })), who.tl && { name: who.tl.name, as: 'Team lead' }, who.recruiter && { name: who.recruiter.name, as: 'Recruiter' }].filter(Boolean),
+    candidateEmail: (full.candidate && full.candidate.email) || null,
+    candidateEmailsOn: await N.candidateEmailsOn(),
+    teamMailsOn: (await N.loadSettings().catch(() => ({}))).enabled === true,
+    sent: (await prisma.interviewEvent.findMany({ where: { applicationId: app.id, status: 'FEEDBACK_SENT' }, orderBy: { createdAt: 'desc' }, take: 1 }))[0] || null,
+  });
+});
+router.post('/interviews/:id/feedback/send', async (req, res) => {
+  const app = await loadInterview(req, res, 'feedback');
+  if (!app) return;
+  const out = await require('../utils/feedbackSend').sendFeedback(app.id, req.user); // eslint-disable-line global-require
+  res.status(out.status || 200).json(out);
+});
+
 // ---- AI interview tab actions ----------------------------------------------
 // An expired AI interview never rejects the candidate: it can be extended,
 // resent, or handed to a recruiter for a manual screen.
