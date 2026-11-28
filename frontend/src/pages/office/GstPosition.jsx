@@ -121,7 +121,12 @@ export default function GstPosition({
   const more = Math.max(0, d.riskVendors.length - top.length);
   const shown = d.riskBills.slice(0, 12);
   const rest = d.riskBills.length - shown.length;
-  const credit = p.payable < 0;
+  // Payable counts only GST on money received by bank transfer / other non-cash modes (founder 2026-11-28), the same
+  // figure as the "GST payable to government" card at the top. Cash receipts and money not yet received are left out.
+  const payNow = p.payableBank != null ? p.payableBank : p.payable;
+  const bankGst = o.bankGst != null ? o.bankGst : o.charged;
+  const filledNow = bankGst - i.gstPaid;
+  const credit = payNow < 0;
 
   return (
     <div className="gp">
@@ -157,9 +162,9 @@ export default function GstPosition({
         <div className="gp-band">The position</div>
         <div className="gp-cards">
           <Card label="Total under this GSTIN" value={money(p.total)} sub={`billed ${money(p.billed)} + bought ${money(p.bought)}`} />
-          <Card label={credit ? 'Credit carried forward' : 'Payable to Government'} value={money(Math.abs(p.payable))}
-            sub={`charged ${money(o.charged)} − claimed ${money(i.claimable)}`} tone={credit ? 'green' : 'red'} />
-          <Card label="If the GSTINs are filled in" value={money(p.ifFilled)} sub={`you would pay ${money(p.saving)} less`} tone="green" />
+          <Card label={credit ? 'Credit carried forward' : 'Payable to Government'} value={money(Math.abs(payNow))}
+            sub={`GST on bank-transfer receipts ${money(bankGst)} − claimed ${money(i.claimable)} · cash and unreceived not counted`} tone={credit ? 'green' : 'red'} />
+          <Card label="If the GSTINs are filled in" value={money(Math.abs(filledNow))} sub={`${filledNow < 0 ? 'credit · ' : ''}${money(p.saving)} better than now`} tone="green" />
           <Card label="Our GSTIN" value={d.ourGstin || 'Not set'} sub={d.ourState || 'Add it in Company details'} mono />
         </div>
         <GstGap inOut={d.inOut} />
