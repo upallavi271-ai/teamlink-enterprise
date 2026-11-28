@@ -95,3 +95,16 @@
 
 /* ---- Names fit (2026-10-17): candidate sub-line wraps (2 lines) instead of "..." ---- */
 .ivx-who .ivx-who-t div{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;line-height:1.25}
+/* several people at once (2026-11-28) */
+.ivx-pick-row{display:flex;align-items:center;gap:8px}
+.ivx-pick-row>input[type=checkbox]{width:18px;height:18px;flex:none;cursor:pointer;accent-color:var(--blue,#2563eb)}
+.ivx-pick-row>button{flex:1;min-width:0}
+.ivx-pick-row.is-on>button{border-color:var(--blue,#2563eb);background:var(--brand-tint,#eef2ff)}
+.ivx-pick-row.is-off{opacity:.45}
+.ivx-tickbar{display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 10px;border:1px solid var(--blue,#2563eb);border-radius:10px;background:var(--brand-tint,#eef2ff);font-size:13px;font-weight:600}
+.ivx-tickbar>span{flex:1}
+.ivx-many{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.ivx-many-h{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ivx-many-row{display:flex;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:var(--paper-raised,#fff)}
+.ivx-many-row .ivx-who-t{flex:1;min-width:0}
+.ivx-many-row .ivx-who-t div{font-size:12px;color:var(--ink-soft)}

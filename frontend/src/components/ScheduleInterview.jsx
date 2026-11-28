@@ -33,6 +33,11 @@ import ReminderDetailsFields from './reminders/ReminderDetailsFields.jsx';
 // all available channels", and the recruiter / TL / client manager (BDE) /
 // interviewer can be told with one button. onBooked() fires on save (reload the
 // list); onScheduled(msg) on Done.
+//
+// SEVERAL PEOPLE AT ONCE (founder 2026-11-28: "tick boxes, at a time multiple candidates okey client ki interview schedule"):
+// tick people of ONE client in the list, Continue, fill When / How / panel once. Each person is booked through the same
+// POST /book (same checks, history, notices); one time for all or spaced out; each keeps their own next round unless a
+// round is picked for all. Then a short list of who was booked, with "Tell them" per person.
 // ---------------------------------------------------------------------------
 const initials = (n) => String(n || '?').replace(/^ZZTEST\S*\s*/i, '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 const todayIst = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
@@ -51,6 +56,30 @@ function Who({ row, onChange }) {
 }
 
 const roundOf = (row) => Math.max(1, Number(row && (row.round || row.suggestedRound)) || 1);
+// "10:00" + 30 minutes x 2 -> "11:00"
+const addMinutes = (hhmm, mins) => {
+  const [h, m] = String(hhmm || '00:00').split(':').map(Number);
+  const t = (h * 60 + m + mins) % (24 * 60);
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+};
+
+function Many({ rows, onChange, onRemove }) {
+  return (
+    <div className="ivx-many">
+      <div className="ivx-many-h">
+        <b>{`${rows.length} people · ${rows[0].client || rows[0].job || ''}`}</b>
+        {onChange && <button type="button" className="btn btn-sm btn-ghost" onClick={onChange}>Change</button>}
+      </div>
+      {rows.map((r) => (
+        <div key={r.id} className="ivx-many-row">
+          <span className="ivx-av" style={{ width: 24, height: 24, fontSize: 10 }} aria-hidden="true">{initials(r.candidate.name)}</span>
+          <span className="ivx-who-t"><b>{r.candidate.name}</b><div>{[r.job, `Round ${roundOf({ round: r.suggestedRound })}`].filter(Boolean).join(' · ')}</div></span>
+          {onRemove && rows.length > 1 && <button type="button" className="link-btn" aria-label={`Remove ${r.candidate.name}`} onClick={() => onRemove(r.id)}>Remove</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function ScheduleInterview({
   onClose, onScheduled, onBooked = null, preset = null,
@@ -58,7 +87,18 @@ export default function ScheduleInterview({
   const [chosen, setChosen] = useState(preset);
   const [round, setRound] = useState(() => (preset ? roundOf(preset) : 1));
   const [done, setDone] = useState(null); // the server's reply after booking
-  const pick = (row) => { setChosen(row); setRound(row ? roundOf({ round: row.suggestedRound }) : 1); };
+  // several people of one client: the ticked rows; `more` = everyone after the first once Continue is pressed
+  const [ticked, setTicked] = useState([]);
+  const [more, setMore] = useState([]);
+  const [roundAll, setRoundAll] = useState(false); // false = each person's own next round
+  const [gap, setGap] = useState(0); // minutes between people (0 = the same time)
+  const [results, setResults] = useState(null); // [{ row, ok, time, round, message, error }]
+  const [tellFor, setTellFor] = useState(null);
+  const many = chosen ? [chosen, ...more] : [];
+  const pick = (row) => { setChosen(row); setMore([]); setTicked([]); setRoundAll(false); setRound(row ? roundOf({ round: row.suggestedRound }) : 1); };
+  const tickedClient = ticked.length ? (ticked[0].client || '') : null;
+  const toggle = (row) => setTicked((list) => (list.some((x) => x.id === row.id) ? list.filter((x) => x.id !== row.id) : [...list, row]));
+  const goMany = () => { const [first, ...rest] = ticked; setChosen(first); setMore(rest); setTicked([]); setRoundAll(false); setRound(roundOf({ round: first.suggestedRound })); };
   const [q, setQ] = useState('');
   const [list, setList] = useState(null);
   const [form, setForm] = useState({ date: '', time: '', mode: 'Online', meetingLink: '', location: '', interviewer: '', provider: 'Google Meet', roundType: '' });
@@ -100,7 +140,42 @@ export default function ScheduleInterview({
   const linkState = form.provider === 'Google Meet' ? linkCheck(form.meetingLink).state : providerCheck(form.provider, form.meetingLink).state;
   const ready = chosen && form.date && form.time && panel.length > 0 && !(form.mode === 'Online' && linkState === 'bad');
 
+  const body = (row, i) => ({
+    round: many.length > 1 && !roundAll ? roundOf({ round: row.suggestedRound }) : round,
+    viaPopup: true, // the "now tell them" window tells the candidate, so no automatic step message is sent too
+    date: form.date,
+    time: many.length > 1 ? addMinutes(form.time, gap * i) : form.time,
+    mode: form.mode,
+    meetingLink: form.mode === 'Online' ? form.meetingLink.trim() : '',
+    linkProvider: form.mode === 'Online' && form.meetingLink.trim() ? form.provider : undefined,
+    roundType: form.roundType || undefined,
+    location: form.mode === 'In Person' ? form.location.trim() : '',
+    details: { ...venue, address: form.mode === 'In Person' ? form.location.trim() : '' },
+    ...(rem.ready ? { reminders: { steps: rem.steps } } : {}),
+    panel: panel.map((p) => (p.userId ? { userId: p.userId } : { name: p.name, email: p.email || null })),
+  });
+  // several people: one booking each, in order; a refusal for one does not stop the others
+  async function submitMany() {
+    setError(''); setBusy(true);
+    const out = [];
+    for (let i = 0; i < many.length; i += 1) {
+      const row = many[i];
+      const b = body(row, i);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const r = await api.post(`/ats/interviews/${row.id}/book`, b);
+        out.push({ row, ok: true, time: b.time, round: (r.data && r.data.round) || b.round, message: r.data && r.data.message });
+      } catch (err) {
+        out.push({ row, ok: false, time: b.time, round: b.round, error: err.response?.data?.error || 'Could not book.' });
+      }
+    }
+    setBusy(false);
+    setResults(out);
+    if (onBooked && out.some((x) => x.ok)) onBooked({ many: out });
+  }
+
   async function submit() {
+    if (many.length > 1) { await submitMany(); return; }
     setError(''); setBusy(true);
     try {
       const r = await api.post(`/ats/interviews/${chosen.id}/book`, {
@@ -124,6 +199,41 @@ export default function ScheduleInterview({
     } finally { setBusy(false); }
   }
 
+  if (tellFor) {
+    return (
+      <InterviewTell
+        applicationId={tellFor.row.id}
+        kind="scheduled"
+        saved={`Saved. ${tellFor.row.candidate.name} · Round ${tellFor.round}`}
+        note={tellFor.message}
+        canMakeLink
+        onClose={() => setTellFor(null)}
+      />
+    );
+  }
+  if (results) {
+    const okN = results.filter((x) => x.ok).length;
+    const finish = () => onScheduled(`${okN} of ${results.length} interviews booked.`);
+    return (
+      <Modal title={`Booked ${okN} of ${results.length}`} onClose={finish} footer={<button type="button" className="btn btn-primary" onClick={finish}>Done</button>}>
+        <div className="ivx-book">
+          <div className="ivx-hint">{`${form.date.split('-').reverse().join('/')} · ${form.mode === 'In Person' ? 'Offline (in person)' : 'Online'}. Tell each person by Call, WhatsApp, SMS or Mail with "Tell them".`}</div>
+          <div className="ivx-many">
+            {results.map((x) => (
+              <div key={x.row.id} className="ivx-many-row">
+                <span className="ivx-who-t">
+                  <b>{x.row.candidate.name}</b>
+                  <div>{x.ok ? `${x.time} · Round ${x.round}` : <span className="error-text">{x.error}</span>}</div>
+                </span>
+                {x.ok ? <button type="button" className="btn btn-sm" onClick={() => setTellFor(x)}>Tell them</button> : <span className="ivx-pill">Not booked</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
   if (done) {
     const finish = () => onScheduled(done.message || 'Interview booked.');
     return (
@@ -144,14 +254,16 @@ export default function ScheduleInterview({
       onClose={onClose}
       footer={(
         <button type="button" className="btn btn-primary" disabled={busy || !ready} onClick={submit}>
-          {busy ? 'Booking…' : clashes.length ? 'Book anyway' : 'Book interview'}
+          {busy ? 'Booking…' : many.length > 1 ? `Book ${many.length} interviews` : clashes.length ? 'Book anyway' : 'Book interview'}
         </button>
       )}
     >
       <div className="ivx-book">
         <div className="ivx-sec">
           <b>Who</b>
-          {chosen ? (
+          {chosen && more.length ? (
+            <Many rows={many} onChange={preset ? null : () => pick(null)} onRemove={(id) => { if (id === chosen.id) { const [f, ...rest] = more; setChosen(f); setMore(rest); } else setMore((m) => m.filter((x) => x.id !== id)); }} />
+          ) : chosen ? (
             <Who row={chosen} onChange={preset ? null : () => pick(null)} />
           ) : (
             <>
@@ -169,29 +281,60 @@ export default function ScheduleInterview({
                 {list && list.length === 0 && !listErr && (
                   <div className="ivx-hint">{q ? 'Nobody found. Try another name or requirement.' : 'Nobody is shortlisted right now. Search to find a person.'}</div>
                 )}
-                {(list || []).map((r) => (
-                  <button key={r.id} type="button" onClick={() => pick(r)}>
-                    <span className="ivx-av" style={{ width: 28, height: 28, fontSize: 11 }} aria-hidden="true">{initials(r.candidate.name)}</span>
-                    <span className="ivx-who-t">
-                      <b>{r.candidate.name}</b>
-                      <div>{[r.job, r.client, r.round ? `Round ${r.round} done` : null].filter(Boolean).join(' · ')}</div>
-                    </span>
-                    {r.shortlisted ? <span className="ivx-pill green">Shortlisted</span> : r.nextRound ? <span className="ivx-pill blue">Next round</span> : null}
-                  </button>
-                ))}
+                {(list || []).map((r) => {
+                  const on = ticked.some((x) => x.id === r.id);
+                  const other = tickedClient !== null && (r.client || '') !== tickedClient;
+                  return (
+                    <div key={r.id} className={`ivx-pick-row${on ? ' is-on' : ''}${other ? ' is-off' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        disabled={other}
+                        aria-label={`Tick ${r.candidate.name}`}
+                        title={other ? `Another client: book ${tickedClient} first` : 'Tick to book several people of this client together'}
+                        onChange={() => toggle(r)}
+                      />
+                      <button type="button" onClick={() => (ticked.length ? (!other && toggle(r)) : pick(r))}>
+                        <span className="ivx-av" style={{ width: 28, height: 28, fontSize: 11 }} aria-hidden="true">{initials(r.candidate.name)}</span>
+                        <span className="ivx-who-t">
+                          <b>{r.candidate.name}</b>
+                          <div>{[r.job, r.client, r.round ? `Round ${r.round} done` : null].filter(Boolean).join(' · ')}</div>
+                        </span>
+                        {r.shortlisted ? <span className="ivx-pill green">Shortlisted</span> : r.nextRound ? <span className="ivx-pill blue">Next round</span> : null}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
+              {ticked.length > 0 ? (
+                <div className="ivx-tickbar">
+                  <span>{`${ticked.length} ticked · ${tickedClient || 'one client'}`}</span>
+                  <button type="button" className="link-btn" onClick={() => setTicked([])}>Clear</button>
+                  <button type="button" className="btn btn-sm btn-primary" onClick={ticked.length === 1 ? () => pick(ticked[0]) : goMany}>{ticked.length === 1 ? 'Continue' : `Continue with ${ticked.length} people`}</button>
+                </div>
+              ) : (
+                <div className="ivx-hint">Tick several people of one client to book them together. Type the college name to find all its people.</div>
+              )}
             </>
           )}
         </div>
 
         <div className="ivx-sec">
           <b>Round</b>
+          {many.length > 1 && (
+            <div className="ivx-hint" style={{ marginBottom: 6 }}>
+              {roundAll ? `Round ${round} for all ${many.length}. ` : 'Each person gets their own next round (shown above). '}
+              <button type="button" className="link-btn" onClick={() => setRoundAll(!roundAll)}>{roundAll ? "Use each person's own round" : 'Pick one round for all'}</button>
+            </div>
+          )}
+          {(many.length <= 1 || roundAll) && (
           <div className="ivv3-rounds" role="radiogroup" aria-label="Interview round">
             {[...new Set([1, 2, 3, 4, round])].sort((a, b) => a - b).map((n) => (
               <button key={n} type="button" role="radio" aria-checked={round === n} className={round === n ? 'is-on' : ''} onClick={() => setRound(n)}>{n}</button>
             ))}
             <button type="button" aria-label="One more round" onClick={() => setRound(Math.min(20, round + 1))}>+</button>
           </div>
+          )}
           <select aria-label="Round type" value={form.roundType} onChange={(e) => set({ roundType: e.target.value })} style={{ marginTop: 6 }}>
             <option value="">Round type (optional)</option>
             {['Technical', 'HR', 'Management', 'Client', 'Other'].map((t) => <option key={t} value={t}>{t}</option>)}
@@ -204,6 +347,15 @@ export default function ScheduleInterview({
             <input type="date" aria-label="Date" min={todayIst()} value={form.date} onChange={(e) => set({ date: e.target.value })} />
             <input type="time" aria-label="Time" value={form.time} onChange={(e) => set({ time: e.target.value })} />
           </div>
+          {many.length > 1 && (
+            <div style={{ marginTop: 8 }}>
+              <select aria-label="Time for each person" value={gap} onChange={(e) => setGap(Number(e.target.value))}>
+                <option value={0}>Everyone at the same time</option>
+                {[15, 20, 30, 45, 60].map((m) => <option key={m} value={m}>{`One after another, every ${m} minutes`}</option>)}
+              </select>
+              {form.time && gap > 0 && <div className="ivx-hint">{many.map((r, i) => `${r.candidate.name.split(' ')[0]} ${addMinutes(form.time, gap * i)}`).join(' · ')}</div>}
+            </div>
+          )}
         </div>
 
         <div className="ivx-sec">

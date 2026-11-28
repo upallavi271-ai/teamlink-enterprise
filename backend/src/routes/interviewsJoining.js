@@ -1524,7 +1524,8 @@ const BOOK_MODES = { online: 'Online', 'in person': 'In Person', inperson: 'In P
 
 // Who can be booked: in your area, not decided, no live slot. Shortlisted by
 // the client first (that is who an interview is for); ?q= finds anyone else
-// by name, phone, email or job. At most 20 — the dialog is a picker, not a list.
+// by name, phone, email, job or client (the college: several people of one client are booked together, 2026-11-28).
+// At most 50 — the dialog is a picker, not a list.
 router.get('/interviews/bookable', requirePerm('ats', 'interviews', 'Schedule Interview', 'create'), async (req, res) => {
   const q = String(req.query.q || '').trim();
   const base = {
@@ -1544,6 +1545,7 @@ router.get('/interviews/bookable', requirePerm('ats', 'interviews', 'Schedule In
         ...(maskedFinder ? [] : [{ candidate: { email: { contains: q } } }]),
         ...(digits.length >= 4 ? [{ candidate: { phone: { contains: digits } } }] : []),
         { requirement: { title: { contains: q } } },
+        { requirement: { client: { name: { contains: q } } } },
       ],
     }
     : { stage: 'CLIENT_SHORTLISTED' };
@@ -1555,11 +1557,11 @@ router.get('/interviews/bookable', requirePerm('ats', 'interviews', 'Schedule In
       requirement: { select: { id: true, title: true, internal: true, client: { select: { name: true } } } },
     },
     orderBy: { updatedAt: 'desc' },
-    take: 40,
+    take: 80,
   });
   const rank = (a) => (a.stage === 'CLIENT_SHORTLISTED' ? 0 : 1);
   res.json({
-    rows: rows.sort((a, b) => rank(a) - rank(b)).slice(0, 20).map((a) => ({
+    rows: rows.sort((a, b) => rank(a) - rank(b)).slice(0, 50).map((a) => ({
       id: a.id,
       candidate: { id: a.candidate.id, name: a.candidate.name },
       job: a.requirement.title,
