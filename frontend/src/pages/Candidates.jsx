@@ -2549,6 +2549,13 @@ function JoinedOnFilter({ filters, setFilter }) {
   return <DateRangeFilter label="Joined between" title="The day the person joined (the Joining date column)" from={filters.joinedFrom || ''} to={filters.joinedTo || ''} onChange={({ from, to }) => setFilter({ joinedFrom: from, joinedTo: to })} />;
 }
 
+// Education: which team the profile belongs to (its seat: EDU-1..5 Team A, EDU-6..10 Team B). Both Education TLs see both teams,
+// so the team is shown on the row (founder 2026-11-28).
+function EduTeamChip({ team }) {
+  if (!team) return null;
+  return <span className={`cpl-eduteam ${team === 'Team A' ? 'is-a' : 'is-b'}`} title={`Education ${team} profile`}>{team}</span>;
+}
+
 function Cell({
   col, c, onOpen, ctx,
 }) {
@@ -2562,6 +2569,7 @@ function Cell({
               <span className="avatarsm" data-tone={avatarTone(c.name)}>{initials(c.name)}</span>
               <span className="cpl-cand-name" title={c.name}>{c.name}</span>
               <RejectedBadge row={c} minTimes={ctx.rejectedTab ? 2 : 1} />
+              <EduTeamChip team={c.eduTeam} />
             </div>
             <div className="small-muted cpl-s-line" title={job}>{job}{c.applicationsCount > 1 ? ` · ${c.applicationsCount} applications` : ''}</div>
             {(c.dup || c.screening) && (
@@ -2580,6 +2588,7 @@ function Cell({
           <RejectedBadge row={c} minTimes={ctx && ctx.rejectedTab ? 2 : 1} />
           <DupChip dup={c.dup} candidateId={c.candidateId || c.id} onChanged={ctx && ctx.reload} />
           <ScreenChip s={c.screening} />
+          <EduTeamChip team={c.eduTeam} />
           <div className="small-muted cviews-code">
             {/* v3: the job this row is about, when the Job column is off. */}
             {ctx && ctx.showJob && c.requirementTitle ? `${c.requirementTitle}${c.clientName ? ` · ${c.clientName}` : ''}` : c.code}

@@ -35,6 +35,7 @@ const PT = require('../utils/pipelineTally'); // one definition of every Candida
 const { hasPersonQuery, attributedApplications } = require('../utils/workers');
 // The paged list's in-memory working set (kept current by deltas).
 const { getListState, markCandidateDirty } = require('../utils/candidateListCache');
+const SEAT = require('../utils/applicationSeat'); // Team A / Team B of an Education profile (2026-11-28)
 const ADDED = require('../utils/candidateAddedBy'); // who typed / uploaded each person: that login keeps seeing them before any requirement
 // THE ACTUAL WORKFLOW (2026-09-29): an internal opening's stages read HR Review /
 // Dept Head / TL, and its next action is the internal chain's.
@@ -1080,7 +1081,7 @@ const APP_ROW_MEMO = new Map();
 const APP_ROW_INFLIGHT = new Map();
 async function pipelineRowsFor(user) {
   // The two snapshots are independent reads: wait for both at once.
-  const [st, snap] = await Promise.all([getListState(), ensureNextActionContext()]);
+  const [st, snap] = await Promise.all([getListState(), ensureNextActionContext(), SEAT.seatMap()]); // the seats: Team A / B on Education rows
   const s = scopeOf(user);
   // The due-date and follow-up rules are settings an admin can change: their versions are part of the key.
   const rulesAt = viewerKind(user) === 'internal' ? ((await FV.loadRules().catch(() => null)) || {}).updatedAt || '' : '';
@@ -1191,6 +1192,9 @@ async function buildPipelineRows(user, st, s, snap) {
         requirementTitle: r ? r.title : null,
         reqCode: r ? r.reqCode || null : null,
         requirementDepartment: r ? r.department || null : null,
+        // Education: Team A (EDU-1..5) or Team B (EDU-6..10), from the profile's seat (founder 2026-11-28: both TLs see both teams,
+        // "clearly visible that it belongs to Team A or Team B"). Staff only.
+        eduTeam: kind !== 'client' && r && /^education$/i.test(r.department || '') ? SEAT.eduTeamOfApp(a.id, a.ownerRecruiterId) : null,
         requirementEmploymentType: r ? r.employmentType || null : null, // NISH: the hiring type filter
         internal,
         hiringLabel: internal ? 'Internal' : 'Client',

@@ -23,7 +23,8 @@ const { isBdeDepartment } = require('./bdeDesk');
 const RD = require('./reqDepartments'); // extra departments of a job (2026-10-13)
 const RT = require('./reqTeamLeads'); // extra team leads of a job (2026-10-14)
 const RR = require('./responseRecipients'); // the recruiters who receive a job's responses (2026-11-20)
-const AP = require('./atsProfile'); // NISH (IT staffing): one recruitment department, one shared candidate pool (2026-11-26)
+const AP = require('./atsProfile');
+const SEAT = require('./applicationSeat'); // the seat a profile belongs to: its latest recruiter follow-up (founder 2026-11-28) // NISH (IT staffing): one recruitment department, one shared candidate pool (2026-11-26)
 
 // THE SHARED POOL (founder 2026-11-26, NISH only: "evaru ey profiles add chesina, recruiters ki tls ki andhariki kanipinchali ... valladhi okate
 // recruitment dept"). On a copy started with ATS_PROFILE=it-staffing every ATS WORKING login - Recruiter, TL, STL, Manager, Assistant Manager -
@@ -302,7 +303,9 @@ function nonItSplit(user) {
 // The jobs themselves stay shared (both teams work the same colleges). Super Admin / Admin / Manager / the BDE desk: unchanged.
 function eduSplit(user) {
   const s = atsScopeOf(user);
-  if (s.global || !s.eduTeam || isBdeTl(user) || !['TL', 'STL', 'RECRUITER'].includes(s.atsRole)) return null;
+  // A department TL is not split any more (founder 2026-11-28: "both TLs can see, but it needs to be clearly visible that it belongs
+  // to Team A or Team B" - the list shows the team of each profile, utils/applicationSeat.js eduTeamOfSeat).
+  if (s.global || !s.eduTeam || isBdeTl(user) || !['STL', 'RECRUITER'].includes(s.atsRole)) return null;
   return s.eduTeam;
 }
 function eduSplitWhere(et) {
@@ -613,7 +616,15 @@ function applicationWhere(user, opts = {}) {
   const split = nonItSplit(user); // Medical vs Non IT Medical, both ways (2026-10-29)
   const edu = eduSplit(user); // Education Team A vs Team B, both ways (2026-11-11)
   const arms = [base, ...(own ? [own] : []), ...(limit ? [{ requirement: limit }] : []), ...(split ? [{ requirement: split }] : []), ...(edu ? [eduSplitWhere(edu)] : [])];
-  const where = arms.length === 1 ? base : { AND: arms };
+  let where = arms.length === 1 ? base : { AND: arms };
+  const s0 = atsScopeOf(user);
+  // A RECRUITER IN A SEAT SEES THAT SEAT'S PROFILES (founder 2026-11-28: "ahh positions lo ey recruiters vacharo, ahh recruiters logins
+  // lo ee profiles display avvali, evari profiles vallakey display avvali"; worked from two seats: "Latest seat only"): every profile
+  // whose latest recruiter follow-up is on their seat - the previous holder's work too - and no profile whose latest seat is another
+  // one. A profile with no seat on any recruiter follow-up keeps the rule above (assigned jobs, own work).
+  if (!s0.global && s0.atsRole === 'RECRUITER' && s0.positions && Array.isArray(s0.positions.seatApplicationIds)) {
+    where = { OR: [{ id: { in: s0.positions.seatApplicationIds.length ? s0.positions.seatApplicationIds : ['__none__'] } }, { AND: [where, SEAT.UNSEATED_WHERE] }] };
+  }
   // A TEAM LEAD'S OWN CANDIDATES ARE ALWAYS IN THEIR VIEW (founder 2026-11-28: TLs bring joinings too - a TL owns the people they add,
   // utils/applicationOwner.js): a TL / STL sees the applications they own even on a requirement with no TL yet, another team's seat or
   // the other side of the Medical / Non IT split. Nothing else widens.
@@ -627,7 +638,11 @@ function applicationWhere(user, opts = {}) {
     const old = depts.length
       ? { AND: [{ createdAt: { lt: OLD_WORK_BEFORE } }, { requirement: { department: { in: depts } } }, ...(edu ? [eduSplitWhere(edu)] : [])] }
       : null;
-    return { OR: [{ ownerRecruiterId: s.userId }, ...(old ? [old] : []), where] };
+    // A DEPARTMENT TL SEES EVERY PROFILE OF THEIR DEPARTMENT (founder 2026-11-28: "ee dept profiles anni present vunna TLs ki visible
+    // avvali ... TL ki andhari profiles display avvali"): every application on a job of their department - Medical and Non IT
+    // still apart (deptTlLimit) - whichever seat or recruiter it is with, old or new. In Education both TLs see both teams.
+    const dept = s.atsRole === 'TL' ? deptTlLimit(user) : null;
+    return { OR: [{ ownerRecruiterId: s.userId }, ...(dept ? [{ requirement: dept }] : []), ...(old ? [old] : []), where] };
   }
   return where;
 }
@@ -772,6 +787,18 @@ function applicationInScope(user, application) {
   if (s.global) return true;
   if (!application) return false;
   if (ctx.shared) return true; // NISH: the shared pool
+  // a recruiter in a seat: the seat's profiles, by the latest recruiter follow-up (founder 2026-11-28, see applicationWhere)
+  if (s.atsRole === 'RECRUITER' && s.positions && Array.isArray(s.positions.seatApplicationIds)) {
+    const v = SEAT.seatVerdict(application.id, s.positions.ownPositionCodes);
+    if (v === 'mine') return true;
+    if (v === 'other') return false;
+  }
+  // a department TL: every profile of their department, and the ones they own (founder 2026-11-28, see applicationWhere)
+  if (s.atsRole === 'TL' && !ctx.bdeTl) {
+    if (s.userId && application.ownerRecruiterId === s.userId) return true;
+    const dept = deptTlLimit(user);
+    if (dept && application.requirement && matches(application.requirement, dept)) return true;
+  }
   // another recruiter's candidate (founder 2026-10-26)
   if (s.atsRole === 'RECRUITER' && application.ownerRecruiterId && application.ownerRecruiterId !== s.userId) return false;
   if (s.atsRole === 'CANDIDATE') return application.candidateId === s.candidateId;

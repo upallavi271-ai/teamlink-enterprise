@@ -151,8 +151,15 @@ async function resolvePositionScope({ userId, employeeId, atsRole }) {
     }
   }
 
+  // A recruiter's seat profiles: every profile whose LATEST recruiter follow-up is on their seat, the previous holder's work too
+  // (founder 2026-11-28, utils/applicationSeat.js).
+  const seatApplicationIds = atsRole === 'RECRUITER'
+    ? await require('./applicationSeat').idsOnSeats(mine.map((a) => a.position.code)) // eslint-disable-line global-require
+    : undefined;
+
   return {
     role: atsRole,
+    seatApplicationIds,
     // "Education Team A", "Medical Team" — what the scope line says.
     label: uniq(mine.map((a) => [a.position.department, a.position.team].filter(Boolean).join(' '))).join(', ') || null,
     ownPositionIds: rootIds,
