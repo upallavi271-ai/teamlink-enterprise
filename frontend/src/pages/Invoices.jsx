@@ -1024,10 +1024,10 @@ export default function Invoices() {
               {badge('receivable', 'Net receivable', totals.receivable)}
               {badge('received', 'Received', totals.received)}
               {badge('pending', 'Balance', totals.pending)}
-              {/* founder 2026-11-28: "Final amount" (fee + GST, TDS not cut - what the client is asked to pay) replaces Net profit. */}
-              <div className="inv-badge" data-testid="inv-final-amount" title={`Fee + GST, TDS not cut, across the ${rows.length} invoice(s) the filters leave`}>
-                <span>Final amount (with GST)</span>
-                <strong>{money2(totals.after)}</strong>
+              {/* founder 2026-11-28: "Final amount" is what is ours - GST and TDS both taken out (Before GST - TDS). */}
+              <div className="inv-badge" data-testid="inv-final-amount" title={`Before GST less TDS, across the ${rows.length} invoice(s) the filters leave`}>
+                <span>Final amount (without GST and TDS)</span>
+                <strong>{money2(totals.before - totals.tds)}</strong>
               </div>
               <div className="inv-badge inv-badge-wide" title={`TDS on the ${rows.length} invoice(s) the filters leave`}>
                 <span>TDS deducted</span>
