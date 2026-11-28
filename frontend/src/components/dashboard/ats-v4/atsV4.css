@@ -261,3 +261,9 @@
 .av4 .av4-fold-b > .jb{border:0 !important;box-shadow:none;border-radius:0 0 12px 12px;background:transparent}
 .av4 .av4-fold-b > .jb > .jb-top{justify-content:flex-end;padding:8px 18px 0}
 .av4 .av4-fold-b > .jb > .jb-top h3{display:none}
+
+/* Candidates by department and step (2026-11-28) */
+.av4-dstbl th, .av4-dstbl td { white-space: nowrap; }
+.av4-dstbl .av4-ds-dept { position: sticky; left: 0; background: inherit; z-index: 1; font-weight: 600; }
+.av4-dstbl thead .av4-ds-dept, .av4-dstbl tbody .av4-ds-dept { background: var(--paper-raised, #fff); }
+.av4-dstbl .av4-ds-total { font-weight: 700; border-left: 1px solid var(--line); }

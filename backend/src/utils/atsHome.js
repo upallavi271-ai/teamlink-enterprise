@@ -1446,6 +1446,93 @@ function deptsWidget(c, b, k) {
   const d = departmentsTable(c, b, k);
   return d.rows.length > 1 ? d : null;
 }
+// ---- Candidates by department and step (founder 2026-11-28: "super admin ki, developer ki, ey dept lo candidates ey stage lo vunnaro,
+// clear ga visible avvali ... filters pettukunna, drop down, dates filter pettukunna, rejected, joined, interview completed ilaa stage lo
+// ey dept valla candidates ekkada vunnaru ani clear ga telsukuneyy laaga vundali") -----------------------------------------------------
+// One row per department, one column per step, every number opens the list. It follows the page's filters (department, client, BDE ...)
+// and its dates: with dates picked, a person counts when they REACHED their present step in those dates (Joined: the joining date, as
+// everywhere); "Any time" counts everyone where they are now. Job Portal responses not yet sent to the ATS are left out, as on the cards.
+const DS_STEPS = [
+  ['new', 'New', ['NEW']],
+  ['ai', 'AI interview', ['AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED']],
+  ['rec', 'Recruiter check', ['RECRUITER_REVIEW', 'RECRUITER_APPROVED']],
+  ['tl', 'TL check', ['TL_REVIEW']],
+  ['bde', 'With BDE', ['WITH_BDE', 'BDE_APPROVED']],
+  ['sent', 'Sent to client', ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW']],
+  ['short', 'Client shortlisted', ['CLIENT_SHORTLISTED']],
+  ['ivb', 'Interview booked', ['INTERVIEW_SCHEDULED']],
+  ['ivd', 'Interview done', ['INTERVIEW_COMPLETED']],
+  ['sel', 'Selected', ['SELECTED']],
+  ['offer', 'Offer', ['OFFER', 'OFFER_ACCEPTED']],
+  ['joined', 'Joined', ['JOINED', 'HIRED']],
+  ['dropped', 'Dropped', []],
+  ['rejected', 'Rejected', ['REJECTED']],
+  ['hold', 'Hold', ['HOLD']],
+];
+const DS_OF = new Map(DS_STEPS.flatMap(([key, , codes]) => codes.map((code) => [code, key])));
+function deptStagesWidget(c, b, k) {
+  const { sel } = k;
+  const anyTime = c.period.key === 'all';
+  // The day a person reached the step they are at now: the latest move into it, else (no history) the day they were added.
+  const reachedAt = (x) => {
+    let t = 0;
+    (x.evs || []).forEach((e) => { if (e.to === x.a.stage && e.at > t) t = e.at; });
+    return t || msOf(x.a.createdAt);
+  };
+  const t = new Map();
+  const row = (d) => {
+    const key = d || '';
+    if (!t.has(key)) t.set(key, { department: key || null, ...Object.fromEntries(DS_STEPS.map(([s]) => [s, []])) });
+    return t.get(key);
+  };
+  sel.forEach((x) => {
+    if (x.pre && !c.screening) return;
+    const dep = (x.a.requirement && x.a.requirement.department) || '';
+    if (isTest(dep)) return;
+    let step = DS_OF.get(x.a.stage);
+    if (!step) return;
+    if (step === 'joined') {
+      if (V.leftAfterJoining(x.a)) {
+        step = 'dropped';
+        if (!anyTime && !inPeriod(reachedAt(x), c.period)) return;
+      } else if (!joinedSince(x, c.period.from, c.period.to, anyTime)) return;
+    } else if (!anyTime && !inPeriod(reachedAt(x), c.period)) return;
+    row(dep)[step].push(x.a.id);
+  });
+  const kept = [...t.values()].sort((x, y) => (!x.department) - (!y.department) || String(x.department).localeCompare(String(y.department)));
+  if (!kept.length) return null;
+  const rows = kept.map((r, i) => {
+    const name = r.department || 'No department';
+    const drills = {};
+    const counts = {};
+    let total = [];
+    DS_STEPS.forEach(([s, label]) => {
+      counts[s] = r[s].length;
+      total = total.concat(r[s]);
+      if (r[s].length) drills[s] = addSet(b, `ds-${i}-${s}`, { kind: 'app', title: `${name} — ${label}`, ids: r[s] });
+    });
+    counts.total = total.length;
+    if (total.length) drills.total = addSet(b, `ds-${i}-total`, { kind: 'app', title: `${name} — every step`, ids: total });
+    return { department: r.department, ...counts, drills };
+  });
+  const totals = {};
+  const totalDrills = {};
+  let everyone = [];
+  DS_STEPS.forEach(([s, label]) => {
+    const idList = kept.flatMap((r) => r[s]);
+    totals[s] = idList.length;
+    everyone = everyone.concat(idList);
+    if (idList.length) totalDrills[s] = addSet(b, `ds-all-${s}`, { kind: 'app', title: `All departments — ${label}`, ids: idList });
+  });
+  totals.total = everyone.length;
+  if (everyone.length) totalDrills.total = addSet(b, 'ds-all-total', { kind: 'app', title: 'All departments — every step', ids: everyone });
+  return {
+    id: 'dept-stages', type: 'deptStages', size: 'full', title: 'Candidates by department and step',
+    basis: anyTime ? 'where everyone is now' : `where people are now · reached that step ${c.word}`,
+    word: c.word, anyTime,
+    steps: DS_STEPS.map(([key, label]) => ({ key, label })), rows, totals, totalDrills,
+  };
+}
 const TILE_HELP = {
   'open-jobs': 'Requirements open now that still need people.',
   people: 'Applications still moving: not rejected, on hold or joined. The same as "Active" on Candidates & Pipeline (a person on two requirements counts twice).',
@@ -1553,7 +1640,7 @@ async function companyHome(c, b, k) {
   if (c.layout === 'superadmin' || isBdeTl(c.user)) {
     const money = await memoPanel('money', c, b, moneyPanel);
     b.widgets = [
-      kpis(b.top), att, team, ...happening,
+      kpis(b.top), att, team, ...happening, deptStagesWidget(c, b, k),
       ...moreOf([money && { ...money, size: 'half' }, funnel(c, b, k.sel), joinTrend(c, b, k.sel), activityBanner(c, k)]),
     ].filter(Boolean);
   } else {
@@ -1561,7 +1648,7 @@ async function companyHome(c, b, k) {
     const h = c.systemAlerts ? await healthRows() : null;
     if (h) addSet(b, 'health', { kind: 'integ', title: 'System problems', rows: h.rows });
     b.widgets = [
-      kpis(b.top), att, team, ...happening,
+      kpis(b.top), att, team, ...happening, deptStagesWidget(c, b, k),
       ...moreOf([{ id: 'cleanup', type: 'cleanup', size: 'half', title: 'Data cleanup', stale: b.cleanup.stale, oldUnassigned: b.cleanup.oldUnassigned, days: b.cleanup.days, joinedNoDate: b.cleanup.joinedNoDate, joinedWrongDate: b.cleanup.joinedWrongDate, to: b.cleanup.to, health: h ? { problems: h.problems, drill: h.problems ? 'health' : null } : null }]),
     ].filter(Boolean);
   }

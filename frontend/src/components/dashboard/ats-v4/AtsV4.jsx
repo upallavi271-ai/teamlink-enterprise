@@ -275,6 +275,52 @@ const BASIS_TIP = { now: 'as of today', period: 'in the dates you picked', total
 function Zero({ what }) {
   return <span className="av4-zero" title={what ? `None: ${what}` : 'None'}>0</span>;
 }
+// Candidates by department and step (founder 2026-11-28): one row per department, one column per step, every number opens the list.
+// The page's department / client filters and its dates apply (utils/atsHome.js deptStagesWidget says how the dates are read).
+const DS_TONE = { joined: ' is-green', dropped: ' is-red', rejected: ' is-red' };
+function DeptStages({ w, onDrill }) {
+  const steps = arr(w.steps);
+  const n = (r, key, drills, label) => {
+    const v = r[key];
+    return v
+      ? <button type="button" className={`av4-n${DS_TONE[key] || ''}`} title={`${label}: open the list`} onClick={() => onDrill(drills[key])}>{fmt(v)}</button>
+      : <Zero what={label} />;
+  };
+  return (
+    <Panel title="Candidates by department and step" sub={`Each number is people ${w.basis}. Click a number to see who.`} icon="chart" className="av4-dstages" flush>
+      <div className="av4-scroll">
+        <table className="ak-table av4-tbl av4-dstbl">
+          <thead>
+            <tr>
+              <th className="av4-ds-dept">Department</th>
+              {steps.map((s) => <th key={s.key} className="num"><span className="av4-th-l">{s.label}</span></th>)}
+              <th className="num av4-ds-total"><span className="av4-th-l">Total</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {arr(w.rows).map((r) => (
+              <tr key={r.department || 'none'}>
+                <td className="av4-ds-dept">{r.department || <Pill tone="red">No department</Pill>}</td>
+                {steps.map((s) => <td key={s.key} className="num">{n(r, s.key, r.drills || {}, `${r.department || 'No department'} · ${s.label}`)}</td>)}
+                <td className="num av4-ds-total">{n(r, 'total', r.drills || {}, `${r.department || 'No department'} · every step`)}</td>
+              </tr>
+            ))}
+          </tbody>
+          {w.totals && (
+            <tfoot>
+              <tr className="av4-total">
+                <td className="av4-ds-dept">All departments</td>
+                {steps.map((s) => <td key={s.key} className="num">{n(w.totals, s.key, w.totalDrills || {}, `All departments · ${s.label}`)}</td>)}
+                <td className="num av4-ds-total">{n(w.totals, 'total', w.totalDrills || {}, 'All departments · every step')}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
 function DeptPerf({ w, onDrill, onPickDept, tls }) {
   const tlRows = tls && tls.data ? arr(tls.data.rows) : null;
   const tlCount = (d) => {
@@ -594,6 +640,7 @@ export default function AtsV4({
   const tlsW = ws.find((w) => w.type === 'tls') || null;
   const middle = openjobs ? null : take((w) => w.type === 'jobs') || take((w) => w.type === 'clients' && w.id === 'per-client');
   const depts = take((w) => w.type === 'depts');
+  const deptStages = take((w) => w.type === 'deptStages'); // Candidates by department and step (2026-11-28)
   const left3 = depts ? null : take((w) => w.type === 'review') || take((w) => w.type === 'tasks') || take((w) => w.type === 'list');
   const peopleW = take((w) => w.type === 'people');
   const right3 = tlsW || peopleW ? null : take((w) => w.type === 'list') || take((w) => w.type === 'clients');
@@ -705,6 +752,7 @@ export default function AtsV4({
         ) : null, 'quick'),
       ],
     },
+    { id: 'dept-stages', label: 'Candidates by department and step', cards: [card('dept-stages', 'Candidates by department and step', deptStages && <DeptStages w={deptStages} onDrill={onDrill} />, 'dept')] },
     { id: 'drops', label: wLabel(drops, 'Drops and replacements'), cards: [card('drops', wLabel(drops, 'Drops and replacements'), drops && <div className="av4-drops">{draw(drops)}</div>)] },
     { id: 'drop-months', label: wLabel(dropMonths, 'Drops by month'), cards: [card('drop-months', wLabel(dropMonths, 'Drops by month'), dropMonths && <div className="av4-drops">{draw(dropMonths)}</div>)] },
     {
