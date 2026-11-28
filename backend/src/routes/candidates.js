@@ -35,6 +35,7 @@ const PT = require('../utils/pipelineTally'); // one definition of every Candida
 const { hasPersonQuery, attributedApplications } = require('../utils/workers');
 // The paged list's in-memory working set (kept current by deltas).
 const { getListState, markCandidateDirty } = require('../utils/candidateListCache');
+const PW = require('../utils/profileWindow'); // the screens show candidate profiles from 1 Jan 2025 (founder 2026-11-28); duplicate checks read the whole list
 const ADDED = require('../utils/candidateAddedBy'); // who typed / uploaded each person: that login keeps seeing them before any requirement
 // THE ACTUAL WORKFLOW (2026-09-29): an internal opening's stages read HR Review /
 // Dept Head / TL, and its next action is the internal chain's.
@@ -778,7 +779,7 @@ function pagedKeyOf(user, st) {
   return { s, shared, key: (shared ? ['G', st.version, istDay(new Date()), DATES.version(), JRULE.stateKey()] : [user.id, st.version, istDay(new Date()), scopeSig(s), ADDED.version(), DATES.version(), JRULE.stateKey()]).join('|') };
 }
 async function pagedRowsFor(user) {
-  const st = await getListState();
+  const st = PW.viewOfState(await getListState());
   const { s, shared, key } = pagedKeyOf(user, st);
   const memoId = shared ? 'G' : user.id;
   // (a shared copy is the same for every global login: their own department / team fields do not matter)
@@ -1080,7 +1081,7 @@ const APP_ROW_MEMO = new Map();
 const APP_ROW_INFLIGHT = new Map();
 async function pipelineRowsFor(user) {
   // The two snapshots are independent reads: wait for both at once.
-  const [st, snap] = await Promise.all([getListState(), ensureNextActionContext()]);
+  const [st, snap] = await Promise.all([getListState().then(PW.viewOfState), ensureNextActionContext()]);
   const s = scopeOf(user);
   // The due-date and follow-up rules are settings an admin can change: their versions are part of the key.
   const rulesAt = viewerKind(user) === 'internal' ? ((await FV.loadRules().catch(() => null)) || {}).updatedAt || '' : '';
@@ -1490,7 +1491,7 @@ function pageOf(rows, q) {
 // Same reach as the lists: Admin sees all; everybody else only the people they added themselves.
 async function waitingPeople(user, search) {
   if (viewerKind(user) !== 'internal') return { total: 0, rows: [] };
-  const st = await getListState();
+  const st = PW.viewOfState(await getListState());
   const s = scopeOf(user);
   const mine = s.global || SC_POOL(user) ? null : await ADDED.idsOf(user.id);
   const term = String(search || '').trim().toLowerCase();
@@ -1765,7 +1766,7 @@ async function attachOpenFit(user, rows, st) {
 async function masterList(req, res, sub) {
   const q = req.query;
   const snap = await ensureNextActionContext();
-  const st = await getListState();
+  const st = PW.viewOfState(await getListState());
   // (the person rows are only fetched when the memo has to be worked out afresh)
   const core = await memoCore(`M|${req.user.id}|${pagedKeyOf(req.user, st).key}|${snap.stamp}|${sub}|${coreSig(q)}`, async () => masterCore(req, sub, snap, await pagedRowsFor(req.user)));
   const {
@@ -1907,7 +1908,7 @@ router.get('/', async (req, res) => {
   // ?limit= (with ?offset=) pages the answer: only the page is decorated when no view / step / follow-up filter needs every row.
   // Without ?limit= the whole scoped list is answered as before (the exports read it). X-Total-Count says how many there are.
   const att = hasPersonQuery(req.query) ? await attributedApplications(req.user, req.query) : null;
-  const st = await getListState();
+  const st = PW.viewOfState(await getListState());
   const scoped = await scopedFromState(req.user, st, att ? [...new Set(att.apps.map((a) => a.candidateId))] : null);
   const { sharedIds } = scoped;
   let { candidates } = scoped;
@@ -2021,7 +2022,7 @@ function slimForList(row) {
 // Light: reads the in-memory working set, and looks only at the few people added this week. Must stay above /:id.
 router.get('/new-summary', async (req, res, next) => {
   try {
-    const st = await getListState();
+    const st = PW.viewOfState(await getListState());
     const s = scopeOf(req.user);
     const mine = s.global || SC_POOL(req.user) ? null : await ADDED.idsOf(req.user.id);
     const recent = st.candidates.filter(isNewRow);
@@ -2492,7 +2493,7 @@ async function reachedMap(version) {
 }
 const SRC_MEMO = new Map();
 router.get('/source-analytics', async (req, res) => {
-  const st = await getListState();
+  const st = PW.viewOfState(await getListState());
   const sc = scopeOf(req.user);
   const memoKey = [req.user.id, st.version, istDay(new Date()), scopeSig(sc)].join('|');
   const memoHit = memoGet(SRC_MEMO, req.user.id, memoKey);

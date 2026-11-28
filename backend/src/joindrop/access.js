@@ -19,6 +19,10 @@ const V = require('./vocab');
 const SET = require('./settings');
 const S = require('./schema');
 const { applicationWhere } = require('../utils/scope');
+const PW = require('../utils/profileWindow');
+// PROFILES FROM 2025 (founder 2026-11-28, utils/profileWindow.js): a joining from before the start date is left off every staff screen,
+// the Super Admin's and HR's too (staff below them already get it through applicationWhere). A client keeps their own history.
+const inWindow = (rec) => { const at = PW.profilesFrom(); if (!at || !rec || !rec.joinedOn) return true; return String(rec.joinedOn).slice(0, 10) >= new Date(at.getTime() + 5.5 * 3600e3).toISOString().slice(0, 10); };
 const scope = require('../utils/scope');
 
 const isClientLogin = (u) => !!u && (u.role === 'CLIENT' || u.atsRole === 'CLIENT') && !!u.clientId;
@@ -77,8 +81,9 @@ async function rights(user) {
 async function canSee(user, rec, r) {
   const rt = r || await rights(user);
   if (rt.kind === 'client') return rec.clientId === user.clientId && rec.hiringType !== 'TeamLink Internal Hire' && require('../utils/clientPortalTypes').hasCap(user, 'VIEW'); // eslint-disable-line global-require
-  if (rt.kind === 'admin') return true;
   if (rt.kind === 'none') return false;
+  if (!inWindow(rec)) return false;
+  if (rt.kind === 'admin') return true;
   if (rt.kind === 'hr' && rt.hrOn && rec.hiringType !== 'TeamLink Internal Hire') return true;
   const hit = await prisma.application.findFirst({ where: { id: rec.applicationId, ...applicationWhere(user) }, select: { id: true } });
   return !!hit;
@@ -87,9 +92,10 @@ async function canSee(user, rec, r) {
 // The subset of rows this login may open (scope checked in chunks of the application ids).
 async function visible(user, rows, r) {
   const rt = r || await rights(user);
-  if (rt.kind === 'admin') return rows;
   if (rt.kind === 'client') return rows.filter((x) => x.clientId === user.clientId && x.hiringType !== 'TeamLink Internal Hire');
   if (rt.kind === 'none') return [];
+  rows = rows.filter(inWindow);
+  if (rt.kind === 'admin') return rows;
   const out = [];
   let rest = rows;
   if (rt.kind === 'hr' && rt.hrOn) { out.push(...rows.filter((x) => x.hiringType !== 'TeamLink Internal Hire')); rest = rows.filter((x) => x.hiringType === 'TeamLink Internal Hire'); }
