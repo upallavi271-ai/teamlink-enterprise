@@ -18,6 +18,7 @@
 .ups .ups-join { margin-left: 6px; font-weight: 600; }
 .ups .ups-warn { color: #b42318; }
 .ups .ups-more { display: flex; gap: 12px; align-items: center; justify-content: flex-end; font-size: 12.5px; background: var(--paper-raised, #fff); border: 1px solid var(--line, #e5e7eb); border-radius: 10px; padding: 6px 12px; box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,.08)); }
+.ups .ups-clearall { justify-content: space-between; font-weight: 600; border-left: 5px solid var(--brand, #2563eb); }
 @keyframes ups-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 @media (max-width: 640px) {
   .ups { top: 58px; right: 8px; left: 8px; width: auto; max-width: none; }

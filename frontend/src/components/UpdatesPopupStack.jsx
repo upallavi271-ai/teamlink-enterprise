@@ -119,9 +119,27 @@ export default function UpdatesPopupStack() {
   const left = (today ? today.items.filter((i) => !i.past) : []);
   const shown = items.slice(0, SHOW);
   const bellShown = bell.slice(0, Math.max(1, SHOW - shown.length));
+  // ONE PRESS CLEARS THEM ALL (founder 2026-11-28: "okatey saari ok button click chesthey, mottham anni poye laaga"): every update, every
+  // notice and today's interview card are marked seen together. Shown whenever two or more are waiting.
+  const waiting = items.length + bell.length + (today && left.length ? 1 : 0);
+  const clearAll = async () => {
+    if (busy) return;
+    const ids = items.map((i) => i.eventId);
+    const notices = bell;
+    setBell([]);
+    notices.forEach((b) => api.patch(`/admin/notifications/${b.id}/read`).catch(() => {}));
+    if (today) todaySeen();
+    if (ids.length) await seen(ids, false);
+  };
 
   return (
     <div className="ups" role="region" aria-label="Updates for you">
+      {waiting >= 2 && (
+        <div className="ups-more ups-clearall">
+          <span>{`${waiting} updates waiting`}</span>
+          <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={clearAll}>OK, clear all</button>
+        </div>
+      )}
       {today && left.length > 0 && (
         <div className="ups-card ups-today" role="alertdialog" aria-labelledby="ups-today-h">
           <div className="ups-top"><span className="ups-chip ups-chip-iv">Interviews</span></div>
