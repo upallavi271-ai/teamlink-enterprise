@@ -9,7 +9,7 @@ const WORDS = {
   vendors: { party: 'Vendor', count: 'Bills', billed: 'GST on bills', done: 'Paid', pending: 'Yet to pay', none: 'No expense in this period has a GST amount entered, so there is no vendor GST to show.' },
 };
 
-export function GstParties({ kind, data }) {
+export function GstParties({ kind, data, filtered }) {
   if (!data) return null;
   const w = WORDS[kind];
   return (
@@ -32,7 +32,7 @@ export function GstParties({ kind, data }) {
             <tfoot><tr><td>Total</td><td className="num">{data.count}</td><td className="num">{money(data.gst)}</td><td className="num">{money(data.done)}</td><td className="num">{money(data.pending)}</td></tr></tfoot>
           </table>
         </div>
-      ) : <div className="small-muted">{w.none}</div>}
+      ) : <div className="small-muted">{kind === 'vendors' && filtered ? 'A filter is on at the top of this page and none of the bills it shows has GST. Clear the filters to see all vendor GST.' : w.none}</div>}
     </div>
   );
 }

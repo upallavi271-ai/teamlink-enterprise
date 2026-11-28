@@ -152,7 +152,7 @@ export default function GstPosition({
           <Card label="Input credit you can claim" value={money(i.claimable)} sub={`Vendor GSTIN on file (${i.claimableBills})`} tone="green" />
           <Card label="At risk" value={money(i.atRisk)} sub={`No vendor GSTIN on ${plural(i.atRiskBills, 'bill')}`} tone="red" />
         </div>
-        <GstParties kind="vendors" data={d.inOut?.vendors} />
+        <GstParties kind="vendors" data={d.inOut?.vendors} filtered={facts.filtered} />
 
         <div className="gp-band">The position</div>
         <div className="gp-cards">
