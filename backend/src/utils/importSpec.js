@@ -833,6 +833,7 @@ const ATS_IMPORT_SHEETS = {
         return col;
       }),
       c('College Name', '_client', { help: 'The college / client. Used with Candidate Name when there is no email, phone or Requirement Code.' }),
+      c('Department', '_department', { help: 'For a college / client that is not in ATS yet: Education, Medical or Manufacturing. Blank = your BDE desk, else the name (a hospital is Medical, a college Education).' }),
       c('Qualification', '_qualification'),
       c('Branch', '_branch'),
       c('Candidate Experience', '_candidateExperience', { help: 'As written: "4 Years", "Fresher".' }),

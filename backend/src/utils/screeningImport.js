@@ -27,6 +27,28 @@ function yearsOf(text) {
   return m[2] ? Math.round((n / 12) * 100) / 100 : n;
 }
 
+// THE DEPARTMENT OF A NEW CLIENT (founder 2026-11-28: Education clients are the Education BDE's, Medical the
+// Medical BDE's, MFG the MFG BDE's, every client the BDE TL's). Never a default: a hospital imported by the BDE TL
+// was filed under Education and showed in the Education logins. In this order:
+//   the row's Department column -> the importer's one BDE desk -> the importer's own department ->
+//   the name ("... Hospital", "Dental", "Medical" -> Medical; "College", "School", "University" -> Education).
+// Nothing found: the row is refused with the reason, so nobody's client lands in another team.
+const MEDICAL_NAME = /hospital|medical|dental|clinic|health ?care|nursing home|diagnostic/i;
+const EDUCATION_NAME = /college|school|university|polytechnic|academy|vidyalaya|engineering|pharmacy/i;
+function departmentForNew(ctx, data, college) {
+  const { canonicalDepartment } = require('./bdeDesk'); // eslint-disable-line global-require
+  const real = (v) => { const d = canonicalDepartment(v); return d && d !== 'BDE' ? d : null; };
+  const named = real(data._department);
+  if (named) return { dept: named, from: 'the Department column' };
+  const desks = ((ctx.s && ctx.s.bdeDeskDepartments) || []).map(real).filter(Boolean);
+  if ([...new Set(desks)].length === 1) return { dept: desks[0], from: 'your BDE desk' };
+  const own = real(ctx.s && ctx.s.atsDepartment);
+  if (own) return { dept: own, from: 'your department' };
+  if (MEDICAL_NAME.test(college)) return { dept: 'Medical', from: 'the name (hospital / medical / dental / clinic)' };
+  if (EDUCATION_NAME.test(college)) return { dept: 'Education', from: 'the name (college / school / university)' };
+  return null;
+}
+
 // Whoever may import interview schedules (the route checks that) may have this
 // sheet add what it needs: no separate "add client / job / candidate" right.
 async function ensureScreeningRefs({ ctx, data, note, HANDLERS, isDry }) {
@@ -38,9 +60,11 @@ async function ensureScreeningRefs({ ctx, data, note, HANDLERS, isDry }) {
   // 1. the college, as a client
   let clientId = ix.client.get(ix.ckey(college)) || ix.clientByAlias(college);
   if (!clientId) {
-    await HANDLERS.client({ data: { name: college, ownerDepartment: (ctx.s && ctx.s.atsDepartment) || 'Education' }, ix, dry });
+    const dep = departmentForNew(ctx, data, college);
+    if (!dep) throw new Error(`"${college}" is not a client yet and its department is not known: add a Department column (Education, Medical or Manufacturing)`);
+    await HANDLERS.client({ data: { name: college, ownerDepartment: dep.dept }, ix, dry });
     clientId = ix.client.get(ix.ckey(college));
-    note(`new client "${college}"`);
+    note(`new client "${college}" (${dep.dept}, from ${dep.from})`);
   }
 
   // 2. its requirement (made once, then reused)
@@ -62,7 +86,7 @@ async function ensureScreeningRefs({ ctx, data, note, HANDLERS, isDry }) {
         await HANDLERS.requirement({
           data: {
             _client: college, title, openings: 1, status: active ? 'OPEN' : 'AGREEMENT_CHECK', _bde: bde,
-            department: (client && client.ownerDepartment) || (ctx.s && ctx.s.atsDepartment) || 'Education',
+            department: (client && client.ownerDepartment) || (departmentForNew(ctx, data, college) || {}).dept || null,
           },
           ix, dry: false,
         });
@@ -117,4 +141,4 @@ async function ensureScreeningRefs({ ctx, data, note, HANDLERS, isDry }) {
   return { planned: dry && !onIt };
 }
 
-module.exports = { isScreeningRow, ensureScreeningRefs, yearsOf };
+module.exports = { isScreeningRow, ensureScreeningRefs, yearsOf, departmentForNew };
