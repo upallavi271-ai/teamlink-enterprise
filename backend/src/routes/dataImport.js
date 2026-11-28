@@ -1509,6 +1509,48 @@ const HANDLERS = {
         });
       }
     }
+
+    // THE RESULT MOVES THE STEP (founder 2026-11-28: "oka candidate ey step ki move ayina, adhi annitlo update avvali"): a sheet row
+    // that says Selected / Rejected for the latest round moves the person there - with its history row, the interview marked
+    // "Feedback in" and the client's feedback on record - so the calendar, the pipeline and the dashboard say the same thing.
+    // Only forward; Joined is never moved back. "Selected for the 2nd round / offline demo" is Shortlisted (one more round).
+    if (latest) {
+      const rec = normalizeRecommendation(data.interviewResult);
+      const cur = await prisma.application.findUnique({ where: { id: app.id }, select: { stage: true, candidateId: true, requirementId: true, interviewStatus: true } });
+      const RANK = { NEW: 0, SCREENING: 1, RECRUITER_APPROVED: 1, TL_REVIEW: 1, TL_APPROVED: 1, WITH_BDE: 1, BDE_APPROVED: 1, SHARED_WITH_CLIENT: 2, CLIENT_REVIEW: 2, CLIENT_SHORTLISTED: 3, INTERVIEW_SCHEDULED: 3, INTERVIEW_COMPLETED: 4, SELECTED: 6, OFFER: 7, OFFER_ACCEPTED: 8, JOINED: 9, HIRED: 9 };
+      const words = `${data._comments || ''} ${data.interviewResult || ''}`;
+      let to = null;
+      if (rec === 'Rejected') to = 'REJECTED';
+      else if (rec === 'Selected') to = /second round|2nd round|next round|offline|demo|final (round|discussion)/i.test(words) ? 'CLIENT_SHORTLISTED' : 'SELECTED';
+      else if (rec === 'Hold' || ['COMPLETED', 'FEEDBACK_SUBMITTED'].includes(status)) to = 'INTERVIEW_COMPLETED';
+      const from = cur ? cur.stage : null;
+      // after an interview, "shortlisted for the next round" is a step past the interview itself
+      const rankTo = to === 'CLIENT_SHORTLISTED' ? 5 : (RANK[to] || 0);
+      const forward = to && from !== to && !['JOINED', 'HIRED'].includes(from)
+        && (to === 'REJECTED' || rankTo > (RANK[from] || 0));
+      if (forward) {
+        await prisma.application.update({ where: { id: app.id }, data: { stage: to, ...(rec ? { interviewStatus: 'FEEDBACK_SUBMITTED' } : {}) } });
+        await prisma.applicationStageEvent.create({
+          data: {
+            applicationId: app.id, candidateId: cur.candidateId, fromStage: from, toStage: to,
+            action: to === 'REJECTED' ? 'Rejected after the interview' : to === 'SELECTED' ? 'Selected' : to === 'CLIENT_SHORTLISTED' ? 'Shortlisted for the next round' : 'Interview completed',
+            comment: [`Round ${round}`, data._comments].filter(Boolean).join(' - ').slice(0, 1000),
+            actorName: IMPORTED_BY, actorRole: 'Recruiter', actorSide: to === 'REJECTED' ? 'Client' : 'Internal',
+            ...(to === 'REJECTED' ? { reasonCategory: 'Rejected in interview', reasonDetail: (data._comments || 'Rejected after the interview').slice(0, 300) } : {}),
+            requirementId: cur.requirementId,
+          },
+        });
+        note(`step ${from} -> ${to} (the interview result)`);
+      } else if (rec && cur && cur.interviewStatus !== 'FEEDBACK_SUBMITTED') {
+        await prisma.application.update({ where: { id: app.id }, data: { interviewStatus: 'FEEDBACK_SUBMITTED' } });
+      }
+      // the result on record even when the sheet does not say whose feedback it is (the calendar then shows "Feedback in")
+      if (rec && !kind) {
+        const has = await prisma.interviewFeedback.findUnique({ where: { applicationId_kind: { applicationId: app.id, kind: 'Client' } } });
+        if (has) await prisma.interviewFeedback.update({ where: { id: has.id }, data: { recommendation: rec, ...(data._comments ? { overall: data._comments } : {}) } });
+        else await prisma.interviewFeedback.create({ data: { applicationId: app.id, kind: 'Client', overall: data._comments || rec, recommendation: rec, submittedBy: IMPORTED_BY, clientId: app.requirement ? app.requirement.clientId : null } });
+      }
+    }
     return action;
   },
 
