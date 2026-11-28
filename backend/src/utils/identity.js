@@ -393,9 +393,11 @@ async function resolveIdentity(userId, preloaded = null) {
       ]);
       atsBdeDeskDepartments = owners.map((o) => o.ownerDepartment)
         .filter((d) => desks.includes(canonicalDepartment(d)));
-      // Non IT Medical is the Non IT MFG team's Medical work (2026-10-29): it belongs to the MFG desk, not the Medical one.
+      // EACH DEPARTMENT'S CANDIDATES ONLY TO THAT DEPARTMENT'S BDE (founder 2026-11-28: "medical candidates, neeraja ki endhuku
+      // kanipisthunnaru"): a "Non IT Medical" job (nurses, doctors at a hospital, worked by the Non IT team) is Medical work for the
+      // BDE desks - the Medical desk's, never the MFG desk's (2026-10-29 had given it to the MFG desk). The TL / recruiter side is unchanged.
       atsBdeDeskRequirementDepartments = reqDepts.map((o) => o.department)
-        .filter((d) => desks.includes(/non[\s-]*it\s*medical/i.test(d) ? 'Manufacturing' : canonicalDepartment(d)));
+        .filter((d) => desks.includes(canonicalDepartment(d)));
       // Admin setting "Desk BDEs see" (utils/clientDepth.js): "only their assigned clients" drops the desk-wide arms; the default keeps the desk.
       if (await require('./clientDepth').deskMode().catch(() => 'desk') === 'assigned') { // eslint-disable-line global-require
         atsBdeDeskDepartments = [];
