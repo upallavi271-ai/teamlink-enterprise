@@ -49,6 +49,7 @@ function fromRow(r) {
     notes: r.remarks || r.notes || '',
     status: r.approvalStatus || 'PENDING',
     reason: '',
+    howOften: r.frequency === 'One-Time' || r.frequency === 'One-time' || r.recurring === false ? 'once' : (r.frequency && r.frequency !== 'Monthly' ? 'other' : 'monthly'),
     paidByPerson: r.paidByPerson || '',
     returned: !!r.personSettledOn,
     returnedOn: r.personSettledOn || '',
@@ -56,7 +57,7 @@ function fromRow(r) {
 }
 const BLANK = () => ({
   expenseDate: todayIso(), category: '', description: '', vendor: '', paymentMode: '', amount: '', gstPct: '0',
-  billNumber: '', notes: '', status: 'PENDING', reason: '', paidByPerson: '', returned: false, returnedOn: '',
+  billNumber: '', notes: '', status: 'PENDING', reason: '', howOften: 'once', paidByPerson: '', returned: false, returnedOn: '',
 });
 
 export default function QuickExpenseModal({
@@ -150,7 +151,7 @@ export default function QuickExpenseModal({
       expenseDate: f.expenseDate,
       category: f.category.trim() || 'Others',
       description: f.description.trim(),
-      vendor: others ? '' : f.vendor.trim(),
+      vendor: f.vendor.trim(),
       ...(f.paymentMode ? { paymentMode: f.paymentMode } : {}),
       billNumber: f.billNumber.trim(),
       remarks: f.notes.trim(),
@@ -160,6 +161,11 @@ export default function QuickExpenseModal({
       body.gstRatePct = String(gstPct);
       // A bill that carries TDS keeps its TDS rate; the amount follows the new base.
       if (editing && Number(row.tds || 0) > 0) body.tdsRatePct = String(row.tdsRate || 0);
+    }
+    // One-time or every month. A monthly one is remembered for the bank statement (the server keeps its Paid To name).
+    if (f.howOften !== 'other' && (!editing || f.howOften !== fromRow(row).howOften)) {
+      body.frequency = f.howOften === 'monthly' ? 'Monthly' : 'One-Time';
+      body.recurring = f.howOften === 'monthly';
     }
     if (!editing) {
       body.approvalStatus = f.status;
@@ -259,6 +265,14 @@ export default function QuickExpenseModal({
         </div>
 
         <FormSection id="oe-qx-s-expense" title="Expense" className="oe-qx-full" />
+        <div className="field oe-qx-full"><span>How often is this paid?</span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} role="radiogroup" aria-label="How often is this paid">
+            {[['once', 'One-time payment'], ['monthly', 'Every month'], ...(f.howOften === 'other' ? [['other', row?.frequency || 'Other']] : [])].map(([v, l]) => (
+              <button key={v} type="button" role="radio" aria-checked={f.howOften === v} className={`btn btn-sm${f.howOften === v ? ' btn-primary' : ''}`} onClick={() => setF((c) => ({ ...c, howOften: v }))}>{l}</button>
+            ))}
+          </div>
+          {f.howOften === 'monthly' && <em className="oe-qx-hint">When a bank statement is imported, next months' payments to the same Paid To name are filed by themselves (the name needs 4 letters or more).</em>}
+        </div>
         <label className={`field${bad('expenseDate') ? ' oe-qx-bad' : ''}`} data-invalid={inv('expenseDate')} onBlur={touch('expenseDate')}><span>Expense Date</span>
           <input type="date" value={f.expenseDate} onChange={set('expenseDate')} max="2100-12-31" aria-invalid={bad('expenseDate') ? true : undefined} />
           {bad('expenseDate') && <em className="oe-qx-err">{errors.expenseDate}</em>}
@@ -275,9 +289,8 @@ export default function QuickExpenseModal({
           {bad('description') && <em className="oe-qx-err">{errors.description}</em>}
         </label>
 
-        <FormSection id="oe-qx-s-vendor" title={others ? 'Payment' : 'Vendor & payment'} className="oe-qx-full" />
-        {!others && (
-        <div className={`field${bad('vendor') ? ' oe-qx-bad' : ''}`} data-invalid={inv('vendor')} onBlur={touch('vendor')}><span>Vendor / Paid To (optional)</span>
+        <FormSection id="oe-qx-s-vendor" title="Paid to & payment" className="oe-qx-full" />
+        <div className={`field${bad('vendor') ? ' oe-qx-bad' : ''}`} data-invalid={inv('vendor')} onBlur={touch('vendor')}><span>{others ? 'Paid To (type any name)' : 'Vendor / Paid To (optional)'}</span>
           <Combo creatable value={f.vendor} onChange={set('vendor')} placeholder="Pick or type who was paid" aria-label="Vendor / Paid To">
             {[...new Set([...vendors, ...(f.vendor ? [f.vendor] : [])])].map((v) => <option key={v} value={v}>{v}</option>)}
           </Combo>
@@ -287,7 +300,6 @@ export default function QuickExpenseModal({
             + Add Vendor
           </button>
         </div>
-        )}
         <label className={`field${bad('paymentMode') ? ' oe-qx-bad' : ''}`} data-invalid={inv('paymentMode')} onBlur={touch('paymentMode')}><span>Payment Mode (optional)</span>
           <Combo value={f.paymentMode} onChange={set('paymentMode')} aria-invalid={bad('paymentMode') ? true : undefined}>
             <option value="">— Pick —</option>

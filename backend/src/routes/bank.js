@@ -2859,7 +2859,22 @@ function linePlan(txn, ctx, loans) {
 
   // A debit. 1 — a hand loan the narration names.
   if (loanClear.length === 1) return loanPlan(loanClear[0], 'high', 'the narration names this hand loan and the amount fits what is still to clear');
-  // 2 — a rule the app has learnt.
+  // 2 — a bill already on file that this line names, for this exact amount, comes before any learnt rule: a rule would
+  // write a SECOND bill for a payment that is already entered (monthly payments, founder 2026-11-28).
+  {
+    const h = tightName(`${txn.description || ''} ${txn.reference || ''}`);
+    const onFile = ctx.expenses.filter((e) => billFree(e, txn.id) && !e.bankTxnId && Math.abs(expenseNet(e) - amount) <= 1
+      && tightName(e.vendor).length >= 4 && h.indexOf(tightName(e.vendor).slice(0, 8)) >= 0);
+    if (onFile.length === 1) {
+      const b = onFile[0];
+      return {
+        confidence: 'high', module: 'expense', why: `the narration names ${b.vendor} and the amount is the bill's`, rule: null,
+        label: `${b.category}${b.vendor ? ` · ${b.vendor}` : ''}${b.billNumber ? ` · bill ${b.billNumber}` : ''}`,
+        action: { type: 'linkBill', billId: b.id },
+      };
+    }
+  }
+  // 2b — a rule the app has learnt.
   const rule = ruleHit(txn, ctx.rules.filter((r) => r.kind !== 'client'));
   if (rule) {
     const ruleWhy = `rule "${rule.match}"`;

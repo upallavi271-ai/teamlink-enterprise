@@ -2513,6 +2513,22 @@ const EXP_FIELD_LABEL = {
 const auditVal = (v) => (v === null || v === undefined || v === '' ? '—' : String(v));
 const codeLabel = (e) => e.expenseCode || e.id;
 
+// EVERY MONTH (founder 2026-11-28): a monthly expense with a Paid To name teaches the bank reader that name, so the next
+// months' statement lines are filed under the same category by themselves. An existing rule for the name is left as it is.
+async function rememberMonthly(e, user) {
+  const name = String(e.vendor || '').trim();
+  if (name.length < 4) return;
+  try {
+    const key = name.toLowerCase();
+    const have = (await prisma.bankRule.findMany()).some((r) => String(r.match || '').trim().toLowerCase() === key);
+    if (have) return;
+    await prisma.bankRule.create({ data: { match: name, category: e.category, vendor: name, kind: 'expense', createdById: user.id, createdByName: user.name || user.email || null, source: 'confirmed' } });
+    await logAudit({ userId: user.id, action: 'Monthly payment remembered for the bank statement', entity: 'OfficeExpense', entityId: e.id, toValue: `${name} → ${e.category}` });
+  } catch (err) {
+    console.error('[office] could not remember the monthly payment:', err.message); // eslint-disable-line no-console
+  }
+}
+
 router.post('/', async (req, res) => {
   const {
     location, vendor, expenseDate, recurring, notes,
@@ -2587,6 +2603,7 @@ router.post('/', async (req, res) => {
   if (wanted === 'PAID') Object.assign(data, { paidById: req.user.id, paidAt: now });
   if (wanted === 'REIMBURSED') Object.assign(data, { reimbursedById: req.user.id, reimbursedAt: now });
   const expense = await createWithCode(data);
+  if (quick && req.body.frequency === 'Monthly') await rememberMonthly(expense, req.user);
   // Spec 21: "Expense Created" with the Expense ID and what was recorded.
   await logAudit({
     userId: req.user.id,
