@@ -2,8 +2,8 @@
 // WHOSE CANDIDATE IS IT (founder 2026-10-26): "portal nunchi vachina, ekkada nunchi vachina, ey site nunchi vachina, ahh respective
 // recruiter & tl daggara ki vellali. inka evariki kanipinchakudadhu."
 //
-// Every application has ONE recruiter (Application.ownerRecruiterId). A recruiter who adds the person owns it. Anything else -
-// the Job Portal, the careers page, a job board, the candidate portal, an import, a TL / BDE / Admin adding someone - goes to the
+// Every application has ONE recruiter (Application.ownerRecruiterId). A recruiter, or a TL / STL (2026-11-28), who adds the person owns it. Anything else -
+// the Job Portal, the careers page, a job board, the candidate portal, an import, a BDE / Admin adding someone - goes to the
 // requirement's own recruiter: the main recruiter, else the first one assigned. Only that recruiter and the requirement's TL (and
 // the roles above) see it (utils/scope.js). When the requirement's recruiters change, routes/requirements.js hands the candidates
 // of a recruiter who left the job to the main recruiter now.

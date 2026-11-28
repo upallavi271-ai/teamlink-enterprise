@@ -65,6 +65,16 @@ const realTenure = (a) => !(a.toDate && a.toDate <= a.fromDate);
 // a follow-up owned by the BDE / TL side (the automatic client-step tasks) is not the recruiter's work
 const NOT_RECRUITER_FU = (f) => ['BDE', 'TL'].includes(roleOfLabel(f && f.ownerRole));
 
+// A TEAM LEAD'S OWN CANDIDATE (founder 2026-11-28: "TLs kuda joinings istharu ... vallaki kuda konni joinings vuntai"): when a TL /
+// STL added the person themselves (the first history row, New, is theirs) and no recruiter has worked them (no recruiter
+// follow-up), the TL is this person's recruiter - their joining counts for them, not for the job's main recruiter.
+function sourcedByLead(evs) {
+  const e = (evs || []).find((x) => !x.fromStage && x.toStage === 'NEW');
+  if (!e || !e.actorUserId) return null;
+  const k = String(e.actorRole || '').trim().toUpperCase();
+  return ['TL', 'STL', 'TEAM_LEAD'].includes(k) ? e : null;
+}
+
 function roleOfLabel(r) {
   const k = String(r || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
   if (k === 'RECRUITER') return 'RECRUITER';
@@ -311,6 +321,10 @@ function attribute(req, fus, evs, person) {
     recruiter = person(ownerFu.ownerUserId, ownerFu.ownerName);
     seat = clean(ownerFu.ownerPositionCode) || r.positionCode || null;
   }
+  if (!recruiter) {
+    const lead = sourcedByLead(evs);
+    if (lead) { recruiter = person(lead.actorUserId, lead.actorName); seat = clean(lead.actorPositionCode) || null; }
+  }
   if (!recruiter && r.recruiterId) {
     recruiter = person(r.recruiterId);
     seat = r.positionCode || null;
@@ -370,6 +384,8 @@ function creditAt(req, fus, evs, person, at, handovers = null) {
   // who worked the person (the same name the old rule used, so one person is not split in two)
   const first = (fus || []).find((f) => (f.ownerUserId || f.ownerName) && !NOT_RECRUITER_FU(f));
   if (first) { const p = person(first.ownerUserId, first.ownerName); if (started(p)) return p; }
+  const lead = sourcedByLead(evs);
+  if (lead && before(lead)) { const p = person(lead.actorUserId, lead.actorName); if (started(p)) return p; }
   const r = req || {};
   if (r.recruiterId) { const p = person(r.recruiterId); if (started(p)) return p; }
   const now = attribute(req, fus, evs, person).recruiter;

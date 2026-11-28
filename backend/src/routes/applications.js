@@ -338,7 +338,7 @@ async function fitAtAdd(user, candidate, requirement) {
 }
 
 async function addApplication(user, {
-  candidate, requirement, comment = null, from = null, fit = null, override = null,
+  candidate, requirement, comment = null, from = null, fit = null, override = null, owner = undefined,
 }) {
   // eslint-disable-next-line global-require
   const rm = require('../utils/resumeMatch');
@@ -368,8 +368,13 @@ async function addApplication(user, {
       candidateId: candidate.id,
       requirementId: requirement.id,
       stage: 'NEW',
-      // a recruiter's own candidate (founder 2026-10-26): only they (and the TL and above) see it
-      ...(user && user.atsRole === 'RECRUITER' ? { ownerRecruiterId: user.id } : {}),
+      // a recruiter's own candidate (founder 2026-10-26): only they (and the TL and above) see it.
+      // A TEAM LEAD'S OWN CANDIDATE TOO (founder 2026-11-28: "TLs kuda joinings istharu ... vallaki kuda konni joinings vuntai"):
+      // a TL / STL who adds a person owns them like a recruiter, so the follow-ups name them and the joining counts for them.
+      // `owner` (a move to another requirement): the person stays with whoever owned them; null = the job's default owner.
+      ...(owner !== undefined
+        ? (owner ? { ownerRecruiterId: owner } : {})
+        : (user && ['RECRUITER', 'TL', 'STL'].includes(user.atsRole) ? { ownerRecruiterId: user.id } : {})),
       matchScore: match.overall,
       // B8: the scoring version + explanation + (when ineligible) the override.
       ...(versioned ? {
@@ -1489,7 +1494,7 @@ router.post('/:id/move', async (req, res, next) => {
       if (closed.status >= 300) return res.status(closed.status).json(closed.body);
     }
     // 2. the new application
-    const created = await addApplication(req.user, { candidate: old.candidate, requirement: target, comment: `Moved from ${old.requirement.reqCode || old.requirement.title}: ${reason}`, fit, override });
+    const created = await addApplication(req.user, { candidate: old.candidate, requirement: target, comment: `Moved from ${old.requirement.reqCode || old.requirement.title}: ${reason}`, fit, override, owner: old.ownerRecruiterId || null });
     await logAudit({ userId: req.user.id, action: 'Candidate moved to another requirement', entity: 'Application', entityId: created.id, fromValue: old.requirement.reqCode || old.requirement.title, toValue: targetName, reason });
     return res.status(201).json({ ok: true, from: old.id, to: created.id, message: `${old.candidate.name} is moved to ${targetName}. The old application is closed as "Moved".` });
   } catch (err) { return next(err); }
