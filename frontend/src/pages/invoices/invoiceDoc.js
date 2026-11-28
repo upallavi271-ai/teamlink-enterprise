@@ -38,7 +38,7 @@ export function invoiceDocumentHtml(d, mode, opts = {}) {
   @page{size:A4;margin:10mm}
   *{box-sizing:border-box}
   body{margin:0;font:11px/1.4 Arial,Helvetica,sans-serif;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .inv{border:1px solid #000;max-width:190mm;margin:0 auto;min-height:272mm;display:flex;flex-direction:column}
+  .inv{border:1px solid #000;max-width:190mm;margin:0 auto;display:flex;flex-direction:column}
   .pageno{max-width:190mm;margin:2mm auto 0;text-align:right;font-size:9px;color:#333}
   table{border-collapse:collapse;width:100%}
   .hd{display:flex;border-bottom:1px solid #000}
@@ -80,7 +80,7 @@ export function invoiceDocumentHtml(d, mode, opts = {}) {
   @media print{.inv{display:block;min-height:0}.blank{display:none}.foot{border-top:1px solid #000}}
   .foot .lft{flex:1.15;padding:9px 10px;border-right:1px solid #000;position:relative}
   .foot .rgt{width:44%}
-  .blank{flex:1 1 auto;min-height:0}
+  .blank{display:none}
   .inv>*:not(.blank){flex-shrink:0}
   table.items{height:auto}
   table.items tr{height:auto}

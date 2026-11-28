@@ -11,12 +11,16 @@ import Combo from '../../components/Combo.jsx';
 import { money2, fmtD } from './invFormat';
 
 const monthOf = (d) => String(d || '').slice(0, 7);
+const dayOf = (d) => String(d || '').slice(0, 10);
+const lastDay = (m) => { const [y, mm] = m.split('-').map(Number); return `${m}-${String(new Date(Date.UTC(y, mm, 0)).getUTCDate()).padStart(2, '0')}`; };
 
-export default function GenerateInvoiceModal({ rows = [], onClose, onDone }) {
+export default function GenerateInvoiceModal({ rows = [], onClose, onDone, onView }) {
   const [joins, setJoins] = useState(null);
   const [loadErr, setLoadErr] = useState('');
   const [clientId, setClientId] = useState('');
-  const [month, setMonth] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const pickMonth = (m) => { setFrom(m ? `${m}-01` : ''); setTo(m ? lastDay(m) : ''); };
   const [edit, setEdit] = useState({}); // applicationId -> changes typed by the person
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState([]);
@@ -40,14 +44,16 @@ export default function GenerateInvoiceModal({ rows = [], onClose, onDone }) {
     return [...s].sort().reverse();
   }, [joins, rows, clientId]);
   useEffect(() => {
-    if (!clientId) { setMonth(''); return; }
+    if (!clientId) { pickMonth(''); return; }
     const waiting = (joins || []).filter((r) => r.clientId === clientId && r.joiningDate).map((r) => monthOf(r.joiningDate)).sort();
-    setMonth(waiting.pop() || months[0] || '');
+    pickMonth(waiting.pop() || months[0] || '');
     setReport([]);
   }, [clientId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const waiting = (joins || []).filter((r) => r.clientId === clientId && monthOf(r.joiningDate) === month);
-  const raised = rows.filter((r) => r.clientId === clientId && monthOf(r.joiningDate) === month && r.status !== 'Cancelled');
+  const inPeriod = (r) => r.clientId === clientId && dayOf(r.joiningDate) >= from && dayOf(r.joiningDate) <= to;
+  const ready = !!(clientId && from && to && from <= to);
+  const waiting = ready ? (joins || []).filter(inPeriod) : [];
+  const raised = ready ? rows.filter((r) => inPeriod(r) && r.status !== 'Cancelled') : [];
 
   const lineOf = (r) => {
     const e = edit[r.applicationId] || {};
@@ -120,8 +126,16 @@ export default function GenerateInvoiceModal({ rows = [], onClose, onDone }) {
               </Combo>
             </label>
             <label className="field" style={{ flex: 1 }}>
-              <span>Period (joining month)</span>
-              <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} disabled={!clientId} />
+              <span>Month (quick pick)</span>
+              <input type="month" value={monthOf(from) && monthOf(from) === monthOf(to) ? monthOf(from) : ''} onChange={(e) => pickMonth(e.target.value)} disabled={!clientId} />
+            </label>
+            <label className="field" style={{ flex: 1 }}>
+              <span>Joined from</span>
+              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} disabled={!clientId} />
+            </label>
+            <label className="field" style={{ flex: 1 }}>
+              <span>Joined to</span>
+              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} disabled={!clientId} />
             </label>
           </div>
           {report.length > 0 && (
@@ -129,16 +143,17 @@ export default function GenerateInvoiceModal({ rows = [], onClose, onDone }) {
               <span>{report.map((x) => <div key={x.text} style={x.ok ? undefined : { color: 'var(--red)' }}>{x.text}</div>)}</span>
             </div>
           )}
-          {clientId && month && (
+          {clientId && from && to && from > to && <div className="notice red"><span>“Joined from” is after “Joined to”.</span></div>}
+          {ready && (
             <>
               <div className="notice" style={{ marginBottom: 10 }}>
                 <span>
-                  This month: <b>{raised.length}</b> already invoiced (<b>{sentCount}</b> sent, <b>{raised.length - sentCount}</b> not sent)
+                  This period: <b>{raised.length}</b> already invoiced (<b>{sentCount}</b> sent, <b>{raised.length - sentCount}</b> not sent)
                   {' '}· <b>{waiting.length}</b> joined and not invoiced yet.
                 </span>
               </div>
               <h4 style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 8px' }}>TO BE INVOICED</h4>
-              {!waiting.length ? <p className="small-muted">Nobody of this client who joined in this month is waiting for an invoice.</p> : (
+              {!waiting.length ? <p className="small-muted">Nobody of this client who joined in this period is waiting for an invoice.</p> : (
                 <div className="tbl-wrap">
                   <table>
                     <thead>
@@ -167,10 +182,14 @@ export default function GenerateInvoiceModal({ rows = [], onClose, onDone }) {
               )}
               {raised.length > 0 && (
                 <>
-                  <h4 style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '16px 0 8px' }}>ALREADY INVOICED THIS MONTH</h4>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0 8px' }}>
+                    <h4 style={{ fontSize: 12, color: 'var(--ink-soft)', margin: 0 }}>ALREADY INVOICED IN THIS PERIOD</h4>
+                    <span style={{ flex: 1 }} />
+                    {onView && <button type="button" className="btn btn-sm btn-gold" onClick={() => onView({ ids: raised.map((r) => r.id), invoiceNumber: raised[0].invoiceNumber, client: raised[0].client })}>View &amp; send all {raised.length}</button>}
+                  </div>
                   <div className="tbl-wrap">
                     <table>
-                      <thead><tr><th>Invoice</th><th>Candidate</th><th className="num">Amount</th><th>GST</th><th>TDS</th><th>Sent to client?</th></tr></thead>
+                      <thead><tr><th>Invoice</th><th>Candidate</th><th className="num">Amount</th><th>GST</th><th>TDS</th><th>Sent to client?</th><th>Send</th></tr></thead>
                       <tbody>
                         {raised.map((r) => (
                           <tr key={r.id}>
@@ -180,6 +199,7 @@ export default function GenerateInvoiceModal({ rows = [], onClose, onDone }) {
                             <td>{r.gstApplicable ? `${r.gstPercent}%` : 'No'}</td>
                             <td>{r.tdsApplicable ? `${r.tdsPercent}%` : 'No'}</td>
                             <td>{r.sentDate || r.sentVia ? <span className="status priority-low">Sent{r.sentVia ? ` · ${r.sentVia}` : ''}{r.sentDate ? ` · ${fmtD(r.sentDate)}` : ''}</span> : <span className="status priority-high">Not sent</span>}</td>
+                            <td>{onView && <button type="button" className="btn btn-sm" onClick={() => onView({ ids: [r.id], invoiceNumber: r.invoiceNumber, client: r.client })}>View &amp; send</button>}</td>
                           </tr>
                         ))}
                       </tbody>

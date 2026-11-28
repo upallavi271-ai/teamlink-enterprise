@@ -1387,7 +1387,7 @@ export default function Invoices() {
           onSaved={(id, msg) => { setNewInvoice(false); setFlash(msg); load(); focusRow(id); }}
         />
       )}
-      {generate && <GenerateInvoiceModal rows={data?.rows || []} onClose={() => setGenerate(false)} onDone={load} />}
+      {generate && <GenerateInvoiceModal rows={data?.rows || []} onClose={() => setGenerate(false)} onDone={load} onView={handlers.onView} />}
       {addClient && (
         <AddClientModal
           onClose={() => setAddClient(false)}
