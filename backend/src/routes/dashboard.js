@@ -1856,6 +1856,37 @@ router.get('/accounts/control', ...MONEY_GUARDS, async (req, res, next) => {
     return res.json({ ...out, mayExport: !!(await mayExportMoney(req.user)) });
   } catch (err) { return next(err); }
 });
+// MONTH BY MONTH PROFIT OR LOSS (founder 2026-11-28): income = the invoices' total less GST (the fee before GST), in the
+// candidate's joining month (the invoice date when no joining date is recorded); expenses = the office bills of that month,
+// before their GST. Income more than expenses is a profit, less is a loss. Cancelled invoices, rejected bills and hand
+// loans are not counted.
+router.get('/accounts/monthly-pl', ...MONEY_GUARDS, async (req, res, next) => {
+  try {
+    const reg = await require('./invoices').buildRegister(req.user, { period: 'all' }); // eslint-disable-line global-require
+    const bills = await prisma.officeExpense.findMany({
+      select: { expenseDate: true, monthlyAmount: true, gstAmount: true, entryKind: true, approvalStatus: true },
+    });
+    const months = new Map();
+    const slot = (k) => { if (!months.has(k)) months.set(k, { month: k, invoices: 0, total: 0, gst: 0, income: 0, bills: 0, expensesWithGst: 0, expenses: 0 }); return months.get(k); };
+    (reg.rows || []).filter((r) => r.status !== 'Cancelled').forEach((r) => {
+      const k = String(r.joiningDate || r.invoiceDate || '').slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(k)) return;
+      const m = slot(k);
+      m.invoices += 1; m.total += Number(r.invoiceValue || 0); m.gst += Number(r.gst || 0); m.income += Number(r.invoiceValue || 0) - Number(r.gst || 0);
+    });
+    bills.filter((b) => b.entryKind !== 'hand' && b.approvalStatus !== 'REJECTED').forEach((b) => {
+      const k = String(b.expenseDate || '').slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(k)) return;
+      const m = slot(k);
+      m.bills += 1; m.expensesWithGst += Number(b.monthlyAmount || 0); m.expenses += Number(b.monthlyAmount || 0) - Number(b.gstAmount || 0);
+    });
+    const r2 = (n) => Math.round(n * 100) / 100;
+    const rows = [...months.values()].sort((a, b) => b.month.localeCompare(a.month)).map((m) => ({
+      ...m, total: r2(m.total), gst: r2(m.gst), income: r2(m.income), expenses: r2(m.expenses), expensesWithGst: r2(m.expensesWithGst), result: r2(m.income - m.expenses),
+    }));
+    return res.json({ rows });
+  } catch (err) { return next(err); }
+});
 // THE DASHBOARD'S OWN EXPORT (user, 2026-10-09): the summary, the client table,
 // the invoices, the office bills, GST and proof lists for the filters picked —
 // from the SAME buildControl payload the page shows. Audited; the Super Admin is told.
