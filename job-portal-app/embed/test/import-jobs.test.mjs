@@ -84,7 +84,7 @@ test('a Non IT / Medical desk gets Medical and Non IT Medical roles', async () =
 });
 test('a typed word narrows it; admin / signed-out / no department are left to the portal', async () => {
   assert.deepEqual((await run2({ dept: 'Education', q: 'teach' })).sent.jobs.map((j) => j.id), ['tl_e2']);
-  assert.equal((await run2({ role: 'admin' })).passed, true);
+  assert.equal((await run2({ role: 'admin' })).sent.jobs.length, JOBS.length); // admin: every department, no 600 limit
   assert.equal((await run2({ cookie: '' })).passed, true);
   assert.equal((await run2({ dept: '' })).passed, true);
 });
@@ -106,4 +106,11 @@ test('all=1 (Send to ATS): every department for a recruiter and for admin, open 
     assert.equal(sent.jobs.length, JOBS.length, role);
     assert.equal(sent.jobs.find((j) => j.id === 'tl_e2').status, 'open');
   }
+});
+
+test('an OBGY role is found by the long words too', async () => {
+  const { alsoKnownAs } = await import('../import-jobs.mjs');
+  assert.match(alsoKnownAs('Professor — OBGY'), /Gynaecology \/ Gynecology/);
+  assert.match(alsoKnownAs('Consultant OBG'), /Gynecology/);
+  assert.equal(alsoKnownAs('Professor — Pharmacology'), 'Professor — Pharmacology');
 });

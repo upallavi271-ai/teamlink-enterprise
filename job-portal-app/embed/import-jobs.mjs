@@ -12,11 +12,19 @@
  *   - the department is also sent as a field of its own.
  * Nothing is removed and no job id changes.
  */
+/* the words people type for a speciality that a title writes short: added to the label so either spelling finds the role */
+const ALSO = [[/\b(obgy?|obg|o&g|obs?\s*(&|and)\s*gyn\w*)\b/i, 'Obstetrics & Gynaecology / Gynecology']];
+export const alsoKnownAs = (title) => {
+  const t = String(title || '');
+  const hit = ALSO.find(([re, words]) => re.test(t) && !t.includes(words));
+  return hit ? `${t} [${hit[1]}]` : t;
+};
+
 export function reshapeImportJobs(jobs) {
   const list = Array.isArray(jobs) ? jobs : [];
   const label = (j) => {
     const d = String(j.department || '').trim();
-    const t = String(j.title || j.id || '');
+    const t = alsoKnownAs(j.title || j.id || '');
     return d && !t.toLowerCase().startsWith(`[${d.toLowerCase()}]`) ? `[${d}] ${t}` : t;
   };
   const decorated = list.map((j) => ({ ...j, title: label(j), department: j.department || '' }));
@@ -73,11 +81,11 @@ export function importJobsForDepartment(deps) {
       // ?all=1 = every department (the Send to ATS box): answered here too, so an unpublished open requirement is said to be open
       const all = String((req.query || {}).all || '') === '1';
       if (!session || !['recruiter', 'bde', 'admin'].includes(session.role)) return next(); // not signed in / not staff: the portal says so
-      if (session.role === 'admin' && !all) return next(); // admin: everything (the portal's list, all departments)
       const SYSTEM = { userId: '', role: 'admin', profileId: null };
-      const dept = !all && session.profileId ? await deps.withUser(SYSTEM, async (c) => ((await c.query('select department from recruiters where id = $1', [session.profileId])).rows[0] || {}).department) : null;
+      const everything = all || session.role === 'admin'; // admin: every department (the portal's own list stops at 600 roles)
+      const dept = !everything && session.profileId ? await deps.withUser(SYSTEM, async (c) => ((await c.query('select department from recruiters where id = $1', [session.profileId])).rows[0] || {}).department) : null;
       const keys = allowedKeys(dept);
-      if (!all && !keys.length) return next();
+      if (!everything && !keys.length) return next();
       const q = String((req.query || {}).q || '').trim().toLowerCase().slice(0, 80);
       const rows = await deps.withUser(SYSTEM, async (c) => (await c.query(
         `select id, title, location, status, department, description from jobs where id like 'tl\\_%' order by (status = 'open') desc, published_at desc nulls last, id limit 5000`)).rows);
@@ -87,7 +95,7 @@ export function importJobsForDepartment(deps) {
         if (m) j.status = m[1] === 'CLOSED' ? 'closed' : 'open';
         delete j.description;
       });
-      const mine = rows.filter((j) => (all || keys.includes(deptKey(j.department))) && (!q || String(j.title || '').toLowerCase().includes(q)));
+      const mine = rows.filter((j) => (everything || keys.includes(deptKey(j.department))) && (!q || String(j.title || '').toLowerCase().includes(q)));
       return res.json({ jobs: reshapeImportJobs(mine) });
     } catch { return next(); }
   };
