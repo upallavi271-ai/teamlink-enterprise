@@ -114,7 +114,8 @@ function rulesFromVersion(version, policy, payMode, reg = null) {
       ceiling: policy && policy.esiGrossCeiling != null ? Number(policy.esiGrossCeiling) : 21000,
       empPct: policy && policy.esiEmployeePct != null ? Number(policy.esiEmployeePct) : 0.75,
       erPct: policy && policy.esiEmployerPct != null ? Number(policy.esiEmployerPct) : 3.25,
-      applicable: v.esiApplicable === true || v.esiApplicable === false ? v.esiApplicable : null,
+      // no ESI on a stipend from the rule's month on (payrollEngine.forMonth)
+      applicable: stipend && policy && policy.noStipendEsi ? false : (v.esiApplicable === true || v.esiApplicable === false ? v.esiApplicable : null),
     },
     pt: { slab: PT_SLAB, versionMax: Number(v.professionalTax) || 0, baseGrossRef },
     tds: { fixed: v.tds === null || v.tds === undefined ? null : Math.round(Number(v.tds) || 0), pct: Number((policy && policy.tdsDefaultPctOfGross) || 0) },

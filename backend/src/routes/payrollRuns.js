@@ -340,7 +340,9 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
         pf: E.forMonth(await E.getPolicy(), e.month).pfFixedAtLimit
           ? "PF = the structure's PF x paid days / payroll days; a PF at the monthly limit is taken in full."
           : "PF = the structure's PF x paid days / payroll days.",
-        esi: '0.75% of the earned pay, rounded up, when the full-month gross is up to the ESI limit.',
+        esi: e.payMode === 'Stipend' && E.forMonth(await E.getPolicy(), e.month).noStipendEsi
+          ? 'No ESI on a stipend.'
+          : '0.75% of the earned pay, rounded up, when the full-month gross is up to the ESI limit.',
         pt: "Telangana PT on the earned pay (never above the structure's PT).",
         tds: "TDS = the structure's monthly figure, else the policy %.",
       },

@@ -128,6 +128,25 @@ ok(identities, 'T38 identities hold on 500 random inputs (net = gross - deductio
   ok(E.forMonth({ pfFixedFrom: '2026-11' }, '2026-11').pfFixedAtLimit === true && E.forMonth({ pfFixedFrom: '2026-11' }, '2026-10').pfFixedAtLimit === false && E.forMonth({ pfFixedFrom: '2026-11' }, '2027-01').pfFixedAtLimit === true && E.forMonth({ pfFixedFrom: null }, '2026-11').pfFixedAtLimit === false, 'L09 the rule starts at its own month and is off without the setting', null);
 }
 
+// NO ESI ON A STIPEND (founder 2026-11-28): with the month's rule on, a stipend carries no ESI; a package is as before
+{
+  const stp = { payMode: 'Stipend', stipend: 10000, basic: 0, hra: 0, bonus: 0, specialAllowance: 0, conveyance: 0, employeePf: 0, employerPf: 0, gratuity: 0, professionalTax: 0, esiApplicable: null, tds: null, otherDeductions: 0 };
+  const pkg = { ...version, basic: 5400, hra: 2160, bonus: 1000, specialAllowance: 4032, employeePf: 648, employerPf: 648, gratuity: 260, professionalTax: 0 };
+  const run = (v, on) => {
+    const pol = { ...policy, noStipendEsi: on };
+    const comp = { ...base, basic: v.basic, hra: v.hra, bonus: v.bonus, specialAllowance: v.specialAllowance, stipend: v.stipend || 0, workingDays: 31, daysLop: 0 };
+    return [payrollCalc(comp, PEdit.rulesFromVersion(v, pol, v.payMode)), E.computeEntry({ version: v, att: att(0, 31), policy: pol })];
+  };
+  const is = (list, emp, er, net) => list.every((x) => x.esiEmployee === emp && x.esiEmployer === er && x.netPay === net);
+  const sOff = run(stp, false); const sOn = run(stp, true);
+  ok(is(sOff, 75, 325, 9925), 'S01 rule off: a 10,000 stipend has ESI 75 / 325 (as before)', sOff.map((x) => [x.esiEmployee, x.esiEmployer, x.netPay]));
+  ok(is(sOn, 0, 0, 10000), 'S02 rule on: no ESI at all on a stipend, net 10,000', sOn.map((x) => [x.esiEmployee, x.esiEmployer, x.netPay]));
+  ok(is(run({ ...stp, esiApplicable: true }, true), 0, 0, 10000), 'S03 rule on: also when the salary record says ESI applies', null);
+  const pOn = run(pkg, true); const pOff = run(pkg, false);
+  ok(pOn[0].esiEmployee === pOff[0].esiEmployee && pOn[0].esiEmployee > 0 && pOn[1].esiEmployee === pOff[1].esiEmployee && pOn[1].netPay === pOff[1].netPay, 'S04 a package is not touched by the rule', [pOn[1].esiEmployee, pOff[1].esiEmployee]);
+  ok(E.forMonth({ stipendNoEsiFrom: '2026-11' }, '2026-11').noStipendEsi === true && E.forMonth({ stipendNoEsiFrom: '2026-11' }, '2026-10').noStipendEsi === false && E.forMonth({}, '2026-11').noStipendEsi === false, 'S05 the rule starts at its own month and is off without the setting', null);
+}
+
 // frontend copy: identical text + identical numbers
 const BEND = fs.readFileSync(path.join(__dirname, '..', 'src', 'utils', 'payrollCalc.js'), 'utf8');
 const FEND = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'src', 'utils', 'payrollCalc.js'), 'utf8');

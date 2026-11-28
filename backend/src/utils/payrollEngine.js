@@ -76,22 +76,33 @@ class PayrollError extends Error {
 }
 
 const PF_FIXED_KEY = 'payroll.pfFixedAtLimit';
+// NO ESI ON A STIPEND (founder 2026-11-28: "nothing is to be cut from a stipend"): from that month a stipend carries no ESI at all.
+const STIPEND_ESI_KEY = 'payroll.stipendNoEsi';
+
+// AppSetting {on, from:'YYYY-MM'} -> the month the rule starts, or null (absent / off / unreadable)
+async function ruleFrom(db, key) {
+  try {
+    const row = await db.appSetting.findUnique({ where: { key } });
+    const v = row ? JSON.parse(row.value) : null;
+    return v && v.on && /^\d{4}-(0[1-9]|1[0-2])$/.test(String(v.from || '')) ? v.from : null;
+  } catch { return null; }
+}
 
 async function getPolicy(db = prisma) {
   let config = await db.hrConfig.findFirst();
   if (!config) config = await db.hrConfig.create({ data: { basicPctOfCtc: DEFAULT_RULES.basicPctOfCtc } });
-  // not a column: the first payroll month from which PF at the limit is fixed (null = never)
-  let pfFixedFrom = null;
-  try {
-    const row = await db.appSetting.findUnique({ where: { key: PF_FIXED_KEY } });
-    const v = row ? JSON.parse(row.value) : null;
-    if (v && v.on && /^\d{4}-(0[1-9]|1[0-2])$/.test(String(v.from || ''))) pfFixedFrom = v.from;
-  } catch { /* an unreadable setting = the rule is off */ }
-  return { ...config, pfFixedFrom };
+  // not columns: the first payroll month of each rule above (null = never)
+  const [pfFixedFrom, stipendNoEsiFrom] = await Promise.all([ruleFrom(db, PF_FIXED_KEY), ruleFrom(db, STIPEND_ESI_KEY)]);
+  return { ...config, pfFixedFrom, stipendNoEsiFrom };
 }
 
 // The settings as they apply to one payroll month.
-const forMonth = (policy, month) => ({ ...policy, pfFixedAtLimit: !!(policy && policy.pfFixedFrom && String(month || '') >= policy.pfFixedFrom) });
+const reached = (from, month) => !!(from && String(month || '') >= from);
+const forMonth = (policy, month) => ({
+  ...policy,
+  pfFixedAtLimit: reached(policy && policy.pfFixedFrom, month),
+  noStipendEsi: reached(policy && policy.stipendNoEsiFrom, month),
+});
 
 const isMonth = (m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(m || ''));
 const monthParts = (m) => { const [y, mo] = m.split('-').map(Number); return { year: y, monthNum: mo }; };
@@ -300,7 +311,7 @@ function computeEntry({ version, att, policy, incentive = 0, register = null }) 
   const gratuity = stipend ? 0 : Math.round((Number(version.gratuity) || 0) * ratio);
   // ESI eligibility is decided on the version's full-month gross; the
   // contribution is on what was actually earned.
-  const eligible = esiFor(baseGross, policy, version.esiApplicable).applicable;
+  const eligible = !(stipend && policy && policy.noStipendEsi) && esiFor(baseGross, policy, version.esiApplicable).applicable;
   const esi = eligible && earnedGross > 0 ? esiFor(earnedGross, policy, true) : { employee: 0, employer: 0 };
   const professionalTax = stipend ? 0 : Math.min(Number(version.professionalTax) || 0, professionalTaxFor(earnedGross));
 
@@ -751,7 +762,7 @@ async function historyOf(entryId) {
 
 module.exports = {
   STATUSES, STATUS_LABEL, FINAL_STATUSES, PAYABLE_STATUSES, TRANSITIONS, PayrollError,
-  getPolicy, forMonth, PF_FIXED_KEY, isMonth, monthParts, payrollWorkingDays, overlapProblem, readSnapshot,
+  getPolicy, forMonth, PF_FIXED_KEY, STIPEND_ESI_KEY, isMonth, monthParts, payrollWorkingDays, overlapProblem, readSnapshot,
   leaversIn, awlContext, // read-only helpers reused by utils/payrollLopBreakdown.js (the LOP dates screen)
   attendanceDefaults, attendanceInputs, computeEntry, computeRegisterEntry, registerFor, calculateMonth, engineRowFor, refreshMonthRun,
   writePayslip, slipFieldsOf, transition, historyOf, incentivesFor,
