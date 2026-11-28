@@ -484,6 +484,16 @@ export default function InterviewCalendar() {
     spec: filters.spec, qual: filters.qual, desig: filters.desig, expBand: filters.expBand,
   }), [filters, deptFilter]);
   const pr = calRange(pf);
+  // THE CALENDAR FOLLOWS THE DATES PICKED (founder 2026-11-28: "From – to" seemed not to work - the list changed, but the top box
+  // and the grid stayed on this month): picking a range moves the calendar to its first day, at a size that fits it.
+  useEffect(() => {
+    if (!pr.from) return;
+    const a = new Date(`${pr.from}T00:00:00`);
+    if (Number.isNaN(a.getTime())) return;
+    const days = pr.to ? Math.round((new Date(`${pr.to}T00:00:00`) - a) / 86400000) + 1 : 31;
+    setAnchor(startOfDay(a));
+    setCalModeS(days <= 1 ? 'day' : days <= 7 ? 'week' : 'month');
+  }, [pr.from, pr.to]); // eslint-disable-line react-hooks/exhaustive-deps
   const passesBase = (r, skipPhase) => {
     const q = filters.q.trim().toLowerCase();
     if (!skipPhase && filters.phase && filters.phase !== 'SHORTLISTED' && phaseOf(r) !== filters.phase) return false;
@@ -925,12 +935,21 @@ export default function InterviewCalendar() {
           <p>Every interview: who, when, and what is left to do after it.</p>
         </div>
         <div className="ak-page-tools">
-          <span className="iv4-range" title="The days the calendar shows">
-            <Icon name="calendar" size={16} />
-            <span>{fmtDay(range.from, true)}</span>
-            <span aria-hidden="true">→</span>
-            <span>{fmtDay(range.to, true)}</span>
-          </span>
+          {pr.from || pr.to ? (
+            <span className="iv4-range" title="The dates picked in the filter (the list shows these); the calendar opens at the first one">
+              <Icon name="calendar" size={16} />
+              <span>{pr.from ? fmtDay(new Date(`${pr.from}T00:00:00`), true) : 'Any day'}</span>
+              <span aria-hidden="true">→</span>
+              <span>{pr.to ? fmtDay(new Date(`${pr.to}T00:00:00`), true) : 'Any day'}</span>
+            </span>
+          ) : (
+            <span className="iv4-range" title="The days the calendar shows">
+              <Icon name="calendar" size={16} />
+              <span>{fmtDay(range.from, true)}</span>
+              <span aria-hidden="true">→</span>
+              <span>{fmtDay(range.to, true)}</span>
+            </span>
+          )}
           <div className="iv4-seg" role="tablist" aria-label="Calendar size">
             {[['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([id, label]) => (
               <button key={id} type="button" role="tab" aria-selected={calMode === id} className={calMode === id ? 'is-on' : ''} onClick={() => setCalMode(id)}>{label}</button>
