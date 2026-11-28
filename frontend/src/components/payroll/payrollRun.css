@@ -26,6 +26,14 @@
 @media (max-width: 520px) { .prb-grid4 { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .prb-detail .prb-kv { grid-template-columns: 1fr; } .prb-tot { margin-left: 0; } }
 
+/* SALARY CREDIT DATE (founder 2026-11-28): the two groups above the list, the tag in its column */
+.prb-paydays { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 18px 0; font-size: 12.5px; }
+.prb-paydays.inline { padding: 0 0 10px; }
+.prb-payday { font: inherit; font-size: 12.5px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: inherit; cursor: pointer; font-variant-numeric: tabular-nums; }
+.prb-payday.on { border-color: var(--brand, #1f3a68); background: var(--brand-tint, #e6efeb); }
+.prb-paytag { display: inline-block; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font-weight: 600; font-size: 12px; }
+.prb-paytag.late { background: #fdf0d5; border-color: #e5c27a; color: #7a5200; }
+
 /* THE SALARY BREAKUP IN THE DETAILS WINDOW (founder 2026-11-27) */
 .psb-who { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12.5px; color: var(--ink-soft); margin-bottom: 10px; }
 .psb-back { font-size: 12.5px; background: #fdeccd; color: #8a5a00; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }

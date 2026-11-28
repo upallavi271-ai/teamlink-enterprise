@@ -38,6 +38,13 @@ const ctcFrom = (f) => (!f ? 'No CTC on the salary structure' : f.from === 'regi
 const lopOf = (e) => (e.join ? e.join.lopDays : e.daysLop);
 const shortDay = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
 
+// Salary credit date (founder 2026-11-28): 2 or more leave days applied after the pay period -> the 10th of the next month,
+// else the last day of the payroll month. Worked out by the server (utils/payrollSalaryDate.js); absent = the rule is off.
+const payDayOf = (e) => (e.salaryDate ? shortDay(e.salaryDate.date) : '');
+const leaveText = (s) => (s && s.dates.length ? s.dates.map((x) => `${shortDay(x.date)}${x.value === 0.5 ? ' (half)' : ''}${x.waiting ? ' (waiting)' : ''}`).join(', ') : 'no leave');
+const dayCount = (n) => `${n} leave day${n === 1 ? '' : 's'}`;
+const PAYDAY_FIELD = { key: 'payday', label: 'Salary date', allLabel: 'Any salary date', get: payDayOf, primary: true };
+
 // The list filter standard for the three tables on this board.
 const empSearch = (code, name) => ({ key: 'q', type: 'search', placeholder: 'Search employee name or ID…', get: (r) => `${code(r) || ''} ${name(r) || ''}` });
 // S3: the month is posted as one journal, so a record is Posted / Paid / Not posted.
@@ -55,6 +62,7 @@ const ENTRY_SORTS = [
   { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.employee?.name || '').localeCompare(String(b.employee?.name || '')) },
   { key: 'net', label: 'Net (high to low)', cmp: (a, b) => (Number(b.netPay) || 0) - (Number(a.netPay) || 0) },
   { key: 'lop', label: 'LOP days (most first)', cmp: (a, b) => (Number(lopOf(b)) || 0) - (Number(lopOf(a)) || 0) },
+  { key: 'payday', label: 'Salary date', cmp: (a, b) => String(a.salaryDate?.date || '').localeCompare(String(b.salaryDate?.date || '')) || String(a.employee?.name || '').localeCompare(String(b.employee?.name || '')) },
 ];
 const ATT_FIELDS = [
   empSearch((r) => r.employeeCode, (r) => r.name),
@@ -202,6 +210,12 @@ function EntryDetail({ id, onClose }) {
             <span>{e.join ? `Counted from ${shortDay(e.join.joinedOn)} (${e.join.word}) to ${shortDay(e.join.periodTo)}` : data.period ? `Pay period ${data.period.rangeText}` : ''}</span>
           </div>
           {e.rejectionReason && <div className="psb-back"><b>Sent back:</b> {e.rejectionReason}</div>}
+          {data.salaryDate && (
+            <div className="prb-paydays inline" data-testid="detail-payday">
+              <b>Salary date: {shortDay(data.salaryDate.date)}</b>
+              <span className="prb-note">{dayCount(data.salaryDate.leaveDays)} from {shortDay(data.salaryDate.window.from)} to {shortDay(data.salaryDate.window.to)}{data.salaryDate.dates.length ? `: ${leaveText(data.salaryDate)}` : ''}</span>
+            </div>
+          )}
           <SalaryBreakdown entry={e} lines={data.lines} onLop={() => setLop(true)} ctcNote={e.monthlyCtc ? ctcFrom(e.monthlyCtcFrom) : ''} />
           {data.breakup && (
             <details className="psb-more">
@@ -353,7 +367,8 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
   // Filters narrow what is SHOWN; the header checkbox ticks the rows shown.
   // A bulk button with nothing ticked still acts on the whole month, as it
   // always has — the note under the bar says so while a filter is on.
-  const lf = useListFilters(entries, ENTRY_FIELDS, { sorts: ENTRY_SORTS });
+  const paydays = data?.salaryDates || null;
+  const lf = useListFilters(entries, [ENTRY_FIELDS[0], { ...PAYDAY_FIELD, show: !!paydays }, ...ENTRY_FIELDS.slice(1)], { sorts: paydays ? ENTRY_SORTS : ENTRY_SORTS.filter((x) => x.key !== 'payday') });
   const page = usePaged(lf.rows);
   const allOn = lf.rows.length > 0 && lf.rows.every((e) => selected[e.id]);
   const showOther = entries.some((e) => Number(e.otherDeductions) > 0);
@@ -380,6 +395,24 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
             </span>
           )}
         </div>
+        {paydays && entries.length > 0 && (
+          <div className="prb-paydays" data-testid="prb-paydays">
+            <b>Salary date:</b>
+            {[paydays.onTime, paydays.late].map((d) => {
+              const list = entries.filter((x) => x.salaryDate && x.salaryDate.date === d);
+              const on = lf.values.payday === shortDay(d);
+              return (
+                <button key={d} type="button" className={`prb-payday ${on ? 'on' : ''}`} title={on ? 'Show everybody again' : `Show only the people paid on ${shortDay(d)}`} onClick={() => lf.setValue('payday', on ? '' : shortDay(d))}>
+                  <b>{shortDay(d)}</b> {list.length} {list.length === 1 ? 'person' : 'people'} · {inr0(list.reduce((n, x) => n + Number(x.netPay || 0), 0))}
+                </button>
+              );
+            })}
+            <span className="prb-note">
+              {shortDay(paydays.late)} = {paydays.threshold} or more leave days applied from {shortDay(paydays.window.from)} to {shortDay(paydays.window.to)} (approved or waiting).
+              {paydays.closed ? '' : ` This can still change until ${shortDay(paydays.window.to)}.`}
+            </span>
+          </div>
+        )}
         <PayrollAccountsStrip month={month} reloadKey={reloadKey + stripKey} onChanged={() => { load(); onChanged(); }} />
         <div className="prb-actions">
           {a.prepare && <button className="btn btn-sm" disabled={!!busy || (!count('DRAFT'))} onClick={() => act('Submitted', '/payroll/entries/submit', idsOr('DRAFT'))}>Submit {chosen.length ? 'selected' : 'all'} for approval</button>}
@@ -414,7 +447,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
               <thead>
                 <tr>
                   <th><input type="checkbox" checked={allOn} title="Tick every record the filters show" onChange={(e) => setSelected(e.target.checked ? Object.fromEntries(lf.rows.map((x) => [x.id, true])) : {})} /></th>
-                  <th>Code</th><th>Name</th><th>Group</th><th title="Cost to company per month: the pay register's figure, else the salary structure's">Monthly CTC</th><th title="Days paid in the pay period">Paid days</th><th title="Days not paid (loss of pay)">LOP days</th><th title="Pay for the paid days">Earned</th><th>PF</th><th>ESI</th><th>PT</th><th>TDS</th>{showOther && <th>Other</th>}<th>Net pay</th><th>Status</th><th />
+                  <th>Code</th><th>Name</th><th>Group</th><th title="Cost to company per month: the pay register's figure, else the salary structure's">Monthly CTC</th><th title="Days paid in the pay period">Paid days</th><th title="Days not paid (loss of pay)">LOP days</th><th title="Pay for the paid days">Earned</th><th>PF</th><th>ESI</th><th>PT</th><th>TDS</th>{showOther && <th>Other</th>}<th>Net pay</th>{paydays && <th title={`The date the salary is credited: ${shortDay(paydays.late)} for ${paydays.threshold} or more leave days after the pay period, else ${shortDay(paydays.onTime)}`}>Salary date</th>}<th>Status</th><th />
                 </tr>
               </thead>
               <tbody>
@@ -434,6 +467,11 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
                     <td className="cell-muted">{inr0(e.tds)}</td>
                     {showOther && <td className="cell-muted">{inr0(e.otherDeductions)}</td>}
                     <td><b>{inr0(e.netPay)}</b></td>
+                    {paydays && (
+                      <td style={{ whiteSpace: 'nowrap' }} title={e.salaryDate ? `${dayCount(e.salaryDate.leaveDays)} from ${shortDay(paydays.window.from)} to ${shortDay(paydays.window.to)}: ${leaveText(e.salaryDate)}` : ''}>
+                        {e.salaryDate ? <><span className={`prb-paytag ${e.salaryDate.late ? 'late' : ''}`}>{shortDay(e.salaryDate.date)}</span>{e.salaryDate.leaveDays > 0 && <div className="prb-note">{dayCount(e.salaryDate.leaveDays)}</div>}</> : '—'}
+                      </td>
+                    )}
                     <td>
                       <span className={`status ${STATUS_CLS[e.status]}`}>{STATUS_LABEL[e.status]}</span>
                       {e.edit && e.edit.edited && <span className="pe-badge" title={`Edited by ${e.edit.lastBy || 'someone'}`}>Edited</span>}

@@ -64,6 +64,7 @@ const REG = require('../utils/payrollRegister'); // pay-register columns of the 
 const JD = require('../utils/payrollJoinDays'); // joined inside the pay period: days before joining apart from LOP
 const SL = require('../utils/payrollSalaryLines'); // the Details window's salary breakup (founder 2026-11-27)
 const CTC = require('../utils/payrollCtc'); // the Monthly CTC column (founder 2026-11-27)
+const SD = require('../utils/payrollSalaryDate'); // salary credit date by the leaves after the pay period (founder 2026-11-28)
 const { notifyDataIo } = require('../utils/dataIoNotify');
 // Payroll edit and recalculate (user spec 2026-10-13, item 5): utils/payrollEdit.js
 const PEdit = require('../utils/payrollEdit');
@@ -192,6 +193,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       const j = await split(month, e, e.employee.dateOfJoining);
       if (j) joinOf.set(e.id, { ...j, amounts: JD.amountsOf(e.lopDeduction, j) });
     }
+    const salary = await SD.forMonth(month, entries.map((e) => e.employeeId)); // null = the rule is off
     const logOf = new Map();
     logs.forEach((l) => { logOf.set(`${l.kind}|${l.employeePayrollRunId}`, l); });
     const sum = (k) => entries.reduce((n, e) => n + (Number(e[k]) || 0), 0);
@@ -199,6 +201,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     entries.forEach((e) => { byStatus[e.status] = (byStatus[e.status] || 0) + 1; });
     res.json({
       month, period: monthLabel(month), cycle: await PC.cycleFor(month), run, access: await accessOf(req), byStatus, missing,
+      salaryDates: SD.summaryOf(salary),
       totals: {
         employees: entries.length, grossPay: sum('grossPay'), lopDeduction: sum('lopDeduction'), earnedGross: sum('earnedGross'),
         totalDeductions: sum('totalDeductions'), netPay: sum('netPay'), pfEmployer: sum('pfEmployer'), esiEmployer: sum('esiEmployer'),
@@ -206,6 +209,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       entries: entries.map((e) => ({
         ...e,
         join: joinOf.get(e.id) || null,
+        salaryDate: salary ? salary.of.get(e.employeeId) : null,
         statusLabel: E.STATUS_LABEL[e.status],
         monthlyCtc: ctcOf.has(e.id) ? ctcOf.get(e.id).value : null,
         monthlyCtcFrom: ctcOf.get(e.id) || null,
@@ -250,12 +254,13 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     // Pay register layout (founder 2026-10-28): payable / non-payable days, the EARNED parts, the PF rule, amounts to the paisa.
     const pfRules = await REG.pfRulesFor(entries.map((e) => e.salaryVersionId));
     const ctcOf = await CTC.monthlyCtcFor(entries);
+    const salary = await SD.forMonth(month, entries.map((e) => e.employeeId));
     const n = (v) => REG.r2(v);
     const headers = ['Employee ID', 'Name', 'Department', 'Designation', 'Pay type', 'Monthly CTC', 'Working days', 'Days present', 'Days before joining', 'LOP days', 'Payable days', 'Non-payable days',
       'Basic', 'HRA', 'Special allowance', 'Conveyance', 'Bonus', 'Incentive', 'Other earnings', 'Gross', 'LOP amount', 'Earned gross',
       'Earned basic', 'Earned HRA', 'Earned conveyance', 'Earned special allowance', 'Earned bonus', 'Earned stipend', 'PF rule',
       'PF (employee)', 'ESI (employee)', 'Professional tax', 'TDS', 'Other deductions', 'Total deductions', 'Net pay',
-      'PF (employer)', 'ESI (employer)', 'Gratuity', 'Status', 'Edited by hand'];
+      'PF (employer)', 'ESI (employer)', 'Gratuity', 'Status', 'Edited by hand', ...(salary ? ['Salary date', 'Leave days after the pay period', 'Leave dates'] : [])];
     const MONEY = ['monthlyCtc', 'basic', 'hra', 'specialAllowance', 'conveyance', 'bonus', 'incentive', 'arrears', 'grossPay', 'lopDeduction', 'earnedGross',
       'eBasic', 'eHra', 'eConveyance', 'eSpecial', 'eBonus', 'eStipend',
       'pfEmployee', 'esiEmployee', 'professionalTax', 'tds', 'otherDeductions', 'totalDeductions', 'netPay', 'pfEmployer', 'esiEmployer', 'gratuity'];
@@ -275,8 +280,10 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
         n(e.basic), n(e.hra), n(e.specialAllowance), n(e.conveyance), n(e.bonus), n(e.incentive), n(e.arrears), n(e.grossPay), n(e.lopDeduction), n(e.earnedGross),
         n(v.eBasic), n(v.eHra), n(v.eConveyance), n(v.eSpecial), n(v.eBonus), n(v.eStipend), v.pfRule,
         n(e.pfEmployee), n(e.esiEmployee), n(e.professionalTax), n(e.tds), n(e.otherDeductions), n(e.totalDeductions), n(e.netPay),
-        n(e.pfEmployer), n(e.esiEmployer), n(e.gratuity), E.STATUS_LABEL[e.status] || e.status, (edited.get(e.id) || {}).edited ? 'Yes' : 'No'];
+        n(e.pfEmployer), n(e.esiEmployer), n(e.gratuity), E.STATUS_LABEL[e.status] || e.status, (edited.get(e.id) || {}).edited ? 'Yes' : 'No',
+        ...(salary ? salaryCells(salary.of.get(e.employeeId)) : [])];
     };
+    const salaryCells = (s) => (s ? [s.date, s.leaveDays, s.dates.map((x) => `${x.date}${x.value === 0.5 ? ' (half)' : ''}${x.waiting ? ' (waiting)' : ''}`).join(', ')] : ['', '', '']);
     const totalOf = (list, label) => {
       const t = (k) => n(list.reduce((sum, v) => sum + n(val(v, k)), 0));
       const days = (k) => list.reduce((sum, v) => sum + (Number(v.ep[k]) || 0), 0);
@@ -284,7 +291,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       return ['', label, '', '', '', T.monthlyCtc, '', '', '', '', days('payable'), days('nonPayable'), T.basic, T.hra, T.specialAllowance, T.conveyance, T.bonus, T.incentive, T.arrears, T.grossPay,
         T.lopDeduction, T.earnedGross, T.eBasic, T.eHra, T.eConveyance, T.eSpecial, T.eBonus, T.eStipend, '',
         T.pfEmployee, T.esiEmployee, T.professionalTax, T.tds, T.otherDeductions, T.totalDeductions, T.netPay,
-        T.pfEmployer, T.esiEmployer, T.gratuity, '', ''];
+        T.pfEmployer, T.esiEmployer, T.gratuity, '', '', ...(salary ? ['', '', ''] : [])];
     };
     const table = (list, label) => (list.length ? [...list.map(rowOf), totalOf(list, label)] : []);
     const rows = table(view, 'TOTAL');
@@ -330,7 +337,9 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       } : {
         mode: 'Standard rules (whole rupees)',
         earned: 'LOP amount = full gross x LOP days / payroll days, rounded to the rupee.',
-        pf: "PF = the structure's PF x paid days / payroll days.",
+        pf: E.forMonth(await E.getPolicy(), e.month).pfFixedAtLimit
+          ? "PF = the structure's PF x paid days / payroll days; a PF at the monthly limit is taken in full."
+          : "PF = the structure's PF x paid days / payroll days.",
         esi: '0.75% of the earned pay, rounded up, when the full-month gross is up to the ESI limit.',
         pt: "Telangana PT on the earned pay (never above the structure's PT).",
         tds: "TDS = the structure's monthly figure, else the policy %.",
@@ -342,8 +351,10 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     const join = await (await JD.splitter())(e.month, e, e.employee.dateOfJoining);
     // the salary breakup line by line, from the stored record (utils/payrollSalaryLines.js)
     const lines = SL.salaryLines(e, { state: await PEdit.readState(e.id), version, register: regOn });
+    const salary = await SD.forMonth(e.month, [e.employeeId]);
     return res.json({
       lines, period: await PC.cycleFor(e.month),
+      salaryDate: salary ? { ...salary.of.get(e.employeeId), ...SD.summaryOf(salary) } : null,
       entry: { ...e, join: join ? { ...join, amounts: JD.amountsOf(e.lopDeduction, join) } : null, statusLabel: E.STATUS_LABEL[e.status], monthlyCtc: ctc ? ctc.value : null, monthlyCtcFrom: ctc },
       version, history, syncLogs: logs, breakup,
       // This employee's share of the month's one journal entry.
